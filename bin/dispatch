@@ -122,7 +122,13 @@ cmd_uninstall() {
 
 cmd_start() { load_agent && green "Started." || { red "Failed to start (run: dispatch install)"; exit 1; }; }
 cmd_stop() { unload_agent; green "Stopped."; }
-cmd_restart() { unload_agent; load_agent && green "Restarted." || { red "Failed to restart"; exit 1; }; }
+cmd_restart() {
+  unload_agent
+  # Wait for the old process to release the port before reloading, so a fast
+  # unload→load doesn't race launchd into a thrash.
+  for _ in 1 2 3 4 5 6 7 8 9 10; do lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1 && sleep 1 || break; done
+  load_agent && green "Restarted." || { red "Failed to restart"; exit 1; }
+}
 
 cmd_status() {
   bold "Daemon"

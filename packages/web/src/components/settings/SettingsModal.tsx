@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useConnection } from '../../stores/connection';
 import { useSettings, ACCENTS } from '../../stores/settings';
 import { useServers, currentLabel } from '../../stores/servers';
@@ -8,6 +9,47 @@ const item: React.CSSProperties = { fontSize: 13, color: '#c9c9cf' };
 const chip: React.CSSProperties = { font: '400 11.5px var(--font-mono)', color: '#c9c9cf', background: '#1b1b1e', border: '1px solid #2c2c32', borderRadius: 7, padding: '5px 10px' };
 
 function Divider() { return <div style={{ height: 1, background: 'var(--color-hover)' }} />; }
+
+function ServersSection() {
+  const servers = useServers((s) => s.servers);
+  const [label, setLabel] = useState('');
+  const [origin, setOrigin] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const canAdd = !!label.trim() && !!origin.trim() && !busy;
+
+  const input: React.CSSProperties = { minWidth: 0, height: 30, padding: '0 9px', background: '#1b1b1e', border: '1px solid #2c2c32', borderRadius: 7, color: 'var(--color-text-primary)', font: '400 12px var(--font-sans)' };
+
+  async function add() {
+    if (!canAdd) return;
+    setBusy(true); setErr('');
+    try { await useServers.getState().add(label.trim(), origin.trim()); setLabel(''); setOrigin(''); }
+    catch { setErr('Could not add — origin must be an http(s) URL.'); }
+    setBusy(false);
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <span style={sectionLabel}>SERVERS</span>
+      <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>Switch between machines from the brand menu. Stored on this daemon.</div>
+      {servers.map((s) => (
+        <div key={s.origin} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
+            <span style={{ fontSize: 13, color: '#e9e9ec', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.label}</span>
+            <span style={{ font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.origin}</span>
+          </span>
+          <button title="Remove server" onClick={() => void useServers.getState().remove(s.origin)} style={{ width: 26, height: 26, flexShrink: 0, background: 'transparent', border: '1px solid #2c2c32', borderRadius: 6, color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 15, lineHeight: 1 }}>×</button>
+        </div>
+      ))}
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label" style={{ ...input, flex: '0 0 34%' }} />
+        <input value={origin} onChange={(e) => setOrigin(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void add(); }} placeholder="https://host:3456" style={{ ...input, flex: 1 }} />
+        <button onClick={() => void add()} disabled={!canAdd} style={{ flexShrink: 0, height: 30, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 7, color: '#08240F', fontWeight: 600, fontSize: 12.5, cursor: canAdd ? 'pointer' : 'default', opacity: canAdd ? 1 : 0.5 }}>Add</button>
+      </div>
+      {err && <div style={{ fontSize: 11.5, color: 'var(--color-status-red)' }}>{err}</div>}
+    </div>
+  );
+}
 
 function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
   return (
@@ -53,6 +95,9 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
             <div style={row}><span style={item}>Server</span><span style={chip}>{currentLabel(servers)}</span></div>
             <div style={row}><span style={item}>Connection</span><span style={{ display: 'flex', alignItems: 'center', gap: 6, font: '500 11px var(--font-mono)', color: st.c }}><span style={{ width: 7, height: 7, borderRadius: '50%', background: st.c }} />{st.t}</span></div>
           </div>
+          <Divider />
+
+          <ServersSection />
           <Divider />
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

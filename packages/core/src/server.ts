@@ -81,7 +81,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   app.use('/api/agents', createAgentsRouter(agentService));
   app.use('/api/hooks', createHooksRouter(db, broadcaster));
   app.use('/api/providers', createProvidersRouter());
-  app.use('/api/servers', createServersRouter());
+  app.use('/api/servers', createServersRouter(db));
   app.use('/api/sessions/:id/files', createFilesRouter(db));
   app.use('/api/sessions/:id/git', createGitRouter(db));
   app.use('/api/auth-requests', createAuthRouter(authRequestService));
@@ -250,7 +250,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.use('/api/agents', createAgentsRouter(agentService));
   app.use('/api/hooks', createHooksRouter(db, broadcaster));
   app.use('/api/providers', createProvidersRouter());
-  app.use('/api/servers', createServersRouter());
+  app.use('/api/servers', createServersRouter(db));
   app.use('/api/sessions/:id/files', createFilesRouter(db));
   app.use('/api/sessions/:id/git', createGitRouter(db));
   app.use('/api/auth-requests', createAuthRouter(authRequestService));

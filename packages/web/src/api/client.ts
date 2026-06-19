@@ -15,6 +15,8 @@ const body = (data: unknown) => JSON.stringify(data);
 
 export const api = {
   listServers: () => req<{ label: string; origin: string }[]>('/api/servers'),
+  addServer: (label: string, origin: string) => req<{ label: string; origin: string }[]>('/api/servers', { method: 'POST', body: body({ label, origin }) }),
+  removeServer: (origin: string) => req<{ label: string; origin: string }[]>(`/api/servers?origin=${encodeURIComponent(origin)}`, { method: 'DELETE' }),
   listSessions: () => req<Session[]>('/api/sessions'),
   getSession: (id: string) => req<Session>(`/api/sessions/${id}`),
   createSession: (input: { provider: string; name?: string; workingDir: string; prompt?: string; skipPermissions?: boolean }) =>
