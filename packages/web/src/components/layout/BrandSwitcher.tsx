@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { TerminalWindow } from '@phosphor-icons/react';
+import { Terminal } from '@phosphor-icons/react';
 import { useServers, currentServer, currentLabel } from '../../stores/servers';
 
 export function BrandSwitcher() {
@@ -23,7 +23,7 @@ export function BrandSwitcher() {
         background: open ? 'var(--color-elevated)' : 'transparent', border: '1px solid', borderColor: open ? '#2C2C32' : 'transparent',
         borderRadius: 8, cursor: 'pointer',
       }}>
-        <span style={{ width: 17, height: 17, borderRadius: 5, background: 'var(--color-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><TerminalWindow size={11} weight="bold" color="#08240F" /></span>
+        <span style={{ width: 17, height: 17, borderRadius: 5, background: 'var(--color-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Terminal size={11} weight="bold" color="#08240F" /></span>
         <span style={{ fontWeight: 600, fontSize: 13, letterSpacing: '-0.3px', color: 'var(--color-text-primary)' }}>Dispatch</span>
         <span style={{ font: '500 12px var(--font-mono)', color: 'var(--color-text-secondary)' }}>{label}</span>
         <span style={{ color: 'var(--color-text-tertiary)', fontSize: 10 }}>▾</span>
