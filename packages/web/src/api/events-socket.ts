@@ -18,7 +18,7 @@ function defaultUrl(): string {
   return `${proto}://${location.host}/api/events`;
 }
 
-export function createEventsSocket(opts: Opts): { close(): void } {
+export function createEventsSocket(opts: Opts): { close(): void; reconnect(): void } {
   const factory = opts.wsFactory ?? ((url) => new WebSocket(url) as unknown as WebSocketLike);
   let ws: WebSocketLike | null = null;
   let stopped = false;
@@ -47,6 +47,17 @@ export function createEventsSocket(opts: Opts): { close(): void } {
       stopped = true;
       if (timer) clearTimeout(timer);
       ws?.close();
+    },
+    // Force an immediate fresh connection — used when the app returns from the
+    // background. iOS silently kills sockets without always firing onclose, so
+    // the status can read "open" over a dead pipe. We null the old onclose so
+    // its backoff timer doesn't race a second connect().
+    reconnect() {
+      if (stopped) return;
+      if (timer) { clearTimeout(timer); timer = undefined; }
+      backoff = 500;
+      if (ws) { ws.onclose = null; try { ws.close(); } catch { /* ignore */ } }
+      connect();
     },
   };
 }

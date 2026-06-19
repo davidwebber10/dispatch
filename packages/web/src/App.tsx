@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { AppShell } from './components/layout/AppShell';
 import { Workspace } from './components/layout/Workspace';
 import { TabBar } from './components/layout/TabBar';
@@ -19,6 +19,8 @@ import { useActivity } from './stores/activity';
 import { useAuth } from './stores/auth';
 import { useAgents } from './stores/agents';
 import { useAgentUI } from './stores/agentUI';
+import { useReconnect } from './stores/reconnect';
+import { useResume } from './hooks/useResume';
 import { useSettings } from './stores/settings';
 import { useServers } from './stores/servers';
 
@@ -37,6 +39,8 @@ export default function App() {
   const agentFocused = useAgentUI((s) => s.focused);
   const agentSelected = useAgents((s) => s.selectedId);
   const editing = useAgentUI((s) => s.editing);
+  const reconnectGen = useReconnect((s) => s.gen);
+  const sockRef = useRef<{ close(): void; reconnect(): void } | null>(null);
 
   useEffect(() => {
     void useProjects.getState().load();
@@ -55,8 +59,17 @@ export default function App() {
         if (e.type === 'session:status' && e.status === 'needs_input' && typeof e.sessionId === 'string') maybeNotify(e.sessionId);
       },
     });
-    return () => sock.close();
+    sockRef.current = sock;
+    return () => { sock.close(); sockRef.current = null; };
   }, []);
+
+  // Returning from the background: re-establish the events socket and remount
+  // every terminal (which iOS may have silently killed) so the UI is live
+  // again without the user having to back out of the view.
+  useResume(() => {
+    sockRef.current?.reconnect();
+    useReconnect.getState().bump();
+  });
 
   if (isMobile) {
     return (<><AuthBanner /><MobileApp /></>);
@@ -81,7 +94,7 @@ export default function App() {
                 <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
                   <TabBar onSelect={() => useAgentUI.getState().blur()} />
                   {activeTerminalId
-                    ? <TabHost key={activeTerminalId} terminalId={activeTerminalId} />
+                    ? <TabHost key={`${activeTerminalId}:${reconnectGen}`} terminalId={activeTerminalId} />
                     : <EmptyWorkspace onSelectTab={selectTab} />}
                 </div>
               )

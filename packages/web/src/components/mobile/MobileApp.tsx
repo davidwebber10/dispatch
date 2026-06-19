@@ -9,10 +9,12 @@ import { EditAgentModal } from '../agents/EditAgentModal';
 import { SettingsModal } from '../settings/SettingsModal';
 import { useTabs } from '../../stores/tabs';
 import { useAgentUI } from '../../stores/agentUI';
+import { useReconnect } from '../../stores/reconnect';
 
 export function MobileApp() {
   const activeTab = useTabs((s) => s.activeTabId);
   const editing = useAgentUI((s) => s.editing);
+  const reconnectGen = useReconnect((s) => s.gen);
   const [screen, setScreen] = useState<'list' | 'tab' | 'agent'>('list');
   const [settings, setSettings] = useState(false);
 
@@ -39,11 +41,9 @@ export function MobileApp() {
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {screen === 'list' && (
-          <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-            <ProjectSidebar onSelectTab={openTab} onSelectAgent={openAgent} onNewAgent={(pid) => useAgentUI.getState().openNew(pid)} />
-          </div>
+          <ProjectSidebar onSelectTab={openTab} onSelectAgent={openAgent} onNewAgent={(pid) => useAgentUI.getState().openNew(pid)} />
         )}
-        {screen === 'tab' && (activeTab ? <TabHost key={activeTab} terminalId={activeTab} /> : <div style={{ padding: 16, color: 'var(--color-text-secondary)' }}>No thread open</div>)}
+        {screen === 'tab' && (activeTab ? <TabHost key={`${activeTab}:${reconnectGen}`} terminalId={activeTab} /> : <div style={{ padding: 16, color: 'var(--color-text-secondary)' }}>No thread open</div>)}
         {screen === 'agent' && <AgentPane />}
       </div>
 

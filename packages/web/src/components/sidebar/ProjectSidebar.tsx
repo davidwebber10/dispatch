@@ -73,7 +73,7 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent }: { onS
         </div>
         <button title="New project" onClick={() => setShowNew(true)} style={{ ...icon, background: 'var(--color-accent)', border: 'none', color: '#08240F', font: '700 18px/1 var(--font-sans)' }}>+</button>
       </div>
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '0 8px 8px' }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y', padding: '0 8px 8px' }}>
       {filtered.map((s) => (
         <div
           key={s.id}
