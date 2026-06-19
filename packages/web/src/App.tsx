@@ -6,7 +6,8 @@ import { ProjectSidebar } from './components/sidebar/ProjectSidebar';
 import { TabHost } from './components/tabs/TabHost';
 import { EmptyWorkspace } from './components/layout/EmptyWorkspace';
 import { Inspector } from './components/inspector/Inspector';
-import { AgentsView } from './components/agents/AgentsView';
+import { AgentPane } from './components/agents/AgentPane';
+import { EditAgentModal } from './components/agents/EditAgentModal';
 import { AuthBanner } from './components/auth/AuthBanner';
 import { MobileApp } from './components/mobile/MobileApp';
 import { useIsMobile } from './hooks/useIsMobile';
@@ -17,7 +18,7 @@ import { useTabs } from './stores/tabs';
 import { useActivity } from './stores/activity';
 import { useAuth } from './stores/auth';
 import { useAgents } from './stores/agents';
-import { useUI } from './stores/ui';
+import { useAgentUI } from './stores/agentUI';
 import { useSettings } from './stores/settings';
 import { useServers } from './stores/servers';
 
@@ -30,10 +31,12 @@ function maybeNotify(sessionId: string) {
 
 export default function App() {
   const activeTerminalId = useTabs((s) => s.activeTabId);
-  const selectTab = (id: string) => useTabs.getState().setActiveTab(id);
+  const selectTab = (id: string) => { useAgentUI.getState().blur(); useTabs.getState().setActiveTab(id); };
   const activeId = useProjects((s) => s.activeId);
-  const view = useUI((s) => s.view);
   const isMobile = useIsMobile();
+  const agentFocused = useAgentUI((s) => s.focused);
+  const agentSelected = useAgents((s) => s.selectedId);
+  const editing = useAgentUI((s) => s.editing);
 
   useEffect(() => {
     void useProjects.getState().load();
@@ -59,27 +62,34 @@ export default function App() {
     return (<><AuthBanner /><MobileApp /></>);
   }
 
+  const showAgent = agentFocused && !!agentSelected;
+
   return (
     <>
       <AuthBanner />
       <AppShell>
-        {view === 'workspace' ? (
-          <Workspace
-            sidebar={<ProjectSidebar onSelectTab={selectTab} />}
-            main={
-              <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-                <TabBar />
-                {activeTerminalId
-                  ? <TabHost key={activeTerminalId} terminalId={activeTerminalId} />
-                  : <EmptyWorkspace onSelectTab={selectTab} />}
-              </div>
-            }
-            inspector={<Inspector projectId={activeId} terminalId={activeTerminalId} onOpenFile={selectTab} />}
-          />
-        ) : (
-          <AgentsView />
-        )}
+        <Workspace
+          sidebar={<ProjectSidebar
+            onSelectTab={selectTab}
+            onSelectAgent={(id) => useAgentUI.getState().selectAgent(id)}
+            onNewAgent={(pid) => useAgentUI.getState().openNew(pid)}
+          />}
+          main={
+            showAgent
+              ? <AgentPane />
+              : (
+                <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+                  <TabBar onSelect={() => useAgentUI.getState().blur()} />
+                  {activeTerminalId
+                    ? <TabHost key={activeTerminalId} terminalId={activeTerminalId} />
+                    : <EmptyWorkspace onSelectTab={selectTab} />}
+                </div>
+              )
+          }
+          inspector={<Inspector projectId={activeId} terminalId={activeTerminalId} onOpenFile={selectTab} />}
+        />
       </AppShell>
+      {editing && <EditAgentModal scheduleId={editing.scheduleId} presetProjectId={editing.preset} onClose={() => useAgentUI.getState().closeEdit()} onSaved={(id) => useAgentUI.getState().selectAgent(id)} />}
     </>
   );
 }

@@ -1,7 +1,7 @@
 import { useTabs, findTerminal } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
 
-export function TabBar() {
+export function TabBar({ onSelect }: { onSelect?: () => void }) {
   const openTabIds = useTabs((s) => s.openTabIds);
   const activeTabId = useTabs((s) => s.activeTabId);
   const byProject = useTabs((s) => s.byProject);
@@ -17,7 +17,7 @@ export function TabBar() {
         return (
           <div
             key={id}
-            onClick={() => useTabs.getState().setActiveTab(id)}
+            onClick={() => { onSelect?.(); useTabs.getState().setActiveTab(id); }}
             onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); useTabs.getState().closeTab(id); } }}
             style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 10px 0 15px', minWidth: 150, maxWidth: 230, flexShrink: 0, cursor: 'pointer', borderRight: '1px solid var(--color-border)', background: active ? 'var(--color-base)' : 'transparent', borderBottom: active ? '2px solid var(--color-accent)' : '2px solid transparent' }}
           >

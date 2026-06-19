@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { Session, Terminal } from '../../api/types';
+import type { Session, Terminal, AgentSchedule } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
+import { useAgents } from '../../stores/agents';
+import { useAgentUI } from '../../stores/agentUI';
 import { StatusDot } from '../common/StatusDot';
 import { Spinner } from '../common/Spinner';
 import { ConfirmModal } from '../common/ConfirmModal';
@@ -67,7 +69,35 @@ function ThreadRow({ tab, active, onClick, onMiddle, onArchive, onContext }: { t
   );
 }
 
-export function ProjectCard({ session, active, onSelectTab }: { session: Session; active: boolean; onSelectTab: (id: string) => void }) {
+function AgentRow({ agent, active, onClick }: { agent: AgentSchedule; active: boolean; onClick: () => void }) {
+  const [hover, setHover] = useState(false);
+  const fs = useSettings((s) => s.sidebarFontSize);
+  return (
+    <button
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '7px 9px',
+        background: active ? 'var(--color-hover)' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
+        borderRadius: 6, border: 'none', color: active ? '#fff' : 'var(--color-text-primary)', fontSize: fs,
+        fontWeight: active ? 500 : 400, textAlign: 'left', cursor: 'pointer', opacity: agent.enabled ? 1 : 0.55,
+      }}
+    >
+      <span style={{ width: 8, height: 8, borderRadius: '50%', background: providerColor(agent.provider), flexShrink: 0 }} />
+      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent.name}</span>
+      <span style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        <StatusDot state={agent.enabled ? 'idle' : 'disabled'} size={7} />
+      </span>
+    </button>
+  );
+}
+
+export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNewAgent }: { session: Session; active: boolean; onSelectTab: (id: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void }) {
+  const allAgents = useAgents((s) => s.schedules);
+  const agents = allAgents.filter((a) => a.projectId === session.id);
+  const agentSel = useAgents((s) => s.selectedId);
+  const agentFocused = useAgentUI((s) => s.focused);
   const tabs = useTabs((s) => s.byProject[session.id]) ?? [];
   const activeTabId = useTabs((s) => s.activeTabId);
   const [hover, setHover] = useState(false);
@@ -152,6 +182,16 @@ export function ProjectCard({ session, active, onSelectTab }: { session: Session
               </div>
             );
           })}
+          <div style={{ marginTop: 6 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 6px' }}>
+              <span style={{ font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)', flex: 1 }}>AGENTS</span>
+              <button title="Add agent" onClick={(e) => { e.stopPropagation(); onNewAgent?.(session.id); }} style={plusBtn}>+</button>
+            </div>
+            {agents.map((a) => (
+              <AgentRow key={a.id} agent={a} active={agentFocused && a.id === agentSel} onClick={() => onSelectAgent?.(a.id)} />
+            ))}
+            {!agents.length && <div style={{ padding: '2px 6px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No agents yet</div>}
+          </div>
         </div>
       </div>
 

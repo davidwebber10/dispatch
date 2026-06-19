@@ -58,7 +58,7 @@ function initSched(existing: AgentSchedule | null): SchedState {
 const input: React.CSSProperties = { height: 34, width: '100%', padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 8, color: 'var(--color-text-primary)', fontSize: 13 };
 const seg = (active: boolean): React.CSSProperties => ({ padding: '6px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12.5, textTransform: 'capitalize', background: active ? 'var(--color-accent)' : 'transparent', color: active ? '#08240F' : 'var(--color-text-secondary)', fontWeight: active ? 600 : 400 });
 
-export function EditAgentModal({ scheduleId, presetProjectId, onClose }: { scheduleId: string | null; presetProjectId?: string | null; onClose: () => void }) {
+export function EditAgentModal({ scheduleId, presetProjectId, onClose, onSaved }: { scheduleId: string | null; presetProjectId?: string | null; onClose: () => void; onSaved?: (id: string) => void }) {
   const existing = useAgents((s) => s.schedules.find((x) => x.id === scheduleId)) ?? null;
   const sessions = useProjects((s) => s.sessions);
 
@@ -84,7 +84,7 @@ export function EditAgentModal({ scheduleId, presetProjectId, onClose }: { sched
       };
       const saved = existing ? await api.updateSchedule(existing.id, payload) : await api.createSchedule(payload);
       await useAgents.getState().loadSchedules();
-      if (saved?.id) await useAgents.getState().select(saved.id);
+      if (saved?.id) { await useAgents.getState().select(saved.id); onSaved?.(saved.id); }
       onClose();
     } finally { setBusy(false); }
   }

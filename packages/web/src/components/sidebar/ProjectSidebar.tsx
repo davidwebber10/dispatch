@@ -9,7 +9,7 @@ const SORTS: [Sort, string][] = [['recent', 'Most recent'], ['alpha', 'Alphabeti
 
 const icon: React.CSSProperties = { width: 32, height: 32, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: 'pointer' };
 
-export function ProjectSidebar({ onSelectTab }: { onSelectTab: (terminalId: string) => void }) {
+export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent }: { onSelectTab: (terminalId: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void }) {
   const sessions = useProjects((s) => s.sessions);
   const activeId = useProjects((s) => s.activeId);
   const setActive = useProjects((s) => s.setActive);
@@ -89,7 +89,7 @@ export function ProjectSidebar({ onSelectTab }: { onSelectTab: (terminalId: stri
             opacity: dragId === s.id ? 0.45 : 1,
           }}
         >
-          <ProjectCard session={s} active={s.id === activeId} onSelectTab={onSelectTab} />
+          <ProjectCard session={s} active={s.id === activeId} onSelectTab={onSelectTab} onSelectAgent={onSelectAgent} onNewAgent={onNewAgent} />
         </div>
       ))}
       {!filtered.length && <div style={{ color: 'var(--color-text-tertiary)', fontSize: 12.5, padding: '4px 6px' }}>No projects</div>}
