@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { CaretDoubleDown } from '@phosphor-icons/react';
 import '@xterm/xterm/css/xterm.css';
 import { openTerminalSocket } from '../../api/terminal-socket';
 import { api } from '../../api/client';
@@ -26,10 +27,12 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
   const [branch, setBranch] = useState<string | null>(null);
   const [drop, setDrop] = useState(false);
   const [note, setNote] = useState('');
+  const [atBottom, setAtBottom] = useState(true);
   const isMobile = useIsMobile();
   const termFontSize = useSettings((s) => s.fontSize);
   const termScrollback = useSettings((s) => s.scrollback);
   const forceFitRef = useRef<() => void>(() => {});
+  const scrollToEndRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     let disposed = false;
@@ -87,25 +90,19 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
 
     // --- Natural momentum touch scrolling (mobile) ---
     // xterm's native touch scroll is 1:1 and inertia-less; we take over the
-    // gesture and drive term.scrollLines with velocity tracking + decay.
+    // gesture and drive the real .xterm-viewport scrollTop in PIXELS (not
+    // term.scrollLines, which quantises to whole rows and feels steppy). This
+    // matches the pixel-smoothness of dragging the scrollbar on desktop.
     const host = hostRef.current;
+    const viewportEl = () => host?.querySelector('.xterm-viewport') as HTMLElement | null;
     let inertiaId = 0;
-    let lastY = 0, lastT = 0, vel = 0, frac = 0;
-    const rowHeight = () => {
-      const vp = host?.querySelector('.xterm-viewport') as HTMLElement | null;
-      const len = term.buffer.active.length || term.rows || 1;
-      if (vp && vp.scrollHeight > 0) return vp.scrollHeight / len;
-      return Math.ceil((term.options.fontSize ?? 13) * 1.3);
-    };
-    const scrollByPx = (px: number) => {
-      frac += px / rowHeight();
-      const lines = Math.trunc(frac);
-      if (lines !== 0) { frac -= lines; term.scrollLines(lines); }
-    };
+    let lastY = 0, lastT = 0, vel = 0;
+    const scrollByPx = (px: number) => { const vp = viewportEl(); if (vp) vp.scrollTop += px; };
+    const updateAtBottom = () => { const vp = viewportEl(); if (vp) setAtBottom(vp.scrollHeight - vp.clientHeight - vp.scrollTop < 4); };
     const stopInertia = () => { if (inertiaId) { cancelAnimationFrame(inertiaId); inertiaId = 0; } };
     const onTouchStart = (e: TouchEvent) => {
       stopInertia();
-      lastY = e.touches[0].clientY; lastT = performance.now(); vel = 0; frac = 0;
+      lastY = e.touches[0].clientY; lastT = performance.now(); vel = 0;
     };
     const onTouchMove = (e: TouchEvent) => {
       if (e.touches.length !== 1) return;
@@ -138,6 +135,14 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       host.addEventListener('touchend', onTouchEnd, { capture: true, passive: true });
     }
 
+    // Track whether we're pinned to the latest output. The native 'scroll'
+    // event fires for both user touch/wheel scrolling and xterm's own
+    // scrollTop sync on new output, so it covers every case.
+    const vp0 = viewportEl();
+    vp0?.addEventListener('scroll', updateAtBottom, { passive: true });
+    updateAtBottom();
+    scrollToEndRef.current = () => { stopInertia(); term.scrollToBottom(); updateAtBottom(); };
+
     void api.getTerminal(terminalId).then((m) => {
       if (disposed) return;
       setMeta(m);
@@ -152,6 +157,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
         host.removeEventListener('touchmove', onTouchMove, { capture: true } as EventListenerOptions);
         host.removeEventListener('touchend', onTouchEnd, { capture: true } as EventListenerOptions);
       }
+      vp0?.removeEventListener('scroll', updateAtBottom);
       ro?.disconnect();
       window.removeEventListener('resize', scheduleFit);
       sock.close();
@@ -199,6 +205,15 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
           drives the flex layout width (which previously blew the column out). */}
       <div style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
         <div ref={hostRef} style={{ position: 'absolute', inset: 0, padding: 15 }} />
+        {!atBottom && (
+          <button
+            title="Scroll to latest"
+            onClick={() => scrollToEndRef.current()}
+            style={{ position: 'absolute', right: 16, bottom: 16, width: 42, height: 42, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', color: '#06140B', border: 'none', boxShadow: '0 8px 22px -6px rgba(0,0,0,.7)', cursor: 'pointer', zIndex: 6 }}
+          >
+            <CaretDoubleDown size={19} weight="bold" />
+          </button>
+        )}
         {drop && (
           <div style={{ position: 'absolute', inset: 8, border: '2px dashed var(--color-accent)', borderRadius: 10, background: 'rgba(62,207,106,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', color: 'var(--color-accent)', fontSize: 14, fontWeight: 600 }}>Drop image → send to the agent</div>
         )}
