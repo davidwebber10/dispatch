@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { Session, Terminal } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
 import { StatusDot } from '../common/StatusDot';
+import { ConfirmModal } from '../common/ConfirmModal';
 import { providerColor } from '../common/typeIcons';
 import { timeAgo } from '../../lib/time';
 import { NewTabMenu } from './NewTabMenu';
@@ -26,7 +28,7 @@ function homePath(p: string): string {
   return (p || '').replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
 }
 
-function ThreadRow({ tab, active, onClick, onMiddle }: { tab: Terminal; active: boolean; onClick: (e: React.MouseEvent) => void; onMiddle: () => void }) {
+function ThreadRow({ tab, active, onClick, onMiddle, onArchive, onContext }: { tab: Terminal; active: boolean; onClick: (e: React.MouseEvent) => void; onMiddle: () => void; onArchive: () => void; onContext: (x: number, y: number) => void }) {
   const [hover, setHover] = useState(false);
   const color = providerColor(tab.type);
   return (
@@ -35,6 +37,7 @@ function ThreadRow({ tab, active, onClick, onMiddle }: { tab: Terminal; active: 
       onMouseLeave={() => setHover(false)}
       onClick={onClick}
       onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onMiddle(); } }}
+      onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContext(e.clientX, e.clientY); }}
       style={{
         display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '7px 9px',
         background: active ? 'var(--color-hover)' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
@@ -45,7 +48,12 @@ function ThreadRow({ tab, active, onClick, onMiddle }: { tab: Terminal; active: 
     >
       <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tab.label}</span>
-      <StatusDot state={dotState(tab.status)} size={7} />
+      {hover ? (
+        <span role="button" title="Archive thread" onClick={(e) => { e.stopPropagation(); onArchive(); }}
+          style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, color: 'var(--color-text-secondary)', fontSize: 14, lineHeight: 1, flexShrink: 0, cursor: 'pointer' }}>×</span>
+      ) : (
+        <StatusDot state={dotState(tab.status)} size={7} />
+      )}
     </button>
   );
 }
@@ -55,12 +63,19 @@ export function ProjectCard({ session, active, onSelectTab }: { session: Session
   const activeTabId = useTabs((s) => s.activeTabId);
   const [hover, setHover] = useState(false);
   const [menu, setMenu] = useState(false);
+  const [archiveTarget, setArchiveTarget] = useState<Terminal | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<{ tab: Terminal; x: number; y: number } | null>(null);
   useEffect(() => { if (active) void useTabs.getState().loadTabs(session.id); }, [active, session.id]);
 
   async function addTab(type: string, config?: Record<string, unknown>) {
     const t = await api.createTerminal(session.id, { type, ...(config ? { config } : {}) });
     await useTabs.getState().loadTabs(session.id);
     onSelectTab(t.id);
+  }
+
+  async function archive(tab: Terminal) {
+    setArchiveTarget(null);
+    try { await api.archiveTerminal(tab.id); await useTabs.getState().loadTabs(session.id); } catch { /* surfaced via connection state */ }
   }
 
   return (
@@ -70,7 +85,7 @@ export function ProjectCard({ session, active, onSelectTab }: { session: Session
       style={{
         background: active ? 'rgba(62,207,106,0.10)' : hover ? 'rgba(255,255,255,0.04)' : 'transparent',
         border: active ? '1px solid rgba(62,207,106,0.45)' : '1px solid transparent',
-        borderRadius: 8, padding: 4, marginBottom: 4, cursor: 'pointer', transition: 'background 0.12s ease, border-color 0.12s ease',
+        borderRadius: 8, padding: 4, marginBottom: 4, cursor: active ? 'default' : 'pointer', transition: 'background 0.12s ease, border-color 0.12s ease',
       }}
     >
       <div style={{ padding: '5px 6px 4px' }}>
@@ -102,7 +117,11 @@ export function ProjectCard({ session, active, onSelectTab }: { session: Session
                   )}
                 </div>
                 {items.map((t) => (
-                  <ThreadRow key={t.id} tab={t} active={t.id === activeTabId} onClick={(e) => { e.stopPropagation(); onSelectTab(t.id); }} onMiddle={() => useTabs.getState().openTab(t.id, true)} />
+                  <ThreadRow key={t.id} tab={t} active={t.id === activeTabId}
+                    onClick={(e) => { e.stopPropagation(); onSelectTab(t.id); }}
+                    onMiddle={() => useTabs.getState().openTab(t.id, true)}
+                    onArchive={() => setArchiveTarget(t)}
+                    onContext={(x, y) => setCtxMenu({ tab: t, x, y })} />
                 ))}
                 {sec.key === 'threads' && !items.length && <div style={{ padding: '2px 6px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No threads yet</div>}
               </div>
@@ -110,6 +129,26 @@ export function ProjectCard({ session, active, onSelectTab }: { session: Session
           })}
         </div>
       </div>
+
+      {ctxMenu && createPortal(
+        <>
+          <div onClick={() => setCtxMenu(null)} onContextMenu={(e) => { e.preventDefault(); setCtxMenu(null); }} style={{ position: 'fixed', inset: 0, zIndex: 300 }} />
+          <div style={{ position: 'fixed', top: ctxMenu.y, left: Math.min(ctxMenu.x, window.innerWidth - 184), zIndex: 301, minWidth: 168, background: '#1B1B1E', border: '1px solid #2C2C32', borderRadius: 9, padding: 4, boxShadow: '0 20px 50px -20px rgba(0,0,0,.8)' }}>
+            <button onClick={() => { setArchiveTarget(ctxMenu.tab); setCtxMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-status-red)', cursor: 'pointer', fontSize: 13 }}>Archive thread</button>
+          </div>
+        </>,
+        document.body,
+      )}
+
+      <ConfirmModal
+        open={!!archiveTarget}
+        title="Archive thread?"
+        message={archiveTarget ? `“${archiveTarget.label}” will be archived. You can restore it later from the archive.` : ''}
+        confirmLabel="Archive"
+        danger
+        onConfirm={() => { if (archiveTarget) void archive(archiveTarget); }}
+        onCancel={() => setArchiveTarget(null)}
+      />
     </div>
   );
 }

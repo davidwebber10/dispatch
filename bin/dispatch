@@ -66,10 +66,12 @@ ensure_built() {
 
 write_plist() {
   require_node
-  local node_bin node_dir path_val
+  local node_bin node_dir path_val servers_val
   node_bin="$(command -v node)"
   node_dir="$(dirname "$node_bin")"
   path_val="$node_dir:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin"
+  # Operator-configured server list for the in-app switcher (Label=origin,… or JSON).
+  servers_val="$(printf '%s' "${DISPATCH_SERVERS:-}" | sed -e 's/[&\\]/\\&/g')"
   mkdir -p "$LOGDIR" "$(dirname "$PLIST")"
   sed \
     -e "s#__LABEL__#$LABEL#g" \
@@ -79,6 +81,7 @@ write_plist() {
     -e "s#__PATH__#$path_val#g" \
     -e "s#__PORT__#$PORT#g" \
     -e "s#__WEBDIST__#$WEBDIST#g" \
+    -e "s#__SERVERS__#$servers_val#g" \
     -e "s#__STDOUT__#$STDOUT#g" \
     -e "s#__STDERR__#$STDERR#g" \
     "$TEMPLATE" > "$PLIST"

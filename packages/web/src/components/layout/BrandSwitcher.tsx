@@ -1,13 +1,15 @@
 import { useState } from 'react';
-import { SERVERS, currentServer, currentLabel } from '../../servers';
+import { TerminalWindow } from '@phosphor-icons/react';
+import { useServers, currentServer, currentLabel } from '../../stores/servers';
 
 export function BrandSwitcher() {
   const [open, setOpen] = useState(false);
+  const servers = useServers((s) => s.servers);
   const origin = window.location.origin;
-  const label = currentLabel(origin);
-  // When the current origin isn't one of the known tailscale servers (local dev or
-  // the hosted domain), surface it as its own "Local" entry at the top of the list.
-  const items = currentServer(origin) ? SERVERS : [{ label, origin }, ...SERVERS];
+  const label = currentLabel(servers, origin);
+  // When the current origin isn't one of the configured servers (local dev or the
+  // hosted domain), surface it as its own "Local" entry at the top of the list.
+  const items = currentServer(servers, origin) ? servers : [{ label, origin }, ...servers];
 
   function go(target: string) {
     setOpen(false);
@@ -21,7 +23,7 @@ export function BrandSwitcher() {
         background: open ? 'var(--color-elevated)' : 'transparent', border: '1px solid', borderColor: open ? '#2C2C32' : 'transparent',
         borderRadius: 8, cursor: 'pointer',
       }}>
-        <span style={{ width: 17, height: 17, borderRadius: 5, background: 'var(--color-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', font: '600 11px var(--font-mono)', color: '#08240F', flexShrink: 0 }}>›</span>
+        <span style={{ width: 17, height: 17, borderRadius: 5, background: 'var(--color-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><TerminalWindow size={11} weight="bold" color="#08240F" /></span>
         <span style={{ fontWeight: 600, fontSize: 13, letterSpacing: '-0.3px', color: 'var(--color-text-primary)' }}>Dispatch</span>
         <span style={{ font: '500 12px var(--font-mono)', color: 'var(--color-text-secondary)' }}>{label}</span>
         <span style={{ color: 'var(--color-text-tertiary)', fontSize: 10 }}>▾</span>

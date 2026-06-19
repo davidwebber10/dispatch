@@ -94,6 +94,17 @@ dispatch run         # run in the foreground instead of as a daemon (Ctrl-C to s
 | Port | `3456` | `PORT=4000 dispatch install` (baked into the launchd plist) |
 | Web bundle path | `packages/web/dist` | `DISPATCH_WEB_DIST` (set automatically by the daemon) |
 | Data directory | `~/.dispatch` | SQLite DB (`dispatch.db`) + runtime files live here |
+| In-app server switcher | empty | `DISPATCH_SERVERS` — a list the in-app brand dropdown offers. Empty by default; set once per deployment. |
+
+The server switcher (the dropdown on the **Dispatch** brand) is populated from `DISPATCH_SERVERS`,
+exposed by the daemon at `/api/servers`. Set it as either a shell-friendly list or JSON, then
+`dispatch install` bakes it into the launchd plist:
+
+```bash
+DISPATCH_SERVERS="MacBook=https://macbook.example.ts.net:3456,Mac mini=https://mini.example.ts.net:3456" dispatch install
+# or JSON:
+DISPATCH_SERVERS='[{"label":"MacBook","origin":"https://…"},{"label":"Mac mini","origin":"https://…"}]' dispatch install
+```
 
 Logs are written to `~/Library/Logs/dispatch/`.
 

@@ -18,6 +18,7 @@ import { useAuth } from './stores/auth';
 import { useAgents } from './stores/agents';
 import { useUI } from './stores/ui';
 import { useSettings } from './stores/settings';
+import { useServers } from './stores/servers';
 
 function maybeNotify(sessionId: string) {
   const { notify } = useSettings.getState();
@@ -35,6 +36,7 @@ export default function App() {
 
   useEffect(() => {
     void useProjects.getState().load();
+    void useServers.getState().load();
     void useTabs.getState().hydrate();
     void useAuth.getState().load();
     void useAgents.getState().loadSchedules();

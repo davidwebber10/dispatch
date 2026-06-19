@@ -1,6 +1,6 @@
 import { useConnection } from '../../stores/connection';
 import { useSettings, ACCENTS } from '../../stores/settings';
-import { currentLabel } from '../../servers';
+import { useServers, currentLabel } from '../../stores/servers';
 
 const sectionLabel: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
 const row: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 };
@@ -34,6 +34,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   const scrollback = useSettings((s) => s.scrollback);
   const accent = useSettings((s) => s.accent);
   const notify = useSettings((s) => s.notify);
+  const servers = useServers((s) => s.servers);
   if (!open) return null;
 
   const st = status === 'open' ? { c: 'var(--color-accent)', t: 'Connected' } : status === 'connecting' ? { c: 'var(--color-status-yellow)', t: 'Connecting' } : { c: 'var(--color-status-red)', t: 'Offline' };
@@ -49,7 +50,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
         <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <span style={sectionLabel}>CONNECTION</span>
-            <div style={row}><span style={item}>Server</span><span style={chip}>{currentLabel()}</span></div>
+            <div style={row}><span style={item}>Server</span><span style={chip}>{currentLabel(servers)}</span></div>
             <div style={row}><span style={item}>Connection</span><span style={{ display: 'flex', alignItems: 'center', gap: 6, font: '500 11px var(--font-mono)', color: st.c }}><span style={{ width: 7, height: 7, borderRadius: '50%', background: st.c }} />{st.t}</span></div>
           </div>
           <Divider />

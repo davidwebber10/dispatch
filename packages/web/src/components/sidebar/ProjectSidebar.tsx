@@ -51,8 +51,8 @@ export function ProjectSidebar({ onSelectTab }: { onSelectTab: (terminalId: stri
   }
 
   return (
-    <div style={{ padding: 8 }}>
-      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 12 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div style={{ flexShrink: 0, display: 'flex', gap: 6, alignItems: 'center', padding: '8px 8px 10px', background: 'var(--color-pane)' }}>
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search projects"
           style={{ flex: 1, minWidth: 0, height: 32, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 7, color: 'var(--color-text-primary)', fontSize: 13 }} />
         <div style={{ position: 'relative' }}>
@@ -73,6 +73,7 @@ export function ProjectSidebar({ onSelectTab }: { onSelectTab: (terminalId: stri
         </div>
         <button title="New project" onClick={() => setShowNew(true)} style={{ ...icon, background: 'var(--color-accent)', border: 'none', color: '#08240F', font: '700 18px/1 var(--font-sans)' }}>+</button>
       </div>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '0 8px 8px' }}>
       {filtered.map((s) => (
         <div
           key={s.id}
@@ -92,6 +93,7 @@ export function ProjectSidebar({ onSelectTab }: { onSelectTab: (terminalId: stri
         </div>
       ))}
       {!filtered.length && <div style={{ color: 'var(--color-text-tertiary)', fontSize: 12.5, padding: '4px 6px' }}>No projects</div>}
+      </div>
       <NewProjectModal open={showNew} onClose={() => setShowNew(false)} />
     </div>
   );

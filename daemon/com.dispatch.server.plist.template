@@ -29,6 +29,8 @@
         <string>__PORT__</string>
         <key>DISPATCH_WEB_DIST</key>
         <string>__WEBDIST__</string>
+        <key>DISPATCH_SERVERS</key>
+        <string>__SERVERS__</string>
     </dict>
 
     <key>RunAtLoad</key>
