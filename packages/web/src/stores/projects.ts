@@ -8,6 +8,7 @@ interface ProjectsState {
   activeId: string | null;
   load: () => Promise<void>;
   setActive: (id: string) => void;
+  archive: (id: string) => Promise<void>;
   reorder: (order: string[]) => void;
   applyEvent: (e: ServerEvent) => void;
 }
@@ -20,6 +21,12 @@ export const useProjects = create<ProjectsState>((set, get) => ({
     set({ sessions, activeId: get().activeId ?? sessions[0]?.id ?? null });
   },
   setActive: (id) => set({ activeId: id }),
+  archive: async (id) => {
+    await api.archiveSession(id);
+    const sessions = get().sessions.filter((s) => s.id !== id);
+    const activeId = get().activeId === id ? (sessions[0]?.id ?? null) : get().activeId;
+    set({ sessions, activeId });
+  },
   reorder: (order) => {
     const map = new Map(get().sessions.map((s) => [s.id, s]));
     const ordered = order.map((id) => map.get(id)).filter(Boolean) as Session[];

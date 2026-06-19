@@ -60,9 +60,10 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   });
 
   // POST /api/terminals/:terminalId/relaunch
-  router.post('/terminals/:terminalId/relaunch', (req, res) => {
-    const terminal = sessionService.relaunchTerminal(req.params.terminalId);
+  router.post('/terminals/:terminalId/relaunch', async (req, res) => {
+    const terminal = await sessionService.restartTerminal(req.params.terminalId);
     if (!terminal) return res.status(404).json({ error: 'Terminal not found' });
+    broadcaster?.broadcast({ type: 'terminal:status', terminalId: terminal.id, status: 'working' });
     res.json(terminal);
   });
 

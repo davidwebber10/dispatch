@@ -212,6 +212,27 @@ export class SessionService {
     return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
   }
 
+  /** Restart a thread: kill the running process (if any) and re-spawn it fresh. */
+  async restartTerminal(terminalId: string): Promise<terminalsDb.Terminal | null> {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) return null;
+    if (!terminalsDb.isPtyType(terminal.type)) return terminalsDb.rowToTerminal(terminal);
+
+    if (this.ptyManager.isAlive(terminalId)) {
+      // Wait for the old process to fully exit before respawning, so its async
+      // exit handler can't delete the fresh PTY out from under us.
+      await new Promise<void>((resolve) => {
+        let done = false;
+        const finish = () => { if (!done) { done = true; this.ptyManager.off('exit', onExit); resolve(); } };
+        const onExit = (id: string) => { if (id === terminalId) finish(); };
+        this.ptyManager.on('exit', onExit);
+        this.ptyManager.kill(terminalId);
+        setTimeout(finish, 3000);
+      });
+    }
+    return this.relaunchTerminal(terminalId);
+  }
+
   stopTerminal(terminalId: string): void {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return;

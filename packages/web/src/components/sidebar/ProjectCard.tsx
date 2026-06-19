@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Session, Terminal } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
+import { useProjects } from '../../stores/projects';
 import { StatusDot } from '../common/StatusDot';
+import { Spinner } from '../common/Spinner';
 import { ConfirmModal } from '../common/ConfirmModal';
 import { providerColor } from '../common/typeIcons';
 import { timeAgo } from '../../lib/time';
@@ -48,12 +50,16 @@ function ThreadRow({ tab, active, onClick, onMiddle, onArchive, onContext }: { t
     >
       <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tab.label}</span>
-      {hover ? (
-        <span role="button" title="Archive thread" onClick={(e) => { e.stopPropagation(); onArchive(); }}
-          style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, color: 'var(--color-text-secondary)', fontSize: 14, lineHeight: 1, flexShrink: 0, cursor: 'pointer' }}>×</span>
-      ) : (
-        <StatusDot state={dotState(tab.status)} size={7} />
-      )}
+      <span style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        {hover ? (
+          <span role="button" title="Archive thread" onClick={(e) => { e.stopPropagation(); onArchive(); }}
+            style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, color: 'var(--color-text-secondary)', fontSize: 14, lineHeight: 1, cursor: 'pointer' }}>×</span>
+        ) : tab.status === 'working' ? (
+          <Spinner size={11} />
+        ) : (
+          <StatusDot state={dotState(tab.status)} size={7} />
+        )}
+      </span>
     </button>
   );
 }
@@ -65,6 +71,9 @@ export function ProjectCard({ session, active, onSelectTab }: { session: Session
   const [menu, setMenu] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<Terminal | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ tab: Terminal; x: number; y: number } | null>(null);
+  const [projMenu, setProjMenu] = useState<{ x: number; y: number } | null>(null);
+  const [projArchive, setProjArchive] = useState(false);
+  const working = session.status === 'working' || tabs.some((t) => t.status === 'working');
   useEffect(() => { if (active) void useTabs.getState().loadTabs(session.id); }, [active, session.id]);
 
   async function addTab(type: string, config?: Record<string, unknown>) {
@@ -78,6 +87,11 @@ export function ProjectCard({ session, active, onSelectTab }: { session: Session
     try { await api.archiveTerminal(tab.id); await useTabs.getState().loadTabs(session.id); } catch { /* surfaced via connection state */ }
   }
 
+  async function archiveProject() {
+    setProjArchive(false);
+    try { await useProjects.getState().archive(session.id); } catch { /* surfaced via connection state */ }
+  }
+
   return (
     <div
       onMouseEnter={() => setHover(true)}
@@ -88,9 +102,10 @@ export function ProjectCard({ session, active, onSelectTab }: { session: Session
         borderRadius: 8, padding: 4, marginBottom: 4, cursor: active ? 'default' : 'pointer', transition: 'background 0.12s ease, border-color 0.12s ease',
       }}
     >
-      <div style={{ padding: '5px 6px 4px' }}>
+      <div style={{ padding: '5px 6px 4px' }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setProjMenu({ x: e.clientX, y: e.clientY }); }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ fontWeight: 600, fontSize: 14.5, color: active ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{session.name}</span>
+          {working && <Spinner size={10} />}
           <span title={session.lastActivityAt ?? ''} style={{ marginLeft: 'auto', flexShrink: 0, font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{timeAgo(session.lastActivityAt)}</span>
         </div>
         <div title={session.workingDir} style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>{homePath(session.workingDir)}</div>
@@ -140,6 +155,16 @@ export function ProjectCard({ session, active, onSelectTab }: { session: Session
         document.body,
       )}
 
+      {projMenu && createPortal(
+        <>
+          <div onClick={() => setProjMenu(null)} onContextMenu={(e) => { e.preventDefault(); setProjMenu(null); }} style={{ position: 'fixed', inset: 0, zIndex: 300 }} />
+          <div style={{ position: 'fixed', top: projMenu.y, left: Math.min(projMenu.x, window.innerWidth - 184), zIndex: 301, minWidth: 168, background: '#1B1B1E', border: '1px solid #2C2C32', borderRadius: 9, padding: 4, boxShadow: '0 20px 50px -20px rgba(0,0,0,.8)' }}>
+            <button onClick={() => { setProjArchive(true); setProjMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-status-red)', cursor: 'pointer', fontSize: 13 }}>Archive project</button>
+          </div>
+        </>,
+        document.body,
+      )}
+
       <ConfirmModal
         open={!!archiveTarget}
         title="Archive thread?"
@@ -148,6 +173,16 @@ export function ProjectCard({ session, active, onSelectTab }: { session: Session
         danger
         onConfirm={() => { if (archiveTarget) void archive(archiveTarget); }}
         onCancel={() => setArchiveTarget(null)}
+      />
+
+      <ConfirmModal
+        open={projArchive}
+        title="Archive project?"
+        message={`“${session.name}” and its threads will be archived. You can restore it later.`}
+        confirmLabel="Archive"
+        danger
+        onConfirm={() => void archiveProject()}
+        onCancel={() => setProjArchive(false)}
       />
     </div>
   );
