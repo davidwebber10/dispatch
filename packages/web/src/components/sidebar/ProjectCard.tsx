@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { ChatCircleDots, Robot, type Icon } from '@phosphor-icons/react';
 import type { Session, Terminal, AgentSchedule } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
@@ -20,8 +21,8 @@ function dotState(status: string): 'working' | 'idle' | 'needs_input' {
   return 'idle';
 }
 
-const SECTIONS: { key: string; label: string; types: Terminal['type'][]; add: 'menu' | 'browser' | 'notes' | null }[] = [
-  { key: 'threads', label: 'THREADS', types: ['claude-code', 'codex', 'shell'], add: 'menu' },
+const SECTIONS: { key: string; label: string; types: Terminal['type'][]; add: 'menu' | 'browser' | 'notes' | null; prominent?: boolean; icon?: Icon }[] = [
+  { key: 'threads', label: 'THREADS', types: ['claude-code', 'codex', 'shell'], add: 'menu', prominent: true, icon: ChatCircleDots },
   { key: 'web', label: 'WEB', types: ['browser'], add: 'browser' },
   { key: 'notes', label: 'NOTES', types: ['notes'], add: 'notes' },
   { key: 'files', label: 'FILES', types: ['file'], add: null },
@@ -93,6 +94,22 @@ function AgentRow({ agent, active, onClick }: { agent: AgentSchedule; active: bo
   );
 }
 
+function SectionHeader({ icon: IconCmp, label, count, prominent, children }: { icon?: Icon; label: string; count: number; prominent?: boolean; children?: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: prominent ? '4px 6px 3px' : '2px 6px' }}>
+      {prominent && IconCmp && <IconCmp size={14} weight="fill" color="var(--color-accent)" style={{ flexShrink: 0 }} />}
+      <span style={prominent
+        ? { font: '700 11px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-text-secondary)' }
+        : { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' }}>{label}</span>
+      {prominent && count > 0 && (
+        <span style={{ font: '600 9.5px var(--font-mono)', color: 'var(--color-text-secondary)', background: 'var(--color-elevated)', borderRadius: 9, padding: '0 6px', lineHeight: '15px' }}>{count}</span>
+      )}
+      <span style={{ flex: 1 }} />
+      {children}
+    </div>
+  );
+}
+
 export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNewAgent }: { session: Session; active: boolean; onSelectTab: (id: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void }) {
   const allAgents = useAgents((s) => s.schedules);
   const agents = allAgents.filter((a) => a.projectId === session.id);
@@ -128,6 +145,36 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
     try { await useProjects.getState().archive(session.id); } catch { /* surfaced via connection state */ }
   }
 
+  const renderSection = (sec: (typeof SECTIONS)[number]) => {
+    const items = tabs.filter((t) => sec.types.includes(t.type));
+    if (sec.key !== 'threads' && !items.length) return null;
+    return (
+      <div key={sec.key} style={{ marginTop: sec.prominent ? 10 : 6 }}>
+        <SectionHeader icon={sec.icon} label={sec.label} count={items.length} prominent={sec.prominent}>
+          {sec.add && (
+            <span style={{ position: 'relative', display: 'inline-flex' }}>
+              <button title={`Add ${sec.label.toLowerCase()}`} onClick={(e) => {
+                e.stopPropagation();
+                if (sec.add === 'menu') setMenu((o) => !o);
+                else if (sec.add === 'browser') void addTab('browser', { url: 'about:blank' });
+                else if (sec.add === 'notes') void addTab('notes');
+              }} style={plusBtn}>+</button>
+              {sec.add === 'menu' && menu && <NewTabMenu sessionId={session.id} onClose={() => setMenu(false)} onCreated={onSelectTab} />}
+            </span>
+          )}
+        </SectionHeader>
+        {items.map((t) => (
+          <ThreadRow key={t.id} tab={t} active={t.id === activeTabId}
+            onClick={(e) => { e.stopPropagation(); onSelectTab(t.id); }}
+            onMiddle={() => useTabs.getState().openTab(t.id, true)}
+            onArchive={() => setArchiveTarget(t)}
+            onContext={(x, y) => setCtxMenu({ tab: t, x, y })} />
+        ))}
+        {sec.key === 'threads' && !items.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No threads yet</div>}
+      </div>
+    );
+  };
+
   return (
     <div
       onMouseEnter={() => setHover(true)}
@@ -152,46 +199,17 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
       </div>
       <div style={{ display: 'grid', gridTemplateRows: active ? '1fr' : '0fr', transition: 'grid-template-rows 0.2s ease' }}>
         <div style={{ overflow: 'hidden', minHeight: 0 }}>
-          {SECTIONS.map((sec) => {
-            const items = tabs.filter((t) => sec.types.includes(t.type));
-            if (sec.key !== 'threads' && !items.length) return null;
-            return (
-              <div key={sec.key} style={{ marginTop: 6 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 6px' }}>
-                  <span style={{ font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)', flex: 1 }}>{sec.label}</span>
-                  {sec.add && (
-                    <span style={{ position: 'relative', display: 'inline-flex' }}>
-                      <button title={`Add ${sec.label.toLowerCase()}`} onClick={(e) => {
-                        e.stopPropagation();
-                        if (sec.add === 'menu') setMenu((o) => !o);
-                        else if (sec.add === 'browser') void addTab('browser', { url: 'about:blank' });
-                        else if (sec.add === 'notes') void addTab('notes');
-                      }} style={plusBtn}>+</button>
-                      {sec.add === 'menu' && menu && <NewTabMenu sessionId={session.id} onClose={() => setMenu(false)} onCreated={onSelectTab} />}
-                    </span>
-                  )}
-                </div>
-                {items.map((t) => (
-                  <ThreadRow key={t.id} tab={t} active={t.id === activeTabId}
-                    onClick={(e) => { e.stopPropagation(); onSelectTab(t.id); }}
-                    onMiddle={() => useTabs.getState().openTab(t.id, true)}
-                    onArchive={() => setArchiveTarget(t)}
-                    onContext={(x, y) => setCtxMenu({ tab: t, x, y })} />
-                ))}
-                {sec.key === 'threads' && !items.length && <div style={{ padding: '2px 6px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No threads yet</div>}
-              </div>
-            );
-          })}
-          <div style={{ marginTop: 6 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 6px' }}>
-              <span style={{ font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)', flex: 1 }}>AGENTS</span>
+          {renderSection(SECTIONS[0])}
+          <div style={{ marginTop: 10 }}>
+            <SectionHeader icon={Robot} label="AGENTS" count={agents.length} prominent>
               <button title="Add agent" onClick={(e) => { e.stopPropagation(); onNewAgent?.(session.id); }} style={plusBtn}>+</button>
-            </div>
+            </SectionHeader>
             {agents.map((a) => (
               <AgentRow key={a.id} agent={a} active={agentFocused && a.id === agentSel} onClick={() => onSelectAgent?.(a.id)} />
             ))}
-            {!agents.length && <div style={{ padding: '2px 6px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No agents yet</div>}
+            {!agents.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No agents yet</div>}
           </div>
+          {SECTIONS.slice(1).map(renderSection)}
         </div>
       </div>
 
