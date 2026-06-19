@@ -3,6 +3,7 @@ import Database from 'better-sqlite3';
 import { initSchema } from '../../src/db/schema.js';
 import * as sessionsDb from '../../src/db/sessions.js';
 import * as terminalsDb from '../../src/db/terminals.js';
+import * as agentsDb from '../../src/db/agents.js';
 import { AgentService } from '../../src/agents/service.js';
 
 let db: Database.Database;
@@ -72,7 +73,7 @@ describe('AgentService', () => {
 
   it('processDueRuns dispatches each due schedule once', () => {
     const service = new AgentService(db, sessionService, broadcaster);
-    service.createSchedule({
+    const s = service.createSchedule({
       projectId: 'proj-1',
       name: 'Daily CI Fix',
       provider: 'codex',
@@ -86,6 +87,8 @@ describe('AgentService', () => {
       nextRunAt: '2026-05-08T12:00:00.000Z',
       defaultTerminalLabel: 'Daily CI Fix',
     });
+    // The server (re)computes next_run_at; force it to the fixed-time fixture so it's due.
+    agentsDb.updateSchedule(db, s.id, { enabled: true, nextRunAt: '2026-05-08T12:00:00.000Z' });
 
     expect(service.processDueRuns('2026-05-08T12:01:00.000Z')).toHaveLength(1);
     expect(service.processDueRuns('2026-05-08T12:02:00.000Z')).toHaveLength(0);
@@ -107,6 +110,8 @@ describe('AgentService', () => {
       nextRunAt: '2026-05-08T08:00:00.000Z',
       defaultTerminalLabel: 'Daily CI Fix',
     });
+    // Force the fixed-time fixture so it's due (server otherwise computes from real now).
+    agentsDb.updateSchedule(db, schedule.id, { enabled: true, nextRunAt: '2026-05-08T08:00:00.000Z' });
 
     expect(service.processDueRuns('2026-05-08T08:01:00.000Z')).toHaveLength(1);
 
@@ -138,5 +143,29 @@ describe('AgentService', () => {
     expect(sessionService.stopTerminal).toHaveBeenCalledWith('term-1');
     expect(cancelled.status).toBe('cancelled');
     expect(cancelled.unreadSince).toBeTruthy();
+  });
+
+  it('deleteSchedule removes a schedule that has runs and stops its terminals', () => {
+    const service = new AgentService(db, sessionService, broadcaster);
+    const schedule = service.createSchedule({
+      projectId: 'proj-1',
+      name: 'Daily CI Fix',
+      provider: 'codex',
+      workingDir: '/srv/tenex',
+      prompt: 'Fix CI',
+      scheduleKind: 'one-shot',
+      runAt: '2026-05-08T12:00:00.000Z',
+      recurrenceRule: null,
+      timezone: 'UTC',
+      enabled: true,
+      nextRunAt: null,
+      defaultTerminalLabel: 'Daily CI Fix',
+    });
+    service.runNow(schedule.id); // creates a run + terminal referencing the schedule
+
+    expect(service.deleteSchedule(schedule.id)).toBe(true);
+    expect(sessionService.stopTerminal).toHaveBeenCalledWith('term-1');
+    expect(service.getSchedule(schedule.id)).toBeNull();
+    expect(service.listRuns({ scheduleId: schedule.id })).toHaveLength(0);
   });
 });

@@ -1,6 +1,7 @@
 import { v4 as uuid } from 'uuid';
 import type Database from 'better-sqlite3';
 import * as agentsDb from '../db/agents.js';
+import { computeNextRunAt } from './recurrence.js';
 import type { EventBroadcaster } from '../ws/events.js';
 
 export interface AgentSchedule {
@@ -107,40 +108,6 @@ export function toRun(row: agentsDb.AgentRunRow): AgentRun {
   };
 }
 
-function nextRunAtFor(schedule: agentsDb.AgentScheduleRow, nowIso: string): string | null {
-  if (schedule.schedule_kind !== 'recurring') return null;
-  if (!schedule.recurrence_rule) return null;
-
-  let rule: any;
-  try {
-    rule = JSON.parse(schedule.recurrence_rule);
-  } catch {
-    return null;
-  }
-
-  const now = new Date(nowIso);
-  if (Number.isNaN(now.getTime())) return null;
-
-  if (rule.type === 'daily') {
-    const [hourRaw, minuteRaw] = String(rule.time ?? '00:00').split(':');
-    const hour = Number(hourRaw);
-    const minute = Number(minuteRaw);
-    if (Number.isNaN(hour) || Number.isNaN(minute)) return null;
-
-    const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), hour, minute, 0, 0));
-    if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
-    return next.toISOString();
-  }
-
-  if (rule.type === 'interval-hours') {
-    const hours = Number(rule.hours ?? 24);
-    if (Number.isNaN(hours) || hours <= 0) return null;
-    return new Date(now.getTime() + hours * 60 * 60 * 1000).toISOString();
-  }
-
-  return null;
-}
-
 export class AgentService {
   constructor(
     private db: Database.Database,
@@ -148,8 +115,21 @@ export class AgentService {
     private broadcaster: EventBroadcaster,
   ) {}
 
+  // The server is authoritative for next_run_at: derive it from the schedule's
+  // rule whenever it's created/updated (disabled schedules never have one).
+  private nextFor(row: agentsDb.AgentScheduleRow): string | null {
+    return row.enabled === 1 ? computeNextRunAt(row, new Date().toISOString()) : null;
+  }
+
+  private withComputedNextRun(row: agentsDb.AgentScheduleRow): agentsDb.AgentScheduleRow {
+    const next = this.nextFor(row);
+    if (next === row.next_run_at) return row;
+    return agentsDb.updateSchedule(this.db, row.id, { nextRunAt: next }) ?? row;
+  }
+
   createSchedule(input: CreateScheduleRequest): AgentSchedule {
-    const schedule = toSchedule(agentsDb.createSchedule(this.db, { id: uuid(), ...input }));
+    const row = this.withComputedNextRun(agentsDb.createSchedule(this.db, { id: uuid(), ...input }));
+    const schedule = toSchedule(row);
     this.broadcaster.broadcast({ type: 'agent:schedule-created', schedule });
     return schedule;
   }
@@ -166,7 +146,7 @@ export class AgentService {
   updateSchedule(id: string, fields: Partial<CreateScheduleRequest>): AgentSchedule | null {
     const row = agentsDb.updateSchedule(this.db, id, fields);
     if (!row) return null;
-    const schedule = toSchedule(row);
+    const schedule = toSchedule(this.withComputedNextRun(row));
     this.broadcaster.broadcast({ type: 'agent:schedule-updated', schedule });
     return schedule;
   }
@@ -174,6 +154,12 @@ export class AgentService {
   deleteSchedule(id: string): boolean {
     const existing = agentsDb.getSchedule(this.db, id);
     if (!existing) return false;
+    // Stop any live terminals spawned by this agent's runs before removing it.
+    for (const run of agentsDb.listRuns(this.db, { scheduleId: id })) {
+      if (run.terminal_id) {
+        try { this.sessionService.stopTerminal(run.terminal_id); } catch { /* best effort */ }
+      }
+    }
     agentsDb.deleteSchedule(this.db, id);
     this.broadcaster.broadcast({ type: 'agent:schedule-removed', scheduleId: id });
     return true;
@@ -245,7 +231,7 @@ export class AgentService {
           this.broadcaster.broadcast({ type: 'agent:schedule-updated', schedule: toSchedule(updated) });
         }
       } else {
-        const nextRunAt = nextRunAtFor(schedule, now);
+        const nextRunAt = computeNextRunAt(schedule, now);
         const updated = agentsDb.updateSchedule(this.db, schedule.id, {
           enabled: nextRunAt != null,
           nextRunAt,

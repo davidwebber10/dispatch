@@ -156,7 +156,11 @@ export function updateSchedule(
 }
 
 export function deleteSchedule(db: Database.Database, id: string): void {
-  db.prepare('DELETE FROM agent_schedules WHERE id = ?').run(id);
+  // agent_runs has a FK to agent_schedules, so clear the run history first.
+  db.transaction(() => {
+    db.prepare('DELETE FROM agent_runs WHERE schedule_id = ?').run(id);
+    db.prepare('DELETE FROM agent_schedules WHERE id = ?').run(id);
+  })();
 }
 
 export function listDueSchedules(db: Database.Database, now: string): AgentScheduleRow[] {
