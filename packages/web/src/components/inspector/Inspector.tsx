@@ -1,9 +1,10 @@
-import { useState } from 'react';
 import { DetailsPane } from './DetailsPane';
 import { FilesPane } from './FilesPane';
+import { useUI } from '../../stores/ui';
 
 export function Inspector({ projectId, terminalId, onOpenFile }: { projectId: string | null; terminalId: string | null; onOpenFile: (terminalId: string) => void }) {
-  const [tab, setTab] = useState<'details' | 'files'>('details');
+  const tab = useUI((s) => s.inspectorTab);
+  const setTab = useUI((s) => s.setInspectorTab);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ display: 'flex', height: 40, flexShrink: 0, borderBottom: '1px solid var(--color-border)' }}>

@@ -4,6 +4,7 @@ import { api } from '../../api/client';
 import type { FileEntry } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
+import { useSettings } from '../../stores/settings';
 import { fileVisual } from '../common/typeIcons';
 
 const INDENT = 14;
@@ -31,6 +32,7 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
   const activeTabId = useTabs((s) => s.activeTabId);
   const tabsForProj = useTabs((s) => (projectId ? s.byProject[projectId] : undefined)) ?? [];
   const selectedPath = tabsForProj.find((t) => t.id === activeTabId && t.type === 'file')?.config?.path as string | undefined;
+  const fs = useSettings((s) => s.sidebarFontSize);
 
   const loadDir = useCallback(async (path: string) => {
     if (!projectId) return;
@@ -100,7 +102,7 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project ? homeAbbrev(project.workingDir) : ''}</span>
         <button title="Refresh" onClick={() => { setChildren({}); setExpanded(new Set()); void loadDir('.'); }} style={{ background: 'none', border: 'none', color: '#46464d', cursor: 'pointer', fontSize: 14, flexShrink: 0 }}>⟳</button>
       </div>
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 6, font: '400 12px/1.4 var(--font-mono)' }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 6, font: `400 ${fs}px/1.4 var(--font-mono)` }}>
         {renderDir('.', 0)}
         {!(children['.']?.length) && <div style={{ padding: 8, color: 'var(--color-text-tertiary)' }}>Empty</div>}
       </div>

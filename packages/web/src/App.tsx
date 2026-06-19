@@ -4,6 +4,7 @@ import { Workspace } from './components/layout/Workspace';
 import { TabBar } from './components/layout/TabBar';
 import { ProjectSidebar } from './components/sidebar/ProjectSidebar';
 import { TabHost } from './components/tabs/TabHost';
+import { EmptyWorkspace } from './components/layout/EmptyWorkspace';
 import { Inspector } from './components/inspector/Inspector';
 import { AgentsView } from './components/agents/AgentsView';
 import { AuthBanner } from './components/auth/AuthBanner';
@@ -70,7 +71,7 @@ export default function App() {
                 <TabBar />
                 {activeTerminalId
                   ? <TabHost key={activeTerminalId} terminalId={activeTerminalId} />
-                  : <div style={{ padding: 12, color: 'var(--color-text-secondary)' }}>Select a thread</div>}
+                  : <EmptyWorkspace onSelectTab={selectTab} />}
               </div>
             }
             inspector={<Inspector projectId={activeId} terminalId={activeTerminalId} onOpenFile={selectTab} />}

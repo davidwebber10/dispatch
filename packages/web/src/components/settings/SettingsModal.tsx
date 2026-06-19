@@ -74,6 +74,8 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   const status = useConnection((s) => s.status);
   const fontSize = useSettings((s) => s.fontSize);
   const scrollback = useSettings((s) => s.scrollback);
+  const sidebarFontSize = useSettings((s) => s.sidebarFontSize);
+  const projectFontSize = useSettings((s) => s.projectFontSize);
   const accent = useSettings((s) => s.accent);
   const notify = useSettings((s) => s.notify);
   const servers = useServers((s) => s.servers);
@@ -104,6 +106,13 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
             <span style={sectionLabel}>TERMINAL</span>
             <div style={row}><span style={item}>Font size</span><Stepper value={String(fontSize)} onDec={() => useSettings.getState().setFontSize(fontSize - 1)} onInc={() => useSettings.getState().setFontSize(fontSize + 1)} /></div>
             <div style={row}><span style={item}>Scrollback</span><Stepper value={scrollback.toLocaleString()} unit=" lines" onDec={() => useSettings.getState().setScrollback(scrollback - 5000)} onInc={() => useSettings.getState().setScrollback(scrollback + 5000)} /></div>
+          </div>
+          <Divider />
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <span style={sectionLabel}>SIDEBAR</span>
+            <div style={row}><span style={item}>Project names</span><Stepper value={String(projectFontSize)} onDec={() => useSettings.getState().setProjectFontSize(projectFontSize - 1)} onInc={() => useSettings.getState().setProjectFontSize(projectFontSize + 1)} /></div>
+            <div style={row}><span style={item}>Thread &amp; file names</span><Stepper value={String(sidebarFontSize)} onDec={() => useSettings.getState().setSidebarFontSize(sidebarFontSize - 1)} onInc={() => useSettings.getState().setSidebarFontSize(sidebarFontSize + 1)} /></div>
           </div>
           <Divider />
 

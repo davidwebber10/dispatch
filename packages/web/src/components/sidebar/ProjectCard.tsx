@@ -7,6 +7,7 @@ import { StatusDot } from '../common/StatusDot';
 import { Spinner } from '../common/Spinner';
 import { ConfirmModal } from '../common/ConfirmModal';
 import { providerColor } from '../common/typeIcons';
+import { useSettings } from '../../stores/settings';
 import { timeAgo } from '../../lib/time';
 import { NewTabMenu } from './NewTabMenu';
 import { api } from '../../api/client';
@@ -33,6 +34,8 @@ function homePath(p: string): string {
 function ThreadRow({ tab, active, onClick, onMiddle, onArchive, onContext }: { tab: Terminal; active: boolean; onClick: (e: React.MouseEvent) => void; onMiddle: () => void; onArchive: () => void; onContext: (x: number, y: number) => void }) {
   const [hover, setHover] = useState(false);
   const color = providerColor(tab.type);
+  const loading = useTabs((s) => !!s.loading[tab.id]);
+  const fs = useSettings((s) => s.sidebarFontSize);
   return (
     <button
       onMouseEnter={() => setHover(true)}
@@ -44,7 +47,7 @@ function ThreadRow({ tab, active, onClick, onMiddle, onArchive, onContext }: { t
         display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '7px 9px',
         background: active ? 'var(--color-hover)' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
         borderRadius: 6, border: 'none',
-        color: active ? '#fff' : 'var(--color-text-primary)', fontSize: 12.5, fontWeight: active ? 500 : 400,
+        color: active ? '#fff' : 'var(--color-text-primary)', fontSize: fs, fontWeight: active ? 500 : 400,
         textAlign: 'left', cursor: 'pointer',
       }}
     >
@@ -54,7 +57,7 @@ function ThreadRow({ tab, active, onClick, onMiddle, onArchive, onContext }: { t
         {hover ? (
           <span role="button" title="Archive thread" onClick={(e) => { e.stopPropagation(); onArchive(); }}
             style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, color: 'var(--color-text-secondary)', fontSize: 14, lineHeight: 1, cursor: 'pointer' }}>×</span>
-        ) : tab.status === 'working' ? (
+        ) : (loading || tab.status === 'working') ? (
           <Spinner size={11} />
         ) : (
           <StatusDot state={dotState(tab.status)} size={7} />
@@ -73,12 +76,15 @@ export function ProjectCard({ session, active, onSelectTab }: { session: Session
   const [ctxMenu, setCtxMenu] = useState<{ tab: Terminal; x: number; y: number } | null>(null);
   const [projMenu, setProjMenu] = useState<{ x: number; y: number } | null>(null);
   const [projArchive, setProjArchive] = useState(false);
-  const working = session.status === 'working' || tabs.some((t) => t.status === 'working');
+  const loadingMap = useTabs((s) => s.loading);
+  const pfs = useSettings((s) => s.projectFontSize);
+  const working = session.status === 'working' || tabs.some((t) => t.status === 'working' || loadingMap[t.id]);
   useEffect(() => { if (active) void useTabs.getState().loadTabs(session.id); }, [active, session.id]);
 
   async function addTab(type: string, config?: Record<string, unknown>) {
     const t = await api.createTerminal(session.id, { type, ...(config ? { config } : {}) });
     await useTabs.getState().loadTabs(session.id);
+    useTabs.getState().markLoading(t.id);
     onSelectTab(t.id);
   }
 
@@ -104,9 +110,13 @@ export function ProjectCard({ session, active, onSelectTab }: { session: Session
     >
       <div style={{ padding: '5px 6px 4px' }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setProjMenu({ x: e.clientX, y: e.clientY }); }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ fontWeight: 600, fontSize: 14.5, color: active ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{session.name}</span>
+          <span style={{ fontWeight: 600, fontSize: pfs, color: active ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{session.name}</span>
           {working && <Spinner size={10} />}
           <span title={session.lastActivityAt ?? ''} style={{ marginLeft: 'auto', flexShrink: 0, font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{timeAgo(session.lastActivityAt)}</span>
+          {(hover || projMenu) && (
+            <button title="Project options" onClick={(e) => { e.stopPropagation(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setProjMenu({ x: r.right, y: r.bottom + 4 }); }}
+              style={{ width: 18, height: 18, flexShrink: 0, marginLeft: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 15, lineHeight: 1, borderRadius: 4 }}>⋯</button>
+          )}
         </div>
         <div title={session.workingDir} style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>{homePath(session.workingDir)}</div>
       </div>

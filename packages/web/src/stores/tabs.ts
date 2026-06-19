@@ -11,6 +11,8 @@ interface TabsState {
   openTabIds: string[];          // tabs open in the top tab bar, in order
   activeTabId: string | null;
   tabSession: Record<string, string>; // tabId -> sessionId, so open tabs survive a refresh
+  loading: Record<string, boolean>;   // terminals that just started / reloaded (transient spinner)
+  markLoading: (id: string) => void;
   loadTabs: (projectId: string) => Promise<void>;
   setActiveTab: (id: string) => void;                       // open + focus
   openTab: (id: string, background?: boolean) => void;       // open (optionally without switching)
@@ -34,6 +36,16 @@ function persist(s: Pick<TabsState, 'openTabIds' | 'activeTabId' | 'tabSession'>
 }
 
 export const useTabs = create<TabsState>((set, get) => ({
+  loading: {},
+  markLoading: (id) => {
+    set({ loading: { ...get().loading, [id]: true } });
+    setTimeout(() => {
+      if (!get().loading[id]) return;
+      const next = { ...get().loading };
+      delete next[id];
+      set({ loading: next });
+    }, 5000);
+  },
   byProject: {},
   openTabIds: [],
   activeTabId: null,

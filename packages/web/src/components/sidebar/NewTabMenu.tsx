@@ -29,6 +29,7 @@ export function NewTabMenu({ sessionId, onClose, onCreated }: { sessionId: strin
     try {
       const term = await api.createTerminal(sessionId, { type: t.type, ...(t.config ? { config: t.config } : {}) });
       await useTabs.getState().loadTabs(sessionId);
+      useTabs.getState().markLoading(term.id);
       onCreated?.(term.id);
     } catch { /* surfaced via connection state */ }
   }

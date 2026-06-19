@@ -1,6 +1,7 @@
 import { api } from '../../api/client';
 import { useProjects } from '../../stores/projects';
 import { useActivity } from '../../stores/activity';
+import { useTabs } from '../../stores/tabs';
 
 function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
@@ -36,7 +37,7 @@ export function DetailsPane({ projectId, terminalId }: { projectId: string | nul
       <Row label="Provider" value={project.provider} />
       <Row label="Status" value={project.status} />
       <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
-        {terminalId && <button onClick={() => void api.relaunchTerminal(terminalId)} style={btn}>Reload Thread</button>}
+        {terminalId && <button onClick={() => { useTabs.getState().markLoading(terminalId); void api.relaunchTerminal(terminalId); }} style={btn}>Reload Thread</button>}
         {terminalId && <button onClick={() => void api.archiveTerminal(terminalId)} style={btn}>Archive Thread</button>}
       </div>
     </div>

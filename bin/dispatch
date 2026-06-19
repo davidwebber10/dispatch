@@ -123,11 +123,34 @@ cmd_uninstall() {
 cmd_start() { load_agent && green "Started." || { red "Failed to start (run: dispatch install)"; exit 1; }; }
 cmd_stop() { unload_agent; green "Stopped."; }
 cmd_restart() {
-  unload_agent
-  # Wait for the old process to release the port before reloading, so a fast
-  # unload→load doesn't race launchd into a thrash.
-  for _ in 1 2 3 4 5 6 7 8 9 10; do lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1 && sleep 1 || break; done
-  load_agent && green "Restarted." || { red "Failed to restart"; exit 1; }
+  if ! is_loaded; then
+    load_agent && green "Started." || { red "Failed to start (run: dispatch install)"; exit 1; }
+    return
+  fi
+  if [ -n "${SSH_CONNECTION:-}" ]; then
+    # Over SSH we're not killing our own session, and bootstrap is unavailable, so the
+    # legacy reload is the reliable path here.
+    unload_agent
+    for _ in 1 2 3 4 5 6 7 8 9 10; do lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1 && sleep 1 || break; done
+    load_agent && green "Restarted." || { red "Failed to restart"; exit 1; }
+    return
+  fi
+  # Local restart: the daemon is the parent of this very terminal (an agent thread), so a
+  # script-driven bootout→bootstrap would die mid-restart when our PTY is killed, leaving
+  # the daemon down. Instead let launchd own the kill+restart via `kickstart -k` (with
+  # KeepAlive as the backstop) — kickstart never unloads the job, so the daemon is never
+  # left down. We schedule it in a new session (setsid) after a short delay so this
+  # command — and any in-flight git push — returns cleanly first, and the scheduled
+  # kickstart survives our process group being torn down.
+  local uid; uid=$(id -u)
+  local kick="launchctl kickstart -k gui/$uid/$LABEL 2>/dev/null || launchctl kickstart -k user/$uid/$LABEL 2>/dev/null"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import os,sys,subprocess,time
+os.setsid(); time.sleep(2); subprocess.run(sys.argv[1], shell=True)' "$kick" >/dev/null 2>&1 &
+  else
+    nohup sh -c "sleep 2; $kick" >/dev/null 2>&1 &
+  fi
+  green "Restart scheduled via launchd — returns on the new code in ~2s (this agent session may end)."
 }
 
 cmd_status() {

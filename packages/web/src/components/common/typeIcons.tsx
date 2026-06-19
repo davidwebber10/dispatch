@@ -7,8 +7,8 @@ import type { TerminalType } from '../../api/types';
 // Provider distinction in thread rows is shown as a small colored dot.
 export function providerColor(type: TerminalType): string {
   switch (type) {
-    case 'claude-code': return '#E5484D'; // Claude → red
-    case 'codex': return '#5A8DD6';        // Codex → blue
+    case 'claude-code': return '#0091FF'; // Claude → blue
+    case 'codex': return '#30D158';        // Codex → green
     case 'shell': return '#8E8E96';         // Terminal → neutral
     case 'browser': return '#56B6C2';
     case 'notes': return '#C792EA';
