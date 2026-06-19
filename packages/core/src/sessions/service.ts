@@ -1,0 +1,401 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import type Database from 'better-sqlite3';
+import { v4 as uuid } from 'uuid';
+import * as sessionsDb from '../db/sessions.js';
+import * as terminalsDb from '../db/terminals.js';
+import * as appState from '../db/app-state.js';
+import { getProvider } from '../providers/registry.js';
+import { PTYManager } from '../pty/manager.js';
+import type { Session, CreateSessionInput } from '../types.js';
+import { rowToSession } from '../types.js';
+import type { TerminalType } from '../db/terminals.js';
+
+export class SessionService {
+  constructor(
+    private db: Database.Database,
+    private ptyManager: PTYManager,
+  ) {}
+
+  create(input: CreateSessionInput): Session {
+    const id = uuid();
+    const name = input.name || 'New Project';
+
+    sessionsDb.create(this.db, {
+      id,
+      provider: input.provider || 'claude-code',
+      name,
+      workingDir: input.workingDir || '~',
+    });
+
+    return rowToSession(sessionsDb.getById(this.db, id)!);
+  }
+
+  get(id: string): Session | null {
+    const row = sessionsDb.getById(this.db, id);
+    return row ? rowToSession(row) : null;
+  }
+
+  list(status?: string): Session[] {
+    return sessionsDb.list(this.db, status).map(rowToSession);
+  }
+
+  reorderSessions(order: string[]): void {
+    for (let i = 0; i < order.length; i++) {
+      this.db.prepare('UPDATE sessions SET sort_order = ? WHERE id = ?').run(i, order[i]);
+    }
+  }
+
+  update(id: string, fields: { name?: string; notes?: string; tags?: string[] }): Session | null {
+    sessionsDb.update(this.db, id, fields);
+    return this.get(id);
+  }
+
+  relaunch(id: string): Session | null {
+    const row = sessionsDb.getById(this.db, id);
+    if (!row) return null;
+
+    // Find the first terminal for this session to relaunch
+    const terminals = terminalsDb.listBySession(this.db, id);
+    if (terminals.length > 0) {
+      const terminal = terminals[0];
+      this.relaunchTerminal(terminal.id);
+    } else {
+      // Legacy: no terminal records yet, use session-level relaunch
+      if (this.ptyManager.isAlive(id)) return rowToSession(row);
+
+      const provider = getProvider(row.provider);
+      try {
+        const cmd = row.external_id
+          ? provider.buildResumeCommand({ externalSessionId: row.external_id, workDir: row.working_dir })
+          : provider.buildNewCommand({ workDir: row.working_dir });
+
+        const pid = this.ptyManager.spawn(id, cmd.command, cmd.args, row.working_dir);
+        sessionsDb.updatePid(this.db, id, pid);
+        sessionsDb.setError(this.db, id, '');
+      } catch (err: any) {
+        sessionsDb.setError(this.db, id, err.message);
+      }
+    }
+
+    return rowToSession(sessionsDb.getById(this.db, id)!);
+  }
+
+  stop(id: string): void {
+    // Stop all terminals for this session
+    const terminals = terminalsDb.listBySession(this.db, id);
+    for (const terminal of terminals) {
+      this.ptyManager.kill(terminal.id);
+      terminalsDb.updatePid(this.db, terminal.id, null);
+    }
+
+    // Legacy: also kill by session ID in case no terminal records
+    this.ptyManager.kill(id);
+    sessionsDb.updateStatus(this.db, id, 'waiting');
+    sessionsDb.updatePid(this.db, id, null);
+  }
+
+  archive(id: string): void {
+    // Kill all terminals
+    const terminals = terminalsDb.listBySession(this.db, id);
+    for (const terminal of terminals) {
+      if (this.ptyManager.isAlive(terminal.id)) this.ptyManager.kill(terminal.id);
+    }
+    terminalsDb.removeBySession(this.db, id);
+
+    if (this.ptyManager.isAlive(id)) this.ptyManager.kill(id);
+    sessionsDb.archive(this.db, id);
+  }
+
+  // --- Terminal-level operations ---
+
+  createTerminal(sessionId: string, type: TerminalType, label?: string, skipPermissions?: boolean, workingDir?: string, externalId?: string): terminalsDb.Terminal {
+    const session = sessionsDb.getById(this.db, sessionId);
+    if (!session) throw new Error('Session not found');
+
+    const resolvedDir = workingDir
+      ? workingDir.replace(/^~/, os.homedir())
+      : session.working_dir;
+
+    if (workingDir) {
+      appState.set(this.db, 'last_directory', resolvedDir);
+    }
+
+    const terminalId = uuid();
+    const displayLabel = label || this.defaultTerminalLabel(sessionId, type);
+
+    terminalsDb.create(this.db, {
+      id: terminalId,
+      sessionId,
+      type,
+      label: displayLabel,
+      skipPermissions,
+      workingDir: resolvedDir,
+      externalId,
+    });
+
+    try {
+      this.spawnTerminal(terminalId);
+    } catch (err: any) {
+      terminalsDb.remove(this.db, terminalId);
+      throw new Error(`Failed to start ${displayLabel}: ${err.message}`);
+    }
+
+    return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
+  }
+
+  // Create a non-PTY tab (browser, notes)
+  createTab(sessionId: string, type: string, label: string, config?: Record<string, any>): terminalsDb.Terminal {
+    const session = sessionsDb.getById(this.db, sessionId);
+    if (!session) throw new Error('Session not found');
+
+    const tabId = uuid();
+    terminalsDb.create(this.db, {
+      id: tabId,
+      sessionId,
+      type,
+      label,
+      config,
+    });
+    return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, tabId)!);
+  }
+
+  // Update any tab (rename, update config)
+  updateTab(tabId: string, fields: { label?: string; config?: Record<string, any> }): terminalsDb.Terminal | null {
+    const row = terminalsDb.getById(this.db, tabId);
+    if (!row) return null;
+    if (fields.label) terminalsDb.updateLabel(this.db, tabId, fields.label);
+    if (fields.config) terminalsDb.updateConfig(this.db, tabId, fields.config);
+    return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, tabId)!);
+  }
+
+  reorderTabs(sessionId: string, order: string[]): void {
+    for (let i = 0; i < order.length; i++) {
+      terminalsDb.updateSortOrder(this.db, order[i], i);
+    }
+  }
+
+  moveTab(tabId: string, toSessionId: string): terminalsDb.Terminal | null {
+    const row = terminalsDb.getById(this.db, tabId);
+    if (!row) return null;
+    terminalsDb.updateSessionId(this.db, tabId, toSessionId);
+    return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, tabId)!);
+  }
+
+  listTerminals(sessionId: string): terminalsDb.Terminal[] {
+    return terminalsDb.listBySession(this.db, sessionId).map(terminalsDb.rowToTerminal);
+  }
+
+  getTerminal(terminalId: string): terminalsDb.Terminal | null {
+    const row = terminalsDb.getById(this.db, terminalId);
+    return row ? terminalsDb.rowToTerminal(row) : null;
+  }
+
+  relaunchTerminal(terminalId: string): terminalsDb.Terminal | null {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) return null;
+    // Non-PTY tabs don't need relaunching
+    if (!terminalsDb.isPtyType(terminal.type)) return terminalsDb.rowToTerminal(terminal);
+    if (this.ptyManager.isAlive(terminalId)) return terminalsDb.rowToTerminal(terminal);
+
+    const session = sessionsDb.getById(this.db, terminal.session_id);
+    if (!session) return null;
+
+    try {
+      this.spawnTerminal(terminalId);
+    } catch (err: any) {
+      terminalsDb.updatePid(this.db, terminalId, null);
+      terminalsDb.updateStatus(this.db, terminalId, 'error');
+    }
+
+    return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
+  }
+
+  stopTerminal(terminalId: string): void {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) return;
+    this.ptyManager.kill(terminalId);
+    terminalsDb.updatePid(this.db, terminalId, null);
+  }
+
+  writeToTerminal(terminalId: string, data: string): void {
+    this.ptyManager.write(terminalId, data);
+  }
+
+  resolveTerminalFilePath(terminalId: string, requestedPath: string): string | null {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) return null;
+
+    const session = sessionsDb.getById(this.db, terminal.session_id);
+    if (!session) return null;
+
+    const sessionRoot = path.resolve(session.working_dir);
+    const terminalRoot = path.resolve(terminal.working_dir || session.working_dir);
+    const roots = Array.from(new Set([terminalRoot, sessionRoot]));
+
+    if (path.isAbsolute(requestedPath)) {
+      const resolved = path.resolve(requestedPath);
+      if (roots.some(root => this.isPathInside(root, resolved))) return resolved;
+      throw new Error('Path traversal not allowed');
+    }
+
+    const sessionResolved = path.resolve(sessionRoot, requestedPath);
+    if (!this.isPathInside(sessionRoot, sessionResolved)) {
+      throw new Error('Path traversal not allowed');
+    }
+
+    if (requestedPath === '.dispatch/inbox' || requestedPath.startsWith('.dispatch/inbox/')) {
+      return sessionResolved;
+    }
+
+    if (this.pathExists(sessionResolved)) {
+      return sessionResolved;
+    }
+
+    const terminalResolved = path.resolve(terminalRoot, requestedPath);
+    if (!this.isPathInside(terminalRoot, terminalResolved)) {
+      throw new Error('Path traversal not allowed');
+    }
+    return terminalResolved;
+  }
+
+  private pathExists(resolvedPath: string): boolean {
+    try {
+      return fs.existsSync(resolvedPath);
+    } catch {
+      return false;
+    }
+  }
+
+  sendFileReference(terminalId: string, requestedPath: string, mode: 'agent-context' | 'shell-path' = 'agent-context'): { sentText: string } | null {
+    const absolutePath = this.resolveTerminalFilePath(terminalId, requestedPath);
+    if (!absolutePath) return null;
+    if (!this.ptyManager.isAlive(terminalId)) throw new Error('Terminal process is not running');
+
+    const sentText = mode === 'shell-path'
+      ? `${this.shellEscapePath(absolutePath)} `
+      : `Use this file as context: ${absolutePath}\r`;
+    this.ptyManager.write(terminalId, sentText);
+    return { sentText };
+  }
+
+  stopAllTerminals(): void {
+    this.ptyManager.killAll();
+  }
+
+  renameTerminal(terminalId: string, label: string): terminalsDb.Terminal | null {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) return null;
+    terminalsDb.updateLabel(this.db, terminalId, label);
+    return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
+  }
+
+  removeTerminal(terminalId: string): void {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) return;
+    // Only kill PTY for terminal types that have processes
+    if (terminalsDb.isPtyType(terminal.type)) {
+      if (this.ptyManager.isAlive(terminalId)) this.ptyManager.kill(terminalId);
+    }
+    // Soft-delete: archive instead of remove
+    terminalsDb.archive(this.db, terminalId);
+  }
+
+  // Restore an archived terminal
+  restoreTerminal(terminalId: string): terminalsDb.Terminal | null {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) return null;
+    terminalsDb.unarchive(this.db, terminalId);
+    // Re-spawn if it's a PTY type
+    if (terminalsDb.isPtyType(terminal.type)) {
+      try {
+        this.spawnTerminal(terminalId);
+      } catch {
+        terminalsDb.updatePid(this.db, terminalId, null);
+        terminalsDb.updateStatus(this.db, terminalId, 'error');
+      }
+    }
+    return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
+  }
+
+  listArchivedTerminals(sessionId: string): terminalsDb.Terminal[] {
+    return terminalsDb.listArchivedBySession(this.db, sessionId).map(terminalsDb.rowToTerminal);
+  }
+
+  private spawnTerminal(terminalId: string): void {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) throw new Error('Terminal not found');
+
+    const session = sessionsDb.getById(this.db, terminal.session_id);
+    if (!session) throw new Error('Session not found');
+
+    const workDir = terminal.working_dir || session.working_dir;
+
+    let command: string;
+    let args: string[];
+
+    if (terminal.type === 'shell') {
+      command = '/bin/zsh';
+      args = [];
+    } else {
+      const provider = getProvider(terminal.type);
+      const cmd = terminal.external_id
+        ? provider.buildResumeCommand({ externalSessionId: terminal.external_id, workDir })
+        : provider.buildNewCommand({ workDir });
+      command = cmd.command;
+      args = cmd.args;
+    }
+
+    const pid = this.ptyManager.spawn(terminalId, command, args, workDir);
+    terminalsDb.updatePid(this.db, terminalId, pid);
+
+    // If this was a fresh spawn (no external_id yet), let the provider try to
+    // discover the session id it assigned — so a later relaunch can resume.
+    if (terminal.type !== 'shell' && !terminal.external_id) {
+      void this.captureExternalSessionId(terminalId, terminal.type, workDir);
+    }
+  }
+
+  private async captureExternalSessionId(terminalId: string, type: string, workDir: string): Promise<void> {
+    const provider = getProvider(type);
+    if (!provider.captureSessionId) return;
+    const spawnTime = Date.now();
+    try {
+      const sid = await provider.captureSessionId({ workDir, spawnTime, deadlineMs: 30_000 });
+      if (!sid) return;
+      const current = terminalsDb.getById(this.db, terminalId);
+      if (!current || current.external_id) return;
+      terminalsDb.updateExternalId(this.db, terminalId, sid);
+    } catch {
+      // Best-effort; relaunch will simply start a fresh session if we miss it.
+    }
+  }
+
+  private isPathInside(root: string, target: string): boolean {
+    const relative = path.relative(root, target);
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  }
+
+  private shellEscapePath(absolutePath: string): string {
+    return `'${absolutePath.replace(/'/g, `'\\''`)}'`;
+  }
+
+  private defaultTerminalLabel(sessionId: string, type: TerminalType): string {
+    const terminals = terminalsDb.listBySession(this.db, sessionId);
+    const sameType = terminals.filter(t => t.type === type);
+
+    switch (type) {
+      case 'claude-code': return sameType.length > 0 ? `Claude Code #${sameType.length + 1}` : 'Claude Code';
+      case 'codex': return sameType.length > 0 ? `Codex #${sameType.length + 1}` : 'Codex';
+      case 'shell': return sameType.length > 0 ? `Terminal #${sameType.length + 1}` : 'Terminal';
+    }
+  }
+
+  private autoName(workDir: string): string {
+    const folder = workDir.split('/').pop() || 'session';
+    const existing = sessionsDb.list(this.db).filter(s => s.name.startsWith(folder));
+    return existing.length > 0 ? `${folder} #${existing.length + 1}` : folder;
+  }
+
+}

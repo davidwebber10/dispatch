@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd agent template for the Dispatch daemon.
+
+  This is a TEMPLATE. Placeholders (__NAME__) are substituted by `bin/dispatch install`,
+  which writes the result to ~/Library/LaunchAgents/com.dispatch.server.plist.
+  You normally don't edit this by hand — run `dispatch install` instead.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>__LABEL__</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__NODE__</string>
+        <string>__SERVER_JS__</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__WORKDIR__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>__PATH__</string>
+        <key>PORT</key>
+        <string>__PORT__</string>
+        <key>DISPATCH_WEB_DIST</key>
+        <string>__WEBDIST__</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
+    <key>StandardOutPath</key>
+    <string>__STDOUT__</string>
+
+    <key>StandardErrorPath</key>
+    <string>__STDERR__</string>
+</dict>
+</plist>

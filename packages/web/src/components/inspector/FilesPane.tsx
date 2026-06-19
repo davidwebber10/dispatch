@@ -1,0 +1,109 @@
+import { useCallback, useEffect, useState } from 'react';
+import { CaretRight } from '@phosphor-icons/react';
+import { api } from '../../api/client';
+import type { FileEntry } from '../../api/types';
+import { useTabs } from '../../stores/tabs';
+import { useProjects } from '../../stores/projects';
+import { fileVisual } from '../common/typeIcons';
+
+const INDENT = 14;
+
+function homeAbbrev(p: string): string {
+  return p.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
+}
+
+function Row({ children, style, onClick, onMiddle }: { children: React.ReactNode; style: React.CSSProperties; onClick: () => void; onMiddle?: () => void }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <div onClick={onClick}
+      onAuxClick={(e) => { if (e.button === 1 && onMiddle) { e.preventDefault(); onMiddle(); } }}
+      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+      style={{ ...style, background: style.background ?? (hover ? 'rgba(255,255,255,0.04)' : 'transparent') }}>
+      {children}
+    </div>
+  );
+}
+
+export function FilesPane({ projectId, onOpenFile }: { projectId: string | null; onOpenFile: (terminalId: string) => void }) {
+  const [children, setChildren] = useState<Record<string, FileEntry[]>>({});
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const project = useProjects((s) => s.sessions.find((x) => x.id === projectId));
+  const activeTabId = useTabs((s) => s.activeTabId);
+  const tabsForProj = useTabs((s) => (projectId ? s.byProject[projectId] : undefined)) ?? [];
+  const selectedPath = tabsForProj.find((t) => t.id === activeTabId && t.type === 'file')?.config?.path as string | undefined;
+
+  const loadDir = useCallback(async (path: string) => {
+    if (!projectId) return;
+    try {
+      const entries = await api.listFiles(projectId, path);
+      setChildren((prev) => ({ ...prev, [path]: entries }));
+    } catch { setChildren((prev) => ({ ...prev, [path]: [] })); }
+  }, [projectId]);
+
+  useEffect(() => {
+    setChildren({}); setExpanded(new Set());
+    if (projectId) void loadDir('.');
+  }, [projectId, loadDir]);
+
+  function toggle(path: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else { next.add(path); if (!children[path]) void loadDir(path); }
+      return next;
+    });
+  }
+
+  async function openFile(e: FileEntry, background = false) {
+    if (!projectId) return;
+    const existing = (useTabs.getState().byProject[projectId] ?? []).find((t) => t.type === 'file' && (t.config?.path as string) === e.path);
+    if (existing) { background ? useTabs.getState().openTab(existing.id, true) : onOpenFile(existing.id); return; }
+    const t = await api.createTerminal(projectId, { type: 'file', label: e.name, config: { path: e.path } });
+    await useTabs.getState().loadTabs(projectId);
+    if (background) useTabs.getState().openTab(t.id, true);
+    else onOpenFile(t.id);
+  }
+
+  if (!projectId) return <div style={{ padding: 12, color: 'var(--color-text-tertiary)' }}>No project selected</div>;
+
+  function renderDir(path: string, depth: number): React.ReactNode {
+    const entries = (children[path] ?? []).slice().sort((a, b) => Number(b.isDirectory) - Number(a.isDirectory) || a.name.localeCompare(b.name));
+    return entries.map((e) => {
+      const pl = 8 + depth * INDENT;
+      if (e.isDirectory) {
+        const isExp = expanded.has(e.path);
+        return (
+          <div key={e.path}>
+            <Row onClick={() => toggle(e.path)} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: `6px 8px 6px ${pl}px`, borderRadius: 5, color: '#c9c9cf', cursor: 'pointer' }}>
+              <CaretRight size={13} weight="bold" color="#8e8e96" style={{ flexShrink: 0, transition: 'transform 0.15s ease', transform: isExp ? 'rotate(90deg)' : 'none' }} />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
+            </Row>
+            {isExp && renderDir(e.path, depth + 1)}
+          </div>
+        );
+      }
+      const selected = e.path === selectedPath;
+      const { Icon: FIcon, color: fcolor } = fileVisual(e.name);
+      return (
+        <Row key={e.path} onClick={() => void openFile(e)} onMiddle={() => void openFile(e, true)}
+          style={{ display: 'flex', alignItems: 'center', gap: 7, padding: `6px 8px 6px ${pl}px`, borderRadius: 5, color: selected ? '#e9e9ec' : '#a8a8b0', background: selected ? '#26262b' : undefined, cursor: 'pointer' }}>
+          <FIcon size={15} weight="fill" color={selected ? '#e9e9ec' : fcolor} style={{ flexShrink: 0 }} />
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
+        </Row>
+      );
+    });
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div style={{ padding: '9px 12px', borderBottom: '1px solid #1d1d21', font: '400 11px var(--font-mono)', color: '#6a6a72', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project ? homeAbbrev(project.workingDir) : ''}</span>
+        <button title="Refresh" onClick={() => { setChildren({}); setExpanded(new Set()); void loadDir('.'); }} style={{ background: 'none', border: 'none', color: '#46464d', cursor: 'pointer', fontSize: 14, flexShrink: 0 }}>⟳</button>
+      </div>
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 6, font: '400 12px/1.4 var(--font-mono)' }}>
+        {renderDir('.', 0)}
+        {!(children['.']?.length) && <div style={{ padding: 8, color: 'var(--color-text-tertiary)' }}>Empty</div>}
+      </div>
+    </div>
+  );
+}

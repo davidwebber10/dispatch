@@ -1,0 +1,8 @@
+packages:
+  - "packages/*"
+
+# These packages have native build steps that must run on install.
+allowBuilds:
+  better-sqlite3: true
+  node-pty: true
+  esbuild: true
