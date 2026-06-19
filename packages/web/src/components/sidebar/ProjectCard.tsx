@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Session, Terminal } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
 import { StatusDot } from '../common/StatusDot';
-import { providerVisual } from '../common/typeIcons';
+import { providerColor } from '../common/typeIcons';
 import { timeAgo } from '../../lib/time';
 import { NewTabMenu } from './NewTabMenu';
 import { api } from '../../api/client';
@@ -28,7 +28,7 @@ function homePath(p: string): string {
 
 function ThreadRow({ tab, active, onClick, onMiddle }: { tab: Terminal; active: boolean; onClick: (e: React.MouseEvent) => void; onMiddle: () => void }) {
   const [hover, setHover] = useState(false);
-  const { Icon: PIcon, color } = providerVisual(tab.type);
+  const color = providerColor(tab.type);
   return (
     <button
       onMouseEnter={() => setHover(true)}
@@ -43,7 +43,7 @@ function ThreadRow({ tab, active, onClick, onMiddle }: { tab: Terminal; active: 
         textAlign: 'left', cursor: 'pointer',
       }}
     >
-      <PIcon size={15} weight="fill" color={color} style={{ flexShrink: 0 }} />
+      <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tab.label}</span>
       <StatusDot state={dotState(tab.status)} size={7} />
     </button>

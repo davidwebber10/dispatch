@@ -1,19 +1,18 @@
 import {
-  Sparkle, Hexagon, Terminal as TerminalIcon, Globe, Note,
   FileTs, FileJs, FileCss, FileHtml, FilePy, FileImage, FileCode, FileText, File as FileGlyph,
   type Icon,
 } from '@phosphor-icons/react';
 import type { TerminalType } from '../../api/types';
 
-export function providerVisual(type: TerminalType): { Icon: Icon; color: string } {
+// Provider distinction in thread rows is shown as a small colored dot.
+export function providerColor(type: TerminalType): string {
   switch (type) {
-    case 'claude-code': return { Icon: Sparkle, color: '#3ECF6A' };
-    case 'codex': return { Icon: Hexagon, color: '#5A8DD6' };
-    case 'shell': return { Icon: TerminalIcon, color: '#9A9AA2' };
-    case 'browser': return { Icon: Globe, color: '#56B6C2' };
-    case 'notes': return { Icon: Note, color: '#C792EA' };
-    case 'file': return { Icon: FileText, color: '#8E8E96' };
-    default: return { Icon: TerminalIcon, color: '#9A9AA2' };
+    case 'claude-code': return '#E5484D'; // Claude → red
+    case 'codex': return '#5A8DD6';        // Codex → blue
+    case 'shell': return '#8E8E96';         // Terminal → neutral
+    case 'browser': return '#56B6C2';
+    case 'notes': return '#C792EA';
+    default: return '#8E8E96';
   }
 }
 
