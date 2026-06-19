@@ -9,7 +9,7 @@ export function TabBar() {
   if (!openTabIds.length) return null;
 
   return (
-    <div style={{ display: 'flex', height: 38, flexShrink: 0, overflowX: 'auto', background: 'var(--color-pane)', borderBottom: '1px solid var(--color-border)' }}>
+    <div style={{ display: 'flex', height: 44, flexShrink: 0, overflowX: 'auto', background: 'var(--color-pane)', borderBottom: '1px solid var(--color-border)' }}>
       {openTabIds.map((id) => {
         const t = findTerminal(byProject, id);
         const proj = sessions.find((s) => s.id === t?.sessionId);
@@ -19,7 +19,7 @@ export function TabBar() {
             key={id}
             onClick={() => useTabs.getState().setActiveTab(id)}
             onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); useTabs.getState().closeTab(id); } }}
-            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 8px 0 12px', minWidth: 130, maxWidth: 210, flexShrink: 0, cursor: 'pointer', borderRight: '1px solid var(--color-border)', background: active ? 'var(--color-base)' : 'transparent', borderBottom: active ? '2px solid var(--color-accent)' : '2px solid transparent' }}
+            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 10px 0 15px', minWidth: 150, maxWidth: 230, flexShrink: 0, cursor: 'pointer', borderRight: '1px solid var(--color-border)', background: active ? 'var(--color-base)' : 'transparent', borderBottom: active ? '2px solid var(--color-accent)' : '2px solid transparent' }}
           >
             <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
               <span style={{ fontSize: 12.5, fontWeight: active ? 500 : 400, color: active ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t?.label ?? 'tab'}</span>
