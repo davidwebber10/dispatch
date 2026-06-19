@@ -14,7 +14,7 @@ test('shows the selected agent and KPIs derived from its runs', () => {
       { id: 'r2', scheduleId: 'a1', status: 'failed', startedAt: '2026-06-18T00:00:00Z', completedAt: '2026-06-18T00:01:00Z' } as any,
     ],
   });
-  render(<AgentDashboard onEdit={() => {}} />);
+  render(<AgentDashboard onEdit={() => {}} onOpenRun={() => {}} />);
   expect(screen.getByText('Triage flaky tests')).toBeInTheDocument();
   expect(screen.getByText('Total Runs')).toBeInTheDocument();
   expect(screen.getByText('2')).toBeInTheDocument();   // total runs

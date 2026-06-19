@@ -14,9 +14,11 @@ function summarize(s: AgentSchedule): string {
   try {
     const r = s.recurrenceRule ? JSON.parse(s.recurrenceRule) : null;
     if (r?.type === 'daily') return `Daily · ${r.time ?? ''}`;
+    if (r?.type === 'interval' || r?.type === 'interval-minutes') { const m = Number(r.everyMinutes); return m % 60 === 0 ? `Every ${m / 60}h` : `Every ${m}m`; }
     if (r?.type === 'interval-hours') return `Every ${r.hours}h`;
-    if (r?.type === 'weekly') return `Weekly · ${(r.days ?? []).join(',')} ${r.time ?? ''}`;
+    if (r?.type === 'weekly') { const n = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']; return `Weekly · ${(r.days ?? []).map((d: number) => n[d]).join(' ')} ${r.time ?? ''}`; }
     if (r?.type === 'cron') return `Cron · ${r.expr ?? ''}`;
+    if (r?.type === 'manual') return 'Manual';
   } catch { /* ignore */ }
   return 'Recurring';
 }
@@ -30,7 +32,7 @@ function Kpi({ label: l, value, accent }: { label: string; value: string; accent
   );
 }
 
-export function AgentDashboard({ onEdit }: { onEdit: () => void }) {
+export function AgentDashboard({ onEdit, onOpenRun, onBack }: { onEdit: () => void; onOpenRun: (runId: string) => void; onBack?: () => void }) {
   const schedule = useAgents((s) => s.schedules.find((x) => x.id === s.selectedId)) ?? null;
   const runs = useAgents((s) => s.runs);
 
@@ -46,6 +48,7 @@ export function AgentDashboard({ onEdit }: { onEdit: () => void }) {
   return (
     <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 24 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        {onBack && <button onClick={onBack} title="Back" style={{ background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', fontSize: 16, padding: 0 }}>‹</button>}
         <StatusDot state={schedule.enabled ? 'idle' : 'disabled'} />
         <span style={{ fontSize: 20, fontWeight: 600 }}>{schedule.name}</span>
         <span style={{ font: '500 10px var(--font-mono)', letterSpacing: '0.4px', color: 'var(--color-text-secondary)', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 5, padding: '2px 6px' }}>{schedule.provider === 'claude-code' ? 'Claude Code' : 'Codex'}</span>
@@ -80,12 +83,16 @@ export function AgentDashboard({ onEdit }: { onEdit: () => void }) {
       <div style={{ ...panel, marginTop: 16 }}>
         <div style={label}>RECENT RUNS</div>
         {recent.map((r) => (
-          <div key={r.id} style={{ display: 'flex', gap: 12, padding: '6px 0', borderBottom: '1px solid var(--color-border)', fontSize: 12.5 }}>
+          <div key={r.id} onClick={() => onOpenRun(r.id)} title="Open run"
+            style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 6px', margin: '0 -6px', borderBottom: '1px solid var(--color-border)', fontSize: 12.5, cursor: 'pointer', borderRadius: 6 }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}>
             <span style={{ color: 'var(--color-text-secondary)', width: 160 }}>{r.startedAt ? new Date(r.startedAt).toLocaleString() : '—'}</span>
             <span style={{ width: 70, fontFamily: 'var(--font-mono)' }}>{formatDuration(runDurationMs(r))}</span>
             <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, color: statusColor(r.status) }}>
               <span style={{ width: 7, height: 7, borderRadius: '50%', background: statusColor(r.status) }} />{r.status}
             </span>
+            <span style={{ color: 'var(--color-text-tertiary)', flexShrink: 0 }}>›</span>
           </div>
         ))}
         {!recent.length && <div style={{ color: 'var(--color-text-tertiary)', fontSize: 12.5, padding: '8px 0' }}>No runs yet</div>}
