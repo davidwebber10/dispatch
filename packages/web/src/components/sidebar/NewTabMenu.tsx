@@ -1,3 +1,5 @@
+import { useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from '../../api/client';
 import { useTabs } from '../../stores/tabs';
 
@@ -8,6 +10,17 @@ const TYPES: { type: string; label: string; config?: Record<string, unknown> }[]
 ];
 
 export function NewTabMenu({ sessionId, onClose, onCreated }: { sessionId: string; onClose: () => void; onCreated?: (terminalId: string) => void }) {
+  // Anchor fills the trigger button; the menu itself is portaled to <body> with
+  // fixed positioning so the card's overflow:hidden (used for the expand animation)
+  // can't clip it.
+  const anchorRef = useRef<HTMLSpanElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+
+  useLayoutEffect(() => {
+    const r = anchorRef.current?.getBoundingClientRect();
+    if (r) setPos({ top: r.bottom + 6, left: Math.min(r.left, window.innerWidth - 172) });
+  }, []);
+
   async function add(t: (typeof TYPES)[number]) {
     onClose();
     try {
@@ -16,15 +29,21 @@ export function NewTabMenu({ sessionId, onClose, onCreated }: { sessionId: strin
       onCreated?.(term.id);
     } catch { /* surfaced via connection state */ }
   }
+
   return (
-    <>
-      <div onClick={(e) => { e.stopPropagation(); onClose(); }} style={{ position: 'fixed', inset: 0, zIndex: 90 }} />
-      <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', top: 22, left: 0, zIndex: 91, minWidth: 150, background: '#1B1B1E', border: '1px solid #2C2C32', borderRadius: 9, padding: 4, boxShadow: '0 20px 50px -20px rgba(0,0,0,.8)' }}>
-        <div style={{ font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)', padding: '4px 8px' }}>NEW</div>
-        {TYPES.map((t) => (
-          <button key={t.type} onClick={() => void add(t)} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 8px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>{t.label}</button>
-        ))}
-      </div>
-    </>
+    <span ref={anchorRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+      {createPortal(
+        <>
+          <div onClick={(e) => { e.stopPropagation(); onClose(); }} style={{ position: 'fixed', inset: 0, zIndex: 200 }} />
+          <div onClick={(e) => e.stopPropagation()} style={{ position: 'fixed', top: pos?.top ?? -9999, left: pos?.left ?? -9999, visibility: pos ? 'visible' : 'hidden', zIndex: 201, minWidth: 160, background: '#1B1B1E', border: '1px solid #2C2C32', borderRadius: 9, padding: 4, boxShadow: '0 20px 50px -20px rgba(0,0,0,.8)' }}>
+            <div style={{ font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)', padding: '4px 8px' }}>NEW THREAD</div>
+            {TYPES.map((t) => (
+              <button key={t.type} onClick={() => void add(t)} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13, whiteSpace: 'nowrap' }}>{t.label}</button>
+            ))}
+          </div>
+        </>,
+        document.body,
+      )}
+    </span>
   );
 }

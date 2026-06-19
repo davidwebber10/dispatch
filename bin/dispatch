@@ -17,7 +17,9 @@ set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LABEL="com.dispatch.server"
-DOMAIN="gui/$(id -u)"
+# Over SSH you can't bootstrap into the GUI (Aqua) domain — it fails with an I/O
+# error — so fall back to the per-user domain, which works headless.
+if [ -n "${SSH_CONNECTION:-}" ]; then DOMAIN="user/$(id -u)"; else DOMAIN="gui/$(id -u)"; fi
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 TEMPLATE="$REPO/daemon/com.dispatch.server.plist.template"
 LOGDIR="$HOME/Library/Logs/dispatch"
