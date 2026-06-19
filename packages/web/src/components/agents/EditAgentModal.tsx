@@ -58,11 +58,11 @@ function initSched(existing: AgentSchedule | null): SchedState {
 const input: React.CSSProperties = { height: 34, width: '100%', padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 8, color: 'var(--color-text-primary)', fontSize: 13 };
 const seg = (active: boolean): React.CSSProperties => ({ padding: '6px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12.5, textTransform: 'capitalize', background: active ? 'var(--color-accent)' : 'transparent', color: active ? '#08240F' : 'var(--color-text-secondary)', fontWeight: active ? 600 : 400 });
 
-export function EditAgentModal({ scheduleId, onClose }: { scheduleId: string | null; onClose: () => void }) {
+export function EditAgentModal({ scheduleId, presetProjectId, onClose }: { scheduleId: string | null; presetProjectId?: string | null; onClose: () => void }) {
   const existing = useAgents((s) => s.schedules.find((x) => x.id === scheduleId)) ?? null;
   const sessions = useProjects((s) => s.sessions);
 
-  const [projectId, setProjectId] = useState(existing?.projectId ?? sessions[0]?.id ?? '');
+  const [projectId, setProjectId] = useState(existing?.projectId ?? presetProjectId ?? sessions[0]?.id ?? '');
   const [name, setName] = useState(existing?.name ?? '');
   const [provider, setProvider] = useState<AgentSchedule['provider']>(existing?.provider ?? 'claude-code');
   const [prompt, setPrompt] = useState(existing?.prompt ?? '');
@@ -82,9 +82,9 @@ export function EditAgentModal({ scheduleId, onClose }: { scheduleId: string | n
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         enabled: true, nextRunAt: null, defaultTerminalLabel: null,
       };
-      if (existing) await api.updateSchedule(existing.id, payload);
-      else await api.createSchedule(payload);
+      const saved = existing ? await api.updateSchedule(existing.id, payload) : await api.createSchedule(payload);
       await useAgents.getState().loadSchedules();
+      if (saved?.id) await useAgents.getState().select(saved.id);
       onClose();
     } finally { setBusy(false); }
   }
