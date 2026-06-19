@@ -119,9 +119,16 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <span style={sectionLabel}>APPEARANCE</span>
             <div style={row}><span style={item}>Theme</span><span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--color-text-secondary)', background: '#1b1b1e', border: '1px solid #2c2c32', borderRadius: 7, padding: '5px 11px' }}><span style={{ width: 11, height: 11, borderRadius: 3, background: '#0f0f11', border: '1px solid #46464d' }} />Dark</span></div>
-            <div style={row}><span style={item}>Accent</span><div style={{ display: 'flex', gap: 8 }}>{ACCENTS.map((c) => (
-              <button key={c} onClick={() => useSettings.getState().setAccent(c)} title={c} style={{ width: 19, height: 19, borderRadius: 5, background: c, border: 'none', cursor: 'pointer', outline: accent === c ? `2px solid ${c}` : '2px solid transparent', outlineOffset: 2 }} />
-            ))}</div></div>
+            <div style={{ ...row, alignItems: 'flex-start' }}><span style={{ ...item, paddingTop: 3 }}>Accent</span>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: 360 }}>
+                {ACCENTS.map((c) => (
+                  <button key={c} onClick={() => useSettings.getState().setAccent(c)} title={c} style={{ width: 19, height: 19, borderRadius: 5, background: c, border: 'none', cursor: 'pointer', flexShrink: 0, outline: accent.toLowerCase() === c.toLowerCase() ? `2px solid ${c}` : '2px solid transparent', outlineOffset: 2 }} />
+                ))}
+                <label title="Custom color" style={{ position: 'relative', width: 19, height: 19, borderRadius: 5, cursor: 'pointer', overflow: 'hidden', flexShrink: 0, background: 'conic-gradient(from 90deg, #f0616d, #f5c542, #30d158, #56b6c2, #5a8dd6, #c792ea, #ff6ac1, #f0616d)', outline: ACCENTS.some((a) => a.toLowerCase() === accent.toLowerCase()) ? '2px solid transparent' : `2px solid ${accent}`, outlineOffset: 2 }}>
+                  <input type="color" value={accent} onChange={(e) => useSettings.getState().setAccent(e.target.value)} style={{ position: 'absolute', inset: -6, width: 'calc(100% + 12px)', height: 'calc(100% + 12px)', opacity: 0, cursor: 'pointer', border: 'none', padding: 0, background: 'none' }} />
+                </label>
+              </div>
+            </div>
           </div>
           <Divider />
 

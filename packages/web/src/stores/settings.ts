@@ -1,6 +1,18 @@
 import { create } from 'zustand';
 
-export const ACCENTS = ['#3ECF6A', '#5A8DD6', '#C792EA', '#F5C542', '#F0616D'] as const;
+export const ACCENTS = [
+  '#3ECF6A', // green
+  '#30D158', // emerald
+  '#56B6C2', // teal
+  '#0091FF', // blue
+  '#5A8DD6', // steel
+  '#5E5CE6', // indigo
+  '#C792EA', // purple
+  '#FF6AC1', // pink
+  '#F0616D', // red
+  '#FF9F0A', // orange
+  '#F5C542', // yellow
+] as const;
 
 interface SettingsState {
   fontSize: number;

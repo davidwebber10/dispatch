@@ -103,8 +103,8 @@ export function ProjectCard({ session, active, onSelectTab }: { session: Session
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
-        background: active ? 'rgba(62,207,106,0.10)' : hover ? 'rgba(255,255,255,0.04)' : 'transparent',
-        border: active ? '1px solid rgba(62,207,106,0.45)' : '1px solid transparent',
+        background: active ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : hover ? 'rgba(255,255,255,0.04)' : 'transparent',
+        border: active ? '1px solid color-mix(in srgb, var(--color-accent) 45%, transparent)' : '1px solid transparent',
         borderRadius: 8, padding: 4, marginBottom: 4, cursor: active ? 'default' : 'pointer', transition: 'background 0.12s ease, border-color 0.12s ease',
       }}
     >
