@@ -33,6 +33,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
   const termScrollback = useSettings((s) => s.scrollback);
   const forceFitRef = useRef<() => void>(() => {});
   const scrollToEndRef = useRef<() => void>(() => {});
+  const offsetResetRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     let disposed = false;
@@ -64,6 +65,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
           lastCols = term.cols; lastRows = term.rows;
           sockRef.current?.resize(term.cols, term.rows);
         }
+        offsetResetRef.current();
       });
     };
 
@@ -77,6 +79,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
         lastCols = term.cols; lastRows = term.rows;
         sockRef.current?.resize(term.cols, term.rows);
       }
+      offsetResetRef.current();
     };
 
     requestAnimationFrame(() => { if (!disposed) { scheduleFit(); try { term.focus(); } catch { /* jsdom */ } } });
@@ -88,17 +91,39 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     }
     window.addEventListener('resize', scheduleFit);
 
-    // --- Natural momentum touch scrolling (mobile) ---
-    // xterm's native touch scroll is 1:1 and inertia-less; we take over the
-    // gesture and drive the real .xterm-viewport scrollTop in PIXELS (not
-    // term.scrollLines, which quantises to whole rows and feels steppy). This
-    // matches the pixel-smoothness of dragging the scrollbar on desktop.
+    // --- Pixel-smooth momentum touch scrolling (mobile) ---
+    // xterm 5.5's DOM renderer only repaints when the buffer scrolls a WHOLE
+    // row, so plain scrollLines/scrollTop teleports ~1 row (≈17px) at a time and
+    // looks jumpy. For true smoothness we keep xterm snapped to the nearest row
+    // (term.scrollLines) AND translate the .xterm-screen by the sub-row
+    // remainder, so the body of the content tracks the finger continuously. The
+    // ≤1-row gap this opens at the trailing edge is painted with the terminal
+    // background, so it reads as blank terminal space rather than a seam.
     const host = hostRef.current;
     const viewportEl = () => host?.querySelector('.xterm-viewport') as HTMLElement | null;
+    const screenEl = () => host?.querySelector('.xterm-screen') as HTMLElement | null;
+    const rowsEl = () => host?.querySelector('.xterm-rows') as HTMLElement | null;
+    const xtermEl = host?.querySelector('.xterm') as HTMLElement | null;
+    if (xtermEl) xtermEl.style.overflow = 'hidden';
+    { const s = screenEl(); if (s) { s.style.background = '#1E1E1E'; s.style.willChange = 'transform'; } }
     let inertiaId = 0;
-    let lastY = 0, lastT = 0, vel = 0;
-    const scrollByPx = (px: number) => { const vp = viewportEl(); if (vp) vp.scrollTop += px; };
-    const updateAtBottom = () => { const vp = viewportEl(); if (vp) setAtBottom(vp.scrollHeight - vp.clientHeight - vp.scrollTop < 4); };
+    let lastY = 0, lastT = 0, vel = 0, subPx = 0;
+    const rowH = () => { const r = rowsEl(); return r && r.children.length ? r.getBoundingClientRect().height / r.children.length : Math.ceil((term.options.fontSize ?? 13) * 1.2); };
+    const applyOffset = () => { const s = screenEl(); if (s) s.style.transform = subPx ? `translate3d(0,${-subPx}px,0)` : ''; };
+    const resetOffset = () => { subPx = 0; applyOffset(); };
+    offsetResetRef.current = resetOffset;
+    const scrollByPx = (px: number) => {
+      const h = rowH() || 17;
+      const total = subPx + px;
+      const lines = Math.floor(total / h);
+      subPx = total - lines * h; // remainder in [0, h)
+      if (lines !== 0) term.scrollLines(lines);
+      const b = term.buffer.active;
+      if (b.viewportY >= b.baseY && px > 0) subPx = 0;      // flush against the latest line
+      else if (b.viewportY <= 0 && total < 0) subPx = 0;    // flush against the top
+      applyOffset();
+    };
+    const updateAtBottom = () => { const vp = viewportEl(); if (vp) setAtBottom(vp.scrollHeight - vp.clientHeight - vp.scrollTop < 4 && subPx === 0); };
     const stopInertia = () => { if (inertiaId) { cancelAnimationFrame(inertiaId); inertiaId = 0; } };
     const onTouchStart = (e: TouchEvent) => {
       stopInertia();
@@ -112,19 +137,21 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       lastY = y; lastT = now;
       if (dt > 0) vel = dy / dt;
       scrollByPx(dy);
+      updateAtBottom();
       e.preventDefault();
       e.stopPropagation();
     };
     const onTouchEnd = () => {
-      let v = Math.max(-10, Math.min(10, vel));
-      if (Math.abs(v) < 0.02) return;
+      let v = Math.max(-12, Math.min(12, vel));
+      if (Math.abs(v) < 0.02) { updateAtBottom(); return; }
       let prev = performance.now();
       const step = () => {
         const now = performance.now();
         const dt = Math.max(1, now - prev); prev = now;
         v *= Math.pow(0.95, dt / 16);
-        if (Math.abs(v) < 0.015) { inertiaId = 0; return; }
+        if (Math.abs(v) < 0.01) { inertiaId = 0; updateAtBottom(); return; }
         scrollByPx(v * dt);
+        updateAtBottom();
         inertiaId = requestAnimationFrame(step);
       };
       inertiaId = requestAnimationFrame(step);
@@ -141,7 +168,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     const vp0 = viewportEl();
     vp0?.addEventListener('scroll', updateAtBottom, { passive: true });
     updateAtBottom();
-    scrollToEndRef.current = () => { stopInertia(); term.scrollToBottom(); updateAtBottom(); };
+    scrollToEndRef.current = () => { stopInertia(); resetOffset(); term.scrollToBottom(); updateAtBottom(); };
 
     void api.getTerminal(terminalId).then((m) => {
       if (disposed) return;
