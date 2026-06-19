@@ -84,14 +84,26 @@ write_plist() {
     "$TEMPLATE" > "$PLIST"
 }
 
+# launchd helpers — prefer the modern API (works inside a GUI session); fall back to
+# the legacy load/unload, which is what works over SSH (bootstrap returns EIO there).
+is_loaded() { launchctl list 2>/dev/null | grep -q "$LABEL"; }
+agent_pid() { launchctl list 2>/dev/null | awk -v l="$LABEL" '$3==l{print $1}'; }
+load_agent() {
+  if launchctl bootstrap "$DOMAIN" "$PLIST" 2>/dev/null; then
+    launchctl enable "$DOMAIN/$LABEL" 2>/dev/null || true
+  else
+    launchctl load -w "$PLIST" 2>/dev/null || true
+  fi
+  is_loaded
+}
+unload_agent() { launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || launchctl unload -w "$PLIST" 2>/dev/null || true; }
+
 cmd_install() {
   ensure_built
   bold "Installing launchd daemon ($LABEL)…"
   write_plist
-  launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
-  launchctl bootstrap "$DOMAIN" "$PLIST" || { red "launchctl bootstrap failed"; exit 1; }
-  launchctl enable "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
-  launchctl kickstart -k "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
+  unload_agent
+  load_agent || { red "failed to load the launchd agent"; exit 1; }
   green "Installed and started."
   info "Local URL:  http://localhost:$PORT"
   info "Logs:       $STDOUT"
@@ -100,24 +112,20 @@ cmd_install() {
 
 cmd_uninstall() {
   bold "Removing launchd daemon…"
-  launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
+  unload_agent
   rm -f "$PLIST"
   green "Uninstalled. (Your data in ~/.dispatch was left intact.)"
 }
 
-cmd_start() { launchctl kickstart "$DOMAIN/$LABEL" && green "Started." || { red "Not installed? Run: dispatch install"; exit 1; }; }
-cmd_stop() { launchctl kill SIGTERM "$DOMAIN/$LABEL" >/dev/null 2>&1 && green "Stopped." || red "Daemon not running."; }
-cmd_restart() { launchctl kickstart -k "$DOMAIN/$LABEL" && green "Restarted." || { red "Not installed? Run: dispatch install"; exit 1; }; }
+cmd_start() { load_agent && green "Started." || { red "Failed to start (run: dispatch install)"; exit 1; }; }
+cmd_stop() { unload_agent; green "Stopped."; }
+cmd_restart() { unload_agent; load_agent && green "Restarted." || { red "Failed to restart"; exit 1; }; }
 
 cmd_status() {
   bold "Daemon"
-  if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
-    local pid state
-    pid="$(launchctl print "$DOMAIN/$LABEL" 2>/dev/null | awk -F'= ' '/ pid =/{print $2; exit}')"
-    state="$(launchctl print "$DOMAIN/$LABEL" 2>/dev/null | awk -F'= ' '/ state =/{print $2; exit}')"
+  if is_loaded; then
     info "loaded   yes"
-    info "state    ${state:-unknown}"
-    info "pid      ${pid:-—}"
+    info "pid      $(agent_pid)"
   else
     info "loaded   no   (run: dispatch install)"
   fi
