@@ -12,6 +12,7 @@ import { providerColor } from '../common/typeIcons';
 import { useSettings } from '../../stores/settings';
 import { timeAgo } from '../../lib/time';
 import { NewTabMenu } from './NewTabMenu';
+import { RenameThreadModal } from './RenameThreadModal';
 import { api } from '../../api/client';
 
 function dotState(status: string): 'working' | 'idle' | 'needs_input' {
@@ -118,6 +119,7 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
   const [hover, setHover] = useState(false);
   const [menu, setMenu] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<Terminal | null>(null);
+  const [renameTarget, setRenameTarget] = useState<Terminal | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ tab: Terminal; x: number; y: number } | null>(null);
   const [projMenu, setProjMenu] = useState<{ x: number; y: number } | null>(null);
   const [projArchive, setProjArchive] = useState(false);
@@ -215,6 +217,7 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
         <>
           <div onClick={() => setCtxMenu(null)} onContextMenu={(e) => { e.preventDefault(); setCtxMenu(null); }} style={{ position: 'fixed', inset: 0, zIndex: 300 }} />
           <div style={{ position: 'fixed', top: ctxMenu.y, left: Math.min(ctxMenu.x, window.innerWidth - 184), zIndex: 301, minWidth: 168, background: '#1B1B1E', border: '1px solid #2C2C32', borderRadius: 9, padding: 4, boxShadow: '0 20px 50px -20px rgba(0,0,0,.8)' }}>
+            <button onClick={() => { setRenameTarget(ctxMenu.tab); setCtxMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>Rename thread</button>
             <button onClick={() => { setArchiveTarget(ctxMenu.tab); setCtxMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-status-red)', cursor: 'pointer', fontSize: 13 }}>Archive thread</button>
           </div>
         </>,
@@ -250,6 +253,15 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
         onConfirm={() => void archiveProject()}
         onCancel={() => setProjArchive(false)}
       />
+
+      {renameTarget && (
+        <RenameThreadModal
+          terminalId={renameTarget.id}
+          sessionId={session.id}
+          current={renameTarget.label}
+          onClose={() => setRenameTarget(null)}
+        />
+      )}
     </div>
   );
 }

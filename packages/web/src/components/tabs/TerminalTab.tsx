@@ -26,7 +26,6 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
   const sockRef = useRef<ReturnType<typeof openTerminalSocket> | null>(null);
   const termRef = useRef<XTerm | null>(null);
   const [meta, setMeta] = useState<Terminal | null>(null);
-  const [branch, setBranch] = useState<string | null>(null);
   const [drop, setDrop] = useState(false);
   const [note, setNote] = useState('');
   const [atBottom, setAtBottom] = useState(true);
@@ -196,7 +195,6 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     void api.getTerminal(terminalId).then((m) => {
       if (disposed) return;
       setMeta(m);
-      api.getGitInfo(m.sessionId).then((g) => { if (!disposed) setBranch(g.branch); }).catch(() => { /* best effort */ });
     });
 
     return () => {
@@ -283,6 +281,9 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
         {drop && (
           <div style={{ position: 'absolute', inset: 8, border: '2px dashed var(--color-accent)', borderRadius: 10, background: 'rgba(62,207,106,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', color: 'var(--color-accent)', fontSize: 14, fontWeight: 600 }}>Drop image → send to the agent</div>
         )}
+        {note && (
+          <div style={{ position: 'absolute', left: 14, bottom: 14, zIndex: 6, background: 'rgba(10,10,12,.85)', color: 'var(--color-accent)', fontSize: 12, fontWeight: 500, padding: '5px 11px', borderRadius: 9, pointerEvents: 'none' }}>{note}</div>
+        )}
       </div>
       {isMobile && (
         <>
@@ -299,6 +300,10 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
             onSubmit={(e) => { e.preventDefault(); sendMobileInput(); }}
             style={{ display: 'flex', gap: 8, padding: '8px', background: 'var(--color-pane)', borderTop: '1px solid var(--color-border)', flexShrink: 0, alignItems: 'center', paddingBottom: 'calc(8px + env(safe-area-inset-bottom))' }}
           >
+            <label title="Attach image" style={{ height: 40, width: 40, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 10, color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 18 }}>
+              📎
+              <input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => { onFiles(e.target.files); e.currentTarget.value = ''; }} />
+            </label>
             <input
               value={mobileInput}
               onChange={(e) => setMobileInput(e.target.value)}
@@ -312,16 +317,6 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
           </form>
         </>
       )}
-      <div style={{ height: 26, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 12, padding: '0 12px', background: 'var(--color-pane)', borderTop: '1px solid var(--color-border)', font: '400 11px var(--font-mono)', color: 'var(--color-text-secondary)' }}>
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{meta?.workingDir ?? ''}</span>
-        {branch && <span style={{ flexShrink: 0 }}>⎇ {branch}</span>}
-        {note && <span style={{ color: 'var(--color-accent)', flexShrink: 0 }}>{note}</span>}
-        <label title="Attach image" style={{ marginLeft: 'auto', cursor: 'pointer', flexShrink: 0 }}>
-          📎
-          <input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => onFiles(e.target.files)} />
-        </label>
-        <span style={{ flexShrink: 0 }}>{meta?.status === 'working' ? `Working · pid ${meta?.pid ?? '—'}` : `pid ${meta?.pid ?? '—'}`}</span>
-      </div>
     </div>
   );
 }
