@@ -21,6 +21,7 @@ const SOFT_KEYS: { label: string; seq: string }[] = [
 
 export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: { terminalId: string; socketFactory?: typeof openTerminalSocket }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const scrollOverlayRef = useRef<HTMLDivElement>(null);
   const sockRef = useRef<ReturnType<typeof openTerminalSocket> | null>(null);
   const termRef = useRef<XTerm | null>(null);
   const [meta, setMeta] = useState<Terminal | null>(null);
@@ -108,6 +109,11 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     const xtermEl = host?.querySelector('.xterm') as HTMLElement | null;
     if (xtermEl) { xtermEl.style.overflow = 'hidden'; xtermEl.style.touchAction = 'none'; }
     if (host) host.style.touchAction = 'none';
+    // On touch devices, forbid text selection across the whole terminal subtree.
+    // Otherwise a drag that starts over text begins an iOS selection instead of
+    // scrolling (xterm's accessibility-tree overlay is user-select:text), which
+    // is why scrolling only felt right when the finger was over empty space.
+    if (isMobile && host) host.classList.add('dispatch-noselect');
     { const s = screenEl(); if (s) { s.style.background = '#1E1E1E'; s.style.willChange = 'transform'; } }
 
     let rowHeight = Math.ceil((term.options.fontSize ?? 13) * 1.2);
@@ -121,7 +127,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     const updateAtBottom = () => setAtBottom(viewportAtBottom());
 
     let inertiaId = 0;
-    let lastY = 0, lastT = 0, vel = 0;
+    let lastY = 0, lastT = 0, vel = 0, startY = 0, moved = false;
     const stopInertia = () => { if (inertiaId) { cancelAnimationFrame(inertiaId); inertiaId = 0; } };
     const scrollByPx = (px: number) => {
       const h = rowHeight || 17;
@@ -141,18 +147,19 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       }
       updateAtBottom();
     };
-    const onTouchStart = (e: TouchEvent) => { stopInertia(); lastY = e.touches[0].clientY; lastT = performance.now(); vel = 0; };
+    const onTouchStart = (e: TouchEvent) => { stopInertia(); lastY = e.touches[0].clientY; startY = lastY; moved = false; lastT = performance.now(); vel = 0; };
     const onTouchMove = (e: TouchEvent) => {
       if (e.touches.length !== 1) return;
       const y = e.touches[0].clientY, now = performance.now();
       const dy = lastY - y, dt = now - lastT;
       lastY = y; lastT = now;
+      if (Math.abs(y - startY) > 6) moved = true;
       if (dt > 0) vel = dy / dt;
       scrollByPx(dy);
       e.preventDefault();
-      e.stopPropagation();
     };
     const onTouchEnd = () => {
+      if (!moved) { try { termRef.current?.focus(); } catch { /* jsdom */ } return; } // a tap → focus, no fling
       let v = Math.max(-12, Math.min(12, vel));
       if (Math.abs(v) < 0.03) return;
       let prev = performance.now();
@@ -165,10 +172,17 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       };
       inertiaId = requestAnimationFrame(step);
     };
-    if (host) {
-      host.addEventListener('touchstart', onTouchStart, { capture: true, passive: true });
-      host.addEventListener('touchmove', onTouchMove, { capture: true, passive: false });
-      host.addEventListener('touchend', onTouchEnd, { capture: true, passive: true });
+    // Attach to a STABLE transparent overlay, never to the xterm content: the DOM
+    // renderer destroys the <span> under the finger on every repaint, which makes
+    // iOS fire touchcancel and abort the gesture (scrolling died "after one line"
+    // whenever the finger was over text). The overlay never changes, so the touch
+    // sequence survives the repaints.
+    const touchSurface = scrollOverlayRef.current;
+    if (touchSurface) {
+      touchSurface.addEventListener('touchstart', onTouchStart, { passive: true });
+      touchSurface.addEventListener('touchmove', onTouchMove, { passive: false });
+      touchSurface.addEventListener('touchend', onTouchEnd, { passive: true });
+      touchSurface.addEventListener('touchcancel', onTouchEnd, { passive: true });
     }
 
     const vp0 = viewportEl();
@@ -186,10 +200,11 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     return () => {
       disposed = true;
       stopInertia();
-      if (host) {
-        host.removeEventListener('touchstart', onTouchStart, { capture: true } as EventListenerOptions);
-        host.removeEventListener('touchmove', onTouchMove, { capture: true } as EventListenerOptions);
-        host.removeEventListener('touchend', onTouchEnd, { capture: true } as EventListenerOptions);
+      if (touchSurface) {
+        touchSurface.removeEventListener('touchstart', onTouchStart);
+        touchSurface.removeEventListener('touchmove', onTouchMove);
+        touchSurface.removeEventListener('touchend', onTouchEnd);
+        touchSurface.removeEventListener('touchcancel', onTouchEnd);
       }
       vp0?.removeEventListener('scroll', updateAtBottom);
       offScroll.dispose();
@@ -241,6 +256,10 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
           drives the flex layout width (which previously blew the column out). */}
       <div style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
         <div ref={hostRef} style={{ position: 'absolute', inset: 0, padding: 15 }} />
+        {/* Stable transparent touch surface (mobile): the gesture lands here, never
+            on the xterm spans that get destroyed on every repaint. Sits above the
+            terminal but below the jump-to-latest button. */}
+        {isMobile && <div ref={scrollOverlayRef} style={{ position: 'absolute', inset: 0, zIndex: 3, touchAction: 'none' }} />}
         {!atBottom && (
           <button
             title="Scroll to latest"
