@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { CaretDoubleDown, Paperclip } from '@phosphor-icons/react';
+import { CaretDoubleDown, Paperclip, CaretUp, CaretDown, CaretLeft, CaretRight, KeyReturn, type Icon } from '@phosphor-icons/react';
 import '@xterm/xterm/css/xterm.css';
 import { openTerminalSocket } from '../../api/terminal-socket';
 import { api } from '../../api/client';
@@ -9,15 +9,15 @@ import type { Terminal } from '../../api/types';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useSettings } from '../../stores/settings';
 
-const SOFT_KEYS: { label: string; seq: string; title?: string }[] = [
+const SOFT_KEYS: { label: string; seq: string; title?: string; Icon?: Icon }[] = [
   { label: 'esc', seq: '\x1b', title: 'Escape' },
   { label: 'tab', seq: '\t', title: 'Tab' },
   { label: '⌃C', seq: '\x03', title: 'Ctrl-C (interrupt)' },
-  { label: '⏎', seq: '\r', title: 'Enter' },
-  { label: '↑', seq: '\x1b[A', title: 'Up' },
-  { label: '↓', seq: '\x1b[B', title: 'Down' },
-  { label: '←', seq: '\x1b[D', title: 'Left' },
-  { label: '→', seq: '\x1b[C', title: 'Right' },
+  { label: 'Enter', seq: '\r', title: 'Enter', Icon: KeyReturn },
+  { label: 'Up', seq: '\x1b[A', title: 'Up', Icon: CaretUp },
+  { label: 'Down', seq: '\x1b[B', title: 'Down', Icon: CaretDown },
+  { label: 'Left', seq: '\x1b[D', title: 'Left', Icon: CaretLeft },
+  { label: 'Right', seq: '\x1b[C', title: 'Right', Icon: CaretRight },
 ];
 
 export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: { terminalId: string; socketFactory?: typeof openTerminalSocket }) {
@@ -321,8 +321,8 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
             {SOFT_KEYS.map((k) => (
               <button key={k.label} title={k.title}
                 onPointerDown={(e) => { e.preventDefault(); sockRef.current?.send(k.seq); }}
-                style={{ flex: '1 1 auto', minWidth: 40, height: 36, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 7, color: 'var(--color-text-primary)', font: '500 14px var(--font-mono)', cursor: 'pointer' }}>
-                {k.label}
+                style={{ flex: '1 1 auto', minWidth: 40, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 7, color: 'var(--color-text-primary)', font: '500 14px var(--font-mono)', cursor: 'pointer' }}>
+                {k.Icon ? <k.Icon size={18} weight="bold" /> : k.label}
               </button>
             ))}
           </div>

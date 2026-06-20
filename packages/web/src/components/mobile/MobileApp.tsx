@@ -8,9 +8,8 @@ import { TabHost } from '../tabs/TabHost';
 import { AgentPane } from '../agents/AgentPane';
 import { EditAgentModal } from '../agents/EditAgentModal';
 import { SettingsModal } from '../settings/SettingsModal';
-import { useTabs, findTerminal } from '../../stores/tabs';
+import { useTabs } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
-import { useAgents } from '../../stores/agents';
 import { useAgentUI } from '../../stores/agentUI';
 import { useReconnect } from '../../stores/reconnect';
 import { Spinner } from '../common/Spinner';
@@ -24,8 +23,6 @@ export function MobileApp() {
   const projects = useProjects((s) => s.sessions);
   const byProject = useTabs((s) => s.byProject);
   const activeTab = useTabs((s) => s.activeTabId);
-  const agents = useAgents((s) => s.schedules);
-  const agentSel = useAgents((s) => s.selectedId);
   const editing = useAgentUI((s) => s.editing);
   const reconnectGen = useReconnect((s) => s.gen);
 
@@ -44,9 +41,10 @@ export function MobileApp() {
   const back = () => setLevel((l) => (l > 0 ? ((l - 1) as 0 | 1 | 2) : 0));
 
   const filtered = projects.filter((p) => p.name.toLowerCase().includes(query.toLowerCase()));
-  const threadLabel = activeTab ? findTerminal(byProject, activeTab)?.label : undefined;
-  const agentName = agents.find((a) => a.id === agentSel)?.name;
-  const headerTitle = level === 1 ? (project?.name ?? '') : level === 2 ? (leaf === 'agent' ? (agentName ?? 'Agent') : (threadLabel ?? 'Thread')) : '';
+  // The back button labels the screen it returns TO (iOS convention): the
+  // project detail goes back to "Projects"; a thread/agent goes back to its
+  // project.
+  const headerTitle = level === 1 ? 'Projects' : level === 2 ? (project?.name ?? 'Back') : '';
 
   const slot: React.CSSProperties = { flex: '0 0 100%', height: '100%', minWidth: 0 };
   const scrollSlot: React.CSSProperties = { ...slot, overflowY: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain' };

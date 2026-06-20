@@ -10,6 +10,7 @@ import { Spinner } from '../common/Spinner';
 import { ConfirmModal } from '../common/ConfirmModal';
 import { providerColor } from '../common/typeIcons';
 import { useSettings } from '../../stores/settings';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import { timeAgo } from '../../lib/time';
 import { NewTabMenu } from './NewTabMenu';
 import { RenameThreadModal } from './RenameThreadModal';
@@ -39,6 +40,8 @@ function ThreadRow({ tab, active, onClick, onMiddle, onArchive, onContext }: { t
   const color = providerColor(tab.type);
   const loading = useTabs((s) => !!s.loading[tab.id]);
   const fs = useSettings((s) => s.sidebarFontSize);
+  const isMobile = useIsMobile();
+  const dot = isMobile ? 11 : 8;
   return (
     <button
       onMouseEnter={() => setHover(true)}
@@ -47,23 +50,23 @@ function ThreadRow({ tab, active, onClick, onMiddle, onArchive, onContext }: { t
       onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onMiddle(); } }}
       onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContext(e.clientX, e.clientY); }}
       style={{
-        display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '7px 9px',
+        display: 'flex', alignItems: 'center', gap: isMobile ? 12 : 9, width: '100%', padding: isMobile ? '15px 12px' : '7px 9px',
         background: active ? 'var(--color-hover)' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
-        borderRadius: 6, border: 'none',
-        color: active ? '#fff' : 'var(--color-text-primary)', fontSize: fs, fontWeight: active ? 500 : 400,
+        borderRadius: isMobile ? 0 : 6, border: 'none', borderBottom: isMobile ? '1px solid var(--color-border)' : 'none',
+        color: active ? '#fff' : 'var(--color-text-primary)', fontSize: isMobile ? 16 : fs, fontWeight: active ? 500 : isMobile ? 450 : 400,
         textAlign: 'left', cursor: 'pointer',
       }}
     >
-      <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
+      <span style={{ width: dot, height: dot, borderRadius: '50%', background: color, flexShrink: 0 }} />
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tab.label}</span>
-      <span style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-        {hover ? (
+      <span style={{ width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        {hover && !isMobile ? (
           <span role="button" title="Archive thread" onClick={(e) => { e.stopPropagation(); onArchive(); }}
             style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, color: 'var(--color-text-secondary)', fontSize: 14, lineHeight: 1, cursor: 'pointer' }}>×</span>
         ) : (loading || tab.status === 'working') ? (
-          <Spinner size={11} />
+          <Spinner size={isMobile ? 13 : 11} />
         ) : (
-          <StatusDot state={dotState(tab.status)} size={7} />
+          <StatusDot state={dotState(tab.status)} size={isMobile ? 9 : 7} />
         )}
       </span>
     </button>
@@ -73,33 +76,37 @@ function ThreadRow({ tab, active, onClick, onMiddle, onArchive, onContext }: { t
 function AgentRow({ agent, active, onClick }: { agent: AgentSchedule; active: boolean; onClick: () => void }) {
   const [hover, setHover] = useState(false);
   const fs = useSettings((s) => s.sidebarFontSize);
+  const isMobile = useIsMobile();
+  const dot = isMobile ? 11 : 8;
   return (
     <button
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       onClick={(e) => { e.stopPropagation(); onClick(); }}
       style={{
-        display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '7px 9px',
+        display: 'flex', alignItems: 'center', gap: isMobile ? 12 : 9, width: '100%', padding: isMobile ? '15px 12px' : '7px 9px',
         background: active ? 'var(--color-hover)' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
-        borderRadius: 6, border: 'none', color: active ? '#fff' : 'var(--color-text-primary)', fontSize: fs,
-        fontWeight: active ? 500 : 400, textAlign: 'left', cursor: 'pointer', opacity: agent.enabled ? 1 : 0.55,
+        borderRadius: isMobile ? 0 : 6, border: 'none', borderBottom: isMobile ? '1px solid var(--color-border)' : 'none',
+        color: active ? '#fff' : 'var(--color-text-primary)', fontSize: isMobile ? 16 : fs,
+        fontWeight: active ? 500 : isMobile ? 450 : 400, textAlign: 'left', cursor: 'pointer', opacity: agent.enabled ? 1 : 0.55,
       }}
     >
-      <span style={{ width: 8, height: 8, borderRadius: '50%', background: providerColor(agent.provider), flexShrink: 0 }} />
+      <span style={{ width: dot, height: dot, borderRadius: '50%', background: providerColor(agent.provider), flexShrink: 0 }} />
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent.name}</span>
-      <span style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-        <StatusDot state={agent.enabled ? 'idle' : 'disabled'} size={7} />
+      <span style={{ width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        <StatusDot state={agent.enabled ? 'idle' : 'disabled'} size={isMobile ? 9 : 7} />
       </span>
     </button>
   );
 }
 
 function SectionHeader({ label, count, prominent, children }: { label: string; count: number; prominent?: boolean; children?: React.ReactNode }) {
+  const isMobile = useIsMobile();
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: prominent ? '4px 6px 3px' : '2px 6px' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: prominent ? (isMobile ? '10px 12px 5px' : '4px 6px 3px') : (isMobile ? '6px 12px 3px' : '2px 6px') }}>
       <span style={prominent
-        ? { font: '700 11px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-text-secondary)' }
-        : { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' }}>{label}</span>
+        ? { font: `700 ${isMobile ? 12 : 11}px var(--font-mono)`, letterSpacing: '1.3px', color: 'var(--color-text-secondary)' }
+        : { font: `500 ${isMobile ? 11 : 10}px var(--font-mono)`, letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' }}>{label}</span>
       {prominent && count > 0 && (
         <span style={{ font: '600 9.5px var(--font-mono)', color: 'var(--color-text-secondary)', background: 'var(--color-elevated)', borderRadius: 9, padding: '0 6px', lineHeight: '15px' }}>{count}</span>
       )}
@@ -125,6 +132,7 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
   const [projArchive, setProjArchive] = useState(false);
   const loadingMap = useTabs((s) => s.loading);
   const pfs = useSettings((s) => s.projectFontSize);
+  const isMobile = useIsMobile();
   const working = session.status === 'working' || tabs.some((t) => t.status === 'working' || loadingMap[t.id]);
   useEffect(() => { if (active) void useTabs.getState().loadTabs(session.id); }, [active, session.id]);
 
@@ -180,14 +188,14 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
-        background: active ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : hover ? 'rgba(255,255,255,0.04)' : 'transparent',
-        border: active ? '1px solid color-mix(in srgb, var(--color-accent) 45%, transparent)' : '1px solid transparent',
-        borderRadius: 8, padding: 4, marginBottom: 4, cursor: active ? 'default' : 'pointer', transition: 'background 0.12s ease, border-color 0.12s ease',
+        background: (!isMobile && active) ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : (!isMobile && hover) ? 'rgba(255,255,255,0.04)' : 'transparent',
+        border: (!isMobile && active) ? '1px solid color-mix(in srgb, var(--color-accent) 45%, transparent)' : '1px solid transparent',
+        borderRadius: 8, padding: isMobile ? '0 4px' : 4, marginBottom: 4, cursor: active ? 'default' : 'pointer', transition: 'background 0.12s ease, border-color 0.12s ease',
       }}
     >
-      <div style={{ padding: '5px 6px 4px' }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setProjMenu({ x: e.clientX, y: e.clientY }); }}>
+      <div style={{ padding: isMobile ? '4px 8px 8px' : '5px 6px 4px' }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setProjMenu({ x: e.clientX, y: e.clientY }); }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ fontWeight: 600, fontSize: pfs, color: active ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{session.name}</span>
+          <span style={{ fontWeight: 600, fontSize: isMobile ? 19 : pfs, color: (!isMobile && active) ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{session.name}</span>
           {working && <Spinner size={10} />}
           <span title={session.lastActivityAt ?? ''} style={{ marginLeft: 'auto', flexShrink: 0, font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{timeAgo(session.lastActivityAt)}</span>
           {(hover || projMenu) && (
