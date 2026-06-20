@@ -13,6 +13,7 @@ const SOFT_KEYS: { label: string; seq: string }[] = [
   { label: 'esc', seq: '\x1b' },
   { label: 'tab', seq: '\t' },
   { label: '⌃C', seq: '\x03' },
+  { label: '⏎', seq: '\r' },
   { label: '↑', seq: '\x1b[A' },
   { label: '↓', seq: '\x1b[B' },
   { label: '←', seq: '\x1b[D' },
@@ -29,6 +30,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
   const [drop, setDrop] = useState(false);
   const [note, setNote] = useState('');
   const [atBottom, setAtBottom] = useState(true);
+  const [mobileInput, setMobileInput] = useState('');
   const isMobile = useIsMobile();
   const termFontSize = useSettings((s) => s.fontSize);
   const termScrollback = useSettings((s) => s.scrollback);
@@ -159,7 +161,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       e.preventDefault();
     };
     const onTouchEnd = () => {
-      if (!moved) { try { termRef.current?.focus(); } catch { /* jsdom */ } return; } // a tap → focus, no fling
+      if (!moved) return; // terminal is non-interactive on mobile — a tap does nothing (type via the input bar)
       let v = Math.max(-12, Math.min(12, vel));
       if (Math.abs(v) < 0.03) return;
       let prev = performance.now();
@@ -243,9 +245,18 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     if (files) for (const f of Array.from(files)) void uploadImage(f);
   }
 
+  // Mobile input: the terminal is read-only to touch (you can only scroll it),
+  // so typing happens here and is sent to the PTY as a submitted line.
+  function sendMobileInput() {
+    const v = mobileInput;
+    if (!v) return;
+    sockRef.current?.send(v + '\r');
+    setMobileInput('');
+  }
+
   return (
     <div
-      onMouseDown={() => { try { termRef.current?.focus(); } catch { /* */ } }}
+      onMouseDown={() => { if (!isMobile) { try { termRef.current?.focus(); } catch { /* */ } } }}
       onDragOver={(e) => { e.preventDefault(); setDrop(true); }}
       onDragLeave={() => setDrop(false)}
       onDrop={(e) => { e.preventDefault(); setDrop(false); onFiles(e.dataTransfer.files); }}
@@ -274,15 +285,32 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
         )}
       </div>
       {isMobile && (
-        <div style={{ display: 'flex', gap: 6, padding: '6px 8px', background: 'var(--color-pane)', borderTop: '1px solid var(--color-border)', overflowX: 'auto', flexShrink: 0 }}>
-          {SOFT_KEYS.map((k) => (
-            <button key={k.label}
-              onPointerDown={(e) => { e.preventDefault(); sockRef.current?.send(k.seq); try { termRef.current?.focus(); } catch { /* */ } }}
-              style={{ minWidth: 42, height: 34, flexShrink: 0, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 7, color: 'var(--color-text-primary)', font: '500 13px var(--font-mono)', cursor: 'pointer' }}>
-              {k.label}
-            </button>
-          ))}
-        </div>
+        <>
+          <div style={{ display: 'flex', gap: 6, padding: '6px 8px', background: 'var(--color-pane)', borderTop: '1px solid var(--color-border)', overflowX: 'auto', flexShrink: 0 }}>
+            {SOFT_KEYS.map((k) => (
+              <button key={k.label}
+                onPointerDown={(e) => { e.preventDefault(); sockRef.current?.send(k.seq); }}
+                style={{ minWidth: 42, height: 34, flexShrink: 0, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 7, color: 'var(--color-text-primary)', font: '500 13px var(--font-mono)', cursor: 'pointer' }}>
+                {k.label}
+              </button>
+            ))}
+          </div>
+          <form
+            onSubmit={(e) => { e.preventDefault(); sendMobileInput(); }}
+            style={{ display: 'flex', gap: 8, padding: '8px', background: 'var(--color-pane)', borderTop: '1px solid var(--color-border)', flexShrink: 0, alignItems: 'center', paddingBottom: 'calc(8px + env(safe-area-inset-bottom))' }}
+          >
+            <input
+              value={mobileInput}
+              onChange={(e) => setMobileInput(e.target.value)}
+              placeholder="Type a message or command…"
+              autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck={false}
+              enterKeyHint="send"
+              /* 16px font avoids iOS auto-zoom on focus */
+              style={{ flex: 1, minWidth: 0, height: 40, padding: '0 13px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 10, color: 'var(--color-text-primary)', fontSize: 16 }}
+            />
+            <button type="submit" style={{ height: 40, padding: '0 18px', flexShrink: 0, background: 'var(--color-accent)', color: '#06140B', border: 'none', borderRadius: 10, fontWeight: 600, fontSize: 15, cursor: 'pointer' }}>Send</button>
+          </form>
+        </>
       )}
       <div style={{ height: 26, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 12, padding: '0 12px', background: 'var(--color-pane)', borderTop: '1px solid var(--color-border)', font: '400 11px var(--font-mono)', color: 'var(--color-text-secondary)' }}>
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{meta?.workingDir ?? ''}</span>

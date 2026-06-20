@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChatCircleDots, Robot, type Icon } from '@phosphor-icons/react';
 import type { Session, Terminal, AgentSchedule } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
@@ -21,8 +20,8 @@ function dotState(status: string): 'working' | 'idle' | 'needs_input' {
   return 'idle';
 }
 
-const SECTIONS: { key: string; label: string; types: Terminal['type'][]; add: 'menu' | 'browser' | 'notes' | null; prominent?: boolean; icon?: Icon }[] = [
-  { key: 'threads', label: 'THREADS', types: ['claude-code', 'codex', 'shell'], add: 'menu', prominent: true, icon: ChatCircleDots },
+const SECTIONS: { key: string; label: string; types: Terminal['type'][]; add: 'menu' | 'browser' | 'notes' | null; prominent?: boolean }[] = [
+  { key: 'threads', label: 'THREADS', types: ['claude-code', 'codex', 'shell'], add: 'menu', prominent: true },
   { key: 'web', label: 'WEB', types: ['browser'], add: 'browser' },
   { key: 'notes', label: 'NOTES', types: ['notes'], add: 'notes' },
   { key: 'files', label: 'FILES', types: ['file'], add: null },
@@ -94,10 +93,9 @@ function AgentRow({ agent, active, onClick }: { agent: AgentSchedule; active: bo
   );
 }
 
-function SectionHeader({ icon: IconCmp, label, count, prominent, children }: { icon?: Icon; label: string; count: number; prominent?: boolean; children?: React.ReactNode }) {
+function SectionHeader({ label, count, prominent, children }: { label: string; count: number; prominent?: boolean; children?: React.ReactNode }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: prominent ? '4px 6px 3px' : '2px 6px' }}>
-      {prominent && IconCmp && <IconCmp size={14} weight="fill" color="var(--color-accent)" style={{ flexShrink: 0 }} />}
       <span style={prominent
         ? { font: '700 11px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-text-secondary)' }
         : { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' }}>{label}</span>
@@ -150,7 +148,7 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
     if (sec.key !== 'threads' && !items.length) return null;
     return (
       <div key={sec.key} style={{ marginTop: sec.prominent ? 10 : 6 }}>
-        <SectionHeader icon={sec.icon} label={sec.label} count={items.length} prominent={sec.prominent}>
+        <SectionHeader label={sec.label} count={items.length} prominent={sec.prominent}>
           {sec.add && (
             <span style={{ position: 'relative', display: 'inline-flex' }}>
               <button title={`Add ${sec.label.toLowerCase()}`} onClick={(e) => {
@@ -201,7 +199,7 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
         <div style={{ overflow: 'hidden', minHeight: 0 }}>
           {renderSection(SECTIONS[0])}
           <div style={{ marginTop: 10 }}>
-            <SectionHeader icon={Robot} label="AGENTS" count={agents.length} prominent>
+            <SectionHeader label="AGENTS" count={agents.length} prominent>
               <button title="Add agent" onClick={(e) => { e.stopPropagation(); onNewAgent?.(session.id); }} style={plusBtn}>+</button>
             </SectionHeader>
             {agents.map((a) => (

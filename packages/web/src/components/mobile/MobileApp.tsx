@@ -23,7 +23,7 @@ export function MobileApp() {
   const detail = screen !== 'list';
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--color-base)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--color-base)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
       <header style={{ height: 'calc(50px + env(safe-area-inset-top))', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', paddingTop: 'env(safe-area-inset-top)', background: 'var(--color-pane)', borderBottom: '1px solid var(--color-border)' }}>
         {detail ? (
           <button onClick={() => setScreen('list')} style={{ background: 'none', border: 'none', color: 'var(--color-accent)', fontSize: 15, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2 }}>‹ Projects</button>
