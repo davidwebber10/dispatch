@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { CaretDoubleDown, Paperclip, CaretUp, CaretDown, CaretLeft, CaretRight, KeyReturn, type Icon } from '@phosphor-icons/react';
+import { Spinner } from '../common/Spinner';
 import '@xterm/xterm/css/xterm.css';
 import { openTerminalSocket } from '../../api/terminal-socket';
 import { api } from '../../api/client';
@@ -29,6 +30,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
   const [drop, setDrop] = useState(false);
   const [note, setNote] = useState('');
   const [atBottom, setAtBottom] = useState(true);
+  const [loading, setLoading] = useState(true);
   const [mobileInput, setMobileInput] = useState('');
   const isMobile = useIsMobile();
   const termFontSize = useSettings((s) => s.fontSize);
@@ -46,8 +48,12 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     termRef.current = term;
     if (hostRef.current) { try { term.open(hostRef.current); } catch { /* jsdom */ } }
 
-    const sock = socketFactory({ terminalId, onData: (chunk) => term.write(chunk) });
+    let gotData = false;
+    const sock = socketFactory({ terminalId, onData: (chunk) => { term.write(chunk); if (!gotData) { gotData = true; setLoading(false); } } });
     sockRef.current = sock;
+    // Hide the loading indicator once content arrives (or after a short grace
+    // period so a genuinely-quiet terminal doesn't spin forever).
+    const loadTimer = setTimeout(() => setLoading(false), 6000);
     term.onData((d) => sock.send(d));
 
     let lastW = -1, lastH = -1, lastCols = -1, lastRows = -1, pending = false;
@@ -231,6 +237,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
 
     return () => {
       disposed = true;
+      clearTimeout(loadTimer);
       stopInertia();
       stopSpring();
       if (touchSurface) {
@@ -304,6 +311,11 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
             on the xterm spans that get destroyed on every repaint. Sits above the
             terminal but below the jump-to-latest button. */}
         {isMobile && <div ref={scrollOverlayRef} style={{ position: 'absolute', inset: 0, zIndex: 3, touchAction: 'none' }} />}
+        {loading && (
+          <div style={{ position: 'absolute', inset: 0, zIndex: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-terminal)', pointerEvents: 'none' }}>
+            <Spinner size={26} />
+          </div>
+        )}
         {!atBottom && (
           <button
             title="Scroll to latest"

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { FolderOpen, CaretRight } from '@phosphor-icons/react';
 import type { Session, Terminal, AgentSchedule } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
@@ -104,13 +105,18 @@ function AgentRow({ agent, active, onClick }: { agent: AgentSchedule; active: bo
 
 function SectionHeader({ label, count, prominent, children }: { label: string; count: number; prominent?: boolean; children?: React.ReactNode }) {
   const isMobile = useIsMobile();
+  // On mobile all section labels share one bigger, brighter style so FILES
+  // matches THREADS / AGENTS; on desktop the prominent/quiet tiers are kept.
+  const labelStyle: React.CSSProperties = isMobile
+    ? { font: '700 13px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-text-secondary)' }
+    : prominent
+      ? { font: '700 11px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-text-secondary)' }
+      : { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: prominent ? (isMobile ? '10px 12px 5px' : '4px 6px 3px') : (isMobile ? '6px 12px 3px' : '2px 6px') }}>
-      <span style={prominent
-        ? { font: `700 ${isMobile ? 12 : 11}px var(--font-mono)`, letterSpacing: '1.3px', color: 'var(--color-text-secondary)' }
-        : { font: `500 ${isMobile ? 11 : 10}px var(--font-mono)`, letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' }}>{label}</span>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: isMobile ? '12px 12px 6px' : (prominent ? '4px 6px 3px' : '2px 6px') }}>
+      <span style={labelStyle}>{label}</span>
       {prominent && count > 0 && (
-        <span style={{ font: '600 9.5px var(--font-mono)', color: 'var(--color-text-secondary)', background: 'var(--color-elevated)', borderRadius: 9, padding: '0 6px', lineHeight: '15px' }}>{count}</span>
+        <span style={{ font: `600 ${isMobile ? 11 : 9.5}px var(--font-mono)`, color: 'var(--color-text-secondary)', background: 'var(--color-elevated)', borderRadius: 9, padding: '0 6px', lineHeight: isMobile ? '17px' : '15px' }}>{count}</span>
       )}
       <span style={{ flex: 1 }} />
       {children}
@@ -118,7 +124,7 @@ function SectionHeader({ label, count, prominent, children }: { label: string; c
   );
 }
 
-export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNewAgent }: { session: Session; active: boolean; onSelectTab: (id: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void }) {
+export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNewAgent, onBrowseFiles }: { session: Session; active: boolean; onSelectTab: (id: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void; onBrowseFiles?: (projectId: string) => void }) {
   const allAgents = useAgents((s) => s.schedules);
   const agents = allAgents.filter((a) => a.projectId === session.id);
   const agentSel = useAgents((s) => s.selectedId);
@@ -158,7 +164,9 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
 
   const renderSection = (sec: (typeof SECTIONS)[number]) => {
     const items = tabs.filter((t) => sec.types.includes(t.type));
-    if (sec.key !== 'threads' && !items.length) return null;
+    // On mobile, always show FILES (even with no pinned files) so "Browse Files" has a home.
+    const filesMobile = sec.key === 'files' && isMobile && !!onBrowseFiles;
+    if (sec.key !== 'threads' && !items.length && !filesMobile) return null;
     return (
       <div key={sec.key} style={{ marginTop: sec.prominent ? 10 : 6 }}>
         <SectionHeader label={sec.label} count={items.length} prominent={sec.prominent}>
@@ -182,6 +190,14 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
             onContext={(x, y) => setCtxMenu({ tab: t, x, y })} />
         ))}
         {sec.key === 'threads' && !items.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No threads yet</div>}
+        {filesMobile && (
+          <button onClick={(e) => { e.stopPropagation(); onBrowseFiles!(session.id); }}
+            style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', padding: '15px 12px', background: 'transparent', border: 'none', borderBottom: '1px solid var(--color-border)', color: 'var(--color-text-primary)', fontSize: 16, fontWeight: 450, textAlign: 'left', cursor: 'pointer' }}>
+            <FolderOpen size={20} weight="fill" color="var(--color-accent)" style={{ flexShrink: 0 }} />
+            <span style={{ flex: 1 }}>Browse Files</span>
+            <CaretRight size={16} color="var(--color-text-tertiary)" />
+          </button>
+        )}
       </div>
     );
   };

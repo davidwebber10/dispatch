@@ -4,6 +4,7 @@ import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
 import { ProjectCard } from '../sidebar/ProjectCard';
 import { NewProjectModal } from '../sidebar/NewProjectModal';
+import { FilesPane } from '../inspector/FilesPane';
 import { TabHost } from '../tabs/TabHost';
 import { AgentPane } from '../agents/AgentPane';
 import { EditAgentModal } from '../agents/EditAgentModal';
@@ -44,6 +45,7 @@ export function MobileApp() {
   const [leafTabId, setLeafTabId] = useState<string | null>(() => parsePath(location.pathname).tabId ?? null);
   const [settings, setSettings] = useState(false);
   const [newProject, setNewProject] = useState(false);
+  const [browseFiles, setBrowseFiles] = useState(false);
   const [query, setQuery] = useState('');
 
   const project = projects.find((p) => p.id === projectId) ?? null;
@@ -120,16 +122,16 @@ export function MobileApp() {
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', position: 'relative' }}>
         <div style={{ display: 'flex', width: '100%', height: '100%', transform: `translateX(-${level * 100}%)`, transition: 'transform .28s cubic-bezier(.4,0,.2,1)' }}>
-          {/* Level 0 — projects */}
-          <div style={scrollSlot}>
-            <div style={{ display: 'flex', gap: 8, padding: 10 }}>
+          {/* Level 0 — projects (search/+ pinned, only the list scrolls) */}
+          <div style={{ ...slot, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', gap: 8, padding: 10, flexShrink: 0 }}>
               <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search projects"
                 style={{ flex: 1, minWidth: 0, height: 40, padding: '0 13px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 10, color: 'var(--color-text-primary)', fontSize: 16 }} />
               <button onClick={() => setNewProject(true)} title="New project" style={{ width: 40, height: 40, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', border: 'none', borderRadius: 10, color: '#06140B', cursor: 'pointer' }}>
                 <Plus size={20} weight="bold" />
               </button>
             </div>
-            <div style={{ padding: '0 8px 12px' }}>
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y', padding: '0 8px 12px' }}>
               {filtered.map((p) => {
                 const tabs = byProject[p.id] ?? [];
                 const working = p.status === 'working' || tabs.some((t) => t.status === 'working');
@@ -156,7 +158,7 @@ export function MobileApp() {
           <div style={scrollSlot}>
             {project ? (
               <div style={{ padding: '8px 4px' }}>
-                <ProjectCard session={project} active onSelectTab={openThread} onSelectAgent={openAgent} onNewAgent={(pid) => useAgentUI.getState().openNew(pid)} />
+                <ProjectCard session={project} active onSelectTab={openThread} onSelectAgent={openAgent} onNewAgent={(pid) => useAgentUI.getState().openNew(pid)} onBrowseFiles={() => setBrowseFiles(true)} />
               </div>
             ) : <div style={{ padding: 16, color: 'var(--color-text-tertiary)' }}>No project selected</div>}
           </div>
@@ -172,6 +174,20 @@ export function MobileApp() {
 
       {newProject && <NewProjectModal open onClose={() => setNewProject(false)} />}
       {editing && <EditAgentModal scheduleId={editing.scheduleId} presetProjectId={editing.preset} onClose={() => useAgentUI.getState().closeEdit()} onSaved={(id) => openAgent(id)} />}
+
+      {browseFiles && project && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'var(--color-base)', display: 'flex', flexDirection: 'column', paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
+          <header style={{ height: 50, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 10px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
+            <button onClick={() => setBrowseFiles(false)} style={{ background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, padding: '4px 2px' }}>
+              <CaretLeft size={20} weight="bold" />
+              <span style={{ fontWeight: 600, fontSize: 16, color: 'var(--color-text-primary)' }}>Files</span>
+            </button>
+          </header>
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <FilesPane projectId={project.id} onOpenFile={(id) => { setBrowseFiles(false); openThread(id); }} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
