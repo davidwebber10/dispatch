@@ -386,7 +386,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
             the right inset is trimmed: xterm's column quantization + scrollbar leave
             ~7px unused on the right, so a smaller right inset re-centres the text
             (and gains a column or two of width). */}
-        <div ref={hostRef} style={{ position: 'absolute', ...(isMobile ? { top: 0, bottom: 12, left: 7, right: 6 } : { inset: 15 }) }} />
+        <div ref={hostRef} style={{ position: 'absolute', ...(isMobile ? { top: 0, bottom: 12, left: 4, right: 2 } : { inset: 15 }) }} />
         {/* Stable transparent touch surface (mobile): the gesture lands here, never
             on the xterm spans that get destroyed on every repaint. Sits above the
             terminal but below the jump-to-latest button. */}
