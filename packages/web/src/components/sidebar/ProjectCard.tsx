@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FolderOpen, CaretRight } from '@phosphor-icons/react';
 import type { Session, Terminal, AgentSchedule } from '../../api/types';
@@ -34,6 +34,93 @@ const plusBtn: React.CSSProperties = { width: 16, height: 16, display: 'flex', a
 
 function homePath(p: string): string {
   return (p || '').replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
+}
+
+// Mobile-only iOS-style swipe row: drag the content left to reveal a single
+// action button (Delete / Unpin) behind its right edge. Disabled on desktop,
+// where it renders children untouched. The opaque foreground (base bg) hides the
+// action when closed; we lock onto the horizontal axis only once the finger
+// commits to it so vertical list-scrolling still works, and swallow the tap that
+// ends a swipe so it never falls through to the row's navigation.
+//
+// Like iOS Mail: a slow drag just reveals the button (tap to act); but a far
+// drag (past ~half the row) or a fast left flick fires the action directly. The
+// action button stretches to meet the dragged edge so there's never a gap.
+function SwipeRow({ actionLabel, actionColor, onAction, disabled, children }: { actionLabel: string; actionColor: string; onAction: () => void; disabled?: boolean; children: React.ReactNode }) {
+  const [dx, setDx] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const dxRef = useRef(0);
+  const startX = useRef(0);
+  const startY = useRef(0);
+  const startDx = useRef(0);
+  const axis = useRef<'x' | 'y' | null>(null);
+  const moved = useRef(false);
+  const openRef = useRef(false);
+  const width = useRef(0);
+  const lastX = useRef(0);
+  const lastT = useRef(0);
+  const vx = useRef(0); // px/ms, negative = leftward
+  const REVEAL = 84;
+
+  if (disabled) return <>{children}</>;
+
+  const set = (v: number) => { dxRef.current = v; setDx(v); };
+  const onStart = (e: React.TouchEvent) => {
+    const t = e.touches[0];
+    startX.current = t.clientX; startY.current = t.clientY; startDx.current = dxRef.current;
+    width.current = (e.currentTarget as HTMLElement).offsetWidth;
+    lastX.current = t.clientX; lastT.current = Date.now(); vx.current = 0;
+    axis.current = null; moved.current = false; setDragging(true);
+  };
+  const onMove = (e: React.TouchEvent) => {
+    const t = e.touches[0];
+    const ddx = t.clientX - startX.current;
+    const ddy = t.clientY - startY.current;
+    if (axis.current === null && (Math.abs(ddx) > 8 || Math.abs(ddy) > 8)) {
+      axis.current = Math.abs(ddx) > Math.abs(ddy) ? 'x' : 'y';
+    }
+    if (axis.current !== 'x') return;
+    moved.current = true;
+    const now = Date.now();
+    const dt = now - lastT.current;
+    if (dt > 0) vx.current = (t.clientX - lastX.current) / dt;
+    lastX.current = t.clientX; lastT.current = now;
+    const cap = width.current ? width.current * 0.95 : REVEAL + 24;
+    set(Math.max(-cap, Math.min(0, startDx.current + ddx)));
+  };
+  const onEnd = () => {
+    setDragging(false);
+    if (axis.current !== 'x') return;
+    const farEnough = dxRef.current < -(width.current * 0.5);
+    const fastFlick = vx.current < -0.6 && dxRef.current < -REVEAL / 2;
+    if (farEnough || fastFlick) {
+      set(0); openRef.current = false;
+      onAction();
+      return;
+    }
+    const open = dxRef.current < -REVEAL / 2;
+    set(open ? -REVEAL : 0);
+    openRef.current = open;
+  };
+  const onClickCapture = (e: React.MouseEvent) => {
+    if (moved.current || openRef.current) {
+      e.preventDefault(); e.stopPropagation();
+      if (openRef.current && !moved.current) { set(0); openRef.current = false; }
+      moved.current = false;
+    }
+  };
+  return (
+    <div style={{ position: 'relative', overflow: 'hidden' }}>
+      <button onClick={() => { set(0); openRef.current = false; onAction(); }}
+        style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: Math.max(REVEAL, -dx), display: 'flex', alignItems: 'center', justifyContent: 'center', background: actionColor, color: '#fff', border: 'none', font: '600 13px var(--font-sans)', cursor: 'pointer' }}>
+        {actionLabel}
+      </button>
+      <div onTouchStart={onStart} onTouchMove={onMove} onTouchEnd={onEnd} onClickCapture={onClickCapture}
+        style={{ position: 'relative', transform: `translateX(${dx}px)`, transition: dragging ? 'none' : 'transform .22s cubic-bezier(.4,0,.2,1)', background: 'var(--color-base)', touchAction: 'pan-y' }}>
+        {children}
+      </div>
+    </div>
+  );
 }
 
 function ThreadRow({ tab, active, onClick, onMiddle, onArchive, onContext }: { tab: Terminal; active: boolean; onClick: (e: React.MouseEvent) => void; onMiddle: () => void; onArchive: () => void; onContext: (x: number, y: number) => void }) {
@@ -137,13 +224,14 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
   const [menu, setMenu] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<Terminal | null>(null);
   const [renameTarget, setRenameTarget] = useState<Terminal | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{ kind: 'thread'; thread: Terminal } | { kind: 'agent'; agent: AgentSchedule } | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ tab: Terminal; x: number; y: number } | null>(null);
   const [projMenu, setProjMenu] = useState<{ x: number; y: number } | null>(null);
   const [projArchive, setProjArchive] = useState(false);
   const loadingMap = useTabs((s) => s.loading);
   const pfs = useSettings((s) => s.projectFontSize);
   const isMobile = useIsMobile();
-  const plusStyle: React.CSSProperties = isMobile ? { ...plusBtn, width: 34, height: 34, font: '500 26px/1 var(--font-sans)', borderRadius: 9 } : plusBtn;
+  const plusStyle: React.CSSProperties = isMobile ? { ...plusBtn, width: 34, height: 34, font: '500 26px/1 var(--font-sans)', borderRadius: 12 } : plusBtn;
   const working = session.status === 'working' || tabs.some((t) => t.status === 'working' || loadingMap[t.id]);
   useEffect(() => { if (active) void useTabs.getState().loadTabs(session.id); }, [active, session.id]);
 
@@ -157,6 +245,10 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
   async function archive(tab: Terminal) {
     setArchiveTarget(null);
     try { await api.archiveTerminal(tab.id); await useTabs.getState().loadTabs(session.id); } catch { /* surfaced via connection state */ }
+  }
+
+  async function deleteAgent(a: AgentSchedule) {
+    try { await api.deleteSchedule(a.id); await useAgents.getState().loadSchedules(); } catch { /* surfaced via connection state */ }
   }
 
   async function archiveProject() {
@@ -183,11 +275,16 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
           )}
         </SectionHeader>
         {items.map((t) => (
-          <ThreadRow key={t.id} tab={t} active={t.id === activeTabId}
-            onClick={(e) => { e.stopPropagation(); onSelectTab(t.id); }}
-            onMiddle={() => useTabs.getState().openTab(t.id, true)}
-            onArchive={() => setArchiveTarget(t)}
-            onContext={(x, y) => setCtxMenu({ tab: t, x, y })} />
+          <SwipeRow key={t.id} disabled={!isMobile}
+            actionLabel={t.type === 'file' ? 'Unpin' : 'Delete'}
+            actionColor={t.type === 'file' ? '#3F3F46' : 'var(--color-status-red)'}
+            onAction={() => { if (t.type === 'file') void archive(t); else setPendingDelete({ kind: 'thread', thread: t }); }}>
+            <ThreadRow tab={t} active={t.id === activeTabId}
+              onClick={(e) => { e.stopPropagation(); onSelectTab(t.id); }}
+              onMiddle={() => useTabs.getState().openTab(t.id, true)}
+              onArchive={() => setArchiveTarget(t)}
+              onContext={(x, y) => setCtxMenu({ tab: t, x, y })} />
+          </SwipeRow>
         ))}
         {sec.key === 'threads' && !items.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No threads yet</div>}
       </div>
@@ -201,7 +298,7 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
       style={{
         background: (!isMobile && active) ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : (!isMobile && hover) ? 'rgba(255,255,255,0.04)' : 'transparent',
         border: (!isMobile && active) ? '1px solid color-mix(in srgb, var(--color-accent) 45%, transparent)' : '1px solid transparent',
-        borderRadius: 8, padding: isMobile ? '0 4px' : 4, marginBottom: 4, cursor: active ? 'default' : 'pointer', transition: 'background 0.12s ease, border-color 0.12s ease',
+        borderRadius: 12, padding: isMobile ? '0 4px' : 4, marginBottom: 4, cursor: active ? 'default' : 'pointer', transition: 'background 0.12s ease, border-color 0.12s ease',
       }}
     >
       <div style={{ padding: isMobile ? '4px 8px 8px' : '5px 6px 4px' }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setProjMenu({ x: e.clientX, y: e.clientY }); }}>
@@ -224,22 +321,20 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
               <button title="Add agent" onClick={(e) => { e.stopPropagation(); onNewAgent?.(session.id); }} style={plusStyle}>+</button>
             </SectionHeader>
             {agents.map((a) => (
-              <AgentRow key={a.id} agent={a} active={agentFocused && a.id === agentSel} onClick={() => onSelectAgent?.(a.id)} />
+              <SwipeRow key={a.id} disabled={!isMobile} actionLabel="Delete" actionColor="var(--color-status-red)" onAction={() => setPendingDelete({ kind: 'agent', agent: a })}>
+                <AgentRow agent={a} active={agentFocused && a.id === agentSel} onClick={() => onSelectAgent?.(a.id)} />
+              </SwipeRow>
             ))}
             {!agents.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No agents yet</div>}
           </div>
           {SECTIONS.slice(1).map(renderSection)}
           {isMobile && onBrowseFiles && (
-            <>
-              {/* Hairline divider sets Browse Files apart from the pinned FILES list above. */}
-              <div style={{ height: 1, background: 'var(--color-border)', margin: '16px 6px 0' }} />
-              <button onClick={(e) => { e.stopPropagation(); onBrowseFiles(session.id); }}
-                style={{ display: 'flex', alignItems: 'center', gap: 11, width: '100%', marginTop: 14, padding: '14px 12px', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 12, color: 'var(--color-text-primary)', fontSize: 16, fontWeight: 500, textAlign: 'left', cursor: 'pointer' }}>
-                <FolderOpen size={20} weight="fill" color="var(--color-accent)" style={{ flexShrink: 0 }} />
-                <span style={{ flex: 1 }}>Browse Files</span>
-                <CaretRight size={16} color="var(--color-text-tertiary)" />
-              </button>
-            </>
+            <button onClick={(e) => { e.stopPropagation(); onBrowseFiles(session.id); }}
+              style={{ display: 'flex', alignItems: 'center', gap: 11, width: '100%', marginTop: 18, padding: '14px 12px', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 12, color: 'var(--color-text-primary)', fontSize: 16, fontWeight: 500, textAlign: 'left', cursor: 'pointer' }}>
+              <FolderOpen size={20} weight="fill" color="var(--color-accent)" style={{ flexShrink: 0 }} />
+              <span style={{ flex: 1 }}>Browse Files</span>
+              <CaretRight size={16} color="var(--color-text-tertiary)" />
+            </button>
           )}
         </div>
       </div>
@@ -273,6 +368,26 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
         danger
         onConfirm={() => { if (archiveTarget) void archive(archiveTarget); }}
         onCancel={() => setArchiveTarget(null)}
+      />
+
+      <ConfirmModal
+        open={!!pendingDelete}
+        title={pendingDelete?.kind === 'agent' ? 'Delete agent?' : 'Delete thread?'}
+        message={
+          pendingDelete?.kind === 'agent'
+            ? `“${pendingDelete.agent.name}” will be permanently deleted.`
+            : pendingDelete?.kind === 'thread'
+              ? `“${pendingDelete.thread.label}” will be removed from the list. You can restore it from the archive.`
+              : ''
+        }
+        confirmLabel="Delete"
+        danger
+        onConfirm={() => {
+          if (pendingDelete?.kind === 'thread') void archive(pendingDelete.thread);
+          else if (pendingDelete?.kind === 'agent') void deleteAgent(pendingDelete.agent);
+          setPendingDelete(null);
+        }}
+        onCancel={() => setPendingDelete(null)}
       />
 
       <ConfirmModal
