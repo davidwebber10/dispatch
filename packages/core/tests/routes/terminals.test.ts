@@ -3,17 +3,19 @@ import request from 'supertest';
 import { createApp } from '../../src/server.js';
 import Database from 'better-sqlite3';
 import { initSchema } from '../../src/db/schema.js';
+import * as terminalsDb from '../../src/db/terminals.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
 describe('terminal routes', () => {
   let app: any;
+  let db: Database.Database;
   let sessionId: string;
   let tmpDir: string;
 
   beforeEach(async () => {
-    const db = new Database(':memory:');
+    db = new Database(':memory:');
     initSchema(db);
     app = createApp({ db, skipPty: true });
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'commandcenter-terminal-test-'));
@@ -31,6 +33,17 @@ describe('terminal routes', () => {
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
     expect(res.body).toHaveLength(0);
+  });
+
+  it('GET /api/sessions/:id/terminals excludes agent runner terminals (config.runner)', async () => {
+    terminalsDb.create(db, { id: 'normal-1', sessionId, type: 'claude-code', label: 'thread', skipPermissions: false });
+    terminalsDb.create(db, { id: 'runner-1', sessionId, type: 'claude-code', label: 'agent run', skipPermissions: true, config: { runner: true, runnerPrompt: 'go' } });
+
+    const list = await request(app).get(`/api/sessions/${sessionId}/terminals`);
+    expect(list.status).toBe(200);
+    const ids = list.body.map((t: any) => t.id);
+    expect(ids).toContain('normal-1');
+    expect(ids).not.toContain('runner-1');
   });
 
   it('POST /api/sessions/:id/terminals creates a shell terminal', async () => {
