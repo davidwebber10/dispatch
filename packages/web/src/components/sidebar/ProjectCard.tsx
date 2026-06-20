@@ -230,12 +230,16 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
           </div>
           {SECTIONS.slice(1).map(renderSection)}
           {isMobile && onBrowseFiles && (
-            <button onClick={(e) => { e.stopPropagation(); onBrowseFiles(session.id); }}
-              style={{ display: 'flex', alignItems: 'center', gap: 11, width: '100%', marginTop: 12, padding: '14px 12px', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 12, color: 'var(--color-text-primary)', fontSize: 16, fontWeight: 500, textAlign: 'left', cursor: 'pointer' }}>
-              <FolderOpen size={20} weight="fill" color="var(--color-accent)" style={{ flexShrink: 0 }} />
-              <span style={{ flex: 1 }}>Browse Files</span>
-              <CaretRight size={16} color="var(--color-text-tertiary)" />
-            </button>
+            <>
+              {/* Hairline divider sets Browse Files apart from the pinned FILES list above. */}
+              <div style={{ height: 1, background: 'var(--color-border)', margin: '16px 6px 0' }} />
+              <button onClick={(e) => { e.stopPropagation(); onBrowseFiles(session.id); }}
+                style={{ display: 'flex', alignItems: 'center', gap: 11, width: '100%', marginTop: 14, padding: '14px 12px', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 12, color: 'var(--color-text-primary)', fontSize: 16, fontWeight: 500, textAlign: 'left', cursor: 'pointer' }}>
+                <FolderOpen size={20} weight="fill" color="var(--color-accent)" style={{ flexShrink: 0 }} />
+                <span style={{ flex: 1 }}>Browse Files</span>
+                <CaretRight size={16} color="var(--color-text-tertiary)" />
+              </button>
+            </>
           )}
         </div>
       </div>
