@@ -67,6 +67,15 @@ export function initSchema(db: Database.Database): void {
       external_session_id TEXT,
       last_opened_at      TEXT,
       unread_since        TEXT,
+      cost_usd            REAL,
+      total_tokens        INTEGER,
+      input_tokens        INTEGER,
+      output_tokens       INTEGER,
+      model               TEXT,
+      num_turns           INTEGER,
+      result_text         TEXT,
+      transcript_path     TEXT,
+      exit_code           INTEGER,
       created_at          TEXT NOT NULL,
       updated_at          TEXT NOT NULL,
       FOREIGN KEY (schedule_id) REFERENCES agent_schedules(id),
@@ -92,6 +101,16 @@ export function initSchema(db: Database.Database): void {
     { table: 'terminals', column: 'archived_at', sql: 'ALTER TABLE terminals ADD COLUMN archived_at TEXT' },
     { table: 'terminals', column: 'sort_order', sql: 'ALTER TABLE terminals ADD COLUMN sort_order INTEGER DEFAULT 0' },
     { table: 'sessions', column: 'sort_order', sql: 'ALTER TABLE sessions ADD COLUMN sort_order INTEGER DEFAULT 0' },
+    // Structured agent-run outcome capture (tokens, cost, model, result, transcript).
+    { table: 'agent_runs', column: 'cost_usd', sql: 'ALTER TABLE agent_runs ADD COLUMN cost_usd REAL' },
+    { table: 'agent_runs', column: 'total_tokens', sql: 'ALTER TABLE agent_runs ADD COLUMN total_tokens INTEGER' },
+    { table: 'agent_runs', column: 'input_tokens', sql: 'ALTER TABLE agent_runs ADD COLUMN input_tokens INTEGER' },
+    { table: 'agent_runs', column: 'output_tokens', sql: 'ALTER TABLE agent_runs ADD COLUMN output_tokens INTEGER' },
+    { table: 'agent_runs', column: 'model', sql: 'ALTER TABLE agent_runs ADD COLUMN model TEXT' },
+    { table: 'agent_runs', column: 'num_turns', sql: 'ALTER TABLE agent_runs ADD COLUMN num_turns INTEGER' },
+    { table: 'agent_runs', column: 'result_text', sql: 'ALTER TABLE agent_runs ADD COLUMN result_text TEXT' },
+    { table: 'agent_runs', column: 'transcript_path', sql: 'ALTER TABLE agent_runs ADD COLUMN transcript_path TEXT' },
+    { table: 'agent_runs', column: 'exit_code', sql: 'ALTER TABLE agent_runs ADD COLUMN exit_code INTEGER' },
   ];
 
   for (const m of migrations) {

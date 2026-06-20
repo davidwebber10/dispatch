@@ -44,6 +44,15 @@ export interface AgentRunRow {
   external_session_id: string | null;
   last_opened_at: string | null;
   unread_since: string | null;
+  cost_usd: number | null;
+  total_tokens: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  model: string | null;
+  num_turns: number | null;
+  result_text: string | null;
+  transcript_path: string | null;
+  exit_code: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -259,5 +268,67 @@ export function markRunOpened(db: Database.Database, runId: string): AgentRunRow
   const now = nowIso();
   db.prepare('UPDATE agent_runs SET last_opened_at = ?, unread_since = NULL, updated_at = ? WHERE id = ?')
     .run(now, now, runId);
+  return getRun(db, runId);
+}
+
+/** Record where a run's streamed JSONL transcript is being persisted (set at launch). */
+export function attachTranscript(db: Database.Database, runId: string, transcriptPath: string): AgentRunRow | null {
+  db.prepare('UPDATE agent_runs SET transcript_path = ?, updated_at = ? WHERE id = ?')
+    .run(transcriptPath, nowIso(), runId);
+  return getRun(db, runId);
+}
+
+export interface FinalizeRunInput {
+  status: AgentRunStatus;
+  error?: string | null;
+  costUsd?: number | null;
+  totalTokens?: number | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  model?: string | null;
+  numTurns?: number | null;
+  resultText?: string | null;
+  exitCode?: number | null;
+  unread?: boolean;
+}
+
+/**
+ * Terminal-state writer that also captures the run's outcome telemetry (cost,
+ * tokens, model, turns, result text, exit code). Fields left undefined are kept;
+ * passing null explicitly clears them.
+ */
+export function finalizeRun(db: Database.Database, runId: string, input: FinalizeRunInput): AgentRunRow | null {
+  const current = getRun(db, runId);
+  if (!current) return null;
+
+  const now = nowIso();
+  const started = current.started_at ?? now;
+  const completed = ['succeeded', 'failed', 'cancelled'].includes(input.status) ? now : current.completed_at;
+  const keep = <T>(v: T | undefined, cur: T): T => (v === undefined ? cur : v);
+
+  db.prepare(`
+    UPDATE agent_runs SET
+      status = ?, started_at = ?, completed_at = ?, error = ?,
+      cost_usd = ?, total_tokens = ?, input_tokens = ?, output_tokens = ?,
+      model = ?, num_turns = ?, result_text = ?, exit_code = ?,
+      unread_since = ?, updated_at = ?
+    WHERE id = ?
+  `).run(
+    input.status,
+    started,
+    completed,
+    keep(input.error, current.error),
+    keep(input.costUsd, current.cost_usd),
+    keep(input.totalTokens, current.total_tokens),
+    keep(input.inputTokens, current.input_tokens),
+    keep(input.outputTokens, current.output_tokens),
+    keep(input.model, current.model),
+    keep(input.numTurns, current.num_turns),
+    keep(input.resultText, current.result_text),
+    keep(input.exitCode, current.exit_code),
+    input.unread ? now : current.unread_since,
+    now,
+    runId,
+  );
   return getRun(db, runId);
 }
