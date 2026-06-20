@@ -17,6 +17,14 @@ html, body, #root { margin: 0; padding: 0; height: 100vh; height: 100dvh; overfl
 html.pwa-standalone, html.pwa-standalone body, html.pwa-standalone #root { height: 100vh; }
 body { background: var(--color-canvas); color: var(--color-text-primary); font-family: var(--font-sans); }
 ::selection { background: rgba(62,207,106,.25); }
+/* xterm computes its scrollbar reservation as offsetWidth-scrollArea OR 15 when
+   that's 0 — so a fully hidden/overlay scrollbar makes FitAddon reserve 15px and
+   leave a dead gap on the right. A 1px transparent scrollbar measures 1, so the
+   `|| 15` fallback never fires and the terminal reclaims the width (still scrolls
+   via touch/wheel + the jump-to-latest button). */
+.xterm-viewport::-webkit-scrollbar { width: 1px; height: 1px; }
+.xterm-viewport::-webkit-scrollbar-thumb,
+.xterm-viewport::-webkit-scrollbar-track { background: transparent; }
 /* Mobile terminals: stop a finger-drag over text from starting an iOS text
    selection, which hijacks the scroll gesture (xterm's accessibility tree sets
    user-select:text over exactly where the visible text is, so scrolling only
