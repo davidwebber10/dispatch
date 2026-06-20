@@ -89,6 +89,11 @@ export class PTYManager extends EventEmitter {
     return this.ptys.has(sessionId);
   }
 
+  /** Ids of all currently-live PTYs (terminal ids for modern terminals). */
+  liveIds(): string[] {
+    return [...this.ptys.keys()];
+  }
+
   killAll(): void {
     for (const [id] of this.ptys) {
       this.kill(id);

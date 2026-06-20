@@ -1,12 +1,16 @@
 import type Database from 'better-sqlite3';
-import type { SessionStatus, SessionRow } from '../types.js';
-import { getProvider } from '../providers/registry.js';
+import type { SessionStatus } from '../types.js';
 import type { PTYManager } from '../pty/manager.js';
 import type { EventBroadcaster } from '../ws/events.js';
 import * as sessionsDb from '../db/sessions.js';
+import * as terminalsDb from '../db/terminals.js';
 
-const ACTIVITY_THRESHOLD_MS = 10_000;
-const DEFAULT_INTERVAL_MS = 5_000;
+// A thread is "working" while its PTY is still emitting output. Claude Code /
+// Codex animate a spinner continuously while a turn is active (including during
+// tool calls), so recent output is a reliable "running" signal; a few seconds of
+// silence means it's back at the prompt.
+const ACTIVITY_THRESHOLD_MS = 4_000;
+const DEFAULT_INTERVAL_MS = 2_000;
 
 export function mapHookEventToStatus(eventName: string): SessionStatus | null {
   switch (eventName) {
@@ -22,8 +26,12 @@ export function mapHookEventToStatus(eventName: string): SessionStatus | null {
 }
 
 /**
- * Starts a polling loop that checks PTY activity for providers using pty-timing.
- * Returns the interval ID for cleanup.
+ * Drives live thread (terminal) status from PTY activity. Modern PTYs are keyed
+ * by terminal id, so we walk the live PTYs directly rather than the sessions
+ * table (whose ids don't match the PTY map). Each interactive terminal is marked
+ * `working` while its PTY is active and `waiting` once it goes quiet; a
+ * hook-set `needs_input` is kept sticky until output resumes. Session status is
+ * then rolled up from its terminals. Returns the interval id for cleanup.
  */
 export function startPtyTimingLoop(
   db: Database.Database,
@@ -31,46 +39,53 @@ export function startPtyTimingLoop(
   broadcaster: EventBroadcaster,
   intervalMs: number = DEFAULT_INTERVAL_MS,
 ): NodeJS.Timeout {
-  return setInterval(() => {
-    // Get all non-done, non-archived sessions
-    const rows = db.prepare(
-      "SELECT * FROM sessions WHERE status != 'done' AND archived_at IS NULL AND pid IS NOT NULL",
-    ).all() as SessionRow[];
+  return setInterval(() => ptyStatusTick(db, ptyManager, broadcaster), intervalMs);
+}
 
-    for (const row of rows) {
-      let provider;
-      try {
-        provider = getProvider(row.provider);
-      } catch {
-        continue;
-      }
+/** One pass of the activity → status reconciliation (exported for tests). */
+export function ptyStatusTick(
+  db: Database.Database,
+  ptyManager: PTYManager,
+  broadcaster: EventBroadcaster,
+): void {
+  {
+    const now = Date.now();
+    const touchedSessions = new Set<string>();
 
-      if (provider.statusStrategy !== 'pty-timing') continue;
+    for (const id of ptyManager.liveIds()) {
+      const term = terminalsDb.getById(db, id);
+      if (!term) continue;                         // legacy session-keyed PTY — skip
+      if (!terminalsDb.isPtyType(term.type)) continue;
+      let config: { runner?: boolean } = {};
+      try { config = JSON.parse(term.config || '{}'); } catch { /* default {} */ }
+      if (config.runner) continue;                 // agent-run terminals are owned by AgentService
 
-      const lastActivity = ptyManager.getLastActivity(row.id);
-      const isAlive = ptyManager.isAlive(row.id);
+      const last = ptyManager.getLastActivity(id);
+      const recent = !!last && now - last.getTime() <= ACTIVITY_THRESHOLD_MS;
+      const current = term.status || 'waiting';
+      const next: SessionStatus = recent
+        ? 'working'
+        : current === 'needs_input' ? 'needs_input' : 'waiting';
 
-      let newStatus: SessionStatus | null = null;
-
-      if (lastActivity) {
-        const elapsed = Date.now() - lastActivity.getTime();
-        if (elapsed <= ACTIVITY_THRESHOLD_MS) {
-          newStatus = 'working';
-        } else if (isAlive) {
-          newStatus = 'waiting';
-        }
-      } else if (isAlive) {
-        newStatus = 'waiting';
-      }
-
-      if (newStatus && newStatus !== row.status) {
-        sessionsDb.updateStatus(db, row.id, newStatus);
-        broadcaster.broadcast({
-          type: 'session:status',
-          sessionId: row.id,
-          status: newStatus,
-        });
+      if (next !== current) {
+        terminalsDb.updateStatus(db, id, next);
+        broadcaster.broadcast({ type: 'terminal:status', terminalId: id, status: next });
+        touchedSessions.add(term.session_id);
       }
     }
-  }, intervalMs);
+
+    for (const sessionId of touchedSessions) {
+      let sessionStatus: SessionStatus = 'waiting';
+      for (const t of terminalsDb.listBySession(db, sessionId)) {
+        const s = t.status || 'waiting';
+        if (s === 'working') { sessionStatus = 'working'; break; }
+        if (s === 'needs_input') sessionStatus = 'needs_input';
+      }
+      const session = sessionsDb.getById(db, sessionId);
+      if (session && session.status !== 'done' && session.status !== sessionStatus) {
+        sessionsDb.updateStatus(db, sessionId, sessionStatus);
+        broadcaster.broadcast({ type: 'session:status', sessionId, status: sessionStatus });
+      }
+    }
+  }
 }

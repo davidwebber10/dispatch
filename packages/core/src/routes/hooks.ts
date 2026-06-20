@@ -43,6 +43,9 @@ export function createHooksRouter(db: Database.Database, broadcaster: EventBroad
 
     const status = mapHookEventToStatus(hook_event_name);
 
+    // Hooks own only the needs_input signal; working/waiting is driven by live
+    // PTY activity (see startPtyTimingLoop). A working/waiting hook just clears a
+    // stale needs_input so the thread isn't stuck showing "needs input".
     if (status === 'needs_input') {
       terminalsDb.updateStatus(db, terminalId, status);
       broadcaster.broadcast({ type: 'terminal:status', terminalId, status });
