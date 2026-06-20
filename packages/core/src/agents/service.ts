@@ -41,16 +41,19 @@ export interface AgentRun {
 }
 
 interface SessionTerminalService {
-  createTerminal(
+  /**
+   * Launch the provider in autonomous "runner" mode with the prompt as a launch
+   * arg, so it executes the prompt to completion (and the process exits when
+   * done) instead of opening an interactive REPL we type into.
+   */
+  createRunnerTerminal(
     sessionId: string,
     type: 'claude-code' | 'codex',
-    label?: string,
-    skipPermissions?: boolean,
-    workingDir?: string,
-    externalId?: string,
+    label: string | undefined,
+    workingDir: string | undefined,
+    prompt: string,
   ): { id: string; externalId?: string | null };
   stopTerminal(terminalId: string): void;
-  writeToTerminal(terminalId: string, data: string): void;
 }
 
 export interface CreateScheduleRequest {
@@ -201,17 +204,18 @@ export class AgentService {
 
     try {
       run = agentsDb.updateRunStatus(this.db, run.id, 'starting')!;
-      const terminal = this.sessionService.createTerminal(
+      // Launch the provider headlessly WITH the prompt so it actually executes
+      // the run autonomously to completion (and exits), instead of opening an
+      // interactive TUI and typing the prompt into it.
+      const terminal = this.sessionService.createRunnerTerminal(
         schedule.project_id,
         schedule.provider,
         schedule.default_terminal_label || schedule.name,
-        false,
         schedule.working_dir,
-        undefined,
+        schedule.prompt,
       );
       run = agentsDb.attachTerminal(this.db, run.id, terminal.id)!;
       run = agentsDb.updateRunStatus(this.db, run.id, 'working', { externalSessionId: terminal.externalId ?? null })!;
-      this.sessionService.writeToTerminal(terminal.id, `${schedule.prompt}\r`);
       this.broadcaster.broadcast({ type: 'agent:run-updated', run: toRun(run) });
       return toRun(run);
     } catch (err: any) {
@@ -260,6 +264,29 @@ export class AgentService {
 
     const status = activity === 'busy' ? 'working' : activity === 'needs_input' ? 'needs_input' : 'idle';
     const run = toRun(agentsDb.updateRunStatus(this.db, row.id, status, { unread: activity === 'needs_input' })!);
+    this.broadcaster.broadcast({ type: 'agent:run-updated', run });
+    return run;
+  }
+
+  /**
+   * Finalize an agent run when its runner process exits. A clean exit (code 0)
+   * transitions the run to 'succeeded'; any non-zero/abnormal exit transitions
+   * it to 'failed'. No-op when the terminal isn't backing a run, or the run has
+   * already reached a terminal state (e.g. it was cancelled, which kills the
+   * PTY and would otherwise re-fire this on exit).
+   */
+  handleTerminalExit(terminalId: string, exitCode: number): AgentRun | null {
+    const row = this.db
+      .prepare('SELECT id, status FROM agent_runs WHERE terminal_id = ? ORDER BY created_at DESC LIMIT 1')
+      .get(terminalId) as { id: string; status: agentsDb.AgentRunStatus } | undefined;
+    if (!row) return null;
+
+    const ACTIVE: agentsDb.AgentRunStatus[] = ['queued', 'starting', 'working', 'needs_input', 'idle'];
+    if (!ACTIVE.includes(row.status)) return null;
+
+    const status: agentsDb.AgentRunStatus = exitCode === 0 ? 'succeeded' : 'failed';
+    const error = exitCode === 0 ? null : `Process exited with code ${exitCode}`;
+    const run = toRun(agentsDb.updateRunStatus(this.db, row.id, status, { error, unread: true })!);
     this.broadcaster.broadcast({ type: 'agent:run-updated', run });
     return run;
   }

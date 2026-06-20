@@ -222,7 +222,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   }
 
   // When a PTY exits, clean up monitor and update status
-  ptyManager.on('exit', (id: string) => {
+  ptyManager.on('exit', (id: string, exitCode: number) => {
     terminalMonitor.remove(id);
     // During shutdown the DB is closed before node-pty's async exit events fire;
     // skip the DB work to avoid "database connection is not open" crashes.
@@ -241,6 +241,14 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       sessionsDb.updateStatus(db, id, 'waiting');
       sessionsDb.updatePid(db, id, null);
       broadcaster.broadcast({ type: 'session:status', sessionId: id, status: 'waiting' });
+    }
+
+    // If this terminal was backing an autonomous agent run, finalize the run:
+    // exit 0 -> succeeded, non-zero -> failed.
+    try {
+      agentService.handleTerminalExit(id, exitCode);
+    } catch (err) {
+      console.error('agent run exit handler failed', err);
     }
   });
 

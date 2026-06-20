@@ -145,6 +145,48 @@ export class SessionService {
     return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
   }
 
+  /**
+   * Create a terminal that launches the provider in autonomous "runner" mode:
+   * the prompt is passed as a launch arg so the agent executes it to completion
+   * (and the process exits when done) instead of opening an interactive REPL
+   * with text typed into it. The prompt + runner flag are persisted in the
+   * terminal's config so a relaunch re-runs the same prompt. Used by agent runs.
+   */
+  createRunnerTerminal(sessionId: string, type: TerminalType, label: string | undefined, workingDir: string | undefined, prompt: string): terminalsDb.Terminal {
+    const session = sessionsDb.getById(this.db, sessionId);
+    if (!session) throw new Error('Session not found');
+
+    const resolvedDir = workingDir
+      ? workingDir.replace(/^~/, os.homedir())
+      : session.working_dir;
+
+    if (workingDir) {
+      appState.set(this.db, 'last_directory', resolvedDir);
+    }
+
+    const terminalId = uuid();
+    const displayLabel = label || this.defaultTerminalLabel(sessionId, type);
+
+    terminalsDb.create(this.db, {
+      id: terminalId,
+      sessionId,
+      type,
+      label: displayLabel,
+      skipPermissions: true,
+      workingDir: resolvedDir,
+      config: { runner: true, runnerPrompt: prompt },
+    });
+
+    try {
+      this.spawnTerminal(terminalId);
+    } catch (err: any) {
+      terminalsDb.remove(this.db, terminalId);
+      throw new Error(`Failed to start ${displayLabel}: ${err.message}`);
+    }
+
+    return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
+  }
+
   // Create a non-PTY tab (browser, notes)
   createTab(sessionId: string, type: string, label: string, config?: Record<string, any>): terminalsDb.Terminal {
     const session = sessionsDb.getById(this.db, sessionId);
@@ -353,6 +395,13 @@ export class SessionService {
 
     const workDir = terminal.working_dir || session.working_dir;
 
+    // Runner terminals (agent runs) persist their prompt in config and always
+    // launch the headless autonomous command — never resume/interactive.
+    let config: Record<string, any> = {};
+    try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
+    const runnerPrompt: string | undefined =
+      config.runner && typeof config.runnerPrompt === 'string' ? config.runnerPrompt : undefined;
+
     let command: string;
     let args: string[];
 
@@ -361,9 +410,14 @@ export class SessionService {
       args = [];
     } else {
       const provider = getProvider(terminal.type);
-      const cmd = terminal.external_id
-        ? provider.buildResumeCommand({ externalSessionId: terminal.external_id, workDir })
-        : provider.buildNewCommand({ workDir });
+      let cmd: { command: string; args: string[] };
+      if (runnerPrompt !== undefined) {
+        cmd = provider.buildRunnerCommand({ workDir, prompt: runnerPrompt });
+      } else if (terminal.external_id) {
+        cmd = provider.buildResumeCommand({ externalSessionId: terminal.external_id, workDir });
+      } else {
+        cmd = provider.buildNewCommand({ workDir });
+      }
       command = cmd.command;
       args = cmd.args;
     }

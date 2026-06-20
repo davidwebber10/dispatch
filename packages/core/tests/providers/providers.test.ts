@@ -22,6 +22,16 @@ describe('claude-code provider', () => {
     expect(cmd.args).toEqual(['--dangerously-skip-permissions', '-r', 'abc']);
   });
 
+  it('builds an autonomous runner command (headless --print with the prompt)', () => {
+    const cmd = claudeCodeProvider.buildRunnerCommand({ workDir: '/tmp', prompt: 'fix bug' });
+    expect(cmd.command).toBe('claude');
+    // Runs headlessly and exits on completion, skipping permission prompts.
+    expect(cmd.args).toContain('--print');
+    expect(cmd.args).toContain('--dangerously-skip-permissions');
+    // Prompt is passed as a launch arg (and is the final positional).
+    expect(cmd.args[cmd.args.length - 1]).toBe('fix bug');
+  });
+
   it('has hooks status strategy', () => {
     expect(claudeCodeProvider.statusStrategy).toBe('hooks');
   });
@@ -42,6 +52,15 @@ describe('codex provider', () => {
     const cmd = codexProvider.buildResumeCommand({ externalSessionId: 'xyz', workDir: '/tmp' });
     expect(cmd.command).toBe('codex');
     expect(cmd.args).toEqual(['resume', 'xyz']);
+  });
+
+  it('builds an autonomous runner command (codex exec with the prompt)', () => {
+    const cmd = codexProvider.buildRunnerCommand({ workDir: '/tmp', prompt: 'fix bug' });
+    expect(cmd.command).toBe('codex');
+    // `codex exec` runs non-interactively and exits on completion.
+    expect(cmd.args[0]).toBe('exec');
+    expect(cmd.args).toContain('--dangerously-bypass-approvals-and-sandbox');
+    expect(cmd.args[cmd.args.length - 1]).toBe('fix bug');
   });
 
   it('has pty-timing status strategy', () => {

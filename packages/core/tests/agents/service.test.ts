@@ -20,26 +20,25 @@ beforeEach(() => {
     workingDir: '/srv/tenex',
   });
   sessionService = {
-    createTerminal: vi.fn((sessionId, type, label, skipPermissions, workingDir, externalId) => {
+    createRunnerTerminal: vi.fn((sessionId, type, label, workingDir, prompt) => {
       terminalsDb.create(db, {
         id: 'term-1',
         sessionId,
         type,
         label,
-        skipPermissions,
+        skipPermissions: true,
         workingDir,
-        externalId,
+        config: { runner: true, runnerPrompt: prompt },
       });
       return terminalsDb.rowToTerminal(terminalsDb.getById(db, 'term-1')!);
     }),
     stopTerminal: vi.fn(),
-    writeToTerminal: vi.fn(),
   };
   broadcaster = { broadcast: vi.fn() };
 });
 
 describe('AgentService', () => {
-  it('runNow creates a run, creates a terminal on the server, and injects the prompt', () => {
+  it('runNow launches an autonomous runner terminal with the prompt (no typed-in prompt)', () => {
     const service = new AgentService(db, sessionService, broadcaster);
     const schedule = service.createSchedule({
       projectId: 'proj-1',
@@ -59,16 +58,94 @@ describe('AgentService', () => {
     const run = service.runNow(schedule.id);
 
     expect(run.terminalId).toBe('term-1');
-    expect(sessionService.createTerminal).toHaveBeenCalledWith(
+    expect(run.status).toBe('working');
+    // The prompt is passed as a launch arg to the runner — not typed into a TUI.
+    expect(sessionService.createRunnerTerminal).toHaveBeenCalledWith(
       'proj-1',
       'codex',
       'Daily CI Fix',
-      false,
       '/srv/tenex',
-      undefined,
+      'Fix CI',
     );
-    expect(sessionService.writeToTerminal).toHaveBeenCalledWith('term-1', 'Fix CI\r');
     expect(broadcaster.broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: 'agent:run-created' }));
+  });
+
+  it('handleTerminalExit marks the run succeeded on a clean (0) exit', () => {
+    const service = new AgentService(db, sessionService, broadcaster);
+    const schedule = service.createSchedule({
+      projectId: 'proj-1',
+      name: 'Daily CI Fix',
+      provider: 'codex',
+      workingDir: '/srv/tenex',
+      prompt: 'Fix CI',
+      scheduleKind: 'one-shot',
+      runAt: '2026-05-08T12:00:00.000Z',
+      recurrenceRule: null,
+      timezone: 'UTC',
+      enabled: true,
+      nextRunAt: null,
+      defaultTerminalLabel: 'Daily CI Fix',
+    });
+    service.runNow(schedule.id);
+
+    const finished = service.handleTerminalExit('term-1', 0)!;
+    expect(finished.status).toBe('succeeded');
+    expect(finished.completedAt).toBeTruthy();
+    expect(finished.error).toBeNull();
+    expect(broadcaster.broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: 'agent:run-updated' }));
+  });
+
+  it('handleTerminalExit marks the run failed on a non-zero exit', () => {
+    const service = new AgentService(db, sessionService, broadcaster);
+    const schedule = service.createSchedule({
+      projectId: 'proj-1',
+      name: 'Daily CI Fix',
+      provider: 'codex',
+      workingDir: '/srv/tenex',
+      prompt: 'Fix CI',
+      scheduleKind: 'one-shot',
+      runAt: '2026-05-08T12:00:00.000Z',
+      recurrenceRule: null,
+      timezone: 'UTC',
+      enabled: true,
+      nextRunAt: null,
+      defaultTerminalLabel: 'Daily CI Fix',
+    });
+    service.runNow(schedule.id);
+
+    const finished = service.handleTerminalExit('term-1', 1)!;
+    expect(finished.status).toBe('failed');
+    expect(finished.completedAt).toBeTruthy();
+    expect(finished.error).toContain('1');
+  });
+
+  it('handleTerminalExit does not override an already-cancelled run', () => {
+    const service = new AgentService(db, sessionService, broadcaster);
+    const schedule = service.createSchedule({
+      projectId: 'proj-1',
+      name: 'Daily CI Fix',
+      provider: 'codex',
+      workingDir: '/srv/tenex',
+      prompt: 'Fix CI',
+      scheduleKind: 'one-shot',
+      runAt: '2026-05-08T12:00:00.000Z',
+      recurrenceRule: null,
+      timezone: 'UTC',
+      enabled: true,
+      nextRunAt: null,
+      defaultTerminalLabel: 'Daily CI Fix',
+    });
+    const run = service.runNow(schedule.id);
+    service.cancelRun(run.id);
+
+    // The cancel killed the PTY, which later fires exit — must stay cancelled.
+    expect(service.handleTerminalExit('term-1', 1)).toBeNull();
+    expect(service.getRun(run.id)!.status).toBe('cancelled');
+  });
+
+  it('handleTerminalExit is a no-op for a terminal with no run', () => {
+    const service = new AgentService(db, sessionService, broadcaster);
+    expect(service.handleTerminalExit('no-such-terminal', 0)).toBeNull();
   });
 
   it('processDueRuns dispatches each due schedule once', () => {

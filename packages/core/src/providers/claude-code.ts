@@ -18,6 +18,22 @@ export const claudeCodeProvider: SessionProvider = {
     return { command: 'claude', args: ['--dangerously-skip-permissions', '-r', externalSessionId] };
   },
 
+  buildRunnerCommand({ prompt }) {
+    // Headless autonomous run:
+    //   --print            run the agentic loop and EXIT when complete (the
+    //                      process-exit is our run-completion signal).
+    //   --verbose          stream human-readable turn/tool progress to the PTY
+    //                      so the live RunnerView shows work as it happens.
+    //   --dangerously-skip-permissions
+    //                      let tools run without interactive approval (print
+    //                      mode cannot answer permission prompts otherwise).
+    // The prompt is passed positionally and submitted at launch.
+    return {
+      command: 'claude',
+      args: ['--dangerously-skip-permissions', '--verbose', '--print', prompt],
+    };
+  },
+
   buildHooksConfig({ serverUrl, sessionId }) {
     const hook = {
       type: 'http',

@@ -4,6 +4,13 @@ export interface SessionProvider {
   statusStrategy?: 'hooks' | 'pty-timing';
   buildNewCommand(args: { workDir: string; prompt?: string }): { command: string; args: string[] };
   buildResumeCommand(args: { externalSessionId: string; workDir: string }): { command: string; args: string[] };
+  /**
+   * Build the command for an autonomous "runner" launch: the provider is run
+   * headlessly with the prompt so it executes the agentic loop to completion
+   * and the process EXITS when done (a clean completion signal), rather than
+   * dropping into an interactive REPL. Used by scheduled/triggered agent runs.
+   */
+  buildRunnerCommand(args: { workDir: string; prompt: string }): { command: string; args: string[] };
   buildHooksConfig?(args: { serverUrl: string; sessionId: string }): Record<string, unknown>;
   /**
    * After a fresh session has been spawned, attempt to discover the external
