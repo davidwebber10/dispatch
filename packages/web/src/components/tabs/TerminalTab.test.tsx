@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { vi, test, expect, beforeEach, afterEach } from 'vitest';
 
 vi.mock('@xterm/xterm', () => ({
-  Terminal: class { cols = 80; rows = 24; loadAddon() {} open() {} write() {} onData() {} dispose() {} focus() {} },
+  Terminal: class { cols = 80; rows = 24; loadAddon() {} open() {} write() {} onData() {} onScroll() { return { dispose() {} }; } scrollToBottom() {} dispose() {} focus() {} },
 }));
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }));
 
