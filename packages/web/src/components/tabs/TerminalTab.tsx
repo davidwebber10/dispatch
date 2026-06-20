@@ -104,8 +104,14 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     const screenEl = () => host?.querySelector('.xterm-screen') as HTMLElement | null;
     const rowsEl = () => host?.querySelector('.xterm-rows') as HTMLElement | null;
     const xtermEl = host?.querySelector('.xterm') as HTMLElement | null;
-    if (xtermEl) xtermEl.style.overflow = 'hidden';
-    { const s = screenEl(); if (s) { s.style.background = '#1E1E1E'; s.style.willChange = 'transform'; } }
+    if (xtermEl) { xtermEl.style.overflow = 'hidden'; xtermEl.style.touchAction = 'none'; }
+    if (host) host.style.touchAction = 'none';
+    // Own every touch ourselves — .xterm-viewport is natively scrollable
+    // (overflow-y: scroll), so without this iOS races our handler for the
+    // gesture and a swipe sometimes pans natively (1-line snap / momentum)
+    // instead of running our smooth scroll. touch-action:none stops that.
+    { const s = screenEl(); if (s) { s.style.background = '#1E1E1E'; s.style.willChange = 'transform'; s.style.touchAction = 'none'; } }
+    { const vp = viewportEl(); if (vp) vp.style.touchAction = 'none'; }
     let inertiaId = 0;
     let lastY = 0, lastT = 0, vel = 0, subPx = 0;
     const rowH = () => { const r = rowsEl(); return r && r.children.length ? r.getBoundingClientRect().height / r.children.length : Math.ceil((term.options.fontSize ?? 13) * 1.2); };
