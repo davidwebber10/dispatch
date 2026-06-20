@@ -11,6 +11,10 @@ import './theme.css';
 function primeSafeAreaInsets() {
   const standalone = (navigator as unknown as { standalone?: boolean }).standalone
     || window.matchMedia('(display-mode: standalone)').matches;
+  // Lets CSS pin height:100vh for the installed PWA (no Safari toolbar, and
+  // 100dvh mis-reports on cold start) while the browser uses 100dvh so the
+  // bottom input clears Safari's URL/tab bar.
+  if (standalone) document.documentElement.classList.add('pwa-standalone');
   if (!standalone) return;
   const meta = document.querySelector('meta[name="viewport"]');
   const original = meta?.getAttribute('content') || '';

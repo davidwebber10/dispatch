@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { CaretDoubleDown } from '@phosphor-icons/react';
+import { CaretDoubleDown, Paperclip } from '@phosphor-icons/react';
 import '@xterm/xterm/css/xterm.css';
 import { openTerminalSocket } from '../../api/terminal-socket';
 import { api } from '../../api/client';
@@ -9,15 +9,15 @@ import type { Terminal } from '../../api/types';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useSettings } from '../../stores/settings';
 
-const SOFT_KEYS: { label: string; seq: string }[] = [
-  { label: 'esc', seq: '\x1b' },
-  { label: 'tab', seq: '\t' },
-  { label: '⌃C', seq: '\x03' },
-  { label: '⏎', seq: '\r' },
-  { label: '↑', seq: '\x1b[A' },
-  { label: '↓', seq: '\x1b[B' },
-  { label: '←', seq: '\x1b[D' },
-  { label: '→', seq: '\x1b[C' },
+const SOFT_KEYS: { label: string; seq: string; title?: string }[] = [
+  { label: 'esc', seq: '\x1b', title: 'Escape' },
+  { label: 'tab', seq: '\t', title: 'Tab' },
+  { label: '⌃C', seq: '\x03', title: 'Ctrl-C (interrupt)' },
+  { label: '⏎', seq: '\r', title: 'Enter' },
+  { label: '↑', seq: '\x1b[A', title: 'Up' },
+  { label: '↓', seq: '\x1b[B', title: 'Down' },
+  { label: '←', seq: '\x1b[D', title: 'Left' },
+  { label: '→', seq: '\x1b[C', title: 'Right' },
 ];
 
 export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: { terminalId: string; socketFactory?: typeof openTerminalSocket }) {
@@ -287,11 +287,11 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       </div>
       {isMobile && (
         <>
-          <div style={{ display: 'flex', gap: 6, padding: '6px 8px', background: 'var(--color-pane)', borderTop: '1px solid var(--color-border)', overflowX: 'auto', flexShrink: 0 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '6px 8px', background: 'var(--color-pane)', borderTop: '1px solid var(--color-border)', flexShrink: 0 }}>
             {SOFT_KEYS.map((k) => (
-              <button key={k.label}
+              <button key={k.label} title={k.title}
                 onPointerDown={(e) => { e.preventDefault(); sockRef.current?.send(k.seq); }}
-                style={{ minWidth: 42, height: 34, flexShrink: 0, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 7, color: 'var(--color-text-primary)', font: '500 13px var(--font-mono)', cursor: 'pointer' }}>
+                style={{ flex: '1 1 auto', minWidth: 40, height: 36, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 7, color: 'var(--color-text-primary)', font: '500 14px var(--font-mono)', cursor: 'pointer' }}>
                 {k.label}
               </button>
             ))}
@@ -300,8 +300,8 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
             onSubmit={(e) => { e.preventDefault(); sendMobileInput(); }}
             style={{ display: 'flex', gap: 8, padding: '8px', background: 'var(--color-pane)', borderTop: '1px solid var(--color-border)', flexShrink: 0, alignItems: 'center', paddingBottom: 'calc(8px + env(safe-area-inset-bottom))' }}
           >
-            <label title="Attach image" style={{ height: 40, width: 40, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 10, color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 18 }}>
-              📎
+            <label title="Attach image" style={{ height: 40, width: 40, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 10, color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
+              <Paperclip size={20} weight="regular" />
               <input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => { onFiles(e.target.files); e.currentTarget.value = ''; }} />
             </label>
             <input
