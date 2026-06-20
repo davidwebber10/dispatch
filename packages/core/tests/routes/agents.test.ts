@@ -68,6 +68,16 @@ describe('agent routes', () => {
     expect(['working', 'failed']).toContain(run.body.status);
   });
 
+  it('returns run events (steps array) and 404s unknown runs', async () => {
+    const create = await request(app).post('/api/agents/schedules').send(scheduleBody()).expect(201);
+    const run = await request(app).post(`/api/agents/schedules/${create.body.id}/run-now`);
+
+    const events = await request(app).get(`/api/agents/runs/${run.body.id}/events`).expect(200);
+    expect(Array.isArray(events.body.steps)).toBe(true);
+
+    await request(app).get('/api/agents/runs/does-not-exist/events').expect(404);
+  });
+
   it('marks run opened', async () => {
     const create = await request(app)
       .post('/api/agents/schedules')

@@ -54,6 +54,12 @@ export function createAgentsRouter(agentService: AgentService): Router {
     res.json(run);
   });
 
+  router.get('/runs/:id/events', (req, res) => {
+    const run = agentService.getRun(req.params.id);
+    if (!run) return res.status(404).json({ error: 'Run not found' });
+    res.json({ steps: agentService.getRunSteps(req.params.id) });
+  });
+
   router.post('/runs/:id/opened', (req, res) => {
     const run = agentService.markRunOpened(req.params.id);
     if (!run) return res.status(404).json({ error: 'Run not found' });
