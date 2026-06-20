@@ -9,7 +9,7 @@ import { useAgentUI } from '../../stores/agentUI';
 import { StatusDot } from '../common/StatusDot';
 import { Spinner } from '../common/Spinner';
 import { ConfirmModal } from '../common/ConfirmModal';
-import { providerColor } from '../common/typeIcons';
+import { providerColor, fileVisual } from '../common/typeIcons';
 import { useSettings } from '../../stores/settings';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { timeAgo } from '../../lib/time';
@@ -58,7 +58,9 @@ function ThreadRow({ tab, active, onClick, onMiddle, onArchive, onContext }: { t
         textAlign: 'left', cursor: 'pointer',
       }}
     >
-      <span style={{ width: dot, height: dot, borderRadius: '50%', background: color, flexShrink: 0 }} />
+      {tab.type === 'file'
+        ? (() => { const fv = fileVisual(tab.label); return <fv.Icon size={isMobile ? 18 : 15} weight="fill" color={fv.color} style={{ flexShrink: 0 }} />; })()
+        : <span style={{ width: dot, height: dot, borderRadius: '50%', background: color, flexShrink: 0 }} />}
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tab.label}</span>
       <span style={{ flexShrink: 0, font: `400 ${isMobile ? 12 : 10.5}px var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>{timeAgo(tab.createdAt)}</span>
       <span style={{ width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -164,9 +166,7 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
 
   const renderSection = (sec: (typeof SECTIONS)[number]) => {
     const items = tabs.filter((t) => sec.types.includes(t.type));
-    // On mobile, always show FILES (even with no pinned files) so "Browse Files" has a home.
-    const filesMobile = sec.key === 'files' && isMobile && !!onBrowseFiles;
-    if (sec.key !== 'threads' && !items.length && !filesMobile) return null;
+    if (sec.key !== 'threads' && !items.length) return null;
     return (
       <div key={sec.key} style={{ marginTop: sec.prominent ? 10 : 6 }}>
         <SectionHeader label={sec.label} count={items.length} prominent={sec.prominent}>
@@ -190,14 +190,6 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
             onContext={(x, y) => setCtxMenu({ tab: t, x, y })} />
         ))}
         {sec.key === 'threads' && !items.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No threads yet</div>}
-        {filesMobile && (
-          <button onClick={(e) => { e.stopPropagation(); onBrowseFiles!(session.id); }}
-            style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', padding: '15px 12px', background: 'transparent', border: 'none', borderBottom: '1px solid var(--color-border)', color: 'var(--color-text-primary)', fontSize: 16, fontWeight: 450, textAlign: 'left', cursor: 'pointer' }}>
-            <FolderOpen size={20} weight="fill" color="var(--color-accent)" style={{ flexShrink: 0 }} />
-            <span style={{ flex: 1 }}>Browse Files</span>
-            <CaretRight size={16} color="var(--color-text-tertiary)" />
-          </button>
-        )}
       </div>
     );
   };
@@ -237,6 +229,14 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
             {!agents.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No agents yet</div>}
           </div>
           {SECTIONS.slice(1).map(renderSection)}
+          {isMobile && onBrowseFiles && (
+            <button onClick={(e) => { e.stopPropagation(); onBrowseFiles(session.id); }}
+              style={{ display: 'flex', alignItems: 'center', gap: 11, width: '100%', marginTop: 12, padding: '14px 12px', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 12, color: 'var(--color-text-primary)', fontSize: 16, fontWeight: 500, textAlign: 'left', cursor: 'pointer' }}>
+              <FolderOpen size={20} weight="fill" color="var(--color-accent)" style={{ flexShrink: 0 }} />
+              <span style={{ flex: 1 }}>Browse Files</span>
+              <CaretRight size={16} color="var(--color-text-tertiary)" />
+            </button>
+          )}
         </div>
       </div>
 

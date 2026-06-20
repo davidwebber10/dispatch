@@ -299,14 +299,16 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       onDragLeave={() => setDrop(false)}
       onDrop={(e) => { e.preventDefault(); setDrop(false); onFiles(e.dataTransfer.files); }}
       onPaste={(e) => { const f = Array.from(e.clipboardData?.files ?? []); if (f.length) { e.preventDefault(); f.forEach((x) => void uploadImage(x)); } }}
-      style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', background: 'var(--color-terminal)', position: 'relative' }}
+      style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', background: isMobile ? 'var(--color-pane)' : 'var(--color-terminal)', position: 'relative' }}
     >
       {/* The xterm host is absolutely positioned so the terminal's own size never
-          drives the flex layout width (which previously blew the column out). */}
-      <div style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
+          drives the flex layout width (which previously blew the column out).
+          On mobile the terminal is a rounded card with a thin frame (the pane bg
+          shows through the 2px margin). */}
+      <div style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', ...(isMobile ? { margin: 2, borderRadius: 13, background: 'var(--color-terminal)' } : {}) }}>
         {/* inset (not padding): FitAddon measures the host's width, and padding on
             the host makes it over-count columns so the right edge clips. */}
-        <div ref={hostRef} style={{ position: 'absolute', inset: 15 }} />
+        <div ref={hostRef} style={{ position: 'absolute', inset: isMobile ? 12 : 15 }} />
         {/* Stable transparent touch surface (mobile): the gesture lands here, never
             on the xterm spans that get destroyed on every repaint. Sits above the
             terminal but below the jump-to-latest button. */}
