@@ -120,35 +120,62 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     let rowHeight = Math.ceil((term.options.fontSize ?? 13) * 1.2);
     rowMeasureRef.current = () => { const r = host?.querySelector('.xterm-rows') as HTMLElement | null; if (r && r.children.length) rowHeight = r.getBoundingClientRect().height / r.children.length; };
 
-    let subPx = 0; // sub-row remainder, applied as a screen translate
-    const applyTransform = () => { const s = screenEl(); if (s) s.style.transform = subPx ? `translate3d(0,${-subPx}px,0)` : ''; };
-    const offRender = term.onRender(() => applyTransform()); // keep the remainder locked to each repaint
+    let subPx = 0;       // sub-row remainder, applied as a screen translate
+    let overscroll = 0;  // signed px pulled past an end (>0 past bottom) — the rubber-band
+    const applyTransform = () => { const s = screenEl(); if (!s) return; const ty = -subPx - overscroll; s.style.transform = ty ? `translate3d(0,${ty}px,0)` : ''; };
+    const offRender = term.onRender(() => applyTransform()); // keep the offset locked to each repaint
 
-    const viewportAtBottom = () => { const vp = viewportEl(); return !vp || (vp.scrollHeight - vp.clientHeight - vp.scrollTop < 4 && subPx === 0); };
+    const viewportAtBottom = () => { const vp = viewportEl(); return !vp || (vp.scrollHeight - vp.clientHeight - vp.scrollTop < 4 && subPx === 0 && overscroll === 0); };
     const updateAtBottom = () => setAtBottom(viewportAtBottom());
 
-    let inertiaId = 0;
+    let inertiaId = 0, springId = 0;
     let lastY = 0, lastT = 0, vel = 0, startY = 0, moved = false;
     const stopInertia = () => { if (inertiaId) { cancelAnimationFrame(inertiaId); inertiaId = 0; } };
+    const stopSpring = () => { if (springId) { cancelAnimationFrame(springId); springId = 0; } };
+    const springBack = () => {
+      stopSpring();
+      const step = () => {
+        overscroll *= 0.8;
+        if (Math.abs(overscroll) < 0.5) { overscroll = 0; springId = 0; applyTransform(); updateAtBottom(); return; }
+        applyTransform();
+        springId = requestAnimationFrame(step);
+      };
+      springId = requestAnimationFrame(step);
+    };
     const scrollByPx = (px: number) => {
       const h = rowHeight || 17;
+      // Already rubber-banded: deeper pull resists (×0.45), pulling back releases
+      // it 1:1; snap to 0 when it crosses neutral. Never touches content here.
+      if (overscroll !== 0) {
+        const prev = overscroll;
+        overscroll += ((overscroll > 0) === (px > 0)) ? px * 0.45 : px;
+        if ((prev > 0) !== (overscroll > 0)) overscroll = 0;
+        overscroll = Math.max(-150, Math.min(150, overscroll));
+        applyTransform(); updateAtBottom(); return;
+      }
+      const b0 = term.buffer.active;
+      // Flush against an end and still pushing further → start a rubber-band
+      // instead of jittering the screen against the wall.
+      if ((b0.viewportY >= b0.baseY && subPx === 0 && px > 0) || (b0.viewportY <= 0 && subPx === 0 && px < 0)) {
+        overscroll = Math.max(-150, Math.min(150, px * 0.45));
+        applyTransform(); updateAtBottom(); return;
+      }
+      // Normal content scroll.
       const newSub = subPx + px;
       const lines = Math.floor(newSub / h);
-      subPx = newSub - lines * h; // remainder in [0, h)
-      if (lines !== 0) {
-        const before = term.buffer.active.viewportY;
-        term.scrollLines(lines);
-        const b = term.buffer.active;
-        if (b.viewportY >= b.baseY && px > 0) subPx = 0;   // flush at the latest line
-        else if (b.viewportY <= 0 && px < 0) subPx = 0;    // flush at the top
-        if (b.viewportY === before) applyTransform();      // clamped: no repaint coming, apply now
-        // otherwise onRender applies the new remainder in lockstep with the repaint
-      } else {
-        applyTransform(); // pure sub-row move, content unchanged — safe to apply now
-      }
+      let rem = newSub - lines * h; // remainder in [0, h)
+      const before = b0.viewportY;
+      if (lines !== 0) term.scrollLines(lines);
+      const b = term.buffer.active;
+      // Never translate into empty space past the ends — this is the jitter fix
+      // (the clamp now runs on EVERY move, not only when a whole row commits).
+      if (b.viewportY >= b.baseY) rem = 0;                              // flush at the last line
+      else if (b.viewportY <= 0 && b.viewportY === before && lines < 0) rem = 0; // flush at the top
+      subPx = rem;
+      if (b.viewportY === before) applyTransform(); // no repaint coming → apply now; else onRender does
       updateAtBottom();
     };
-    const onTouchStart = (e: TouchEvent) => { stopInertia(); lastY = e.touches[0].clientY; startY = lastY; moved = false; lastT = performance.now(); vel = 0; };
+    const onTouchStart = (e: TouchEvent) => { stopInertia(); stopSpring(); lastY = e.touches[0].clientY; startY = lastY; moved = false; lastT = performance.now(); vel = 0; };
     const onTouchMove = (e: TouchEvent) => {
       if (e.touches.length !== 1) return;
       const y = e.touches[0].clientY, now = performance.now();
@@ -160,6 +187,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       e.preventDefault();
     };
     const onTouchEnd = () => {
+      if (overscroll !== 0) { springBack(); return; } // released mid rubber-band → bounce home
       if (!moved) return; // terminal is non-interactive on mobile — a tap does nothing (type via the input bar)
       let v = Math.max(-12, Math.min(12, vel));
       if (Math.abs(v) < 0.03) return;
@@ -169,6 +197,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
         v *= Math.pow(0.95, dt / 16);
         if (Math.abs(v) < 0.02) { inertiaId = 0; return; }
         scrollByPx(v * dt);
+        if (overscroll !== 0) { inertiaId = 0; springBack(); return; } // fling hit an end → bounce
         inertiaId = requestAnimationFrame(step);
       };
       inertiaId = requestAnimationFrame(step);
@@ -190,7 +219,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     vp0?.addEventListener('scroll', updateAtBottom, { passive: true });
     const offScroll = term.onScroll(() => updateAtBottom());
     updateAtBottom();
-    scrollToEndRef.current = () => { stopInertia(); subPx = 0; applyTransform(); term.scrollToBottom(); updateAtBottom(); };
+    scrollToEndRef.current = () => { stopInertia(); stopSpring(); subPx = 0; overscroll = 0; applyTransform(); term.scrollToBottom(); updateAtBottom(); };
 
     void api.getTerminal(terminalId).then((m) => {
       if (disposed) return;
@@ -200,6 +229,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     return () => {
       disposed = true;
       stopInertia();
+      stopSpring();
       if (touchSurface) {
         touchSurface.removeEventListener('touchstart', onTouchStart);
         touchSurface.removeEventListener('touchmove', onTouchMove);
