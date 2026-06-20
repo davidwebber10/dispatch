@@ -33,6 +33,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
   const termScrollback = useSettings((s) => s.scrollback);
   const forceFitRef = useRef<() => void>(() => {});
   const scrollToEndRef = useRef<() => void>(() => {});
+  const rowMeasureRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     let disposed = false;
@@ -64,6 +65,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
           lastCols = term.cols; lastRows = term.rows;
           sockRef.current?.resize(term.cols, term.rows);
         }
+        rowMeasureRef.current();
       });
     };
 
@@ -77,6 +79,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
         lastCols = term.cols; lastRows = term.rows;
         sockRef.current?.resize(term.cols, term.rows);
       }
+      rowMeasureRef.current();
     };
 
     requestAnimationFrame(() => { if (!disposed) { scheduleFit(); try { term.focus(); } catch { /* jsdom */ } } });
@@ -88,20 +91,91 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     }
     window.addEventListener('resize', scheduleFit);
 
-    // Touch scrolling is handled by xterm itself (it has built-in
-    // handleTouchStart/handleTouchMove that scroll .xterm-viewport). We used to
-    // layer a custom momentum handler + a sub-row screen transform on top, but
-    // that fought both xterm's own touch handler AND its async renderer, which
-    // is what made scrolling jumpy and inconsistent. Now we stay out of the way
-    // and only observe the scroll position so the jump-to-latest button works.
+    // --- Sub-pixel smooth touch scrolling (mobile) ---
+    // xterm's DOM renderer only repaints in whole rows, so every scroll path it
+    // offers (its own touch handler, scrollLines, viewport.scrollTop) makes the
+    // text stick then jump ~1 row (≈17px). We own the gesture and split scrolling
+    // into: term.scrollLines for whole rows + a translate3d on .xterm-screen for
+    // the sub-row remainder, so the text tracks the finger continuously. Two
+    // things that previously made this "really bad": (1) reading row height with
+    // getBoundingClientRect every frame (a layout reflow per frame) — now cached;
+    // (2) applying the transform synchronously after scrollLines, a frame before
+    // xterm repaints the new row — torn frame / flicker. We now apply the
+    // remainder transform inside term.onRender so it is locked to the repaint.
     const host = hostRef.current;
     const viewportEl = () => host?.querySelector('.xterm-viewport') as HTMLElement | null;
-    const updateAtBottom = () => { const vp = viewportEl(); if (vp) setAtBottom(vp.scrollHeight - vp.clientHeight - vp.scrollTop < 4); };
+    const screenEl = () => host?.querySelector('.xterm-screen') as HTMLElement | null;
+    const xtermEl = host?.querySelector('.xterm') as HTMLElement | null;
+    if (xtermEl) { xtermEl.style.overflow = 'hidden'; xtermEl.style.touchAction = 'none'; }
+    if (host) host.style.touchAction = 'none';
+    { const s = screenEl(); if (s) { s.style.background = '#1E1E1E'; s.style.willChange = 'transform'; } }
+
+    let rowHeight = Math.ceil((term.options.fontSize ?? 13) * 1.2);
+    rowMeasureRef.current = () => { const r = host?.querySelector('.xterm-rows') as HTMLElement | null; if (r && r.children.length) rowHeight = r.getBoundingClientRect().height / r.children.length; };
+
+    let subPx = 0; // sub-row remainder, applied as a screen translate
+    const applyTransform = () => { const s = screenEl(); if (s) s.style.transform = subPx ? `translate3d(0,${-subPx}px,0)` : ''; };
+    const offRender = term.onRender(() => applyTransform()); // keep the remainder locked to each repaint
+
+    const viewportAtBottom = () => { const vp = viewportEl(); return !vp || (vp.scrollHeight - vp.clientHeight - vp.scrollTop < 4 && subPx === 0); };
+    const updateAtBottom = () => setAtBottom(viewportAtBottom());
+
+    let inertiaId = 0;
+    let lastY = 0, lastT = 0, vel = 0;
+    const stopInertia = () => { if (inertiaId) { cancelAnimationFrame(inertiaId); inertiaId = 0; } };
+    const scrollByPx = (px: number) => {
+      const h = rowHeight || 17;
+      const newSub = subPx + px;
+      const lines = Math.floor(newSub / h);
+      subPx = newSub - lines * h; // remainder in [0, h)
+      if (lines !== 0) {
+        const before = term.buffer.active.viewportY;
+        term.scrollLines(lines);
+        const b = term.buffer.active;
+        if (b.viewportY >= b.baseY && px > 0) subPx = 0;   // flush at the latest line
+        else if (b.viewportY <= 0 && px < 0) subPx = 0;    // flush at the top
+        if (b.viewportY === before) applyTransform();      // clamped: no repaint coming, apply now
+        // otherwise onRender applies the new remainder in lockstep with the repaint
+      } else {
+        applyTransform(); // pure sub-row move, content unchanged — safe to apply now
+      }
+      updateAtBottom();
+    };
+    const onTouchStart = (e: TouchEvent) => { stopInertia(); lastY = e.touches[0].clientY; lastT = performance.now(); vel = 0; };
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      const y = e.touches[0].clientY, now = performance.now();
+      const dy = lastY - y, dt = now - lastT;
+      lastY = y; lastT = now;
+      if (dt > 0) vel = dy / dt;
+      scrollByPx(dy);
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    const onTouchEnd = () => {
+      let v = Math.max(-12, Math.min(12, vel));
+      if (Math.abs(v) < 0.03) return;
+      let prev = performance.now();
+      const step = () => {
+        const now = performance.now(); const dt = Math.max(1, now - prev); prev = now;
+        v *= Math.pow(0.95, dt / 16);
+        if (Math.abs(v) < 0.02) { inertiaId = 0; return; }
+        scrollByPx(v * dt);
+        inertiaId = requestAnimationFrame(step);
+      };
+      inertiaId = requestAnimationFrame(step);
+    };
+    if (host) {
+      host.addEventListener('touchstart', onTouchStart, { capture: true, passive: true });
+      host.addEventListener('touchmove', onTouchMove, { capture: true, passive: false });
+      host.addEventListener('touchend', onTouchEnd, { capture: true, passive: true });
+    }
+
     const vp0 = viewportEl();
     vp0?.addEventListener('scroll', updateAtBottom, { passive: true });
     const offScroll = term.onScroll(() => updateAtBottom());
     updateAtBottom();
-    scrollToEndRef.current = () => { term.scrollToBottom(); updateAtBottom(); };
+    scrollToEndRef.current = () => { stopInertia(); subPx = 0; applyTransform(); term.scrollToBottom(); updateAtBottom(); };
 
     void api.getTerminal(terminalId).then((m) => {
       if (disposed) return;
@@ -111,8 +185,15 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
 
     return () => {
       disposed = true;
+      stopInertia();
+      if (host) {
+        host.removeEventListener('touchstart', onTouchStart, { capture: true } as EventListenerOptions);
+        host.removeEventListener('touchmove', onTouchMove, { capture: true } as EventListenerOptions);
+        host.removeEventListener('touchend', onTouchEnd, { capture: true } as EventListenerOptions);
+      }
       vp0?.removeEventListener('scroll', updateAtBottom);
       offScroll.dispose();
+      offRender.dispose();
       ro?.disconnect();
       window.removeEventListener('resize', scheduleFit);
       sock.close();
