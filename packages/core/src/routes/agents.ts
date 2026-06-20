@@ -4,6 +4,11 @@ import type { AgentService } from '../agents/service.js';
 export function createAgentsRouter(agentService: AgentService): Router {
   const router = Router();
 
+  // Cross-project agent overview (status + all-time spend) for the Agents tab.
+  router.get('/overview', (_req, res) => {
+    res.json(agentService.overview());
+  });
+
   router.get('/schedules', (req, res) => {
     res.json(agentService.listSchedules({ projectId: req.query.projectId as string | undefined }));
   });

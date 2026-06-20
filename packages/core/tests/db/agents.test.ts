@@ -161,4 +161,42 @@ describe('agents db', () => {
     }
     legacy.close();
   });
+
+  it('agentOverview aggregates spend, run count and live activity per agent', () => {
+    sessionsDb.create(db, { id: 'proj-2', provider: 'claude-code', name: 'other', workingDir: '/srv/other' });
+    const mkSchedule = (id: string, projectId: string, name: string) => agentsDb.createSchedule(db, {
+      id, projectId, name, provider: 'codex', workingDir: '/x', prompt: 'go',
+      scheduleKind: 'recurring', runAt: null, recurrenceRule: JSON.stringify({ type: 'daily', time: '08:00' }),
+      timezone: 'UTC', enabled: true, nextRunAt: null, defaultTerminalLabel: name,
+    });
+    const mkRun = (id: string, scheduleId: string, projectId: string, status: any) => agentsDb.createRun(db, {
+      id, scheduleId, projectId, terminalId: null, provider: 'codex',
+      promptSnapshot: 'go', status, error: null, externalSessionId: null,
+    });
+    const finalize = (id: string, costUsd: number) => agentsDb.finalizeRun(db, id, {
+      status: 'succeeded', costUsd, totalTokens: 100, inputTokens: 80, outputTokens: 20,
+      model: 'm', numTurns: 1, resultText: '', exitCode: 0,
+    });
+
+    mkSchedule('a1', 'proj-1', 'Alpha');
+    mkSchedule('a2', 'proj-1', 'Beta');
+    mkSchedule('a3', 'proj-2', 'Gamma');           // no runs
+
+    mkRun('r1', 'a1', 'proj-1', 'queued'); finalize('r1', 0.20);
+    mkRun('r2', 'a1', 'proj-1', 'queued'); finalize('r2', 0.05);
+    mkRun('r3', 'a2', 'proj-1', 'working');         // currently running, no cost
+
+    const byId = Object.fromEntries(agentsDb.agentOverview(db).map((r) => [r.schedule_id, r]));
+    expect(Object.keys(byId)).toHaveLength(3);
+    expect(byId.a1.spend_usd).toBeCloseTo(0.25, 4);
+    expect(byId.a1.run_count).toBe(2);
+    expect(byId.a1.active_runs).toBe(0);
+    expect(byId.a1.project_name).toBe('tenex');
+    expect(byId.a2.active_runs).toBe(1);            // the 'working' run
+    expect(byId.a2.run_count).toBe(1);
+    expect(byId.a2.spend_usd).toBe(0);
+    expect(byId.a3.run_count).toBe(0);
+    expect(byId.a3.active_runs).toBe(0);
+    expect(byId.a3.project_name).toBe('other');
+  });
 });

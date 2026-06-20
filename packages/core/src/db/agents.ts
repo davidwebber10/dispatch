@@ -228,6 +228,47 @@ export function listRuns(
   return db.prepare('SELECT * FROM agent_runs ORDER BY created_at DESC').all() as AgentRunRow[];
 }
 
+export interface AgentOverviewRow {
+  schedule_id: string;
+  project_id: string;
+  project_name: string | null;
+  name: string;
+  provider: string;
+  enabled: number;
+  next_run_at: string | null;
+  spend_usd: number;
+  run_count: number;
+  last_run_at: string | null;
+  active_runs: number;
+}
+
+/**
+ * Per-agent rollup of spend + activity across every run, joined to the agent's
+ * project. One row per schedule (even with zero runs). Spend is the all-time sum
+ * of cost_usd; active_runs > 0 means the agent is currently running.
+ */
+export function agentOverview(db: Database.Database): AgentOverviewRow[] {
+  return db.prepare(`
+    SELECT
+      s.id          AS schedule_id,
+      s.project_id  AS project_id,
+      p.name        AS project_name,
+      s.name        AS name,
+      s.provider    AS provider,
+      s.enabled     AS enabled,
+      s.next_run_at AS next_run_at,
+      COALESCE(SUM(r.cost_usd), 0)                              AS spend_usd,
+      COUNT(r.id)                                               AS run_count,
+      MAX(COALESCE(r.completed_at, r.started_at, r.created_at)) AS last_run_at,
+      COALESCE(SUM(CASE WHEN r.status IN ('queued','starting','working','needs_input') THEN 1 ELSE 0 END), 0) AS active_runs
+    FROM agent_schedules s
+    LEFT JOIN agent_runs r ON r.schedule_id = s.id
+    LEFT JOIN sessions   p ON p.id = s.project_id
+    GROUP BY s.id
+    ORDER BY p.name ASC, s.name ASC
+  `).all() as AgentOverviewRow[];
+}
+
 export function attachTerminal(db: Database.Database, runId: string, terminalId: string): AgentRunRow | null {
   db.prepare('UPDATE agent_runs SET terminal_id = ?, updated_at = ? WHERE id = ?').run(terminalId, nowIso(), runId);
   return getRun(db, runId);

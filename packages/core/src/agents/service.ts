@@ -84,6 +84,34 @@ export interface CreateScheduleRequest {
   defaultTerminalLabel: string | null;
 }
 
+export interface AgentOverviewAgent {
+  scheduleId: string;
+  name: string;
+  provider: string;
+  enabled: boolean;
+  nextRunAt: string | null;
+  spendUsd: number;
+  runCount: number;
+  lastRunAt: string | null;
+  running: boolean;
+}
+
+export interface AgentOverviewProject {
+  projectId: string;
+  projectName: string | null;
+  spendUsd: number;
+  runningCount: number;
+  agents: AgentOverviewAgent[];
+}
+
+export interface AgentOverview {
+  totalSpendUsd: number;
+  totalRuns: number;
+  runningCount: number;
+  agentCount: number;
+  projects: AgentOverviewProject[];
+}
+
 export function toSchedule(row: agentsDb.AgentScheduleRow): AgentSchedule {
   return {
     id: row.id,
@@ -209,6 +237,54 @@ export class AgentService {
 
   listRuns(filter: { projectId?: string; scheduleId?: string } = {}): AgentRun[] {
     return agentsDb.listRuns(this.db, filter).map(toRun);
+  }
+
+  /**
+   * Cross-project agent overview: every agent with its all-time spend, run count,
+   * last-run time and live running flag, grouped by project, plus grand totals.
+   * Backs the mobile "Agents" tab. All aggregation is done in SQL.
+   */
+  overview(): AgentOverview {
+    // Spend/run/active aggregation is done in SQL (agentsDb.agentOverview); here
+    // we just group the per-agent rows by project and total them up.
+    const projects = new Map<string, AgentOverviewProject>();
+    let totalSpendUsd = 0;
+    let totalRuns = 0;
+    let runningCount = 0;
+    let agentCount = 0;
+
+    for (const r of agentsDb.agentOverview(this.db)) {
+      agentCount += 1;
+      const running = r.active_runs > 0;
+      const spendUsd = r.spend_usd || 0;
+      totalSpendUsd += spendUsd;
+      totalRuns += r.run_count;
+      if (running) runningCount += 1;
+
+      let group = projects.get(r.project_id);
+      if (!group) {
+        group = { projectId: r.project_id, projectName: r.project_name, spendUsd: 0, runningCount: 0, agents: [] };
+        projects.set(r.project_id, group);
+      }
+      group.spendUsd += spendUsd;
+      if (running) group.runningCount += 1;
+      group.agents.push({
+        scheduleId: r.schedule_id,
+        name: r.name,
+        provider: r.provider,
+        enabled: !!r.enabled,
+        nextRunAt: r.next_run_at,
+        spendUsd,
+        runCount: r.run_count,
+        lastRunAt: r.last_run_at,
+        running,
+      });
+    }
+
+    const grouped = [...projects.values()].sort(
+      (a, b) => (b.runningCount - a.runningCount) || (b.spendUsd - a.spendUsd) || (a.projectName ?? '').localeCompare(b.projectName ?? ''),
+    );
+    return { totalSpendUsd, totalRuns, runningCount, agentCount, projects: grouped };
   }
 
   getRun(id: string): AgentRun | null {
