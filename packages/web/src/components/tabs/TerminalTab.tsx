@@ -297,7 +297,9 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       {/* The xterm host is absolutely positioned so the terminal's own size never
           drives the flex layout width (which previously blew the column out). */}
       <div style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
-        <div ref={hostRef} style={{ position: 'absolute', inset: 0, padding: 15 }} />
+        {/* inset (not padding): FitAddon measures the host's width, and padding on
+            the host makes it over-count columns so the right edge clips. */}
+        <div ref={hostRef} style={{ position: 'absolute', inset: 15 }} />
         {/* Stable transparent touch surface (mobile): the gesture lands here, never
             on the xterm spans that get destroyed on every repaint. Sits above the
             terminal but below the jump-to-latest button. */}
