@@ -198,16 +198,19 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   // Determine actual server URL after port is known
   const sessionService = new SessionService(db, ptyManager);
-  const agentService = new AgentService(db, sessionService, broadcaster);
+  const agentService = new AgentService(db, sessionService, broadcaster, path.join(dataDir, 'runs'));
 
   // Terminal activity monitor — parses status bar, detects busy/idle
   const terminalMonitor = new TerminalMonitor(broadcaster, db, (terminalId, activity) => {
     agentService.updateRunFromTerminalActivity(terminalId, activity);
   });
 
-  // Wire PTY data through the monitor
+  // Wire PTY data through the monitor (busy/idle + status-bar HUD) and, for
+  // autonomous agent-runner terminals, through the structured stream parser
+  // (live steps + transcript capture + outcome telemetry).
   ptyManager.on('data', (id: string, data: Buffer) => {
     terminalMonitor.onOutput(id, data);
+    agentService.onRunnerData(id, data);
   });
 
   function aggregateSessionStatus(sessionId: string) {

@@ -19,18 +19,20 @@ export const claudeCodeProvider: SessionProvider = {
   },
 
   buildRunnerCommand({ prompt }) {
-    // Headless autonomous run:
-    //   --print            run the agentic loop and EXIT when complete (the
-    //                      process-exit is our run-completion signal).
-    //   --verbose          stream human-readable turn/tool progress to the PTY
-    //                      so the live RunnerView shows work as it happens.
-    //   --dangerously-skip-permissions
-    //                      let tools run without interactive approval (print
-    //                      mode cannot answer permission prompts otherwise).
+    // Headless autonomous run with STRUCTURED output:
+    //   --print                       run the agentic loop and EXIT when complete
+    //                                 (process-exit is our completion fallback).
+    //   --output-format stream-json   emit newline-delimited JSON events (init,
+    //                                 assistant text/tool_use/TodoWrite, usage,
+    //                                 and a final `result` with cost/tokens) that
+    //                                 the RunStreamParser turns into live steps
+    //                                 and persisted run telemetry.
+    //   --verbose                     required for stream-json with --print.
+    //   --dangerously-skip-permissions  run tools without interactive approval.
     // The prompt is passed positionally and submitted at launch.
     return {
       command: 'claude',
-      args: ['--dangerously-skip-permissions', '--verbose', '--print', prompt],
+      args: ['--dangerously-skip-permissions', '--verbose', '--output-format', 'stream-json', '--print', prompt],
     };
   },
 

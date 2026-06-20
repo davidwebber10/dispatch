@@ -1,10 +1,18 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import Database from 'better-sqlite3';
 import { initSchema } from '../../src/db/schema.js';
 import * as sessionsDb from '../../src/db/sessions.js';
 import * as terminalsDb from '../../src/db/terminals.js';
 import * as agentsDb from '../../src/db/agents.js';
 import { AgentService } from '../../src/agents/service.js';
+
+const claudeFixture = fs.readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), '../fixtures/claude-stream.jsonl'),
+  'utf8',
+);
 
 let db: Database.Database;
 let sessionService: any;
@@ -220,6 +228,39 @@ describe('AgentService', () => {
     expect(sessionService.stopTerminal).toHaveBeenCalledWith('term-1');
     expect(cancelled.status).toBe('cancelled');
     expect(cancelled.unreadSince).toBeTruthy();
+  });
+
+  it('streams structured steps and finalizes the run with telemetry from stream-json', () => {
+    const service = new AgentService(db, sessionService, broadcaster);
+    const schedule = service.createSchedule({
+      projectId: 'proj-1', name: 'Claude Run', provider: 'claude-code', workingDir: '/srv/tenex',
+      prompt: 'go', scheduleKind: 'one-shot', runAt: '2026-05-08T12:00:00.000Z', recurrenceRule: null,
+      timezone: 'UTC', enabled: true, nextRunAt: null, defaultTerminalLabel: 'Claude Run',
+    });
+    const run = service.runNow(schedule.id);
+
+    // Feed the real captured stream-json output for this run's terminal.
+    service.onRunnerData('term-1', claudeFixture);
+
+    // Live structured steps were broadcast (e.g. the Write tool call).
+    const stepEvents = broadcaster.broadcast.mock.calls
+      .map((c) => c[0])
+      .filter((e: any) => e.type === 'agent:run-step');
+    expect(stepEvents.length).toBeGreaterThan(0);
+    expect(stepEvents.some((e: any) => e.step.kind === 'tool-use' && e.step.title.startsWith('Write'))).toBe(true);
+
+    // The parsed `result` event finalized the run with cost/tokens (before exit).
+    const finished = service.getRun(run.id)!;
+    expect(finished.status).toBe('succeeded');
+    expect(finished.costUsd!).toBeGreaterThan(0);
+    expect(finished.totalTokens!).toBeGreaterThan(0);
+    expect(finished.numTurns).toBe(3);
+    expect(finished.model).toBe('claude-opus-4-8[1m]');
+    expect(finished.resultText).toContain('hello.txt');
+
+    // A subsequent process exit must NOT override the already-finalized run.
+    expect(service.handleTerminalExit('term-1', 0)).toBeNull();
+    expect(service.getRun(run.id)!.status).toBe('succeeded');
   });
 
   it('deleteSchedule removes a schedule that has runs and stops its terminals', () => {

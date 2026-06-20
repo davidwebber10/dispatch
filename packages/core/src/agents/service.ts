@@ -1,7 +1,11 @@
+import fs from 'fs';
+import path from 'path';
+import { StringDecoder } from 'string_decoder';
 import { v4 as uuid } from 'uuid';
 import type Database from 'better-sqlite3';
 import * as agentsDb from '../db/agents.js';
 import { computeNextRunAt } from './recurrence.js';
+import { RunStreamParser, runEventToStep, type RunEvent } from './run-stream.js';
 import type { EventBroadcaster } from '../ws/events.js';
 
 export interface AgentSchedule {
@@ -36,6 +40,15 @@ export interface AgentRun {
   externalSessionId: string | null;
   lastOpenedAt: string | null;
   unreadSince: string | null;
+  costUsd: number | null;
+  totalTokens: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  model: string | null;
+  numTurns: number | null;
+  resultText: string | null;
+  transcriptPath: string | null;
+  exitCode: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -106,16 +119,41 @@ export function toRun(row: agentsDb.AgentRunRow): AgentRun {
     externalSessionId: row.external_session_id,
     lastOpenedAt: row.last_opened_at,
     unreadSince: row.unread_since,
+    costUsd: row.cost_usd,
+    totalTokens: row.total_tokens,
+    inputTokens: row.input_tokens,
+    outputTokens: row.output_tokens,
+    model: row.model,
+    numTurns: row.num_turns,
+    resultText: row.result_text,
+    transcriptPath: row.transcript_path,
+    exitCode: row.exit_code,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
 
+interface RunStreamState {
+  runId: string;
+  terminalId: string;
+  parser: RunStreamParser;
+  decoder: StringDecoder;
+  write: fs.WriteStream | null;
+  lastAssistantText?: string;
+  model?: string;
+  finalized: boolean;
+}
+
 export class AgentService {
+  /** Live stream parsers keyed by the runner terminalId. */
+  private runStreams = new Map<string, RunStreamState>();
+
   constructor(
     private db: Database.Database,
     private sessionService: SessionTerminalService,
     private broadcaster: EventBroadcaster,
+    /** Directory for persisted per-run JSONL transcripts (omit to skip persistence, e.g. in tests). */
+    private runsDir?: string,
   ) {}
 
   // The server is authoritative for next_run_at: derive it from the schedule's
@@ -215,6 +253,9 @@ export class AgentService {
         schedule.prompt,
       );
       run = agentsDb.attachTerminal(this.db, run.id, terminal.id)!;
+      // Set up structured-output parsing + transcript capture for this run's PTY
+      // before it produces output, so we miss nothing.
+      this.beginRunStream(run.id, terminal.id, schedule.provider);
       run = agentsDb.updateRunStatus(this.db, run.id, 'working', { externalSessionId: terminal.externalId ?? null })!;
       this.broadcaster.broadcast({ type: 'agent:run-updated', run: toRun(run) });
       return toRun(run);
@@ -251,13 +292,21 @@ export class AgentService {
   cancelRun(id: string): AgentRun {
     const current = agentsDb.getRun(this.db, id);
     if (!current) throw new Error('Run not found');
-    if (current.terminal_id) this.sessionService.stopTerminal(current.terminal_id);
+    if (current.terminal_id) {
+      this.endRunStream(current.terminal_id);
+      this.sessionService.stopTerminal(current.terminal_id);
+    }
     const run = toRun(agentsDb.updateRunStatus(this.db, id, 'cancelled', { unread: true })!);
     this.broadcaster.broadcast({ type: 'agent:run-updated', run });
     return run;
   }
 
   updateRunFromTerminalActivity(terminalId: string, activity: 'busy' | 'idle' | 'needs_input'): AgentRun | null {
+    // For autonomous runner terminals the structured stream parser is the source
+    // of truth for status — ignore the coarse busy/idle heuristic so a thinking
+    // pause is never misread as 'idle' or completion.
+    if (this.runStreams.has(terminalId)) return null;
+
     const row = this.db.prepare('SELECT id FROM agent_runs WHERE terminal_id = ? ORDER BY created_at DESC LIMIT 1')
       .get(terminalId) as { id: string } | undefined;
     if (!row) return null;
@@ -268,6 +317,102 @@ export class AgentService {
     return run;
   }
 
+  // --- Structured run streaming -------------------------------------------
+
+  /**
+   * Begin parsing a runner terminal's stdout: open a transcript file (if a runs
+   * dir is configured) and a stream parser. Called synchronously right after the
+   * runner PTY is spawned so no early output is missed.
+   */
+  private beginRunStream(runId: string, terminalId: string, provider: agentsDb.AgentProvider): void {
+    let write: fs.WriteStream | null = null;
+    if (this.runsDir) {
+      try {
+        fs.mkdirSync(this.runsDir, { recursive: true });
+        const transcriptPath = path.join(this.runsDir, `${runId}.jsonl`);
+        write = fs.createWriteStream(transcriptPath, { flags: 'a' });
+        agentsDb.attachTranscript(this.db, runId, transcriptPath);
+      } catch (err) {
+        console.error('agent run transcript open failed', err);
+      }
+    }
+    this.runStreams.set(terminalId, {
+      runId,
+      terminalId,
+      parser: new RunStreamParser(provider),
+      decoder: new StringDecoder('utf8'),
+      write,
+      finalized: false,
+    });
+  }
+
+  /**
+   * Feed a chunk of a runner terminal's raw PTY output. Persists it verbatim to
+   * the transcript and parses it into structured run steps that are broadcast
+   * live; a parsed `result` event finalizes the run with its telemetry.
+   */
+  onRunnerData(terminalId: string, data: Buffer | string): void {
+    const state = this.runStreams.get(terminalId);
+    if (!state) return;
+    try {
+      state.write?.write(data);
+    } catch { /* best effort */ }
+    const text = typeof data === 'string' ? data : state.decoder.write(data);
+    let events: RunEvent[];
+    try {
+      events = state.parser.feed(text);
+    } catch {
+      return;
+    }
+    for (const ev of events) this.handleRunEvent(state, ev);
+  }
+
+  private handleRunEvent(state: RunStreamState, ev: RunEvent): void {
+    if (ev.kind === 'assistant-text') state.lastAssistantText = ev.text;
+    if ((ev.kind === 'init' || ev.kind === 'result') && ev.model) state.model = ev.model;
+
+    const step = runEventToStep(ev);
+    this.broadcaster.broadcast({
+      type: 'agent:run-step',
+      runId: state.runId,
+      terminalId: state.terminalId,
+      step: { ...step, ts: new Date().toISOString() },
+    });
+
+    if (ev.kind === 'result') this.finalizeFromResult(state, ev);
+  }
+
+  private finalizeFromResult(state: RunStreamState, ev: Extract<RunEvent, { kind: 'result' }>): void {
+    if (state.finalized) return;
+    state.finalized = true;
+    const row = agentsDb.finalizeRun(this.db, state.runId, {
+      status: ev.isError ? 'failed' : 'succeeded',
+      error: ev.isError ? (ev.result ?? 'Agent reported an error') : null,
+      costUsd: ev.costUsd ?? null,
+      totalTokens: ev.totalTokens ?? null,
+      inputTokens: ev.inputTokens ?? null,
+      outputTokens: ev.outputTokens ?? null,
+      model: state.model ?? ev.model ?? null,
+      numTurns: ev.numTurns ?? null,
+      resultText: ev.result ?? state.lastAssistantText ?? null,
+      unread: true,
+    });
+    if (row) this.broadcaster.broadcast({ type: 'agent:run-updated', run: toRun(row) });
+  }
+
+  /** Flush + close a run's stream (on completion or cancellation). Idempotent. */
+  private endRunStream(terminalId: string): void {
+    const state = this.runStreams.get(terminalId);
+    if (!state) return;
+    this.runStreams.delete(terminalId);
+    try {
+      for (const ev of state.parser.flush()) this.handleRunEvent(state, ev);
+    } catch { /* best effort */ }
+    try {
+      state.write?.end();
+    } catch { /* best effort */ }
+  }
+
   /**
    * Finalize an agent run when its runner process exits. A clean exit (code 0)
    * transitions the run to 'succeeded'; any non-zero/abnormal exit transitions
@@ -276,17 +421,22 @@ export class AgentService {
    * PTY and would otherwise re-fire this on exit).
    */
   handleTerminalExit(terminalId: string, exitCode: number): AgentRun | null {
+    // Flush any buffered final events first — a `result` event in the last chunk
+    // finalizes the run (with full telemetry) before we fall back to exit code.
+    this.endRunStream(terminalId);
+
     const row = this.db
       .prepare('SELECT id, status FROM agent_runs WHERE terminal_id = ? ORDER BY created_at DESC LIMIT 1')
       .get(terminalId) as { id: string; status: agentsDb.AgentRunStatus } | undefined;
     if (!row) return null;
 
     const ACTIVE: agentsDb.AgentRunStatus[] = ['queued', 'starting', 'working', 'needs_input', 'idle'];
-    if (!ACTIVE.includes(row.status)) return null;
+    if (!ACTIVE.includes(row.status)) return null; // already finalized (result event or cancel)
 
+    // Fallback for crashes / runs that exited without a parsed result event.
     const status: agentsDb.AgentRunStatus = exitCode === 0 ? 'succeeded' : 'failed';
     const error = exitCode === 0 ? null : `Process exited with code ${exitCode}`;
-    const run = toRun(agentsDb.updateRunStatus(this.db, row.id, status, { error, unread: true })!);
+    const run = toRun(agentsDb.finalizeRun(this.db, row.id, { status, error, exitCode, unread: true })!);
     this.broadcaster.broadcast({ type: 'agent:run-updated', run });
     return run;
   }

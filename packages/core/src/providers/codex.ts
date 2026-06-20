@@ -16,7 +16,10 @@ export const codexProvider: SessionProvider = {
 
   buildRunnerCommand({ prompt }) {
     // `codex exec` runs non-interactively and EXITS when the task is complete
-    // (the process-exit is our run-completion signal).
+    // (the process-exit is our run-completion fallback).
+    //   --json              emit newline-delimited JSON events (thread/turn/item +
+    //                       a final turn.completed with token usage) that the
+    //                       RunStreamParser turns into live steps + telemetry.
     //   --dangerously-bypass-approvals-and-sandbox
     //                       run fully autonomously with no approval prompts,
     //                       mirroring Claude's --dangerously-skip-permissions.
@@ -25,7 +28,7 @@ export const codexProvider: SessionProvider = {
     // The prompt is passed positionally as the initial instructions.
     return {
       command: 'codex',
-      args: ['exec', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', prompt],
+      args: ['exec', '--json', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', prompt],
     };
   },
 };
