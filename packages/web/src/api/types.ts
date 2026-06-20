@@ -93,8 +93,37 @@ export interface AgentRun {
   externalSessionId: string | null;
   lastOpenedAt: string | null;
   unreadSince: string | null;
+  costUsd: number | null;
+  totalTokens: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  model: string | null;
+  numTurns: number | null;
+  resultText: string | null;
+  transcriptPath: string | null;
+  exitCode: number | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TodoItem {
+  content: string;
+  status: string; // 'pending' | 'in_progress' | 'completed'
+  activeForm?: string;
+}
+
+export type RunStepKind =
+  | 'init' | 'assistant-text' | 'thinking' | 'tool-use' | 'tool-result' | 'todos' | 'usage' | 'result';
+
+/** A single item in a run's activity stream (mirrors core RunStep). */
+export interface RunStep {
+  kind: RunStepKind;
+  title: string;
+  detail?: string;
+  todos?: TodoItem[];
+  status?: 'ok' | 'error';
+  timeline: boolean;
+  ts?: string;
 }
 
 export interface CreateScheduleInput {
