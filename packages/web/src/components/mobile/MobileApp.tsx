@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Gear, CaretLeft, CaretRight, Plus } from '@phosphor-icons/react';
 import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
@@ -35,10 +35,36 @@ export function MobileApp() {
 
   const project = projects.find((p) => p.id === projectId) ?? null;
 
-  const openProject = (id: string) => { useProjects.getState().setActive(id); setProjectId(id); setLevel(1); };
-  const openThread = (tabId: string) => { useAgentUI.getState().blur(); useTabs.getState().setActiveTab(tabId); setLeaf('tab'); setLevel(2); };
-  const openAgent = (id: string) => { useAgentUI.getState().selectAgent(id); setLeaf('agent'); setLevel(2); };
-  const back = () => setLevel((l) => (l > 0 ? ((l - 1) as 0 | 1 | 2) : 0));
+  // Navigation is backed by the History API so the browser back button and the
+  // iOS edge-swipe-back gesture move up the stack (projects ← project ← thread).
+  const openProject = (id: string) => {
+    useProjects.getState().setActive(id); setProjectId(id); setLevel(1);
+    history.pushState({ nav: 1, projectId: id }, '', `/p/${id}`);
+  };
+  const openThread = (tabId: string) => {
+    useAgentUI.getState().blur(); useTabs.getState().setActiveTab(tabId); setLeaf('tab'); setLevel(2);
+    history.pushState({ nav: 2, projectId, leaf: 'tab', tabId }, '', `/p/${projectId}/t/${tabId}`);
+  };
+  const openAgent = (id: string) => {
+    useAgentUI.getState().selectAgent(id); setLeaf('agent'); setLevel(2);
+    history.pushState({ nav: 2, projectId, leaf: 'agent', agentId: id }, '', `/p/${projectId}/a/${id}`);
+  };
+  const back = () => history.back();
+
+  // Apply nav state when the history entry changes (back/forward/edge-swipe).
+  useEffect(() => {
+    history.replaceState({ nav: 0 }, '', '/');
+    const onPop = (e: PopStateEvent) => {
+      const s = (e.state || { nav: 0 }) as { nav?: number; projectId?: string; leaf?: 'tab' | 'agent'; tabId?: string; agentId?: string };
+      if (s.projectId) { setProjectId(s.projectId); useProjects.getState().setActive(s.projectId); }
+      if (s.leaf) setLeaf(s.leaf);
+      if (s.tabId) { useAgentUI.getState().blur(); useTabs.getState().setActiveTab(s.tabId); }
+      if (s.agentId) useAgentUI.getState().selectAgent(s.agentId);
+      setLevel((s.nav ?? 0) as 0 | 1 | 2);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
 
   const filtered = projects.filter((p) => p.name.toLowerCase().includes(query.toLowerCase()));
   // The back button labels the screen it returns TO (iOS convention): the
@@ -47,7 +73,7 @@ export function MobileApp() {
   const headerTitle = level === 1 ? 'Projects' : level === 2 ? (project?.name ?? 'Back') : '';
 
   const slot: React.CSSProperties = { flex: '0 0 100%', height: '100%', minWidth: 0 };
-  const scrollSlot: React.CSSProperties = { ...slot, overflowY: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain' };
+  const scrollSlot: React.CSSProperties = { ...slot, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y' };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--color-base)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
@@ -91,10 +117,10 @@ export function MobileApp() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                         <span style={{ fontSize: 16, fontWeight: 600, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
                         {working && <Spinner size={11} />}
-                        <span style={{ marginLeft: 'auto', flexShrink: 0, font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{timeAgo(p.lastActivityAt)}</span>
                       </div>
                       <div style={{ font: '400 12px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>{homePath(p.workingDir)}</div>
                     </div>
+                    <span style={{ flexShrink: 0, font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{timeAgo(p.lastActivityAt)}</span>
                     <CaretRight size={18} color="var(--color-text-tertiary)" />
                   </button>
                 );
@@ -122,7 +148,7 @@ export function MobileApp() {
       </div>
 
       {newProject && <NewProjectModal open onClose={() => setNewProject(false)} />}
-      {editing && <EditAgentModal scheduleId={editing.scheduleId} presetProjectId={editing.preset} onClose={() => useAgentUI.getState().closeEdit()} onSaved={(id) => { useAgentUI.getState().selectAgent(id); setLeaf('agent'); setLevel(2); }} />}
+      {editing && <EditAgentModal scheduleId={editing.scheduleId} presetProjectId={editing.preset} onClose={() => useAgentUI.getState().closeEdit()} onSaved={(id) => openAgent(id)} />}
     </div>
   );
 }

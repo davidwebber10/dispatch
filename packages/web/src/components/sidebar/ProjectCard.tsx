@@ -59,6 +59,7 @@ function ThreadRow({ tab, active, onClick, onMiddle, onArchive, onContext }: { t
     >
       <span style={{ width: dot, height: dot, borderRadius: '50%', background: color, flexShrink: 0 }} />
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tab.label}</span>
+      <span style={{ flexShrink: 0, font: `400 ${isMobile ? 12 : 10.5}px var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>{timeAgo(tab.createdAt)}</span>
       <span style={{ width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
         {hover && !isMobile ? (
           <span role="button" title="Archive thread" onClick={(e) => { e.stopPropagation(); onArchive(); }}
@@ -93,6 +94,7 @@ function AgentRow({ agent, active, onClick }: { agent: AgentSchedule; active: bo
     >
       <span style={{ width: dot, height: dot, borderRadius: '50%', background: providerColor(agent.provider), flexShrink: 0 }} />
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent.name}</span>
+      <span style={{ flexShrink: 0, font: `400 ${isMobile ? 12 : 10.5}px var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>{timeAgo(agent.createdAt)}</span>
       <span style={{ width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
         <StatusDot state={agent.enabled ? 'idle' : 'disabled'} size={isMobile ? 9 : 7} />
       </span>

@@ -13,7 +13,7 @@
    leading 100vh is the fallback for engines without dvh.
    Installed PWA: there's no Safari toolbar and 100dvh mis-reports until the
    device is rotated, so pin to 100vh (via the .pwa-standalone class on <html>). */
-html, body, #root { margin: 0; padding: 0; height: 100vh; height: 100dvh; overflow: hidden; }
+html, body, #root { margin: 0; padding: 0; height: 100vh; height: 100dvh; overflow: hidden; overscroll-behavior: none; }
 html.pwa-standalone, html.pwa-standalone body, html.pwa-standalone #root { height: 100vh; }
 body { background: var(--color-canvas); color: var(--color-text-primary); font-family: var(--font-sans); }
 ::selection { background: rgba(62,207,106,.25); }

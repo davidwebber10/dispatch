@@ -110,6 +110,9 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     const xtermEl = host?.querySelector('.xterm') as HTMLElement | null;
     if (xtermEl) { xtermEl.style.overflow = 'hidden'; xtermEl.style.touchAction = 'none'; }
     if (host) host.style.touchAction = 'none';
+    // .xterm-viewport is overflow-y:scroll, which makes its overflow-x compute to
+    // auto — on iOS that yields a phantom horizontal scroll/rubber-band. Pin it.
+    { const vp = viewportEl(); if (vp) { vp.style.overflowX = 'hidden'; vp.style.touchAction = 'none'; } }
     // On touch devices, forbid text selection across the whole terminal subtree.
     // Otherwise a drag that starts over text begins an iOS selection instead of
     // scrolling (xterm's accessibility-tree overlay is user-select:text), which
