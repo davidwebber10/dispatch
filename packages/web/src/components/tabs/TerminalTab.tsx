@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { CaretDoubleDown, Paperclip, CaretUp, CaretDown, CaretLeft, CaretRight, KeyReturn, type Icon } from '@phosphor-icons/react';
+import { CaretDoubleDown, Paperclip, CaretUp, CaretDown, CaretLeft, CaretRight, ArrowElbowDownLeft, type Icon } from '@phosphor-icons/react';
 import { Spinner } from '../common/Spinner';
 import '@xterm/xterm/css/xterm.css';
 import { openTerminalSocket } from '../../api/terminal-socket';
@@ -10,16 +10,40 @@ import type { Terminal } from '../../api/types';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useSettings } from '../../stores/settings';
 
-const SOFT_KEYS: { label: string; seq: string; title?: string; Icon?: Icon }[] = [
-  { label: 'esc', seq: '\x1b', title: 'Escape' },
-  { label: 'tab', seq: '\t', title: 'Tab' },
-  { label: '⌃C', seq: '\x03', title: 'Ctrl-C (interrupt)' },
-  { label: 'Enter', seq: '\r', title: 'Enter', Icon: KeyReturn },
+type SoftKey = { label: string; seq: string; title?: string; Icon?: Icon };
+const ENTER: SoftKey = { label: 'Enter', seq: '\r', title: 'Enter', Icon: ArrowElbowDownLeft };
+const UP_DOWN: SoftKey[] = [
   { label: 'Up', seq: '\x1b[A', title: 'Up', Icon: CaretUp },
   { label: 'Down', seq: '\x1b[B', title: 'Down', Icon: CaretDown },
+];
+// Slash commands send their text; no-arg ones run on tap (\r), arg ones leave a
+// trailing space for you to fill in.
+const CLAUDE_KEYS: SoftKey[] = [
+  { label: 'esc', seq: '\x1b', title: 'Escape' }, ENTER, ...UP_DOWN,
+  { label: '⌃O', seq: '\x0f', title: 'Ctrl-O' },
+  { label: '⌃E', seq: '\x05', title: 'Ctrl-E' },
+  { label: '/mcp', seq: '/mcp\r', title: '/mcp' },
+  { label: '/btw', seq: '/btw ', title: '/btw' },
+  { label: '/effort', seq: '/effort ', title: '/effort' },
+  { label: '/resume', seq: '/resume\r', title: '/resume' },
+];
+const CODEX_KEYS: SoftKey[] = [
+  { label: 'esc', seq: '\x1b', title: 'Escape' }, ENTER, ...UP_DOWN,
+  { label: '/model', seq: '/model\r', title: '/model' },
+  { label: '/approvals', seq: '/approvals\r', title: '/approvals' },
+  { label: '/mcp', seq: '/mcp\r', title: '/mcp' },
+  { label: '/status', seq: '/status\r', title: '/status' },
+];
+const SHELL_KEYS: SoftKey[] = [
+  { label: 'esc', seq: '\x1b', title: 'Escape' },
+  { label: 'tab', seq: '\t', title: 'Tab' },
+  { label: '⌃C', seq: '\x03', title: 'Ctrl-C' }, ENTER, ...UP_DOWN,
   { label: 'Left', seq: '\x1b[D', title: 'Left', Icon: CaretLeft },
   { label: 'Right', seq: '\x1b[C', title: 'Right', Icon: CaretRight },
 ];
+function softKeysFor(type?: string): SoftKey[] {
+  return type === 'codex' ? CODEX_KEYS : type === 'shell' ? SHELL_KEYS : CLAUDE_KEYS;
+}
 
 export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: { terminalId: string; socketFactory?: typeof openTerminalSocket }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -337,7 +361,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       {isMobile && (
         <>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '6px 8px', background: 'var(--color-pane)', borderTop: '1px solid var(--color-border)', flexShrink: 0 }}>
-            {SOFT_KEYS.map((k) => (
+            {softKeysFor(meta?.type).map((k) => (
               <button key={k.label} title={k.title}
                 onPointerDown={(e) => { e.preventDefault(); sockRef.current?.send(k.seq); }}
                 style={{ flex: '1 1 auto', minWidth: 40, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 7, color: 'var(--color-text-primary)', font: '500 14px var(--font-mono)', cursor: 'pointer' }}>
