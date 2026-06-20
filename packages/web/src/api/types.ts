@@ -140,3 +140,30 @@ export interface CreateScheduleInput {
   nextRunAt: string | null;
   defaultTerminalLabel: string | null;
 }
+
+// Cross-project agent overview (GET /api/agents/overview) — mirrors core.
+export interface AgentOverviewAgent {
+  scheduleId: string;
+  name: string;
+  provider: string;
+  enabled: boolean;
+  nextRunAt: string | null;
+  spendUsd: number;
+  runCount: number;
+  lastRunAt: string | null;
+  running: boolean;
+}
+export interface AgentOverviewProject {
+  projectId: string;
+  projectName: string | null;
+  spendUsd: number;
+  runningCount: number;
+  agents: AgentOverviewAgent[];
+}
+export interface AgentOverview {
+  totalSpendUsd: number;
+  totalRuns: number;
+  runningCount: number;
+  agentCount: number;
+  projects: AgentOverviewProject[];
+}

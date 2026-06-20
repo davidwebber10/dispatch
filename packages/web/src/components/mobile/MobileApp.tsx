@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Gear, CaretLeft, CaretRight, Plus } from '@phosphor-icons/react';
+import { Gear, CaretLeft, CaretRight, Plus, Folders, Robot } from '@phosphor-icons/react';
 import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
 import { ProjectCard } from '../sidebar/ProjectCard';
+import { AllAgentsView } from '../agents/AllAgentsView';
 import { NewProjectModal } from '../sidebar/NewProjectModal';
 import { FilesPane } from '../inspector/FilesPane';
 import { TabHost } from '../tabs/TabHost';
@@ -47,6 +48,7 @@ export function MobileApp() {
   const [newProject, setNewProject] = useState(false);
   const [browseFiles, setBrowseFiles] = useState(false);
   const [query, setQuery] = useState('');
+  const [bottomTab, setBottomTab] = useState<'projects' | 'agents'>('projects');
 
   const project = projects.find((p) => p.id === projectId) ?? null;
 
@@ -63,6 +65,13 @@ export function MobileApp() {
   const openAgent = (id: string) => {
     useAgentUI.getState().selectAgent(id); setLeaf('agent'); setLevel(2);
     history.pushState({ nav: 2, projectId, leaf: 'agent', agentId: id }, '', `/p/${projectId}/a/${id}`);
+  };
+  // Opening an agent from the cross-project Agents tab: seed the project context
+  // first (openAgent derives its URL from it), then jump straight to the agent.
+  const openAgentFromList = (pid: string, scheduleId: string) => {
+    useProjects.getState().setActive(pid); setProjectId(pid);
+    useAgentUI.getState().selectAgent(scheduleId); setLeaf('agent'); setLevel(2);
+    history.pushState({ nav: 2, projectId: pid, leaf: 'agent', agentId: scheduleId }, '', `/p/${pid}/a/${scheduleId}`);
   };
   const back = () => history.back();
 
@@ -122,8 +131,12 @@ export function MobileApp() {
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', position: 'relative' }}>
         <div style={{ display: 'flex', width: '100%', height: '100%', transform: `translateX(-${level * 100}%)`, transition: 'transform .28s cubic-bezier(.4,0,.2,1)' }}>
-          {/* Level 0 — projects (search/+ pinned, only the list scrolls) */}
+          {/* Level 0 — projects / agents, switched by the bottom tab bar */}
           <div style={{ ...slot, display: 'flex', flexDirection: 'column' }}>
+            {bottomTab === 'agents' ? (
+              <AllAgentsView onOpenAgent={openAgentFromList} />
+            ) : (
+            <>
             <div style={{ display: 'flex', gap: 8, padding: 10, flexShrink: 0 }}>
               <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search projects"
                 style={{ flex: 1, minWidth: 0, height: 40, padding: '0 13px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 12, color: 'var(--color-text-primary)', fontSize: 16 }} />
@@ -151,6 +164,21 @@ export function MobileApp() {
                 );
               })}
               {!filtered.length && <div style={{ padding: 16, color: 'var(--color-text-tertiary)', fontSize: 13 }}>No projects</div>}
+            </div>
+            </>
+            )}
+            {/* Bottom tab bar — Projects / Agents (only at the root; slides away with the rail) */}
+            <div style={{ flexShrink: 0, display: 'flex', borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
+              {([['projects', 'Projects', Folders], ['agents', 'Agents', Robot]] as const).map(([key, label, Icon]) => {
+                const on = bottomTab === key;
+                return (
+                  <button key={key} onClick={() => setBottomTab(key)}
+                    style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '8px 0 6px', background: 'none', border: 'none', cursor: 'pointer', color: on ? 'var(--color-accent)' : 'var(--color-text-secondary)' }}>
+                    <Icon size={23} weight={on ? 'fill' : 'regular'} />
+                    <span style={{ fontSize: 11, fontWeight: on ? 600 : 500 }}>{label}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 

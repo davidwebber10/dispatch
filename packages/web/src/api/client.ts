@@ -1,4 +1,4 @@
-import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep } from './types';
+import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview } from './types';
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -85,6 +85,7 @@ export const api = {
   cancelRun: (id: string) => req<AgentRun>(`/api/agents/runs/${id}/cancel`, { method: 'POST' }),
   markRunOpened: (id: string) => req<AgentRun>(`/api/agents/runs/${id}/opened`, { method: 'POST' }),
   runEvents: (id: string) => req<{ steps: RunStep[] }>(`/api/agents/runs/${id}/events`),
+  agentsOverview: () => req<AgentOverview>('/api/agents/overview'),
 
   // Browser auth relay
   listAuthRequests: () => req<AuthRequest[]>('/api/auth-requests'),
