@@ -27,12 +27,15 @@ const CLAUDE_KEYS: SoftKey[] = [
   { label: '/effort', seq: '/effort ', title: '/effort' },
   { label: '/resume', seq: '/resume\r', title: '/resume' },
 ];
+// Codex CLI slash commands (developers.openai.com/codex/cli/slash-commands):
+// /model = model + reasoning effort, /mcp tools, /diff, /status, /resume.
 const CODEX_KEYS: SoftKey[] = [
   { label: 'esc', seq: '\x1b', title: 'Escape' }, ENTER, ...UP_DOWN,
-  { label: '/model', seq: '/model\r', title: '/model' },
-  { label: '/approvals', seq: '/approvals\r', title: '/approvals' },
-  { label: '/mcp', seq: '/mcp\r', title: '/mcp' },
-  { label: '/status', seq: '/status\r', title: '/status' },
+  { label: '/model', seq: '/model\r', title: 'Model & reasoning effort' },
+  { label: '/mcp', seq: '/mcp\r', title: 'MCP tools' },
+  { label: '/diff', seq: '/diff\r', title: 'Git diff' },
+  { label: '/status', seq: '/status\r', title: 'Session status' },
+  { label: '/resume', seq: '/resume\r', title: 'Resume a conversation' },
 ];
 const SHELL_KEYS: SoftKey[] = [
   { label: 'esc', seq: '\x1b', title: 'Escape' },

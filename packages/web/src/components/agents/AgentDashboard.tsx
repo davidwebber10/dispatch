@@ -65,7 +65,7 @@ export function AgentDashboard({ onEdit, onOpenRun, onBack }: { onEdit: () => vo
   }
 
   return (
-    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 24 }}>
+    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: isMobile ? 14 : 24 }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         {onBack && <button onClick={onBack} title="Back" style={{ background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', fontSize: 16, padding: 0 }}>‹</button>}
@@ -121,10 +121,23 @@ export function AgentDashboard({ onEdit, onOpenRun, onBack }: { onEdit: () => vo
         {/* Recent runs */}
         <div style={{ ...panel, flex: 1.5, minWidth: 0 }}>
           <div style={label}>RECENT RUNS</div>
-          <div style={{ display: 'flex', gap: 12, padding: '8px 0 6px', font: '500 9.5px var(--font-mono)', letterSpacing: '.6px', color: 'var(--color-text-tertiary)' }}>
-            <span style={{ flex: 1.6 }}>STARTED</span><span style={{ flex: 1 }}>DURATION</span><span style={{ flex: 1 }}>COST</span><span style={{ flex: 1 }}>TOKENS</span><span style={{ flex: 1.4 }}>STATUS</span>
-          </div>
-          {recent.map((r) => (
+          {!isMobile && (
+            <div style={{ display: 'flex', gap: 12, padding: '8px 0 6px', font: '500 9.5px var(--font-mono)', letterSpacing: '.6px', color: 'var(--color-text-tertiary)' }}>
+              <span style={{ flex: 1.6 }}>STARTED</span><span style={{ flex: 1 }}>DURATION</span><span style={{ flex: 1 }}>COST</span><span style={{ flex: 1 }}>TOKENS</span><span style={{ flex: 1.4 }}>STATUS</span>
+            </div>
+          )}
+          {recent.map((r) => isMobile ? (
+            // Mobile: a 2-line card instead of the cramped 5-column table.
+            <div key={r.id} onClick={() => onOpenRun(r.id)}
+              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 6px', margin: '0 -6px', borderTop: '1px solid var(--color-border)', cursor: 'pointer' }}>
+              <span style={{ width: 9, height: 9, borderRadius: '50%', background: statusColor(r.status), flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.startedAt ? new Date(r.startedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'}</div>
+                <div style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)', marginTop: 3 }}>{formatDuration(runDurationMs(r))} · {formatCost(r.costUsd)} · {formatTokens(r.totalTokens)}</div>
+              </div>
+              <span style={{ fontSize: 12.5, fontWeight: 500, color: statusColor(r.status), flexShrink: 0 }}>{r.status}</span>
+            </div>
+          ) : (
             <div key={r.id} onClick={() => onOpenRun(r.id)} title="Open run"
               style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 6px', margin: '0 -6px', borderTop: '1px solid var(--color-border)', font: '400 12px var(--font-mono)', cursor: 'pointer', borderRadius: 6 }}
               onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
