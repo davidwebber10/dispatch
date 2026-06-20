@@ -19,16 +19,29 @@ function homePath(p: string): string {
   return (p || '').replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
 }
 
+type NavInit = { level: 0 | 1 | 2; projectId?: string; leaf?: 'tab' | 'agent'; tabId?: string; agentId?: string };
+function parsePath(path: string): NavInit {
+  const m = path.match(/^\/p\/([^/]+)(?:\/(t|a)\/([^/]+))?/);
+  if (!m) return { level: 0 };
+  if (m[2] === 't') return { level: 2, projectId: m[1], leaf: 'tab', tabId: m[3] };
+  if (m[2] === 'a') return { level: 2, projectId: m[1], leaf: 'agent', agentId: m[3] };
+  return { level: 1, projectId: m[1] };
+}
+
 export function MobileApp() {
   const projects = useProjects((s) => s.sessions);
   const byProject = useTabs((s) => s.byProject);
-  const activeTab = useTabs((s) => s.activeTabId);
   const editing = useAgentUI((s) => s.editing);
   const reconnectGen = useReconnect((s) => s.gen);
 
-  const [level, setLevel] = useState<0 | 1 | 2>(0); // projects → project → thread/agent
-  const [projectId, setProjectId] = useState<string | null>(null);
-  const [leaf, setLeaf] = useState<'tab' | 'agent'>('tab');
+  // Initialise straight from the URL so a reload restores the page (no flash to
+  // the index, and the rail renders at the right level without an entry slide).
+  const [level, setLevel] = useState<0 | 1 | 2>(() => parsePath(location.pathname).level);
+  const [projectId, setProjectId] = useState<string | null>(() => parsePath(location.pathname).projectId ?? null);
+  const [leaf, setLeaf] = useState<'tab' | 'agent'>(() => parsePath(location.pathname).leaf ?? 'tab');
+  // The thread shown at level 2 is tracked locally (from the URL) rather than via
+  // the global activeTab store, which App's hydrate() can reset to null on reload.
+  const [leafTabId, setLeafTabId] = useState<string | null>(() => parsePath(location.pathname).tabId ?? null);
   const [settings, setSettings] = useState(false);
   const [newProject, setNewProject] = useState(false);
   const [query, setQuery] = useState('');
@@ -42,7 +55,7 @@ export function MobileApp() {
     history.pushState({ nav: 1, projectId: id }, '', `/p/${id}`);
   };
   const openThread = (tabId: string) => {
-    useAgentUI.getState().blur(); useTabs.getState().setActiveTab(tabId); setLeaf('tab'); setLevel(2);
+    useAgentUI.getState().blur(); useTabs.getState().setActiveTab(tabId); setLeafTabId(tabId); setLeaf('tab'); setLevel(2);
     history.pushState({ nav: 2, projectId, leaf: 'tab', tabId }, '', `/p/${projectId}/t/${tabId}`);
   };
   const openAgent = (id: string) => {
@@ -51,14 +64,24 @@ export function MobileApp() {
   };
   const back = () => history.back();
 
-  // Apply nav state when the history entry changes (back/forward/edge-swipe).
+  // On a deep-linked reload: restore the stores from the URL and rebuild the
+  // history stack (base → project → leaf) so back/edge-swipe still walks up.
   useEffect(() => {
+    const init = parsePath(location.pathname);
+    if (init.projectId) { useProjects.getState().setActive(init.projectId); void useTabs.getState().loadTabs(init.projectId); }
+    if (init.leaf === 'tab' && init.tabId) { useAgentUI.getState().blur(); setLeafTabId(init.tabId); useTabs.getState().setActiveTab(init.tabId); }
+    if (init.leaf === 'agent' && init.agentId) useAgentUI.getState().selectAgent(init.agentId);
     history.replaceState({ nav: 0 }, '', '/');
+    if (init.level >= 1 && init.projectId) history.pushState({ nav: 1, projectId: init.projectId }, '', `/p/${init.projectId}`);
+    if (init.level === 2 && init.projectId) {
+      const url = init.leaf === 'agent' ? `/p/${init.projectId}/a/${init.agentId}` : `/p/${init.projectId}/t/${init.tabId}`;
+      history.pushState({ nav: 2, projectId: init.projectId, leaf: init.leaf, tabId: init.tabId, agentId: init.agentId }, '', url);
+    }
     const onPop = (e: PopStateEvent) => {
       const s = (e.state || { nav: 0 }) as { nav?: number; projectId?: string; leaf?: 'tab' | 'agent'; tabId?: string; agentId?: string };
       if (s.projectId) { setProjectId(s.projectId); useProjects.getState().setActive(s.projectId); }
       if (s.leaf) setLeaf(s.leaf);
-      if (s.tabId) { useAgentUI.getState().blur(); useTabs.getState().setActiveTab(s.tabId); }
+      if (s.tabId) { useAgentUI.getState().blur(); setLeafTabId(s.tabId); useTabs.getState().setActiveTab(s.tabId); }
       if (s.agentId) useAgentUI.getState().selectAgent(s.agentId);
       setLevel((s.nav ?? 0) as 0 | 1 | 2);
     };
@@ -142,7 +165,7 @@ export function MobileApp() {
           <div style={{ ...slot, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             {leaf === 'agent'
               ? <AgentPane />
-              : (activeTab ? <TabHost key={`${activeTab}:${reconnectGen}`} terminalId={activeTab} /> : <div style={{ padding: 16, color: 'var(--color-text-secondary)' }}>No thread open</div>)}
+              : (leafTabId ? <TabHost key={`${leafTabId}:${reconnectGen}`} terminalId={leafTabId} /> : <div style={{ padding: 16, color: 'var(--color-text-secondary)' }}>No thread open</div>)}
           </div>
         </div>
       </div>

@@ -135,6 +135,7 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
   const loadingMap = useTabs((s) => s.loading);
   const pfs = useSettings((s) => s.projectFontSize);
   const isMobile = useIsMobile();
+  const plusStyle: React.CSSProperties = isMobile ? { ...plusBtn, width: 34, height: 34, font: '500 26px/1 var(--font-sans)', borderRadius: 9 } : plusBtn;
   const working = session.status === 'working' || tabs.some((t) => t.status === 'working' || loadingMap[t.id]);
   useEffect(() => { if (active) void useTabs.getState().loadTabs(session.id); }, [active, session.id]);
 
@@ -168,7 +169,7 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
                 if (sec.add === 'menu') setMenu((o) => !o);
                 else if (sec.add === 'browser') void addTab('browser', { url: 'about:blank' });
                 else if (sec.add === 'notes') void addTab('notes');
-              }} style={plusBtn}>+</button>
+              }} style={plusStyle}>+</button>
               {sec.add === 'menu' && menu && <NewTabMenu sessionId={session.id} onClose={() => setMenu(false)} onCreated={onSelectTab} />}
             </span>
           )}
@@ -212,7 +213,7 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
           {renderSection(SECTIONS[0])}
           <div style={{ marginTop: 10 }}>
             <SectionHeader label="AGENTS" count={agents.length} prominent>
-              <button title="Add agent" onClick={(e) => { e.stopPropagation(); onNewAgent?.(session.id); }} style={plusBtn}>+</button>
+              <button title="Add agent" onClick={(e) => { e.stopPropagation(); onNewAgent?.(session.id); }} style={plusStyle}>+</button>
             </SectionHeader>
             {agents.map((a) => (
               <AgentRow key={a.id} agent={a} active={agentFocused && a.id === agentSel} onClick={() => onSelectAgent?.(a.id)} />
