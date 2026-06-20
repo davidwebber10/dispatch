@@ -226,7 +226,12 @@ export class SessionService {
   }
 
   listTerminals(sessionId: string): terminalsDb.Terminal[] {
-    return terminalsDb.listBySession(this.db, sessionId).map(terminalsDb.rowToTerminal);
+    // Exclude agent-run "runner" terminals: they belong to the agent run's
+    // polished RunnerView (steps/plan/HUD), not the project's thread list — where
+    // opening one would just show the raw stream-json the runner emits.
+    return terminalsDb.listBySession(this.db, sessionId)
+      .map(terminalsDb.rowToTerminal)
+      .filter((t) => !(t.config as { runner?: boolean } | undefined)?.runner);
   }
 
   getTerminal(terminalId: string): terminalsDb.Terminal | null {
