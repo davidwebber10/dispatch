@@ -343,7 +343,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     try {
       const res = await api.uploadInbox(meta.sessionId, file);
       await api.sendFileReference(terminalId, res.path, 'agent-context');
-      setNote(`Sent ${file.name} ↗`);
+      setNote(`Sent ${file.name}`);
     } catch { setNote('Upload failed'); }
     setTimeout(() => setNote(''), 2500);
   }
@@ -386,7 +386,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
             the right inset is trimmed: xterm's column quantization + scrollbar leave
             ~7px unused on the right, so a smaller right inset re-centres the text
             (and gains a column or two of width). */}
-        <div ref={hostRef} style={{ position: 'absolute', ...(isMobile ? { top: 0, bottom: 12, left: 4, right: 2 } : { inset: 15 }) }} />
+        <div ref={hostRef} style={{ position: 'absolute', ...(isMobile ? { top: 0, bottom: 12, left: 3, right: 3 } : { inset: 15 }) }} />
         {/* Stable transparent touch surface (mobile): the gesture lands here, never
             on the xterm spans that get destroyed on every repaint. Sits above the
             terminal but below the jump-to-latest button. */}
@@ -406,7 +406,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
           </button>
         )}
         {drop && (
-          <div style={{ position: 'absolute', inset: 8, border: '2px dashed var(--color-accent)', borderRadius: 10, background: 'rgba(62,207,106,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', color: 'var(--color-accent)', fontSize: 14, fontWeight: 600 }}>Drop image → send to the agent</div>
+          <div style={{ position: 'absolute', inset: 8, border: '2px dashed var(--color-accent)', borderRadius: 10, background: 'rgba(62,207,106,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', color: 'var(--color-accent)', fontSize: 14, fontWeight: 600 }}>Drop image to send to the agent</div>
         )}
         {note && (
           <div style={{ position: 'absolute', left: 14, bottom: 14, zIndex: 6, background: 'rgba(10,10,12,.85)', color: 'var(--color-accent)', fontSize: 12, fontWeight: 500, padding: '5px 11px', borderRadius: 9, pointerEvents: 'none' }}>{note}</div>
