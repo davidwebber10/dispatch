@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import Database from 'better-sqlite3';
@@ -261,6 +262,27 @@ describe('AgentService', () => {
     // A subsequent process exit must NOT override the already-finalized run.
     expect(service.handleTerminalExit('term-1', 0)).toBeNull();
     expect(service.getRun(run.id)!.status).toBe('succeeded');
+  });
+
+  it('getRunSteps re-parses a persisted transcript into timeline + activity steps', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-runs-'));
+    const service = new AgentService(db, sessionService, broadcaster, dir);
+    const schedule = service.createSchedule({
+      projectId: 'proj-1', name: 'Claude Run', provider: 'claude-code', workingDir: '/srv/tenex',
+      prompt: 'go', scheduleKind: 'one-shot', runAt: '2026-05-08T12:00:00.000Z', recurrenceRule: null,
+      timezone: 'UTC', enabled: true, nextRunAt: null, defaultTerminalLabel: 'Claude Run',
+    });
+    const run = service.runNow(schedule.id);
+    service.onRunnerData('term-1', claudeFixture);
+    service.handleTerminalExit('term-1', 0); // closes the transcript stream
+
+    const steps = service.getRunSteps(run.id);
+    expect(steps.length).toBeGreaterThan(0);
+    expect(steps.some((s) => s.kind === 'tool-use')).toBe(true);
+    expect(steps.some((s) => s.kind === 'result')).toBe(true);
+    expect(steps.filter((s) => s.timeline).length).toBeGreaterThan(0);
+
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 
   it('deleteSchedule removes a schedule that has runs and stops its terminals', () => {

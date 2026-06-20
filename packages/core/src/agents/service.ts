@@ -5,7 +5,7 @@ import { v4 as uuid } from 'uuid';
 import type Database from 'better-sqlite3';
 import * as agentsDb from '../db/agents.js';
 import { computeNextRunAt } from './recurrence.js';
-import { RunStreamParser, runEventToStep, type RunEvent } from './run-stream.js';
+import { RunStreamParser, runEventToStep, type RunEvent, type RunStep } from './run-stream.js';
 import type { EventBroadcaster } from '../ws/events.js';
 
 export interface AgentSchedule {
@@ -138,7 +138,8 @@ interface RunStreamState {
   terminalId: string;
   parser: RunStreamParser;
   decoder: StringDecoder;
-  write: fs.WriteStream | null;
+  /** Transcript file path, or null when persistence is disabled (e.g. tests). */
+  transcriptPath: string | null;
   lastAssistantText?: string;
   model?: string;
   finalized: boolean;
@@ -213,6 +214,25 @@ export class AgentService {
   getRun(id: string): AgentRun | null {
     const row = agentsDb.getRun(this.db, id);
     return row ? toRun(row) : null;
+  }
+
+  /**
+   * Re-parse a run's persisted JSONL transcript into RunSteps (timeline + activity
+   * log). Used to hydrate the RunnerView for completed runs / on (re)open; live
+   * runs additionally receive incremental steps over the events socket.
+   */
+  getRunSteps(runId: string): RunStep[] {
+    const run = agentsDb.getRun(this.db, runId);
+    if (!run || !run.transcript_path) return [];
+    let raw: string;
+    try {
+      raw = fs.readFileSync(run.transcript_path, 'utf8');
+    } catch {
+      return [];
+    }
+    const parser = new RunStreamParser(run.provider);
+    const events: RunEvent[] = [...parser.feed(raw), ...parser.flush()];
+    return events.map(runEventToStep);
   }
 
   markRunOpened(id: string): AgentRun | null {
@@ -325,15 +345,16 @@ export class AgentService {
    * runner PTY is spawned so no early output is missed.
    */
   private beginRunStream(runId: string, terminalId: string, provider: agentsDb.AgentProvider): void {
-    let write: fs.WriteStream | null = null;
+    let transcriptPath: string | null = null;
     if (this.runsDir) {
       try {
         fs.mkdirSync(this.runsDir, { recursive: true });
-        const transcriptPath = path.join(this.runsDir, `${runId}.jsonl`);
-        write = fs.createWriteStream(transcriptPath, { flags: 'a' });
+        transcriptPath = path.join(this.runsDir, `${runId}.jsonl`);
+        fs.writeFileSync(transcriptPath, ''); // truncate any prior partial file
         agentsDb.attachTranscript(this.db, runId, transcriptPath);
       } catch (err) {
         console.error('agent run transcript open failed', err);
+        transcriptPath = null;
       }
     }
     this.runStreams.set(terminalId, {
@@ -341,7 +362,7 @@ export class AgentService {
       terminalId,
       parser: new RunStreamParser(provider),
       decoder: new StringDecoder('utf8'),
-      write,
+      transcriptPath,
       finalized: false,
     });
   }
@@ -354,9 +375,11 @@ export class AgentService {
   onRunnerData(terminalId: string, data: Buffer | string): void {
     const state = this.runStreams.get(terminalId);
     if (!state) return;
-    try {
-      state.write?.write(data);
-    } catch { /* best effort */ }
+    if (state.transcriptPath) {
+      try {
+        fs.appendFileSync(state.transcriptPath, data);
+      } catch { /* best effort */ }
+    }
     const text = typeof data === 'string' ? data : state.decoder.write(data);
     let events: RunEvent[];
     try {
@@ -407,9 +430,6 @@ export class AgentService {
     this.runStreams.delete(terminalId);
     try {
       for (const ev of state.parser.flush()) this.handleRunEvent(state, ev);
-    } catch { /* best effort */ }
-    try {
-      state.write?.end();
     } catch { /* best effort */ }
   }
 
