@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useUI } from '../../stores/ui';
 
 const SKEY = 'dispatch:sidebar-width';
 const IKEY = 'dispatch:inspector-width';
 const S_MIN = 180, S_MAX = 520, S_DEF = 260;
 const I_MIN = 220, I_MAX = 600, I_DEF = 320;
+// Dragging a handle below this width (well under the min) collapses that column.
+const S_COLLAPSE = 110, I_COLLAPSE = 150;
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -33,24 +36,32 @@ export function Workspace({ sidebar, main, inspector }: { sidebar: ReactNode; ma
   const [sideW, setSideW] = useState(() => load(SKEY, S_DEF, S_MIN, S_MAX));
   const [inspW, setInspW] = useState(() => load(IKEY, I_DEF, I_MIN, I_MAX));
   const dragging = useRef<null | 'left' | 'right'>(null);
+  const leftCollapsed = useUI((s) => s.leftCollapsed);
+  const rightCollapsed = useUI((s) => s.rightCollapsed);
 
   useEffect(() => { try { localStorage.setItem(SKEY, String(sideW)); } catch { /* */ } }, [sideW]);
   useEffect(() => { try { localStorage.setItem(IKEY, String(inspW)); } catch { /* */ } }, [inspW]);
 
   useEffect(() => {
-    function onMove(e: MouseEvent) {
-      if (dragging.current === 'left') setSideW(clamp(e.clientX, S_MIN, S_MAX));
-      else if (dragging.current === 'right') setInspW(clamp(window.innerWidth - e.clientX, I_MIN, I_MAX));
-    }
-    function onUp() {
+    function endDrag() {
       if (!dragging.current) return;
       dragging.current = null;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
     }
+    function onMove(e: MouseEvent) {
+      if (dragging.current === 'left') {
+        if (e.clientX < S_COLLAPSE) { useUI.getState().setLeftCollapsed(true); endDrag(); return; }
+        setSideW(clamp(e.clientX, S_MIN, S_MAX));
+      } else if (dragging.current === 'right') {
+        const w = window.innerWidth - e.clientX;
+        if (w < I_COLLAPSE) { useUI.getState().setRightCollapsed(true); endDrag(); return; }
+        setInspW(clamp(w, I_MIN, I_MAX));
+      }
+    }
     window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+    window.addEventListener('mouseup', endDrag);
+    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', endDrag); };
   }, []);
 
   function start(which: 'left' | 'right') {
@@ -61,11 +72,11 @@ export function Workspace({ sidebar, main, inspector }: { sidebar: ReactNode; ma
 
   return (
     <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-      <aside style={{ width: sideW, flexShrink: 0, background: 'var(--color-pane)', borderRight: '1px solid var(--color-border)', overflow: 'auto' }}>{sidebar}</aside>
-      <DragHandle onStart={() => start('left')} />
+      <aside style={{ width: leftCollapsed ? 0 : sideW, flexShrink: 0, background: 'var(--color-pane)', borderRight: leftCollapsed ? 'none' : '1px solid var(--color-border)', overflow: leftCollapsed ? 'hidden' : 'auto' }}>{sidebar}</aside>
+      {!leftCollapsed && <DragHandle onStart={() => start('left')} />}
       <main style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>{main}</main>
-      <DragHandle onStart={() => start('right')} />
-      <aside style={{ width: inspW, flexShrink: 0, background: 'var(--color-pane)', borderLeft: '1px solid var(--color-border)', overflow: 'auto' }}>{inspector}</aside>
+      {!rightCollapsed && <DragHandle onStart={() => start('right')} />}
+      <aside style={{ width: rightCollapsed ? 0 : inspW, flexShrink: 0, background: 'var(--color-pane)', borderLeft: rightCollapsed ? 'none' : '1px solid var(--color-border)', overflow: rightCollapsed ? 'hidden' : 'auto' }}>{inspector}</aside>
     </div>
   );
 }
