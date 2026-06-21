@@ -1,20 +1,26 @@
-import type { SessionProvider } from './types.js';
+import type { SessionProvider, SecretsMcpInjection } from './types.js';
+
+// Codex `-c` overrides are global options and must precede the subcommand.
+// Returns [] when Doppler isn't connected.
+function mcpArgs(secretsMcp?: SecretsMcpInjection): string[] {
+  return secretsMcp?.codexArgs ?? [];
+}
 
 export const codexProvider: SessionProvider = {
   name: 'codex',
   displayName: 'Codex',
   statusStrategy: 'pty-timing',
-  buildNewCommand({ prompt }) {
-    const args: string[] = [];
+  buildNewCommand({ prompt, secretsMcp }) {
+    const args: string[] = [...mcpArgs(secretsMcp)];
     if (prompt) args.push(prompt);
     return { command: 'codex', args };
   },
 
-  buildResumeCommand({ externalSessionId }) {
-    return { command: 'codex', args: ['resume', externalSessionId] };
+  buildResumeCommand({ externalSessionId, secretsMcp }) {
+    return { command: 'codex', args: [...mcpArgs(secretsMcp), 'resume', externalSessionId] };
   },
 
-  buildRunnerCommand({ prompt }) {
+  buildRunnerCommand({ prompt, secretsMcp }) {
     // `codex exec` runs non-interactively and EXITS when the task is complete
     // (the process-exit is our run-completion fallback).
     //   --json              emit newline-delimited JSON events (thread/turn/item +
@@ -25,10 +31,10 @@ export const codexProvider: SessionProvider = {
     //                       mirroring Claude's --dangerously-skip-permissions.
     //   --skip-git-repo-check
     //                       allow running in working dirs that aren't git repos.
-    // The prompt is passed positionally as the initial instructions.
+    // -c overrides (Doppler MCP) precede the `exec` subcommand. Prompt is positional.
     return {
       command: 'codex',
-      args: ['exec', '--json', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', prompt],
+      args: [...mcpArgs(secretsMcp), 'exec', '--json', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', prompt],
     };
   },
 };

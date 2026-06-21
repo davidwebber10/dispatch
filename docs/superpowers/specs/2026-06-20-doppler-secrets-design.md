@@ -8,8 +8,12 @@ to both via git; the token, built MCP server, and authed CLIs are **per-host**.
 ## Decisions (confirmed)
 1. **Agent mechanism:** a **custom lean stdio MCP server** (`packages/doppler-mcp`, 4 tools) wired
    into spawned Claude Code (`--mcp-config`) and Codex (`-c mcp_servers.*`).
-2. **Token:** a **cross-project Doppler Service Account token** (`dp.sa.…`), entered in Settings →
-   Secrets, stored in a **0600 file** on the host — never in `app_state`, never returned to clients.
+2. **Token:** a Doppler token entered in Settings → Secrets, stored in a **0600 file** on the host
+   — never in `app_state`, never returned to clients. On a **free plan** (no Team → no Service
+   Accounts), use a **Personal Token** (`dp.pt.…`): it has cross-project access to the user's own
+   projects, so the project/config pickers work. (Service Account `dp.sa.` works identically if a Team
+   plan is added later.) The integration is token-type-agnostic (Bearer auth); `verify()` lists
+   projects, which a Personal token can do.
 3. **Scope now:** build + deploy the feature to both hosts. Provisioning the mini's `claude`/`codex`
    (interactive sign-in) is the user's follow-up; agents run wherever those CLIs are authed.
 

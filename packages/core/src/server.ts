@@ -27,6 +27,8 @@ import { createServersRouter } from './routes/servers.js';
 import { createFilesRouter } from './routes/files.js';
 import { createStateRouter } from './routes/state.js';
 import { createGitRouter } from './routes/git.js';
+import { createSecretsRouter } from './routes/secrets.js';
+import { SecretsService } from './secrets/service.js';
 import { createEventsBroadcaster, createNoopBroadcaster } from './ws/events.js';
 import type { EventBroadcaster } from './ws/events.js';
 import { handleTerminalConnection } from './ws/terminal.js';
@@ -36,6 +38,10 @@ import { TerminalMonitor } from './terminal-monitor.js';
 interface CreateAppOptions {
   db: Database.Database;
   skipPty?: boolean;
+  /** Directory for the Doppler token/config files (defaults to ~/.dispatch). */
+  secretsDir?: string;
+  /** Inject a pre-built SecretsService (e.g. with a fake Doppler client) for tests. */
+  secretsService?: SecretsService;
 }
 
 /**
@@ -74,6 +80,8 @@ export function createApp(options: CreateAppOptions): import('express').Express 
 
   const sessionService = new SessionService(db, ptyManager);
   const agentService = new AgentService(db, sessionService, broadcaster);
+  const secretsService = options.secretsService ?? new SecretsService(options.secretsDir ?? path.join(os.homedir(), '.dispatch'));
+  sessionService.setSecretsInjection(() => secretsService.getInjection());
 
   // Mount routes
   app.use('/api/sessions', createSessionsRouter(sessionService, broadcaster));
@@ -82,6 +90,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   app.use('/api/hooks', createHooksRouter(db, broadcaster));
   app.use('/api/providers', createProvidersRouter());
   app.use('/api/servers', createServersRouter(db));
+  app.use('/api/secrets', createSecretsRouter(secretsService));
   app.use('/api/sessions/:id/files', createFilesRouter(db));
   app.use('/api/sessions/:id/git', createGitRouter(db));
   app.use('/api/auth-requests', createAuthRouter(authRequestService));
@@ -200,6 +209,15 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const sessionService = new SessionService(db, ptyManager);
   const agentService = new AgentService(db, sessionService, broadcaster, path.join(dataDir, 'runs'));
 
+  // Doppler secrets: token-backed connection + per-spawn injection (DOPPLER_* env +
+  // an MCP server) so Claude Code / Codex agents can add & retrieve secrets.
+  const secretsService = new SecretsService(dataDir);
+  sessionService.setSecretsInjection(() => secretsService.getInjection());
+  let effectiveShimEnv = browserShimEnv;
+  const refreshPtyEnv = () => ptyManager.setDefaultEnv({ ...effectiveShimEnv, ...secretsService.getSpawnEnv() });
+  secretsService.onChange(refreshPtyEnv);
+  refreshPtyEnv();
+
   // Terminal activity monitor — parses status bar, detects busy/idle
   const terminalMonitor = new TerminalMonitor(broadcaster, db, (terminalId, activity) => {
     agentService.updateRunFromTerminalActivity(terminalId, activity);
@@ -262,6 +280,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.use('/api/hooks', createHooksRouter(db, broadcaster));
   app.use('/api/providers', createProvidersRouter());
   app.use('/api/servers', createServersRouter(db));
+  app.use('/api/secrets', createSecretsRouter(secretsService));
   app.use('/api/sessions/:id/files', createFilesRouter(db));
   app.use('/api/sessions/:id/git', createGitRouter(db));
   app.use('/api/auth-requests', createAuthRouter(authRequestService));
@@ -320,11 +339,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   });
 
   if (port !== preferredPort) {
-    const actualBrowserShimEnv = installBrowserShim({
+    effectiveShimEnv = installBrowserShim({
       dataDir,
       serverUrl: `http://127.0.0.1:${port}`,
     });
-    ptyManager.setDefaultEnv(actualBrowserShimEnv);
+    refreshPtyEnv();
   }
 
   // Store port in app state

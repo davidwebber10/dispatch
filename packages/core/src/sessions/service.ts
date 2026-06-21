@@ -11,12 +11,20 @@ import { PTYManager } from '../pty/manager.js';
 import type { Session, CreateSessionInput } from '../types.js';
 import { rowToSession } from '../types.js';
 import type { TerminalType } from '../db/terminals.js';
+import type { SecretsMcpInjection } from '../providers/types.js';
 
 export class SessionService {
+  /** Supplies the Doppler MCP injection for spawned CLIs; set by the server wiring. */
+  private secretsInjection: (() => SecretsMcpInjection) | null = null;
+
   constructor(
     private db: Database.Database,
     private ptyManager: PTYManager,
   ) {}
+
+  setSecretsInjection(fn: () => SecretsMcpInjection): void {
+    this.secretsInjection = fn;
+  }
 
   create(input: CreateSessionInput): Session {
     const id = uuid();
@@ -415,13 +423,14 @@ export class SessionService {
       args = [];
     } else {
       const provider = getProvider(terminal.type);
+      const secretsMcp = this.secretsInjection?.() ?? undefined;
       let cmd: { command: string; args: string[] };
       if (runnerPrompt !== undefined) {
-        cmd = provider.buildRunnerCommand({ workDir, prompt: runnerPrompt });
+        cmd = provider.buildRunnerCommand({ workDir, prompt: runnerPrompt, secretsMcp });
       } else if (terminal.external_id) {
-        cmd = provider.buildResumeCommand({ externalSessionId: terminal.external_id, workDir });
+        cmd = provider.buildResumeCommand({ externalSessionId: terminal.external_id, workDir, secretsMcp });
       } else {
-        cmd = provider.buildNewCommand({ workDir });
+        cmd = provider.buildNewCommand({ workDir, secretsMcp });
       }
       command = cmd.command;
       args = cmd.args;

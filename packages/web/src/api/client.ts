@@ -1,4 +1,4 @@
-import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview } from './types';
+import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig } from './types';
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -86,6 +86,21 @@ export const api = {
   markRunOpened: (id: string) => req<AgentRun>(`/api/agents/runs/${id}/opened`, { method: 'POST' }),
   runEvents: (id: string) => req<{ steps: RunStep[] }>(`/api/agents/runs/${id}/events`),
   agentsOverview: () => req<AgentOverview>('/api/agents/overview'),
+
+  // Secrets (Doppler)
+  getSecretsStatus: () => req<DopplerStatus>('/api/secrets/status'),
+  setDopplerConnection: (input: { token: string; project: string; config: string; enabled: boolean; readOnly: boolean }) =>
+    req<DopplerStatus>('/api/secrets/connection', { method: 'PUT', body: body(input) }),
+  disconnectDoppler: () => req<void>('/api/secrets/connection', { method: 'DELETE' }),
+  listDopplerProjects: () => req<DopplerProject[]>('/api/secrets/projects'),
+  listDopplerConfigs: (project: string) => req<DopplerConfig[]>(`/api/secrets/configs?project=${encodeURIComponent(project)}`),
+  listSecrets: (q: { project?: string; config?: string } = {}) => {
+    const params = new URLSearchParams(Object.entries(q).filter(([, v]) => v) as [string, string][]);
+    const qs = params.toString();
+    return req<DopplerSecret[]>(`/api/secrets${qs ? `?${qs}` : ''}`);
+  },
+  setSecret: (input: { name: string; value: string }) => req<DopplerSecret>('/api/secrets', { method: 'POST', body: body(input) }),
+  deleteSecret: (name: string) => req<void>(`/api/secrets/${encodeURIComponent(name)}`, { method: 'DELETE' }),
 
   // Browser auth relay
   listAuthRequests: () => req<AuthRequest[]>('/api/auth-requests'),

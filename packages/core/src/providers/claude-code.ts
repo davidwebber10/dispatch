@@ -1,24 +1,30 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import type { SessionProvider } from './types.js';
+import type { SessionProvider, SecretsMcpInjection } from './types.js';
+
+// Additive --mcp-config (no --strict-mcp-config, so the user's other MCP servers
+// still load). Returns [] when Doppler isn't connected.
+function mcpArgs(secretsMcp?: SecretsMcpInjection): string[] {
+  return secretsMcp?.claudeConfigPath ? ['--mcp-config', secretsMcp.claudeConfigPath] : [];
+}
 
 export const claudeCodeProvider: SessionProvider = {
   name: 'claude-code',
   displayName: 'Claude Code',
   statusStrategy: 'hooks',
 
-  buildNewCommand({ prompt }) {
-    const args: string[] = ['--dangerously-skip-permissions'];
+  buildNewCommand({ prompt, secretsMcp }) {
+    const args: string[] = ['--dangerously-skip-permissions', ...mcpArgs(secretsMcp)];
     if (prompt) args.push(prompt);
     return { command: 'claude', args };
   },
 
-  buildResumeCommand({ externalSessionId }) {
-    return { command: 'claude', args: ['--dangerously-skip-permissions', '-r', externalSessionId] };
+  buildResumeCommand({ externalSessionId, secretsMcp }) {
+    return { command: 'claude', args: ['--dangerously-skip-permissions', ...mcpArgs(secretsMcp), '-r', externalSessionId] };
   },
 
-  buildRunnerCommand({ prompt }) {
+  buildRunnerCommand({ prompt, secretsMcp }) {
     // Headless autonomous run with STRUCTURED output:
     //   --print                       run the agentic loop and EXIT when complete
     //                                 (process-exit is our completion fallback).
@@ -32,7 +38,7 @@ export const claudeCodeProvider: SessionProvider = {
     // The prompt is passed positionally and submitted at launch.
     return {
       command: 'claude',
-      args: ['--dangerously-skip-permissions', '--verbose', '--output-format', 'stream-json', '--print', prompt],
+      args: ['--dangerously-skip-permissions', ...mcpArgs(secretsMcp), '--verbose', '--output-format', 'stream-json', '--print', prompt],
     };
   },
 
