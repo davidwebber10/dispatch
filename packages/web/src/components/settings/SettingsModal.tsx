@@ -236,69 +236,85 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   const accent = useSettings((s) => s.accent);
   const notify = useSettings((s) => s.notify);
   const servers = useServers((s) => s.servers);
+  const [tab, setTab] = useState<'general' | 'secrets'>('general');
   if (!open) return null;
 
   const st = status === 'open' ? { c: 'var(--color-accent)', t: 'Connected' } : status === 'connecting' ? { c: 'var(--color-status-yellow)', t: 'Connecting' } : { c: 'var(--color-status-red)', t: 'Offline' };
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: 520, maxWidth: '100%', maxHeight: '90vh', overflow: 'auto', background: '#18181b', border: '1px solid #2f2f35', borderRadius: 14, boxShadow: '0 30px 80px -20px rgba(0,0,0,.85)', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--color-hover)' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 520, maxWidth: '100%', maxHeight: '90vh', overflow: 'hidden', background: '#18181b', border: '1px solid #2f2f35', borderRadius: 14, boxShadow: '0 30px 80px -20px rgba(0,0,0,.85)', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px 0' }}>
           <span style={{ fontSize: 17, fontWeight: 600 }}>Settings</span>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 20, lineHeight: 1 }}>×</button>
         </div>
 
-        <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <span style={sectionLabel}>CONNECTION</span>
-            <div style={row}><span style={item}>Server</span><span style={chip}>{currentLabel(servers)}</span></div>
-            <div style={row}><span style={item}>Connection</span><span style={{ display: 'flex', alignItems: 'center', gap: 6, font: '500 11px var(--font-mono)', color: st.c }}><span style={{ width: 7, height: 7, borderRadius: '50%', background: st.c }} />{st.t}</span></div>
-          </div>
-          <Divider />
-
-          <ServersSection />
-          <Divider />
-
-          <SecretsSection />
-          <Divider />
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <span style={sectionLabel}>TERMINAL</span>
-            <div style={row}><span style={item}>Font size</span><Stepper value={String(fontSize)} onDec={() => useSettings.getState().setFontSize(fontSize - 1)} onInc={() => useSettings.getState().setFontSize(fontSize + 1)} /></div>
-            <div style={row}><span style={item}>Scrollback</span><Stepper value={scrollback.toLocaleString()} unit=" lines" onDec={() => useSettings.getState().setScrollback(scrollback - 5000)} onInc={() => useSettings.getState().setScrollback(scrollback + 5000)} /></div>
-          </div>
-          <Divider />
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <span style={sectionLabel}>SIDEBAR</span>
-            <div style={row}><span style={item}>Project names</span><Stepper value={String(projectFontSize)} onDec={() => useSettings.getState().setProjectFontSize(projectFontSize - 1)} onInc={() => useSettings.getState().setProjectFontSize(projectFontSize + 1)} /></div>
-            <div style={row}><span style={item}>Thread &amp; file names</span><Stepper value={String(sidebarFontSize)} onDec={() => useSettings.getState().setSidebarFontSize(sidebarFontSize - 1)} onInc={() => useSettings.getState().setSidebarFontSize(sidebarFontSize + 1)} /></div>
-          </div>
-          <Divider />
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <span style={sectionLabel}>APPEARANCE</span>
-            <div style={row}><span style={item}>Theme</span><span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--color-text-secondary)', background: '#1b1b1e', border: '1px solid #2c2c32', borderRadius: 7, padding: '5px 11px' }}><span style={{ width: 11, height: 11, borderRadius: 3, background: '#0f0f11', border: '1px solid #46464d' }} />Dark</span></div>
-            <div style={{ ...row, alignItems: 'flex-start' }}><span style={{ ...item, paddingTop: 3 }}>Accent</span>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: 360 }}>
-                {ACCENTS.map((c) => (
-                  <button key={c} onClick={() => useSettings.getState().setAccent(c)} title={c} style={{ width: 19, height: 19, borderRadius: 5, background: c, border: 'none', cursor: 'pointer', flexShrink: 0, outline: accent.toLowerCase() === c.toLowerCase() ? `2px solid ${c}` : '2px solid transparent', outlineOffset: 2 }} />
-                ))}
-                <label title="Custom color" style={{ position: 'relative', width: 19, height: 19, borderRadius: 5, cursor: 'pointer', overflow: 'hidden', flexShrink: 0, background: 'conic-gradient(from 90deg, #f0616d, #f5c542, #30d158, #56b6c2, #5a8dd6, #c792ea, #ff6ac1, #f0616d)', outline: ACCENTS.some((a) => a.toLowerCase() === accent.toLowerCase()) ? '2px solid transparent' : `2px solid ${accent}`, outlineOffset: 2 }}>
-                  <input type="color" value={accent} onChange={(e) => useSettings.getState().setAccent(e.target.value)} style={{ position: 'absolute', inset: -6, width: 'calc(100% + 12px)', height: 'calc(100% + 12px)', opacity: 0, cursor: 'pointer', border: 'none', padding: 0, background: 'none' }} />
-                </label>
-              </div>
-            </div>
-          </div>
-          <Divider />
-
-          <div style={row}><span style={item}>Alert when input needed</span><Toggle on={notify} onClick={() => void useSettings.getState().setNotify(!notify)} /></div>
-          <Divider />
-
-          <div style={row}><span style={item}>Version</span><span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)' }}>Dispatch Web</span></div>
+        {/* Tabs */}
+        <div style={{ flexShrink: 0, display: 'flex', gap: 4, padding: '12px 20px 0', borderBottom: '1px solid var(--color-hover)' }}>
+          {([['general', 'General'], ['secrets', 'Secrets']] as const).map(([key, label]) => (
+            <button key={key} onClick={() => setTab(key)} style={{
+              position: 'relative', padding: '8px 14px 11px', background: 'none', border: 'none', cursor: 'pointer',
+              fontSize: 13, fontWeight: tab === key ? 600 : 500,
+              color: tab === key ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+              borderBottom: `2px solid ${tab === key ? 'var(--color-accent)' : 'transparent'}`, marginBottom: -1,
+            }}>{label}</button>
+          ))}
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '14px 20px', borderTop: '1px solid var(--color-hover)' }}>
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {tab === 'general' ? (
+            <>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <span style={sectionLabel}>CONNECTION</span>
+                <div style={row}><span style={item}>Server</span><span style={chip}>{currentLabel(servers)}</span></div>
+                <div style={row}><span style={item}>Connection</span><span style={{ display: 'flex', alignItems: 'center', gap: 6, font: '500 11px var(--font-mono)', color: st.c }}><span style={{ width: 7, height: 7, borderRadius: '50%', background: st.c }} />{st.t}</span></div>
+              </div>
+              <Divider />
+
+              <ServersSection />
+              <Divider />
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <span style={sectionLabel}>TERMINAL</span>
+                <div style={row}><span style={item}>Font size</span><Stepper value={String(fontSize)} onDec={() => useSettings.getState().setFontSize(fontSize - 1)} onInc={() => useSettings.getState().setFontSize(fontSize + 1)} /></div>
+                <div style={row}><span style={item}>Scrollback</span><Stepper value={scrollback.toLocaleString()} unit=" lines" onDec={() => useSettings.getState().setScrollback(scrollback - 5000)} onInc={() => useSettings.getState().setScrollback(scrollback + 5000)} /></div>
+              </div>
+              <Divider />
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <span style={sectionLabel}>SIDEBAR</span>
+                <div style={row}><span style={item}>Project names</span><Stepper value={String(projectFontSize)} onDec={() => useSettings.getState().setProjectFontSize(projectFontSize - 1)} onInc={() => useSettings.getState().setProjectFontSize(projectFontSize + 1)} /></div>
+                <div style={row}><span style={item}>Thread &amp; file names</span><Stepper value={String(sidebarFontSize)} onDec={() => useSettings.getState().setSidebarFontSize(sidebarFontSize - 1)} onInc={() => useSettings.getState().setSidebarFontSize(sidebarFontSize + 1)} /></div>
+              </div>
+              <Divider />
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <span style={sectionLabel}>APPEARANCE</span>
+                <div style={row}><span style={item}>Theme</span><span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--color-text-secondary)', background: '#1b1b1e', border: '1px solid #2c2c32', borderRadius: 7, padding: '5px 11px' }}><span style={{ width: 11, height: 11, borderRadius: 3, background: '#0f0f11', border: '1px solid #46464d' }} />Dark</span></div>
+                <div style={{ ...row, alignItems: 'flex-start' }}><span style={{ ...item, paddingTop: 3 }}>Accent</span>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: 360 }}>
+                    {ACCENTS.map((c) => (
+                      <button key={c} onClick={() => useSettings.getState().setAccent(c)} title={c} style={{ width: 19, height: 19, borderRadius: 5, background: c, border: 'none', cursor: 'pointer', flexShrink: 0, outline: accent.toLowerCase() === c.toLowerCase() ? `2px solid ${c}` : '2px solid transparent', outlineOffset: 2 }} />
+                    ))}
+                    <label title="Custom color" style={{ position: 'relative', width: 19, height: 19, borderRadius: 5, cursor: 'pointer', overflow: 'hidden', flexShrink: 0, background: 'conic-gradient(from 90deg, #f0616d, #f5c542, #30d158, #56b6c2, #5a8dd6, #c792ea, #ff6ac1, #f0616d)', outline: ACCENTS.some((a) => a.toLowerCase() === accent.toLowerCase()) ? '2px solid transparent' : `2px solid ${accent}`, outlineOffset: 2 }}>
+                      <input type="color" value={accent} onChange={(e) => useSettings.getState().setAccent(e.target.value)} style={{ position: 'absolute', inset: -6, width: 'calc(100% + 12px)', height: 'calc(100% + 12px)', opacity: 0, cursor: 'pointer', border: 'none', padding: 0, background: 'none' }} />
+                    </label>
+                  </div>
+                </div>
+              </div>
+              <Divider />
+
+              <div style={row}><span style={item}>Alert when input needed</span><Toggle on={notify} onClick={() => void useSettings.getState().setNotify(!notify)} /></div>
+              <Divider />
+
+              <div style={row}><span style={item}>Version</span><span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)' }}>Dispatch Web</span></div>
+            </>
+          ) : (
+            <SecretsSection />
+          )}
+        </div>
+
+        <div style={{ flexShrink: 0, display: 'flex', justifyContent: 'flex-end', padding: '14px 20px', borderTop: '1px solid var(--color-hover)' }}>
           <button onClick={onClose} style={{ height: 34, padding: '0 20px', background: 'var(--color-accent)', border: 'none', borderRadius: 9, color: '#08240F', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>Done</button>
         </div>
       </div>
