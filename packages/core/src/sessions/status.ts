@@ -4,6 +4,7 @@ import type { PTYManager } from '../pty/manager.js';
 import type { EventBroadcaster } from '../ws/events.js';
 import * as sessionsDb from '../db/sessions.js';
 import * as terminalsDb from '../db/terminals.js';
+import { getProvider } from '../providers/registry.js';
 
 // A thread is "working" while its PTY is still emitting output. Claude Code /
 // Codex animate a spinner continuously while a turn is active (including during
@@ -56,6 +57,10 @@ export function ptyStatusTick(
       const term = terminalsDb.getById(db, id);
       if (!term) continue;                         // legacy session-keyed PTY — skip
       if (!terminalsDb.isPtyType(term.type)) continue;
+      // Hook-driven providers (Claude Code) get authoritative status from the
+      // StatusService; PTY-output timing only drives pty-timing providers (Codex).
+      let provider; try { provider = getProvider(term.type); } catch { provider = null; }
+      if (provider?.statusStrategy === 'hooks') continue;
       let config: { runner?: boolean } = {};
       try { config = JSON.parse(term.config || '{}'); } catch { /* default {} */ }
       if (config.runner) continue;                 // agent-run terminals are owned by AgentService

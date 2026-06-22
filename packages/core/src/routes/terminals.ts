@@ -2,10 +2,11 @@ import { Router } from 'express';
 import type { SessionService } from '../sessions/service.js';
 import { isPtyType } from '../db/terminals.js';
 import type { EventBroadcaster } from '../ws/events.js';
+import type { StatusService } from '../status/service.js';
 
 const VALID_TYPES = ['claude-code', 'codex', 'shell', 'browser', 'notes', 'file'];
 
-export function createTerminalsRouter(sessionService: SessionService, broadcaster?: EventBroadcaster): Router {
+export function createTerminalsRouter(sessionService: SessionService, broadcaster?: EventBroadcaster, statusService?: StatusService): Router {
   const router = Router();
 
   // GET /api/sessions/:id/terminals/archived — MUST be before the generic list route
@@ -70,8 +71,14 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   router.post('/terminals/:terminalId/input', (req, res) => {
     const data = req.body?.data;
     if (typeof data !== 'string') return res.status(400).json({ error: 'data (string) is required' });
-    try { sessionService.writeToTerminal(req.params.terminalId, data); res.status(204).end(); }
-    catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
+    try {
+      sessionService.writeToTerminal(req.params.terminalId, data);
+      // A submitted message (carries a CR, not a bare Esc interrupt) means the
+      // thread is now working — surface that immediately, before any hook fires.
+      // Codex relies on this since its notify only reports turn completion.
+      if (data.includes('\r') && data !== '\x1b') statusService?.markWorking(req.params.terminalId, 'Thinking…');
+      res.status(204).end();
+    } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
   });
 
   // POST /api/terminals/:terminalId/relaunch

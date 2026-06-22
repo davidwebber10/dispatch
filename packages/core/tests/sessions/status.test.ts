@@ -38,9 +38,10 @@ function setup() {
 }
 
 describe('ptyStatusTick', () => {
+  // Codex is the pty-timing provider; Claude Code is hook-driven (skipped here).
   it('marks a recently-active terminal working and rolls it up to the session', () => {
     const { db, events, broadcaster } = setup();
-    terminalsDb.create(db, { id: 't1', sessionId: 's1', type: 'claude-code', label: 'CC' });
+    terminalsDb.create(db, { id: 't1', sessionId: 's1', type: 'codex', label: 'CX' });
 
     ptyStatusTick(db, fakePty({ t1: new Date() }), broadcaster);
 
@@ -52,7 +53,7 @@ describe('ptyStatusTick', () => {
 
   it('marks a terminal waiting once its PTY goes quiet', () => {
     const { db, broadcaster } = setup();
-    terminalsDb.create(db, { id: 't1', sessionId: 's1', type: 'claude-code', label: 'CC' });
+    terminalsDb.create(db, { id: 't1', sessionId: 's1', type: 'codex', label: 'CX' });
     terminalsDb.updateStatus(db, 't1', 'working');
 
     ptyStatusTick(db, fakePty({ t1: new Date(Date.now() - 60_000) }), broadcaster);
@@ -62,7 +63,7 @@ describe('ptyStatusTick', () => {
 
   it('keeps needs_input sticky while the PTY stays quiet', () => {
     const { db, broadcaster } = setup();
-    terminalsDb.create(db, { id: 't1', sessionId: 's1', type: 'claude-code', label: 'CC' });
+    terminalsDb.create(db, { id: 't1', sessionId: 's1', type: 'codex', label: 'CX' });
     terminalsDb.updateStatus(db, 't1', 'needs_input');
 
     ptyStatusTick(db, fakePty({ t1: new Date(Date.now() - 60_000) }), broadcaster);
@@ -70,9 +71,21 @@ describe('ptyStatusTick', () => {
     expect(terminalsDb.getById(db, 't1')!.status).toBe('needs_input');
   });
 
+  it('leaves hook-driven (Claude Code) terminals to the StatusService', () => {
+    const { db, broadcaster } = setup();
+    terminalsDb.create(db, { id: 'cc1', sessionId: 's1', type: 'claude-code', label: 'CC' });
+    terminalsDb.updateStatus(db, 'cc1', 'waiting');
+
+    // Recent activity would mark a pty-timing terminal working; a hook terminal
+    // must be left untouched (hooks own its status).
+    ptyStatusTick(db, fakePty({ cc1: new Date() }), broadcaster);
+
+    expect(terminalsDb.getById(db, 'cc1')!.status).toBe('waiting');
+  });
+
   it('ignores agent-run "runner" terminals', () => {
     const { db, broadcaster } = setup();
-    terminalsDb.create(db, { id: 'r1', sessionId: 's1', type: 'claude-code', label: 'run', config: { runner: true } });
+    terminalsDb.create(db, { id: 'r1', sessionId: 's1', type: 'codex', label: 'run', config: { runner: true } });
 
     ptyStatusTick(db, fakePty({ r1: new Date() }), broadcaster);
 

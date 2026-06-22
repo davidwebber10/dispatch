@@ -36,9 +36,18 @@ describe('claude-code provider', () => {
     expect(claudeCodeProvider.statusStrategy).toBe('hooks');
   });
 
-  it('builds hooks config', () => {
-    const config = claudeCodeProvider.buildHooksConfig!({ serverUrl: 'http://localhost:3456', sessionId: 'sess-1' });
-    expect(config.hooks).toBeDefined();
+  it('builds a status-hooks settings object targeting the events route', () => {
+    const plan = claudeCodeProvider.buildStatusHooks!({ serverUrl: 'http://localhost:3456', terminalId: 'term-1', codexHelperPath: '/x' });
+    const hooks = (plan!.claudeSettings as any).hooks;
+    expect(hooks.SessionStart).toBeDefined();
+    expect(hooks.Stop).toBeDefined();
+    expect(JSON.stringify(hooks)).toContain('http://localhost:3456/api/events/claude/term-1');
+  });
+
+  it('injects --settings when status hooks are provided', () => {
+    const cmd = claudeCodeProvider.buildNewCommand({ workDir: '/tmp', statusHooks: { claudeSettingsPath: '/tmp/h.json' } });
+    expect(cmd.args).toContain('--settings');
+    expect(cmd.args[cmd.args.indexOf('--settings') + 1]).toBe('/tmp/h.json');
   });
 });
 
@@ -65,6 +74,19 @@ describe('codex provider', () => {
 
   it('has pty-timing status strategy', () => {
     expect(codexProvider.statusStrategy).toBe('pty-timing');
+  });
+
+  it('builds notify -c args and injects them before the subcommand', () => {
+    const plan = codexProvider.buildStatusHooks!({ serverUrl: 'http://localhost:3456', terminalId: 'cx-1', codexHelperPath: '/opt/codex-notify.mjs' });
+    expect(plan!.codexArgs![0]).toBe('-c');
+    expect(plan!.codexArgs![1]).toContain('notify=');
+    expect(plan!.codexArgs![1]).toContain('http://localhost:3456/api/events/codex/cx-1');
+
+    const cmd = codexProvider.buildResumeCommand({ externalSessionId: 'xyz', workDir: '/tmp', statusHooks: { codexNotifyArgs: plan!.codexArgs } });
+    // -c overrides must precede the `resume` subcommand.
+    expect(cmd.args[0]).toBe('-c');
+    expect(cmd.args[cmd.args.length - 2]).toBe('resume');
+    expect(cmd.args[cmd.args.length - 1]).toBe('xyz');
   });
 });
 

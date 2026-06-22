@@ -3,6 +3,7 @@ import { ArrowUp, Stop, Wrench, Brain, Terminal as TerminalIcon } from '@phospho
 import { api } from '../../api/client';
 import type { ConvItem } from '../../api/types';
 import { useActivity } from '../../stores/activity';
+import { useThreadStatus } from '../../stores/threadStatus';
 import { renderMarkdown } from '../../lib/markdown';
 
 /**
@@ -18,7 +19,13 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
   const [queued, setQueued] = useState<string[]>([]);
   const [showAll, setShowAll] = useState(false);
   const cursor = useRef(0);
-  const busy = useActivity((s) => s.byTerminal[terminalId]?.activity === 'busy');
+  // Prefer the hook/notify-driven status (accurate per-turn); fall back to the
+  // PTY activity heuristic only until the first status event arrives.
+  const ts = useThreadStatus((s) => s.byTerminal[terminalId]);
+  const activityBusy = useActivity((s) => s.byTerminal[terminalId]?.activity === 'busy');
+  const busy = ts ? ts.status === 'working' : activityBusy;
+  const needsInput = ts?.status === 'needs_input';
+  const activityLabel = ts?.activity || undefined;
   const busyRef = useRef(busy); busyRef.current = busy;
   const prevBusy = useRef(busy);
 
@@ -113,7 +120,8 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
               </>
             );
           })()}
-          {busy && <Typing />}
+          {busy && <Typing label={activityLabel} />}
+          {!busy && needsInput && <NeedsInput label={activityLabel} />}
         </div>
       </div>
 
@@ -188,11 +196,20 @@ function Item({ item }: { item: ConvItem }) {
   );
 }
 
-function Typing() {
+function Typing({ label }: { label?: string }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--color-accent)', fontSize: 12.5 }}>
       <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--color-accent)', animation: 'dispatchPulse 1.4s ease-in-out infinite' }} />
-      Working…
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label || 'Working…'}</span>
+    </div>
+  );
+}
+
+function NeedsInput({ label }: { label?: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--color-status-yellow)', fontSize: 12.5 }}>
+      <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--color-status-yellow)', animation: 'dispatchGlow 1.6s ease-in-out infinite' }} />
+      {label || 'Waiting for your input'}
     </div>
   );
 }

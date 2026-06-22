@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { FolderOpen, CaretRight } from '@phosphor-icons/react';
 import type { Session, Terminal, AgentSchedule } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
+import { useThreadStatus } from '../../stores/threadStatus';
 import { useProjects } from '../../stores/projects';
 import { useAgents } from '../../stores/agents';
 import { useAgentUI } from '../../stores/agentUI';
@@ -17,9 +18,10 @@ import { NewTabMenu } from './NewTabMenu';
 import { RenameThreadModal } from './RenameThreadModal';
 import { api } from '../../api/client';
 
-function dotState(status: string): 'working' | 'idle' | 'needs_input' {
+function dotState(status: string): 'working' | 'idle' | 'needs_input' | 'error' {
   if (status === 'working') return 'working';
   if (status === 'needs_input') return 'needs_input';
+  if (status === 'error') return 'error';
   return 'idle';
 }
 
@@ -130,6 +132,10 @@ function ThreadRow({ tab, active, onClick, onMiddle, onArchive, onContext }: { t
   const fs = useSettings((s) => s.sidebarFontSize);
   const isMobile = useIsMobile();
   const dot = isMobile ? 11 : 8;
+  // While a thread is working/needs-input, surface its live activity label in
+  // place of the timestamp ("Running: npm test", "Editing app.ts").
+  const activity = useThreadStatus((s) => s.byTerminal[tab.id]?.activity);
+  const liveActivity = (tab.status === 'working' || tab.status === 'needs_input') ? activity : undefined;
   return (
     <button
       onMouseEnter={() => setHover(true)}
@@ -149,7 +155,9 @@ function ThreadRow({ tab, active, onClick, onMiddle, onArchive, onContext }: { t
         ? (() => { const fv = fileVisual(tab.label); return <fv.Icon size={isMobile ? 18 : 15} weight="fill" color={fv.color} style={{ flexShrink: 0 }} />; })()
         : <span style={{ width: dot, height: dot, borderRadius: '50%', background: color, flexShrink: 0 }} />}
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tab.label}</span>
-      <span style={{ flexShrink: 0, font: `400 ${isMobile ? 12 : 10.5}px var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>{timeAgo(tab.createdAt)}</span>
+      <span style={{ flexShrink: 0, maxWidth: isMobile ? 150 : 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', font: `400 ${isMobile ? 12 : 10.5}px var(--font-mono)`, color: liveActivity ? 'var(--color-accent)' : 'var(--color-text-tertiary)' }}>
+        {liveActivity || timeAgo(tab.createdAt)}
+      </span>
       <span style={{ width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
         {hover && !isMobile ? (
           <span role="button" title="Archive thread" onClick={(e) => { e.stopPropagation(); onArchive(); }}

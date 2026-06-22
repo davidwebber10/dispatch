@@ -1,7 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import type { SessionProvider, SecretsMcpInjection } from './types.js';
+import type { SessionProvider, SecretsMcpInjection, StatusHooksInjection } from './types.js';
 
 // Additive --mcp-config (no --strict-mcp-config, so the user's other MCP servers
 // still load). Returns [] when Doppler isn't connected.
@@ -9,19 +9,25 @@ function mcpArgs(secretsMcp?: SecretsMcpInjection): string[] {
   return secretsMcp?.claudeConfigPath ? ['--mcp-config', secretsMcp.claudeConfigPath] : [];
 }
 
+// Layers a generated settings file (lifecycle hooks) on top of the user's own
+// settings. `--settings` is additive, so the user's config still applies.
+function hookArgs(statusHooks?: StatusHooksInjection): string[] {
+  return statusHooks?.claudeSettingsPath ? ['--settings', statusHooks.claudeSettingsPath] : [];
+}
+
 export const claudeCodeProvider: SessionProvider = {
   name: 'claude-code',
   displayName: 'Claude Code',
   statusStrategy: 'hooks',
 
-  buildNewCommand({ prompt, secretsMcp }) {
-    const args: string[] = ['--dangerously-skip-permissions', ...mcpArgs(secretsMcp)];
+  buildNewCommand({ prompt, secretsMcp, statusHooks }) {
+    const args: string[] = ['--dangerously-skip-permissions', ...mcpArgs(secretsMcp), ...hookArgs(statusHooks)];
     if (prompt) args.push(prompt);
     return { command: 'claude', args };
   },
 
-  buildResumeCommand({ externalSessionId, secretsMcp }) {
-    return { command: 'claude', args: ['--dangerously-skip-permissions', ...mcpArgs(secretsMcp), '-r', externalSessionId] };
+  buildResumeCommand({ externalSessionId, secretsMcp, statusHooks }) {
+    return { command: 'claude', args: ['--dangerously-skip-permissions', ...mcpArgs(secretsMcp), ...hookArgs(statusHooks), '-r', externalSessionId] };
   },
 
   buildRunnerCommand({ prompt, secretsMcp }) {
@@ -42,16 +48,24 @@ export const claudeCodeProvider: SessionProvider = {
     };
   },
 
-  buildHooksConfig({ serverUrl, sessionId }) {
-    const hook = {
-      type: 'http',
-      url: `${serverUrl}/api/hooks/terminal/${sessionId}`,
-    };
+  buildStatusHooks({ serverUrl, terminalId }) {
+    // HTTP hooks POST each lifecycle event's payload to the events route, which
+    // normalizes it (status + activity) and captures session_id on the first hit.
+    // `*` matchers fire for every tool; the un-matched events fire once each.
+    const hook = { type: 'http', url: `${serverUrl}/api/events/claude/${terminalId}` };
+    const always = [{ hooks: [hook] }];
+    const everyTool = [{ matcher: '*', hooks: [hook] }];
     return {
-      hooks: {
-        Stop: [{ hooks: [hook] }],
-        UserPromptSubmit: [{ hooks: [hook] }],
-        Notification: [{ matcher: 'permission_prompt|idle_prompt', hooks: [hook] }],
+      claudeSettings: {
+        hooks: {
+          SessionStart: always,
+          UserPromptSubmit: always,
+          PreToolUse: everyTool,
+          PostToolUse: everyTool,
+          Notification: always,
+          Stop: always,
+          SessionEnd: always,
+        },
       },
     };
   },

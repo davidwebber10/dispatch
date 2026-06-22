@@ -126,11 +126,12 @@ export class TerminalMonitor {
         status.activity = 'idle';
         this.burstBytes.set(terminalId, 0);
         this.broadcast(terminalId, status);
-        // Update last_activity_at on terminal and session
+        // Bump last_activity_at only. The thread STATUS column is owned by the
+        // StatusService (Claude hooks / Codex notify) — writing 'waiting' here on
+        // every output pause is what made status flap mid-turn, so we don't.
         if (this.db) {
           const now = new Date().toISOString();
           try {
-            this.db.prepare('UPDATE terminals SET status = ? WHERE id = ?').run('waiting', terminalId);
             const row = this.db.prepare('SELECT session_id FROM terminals WHERE id = ?').get(terminalId) as any;
             if (row?.session_id) {
               this.db.prepare('UPDATE sessions SET last_activity_at = ? WHERE id = ?').run(now, row.session_id);

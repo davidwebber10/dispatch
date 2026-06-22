@@ -29,6 +29,8 @@ import { createStateRouter } from './routes/state.js';
 import { createGitRouter } from './routes/git.js';
 import { createSecretsRouter } from './routes/secrets.js';
 import { SecretsService } from './secrets/service.js';
+import { createEventsRouter } from './routes/events.js';
+import { StatusService } from './status/service.js';
 import { createEventsBroadcaster, createNoopBroadcaster } from './ws/events.js';
 import type { EventBroadcaster } from './ws/events.js';
 import { handleTerminalConnection } from './ws/terminal.js';
@@ -82,10 +84,12 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const agentService = new AgentService(db, sessionService, broadcaster);
   const secretsService = options.secretsService ?? new SecretsService(options.secretsDir ?? path.join(os.homedir(), '.dispatch'));
   sessionService.setSecretsInjection(() => secretsService.getInjection());
+  const statusService = new StatusService(db, broadcaster);
 
   // Mount routes
   app.use('/api/sessions', createSessionsRouter(sessionService, broadcaster));
-  app.use('/api', createTerminalsRouter(sessionService));
+  app.use('/api', createTerminalsRouter(sessionService, undefined, statusService));
+  app.use('/api/events', createEventsRouter(statusService));
   app.use('/api/agents', createAgentsRouter(agentService));
   app.use('/api/hooks', createHooksRouter(db, broadcaster));
   app.use('/api/providers', createProvidersRouter());
@@ -208,6 +212,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Determine actual server URL after port is known
   const sessionService = new SessionService(db, ptyManager);
   const agentService = new AgentService(db, sessionService, broadcaster, path.join(dataDir, 'runs'));
+  const statusService = new StatusService(db, broadcaster);
 
   // Doppler secrets: token-backed connection + per-spawn injection (DOPPLER_* env +
   // an MCP server) so Claude Code / Codex agents can add & retrieve secrets.
@@ -275,7 +280,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   // Mount routes
   app.use('/api/sessions', createSessionsRouter(sessionService, broadcaster));
-  app.use('/api', createTerminalsRouter(sessionService, broadcaster));
+  app.use('/api', createTerminalsRouter(sessionService, broadcaster, statusService));
+  app.use('/api/events', createEventsRouter(statusService));
   app.use('/api/agents', createAgentsRouter(agentService));
   app.use('/api/hooks', createHooksRouter(db, broadcaster));
   app.use('/api/providers', createProvidersRouter());
@@ -348,6 +354,14 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   // Store port in app state
   appState.set(db, 'port', String(port));
+
+  // Status hooks: tell SessionService how to make spawned agents phone home with
+  // lifecycle events (Claude hooks settings file + Codex notify helper).
+  sessionService.setStatusContext({
+    serverUrl: `http://127.0.0.1:${port}`,
+    hooksDir: path.join(dataDir, 'hooks'),
+    codexHelperPath: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../scripts/codex-notify.mjs'),
+  });
 
   console.log(`Dispatch server listening on port ${port}`);
 

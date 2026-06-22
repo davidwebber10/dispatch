@@ -11,12 +11,22 @@ import { PTYManager } from '../pty/manager.js';
 import type { Session, CreateSessionInput } from '../types.js';
 import { rowToSession } from '../types.js';
 import type { TerminalType } from '../db/terminals.js';
-import type { SecretsMcpInjection } from '../providers/types.js';
+import type { SecretsMcpInjection, StatusHooksInjection } from '../providers/types.js';
 import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript.js';
+
+interface StatusContext {
+  serverUrl: string;
+  /** Directory where per-terminal Claude hook settings files are written. */
+  hooksDir: string;
+  /** Absolute path to the Codex notify helper script. */
+  codexHelperPath: string;
+}
 
 export class SessionService {
   /** Supplies the Doppler MCP injection for spawned CLIs; set by the server wiring. */
   private secretsInjection: (() => SecretsMcpInjection) | null = null;
+  /** How spawned CLIs phone home with lifecycle events; set by the server wiring. */
+  private statusContext: StatusContext | null = null;
 
   constructor(
     private db: Database.Database,
@@ -25,6 +35,39 @@ export class SessionService {
 
   setSecretsInjection(fn: () => SecretsMcpInjection): void {
     this.secretsInjection = fn;
+  }
+
+  setStatusContext(ctx: StatusContext): void {
+    this.statusContext = ctx;
+  }
+
+  /**
+   * Resolve the per-terminal status-hooks injection: ask the provider to shape
+   * the plan, then do the IO (write the Claude settings file) so the build*
+   * commands receive ready-to-use args. No-op until the server sets the context.
+   */
+  private buildStatusHooks(terminalId: string, type: string): StatusHooksInjection | undefined {
+    const ctx = this.statusContext;
+    if (!ctx) return undefined;
+    const provider = getProvider(type);
+    const plan = provider.buildStatusHooks?.({
+      serverUrl: ctx.serverUrl,
+      terminalId,
+      codexHelperPath: ctx.codexHelperPath,
+    });
+    if (!plan) return undefined;
+    if (plan.claudeSettings) {
+      try {
+        fs.mkdirSync(ctx.hooksDir, { recursive: true });
+        const file = path.join(ctx.hooksDir, `${terminalId}.json`);
+        fs.writeFileSync(file, JSON.stringify(plan.claudeSettings, null, 2));
+        return { claudeSettingsPath: file };
+      } catch {
+        return undefined; // hooks are best-effort; never block a spawn
+      }
+    }
+    if (plan.codexArgs) return { codexNotifyArgs: plan.codexArgs };
+    return undefined;
   }
 
   create(input: CreateSessionInput): Session {
@@ -478,11 +521,13 @@ export class SessionService {
       const secretsMcp = this.secretsInjection?.() ?? undefined;
       let cmd: { command: string; args: string[] };
       if (runnerPrompt !== undefined) {
+        // Runner launches emit their own structured stream-json; no hooks needed.
         cmd = provider.buildRunnerCommand({ workDir, prompt: runnerPrompt, secretsMcp });
-      } else if (terminal.external_id) {
-        cmd = provider.buildResumeCommand({ externalSessionId: terminal.external_id, workDir, secretsMcp });
       } else {
-        cmd = provider.buildNewCommand({ workDir, secretsMcp });
+        const statusHooks = this.buildStatusHooks(terminalId, terminal.type);
+        cmd = terminal.external_id
+          ? provider.buildResumeCommand({ externalSessionId: terminal.external_id, workDir, secretsMcp, statusHooks })
+          : provider.buildNewCommand({ workDir, secretsMcp, statusHooks });
       }
       command = cmd.command;
       args = cmd.args;
