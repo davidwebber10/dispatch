@@ -5,6 +5,7 @@ import type { EventBroadcaster } from '../ws/events.js';
 import * as sessionsDb from '../db/sessions.js';
 import * as terminalsDb from '../db/terminals.js';
 import { getProvider } from '../providers/registry.js';
+import { aggregateSessionStatus } from '../status/aggregate.js';
 
 // A thread is "working" while its PTY is still emitting output. Claude Code /
 // Codex animate a spinner continuously while a turn is active (including during
@@ -12,19 +13,6 @@ import { getProvider } from '../providers/registry.js';
 // silence means it's back at the prompt.
 const ACTIVITY_THRESHOLD_MS = 4_000;
 const DEFAULT_INTERVAL_MS = 2_000;
-
-export function mapHookEventToStatus(eventName: string): SessionStatus | null {
-  switch (eventName) {
-    case 'UserPromptSubmit':
-      return 'working';
-    case 'Stop':
-      return 'waiting';
-    case 'Notification':
-      return 'needs_input';
-    default:
-      return null;
-  }
-}
 
 /**
  * Drives live thread (terminal) status from PTY activity. Modern PTYs are keyed
@@ -80,12 +68,7 @@ export function ptyStatusTick(
     }
 
     for (const sessionId of touchedSessions) {
-      let sessionStatus: SessionStatus = 'waiting';
-      for (const t of terminalsDb.listBySession(db, sessionId)) {
-        const s = t.status || 'waiting';
-        if (s === 'working') { sessionStatus = 'working'; break; }
-        if (s === 'needs_input') sessionStatus = 'needs_input';
-      }
+      const sessionStatus = aggregateSessionStatus(terminalsDb.listBySession(db, sessionId).map((t) => t.status || 'waiting'));
       const session = sessionsDb.getById(db, sessionId);
       if (session && session.status !== 'done' && session.status !== sessionStatus) {
         sessionsDb.updateStatus(db, sessionId, sessionStatus);

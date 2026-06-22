@@ -2,7 +2,7 @@ export type Provider = 'claude-code' | 'codex';
 
 export type TerminalType = 'claude-code' | 'codex' | 'shell';
 
-export type SessionStatus = 'working' | 'waiting' | 'needs_input' | 'done';
+export type SessionStatus = 'working' | 'waiting' | 'needs_input' | 'error' | 'done';
 
 export interface Session {
   id: string;

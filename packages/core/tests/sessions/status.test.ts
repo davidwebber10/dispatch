@@ -3,23 +3,8 @@ import Database from 'better-sqlite3';
 import { initSchema } from '../../src/db/schema.js';
 import * as sessionsDb from '../../src/db/sessions.js';
 import * as terminalsDb from '../../src/db/terminals.js';
-import { mapHookEventToStatus, ptyStatusTick } from '../../src/sessions/status.js';
+import { ptyStatusTick } from '../../src/sessions/status.js';
 import type { PTYManager } from '../../src/pty/manager.js';
-
-describe('mapHookEventToStatus', () => {
-  it('maps UserPromptSubmit to working', () => {
-    expect(mapHookEventToStatus('UserPromptSubmit')).toBe('working');
-  });
-  it('maps Stop to waiting', () => {
-    expect(mapHookEventToStatus('Stop')).toBe('waiting');
-  });
-  it('maps Notification to needs_input', () => {
-    expect(mapHookEventToStatus('Notification')).toBe('needs_input');
-  });
-  it('returns null for unknown events', () => {
-    expect(mapHookEventToStatus('Unknown')).toBeNull();
-  });
-});
 
 function fakePty(activity: Record<string, Date | null>): PTYManager {
   return {

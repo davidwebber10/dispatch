@@ -17,7 +17,7 @@ import { createSessionsRouter } from './routes/sessions.js';
 import { createTerminalsRouter } from './routes/terminals.js';
 import { AgentService } from './agents/service.js';
 import { createAgentsRouter } from './routes/agents.js';
-import { createHooksRouter } from './routes/hooks.js';
+import { aggregateSessionStatus } from './status/aggregate.js';
 import { AuthRequestService } from './auth/service.js';
 import { installBrowserShim } from './auth/shim.js';
 
@@ -91,7 +91,6 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   app.use('/api', createTerminalsRouter(sessionService, undefined, statusService));
   app.use('/api/events', createEventsRouter(statusService));
   app.use('/api/agents', createAgentsRouter(agentService));
-  app.use('/api/hooks', createHooksRouter(db, broadcaster));
   app.use('/api/providers', createProvidersRouter());
   app.use('/api/servers', createServersRouter(db));
   app.use('/api/secrets', createSecretsRouter(secretsService));
@@ -236,13 +235,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     agentService.onRunnerData(id, data);
   });
 
-  function aggregateSessionStatus(sessionId: string) {
-    const allTerminals = terminalsDb.listBySession(db, sessionId);
-    let status = 'waiting';
-    for (const t of allTerminals) {
-      const s = t.status || 'waiting';
-      if (s === 'needs_input') { status = 'needs_input'; break; }
-    }
+  function rollupSession(sessionId: string) {
+    const status = aggregateSessionStatus(terminalsDb.listBySession(db, sessionId).map((t) => t.status || 'waiting'));
     sessionsDb.updateStatus(db, sessionId, status);
     broadcaster.broadcast({ type: 'session:status', sessionId, status });
   }
@@ -261,7 +255,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       broadcaster.broadcast({ type: 'terminal:status', terminalId: id, status: 'waiting' });
       broadcaster.broadcast({ type: 'terminal:exit', terminalId: id, sessionId: terminal.session_id });
       sessionsDb.updatePid(db, terminal.session_id, null);
-      aggregateSessionStatus(terminal.session_id);
+      rollupSession(terminal.session_id);
     } else {
       // Legacy: id is a session ID
       sessionsDb.updateStatus(db, id, 'waiting');
@@ -283,7 +277,6 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.use('/api', createTerminalsRouter(sessionService, broadcaster, statusService));
   app.use('/api/events', createEventsRouter(statusService));
   app.use('/api/agents', createAgentsRouter(agentService));
-  app.use('/api/hooks', createHooksRouter(db, broadcaster));
   app.use('/api/providers', createProvidersRouter());
   app.use('/api/servers', createServersRouter(db));
   app.use('/api/secrets', createSecretsRouter(secretsService));

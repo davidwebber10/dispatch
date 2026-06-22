@@ -4,6 +4,7 @@ import { FolderOpen, CaretRight } from '@phosphor-icons/react';
 import type { Session, Terminal, AgentSchedule } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
 import { useThreadStatus } from '../../stores/threadStatus';
+import { projectIndicator } from '../../lib/status';
 import { useProjects } from '../../stores/projects';
 import { useAgents } from '../../stores/agents';
 import { useAgentUI } from '../../stores/agentUI';
@@ -243,7 +244,9 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   // project screen is always expanded (open defaults to active when not provided).
   const isOpen = open ?? active;
   const plusStyle: React.CSSProperties = isMobile ? { ...plusBtn, width: 34, height: 34, font: '500 26px/1 var(--font-sans)', borderRadius: 12 } : plusBtn;
-  const working = session.status === 'working' || tabs.some((t) => t.status === 'working' || loadingMap[t.id]);
+  // Roll the project's threads up to one header indicator (needs_input > working
+  // > error > idle), combining the backend's session.status with live tab state.
+  const indicator = projectIndicator(session.status, tabs.map((t) => t.status), tabs.some((t) => loadingMap[t.id]));
   useEffect(() => { if (isOpen) void useTabs.getState().loadTabs(session.id); }, [isOpen, session.id]);
 
   async function addTab(type: string, config?: Record<string, unknown>) {
@@ -325,7 +328,9 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
             <CaretRight size={11} weight="bold" style={{ flexShrink: 0, color: 'var(--color-text-tertiary)', transition: 'transform .15s ease', transform: isOpen ? 'rotate(90deg)' : 'none' }} />
           )}
           <span style={{ fontWeight: 600, fontSize: isMobile ? 19 : pfs, color: (!isMobile && active) ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{session.name}</span>
-          {working && <Spinner size={10} />}
+          {indicator === 'working' && <Spinner size={10} />}
+          {indicator === 'needs_input' && <StatusDot state="needs_input" size={8} />}
+          {indicator === 'error' && <StatusDot state="error" size={8} />}
           <span title={session.lastActivityAt ?? ''} style={{ marginLeft: 'auto', flexShrink: 0, font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{timeAgo(session.lastActivityAt)}</span>
           {(hover || projMenu) && (
             <button title="Project options" onClick={(e) => { e.stopPropagation(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setProjMenu({ x: r.right, y: r.bottom + 4 }); }}

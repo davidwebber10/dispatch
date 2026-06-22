@@ -3,6 +3,7 @@ import * as terminalsDb from '../db/terminals.js';
 import * as sessionsDb from '../db/sessions.js';
 import type { EventBroadcaster } from '../ws/events.js';
 import { normalizeClaude, normalizeCodex, type ThreadStatus } from './events.js';
+import { aggregateSessionStatus } from './aggregate.js';
 
 // Normalized thread status -> the persisted terminal-status enum.
 const TO_TERMINAL: Record<ThreadStatus, string> = {
@@ -51,8 +52,7 @@ export class StatusService {
   }
 
   private aggregateSession(sessionId: string): void {
-    const statuses = terminalsDb.listBySession(this.db, sessionId).map((t) => t.status || 'waiting');
-    const status = statuses.includes('needs_input') ? 'needs_input' : statuses.includes('working') ? 'working' : 'waiting';
+    const status = aggregateSessionStatus(terminalsDb.listBySession(this.db, sessionId).map((t) => t.status || 'waiting'));
     try { sessionsDb.updateStatus(this.db, sessionId, status); } catch { /* best effort */ }
     this.broadcaster.broadcast({ type: 'session:status', sessionId, status });
   }
