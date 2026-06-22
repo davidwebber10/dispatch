@@ -10,14 +10,14 @@ import { renderMarkdown } from '../../lib/markdown';
 /**
  * Visual mode: a chat-style render of the session's live transcript. Reads are
  * cursor-polled from the daemon; the composer writes back to the SAME live PTY
- * (so Terminal mode mirrors it). Stop interrupts the turn; sending while the agent
- * is responding queues the message and auto-sends it when the turn finishes.
+ * (so Terminal mode mirrors it). Stop interrupts the turn; a message is always
+ * sent straight to the agent, which runs it now if idle or queues it natively if
+ * mid-turn (no client-side queue — that caused staged/lost messages).
  */
 export function ConversationView({ terminalId }: { terminalId: string }) {
   const [items, setItems] = useState<ConvItem[]>([]);
   const [unsupported, setUnsupported] = useState(false);
   const [input, setInput] = useState('');
-  const [queued, setQueued] = useState<string[]>([]);
   const [showAll, setShowAll] = useState(false);
   const cursor = useRef(0);
   // Prefer the hook/notify-driven status (accurate per-turn); fall back to the
@@ -28,7 +28,6 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
   const needsInput = ts?.status === 'needs_input';
   const activityLabel = ts?.activity || undefined;
   const busyRef = useRef(busy); busyRef.current = busy;
-  const prevBusy = useRef(busy);
 
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
@@ -62,16 +61,6 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
     if (atBottom.current && scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
   }, [items.length, busy]);
 
-  // --- flush one queued message when a turn finishes (busy true->false) -
-  useEffect(() => {
-    const was = prevBusy.current; prevBusy.current = busy;
-    if (was && !busy && queued.length) {
-      const [next, ...rest] = queued;
-      setQueued(rest);
-      void api.sendInput(terminalId, next + '\r').then(() => setTimeout(() => refreshRef.current(), 300));
-    }
-  }, [busy, queued, terminalId]);
-
   function onScroll() {
     const el = scroller.current;
     if (el) atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
@@ -81,8 +70,10 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
     const msg = input.trim();
     if (!msg) return;
     setInput('');
-    if (busy) { setQueued((q) => [...q, msg]); return; }
     atBottom.current = true;
+    // Always send straight to the agent. It runs the message immediately when
+    // idle and queues it natively when mid-turn — so there's no client-side
+    // queue to drop or mis-flush (the old source of staged/lost messages).
     void api.sendInput(terminalId, msg + '\r').then(() => setTimeout(() => refreshRef.current(), 300));
   }
 
@@ -130,23 +121,13 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
       <div style={{ flexShrink: 0, borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', padding: '10px 16px' }}>
         <div style={{ maxWidth: 760, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
           <PromptCard terminalId={terminalId} />
-          {queued.length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {queued.map((q, i) => (
-                <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: '100%', font: '400 11.5px var(--font-mono)', color: 'var(--color-status-yellow)', background: 'rgba(245,197,66,.1)', border: '1px solid rgba(245,197,66,.3)', borderRadius: 7, padding: '3px 8px' }}>
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>queued: {q}</span>
-                  <button onClick={() => setQueued((qq) => qq.filter((_, j) => j !== i))} title="Remove" style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>×</button>
-                </span>
-              ))}
-            </div>
-          )}
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
               rows={1}
-              placeholder={busy ? 'Queue a follow-up…' : 'Message…  (Enter to send, Shift+Enter for newline)'}
+              placeholder={busy ? 'Message…  (sends now, agent queues it)' : 'Message…  (Enter to send, Shift+Enter for newline)'}
               style={{ flex: 1, minWidth: 0, resize: 'none', maxHeight: 160, minHeight: 38, padding: '9px 12px', background: 'var(--color-elevated)', border: '1px solid #2c2c32', borderRadius: 10, color: 'var(--color-text-primary)', font: '400 13px var(--font-sans)', lineHeight: 1.5 }}
             />
             {busy && (
@@ -154,7 +135,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
                 <Stop size={16} weight="fill" />
               </button>
             )}
-            <button onClick={send} disabled={!input.trim()} title={busy ? 'Queue message' : 'Send'} style={{ flexShrink: 0, width: 38, height: 38, display: 'flex', alignItems: 'center', justifyContent: 'center', background: input.trim() ? 'var(--color-accent)' : 'var(--color-elevated)', border: input.trim() ? 'none' : '1px solid #2c2c32', borderRadius: 10, color: input.trim() ? '#08240F' : 'var(--color-text-tertiary)', cursor: input.trim() ? 'pointer' : 'default' }}>
+            <button onClick={send} disabled={!input.trim()} title="Send" style={{ flexShrink: 0, width: 38, height: 38, display: 'flex', alignItems: 'center', justifyContent: 'center', background: input.trim() ? 'var(--color-accent)' : 'var(--color-elevated)', border: input.trim() ? 'none' : '1px solid #2c2c32', borderRadius: 10, color: input.trim() ? '#08240F' : 'var(--color-text-tertiary)', cursor: input.trim() ? 'pointer' : 'default' }}>
               <ArrowUp size={17} weight="bold" />
             </button>
           </div>
