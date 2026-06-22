@@ -6,7 +6,15 @@
 
 **Architecture:** A pure `detectPrompt(provider, screen)` parses the live PTY screen (from `ptyManager.getBuffer`) into a normalized `DetectedPrompt`. A `PromptService` debounces PTY output, runs detection when a thread goes quiet, dedupes, and broadcasts a `terminal:prompt` websocket event. The web renders a `PromptCard` (option buttons) or, when `parsed=false`, an inline live terminal. Answering sends keystrokes through the existing `POST /api/terminals/:id/input`. Detection runs server-side regardless of whether Visual mode is open.
 
-**Tech Stack:** TypeScript (ESM, `.js` import specifiers), Express, ws, better-sqlite3, node-pty, vitest (core); React + Zustand + Vite, vitest (web). pnpm workspace.
+**Tech Stack:** TypeScript (ESM, `.js` import specifiers), Express, ws, better-sqlite3, node-pty, `@xterm/headless`, vitest (core); React + Zustand + Vite, vitest (web). pnpm workspace.
+
+## Revisions during execution (Task 1 findings)
+
+Capturing real fixtures (Task 1) exposed two facts that change Tasks 2–4:
+1. **Claude/Codex TUIs paint with absolute column positioning** (`\x1b[<n>G`), so naive `stripAnsi` collapses all spacing (`1.Yes`, `Quicksafetycheck`). **Fix:** Task 2 becomes `renderScreen(raw): Promise<string>` using **`@xterm/headless`** (added to core) — feed the buffer to a headless terminal, read the screen grid rows. This restores exact spacing. `detectPrompt` stays pure/sync and operates on the *rendered* text; `PromptService.check` becomes async.
+2. **The dominant shape for both providers is a numbered select** (a question, then `N. label` lines, a highlighted row). Claude marks the highlight with `❯`, **Codex with `›`**. Real wording differs from the plan's guesses (Claude trust = "…one you trust?", option "1. Yes, I trust this folder"). **Fix:** one robust `numberedSelect` parser (cursor glyphs `❯`/`›`) covers Claude trust, Codex trust, the browser prompt, and model multiple-choice; plus a `confirm` (`y/n`) parser. Option **keys = arrow-nav to the highlighted target + Enter** (`\x1b[B`/`\x1b[A` + `\r`), since these are "Enter to confirm" menus — more reliable than number-guessing. Task 3 = renderScreen-fed numbered-select + confirm; Task 4 = add `›` + Codex wording to the same parser (no separate Codex module needed).
+
+Fixtures captured: `claude-trust-folder.txt`, `claude-select.txt` (browser prompt), `codex-trust.txt`.
 
 ## Global Constraints
 
