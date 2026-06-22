@@ -9,7 +9,7 @@ import { ConversationView } from './ConversationView';
 import { useThreadMode, type ThreadMode } from '../../stores/threadMode';
 import { useTabs } from '../../stores/tabs';
 
-/** AI thread (claude-code/codex): a Pretty (conversation) / Terminal (raw) toggle. */
+/** AI thread (claude-code/codex): a Visual (conversation) / Terminal (raw) toggle. */
 function AiThread({ tab }: { tab: Terminal }) {
   const defaultMode: ThreadMode = tab.type === 'codex' ? 'expert' : 'normal';
   const mode = useThreadMode((s) => s.modes[tab.id]) ?? defaultMode;
@@ -19,7 +19,7 @@ function AiThread({ tab }: { tab: Terminal }) {
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
       <div style={{ flexShrink: 0, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', padding: '6px 12px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
         <div style={{ display: 'flex', background: 'var(--color-elevated)', border: '1px solid #2c2c32', borderRadius: 8, padding: 2, gap: 2 }}>
-          {([['normal', 'Pretty'], ['expert', 'Terminal']] as const).map(([m, label]) => (
+          {([['normal', 'Visual'], ['expert', 'Terminal']] as const).map(([m, label]) => (
             <button key={m} onClick={() => setMode(tab.id, m)} style={{
               padding: '4px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12,
               fontWeight: mode === m ? 600 : 500,
