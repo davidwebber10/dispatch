@@ -299,10 +299,9 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
-        // Active project: an accent "glow" fading from the top into the dark
-        // background over a FIXED distance (not a % of height) so it looks the same
-        // on a tall card or a short collapsed one (per the Claude design).
-        background: (!isMobile && active) ? 'linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 20%, transparent), transparent 104px)' : (!isMobile && hover) ? 'rgba(255,255,255,0.04)' : 'transparent',
+        // Active project: a gentle accent wash that fades all the way down the card
+        // (full-height, so it's gradual at any size) and stays subtle (~20% accent).
+        background: (!isMobile && active) ? 'linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 20%, transparent), transparent)' : (!isMobile && hover) ? 'rgba(255,255,255,0.04)' : 'transparent',
         border: (!isMobile && active) ? '1px solid color-mix(in srgb, var(--color-accent) 45%, transparent)' : '1px solid transparent',
         borderRadius: 12, padding: isMobile ? '0 4px' : 4, marginBottom: 4, cursor: 'default', transition: 'background 0.12s ease, border-color 0.12s ease',
       }}
