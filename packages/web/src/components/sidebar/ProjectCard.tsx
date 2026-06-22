@@ -299,9 +299,9 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
-        // Active project: a gentle accent wash that fades all the way down the card
-        // (full-height, so it's gradual at any size) and stays subtle (~20% accent).
-        background: (!isMobile && active) ? 'linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 20%, transparent), transparent)' : (!isMobile && hover) ? 'rgba(255,255,255,0.04)' : 'transparent',
+        // Active project: a faint accent wash fading the full height of the card —
+        // kept subtle (~10% accent at the very top, fading to clear).
+        background: (!isMobile && active) ? 'linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 10%, transparent), transparent)' : (!isMobile && hover) ? 'rgba(255,255,255,0.04)' : 'transparent',
         border: (!isMobile && active) ? '1px solid color-mix(in srgb, var(--color-accent) 45%, transparent)' : '1px solid transparent',
         borderRadius: 12, padding: isMobile ? '0 4px' : 4, marginBottom: 4, cursor: 'default', transition: 'background 0.12s ease, border-color 0.12s ease',
       }}
