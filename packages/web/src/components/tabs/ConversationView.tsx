@@ -16,6 +16,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
   const [unsupported, setUnsupported] = useState(false);
   const [input, setInput] = useState('');
   const [queued, setQueued] = useState<string[]>([]);
+  const [showAll, setShowAll] = useState(false);
   const cursor = useRef(0);
   const busy = useActivity((s) => s.byTerminal[terminalId]?.activity === 'busy');
   const busyRef = useRef(busy); busyRef.current = busy;
@@ -96,7 +97,22 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
           {items.length === 0 && (
             <div style={{ color: 'var(--color-text-tertiary)', fontSize: 13, padding: '8px 0' }}>No messages yet — say something below.</div>
           )}
-          {items.map((it, i) => <Item key={i} item={it} />)}
+          {(() => {
+            const MAX = 120;
+            const hidden = showAll ? 0 : Math.max(0, items.length - MAX);
+            const base = hidden;
+            const shown = hidden ? items.slice(hidden) : items;
+            return (
+              <>
+                {hidden > 0 && (
+                  <button onClick={() => setShowAll(true)} style={{ alignSelf: 'center', background: 'var(--color-elevated)', border: '1px solid #2c2c32', borderRadius: 8, color: 'var(--color-text-secondary)', fontSize: 12, padding: '6px 12px', cursor: 'pointer' }}>
+                    Show {hidden} earlier message{hidden > 1 ? 's' : ''}
+                  </button>
+                )}
+                {shown.map((it, i) => <Item key={base + i} item={it} />)}
+              </>
+            );
+          })()}
           {busy && <Typing />}
         </div>
       </div>

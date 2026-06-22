@@ -261,19 +261,42 @@ export class SessionService {
 
     const session = sessionsDb.getById(this.db, terminal.session_id);
     const workDir = terminal.working_dir || session?.working_dir;
-    const sessionId = terminal.external_id;
-    if (!workDir || !sessionId) return { items: [], cursor: 0 };
+    if (!workDir) return { items: [], cursor: 0 };
 
-    const encoded = workDir.replace(/\//g, '-');
-    const file = path.join(os.homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
+    const dir = path.join(os.homedir(), '.claude', 'projects', workDir.replace(/\//g, '-'));
+    // external_id is normally captured at spawn; when it wasn't, recover it from the
+    // project's transcript files so the thread still renders in Normal Mode.
+    const sessionId = terminal.external_id || this.recoverSessionId(terminalId, dir);
+    if (!sessionId) return { items: [], cursor: 0 };
+
     let raw: string;
-    try { raw = fs.readFileSync(file, 'utf8'); } catch { return { items: [], cursor: 0 }; }
+    try { raw = fs.readFileSync(path.join(dir, `${sessionId}.jsonl`), 'utf8'); } catch { return { items: [], cursor: 0 }; }
 
     // Consume only complete lines (the trailing element is an empty string after a
     // final newline, or a half-written entry) so we never parse a partial record.
     const usable = raw.split('\n').slice(0, -1);
     const items = parseClaudeTranscript(usable.slice(since).join('\n'));
     return { items, cursor: usable.length };
+  }
+
+  /**
+   * Recover a missing transcript link: pick the newest *.jsonl in the project's
+   * Claude transcript dir, and persist it as the terminal's external_id when it's
+   * the only one (unambiguous) so resume + future loads work too.
+   */
+  private recoverSessionId(terminalId: string, dir: string): string | null {
+    let files: { id: string; m: number }[];
+    try {
+      files = fs.readdirSync(dir)
+        .filter((f) => f.endsWith('.jsonl'))
+        .map((f) => ({ id: f.replace(/\.jsonl$/, ''), m: fs.statSync(path.join(dir, f)).mtimeMs }))
+        .sort((a, b) => b.m - a.m);
+    } catch { return null; }
+    if (!files.length) return null;
+    if (files.length === 1) {
+      try { terminalsDb.updateExternalId(this.db, terminalId, files[0].id); } catch { /* best effort */ }
+    }
+    return files[0].id;
   }
 
   relaunchTerminal(terminalId: string): terminalsDb.Terminal | null {

@@ -7,6 +7,7 @@ import { NotesTab } from './NotesTab';
 import { FileEditorTab } from './FileEditorTab';
 import { ConversationView } from './ConversationView';
 import { useThreadMode, type ThreadMode } from '../../stores/threadMode';
+import { useTabs } from '../../stores/tabs';
 
 /** AI thread (claude-code/codex): a Normal (conversation) / Expert (terminal) toggle. */
 function AiThread({ tab }: { tab: Terminal }) {
@@ -37,14 +38,21 @@ function AiThread({ tab }: { tab: Terminal }) {
 
 /** Renders the active tab by its backend type. */
 export function TabHost({ terminalId }: { terminalId: string }) {
-  const [tab, setTab] = useState<Terminal | null>(null);
+  // Render instantly from the tab the sidebar already loaded; only hit the network
+  // when it isn't cached (avoids a "Loading…" flash on every thread switch).
+  const cached = useTabs((s) => {
+    for (const list of Object.values(s.byProject)) { const t = list.find((x) => x.id === terminalId); if (t) return t; }
+    return null;
+  });
+  const [tab, setTab] = useState<Terminal | null>(cached);
 
   useEffect(() => {
+    if (cached) { setTab(cached); return; }
     let on = true;
     setTab(null);
     void api.getTerminal(terminalId).then((t) => { if (on) setTab(t); });
     return () => { on = false; };
-  }, [terminalId]);
+  }, [terminalId, cached]);
 
   if (!tab) return <div style={{ padding: 12, color: 'var(--color-text-secondary)' }}>Loading…</div>;
   switch (tab.type) {

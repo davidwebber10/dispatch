@@ -76,6 +76,27 @@ describe('terminal routes', () => {
     }
   });
 
+  it('GET /conversation recovers a missing session id from the transcript dir + persists it', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-conv-rec-'));
+    const oldHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      const wd = '/tmp/proj-rec';
+      terminalsDb.create(db, { id: 'cc-rec', sessionId, type: 'claude-code', label: 't', skipPermissions: true, workingDir: wd }); // no externalId
+      const dir = path.join(home, '.claude', 'projects', wd.replace(/\//g, '-'));
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'rec-uuid-1.jsonl'), '{"type":"user","message":{"role":"user","content":"hey"},"uuid":"u1"}\n');
+
+      const r = await request(app).get('/api/terminals/cc-rec/conversation').expect(200);
+      expect(r.body.items.map((i: any) => i.kind)).toEqual(['user']);
+      // single transcript in the dir => external_id is linked for next time
+      expect(terminalsDb.getById(db, 'cc-rec')?.external_id).toBe('rec-uuid-1');
+    } finally {
+      if (oldHome === undefined) delete process.env.HOME; else process.env.HOME = oldHome;
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it('conversation is marked unsupported for non-claude terminals', async () => {
     terminalsDb.create(db, { id: 'sh-c', sessionId, type: 'shell', label: 's', skipPermissions: false });
     const r = await request(app).get('/api/terminals/sh-c/conversation').expect(200);
