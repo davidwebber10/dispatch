@@ -7,9 +7,9 @@ import { useThreadStatus } from '../../stores/threadStatus';
 import { renderMarkdown } from '../../lib/markdown';
 
 /**
- * Normal Mode: a chat-style render of the session's live transcript. Reads are
+ * Pretty mode: a chat-style render of the session's live transcript. Reads are
  * cursor-polled from the daemon; the composer writes back to the SAME live PTY
- * (so Expert Mode mirrors it). Stop interrupts the turn; sending while the agent
+ * (so Terminal mode mirrors it). Stop interrupts the turn; sending while the agent
  * is responding queues the message and auto-sends it when the turn finishes.
  */
 export function ConversationView({ terminalId }: { terminalId: string }) {
@@ -91,8 +91,8 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, color: 'var(--color-text-tertiary)', padding: 24, textAlign: 'center' }}>
         <TerminalIcon size={22} />
-        <div style={{ fontSize: 13 }}>Normal Mode isn't available for this thread yet.</div>
-        <div style={{ fontSize: 12 }}>Switch to <strong style={{ color: 'var(--color-text-secondary)' }}>Expert</strong> for the terminal.</div>
+        <div style={{ fontSize: 13 }}>Pretty view isn't available for this thread yet.</div>
+        <div style={{ fontSize: 12 }}>Switch to <strong style={{ color: 'var(--color-text-secondary)' }}>Terminal</strong> to use it.</div>
       </div>
     );
   }
