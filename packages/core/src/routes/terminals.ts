@@ -59,6 +59,21 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     res.json(terminal);
   });
 
+  // GET /api/terminals/:terminalId/conversation?since=N — parsed transcript (Normal Mode)
+  router.get('/terminals/:terminalId/conversation', (req, res) => {
+    const since = Number(req.query.since) || 0;
+    res.json(sessionService.getConversation(req.params.terminalId, since));
+  });
+
+  // POST /api/terminals/:terminalId/input { data } — write raw bytes to the live PTY.
+  // Normal Mode uses this to send a message ("msg\r") or interrupt the turn (Esc "\x1b").
+  router.post('/terminals/:terminalId/input', (req, res) => {
+    const data = req.body?.data;
+    if (typeof data !== 'string') return res.status(400).json({ error: 'data (string) is required' });
+    try { sessionService.writeToTerminal(req.params.terminalId, data); res.status(204).end(); }
+    catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
+  });
+
   // POST /api/terminals/:terminalId/relaunch
   router.post('/terminals/:terminalId/relaunch', async (req, res) => {
     const terminal = await sessionService.restartTerminal(req.params.terminalId);

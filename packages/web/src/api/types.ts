@@ -126,6 +126,23 @@ export interface RunStep {
   ts?: string;
 }
 
+export interface ConvItem {
+  kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'tool-result';
+  text?: string;
+  toolName?: string;
+  toolTitle?: string;
+  toolDetail?: string;
+  isError?: boolean;
+  ts?: string;
+  uuid?: string;
+}
+
+export interface Conversation {
+  items: ConvItem[];
+  cursor: number;
+  unsupported?: boolean;
+}
+
 export interface CreateScheduleInput {
   projectId: string;
   name: string;

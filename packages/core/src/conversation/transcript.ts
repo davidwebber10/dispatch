@@ -1,0 +1,110 @@
+/**
+ * Parses Claude Code's interactive session transcript JSONL
+ * (~/.claude/projects/<enc-cwd>/<sessionId>.jsonl) into a flat conversation for
+ * Normal Mode. Each line is an independent JSON entry; we keep the human prompts,
+ * assistant text/thinking, tool calls and tool results, and skip the bookkeeping
+ * entries (mode/permission-mode/attachment/file-history-snapshot, isMeta users).
+ */
+
+export interface ConvItem {
+  kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'tool-result';
+  text?: string;
+  toolName?: string;
+  toolTitle?: string;
+  toolDetail?: string;
+  isError?: boolean;
+  ts?: string;
+  uuid?: string;
+}
+
+export function parseClaudeTranscript(text: string): ConvItem[] {
+  const items: ConvItem[] = [];
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let obj: any;
+    try { obj = JSON.parse(trimmed); } catch { continue; } // partial/garbled line
+    items.push(...parseEntry(obj));
+  }
+  return items;
+}
+
+function parseEntry(o: any): ConvItem[] {
+  if (!o || typeof o !== 'object') return [];
+  const ts = str(o.timestamp);
+  const uuid = str(o.uuid);
+  const msg = o.message;
+
+  if (o.type === 'user' && msg) {
+    if (o.isMeta) return []; // injected context / system reminders
+    const c = msg.content;
+    if (typeof c === 'string') {
+      return c.trim() ? [{ kind: 'user', text: c, ts, uuid }] : [];
+    }
+    if (Array.isArray(c)) {
+      const out: ConvItem[] = [];
+      for (const b of c) {
+        if (!b || typeof b !== 'object') continue;
+        if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
+          out.push({ kind: 'user', text: b.text, ts, uuid });
+        } else if (b.type === 'tool_result') {
+          out.push({ kind: 'tool-result', text: stringifyContent(b.content), isError: b.is_error === true, ts, uuid });
+        }
+      }
+      return out;
+    }
+    return [];
+  }
+
+  if (o.type === 'assistant' && msg && Array.isArray(msg.content)) {
+    const out: ConvItem[] = [];
+    for (const b of msg.content) {
+      if (!b || typeof b !== 'object') continue;
+      if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
+        out.push({ kind: 'assistant', text: b.text, ts, uuid });
+      } else if (b.type === 'thinking') {
+        out.push({ kind: 'thinking', text: str(b.thinking), ts, uuid });
+      } else if (b.type === 'tool_use') {
+        const name = str(b.name) ?? 'tool';
+        out.push({ kind: 'tool', toolName: name, toolTitle: toolTitle(name, b.input), toolDetail: toolDetail(name, b.input), ts, uuid });
+      }
+    }
+    return out;
+  }
+
+  return [];
+}
+
+function toolTitle(name: string, input: any): string {
+  if (name === 'TodoWrite') return 'Updated plan';
+  const file = input?.file_path ?? input?.path ?? input?.notebook_path;
+  if (file) return `${name} ${basename(String(file))}`;
+  return name;
+}
+
+function toolDetail(name: string, input: any): string | undefined {
+  if (input == null) return undefined;
+  if (typeof input === 'string') return truncate(input, 240);
+  if (name === 'Bash') return truncate(str(input.command) ?? '', 240);
+  if (input.file_path || input.path) return str(input.file_path ?? input.path);
+  if (input.pattern) return `pattern: ${truncate(String(input.pattern), 160)}`;
+  if (input.url) return str(input.url);
+  if (input.description) return truncate(String(input.description), 160);
+  try { return truncate(JSON.stringify(input), 240); } catch { return undefined; }
+}
+
+function stringifyContent(content: any): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content.map((c) => (typeof c === 'string' ? c : c?.type === 'text' ? c.text : c?.text ?? '')).filter(Boolean).join('\n');
+  }
+  if (content == null) return '';
+  try { return JSON.stringify(content); } catch { return String(content); }
+}
+
+function basename(p: string): string {
+  const parts = p.split('/').filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : p;
+}
+function truncate(s: string, n: number): string { return s.length <= n ? s : s.slice(0, n - 1) + '…'; }
+function str(v: unknown): string | undefined { return typeof v === 'string' ? v : undefined; }

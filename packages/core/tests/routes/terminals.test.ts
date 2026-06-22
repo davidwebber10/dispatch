@@ -46,6 +46,48 @@ describe('terminal routes', () => {
     expect(ids).not.toContain('runner-1');
   });
 
+  it('GET /terminals/:id/conversation parses the claude transcript (incremental + missing-file)', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-conv-home-'));
+    const oldHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      const wd = '/tmp/proj-x';
+      const sid = 'sess-123';
+      terminalsDb.create(db, { id: 'cc-1', sessionId, type: 'claude-code', label: 'thread', skipPermissions: true, workingDir: wd, externalId: sid });
+
+      let r = await request(app).get('/api/terminals/cc-1/conversation').expect(200);
+      expect(r.body).toMatchObject({ items: [], cursor: 0 }); // missing file
+
+      const dir = path.join(home, '.claude', 'projects', wd.replace(/\//g, '-'));
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, `${sid}.jsonl`),
+        '{"type":"user","message":{"role":"user","content":"hi"},"uuid":"u1"}\n' +
+        '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]},"uuid":"a1"}\n');
+
+      r = await request(app).get('/api/terminals/cc-1/conversation').expect(200);
+      expect(r.body.items.map((i: any) => i.kind)).toEqual(['user', 'assistant']);
+      expect(r.body.cursor).toBe(2);
+
+      const r2 = await request(app).get(`/api/terminals/cc-1/conversation?since=${r.body.cursor}`).expect(200);
+      expect(r2.body.items).toEqual([]);
+    } finally {
+      if (oldHome === undefined) delete process.env.HOME; else process.env.HOME = oldHome;
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('conversation is marked unsupported for non-claude terminals', async () => {
+    terminalsDb.create(db, { id: 'sh-c', sessionId, type: 'shell', label: 's', skipPermissions: false });
+    const r = await request(app).get('/api/terminals/sh-c/conversation').expect(200);
+    expect(r.body.unsupported).toBe(true);
+  });
+
+  it('POST /terminals/:id/input writes to the PTY (204) and validates data', async () => {
+    terminalsDb.create(db, { id: 'cc-2', sessionId, type: 'claude-code', label: 't', skipPermissions: true });
+    await request(app).post('/api/terminals/cc-2/input').send({ data: 'hello\r' }).expect(204);
+    await request(app).post('/api/terminals/cc-2/input').send({}).expect(400);
+  });
+
   it('POST /api/sessions/:id/terminals creates a shell terminal', async () => {
     const res = await request(app)
       .post(`/api/sessions/${sessionId}/terminals`)

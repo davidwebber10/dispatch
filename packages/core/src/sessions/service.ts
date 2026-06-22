@@ -12,6 +12,7 @@ import type { Session, CreateSessionInput } from '../types.js';
 import { rowToSession } from '../types.js';
 import type { TerminalType } from '../db/terminals.js';
 import type { SecretsMcpInjection } from '../providers/types.js';
+import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript.js';
 
 export class SessionService {
   /** Supplies the Doppler MCP injection for spawned CLIs; set by the server wiring. */
@@ -245,6 +246,34 @@ export class SessionService {
   getTerminal(terminalId: string): terminalsDb.Terminal | null {
     const row = terminalsDb.getById(this.db, terminalId);
     return row ? terminalsDb.rowToTerminal(row) : null;
+  }
+
+  /**
+   * Read + parse the live transcript for a terminal's session into conversation
+   * items (Normal Mode). `since` is the count of complete JSONL lines the client
+   * has already consumed; the returned `cursor` is the new complete-line count.
+   * Claude Code only for now; a missing file yields an empty conversation.
+   */
+  getConversation(terminalId: string, since = 0): { items: ConvItem[]; cursor: number; unsupported?: boolean } {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) return { items: [], cursor: 0 };
+    if (terminal.type !== 'claude-code') return { items: [], cursor: 0, unsupported: true };
+
+    const session = sessionsDb.getById(this.db, terminal.session_id);
+    const workDir = terminal.working_dir || session?.working_dir;
+    const sessionId = terminal.external_id;
+    if (!workDir || !sessionId) return { items: [], cursor: 0 };
+
+    const encoded = workDir.replace(/\//g, '-');
+    const file = path.join(os.homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
+    let raw: string;
+    try { raw = fs.readFileSync(file, 'utf8'); } catch { return { items: [], cursor: 0 }; }
+
+    // Consume only complete lines (the trailing element is an empty string after a
+    // final newline, or a half-written entry) so we never parse a partial record.
+    const usable = raw.split('\n').slice(0, -1);
+    const items = parseClaudeTranscript(usable.slice(since).join('\n'));
+    return { items, cursor: usable.length };
   }
 
   relaunchTerminal(terminalId: string): terminalsDb.Terminal | null {

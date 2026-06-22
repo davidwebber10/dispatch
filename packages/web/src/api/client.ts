@@ -1,4 +1,4 @@
-import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig } from './types';
+import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation } from './types';
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -31,6 +31,8 @@ export const api = {
   createTerminal: (sessionId: string, input: { type: string; label?: string; workingDir?: string; externalId?: string; config?: Record<string, unknown> }) =>
     req<Terminal>(`/api/sessions/${sessionId}/terminals`, { method: 'POST', body: body(input) }),
   getTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}`),
+  getConversation: (id: string, since = 0) => req<Conversation>(`/api/terminals/${id}/conversation?since=${since}`),
+  sendInput: (id: string, data: string) => req<void>(`/api/terminals/${id}/input`, { method: 'POST', body: body({ data }) }),
   updateTerminal: (id: string, fields: { label?: string; config?: Record<string, unknown> }) =>
     req<Terminal>(`/api/terminals/${id}`, { method: 'PATCH', body: body(fields) }),
   relaunchTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}/relaunch`, { method: 'POST' }),
