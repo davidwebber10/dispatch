@@ -4,6 +4,7 @@ import { api } from '../../api/client';
 import type { ConvItem } from '../../api/types';
 import { useActivity } from '../../stores/activity';
 import { useThreadStatus } from '../../stores/threadStatus';
+import { PromptCard } from './PromptCard';
 import { renderMarkdown } from '../../lib/markdown';
 
 /**
@@ -128,6 +129,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
       {/* Composer */}
       <div style={{ flexShrink: 0, borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', padding: '10px 16px' }}>
         <div style={{ maxWidth: 760, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <PromptCard terminalId={terminalId} />
           {queued.length > 0 && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {queued.map((q, i) => (
