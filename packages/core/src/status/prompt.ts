@@ -21,7 +21,9 @@ export interface DetectedPrompt {
 const CURSOR = /[❯›]/;                                       // Claude ❯ / Codex ›
 const OPTION_RE = /^\s*([❯›>])?\s*(\d+)[.)]\s+(.+?)\s*$/;    // "❯ 1. Label" / "  2. Label"
 const DIVIDER_RE = /^[\s─━—_=·•]+$/;
-const FOOTER_RE = /(enter to (confirm|continue|select)|press enter|esc to|use arrows?|↑.*↓)/i;
+// A submit/affirm footer present in every real interactive menu (trust, select,
+// codex) — and NOT in normal output or the working state ("esc to interrupt").
+const SELECT_FOOTER = /(enter to (confirm|continue|select)|press enter|use arrows?|↑.*↓)/i;
 
 /** Arrow keystrokes to move the highlight from `from` to `to`, then Enter. */
 function navKeys(from: number, to: number): string {
@@ -73,7 +75,10 @@ function parseNumberedSelect(screen: string): DetectedPrompt | null {
   }
   if (opts.length < 2) return null;
   const found = opts.findIndex((o) => o.cursor);
-  const cursorIdx = found >= 0 ? found : 0;
+  // Real interactive menu, not a numbered list in normal output: it must have the
+  // selection cursor ON an option AND a submit footer. Otherwise it's just prose.
+  if (found < 0 || !SELECT_FOOTER.test(screen)) return null;
+  const cursorIdx = found;
   return {
     kind: 'select',
     question: buildQuestion(lines.slice(0, firstLine)) || 'Choose an option',
@@ -83,7 +88,9 @@ function parseNumberedSelect(screen: string): DetectedPrompt | null {
 }
 
 function parseFallback(screen: string): DetectedPrompt | null {
-  if (!CURSOR.test(screen) || !FOOTER_RE.test(screen)) return null; // gated: not idle
+  // A cursor list we couldn't enumerate (e.g. resume picker) — still needs the
+  // cursor AND a submit footer so we never fire on normal output / working state.
+  if (!CURSOR.test(screen) || !SELECT_FOOTER.test(screen)) return null;
   return { kind: 'unknown', question: firstMeaningful(screen) || 'The agent is asking for input', options: [], parsed: false, raw: screen };
 }
 

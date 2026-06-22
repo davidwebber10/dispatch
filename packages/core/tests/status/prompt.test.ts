@@ -55,6 +55,17 @@ describe('detectPrompt', () => {
     expect(p.options[0].keys).toBe('\r');
   });
 
+  it('does NOT match a numbered list in normal output (no cursor, no submit footer)', () => {
+    // Real false positive: claude listing questions in prose, not an interactive menu.
+    const screen = 'Here are a couple of open questions:\n1. How long did it actually take you (one person, with AI)?\n2. The "team for a year" estimate — who said it, and what size team?';
+    expect(detectPrompt('claude-code', screen)).toBeNull();
+  });
+
+  it('does NOT false-positive on a normal working screen with a queued message', () => {
+    const screen = '❯ write an essay\n✢ Forming…\n  ❯ what is the capital of france\n────\n❯ Press up to edit queued messages\n────\n proj │ Opus 4.8 │ bypass permissions on';
+    expect(detectPrompt('claude-code', screen)).toBeNull();
+  });
+
   it('falls back (parsed:false) for a cursor list with no numbered options', () => {
     const screen = 'Resume which session?\n❯ fix the login bug — 2h ago\n  add dark mode — yesterday\nEnter to confirm · Esc to cancel';
     const p = detectPrompt('claude-code', screen)!;
