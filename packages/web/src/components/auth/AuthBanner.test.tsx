@@ -15,6 +15,10 @@ test('shows the auth url, open action, and callback-paste for a pending request'
   render(<AuthBanner />);
   expect(screen.getByText('Authentication required')).toBeInTheDocument();
   expect(screen.getByText('https://example.com/oauth')).toBeInTheDocument();
-  expect(screen.getByText('Open ↗')).toBeInTheDocument();
+  // "Open" is a real anchor to the system browser (not window.open / in-app).
+  const open = screen.getByText(/Open in browser/);
+  expect(open.tagName).toBe('A');
+  expect(open).toHaveAttribute('href', 'https://example.com/oauth');
+  expect(open).toHaveAttribute('target', '_blank');
   expect(screen.getByPlaceholderText(/localhost/)).toBeInTheDocument();
 });

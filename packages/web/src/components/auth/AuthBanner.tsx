@@ -10,7 +10,6 @@ export function AuthBanner() {
   const [cb, setCb] = useState('');
   if (!req) return null;
 
-  const open = async () => { window.open(req.url, '_blank', 'noreferrer'); await api.markAuthOpened(req.id); };
   const submit = async () => { if (cb.trim()) { await api.forwardAuthCallback(req.id, cb.trim()); setCb(''); } };
 
   return (
@@ -21,8 +20,19 @@ export function AuthBanner() {
         <button onClick={() => void api.completeAuth(req.id)} style={{ marginLeft: 'auto', ...ghost }}>Dismiss</button>
       </div>
       <div style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-secondary)', margin: '8px 0', wordBreak: 'break-all' }}>{req.url}</div>
-      <button onClick={() => void open()} style={primary}>Open ↗</button>
-      <div style={{ marginTop: 10, fontSize: 11, color: 'var(--color-text-tertiary)' }}>If the login redirects to a <code>localhost</code> page, paste that URL here:</div>
+      {/* A real anchor (not window.open) so a PWA opens the SYSTEM browser — Safari
+          on iOS, the default browser on Mac — instead of an in-app browser. On the
+          daemon's own device the localhost OAuth callback then returns automatically. */}
+      <a
+        href={req.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={() => { void api.markAuthOpened(req.id); }}
+        style={{ ...primary, display: 'inline-flex', alignItems: 'center', textDecoration: 'none', lineHeight: '30px' }}
+      >
+        Open in browser ↗
+      </a>
+      <div style={{ marginTop: 10, fontSize: 11, color: 'var(--color-text-tertiary)' }}>On this Mac it returns automatically. From another device (e.g. iPhone), copy the <code>localhost</code> URL Safari lands on and paste it here:</div>
       <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
         <input value={cb} onChange={(e) => setCb(e.target.value)} placeholder="http://localhost:…/callback?code=…" style={{ flex: 1, height: 30, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 7, color: 'var(--color-text-primary)', font: '400 11px var(--font-mono)' }} />
         <button onClick={() => void submit()} style={ghost}>Forward</button>
