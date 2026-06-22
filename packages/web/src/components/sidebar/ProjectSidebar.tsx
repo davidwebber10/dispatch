@@ -12,15 +12,20 @@ const icon: React.CSSProperties = { width: 32, height: 32, flexShrink: 0, displa
 export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent }: { onSelectTab: (terminalId: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void }) {
   const sessions = useProjects((s) => s.sessions);
   const activeId = useProjects((s) => s.activeId);
-  const setActive = useProjects((s) => s.setActive);
   const [query, setQuery] = useState('');
   const [showNew, setShowNew] = useState(false);
   const [sort, setSort] = useState<Sort>(() => (localStorage.getItem('dispatch:sort') as Sort) || 'recent');
   const [sortOpen, setSortOpen] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
+  // Expansion is independent of the active highlight: opening a thread makes its
+  // project active (and auto-expands it); clicking a project header just toggles
+  // its expansion without stealing the highlight.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   useEffect(() => { try { localStorage.setItem('dispatch:sort', sort); } catch { /* ignore */ } }, [sort]);
+  useEffect(() => { if (activeId) setExpanded((e) => (e.has(activeId) ? e : new Set(e).add(activeId))); }, [activeId]);
+  const toggleExpand = (id: string) => setExpanded((e) => { const n = new Set(e); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   const filtered = sessions
     .filter((s) => s.name.toLowerCase().includes(query.toLowerCase()))
@@ -78,7 +83,6 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent }: { onS
         <div
           key={s.id}
           draggable={canDrag}
-          onClick={() => setActive(s.id)}
           onDragStart={(e) => { setDragId(s.id); e.dataTransfer.effectAllowed = 'move'; }}
           onDragOver={(e) => { if (dragId && dragId !== s.id) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (overId !== s.id) setOverId(s.id); } }}
           onDragLeave={() => { if (overId === s.id) setOverId(null); }}
@@ -89,7 +93,7 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent }: { onS
             opacity: dragId === s.id ? 0.45 : 1,
           }}
         >
-          <ProjectCard session={s} active={s.id === activeId} onSelectTab={onSelectTab} onSelectAgent={onSelectAgent} onNewAgent={onNewAgent} />
+          <ProjectCard session={s} active={s.id === activeId} open={expanded.has(s.id)} onToggle={() => toggleExpand(s.id)} onSelectTab={onSelectTab} onSelectAgent={onSelectAgent} onNewAgent={onNewAgent} />
         </div>
       ))}
       {!filtered.length && <div style={{ color: 'var(--color-text-tertiary)', fontSize: 12.5, padding: '4px 6px' }}>No projects</div>}

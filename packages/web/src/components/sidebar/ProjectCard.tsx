@@ -213,7 +213,7 @@ function SectionHeader({ label, count, prominent, children }: { label: string; c
   );
 }
 
-export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNewAgent, onBrowseFiles }: { session: Session; active: boolean; onSelectTab: (id: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void; onBrowseFiles?: (projectId: string) => void }) {
+export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSelectAgent, onNewAgent, onBrowseFiles }: { session: Session; active: boolean; open?: boolean; onToggle?: () => void; onSelectTab: (id: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void; onBrowseFiles?: (projectId: string) => void }) {
   const allAgents = useAgents((s) => s.schedules);
   const agents = allAgents.filter((a) => a.projectId === session.id);
   const agentSel = useAgents((s) => s.selectedId);
@@ -231,9 +231,12 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
   const loadingMap = useTabs((s) => s.loading);
   const pfs = useSettings((s) => s.projectFontSize);
   const isMobile = useIsMobile();
+  // Expansion is decoupled from the active highlight on desktop; on mobile the
+  // project screen is always expanded (open defaults to active when not provided).
+  const isOpen = open ?? active;
   const plusStyle: React.CSSProperties = isMobile ? { ...plusBtn, width: 34, height: 34, font: '500 26px/1 var(--font-sans)', borderRadius: 12 } : plusBtn;
   const working = session.status === 'working' || tabs.some((t) => t.status === 'working' || loadingMap[t.id]);
-  useEffect(() => { if (active) void useTabs.getState().loadTabs(session.id); }, [active, session.id]);
+  useEffect(() => { if (isOpen) void useTabs.getState().loadTabs(session.id); }, [isOpen, session.id]);
 
   async function addTab(type: string, config?: Record<string, unknown>) {
     const t = await api.createTerminal(session.id, { type, ...(config ? { config } : {}) });
@@ -296,13 +299,22 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
-        background: (!isMobile && active) ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : (!isMobile && hover) ? 'rgba(255,255,255,0.04)' : 'transparent',
+        // Active project: a top→bottom gradient (accent at the top fading into the
+        // dark background), per the Claude design.
+        background: (!isMobile && active) ? 'linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 26%, transparent) 0%, transparent 80%)' : (!isMobile && hover) ? 'rgba(255,255,255,0.04)' : 'transparent',
         border: (!isMobile && active) ? '1px solid color-mix(in srgb, var(--color-accent) 45%, transparent)' : '1px solid transparent',
-        borderRadius: 12, padding: isMobile ? '0 4px' : 4, marginBottom: 4, cursor: active ? 'default' : 'pointer', transition: 'background 0.12s ease, border-color 0.12s ease',
+        borderRadius: 12, padding: isMobile ? '0 4px' : 4, marginBottom: 4, cursor: 'default', transition: 'background 0.12s ease, border-color 0.12s ease',
       }}
     >
-      <div style={{ padding: isMobile ? '4px 8px 8px' : '5px 6px 4px' }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setProjMenu({ x: e.clientX, y: e.clientY }); }}>
+      <div
+        onClick={() => { if (!isMobile) onToggle?.(); }}
+        style={{ padding: isMobile ? '4px 8px 8px' : '5px 6px 4px', cursor: isMobile ? 'default' : 'pointer' }}
+        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setProjMenu({ x: e.clientX, y: e.clientY }); }}
+      >
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {!isMobile && (
+            <CaretRight size={11} weight="bold" style={{ flexShrink: 0, color: 'var(--color-text-tertiary)', transition: 'transform .15s ease', transform: isOpen ? 'rotate(90deg)' : 'none' }} />
+          )}
           <span style={{ fontWeight: 600, fontSize: isMobile ? 19 : pfs, color: (!isMobile && active) ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{session.name}</span>
           {working && <Spinner size={10} />}
           <span title={session.lastActivityAt ?? ''} style={{ marginLeft: 'auto', flexShrink: 0, font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{timeAgo(session.lastActivityAt)}</span>
@@ -313,7 +325,7 @@ export function ProjectCard({ session, active, onSelectTab, onSelectAgent, onNew
         </div>
         <div title={session.workingDir} style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>{homePath(session.workingDir)}</div>
       </div>
-      <div style={{ display: 'grid', gridTemplateRows: active ? '1fr' : '0fr', transition: 'grid-template-rows 0.2s ease' }}>
+      <div style={{ display: 'grid', gridTemplateRows: isOpen ? '1fr' : '0fr', transition: 'grid-template-rows 0.2s ease' }}>
         <div style={{ overflow: 'hidden', minHeight: 0 }}>
           {renderSection(SECTIONS[0])}
           <div style={{ marginTop: 10 }}>
