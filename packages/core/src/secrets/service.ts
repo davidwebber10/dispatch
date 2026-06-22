@@ -207,8 +207,27 @@ export class SecretsService {
     ];
   }
 
-  getInjection(): { claudeConfigPath: string | null; codexArgs: string[] } {
-    return { claudeConfigPath: this.ensureClaudeMcpConfig(), codexArgs: this.codexMcpArgs() };
+  /**
+   * Standing instruction appended to a spawned agent's system prompt so it knows
+   * to keep secrets in Doppler (via the MCP tools) rather than hardcoding them.
+   * Null unless Doppler is active, so agents are never told to use a server that
+   * isn't wired in.
+   */
+  getSystemPrompt(): string | null {
+    if (!this.active()) return null;
+    const c = this.read();
+    const base =
+      `This workspace uses Doppler for secrets management (project "${c.project}", config "${c.config}"). ` +
+      `A "doppler" MCP server is available to you. When you need an API key, token, password, or other secret, ` +
+      `retrieve it with the Doppler MCP tools (e.g. doppler_get_secret, doppler_list_secrets) and store new secrets ` +
+      `with doppler_set_secret. Never hardcode secrets, write them to .env files, or commit them to the repo.`;
+    return c.readOnly
+      ? `${base} Secrets are read-only here: retrieve them but do not create, modify, or delete.`
+      : base;
+  }
+
+  getInjection(): { claudeConfigPath: string | null; codexArgs: string[]; systemPrompt: string | null } {
+    return { claudeConfigPath: this.ensureClaudeMcpConfig(), codexArgs: this.codexMcpArgs(), systemPrompt: this.getSystemPrompt() };
   }
 
   private refresh(): void {

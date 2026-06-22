@@ -2,11 +2,14 @@
  * Optional per-spawn injection that wires the Doppler secrets MCP server into the
  * launched CLI so agents can add/retrieve secrets. `claudeConfigPath` is the path to
  * a generated `--mcp-config` file; `codexArgs` are `-c` overrides registering the
- * server. Both are no-ops when Doppler is not connected.
+ * server; `systemPrompt` is a standing instruction telling the agent to use Doppler
+ * for secrets (appended to Claude's system prompt). All are no-ops when Doppler is
+ * not connected.
  */
 export interface SecretsMcpInjection {
   claudeConfigPath?: string | null;
   codexArgs?: string[];
+  systemPrompt?: string | null;
 }
 
 /**

@@ -34,7 +34,27 @@ describe('SecretsService', () => {
     const s = svc();
     expect(s.status()).toEqual({ connected: false, project: null, config: null, enabled: true, readOnly: false });
     expect(s.getSpawnEnv()).toEqual({});
-    expect(s.getInjection()).toEqual({ claudeConfigPath: null, codexArgs: [] });
+    expect(s.getInjection()).toEqual({ claudeConfigPath: null, codexArgs: [], systemPrompt: null });
+  });
+
+  it('provides a Doppler system-prompt instruction (with project/config) when connected', async () => {
+    const s = svc(true);
+    await s.setConnection({ token: 'dp.sa.x', project: 'dispatch', config: 'dev' });
+    const sp = s.getInjection().systemPrompt!;
+    expect(sp).toMatch(/Doppler/);
+    expect(sp).toContain('dispatch');
+    expect(sp).toContain('dev');
+  });
+
+  it('has no system prompt when disconnected', () => {
+    expect(svc().getInjection().systemPrompt).toBeNull();
+  });
+
+  it('notes read-only mode in the system prompt', async () => {
+    const s = svc(true);
+    await s.setConnection({ token: 'dp.sa.x', project: 'dispatch', config: 'dev' });
+    await s.setConnection({ token: '', readOnly: true });
+    expect(s.getInjection().systemPrompt).toMatch(/read-only|do not (create|modify)/i);
   });
 
   it('verifies + stores a token (0600) but stays disconnected until project+config', async () => {

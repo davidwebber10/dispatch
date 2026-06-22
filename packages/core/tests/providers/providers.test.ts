@@ -22,6 +22,20 @@ describe('claude-code provider', () => {
     expect(cmd.args).toEqual(['--dangerously-skip-permissions', '-r', 'abc']);
   });
 
+  it('appends the secrets system prompt when one is injected (new + resume)', () => {
+    const neu = claudeCodeProvider.buildNewCommand({ workDir: '/tmp', secretsMcp: { systemPrompt: 'Use Doppler for secrets' } });
+    const i = neu.args.indexOf('--append-system-prompt');
+    expect(i).toBeGreaterThan(-1);
+    expect(neu.args[i + 1]).toBe('Use Doppler for secrets');
+
+    const res = claudeCodeProvider.buildResumeCommand({ externalSessionId: 'abc', workDir: '/tmp', secretsMcp: { systemPrompt: 'Use Doppler' } });
+    expect(res.args).toContain('--append-system-prompt');
+  });
+
+  it('omits --append-system-prompt when no secrets system prompt is set', () => {
+    expect(claudeCodeProvider.buildNewCommand({ workDir: '/tmp', secretsMcp: {} }).args).not.toContain('--append-system-prompt');
+  });
+
   it('builds an autonomous runner command (headless --print with the prompt)', () => {
     const cmd = claudeCodeProvider.buildRunnerCommand({ workDir: '/tmp', prompt: 'fix bug' });
     expect(cmd.command).toBe('claude');

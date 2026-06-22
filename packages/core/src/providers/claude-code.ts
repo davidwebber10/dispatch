@@ -15,19 +15,25 @@ function hookArgs(statusHooks?: StatusHooksInjection): string[] {
   return statusHooks?.claudeSettingsPath ? ['--settings', statusHooks.claudeSettingsPath] : [];
 }
 
+// Appends a standing instruction (e.g. "use Doppler for secrets") to the system
+// prompt so the agent just knows it, without touching the user's prompt.
+function systemPromptArgs(secretsMcp?: SecretsMcpInjection): string[] {
+  return secretsMcp?.systemPrompt ? ['--append-system-prompt', secretsMcp.systemPrompt] : [];
+}
+
 export const claudeCodeProvider: SessionProvider = {
   name: 'claude-code',
   displayName: 'Claude Code',
   statusStrategy: 'hooks',
 
   buildNewCommand({ prompt, secretsMcp, statusHooks }) {
-    const args: string[] = ['--dangerously-skip-permissions', ...mcpArgs(secretsMcp), ...hookArgs(statusHooks)];
+    const args: string[] = ['--dangerously-skip-permissions', ...mcpArgs(secretsMcp), ...systemPromptArgs(secretsMcp), ...hookArgs(statusHooks)];
     if (prompt) args.push(prompt);
     return { command: 'claude', args };
   },
 
   buildResumeCommand({ externalSessionId, secretsMcp, statusHooks }) {
-    return { command: 'claude', args: ['--dangerously-skip-permissions', ...mcpArgs(secretsMcp), ...hookArgs(statusHooks), '-r', externalSessionId] };
+    return { command: 'claude', args: ['--dangerously-skip-permissions', ...mcpArgs(secretsMcp), ...systemPromptArgs(secretsMcp), ...hookArgs(statusHooks), '-r', externalSessionId] };
   },
 
   buildRunnerCommand({ prompt, secretsMcp }) {
