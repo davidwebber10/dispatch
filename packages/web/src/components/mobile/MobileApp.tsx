@@ -203,7 +203,7 @@ export function MobileApp() {
           {/* Level 2 — the thread terminal or the agent dashboard */}
           <div style={{ ...slot, overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative' }}>
             {leaf === 'tab' && leafTabId && (
-              <div style={{ position: 'absolute', top: 8, right: 10, zIndex: 5, pointerEvents: 'none', background: 'rgba(10,10,12,.6)', borderRadius: 8, padding: '3px 8px', backdropFilter: 'blur(4px)' }}>
+              <div style={{ position: 'absolute', top: 8, right: 10, zIndex: 5, pointerEvents: 'none', display: 'flex', alignItems: 'center', lineHeight: 1, background: 'rgba(10,10,12,.6)', borderRadius: 8, padding: '5px 9px', backdropFilter: 'blur(4px)' }}>
                 <ConnectionStatus />
               </div>
             )}
