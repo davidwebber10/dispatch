@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
-import type { SetupState, ProviderStatus } from '../../api/types';
+import QRCode from 'qrcode';
+import type { SetupState, ProviderStatus, TailscaleStatus } from '../../api/types';
 import { api } from '../../api/client';
 import { useSetup } from '../../stores/setup';
 
@@ -37,7 +38,7 @@ export function SetupWizard() {
           <button onClick={finish} style={{ background: 'none', border: 'none', color: 'var(--color-text-tertiary)', cursor: 'pointer', fontSize: 13 }}>Skip all</button>
         </div>
         {step === 'agents' && <AgentsStep providers={state.providers} />}
-        {step === 'mobile' && <div data-testid="mobile-step">Mobile step (Task 7)</div>}
+        {step === 'mobile' && <MobileStep tailscale={state.tailscale} />}
         {step === 'secrets' && <div data-testid="secrets-step">Secrets step (Task 8)</div>}
         {step === 'done' && <div>You're all set. Reopen this anytime from Settings → Getting started.</div>}
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 20 }}>
@@ -81,6 +82,35 @@ function AgentsStep({ providers: initial }: { providers: ProviderStatus[] }) {
         );
       })}
       <button onClick={recheck} disabled={checking} style={btn(false)}>{checking ? 'Checking…' : 'Re-check'}</button>
+    </div>
+  );
+}
+
+function MobileStep({ tailscale: initial }: { tailscale: TailscaleStatus }) {
+  const [ts, setTs] = useState(initial);
+  const [qr, setQr] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+  const recheck = async () => { setChecking(true); try { setTs(await api.recheckTailscale()); } catch { /* keep */ } setChecking(false); };
+  useEffect(() => {
+    if (ts.url) QRCode.toDataURL(ts.url, { width: 180, margin: 1 }).then(setQr).catch(() => setQr(null));
+    else setQr(null);
+  }, [ts.url]);
+  return (
+    <div>
+      <p style={{ color: 'var(--color-text-secondary)', fontSize: 13, marginTop: 0 }}>Reach Dispatch from your phone privately over Tailscale — no public exposure.</p>
+      {ts.running && ts.url ? (
+        <div style={{ textAlign: 'center' }}>
+          {qr && <img src={qr} alt="Open on phone" style={{ borderRadius: 10, background: '#fff', padding: 8 }} />}
+          <div style={{ font: '500 13px var(--font-mono)', marginTop: 10, wordBreak: 'break-all' }}>{ts.url}</div>
+          <p style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>Install the Tailscale app on your phone, sign into the same account, then open this URL.</p>
+        </div>
+      ) : (
+        <div>
+          <p style={{ fontSize: 13 }}>{ts.installed ? 'Tailscale is installed but not running. Start it, then re-check.' : 'Install Tailscale on this Mac:'}</p>
+          {!ts.installed && <pre style={{ font: '400 11.5px var(--font-mono)', background: 'var(--color-elevated)', borderRadius: 8, padding: '8px 10px' }}>brew install --cask tailscale{'\n'}tailscale up</pre>}
+          <button onClick={recheck} disabled={checking} style={btn(false)}>{checking ? 'Checking…' : 'Re-check'}</button>
+        </div>
+      )}
     </div>
   );
 }

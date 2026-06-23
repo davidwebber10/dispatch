@@ -31,3 +31,11 @@ test('shows the Agents step on first run with provider badges', async () => {
   await waitFor(() => expect(screen.getByText(/npm i -g @openai\/codex/)).toBeInTheDocument());
   expect(screen.getByText('Set up Dispatch')).toBeInTheDocument();
 });
+
+test('mobile step shows the tailnet URL when running', async () => {
+  getSetupState.mockResolvedValue({ firstRun: true, providers: [], tailscale: { installed: true, running: true, dnsName: 'my-mac.ts.net', url: 'http://my-mac.ts.net:3456' }, secrets: { connected: false } });
+  render(<SetupWizard />);
+  await waitFor(() => expect(screen.getByText('Set up Dispatch')).toBeInTheDocument());
+  fireEvent.click(screen.getByText('Continue')); // agents → mobile
+  await waitFor(() => expect(screen.getByText('http://my-mac.ts.net:3456')).toBeInTheDocument());
+});
