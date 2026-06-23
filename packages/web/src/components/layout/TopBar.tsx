@@ -2,8 +2,10 @@ import { useState } from 'react';
 import { Gear, Sidebar } from '@phosphor-icons/react';
 import { ConnectionStatus } from './ConnectionStatus';
 import { BrandSwitcher } from './BrandSwitcher';
+import { ModeToggle } from './ModeToggle';
 import { SettingsModal } from '../settings/SettingsModal';
 import { useUI } from '../../stores/ui';
+import { useTabs } from '../../stores/tabs';
 
 const iconBtn: React.CSSProperties = {
   width: 28, height: 28, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -16,10 +18,11 @@ export function TopBar() {
   const rightCollapsed = useUI((s) => s.rightCollapsed);
   const toggleLeft = useUI((s) => s.toggleLeft);
   const toggleRight = useUI((s) => s.toggleRight);
+  const activeId = useTabs((s) => s.activeTabId);
 
   return (
     <header style={{
-      height: 40, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 12,
+      position: 'relative', height: 40, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 12,
       padding: '0 12px', background: 'var(--color-pane)', borderBottom: '1px solid var(--color-border)',
     }}>
       <button title={leftCollapsed ? 'Show projects panel' : 'Hide projects panel'} onClick={toggleLeft}
@@ -27,6 +30,7 @@ export function TopBar() {
         <Sidebar size={16} weight={leftCollapsed ? 'regular' : 'fill'} />
       </button>
       <BrandSwitcher />
+      <ModeToggle terminalId={activeId} />
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
         <ConnectionStatus />
         <button title="Settings" onClick={() => setSettings(true)} style={{ ...iconBtn, color: 'var(--color-text-secondary)' }}>

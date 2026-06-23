@@ -60,12 +60,16 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     res.json(terminal);
   });
 
-  // GET /api/terminals/:terminalId/conversation?since=N&tail=M — parsed transcript (View).
-  // `tail` (on the initial since=0 load) returns only the last M jsonl lines for speed.
+  // GET /api/terminals/:terminalId/conversation?since=N&before=M&limit=L — windowed
+  // transcript (View). Default: most recent `limit` lines; `since`: new lines after N
+  // (poll); `before`: the `limit` lines before M (older history for infinite scroll).
   router.get('/terminals/:terminalId/conversation', (req, res) => {
-    const since = Number(req.query.since) || 0;
-    const tail = Number(req.query.tail) || 0;
-    res.json(sessionService.getConversation(req.params.terminalId, since, tail));
+    const num = (v: unknown) => (v != null ? Number(v) : undefined);
+    res.json(sessionService.getConversation(req.params.terminalId, {
+      since: num(req.query.since),
+      before: num(req.query.before),
+      limit: num(req.query.limit),
+    }));
   });
 
   // POST /api/terminals/:terminalId/input { data } — write raw bytes to the live PTY.

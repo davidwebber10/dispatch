@@ -292,43 +292,59 @@ export class SessionService {
   }
 
   /**
-   * Read + parse the live transcript for a terminal's session into conversation
-   * items (Normal Mode). `since` is the count of complete JSONL lines the client
-   * has already consumed; the returned `cursor` is the new complete-line count.
-   * Claude Code only for now; a missing file yields an empty conversation.
+   * Read + parse a WINDOW of the live transcript for a terminal's session (View).
+   * The transcript is addressed by complete-JSONL-line index:
+   *   - default (initial load): the most recent `limit` lines.
+   *   - `since`: lines after index `since` (polling for new messages at the bottom).
+   *   - `before`: the `limit` lines ending just before index `before` (loading
+   *     older history at the top, for reverse infinite scroll).
+   * Returns the parsed `items`, `cursor` (= total line count, the bottom edge for
+   * polling), `startLine` (top edge of the returned window), and `hasMore`
+   * (whether older lines exist above the window). Claude Code only for now.
    */
-  getConversation(terminalId: string, since = 0, tail = 0): { items: ConvItem[]; cursor: number; unsupported?: boolean; truncated?: boolean } {
+  getConversation(
+    terminalId: string,
+    opts: { since?: number; before?: number; limit?: number } = {},
+  ): { items: ConvItem[]; cursor: number; startLine: number; hasMore: boolean; unsupported?: boolean } {
+    const empty = { items: [] as ConvItem[], cursor: 0, startLine: 0, hasMore: false };
     const terminal = terminalsDb.getById(this.db, terminalId);
-    if (!terminal) return { items: [], cursor: 0 };
-    if (terminal.type !== 'claude-code') return { items: [], cursor: 0, unsupported: true };
+    if (!terminal) return empty;
+    if (terminal.type !== 'claude-code') return { ...empty, unsupported: true };
 
     const session = sessionsDb.getById(this.db, terminal.session_id);
     const workDir = terminal.working_dir || session?.working_dir;
-    if (!workDir) return { items: [], cursor: 0 };
+    if (!workDir) return empty;
 
     const dir = path.join(os.homedir(), '.claude', 'projects', workDir.replace(/\//g, '-'));
     // external_id is normally captured at spawn; when it wasn't, recover it from the
-    // project's transcript files so the thread still renders in Normal Mode.
+    // project's transcript files so the thread still renders in View.
     const sessionId = terminal.external_id || this.recoverSessionId(terminalId, dir);
-    if (!sessionId) return { items: [], cursor: 0 };
+    if (!sessionId) return empty;
 
     let raw: string;
-    try { raw = fs.readFileSync(path.join(dir, `${sessionId}.jsonl`), 'utf8'); } catch { return { items: [], cursor: 0 }; }
+    try { raw = fs.readFileSync(path.join(dir, `${sessionId}.jsonl`), 'utf8'); } catch { return empty; }
 
     // Consume only complete lines (the trailing element is an empty string after a
     // final newline, or a half-written entry) so we never parse a partial record.
     const usable = raw.split('\n').slice(0, -1);
-    // Initial load (since=0) can request only the last `tail` lines so a long
-    // transcript renders fast; `cursor` is still the true end so polling appends
-    // new lines normally, and `truncated` tells the client earlier lines exist.
-    let start = since;
-    let truncated = false;
-    if (since === 0 && tail > 0 && usable.length > tail) {
-      start = usable.length - tail;
-      truncated = true;
+    const total = usable.length;
+    const limit = opts.limit && opts.limit > 0 ? opts.limit : 200;
+
+    let start: number;
+    let end: number;
+    if (opts.before !== undefined && opts.before > 0) {       // older window (scroll up)
+      end = Math.min(opts.before, total);
+      start = Math.max(0, end - limit);
+    } else if (opts.since !== undefined && opts.since > 0) {  // new lines (poll)
+      start = Math.min(opts.since, total);
+      end = total;
+    } else {                                                  // initial: most recent `limit`
+      end = total;
+      start = Math.max(0, total - limit);
     }
-    const items = parseClaudeTranscript(usable.slice(start).join('\n'));
-    return { items, cursor: usable.length, truncated };
+
+    const items = parseClaudeTranscript(usable.slice(start, end).join('\n'));
+    return { items, cursor: total, startLine: start, hasMore: start > 0 };
   }
 
   /**

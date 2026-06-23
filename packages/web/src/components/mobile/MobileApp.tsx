@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Gear, CaretLeft, CaretRight, Plus, Folders, Robot } from '@phosphor-icons/react';
 import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
+import { ModeToggle } from '../layout/ModeToggle';
 import { ProjectCard } from '../sidebar/ProjectCard';
 import { AllAgentsView } from '../agents/AllAgentsView';
 import { NewProjectModal } from '../sidebar/NewProjectModal';
@@ -111,7 +112,8 @@ export function MobileApp() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--color-base)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
-      <header style={{ height: 'calc(50px + env(safe-area-inset-top))', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px', paddingTop: 'env(safe-area-inset-top)', background: 'var(--color-pane)' }}>
+      <header style={{ position: 'relative', height: 'calc(50px + env(safe-area-inset-top))', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px', paddingTop: 'env(safe-area-inset-top)', background: 'var(--color-pane)' }}>
+        <ModeToggle terminalId={level === 2 && leaf === 'tab' ? leafTabId : null} />
         {level === 0 ? (
           <BrandSwitcher />
         ) : (

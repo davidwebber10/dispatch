@@ -139,9 +139,10 @@ export interface ConvItem {
 
 export interface Conversation {
   items: ConvItem[];
-  cursor: number;
+  cursor: number;      // total line count (bottom edge for polling)
+  startLine: number;   // top edge of the returned window
+  hasMore: boolean;    // older lines exist above the window
   unsupported?: boolean;
-  truncated?: boolean;
 }
 
 export interface CreateScheduleInput {

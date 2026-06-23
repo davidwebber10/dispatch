@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Wrench, Brain, Terminal as TerminalIcon, CaretRight } from '@phosphor-icons/react';
 import { api } from '../../api/client';
 import type { ConvItem } from '../../api/types';
@@ -13,13 +13,16 @@ import { renderMarkdown } from '../../lib/markdown';
  * View never writes to the PTY. It shows working / needs-input status purely as
  * indicators so you can watch a thread without driving it.
  */
+const LIMIT = 120; // jsonl lines per window (initial load + each older chunk)
+
 export function ConversationView({ terminalId }: { terminalId: string }) {
   const [items, setItems] = useState<ConvItem[]>([]);
   const [unsupported, setUnsupported] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [truncated, setTruncated] = useState(false);
-  const cursor = useRef(0);
-  const TAIL = 600; // initial-load line cap — enough recent context, loads fast
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const earliest = useRef(0);   // top edge (startLine) of the loaded window
+  const pollCursor = useRef(0); // bottom edge (total lines) for polling new
   const ts = useThreadStatus((s) => s.byTerminal[terminalId]);
   const activityBusy = useActivity((s) => s.byTerminal[terminalId]?.activity === 'busy');
   const busy = ts ? ts.status === 'working' : activityBusy;
@@ -29,22 +32,32 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
 
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
+  const prependFromHeight = useRef<number | null>(null); // scroll-preserve marker
 
-  // --- cursor-polling of the transcript (read-only) --------------------
+  // --- initial load + poll for new messages at the bottom --------------
   useEffect(() => {
     let on = true;
     let timer: ReturnType<typeof setTimeout>;
-    setItems([]); setUnsupported(false); setTruncated(false); setLoading(true); cursor.current = 0;
+    setItems([]); setUnsupported(false); setHasMore(false); setLoading(true);
+    earliest.current = 0; pollCursor.current = 0;
+    let first = true;
     async function refresh() {
       try {
-        // First load only pulls the recent tail (fast); afterwards, just new lines.
-        const conv = await api.getConversation(terminalId, cursor.current, cursor.current === 0 ? TAIL : 0);
+        const conv = first
+          ? await api.getConversation(terminalId, { limit: LIMIT })   // recent window
+          : await api.getConversation(terminalId, { since: pollCursor.current }); // new only
         if (!on) return;
         if (conv.unsupported) { setUnsupported(true); setLoading(false); on = false; return; }
-        if (cursor.current === 0) { setItems(conv.items); setTruncated(!!conv.truncated); }
-        else if (conv.items.length) setItems((prev) => [...prev, ...conv.items]);
-        cursor.current = conv.cursor;
-        setLoading(false);
+        if (first) {
+          setItems(conv.items);
+          earliest.current = conv.startLine;
+          setHasMore(conv.hasMore);
+          setLoading(false);
+          first = false;
+        } else if (conv.items.length) {
+          setItems((prev) => [...prev, ...conv.items]);
+        }
+        pollCursor.current = conv.cursor;
       } catch { /* transient; retry next tick */ }
     }
     async function loop() {
@@ -55,24 +68,39 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
     return () => { on = false; clearTimeout(timer); };
   }, [terminalId]);
 
-  // Load the full transcript on demand (when the initial tail was truncated).
-  async function loadEarlier() {
+  // --- load an older window when scrolled near the top -----------------
+  async function loadOlder() {
+    if (loadingOlder || !hasMore) return;
+    setLoadingOlder(true);
     try {
-      const conv = await api.getConversation(terminalId, 0, 0);
-      setItems(conv.items);
-      setTruncated(false);
-      cursor.current = conv.cursor;
-    } catch { /* ignore; user can retry */ }
+      const conv = await api.getConversation(terminalId, { before: earliest.current, limit: LIMIT });
+      prependFromHeight.current = scroller.current?.scrollHeight ?? null; // preserve scroll
+      earliest.current = conv.startLine;
+      setHasMore(conv.hasMore);
+      setItems((prev) => [...conv.items, ...prev]);
+    } catch { /* user can scroll to retry */ }
+    setLoadingOlder(false);
   }
 
-  // --- auto-scroll to bottom on new items ------------------------------
+  // After a prepend, keep the viewport anchored (don't jump to the top).
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (prependFromHeight.current != null && el) {
+      el.scrollTop += el.scrollHeight - prependFromHeight.current;
+      prependFromHeight.current = null;
+    }
+  }, [items]);
+
+  // --- auto-scroll to bottom on new items (only if already at bottom) ---
   useEffect(() => {
     if (atBottom.current && scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
   }, [items.length, busy]);
 
   function onScroll() {
     const el = scroller.current;
-    if (el) atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    if (!el) return;
+    atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    if (el.scrollTop < 120 && hasMore && !loadingOlder) void loadOlder();
   }
 
   if (unsupported) {
@@ -95,17 +123,34 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, background: 'var(--color-base)' }}>
-      <div ref={scroller} onScroll={onScroll} style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '18px 0' }}>
-        <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {items.length === 0 && (
+      <div ref={scroller} onScroll={onScroll} style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', padding: '18px 0' }}>
+        <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 20px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {hasMore && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: 'var(--color-text-tertiary)', fontSize: 12, padding: '4px 0' }}>
+              {loadingOlder ? <><Spinner size={12} /> Loading earlier…</> : 'Scroll up for earlier messages'}
+            </div>
+          )}
+          {items.length === 0 && !hasMore && (
             <div style={{ color: 'var(--color-text-tertiary)', fontSize: 13, padding: '8px 0' }}>No messages yet. Switch to Terminal to interact.</div>
           )}
-          {truncated && (
-            <button onClick={() => void loadEarlier()} style={{ alignSelf: 'center', background: 'var(--color-elevated)', border: '1px solid #2c2c32', borderRadius: 8, color: 'var(--color-text-secondary)', fontSize: 12, padding: '6px 12px', cursor: 'pointer' }}>
-              Load earlier messages
-            </button>
-          )}
-          {items.map((it, i) => <Item key={i} item={it} />)}
+          {(() => {
+            const rows: React.ReactNode[] = [];
+            for (let i = 0; i < items.length; i++) {
+              const it = items[i];
+              const key = earliest.current + i;
+              if (it.kind === 'tool') {
+                const next = items[i + 1];
+                const result = next?.kind === 'tool-result' ? next : undefined;
+                rows.push(<ToolCall key={key} tool={it} result={result} />);
+                if (result) i++;
+              } else if (it.kind === 'tool-result') {
+                rows.push(<ToolResult key={key} item={it} />);
+              } else {
+                rows.push(<Item key={key} item={it} />);
+              }
+            }
+            return rows;
+          })()}
           {busy && <Typing label={activityLabel} />}
           {!busy && needsInput && <NeedsInput label={activityLabel} />}
         </div>
@@ -144,6 +189,38 @@ function Item({ item }: { item: ConvItem }) {
   }
   // tool-result
   return <ToolResult item={item} />;
+}
+
+/** A tool call: tool name (row 1) + file/detail (row 2), expandable to its output. */
+function ToolCall({ tool, result }: { tool: ConvItem; result?: ConvItem }) {
+  const [open, setOpen] = useState(false);
+  const name = tool.toolTitle ?? tool.toolName ?? 'Tool';
+  const detail = tool.toolDetail;
+  const out = result?.text ?? '';
+  const hasOut = !!out.trim();
+  const err = result?.isError;
+  const lines = hasOut ? out.split('\n').length : 0;
+  return (
+    <div style={{ border: '1px solid var(--color-border)', borderRadius: 9, background: 'var(--color-elevated)', overflow: 'hidden' }}>
+      <button
+        onClick={() => hasOut && setOpen((o) => !o)}
+        style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: hasOut ? 'pointer' : 'default', padding: '8px 10px', display: 'flex', gap: 8, alignItems: 'flex-start' }}
+      >
+        <CaretRight size={11} weight="bold" style={{ marginTop: 2, flexShrink: 0, color: 'var(--color-text-tertiary)', visibility: hasOut ? 'visible' : 'hidden', transition: 'transform .12s ease', transform: open ? 'rotate(90deg)' : 'none' }} />
+        <Wrench size={13} color="#5A8DD6" style={{ marginTop: 1, flexShrink: 0 }} />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--color-text-primary)', fontWeight: 500 }}>
+            <span>{name}</span>
+            {result && <span style={{ fontWeight: 400, fontSize: 11, color: err ? 'var(--color-status-red)' : 'var(--color-text-tertiary)' }}>{err ? 'error' : `${lines} line${lines !== 1 ? 's' : ''}`}</span>}
+          </div>
+          {detail && <div style={{ marginTop: 2, font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{detail}</div>}
+        </div>
+      </button>
+      {open && hasOut && (
+        <pre style={{ margin: 0, borderTop: '1px solid var(--color-border)', font: '400 11.5px var(--font-mono)', lineHeight: 1.5, color: err ? 'var(--color-status-red)' : 'var(--color-text-tertiary)', padding: '8px 10px', maxHeight: 320, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{out}</pre>
+      )}
+    </div>
+  );
 }
 
 /** A tool result, minimized to a one-line summary and expandable on click. */

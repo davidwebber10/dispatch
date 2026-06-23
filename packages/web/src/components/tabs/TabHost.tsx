@@ -6,34 +6,17 @@ import { BrowserTab } from './BrowserTab';
 import { NotesTab } from './NotesTab';
 import { FileEditorTab } from './FileEditorTab';
 import { ConversationView } from './ConversationView';
-import { useThreadMode, type ThreadMode } from '../../stores/threadMode';
+import { useThreadMode } from '../../stores/threadMode';
 import { useTabs } from '../../stores/tabs';
 
-/** AI thread (claude-code/codex): a View (read-only transcript) / Terminal (interactive) toggle. */
+/** AI thread (claude-code/codex): View (read-only) or Terminal (interactive).
+ *  The mode toggle lives in the main top bar (see ModeToggle). Defaults to
+ *  Terminal so a new thread opens where you can type. */
 function AiThread({ tab }: { tab: Terminal }) {
-  // Default to Terminal (interactive) — View is read-only, so a new thread should
-  // open where you can actually type. Per-thread choice is remembered after that.
-  const defaultMode: ThreadMode = 'expert';
-  const mode = useThreadMode((s) => s.modes[tab.id]) ?? defaultMode;
-  const setMode = useThreadMode((s) => s.set);
-
+  const mode = useThreadMode((s) => s.modes[tab.id]) ?? 'expert';
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
-      <div style={{ flexShrink: 0, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', padding: '6px 12px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
-        <div style={{ display: 'flex', background: 'var(--color-elevated)', border: '1px solid #2c2c32', borderRadius: 8, padding: 2, gap: 2 }}>
-          {([['normal', 'View'], ['expert', 'Terminal']] as const).map(([m, label]) => (
-            <button key={m} onClick={() => setMode(tab.id, m)} style={{
-              padding: '4px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12,
-              fontWeight: mode === m ? 600 : 500,
-              background: mode === m ? 'var(--color-hover)' : 'transparent',
-              color: mode === m ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
-            }}>{label}</button>
-          ))}
-        </div>
-      </div>
-      <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
-        {mode === 'normal' ? <ConversationView terminalId={tab.id} /> : <TerminalTab terminalId={tab.id} />}
-      </div>
+      {mode === 'normal' ? <ConversationView terminalId={tab.id} /> : <TerminalTab terminalId={tab.id} />}
     </div>
   );
 }
