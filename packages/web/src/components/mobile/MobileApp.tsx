@@ -197,7 +197,7 @@ export function MobileApp() {
           <div style={scrollSlot}>
             {project ? (
               <div style={{ padding: '8px 4px' }}>
-                <ProjectCard session={project} active onSelectTab={openThread} onSelectAgent={openAgent} onNewAgent={(pid) => useAgentUI.getState().openNew(pid)} onBrowseFiles={() => setBrowseFiles(true)} />
+                <ProjectCard session={project} active fadeActiveKey={listFadeKey} onSelectTab={openThread} onSelectAgent={openAgent} onNewAgent={(pid) => useAgentUI.getState().openNew(pid)} onBrowseFiles={() => setBrowseFiles(true)} />
               </div>
             ) : <div style={{ padding: 16, color: 'var(--color-text-tertiary)' }}>No project selected</div>}
           </div>

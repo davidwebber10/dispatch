@@ -23,6 +23,19 @@ export function createFilesRouter(db: Database.Database): Router {
     return resolved;
   }
 
+  /**
+   * Read-only resolver. A tool call may reference a file OUTSIDE the session's
+   * working dir — e.g. an agent whose cwd is one repo but which edits another
+   * (the "View file" button in View opens exactly these). The agent already has
+   * full filesystem access, so for READS we honor an absolute path as-is;
+   * relative paths stay sandboxed to the working dir. Writes/listing/upload keep
+   * using resolveSafe.
+   */
+  function resolveRead(workingDir: string, requestedPath: string): string | null {
+    if (path.isAbsolute(requestedPath)) return path.resolve(requestedPath);
+    return resolveSafe(workingDir, requestedPath);
+  }
+
   function sanitizeFilename(filename: string): string {
     const sanitized = path.basename(filename)
       .replace(/[\x00-\x1F\x7F]/g, '')
@@ -66,7 +79,7 @@ export function createFilesRouter(db: Database.Database): Router {
     const requestedPath = req.query.path as string;
     if (!requestedPath) return res.status(400).json({ error: 'Missing path parameter' });
 
-    const resolved = resolveSafe(session.workingDir, requestedPath);
+    const resolved = resolveRead(session.workingDir, requestedPath);
     if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
 
     try {

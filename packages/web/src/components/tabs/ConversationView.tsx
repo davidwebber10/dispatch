@@ -1,6 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { Wrench, Brain, Terminal as TerminalIcon, CaretRight, MagnifyingGlass, X, ArrowUp, CaretDoubleDown, Paperclip, PaperPlaneTilt, FileText } from '@phosphor-icons/react';
+import { Wrench, Brain, Terminal as TerminalIcon, CaretRight, MagnifyingGlass, X, ArrowUp, CaretDoubleDown, Paperclip, PaperPlaneTilt, FileText, Sparkle } from '@phosphor-icons/react';
 import { api } from '../../api/client';
 import type { ConvItem, SearchMatch } from '../../api/types';
 import { useActivity } from '../../stores/activity';
@@ -44,8 +43,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
   const wantPrevUser = useRef(false);                      // up-arrow waiting on an older page to continue
   const [highlight, setHighlight] = useState<number | null>(null);
 
-  // --- search (floating bubble → modal, over the full history) ---------
-  const [searchOpen, setSearchOpen] = useState(false);
+  // --- search (full-width bar below the header, over the full history) --
   const [searchQ, setSearchQ] = useState('');
   const [results, setResults] = useState<SearchMatch[]>([]);
   const [searching, setSearching] = useState(false);
@@ -60,7 +58,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
     }, 250);
     return () => { on = false; clearTimeout(t); };
   }, [searchQ, terminalId]);
-  const goToResult = (line: number) => { setSearchOpen(false); setSearchQ(''); setResults([]); void loadAround(line); };
+  const goToResult = (line: number) => { setSearchQ(''); setResults([]); void loadAround(line); };
 
   // --- floating, draggable "jump to previous user message" arrow -------
   const arrowRef = useRef<HTMLButtonElement>(null);
@@ -295,6 +293,27 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
 
   return (
     <div ref={outer} style={{ position: 'relative', display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, background: 'var(--color-base)' }}>
+      {/* Full-width search, just below the header. Matches show in a dropdown that
+          overlays the top of the transcript; tapping one jumps + clears. */}
+      <div style={{ position: 'relative', flexShrink: 0, zIndex: 8, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
+        <MagnifyingGlass size={15} color="var(--color-text-tertiary)" style={{ flexShrink: 0 }} />
+        <input value={searchQ} onChange={(e) => setSearchQ(e.target.value)} placeholder="Search this conversation…"
+          autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck={false}
+          style={{ flex: 1, minWidth: 0, height: 32, background: 'var(--color-elevated)', border: '1px solid #2c2c32', borderRadius: 8, color: 'var(--color-text-primary)', fontSize: 16, padding: '0 10px', outline: 'none' }} />
+        {searchQ && <button onClick={() => { setSearchQ(''); setResults([]); }} title="Clear" style={{ background: 'none', border: 'none', color: 'var(--color-text-tertiary)', cursor: 'pointer', display: 'flex', flexShrink: 0 }}><X size={16} /></button>}
+        {searchQ.trim() && (
+          <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, maxHeight: '52vh', overflowY: 'auto', background: 'var(--color-pane)', borderBottom: '1px solid var(--color-border)', boxShadow: '0 14px 26px -10px rgba(0,0,0,.6)' }}>
+            {searching && results.length === 0 && <div style={{ padding: '11px 14px', color: 'var(--color-text-tertiary)', fontSize: 13 }}>Searching…</div>}
+            {!searching && results.length === 0 && <div style={{ padding: '11px 14px', color: 'var(--color-text-tertiary)', fontSize: 13 }}>No matches.</div>}
+            {results.map((m, i) => (
+              <button key={i} onClick={() => goToResult(m.line)} style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none', borderBottom: '1px solid var(--color-border)', padding: '10px 14px', cursor: 'pointer' }}>
+                <span style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--color-text-tertiary)' }}>{m.kind}</span>
+                <div style={{ fontSize: 13.5, color: 'var(--color-text-primary)', marginTop: 2, lineHeight: 1.45, wordBreak: 'break-word' }}>{m.snippet}</div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
       <div ref={scroller} onScroll={onScroll} style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', padding: '18px 0' }}>
         <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 20px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
           {hasMore && (
@@ -341,7 +360,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
         <button
           title="Scroll to latest"
           onClick={() => void scrollToLatest()}
-          style={{ position: 'absolute', right: 16, bottom: 78, width: 42, height: 42, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', color: '#06140B', border: 'none', boxShadow: '0 8px 22px -6px rgba(0,0,0,.7)', cursor: 'pointer', zIndex: 5 }}
+          style={{ position: 'absolute', right: 16, bottom: 116, width: 42, height: 42, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', color: '#06140B', border: 'none', boxShadow: '0 8px 22px -6px rgba(0,0,0,.7)', cursor: 'pointer', zIndex: 5 }}
         >
           <CaretDoubleDown size={19} weight="bold" />
         </button>
@@ -356,7 +375,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
         onPointerUp={onArrowUp}
         title="Jump to previous message (drag to move)"
         style={{
-          position: 'absolute', ...(arrowPos ? { left: arrowPos.left, top: arrowPos.top } : { right: 16, bottom: 130 }),
+          position: 'absolute', ...(arrowPos ? { left: arrowPos.left, top: arrowPos.top } : { right: 16, bottom: 170 }),
           width: 42, height: 42, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
           background: 'var(--color-elevated)', border: '1px solid #2c2c32', color: 'var(--color-text-secondary)',
           boxShadow: grabbed ? '0 14px 30px -6px rgba(0,0,0,.75)' : '0 6px 18px -6px rgba(0,0,0,.6)',
@@ -367,15 +386,6 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
         }}
       >
         <ArrowUp size={18} weight="bold" />
-      </button>
-
-      {/* Floating search bubble (bottom-left) → opens the search modal. */}
-      <button
-        title="Search this conversation"
-        onClick={() => setSearchOpen(true)}
-        style={{ position: 'absolute', left: 16, bottom: 78, width: 42, height: 42, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid #2c2c32', color: 'var(--color-text-secondary)', boxShadow: '0 6px 18px -6px rgba(0,0,0,.6)', cursor: 'pointer', zIndex: 5 }}
-      >
-        <MagnifyingGlass size={18} weight="bold" />
       </button>
 
       {/* Upload feedback toast */}
@@ -404,32 +414,39 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
         </button>
       </form>
 
-      {/* Search modal (full history) — portaled to <body> so position:fixed isn't
-          trapped by the mobile slide-rail's transform. */}
-      {searchOpen && createPortal(
-        <div style={{ position: 'fixed', inset: 0, zIndex: 70, display: 'flex', flexDirection: 'column' }}>
-          <div onClick={() => setSearchOpen(false)} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.55)' }} />
-          <div style={{ position: 'relative', margin: '0 auto', marginTop: 'max(7vh, calc(env(safe-area-inset-top) + 12px))', width: 'min(680px, 94vw)', maxHeight: '80vh', display: 'flex', flexDirection: 'column', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 14, overflow: 'hidden', boxShadow: '0 24px 60px -12px rgba(0,0,0,.7)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px', borderBottom: '1px solid var(--color-border)' }}>
-              <MagnifyingGlass size={16} color="var(--color-text-tertiary)" style={{ flexShrink: 0 }} />
-              <input autoFocus value={searchQ} onChange={(e) => setSearchQ(e.target.value)} placeholder="Search this conversation…"
-                style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', color: 'var(--color-text-primary)', fontSize: 16, outline: 'none' }} />
-              <button onClick={() => setSearchOpen(false)} title="Close" style={{ background: 'none', border: 'none', color: 'var(--color-text-tertiary)', cursor: 'pointer', display: 'flex', flexShrink: 0 }}><X size={16} /></button>
-            </div>
-            <div style={{ overflowY: 'auto' }}>
-              {searching && results.length === 0 && <div style={{ padding: '12px 16px', color: 'var(--color-text-tertiary)', fontSize: 13 }}>Searching…</div>}
-              {!searching && searchQ.trim() && results.length === 0 && <div style={{ padding: '12px 16px', color: 'var(--color-text-tertiary)', fontSize: 13 }}>No matches.</div>}
-              {results.map((m, i) => (
-                <button key={i} onClick={() => goToResult(m.line)} style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none', borderBottom: '1px solid var(--color-border)', padding: '11px 16px', cursor: 'pointer' }}>
-                  <span style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--color-text-tertiary)' }}>{m.kind}</span>
-                  <div style={{ fontSize: 13.5, color: 'var(--color-text-primary)', marginTop: 2, lineHeight: 1.45, wordBreak: 'break-word' }}>{m.snippet}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>,
-        document.body,
-      )}
+    </div>
+  );
+}
+
+// "★ Insight ───…" / content / "───…" callout blocks Claude emits in explanatory
+// mode. Pull them out of the markdown and render as a styled card; everything
+// else renders as normal markdown.
+const INSIGHT_RE = /★[ \t]*Insight[^\n]*\n([\s\S]*?)\n[ \t]*─{5,}[ \t]*(?=\n|$)/g;
+
+function renderAssistant(text: string): React.ReactNode {
+  if (!text.includes('Insight') || !text.includes('─')) {
+    return <div className="md-view" dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />;
+  }
+  const parts: React.ReactNode[] = [];
+  let last = 0; let i = 0; let m: RegExpExecArray | null;
+  INSIGHT_RE.lastIndex = 0;
+  while ((m = INSIGHT_RE.exec(text)) !== null) {
+    if (m.index > last) parts.push(<div key={`t${i}`} className="md-view" dangerouslySetInnerHTML={{ __html: renderMarkdown(text.slice(last, m.index)) }} />);
+    parts.push(<InsightBox key={`i${i}`} body={m[1]} />);
+    last = m.index + m[0].length; i++;
+  }
+  if (!parts.length) return <div className="md-view" dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />;
+  if (last < text.length) parts.push(<div key="tend" className="md-view" dangerouslySetInnerHTML={{ __html: renderMarkdown(text.slice(last)) }} />);
+  return <>{parts}</>;
+}
+
+function InsightBox({ body }: { body: string }) {
+  return (
+    <div style={{ margin: '4px 0', borderRadius: 10, border: '1px solid color-mix(in srgb, var(--color-accent) 32%, transparent)', background: 'color-mix(in srgb, var(--color-accent) 8%, transparent)', padding: '9px 12px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--color-accent)', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 6 }}>
+        <Sparkle size={13} weight="fill" /> Insight
+      </div>
+      <div className="md-view" style={{ fontSize: 13 }} dangerouslySetInnerHTML={{ __html: renderMarkdown(body.trim()) }} />
     </div>
   );
 }
@@ -443,7 +460,7 @@ function Item({ item }: { item: ConvItem }) {
     );
   }
   if (item.kind === 'assistant') {
-    return <div className="md-view" style={{ fontSize: 13.5 }} dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text ?? '') }} />;
+    return <div style={{ fontSize: 13.5 }}>{renderAssistant(item.text ?? '')}</div>;
   }
   if (item.kind === 'thinking') {
     return (
