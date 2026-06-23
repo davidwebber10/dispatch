@@ -28,6 +28,7 @@ import { createFilesRouter } from './routes/files.js';
 import { createStateRouter } from './routes/state.js';
 import { createGitRouter } from './routes/git.js';
 import { createSecretsRouter } from './routes/secrets.js';
+import { createSetupRouter } from './routes/setup.js';
 import { SecretsService } from './secrets/service.js';
 import { createEventsRouter } from './routes/events.js';
 import { StatusService } from './status/service.js';
@@ -94,6 +95,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   app.use('/api/providers', createProvidersRouter());
   app.use('/api/servers', createServersRouter(db));
   app.use('/api/secrets', createSecretsRouter(secretsService));
+  app.use('/api/setup', createSetupRouter(db, secretsService));
   app.use('/api/sessions/:id/files', createFilesRouter(db));
   app.use('/api/sessions/:id/git', createGitRouter(db));
   app.use('/api/auth-requests', createAuthRouter(authRequestService));
@@ -280,6 +282,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.use('/api/providers', createProvidersRouter());
   app.use('/api/servers', createServersRouter(db));
   app.use('/api/secrets', createSecretsRouter(secretsService));
+  app.use('/api/setup', createSetupRouter(db, secretsService));
   app.use('/api/sessions/:id/files', createFilesRouter(db));
   app.use('/api/sessions/:id/git', createGitRouter(db));
   app.use('/api/auth-requests', createAuthRouter(authRequestService));
