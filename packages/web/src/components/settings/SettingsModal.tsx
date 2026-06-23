@@ -56,7 +56,7 @@ function ServersSection() {
 
 const iconBtn: React.CSSProperties = { width: 26, height: 26, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: '1px solid #2c2c32', borderRadius: 6, color: 'var(--color-text-secondary)', cursor: 'pointer' };
 
-function SecretsSection() {
+export function SecretsSection() {
   const status = useSecrets((s) => s.status);
   const secrets = useSecrets((s) => s.secrets);
   const projects = useSecrets((s) => s.projects);

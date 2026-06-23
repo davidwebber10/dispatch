@@ -3,6 +3,7 @@ import QRCode from 'qrcode';
 import type { SetupState, ProviderStatus, TailscaleStatus } from '../../api/types';
 import { api } from '../../api/client';
 import { useSetup } from '../../stores/setup';
+import { SecretsSection } from '../settings/SettingsModal';
 
 type Step = 'agents' | 'mobile' | 'secrets' | 'done';
 const ORDER: Step[] = ['agents', 'mobile', 'secrets', 'done'];
@@ -39,7 +40,12 @@ export function SetupWizard() {
         </div>
         {step === 'agents' && <AgentsStep providers={state.providers} />}
         {step === 'mobile' && <MobileStep tailscale={state.tailscale} />}
-        {step === 'secrets' && <div data-testid="secrets-step">Secrets step (Task 8)</div>}
+        {step === 'secrets' && (
+          <div>
+            <p style={{ color: 'var(--color-text-secondary)', fontSize: 13, marginTop: 0 }}>Optional — connect Doppler so your agents can read your secrets. You can skip this.</p>
+            <SecretsSection />
+          </div>
+        )}
         {step === 'done' && <div>You're all set. Reopen this anytime from Settings → Getting started.</div>}
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 20 }}>
           <button onClick={back} disabled={idx === 0} style={btn(false)}>Back</button>
