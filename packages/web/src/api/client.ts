@@ -1,4 +1,4 @@
-import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch } from './types';
+import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus } from './types';
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -41,6 +41,11 @@ export const api = {
   },
   searchConversation: (id: string, q: string) => req<{ matches: SearchMatch[] }>(`/api/terminals/${id}/conversation/search?q=${encodeURIComponent(q)}`),
   sendInput: (id: string, data: string) => req<void>(`/api/terminals/${id}/input`, { method: 'POST', body: body({ data }) }),
+
+  getSetupState: () => req<SetupState>(`/api/setup/state`),
+  recheckProviders: () => req<ProviderStatus[]>(`/api/setup/providers`),
+  recheckTailscale: () => req<TailscaleStatus>(`/api/setup/tailscale`),
+  completeSetup: () => req<{ ok: true }>(`/api/setup/complete`, { method: 'POST' }),
   updateTerminal: (id: string, fields: { label?: string; config?: Record<string, unknown> }) =>
     req<Terminal>(`/api/terminals/${id}`, { method: 'PATCH', body: body(fields) }),
   relaunchTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}/relaunch`, { method: 'POST' }),

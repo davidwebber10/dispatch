@@ -196,6 +196,11 @@ export interface AgentOverview {
   projects: AgentOverviewProject[];
 }
 
+// Setup / onboarding — mirrors core /api/setup.
+export interface ProviderStatus { name: 'claude' | 'codex'; installed: boolean; version?: string; signedIn: boolean | 'unknown'; }
+export interface TailscaleStatus { installed: boolean; running: boolean; dnsName?: string; url?: string; }
+export interface SetupState { firstRun: boolean; providers: ProviderStatus[]; tailscale: TailscaleStatus; secrets: { connected: boolean }; }
+
 // Secrets (Doppler) — mirrors core /api/secrets.
 export interface DopplerStatus { connected: boolean; project: string | null; config: string | null; enabled: boolean; readOnly: boolean }
 export interface DopplerSecret { name: string; value: string }
