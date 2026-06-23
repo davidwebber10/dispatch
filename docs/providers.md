@@ -1,5 +1,9 @@
 # Agent providers: Claude Code & Codex
 
+> The in-app setup wizard (and `dispatch doctor`) auto-detect whether `claude` / `codex` are
+> installed and signed in, and show the exact install + login commands with a Re-check button.
+> This page is the detailed reference behind that.
+
 Dispatch drives coding agents by spawning their **command-line tools** inside managed
 terminals. It does not bundle or authenticate them — they run as you, the logged-in user.
 

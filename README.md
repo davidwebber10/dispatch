@@ -37,36 +37,48 @@ couch, or your phone — including as an installable PWA. Put it behind a
 ## Quick start
 
 ```bash
-git clone https://github.com/davidwebber10/dispatch.git
-cd dispatch
-
-# Install dependencies and build the server + web client
-./bin/dispatch build
-
-# Install + start the background daemon (launchd)
-./bin/dispatch install
-
-# Open it
-open http://localhost:3456
+curl -fsSL https://raw.githubusercontent.com/davidwebber10/dispatch/main/scripts/install.sh | sh
 ```
 
-That's it — Dispatch is now running locally and will restart automatically on login.
+This checks prerequisites (git, Node 18+, pnpm), clones Dispatch to `~/.dispatch/app`, builds it,
+starts the background daemon (launchd), puts `dispatch` on your `PATH`, and opens
+`http://localhost:3456`. A first-run **setup wizard** then walks you through your agents
+(Claude Code / Codex), mobile access (Tailscale), and optional secrets (Doppler). Run
+`dispatch doctor` anytime to re-check that status from the terminal.
 
-To use the `dispatch` command from anywhere, add it to your `PATH`:
+<details>
+<summary>Prefer to do it by hand?</summary>
 
 ```bash
-ln -s "$PWD/bin/dispatch" /usr/local/bin/dispatch   # or somewhere on your PATH
+git clone https://github.com/davidwebber10/dispatch.git
+cd dispatch
+./bin/dispatch build      # install deps + build server + web client
+./bin/dispatch install    # install + start the launchd daemon
+open http://localhost:3456
+ln -s "$PWD/bin/dispatch" /usr/local/bin/dispatch   # optional: dispatch on PATH
 ```
+</details>
+
+That's it — Dispatch is now running locally and will restart automatically on login.
 
 ---
 
 ## Make it reachable from anywhere
 
-Locally Dispatch listens on `http://localhost:3456`. To reach it from your phone or another
-machine, expose it with a **Cloudflare Tunnel** and gate it with **Cloudflare Access** so only
-you can sign in:
+Locally Dispatch listens on `http://localhost:3456`.
+
+**Easiest (recommended): Tailscale.** Install [Tailscale](https://tailscale.com) on your Mac and
+your phone, sign into the same account, and Dispatch is reachable at `http://<your-mac>.ts.net:3456`
+— privately, only from your own devices, with no public exposure. The setup wizard's **Mobile**
+step shows the exact URL and a QR code to open on your phone.
+
+**Public URL: Cloudflare Tunnel + Access.** To expose a real shareable `https://` URL, put Dispatch
+behind a **Cloudflare Tunnel** gated with **Cloudflare Access** so only you can sign in:
 
 → **[docs/cloudflare.md](docs/cloudflare.md)** — full Tunnel + Zero Trust Access walkthrough.
+
+> ⚠️ Never expose `:3456` to the internet without a gate (Tailscale or Cloudflare Access) — the
+> daemon spawns shells and agents, so an open port is remote code execution.
 
 (For private, tailnet-only access without a public domain, Tailscale also works — see the note at the end of that doc.)
 
