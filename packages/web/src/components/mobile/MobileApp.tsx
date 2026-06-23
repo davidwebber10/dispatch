@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { Gear, CaretLeft, CaretRight, Plus, Folders, Robot } from '@phosphor-icons/react';
 import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
@@ -49,12 +49,10 @@ export function MobileApp() {
   const [settings, setSettings] = useState(false);
   const [listFadeKey, setListFadeKey] = useState(0); // bumps when the thread list reappears → re-fades the active row
   useEffect(() => { if (level === 1) setListFadeKey((k) => k + 1); }, [level]);
-  // The thread list highlights a row ONLY when you just backed out of that
-  // thread (then it fades). Opening a project fresh highlights nothing.
+  // The thread list highlights a row ONLY for the thread you last opened (set in
+  // openThread), so backing out of it highlights its row (then fades). Opening a
+  // project fresh clears it → nothing highlighted.
   const [highlightThreadId, setHighlightThreadId] = useState<string | null>(null);
-  const levelRef = useRef(level); levelRef.current = level;
-  const leafRef = useRef(leaf); leafRef.current = leaf;
-  const leafTabIdRef = useRef(leafTabId); leafTabIdRef.current = leafTabId;
   const [newProject, setNewProject] = useState(false);
   const [browseFiles, setBrowseFiles] = useState(false);
   const [query, setQuery] = useState('');
@@ -71,6 +69,7 @@ export function MobileApp() {
   };
   const openThread = (tabId: string) => {
     useAgentUI.getState().blur(); useTabs.getState().setActiveTab(tabId); setLeafTabId(tabId); setLeaf('tab'); setLevel(2);
+    setHighlightThreadId(tabId); // so backing out of THIS thread highlights its row (then fades)
     history.pushState({ nav: 2, projectId, leaf: 'tab', tabId }, '', `/p/${projectId}/t/${tabId}`);
   };
   const openAgent = (id: string) => {
@@ -108,16 +107,11 @@ export function MobileApp() {
     }
     const onPop = (e: PopStateEvent) => {
       const s = (e.state || { nav: 0 }) as { nav?: number; projectId?: string; leaf?: 'tab' | 'agent'; tabId?: string; agentId?: string };
-      const target = (s.nav ?? 0) as 0 | 1 | 2;
-      // Backing out of a thread (level 2 tab → list): highlight the row we left
-      // so the fade reads as "you came from here". Any other arrival at the list
-      // clears it (no highlight on a fresh open).
-      if (target === 1) setHighlightThreadId(levelRef.current === 2 && leafRef.current === 'tab' ? leafTabIdRef.current : null);
       if (s.projectId) { setProjectId(s.projectId); useProjects.getState().setActive(s.projectId); }
       if (s.leaf) setLeaf(s.leaf);
       if (s.tabId) { useAgentUI.getState().blur(); setLeafTabId(s.tabId); useTabs.getState().setActiveTab(s.tabId); }
       if (s.agentId) useAgentUI.getState().selectAgent(s.agentId);
-      setLevel(target);
+      setLevel((s.nav ?? 0) as 0 | 1 | 2);
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);

@@ -142,8 +142,8 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
   const [dimmed, setDimmed] = useState(false);
   useEffect(() => {
     if (fadeKey === undefined || !active) { setDimmed(false); return; }
-    setDimmed(false); // paint highlighted for one frame, then fade out immediately
-    const t = setTimeout(() => setDimmed(true), 60);
+    setDimmed(false); // show the highlight on arrival…
+    const t = setTimeout(() => setDimmed(true), 900); // …hold briefly, then fade out
     return () => clearTimeout(t);
   }, [fadeKey, active]);
   const showActive = active && !dimmed;
