@@ -17,7 +17,6 @@ import { useProjects } from './stores/projects';
 import { useTabs } from './stores/tabs';
 import { useActivity } from './stores/activity';
 import { useThreadStatus } from './stores/threadStatus';
-import { usePrompts } from './stores/prompts';
 import { useAuth } from './stores/auth';
 import { useAgents } from './stores/agents';
 import { useAgentUI } from './stores/agentUI';
@@ -57,7 +56,6 @@ export default function App() {
         useTabs.getState().applyEvent(e);
         useActivity.getState().applyEvent(e);
         useThreadStatus.getState().applyEvent(e);
-        usePrompts.getState().applyEvent(e);
         useAuth.getState().applyEvent(e);
         useAgents.getState().applyEvent(e);
         if (e.type === 'session:status' && e.status === 'needs_input' && typeof e.sessionId === 'string') maybeNotify(e.sessionId);

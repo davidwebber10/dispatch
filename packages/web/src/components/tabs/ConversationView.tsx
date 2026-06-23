@@ -1,27 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowUp, Stop, Wrench, Brain, Terminal as TerminalIcon } from '@phosphor-icons/react';
+import { Wrench, Brain, Terminal as TerminalIcon, CaretRight } from '@phosphor-icons/react';
 import { api } from '../../api/client';
 import type { ConvItem } from '../../api/types';
 import { useActivity } from '../../stores/activity';
 import { useThreadStatus } from '../../stores/threadStatus';
-import { PromptCard } from './PromptCard';
 import { renderMarkdown } from '../../lib/markdown';
 
 /**
- * Visual mode: a chat-style render of the session's live transcript. Reads are
- * cursor-polled from the daemon; the composer writes back to the SAME live PTY
- * (so Terminal mode mirrors it). Stop interrupts the turn; a message is always
- * sent straight to the agent, which runs it now if idle or queues it natively if
- * mid-turn (no client-side queue — that caused staged/lost messages).
+ * View mode: a READ-ONLY, chat-style render of the session's live transcript
+ * (cursor-polled from the daemon). All interaction happens in Terminal mode —
+ * View never writes to the PTY. It shows working / needs-input status purely as
+ * indicators so you can watch a thread without driving it.
  */
 export function ConversationView({ terminalId }: { terminalId: string }) {
   const [items, setItems] = useState<ConvItem[]>([]);
   const [unsupported, setUnsupported] = useState(false);
-  const [input, setInput] = useState('');
   const [showAll, setShowAll] = useState(false);
   const cursor = useRef(0);
-  // Prefer the hook/notify-driven status (accurate per-turn); fall back to the
-  // PTY activity heuristic only until the first status event arrives.
   const ts = useThreadStatus((s) => s.byTerminal[terminalId]);
   const activityBusy = useActivity((s) => s.byTerminal[terminalId]?.activity === 'busy');
   const busy = ts ? ts.status === 'working' : activityBusy;
@@ -31,9 +26,8 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
 
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
-  const refreshRef = useRef<() => void>(() => {});
 
-  // --- cursor-polling of the transcript --------------------------------
+  // --- cursor-polling of the transcript (read-only) --------------------
   useEffect(() => {
     let on = true;
     let timer: ReturnType<typeof setTimeout>;
@@ -51,7 +45,6 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
       await refresh();
       if (on) timer = setTimeout(loop, busyRef.current ? 1000 : 2500);
     }
-    refreshRef.current = () => { void refresh(); };
     void loop();
     return () => { on = false; clearTimeout(timer); };
   }, [terminalId]);
@@ -66,25 +59,11 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
     if (el) atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
   }
 
-  function send() {
-    const msg = input.trim();
-    if (!msg) return;
-    setInput('');
-    atBottom.current = true;
-    // Always send straight to the agent (submit:true → text, then a separate
-    // Enter server-side, so it actually submits instead of staging the newline).
-    // It runs immediately when idle and queues natively when mid-turn — no
-    // client-side queue to drop or mis-flush.
-    void api.sendInput(terminalId, msg, true).then(() => setTimeout(() => refreshRef.current(), 300));
-  }
-
-  function stop() { void api.sendInput(terminalId, '\x1b'); } // Esc interrupts the turn
-
   if (unsupported) {
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, color: 'var(--color-text-tertiary)', padding: 24, textAlign: 'center' }}>
         <TerminalIcon size={22} />
-        <div style={{ fontSize: 13 }}>Visual view isn't available for this thread yet.</div>
+        <div style={{ fontSize: 13 }}>View isn't available for this thread yet.</div>
         <div style={{ fontSize: 12 }}>Switch to <strong style={{ color: 'var(--color-text-secondary)' }}>Terminal</strong> to use it.</div>
       </div>
     );
@@ -95,7 +74,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
       <div ref={scroller} onScroll={onScroll} style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '18px 0' }}>
         <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
           {items.length === 0 && (
-            <div style={{ color: 'var(--color-text-tertiary)', fontSize: 13, padding: '8px 0' }}>No messages yet — say something below.</div>
+            <div style={{ color: 'var(--color-text-tertiary)', fontSize: 13, padding: '8px 0' }}>No messages yet. Switch to Terminal to interact.</div>
           )}
           {(() => {
             const MAX = 120;
@@ -115,31 +94,6 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
           })()}
           {busy && <Typing label={activityLabel} />}
           {!busy && needsInput && <NeedsInput label={activityLabel} />}
-        </div>
-      </div>
-
-      {/* Composer */}
-      <div style={{ flexShrink: 0, borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', padding: '10px 16px' }}>
-        <div style={{ maxWidth: 760, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <PromptCard terminalId={terminalId} />
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
-              rows={1}
-              placeholder={busy ? 'Message…  (sends now, agent queues it)' : 'Message…  (Enter to send, Shift+Enter for newline)'}
-              style={{ flex: 1, minWidth: 0, resize: 'none', maxHeight: 160, minHeight: 38, padding: '9px 12px', background: 'var(--color-elevated)', border: '1px solid #2c2c32', borderRadius: 10, color: 'var(--color-text-primary)', font: '400 13px var(--font-sans)', lineHeight: 1.5 }}
-            />
-            {busy && (
-              <button onClick={stop} title="Stop (interrupt the current turn)" style={{ flexShrink: 0, width: 38, height: 38, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#241313', border: '1px solid #4A1F22', borderRadius: 10, color: '#F0616D', cursor: 'pointer' }}>
-                <Stop size={16} weight="fill" />
-              </button>
-            )}
-            <button onClick={send} disabled={!input.trim()} title="Send" style={{ flexShrink: 0, width: 38, height: 38, display: 'flex', alignItems: 'center', justifyContent: 'center', background: input.trim() ? 'var(--color-accent)' : 'var(--color-elevated)', border: input.trim() ? 'none' : '1px solid #2c2c32', borderRadius: 10, color: input.trim() ? '#08240F' : 'var(--color-text-tertiary)', cursor: input.trim() ? 'pointer' : 'default' }}>
-              <ArrowUp size={17} weight="bold" />
-            </button>
-          </div>
         </div>
       </div>
     </div>
@@ -175,8 +129,30 @@ function Item({ item }: { item: ConvItem }) {
     );
   }
   // tool-result
+  return <ToolResult item={item} />;
+}
+
+/** A tool result, minimized to a one-line summary and expandable on click. */
+function ToolResult({ item }: { item: ConvItem }) {
+  const [open, setOpen] = useState(false);
+  const text = item.text ?? '';
+  if (!text.trim()) return null;
+  const lines = text.split('\n').length;
+  const err = item.isError;
+  const color = err ? 'var(--color-status-red)' : 'var(--color-text-tertiary)';
   return (
-    <pre style={{ margin: 0, font: '400 11.5px var(--font-mono)', lineHeight: 1.5, color: item.isError ? 'var(--color-status-red)' : 'var(--color-text-tertiary)', background: 'var(--color-elevated)', border: `1px solid ${item.isError ? 'rgba(240,97,109,.3)' : 'var(--color-border)'}`, borderRadius: 8, padding: '8px 10px', maxHeight: 140, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{item.text}</pre>
+    <div>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', cursor: 'pointer', padding: '1px 0', font: '400 11.5px var(--font-mono)', color }}
+      >
+        <CaretRight size={10} weight="bold" style={{ transition: 'transform .12s ease', transform: open ? 'rotate(90deg)' : 'none' }} />
+        {err ? 'Error output' : 'Output'}<span style={{ opacity: 0.6 }}> · {lines} line{lines !== 1 ? 's' : ''}</span>
+      </button>
+      {open && (
+        <pre style={{ margin: '4px 0 0', font: '400 11.5px var(--font-mono)', lineHeight: 1.5, color, background: 'var(--color-elevated)', border: `1px solid ${err ? 'rgba(240,97,109,.3)' : 'var(--color-border)'}`, borderRadius: 8, padding: '8px 10px', maxHeight: 280, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{text}</pre>
+      )}
+    </div>
   );
 }
 
@@ -193,7 +169,7 @@ function NeedsInput({ label }: { label?: string }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--color-status-yellow)', fontSize: 12.5 }}>
       <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--color-status-yellow)', animation: 'dispatchGlow 1.6s ease-in-out infinite' }} />
-      {label || 'Waiting for your input'}
+      {label || 'Waiting for your input (use Terminal)'}
     </div>
   );
 }
