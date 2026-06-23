@@ -4,6 +4,7 @@ import { useConnection } from '../../stores/connection';
 import { useSettings, ACCENTS } from '../../stores/settings';
 import { useServers, currentLabel } from '../../stores/servers';
 import { useSecrets } from '../../stores/secrets';
+import { useSetup } from '../../stores/setup';
 
 const sectionLabel: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
 const row: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 };
@@ -236,6 +237,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   const accent = useSettings((s) => s.accent);
   const notify = useSettings((s) => s.notify);
   const servers = useServers((s) => s.servers);
+  const openSetup = useSetup((s) => s.open);
   const [tab, setTab] = useState<'general' | 'secrets'>('general');
   if (!open) return null;
 
@@ -264,6 +266,12 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 16 }}>
           {tab === 'general' ? (
             <>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <span style={sectionLabel}>GETTING STARTED</span>
+                <button onClick={() => { openSetup(); onClose(); }} style={{ alignSelf: 'flex-start', height: 30, padding: '0 14px', background: 'transparent', border: '1px solid #2c2c32', borderRadius: 7, color: 'var(--color-text-primary)', fontSize: 12.5, cursor: 'pointer' }}>Re-run setup wizard</button>
+              </div>
+              <Divider />
+
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <span style={sectionLabel}>CONNECTION</span>
                 <div style={row}><span style={item}>Server</span><span style={chip}>{currentLabel(servers)}</span></div>
