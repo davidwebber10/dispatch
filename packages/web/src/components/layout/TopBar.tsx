@@ -1,12 +1,11 @@
 import { useState } from 'react';
-import { Gear, Sidebar, MagnifyingGlass } from '@phosphor-icons/react';
+import { Gear, Sidebar } from '@phosphor-icons/react';
 import { ConnectionStatus } from './ConnectionStatus';
 import { BrandSwitcher } from './BrandSwitcher';
 import { ModeToggle } from './ModeToggle';
 import { SettingsModal } from '../settings/SettingsModal';
-import { SearchOverlay } from '../tabs/SearchOverlay';
 import { useUI } from '../../stores/ui';
-import { useTabs, findTerminal } from '../../stores/tabs';
+import { useTabs } from '../../stores/tabs';
 
 const iconBtn: React.CSSProperties = {
   width: 28, height: 28, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -20,9 +19,6 @@ export function TopBar() {
   const toggleLeft = useUI((s) => s.toggleLeft);
   const toggleRight = useUI((s) => s.toggleRight);
   const activeId = useTabs((s) => s.activeTabId);
-  const activeTab = useTabs((s) => (activeId ? findTerminal(s.byProject, activeId) : undefined));
-  const isThread = !!activeTab && (activeTab.type === 'claude-code' || activeTab.type === 'codex');
-  const [search, setSearch] = useState(false);
 
   return (
     <header style={{
@@ -37,11 +33,6 @@ export function TopBar() {
       <ModeToggle terminalId={activeId} />
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
         <ConnectionStatus />
-        {isThread && (
-          <button title="Search this conversation" onClick={() => setSearch(true)} style={{ ...iconBtn, color: 'var(--color-text-secondary)' }}>
-            <MagnifyingGlass size={16} />
-          </button>
-        )}
         <button title="Settings" onClick={() => setSettings(true)} style={{ ...iconBtn, color: 'var(--color-text-secondary)' }}>
           <Gear size={16} />
         </button>
@@ -51,7 +42,6 @@ export function TopBar() {
         </button>
       </div>
       <SettingsModal open={settings} onClose={() => setSettings(false)} />
-      {search && activeId && <SearchOverlay terminalId={activeId} onClose={() => setSearch(false)} />}
     </header>
   );
 }

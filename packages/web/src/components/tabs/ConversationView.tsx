@@ -1,10 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Wrench, Brain, Terminal as TerminalIcon, CaretRight } from '@phosphor-icons/react';
+import { Wrench, Brain, Terminal as TerminalIcon, CaretRight, MagnifyingGlass, X, ArrowUp } from '@phosphor-icons/react';
 import { api } from '../../api/client';
-import type { ConvItem } from '../../api/types';
+import type { ConvItem, SearchMatch } from '../../api/types';
 import { useActivity } from '../../stores/activity';
 import { useThreadStatus } from '../../stores/threadStatus';
-import { useViewJump } from '../../stores/viewJump';
 import { Spinner } from '../common/Spinner';
 import { renderMarkdown } from '../../lib/markdown';
 
@@ -31,6 +30,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
   const activityLabel = ts?.activity || undefined;
   const busyRef = useRef(busy); busyRef.current = busy;
 
+  const outer = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   const atEnd = useRef(true);                              // window includes the latest line → poll appends
@@ -38,7 +38,28 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
   const pendingScroll = useRef<number | null>(null);       // line to scroll to after a jump
   const loadToken = useRef(0);                             // discards stale async loads (race guard)
   const [highlight, setHighlight] = useState<number | null>(null);
-  const jump = useViewJump((s) => s.target);
+
+  // --- search (bottom bar over the full history) -----------------------
+  const [searchQ, setSearchQ] = useState('');
+  const [results, setResults] = useState<SearchMatch[]>([]);
+  const [searching, setSearching] = useState(false);
+  useEffect(() => {
+    const v = searchQ.trim();
+    if (!v) { setResults([]); setSearching(false); return; }
+    let on = true; setSearching(true);
+    const t = setTimeout(async () => {
+      try { const r = await api.searchConversation(terminalId, v); if (on) setResults(r.matches); }
+      catch { if (on) setResults([]); }
+      finally { if (on) setSearching(false); }
+    }, 250);
+    return () => { on = false; clearTimeout(t); };
+  }, [searchQ, terminalId]);
+  const goToResult = (line: number) => { setSearchQ(''); setResults([]); void loadAround(line); };
+
+  // --- floating, draggable "jump to previous user message" arrow -------
+  const arrowRef = useRef<HTMLButtonElement>(null);
+  const [arrowPos, setArrowPos] = useState<{ left: number; top: number } | null>(null);
+  const drag = useRef<{ sx: number; sy: number; ox: number; oy: number; moved: boolean } | null>(null);
 
   // Load the most recent window (default View).
   async function loadInitial() {
@@ -92,12 +113,39 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
     return () => { on = false; clearTimeout(timer); };
   }, [terminalId]);
 
-  // --- handle a search jump (load + scroll to that line) ---------------
-  useEffect(() => {
-    if (!jump || jump.terminalId !== terminalId) return;
-    useViewJump.getState().clear();
-    void loadAround(jump.line);
-  }, [jump, terminalId]);
+  // Scroll up to the previous user message (the one just above the viewport).
+  function scrollToPrevUser() {
+    const el = scroller.current; if (!el) return;
+    const elTop = el.getBoundingClientRect().top;
+    const cur = el.scrollTop;
+    let targetTop: number | null = null;
+    el.querySelectorAll('[data-user="1"]').forEach((u) => {
+      const top = (u as HTMLElement).getBoundingClientRect().top - elTop + cur;
+      if (top < cur - 8) targetTop = top; // last user message above the current position
+    });
+    if (targetTop != null) el.scrollTo({ top: Math.max(0, targetTop - 12), behavior: 'smooth' });
+    else if (hasMore) void loadOlder(); // none above in the loaded window → pull older history
+  }
+
+  function onArrowDown(e: React.PointerEvent) {
+    const a = arrowRef.current, c = outer.current; if (!a || !c) return;
+    const r = a.getBoundingClientRect(), cr = c.getBoundingClientRect();
+    drag.current = { sx: e.clientX, sy: e.clientY, ox: r.left - cr.left, oy: r.top - cr.top, moved: false };
+    a.setPointerCapture(e.pointerId);
+  }
+  function onArrowMove(e: React.PointerEvent) {
+    const d = drag.current, c = outer.current; if (!d || !c) return;
+    const dx = e.clientX - d.sx, dy = e.clientY - d.sy;
+    if (Math.abs(dx) + Math.abs(dy) > 5) d.moved = true;
+    if (d.moved) {
+      const cr = c.getBoundingClientRect();
+      setArrowPos({ left: Math.max(6, Math.min(cr.width - 52, d.ox + dx)), top: Math.max(6, Math.min(cr.height - 52, d.oy + dy)) });
+    }
+  }
+  function onArrowUp() {
+    const d = drag.current; drag.current = null;
+    if (d && !d.moved) scrollToPrevUser(); // a tap (not a drag) jumps to the previous user message
+  }
 
   // --- load an older window when scrolled near the top -----------------
   async function loadOlder() {
@@ -176,7 +224,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, background: 'var(--color-base)' }}>
+    <div ref={outer} style={{ position: 'relative', display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, background: 'var(--color-base)' }}>
       <div ref={scroller} onScroll={onScroll} style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', padding: '18px 0' }}>
         <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 20px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
           {hasMore && (
@@ -205,7 +253,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
               }
               const hot = highlight != null && it.line === highlight;
               rows.push(
-                <div key={key} data-line={it.line} style={hot ? { borderRadius: 8, background: 'rgba(245,197,66,.14)', boxShadow: '0 0 0 3px rgba(245,197,66,.18)', transition: 'background .4s, box-shadow .4s' } : { transition: 'background .4s, box-shadow .4s' }}>
+                <div key={key} data-line={it.line} data-user={it.kind === 'user' ? '1' : undefined} style={hot ? { borderRadius: 8, background: 'rgba(245,197,66,.14)', boxShadow: '0 0 0 3px rgba(245,197,66,.18)', transition: 'background .4s, box-shadow .4s' } : { transition: 'background .4s, box-shadow .4s' }}>
                   {node}
                 </div>,
               );
@@ -216,6 +264,45 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
           {!busy && needsInput && <NeedsInput label={activityLabel} />}
         </div>
       </div>
+
+      {/* Floating, draggable "jump to previous user message" arrow. */}
+      <button
+        ref={arrowRef}
+        onPointerDown={onArrowDown}
+        onPointerMove={onArrowMove}
+        onPointerUp={onArrowUp}
+        title="Jump to previous message"
+        style={{
+          position: 'absolute', ...(arrowPos ? { left: arrowPos.left, top: arrowPos.top } : { right: 16, bottom: 88 }),
+          width: 42, height: 42, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'var(--color-elevated)', border: '1px solid #2c2c32', color: 'var(--color-text-secondary)',
+          boxShadow: '0 6px 18px -6px rgba(0,0,0,.6)', cursor: 'pointer', touchAction: 'none', zIndex: 4,
+        }}
+      >
+        <ArrowUp size={18} weight="bold" />
+      </button>
+
+      {/* Search results (over the full history) */}
+      {searchQ.trim() && (
+        <div style={{ flexShrink: 0, maxHeight: '42vh', overflowY: 'auto', borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
+          {searching && results.length === 0 && <div style={{ padding: '10px 14px', color: 'var(--color-text-tertiary)', fontSize: 13 }}>Searching…</div>}
+          {!searching && results.length === 0 && <div style={{ padding: '10px 14px', color: 'var(--color-text-tertiary)', fontSize: 13 }}>No matches.</div>}
+          {results.map((m, i) => (
+            <button key={i} onClick={() => goToResult(m.line)} style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none', borderBottom: '1px solid var(--color-border)', padding: '9px 14px', cursor: 'pointer' }}>
+              <span style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--color-text-tertiary)' }}>{m.kind}</span>
+              <div style={{ fontSize: 13.5, color: 'var(--color-text-primary)', marginTop: 2, lineHeight: 1.45, wordBreak: 'break-word' }}>{m.snippet}</div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Search bar (bottom) */}
+      <div style={{ flexShrink: 0, borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', padding: '8px 12px', paddingBottom: 'calc(8px + env(safe-area-inset-bottom))', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <MagnifyingGlass size={15} color="var(--color-text-tertiary)" style={{ flexShrink: 0 }} />
+        <input value={searchQ} onChange={(e) => setSearchQ(e.target.value)} placeholder="Search this conversation…"
+          style={{ flex: 1, minWidth: 0, background: 'var(--color-elevated)', border: '1px solid #2c2c32', borderRadius: 8, color: 'var(--color-text-primary)', font: '400 13px var(--font-sans)', padding: '8px 10px', outline: 'none' }} />
+        {searchQ && <button onClick={() => { setSearchQ(''); setResults([]); }} title="Clear" style={{ background: 'none', border: 'none', color: 'var(--color-text-tertiary)', cursor: 'pointer', display: 'flex', flexShrink: 0 }}><X size={15} /></button>}
+      </div>
     </div>
   );
 }
@@ -223,7 +310,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
 function Item({ item }: { item: ConvItem }) {
   if (item.kind === 'user') {
     return (
-      <div style={{ alignSelf: 'flex-end', maxWidth: '85%', background: 'var(--color-hover)', border: '1px solid var(--color-border)', borderRadius: '12px 12px 4px 12px', padding: '9px 13px', fontSize: 13, lineHeight: 1.55, color: 'var(--color-text-primary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+      <div style={{ alignSelf: 'flex-end', maxWidth: '88%', background: 'rgba(62,207,106,.13)', border: '1px solid rgba(62,207,106,.34)', borderRadius: '13px 13px 4px 13px', padding: '9px 13px', fontSize: 13.5, lineHeight: 1.55, color: 'var(--color-text-primary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', boxShadow: '0 1px 0 rgba(0,0,0,.15)' }}>
         {item.text}
       </div>
     );

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Gear, CaretLeft, CaretRight, Plus, Folders, Robot, MagnifyingGlass } from '@phosphor-icons/react';
+import { Gear, CaretLeft, CaretRight, Plus, Folders, Robot } from '@phosphor-icons/react';
 import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
 import { ModeToggle } from '../layout/ModeToggle';
@@ -11,7 +11,6 @@ import { TabHost } from '../tabs/TabHost';
 import { AgentPane } from '../agents/AgentPane';
 import { EditAgentModal } from '../agents/EditAgentModal';
 import { SettingsModal } from '../settings/SettingsModal';
-import { SearchOverlay } from '../tabs/SearchOverlay';
 import { useTabs } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
 import { useAgentUI } from '../../stores/agentUI';
@@ -47,7 +46,6 @@ export function MobileApp() {
   // the global activeTab store, which App's hydrate() can reset to null on reload.
   const [leafTabId, setLeafTabId] = useState<string | null>(() => parsePath(location.pathname).tabId ?? null);
   const [settings, setSettings] = useState(false);
-  const [search, setSearch] = useState(false);
   const [newProject, setNewProject] = useState(false);
   const [browseFiles, setBrowseFiles] = useState(false);
   const [query, setQuery] = useState('');
@@ -124,19 +122,11 @@ export function MobileApp() {
           </button>
         )}
         <ModeToggle terminalId={level === 2 && leaf === 'tab' ? leafTabId : null} />
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-          {level === 2 && leaf === 'tab' && leafTabId && (
-            <button title="Search" onClick={() => setSearch(true)} style={{ width: 32, height: 32, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 12, background: 'var(--color-elevated)', border: '1px solid #2C2C32', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
-              <MagnifyingGlass size={17} />
-            </button>
-          )}
-          <button title="Settings" onClick={() => setSettings(true)} style={{ width: 32, height: 32, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 12, background: 'var(--color-elevated)', border: '1px solid #2C2C32', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
-            <Gear size={17} />
-          </button>
-        </div>
+        <button title="Settings" onClick={() => setSettings(true)} style={{ marginLeft: 'auto', width: 32, height: 32, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 12, background: 'var(--color-elevated)', border: '1px solid #2C2C32', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
+          <Gear size={17} />
+        </button>
       </header>
       <SettingsModal open={settings} onClose={() => setSettings(false)} />
-      {search && leafTabId && <SearchOverlay terminalId={leafTabId} onClose={() => setSearch(false)} />}
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', position: 'relative' }}>
         <div style={{ display: 'flex', width: '100%', height: '100%', transform: `translateX(-${level * 100}%)`, transition: 'transform .28s cubic-bezier(.4,0,.2,1)' }}>
