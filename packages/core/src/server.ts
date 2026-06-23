@@ -31,7 +31,6 @@ import { createSecretsRouter } from './routes/secrets.js';
 import { SecretsService } from './secrets/service.js';
 import { createEventsRouter } from './routes/events.js';
 import { StatusService } from './status/service.js';
-import { PromptService } from './status/prompt-service.js';
 import { createEventsBroadcaster, createNoopBroadcaster } from './ws/events.js';
 import type { EventBroadcaster } from './ws/events.js';
 import { handleTerminalConnection } from './ws/terminal.js';
@@ -214,19 +213,6 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const agentService = new AgentService(db, sessionService, broadcaster, path.join(dataDir, 'runs'));
   const statusService = new StatusService(db, broadcaster);
 
-  // Interactive-prompt detection: when a PTY goes quiet, render its screen and
-  // surface any prompt (trust/select/confirm) as a `terminal:prompt` event.
-  const promptService = new PromptService(db, ptyManager, broadcaster);
-  const promptTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  const schedulePromptCheck = (id: string) => {
-    const existing = promptTimers.get(id);
-    if (existing) clearTimeout(existing);
-    promptTimers.set(id, setTimeout(() => {
-      promptTimers.delete(id);
-      void promptService.check(id).catch(() => { /* detection is best-effort */ });
-    }, 600));
-  };
-
   // Doppler secrets: token-backed connection + per-spawn injection (DOPPLER_* env +
   // an MCP server) so Claude Code / Codex agents can add & retrieve secrets.
   const secretsService = new SecretsService(dataDir);
@@ -247,7 +233,6 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   ptyManager.on('data', (id: string, data: Buffer) => {
     terminalMonitor.onOutput(id, data);
     agentService.onRunnerData(id, data);
-    schedulePromptCheck(id);
   });
 
   function rollupSession(sessionId: string) {
@@ -269,7 +254,6 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       terminalsDb.updateStatus(db, id, 'waiting');
       broadcaster.broadcast({ type: 'terminal:status', terminalId: id, status: 'waiting' });
       broadcaster.broadcast({ type: 'terminal:exit', terminalId: id, sessionId: terminal.session_id });
-      promptService.clear(id);
       sessionsDb.updatePid(db, terminal.session_id, null);
       rollupSession(terminal.session_id);
     } else {

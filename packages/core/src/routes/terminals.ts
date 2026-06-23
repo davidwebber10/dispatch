@@ -66,21 +66,15 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     res.json(sessionService.getConversation(req.params.terminalId, since));
   });
 
-  // POST /api/terminals/:terminalId/input { data, submit? } — write to the live PTY.
-  // `submit: true` sends `data` as a message: the text, then a SEPARATE Enter (so
-  // the agent submits it instead of staging the \r). Otherwise raw bytes are written
-  // verbatim (e.g. Esc "\x1b" to interrupt, or a standalone "\r").
+  // POST /api/terminals/:terminalId/input { data } — write raw bytes to the live PTY.
   router.post('/terminals/:terminalId/input', (req, res) => {
     const data = req.body?.data;
-    const submit = req.body?.submit === true;
     if (typeof data !== 'string') return res.status(400).json({ error: 'data (string) is required' });
     try {
-      if (submit) sessionService.submitToTerminal(req.params.terminalId, data);
-      else sessionService.writeToTerminal(req.params.terminalId, data);
-      // A submitted message (or a CR write) means the thread is now working —
-      // surface that immediately, before any hook fires. Codex relies on this
-      // since its notify only reports turn completion.
-      if (submit || (data.includes('\r') && data !== '\x1b')) statusService?.markWorking(req.params.terminalId, 'Thinking…');
+      sessionService.writeToTerminal(req.params.terminalId, data);
+      // A CR write means the thread is now working — surface it immediately,
+      // before any hook fires (Codex relies on this; notify only reports completion).
+      if (data.includes('\r') && data !== '\x1b') statusService?.markWorking(req.params.terminalId, 'Thinking…');
       res.status(204).end();
     } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
   });

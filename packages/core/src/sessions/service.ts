@@ -394,20 +394,6 @@ export class SessionService {
     this.ptyManager.write(terminalId, data);
   }
 
-  /**
-   * Submit a message to an interactive agent: write the text, then a SEPARATE
-   * Enter after a short gap. Sending "text\r" in one write makes the TUI treat
-   * the \r as a literal newline (text staged, not submitted); a standalone Enter
-   * is recognized as submit. The gap is server-local so it's reliable regardless
-   * of client/network latency (notably on mobile).
-   */
-  submitToTerminal(terminalId: string, text: string): void {
-    this.ptyManager.write(terminalId, text);
-    setTimeout(() => {
-      try { this.ptyManager.write(terminalId, '\r'); } catch { /* terminal may have exited */ }
-    }, 80);
-  }
-
   resolveTerminalFilePath(terminalId: string, requestedPath: string): string | null {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return null;

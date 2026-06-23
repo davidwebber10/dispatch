@@ -32,7 +32,7 @@ export const api = {
     req<Terminal>(`/api/sessions/${sessionId}/terminals`, { method: 'POST', body: body(input) }),
   getTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}`),
   getConversation: (id: string, since = 0) => req<Conversation>(`/api/terminals/${id}/conversation?since=${since}`),
-  sendInput: (id: string, data: string, submit = false) => req<void>(`/api/terminals/${id}/input`, { method: 'POST', body: body({ data, submit }) }),
+  sendInput: (id: string, data: string) => req<void>(`/api/terminals/${id}/input`, { method: 'POST', body: body({ data }) }),
   updateTerminal: (id: string, fields: { label?: string; config?: Record<string, unknown> }) =>
     req<Terminal>(`/api/terminals/${id}`, { method: 'PATCH', body: body(fields) }),
   relaunchTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}/relaunch`, { method: 'POST' }),
