@@ -15,7 +15,9 @@ export interface ConvItem {
   isError?: boolean;
   ts?: string;
   uuid?: string;
-  line?: number; // source JSONL line index (set by the caller; enables jump-to)
+  line?: number;       // source JSONL line index (set by the caller; enables jump-to)
+  toolInput?: string;  // the tool call's raw arguments (pretty JSON), for the Input tab
+  toolFile?: string;   // file path argument, for output-language inference
 }
 
 export function parseClaudeTranscript(text: string): ConvItem[] {
@@ -67,7 +69,11 @@ function parseEntry(o: any): ConvItem[] {
         out.push({ kind: 'thinking', text: str(b.thinking), ts, uuid });
       } else if (b.type === 'tool_use') {
         const name = str(b.name) ?? 'tool';
-        out.push({ kind: 'tool', toolName: name, toolTitle: toolTitle(name, b.input), toolDetail: toolDetail(name, b.input), ts, uuid });
+        const file = b.input?.file_path ?? b.input?.path ?? b.input?.notebook_path;
+        out.push({
+          kind: 'tool', toolName: name, toolTitle: toolTitle(name, b.input), toolDetail: toolDetail(name, b.input),
+          toolInput: toolInputString(name, b.input), toolFile: file ? String(file) : undefined, ts, uuid,
+        });
       }
     }
     return out;
@@ -92,6 +98,15 @@ function toolDetail(name: string, input: any): string | undefined {
   if (input.url) return str(input.url);
   if (input.description) return truncate(String(input.description), 160);
   try { return truncate(JSON.stringify(input), 240); } catch { return undefined; }
+}
+
+// The tool call's arguments, for the Input tab. Bash shows the bare command;
+// everything else shows pretty-printed JSON.
+function toolInputString(name: string, input: any): string | undefined {
+  if (input == null) return undefined;
+  if (typeof input === 'string') return input;
+  if (name === 'Bash' && typeof input.command === 'string') return input.command;
+  try { return JSON.stringify(input, null, 2); } catch { return String(input); }
 }
 
 function stringifyContent(content: any): string {

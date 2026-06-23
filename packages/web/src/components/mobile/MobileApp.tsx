@@ -15,6 +15,7 @@ import { useTabs } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
 import { useAgentUI } from '../../stores/agentUI';
 import { useReconnect } from '../../stores/reconnect';
+import { useUI } from '../../stores/ui';
 import { Spinner } from '../common/Spinner';
 import { timeAgo } from '../../lib/time';
 
@@ -46,6 +47,8 @@ export function MobileApp() {
   // the global activeTab store, which App's hydrate() can reset to null on reload.
   const [leafTabId, setLeafTabId] = useState<string | null>(() => parsePath(location.pathname).tabId ?? null);
   const [settings, setSettings] = useState(false);
+  const [listFadeKey, setListFadeKey] = useState(0); // bumps when the thread list reappears → re-fades the active row
+  useEffect(() => { if (level === 1) setListFadeKey((k) => k + 1); }, [level]);
   const [newProject, setNewProject] = useState(false);
   const [browseFiles, setBrowseFiles] = useState(false);
   const [query, setQuery] = useState('');
@@ -75,6 +78,13 @@ export function MobileApp() {
     history.pushState({ nav: 2, projectId: pid, leaf: 'agent', agentId: scheduleId }, '', `/p/${pid}/a/${scheduleId}`);
   };
   const back = () => history.back();
+
+  // View's "open file" button raises a cross-shell intent; navigate to that tab.
+  const pendingOpenTab = useUI((s) => s.pendingOpenTab);
+  useEffect(() => {
+    if (pendingOpenTab) { openThread(pendingOpenTab); useUI.getState().clearOpenTab(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingOpenTab]);
 
   // On a deep-linked reload: restore the stores from the URL and rebuild the
   // history stack (base → project → leaf) so back/edge-swipe still walks up.
@@ -121,10 +131,12 @@ export function MobileApp() {
             <span style={{ fontWeight: 600, fontSize: 16, color: 'var(--color-text-primary)', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{headerTitle}</span>
           </button>
         )}
-        <ModeToggle terminalId={level === 2 && leaf === 'tab' ? leafTabId : null} />
-        <button title="Settings" onClick={() => setSettings(true)} style={{ marginLeft: 'auto', width: 32, height: 32, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 12, background: 'var(--color-elevated)', border: '1px solid #2C2C32', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
-          <Gear size={17} />
-        </button>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <ModeToggle terminalId={level === 2 && leaf === 'tab' ? leafTabId : null} />
+          <button title="Settings" onClick={() => setSettings(true)} style={{ width: 32, height: 32, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 12, background: 'var(--color-elevated)', border: '1px solid #2C2C32', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
+            <Gear size={17} />
+          </button>
+        </div>
       </header>
       <SettingsModal open={settings} onClose={() => setSettings(false)} />
 

@@ -1,11 +1,15 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Wrench, Brain, Terminal as TerminalIcon, CaretRight, MagnifyingGlass, X, ArrowUp } from '@phosphor-icons/react';
+import { createPortal } from 'react-dom';
+import { Wrench, Brain, Terminal as TerminalIcon, CaretRight, MagnifyingGlass, X, ArrowUp, CaretDoubleDown, Paperclip, PaperPlaneTilt, FileText } from '@phosphor-icons/react';
 import { api } from '../../api/client';
 import type { ConvItem, SearchMatch } from '../../api/types';
 import { useActivity } from '../../stores/activity';
 import { useThreadStatus } from '../../stores/threadStatus';
+import { useTabs, findTerminal } from '../../stores/tabs';
+import { useThreadMode } from '../../stores/threadMode';
+import { useUI } from '../../stores/ui';
 import { Spinner } from '../common/Spinner';
-import { renderMarkdown } from '../../lib/markdown';
+import { renderMarkdown, highlightCode, langFromPath } from '../../lib/markdown';
 
 /**
  * View mode: a READ-ONLY, chat-style render of the session's live transcript
@@ -40,7 +44,8 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
   const wantPrevUser = useRef(false);                      // up-arrow waiting on an older page to continue
   const [highlight, setHighlight] = useState<number | null>(null);
 
-  // --- search (bottom bar over the full history) -----------------------
+  // --- search (floating bubble → modal, over the full history) ---------
+  const [searchOpen, setSearchOpen] = useState(false);
   const [searchQ, setSearchQ] = useState('');
   const [results, setResults] = useState<SearchMatch[]>([]);
   const [searching, setSearching] = useState(false);
@@ -55,12 +60,65 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
     }, 250);
     return () => { on = false; clearTimeout(t); };
   }, [searchQ, terminalId]);
-  const goToResult = (line: number) => { setSearchQ(''); setResults([]); void loadAround(line); };
+  const goToResult = (line: number) => { setSearchOpen(false); setSearchQ(''); setResults([]); void loadAround(line); };
 
   // --- floating, draggable "jump to previous user message" arrow -------
   const arrowRef = useRef<HTMLButtonElement>(null);
   const [arrowPos, setArrowPos] = useState<{ left: number; top: number } | null>(null);
+  const [grabbed, setGrabbed] = useState(false); // press-down visual cue (enlarge + wiggle)
   const drag = useRef<{ sx: number; sy: number; ox: number; oy: number; moved: boolean } | null>(null);
+
+  // --- "scroll to latest" down-arrow (mirrors Terminal) ---------------
+  const [showDown, setShowDown] = useState(false);
+  async function scrollToLatest() {
+    if (!atEnd.current) { atBottom.current = true; setShowDown(false); await loadInitial(); return; } // effect scrolls to bottom
+    const el = scroller.current; if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    setShowDown(false);
+  }
+
+  // --- compose box → hand off to Terminal (View never writes to View) --
+  const tab = useTabs((s) => findTerminal(s.byProject, terminalId));
+  const sessionId = tab?.sessionId;
+  const setMode = useThreadMode((s) => s.set);
+  const [composeText, setComposeText] = useState('');
+  const [note, setNote] = useState('');
+  function sendToTerminal() {
+    const v = composeText.trim();
+    if (!v) return;
+    // Send text + Enter as SEPARATE writes (see TerminalTab.sendMobileInput).
+    void api.sendInput(terminalId, v);
+    setTimeout(() => void api.sendInput(terminalId, '\r'), 80);
+    setComposeText('');
+    setMode(terminalId, 'expert'); // switch to Terminal so you watch it run
+  }
+  async function attachFiles(files: FileList | null) {
+    if (!files || !files.length || !sessionId) return;
+    for (const f of Array.from(files)) {
+      setNote(`Uploading ${f.name}…`);
+      try { const res = await api.uploadInbox(sessionId, f); await api.sendFileReference(terminalId, res.path, 'agent-context'); setNote(`Sent ${f.name}`); }
+      catch { setNote('Upload failed'); }
+    }
+    setTimeout(() => setNote(''), 2500);
+    setMode(terminalId, 'expert');
+  }
+
+  // --- open a tool-call's file in the file viewer (a 'file' tab) --------
+  async function openFileInViewer(path: string) {
+    if (!sessionId) return;
+    const st = useTabs.getState();
+    const existing = (st.byProject[sessionId] ?? []).find((t) => t.type === 'file' && (t.config?.path as string) === path);
+    let id = existing?.id;
+    if (!id) {
+      try {
+        const name = path.split('/').pop() || path;
+        const t = await api.createTerminal(sessionId, { type: 'file', label: name, config: { path } });
+        await st.loadTabs(sessionId);
+        id = t.id;
+      } catch { setNote('Could not open file'); setTimeout(() => setNote(''), 2500); return; }
+    }
+    st.openTab(id);                    // desktop: switch the active tab
+    useUI.getState().requestOpenTab(id); // mobile: MobileApp navigates its leaf
+  }
 
   // Load the most recent window (default View).
   async function loadInitial() {
@@ -139,6 +197,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
     const r = a.getBoundingClientRect(), cr = c.getBoundingClientRect();
     drag.current = { sx: e.clientX, sy: e.clientY, ox: r.left - cr.left, oy: r.top - cr.top, moved: false };
     a.setPointerCapture(e.pointerId);
+    setGrabbed(true); // enlarge + wiggle to signal "drag me"
   }
   function onArrowMove(e: React.PointerEvent) {
     const d = drag.current, c = outer.current; if (!d || !c) return;
@@ -151,6 +210,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
   }
   function onArrowUp() {
     const d = drag.current; drag.current = null;
+    setGrabbed(false);
     if (d && !d.moved) scrollToPrevUser(); // a tap (not a drag) jumps to the previous user message
   }
 
@@ -190,6 +250,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
       }
       if (target) {
         target.scrollIntoView({ block: 'center' });
+        setShowDown(true); // jumped off the live tail
         const hl = Number(target.getAttribute('data-line'));
         setHighlight(hl);
         setTimeout(() => setHighlight((h) => (h === hl ? null : h)), 2200);
@@ -210,6 +271,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
     const el = scroller.current;
     if (!el) return;
     atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    setShowDown(!atBottom.current || !atEnd.current); // off the live tail → show the jump-down arrow
     if (el.scrollTop < 120 && hasMore && !loadingOlder) void loadOlder();
   }
 
@@ -252,7 +314,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
               if (it.kind === 'tool') {
                 const next = items[i + 1];
                 const result = next?.kind === 'tool-result' ? next : undefined;
-                node = <ToolCall tool={it} result={result} />;
+                node = <ToolCall tool={it} result={result} onViewFile={openFileInViewer} />;
                 if (result) i++;
               } else if (it.kind === 'tool-result') {
                 node = <ToolResult item={it} />;
@@ -274,44 +336,100 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
         </div>
       </div>
 
-      {/* Floating, draggable "jump to previous user message" arrow. */}
+      {/* Floating "scroll to latest" — appears when off the live tail (like Terminal). */}
+      {showDown && (
+        <button
+          title="Scroll to latest"
+          onClick={() => void scrollToLatest()}
+          style={{ position: 'absolute', right: 16, bottom: 78, width: 42, height: 42, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', color: '#06140B', border: 'none', boxShadow: '0 8px 22px -6px rgba(0,0,0,.7)', cursor: 'pointer', zIndex: 5 }}
+        >
+          <CaretDoubleDown size={19} weight="bold" />
+        </button>
+      )}
+
+      {/* Floating, draggable "jump to previous user message" arrow. Press to enlarge
+          + wiggle (it's draggable); tap to jump; drag to reposition. */}
       <button
         ref={arrowRef}
         onPointerDown={onArrowDown}
         onPointerMove={onArrowMove}
         onPointerUp={onArrowUp}
-        title="Jump to previous message"
+        title="Jump to previous message (drag to move)"
         style={{
-          position: 'absolute', ...(arrowPos ? { left: arrowPos.left, top: arrowPos.top } : { right: 16, bottom: 88 }),
+          position: 'absolute', ...(arrowPos ? { left: arrowPos.left, top: arrowPos.top } : { right: 16, bottom: 130 }),
           width: 42, height: 42, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
           background: 'var(--color-elevated)', border: '1px solid #2c2c32', color: 'var(--color-text-secondary)',
-          boxShadow: '0 6px 18px -6px rgba(0,0,0,.6)', cursor: 'pointer', touchAction: 'none', zIndex: 4,
+          boxShadow: grabbed ? '0 14px 30px -6px rgba(0,0,0,.75)' : '0 6px 18px -6px rgba(0,0,0,.6)',
+          cursor: 'grab', touchAction: 'none', zIndex: 6,
+          transform: grabbed ? 'scale(1.2)' : 'scale(1)',
+          transition: 'transform .12s ease, box-shadow .12s ease',
+          animation: grabbed ? 'dispatchWiggle .4s ease-in-out infinite' : 'none',
         }}
       >
         <ArrowUp size={18} weight="bold" />
       </button>
 
-      {/* Search results (over the full history) */}
-      {searchQ.trim() && (
-        <div style={{ flexShrink: 0, maxHeight: '42vh', overflowY: 'auto', borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
-          {searching && results.length === 0 && <div style={{ padding: '10px 14px', color: 'var(--color-text-tertiary)', fontSize: 13 }}>Searching…</div>}
-          {!searching && results.length === 0 && <div style={{ padding: '10px 14px', color: 'var(--color-text-tertiary)', fontSize: 13 }}>No matches.</div>}
-          {results.map((m, i) => (
-            <button key={i} onClick={() => goToResult(m.line)} style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none', borderBottom: '1px solid var(--color-border)', padding: '9px 14px', cursor: 'pointer' }}>
-              <span style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--color-text-tertiary)' }}>{m.kind}</span>
-              <div style={{ fontSize: 13.5, color: 'var(--color-text-primary)', marginTop: 2, lineHeight: 1.45, wordBreak: 'break-word' }}>{m.snippet}</div>
-            </button>
-          ))}
-        </div>
-      )}
+      {/* Floating search bubble (bottom-left) → opens the search modal. */}
+      <button
+        title="Search this conversation"
+        onClick={() => setSearchOpen(true)}
+        style={{ position: 'absolute', left: 16, bottom: 78, width: 42, height: 42, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid #2c2c32', color: 'var(--color-text-secondary)', boxShadow: '0 6px 18px -6px rgba(0,0,0,.6)', cursor: 'pointer', zIndex: 5 }}
+      >
+        <MagnifyingGlass size={18} weight="bold" />
+      </button>
 
-      {/* Search bar (bottom) */}
-      <div style={{ flexShrink: 0, borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', padding: '8px 12px', paddingBottom: 'calc(8px + env(safe-area-inset-bottom))', display: 'flex', alignItems: 'center', gap: 8 }}>
-        <MagnifyingGlass size={15} color="var(--color-text-tertiary)" style={{ flexShrink: 0 }} />
-        <input value={searchQ} onChange={(e) => setSearchQ(e.target.value)} placeholder="Search this conversation…"
-          style={{ flex: 1, minWidth: 0, background: 'var(--color-elevated)', border: '1px solid #2c2c32', borderRadius: 8, color: 'var(--color-text-primary)', font: '400 13px var(--font-sans)', padding: '8px 10px', outline: 'none' }} />
-        {searchQ && <button onClick={() => { setSearchQ(''); setResults([]); }} title="Clear" style={{ background: 'none', border: 'none', color: 'var(--color-text-tertiary)', cursor: 'pointer', display: 'flex', flexShrink: 0 }}><X size={15} /></button>}
-      </div>
+      {/* Upload feedback toast */}
+      {note && <div style={{ position: 'absolute', left: 14, bottom: 70, zIndex: 6, background: 'rgba(10,10,12,.85)', color: 'var(--color-accent)', fontSize: 12, fontWeight: 500, padding: '5px 11px', borderRadius: 9, pointerEvents: 'none' }}>{note}</div>}
+
+      {/* Compose box (file · text · send). View never writes to View — this submits
+          to the live PTY and flips to Terminal so you watch the agent run it. */}
+      <form
+        onSubmit={(e) => { e.preventDefault(); sendToTerminal(); }}
+        style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0, padding: '8px 10px', paddingBottom: 'calc(8px + env(safe-area-inset-bottom))', borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)' }}
+      >
+        <label title="Attach image" style={{ height: 38, width: 38, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 11, color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
+          <Paperclip size={18} />
+          <input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }} />
+        </label>
+        <input
+          value={composeText}
+          onChange={(e) => setComposeText(e.target.value)}
+          placeholder="Message — sends in Terminal…"
+          autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck={false}
+          enterKeyHint="send"
+          style={{ flex: 1, minWidth: 0, height: 38, padding: '0 13px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 11, color: 'var(--color-text-primary)', fontSize: 16, outline: 'none' }}
+        />
+        <button type="submit" title="Send in Terminal" style={{ height: 38, width: 38, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', color: '#06140B', border: 'none', borderRadius: 11, cursor: 'pointer' }}>
+          <PaperPlaneTilt size={18} weight="fill" />
+        </button>
+      </form>
+
+      {/* Search modal (full history) — portaled to <body> so position:fixed isn't
+          trapped by the mobile slide-rail's transform. */}
+      {searchOpen && createPortal(
+        <div style={{ position: 'fixed', inset: 0, zIndex: 70, display: 'flex', flexDirection: 'column' }}>
+          <div onClick={() => setSearchOpen(false)} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.55)' }} />
+          <div style={{ position: 'relative', margin: '0 auto', marginTop: 'max(7vh, calc(env(safe-area-inset-top) + 12px))', width: 'min(680px, 94vw)', maxHeight: '80vh', display: 'flex', flexDirection: 'column', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 14, overflow: 'hidden', boxShadow: '0 24px 60px -12px rgba(0,0,0,.7)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px', borderBottom: '1px solid var(--color-border)' }}>
+              <MagnifyingGlass size={16} color="var(--color-text-tertiary)" style={{ flexShrink: 0 }} />
+              <input autoFocus value={searchQ} onChange={(e) => setSearchQ(e.target.value)} placeholder="Search this conversation…"
+                style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', color: 'var(--color-text-primary)', fontSize: 16, outline: 'none' }} />
+              <button onClick={() => setSearchOpen(false)} title="Close" style={{ background: 'none', border: 'none', color: 'var(--color-text-tertiary)', cursor: 'pointer', display: 'flex', flexShrink: 0 }}><X size={16} /></button>
+            </div>
+            <div style={{ overflowY: 'auto' }}>
+              {searching && results.length === 0 && <div style={{ padding: '12px 16px', color: 'var(--color-text-tertiary)', fontSize: 13 }}>Searching…</div>}
+              {!searching && searchQ.trim() && results.length === 0 && <div style={{ padding: '12px 16px', color: 'var(--color-text-tertiary)', fontSize: 13 }}>No matches.</div>}
+              {results.map((m, i) => (
+                <button key={i} onClick={() => goToResult(m.line)} style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none', borderBottom: '1px solid var(--color-border)', padding: '11px 16px', cursor: 'pointer' }}>
+                  <span style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--color-text-tertiary)' }}>{m.kind}</span>
+                  <div style={{ fontSize: 13.5, color: 'var(--color-text-primary)', marginTop: 2, lineHeight: 1.45, wordBreak: 'break-word' }}>{m.snippet}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }
@@ -348,35 +466,63 @@ function Item({ item }: { item: ConvItem }) {
   return <ToolResult item={item} />;
 }
 
-/** A tool call: tool name (row 1) + file/detail (row 2), expandable to its output. */
-function ToolCall({ tool, result }: { tool: ConvItem; result?: ConvItem }) {
+/** A tool call: single-line summary; expand to an Input/Output tabbed, syntax-
+ *  highlighted shelf. If it references a file, the shelf offers "View file". */
+function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?: ConvItem; onViewFile?: (path: string) => void }) {
   const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState<'input' | 'output'>('output');
   const name = tool.toolTitle ?? tool.toolName ?? 'Tool';
-  const detail = tool.toolDetail;
+  const input = tool.toolInput ?? '';
   const out = result?.text ?? '';
+  const hasIn = !!input.trim();
   const hasOut = !!out.trim();
   const err = result?.isError;
   const lines = hasOut ? out.split('\n').length : 0;
+  const expandable = hasIn || hasOut;
+  const effTab: 'input' | 'output' = (tab === 'input' && hasIn) ? 'input' : (hasOut ? 'output' : 'input');
+  const content = effTab === 'input' ? input : out;
+  const lang = effTab === 'input' ? (tool.toolName === 'Bash' ? 'bash' : 'json') : langFromPath(tool.toolFile);
   return (
     <div style={{ border: '1px solid var(--color-border)', borderRadius: 9, background: 'var(--color-elevated)', overflow: 'hidden' }}>
       <button
-        onClick={() => hasOut && setOpen((o) => !o)}
-        style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: hasOut ? 'pointer' : 'default', padding: '8px 10px', display: 'flex', gap: 8, alignItems: 'flex-start' }}
+        onClick={() => expandable && setOpen((o) => !o)}
+        style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: expandable ? 'pointer' : 'default', padding: '8px 10px', display: 'flex', gap: 8, alignItems: 'center' }}
       >
-        <CaretRight size={11} weight="bold" style={{ marginTop: 2, flexShrink: 0, color: 'var(--color-text-tertiary)', visibility: hasOut ? 'visible' : 'hidden', transition: 'transform .12s ease', transform: open ? 'rotate(90deg)' : 'none' }} />
-        <Wrench size={13} color="#5A8DD6" style={{ marginTop: 1, flexShrink: 0 }} />
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--color-text-primary)', fontWeight: 500 }}>
-            <span>{name}</span>
-            {result && <span style={{ fontWeight: 400, fontSize: 11, color: err ? 'var(--color-status-red)' : 'var(--color-text-tertiary)' }}>{err ? 'error' : `${lines} line${lines !== 1 ? 's' : ''}`}</span>}
-          </div>
-          {detail && <div style={{ marginTop: 2, font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{detail}</div>}
-        </div>
+        <CaretRight size={11} weight="bold" style={{ flexShrink: 0, color: 'var(--color-text-tertiary)', visibility: expandable ? 'visible' : 'hidden', transition: 'transform .12s ease', transform: open ? 'rotate(90deg)' : 'none' }} />
+        <Wrench size={13} color="#5A8DD6" style={{ flexShrink: 0 }} />
+        <span style={{ minWidth: 0, flex: 1, fontSize: 12.5, color: 'var(--color-text-primary)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+        {result && <span style={{ flexShrink: 0, fontSize: 11, color: err ? 'var(--color-status-red)' : 'var(--color-text-tertiary)' }}>{err ? 'error' : `${lines} line${lines !== 1 ? 's' : ''}`}</span>}
       </button>
-      {open && hasOut && (
-        <pre style={{ margin: 0, borderTop: '1px solid var(--color-border)', font: '400 11.5px var(--font-mono)', lineHeight: 1.5, color: err ? 'var(--color-status-red)' : 'var(--color-text-tertiary)', padding: '8px 10px', maxHeight: 320, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{out}</pre>
+      {open && expandable && (
+        <div style={{ borderTop: '1px solid var(--color-border)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '6px 8px 0', background: 'var(--color-pane)' }}>
+            {hasIn && <TabButton active={effTab === 'input'} onClick={() => setTab('input')}>Input</TabButton>}
+            {hasOut && <TabButton active={effTab === 'output'} onClick={() => setTab('output')}>Output</TabButton>}
+            {tool.toolFile && onViewFile && (
+              <button
+                onClick={() => onViewFile(tool.toolFile!)}
+                title={tool.toolFile}
+                style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', color: 'var(--color-accent)', font: '500 11.5px var(--font-sans)', cursor: 'pointer', padding: '3px 4px' }}
+              >
+                <FileText size={13} weight="bold" /> View file
+              </button>
+            )}
+          </div>
+          <pre className="hljs" style={{ margin: 0, font: '400 11.5px var(--font-mono)', lineHeight: 1.5, padding: '9px 11px', maxHeight: 360, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            <code dangerouslySetInnerHTML={{ __html: highlightCode(content, lang) }} />
+          </pre>
+        </div>
       )}
     </div>
+  );
+}
+
+function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button onClick={onClick} style={{
+      padding: '4px 11px', fontSize: 11.5, borderRadius: '6px 6px 0 0', border: 'none', cursor: 'pointer',
+      background: active ? 'var(--color-elevated)' : 'transparent', color: active ? 'var(--color-text-primary)' : 'var(--color-text-secondary)', fontWeight: active ? 600 : 400,
+    }}>{children}</button>
   );
 }
 

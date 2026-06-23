@@ -19,6 +19,12 @@ export const useUI = create<{
   toggleRight: () => void;
   setLeftCollapsed: (v: boolean) => void;
   setRightCollapsed: (v: boolean) => void;
+  // Cross-shell "navigate to this tab" intent (e.g. View's "open file" button).
+  // Desktop navigates via tabs.openTab directly; mobile consumes this to run its
+  // own leaf navigation (openThread). Set, then cleared by the consumer.
+  pendingOpenTab: string | null;
+  requestOpenTab: (id: string) => void;
+  clearOpenTab: () => void;
 }>((set, get) => ({
   view: 'workspace',
   setView: (view) => set({ view }),
@@ -30,4 +36,7 @@ export const useUI = create<{
   toggleRight: () => { const v = !get().rightCollapsed; saveBool(RKEY, v); set({ rightCollapsed: v }); },
   setLeftCollapsed: (v) => { saveBool(LKEY, v); set({ leftCollapsed: v }); },
   setRightCollapsed: (v) => { saveBool(RKEY, v); set({ rightCollapsed: v }); },
+  pendingOpenTab: null,
+  requestOpenTab: (id) => set({ pendingOpenTab: id }),
+  clearOpenTab: () => set({ pendingOpenTab: null }),
 }));

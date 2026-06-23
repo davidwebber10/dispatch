@@ -126,7 +126,7 @@ function SwipeRow({ actionLabel, actionColor, onAction, disabled, children }: { 
   );
 }
 
-function ThreadRow({ tab, active, onClick, onMiddle, onArchive, onContext }: { tab: Terminal; active: boolean; onClick: (e: React.MouseEvent) => void; onMiddle: () => void; onArchive: () => void; onContext: (x: number, y: number) => void }) {
+function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onContext }: { tab: Terminal; active: boolean; fadeKey?: number; onClick: (e: React.MouseEvent) => void; onMiddle: () => void; onArchive: () => void; onContext: (x: number, y: number) => void }) {
   const [hover, setHover] = useState(false);
   const color = providerColor(tab.type);
   const loading = useTabs((s) => !!s.loading[tab.id]);
@@ -137,6 +137,16 @@ function ThreadRow({ tab, active, onClick, onMiddle, onArchive, onContext }: { t
   // place of the timestamp ("Running: npm test", "Editing app.ts").
   const activity = useThreadStatus((s) => s.byTerminal[tab.id]?.activity);
   const liveActivity = (tab.status === 'working' || tab.status === 'needs_input') ? activity : undefined;
+  // On mobile, the active row's highlight fades out a couple seconds after the
+  // thread list (re)appears (fadeKey bumps), so the list reads as clean.
+  const [dimmed, setDimmed] = useState(false);
+  useEffect(() => {
+    if (fadeKey === undefined || !active) { setDimmed(false); return; }
+    setDimmed(false);
+    const t = setTimeout(() => setDimmed(true), 2500);
+    return () => clearTimeout(t);
+  }, [fadeKey, active]);
+  const showActive = active && !dimmed;
   return (
     <button
       onMouseEnter={() => setHover(true)}
@@ -146,9 +156,10 @@ function ThreadRow({ tab, active, onClick, onMiddle, onArchive, onContext }: { t
       onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContext(e.clientX, e.clientY); }}
       style={{
         display: 'flex', alignItems: 'center', gap: isMobile ? 12 : 9, width: '100%', padding: isMobile ? '15px 12px' : '7px 9px',
-        background: active ? 'var(--color-hover)' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
+        transition: 'background .8s ease, color .8s ease',
+        background: showActive ? 'var(--color-hover)' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
         borderRadius: isMobile ? 0 : 6, border: 'none', borderBottom: isMobile ? '1px solid var(--color-border)' : 'none',
-        color: active ? '#fff' : 'var(--color-text-primary)', fontSize: isMobile ? 16 : fs, fontWeight: active ? 500 : isMobile ? 450 : 400,
+        color: showActive ? '#fff' : 'var(--color-text-primary)', fontSize: isMobile ? 16 : fs, fontWeight: showActive ? 500 : isMobile ? 450 : 400,
         textAlign: 'left', cursor: 'pointer',
       }}
     >
@@ -222,7 +233,7 @@ function SectionHeader({ label, count, prominent, children }: { label: string; c
   );
 }
 
-export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSelectAgent, onNewAgent, onBrowseFiles }: { session: Session; active: boolean; open?: boolean; onToggle?: () => void; onSelectTab: (id: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void; onBrowseFiles?: (projectId: string) => void }) {
+export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSelectAgent, onNewAgent, onBrowseFiles, fadeActiveKey }: { session: Session; active: boolean; open?: boolean; onToggle?: () => void; onSelectTab: (id: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void; onBrowseFiles?: (projectId: string) => void; fadeActiveKey?: number }) {
   const allAgents = useAgents((s) => s.schedules);
   const agents = allAgents.filter((a) => a.projectId === session.id);
   const agentSel = useAgents((s) => s.selectedId);
@@ -293,7 +304,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
             actionLabel={t.type === 'file' ? 'Unpin' : 'Delete'}
             actionColor={t.type === 'file' ? '#3F3F46' : 'var(--color-status-red)'}
             onAction={() => { if (t.type === 'file') void archive(t); else setPendingDelete({ kind: 'thread', thread: t }); }}>
-            <ThreadRow tab={t} active={t.id === activeTabId}
+            <ThreadRow tab={t} active={t.id === activeTabId} fadeKey={fadeActiveKey}
               onClick={(e) => { e.stopPropagation(); onSelectTab(t.id); }}
               onMiddle={() => useTabs.getState().openTab(t.id, true)}
               onArchive={() => setArchiveTarget(t)}

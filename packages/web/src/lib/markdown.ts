@@ -65,3 +65,27 @@ const marked = new Marked(
 export function renderMarkdown(src: string): string {
   return marked.parse(src ?? '') as string;
 }
+
+/** Highlight a raw code string. Uses `lang` (or its alias) when known; otherwise
+ *  auto-detects. Returns inner HTML for a `<code class="hljs">`. */
+export function highlightCode(code: string, lang?: string): string {
+  try {
+    if (lang && hljs.getLanguage(lang)) return hljs.highlight(code, { language: lang }).value;
+    return hljs.highlightAuto(code).value;
+  } catch {
+    return code.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string));
+  }
+}
+
+/** Infer a highlight.js language from a file path's extension. */
+export function langFromPath(path?: string): string | undefined {
+  const ext = path?.split('.').pop()?.toLowerCase();
+  if (!ext) return undefined;
+  const map: Record<string, string> = {
+    ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript',
+    json: 'json', py: 'python', sh: 'bash', bash: 'bash', zsh: 'bash', sql: 'sql', html: 'xml', htm: 'xml',
+    xml: 'xml', svg: 'xml', vue: 'xml', css: 'css', scss: 'css', yaml: 'yaml', yml: 'yaml', md: 'markdown',
+    go: 'go', rs: 'rust', toml: 'ini', ini: 'ini', conf: 'ini', dockerfile: 'dockerfile', diff: 'diff', patch: 'diff',
+  };
+  return map[ext];
+}

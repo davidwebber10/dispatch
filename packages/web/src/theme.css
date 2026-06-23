@@ -48,6 +48,7 @@ body { background: var(--color-canvas); color: var(--color-text-primary); font-f
 @keyframes dispatchConnPulse { 0%,100% { opacity: .6 } 50% { opacity: 1 } }
 @keyframes dispatchSpin { to { transform: rotate(360deg) } }
 @keyframes dispatchSlideUp { from { transform: translateY(100%) } to { transform: translateY(0) } }
+@keyframes dispatchWiggle { 0%,100% { transform: scale(1.2) rotate(-7deg) } 50% { transform: scale(1.2) rotate(7deg) } }
 
 /* Rendered markdown (File editor → View) */
 .md-view { color: var(--color-text-primary); font-size: 14px; line-height: 1.65; }

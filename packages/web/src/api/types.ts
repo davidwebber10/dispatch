@@ -135,7 +135,9 @@ export interface ConvItem {
   isError?: boolean;
   ts?: string;
   uuid?: string;
-  line?: number; // source JSONL line index (enables jump-to from search)
+  line?: number;      // source JSONL line index (enables jump-to from search)
+  toolInput?: string; // tool call's raw arguments (for the Input tab)
+  toolFile?: string;  // file path argument (for output-language inference)
 }
 
 export interface Conversation {

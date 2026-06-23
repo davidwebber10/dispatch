@@ -30,8 +30,8 @@ export function TopBar() {
         <Sidebar size={16} weight={leftCollapsed ? 'regular' : 'fill'} />
       </button>
       <BrandSwitcher />
-      <ModeToggle terminalId={activeId} />
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <ModeToggle terminalId={activeId} />
         <ConnectionStatus />
         <button title="Settings" onClick={() => setSettings(true)} style={{ ...iconBtn, color: 'var(--color-text-secondary)' }}>
           <Gear size={16} />
