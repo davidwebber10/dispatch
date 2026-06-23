@@ -352,11 +352,15 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
   }
 
   // Mobile input: the terminal is read-only to touch (you can only scroll it),
-  // so typing happens here and is sent to the PTY as a submitted line.
+  // so typing happens here and is sent to the PTY as a submitted line. Send the
+  // text and the Enter as SEPARATE writes — "text\r" in one write makes the agent
+  // TUI treat the \r as a literal newline (message staged, not submitted); a
+  // standalone Enter is recognized as submit.
   function sendMobileInput() {
     const v = mobileInput;
     if (!v) return;
-    sockRef.current?.send(v + '\r');
+    sockRef.current?.send(v);
+    setTimeout(() => sockRef.current?.send('\r'), 80);
     setMobileInput('');
   }
 
