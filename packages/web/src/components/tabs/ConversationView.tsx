@@ -4,6 +4,7 @@ import { api } from '../../api/client';
 import type { ConvItem } from '../../api/types';
 import { useActivity } from '../../stores/activity';
 import { useThreadStatus } from '../../stores/threadStatus';
+import { useViewJump } from '../../stores/viewJump';
 import { Spinner } from '../common/Spinner';
 import { renderMarkdown } from '../../lib/markdown';
 
@@ -32,60 +33,113 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
 
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
-  const prependFromHeight = useRef<number | null>(null); // scroll-preserve marker
+  const atEnd = useRef(true);                              // window includes the latest line → poll appends
+  const prependFromHeight = useRef<number | null>(null);   // scroll-preserve marker
+  const pendingScroll = useRef<number | null>(null);       // line to scroll to after a jump
+  const loadToken = useRef(0);                             // discards stale async loads (race guard)
+  const [highlight, setHighlight] = useState<number | null>(null);
+  const jump = useViewJump((s) => s.target);
 
-  // --- initial load + poll for new messages at the bottom --------------
+  // Load the most recent window (default View).
+  async function loadInitial() {
+    const tok = ++loadToken.current;
+    try {
+      const conv = await api.getConversation(terminalId, { limit: LIMIT });
+      if (tok !== loadToken.current) return;
+      if (conv.unsupported) { setUnsupported(true); setLoading(false); return; }
+      setItems(conv.items); earliest.current = conv.startLine; pollCursor.current = conv.cursor;
+      setHasMore(conv.hasMore); atEnd.current = true; setLoading(false);
+    } catch { /* retried by the poll loop */ }
+  }
+
+  // Load a window centered on `line` (search jump), then scroll to it.
+  async function loadAround(line: number) {
+    const tok = ++loadToken.current;
+    setLoading(true);
+    try {
+      const conv = await api.getConversation(terminalId, { before: line + Math.floor(LIMIT / 2), limit: LIMIT });
+      if (tok !== loadToken.current) return;
+      if (conv.unsupported) { setUnsupported(true); setLoading(false); return; }
+      setItems(conv.items); earliest.current = conv.startLine; pollCursor.current = conv.cursor;
+      setHasMore(conv.hasMore); atEnd.current = false; pendingScroll.current = line; setLoading(false);
+    } catch { setLoading(false); }
+  }
+
+  // --- mount: load recent + poll for new messages at the bottom --------
   useEffect(() => {
     let on = true;
     let timer: ReturnType<typeof setTimeout>;
     setItems([]); setUnsupported(false); setHasMore(false); setLoading(true);
-    earliest.current = 0; pollCursor.current = 0;
-    let first = true;
-    async function refresh() {
-      try {
-        const conv = first
-          ? await api.getConversation(terminalId, { limit: LIMIT })   // recent window
-          : await api.getConversation(terminalId, { since: pollCursor.current }); // new only
+    earliest.current = 0; pollCursor.current = 0; atEnd.current = true;
+    (async () => {
+      await loadInitial();
+      async function poll() {
         if (!on) return;
-        if (conv.unsupported) { setUnsupported(true); setLoading(false); on = false; return; }
-        if (first) {
-          setItems(conv.items);
-          earliest.current = conv.startLine;
-          setHasMore(conv.hasMore);
-          setLoading(false);
-          first = false;
-        } else if (conv.items.length) {
-          setItems((prev) => [...prev, ...conv.items]);
+        if (atEnd.current) {
+          const tok = loadToken.current;
+          try {
+            const conv = await api.getConversation(terminalId, { since: pollCursor.current });
+            if (on && tok === loadToken.current) {
+              if (conv.items.length) setItems((prev) => [...prev, ...conv.items]);
+              pollCursor.current = conv.cursor;
+            }
+          } catch { /* transient */ }
         }
-        pollCursor.current = conv.cursor;
-      } catch { /* transient; retry next tick */ }
-    }
-    async function loop() {
-      await refresh();
-      if (on) timer = setTimeout(loop, busyRef.current ? 1000 : 2500);
-    }
-    void loop();
+        if (on) timer = setTimeout(poll, busyRef.current ? 1000 : 2500);
+      }
+      if (on) timer = setTimeout(poll, busyRef.current ? 1000 : 2500);
+    })();
     return () => { on = false; clearTimeout(timer); };
   }, [terminalId]);
+
+  // --- handle a search jump (load + scroll to that line) ---------------
+  useEffect(() => {
+    if (!jump || jump.terminalId !== terminalId) return;
+    useViewJump.getState().clear();
+    void loadAround(jump.line);
+  }, [jump, terminalId]);
 
   // --- load an older window when scrolled near the top -----------------
   async function loadOlder() {
     if (loadingOlder || !hasMore) return;
     setLoadingOlder(true);
+    const tok = loadToken.current;
     try {
       const conv = await api.getConversation(terminalId, { before: earliest.current, limit: LIMIT });
-      prependFromHeight.current = scroller.current?.scrollHeight ?? null; // preserve scroll
-      earliest.current = conv.startLine;
-      setHasMore(conv.hasMore);
-      setItems((prev) => [...conv.items, ...prev]);
+      if (tok === loadToken.current) {
+        prependFromHeight.current = scroller.current?.scrollHeight ?? null; // preserve scroll
+        earliest.current = conv.startLine;
+        setHasMore(conv.hasMore);
+        setItems((prev) => [...conv.items, ...prev]);
+      }
     } catch { /* user can scroll to retry */ }
     setLoadingOlder(false);
   }
 
-  // After a prepend, keep the viewport anchored (don't jump to the top).
+  // After items change: restore scroll on prepend, or jump+highlight on a search jump.
   useLayoutEffect(() => {
     const el = scroller.current;
-    if (prependFromHeight.current != null && el) {
+    if (!el) return;
+    if (pendingScroll.current != null) {
+      const line = pendingScroll.current; pendingScroll.current = null;
+      let target = el.querySelector(`[data-line="${line}"]`) as HTMLElement | null;
+      if (!target) {
+        // nearest rendered item at or before the target line (the match may be
+        // inside a merged tool card, which carries only the tool's line).
+        let best: HTMLElement | null = null; let bestLine = -1;
+        el.querySelectorAll('[data-line]').forEach((e) => {
+          const l = Number((e as HTMLElement).getAttribute('data-line'));
+          if (l <= line && l > bestLine) { bestLine = l; best = e as HTMLElement; }
+        });
+        target = best;
+      }
+      if (target) {
+        target.scrollIntoView({ block: 'center' });
+        const hl = Number(target.getAttribute('data-line'));
+        setHighlight(hl);
+        setTimeout(() => setHighlight((h) => (h === hl ? null : h)), 2200);
+      }
+    } else if (prependFromHeight.current != null) {
       el.scrollTop += el.scrollHeight - prependFromHeight.current;
       prependFromHeight.current = null;
     }
@@ -93,7 +147,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
 
   // --- auto-scroll to bottom on new items (only if already at bottom) ---
   useEffect(() => {
-    if (atBottom.current && scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
+    if (atBottom.current && atEnd.current && scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
   }, [items.length, busy]);
 
   function onScroll() {
@@ -138,16 +192,23 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
             for (let i = 0; i < items.length; i++) {
               const it = items[i];
               const key = earliest.current + i;
+              let node: React.ReactNode;
               if (it.kind === 'tool') {
                 const next = items[i + 1];
                 const result = next?.kind === 'tool-result' ? next : undefined;
-                rows.push(<ToolCall key={key} tool={it} result={result} />);
+                node = <ToolCall tool={it} result={result} />;
                 if (result) i++;
               } else if (it.kind === 'tool-result') {
-                rows.push(<ToolResult key={key} item={it} />);
+                node = <ToolResult item={it} />;
               } else {
-                rows.push(<Item key={key} item={it} />);
+                node = <Item item={it} />;
               }
+              const hot = highlight != null && it.line === highlight;
+              rows.push(
+                <div key={key} data-line={it.line} style={hot ? { borderRadius: 8, background: 'rgba(245,197,66,.14)', boxShadow: '0 0 0 3px rgba(245,197,66,.18)', transition: 'background .4s, box-shadow .4s' } : { transition: 'background .4s, box-shadow .4s' }}>
+                  {node}
+                </div>,
+              );
             }
             return rows;
           })()}

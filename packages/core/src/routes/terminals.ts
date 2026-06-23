@@ -72,6 +72,11 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     }));
   });
 
+  // GET /api/terminals/:terminalId/conversation/search?q=... — full-history search.
+  router.get('/terminals/:terminalId/conversation/search', (req, res) => {
+    res.json(sessionService.searchConversation(req.params.terminalId, String(req.query.q ?? '')));
+  });
+
   // POST /api/terminals/:terminalId/input { data } — write raw bytes to the live PTY.
   router.post('/terminals/:terminalId/input', (req, res) => {
     const data = req.body?.data;

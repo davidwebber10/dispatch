@@ -135,6 +135,7 @@ export interface ConvItem {
   isError?: boolean;
   ts?: string;
   uuid?: string;
+  line?: number; // source JSONL line index (enables jump-to from search)
 }
 
 export interface Conversation {
@@ -143,6 +144,12 @@ export interface Conversation {
   startLine: number;   // top edge of the returned window
   hasMore: boolean;    // older lines exist above the window
   unsupported?: boolean;
+}
+
+export interface SearchMatch {
+  line: number;        // source JSONL line index (jump target)
+  kind: string;
+  snippet: string;
 }
 
 export interface CreateScheduleInput {

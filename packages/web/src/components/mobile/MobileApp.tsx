@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Gear, CaretLeft, CaretRight, Plus, Folders, Robot } from '@phosphor-icons/react';
+import { Gear, CaretLeft, CaretRight, Plus, Folders, Robot, MagnifyingGlass } from '@phosphor-icons/react';
 import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
 import { ModeToggle } from '../layout/ModeToggle';
@@ -11,6 +11,7 @@ import { TabHost } from '../tabs/TabHost';
 import { AgentPane } from '../agents/AgentPane';
 import { EditAgentModal } from '../agents/EditAgentModal';
 import { SettingsModal } from '../settings/SettingsModal';
+import { SearchOverlay } from '../tabs/SearchOverlay';
 import { useTabs } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
 import { useAgentUI } from '../../stores/agentUI';
@@ -46,6 +47,7 @@ export function MobileApp() {
   // the global activeTab store, which App's hydrate() can reset to null on reload.
   const [leafTabId, setLeafTabId] = useState<string | null>(() => parsePath(location.pathname).tabId ?? null);
   const [settings, setSettings] = useState(false);
+  const [search, setSearch] = useState(false);
   const [newProject, setNewProject] = useState(false);
   const [browseFiles, setBrowseFiles] = useState(false);
   const [query, setQuery] = useState('');
@@ -112,26 +114,29 @@ export function MobileApp() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--color-base)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
-      <header style={{ height: 'calc(50px + env(safe-area-inset-top))', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px', paddingTop: 'env(safe-area-inset-top)', background: 'var(--color-pane)' }}>
+      <header style={{ position: 'relative', height: 'calc(50px + env(safe-area-inset-top))', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px', paddingTop: 'env(safe-area-inset-top)', background: 'var(--color-pane)' }}>
         {level === 0 ? (
           <BrandSwitcher />
         ) : (
           <button onClick={back} style={{ background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, padding: '4px 2px', minWidth: 0 }}>
             <CaretLeft size={20} weight="bold" />
-            <span style={{ fontWeight: 600, fontSize: 16, color: 'var(--color-text-primary)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{headerTitle}</span>
+            <span style={{ fontWeight: 600, fontSize: 16, color: 'var(--color-text-primary)', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{headerTitle}</span>
           </button>
         )}
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', justifyContent: 'center' }}>
-          <ModeToggle terminalId={level === 2 && leaf === 'tab' ? leafTabId : null} />
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <ConnectionStatus />
+        <ModeToggle terminalId={level === 2 && leaf === 'tab' ? leafTabId : null} />
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          {level === 2 && leaf === 'tab' && leafTabId && (
+            <button title="Search" onClick={() => setSearch(true)} style={{ width: 32, height: 32, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 12, background: 'var(--color-elevated)', border: '1px solid #2C2C32', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
+              <MagnifyingGlass size={17} />
+            </button>
+          )}
           <button title="Settings" onClick={() => setSettings(true)} style={{ width: 32, height: 32, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 12, background: 'var(--color-elevated)', border: '1px solid #2C2C32', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
             <Gear size={17} />
           </button>
         </div>
       </header>
       <SettingsModal open={settings} onClose={() => setSettings(false)} />
+      {search && leafTabId && <SearchOverlay terminalId={leafTabId} onClose={() => setSearch(false)} />}
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', position: 'relative' }}>
         <div style={{ display: 'flex', width: '100%', height: '100%', transform: `translateX(-${level * 100}%)`, transition: 'transform .28s cubic-bezier(.4,0,.2,1)' }}>
@@ -196,7 +201,12 @@ export function MobileApp() {
           </div>
 
           {/* Level 2 — the thread terminal or the agent dashboard */}
-          <div style={{ ...slot, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ ...slot, overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+            {leaf === 'tab' && leafTabId && (
+              <div style={{ position: 'absolute', top: 8, right: 10, zIndex: 5, pointerEvents: 'none', background: 'rgba(10,10,12,.6)', borderRadius: 8, padding: '3px 8px', backdropFilter: 'blur(4px)' }}>
+                <ConnectionStatus />
+              </div>
+            )}
             {leaf === 'agent'
               ? <AgentPane />
               : (leafTabId ? <TabHost key={`${leafTabId}:${reconnectGen}`} terminalId={leafTabId} /> : <div style={{ padding: 16, color: 'var(--color-text-secondary)' }}>No thread open</div>)}

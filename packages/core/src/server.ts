@@ -71,7 +71,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const { db, skipPty = false } = options;
 
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ limit: '50mb' })); // large enough for Claude PostToolUse hook payloads (full file reads)
 
   const ptyManager = skipPty ? new NoopPTYManager() : new PTYManager();
   const serverUrl = 'http://localhost:3456'; // Updated at runtime in startServer
@@ -185,7 +185,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   // Create Express app
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ limit: '50mb' })); // large enough for Claude PostToolUse hook payloads (full file reads)
 
   // Create HTTP server
   const server = http.createServer(app);

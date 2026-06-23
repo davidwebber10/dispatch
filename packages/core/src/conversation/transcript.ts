@@ -15,6 +15,7 @@ export interface ConvItem {
   isError?: boolean;
   ts?: string;
   uuid?: string;
+  line?: number; // source JSONL line index (set by the caller; enables jump-to)
 }
 
 export function parseClaudeTranscript(text: string): ConvItem[] {

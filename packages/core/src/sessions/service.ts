@@ -343,8 +343,46 @@ export class SessionService {
       start = Math.max(0, total - limit);
     }
 
-    const items = parseClaudeTranscript(usable.slice(start, end).join('\n'));
+    // Parse per line so each item carries its source line index (enables jump-to).
+    const items: ConvItem[] = [];
+    for (let i = start; i < end; i++) {
+      for (const it of parseClaudeTranscript(usable[i])) items.push({ ...it, line: i });
+    }
     return { items, cursor: total, startLine: start, hasMore: start > 0 };
+  }
+
+  /**
+   * Full-history text search over a terminal's transcript. Returns matches with
+   * their source line index (so View can load + scroll to that spot) and a short
+   * snippet around the match. Newest matches first, capped for response size.
+   */
+  searchConversation(terminalId: string, query: string, limit = 200): { matches: { line: number; kind: string; snippet: string }[] } {
+    const q = query.trim().toLowerCase();
+    if (!q) return { matches: [] };
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal || terminal.type !== 'claude-code') return { matches: [] };
+    const session = sessionsDb.getById(this.db, terminal.session_id);
+    const workDir = terminal.working_dir || session?.working_dir;
+    if (!workDir) return { matches: [] };
+    const dir = path.join(os.homedir(), '.claude', 'projects', workDir.replace(/\//g, '-'));
+    const sessionId = terminal.external_id || this.recoverSessionId(terminalId, dir);
+    if (!sessionId) return { matches: [] };
+    let raw: string;
+    try { raw = fs.readFileSync(path.join(dir, `${sessionId}.jsonl`), 'utf8'); } catch { return { matches: [] }; }
+
+    const usable = raw.split('\n').slice(0, -1);
+    const matches: { line: number; kind: string; snippet: string }[] = [];
+    for (let i = usable.length - 1; i >= 0 && matches.length < limit; i--) { // newest first
+      for (const it of parseClaudeTranscript(usable[i])) {
+        const hay = `${it.text ?? ''} ${it.toolTitle ?? ''} ${it.toolDetail ?? ''}`;
+        const at = hay.toLowerCase().indexOf(q);
+        if (at >= 0) {
+          matches.push({ line: i, kind: it.kind, snippet: snippetAround(hay, at, q.length) });
+          break; // one match per line is enough
+        }
+      }
+    }
+    return { matches };
   }
 
   /**
@@ -609,4 +647,14 @@ export class SessionService {
     return existing.length > 0 ? `${folder} #${existing.length + 1}` : folder;
   }
 
+}
+
+/** A short single-line snippet centered on a match, with ellipses + collapsed whitespace. */
+function snippetAround(text: string, at: number, matchLen: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  // Recompute the match position in the collapsed string (approximate is fine).
+  const idx = flat.toLowerCase().indexOf(text.slice(at, at + matchLen).replace(/\s+/g, ' ').trim().toLowerCase());
+  const start = Math.max(0, (idx < 0 ? 0 : idx) - 30);
+  const end = Math.min(flat.length, (idx < 0 ? 0 : idx) + matchLen + 50);
+  return (start > 0 ? '…' : '') + flat.slice(start, end) + (end < flat.length ? '…' : '');
 }
