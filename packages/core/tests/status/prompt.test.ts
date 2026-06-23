@@ -66,6 +66,13 @@ describe('detectPrompt', () => {
     expect(detectPrompt('claude-code', screen)).toBeNull();
   });
 
+  it('does NOT treat the bare input-box ❯ as a prompt, even if footer words appear in output', () => {
+    // The real false positive: claude idle at its input box (❯), with footer-like
+    // words ("press enter to continue") sitting in its assistant output.
+    const screen = 'Sure — press enter to continue when ready, I explained earlier.\n\n❯\n────\n proj │ Opus 4.8 │ bypass permissions on';
+    expect(detectPrompt('claude-code', screen)).toBeNull();
+  });
+
   it('falls back (parsed:false) for a cursor list with no numbered options', () => {
     const screen = 'Resume which session?\n❯ fix the login bug — 2h ago\n  add dark mode — yesterday\nEnter to confirm · Esc to cancel';
     const p = detectPrompt('claude-code', screen)!;

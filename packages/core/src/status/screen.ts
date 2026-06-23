@@ -16,8 +16,12 @@ export function renderScreen(raw: string, cols = 120, rows = 40): Promise<string
     const term = new Terminal({ cols, rows, allowProposedApi: true });
     term.write(raw, () => {
       const buf = term.buffer.active;
+      // Only the CURRENT viewport — the visible rows, not the scrollback above it.
+      // A live prompt is always on screen; scanning history would match stale or
+      // incidental text (e.g. the word "Enter to confirm" in earlier output).
+      const start = buf.baseY;
       const lines: string[] = [];
-      for (let i = 0; i < buf.length; i++) {
+      for (let i = start; i < start + rows; i++) {
         lines.push((buf.getLine(i)?.translateToString(true) ?? '').replace(/\s+$/, ''));
       }
       try { term.dispose(); } catch { /* best effort */ }

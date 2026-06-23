@@ -18,4 +18,12 @@ describe('renderScreen', () => {
     expect(screen).toContain('Quick safety check');
     expect(screen).toContain('1. Yes, I trust this folder');
   });
+
+  it('returns only the current viewport, not the whole scrollback', async () => {
+    const raw = Array.from({ length: 120 }, (_, i) => `scroll-line-${i}`).join('\r\n');
+    const screen = await renderScreen(raw);
+    expect(screen.split('\n').length).toBeLessThanOrEqual(40);
+    expect(screen).not.toContain('scroll-line-0');   // old scrollback excluded
+    expect(screen).toContain('scroll-line-119');      // latest visible line kept
+  });
 });

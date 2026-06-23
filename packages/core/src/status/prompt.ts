@@ -19,11 +19,15 @@ export interface DetectedPrompt {
 }
 
 const CURSOR = /[❯›]/;                                       // Claude ❯ / Codex ›
+// A cursor that actually HIGHLIGHTS an option (followed by content on the SAME
+// line) — NOT claude's bare idle input box (just "❯" with nothing after it).
+// Uses literal spaces/tabs, not \s, so it can't span a newline into the next line.
+const MENU_CURSOR = /[❯›][ \t]+\S/;
 const OPTION_RE = /^\s*([❯›>])?\s*(\d+)[.)]\s+(.+?)\s*$/;    // "❯ 1. Label" / "  2. Label"
 const DIVIDER_RE = /^[\s─━—_=·•]+$/;
-// A submit/affirm footer present in every real interactive menu (trust, select,
-// codex) — and NOT in normal output or the working state ("esc to interrupt").
-const SELECT_FOOTER = /(enter to (confirm|continue|select)|press enter|use arrows?|↑.*↓)/i;
+// The submit footer of a real interactive menu (trust / select / codex). Kept
+// narrow so it doesn't match prose: only the actual confirm/continue prompts.
+const SELECT_FOOTER = /(enter to (confirm|continue|select)|press enter to)/i;
 
 /** Arrow keystrokes to move the highlight from `from` to `to`, then Enter. */
 function navKeys(from: number, to: number): string {
@@ -88,9 +92,10 @@ function parseNumberedSelect(screen: string): DetectedPrompt | null {
 }
 
 function parseFallback(screen: string): DetectedPrompt | null {
-  // A cursor list we couldn't enumerate (e.g. resume picker) — still needs the
-  // cursor AND a submit footer so we never fire on normal output / working state.
-  if (!CURSOR.test(screen) || !SELECT_FOOTER.test(screen)) return null;
+  // A cursor list we couldn't enumerate (e.g. resume picker). Require a cursor
+  // that highlights an option (not the bare input box) AND a real submit footer,
+  // so we never fire on the idle input box or normal output.
+  if (!MENU_CURSOR.test(screen) || !SELECT_FOOTER.test(screen)) return null;
   return { kind: 'unknown', question: firstMeaningful(screen) || 'The agent is asking for input', options: [], parsed: false, raw: screen };
 }
 
