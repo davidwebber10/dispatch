@@ -29,6 +29,29 @@ function primeSafeAreaInsets() {
 }
 primeSafeAreaInsets();
 
+// Auto-update: a standalone PWA can stay open for days, running a stale bundle
+// long after a deploy (the window never re-navigates, so it never picks up the
+// new content-hashed assets). Poll the HTML shell for the entry script's hash and
+// reload when it changes — on focus and a slow interval. reload() re-navigates,
+// which the service worker serves network-first, pulling the fresh shell + assets.
+function watchForUpdates() {
+  const current = (document.querySelector('script[type="module"][src*="/assets/index-"]') as HTMLScriptElement | null)?.src;
+  if (!current) return;
+  let reloading = false;
+  const check = async () => {
+    if (reloading || document.hidden) return;
+    try {
+      const html = await (await fetch('/', { cache: 'no-store' })).text();
+      const m = html.match(/\/assets\/index-[A-Za-z0-9_]+\.js/);
+      if (m && !current.endsWith(m[0])) { reloading = true; location.reload(); }
+    } catch { /* offline / transient — try again next tick */ }
+  };
+  window.addEventListener('focus', () => void check());
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) void check(); });
+  setInterval(() => void check(), 90_000);
+}
+watchForUpdates();
+
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <App />

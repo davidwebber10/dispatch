@@ -2,7 +2,7 @@
 // Deliberately conservative because the origin sits behind Cloudflare Access:
 // API / WebSocket / Access / upload paths are never intercepted, and the HTML
 // shell is revalidated over the network so an expired session re-authenticates.
-const VERSION = 'dispatch-v1';
+const VERSION = 'dispatch-v2';
 const CACHE = `dispatch-${VERSION}`;
 
 self.addEventListener('install', () => self.skipWaiting());
