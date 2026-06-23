@@ -10,6 +10,7 @@ import { AgentPane } from './components/agents/AgentPane';
 import { EditAgentModal } from './components/agents/EditAgentModal';
 import { AuthBanner } from './components/auth/AuthBanner';
 import { MobileApp } from './components/mobile/MobileApp';
+import { SetupWizard } from './components/setup/SetupWizard';
 import { useIsMobile } from './hooks/useIsMobile';
 import { createEventsSocket } from './api/events-socket';
 import { useConnection } from './stores/connection';
@@ -74,13 +75,14 @@ export default function App() {
   });
 
   if (isMobile) {
-    return (<><AuthBanner /><MobileApp /></>);
+    return (<><SetupWizard /><AuthBanner /><MobileApp /></>);
   }
 
   const showAgent = agentFocused && !!agentSelected;
 
   return (
     <>
+      <SetupWizard />
       <AuthBanner />
       <AppShell>
         <Workspace
