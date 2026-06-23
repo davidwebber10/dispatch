@@ -37,6 +37,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
   const prependFromHeight = useRef<number | null>(null);   // scroll-preserve marker
   const pendingScroll = useRef<number | null>(null);       // line to scroll to after a jump
   const loadToken = useRef(0);                             // discards stale async loads (race guard)
+  const wantPrevUser = useRef(false);                      // up-arrow waiting on an older page to continue
   const [highlight, setHighlight] = useState<number | null>(null);
 
   // --- search (bottom bar over the full history) -----------------------
@@ -123,8 +124,14 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
       const top = (u as HTMLElement).getBoundingClientRect().top - elTop + cur;
       if (top < cur - 8) targetTop = top; // last user message above the current position
     });
-    if (targetTop != null) el.scrollTo({ top: Math.max(0, targetTop - 12), behavior: 'smooth' });
-    else if (hasMore) void loadOlder(); // none above in the loaded window → pull older history
+    if (targetTop != null) { el.scrollTo({ top: Math.max(0, targetTop - 12), behavior: 'smooth' }); return; }
+    // None loaded above: pull the next older page, reveal the loading indicator at
+    // the top, and continue up to the message once it arrives (see the layout effect).
+    if (hasMore) {
+      wantPrevUser.current = true;
+      el.scrollTo({ top: 0, behavior: 'smooth' });
+      if (!loadingOlder) void loadOlder();
+    }
   }
 
   function onArrowDown(e: React.PointerEvent) {
@@ -190,6 +197,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
     } else if (prependFromHeight.current != null) {
       el.scrollTop += el.scrollHeight - prependFromHeight.current;
       prependFromHeight.current = null;
+      if (wantPrevUser.current) { wantPrevUser.current = false; scrollToPrevUser(); }
     }
   }, [items]);
 
@@ -253,7 +261,8 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
               }
               const hot = highlight != null && it.line === highlight;
               rows.push(
-                <div key={key} data-line={it.line} data-user={it.kind === 'user' ? '1' : undefined} style={hot ? { borderRadius: 8, background: 'rgba(245,197,66,.14)', boxShadow: '0 0 0 3px rgba(245,197,66,.18)', transition: 'background .4s, box-shadow .4s' } : { transition: 'background .4s, box-shadow .4s' }}>
+                <div key={key} data-line={it.line} data-user={it.kind === 'user' ? '1' : undefined}
+                  style={{ display: 'flex', flexDirection: 'column', transition: 'background .4s, box-shadow .4s', ...(hot ? { borderRadius: 8, background: 'rgba(245,197,66,.14)', boxShadow: '0 0 0 3px rgba(245,197,66,.18)' } : {}) }}>
                   {node}
                 </div>,
               );
@@ -310,7 +319,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
 function Item({ item }: { item: ConvItem }) {
   if (item.kind === 'user') {
     return (
-      <div style={{ alignSelf: 'flex-end', maxWidth: '88%', background: 'rgba(62,207,106,.13)', border: '1px solid rgba(62,207,106,.34)', borderRadius: '13px 13px 4px 13px', padding: '9px 13px', fontSize: 13.5, lineHeight: 1.55, color: 'var(--color-text-primary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', boxShadow: '0 1px 0 rgba(0,0,0,.15)' }}>
+      <div style={{ alignSelf: 'flex-end', maxWidth: '88%', background: 'var(--color-accent)', borderRadius: '14px 14px 4px 14px', padding: '9px 13px', fontSize: 13.5, fontWeight: 500, lineHeight: 1.55, color: '#08240F', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
         {item.text}
       </div>
     );
