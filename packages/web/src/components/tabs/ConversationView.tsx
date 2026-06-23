@@ -71,10 +71,11 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
     if (!msg) return;
     setInput('');
     atBottom.current = true;
-    // Always send straight to the agent. It runs the message immediately when
-    // idle and queues it natively when mid-turn — so there's no client-side
-    // queue to drop or mis-flush (the old source of staged/lost messages).
-    void api.sendInput(terminalId, msg + '\r').then(() => setTimeout(() => refreshRef.current(), 300));
+    // Always send straight to the agent (submit:true → text, then a separate
+    // Enter server-side, so it actually submits instead of staging the newline).
+    // It runs immediately when idle and queues natively when mid-turn — no
+    // client-side queue to drop or mis-flush.
+    void api.sendInput(terminalId, msg, true).then(() => setTimeout(() => refreshRef.current(), 300));
   }
 
   function stop() { void api.sendInput(terminalId, '\x1b'); } // Esc interrupts the turn
