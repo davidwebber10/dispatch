@@ -420,9 +420,11 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
 
 // "★ Insight ───…" / content / "───…" callout blocks Claude emits in explanatory
 // mode. The opener and closer lines are wrapped in backticks (inline code) in the
-// transcript — `★ Insight ───` … `───` — so the regex tolerates leading/trailing
-// backticks. Pull them out and render as a styled card; the rest stays markdown.
-const INSIGHT_RE = /`?★[ \t]*Insight[^\n]*\n([\s\S]*?)\n[ \t]*`?─{5,}`?[ \t]*(?=\n|$)/g;
+// transcript — `★ Insight ───` … `───`. Both delimiters must be a WHOLE line
+// (^…$ with the m flag): opener = "★ Insight" + dashes only, closer = dashes only.
+// This prevents an inline prose mention of "★ Insight" from opening a bogus block
+// and swallowing earlier content up to the next dashed line.
+const INSIGHT_RE = /^[ \t]*`?★[ \t]*Insight[ \t]*─+`?[ \t]*\n([\s\S]*?)\n[ \t]*`?─{5,}`?[ \t]*(?=\n|$)/gm;
 
 function renderAssistant(text: string): React.ReactNode {
   if (!text.includes('Insight') || !text.includes('─')) {
