@@ -297,7 +297,7 @@ export class SessionService {
    * has already consumed; the returned `cursor` is the new complete-line count.
    * Claude Code only for now; a missing file yields an empty conversation.
    */
-  getConversation(terminalId: string, since = 0): { items: ConvItem[]; cursor: number; unsupported?: boolean } {
+  getConversation(terminalId: string, since = 0, tail = 0): { items: ConvItem[]; cursor: number; unsupported?: boolean; truncated?: boolean } {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return { items: [], cursor: 0 };
     if (terminal.type !== 'claude-code') return { items: [], cursor: 0, unsupported: true };
@@ -318,8 +318,17 @@ export class SessionService {
     // Consume only complete lines (the trailing element is an empty string after a
     // final newline, or a half-written entry) so we never parse a partial record.
     const usable = raw.split('\n').slice(0, -1);
-    const items = parseClaudeTranscript(usable.slice(since).join('\n'));
-    return { items, cursor: usable.length };
+    // Initial load (since=0) can request only the last `tail` lines so a long
+    // transcript renders fast; `cursor` is still the true end so polling appends
+    // new lines normally, and `truncated` tells the client earlier lines exist.
+    let start = since;
+    let truncated = false;
+    if (since === 0 && tail > 0 && usable.length > tail) {
+      start = usable.length - tail;
+      truncated = true;
+    }
+    const items = parseClaudeTranscript(usable.slice(start).join('\n'));
+    return { items, cursor: usable.length, truncated };
   }
 
   /**

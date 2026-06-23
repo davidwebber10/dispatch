@@ -4,6 +4,7 @@ import { api } from '../../api/client';
 import type { ConvItem } from '../../api/types';
 import { useActivity } from '../../stores/activity';
 import { useThreadStatus } from '../../stores/threadStatus';
+import { Spinner } from '../common/Spinner';
 import { renderMarkdown } from '../../lib/markdown';
 
 /**
@@ -15,8 +16,10 @@ import { renderMarkdown } from '../../lib/markdown';
 export function ConversationView({ terminalId }: { terminalId: string }) {
   const [items, setItems] = useState<ConvItem[]>([]);
   const [unsupported, setUnsupported] = useState(false);
-  const [showAll, setShowAll] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [truncated, setTruncated] = useState(false);
   const cursor = useRef(0);
+  const TAIL = 600; // initial-load line cap — enough recent context, loads fast
   const ts = useThreadStatus((s) => s.byTerminal[terminalId]);
   const activityBusy = useActivity((s) => s.byTerminal[terminalId]?.activity === 'busy');
   const busy = ts ? ts.status === 'working' : activityBusy;
@@ -31,14 +34,17 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
   useEffect(() => {
     let on = true;
     let timer: ReturnType<typeof setTimeout>;
-    setItems([]); setUnsupported(false); cursor.current = 0;
+    setItems([]); setUnsupported(false); setTruncated(false); setLoading(true); cursor.current = 0;
     async function refresh() {
       try {
-        const conv = await api.getConversation(terminalId, cursor.current);
+        // First load only pulls the recent tail (fast); afterwards, just new lines.
+        const conv = await api.getConversation(terminalId, cursor.current, cursor.current === 0 ? TAIL : 0);
         if (!on) return;
-        if (conv.unsupported) { setUnsupported(true); on = false; return; }
-        if (conv.items.length) setItems((prev) => [...prev, ...conv.items]);
+        if (conv.unsupported) { setUnsupported(true); setLoading(false); on = false; return; }
+        if (cursor.current === 0) { setItems(conv.items); setTruncated(!!conv.truncated); }
+        else if (conv.items.length) setItems((prev) => [...prev, ...conv.items]);
         cursor.current = conv.cursor;
+        setLoading(false);
       } catch { /* transient; retry next tick */ }
     }
     async function loop() {
@@ -48,6 +54,16 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
     void loop();
     return () => { on = false; clearTimeout(timer); };
   }, [terminalId]);
+
+  // Load the full transcript on demand (when the initial tail was truncated).
+  async function loadEarlier() {
+    try {
+      const conv = await api.getConversation(terminalId, 0, 0);
+      setItems(conv.items);
+      setTruncated(false);
+      cursor.current = conv.cursor;
+    } catch { /* ignore; user can retry */ }
+  }
 
   // --- auto-scroll to bottom on new items ------------------------------
   useEffect(() => {
@@ -69,6 +85,14 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
     );
   }
 
+  if (loading) {
+    return (
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, color: 'var(--color-text-tertiary)', background: 'var(--color-base)', fontSize: 13 }}>
+        <Spinner size={14} /> Loading conversation…
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, background: 'var(--color-base)' }}>
       <div ref={scroller} onScroll={onScroll} style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '18px 0' }}>
@@ -76,22 +100,12 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
           {items.length === 0 && (
             <div style={{ color: 'var(--color-text-tertiary)', fontSize: 13, padding: '8px 0' }}>No messages yet. Switch to Terminal to interact.</div>
           )}
-          {(() => {
-            const MAX = 120;
-            const hidden = showAll ? 0 : Math.max(0, items.length - MAX);
-            const base = hidden;
-            const shown = hidden ? items.slice(hidden) : items;
-            return (
-              <>
-                {hidden > 0 && (
-                  <button onClick={() => setShowAll(true)} style={{ alignSelf: 'center', background: 'var(--color-elevated)', border: '1px solid #2c2c32', borderRadius: 8, color: 'var(--color-text-secondary)', fontSize: 12, padding: '6px 12px', cursor: 'pointer' }}>
-                    Show {hidden} earlier message{hidden > 1 ? 's' : ''}
-                  </button>
-                )}
-                {shown.map((it, i) => <Item key={base + i} item={it} />)}
-              </>
-            );
-          })()}
+          {truncated && (
+            <button onClick={() => void loadEarlier()} style={{ alignSelf: 'center', background: 'var(--color-elevated)', border: '1px solid #2c2c32', borderRadius: 8, color: 'var(--color-text-secondary)', fontSize: 12, padding: '6px 12px', cursor: 'pointer' }}>
+              Load earlier messages
+            </button>
+          )}
+          {items.map((it, i) => <Item key={i} item={it} />)}
           {busy && <Typing label={activityLabel} />}
           {!busy && needsInput && <NeedsInput label={activityLabel} />}
         </div>

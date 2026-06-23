@@ -60,10 +60,12 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     res.json(terminal);
   });
 
-  // GET /api/terminals/:terminalId/conversation?since=N — parsed transcript (Normal Mode)
+  // GET /api/terminals/:terminalId/conversation?since=N&tail=M — parsed transcript (View).
+  // `tail` (on the initial since=0 load) returns only the last M jsonl lines for speed.
   router.get('/terminals/:terminalId/conversation', (req, res) => {
     const since = Number(req.query.since) || 0;
-    res.json(sessionService.getConversation(req.params.terminalId, since));
+    const tail = Number(req.query.tail) || 0;
+    res.json(sessionService.getConversation(req.params.terminalId, since, tail));
   });
 
   // POST /api/terminals/:terminalId/input { data } — write raw bytes to the live PTY.

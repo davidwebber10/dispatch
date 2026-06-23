@@ -141,6 +141,7 @@ export interface Conversation {
   items: ConvItem[];
   cursor: number;
   unsupported?: boolean;
+  truncated?: boolean;
 }
 
 export interface CreateScheduleInput {
