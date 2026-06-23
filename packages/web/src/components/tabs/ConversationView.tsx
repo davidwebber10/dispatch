@@ -419,9 +419,10 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
 }
 
 // "★ Insight ───…" / content / "───…" callout blocks Claude emits in explanatory
-// mode. Pull them out of the markdown and render as a styled card; everything
-// else renders as normal markdown.
-const INSIGHT_RE = /★[ \t]*Insight[^\n]*\n([\s\S]*?)\n[ \t]*─{5,}[ \t]*(?=\n|$)/g;
+// mode. The opener and closer lines are wrapped in backticks (inline code) in the
+// transcript — `★ Insight ───` … `───` — so the regex tolerates leading/trailing
+// backticks. Pull them out and render as a styled card; the rest stays markdown.
+const INSIGHT_RE = /`?★[ \t]*Insight[^\n]*\n([\s\S]*?)\n[ \t]*`?─{5,}`?[ \t]*(?=\n|$)/g;
 
 function renderAssistant(text: string): React.ReactNode {
   if (!text.includes('Insight') || !text.includes('─')) {

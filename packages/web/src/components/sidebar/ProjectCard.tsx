@@ -142,8 +142,8 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
   const [dimmed, setDimmed] = useState(false);
   useEffect(() => {
     if (fadeKey === undefined || !active) { setDimmed(false); return; }
-    setDimmed(false);
-    const t = setTimeout(() => setDimmed(true), 2500);
+    setDimmed(false); // paint highlighted for one frame, then fade out immediately
+    const t = setTimeout(() => setDimmed(true), 60);
     return () => clearTimeout(t);
   }, [fadeKey, active]);
   const showActive = active && !dimmed;
@@ -233,13 +233,17 @@ function SectionHeader({ label, count, prominent, children }: { label: string; c
   );
 }
 
-export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSelectAgent, onNewAgent, onBrowseFiles, fadeActiveKey }: { session: Session; active: boolean; open?: boolean; onToggle?: () => void; onSelectTab: (id: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void; onBrowseFiles?: (projectId: string) => void; fadeActiveKey?: number }) {
+export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSelectAgent, onNewAgent, onBrowseFiles, fadeActiveKey, highlightTabId }: { session: Session; active: boolean; open?: boolean; onToggle?: () => void; onSelectTab: (id: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void; onBrowseFiles?: (projectId: string) => void; fadeActiveKey?: number; highlightTabId?: string | null }) {
   const allAgents = useAgents((s) => s.schedules);
   const agents = allAgents.filter((a) => a.projectId === session.id);
   const agentSel = useAgents((s) => s.selectedId);
   const agentFocused = useAgentUI((s) => s.focused);
   const tabs = useTabs((s) => s.byProject[session.id]) ?? [];
   const activeTabId = useTabs((s) => s.activeTabId);
+  // Desktop highlights the open tab persistently (activeTabId). Mobile passes
+  // highlightTabId explicitly so the list only highlights a thread you just
+  // returned FROM — opening a project fresh highlights nothing (null).
+  const highlightId = highlightTabId !== undefined ? highlightTabId : activeTabId;
   const [hover, setHover] = useState(false);
   const [menu, setMenu] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<Terminal | null>(null);
@@ -304,7 +308,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
             actionLabel={t.type === 'file' ? 'Unpin' : 'Delete'}
             actionColor={t.type === 'file' ? '#3F3F46' : 'var(--color-status-red)'}
             onAction={() => { if (t.type === 'file') void archive(t); else setPendingDelete({ kind: 'thread', thread: t }); }}>
-            <ThreadRow tab={t} active={t.id === activeTabId} fadeKey={fadeActiveKey}
+            <ThreadRow tab={t} active={t.id === highlightId} fadeKey={fadeActiveKey}
               onClick={(e) => { e.stopPropagation(); onSelectTab(t.id); }}
               onMiddle={() => useTabs.getState().openTab(t.id, true)}
               onArchive={() => setArchiveTarget(t)}
