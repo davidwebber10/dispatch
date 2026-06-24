@@ -109,7 +109,13 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     if (hostRef.current) { try { term.open(hostRef.current); } catch { /* jsdom */ } }
 
     let gotData = false;
-    const sock = socketFactory({ terminalId, onData: (chunk) => { term.write(chunk); if (!gotData) { gotData = true; setLoading(false); } } });
+    const sock = socketFactory({
+      terminalId,
+      onData: (chunk) => { term.write(chunk); if (!gotData) { gotData = true; setLoading(false); } },
+      // On reconnect the server replays the scrollback — clear first so it lands
+      // clean, then re-sync the PTY size to this view.
+      onReset: () => { term.reset(); if (term.cols && term.rows) sockRef.current?.resize(term.cols, term.rows); },
+    });
     sockRef.current = sock;
     // Hide the loading indicator once content arrives (or after a short grace
     // period so a genuinely-quiet terminal doesn't spin forever).
