@@ -9,7 +9,8 @@
     "test": "pnpm -r run test",
     "dev:server": "pnpm --filter dispatch-server dev",
     "dev:web": "pnpm --filter dispatch-web dev",
-    "start": "node packages/core/dist/server.js"
+    "start": "node packages/core/dist/server.js",
+    "postinstall": "node scripts/fix-node-pty-perms.mjs"
   },
   "bin": {
     "dispatch": "bin/dispatch"
