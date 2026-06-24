@@ -45,12 +45,12 @@ export class PTYManager extends EventEmitter {
     const managed: ManagedPty = { process: proc, buffer };
     this.ptys.set(sessionId, managed);
 
-    proc.on('data', (data: string) => {
+    proc.onData((data: string) => {
       buffer.write(data);
       this.emit('data', sessionId, data);
     });
 
-    proc.on('exit', (exitCode: number) => {
+    proc.onExit(({ exitCode }) => {
       this.ptys.delete(sessionId);
       this.emit('exit', sessionId, exitCode);
     });
