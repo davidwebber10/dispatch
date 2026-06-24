@@ -15,7 +15,17 @@
 #
 set -uo pipefail
 
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Resolve symlinks so REPO points at the real checkout even when this script is
+# invoked through a symlink (e.g. ~/.local/bin/dispatch -> <repo>/bin/dispatch).
+# Without this, `dispatch update` runs git against the symlink's parent dir and
+# fails with "not a git repository".
+SRC="${BASH_SOURCE[0]}"
+while [ -h "$SRC" ]; do
+  DIR="$(cd "$(dirname "$SRC")" && pwd)"
+  SRC="$(readlink "$SRC")"
+  [[ "$SRC" != /* ]] && SRC="$DIR/$SRC"
+done
+REPO="$(cd "$(dirname "$SRC")/.." && pwd)"
 LABEL="com.dispatch.server"
 # Over SSH you can't bootstrap into the GUI (Aqua) domain — it fails with an I/O
 # error — so fall back to the per-user domain, which works headless.
