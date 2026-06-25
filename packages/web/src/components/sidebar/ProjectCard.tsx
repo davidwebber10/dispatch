@@ -360,17 +360,17 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
       </div>
       <div style={{ display: 'grid', gridTemplateRows: isOpen ? '1fr' : '0fr', transition: 'grid-template-rows 0.2s ease' }}>
         <div style={{ overflow: 'hidden', minHeight: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: isMobile ? '10px 8px 6px' : '6px 6px 4px' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, marginTop: isMobile ? 6 : 4, marginBottom: 6, padding: isMobile ? '0 6px' : '0 4px', borderBottom: '1px solid var(--color-border)', background: 'rgba(255,255,255,0.03)' }}>
             <TabPill label="Threads" count={threadItems.length} active={projTab === 'threads'} mobile={isMobile} onClick={() => setProjTab('threads')} />
             <TabPill label="Agents" count={agents.length} active={projTab === 'agents'} mobile={isMobile} onClick={() => setProjTab('agents')} />
             <span style={{ flex: 1 }} />
             {projTab === 'threads' ? (
-              <span style={{ position: 'relative', display: 'inline-flex' }}>
+              <span style={{ alignSelf: 'center', marginBottom: 4, position: 'relative', display: 'inline-flex' }}>
                 <button title="Add thread" onClick={(e) => { e.stopPropagation(); setMenu((o) => !o); }} style={plusStyle}>+</button>
                 {menu && <NewTabMenu sessionId={session.id} onClose={() => setMenu(false)} onCreated={onSelectTab} />}
               </span>
             ) : (
-              <button title="Add agent" onClick={(e) => { e.stopPropagation(); onNewAgent?.(session.id); }} style={plusStyle}>+</button>
+              <button title="Add agent" onClick={(e) => { e.stopPropagation(); onNewAgent?.(session.id); }} style={{ ...plusStyle, alignSelf: 'center', marginBottom: 4 }}>+</button>
             )}
           </div>
           {projTab === 'threads' ? (
@@ -496,15 +496,13 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
 function TabPill({ label, count, active, mobile, onClick }: { label: string; count: number; active: boolean; mobile: boolean; onClick: () => void }) {
   return (
     <button onClick={(e) => { e.stopPropagation(); onClick(); }} style={{
-      display: 'inline-flex', alignItems: 'center', gap: 6, padding: mobile ? '6px 11px' : '4px 9px', borderRadius: 8, border: 'none', cursor: 'pointer',
-      background: active ? 'var(--color-elevated)' : 'transparent',
+      display: 'inline-flex', alignItems: 'center', gap: 6, padding: mobile ? '9px 4px 8px' : '6px 3px 7px', background: 'transparent', border: 'none', cursor: 'pointer',
+      borderBottom: active ? '2px solid var(--color-accent)' : '2px solid transparent', marginBottom: -1,
       color: active ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
-      font: `700 ${mobile ? 13 : 11}px var(--font-mono)`, letterSpacing: '1.1px', transition: 'background .12s ease, color .12s ease',
+      font: `700 ${mobile ? 13 : 11}px var(--font-mono)`, letterSpacing: '1.1px', transition: 'color .12s ease, border-color .12s ease',
     }}>
       {label.toUpperCase()}
-      {count > 0 && (
-        <span style={{ font: `600 ${mobile ? 11 : 9.5}px var(--font-mono)`, color: 'var(--color-text-secondary)', background: active ? 'var(--color-pane)' : 'var(--color-elevated)', borderRadius: 9, padding: '0 6px', lineHeight: mobile ? '17px' : '15px' }}>{count}</span>
-      )}
+      <span style={{ font: `600 ${mobile ? 11 : 9.5}px var(--font-mono)`, color: active ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)', background: active ? 'color-mix(in srgb, var(--color-accent) 22%, transparent)' : 'var(--color-elevated)', borderRadius: 9, padding: '0 6px', lineHeight: mobile ? '17px' : '15px' }}>{count}</span>
     </button>
   );
 }
