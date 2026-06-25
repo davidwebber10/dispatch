@@ -144,8 +144,11 @@ plan).
   `platform.listProcessIds()`; data dir → `platform.dataDir()`.
 - `providers/claude-code.ts`, `sessions/service.ts`: transcript dir →
   `platform.claudeProjectDir(workDir)`.
-- provider command spawning: resolve `claude`/`codex` via `platform.resolveCommand()`
-  before handing to node-pty (Windows `.cmd` shims).
+- provider command spawning: both `claude` and `codex` run natively on Windows (Codex via
+  Node.js, no WSL — see Risks). Resolve each via `platform.resolveCommand()` before handing
+  to node-pty (Windows installs expose them as `.cmd`/Node shims). The Codex **notify hook**
+  path (`packages/core/scripts/codex-notify.mjs`, drives thread status) must be built with
+  `path.join` and invoked via the resolved `node`, so it works regardless of separators.
 - `auth/shim.ts`: gated behind `platform.installBrowserShim()`.
 - `routes/state.ts`: Tailscale path guarded; `win32` returns "unavailable".
 
@@ -185,16 +188,22 @@ macOS:
   3. Create a **Claude Code** terminal → confirm it spawns, and confirm the transcript dir
      under `%USERPROFILE%\.claude\projects\…` matches `claudeProjectDir()` (adjust the
      encoding if not — see Risks).
-  4. Run a headless agent → confirm run + transcript replay.
-  5. `dispatch restart`/`update` → confirm the task survives and the daemon comes back.
-  6. Confirm deferred features degrade gracefully (no crash on the Tailscale panel; OAuth
+  4. Create a **Codex** terminal → confirm it spawns (native Windows Codex, no WSL) and the
+     notify hook fires (thread status updates).
+  5. Run a headless agent for **both** providers → confirm run + transcript replay.
+  6. `dispatch restart`/`update` → confirm the task survives and the daemon comes back.
+  7. Confirm deferred features degrade gracefully (no crash on the Tailscale panel; OAuth
      opens the system browser).
 
 ## Risks / assumptions
 
-- **Codex on Windows:** Claude Code supports Windows; Codex CLI Windows support must be
-  confirmed. If unsupported, Codex degrades to "unavailable" on Windows (Claude still
-  works); not a blocker for v1.
+- **Codex on Windows (confirmed — resolved):** Both Claude Code and Codex run **natively**
+  on Windows (no WSL). Codex installs via Node.js, launches as `codex`, and has **full
+  feature parity** plus native sandbox modes (`elevated`/`unelevated`) — see
+  https://developers.openai.com/codex/windows. Both agents are in scope for v1; neither
+  degrades on Windows. Dispatch does not manage Codex's sandbox (the user configures it in
+  Codex). The only Dispatch-side care is cross-platform `resolveCommand` + notify-hook path
+  construction (§4).
 - **Claude transcript encoding:** `claudeProjectDir()` must match Windows Claude Code's
   actual `%USERPROFILE%\.claude\projects\<encoded>` scheme byte-for-byte. Confirmed during
   bring-up (checklist step 3); the encoding is isolated to one method so a fix is local.
