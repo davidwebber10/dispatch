@@ -7,6 +7,7 @@ import { useThreadStatus } from '../../stores/threadStatus';
 import { useTabs, findTerminal } from '../../stores/tabs';
 import { useThreadMode } from '../../stores/threadMode';
 import { useUI } from '../../stores/ui';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import { Spinner } from '../common/Spinner';
 import { renderMarkdown, highlightCode, langFromPath } from '../../lib/markdown';
 
@@ -19,6 +20,7 @@ import { renderMarkdown, highlightCode, langFromPath } from '../../lib/markdown'
 const LIMIT = 120; // jsonl lines per window (initial load + each older chunk)
 
 export function ConversationView({ terminalId }: { terminalId: string }) {
+  const isMobile = useIsMobile(); // desktop floats the View/Terminal toggle over the top-right
   const [items, setItems] = useState<ConvItem[]>([]);
   const [unsupported, setUnsupported] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -295,7 +297,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
     <div ref={outer} style={{ position: 'relative', display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, background: 'var(--color-base)' }}>
       {/* Full-width search, just below the header. Matches show in a dropdown that
           overlays the top of the transcript; tapping one jumps + clears. */}
-      <div style={{ position: 'relative', flexShrink: 0, zIndex: 8, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
+      <div style={{ position: 'relative', flexShrink: 0, zIndex: 8, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', paddingRight: isMobile ? 12 : 118, borderBottom: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
         <MagnifyingGlass size={15} color="var(--color-text-tertiary)" style={{ flexShrink: 0 }} />
         <input value={searchQ} onChange={(e) => setSearchQ(e.target.value)} placeholder="Search this conversation…"
           autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck={false}

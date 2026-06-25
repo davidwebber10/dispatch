@@ -2,10 +2,8 @@ import { useState } from 'react';
 import { Gear, Sidebar } from '@phosphor-icons/react';
 import { ConnectionStatus } from './ConnectionStatus';
 import { BrandSwitcher } from './BrandSwitcher';
-import { ModeToggle } from './ModeToggle';
 import { SettingsModal } from '../settings/SettingsModal';
 import { useUI } from '../../stores/ui';
-import { useTabs } from '../../stores/tabs';
 
 const iconBtn: React.CSSProperties = {
   width: 28, height: 28, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -18,7 +16,6 @@ export function TopBar() {
   const rightCollapsed = useUI((s) => s.rightCollapsed);
   const toggleLeft = useUI((s) => s.toggleLeft);
   const toggleRight = useUI((s) => s.toggleRight);
-  const activeId = useTabs((s) => s.activeTabId);
 
   return (
     <header style={{
@@ -31,7 +28,6 @@ export function TopBar() {
       </button>
       <BrandSwitcher />
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-        <ModeToggle terminalId={activeId} />
         <ConnectionStatus />
         <button title="Settings" onClick={() => setSettings(true)} style={{ ...iconBtn, color: 'var(--color-text-secondary)' }}>
           <Gear size={16} />
