@@ -136,10 +136,12 @@ function SwipeRow({ actionLabel, actionColor, onAction, disabled, children }: { 
 
 function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onContext }: { tab: Terminal; active: boolean; fadeKey?: number; onClick: (e: React.MouseEvent) => void; onMiddle: () => void; onArchive: () => void; onContext: (x: number, y: number) => void }) {
   const [hover, setHover] = useState(false);
+  const color = providerColor(tab.type);
   const loading = useTabs((s) => !!s.loading[tab.id]);
   const fs = useSettings((s) => s.sidebarFontSize);
   const density = useSettings((s) => s.density);
   const isMobile = useIsMobile();
+  const dot = isMobile ? 11 : 8;
   const padY = isMobile ? 15 : DENSITY[density].rowY;
   const working = loading || tab.status === 'working';
   const needsAttn = tab.status === 'needs_input' || tab.status === 'error';
@@ -165,24 +167,26 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
         // Selecting snaps instantly; the transition only applies while the mobile
         // fade-back dims the row (dimmed → true), so it eases out, not in.
         transition: dimmed ? 'background .8s ease, color .8s ease' : 'none',
-        background: showActive ? 'var(--color-accent)' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
+        background: showActive ? '#2a2a31' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
         borderRadius: isMobile ? 0 : (showActive ? 0 : 5), border: 'none', borderBottom: isMobile ? '1px solid var(--color-border)' : 'none',
-        color: showActive ? '#08240F' : 'var(--color-text-primary)', fontSize: isMobile ? 16 : fs, fontWeight: showActive ? 600 : isMobile ? 450 : 400,
+        color: showActive ? '#fff' : 'var(--color-text-primary)', fontSize: isMobile ? 16 : fs, fontWeight: showActive ? 600 : isMobile ? 450 : 400,
         textAlign: 'left', cursor: 'pointer',
       }}
     >
-      {tab.type === 'file' && (() => { const fv = fileVisual(tab.label); return <fv.Icon size={isMobile ? 18 : 15} weight="fill" color={showActive ? '#08240F' : fv.color} style={{ flexShrink: 0 }} />; })()}
+      {tab.type === 'file'
+        ? (() => { const fv = fileVisual(tab.label); return <fv.Icon size={isMobile ? 18 : 15} weight="fill" color={fv.color} style={{ flexShrink: 0 }} />; })()
+        : <span style={{ width: dot, height: dot, borderRadius: '50%', background: color, flexShrink: 0 }} />}
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tab.label}</span>
       <span style={{ flexShrink: 0, marginLeft: 8, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
         {hover && !isMobile ? (
           <span role="button" title="Archive thread" onClick={(e) => { e.stopPropagation(); onArchive(); }}
-            style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, color: showActive ? '#08240F' : 'var(--color-text-secondary)', fontSize: 14, lineHeight: 1, cursor: 'pointer' }}>×</span>
+            style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, color: 'var(--color-text-secondary)', fontSize: 14, lineHeight: 1, cursor: 'pointer' }}>×</span>
         ) : working ? (
-          <Spinner size={isMobile ? 13 : 11} color={showActive ? '#08240F' : 'var(--color-accent)'} />
+          <Spinner size={isMobile ? 13 : 11} />
         ) : needsAttn ? (
           <StatusDot state={dotState(tab.status)} size={isMobile ? 9 : 7} />
         ) : (
-          <span style={{ font: `400 ${isMobile ? 12 : 10.5}px var(--font-mono)`, color: showActive ? 'rgba(8,36,15,0.75)' : 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{timeAgo(tab.lastActivityAt ?? tab.createdAt)}</span>
+          <span style={{ font: `400 ${isMobile ? 12 : 10.5}px var(--font-mono)`, color: showActive ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{timeAgo(tab.lastActivityAt ?? tab.createdAt)}</span>
         )}
       </span>
     </button>
@@ -203,15 +207,15 @@ function AgentRow({ agent, active, onClick }: { agent: AgentSchedule; active: bo
       onClick={(e) => { e.stopPropagation(); onClick(); }}
       style={{
         display: 'flex', alignItems: 'center', gap: isMobile ? 12 : 9, width: '100%', padding: isMobile ? '15px 12px' : `${padY}px 9px`,
-        background: active ? 'var(--color-accent)' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
+        background: active ? '#2a2a31' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
         borderRadius: isMobile ? 0 : (active ? 0 : 5), border: 'none', borderBottom: isMobile ? '1px solid var(--color-border)' : 'none',
-        color: active ? '#08240F' : 'var(--color-text-primary)', fontSize: isMobile ? 16 : fs,
+        color: active ? '#fff' : 'var(--color-text-primary)', fontSize: isMobile ? 16 : fs,
         fontWeight: active ? 600 : isMobile ? 450 : 400, textAlign: 'left', cursor: 'pointer', opacity: agent.enabled ? 1 : 0.55,
       }}
     >
-      <span style={{ width: dot, height: dot, borderRadius: '50%', background: active ? '#08240F' : providerColor(agent.provider), flexShrink: 0 }} />
+      <span style={{ width: dot, height: dot, borderRadius: '50%', background: providerColor(agent.provider), flexShrink: 0 }} />
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent.name}</span>
-      <span style={{ flexShrink: 0, marginLeft: 8, font: `400 ${isMobile ? 12 : 10.5}px var(--font-mono)`, color: active ? 'rgba(8,36,15,0.75)' : 'var(--color-text-tertiary)' }}>{timeAgo(agent.createdAt)}</span>
+      <span style={{ flexShrink: 0, marginLeft: 8, font: `400 ${isMobile ? 12 : 10.5}px var(--font-mono)`, color: active ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)' }}>{timeAgo(agent.createdAt)}</span>
     </button>
   );
 }
@@ -337,7 +341,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
         // not-active project keeps a subtle background so you can see it's open;
         // collapsed projects only tint on hover.
         background: (!isMobile && active) ? 'linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 10%, transparent), transparent)' : (!isMobile && (isOpen || hover)) ? 'rgba(255,255,255,0.04)' : 'transparent',
-        border: (!isMobile && active) ? '1px solid var(--color-accent)' : '1px solid transparent',
+        border: '1px solid transparent',
         borderRadius: 8, padding: isMobile ? 0 : '4px 0', marginBottom: 4, cursor: 'default', transition: 'background 0.12s ease, border-color 0.12s ease',
       }}
     >
@@ -351,7 +355,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
             <CaretRight size={11} weight="bold" style={{ flexShrink: 0, color: 'var(--color-text-tertiary)', transition: 'transform .15s ease', transform: isOpen ? 'rotate(90deg)' : 'none' }} />
           )}
           <span style={{ fontWeight: 600, fontSize: isMobile ? 19 : pfs, color: (!isMobile && active) ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{session.name}</span>
-          <span title={session.lastActivityAt ?? ''} style={{ marginLeft: 'auto', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+          <span title={session.lastActivityAt ?? ''} style={{ marginLeft: 'auto', flexShrink: 0, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', lineHeight: 1 }}>
             {indicator === 'working' ? <Spinner size={11} />
               : indicator === 'needs_input' ? <StatusDot state="needs_input" size={8} />
               : indicator === 'error' ? <StatusDot state="error" size={8} />
