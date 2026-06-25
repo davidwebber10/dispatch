@@ -13,3 +13,4 @@ function select(): Platform {
 
 export const platform: Platform = select();
 export type { Platform, ShellSpec, BrowserShimOptions, BrowserShimEnv } from './types.js';
+export type { DaemonController, DaemonInstallOptions, DaemonStatus } from './daemon.js';
