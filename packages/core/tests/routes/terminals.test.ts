@@ -7,6 +7,7 @@ import * as terminalsDb from '../../src/db/terminals.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { platform } from '../../src/platform/index.js';
 
 describe('terminal routes', () => {
   let app: any;
@@ -50,6 +51,12 @@ describe('terminal routes', () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-conv-home-'));
     const oldHome = process.env.HOME;
     process.env.HOME = home;
+    // NOTE: on Windows os.homedir() reads USERPROFILE, not HOME. Setting both ensures
+    // platform.claudeProjectDir() and the route see the same base dir.
+    // The win32 encoding of the workDir below ('/tmp/proj-x') against a real Windows
+    // %USERPROFILE%\.claude\projects listing is confirmed during bring-up.
+    const oldUserProfile = process.env.USERPROFILE;
+    process.env.USERPROFILE = home;
     try {
       const wd = '/tmp/proj-x';
       const sid = 'sess-123';
@@ -58,7 +65,9 @@ describe('terminal routes', () => {
       let r = await request(app).get('/api/terminals/cc-1/conversation').expect(200);
       expect(r.body).toMatchObject({ items: [], cursor: 0 }); // missing file
 
-      const dir = path.join(home, '.claude', 'projects', wd.replace(/\//g, '-'));
+      // Use platform.claudeProjectDir so the test fixture path matches what the route uses
+      // on every platform (darwin/linux/win32) without hardcoding the encoding.
+      const dir = platform.claudeProjectDir(wd);
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, `${sid}.jsonl`),
         '{"type":"user","message":{"role":"user","content":"hi"},"uuid":"u1"}\n' +
@@ -72,6 +81,7 @@ describe('terminal routes', () => {
       expect(r2.body.items).toEqual([]);
     } finally {
       if (oldHome === undefined) delete process.env.HOME; else process.env.HOME = oldHome;
+      if (oldUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = oldUserProfile;
       fs.rmSync(home, { recursive: true, force: true });
     }
   });
@@ -80,10 +90,18 @@ describe('terminal routes', () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-conv-rec-'));
     const oldHome = process.env.HOME;
     process.env.HOME = home;
+    // NOTE: on Windows os.homedir() reads USERPROFILE, not HOME. Setting both ensures
+    // platform.claudeProjectDir() and the route see the same base dir.
+    // The win32 encoding of the workDir below ('/tmp/proj-rec') against a real Windows
+    // %USERPROFILE%\.claude\projects listing is confirmed during bring-up.
+    const oldUserProfile = process.env.USERPROFILE;
+    process.env.USERPROFILE = home;
     try {
       const wd = '/tmp/proj-rec';
       terminalsDb.create(db, { id: 'cc-rec', sessionId, type: 'claude-code', label: 't', skipPermissions: true, workingDir: wd }); // no externalId
-      const dir = path.join(home, '.claude', 'projects', wd.replace(/\//g, '-'));
+      // Use platform.claudeProjectDir so the test fixture path matches what the route uses
+      // on every platform (darwin/linux/win32) without hardcoding the encoding.
+      const dir = platform.claudeProjectDir(wd);
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, 'rec-uuid-1.jsonl'), '{"type":"user","message":{"role":"user","content":"hey"},"uuid":"u1"}\n');
 
@@ -93,6 +111,7 @@ describe('terminal routes', () => {
       expect(terminalsDb.getById(db, 'cc-rec')?.external_id).toBe('rec-uuid-1');
     } finally {
       if (oldHome === undefined) delete process.env.HOME; else process.env.HOME = oldHome;
+      if (oldUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = oldUserProfile;
       fs.rmSync(home, { recursive: true, force: true });
     }
   });
