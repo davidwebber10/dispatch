@@ -1,29 +1,67 @@
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 import type { DaemonController, DaemonInstallOptions, DaemonStatus } from './daemon.js';
 
 export type Runner = (cmd: string, args: string[]) => string;
 const LABEL = 'com.dispatch.server';
 const defaultRun: Runner = (cmd, args) => execFileSync(cmd, args, { encoding: 'utf-8' });
 
+/**
+ * Try a launchctl command against the gui/$uid domain first (interactive session),
+ * then fall back to user/$uid (works over SSH / headless, where gui/ bootstrap fails
+ * with EIO). Mirrors the old bash script's $DOMAIN / fallback pattern.
+ */
+function runWithDomainFallback(run: Runner, uid: number, verb: string[]): void {
+  const guiDomain = `gui/${uid}`;
+  const userDomain = `user/${uid}`;
+  try {
+    run('launchctl', [...verb.map(s => s.replace('__DOMAIN__', guiDomain))]);
+  } catch {
+    run('launchctl', [...verb.map(s => s.replace('__DOMAIN__', userDomain))]);
+  }
+}
+
 export function createDarwinDaemon(run: Runner = defaultRun): DaemonController {
   const uid = process.getuid?.() ?? 0;
-  const domain = `gui/${uid}`;
   const plistPath = path.join(os.homedir(), 'Library', 'LaunchAgents', `${LABEL}.plist`);
+
+  // Over SSH the gui/ domain cannot be bootstrapped (EIO), so we pick the domain
+  // from environment at construction time for install/unload helpers, but for all
+  // lifecycle verbs we use runWithDomainFallback so they work in both cases.
+  const primaryDomain = process.env.SSH_CONNECTION ? `user/${uid}` : `gui/${uid}`;
+
   return {
     install(opts: DaemonInstallOptions) {
       fs.mkdirSync(path.dirname(plistPath), { recursive: true });
       fs.mkdirSync(opts.logDir, { recursive: true });
       fs.writeFileSync(plistPath, buildPlist(opts));
-      try { run('launchctl', ['bootstrap', domain, plistPath]); }
+      try { run('launchctl', ['bootstrap', primaryDomain, plistPath]); }
       catch { run('launchctl', ['load', '-w', plistPath]); }
     },
-    uninstall() { try { run('launchctl', ['bootout', `${domain}/${LABEL}`]); } catch { /* ignore */ } },
-    start() { run('launchctl', ['kickstart', `${domain}/${LABEL}`]); },
-    stop() { run('launchctl', ['bootout', `${domain}/${LABEL}`]); },
-    restart() { run('launchctl', ['kickstart', '-k', `${domain}/${LABEL}`]); },
+    uninstall() {
+      try { runWithDomainFallback(run, uid, ['bootout', `__DOMAIN__/${LABEL}`]); }
+      catch { /* ignore — may already be unloaded */ }
+    },
+    start() { runWithDomainFallback(run, uid, ['kickstart', `__DOMAIN__/${LABEL}`]); },
+    stop() { runWithDomainFallback(run, uid, ['bootout', `__DOMAIN__/${LABEL}`]); },
+    restart() {
+      // Restart must survive being called from inside a Dispatch-spawned terminal:
+      // a synchronous kickstart -k would kill this process's PTY tree mid-execution.
+      // Instead, spawn the kickstart detached and unref'd so it runs after our
+      // process exits — mirroring the old bash `setsid / nohup` approach.
+      const guiTarget = `gui/${uid}/${LABEL}`;
+      const userTarget = `user/${uid}/${LABEL}`;
+      const kickCmd =
+        `launchctl kickstart -k ${guiTarget} 2>/dev/null || ` +
+        `launchctl kickstart -k ${userTarget} 2>/dev/null`;
+      const child = spawn(
+        'sh', ['-c', `sleep 2; ${kickCmd}`],
+        { detached: true, stdio: 'ignore' },
+      );
+      child.unref();
+    },
     status(): DaemonStatus {
       try {
         const out = run('launchctl', ['list']);
@@ -33,9 +71,19 @@ export function createDarwinDaemon(run: Runner = defaultRun): DaemonController {
   };
 }
 
+/** XML-escape a string for safe interpolation into plist content (matches old bash sed escaping). */
+export function esc(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
 export function buildPlist(opts: DaemonInstallOptions): string {
   const envEntries = Object.entries(opts.env)
-    .map(([k, v]) => `        <key>${k}</key>\n        <string>${v}</string>`).join('\n');
+    .map(([k, v]) => `        <key>${esc(k)}</key>\n        <string>${esc(v)}</string>`).join('\n');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
