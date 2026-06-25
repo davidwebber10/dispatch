@@ -29,9 +29,9 @@ function dotState(status: string): 'working' | 'idle' | 'needs_input' | 'error' 
 // Project-view density: scales row padding + section spacing (desktop). Mobile
 // rows stay finger-sized regardless.
 const DENSITY: Record<Density, { rowY: number; sectionMt: number }> = {
-  compact: { rowY: 5, sectionMt: 4 },
-  cozy: { rowY: 8, sectionMt: 8 },
-  roomy: { rowY: 12, sectionMt: 14 },
+  compact: { rowY: 3, sectionMt: 4 },
+  cozy: { rowY: 6, sectionMt: 7 },
+  roomy: { rowY: 10, sectionMt: 12 },
 };
 
 const SECTIONS: { key: string; label: string; types: Terminal['type'][]; add: 'menu' | 'browser' | 'notes' | null; prominent?: boolean }[] = [
@@ -162,9 +162,11 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
       onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContext(e.clientX, e.clientY); }}
       style={{
         display: 'flex', alignItems: 'center', gap: isMobile ? 12 : 9, width: '100%', padding: isMobile ? '15px 12px' : `${padY}px 9px`,
-        transition: 'background .8s ease, color .8s ease',
+        // Selecting snaps instantly; the transition only applies while the mobile
+        // fade-back dims the row (dimmed → true), so it eases out, not in.
+        transition: dimmed ? 'background .8s ease, color .8s ease' : 'none',
         background: showActive ? 'var(--color-accent)' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
-        borderRadius: isMobile ? 0 : 6, border: 'none', borderBottom: isMobile ? '1px solid var(--color-border)' : 'none',
+        borderRadius: isMobile ? 0 : 5, border: 'none', borderBottom: isMobile ? '1px solid var(--color-border)' : 'none',
         color: showActive ? '#08240F' : 'var(--color-text-primary)', fontSize: isMobile ? 16 : fs, fontWeight: showActive ? 600 : isMobile ? 450 : 400,
         textAlign: 'left', cursor: 'pointer',
       }}
@@ -202,7 +204,7 @@ function AgentRow({ agent, active, onClick }: { agent: AgentSchedule; active: bo
       style={{
         display: 'flex', alignItems: 'center', gap: isMobile ? 12 : 9, width: '100%', padding: isMobile ? '15px 12px' : `${padY}px 9px`,
         background: active ? 'var(--color-accent)' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
-        borderRadius: isMobile ? 0 : 6, border: 'none', borderBottom: isMobile ? '1px solid var(--color-border)' : 'none',
+        borderRadius: isMobile ? 0 : 5, border: 'none', borderBottom: isMobile ? '1px solid var(--color-border)' : 'none',
         color: active ? '#08240F' : 'var(--color-text-primary)', fontSize: isMobile ? 16 : fs,
         fontWeight: active ? 600 : isMobile ? 450 : 400, textAlign: 'left', cursor: 'pointer', opacity: agent.enabled ? 1 : 0.55,
       }}
@@ -336,7 +338,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
         // collapsed projects only tint on hover.
         background: (!isMobile && active) ? 'linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 10%, transparent), transparent)' : (!isMobile && (isOpen || hover)) ? 'rgba(255,255,255,0.04)' : 'transparent',
         border: (!isMobile && active) ? '1px solid color-mix(in srgb, var(--color-accent) 45%, transparent)' : '1px solid transparent',
-        borderRadius: 12, padding: isMobile ? '0 4px' : 4, marginBottom: 4, cursor: 'default', transition: 'background 0.12s ease, border-color 0.12s ease',
+        borderRadius: 8, padding: isMobile ? '0 4px' : 4, marginBottom: 4, cursor: 'default', transition: 'background 0.12s ease, border-color 0.12s ease',
       }}
     >
       <div
