@@ -166,7 +166,7 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
         // fade-back dims the row (dimmed → true), so it eases out, not in.
         transition: dimmed ? 'background .8s ease, color .8s ease' : 'none',
         background: showActive ? 'var(--color-accent)' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
-        borderRadius: isMobile ? 0 : 5, border: 'none', borderBottom: isMobile ? '1px solid var(--color-border)' : 'none',
+        borderRadius: isMobile ? 0 : (showActive ? 0 : 5), border: 'none', borderBottom: isMobile ? '1px solid var(--color-border)' : 'none',
         color: showActive ? '#08240F' : 'var(--color-text-primary)', fontSize: isMobile ? 16 : fs, fontWeight: showActive ? 600 : isMobile ? 450 : 400,
         textAlign: 'left', cursor: 'pointer',
       }}
@@ -204,7 +204,7 @@ function AgentRow({ agent, active, onClick }: { agent: AgentSchedule; active: bo
       style={{
         display: 'flex', alignItems: 'center', gap: isMobile ? 12 : 9, width: '100%', padding: isMobile ? '15px 12px' : `${padY}px 9px`,
         background: active ? 'var(--color-accent)' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
-        borderRadius: isMobile ? 0 : 5, border: 'none', borderBottom: isMobile ? '1px solid var(--color-border)' : 'none',
+        borderRadius: isMobile ? 0 : (active ? 0 : 5), border: 'none', borderBottom: isMobile ? '1px solid var(--color-border)' : 'none',
         color: active ? '#08240F' : 'var(--color-text-primary)', fontSize: isMobile ? 16 : fs,
         fontWeight: active ? 600 : isMobile ? 450 : 400, textAlign: 'left', cursor: 'pointer', opacity: agent.enabled ? 1 : 0.55,
       }}
@@ -338,7 +338,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
         // collapsed projects only tint on hover.
         background: (!isMobile && active) ? 'linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 10%, transparent), transparent)' : (!isMobile && (isOpen || hover)) ? 'rgba(255,255,255,0.04)' : 'transparent',
         border: (!isMobile && active) ? '1px solid color-mix(in srgb, var(--color-accent) 45%, transparent)' : '1px solid transparent',
-        borderRadius: 8, padding: isMobile ? '0 4px' : 4, marginBottom: 4, cursor: 'default', transition: 'background 0.12s ease, border-color 0.12s ease',
+        borderRadius: 8, padding: isMobile ? 0 : '4px 0', marginBottom: 4, cursor: 'default', transition: 'background 0.12s ease, border-color 0.12s ease',
       }}
     >
       <div
@@ -366,7 +366,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
       </div>
       <div style={{ display: 'grid', gridTemplateRows: isOpen ? '1fr' : '0fr', transition: 'grid-template-rows 0.12s ease' }}>
         <div style={{ overflow: 'hidden', minHeight: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, marginTop: isMobile ? 6 : 4, marginBottom: 6, padding: isMobile ? '0 6px' : '0 4px', borderBottom: '1px solid var(--color-border)', background: 'rgba(255,255,255,0.03)' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, marginTop: isMobile ? 6 : 4, marginBottom: 6, padding: isMobile ? '0 12px' : '0 9px', borderBottom: '1px solid var(--color-border)', background: 'rgba(255,255,255,0.03)' }}>
             <TabPill label="Threads" count={threadItems.length} active={projTab === 'threads'} mobile={isMobile} onClick={() => setProjTab('threads')} />
             <TabPill label="Agents" count={agents.length} active={projTab === 'agents'} mobile={isMobile} onClick={() => setProjTab('agents')} />
             <span style={{ flex: 1 }} />
