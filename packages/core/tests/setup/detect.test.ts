@@ -27,7 +27,9 @@ function whenExec(impl: (cmd: string, args: string[]) => { stdout: string } | Er
 
 import { detectProvider, detectTailscale } from '../../src/setup/detect.js';
 
-describe('detectProvider', () => {
+// These cases rely on posix-style path matching in fsExists stubs (e.g. p.endsWith('/.claude'))
+// and posix-only binary resolution — guard the whole suite on Windows.
+describe.skipIf(process.platform === 'win32')('detectProvider', () => {
   beforeEach(() => { execFileMock.mockReset(); resolveCommandMock.mockReset(); fsExists = () => false; });
 
   it('reports not installed when the binary is absent', async () => {
@@ -59,7 +61,7 @@ describe('detectProvider', () => {
   });
 });
 
-describe('detectTailscale', () => {
+describe.skipIf(process.platform === 'win32')('detectTailscale', () => {
   beforeEach(() => { execFileMock.mockReset(); resolveCommandMock.mockReset(); fsExists = () => false; });
 
   it('not installed when binary missing and app bundle absent', async () => {

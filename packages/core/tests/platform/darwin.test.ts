@@ -3,7 +3,8 @@ import os from 'os';
 import path from 'path';
 import { darwin } from '../../src/platform/darwin.js';
 
-describe('darwin platform', () => {
+// darwin.ts uses ps/which//bin/zsh — all POSIX-only; passes on darwin+linux.
+describe.skipIf(process.platform === 'win32')('darwin platform', () => {
   test('defaultShell uses $SHELL or /bin/zsh', () => {
     const { command, args } = darwin.defaultShell();
     expect(command).toBe(process.env.SHELL || '/bin/zsh');
