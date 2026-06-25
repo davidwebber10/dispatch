@@ -71,7 +71,7 @@ export function Workspace({ sidebar, main, inspector }: { sidebar: ReactNode; ma
   }
 
   return (
-    <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+    <div style={{ display: 'flex', flex: 1, minWidth: 0, minHeight: 0 }}>
       <aside style={{ width: leftCollapsed ? 0 : sideW, flexShrink: 0, background: 'var(--color-pane)', borderRight: leftCollapsed ? 'none' : '1px solid var(--color-border)', overflow: leftCollapsed ? 'hidden' : 'auto' }}>{sidebar}</aside>
       {!leftCollapsed && <DragHandle onStart={() => start('left')} />}
       <main style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>{main}</main>
