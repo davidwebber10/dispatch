@@ -1,4 +1,4 @@
-import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus } from './types';
+import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession } from './types';
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -30,6 +30,8 @@ export const api = {
   listArchivedTerminals: (sessionId: string) => req<Terminal[]>(`/api/sessions/${sessionId}/terminals/archived`),
   createTerminal: (sessionId: string, input: { type: string; label?: string; workingDir?: string; externalId?: string; config?: Record<string, unknown> }) =>
     req<Terminal>(`/api/sessions/${sessionId}/terminals`, { method: 'POST', body: body(input) }),
+  recentCcSessions: (sessionId: string) => req<CcRecentSession[]>(`/api/sessions/${sessionId}/cc-recent`),
+  branchTerminal: (terminalId: string) => req<Terminal>(`/api/terminals/${terminalId}/branch`, { method: 'POST' }),
   getTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}`),
   getConversation: (id: string, params: { since?: number; before?: number; limit?: number } = {}) => {
     const q = new URLSearchParams();

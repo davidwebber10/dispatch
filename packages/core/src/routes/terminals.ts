@@ -98,6 +98,18 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     res.json(terminal);
   });
 
+  // POST /api/terminals/:terminalId/branch — fork a Claude Code thread's conversation
+  router.post('/terminals/:terminalId/branch', (req, res) => {
+    try {
+      const terminal = sessionService.branchTerminal(req.params.terminalId);
+      broadcaster?.broadcast({ type: 'terminal:created', terminal });
+      broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: terminal.sessionId });
+      res.json(terminal);
+    } catch (e: any) {
+      res.status(e?.status === 422 ? 422 : 400).json({ error: e?.message || 'Branch failed' });
+    }
+  });
+
   // POST /api/terminals/:terminalId/restore
   router.post('/terminals/:terminalId/restore', (req, res) => {
     const terminal = sessionService.restoreTerminal(req.params.terminalId);

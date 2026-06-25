@@ -197,6 +197,9 @@ export interface AgentOverview {
   projects: AgentOverviewProject[];
 }
 
+// Recent Claude Code sessions (resume picker) — mirrors core /api/sessions/:id/cc-recent.
+export interface CcRecentSession { id: string; mtime: number; preview: string; messageCount: number; truncated: boolean; }
+
 // Setup / onboarding — mirrors core /api/setup.
 export interface ProviderStatus { name: 'claude' | 'codex'; installed: boolean; version?: string; signedIn: boolean | 'unknown'; }
 export interface TailscaleStatus { installed: boolean; running: boolean; dnsName?: string; url?: string; }

@@ -239,6 +239,46 @@ export class SessionService {
     return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
   }
 
+  /**
+   * Branch (fork) a Claude Code thread into a NEW thread. Resolves the source
+   * thread's session id, then creates a terminal that forks it on first spawn
+   * (config.branchFrom → provider.buildBranchCommand → `claude -r <id> --fork-session`).
+   * The original thread is untouched. Throws with `.status = 422` if the source
+   * doesn't have a session id yet.
+   */
+  branchTerminal(sourceTerminalId: string): terminalsDb.Terminal {
+    const source = terminalsDb.getById(this.db, sourceTerminalId);
+    if (!source) throw new Error('Thread not found');
+    const provider = getProvider(source.type);
+    if (!provider.buildBranchCommand) throw new Error('This thread type cannot be branched');
+    const dir = source.working_dir || sessionsDb.getById(this.db, source.session_id)?.working_dir;
+    if (!dir) throw new Error('Session not found');
+    const sourceSessionId = source.external_id || this.recoverSessionId(sourceTerminalId, dir);
+    if (!sourceSessionId) {
+      const e: any = new Error('Thread has no session yet — let it start, then branch.');
+      e.status = 422;
+      throw e;
+    }
+
+    const terminalId = uuid();
+    terminalsDb.create(this.db, {
+      id: terminalId,
+      sessionId: source.session_id,
+      type: source.type,
+      label: `${source.label} (branch)`,
+      skipPermissions: true,
+      workingDir: dir,
+      config: { branchFrom: sourceSessionId },
+    });
+    try {
+      this.spawnTerminal(terminalId);
+    } catch (err: any) {
+      terminalsDb.remove(this.db, terminalId);
+      throw new Error(`Failed to branch: ${err.message}`);
+    }
+    return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
+  }
+
   // Create a non-PTY tab (browser, notes)
   createTab(sessionId: string, type: string, label: string, config?: Record<string, any>): terminalsDb.Terminal {
     const session = sessionsDb.getById(this.db, sessionId);
@@ -588,9 +628,12 @@ export class SessionService {
         cmd = provider.buildRunnerCommand({ workDir, prompt: runnerPrompt, secretsMcp });
       } else {
         const statusHooks = this.buildStatusHooks(terminalId, terminal.type);
+        const branchFrom: string | undefined = typeof config.branchFrom === 'string' ? config.branchFrom : undefined;
         cmd = terminal.external_id
           ? provider.buildResumeCommand({ externalSessionId: terminal.external_id, workDir, secretsMcp, statusHooks })
-          : provider.buildNewCommand({ workDir, secretsMcp, statusHooks });
+          : (branchFrom && provider.buildBranchCommand)
+            ? provider.buildBranchCommand({ sourceSessionId: branchFrom, workDir, secretsMcp, statusHooks })
+            : provider.buildNewCommand({ workDir, secretsMcp, statusHooks });
       }
       command = cmd.command;
       args = cmd.args;

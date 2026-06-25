@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { SessionService } from '../sessions/service.js';
 import type { EventBroadcaster } from '../ws/events.js';
+import { listRecentSessions } from '../sessions/cc-sessions.js';
 
 export function createSessionsRouter(sessionService: SessionService, broadcaster?: EventBroadcaster): Router {
   const router = Router();
@@ -36,6 +37,15 @@ export function createSessionsRouter(sessionService: SessionService, broadcaster
     const session = sessionService.get(req.params.id);
     if (!session) return res.status(404).json({ error: 'Session not found' });
     res.json(session);
+  });
+
+  // GET /api/sessions/:id/cc-recent — recent Claude Code sessions in this project's
+  // folder, for the new-thread "resume" picker.
+  router.get('/:id/cc-recent', async (req, res) => {
+    const session = sessionService.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    try { res.json(await listRecentSessions(session.workingDir)); }
+    catch { res.json([]); }
   });
 
   // PATCH /api/sessions/:id — update session fields

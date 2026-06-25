@@ -15,6 +15,7 @@ import { useSettings, type Density } from '../../stores/settings';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { timeAgo } from '../../lib/time';
 import { NewTabMenu } from './NewTabMenu';
+import { NewClaudeThreadModal } from './NewClaudeThreadModal';
 import { RenameProjectModal } from './RenameProjectModal';
 import { RenameThreadModal } from './RenameThreadModal';
 import { api } from '../../api/client';
@@ -261,6 +262,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   const [projMenu, setProjMenu] = useState<{ x: number; y: number } | null>(null);
   const [projArchive, setProjArchive] = useState(false);
   const [renameProj, setRenameProj] = useState(false);
+  const [newClaude, setNewClaude] = useState(false);
   const [projTab, setProjTab] = useState<'threads' | 'agents'>('threads');
   const loadingMap = useTabs((s) => s.loading);
   const pfs = useSettings((s) => s.projectFontSize);
@@ -286,6 +288,15 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   async function archive(tab: Terminal) {
     setArchiveTarget(null);
     try { await api.archiveTerminal(tab.id); await useTabs.getState().loadTabs(session.id); } catch { /* surfaced via connection state */ }
+  }
+
+  async function branch(tab: Terminal) {
+    try {
+      const t = await api.branchTerminal(tab.id);
+      await useTabs.getState().loadTabs(session.id);
+      useTabs.getState().markLoading(t.id);
+      onSelectTab(t.id);
+    } catch { /* e.g. 422 if the thread hasn't started a session yet */ }
   }
 
   async function deleteAgent(a: AgentSchedule) {
@@ -385,7 +396,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
             {projTab === 'threads' ? (
               <span style={{ alignSelf: 'center', position: 'relative', display: 'inline-flex' }}>
                 <button title="Add thread" onClick={(e) => { e.stopPropagation(); setMenu((o) => !o); }} style={plusStyle}>+</button>
-                {menu && <NewTabMenu sessionId={session.id} onClose={() => setMenu(false)} onCreated={onSelectTab} />}
+                {menu && <NewTabMenu sessionId={session.id} onClose={() => setMenu(false)} onCreated={onSelectTab} onPickClaude={() => { setMenu(false); setNewClaude(true); }} />}
               </span>
             ) : (
               <button title="Add agent" onClick={(e) => { e.stopPropagation(); onNewAgent?.(session.id); }} style={{ ...plusStyle, alignSelf: 'center' }}>+</button>
@@ -434,6 +445,9 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
           <div onClick={() => setCtxMenu(null)} onContextMenu={(e) => { e.preventDefault(); setCtxMenu(null); }} style={{ position: 'fixed', inset: 0, zIndex: 300 }} />
           <div style={{ position: 'fixed', top: ctxMenu.y, left: Math.min(ctxMenu.x, window.innerWidth - 184), zIndex: 301, minWidth: 168, background: '#1B1B1E', border: '1px solid #2C2C32', borderRadius: 9, padding: 4, boxShadow: '0 20px 50px -20px rgba(0,0,0,.8)' }}>
             <button onClick={() => { setRenameTarget(ctxMenu.tab); setCtxMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>{ctxMenu.tab.type === 'file' ? 'Rename file' : 'Rename thread'}</button>
+            {ctxMenu.tab.type === 'claude-code' && (
+              <button onClick={() => { void branch(ctxMenu.tab); setCtxMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>Branch thread</button>
+            )}
             {ctxMenu.tab.type === 'file' ? (
               <button onClick={() => { void archive(ctxMenu.tab); setCtxMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>Unpin</button>
             ) : (
@@ -506,6 +520,10 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
 
       {renameProj && (
         <RenameProjectModal sessionId={session.id} current={session.name} onClose={() => setRenameProj(false)} />
+      )}
+
+      {newClaude && (
+        <NewClaudeThreadModal sessionId={session.id} onClose={() => setNewClaude(false)} onCreated={onSelectTab} />
       )}
     </div>
   );
