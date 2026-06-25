@@ -28,10 +28,10 @@ function dotState(status: string): 'working' | 'idle' | 'needs_input' | 'error' 
 
 // Project-view density: scales row padding + section spacing (desktop). Mobile
 // rows stay finger-sized regardless.
-const DENSITY: Record<Density, { rowY: number; sectionMt: number }> = {
-  compact: { rowY: 3, sectionMt: 4 },
-  cozy: { rowY: 6, sectionMt: 7 },
-  roomy: { rowY: 10, sectionMt: 12 },
+const DENSITY: Record<Density, { rowY: number; sectionMt: number; rowGap: number }> = {
+  compact: { rowY: 3, sectionMt: 4, rowGap: 1 },
+  cozy: { rowY: 6, sectionMt: 7, rowGap: 3 },
+  roomy: { rowY: 10, sectionMt: 12, rowGap: 5 },
 };
 
 const SECTIONS: { key: string; label: string; types: Terminal['type'][]; add: 'menu' | 'browser' | 'notes' | null; prominent?: boolean }[] = [
@@ -364,7 +364,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
         </div>
         <div title={session.workingDir} style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>{homePath(session.workingDir)}</div>
       </div>
-      <div style={{ display: 'grid', gridTemplateRows: isOpen ? '1fr' : '0fr', transition: 'grid-template-rows 0.2s ease' }}>
+      <div style={{ display: 'grid', gridTemplateRows: isOpen ? '1fr' : '0fr', transition: 'grid-template-rows 0.12s ease' }}>
         <div style={{ overflow: 'hidden', minHeight: 0 }}>
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, marginTop: isMobile ? 6 : 4, marginBottom: 6, padding: isMobile ? '0 6px' : '0 4px', borderBottom: '1px solid var(--color-border)', background: 'rgba(255,255,255,0.03)' }}>
             <TabPill label="Threads" count={threadItems.length} active={projTab === 'threads'} mobile={isMobile} onClick={() => setProjTab('threads')} />
@@ -380,7 +380,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
             )}
           </div>
           {projTab === 'threads' ? (
-            <div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: isMobile ? 0 : DENSITY[density].rowGap }}>
               {threadItems.map((t) => (
                 <SwipeRow key={t.id} disabled={!isMobile}
                   actionLabel={t.type === 'file' ? 'Unpin' : 'Delete'}
@@ -396,7 +396,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
               {!threadItems.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No threads yet</div>}
             </div>
           ) : (
-            <div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: isMobile ? 0 : DENSITY[density].rowGap }}>
               {agents.map((a) => (
                 <SwipeRow key={a.id} disabled={!isMobile} actionLabel="Delete" actionColor="var(--color-status-red)" onAction={() => setPendingDelete({ kind: 'agent', agent: a })}>
                   <AgentRow agent={a} active={agentFocused && a.id === agentSel} onClick={() => onSelectAgent?.(a.id)} />
