@@ -4,6 +4,7 @@ import { execFileSync } from 'child_process';
 import type { Platform, ShellSpec, BrowserShimEnv } from './types.js';
 import { encodeClaudeProjectDir } from './encode.js';
 import { parseTasklistPids } from './win32-util.js';
+import { createWin32Daemon } from './daemon-win32.js';
 
 function whereExe(name: string): string | null {
   try {
@@ -39,4 +40,5 @@ export const win32: Win32Platform = {
   claudeProjectDir: (workDir) =>
     path.join(os.homedir(), '.claude', 'projects', encodeClaudeProjectDir(workDir, 'win32')),
   installBrowserShim: (): BrowserShimEnv => ({}),
+  daemon: createWin32Daemon(),
 };

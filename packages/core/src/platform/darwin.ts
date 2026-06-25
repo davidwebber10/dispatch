@@ -4,6 +4,7 @@ import { execFileSync } from 'child_process';
 import type { Platform } from './types.js';
 import { encodeClaudeProjectDir } from './encode.js';
 import { installBrowserShim } from '../auth/shim.js';
+import { createDarwinDaemon } from './daemon-darwin.js';
 
 export const darwin: Platform = {
   id: 'darwin',
@@ -43,4 +44,5 @@ export const darwin: Platform = {
   claudeProjectDir: (workDir) =>
     path.join(os.homedir(), '.claude', 'projects', encodeClaudeProjectDir(workDir, 'darwin')),
   installBrowserShim: (opts) => installBrowserShim(opts),
+  daemon: createDarwinDaemon(),
 };

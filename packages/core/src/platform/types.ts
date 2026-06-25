@@ -1,3 +1,5 @@
+import type { DaemonController } from './daemon.js';
+
 export interface ShellSpec {
   command: string;
   args: string[];
@@ -30,4 +32,6 @@ export interface Platform {
   claudeProjectDir(workDir: string): string;
   /** Installs the browser/OAuth capture shim; returns env to inject. {} when unsupported. */
   installBrowserShim(opts: BrowserShimOptions): BrowserShimEnv;
+  /** Manages the background server daemon for this platform. */
+  readonly daemon: DaemonController;
 }
