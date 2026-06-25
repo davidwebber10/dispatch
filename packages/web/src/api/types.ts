@@ -27,6 +27,7 @@ export interface Terminal {
   workingDir: string | null;
   status: TerminalStatus;
   createdAt: string;
+  lastActivityAt?: string;
   config: Record<string, unknown>;
   archivedAt: string | null;
   sortOrder: number;

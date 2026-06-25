@@ -16,6 +16,7 @@ import { useSettings } from '../../stores/settings';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { timeAgo } from '../../lib/time';
 import { NewTabMenu } from './NewTabMenu';
+import { RenameProjectModal } from './RenameProjectModal';
 import { RenameThreadModal } from './RenameThreadModal';
 import { api } from '../../api/client';
 
@@ -168,7 +169,7 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
         : <span style={{ width: dot, height: dot, borderRadius: '50%', background: color, flexShrink: 0 }} />}
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tab.label}</span>
       <span style={{ flexShrink: 0, maxWidth: isMobile ? 150 : 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', font: `400 ${isMobile ? 12 : 10.5}px var(--font-mono)`, color: liveActivity ? 'var(--color-accent)' : 'var(--color-text-tertiary)' }}>
-        {liveActivity || timeAgo(tab.createdAt)}
+        {liveActivity || timeAgo(tab.lastActivityAt ?? tab.createdAt)}
       </span>
       <span style={{ width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
         {hover && !isMobile ? (
@@ -252,6 +253,8 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   const [ctxMenu, setCtxMenu] = useState<{ tab: Terminal; x: number; y: number } | null>(null);
   const [projMenu, setProjMenu] = useState<{ x: number; y: number } | null>(null);
   const [projArchive, setProjArchive] = useState(false);
+  const [renameProj, setRenameProj] = useState(false);
+  const [projTab, setProjTab] = useState<'threads' | 'agents'>('threads');
   const loadingMap = useTabs((s) => s.loading);
   const pfs = useSettings((s) => s.projectFontSize);
   const isMobile = useIsMobile();
@@ -262,6 +265,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   // Roll the project's threads up to one header indicator (needs_input > working
   // > error > idle), combining the backend's session.status with live tab state.
   const indicator = projectIndicator(session.status, tabs.map((t) => t.status), tabs.some((t) => loadingMap[t.id]));
+  const threadItems = tabs.filter((t) => SECTIONS[0].types.includes(t.type));
   useEffect(() => { if (isOpen) void useTabs.getState().loadTabs(session.id); }, [isOpen, session.id]);
 
   async function addTab(type: string, config?: Record<string, unknown>) {
@@ -356,18 +360,45 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
       </div>
       <div style={{ display: 'grid', gridTemplateRows: isOpen ? '1fr' : '0fr', transition: 'grid-template-rows 0.2s ease' }}>
         <div style={{ overflow: 'hidden', minHeight: 0 }}>
-          {renderSection(SECTIONS[0])}
-          <div style={{ marginTop: 10 }}>
-            <SectionHeader label="AGENTS" count={agents.length} prominent>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: isMobile ? '10px 8px 6px' : '6px 6px 4px' }}>
+            <TabPill label="Threads" count={threadItems.length} active={projTab === 'threads'} mobile={isMobile} onClick={() => setProjTab('threads')} />
+            <TabPill label="Agents" count={agents.length} active={projTab === 'agents'} mobile={isMobile} onClick={() => setProjTab('agents')} />
+            <span style={{ flex: 1 }} />
+            {projTab === 'threads' ? (
+              <span style={{ position: 'relative', display: 'inline-flex' }}>
+                <button title="Add thread" onClick={(e) => { e.stopPropagation(); setMenu((o) => !o); }} style={plusStyle}>+</button>
+                {menu && <NewTabMenu sessionId={session.id} onClose={() => setMenu(false)} onCreated={onSelectTab} />}
+              </span>
+            ) : (
               <button title="Add agent" onClick={(e) => { e.stopPropagation(); onNewAgent?.(session.id); }} style={plusStyle}>+</button>
-            </SectionHeader>
-            {agents.map((a) => (
-              <SwipeRow key={a.id} disabled={!isMobile} actionLabel="Delete" actionColor="var(--color-status-red)" onAction={() => setPendingDelete({ kind: 'agent', agent: a })}>
-                <AgentRow agent={a} active={agentFocused && a.id === agentSel} onClick={() => onSelectAgent?.(a.id)} />
-              </SwipeRow>
-            ))}
-            {!agents.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No agents yet</div>}
+            )}
           </div>
+          {projTab === 'threads' ? (
+            <div>
+              {threadItems.map((t) => (
+                <SwipeRow key={t.id} disabled={!isMobile}
+                  actionLabel={t.type === 'file' ? 'Unpin' : 'Delete'}
+                  actionColor={t.type === 'file' ? '#3F3F46' : 'var(--color-status-red)'}
+                  onAction={() => { if (t.type === 'file') void archive(t); else setPendingDelete({ kind: 'thread', thread: t }); }}>
+                  <ThreadRow tab={t} active={t.id === highlightId} fadeKey={fadeActiveKey}
+                    onClick={(e) => { e.stopPropagation(); onSelectTab(t.id); }}
+                    onMiddle={() => useTabs.getState().openTab(t.id, true)}
+                    onArchive={() => setArchiveTarget(t)}
+                    onContext={(x, y) => setCtxMenu({ tab: t, x, y })} />
+                </SwipeRow>
+              ))}
+              {!threadItems.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No threads yet</div>}
+            </div>
+          ) : (
+            <div>
+              {agents.map((a) => (
+                <SwipeRow key={a.id} disabled={!isMobile} actionLabel="Delete" actionColor="var(--color-status-red)" onAction={() => setPendingDelete({ kind: 'agent', agent: a })}>
+                  <AgentRow agent={a} active={agentFocused && a.id === agentSel} onClick={() => onSelectAgent?.(a.id)} />
+                </SwipeRow>
+              ))}
+              {!agents.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No agents yet</div>}
+            </div>
+          )}
           {SECTIONS.slice(1).map(renderSection)}
           {isMobile && onBrowseFiles && (
             <button onClick={(e) => { e.stopPropagation(); onBrowseFiles(session.id); }}
@@ -384,8 +415,12 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
         <>
           <div onClick={() => setCtxMenu(null)} onContextMenu={(e) => { e.preventDefault(); setCtxMenu(null); }} style={{ position: 'fixed', inset: 0, zIndex: 300 }} />
           <div style={{ position: 'fixed', top: ctxMenu.y, left: Math.min(ctxMenu.x, window.innerWidth - 184), zIndex: 301, minWidth: 168, background: '#1B1B1E', border: '1px solid #2C2C32', borderRadius: 9, padding: 4, boxShadow: '0 20px 50px -20px rgba(0,0,0,.8)' }}>
-            <button onClick={() => { setRenameTarget(ctxMenu.tab); setCtxMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>Rename thread</button>
-            <button onClick={() => { setArchiveTarget(ctxMenu.tab); setCtxMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-status-red)', cursor: 'pointer', fontSize: 13 }}>Archive thread</button>
+            <button onClick={() => { setRenameTarget(ctxMenu.tab); setCtxMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>{ctxMenu.tab.type === 'file' ? 'Rename file' : 'Rename thread'}</button>
+            {ctxMenu.tab.type === 'file' ? (
+              <button onClick={() => { void archive(ctxMenu.tab); setCtxMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>Unpin</button>
+            ) : (
+              <button onClick={() => { setArchiveTarget(ctxMenu.tab); setCtxMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-status-red)', cursor: 'pointer', fontSize: 13 }}>Archive thread</button>
+            )}
           </div>
         </>,
         document.body,
@@ -395,6 +430,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
         <>
           <div onClick={() => setProjMenu(null)} onContextMenu={(e) => { e.preventDefault(); setProjMenu(null); }} style={{ position: 'fixed', inset: 0, zIndex: 300 }} />
           <div style={{ position: 'fixed', top: projMenu.y, left: Math.min(projMenu.x, window.innerWidth - 184), zIndex: 301, minWidth: 168, background: '#1B1B1E', border: '1px solid #2C2C32', borderRadius: 9, padding: 4, boxShadow: '0 20px 50px -20px rgba(0,0,0,.8)' }}>
+            <button onClick={() => { setRenameProj(true); setProjMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>Rename project</button>
             <button onClick={() => { setProjArchive(true); setProjMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-status-red)', cursor: 'pointer', fontSize: 13 }}>Archive project</button>
           </div>
         </>,
@@ -449,6 +485,26 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
           onClose={() => setRenameTarget(null)}
         />
       )}
+
+      {renameProj && (
+        <RenameProjectModal sessionId={session.id} current={session.name} onClose={() => setRenameProj(false)} />
+      )}
     </div>
+  );
+}
+
+function TabPill({ label, count, active, mobile, onClick }: { label: string; count: number; active: boolean; mobile: boolean; onClick: () => void }) {
+  return (
+    <button onClick={(e) => { e.stopPropagation(); onClick(); }} style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6, padding: mobile ? '6px 11px' : '4px 9px', borderRadius: 8, border: 'none', cursor: 'pointer',
+      background: active ? 'var(--color-elevated)' : 'transparent',
+      color: active ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
+      font: `700 ${mobile ? 13 : 11}px var(--font-mono)`, letterSpacing: '1.1px', transition: 'background .12s ease, color .12s ease',
+    }}>
+      {label.toUpperCase()}
+      {count > 0 && (
+        <span style={{ font: `600 ${mobile ? 11 : 9.5}px var(--font-mono)`, color: 'var(--color-text-secondary)', background: active ? 'var(--color-pane)' : 'var(--color-elevated)', borderRadius: 9, padding: '0 6px', lineHeight: mobile ? '17px' : '15px' }}>{count}</span>
+      )}
+    </button>
   );
 }

@@ -22,6 +22,7 @@ export interface TerminalRow {
   working_dir: string | null;
   status: string;
   created_at: string;
+  last_activity_at: string | null;
   config: string | null;
   archived_at: string | null;
   sort_order: number;
@@ -38,6 +39,7 @@ export interface Terminal {
   workingDir: string | null;
   status: string;
   createdAt: string;
+  lastActivityAt: string;
   config: Record<string, any>;
   archivedAt: string | null;
   sortOrder: number;
@@ -57,6 +59,7 @@ export function rowToTerminal(row: TerminalRow): Terminal {
     workingDir: row.working_dir,
     status: row.status || 'waiting',
     createdAt: row.created_at,
+    lastActivityAt: row.last_activity_at ?? row.created_at,
     config,
     archivedAt: row.archived_at,
     sortOrder: row.sort_order ?? 0,
