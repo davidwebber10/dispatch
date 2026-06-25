@@ -1,0 +1,20 @@
+# .github/workflows/windows.yml
+name: windows
+on: [push, pull_request]
+jobs:
+  build-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r run build
+      - run: pnpm -r run test
+      - name: Guard — no process.platform branching outside platform/
+        shell: bash
+        run: |
+          if grep -rnE "process\.platform" packages/core/src packages/web/src | grep -v "src/platform/"; then
+            echo "process.platform used outside platform/"; exit 1; fi
