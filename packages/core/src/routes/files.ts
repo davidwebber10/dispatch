@@ -146,7 +146,9 @@ export function createFilesRouter(db: Database.Database): Router {
         const suffix = Math.random().toString(36).slice(2, 10) || 'upload';
         const filename = `${Date.now()}-${suffix}-${safeFilename}`;
         const absolutePath = path.join(inboxDir, filename);
-        const relativePath = path.relative(session.workingDir, absolutePath);
+        // Normalize to forward slashes for a platform-independent API response
+        // (on Windows path.relative returns backslashes; on macOS/linux this is a no-op).
+        const relativePath = path.relative(session.workingDir, absolutePath).split(path.sep).join('/');
 
         fs.copyFileSync(req.file.path, absolutePath);
         fs.unlinkSync(req.file.path);
