@@ -1,7 +1,7 @@
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import type { SessionProvider, SecretsMcpInjection, StatusHooksInjection } from './types.js';
+import { platform } from '../platform/index.js';
 
 // Additive --mcp-config (no --strict-mcp-config, so the user's other MCP servers
 // still load). Returns [] when Doppler isn't connected.
@@ -81,8 +81,7 @@ export const claudeCodeProvider: SessionProvider = {
     //   ~/.claude/projects/<workdir-with-slashes-replaced-by-dashes>/<uuid>.jsonl
     // The filename (without extension) is the session UUID, so we watch for the
     // first jsonl file created after spawnTime.
-    const encoded = workDir.replace(/\//g, '-');
-    const projectDir = path.join(os.homedir(), '.claude', 'projects', encoded);
+    const projectDir = platform.claudeProjectDir(workDir);
     const deadline = spawnTime + deadlineMs;
     const minBirth = spawnTime - 2000; // small slack for clock skew / fs timing
 

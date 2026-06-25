@@ -13,6 +13,7 @@ import { rowToSession } from '../types.js';
 import type { TerminalType } from '../db/terminals.js';
 import type { SecretsMcpInjection, StatusHooksInjection } from '../providers/types.js';
 import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript.js';
+import { platform } from '../platform/index.js';
 
 interface StatusContext {
   serverUrl: string;
@@ -315,7 +316,7 @@ export class SessionService {
     const workDir = terminal.working_dir || session?.working_dir;
     if (!workDir) return empty;
 
-    const dir = path.join(os.homedir(), '.claude', 'projects', workDir.replace(/\//g, '-'));
+    const dir = platform.claudeProjectDir(workDir);
     // external_id is normally captured at spawn; when it wasn't, recover it from the
     // project's transcript files so the thread still renders in View.
     const sessionId = terminal.external_id || this.recoverSessionId(terminalId, dir);
@@ -364,7 +365,7 @@ export class SessionService {
     const session = sessionsDb.getById(this.db, terminal.session_id);
     const workDir = terminal.working_dir || session?.working_dir;
     if (!workDir) return { matches: [] };
-    const dir = path.join(os.homedir(), '.claude', 'projects', workDir.replace(/\//g, '-'));
+    const dir = platform.claudeProjectDir(workDir);
     const sessionId = terminal.external_id || this.recoverSessionId(terminalId, dir);
     if (!sessionId) return { matches: [] };
     let raw: string;
@@ -577,8 +578,9 @@ export class SessionService {
     let args: string[];
 
     if (terminal.type === 'shell') {
-      command = '/bin/zsh';
-      args = [];
+      const shell = platform.defaultShell();
+      command = shell.command;
+      args = shell.args;
     } else {
       const provider = getProvider(terminal.type);
       const secretsMcp = this.secretsInjection?.() ?? undefined;

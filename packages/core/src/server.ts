@@ -3,7 +3,6 @@ import path from 'path';
 import os from 'os';
 import http from 'http';
 import { fileURLToPath } from 'url';
-import { execFileSync, execSync } from 'child_process';
 import express from 'express';
 import { WebSocketServer } from 'ws';
 import type Database from 'better-sqlite3';
@@ -37,6 +36,7 @@ import type { EventBroadcaster } from './ws/events.js';
 import { handleTerminalConnection } from './ws/terminal.js';
 import { startPtyTimingLoop } from './sessions/status.js';
 import { TerminalMonitor } from './terminal-monitor.js';
+import { platform } from './platform/index.js';
 
 interface CreateAppOptions {
   db: Database.Database;
@@ -83,7 +83,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
 
   const sessionService = new SessionService(db, ptyManager);
   const agentService = new AgentService(db, sessionService, broadcaster);
-  const secretsService = options.secretsService ?? new SecretsService(options.secretsDir ?? path.join(os.homedir(), '.dispatch'));
+  const secretsService = options.secretsService ?? new SecretsService(options.secretsDir ?? platform.dataDir());
   sessionService.setSecretsInjection(() => secretsService.getInjection());
   const statusService = new StatusService(db, broadcaster);
 
@@ -119,34 +119,11 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   return app;
 }
 
-/**
- * When launched from Finder/Login Items, macOS GUI apps inherit launchd's
- * minimal PATH (no ~/.local/bin, no nvm, no homebrew). Ask the user's login
- * shell for its PATH so spawned PTYs can find `claude`, `codex`, git, etc.
- */
-function resolveShellPath(): string | undefined {
-  try {
-    const shell = process.env.SHELL || '/bin/zsh';
-    // Wrap PATH in sentinels so we can extract it cleanly even if .zshrc prints noise
-    // (e.g. "Restored session:" lines, p10k hints, shell integration prints).
-    const out = execFileSync(
-      shell,
-      ['-ilc', 'echo -n "__DISPATCH_PATH_START__${PATH}__DISPATCH_PATH_END__"'],
-      { encoding: 'utf-8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] },
-    );
-    const match = String(out).match(/__DISPATCH_PATH_START__(.*?)__DISPATCH_PATH_END__/s);
-    const resolved = match?.[1]?.trim();
-    return resolved && resolved.length > 0 ? resolved : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 export async function startServer(options?: { port?: number; allowRandomPortFallback?: boolean }): Promise<{ port: number; cleanup: () => void }> {
   const preferredPort = options?.port ?? 3456;
 
   // Resolve the user's shell PATH so PTYs inherit it (fixes Finder/login-items launches)
-  const shellPath = resolveShellPath();
+  const shellPath = platform.resolveLoginPath();
   if (shellPath) {
     process.env.PATH = shellPath;
     console.log(`Resolved shell PATH (${shellPath.split(':').length} entries)`);
@@ -159,7 +136,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   } catch {}
 
   // Ensure data directory exists
-  const dataDir = path.join(os.homedir(), '.dispatch');
+  const dataDir = platform.dataDir();
   fs.mkdirSync(dataDir, { recursive: true });
 
   const browserShimEnv = installBrowserShim({
@@ -175,14 +152,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const ptyManager = new PTYManager(browserShimEnv);
 
   // Clean stale PIDs
-  const alivePids = new Set<number>();
-  try {
-    const procs = execSync('ps -eo pid', { encoding: 'utf-8' });
-    for (const line of procs.split('\n')) {
-      const pid = parseInt(line.trim(), 10);
-      if (!isNaN(pid)) alivePids.add(pid);
-    }
-  } catch {}
+  const alivePids = new Set<number>(platform.listProcessIds());
   sessionsDb.clearStalePids(db, alivePids);
 
   // Create Express app
