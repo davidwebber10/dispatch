@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { createRequire } from 'module';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import type { DaemonController, DaemonInstallOptions } from 'dispatch-server/platform';
 
@@ -140,6 +141,8 @@ function cmdLogs(ctx: Ctx, args: string[]): void {
   }
 
   // Follow mode: print last 200 lines of each file then stream appended bytes.
+  const watchedFiles: string[] = [];
+
   const watchFile = (filePath: string, label: string) => {
     if (!fs.existsSync(filePath)) return;
     const content = fs.readFileSync(filePath, 'utf-8');
@@ -149,19 +152,34 @@ function cmdLogs(ctx: Ctx, args: string[]): void {
       process.stdout.write(out + '\n');
     }
     let offset = fs.statSync(filePath).size;
+    watchedFiles.push(filePath);
     fs.watchFile(filePath, { interval: 250 }, (curr) => {
       if (curr.size <= offset) return; // truncation or no change
-      const buf = Buffer.alloc(curr.size - offset);
+      // Loop until no more bytes to read — a single readSync may not capture all
+      // appended bytes when the write is large (short-read guard).
       const fd = fs.openSync(filePath, 'r');
-      fs.readSync(fd, buf, 0, buf.length, offset);
+      let pos = offset;
+      while (pos < curr.size) {
+        const chunkSize = curr.size - pos;
+        const buf = Buffer.alloc(chunkSize);
+        const bytesRead = fs.readSync(fd, buf, 0, chunkSize, pos);
+        if (bytesRead === 0) break;
+        process.stdout.write(buf.subarray(0, bytesRead));
+        pos += bytesRead;
+      }
       fs.closeSync(fd);
       offset = curr.size;
-      process.stdout.write(buf);
     });
   };
 
   watchFile(outFile, 'dispatch.out.log');
   watchFile(errFile, 'dispatch.err.log');
+
+  // Clean up watchers on SIGINT (Ctrl-C) so the process exits promptly.
+  process.once('SIGINT', () => {
+    for (const f of watchedFiles) fs.unwatchFile(f);
+    process.exit(0);
+  });
 }
 
 // Real entry point — only runs when this file is executed directly
@@ -178,6 +196,24 @@ async function main(): Promise<void> {
   const logDir = platform.logDir();
   const port = Number(process.env.PORT ?? 3456);
 
+  // #1: Bake PATH into the plist env on darwin so spawned processes have a good
+  // PATH at process-creation time (belt-and-suspenders with resolveLoginPath()).
+  // Mirrors write_plist() in the old bash script:
+  //   path_val="$node_dir:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin"
+  // Do NOT set PATH on win32 — the logon task already inherits the registry PATH.
+  const darwinPathEnv: Record<string, string> = {};
+  if (platform.id === 'darwin') {
+    const nodeDir = path.dirname(process.execPath);
+    const home = os.homedir();
+    const curatedPath =
+      `${nodeDir}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${home}/.local/bin`;
+    darwinPathEnv.PATH = platform.resolveLoginPath() ?? curatedPath;
+  }
+
+  // #2: Bake DISPATCH_WEB_DIST so the server always finds the built web assets
+  // without relying on its own relative-path fallback.
+  const webDist = resolve(repoRoot, 'packages', 'web', 'dist');
+
   const ctx: Ctx = {
     daemon: platform.daemon,
     port,
@@ -188,6 +224,8 @@ async function main(): Promise<void> {
     platformId: platform.id,
     env: {
       PORT: String(port),
+      DISPATCH_WEB_DIST: webDist,
+      ...darwinPathEnv,
       ...(process.env.DISPATCH_SERVERS ? { DISPATCH_SERVERS: process.env.DISPATCH_SERVERS } : {}),
     },
   };

@@ -11,7 +11,7 @@ export function buildLogonTaskXml(opts: DaemonInstallOptions & { userId: string 
     .map(([k, v]) => `$env:${k}='${v.replace(/'/g, "''")}';`).join(' ');
   const cmd =
     `${envSetup} & '${opts.nodePath}' '${opts.entry}' ` +
-    `*> '${opts.logDir}\\dispatch.out.log'`;
+    `*>> '${opts.logDir}\\dispatch.out.log'`;
   const args = `-NoLogo -NonInteractive -Command "${cmd}"`;
   return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">

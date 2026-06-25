@@ -28,4 +28,14 @@ describe('buildLogonTaskXml', () => {
     });
     expect(x).toContain('a&amp;b&lt;c&gt;');
   });
+  test('uses append redirect *>> so logs persist across restarts', () => {
+    // The *>> is inside an XML-escaped <Arguments> value, so > becomes &gt;
+    // *>> → *&gt;&gt; in the serialised XML.
+    expect(xml).toContain('*&gt;&gt;');
+    // Must NOT contain bare *&gt; (single >) which would be the truncating *> form.
+    // We check the raw source string contains '*>>' and not just '*>'.
+    const src = xml.replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&');
+    expect(src).toContain('*>>');
+    expect(src).not.toMatch(/\*>[^>]/); // no single *> redirect
+  });
 });

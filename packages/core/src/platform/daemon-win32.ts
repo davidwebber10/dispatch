@@ -1,7 +1,7 @@
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import type { DaemonController, DaemonInstallOptions, DaemonStatus } from './daemon.js';
 import { buildLogonTaskXml } from './win32-task-xml.js';
 
@@ -23,7 +23,14 @@ export function createWin32Daemon(run: Runner = defaultRun, userId: () => string
     uninstall() { run('schtasks', ['/Delete', '/TN', TASK, '/F']); },
     start() { run('schtasks', ['/Run', '/TN', TASK]); },
     stop() { run('schtasks', ['/End', '/TN', TASK]); },
-    restart() { try { run('schtasks', ['/End', '/TN', TASK]); } catch { /* ignore */ } run('schtasks', ['/Run', '/TN', TASK]); },
+    restart() {
+      try { run('schtasks', ['/End', '/TN', TASK]); } catch { /* ignore — may not be running */ }
+      // schtasks /End is asynchronous; MultipleInstancesPolicy=IgnoreNew will silently
+      // drop /Run if the old process is still alive. A short delay avoids the race.
+      // NOTE: this 2-second wait should be validated during Windows bring-up.
+      spawnSync('timeout', ['/T', '2', '/NOBREAK'], { shell: false, stdio: 'ignore' });
+      run('schtasks', ['/Run', '/TN', TASK]);
+    },
     status(): DaemonStatus {
       try {
         const out = run('schtasks', ['/Query', '/TN', TASK]);

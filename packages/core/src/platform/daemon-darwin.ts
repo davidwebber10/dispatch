@@ -65,7 +65,25 @@ export function createDarwinDaemon(run: Runner = defaultRun): DaemonController {
     status(): DaemonStatus {
       try {
         const out = run('launchctl', ['list']);
-        return { loaded: out.includes(LABEL) };
+        // Find the line whose 3rd column == LABEL (same as old bash agent_pid():
+        //   launchctl list | awk -v l="$LABEL" '$3==l{print $1}')
+        // Format: <pid-or-dash>  <exitcode>  <label>
+        let loaded = false;
+        let pid: number | undefined;
+        for (const line of out.split('\n')) {
+          const cols = line.trim().split(/\s+/);
+          if (cols.length >= 3 && cols[2] === LABEL) {
+            loaded = true;
+            // First column is '-' when loaded-but-not-running, or an integer PID.
+            const raw = cols[0];
+            if (raw !== '-') {
+              const n = parseInt(raw, 10);
+              if (!isNaN(n)) pid = n;
+            }
+            break;
+          }
+        }
+        return pid !== undefined ? { loaded, pid } : { loaded };
       } catch { return { loaded: false }; }
     },
   };

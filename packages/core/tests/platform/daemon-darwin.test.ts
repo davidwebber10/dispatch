@@ -72,6 +72,50 @@ describe('buildPlist XML escaping', () => {
   });
 });
 
+// ── status() PID parsing ─────────────────────────────────────────────────────
+
+describe('createDarwinDaemon status()', () => {
+  test('returns loaded=true and pid when the label is present with a PID', () => {
+    // Sample launchctl list output: PID  exitcode  label
+    const listOutput = [
+      'PID\tStatus\tLabel',
+      '12345\t0\tcom.apple.something',
+      '67890\t0\tcom.dispatch.server',
+      '-\t0\tcom.apple.other',
+    ].join('\n');
+    const run = vi.fn((_cmd: string, _args: string[]) => listOutput);
+    const d = createDarwinDaemon(run);
+    const s = d.status();
+    expect(s.loaded).toBe(true);
+    expect(s.pid).toBe(67890);
+  });
+
+  test('returns loaded=true and no pid when the process is loaded but not running (-)', () => {
+    const listOutput = [
+      'PID\tStatus\tLabel',
+      '-\t0\tcom.dispatch.server',
+    ].join('\n');
+    const run = vi.fn((_cmd: string, _args: string[]) => listOutput);
+    const d = createDarwinDaemon(run);
+    const s = d.status();
+    expect(s.loaded).toBe(true);
+    expect(s.pid).toBeUndefined();
+  });
+
+  test('returns loaded=false when the label is absent', () => {
+    const listOutput = [
+      'PID\tStatus\tLabel',
+      '123\t0\tcom.apple.something',
+      '-\t0\tcom.apple.other',
+    ].join('\n');
+    const run = vi.fn((_cmd: string, _args: string[]) => listOutput);
+    const d = createDarwinDaemon(run);
+    const s = d.status();
+    expect(s.loaded).toBe(false);
+    expect(s.pid).toBeUndefined();
+  });
+});
+
 // ── domain fallback (SSH vs local) ──────────────────────────────────────────
 
 describe('createDarwinDaemon domain fallback', () => {
