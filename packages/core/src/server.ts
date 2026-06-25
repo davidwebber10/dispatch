@@ -18,8 +18,6 @@ import { AgentService } from './agents/service.js';
 import { createAgentsRouter } from './routes/agents.js';
 import { aggregateSessionStatus } from './status/aggregate.js';
 import { AuthRequestService } from './auth/service.js';
-import { installBrowserShim } from './auth/shim.js';
-
 import { createAuthRouter } from './routes/auth.js';
 import { createProvidersRouter } from './routes/providers.js';
 import { createServersRouter } from './routes/servers.js';
@@ -139,7 +137,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const dataDir = platform.dataDir();
   fs.mkdirSync(dataDir, { recursive: true });
 
-  const browserShimEnv = installBrowserShim({
+  const browserShimEnv = platform.installBrowserShim({
     dataDir,
     serverUrl: `http://127.0.0.1:${preferredPort}`,
   });
@@ -311,7 +309,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   });
 
   if (port !== preferredPort) {
-    effectiveShimEnv = installBrowserShim({
+    effectiveShimEnv = platform.installBrowserShim({
       dataDir,
       serverUrl: `http://127.0.0.1:${port}`,
     });
