@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { createRequire } from 'module';
+import * as fs from 'fs';
+import * as path from 'path';
 import type { DaemonController, DaemonInstallOptions } from 'dispatch-server/platform';
 
 const require = createRequire(import.meta.url);
@@ -85,10 +87,48 @@ function cmdRun(ctx: Ctx): void {
   spawnSync(ctx.nodePath ?? process.execPath, [ctx.entry ?? ''], { stdio: 'inherit', env });
 }
 
+/** Returns the last `n` lines of `content`. Pure helper — no I/O, cross-platform. */
+export function lastLines(content: string, n: number): string {
+  if (n <= 0) return '';
+  // Normalise a single trailing newline so it doesn't count as an extra empty line.
+  const normalised = content.endsWith('\n') ? content.slice(0, -1) : content;
+  if (normalised === '') return '';
+  const lines = normalised.split('\n');
+  return lines.slice(-n).join('\n');
+}
+
 function cmdLogs(ctx: Ctx, args: string[]): void {
-  const logFile = `${ctx.logDir ?? ''}/dispatch.out.log`;
+  const logFile = path.join(ctx.logDir ?? '', 'dispatch.out.log');
   const follow = args.includes('-f');
-  spawnSync('tail', follow ? ['-f', logFile] : ['-n', '200', logFile], { stdio: 'inherit' });
+
+  if (!fs.existsSync(logFile)) {
+    console.log('no logs yet');
+    return;
+  }
+
+  if (!follow) {
+    const content = fs.readFileSync(logFile, 'utf-8');
+    const out = lastLines(content, 200);
+    if (out) process.stdout.write(out + '\n');
+    return;
+  }
+
+  // Follow mode: print last 200 lines then stream appended bytes.
+  const content = fs.readFileSync(logFile, 'utf-8');
+  const out = lastLines(content, 200);
+  if (out) process.stdout.write(out + '\n');
+
+  let offset = fs.statSync(logFile).size;
+
+  fs.watchFile(logFile, { interval: 250 }, (curr) => {
+    if (curr.size <= offset) return; // truncation or no change
+    const buf = Buffer.alloc(curr.size - offset);
+    const fd = fs.openSync(logFile, 'r');
+    fs.readSync(fd, buf, 0, buf.length, offset);
+    fs.closeSync(fd);
+    offset = curr.size;
+    process.stdout.write(buf);
+  });
 }
 
 // Real entry point — only runs when this file is executed directly
