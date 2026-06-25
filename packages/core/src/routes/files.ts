@@ -6,6 +6,33 @@ import type Database from 'better-sqlite3';
 import * as sessionsDb from '../db/sessions.js';
 import { rowToSession } from '../types.js';
 
+/**
+ * Best-effort synchronous file removal that retries on transient errors
+ * (EBUSY / EPERM / EACCES) which can occur on Windows when a file handle
+ * has not yet been released. Uses a short busy-wait so the function stays
+ * synchronous. ENOENT is treated as success (already gone). Any error
+ * that persists after all retries is swallowed — cleanup is best-effort.
+ */
+function safeUnlinkSync(p: string): void {
+  const MAX_ATTEMPTS = 10;
+  const DELAY_MS = 20;
+  const TRANSIENT = new Set(['EBUSY', 'EPERM', 'EACCES']);
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    try {
+      fs.unlinkSync(p);
+      return; // success
+    } catch (err: any) {
+      if (err.code === 'ENOENT') return; // already gone — success
+      if (!TRANSIENT.has(err.code)) return; // non-transient — give up silently
+      if (attempt < MAX_ATTEMPTS - 1) {
+        // Synchronous busy-wait via Atomics so we don't require async handlers
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, DELAY_MS);
+      }
+      // else: last attempt failed — fall through and return without throwing
+    }
+  }
+}
+
 export function createFilesRouter(db: Database.Database): Router {
   const router = Router({ mergeParams: true });
   const upload = multer({ dest: '/tmp/commandcenter-uploads' });
@@ -120,7 +147,7 @@ export function createFilesRouter(db: Database.Database): Router {
       const dest = path.join(resolved, req.file.originalname);
       if (!dest.startsWith(session.workingDir)) return res.status(403).json({ error: 'Path traversal not allowed' });
       fs.copyFileSync(req.file.path, dest);
-      fs.unlinkSync(req.file.path);
+      safeUnlinkSync(req.file.path);
       res.json({ ok: true, path: path.relative(session.workingDir, dest) });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -151,12 +178,10 @@ export function createFilesRouter(db: Database.Database): Router {
         const relativePath = path.relative(session.workingDir, absolutePath).split(path.sep).join('/');
 
         fs.copyFileSync(req.file.path, absolutePath);
-        fs.unlinkSync(req.file.path);
+        safeUnlinkSync(req.file.path);
         res.json({ ok: true, path: relativePath, absolutePath });
       } catch (copyErr: any) {
-        try {
-          if (req.file?.path) fs.unlinkSync(req.file.path);
-        } catch {}
+        if (req.file?.path) safeUnlinkSync(req.file.path);
         res.status(400).json({ error: copyErr.message });
       }
     });
