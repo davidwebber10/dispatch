@@ -102,7 +102,37 @@ afterward.
 
 ---
 
-## Step 7 — Deferred features degrade gracefully
+## Step 7a — Inbox upload path separators
+
+Upload a file via the Files UI (drag-drop or the upload button) into any session.
+
+**Expected:** the response JSON and the displayed path in the UI both use forward slashes
+(`/`) as separators — e.g. `.dispatch/inbox/1234567890-abc-myfile.txt`. If backslashes
+(`\`) appear in the path returned from `POST /api/sessions/:id/files/inbox`, the
+normalization in `packages/core/src/routes/files.ts` is not working correctly — report it.
+
+---
+
+## Step 7b — Claude transcript directory encoding
+
+After a Claude Code terminal has run at least one exchange:
+
+1. Open PowerShell and run:
+   ```powershell
+   dir "$env:USERPROFILE\.claude\projects"
+   ```
+2. Note the subdirectory name for your project path (e.g. for `C:\Users\you\proj` it might
+   be `-C--Users-you-proj` or similar).
+3. Compare it against what `platform.claudeProjectDir('C:\\Users\\you\\proj')` produces in
+   Node (run: `node -e "const {platform}=require('./packages/core/dist/platform/index.js'); console.log(platform.claudeProjectDir('C:\\\\Users\\\\you\\\\proj'))"`).
+
+If they match: transcript loading in the View pane works. If they differ, record the
+expected vs. actual encoding and update `packages/core/src/platform/encode.ts` accordingly
+(one-line change in the `win32` branch).
+
+---
+
+## Step 8 — Deferred features degrade gracefully
 
 **Expected (no crash, no unhandled error):**
 
