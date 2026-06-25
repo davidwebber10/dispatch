@@ -16,5 +16,5 @@ jobs:
       - name: Guard — no process.platform branching outside platform/
         shell: bash
         run: |
-          if grep -rnE "process\.platform" packages/core/src packages/web/src | grep -v "src/platform/"; then
+          if grep -rnE "process\.platform" packages/core/src packages/web/src packages/cli/src | grep -v "src/platform/"; then
             echo "process.platform used outside platform/"; exit 1; fi
