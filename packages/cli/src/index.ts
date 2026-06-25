@@ -14,6 +14,8 @@ export interface Ctx {
   repoRoot?: string;
   logDir?: string;
   env?: Record<string, string>;
+  /** The platform identifier — used to conditionally pass { shell: true } on win32. */
+  platformId?: NodeJS.Platform;
 }
 
 function buildInstallOpts(ctx: Ctx): DaemonInstallOptions {
@@ -51,7 +53,7 @@ export function runCommand(argv: string[], ctx: Ctx): void {
       return;
     }
     case 'build':
-      cmdBuild();
+      cmdBuild(ctx);
       return;
     case 'update':
       cmdUpdate(ctx);
@@ -72,13 +74,17 @@ export function runCommand(argv: string[], ctx: Ctx): void {
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { execFileSync, spawnSync } = require('child_process') as typeof import('child_process');
 
-function cmdBuild(): void {
-  execFileSync('pnpm', ['-r', 'run', 'build'], { stdio: 'inherit' });
+function cmdBuild(ctx: Ctx): void {
+  // On win32 pnpm/git are .cmd shims that execFile cannot launch directly without
+  // shell: true. On macOS/Linux the binaries are real executables — no shell needed.
+  const shellOpt = ctx.platformId === 'win32' ? { shell: true } : {};
+  execFileSync('pnpm', ['-r', 'run', 'build'], { stdio: 'inherit', ...shellOpt });
 }
 
 function cmdUpdate(ctx: Ctx): void {
-  execFileSync('git', ['pull', '--ff-only'], { stdio: 'inherit' });
-  cmdBuild();
+  const shellOpt = ctx.platformId === 'win32' ? { shell: true } : {};
+  execFileSync('git', ['pull', '--ff-only'], { stdio: 'inherit', ...shellOpt });
+  cmdBuild(ctx);
   ctx.daemon.restart();
 }
 
@@ -98,37 +104,64 @@ export function lastLines(content: string, n: number): string {
 }
 
 function cmdLogs(ctx: Ctx, args: string[]): void {
-  const logFile = path.join(ctx.logDir ?? '', 'dispatch.out.log');
+  const logDir = ctx.logDir ?? '';
+  const outFile = path.join(logDir, 'dispatch.out.log');
+  // stderr is separate on macOS (plist StandardErrorPath); on win32 the task XML
+  // redirects everything to out.log so err.log won't exist — handle gracefully.
+  const errFile = path.join(logDir, 'dispatch.err.log');
   const follow = args.includes('-f');
 
-  if (!fs.existsSync(logFile)) {
+  const outExists = fs.existsSync(outFile);
+  const errExists = fs.existsSync(errFile);
+
+  if (!outExists && !errExists) {
     console.log('no logs yet');
     return;
   }
 
   if (!follow) {
-    const content = fs.readFileSync(logFile, 'utf-8');
-    const out = lastLines(content, 200);
-    if (out) process.stdout.write(out + '\n');
+    if (outExists) {
+      const content = fs.readFileSync(outFile, 'utf-8');
+      const out = lastLines(content, 200);
+      if (out) {
+        process.stdout.write('==> dispatch.out.log <==\n');
+        process.stdout.write(out + '\n');
+      }
+    }
+    if (errExists) {
+      const content = fs.readFileSync(errFile, 'utf-8');
+      const out = lastLines(content, 200);
+      if (out) {
+        process.stdout.write('==> dispatch.err.log <==\n');
+        process.stdout.write(out + '\n');
+      }
+    }
     return;
   }
 
-  // Follow mode: print last 200 lines then stream appended bytes.
-  const content = fs.readFileSync(logFile, 'utf-8');
-  const out = lastLines(content, 200);
-  if (out) process.stdout.write(out + '\n');
+  // Follow mode: print last 200 lines of each file then stream appended bytes.
+  const watchFile = (filePath: string, label: string) => {
+    if (!fs.existsSync(filePath)) return;
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const out = lastLines(content, 200);
+    if (out) {
+      process.stdout.write(`==> ${label} <==\n`);
+      process.stdout.write(out + '\n');
+    }
+    let offset = fs.statSync(filePath).size;
+    fs.watchFile(filePath, { interval: 250 }, (curr) => {
+      if (curr.size <= offset) return; // truncation or no change
+      const buf = Buffer.alloc(curr.size - offset);
+      const fd = fs.openSync(filePath, 'r');
+      fs.readSync(fd, buf, 0, buf.length, offset);
+      fs.closeSync(fd);
+      offset = curr.size;
+      process.stdout.write(buf);
+    });
+  };
 
-  let offset = fs.statSync(logFile).size;
-
-  fs.watchFile(logFile, { interval: 250 }, (curr) => {
-    if (curr.size <= offset) return; // truncation or no change
-    const buf = Buffer.alloc(curr.size - offset);
-    const fd = fs.openSync(logFile, 'r');
-    fs.readSync(fd, buf, 0, buf.length, offset);
-    fs.closeSync(fd);
-    offset = curr.size;
-    process.stdout.write(buf);
-  });
+  watchFile(outFile, 'dispatch.out.log');
+  watchFile(errFile, 'dispatch.err.log');
 }
 
 // Real entry point — only runs when this file is executed directly
@@ -152,6 +185,7 @@ async function main(): Promise<void> {
     entry,
     repoRoot,
     logDir,
+    platformId: platform.id,
     env: {
       PORT: String(port),
       ...(process.env.DISPATCH_SERVERS ? { DISPATCH_SERVERS: process.env.DISPATCH_SERVERS } : {}),
