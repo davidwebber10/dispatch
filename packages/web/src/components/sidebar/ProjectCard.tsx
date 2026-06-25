@@ -365,12 +365,12 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
             <TabPill label="Agents" count={agents.length} active={projTab === 'agents'} mobile={isMobile} onClick={() => setProjTab('agents')} />
             <span style={{ flex: 1 }} />
             {projTab === 'threads' ? (
-              <span style={{ alignSelf: 'center', marginBottom: 4, position: 'relative', display: 'inline-flex' }}>
+              <span style={{ alignSelf: 'center', position: 'relative', display: 'inline-flex' }}>
                 <button title="Add thread" onClick={(e) => { e.stopPropagation(); setMenu((o) => !o); }} style={plusStyle}>+</button>
                 {menu && <NewTabMenu sessionId={session.id} onClose={() => setMenu(false)} onCreated={onSelectTab} />}
               </span>
             ) : (
-              <button title="Add agent" onClick={(e) => { e.stopPropagation(); onNewAgent?.(session.id); }} style={{ ...plusStyle, alignSelf: 'center', marginBottom: 4 }}>+</button>
+              <button title="Add agent" onClick={(e) => { e.stopPropagation(); onNewAgent?.(session.id); }} style={{ ...plusStyle, alignSelf: 'center' }}>+</button>
             )}
           </div>
           {projTab === 'threads' ? (
