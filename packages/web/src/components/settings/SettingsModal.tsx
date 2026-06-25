@@ -235,6 +235,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   const sidebarFontSize = useSettings((s) => s.sidebarFontSize);
   const projectFontSize = useSettings((s) => s.projectFontSize);
   const accent = useSettings((s) => s.accent);
+  const density = useSettings((s) => s.density);
   const notify = useSettings((s) => s.notify);
   const servers = useServers((s) => s.servers);
   const openSetup = useSetup((s) => s.open);
@@ -293,6 +294,18 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
                 <span style={sectionLabel}>SIDEBAR</span>
                 <div style={row}><span style={item}>Project names</span><Stepper value={String(projectFontSize)} onDec={() => useSettings.getState().setProjectFontSize(projectFontSize - 1)} onInc={() => useSettings.getState().setProjectFontSize(projectFontSize + 1)} /></div>
                 <div style={row}><span style={item}>Thread &amp; file names</span><Stepper value={String(sidebarFontSize)} onDec={() => useSettings.getState().setSidebarFontSize(sidebarFontSize - 1)} onInc={() => useSettings.getState().setSidebarFontSize(sidebarFontSize + 1)} /></div>
+                <div style={row}><span style={item}>Density</span>
+                  <div style={{ display: 'inline-flex', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 7, padding: 2, gap: 2 }}>
+                    {(['compact', 'cozy', 'roomy'] as const).map((d) => (
+                      <button key={d} onClick={() => useSettings.getState().setDensity(d)} style={{
+                        padding: '4px 10px', borderRadius: 5, border: 'none', cursor: 'pointer', textTransform: 'capitalize',
+                        fontSize: 12, fontWeight: density === d ? 600 : 400,
+                        background: density === d ? 'var(--color-accent)' : 'transparent',
+                        color: density === d ? '#08240F' : 'var(--color-text-secondary)',
+                      }}>{d}</button>
+                    ))}
+                  </div>
+                </div>
               </div>
               <Divider />
 

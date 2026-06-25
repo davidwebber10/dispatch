@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom';
 import { FolderOpen, CaretRight } from '@phosphor-icons/react';
 import type { Session, Terminal, AgentSchedule } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
-import { useThreadStatus } from '../../stores/threadStatus';
 import { projectIndicator } from '../../lib/status';
 import { useProjects } from '../../stores/projects';
 import { useAgents } from '../../stores/agents';
@@ -12,7 +11,7 @@ import { StatusDot } from '../common/StatusDot';
 import { Spinner } from '../common/Spinner';
 import { ConfirmModal } from '../common/ConfirmModal';
 import { providerColor, fileVisual } from '../common/typeIcons';
-import { useSettings } from '../../stores/settings';
+import { useSettings, type Density } from '../../stores/settings';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { timeAgo } from '../../lib/time';
 import { NewTabMenu } from './NewTabMenu';
@@ -26,6 +25,14 @@ function dotState(status: string): 'working' | 'idle' | 'needs_input' | 'error' 
   if (status === 'error') return 'error';
   return 'idle';
 }
+
+// Project-view density: scales row padding + section spacing (desktop). Mobile
+// rows stay finger-sized regardless.
+const DENSITY: Record<Density, { rowY: number; sectionMt: number }> = {
+  compact: { rowY: 5, sectionMt: 4 },
+  cozy: { rowY: 8, sectionMt: 8 },
+  roomy: { rowY: 12, sectionMt: 14 },
+};
 
 const SECTIONS: { key: string; label: string; types: Terminal['type'][]; add: 'menu' | 'browser' | 'notes' | null; prominent?: boolean }[] = [
   { key: 'threads', label: 'THREADS', types: ['claude-code', 'codex', 'shell'], add: 'menu', prominent: true },
@@ -129,15 +136,13 @@ function SwipeRow({ actionLabel, actionColor, onAction, disabled, children }: { 
 
 function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onContext }: { tab: Terminal; active: boolean; fadeKey?: number; onClick: (e: React.MouseEvent) => void; onMiddle: () => void; onArchive: () => void; onContext: (x: number, y: number) => void }) {
   const [hover, setHover] = useState(false);
-  const color = providerColor(tab.type);
   const loading = useTabs((s) => !!s.loading[tab.id]);
   const fs = useSettings((s) => s.sidebarFontSize);
+  const density = useSettings((s) => s.density);
   const isMobile = useIsMobile();
-  const dot = isMobile ? 11 : 8;
-  // While a thread is working/needs-input, surface its live activity label in
-  // place of the timestamp ("Running: npm test", "Editing app.ts").
-  const activity = useThreadStatus((s) => s.byTerminal[tab.id]?.activity);
-  const liveActivity = (tab.status === 'working' || tab.status === 'needs_input') ? activity : undefined;
+  const padY = isMobile ? 15 : DENSITY[density].rowY;
+  const working = loading || tab.status === 'working';
+  const needsAttn = tab.status === 'needs_input' || tab.status === 'error';
   // On mobile, the active row's highlight fades out a couple seconds after the
   // thread list (re)appears (fadeKey bumps), so the list reads as clean.
   const [dimmed, setDimmed] = useState(false);
@@ -156,29 +161,26 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
       onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onMiddle(); } }}
       onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContext(e.clientX, e.clientY); }}
       style={{
-        display: 'flex', alignItems: 'center', gap: isMobile ? 12 : 9, width: '100%', padding: isMobile ? '15px 12px' : '7px 9px',
+        display: 'flex', alignItems: 'center', gap: isMobile ? 12 : 9, width: '100%', padding: isMobile ? '15px 12px' : `${padY}px 9px`,
         transition: 'background .8s ease, color .8s ease',
-        background: showActive ? 'var(--color-hover)' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
+        background: showActive ? 'var(--color-accent)' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
         borderRadius: isMobile ? 0 : 6, border: 'none', borderBottom: isMobile ? '1px solid var(--color-border)' : 'none',
-        color: showActive ? '#fff' : 'var(--color-text-primary)', fontSize: isMobile ? 16 : fs, fontWeight: showActive ? 500 : isMobile ? 450 : 400,
+        color: showActive ? '#08240F' : 'var(--color-text-primary)', fontSize: isMobile ? 16 : fs, fontWeight: showActive ? 600 : isMobile ? 450 : 400,
         textAlign: 'left', cursor: 'pointer',
       }}
     >
-      {tab.type === 'file'
-        ? (() => { const fv = fileVisual(tab.label); return <fv.Icon size={isMobile ? 18 : 15} weight="fill" color={fv.color} style={{ flexShrink: 0 }} />; })()
-        : <span style={{ width: dot, height: dot, borderRadius: '50%', background: color, flexShrink: 0 }} />}
+      {tab.type === 'file' && (() => { const fv = fileVisual(tab.label); return <fv.Icon size={isMobile ? 18 : 15} weight="fill" color={showActive ? '#08240F' : fv.color} style={{ flexShrink: 0 }} />; })()}
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tab.label}</span>
-      <span style={{ flexShrink: 0, maxWidth: isMobile ? 150 : 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', font: `400 ${isMobile ? 12 : 10.5}px var(--font-mono)`, color: liveActivity ? 'var(--color-accent)' : 'var(--color-text-tertiary)' }}>
-        {liveActivity || timeAgo(tab.lastActivityAt ?? tab.createdAt)}
-      </span>
-      <span style={{ width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+      <span style={{ flexShrink: 0, marginLeft: 8, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
         {hover && !isMobile ? (
           <span role="button" title="Archive thread" onClick={(e) => { e.stopPropagation(); onArchive(); }}
-            style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, color: 'var(--color-text-secondary)', fontSize: 14, lineHeight: 1, cursor: 'pointer' }}>×</span>
-        ) : (loading || tab.status === 'working') ? (
-          <Spinner size={isMobile ? 13 : 11} />
-        ) : (
+            style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, color: showActive ? '#08240F' : 'var(--color-text-secondary)', fontSize: 14, lineHeight: 1, cursor: 'pointer' }}>×</span>
+        ) : working ? (
+          <Spinner size={isMobile ? 13 : 11} color={showActive ? '#08240F' : 'var(--color-accent)'} />
+        ) : needsAttn ? (
           <StatusDot state={dotState(tab.status)} size={isMobile ? 9 : 7} />
+        ) : (
+          <span style={{ font: `400 ${isMobile ? 12 : 10.5}px var(--font-mono)`, color: showActive ? 'rgba(8,36,15,0.75)' : 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{timeAgo(tab.lastActivityAt ?? tab.createdAt)}</span>
         )}
       </span>
     </button>
@@ -188,7 +190,9 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
 function AgentRow({ agent, active, onClick }: { agent: AgentSchedule; active: boolean; onClick: () => void }) {
   const [hover, setHover] = useState(false);
   const fs = useSettings((s) => s.sidebarFontSize);
+  const density = useSettings((s) => s.density);
   const isMobile = useIsMobile();
+  const padY = isMobile ? 15 : DENSITY[density].rowY;
   const dot = isMobile ? 11 : 8;
   return (
     <button
@@ -196,19 +200,16 @@ function AgentRow({ agent, active, onClick }: { agent: AgentSchedule; active: bo
       onMouseLeave={() => setHover(false)}
       onClick={(e) => { e.stopPropagation(); onClick(); }}
       style={{
-        display: 'flex', alignItems: 'center', gap: isMobile ? 12 : 9, width: '100%', padding: isMobile ? '15px 12px' : '7px 9px',
-        background: active ? 'var(--color-hover)' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
+        display: 'flex', alignItems: 'center', gap: isMobile ? 12 : 9, width: '100%', padding: isMobile ? '15px 12px' : `${padY}px 9px`,
+        background: active ? 'var(--color-accent)' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
         borderRadius: isMobile ? 0 : 6, border: 'none', borderBottom: isMobile ? '1px solid var(--color-border)' : 'none',
-        color: active ? '#fff' : 'var(--color-text-primary)', fontSize: isMobile ? 16 : fs,
-        fontWeight: active ? 500 : isMobile ? 450 : 400, textAlign: 'left', cursor: 'pointer', opacity: agent.enabled ? 1 : 0.55,
+        color: active ? '#08240F' : 'var(--color-text-primary)', fontSize: isMobile ? 16 : fs,
+        fontWeight: active ? 600 : isMobile ? 450 : 400, textAlign: 'left', cursor: 'pointer', opacity: agent.enabled ? 1 : 0.55,
       }}
     >
-      <span style={{ width: dot, height: dot, borderRadius: '50%', background: providerColor(agent.provider), flexShrink: 0 }} />
+      <span style={{ width: dot, height: dot, borderRadius: '50%', background: active ? '#08240F' : providerColor(agent.provider), flexShrink: 0 }} />
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent.name}</span>
-      <span style={{ flexShrink: 0, font: `400 ${isMobile ? 12 : 10.5}px var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>{timeAgo(agent.createdAt)}</span>
-      <span style={{ width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-        <StatusDot state={agent.enabled ? 'idle' : 'disabled'} size={isMobile ? 9 : 7} />
-      </span>
+      <span style={{ flexShrink: 0, marginLeft: 8, font: `400 ${isMobile ? 12 : 10.5}px var(--font-mono)`, color: active ? 'rgba(8,36,15,0.75)' : 'var(--color-text-tertiary)' }}>{timeAgo(agent.createdAt)}</span>
     </button>
   );
 }
@@ -257,6 +258,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   const [projTab, setProjTab] = useState<'threads' | 'agents'>('threads');
   const loadingMap = useTabs((s) => s.loading);
   const pfs = useSettings((s) => s.projectFontSize);
+  const density = useSettings((s) => s.density);
   const isMobile = useIsMobile();
   // Expansion is decoupled from the active highlight on desktop; on mobile the
   // project screen is always expanded (open defaults to active when not provided).
@@ -293,7 +295,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
     const items = tabs.filter((t) => sec.types.includes(t.type));
     if (sec.key !== 'threads' && !items.length) return null;
     return (
-      <div key={sec.key} style={{ marginTop: sec.prominent ? 10 : 6 }}>
+      <div key={sec.key} style={{ marginTop: sec.prominent ? DENSITY[density].sectionMt : Math.round(DENSITY[density].sectionMt * 0.7) }}>
         <SectionHeader label={sec.label} count={items.length} prominent={sec.prominent}>
           {sec.add && (
             <span style={{ position: 'relative', display: 'inline-flex' }}>
@@ -347,10 +349,12 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
             <CaretRight size={11} weight="bold" style={{ flexShrink: 0, color: 'var(--color-text-tertiary)', transition: 'transform .15s ease', transform: isOpen ? 'rotate(90deg)' : 'none' }} />
           )}
           <span style={{ fontWeight: 600, fontSize: isMobile ? 19 : pfs, color: (!isMobile && active) ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{session.name}</span>
-          {indicator === 'working' && <Spinner size={10} />}
-          {indicator === 'needs_input' && <StatusDot state="needs_input" size={8} />}
-          {indicator === 'error' && <StatusDot state="error" size={8} />}
-          <span title={session.lastActivityAt ?? ''} style={{ marginLeft: 'auto', flexShrink: 0, font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{timeAgo(session.lastActivityAt)}</span>
+          <span title={session.lastActivityAt ?? ''} style={{ marginLeft: 'auto', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+            {indicator === 'working' ? <Spinner size={11} />
+              : indicator === 'needs_input' ? <StatusDot state="needs_input" size={8} />
+              : indicator === 'error' ? <StatusDot state="error" size={8} />
+              : <span style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{timeAgo(session.lastActivityAt)}</span>}
+          </span>
           {(hover || projMenu) && (
             <button title="Project options" onClick={(e) => { e.stopPropagation(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setProjMenu({ x: r.right, y: r.bottom + 4 }); }}
               style={{ width: 18, height: 18, flexShrink: 0, marginLeft: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 15, lineHeight: 1, borderRadius: 4 }}>⋯</button>
