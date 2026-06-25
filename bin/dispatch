@@ -1,3 +1,10 @@
 #!/bin/sh
-DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# Resolve symlinks so a `dispatch` symlink on PATH still finds the repo.
+SOURCE="$0"
+while [ -L "$SOURCE" ]; do
+  dir="$(cd "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  case "$SOURCE" in /*) ;; *) SOURCE="$dir/$SOURCE" ;; esac
+done
+DIR="$(cd "$(dirname "$SOURCE")/.." && pwd)"
 exec node "$DIR/packages/cli/dist/index.js" "$@"
