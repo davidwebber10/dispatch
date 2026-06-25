@@ -23,7 +23,7 @@ function AiThread({ tab }: { tab: Terminal }) {
       {/* Desktop: the View/Terminal switcher floats over the top-right of the
           thread (mobile keeps it in the header). */}
       {!isMobile && (
-        <div style={{ position: 'absolute', top: 8, right: 12, zIndex: 6 }}>
+        <div style={{ position: 'absolute', top: 8, right: 12, zIndex: 12 }}>
           <ModeToggle terminalId={tab.id} floating />
         </div>
       )}
