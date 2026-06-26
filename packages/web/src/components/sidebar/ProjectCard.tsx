@@ -158,31 +158,13 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
     return () => clearTimeout(t);
   }, [fadeKey, active]);
   const showActive = active && !dimmed;
-  // Mobile long-press → open the same context menu desktop gets on right-click.
-  const lpTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lpStart = useRef<{ x: number; y: number } | null>(null);
-  const lpFired = useRef(false);
-  const cancelLp = () => { if (lpTimer.current) { clearTimeout(lpTimer.current); lpTimer.current = null; } };
   return (
     <button
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      onClick={(e) => { if (lpFired.current) { lpFired.current = false; return; } onClick(e); }}
+      onClick={(e) => onClick(e)}
       onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onMiddle(); } }}
       onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContext(e.clientX, e.clientY); }}
-      onTouchStart={(e) => {
-        if (!isMobile) return;
-        const t = e.touches[0]; if (!t) return;
-        lpStart.current = { x: t.clientX, y: t.clientY }; lpFired.current = false;
-        cancelLp();
-        lpTimer.current = setTimeout(() => { lpFired.current = true; onContext(lpStart.current!.x, lpStart.current!.y); try { navigator.vibrate?.(8); } catch { /* */ } }, 450);
-      }}
-      onTouchMove={(e) => {
-        const s = lpStart.current, t = e.touches[0];
-        if (s && t && Math.abs(t.clientX - s.x) + Math.abs(t.clientY - s.y) > 10) cancelLp();
-      }}
-      onTouchEnd={cancelLp}
-      onTouchCancel={cancelLp}
       style={{
         display: 'flex', alignItems: 'center', gap: isMobile ? 12 : 9, width: '100%', padding: isMobile ? '15px 12px' : `${padY}px 9px`,
         // Selecting snaps instantly; the transition only applies while the mobile
@@ -202,6 +184,11 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
         : <span style={{ width: dot, height: dot, borderRadius: '50%', background: color, flexShrink: 0 }} />}
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tab.label}</span>
       <span style={{ flexShrink: 0, marginLeft: 8, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+        {isMobile && (
+          <span role="button" title="Thread options" aria-label="Thread options"
+            onClick={(e) => { e.stopPropagation(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); onContext(r.left, r.bottom); }}
+            style={{ width: 28, height: 28, marginRight: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: 'var(--color-text-secondary)', fontSize: 18, lineHeight: 1 }}>⋯</span>
+        )}
         {hover && !isMobile ? (
           <span role="button" title="Archive thread" onClick={(e) => { e.stopPropagation(); onArchive(); }}
             style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, color: 'var(--color-text-secondary)', fontSize: 14, lineHeight: 1, cursor: 'pointer' }}>×</span>
@@ -429,7 +416,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
             <div style={{ display: 'flex', flexDirection: 'column', gap: isMobile ? 0 : DENSITY[density].rowGap }}>
               <SortableList
                 items={threadItems}
-                disabled={isMobile}
+                disabled={false}
                 onReorder={(orderedIds) => void useTabs.getState().reorder(session.id, orderedIds)}
                 renderItem={(t) => (
                   <SwipeRow key={t.id} disabled={!isMobile}
