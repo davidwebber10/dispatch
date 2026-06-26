@@ -56,19 +56,21 @@ export class IntegrationsService {
   /** Resolve every enabled integration to an McpServerSpec for composeInjection. */
   getServerSpecs(): McpServerSpec[] {
     const specs: McpServerSpec[] = [];
-    for (const i of this.list()) {
-      if (!i.enabled) continue;
-      try {
-        if (i.type === 'stdio') {
-          if (!i.command) continue;
-          specs.push({ name: i.name, command: i.command, args: i.args, ...(Object.keys(i.env).length ? { env: i.env } : {}) });
-        } else {
-          if (!i.url) continue;
-          const headerArgs = Object.entries(i.headers).flatMap(([k, v]) => ['--header', `${k}:${v}`]);
-          specs.push({ name: i.name, command: 'npx', args: ['-y', 'mcp-remote', i.url, ...headerArgs], ...(Object.keys(i.env).length ? { env: i.env } : {}) });
-        }
-      } catch { /* skip a malformed row rather than break a spawn */ }
-    }
+    try {
+      for (const i of this.list()) {
+        if (!i.enabled) continue;
+        try {
+          if (i.type === 'stdio') {
+            if (!i.command) continue;
+            specs.push({ name: i.name, command: i.command, args: i.args, ...(Object.keys(i.env).length ? { env: i.env } : {}) });
+          } else {
+            if (!i.url) continue;
+            const headerArgs = Object.entries(i.headers).flatMap(([k, v]) => ['--header', `${k}:${v}`]);
+            specs.push({ name: i.name, command: 'npx', args: ['-y', 'mcp-remote', i.url, ...headerArgs], ...(Object.keys(i.env).length ? { env: i.env } : {}) });
+          }
+        } catch { /* skip a malformed row rather than break a spawn */ }
+      }
+    } catch { /* DB-level failure — return whatever we collected; never break a spawn */ }
     return specs;
   }
 
