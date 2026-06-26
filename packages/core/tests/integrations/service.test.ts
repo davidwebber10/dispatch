@@ -1,5 +1,8 @@
 import { it, expect, vi } from 'vitest';
-vi.mock('node:child_process', () => ({ execFileSync: () => { throw new Error('not installed'); } }));
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return { ...actual, execFileSync: () => { throw new Error('not installed'); } };
+});
 import { IntegrationsService } from '../../src/integrations/service.js';
 
 it('reports not installed + null spec when executor is absent', () => {
