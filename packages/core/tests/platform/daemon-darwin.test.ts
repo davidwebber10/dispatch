@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
+import fs from 'fs';
 import { buildPlist, esc, createDarwinDaemon } from '../../src/platform/daemon-darwin.js';
 import type { DaemonInstallOptions } from '../../src/platform/daemon.js';
 
@@ -120,9 +121,10 @@ describe('createDarwinDaemon status()', () => {
 
 describe('createDarwinDaemon domain fallback', () => {
   vi.mock('fs', () => ({
-    default: { mkdirSync: vi.fn(), writeFileSync: vi.fn() },
+    default: { mkdirSync: vi.fn(), writeFileSync: vi.fn(), rmSync: vi.fn() },
     mkdirSync: vi.fn(),
     writeFileSync: vi.fn(),
+    rmSync: vi.fn(),
   }));
 
   test('start falls back to user/$uid when gui/$uid throws', () => {
@@ -149,5 +151,81 @@ describe('createDarwinDaemon domain fallback', () => {
     const d = createDarwinDaemon(run);
     expect(() => d.stop()).not.toThrow();
     expect(calls.some(c => c.some(a => a.startsWith('user/')))).toBe(true);
+  });
+});
+
+// ── install() idempotency + uninstall plist cleanup ─────────────────────────
+
+describe('createDarwinDaemon install()', () => {
+  test('issues bootout BEFORE bootstrap when label is loaded', () => {
+    const calls: string[][] = [];
+    let listCallCount = 0;
+    const run = vi.fn((cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      if (args[0] === 'list') {
+        listCallCount++;
+        // First call (check after bootout): still loaded; second call: gone; final verify: loaded
+        if (listCallCount === 1) return 'PID\tStatus\tLabel\n123\t0\tcom.dispatch.server\n';
+        if (listCallCount === 2) return 'PID\tStatus\tLabel\n'; // gone
+        return 'PID\tStatus\tLabel\n456\t0\tcom.dispatch.server\n'; // loaded after bootstrap
+      }
+      return ''; // bootout, bootstrap succeed silently
+    });
+    const sleeper = vi.fn();
+    const d = createDarwinDaemon(run, sleeper, '/tmp/test.plist');
+    d.install({ port: 3456, nodePath: '/usr/bin/node', entry: '/repo/server.js', repoRoot: '/repo', logDir: '/tmp/logs', env: {} });
+    // bootout must come before bootstrap
+    const bootoutIdx = calls.findIndex(c => c[1] === 'bootout');
+    const bootstrapIdx = calls.findIndex(c => c[1] === 'bootstrap');
+    expect(bootoutIdx).toBeGreaterThanOrEqual(0);
+    expect(bootstrapIdx).toBeGreaterThan(bootoutIdx);
+  });
+
+  test('retries bootstrap on EIO then succeeds', () => {
+    let bootstrapAttempts = 0;
+    let listCallCount = 0;
+    const run = vi.fn((cmd: string, args: string[]) => {
+      if (args[0] === 'list') {
+        listCallCount++;
+        // After bootout polls: show gone; after bootstrap: show loaded
+        if (listCallCount <= 1) return 'PID\tStatus\tLabel\n'; // gone after bootout
+        return 'PID\tStatus\tLabel\n789\t0\tcom.dispatch.server\n';
+      }
+      if (args[0] === 'bootstrap') {
+        bootstrapAttempts++;
+        if (bootstrapAttempts < 2) throw new Error('EIO: bootstrap failed');
+        return '';
+      }
+      return ''; // bootout
+    });
+    const sleeper = vi.fn();
+    const d = createDarwinDaemon(run, sleeper, '/tmp/test.plist');
+    expect(() => d.install({ port: 3456, nodePath: '/usr/bin/node', entry: '/repo/server.js', repoRoot: '/repo', logDir: '/tmp/logs', env: {} })).not.toThrow();
+    expect(bootstrapAttempts).toBeGreaterThanOrEqual(2);
+  });
+
+  test('throws if label never loads after bootstrap attempts', () => {
+    let listCallCount = 0;
+    const run = vi.fn((cmd: string, args: string[]) => {
+      if (args[0] === 'list') {
+        listCallCount++;
+        return 'PID\tStatus\tLabel\n'; // never shows com.dispatch.server
+      }
+      // bootstrap always throws
+      if (args[0] === 'bootstrap') throw new Error('EIO');
+      return '';
+    });
+    const sleeper = vi.fn();
+    const d = createDarwinDaemon(run, sleeper, '/tmp/test.plist');
+    expect(() => d.install({ port: 3456, nodePath: '/usr/bin/node', entry: '/repo/server.js', repoRoot: '/repo', logDir: '/tmp/logs', env: {} })).toThrow(/failed to load/i);
+  });
+
+  test('uninstall calls rmSync on plist path', () => {
+    const run = vi.fn(() => '');
+    const rmSpy = vi.spyOn(fs, 'rmSync').mockImplementation(() => {});
+    const d = createDarwinDaemon(run, undefined, '/tmp/dispatch-test.plist');
+    d.uninstall();
+    expect(rmSpy).toHaveBeenCalledWith('/tmp/dispatch-test.plist', { force: true });
+    rmSpy.mockRestore();
   });
 });
