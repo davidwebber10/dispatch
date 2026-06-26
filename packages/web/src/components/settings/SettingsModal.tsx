@@ -240,7 +240,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   const notify = useSettings((s) => s.notify);
   const servers = useServers((s) => s.servers);
   const openSetup = useSetup((s) => s.open);
-  const [tab, setTab] = useState<'general' | 'secrets'>('general');
+  const [tab, setTab] = useState<'general' | 'integrations' | 'secrets'>('general');
   if (!open) return null;
 
   const st = status === 'open' ? { c: 'var(--color-accent)', t: 'Connected' } : status === 'connecting' ? { c: 'var(--color-status-yellow)', t: 'Connecting' } : { c: 'var(--color-status-red)', t: 'Offline' };
@@ -255,7 +255,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
 
         {/* Tabs */}
         <div style={{ flexShrink: 0, display: 'flex', gap: 4, padding: '12px 20px 0', borderBottom: '1px solid var(--color-hover)' }}>
-          {([['general', 'General'], ['secrets', 'Secrets']] as const).map(([key, label]) => (
+          {([['general', 'General'], ['integrations', 'Integrations'], ['secrets', 'Secrets']] as const).map(([key, label]) => (
             <button key={key} onClick={() => setTab(key)} style={{
               position: 'relative', padding: '8px 14px 11px', background: 'none', border: 'none', cursor: 'pointer',
               fontSize: 13, fontWeight: tab === key ? 600 : 500,
@@ -266,7 +266,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
         </div>
 
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {tab === 'general' ? (
+          {tab === 'general' && (
             <>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <span style={sectionLabel}>GETTING STARTED</span>
@@ -330,13 +330,10 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
               <Divider />
 
               <div style={row}><span style={item}>Version</span><span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)' }}>Dispatch Web</span></div>
-              <Divider />
-
-              <IntegrationsSection />
             </>
-          ) : (
-            <SecretsSection />
           )}
+          {tab === 'integrations' && <IntegrationsSection />}
+          {tab === 'secrets' && <SecretsSection />}
         </div>
 
         <div style={{ flexShrink: 0, display: 'flex', justifyContent: 'flex-end', padding: '14px 20px', borderTop: '1px solid var(--color-hover)' }}>
