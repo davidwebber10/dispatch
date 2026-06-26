@@ -11,7 +11,8 @@ import { PTYManager } from '../pty/manager.js';
 import type { Session, CreateSessionInput } from '../types.js';
 import { rowToSession } from '../types.js';
 import type { TerminalType } from '../db/terminals.js';
-import type { SecretsMcpInjection, StatusHooksInjection } from '../providers/types.js';
+import type { StatusHooksInjection } from '../providers/types.js';
+import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
 import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript.js';
 
 interface StatusContext {
@@ -23,8 +24,12 @@ interface StatusContext {
 }
 
 export class SessionService {
-  /** Supplies the Doppler MCP injection for spawned CLIs; set by the server wiring. */
-  private secretsInjection: (() => SecretsMcpInjection) | null = null;
+  /** Supplies the Doppler MCP spec for spawned CLIs; set by the server wiring. */
+  private secretsServerSpec: (() => { spec: McpServerSpec | null; prompt: string | null }) | null = null;
+  /** Supplies the executor MCP spec for spawned CLIs; set by the server wiring. */
+  private integrationsInjection: (() => { spec: McpServerSpec | null; prompt: string | null }) | null = null;
+  /** Path for the combined MCP config written at spawn time. */
+  private readonly mcpConfigPath: string = path.join(os.homedir(), '.dispatch', 'mcp.json');
   /** How spawned CLIs phone home with lifecycle events; set by the server wiring. */
   private statusContext: StatusContext | null = null;
 
@@ -33,8 +38,12 @@ export class SessionService {
     private ptyManager: PTYManager,
   ) {}
 
-  setSecretsInjection(fn: () => SecretsMcpInjection): void {
-    this.secretsInjection = fn;
+  setSecretsServerSpec(fn: () => { spec: McpServerSpec | null; prompt: string | null }): void {
+    this.secretsServerSpec = fn;
+  }
+
+  setIntegrationsInjection(fn: () => { spec: McpServerSpec | null; prompt: string | null }): void {
+    this.integrationsInjection = fn;
   }
 
   setStatusContext(ctx: StatusContext): void {
@@ -621,7 +630,13 @@ export class SessionService {
       args = [];
     } else {
       const provider = getProvider(terminal.type);
-      const secretsMcp = this.secretsInjection?.() ?? undefined;
+      const specs: McpServerSpec[] = [];
+      const prompts: string[] = [];
+      const sec = this.secretsServerSpec?.();
+      if (sec?.spec) { specs.push(sec.spec); if (sec.prompt) prompts.push(sec.prompt); }
+      const intg = this.integrationsInjection?.();
+      if (intg?.spec) { specs.push(intg.spec); if (intg.prompt) prompts.push(intg.prompt); }
+      const secretsMcp = composeInjection(specs, { configPath: this.mcpConfigPath, prompts });
       let cmd: { command: string; args: string[] };
       if (runnerPrompt !== undefined) {
         // Runner launches emit their own structured stream-json; no hooks needed.

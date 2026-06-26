@@ -30,6 +30,7 @@ import { createGitRouter } from './routes/git.js';
 import { createSecretsRouter } from './routes/secrets.js';
 import { createSetupRouter } from './routes/setup.js';
 import { SecretsService } from './secrets/service.js';
+import { IntegrationsService } from './integrations/service.js';
 import { createEventsRouter } from './routes/events.js';
 import { StatusService } from './status/service.js';
 import { createEventsBroadcaster, createNoopBroadcaster } from './ws/events.js';
@@ -84,7 +85,9 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const sessionService = new SessionService(db, ptyManager);
   const agentService = new AgentService(db, sessionService, broadcaster);
   const secretsService = options.secretsService ?? new SecretsService(options.secretsDir ?? path.join(os.homedir(), '.dispatch'));
-  sessionService.setSecretsInjection(() => secretsService.getInjection());
+  const integrationsService = new IntegrationsService();
+  sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
+  sessionService.setIntegrationsInjection(() => ({ spec: integrationsService.getServerSpec(), prompt: integrationsService.getSystemPrompt() }));
   const statusService = new StatusService(db, broadcaster);
 
   // Mount routes
@@ -218,7 +221,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Doppler secrets: token-backed connection + per-spawn injection (DOPPLER_* env +
   // an MCP server) so Claude Code / Codex agents can add & retrieve secrets.
   const secretsService = new SecretsService(dataDir);
-  sessionService.setSecretsInjection(() => secretsService.getInjection());
+  const integrationsService = new IntegrationsService();
+  sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
+  sessionService.setIntegrationsInjection(() => ({ spec: integrationsService.getServerSpec(), prompt: integrationsService.getSystemPrompt() }));
   let effectiveShimEnv = browserShimEnv;
   const refreshPtyEnv = () => ptyManager.setDefaultEnv({ ...effectiveShimEnv, ...secretsService.getSpawnEnv() });
   secretsService.onChange(refreshPtyEnv);
