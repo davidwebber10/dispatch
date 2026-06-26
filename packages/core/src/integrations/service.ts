@@ -33,6 +33,10 @@ export interface IntegrationsDeps {
 
 // --- default deps (real IO) ---------------------------------------------------
 
+// SECURITY: never log a rejection from this call. On a non-zero exit, the
+// ChildProcessError message embeds the full argv — including the stringified
+// add payload, which a future phase may populate with auth headers / API keys.
+// Routes already return fixed 502 strings; keep it that way and do not add logging here.
 async function defaultRun(args: string[]): Promise<string> {
   // 30s timeout covers daemon cold-start (~1s) plus remote spec fetches.
   const { stdout } = await execFileP('executor', args, { encoding: 'utf-8', timeout: 30_000, maxBuffer: 10 * 1024 * 1024 });
@@ -99,25 +103,27 @@ export class IntegrationsService {
     if (input.type === 'openapi') {
       const d = await this.callJson(['call', 'executor', 'openapi', 'addSpec',
         JSON.stringify({ spec: { kind: 'url', url: input.url }, slug: input.slug })]);
-      slug = d.slug; toolCount = typeof d.toolCount === 'number' ? d.toolCount : undefined;
+      slug = d.slug ?? input.slug; toolCount = typeof d.toolCount === 'number' ? d.toolCount : undefined;
     } else if (input.type === 'mcp-stdio') {
       const d = await this.callJson(['call', 'executor', 'mcp', 'addServer',
         JSON.stringify({ transport: 'stdio', name: input.name, command: input.command, args: input.args, ...(input.slug ? { slug: input.slug } : {}) })]);
-      slug = d.slug;
+      slug = d.slug ?? input.slug;
     } else if (input.type === 'mcp-remote') {
       const d = await this.callJson(['call', 'executor', 'mcp', 'addServer',
         JSON.stringify({ transport: 'remote', name: input.name, endpoint: input.endpoint, ...(input.slug ? { slug: input.slug } : {}) })]);
-      slug = d.slug;
+      slug = d.slug ?? input.slug;
     } else {
       const d = await this.callJson(['call', 'executor', 'graphql', 'addIntegration',
         JSON.stringify({ endpoint: input.endpoint, slug: input.slug })]);
-      slug = d.slug;
+      slug = d.slug ?? input.slug;
     }
     // Materialize tools for no-auth sources; non-fatal (catalog entry exists regardless).
     try {
       await this.callJson(['call', 'executor', 'coreTools', 'connections', 'create',
         JSON.stringify({ owner: 'org', name: 'default', integration: slug, template: 'none' })]);
-    } catch { /* best-effort: auth'd sources get credentials via executor's own UI */ }
+    } catch { /* best-effort: auth'd sources get credentials via executor's own UI.
+      // Intentionally NOT logged (see SECURITY note on defaultRun) — a failed
+      // tool-materialization is invisible server-side by design. */ }
     return { slug, toolCount };
   }
 

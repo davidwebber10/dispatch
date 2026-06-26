@@ -50,6 +50,7 @@ describe('integrations management routes', () => {
   it('GET / returns 502 when list throws', async () => {
     const res = await request(appWith({ list: async () => { throw new Error('daemon down'); } })).get('/api/integrations');
     expect(res.status).toBe(502);
+    expect(res.body.error).toBe('Could not reach the executor catalog.');
   });
 
   it('POST / adds a valid openapi source', async () => {
@@ -95,6 +96,7 @@ describe('integrations management routes', () => {
     const res = await request(appWith({ remove: async () => { throw new Error('network fail'); } }))
       .delete('/api/integrations/petstore');
     expect(res.status).toBe(502);
+    expect(res.body.error).toBe('Could not remove the integration.');
   });
 
   it('POST / accepts a valid mcp-stdio source', async () => {

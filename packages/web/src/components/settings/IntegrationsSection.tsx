@@ -25,6 +25,7 @@ export function IntegrationsSection() {
   const [version, setVersion] = useState<string | null>(null);
   const [list, setList] = useState<Integration[]>([]);
   const [err, setErr] = useState('');
+  const [dispatchDown, setDispatchDown] = useState(false);
   const [busy, setBusy] = useState(false);
   const [removingSlug, setRemovingSlug] = useState<string | null>(null);
   const [type, setType] = useState<AddType>('mcp-stdio');
@@ -32,13 +33,12 @@ export function IntegrationsSection() {
   const setF = (k: string, v: string) => setFields((f) => ({ ...f, [k]: v }));
 
   const reload = useCallback(async () => {
-    setErr('');
+    setErr(''); setDispatchDown(false);
     let st: { installed: boolean; version: string | null };
     try {
       st = await api.getIntegrationsStatus();
     } catch {
-      setInstalled(false);
-      setErr('Could not reach Dispatch. Check your connection and try again.');
+      setDispatchDown(true);
       return;
     }
     setInstalled(st.installed);
@@ -76,15 +76,21 @@ export function IntegrationsSection() {
       <span style={sectionLabel}>INTEGRATIONS</span>
       <div style={sub}>One catalog shared across Claude &amp; Codex, via executor.</div>
 
-      {installed === null && <div style={sub}>Checking…</div>}
+      {dispatchDown && (
+        <div style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>
+          Could not reach Dispatch. Check your connection and try again.
+        </div>
+      )}
 
-      {installed === false && (
+      {!dispatchDown && installed === null && <div style={sub}>Checking…</div>}
+
+      {!dispatchDown && installed === false && (
         <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
           executor not installed. Install with: <code>npm i -g executor</code> — then restart the daemon and it&apos;s shared across Claude &amp; Codex.
         </div>
       )}
 
-      {installed === true && (
+      {!dispatchDown && installed === true && (
         <>
           <div style={{ ...sub, color: 'var(--color-text-secondary)' }}>executor {version ?? '(unknown version)'} — connected.</div>
 
