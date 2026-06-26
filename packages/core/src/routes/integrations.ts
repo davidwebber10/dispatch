@@ -1,46 +1,38 @@
 import { Router } from 'express';
-import { IntegrationsService } from '../integrations/service.js';
-import type { AddIntegrationInput } from '../integrations/service.js';
+import type { IntegrationsService, AddIntegrationInput, IntegrationsExport } from '../integrations/service.js';
 
 export function createIntegrationsRouter(integrations: IntegrationsService): Router {
   const router = Router();
 
-  // Always "installed" now — integrations live in the local DB.
-  router.get('/status', (_req, res) => res.json({ installed: true }));
-
-  router.get('/', (_req, res) => {
-    try {
-      res.json({ installed: true, integrations: integrations.list() });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+  router.get('/', (_req, res) => res.json({ integrations: integrations.list() }));
 
   router.post('/', (req, res) => {
-    const err = IntegrationsService.validate(req.body);
+    const err = (integrations.constructor as typeof IntegrationsService).validate(req.body);
     if (err) return res.status(400).json({ error: err });
     try {
-      const result = integrations.add(req.body as AddIntegrationInput);
-      res.json(result);
-    } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      res.json(integrations.add(req.body as AddIntegrationInput));
+    } catch (e: any) {
+      const msg = String(e?.message ?? 'add failed');
+      res.status(/exists/.test(msg) ? 409 : 502).json({ error: /exists/.test(msg) ? msg : 'Could not add the integration.' });
     }
   });
 
-  router.patch('/:id/enabled', (req, res) => {
-    const { enabled } = req.body;
-    if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be boolean' });
-    const result = integrations.setEnabled(req.params.id, enabled);
-    if (!result) return res.status(404).json({ error: 'integration not found' });
-    res.json(result);
+  router.patch('/:id', (req, res) => {
+    if (typeof req.body?.enabled !== 'boolean') return res.status(400).json({ error: 'enabled (boolean) required' });
+    const updated = integrations.setEnabled(req.params.id, req.body.enabled);
+    if (!updated) return res.status(404).json({ error: 'not found' });
+    res.json(updated);
   });
 
-  router.delete('/:id', (req, res) => {
+  router.delete('/:id', (req, res) => res.json(integrations.remove(req.params.id)));
+
+  router.get('/export', (_req, res) => res.json(integrations.export()));
+
+  router.post('/import', (req, res) => {
     try {
-      const result = integrations.remove(req.params.id);
-      res.json(result);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.json(integrations.import(req.body as IntegrationsExport));
+    } catch {
+      res.status(400).json({ error: 'Invalid import document.' });
     }
   });
 
