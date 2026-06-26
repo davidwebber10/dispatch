@@ -1,148 +1,92 @@
-import { execFileSync, execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
+import { v4 as uuid } from 'uuid';
+import type Database from 'better-sqlite3';
+import * as integrationsDb from '../db/integrations.js';
+import type { Integration } from '../db/integrations.js';
 import type { McpServerSpec } from '../mcp/injection.js';
 
-const execFileP = promisify(execFile);
-
-export interface Integration {
-  slug: string;
-  description: string;
-  kind: string;
-  canRemove: boolean;
-  canRefresh: boolean;
-}
-
 export type AddIntegrationInput =
-  | { type: 'openapi'; url: string; slug: string }
-  | { type: 'mcp-stdio'; name: string; command: string; args: string[]; slug?: string }
-  | { type: 'mcp-remote'; name: string; endpoint: string; slug?: string }
-  | { type: 'graphql'; endpoint: string; slug: string };
+  | { type: 'remote'; name: string; url: string; headers?: Record<string, string>; env?: Record<string, string> }
+  | { type: 'stdio'; name: string; command: string; args?: string[]; env?: Record<string, string> };
 
-export interface AddIntegrationResult { slug: string; toolCount?: number }
+export type ExportedIntegration = Omit<Integration, 'id' | 'createdAt' | 'updatedAt'>;
+export interface IntegrationsExport { version: 1; integrations: ExportedIntegration[] }
 
-/** Injectable IO so list/add/remove are unit-testable without a real executor daemon. */
-export interface IntegrationsDeps {
-  /** Run `executor <args>` and return stdout. */
-  run: (args: string[]) => Promise<string>;
-  /** DELETE the catalog entry via the daemon's HTTP API (token read server-side). */
-  deleteCatalogEntry: (slug: string) => Promise<{ removed: boolean }>;
-}
-
-// --- default deps (real IO) ---------------------------------------------------
-
-// SECURITY: never log a rejection from this call. On a non-zero exit, the
-// ChildProcessError message embeds the full argv — including the stringified
-// add payload, which a future phase may populate with auth headers / API keys.
-// Routes already return fixed 502 strings; keep it that way and do not add logging here.
-async function defaultRun(args: string[]): Promise<string> {
-  // 30s timeout covers daemon cold-start (~1s) plus remote spec fetches.
-  const { stdout } = await execFileP('executor', args, { encoding: 'utf-8', timeout: 30_000, maxBuffer: 10 * 1024 * 1024 });
-  return stdout;
-}
-
-async function defaultDeleteCatalogEntry(slug: string): Promise<{ removed: boolean }> {
-  const authPath = path.join(os.homedir(), '.executor', 'server-control', 'auth.json');
-  const token = JSON.parse(fs.readFileSync(authPath, 'utf-8')).token as string;
-  const res = await fetch(`http://localhost:4788/api/integrations/${encodeURIComponent(slug)}`, {
-    method: 'DELETE',
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) throw new Error(`executor DELETE failed: ${res.status}`);
-  return (await res.json()) as { removed: boolean };
-}
+const NAME_RE = /^[a-zA-Z0-9_-]+$/;
 
 export class IntegrationsService {
-  // Detection result is cached for the daemon's lifetime: installing `executor`
-  // after startup is not reflected until the daemon is restarted.
-  private detected: { installed: boolean; version: string | null } | null = null;
-  private readonly deps: IntegrationsDeps;
+  constructor(private db: Database.Database) {}
 
-  constructor(deps?: Partial<IntegrationsDeps>) {
-    this.deps = { run: defaultRun, deleteCatalogEntry: defaultDeleteCatalogEntry, ...deps };
-  }
-
-  status(): { installed: boolean; version: string | null } {
-    if (this.detected) return this.detected;
-    try {
-      const v = execFileSync('executor', ['--version'], { encoding: 'utf-8', timeout: 4000 }).trim();
-      this.detected = { installed: true, version: v };
-    } catch { this.detected = { installed: false, version: null }; }
-    return this.detected;
-  }
-
-  getServerSpec(): McpServerSpec | null {
-    if (!this.status().installed) return null;
-    return { name: 'executor', command: 'executor', args: ['mcp', '--elicitation-mode', 'model'] };
-  }
-
-  getSystemPrompt(): string | null {
-    if (!this.status().installed) return null;
-    return 'An "executor" MCP server exposes your shared integration catalog (the same tools across Claude and Codex). Use its tools to call integrations, and its management tools to add a new integration when given API docs, a CLI, or an MCP. If Doppler is connected, store any credentials there.';
-  }
-
-  /** List integrations from the executor catalog. */
-  async list(): Promise<Integration[]> {
-    const data = await this.callJson(['call', 'executor', 'coreTools', 'integrations', 'list']);
-    const arr: any[] = Array.isArray(data?.integrations) ? data.integrations : [];
-    return arr.map((i) => ({
-      slug: String(i.slug),
-      description: typeof i.description === 'string' ? i.description : '',
-      kind: typeof i.kind === 'string' ? i.kind : 'unknown',
-      canRemove: !!i.canRemove,
-      canRefresh: !!i.canRefresh,
-    }));
-  }
-
-  /** Add a source to the catalog, then best-effort materialize its tools. */
-  async add(input: AddIntegrationInput): Promise<AddIntegrationResult> {
-    let slug: string;
-    let toolCount: number | undefined;
-    if (input.type === 'openapi') {
-      const d = await this.callJson(['call', 'executor', 'openapi', 'addSpec',
-        JSON.stringify({ spec: { kind: 'url', url: input.url }, slug: input.slug })]);
-      slug = d.slug ?? input.slug; toolCount = typeof d.toolCount === 'number' ? d.toolCount : undefined;
-    } else if (input.type === 'mcp-stdio') {
-      const d = await this.callJson(['call', 'executor', 'mcp', 'addServer',
-        JSON.stringify({ transport: 'stdio', name: input.name, command: input.command, args: input.args, ...(input.slug ? { slug: input.slug } : {}) })]);
-      slug = d.slug ?? input.slug;
-    } else if (input.type === 'mcp-remote') {
-      const d = await this.callJson(['call', 'executor', 'mcp', 'addServer',
-        JSON.stringify({ transport: 'remote', name: input.name, endpoint: input.endpoint, ...(input.slug ? { slug: input.slug } : {}) })]);
-      slug = d.slug ?? input.slug;
-    } else {
-      const d = await this.callJson(['call', 'executor', 'graphql', 'addIntegration',
-        JSON.stringify({ endpoint: input.endpoint, slug: input.slug })]);
-      slug = d.slug ?? input.slug;
+  /** Returns an error string if the input is invalid, else null. */
+  static validate(input: any): string | null {
+    if (!input || typeof input !== 'object') return 'body required';
+    if (typeof input.name !== 'string' || !NAME_RE.test(input.name)) return 'name must match ^[a-zA-Z0-9_-]+$ (no spaces)';
+    if (input.type === 'remote') {
+      if (typeof input.url !== 'string' || !/^https?:\/\//.test(input.url)) return 'remote requires an http(s) url';
+      return null;
     }
-    // Materialize tools for no-auth sources; non-fatal (catalog entry exists regardless).
-    try {
-      await this.callJson(['call', 'executor', 'coreTools', 'connections', 'create',
-        JSON.stringify({ owner: 'org', name: 'default', integration: slug, template: 'none' })]);
-    } catch { /* best-effort: auth'd sources get credentials via executor's own UI.
-      // Intentionally NOT logged (see SECURITY note on defaultRun) — a failed
-      // tool-materialization is invisible server-side by design. */ }
-    return { slug, toolCount };
+    if (input.type === 'stdio') {
+      if (typeof input.command !== 'string' || !input.command.trim()) return 'stdio requires a command';
+      return null;
+    }
+    return `unknown integration type: ${String(input.type)}`;
   }
 
-  /** Remove a source: drop its connection (best-effort) then delete the catalog entry. */
-  async remove(slug: string): Promise<{ removed: boolean }> {
-    try {
-      await this.callJson(['call', 'executor', 'coreTools', 'connections', 'remove',
-        JSON.stringify({ owner: 'org', name: 'default', integration: slug })]);
-    } catch { /* no connection / already gone — the connection call also auto-starts the daemon */ }
-    return this.deps.deleteCatalogEntry(slug);
+  list(): Integration[] { return integrationsDb.list(this.db); }
+
+  add(input: AddIntegrationInput): Integration {
+    const err = IntegrationsService.validate(input);
+    if (err) throw new Error(err);
+    if (this.list().some((i) => i.name.toLowerCase() === input.name.toLowerCase())) {
+      throw new Error(`an integration named "${input.name}" already exists`);
+    }
+    return integrationsDb.create(this.db, {
+      id: uuid(), name: input.name, type: input.type,
+      command: input.type === 'stdio' ? input.command : null,
+      args: input.type === 'stdio' ? (input.args ?? []) : [],
+      url: input.type === 'remote' ? input.url : null,
+      headers: input.type === 'remote' ? (input.headers ?? {}) : {},
+      env: input.env ?? {},
+    });
   }
 
-  /** Run an `executor call` and unwrap its {ok,data} envelope. */
-  private async callJson(args: string[]): Promise<any> {
-    const stdout = await this.deps.run(args);
-    let parsed: any;
-    try { parsed = JSON.parse(stdout); }
-    catch { throw new Error(`executor: unparseable output: ${stdout.slice(0, 200)}`); }
-    if (parsed && parsed.ok === false) throw new Error(typeof parsed.error === 'string' ? parsed.error : 'executor call failed');
-    return parsed && 'data' in parsed ? parsed.data : parsed;
+  remove(id: string): { removed: boolean } { integrationsDb.remove(this.db, id); return { removed: true }; }
+
+  setEnabled(id: string, enabled: boolean): Integration | null { return integrationsDb.setEnabled(this.db, id, enabled); }
+
+  /** Resolve every enabled integration to an McpServerSpec for composeInjection. */
+  getServerSpecs(): McpServerSpec[] {
+    const specs: McpServerSpec[] = [];
+    for (const i of this.list()) {
+      if (!i.enabled) continue;
+      try {
+        if (i.type === 'stdio') {
+          if (!i.command) continue;
+          specs.push({ name: i.name, command: i.command, args: i.args, ...(Object.keys(i.env).length ? { env: i.env } : {}) });
+        } else {
+          if (!i.url) continue;
+          const headerArgs = Object.entries(i.headers).flatMap(([k, v]) => ['--header', `${k}:${v}`]);
+          specs.push({ name: i.name, command: 'npx', args: ['-y', 'mcp-remote', i.url, ...headerArgs], ...(Object.keys(i.env).length ? { env: i.env } : {}) });
+        }
+      } catch { /* skip a malformed row rather than break a spawn */ }
+    }
+    return specs;
+  }
+
+  export(): IntegrationsExport {
+    return { version: 1, integrations: this.list().map(({ id, createdAt, updatedAt, ...rest }) => rest) };
+  }
+
+  import(doc: IntegrationsExport): { added: string[]; skipped: string[] } {
+    const added: string[] = []; const skipped: string[] = [];
+    const existing = new Set(this.list().map((i) => i.name.toLowerCase()));
+    for (const e of doc?.integrations ?? []) {
+      if (!e || typeof e.name !== 'string' || existing.has(e.name.toLowerCase())) { if (e?.name) skipped.push(e.name); continue; }
+      const input: AddIntegrationInput = e.type === 'stdio'
+        ? { type: 'stdio', name: e.name, command: e.command ?? '', args: e.args, env: e.env }
+        : { type: 'remote', name: e.name, url: e.url ?? '', headers: e.headers, env: e.env };
+      if (IntegrationsService.validate(input)) { skipped.push(e.name); continue; }
+      this.add(input); existing.add(e.name.toLowerCase()); added.push(e.name);
+    }
+    return { added, skipped };
   }
 }
