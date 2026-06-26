@@ -56,3 +56,7 @@ Remove: the `executor`-specific code in `IntegrationsService`, the `executor mcp
 - Remote MCP via the `mcp-remote` stdio bridge in v1 (reuses `composeInjection` untouched, works for both providers). Native remote config is a later optimization if `mcp-remote` proves limiting.
 - Secrets via ambient Doppler env (inherited by spawned MCP servers); no secret values in the injected config file.
 - Export carries catalog definitions only, never secret values (those live in Doppler).
+
+## Known limitations (deferred fast-follow)
+
+- **Codex literal per-integration `env`:** `composeInjection` writes a spec's literal `env` map into the Claude `--mcp-config` file, but its Codex `-c` branch does not emit it. So an stdio integration that sets a literal env var via the Advanced env editor (e.g. `ROOT=/tmp`) takes effect under Claude but not Codex. This is narrow — the primary cross-provider paths are unaffected: remote secret headers ride in `args` (emitted for both providers) and Doppler secrets ride the ambient terminal env (inherited by spawned MCP servers under both providers). A proper fix means emitting `mcp_servers.<name>.env` for Codex (verifying Codex's config support first) and lifting this spec's "composeInjection unchanged" constraint — tracked as a follow-up, not a v1 blocker.
