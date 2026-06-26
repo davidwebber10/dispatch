@@ -87,6 +87,20 @@ export function initSchema(db: Database.Database): void {
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS integrations (
+      id          TEXT PRIMARY KEY,
+      name        TEXT NOT NULL,
+      type        TEXT NOT NULL,
+      command     TEXT,
+      args        TEXT DEFAULT '[]',
+      url         TEXT,
+      headers     TEXT DEFAULT '{}',
+      env         TEXT DEFAULT '{}',
+      enabled     INTEGER NOT NULL DEFAULT 1,
+      created_at  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL
+    );
   `);
 
   // Migrations: add columns that may not exist on older databases
