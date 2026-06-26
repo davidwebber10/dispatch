@@ -17,6 +17,8 @@ export interface Ctx {
   env?: Record<string, string>;
   /** The platform identifier — used to conditionally pass { shell: true } on win32. */
   platformId?: NodeJS.Platform;
+  /** Optional injectable HTTP probe for testability. Defaults to a spawnSync-based check. */
+  probe?: (port: number) => boolean;
 }
 
 function buildInstallOpts(ctx: Ctx): DaemonInstallOptions {
@@ -51,6 +53,7 @@ export function runCommand(argv: string[], ctx: Ctx): void {
     case 'status': {
       const s = ctx.daemon.status();
       console.log(s.loaded ? `loaded yes${s.pid ? ` (pid ${s.pid})` : ''}` : 'loaded no');
+      console.log(probeHttp(ctx.port, ctx.probe));
       return;
     }
     case 'build':
@@ -74,6 +77,27 @@ export function runCommand(argv: string[], ctx: Ctx): void {
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { execFileSync, spawnSync } = require('child_process') as typeof import('child_process');
+
+/**
+ * Probe whether the Dispatch HTTP server is reachable on the given port.
+ * If `probe` is provided (e.g. in tests), it is called directly.
+ * Otherwise a child `node` process issues the HTTP request so this stays sync.
+ */
+export function probeHttp(port: number, probe?: (port: number) => boolean): string {
+  const url = `http://localhost:${port}`;
+  let reachable: boolean;
+  if (probe !== undefined) {
+    reachable = probe(port);
+  } else {
+    const script =
+      `require('http').get('${url}/api/sessions',r=>{process.exit(0)}).on('error',()=>process.exit(1))`;
+    const result = spawnSync(process.execPath, ['-e', script], { timeout: 1500 });
+    reachable = result.status === 0;
+  }
+  return reachable
+    ? `HTTP: reachable at ${url}`
+    : `HTTP: not responding on ${url}`;
+}
 
 function cmdBuild(ctx: Ctx): void {
   // On win32 pnpm/git are .cmd shims that execFile cannot launch directly without
