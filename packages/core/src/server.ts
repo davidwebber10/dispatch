@@ -27,7 +27,9 @@ import { createGitRouter } from './routes/git.js';
 import { createSecretsRouter } from './routes/secrets.js';
 import { createSetupRouter } from './routes/setup.js';
 import { SecretsService } from './secrets/service.js';
+import { IntegrationsService } from './integrations/service.js';
 import { createEventsRouter } from './routes/events.js';
+import { createIntegrationsRouter } from './routes/integrations.js';
 import { StatusService } from './status/service.js';
 import { createEventsBroadcaster, createNoopBroadcaster } from './ws/events.js';
 import type { EventBroadcaster } from './ws/events.js';
@@ -79,10 +81,13 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const broadcaster: EventBroadcaster = createNoopBroadcaster();
   const authRequestService = new AuthRequestService(broadcaster);
 
-  const sessionService = new SessionService(db, ptyManager);
+  const dispatchDir = options.secretsDir ?? platform.dataDir();
+  const sessionService = new SessionService(db, ptyManager, path.join(dispatchDir, 'mcp.json'));
   const agentService = new AgentService(db, sessionService, broadcaster);
-  const secretsService = options.secretsService ?? new SecretsService(options.secretsDir ?? platform.dataDir());
-  sessionService.setSecretsInjection(() => secretsService.getInjection());
+  const secretsService = options.secretsService ?? new SecretsService(dispatchDir);
+  const integrationsService = new IntegrationsService(db);
+  sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
+  sessionService.setIntegrationsSpecs(() => integrationsService.getServerSpecs());
   const statusService = new StatusService(db, broadcaster);
 
   // Mount routes
@@ -98,6 +103,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   app.use('/api/sessions/:id/git', createGitRouter(db));
   app.use('/api/auth-requests', createAuthRouter(authRequestService));
   app.use('/api/state', createStateRouter(db));
+  app.use('/api/integrations', createIntegrationsRouter(integrationsService));
 
   // Attach internals for server wiring
   (app as any)._ptyManager = ptyManager;
@@ -179,14 +185,16 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const authRequestService = new AuthRequestService(broadcaster);
 
   // Determine actual server URL after port is known
-  const sessionService = new SessionService(db, ptyManager);
+  const sessionService = new SessionService(db, ptyManager, path.join(dataDir, 'mcp.json'));
   const agentService = new AgentService(db, sessionService, broadcaster, path.join(dataDir, 'runs'));
   const statusService = new StatusService(db, broadcaster);
 
   // Doppler secrets: token-backed connection + per-spawn injection (DOPPLER_* env +
   // an MCP server) so Claude Code / Codex agents can add & retrieve secrets.
   const secretsService = new SecretsService(dataDir);
-  sessionService.setSecretsInjection(() => secretsService.getInjection());
+  const integrationsService = new IntegrationsService(db);
+  sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
+  sessionService.setIntegrationsSpecs(() => integrationsService.getServerSpecs());
   let effectiveShimEnv = browserShimEnv;
   const refreshPtyEnv = () => ptyManager.setDefaultEnv({ ...effectiveShimEnv, ...secretsService.getSpawnEnv() });
   secretsService.onChange(refreshPtyEnv);
@@ -256,6 +264,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.use('/api/auth-requests', createAuthRouter(authRequestService));
 
   app.use('/api/state', createStateRouter(db));
+  app.use('/api/integrations', createIntegrationsRouter(integrationsService));
 
   // Serve the built web client (single-origin) when a build is present.
   // SPA fallback returns index.html for any non-/api, non-WS GET.

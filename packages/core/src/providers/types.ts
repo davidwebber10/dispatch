@@ -49,6 +49,12 @@ export interface SessionProvider {
   buildNewCommand(args: { workDir: string; prompt?: string; secretsMcp?: SecretsMcpInjection; statusHooks?: StatusHooksInjection }): { command: string; args: string[] };
   buildResumeCommand(args: { externalSessionId: string; workDir: string; secretsMcp?: SecretsMcpInjection; statusHooks?: StatusHooksInjection }): { command: string; args: string[] };
   /**
+   * Build the command to BRANCH (fork) an existing conversation: resume the
+   * source session but fork it into a NEW session id, leaving the original
+   * untouched. Undefined for providers that don't support forking.
+   */
+  buildBranchCommand?(args: { sourceSessionId: string; workDir: string; secretsMcp?: SecretsMcpInjection; statusHooks?: StatusHooksInjection }): { command: string; args: string[] };
+  /**
    * Build the command for an autonomous "runner" launch: the provider is run
    * headlessly with the prompt so it executes the agentic loop to completion
    * and the process EXITS when done (a clean completion signal), rather than

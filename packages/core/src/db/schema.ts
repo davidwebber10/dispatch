@@ -87,6 +87,20 @@ export function initSchema(db: Database.Database): void {
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS integrations (
+      id          TEXT PRIMARY KEY,
+      name        TEXT NOT NULL,
+      type        TEXT NOT NULL,
+      command     TEXT,
+      args        TEXT DEFAULT '[]',
+      url         TEXT,
+      headers     TEXT DEFAULT '{}',
+      env         TEXT DEFAULT '{}',
+      enabled     INTEGER NOT NULL DEFAULT 1,
+      created_at  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL
+    );
   `);
 
   // Migrations: add columns that may not exist on older databases
@@ -100,6 +114,7 @@ export function initSchema(db: Database.Database): void {
     { table: 'terminals', column: 'config', sql: "ALTER TABLE terminals ADD COLUMN config TEXT DEFAULT '{}'" },
     { table: 'terminals', column: 'archived_at', sql: 'ALTER TABLE terminals ADD COLUMN archived_at TEXT' },
     { table: 'terminals', column: 'sort_order', sql: 'ALTER TABLE terminals ADD COLUMN sort_order INTEGER DEFAULT 0' },
+    { table: 'terminals', column: 'last_activity_at', sql: 'ALTER TABLE terminals ADD COLUMN last_activity_at TEXT' },
     { table: 'sessions', column: 'sort_order', sql: 'ALTER TABLE sessions ADD COLUMN sort_order INTEGER DEFAULT 0' },
     // Structured agent-run outcome capture (tokens, cost, model, result, transcript).
     { table: 'agent_runs', column: 'cost_usd', sql: 'ALTER TABLE agent_runs ADD COLUMN cost_usd REAL' },

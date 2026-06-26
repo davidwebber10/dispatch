@@ -5,6 +5,7 @@ import { useSettings, ACCENTS } from '../../stores/settings';
 import { useServers, currentLabel } from '../../stores/servers';
 import { useSecrets } from '../../stores/secrets';
 import { useSetup } from '../../stores/setup';
+import { IntegrationsSection } from './IntegrationsSection';
 
 const sectionLabel: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
 const row: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 };
@@ -235,10 +236,11 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   const sidebarFontSize = useSettings((s) => s.sidebarFontSize);
   const projectFontSize = useSettings((s) => s.projectFontSize);
   const accent = useSettings((s) => s.accent);
+  const density = useSettings((s) => s.density);
   const notify = useSettings((s) => s.notify);
   const servers = useServers((s) => s.servers);
   const openSetup = useSetup((s) => s.open);
-  const [tab, setTab] = useState<'general' | 'secrets'>('general');
+  const [tab, setTab] = useState<'general' | 'integrations' | 'secrets'>('general');
   if (!open) return null;
 
   const st = status === 'open' ? { c: 'var(--color-accent)', t: 'Connected' } : status === 'connecting' ? { c: 'var(--color-status-yellow)', t: 'Connecting' } : { c: 'var(--color-status-red)', t: 'Offline' };
@@ -253,7 +255,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
 
         {/* Tabs */}
         <div style={{ flexShrink: 0, display: 'flex', gap: 4, padding: '12px 20px 0', borderBottom: '1px solid var(--color-hover)' }}>
-          {([['general', 'General'], ['secrets', 'Secrets']] as const).map(([key, label]) => (
+          {([['general', 'General'], ['integrations', 'Integrations'], ['secrets', 'Secrets']] as const).map(([key, label]) => (
             <button key={key} onClick={() => setTab(key)} style={{
               position: 'relative', padding: '8px 14px 11px', background: 'none', border: 'none', cursor: 'pointer',
               fontSize: 13, fontWeight: tab === key ? 600 : 500,
@@ -264,7 +266,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
         </div>
 
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {tab === 'general' ? (
+          {tab === 'general' && (
             <>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <span style={sectionLabel}>GETTING STARTED</span>
@@ -293,6 +295,18 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
                 <span style={sectionLabel}>SIDEBAR</span>
                 <div style={row}><span style={item}>Project names</span><Stepper value={String(projectFontSize)} onDec={() => useSettings.getState().setProjectFontSize(projectFontSize - 1)} onInc={() => useSettings.getState().setProjectFontSize(projectFontSize + 1)} /></div>
                 <div style={row}><span style={item}>Thread &amp; file names</span><Stepper value={String(sidebarFontSize)} onDec={() => useSettings.getState().setSidebarFontSize(sidebarFontSize - 1)} onInc={() => useSettings.getState().setSidebarFontSize(sidebarFontSize + 1)} /></div>
+                <div style={row}><span style={item}>Density</span>
+                  <div style={{ display: 'inline-flex', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 7, padding: 2, gap: 2 }}>
+                    {(['compact', 'cozy', 'roomy'] as const).map((d) => (
+                      <button key={d} onClick={() => useSettings.getState().setDensity(d)} style={{
+                        padding: '4px 10px', borderRadius: 5, border: 'none', cursor: 'pointer', textTransform: 'capitalize',
+                        fontSize: 12, fontWeight: density === d ? 600 : 400,
+                        background: density === d ? 'var(--color-accent)' : 'transparent',
+                        color: density === d ? '#08240F' : 'var(--color-text-secondary)',
+                      }}>{d}</button>
+                    ))}
+                  </div>
+                </div>
               </div>
               <Divider />
 
@@ -317,9 +331,9 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
 
               <div style={row}><span style={item}>Version</span><span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)' }}>Dispatch Web</span></div>
             </>
-          ) : (
-            <SecretsSection />
           )}
+          {tab === 'integrations' && <IntegrationsSection />}
+          {tab === 'secrets' && <SecretsSection />}
         </div>
 
         <div style={{ flexShrink: 0, display: 'flex', justifyContent: 'flex-end', padding: '14px 20px', borderTop: '1px solid var(--color-hover)' }}>

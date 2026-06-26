@@ -8,15 +8,25 @@ import { FileEditorTab } from './FileEditorTab';
 import { ConversationView } from './ConversationView';
 import { useThreadMode } from '../../stores/threadMode';
 import { useTabs } from '../../stores/tabs';
+import { ModeToggle } from '../layout/ModeToggle';
+import { useIsMobile } from '../../hooks/useIsMobile';
 
 /** AI thread (claude-code/codex): View (read-only) or Terminal (interactive).
  *  The mode toggle lives in the main top bar (see ModeToggle). Defaults to
  *  Terminal so a new thread opens where you can type. */
 function AiThread({ tab }: { tab: Terminal }) {
   const mode = useThreadMode((s) => s.modes[tab.id]) ?? 'expert';
+  const isMobile = useIsMobile();
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
+    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
       {mode === 'normal' ? <ConversationView terminalId={tab.id} /> : <TerminalTab terminalId={tab.id} />}
+      {/* Desktop: the View/Terminal switcher floats over the top-right of the
+          thread (mobile keeps it in the header). */}
+      {!isMobile && (
+        <div style={{ position: 'absolute', top: 4, right: 12, zIndex: 12 }}>
+          <ModeToggle terminalId={tab.id} floating />
+        </div>
+      )}
     </div>
   );
 }

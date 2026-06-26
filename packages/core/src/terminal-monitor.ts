@@ -135,6 +135,7 @@ export class TerminalMonitor {
             const row = this.db.prepare('SELECT session_id FROM terminals WHERE id = ?').get(terminalId) as any;
             if (row?.session_id) {
               this.db.prepare('UPDATE sessions SET last_activity_at = ? WHERE id = ?').run(now, row.session_id);
+              this.db.prepare('UPDATE terminals SET last_activity_at = ? WHERE id = ?').run(now, terminalId);
             }
           } catch {}
         }

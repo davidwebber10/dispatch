@@ -9,7 +9,7 @@ const TYPES: { type: string; label: string; config?: Record<string, unknown> }[]
   { type: 'shell', label: 'Terminal' },
 ];
 
-export function NewTabMenu({ sessionId, onClose, onCreated }: { sessionId: string; onClose: () => void; onCreated?: (terminalId: string) => void }) {
+export function NewTabMenu({ sessionId, onClose, onCreated, onPickClaude }: { sessionId: string; onClose: () => void; onCreated?: (terminalId: string) => void; onPickClaude?: () => void }) {
   // Anchor fills the trigger button; the menu itself is portaled to <body> with
   // fixed positioning so the card's overflow:hidden (used for the expand animation)
   // can't clip it.
@@ -26,6 +26,8 @@ export function NewTabMenu({ sessionId, onClose, onCreated }: { sessionId: strin
 
   async function add(t: (typeof TYPES)[number]) {
     onClose();
+    // Claude Code opens the name/resume modal instead of creating instantly.
+    if (t.type === 'claude-code' && onPickClaude) { onPickClaude(); return; }
     try {
       const term = await api.createTerminal(sessionId, { type: t.type, ...(t.config ? { config: t.config } : {}) });
       await useTabs.getState().loadTabs(sessionId);

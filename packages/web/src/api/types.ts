@@ -27,6 +27,7 @@ export interface Terminal {
   workingDir: string | null;
   status: TerminalStatus;
   createdAt: string;
+  lastActivityAt?: string;
   config: Record<string, unknown>;
   archivedAt: string | null;
   sortOrder: number;
@@ -196,6 +197,9 @@ export interface AgentOverview {
   projects: AgentOverviewProject[];
 }
 
+// Recent Claude Code sessions (resume picker) — mirrors core /api/sessions/:id/cc-recent.
+export interface CcRecentSession { id: string; mtime: number; preview: string; messageCount: number; truncated: boolean; }
+
 // Setup / onboarding — mirrors core /api/setup.
 export interface ProviderStatus { name: 'claude' | 'codex'; installed: boolean; version?: string; signedIn: boolean | 'unknown'; }
 export interface TailscaleStatus { installed: boolean; running: boolean; dnsName?: string; url?: string; }
@@ -206,3 +210,9 @@ export interface DopplerStatus { connected: boolean; project: string | null; con
 export interface DopplerSecret { name: string; value: string }
 export interface DopplerProject { id: string; slug: string; name: string }
 export interface DopplerConfig { name: string; environment: string }
+
+export interface Integration { id: string; name: string; type: 'stdio' | 'remote'; command: string | null; args: string[]; url: string | null; headers: Record<string, string>; env: Record<string, string>; enabled: boolean; createdAt: string; updatedAt: string }
+export type AddIntegrationInput =
+  | { type: 'remote'; name: string; url: string; headers?: Record<string, string>; env?: Record<string, string> }
+  | { type: 'stdio'; name: string; command: string; args?: string[]; env?: Record<string, string> };
+export interface IntegrationsExport { version: 1; integrations: Omit<Integration, 'id' | 'createdAt' | 'updatedAt'>[] }

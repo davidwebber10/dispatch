@@ -1,4 +1,4 @@
-import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus } from './types';
+import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession, Integration, AddIntegrationInput, IntegrationsExport } from './types';
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -30,6 +30,8 @@ export const api = {
   listArchivedTerminals: (sessionId: string) => req<Terminal[]>(`/api/sessions/${sessionId}/terminals/archived`),
   createTerminal: (sessionId: string, input: { type: string; label?: string; workingDir?: string; externalId?: string; config?: Record<string, unknown> }) =>
     req<Terminal>(`/api/sessions/${sessionId}/terminals`, { method: 'POST', body: body(input) }),
+  recentCcSessions: (sessionId: string) => req<CcRecentSession[]>(`/api/sessions/${sessionId}/cc-recent`),
+  branchTerminal: (terminalId: string) => req<Terminal>(`/api/terminals/${terminalId}/branch`, { method: 'POST' }),
   getTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}`),
   getConversation: (id: string, params: { since?: number; before?: number; limit?: number } = {}) => {
     const q = new URLSearchParams();
@@ -116,6 +118,14 @@ export const api = {
   },
   setSecret: (input: { name: string; value: string }) => req<DopplerSecret>('/api/secrets', { method: 'POST', body: body(input) }),
   deleteSecret: (name: string) => req<void>(`/api/secrets/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+
+  // Integrations (own MCP catalog)
+  listIntegrations: () => req<{ integrations: Integration[] }>('/api/integrations'),
+  addIntegration: (input: AddIntegrationInput) => req<Integration>('/api/integrations', { method: 'POST', body: body(input) }),
+  setIntegrationEnabled: (id: string, enabled: boolean) => req<Integration>(`/api/integrations/${encodeURIComponent(id)}`, { method: 'PATCH', body: body({ enabled }) }),
+  removeIntegration: (id: string) => req<{ removed: boolean }>(`/api/integrations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  exportIntegrations: () => req<IntegrationsExport>('/api/integrations/export'),
+  importIntegrations: (doc: IntegrationsExport) => req<{ added: string[]; skipped: string[] }>('/api/integrations/import', { method: 'POST', body: body(doc) }),
 
   // Browser auth relay
   listAuthRequests: () => req<AuthRequest[]>('/api/auth-requests'),

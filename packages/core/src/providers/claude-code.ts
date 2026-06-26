@@ -36,6 +36,13 @@ export const claudeCodeProvider: SessionProvider = {
     return { command: 'claude', args: ['--dangerously-skip-permissions', ...mcpArgs(secretsMcp), ...systemPromptArgs(secretsMcp), ...hookArgs(statusHooks), '-r', externalSessionId] };
   },
 
+  // Branch = resume the source session but fork it to a NEW session id (the
+  // original transcript is left untouched). `captureSessionId` then records the
+  // forked id as this terminal's external_id so future relaunches resume it.
+  buildBranchCommand({ sourceSessionId, secretsMcp, statusHooks }) {
+    return { command: 'claude', args: ['--dangerously-skip-permissions', ...mcpArgs(secretsMcp), ...systemPromptArgs(secretsMcp), ...hookArgs(statusHooks), '-r', sourceSessionId, '--fork-session'] };
+  },
+
   buildRunnerCommand({ prompt, secretsMcp }) {
     // Headless autonomous run with STRUCTURED output:
     //   --print                       run the agentic loop and EXIT when complete

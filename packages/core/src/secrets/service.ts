@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { DopplerClient, type DopplerProject, type DopplerConfig, type DopplerSecret } from './doppler.js';
+import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
 
 export interface DopplerStatus {
   connected: boolean;
@@ -197,16 +198,6 @@ export class SecretsService {
     return this.mcpConfigPath;
   }
 
-  /** Codex `-c` overrides registering the doppler MCP server (env forwarded by name). */
-  codexMcpArgs(): string[] {
-    if (!this.active()) return [];
-    return [
-      '-c', 'mcp_servers.doppler.command="node"',
-      '-c', `mcp_servers.doppler.args=["${this.dopplerMcpPath}"]`,
-      '-c', 'mcp_servers.doppler.env_vars=["DOPPLER_TOKEN","DOPPLER_PROJECT","DOPPLER_CONFIG","DOPPLER_READ_ONLY"]',
-    ];
-  }
-
   /**
    * Standing instruction appended to a spawned agent's system prompt so it knows
    * to keep secrets in Doppler (via the MCP tools) rather than hardcoding them.
@@ -226,8 +217,18 @@ export class SecretsService {
       : base;
   }
 
+  getServerSpec(): McpServerSpec | null {
+    if (!this.active()) return null;
+    return {
+      name: 'doppler', command: 'node', args: [this.dopplerMcpPath],
+      env: { DOPPLER_TOKEN: '${DOPPLER_TOKEN}', DOPPLER_PROJECT: '${DOPPLER_PROJECT}', DOPPLER_CONFIG: '${DOPPLER_CONFIG}', DOPPLER_READ_ONLY: '${DOPPLER_READ_ONLY}' },
+      envVars: ['DOPPLER_TOKEN', 'DOPPLER_PROJECT', 'DOPPLER_CONFIG', 'DOPPLER_READ_ONLY'],
+    };
+  }
+
   getInjection(): { claudeConfigPath: string | null; codexArgs: string[]; systemPrompt: string | null } {
-    return { claudeConfigPath: this.ensureClaudeMcpConfig(), codexArgs: this.codexMcpArgs(), systemPrompt: this.getSystemPrompt() };
+    const spec = this.getServerSpec();
+    return composeInjection(spec ? [spec] : [], { configPath: this.mcpConfigPath, prompts: [this.getSystemPrompt() ?? ''] });
   }
 
   private refresh(): void {
