@@ -381,9 +381,9 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
           : isOpen ? 'rgba(255,255,255,0.022)'
           : hover ? 'rgba(255,255,255,0.05)'
           : 'transparent',
-        border: (!isMobile && active) ? '1px solid color-mix(in srgb, var(--color-accent) 45%, transparent)'
-          : (!isMobile && isOpen) ? '1px solid #3a3a42'
-          : '1px solid transparent',
+        border: (!isMobile && active) ? '2px solid color-mix(in srgb, var(--color-accent) 45%, transparent)'
+          : (!isMobile && isOpen) ? '2px solid #3a3a42'
+          : '2px solid transparent',
         borderRadius: 8, padding: isMobile ? 0 : '4px 0', marginBottom: 4, cursor: 'default', transition: 'background 0.12s ease, border-color 0.12s ease',
       }}
     >
