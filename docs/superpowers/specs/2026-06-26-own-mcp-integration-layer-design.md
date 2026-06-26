@@ -57,6 +57,6 @@ Remove: the `executor`-specific code in `IntegrationsService`, the `executor mcp
 - Secrets via ambient Doppler env (inherited by spawned MCP servers); no secret values in the injected config file.
 - Export carries catalog definitions only, never secret values (those live in Doppler).
 
-## Known limitations (deferred fast-follow)
+## Resolved follow-ups
 
-- **Codex literal per-integration `env`:** `composeInjection` writes a spec's literal `env` map into the Claude `--mcp-config` file, but its Codex `-c` branch does not emit it. So an stdio integration that sets a literal env var via the Advanced env editor (e.g. `ROOT=/tmp`) takes effect under Claude but not Codex. This is narrow — the primary cross-provider paths are unaffected: remote secret headers ride in `args` (emitted for both providers) and Doppler secrets ride the ambient terminal env (inherited by spawned MCP servers under both providers). A proper fix means emitting `mcp_servers.<name>.env` for Codex (verifying Codex's config support first) and lifting this spec's "composeInjection unchanged" constraint — tracked as a follow-up, not a v1 blocker.
+- **Codex literal per-integration `env` (RESOLVED, commit 063f8bf):** `composeInjection` now emits a spec's literal `env` to Codex via dotted-path overrides (`-c mcp_servers.<name>.env.<KEY>=<value>` — JSON objects aren't valid TOML, so per-key nested overrides are used; verified Codex supports `[mcp_servers.<name>.env]`). The emission is gated on `!envVars` so the Doppler spec (which uses `${VAR}` placeholders + Codex `env_vars` pass-through) is unaffected. Literal per-integration env now takes effect under both Claude and Codex.
