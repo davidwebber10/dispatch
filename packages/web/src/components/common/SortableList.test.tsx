@@ -14,5 +14,6 @@ test('renders every item via renderItem', () => {
 test('renders items when disabled (no drag wiring)', () => {
   render(<SortableList items={items} disabled onReorder={() => {}} renderItem={(it) => <div>row-{it.id}</div>} />);
   expect(screen.getByText('row-a')).toBeInTheDocument();
+  expect(screen.getByText('row-b')).toBeInTheDocument();
   expect(screen.getByText('row-c')).toBeInTheDocument();
 });

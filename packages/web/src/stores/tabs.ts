@@ -66,7 +66,7 @@ export const useTabs = create<TabsState>((set, get) => ({
     for (const t of current) if (!orderedIds.includes(t.id)) reordered.push(t);
     set({ byProject: { ...get().byProject, [projectId]: reordered } });
     try { await api.reorderTerminals(projectId, orderedIds); }
-    catch { await get().loadTabs(projectId); }  // restore server truth on failure
+    catch (e) { console.error('useTabs.reorder: reorderTerminals failed, reverting', e); await get().loadTabs(projectId); }  // restore server truth on failure
   },
   openTab: (id, background = false) => {
     const { openTabIds, activeTabId, byProject } = get();

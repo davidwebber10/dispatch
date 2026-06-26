@@ -9,12 +9,15 @@ describe('reorderIds', () => {
     expect(reorderIds(['a', 'b', 'c', 'd'], 'd', 'b')).toEqual(['a', 'd', 'b', 'c']);
   });
   it('returns the same order when dropped on itself', () => {
-    expect(reorderIds(['a', 'b', 'c'], 'b', 'b')).toEqual(['a', 'b', 'c']);
+    const arr = ['a', 'b', 'c'];
+    expect(reorderIds(arr, 'b', 'b')).toBe(arr);
   });
   it('returns the same order for a null over', () => {
-    expect(reorderIds(['a', 'b', 'c'], 'b', null)).toEqual(['a', 'b', 'c']);
+    const arr = ['a', 'b', 'c'];
+    expect(reorderIds(arr, 'b', null)).toBe(arr);
   });
   it('returns the same order for an unknown id', () => {
-    expect(reorderIds(['a', 'b', 'c'], 'x', 'b')).toEqual(['a', 'b', 'c']);
+    const arr = ['a', 'b', 'c'];
+    expect(reorderIds(arr, 'x', 'b')).toBe(arr);
   });
 });

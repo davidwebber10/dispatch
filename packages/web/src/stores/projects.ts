@@ -9,7 +9,7 @@ interface ProjectsState {
   load: () => Promise<void>;
   setActive: (id: string) => void;
   archive: (id: string) => Promise<void>;
-  reorder: (order: string[]) => void;
+  reorder: (order: string[]) => Promise<void>;
   applyEvent: (e: ServerEvent) => void;
 }
 
@@ -27,12 +27,13 @@ export const useProjects = create<ProjectsState>((set, get) => ({
     const activeId = get().activeId === id ? (sessions[0]?.id ?? null) : get().activeId;
     set({ sessions, activeId });
   },
-  reorder: (order) => {
+  reorder: async (order) => {
     const map = new Map(get().sessions.map((s) => [s.id, s]));
     const ordered = order.map((id) => map.get(id)).filter(Boolean) as Session[];
     const rest = get().sessions.filter((s) => !order.includes(s.id));
     set({ sessions: [...ordered, ...rest] });
-    void api.reorderSessions(order);
+    try { await api.reorderSessions(order); }
+    catch (e) { console.error('useProjects.reorder: reorderSessions failed, reloading', e); await get().load?.(); }
   },
   applyEvent: (e) => {
     if (e.type === 'session:created' && e.session) {

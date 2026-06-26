@@ -1,9 +1,9 @@
 import { useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import {
   DndContext, DragOverlay, PointerSensor, KeyboardSensor, useSensor, useSensors,
   closestCenter, type DragStartEvent, type DragEndEvent,
 } from '@dnd-kit/core';
-import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { SortableContext, useSortable, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { reorderIds } from '../../lib/reorder';
@@ -57,20 +57,23 @@ export function SortableList<T extends { id: string }>({ items, onReorder, rende
   }
 
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} modifiers={[restrictToVerticalAxis]}
+    <DndContext sensors={sensors} collisionDetection={closestCenter}
       onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setActiveId(null)}>
       <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
         {items.map((it) => (
           <SortableRow key={it.id} id={it.id}>{(dragging) => renderItem(it, { dragging })}</SortableRow>
         ))}
       </SortableContext>
-      <DragOverlay>
-        {activeItem ? (
-          <div className="dispatch-wiggle" style={{ transform: 'scale(1.03)', boxShadow: '0 14px 34px -10px rgba(0,0,0,.65)', borderRadius: 8, cursor: 'grabbing' }}>
-            {(renderOverlay ?? ((it: T) => renderItem(it, { dragging: true })))(activeItem)}
-          </div>
-        ) : null}
-      </DragOverlay>
+      {createPortal(
+        <DragOverlay>
+          {activeItem ? (
+            <div className="dispatch-wiggle" style={{ transform: 'scale(1.03)', boxShadow: '0 14px 34px -10px rgba(0,0,0,.65)', borderRadius: 8, cursor: 'grabbing' }}>
+              {(renderOverlay ?? ((it: T) => renderItem(it, { dragging: true })))(activeItem)}
+            </div>
+          ) : null}
+        </DragOverlay>,
+        document.body,
+      )}
     </DndContext>
   );
 }
