@@ -95,6 +95,15 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const statusService = new StatusService(db, broadcaster);
   const pushService = new PushService(db, { vapidDir: dispatchDir });
 
+  statusService.setThreadSettledHook(({ terminalId, sessionId, threadStatus }) => {
+    const term = terminalsDb.getById(db, terminalId);
+    const sess = sessionsDb.getById(db, sessionId);
+    const title = sess?.name || 'Dispatch';
+    const label = term?.label || 'Thread';
+    const body = threadStatus === 'needs_input' ? `${label} needs your input` : `${label} finished`;
+    void pushService.notifyThread({ terminalId, title, body });
+  });
+
   // Mount routes
   app.use('/api/sessions', createSessionsRouter(sessionService, broadcaster));
   app.use('/api', createTerminalsRouter(sessionService, undefined, statusService));
@@ -225,6 +234,16 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const sessionService = new SessionService(db, ptyManager, path.join(dataDir, 'mcp.json'));
   const agentService = new AgentService(db, sessionService, broadcaster, path.join(dataDir, 'runs'));
   const statusService = new StatusService(db, broadcaster);
+  const pushService = new PushService(db, { vapidDir: dataDir });
+
+  statusService.setThreadSettledHook(({ terminalId, sessionId, threadStatus }) => {
+    const term = terminalsDb.getById(db, terminalId);
+    const sess = sessionsDb.getById(db, sessionId);
+    const title = sess?.name || 'Dispatch';
+    const label = term?.label || 'Thread';
+    const body = threadStatus === 'needs_input' ? `${label} needs your input` : `${label} finished`;
+    void pushService.notifyThread({ terminalId, title, body });
+  });
 
   // Doppler secrets: token-backed connection + per-spawn injection (DOPPLER_* env +
   // an MCP server) so Claude Code / Codex agents can add & retrieve secrets.
@@ -302,6 +321,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   app.use('/api/state', createStateRouter(db));
   app.use('/api/integrations', createIntegrationsRouter(integrationsService));
+  app.use('/api/push', createPushRouter(pushService));
 
   // Serve the built web client (single-origin) when a build is present.
   // SPA fallback returns index.html for any non-/api, non-WS GET.

@@ -22,7 +22,13 @@ const TO_TERMINAL: Record<ThreadStatus, string> = {
  * broadcasts `terminal:status` (with the rich threadStatus + activity) + session status.
  */
 export class StatusService {
+  private threadSettledHook: ((info: { terminalId: string; sessionId: string; threadStatus: ThreadStatus }) => void) | null = null;
+
   constructor(private db: Database.Database, private broadcaster: EventBroadcaster) {}
+
+  setThreadSettledHook(fn: (info: { terminalId: string; sessionId: string; threadStatus: ThreadStatus }) => void): void {
+    this.threadSettledHook = fn;
+  }
 
   ingest(provider: string, terminalId: string, payload: unknown): void {
     const norm = provider === 'codex' ? normalizeCodex(payload) : normalizeClaude(payload);
@@ -45,9 +51,13 @@ export class StatusService {
   }
 
   private apply(sessionId: string, terminalId: string, status: ThreadStatus, activity?: string): void {
+    const prior = terminalsDb.getById(this.db, terminalId)?.status; // persisted enum before update
     const terminalStatus = TO_TERMINAL[status];
     try { terminalsDb.updateStatus(this.db, terminalId, terminalStatus); } catch { /* best effort */ }
     this.broadcaster.broadcast({ type: 'terminal:status', terminalId, status: terminalStatus, threadStatus: status, activity: activity ?? null });
+    if (prior === 'working' && (terminalStatus === 'waiting' || terminalStatus === 'needs_input')) {
+      try { this.threadSettledHook?.({ terminalId, sessionId, threadStatus: status }); } catch { /* hook must never break status */ }
+    }
     this.aggregateSession(sessionId);
   }
 
