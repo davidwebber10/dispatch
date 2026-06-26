@@ -24,8 +24,8 @@ export function createIntegrationsRouter(integrations: IntegrationsService): Rou
     try {
       const list = await integrations.list();
       res.json({ installed: true, integrations: list });
-    } catch (e: any) {
-      res.status(502).json({ error: e?.message ?? 'executor error' });
+    } catch {
+      res.status(502).json({ error: 'Could not reach the executor catalog.' });
     }
   });
 
@@ -36,8 +36,8 @@ export function createIntegrationsRouter(integrations: IntegrationsService): Rou
     try {
       const result = await integrations.add(req.body as AddIntegrationInput);
       res.json(result);
-    } catch (e: any) {
-      res.status(502).json({ error: e?.message ?? 'add failed' });
+    } catch {
+      res.status(502).json({ error: 'Could not add the integration.' });
     }
   });
 
@@ -46,8 +46,8 @@ export function createIntegrationsRouter(integrations: IntegrationsService): Rou
     try {
       const result = await integrations.remove(req.params.slug);
       res.json(result);
-    } catch (e: any) {
-      res.status(502).json({ error: e?.message ?? 'remove failed' });
+    } catch {
+      res.status(502).json({ error: 'Could not remove the integration.' });
     }
   });
 

@@ -83,4 +83,34 @@ describe('integrations management routes', () => {
     const res = await request(appWith({ status: () => ({ installed: false, version: null }) })).delete('/api/integrations/petstore');
     expect(res.status).toBe(409);
   });
+
+  it('POST / returns 502 with a safe message when add throws', async () => {
+    const res = await request(appWith({ add: async () => { throw new Error('secret-bearing network fail'); } }))
+      .post('/api/integrations').send({ type: 'openapi', url: 'https://x', slug: 's' });
+    expect(res.status).toBe(502);
+    expect(res.body.error).toBe('Could not add the integration.');
+  });
+
+  it('DELETE /:slug returns 502 when remove throws', async () => {
+    const res = await request(appWith({ remove: async () => { throw new Error('network fail'); } }))
+      .delete('/api/integrations/petstore');
+    expect(res.status).toBe(502);
+  });
+
+  it('POST / accepts a valid mcp-stdio source', async () => {
+    const res = await request(appWith()).post('/api/integrations')
+      .send({ type: 'mcp-stdio', name: 'My MCP', command: 'npx', args: ['-y', 'pkg'] });
+    expect(res.status).toBe(200);
+  });
+
+  it('POST / rejects mcp-stdio with non-string args (400)', async () => {
+    const res = await request(appWith()).post('/api/integrations')
+      .send({ type: 'mcp-stdio', name: 'My MCP', command: 'npx', args: [1, 2] });
+    expect(res.status).toBe(400);
+  });
+
+  it('POST / rejects an empty body (400)', async () => {
+    const res = await request(appWith()).post('/api/integrations').send({});
+    expect(res.status).toBe(400);
+  });
 });
