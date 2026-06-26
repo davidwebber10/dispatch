@@ -156,13 +156,31 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
     return () => clearTimeout(t);
   }, [fadeKey, active]);
   const showActive = active && !dimmed;
+  // Mobile long-press → open the same context menu desktop gets on right-click.
+  const lpTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lpStart = useRef<{ x: number; y: number } | null>(null);
+  const lpFired = useRef(false);
+  const cancelLp = () => { if (lpTimer.current) { clearTimeout(lpTimer.current); lpTimer.current = null; } };
   return (
     <button
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      onClick={onClick}
+      onClick={(e) => { if (lpFired.current) { lpFired.current = false; return; } onClick(e); }}
       onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onMiddle(); } }}
       onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContext(e.clientX, e.clientY); }}
+      onTouchStart={(e) => {
+        if (!isMobile) return;
+        const t = e.touches[0]; if (!t) return;
+        lpStart.current = { x: t.clientX, y: t.clientY }; lpFired.current = false;
+        cancelLp();
+        lpTimer.current = setTimeout(() => { lpFired.current = true; onContext(lpStart.current!.x, lpStart.current!.y); try { navigator.vibrate?.(8); } catch { /* */ } }, 450);
+      }}
+      onTouchMove={(e) => {
+        const s = lpStart.current, t = e.touches[0];
+        if (s && t && Math.abs(t.clientX - s.x) + Math.abs(t.clientY - s.y) > 10) cancelLp();
+      }}
+      onTouchEnd={cancelLp}
+      onTouchCancel={cancelLp}
       style={{
         display: 'flex', alignItems: 'center', gap: isMobile ? 12 : 9, width: '100%', padding: isMobile ? '15px 12px' : `${padY}px 9px`,
         // Selecting snaps instantly; the transition only applies while the mobile
@@ -374,12 +392,14 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
             <CaretRight size={11} weight="bold" style={{ flexShrink: 0, color: 'var(--color-text-tertiary)', transition: 'transform .15s ease', transform: isOpen ? 'rotate(90deg)' : 'none' }} />
           )}
           <span style={{ fontWeight: 600, fontSize: isMobile ? 19 : pfs, color: (!isMobile && active) ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{session.name}</span>
-          <span title={session.lastActivityAt ?? ''} style={{ marginLeft: 'auto', flexShrink: 0, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', lineHeight: 1 }}>
-            {indicator === 'working' ? <Spinner size={11} />
-              : indicator === 'needs_input' ? <StatusDot state="needs_input" size={8} />
-              : indicator === 'error' ? <StatusDot state="error" size={8} />
-              : <span style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{timeAgo(session.lastActivityAt)}</span>}
-          </span>
+          {!isMobile && (
+            <span title={session.lastActivityAt ?? ''} style={{ marginLeft: 'auto', flexShrink: 0, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', lineHeight: 1 }}>
+              {indicator === 'working' ? <Spinner size={11} />
+                : indicator === 'needs_input' ? <StatusDot state="needs_input" size={8} />
+                : indicator === 'error' ? <StatusDot state="error" size={8} />
+                : <span style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{timeAgo(session.lastActivityAt)}</span>}
+            </span>
+          )}
           {(hover || projMenu) && (
             <button title="Project options" onClick={(e) => { e.stopPropagation(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setProjMenu({ x: r.right, y: r.bottom + 4 }); }}
               style={{ width: 18, height: 18, flexShrink: 0, marginLeft: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 15, lineHeight: 1, borderRadius: 4 }}>⋯</button>
