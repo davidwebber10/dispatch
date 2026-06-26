@@ -1,4 +1,4 @@
-import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession, IntegrationsStatus } from './types';
+import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession, IntegrationsStatus, IntegrationsList, AddIntegrationInput, AddIntegrationResult } from './types';
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -121,6 +121,9 @@ export const api = {
 
   // Integrations
   getIntegrationsStatus: () => req<IntegrationsStatus>('/api/integrations/status'),
+  listIntegrations: () => req<IntegrationsList>('/api/integrations'),
+  addIntegration: (input: AddIntegrationInput) => req<AddIntegrationResult>('/api/integrations', { method: 'POST', body: body(input) }),
+  removeIntegration: (slug: string) => req<{ removed: boolean }>(`/api/integrations/${encodeURIComponent(slug)}`, { method: 'DELETE' }),
 
   // Browser auth relay
   listAuthRequests: () => req<AuthRequest[]>('/api/auth-requests'),

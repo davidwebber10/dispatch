@@ -212,3 +212,11 @@ export interface DopplerProject { id: string; slug: string; name: string }
 export interface DopplerConfig { name: string; environment: string }
 
 export interface IntegrationsStatus { installed: boolean; version: string | null }
+export interface Integration { slug: string; description: string; kind: string; canRemove: boolean; canRefresh: boolean }
+export interface IntegrationsList { installed: boolean; integrations: Integration[] }
+export type AddIntegrationInput =
+  | { type: 'openapi'; url: string; slug: string }
+  | { type: 'mcp-stdio'; name: string; command: string; args: string[]; slug?: string }
+  | { type: 'mcp-remote'; name: string; endpoint: string; slug?: string }
+  | { type: 'graphql'; endpoint: string; slug: string };
+export interface AddIntegrationResult { slug: string; toolCount?: number }
