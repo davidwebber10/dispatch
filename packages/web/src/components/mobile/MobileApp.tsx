@@ -17,6 +17,7 @@ import { useAgentUI } from '../../stores/agentUI';
 import { useReconnect } from '../../stores/reconnect';
 import { useUI } from '../../stores/ui';
 import { Spinner } from '../common/Spinner';
+import { SortableList } from '../common/SortableList';
 import { timeAgo } from '../../lib/time';
 
 function homePath(p: string): string {
@@ -162,23 +163,28 @@ export function MobileApp() {
               </button>
             </div>
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y', padding: '0 4px 12px' }}>
-              {filtered.map((p) => {
-                const tabs = byProject[p.id] ?? [];
-                const working = p.status === 'working' || tabs.some((t) => t.status === 'working');
-                return (
-                  <button key={p.id} onClick={() => openProject(p.id)}
-                    style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', textAlign: 'left', padding: '15px 12px', background: 'transparent', border: 'none', borderBottom: '1px solid var(--color-border)', cursor: 'pointer' }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ fontSize: 16, fontWeight: 600, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{p.name}</span>
-                      <div style={{ font: '400 12px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>{homePath(p.workingDir)}</div>
-                    </div>
-                    {working
-                      ? <Spinner size={13} />
-                      : <span style={{ flexShrink: 0, font: '400 12px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{timeAgo(p.lastActivityAt)}</span>}
-                    <CaretRight size={18} color="var(--color-text-tertiary)" />
-                  </button>
-                );
-              })}
+              <SortableList
+                items={filtered}
+                disabled={!!query}
+                onReorder={(orderedIds) => void useProjects.getState().reorder(orderedIds)}
+                renderItem={(p) => {
+                  const tabs = byProject[p.id] ?? [];
+                  const working = p.status === 'working' || tabs.some((t) => t.status === 'working');
+                  return (
+                    <button onClick={() => openProject(p.id)}
+                      style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', textAlign: 'left', padding: '15px 12px', background: 'transparent', border: 'none', borderBottom: '1px solid var(--color-border)', cursor: 'pointer' }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <span style={{ fontSize: 16, fontWeight: 600, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{p.name}</span>
+                        <div style={{ font: '400 12px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>{homePath(p.workingDir)}</div>
+                      </div>
+                      {working
+                        ? <Spinner size={13} />
+                        : <span style={{ flexShrink: 0, font: '400 12px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{timeAgo(p.lastActivityAt)}</span>}
+                      <CaretRight size={18} color="var(--color-text-tertiary)" />
+                    </button>
+                  );
+                }}
+              />
               {!filtered.length && <div style={{ padding: 16, color: 'var(--color-text-tertiary)', fontSize: 13 }}>No projects</div>}
             </div>
             </>
