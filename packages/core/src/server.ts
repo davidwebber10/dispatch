@@ -33,6 +33,8 @@ import { SecretsService } from './secrets/service.js';
 import { IntegrationsService } from './integrations/service.js';
 import { createEventsRouter } from './routes/events.js';
 import { createIntegrationsRouter } from './routes/integrations.js';
+import { PushService } from './push/service.js';
+import { createPushRouter } from './routes/push.js';
 import { StatusService } from './status/service.js';
 import { createEventsBroadcaster, createNoopBroadcaster } from './ws/events.js';
 import type { EventBroadcaster } from './ws/events.js';
@@ -91,6 +93,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
   sessionService.setIntegrationsSpecs(() => integrationsService.getServerSpecs());
   const statusService = new StatusService(db, broadcaster);
+  const pushService = new PushService(db, { vapidDir: dispatchDir });
 
   // Mount routes
   app.use('/api/sessions', createSessionsRouter(sessionService, broadcaster));
@@ -106,10 +109,12 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   app.use('/api/auth-requests', createAuthRouter(authRequestService));
   app.use('/api/state', createStateRouter(db));
   app.use('/api/integrations', createIntegrationsRouter(integrationsService));
+  app.use('/api/push', createPushRouter(pushService));
 
   // Attach internals for server wiring
   (app as any)._ptyManager = ptyManager;
   (app as any)._sessionService = sessionService;
+  (app as any)._pushService = pushService;
 
   // Serve the built web client (single-origin) when a build is present.
   // SPA fallback returns index.html for any non-/api, non-WS GET.

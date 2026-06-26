@@ -101,6 +101,15 @@ export function initSchema(db: Database.Database): void {
       created_at  TEXT NOT NULL,
       updated_at  TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      device_id   TEXT PRIMARY KEY,
+      endpoint    TEXT NOT NULL,
+      p256dh      TEXT NOT NULL,
+      auth        TEXT NOT NULL,
+      created_at  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL
+    );
   `);
 
   // Migrations: add columns that may not exist on older databases
