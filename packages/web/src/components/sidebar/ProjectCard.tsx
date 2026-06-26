@@ -393,9 +393,6 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
         onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setProjMenu({ x: e.clientX, y: e.clientY }); }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          {!isMobile && (
-            <CaretRight size={11} weight="bold" style={{ flexShrink: 0, color: 'var(--color-text-tertiary)', transition: 'transform .15s ease', transform: isOpen ? 'rotate(90deg)' : 'none' }} />
-          )}
           <span style={{ fontWeight: 600, fontSize: isMobile ? 19 : pfs, color: (!isMobile && active) ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{session.name}</span>
           {!isMobile && (
             <span title={session.lastActivityAt ?? ''} style={{ marginLeft: 'auto', flexShrink: 0, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', lineHeight: 1 }}>
