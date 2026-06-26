@@ -26,20 +26,28 @@ export function IntegrationsSection() {
   const [list, setList] = useState<Integration[]>([]);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [removingSlug, setRemovingSlug] = useState<string | null>(null);
   const [type, setType] = useState<AddType>('mcp-stdio');
   const [fields, setFields] = useState<Record<string, string>>({});
   const setF = (k: string, v: string) => setFields((f) => ({ ...f, [k]: v }));
 
   const reload = useCallback(async () => {
     setErr('');
+    let st: { installed: boolean; version: string | null };
     try {
-      const st = await api.getIntegrationsStatus();
-      setInstalled(st.installed); setVersion(st.version);
-      if (!st.installed) { setList([]); return; }
+      st = await api.getIntegrationsStatus();
+    } catch {
+      setInstalled(false);
+      setErr('Could not reach Dispatch. Check your connection and try again.');
+      return;
+    }
+    setInstalled(st.installed);
+    setVersion(st.version);
+    if (!st.installed) { setList([]); return; }
+    try {
       const r = await api.listIntegrations();
       setList(r.integrations);
     } catch {
-      // status said installed but the catalog call failed: surface a reachable-daemon hint.
       setErr('Could not reach the executor daemon. It starts on first use — try again in a moment.');
     }
   }, []);
@@ -54,9 +62,11 @@ export function IntegrationsSection() {
     setBusy(false);
   }
   async function remove(slug: string) {
-    setErr('');
+    if (removingSlug) return;
+    setRemovingSlug(slug); setErr('');
     try { await api.removeIntegration(slug); await reload(); }
     catch { setErr('Could not remove.'); }
+    setRemovingSlug(null);
   }
 
   const canAdd = !busy && !!buildInput(type, fields);
@@ -89,7 +99,7 @@ export function IntegrationsSection() {
                 {i.description && <span style={{ ...sub, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{i.description}</span>}
               </span>
               {i.canRemove && (
-                <button title="Remove integration" onClick={() => void remove(i.slug)} style={{ width: 26, height: 26, flexShrink: 0, background: 'transparent', border: '1px solid #2c2c32', borderRadius: 6, color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 15, lineHeight: 1 }}>×</button>
+                <button title="Remove integration" disabled={removingSlug === i.slug} onClick={() => void remove(i.slug)} style={{ width: 26, height: 26, flexShrink: 0, background: 'transparent', border: '1px solid #2c2c32', borderRadius: 6, color: 'var(--color-text-secondary)', cursor: removingSlug === i.slug ? 'default' : 'pointer', opacity: removingSlug === i.slug ? 0.5 : 1, fontSize: 15, lineHeight: 1 }}>×</button>
               )}
             </div>
           ))}
