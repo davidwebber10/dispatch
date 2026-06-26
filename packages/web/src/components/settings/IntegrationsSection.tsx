@@ -10,7 +10,7 @@ export function IntegrationsSection() {
       <span style={{ font: '700 11px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-text-secondary)' }}>INTEGRATIONS</span>
       <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
         {s == null ? 'Checking…'
-          : s.installed ? `executor ${s.version} — connected. Integrations are shared across Claude & Codex.`
+          : s.installed ? `executor ${s.version ?? '(unknown version)'} — connected. Integrations are shared across Claude & Codex.`
           : 'executor not installed. Install with: npm i -g executor — then it\'s shared across Claude & Codex.'}
       </div>
     </div>

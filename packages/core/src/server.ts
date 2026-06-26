@@ -83,9 +83,10 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const broadcaster: EventBroadcaster = createNoopBroadcaster();
   const authRequestService = new AuthRequestService(broadcaster);
 
-  const sessionService = new SessionService(db, ptyManager);
+  const dispatchDir = options.secretsDir ?? path.join(os.homedir(), '.dispatch');
+  const sessionService = new SessionService(db, ptyManager, path.join(dispatchDir, 'mcp.json'));
   const agentService = new AgentService(db, sessionService, broadcaster);
-  const secretsService = options.secretsService ?? new SecretsService(options.secretsDir ?? path.join(os.homedir(), '.dispatch'));
+  const secretsService = options.secretsService ?? new SecretsService(dispatchDir);
   const integrationsService = new IntegrationsService();
   sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
   sessionService.setIntegrationsInjection(() => ({ spec: integrationsService.getServerSpec(), prompt: integrationsService.getSystemPrompt() }));
@@ -216,7 +217,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const authRequestService = new AuthRequestService(broadcaster);
 
   // Determine actual server URL after port is known
-  const sessionService = new SessionService(db, ptyManager);
+  const sessionService = new SessionService(db, ptyManager, path.join(dataDir, 'mcp.json'));
   const agentService = new AgentService(db, sessionService, broadcaster, path.join(dataDir, 'runs'));
   const statusService = new StatusService(db, broadcaster);
 

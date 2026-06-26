@@ -11,5 +11,6 @@ describe('integrations routes', () => {
     const res = await request(app).get('/api/integrations/status');
     expect(res.status).toBe(200);
     expect(typeof res.body.installed).toBe('boolean');
+    expect(res.body.version === null || typeof res.body.version === 'string').toBe(true);
   });
 });

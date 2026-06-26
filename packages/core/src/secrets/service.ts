@@ -198,16 +198,6 @@ export class SecretsService {
     return this.mcpConfigPath;
   }
 
-  /** Codex `-c` overrides registering the doppler MCP server (env forwarded by name). */
-  codexMcpArgs(): string[] {
-    if (!this.active()) return [];
-    return [
-      '-c', 'mcp_servers.doppler.command="node"',
-      '-c', `mcp_servers.doppler.args=["${this.dopplerMcpPath}"]`,
-      '-c', 'mcp_servers.doppler.env_vars=["DOPPLER_TOKEN","DOPPLER_PROJECT","DOPPLER_CONFIG","DOPPLER_READ_ONLY"]',
-    ];
-  }
-
   /**
    * Standing instruction appended to a spawned agent's system prompt so it knows
    * to keep secrets in Doppler (via the MCP tools) rather than hardcoding them.

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { it, expect, vi } from 'vitest';
 vi.mock('node:child_process', () => ({ execFileSync: () => { throw new Error('not installed'); } }));
 import { IntegrationsService } from '../../src/integrations/service.js';
 

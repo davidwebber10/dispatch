@@ -28,14 +28,14 @@ export class SessionService {
   private secretsServerSpec: (() => { spec: McpServerSpec | null; prompt: string | null }) | null = null;
   /** Supplies the executor MCP spec for spawned CLIs; set by the server wiring. */
   private integrationsInjection: (() => { spec: McpServerSpec | null; prompt: string | null }) | null = null;
-  /** Path for the combined MCP config written at spawn time. */
-  private readonly mcpConfigPath: string = path.join(os.homedir(), '.dispatch', 'mcp.json');
   /** How spawned CLIs phone home with lifecycle events; set by the server wiring. */
   private statusContext: StatusContext | null = null;
 
   constructor(
     private db: Database.Database,
     private ptyManager: PTYManager,
+    /** Path for the combined MCP config written at spawn time. Defaults to ~/.dispatch/mcp.json. */
+    private readonly mcpConfigPath: string = path.join(os.homedir(), '.dispatch', 'mcp.json'),
   ) {}
 
   setSecretsServerSpec(fn: () => { spec: McpServerSpec | null; prompt: string | null }): void {
