@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { SortableList } from '../common/SortableList';
 import { FolderOpen, CaretRight } from '@phosphor-icons/react';
 import type { Session, Terminal, AgentSchedule } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
@@ -426,18 +427,23 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
           </div>
           {projTab === 'threads' ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: isMobile ? 0 : DENSITY[density].rowGap }}>
-              {threadItems.map((t) => (
-                <SwipeRow key={t.id} disabled={!isMobile}
-                  actionLabel={t.type === 'file' ? 'Unpin' : 'Delete'}
-                  actionColor={t.type === 'file' ? '#3F3F46' : 'var(--color-status-red)'}
-                  onAction={() => { if (t.type === 'file') void archive(t); else setPendingDelete({ kind: 'thread', thread: t }); }}>
-                  <ThreadRow tab={t} active={t.id === highlightId} fadeKey={fadeActiveKey}
-                    onClick={(e) => { e.stopPropagation(); onSelectTab(t.id); }}
-                    onMiddle={() => useTabs.getState().openTab(t.id, true)}
-                    onArchive={() => setArchiveTarget(t)}
-                    onContext={(x, y) => setCtxMenu({ tab: t, x, y })} />
-                </SwipeRow>
-              ))}
+              <SortableList
+                items={threadItems}
+                disabled={isMobile}
+                onReorder={(orderedIds) => void useTabs.getState().reorder(session.id, orderedIds)}
+                renderItem={(t) => (
+                  <SwipeRow key={t.id} disabled={!isMobile}
+                    actionLabel={t.type === 'file' ? 'Unpin' : 'Delete'}
+                    actionColor={t.type === 'file' ? '#3F3F46' : 'var(--color-status-red)'}
+                    onAction={() => { if (t.type === 'file') void archive(t); else setPendingDelete({ kind: 'thread', thread: t }); }}>
+                    <ThreadRow tab={t} active={t.id === highlightId} fadeKey={fadeActiveKey}
+                      onClick={(e) => { e.stopPropagation(); onSelectTab(t.id); }}
+                      onMiddle={() => useTabs.getState().openTab(t.id, true)}
+                      onArchive={() => setArchiveTarget(t)}
+                      onContext={(x, y) => setCtxMenu({ tab: t, x, y })} />
+                  </SwipeRow>
+                )}
+              />
               {!threadItems.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No threads yet</div>}
             </div>
           ) : (
