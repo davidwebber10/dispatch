@@ -92,7 +92,7 @@ export async function listRecentCodexSessions(
           messageCount++;
           if (!preview && role === 'user') {
             const t = extractText(o.payload.content).replace(/\s+/g, ' ').trim();
-            if (t && !t.startsWith('<')) preview = t.slice(0, 120);
+            if (t && !t.startsWith('<')) preview = t;
           }
         }
       }

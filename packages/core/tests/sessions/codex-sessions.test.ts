@@ -65,4 +65,28 @@ describe('listRecentCodexSessions', () => {
     const list = await listRecentCodexSessions('/work/proj', 20, root);
     expect(list).toEqual([{ id: 'c', mtime: expect.any(Number), preview: 'New session', messageCount: 0, truncated: false }]);
   });
+
+  it('skips a first user message starting with < and uses the next real user message', async () => {
+    writeRollout(root, '2026/06/05/rollout-skip.jsonl', [
+      { type: 'session_meta', payload: { session_id: 'skip', cwd: '/work/proj' } },
+      { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<context>blah</context>' }] } },
+      { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'real prompt' }] } },
+    ]);
+    const list = await listRecentCodexSessions('/work/proj', 20, root);
+    expect(list[0]).toMatchObject({ id: 'skip', preview: 'real prompt' });
+  });
+
+  it('enforces the limit parameter', async () => {
+    const now = Date.now();
+    writeRollout(root, '2026/06/06/rollout-l1.jsonl', [
+      { type: 'session_meta', payload: { session_id: 'l1', cwd: '/work/proj' } },
+      { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'first' }] } },
+    ], now - 1000);
+    writeRollout(root, '2026/06/06/rollout-l2.jsonl', [
+      { type: 'session_meta', payload: { session_id: 'l2', cwd: '/work/proj' } },
+      { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'second' }] } },
+    ], now);
+    const list = await listRecentCodexSessions('/work/proj', 1, root);
+    expect(list).toHaveLength(1);
+  });
 });
