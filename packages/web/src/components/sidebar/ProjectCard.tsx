@@ -375,14 +375,14 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
         //  unselected: transparent, no border
         //  hover:      faint wash, no border (a quick affordance)
         //  open:       calm bg + neutral border (a contained card)
-        //  selected:   accent wash + accent border (the active project)
+        //  selected:   accent border only, no wash (the active project)
         background: isMobile ? 'transparent'
-          : active ? 'linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 9%, transparent), transparent)'
+          : active ? 'transparent'
           : isOpen ? 'rgba(255,255,255,0.022)'
           : hover ? 'rgba(255,255,255,0.05)'
           : 'transparent',
         border: (!isMobile && active) ? '1px solid color-mix(in srgb, var(--color-accent) 45%, transparent)'
-          : (!isMobile && isOpen) ? '1px solid var(--color-border)'
+          : (!isMobile && isOpen) ? '1px solid #3a3a42'
           : '1px solid transparent',
         borderRadius: 8, padding: isMobile ? 0 : '4px 0', marginBottom: 4, cursor: 'default', transition: 'background 0.12s ease, border-color 0.12s ease',
       }}
