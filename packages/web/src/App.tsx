@@ -27,7 +27,8 @@ import { useSettings } from './stores/settings';
 import { useServers } from './stores/servers';
 
 function maybeNotify(sessionId: string) {
-  const { notify } = useSettings.getState();
+  const { notify, pushEnabled } = useSettings.getState();
+  if (pushEnabled) return; // server push handles it (this tab counts as away)
   if (!notify || typeof Notification === 'undefined' || Notification.permission !== 'granted' || !document.hidden) return;
   const proj = useProjects.getState().sessions.find((x) => x.id === sessionId);
   try { new Notification('Dispatch — input needed', { body: proj?.name ?? 'A session needs your input', icon: '/icons/icon-192.png' }); } catch { /* ignore */ }
@@ -64,6 +65,15 @@ export default function App() {
     });
     sockRef.current = sock;
     return () => { sock.close(); sockRef.current = null; };
+  }, []);
+
+  useEffect(() => {
+    const report = () => { if (useSettings.getState().pushEnabled) void import('./lib/push').then((m) => m.reportPresence(document.visibilityState === 'visible' && document.hasFocus())); };
+    report();
+    document.addEventListener('visibilitychange', report);
+    window.addEventListener('focus', report);
+    window.addEventListener('blur', report);
+    return () => { document.removeEventListener('visibilitychange', report); window.removeEventListener('focus', report); window.removeEventListener('blur', report); };
   }, []);
 
   // Returning from the background: re-establish the events socket and remount

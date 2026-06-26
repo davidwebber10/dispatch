@@ -24,6 +24,7 @@ interface SettingsState {
   density: Density;
   accent: string;
   notify: boolean;
+  pushEnabled: boolean;
   setFontSize: (n: number) => void;
   setScrollback: (n: number) => void;
   setSidebarFontSize: (n: number) => void;
@@ -31,6 +32,7 @@ interface SettingsState {
   setDensity: (d: Density) => void;
   setAccent: (c: string) => void;
   setNotify: (b: boolean) => Promise<void>;
+  setPushEnabled: (b: boolean) => Promise<void>;
 }
 
 function load<T>(key: string, fallback: T): T {
@@ -53,6 +55,7 @@ export const useSettings = create<SettingsState>((set) => ({
   density: load<Density>('dispatch:density', 'cozy'),
   accent: initialAccent,
   notify: load('dispatch:notify', false),
+  pushEnabled: load('dispatch:pushEnabled', false),
   setFontSize: (n) => { const fontSize = Math.max(9, Math.min(22, Math.round(n))); save('dispatch:fontSize', fontSize); set({ fontSize }); },
   setScrollback: (n) => { const scrollback = Math.max(1000, Math.min(100000, Math.round(n))); save('dispatch:scrollback', scrollback); set({ scrollback }); },
   setSidebarFontSize: (n) => { const sidebarFontSize = Math.max(10, Math.min(18, Math.round(n))); save('dispatch:sidebarFontSize', sidebarFontSize); set({ sidebarFontSize }); },
@@ -65,5 +68,16 @@ export const useSettings = create<SettingsState>((set) => ({
     }
     const notify = b && typeof Notification !== 'undefined' && Notification.permission === 'granted';
     save('dispatch:notify', notify); set({ notify });
+  },
+  setPushEnabled: async (b) => {
+    if (b) {
+      const r = await (await import('../lib/push')).enablePush();
+      const on = r === 'ok';
+      save('dispatch:pushEnabled', on); set({ pushEnabled: on });
+      if (!on) throw new Error(r); // surfaced by the toggle for messaging (denied / unsupported / ios-install)
+    } else {
+      await (await import('../lib/push')).disablePush();
+      save('dispatch:pushEnabled', false); set({ pushEnabled: false });
+    }
   },
 }));

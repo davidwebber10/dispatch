@@ -128,6 +128,12 @@ export const api = {
   exportIntegrations: () => req<IntegrationsExport>('/api/integrations/export'),
   importIntegrations: (doc: IntegrationsExport) => req<{ added: string[]; skipped: string[] }>('/api/integrations/import', { method: 'POST', body: body(doc) }),
 
+  // Push notifications
+  getPushKey: () => req<{ publicKey: string }>('/api/push/key'),
+  pushSubscribe: (deviceId: string, subscription: unknown) => req<{ ok: true }>('/api/push/subscribe', { method: 'POST', body: body({ deviceId, subscription }) }),
+  pushUnsubscribe: (deviceId: string) => req<{ ok: true }>('/api/push/unsubscribe', { method: 'POST', body: body({ deviceId }) }),
+  pushPresence: (deviceId: string, foreground: boolean) => req<{ ok: true }>('/api/push/presence', { method: 'POST', body: body({ deviceId, foreground }) }),
+
   // Browser auth relay
   listAuthRequests: () => req<AuthRequest[]>('/api/auth-requests'),
   markAuthOpened: (id: string) => req<AuthRequest>(`/api/auth-requests/${id}/opened`, { method: 'POST' }),
