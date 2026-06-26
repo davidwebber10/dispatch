@@ -5,6 +5,7 @@ import { useSettings, ACCENTS } from '../../stores/settings';
 import { useServers, currentLabel } from '../../stores/servers';
 import { useSecrets } from '../../stores/secrets';
 import { useSetup } from '../../stores/setup';
+import { IntegrationsSection } from './IntegrationsSection';
 
 const sectionLabel: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
 const row: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 };
@@ -329,6 +330,9 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
               <Divider />
 
               <div style={row}><span style={item}>Version</span><span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)' }}>Dispatch Web</span></div>
+              <Divider />
+
+              <IntegrationsSection />
             </>
           ) : (
             <SecretsSection />

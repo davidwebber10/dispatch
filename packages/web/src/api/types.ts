@@ -210,3 +210,5 @@ export interface DopplerStatus { connected: boolean; project: string | null; con
 export interface DopplerSecret { name: string; value: string }
 export interface DopplerProject { id: string; slug: string; name: string }
 export interface DopplerConfig { name: string; environment: string }
+
+export interface IntegrationsStatus { installed: boolean; version: string | null }

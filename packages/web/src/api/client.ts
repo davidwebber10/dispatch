@@ -1,4 +1,4 @@
-import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession } from './types';
+import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession, IntegrationsStatus } from './types';
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -118,6 +118,9 @@ export const api = {
   },
   setSecret: (input: { name: string; value: string }) => req<DopplerSecret>('/api/secrets', { method: 'POST', body: body(input) }),
   deleteSecret: (name: string) => req<void>(`/api/secrets/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+
+  // Integrations
+  getIntegrationsStatus: () => req<IntegrationsStatus>('/api/integrations/status'),
 
   // Browser auth relay
   listAuthRequests: () => req<AuthRequest[]>('/api/auth-requests'),

@@ -32,6 +32,7 @@ import { createSetupRouter } from './routes/setup.js';
 import { SecretsService } from './secrets/service.js';
 import { IntegrationsService } from './integrations/service.js';
 import { createEventsRouter } from './routes/events.js';
+import { createIntegrationsRouter } from './routes/integrations.js';
 import { StatusService } from './status/service.js';
 import { createEventsBroadcaster, createNoopBroadcaster } from './ws/events.js';
 import type { EventBroadcaster } from './ws/events.js';
@@ -103,6 +104,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   app.use('/api/sessions/:id/git', createGitRouter(db));
   app.use('/api/auth-requests', createAuthRouter(authRequestService));
   app.use('/api/state', createStateRouter(db));
+  app.use('/api/integrations', createIntegrationsRouter(integrationsService));
 
   // Attach internals for server wiring
   (app as any)._ptyManager = ptyManager;
@@ -293,6 +295,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.use('/api/auth-requests', createAuthRouter(authRequestService));
 
   app.use('/api/state', createStateRouter(db));
+  app.use('/api/integrations', createIntegrationsRouter(integrationsService));
 
   // Serve the built web client (single-origin) when a build is present.
   // SPA fallback returns index.html for any non-/api, non-WS GET.
