@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import fs from 'fs';
 import { buildPlist, esc, createDarwinDaemon } from '../../src/platform/daemon-darwin.js';
+import type { RunnerOpts } from '../../src/platform/daemon-darwin.js';
 import type { DaemonInstallOptions } from '../../src/platform/daemon.js';
 
 const baseOpts: DaemonInstallOptions = {
@@ -227,5 +228,27 @@ describe('createDarwinDaemon install()', () => {
     d.uninstall();
     expect(rmSpy).toHaveBeenCalledWith('/tmp/dispatch-test.plist', { force: true });
     rmSpy.mockRestore();
+  });
+
+  test('idempotency bootout calls pass { quiet: true }', () => {
+    // Record the opts passed to each call so we can assert the two bootout
+    // calls are issued with quiet:true (stderr suppressed).
+    const callOpts: Array<RunnerOpts | undefined> = [];
+    let listCallCount = 0;
+    const run = vi.fn((cmd: string, args: string[], opts?: RunnerOpts) => {
+      if (args[0] === 'list') {
+        listCallCount++;
+        if (listCallCount <= 1) return 'PID\tStatus\tLabel\n';
+        return 'PID\tStatus\tLabel\n789\t0\tcom.dispatch.server\n';
+      }
+      if (args[0] === 'bootout') callOpts.push(opts);
+      return '';
+    });
+    const d = createDarwinDaemon(run, vi.fn(), '/tmp/test.plist');
+    d.install({ port: 3456, nodePath: '/usr/bin/node', entry: '/repo/server.js', repoRoot: '/repo', logDir: '/tmp/logs', env: {} });
+    // The first two bootout calls (gui/ and user/) must both carry quiet:true.
+    expect(callOpts.length).toBeGreaterThanOrEqual(2);
+    expect(callOpts[0]).toEqual({ quiet: true });
+    expect(callOpts[1]).toEqual({ quiet: true });
   });
 });

@@ -4,9 +4,13 @@ import path from 'path';
 import { execFileSync, spawn } from 'child_process';
 import type { DaemonController, DaemonInstallOptions, DaemonStatus } from './daemon.js';
 
-export type Runner = (cmd: string, args: string[]) => string;
+export type RunnerOpts = { quiet?: boolean };
+export type Runner = (cmd: string, args: string[], opts?: RunnerOpts) => string;
 const LABEL = 'com.dispatch.server';
-const defaultRun: Runner = (cmd, args) => execFileSync(cmd, args, { encoding: 'utf-8' });
+const defaultRun: Runner = (cmd, args, opts) =>
+  execFileSync(cmd, args, opts?.quiet
+    ? { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }
+    : { encoding: 'utf-8' });
 
 /**
  * Try a launchctl command against the gui/$uid domain first (interactive session),
@@ -61,8 +65,9 @@ export function createDarwinDaemon(
       fs.writeFileSync(plistPath, buildPlist(opts));
 
       // 2. Bootout first (idempotency) — ignore all errors (may not be loaded).
-      try { run('launchctl', ['bootout', `gui/${uid}/${LABEL}`]); } catch { /* ignore */ }
-      try { run('launchctl', ['bootout', `user/${uid}/${LABEL}`]); } catch { /* ignore */ }
+      // quiet:true suppresses the expected "Boot-out failed: 3: No such process" stderr noise.
+      try { run('launchctl', ['bootout', `gui/${uid}/${LABEL}`], { quiet: true }); } catch { /* ignore */ }
+      try { run('launchctl', ['bootout', `user/${uid}/${LABEL}`], { quiet: true }); } catch { /* ignore */ }
 
       // 3. Poll for teardown (up to ~5 × 500ms = 2.5s).
       for (let i = 0; i < 5; i++) {
