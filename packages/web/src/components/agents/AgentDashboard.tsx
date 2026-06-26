@@ -54,7 +54,7 @@ export function AgentDashboard({ onEdit, onOpenRun, onBack }: { onEdit: () => vo
   const runs = useAgents((s) => s.runs);
   const isMobile = useIsMobile();
 
-  if (!schedule) return <div style={{ flex: 1, padding: 24, color: 'var(--color-text-tertiary)' }}>Select an agent, or create one.</div>;
+  if (!schedule) return <div style={{ flex: 1, padding: 24, color: 'var(--color-text-tertiary)' }}>Select an automation, or create one.</div>;
 
   const kpis = deriveKpis(runs);
   const recent = runs.slice(0, 24);

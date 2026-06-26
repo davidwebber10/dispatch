@@ -35,7 +35,7 @@ export function AllAgentsView({ onOpenAgent }: { onOpenAgent: (projectId: string
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <div style={{ display: 'flex', gap: 8, padding: '10px 12px', flexShrink: 0 }}>
-        <Stat label="AGENTS" value={data ? String(data.agentCount) : '—'} />
+        <Stat label="AUTOMATIONS" value={data ? String(data.agentCount) : '—'} />
         <Stat label="RUNNING" value={data ? String(data.runningCount) : '—'} accent={!!data?.runningCount} />
         <Stat label="SPEND" value={data ? money(data.totalSpendUsd) : '—'} />
         <button onClick={load} title="Refresh" style={{ flexShrink: 0, width: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 12, color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
@@ -45,8 +45,8 @@ export function AllAgentsView({ onOpenAgent }: { onOpenAgent: (projectId: string
 
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y', padding: '0 4px 12px' }}>
         {loading && <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><Spinner size={24} /></div>}
-        {error && !loading && <Empty text="Couldn't load agents — the server may need updating." onRetry={load} />}
-        {data && !loading && !error && data.projects.length === 0 && <Empty text="No agents yet." />}
+        {error && !loading && <Empty text="Couldn't load automations — the server may need updating." onRetry={load} />}
+        {data && !loading && !error && data.projects.length === 0 && <Empty text="No automations yet." />}
         {data && !loading && !error && data.projects.map((proj) => (
           <div key={proj.projectId} style={{ marginTop: 8 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '12px 12px 6px' }}>

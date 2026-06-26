@@ -185,7 +185,7 @@ export function MobileApp() {
             )}
             {/* Bottom tab bar — Projects / Agents (only at the root; slides away with the rail) */}
             <div style={{ flexShrink: 0, display: 'flex', borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
-              {([['projects', 'Projects', Folders], ['agents', 'Agents', Robot]] as const).map(([key, label, Icon]) => {
+              {([['projects', 'Projects', Folders], ['agents', 'Automations', Robot]] as const).map(([key, label, Icon]) => {
                 const on = bottomTab === key;
                 return (
                   <button key={key} onClick={() => setBottomTab(key)}

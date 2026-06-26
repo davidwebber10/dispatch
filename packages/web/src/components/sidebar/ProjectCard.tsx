@@ -414,7 +414,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
         <div style={{ overflow: 'hidden', minHeight: 0 }}>
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, marginTop: isMobile ? 6 : 4, marginBottom: 6, padding: isMobile ? '0 12px' : '0 9px', borderBottom: '1px solid var(--color-border)', background: 'rgba(255,255,255,0.03)' }}>
             <TabPill label="Threads" count={threadItems.length} active={projTab === 'threads'} mobile={isMobile} onClick={() => setProjTab('threads')} />
-            <TabPill label="Agents" count={agents.length} active={projTab === 'agents'} mobile={isMobile} onClick={() => setProjTab('agents')} />
+            <TabPill label="Automations" count={agents.length} active={projTab === 'agents'} mobile={isMobile} onClick={() => setProjTab('agents')} />
             <span style={{ flex: 1 }} />
             {projTab === 'threads' ? (
               <span style={{ alignSelf: 'center', position: 'relative', display: 'inline-flex' }}>
@@ -422,7 +422,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
                 {menu && <NewTabMenu sessionId={session.id} onClose={() => setMenu(false)} onCreated={onSelectTab} onPickClaude={() => { setMenu(false); setNewClaude(true); }} onPickCodex={() => { setMenu(false); setNewCodex(true); }} />}
               </span>
             ) : (
-              <button title="Add agent" onClick={(e) => { e.stopPropagation(); onNewAgent?.(session.id); }} style={{ ...plusStyle, alignSelf: 'center' }}>+</button>
+              <button title="Add automation" onClick={(e) => { e.stopPropagation(); onNewAgent?.(session.id); }} style={{ ...plusStyle, alignSelf: 'center' }}>+</button>
             )}
           </div>
           {projTab === 'threads' ? (
@@ -453,7 +453,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
                   <AgentRow agent={a} active={agentFocused && a.id === agentSel} onClick={() => onSelectAgent?.(a.id)} />
                 </SwipeRow>
               ))}
-              {!agents.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No agents yet</div>}
+              {!agents.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No automations yet</div>}
             </div>
           )}
           {SECTIONS.slice(1).map(renderSection)}
@@ -509,7 +509,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
 
       <ConfirmModal
         open={!!pendingDelete}
-        title={pendingDelete?.kind === 'agent' ? 'Delete agent?' : 'Delete thread?'}
+        title={pendingDelete?.kind === 'agent' ? 'Delete automation?' : 'Delete thread?'}
         message={
           pendingDelete?.kind === 'agent'
             ? `“${pendingDelete.agent.name}” will be permanently deleted.`
