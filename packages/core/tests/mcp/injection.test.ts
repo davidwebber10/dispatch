@@ -23,6 +23,17 @@ describe('composeInjection', () => {
     expect(cfg.mcpServers.executor).toEqual({ command: 'executor', args: ['mcp'] });
     expect(r.codexArgs).toContain('mcp_servers.executor.command="executor"');
     expect(r.codexArgs).toContain('mcp_servers.doppler.env_vars=["DOPPLER_TOKEN"]');
+    // env+envVars (placeholder pattern) must NOT also emit a literal Codex env override.
+    expect(r.codexArgs).not.toContain('mcp_servers.doppler.env.DOPPLER_TOKEN="${DOPPLER_TOKEN}"');
     expect(r.systemPrompt).toBe('use doppler\n\nuse executor');
+  });
+
+  it('emits Codex literal env via dotted path for a spec with env and no envVars', () => {
+    const r = composeInjection([
+      { name: 'fs', command: 'npx', args: ['-y', 'server-fs'], env: { ROOT: '/tmp' } },
+    ], { configPath, prompts: [] });
+    expect(r.codexArgs).toContain('mcp_servers.fs.env.ROOT="/tmp"');
+    const cfg = JSON.parse(fs.readFileSync(r.claudeConfigPath!, 'utf-8'));
+    expect(cfg.mcpServers.fs.env).toEqual({ ROOT: '/tmp' });
   });
 });
