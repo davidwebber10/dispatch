@@ -28,8 +28,6 @@ describe('push db', () => {
 
 import { PushService } from '../../src/push/service.js';
 import fs from 'fs'; import os from 'os'; import path from 'path';
-import * as terminalsDb from '../../src/db/terminals.js';
-import * as sessionsDb from '../../src/db/sessions.js';
 
 describe('PushService', () => {
   let d: Database.Database; let vapidDir: string; let sent: { sub: any; payload: string }[];
@@ -60,5 +58,20 @@ describe('PushService', () => {
     s.subscribe('dev', { endpoint: 'https://e/x', keys: { p256dh: 'k', auth: 'a' } });
     await s.notifyThread({ terminalId: 't1', title: 'P', body: 'done' });
     expect((await import('../../src/db/push.js')).list(d)).toEqual([]);
+  });
+  it('prunes a subscription whose send throws a 404', async () => {
+    d = db(); vapidDir = fs.mkdtempSync(path.join(os.tmpdir(), 'push-'));
+    const s = new PushService(d, { vapidDir, send: async () => { const e: any = new Error('not found'); e.statusCode = 404; throw e; } });
+    s.subscribe('dev', { endpoint: 'https://e/y', keys: { p256dh: 'k', auth: 'a' } });
+    await s.notifyThread({ terminalId: 't1', title: 'P', body: 'done' });
+    expect((await import('../../src/db/push.js')).list(d)).toEqual([]);
+  });
+  it('notifies a device that has never reported presence (missing presence ⇒ away)', async () => {
+    // covers the "!p" branch in isAway(); stale-presence shares the same notify path
+    const s = svc();
+    s.subscribe('dev-unknown', { endpoint: 'https://e/unknown', keys: { p256dh: 'k', auth: 'a' } });
+    // no setPresence call → treated as away → should be notified
+    await s.notifyThread({ terminalId: 't1', title: 'P', body: 'done' });
+    expect(sent.map((x) => x.sub.endpoint)).toContain('https://e/unknown');
   });
 });

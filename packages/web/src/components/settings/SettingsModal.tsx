@@ -247,7 +247,8 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
       const r = String(e?.message);
       setPushMsg(r === 'ios-install' ? 'On iPhone/iPad, add Dispatch to your Home Screen first, then enable.'
         : r === 'unsupported' ? 'Push notifications aren\'t supported in this browser.'
-        : 'Notification permission was denied.');
+        : r === 'denied' ? 'Notification permission was denied.'
+        : 'Couldn\'t enable push notifications — please try again.');
     }
   }
   const servers = useServers((s) => s.servers);

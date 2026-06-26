@@ -68,7 +68,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const report = () => { if (useSettings.getState().pushEnabled) void import('./lib/push').then((m) => m.reportPresence(document.visibilityState === 'visible' && document.hasFocus())); };
+    const report = () => { if (useSettings.getState().pushEnabled) void import('./lib/push').then((m) => m.reportPresence(document.visibilityState === 'visible' && document.hasFocus())).catch(() => {}); };
     report();
     document.addEventListener('visibilitychange', report);
     window.addEventListener('focus', report);

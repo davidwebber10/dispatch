@@ -28,7 +28,7 @@ export class PushService {
     const file = path.join(dir, 'push.json');
     try { const j = JSON.parse(fs.readFileSync(file, 'utf-8')); if (j.publicKey && j.privateKey) return j; } catch { /* create below */ }
     const keys = webpush.generateVAPIDKeys();
-    try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, JSON.stringify(keys, null, 2), { mode: 0o600 }); } catch { /* ephemeral if unwritable */ }
+    try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, JSON.stringify(keys, null, 2), { mode: 0o600 }); try { fs.chmodSync(file, 0o600); } catch { /* best effort */ } } catch { /* ephemeral if unwritable */ }
     return keys;
   }
 

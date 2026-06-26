@@ -42,12 +42,11 @@ export async function enablePush(): Promise<'ok' | 'denied' | 'unsupported' | 'i
   const { publicKey } = await api.getPushKey();
   const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) });
   await api.pushSubscribe(deviceId(), sub.toJSON());
+  reportPresence(true);
   return 'ok';
 }
 export async function disablePush(): Promise<void> {
   try { const reg = await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); await sub?.unsubscribe(); } catch { /* ignore */ }
   try { await api.pushUnsubscribe(deviceId()); } catch { /* ignore */ }
 }
-export function reportPresence(foreground: boolean): void {
-  try { void api.pushPresence(deviceId(), foreground); } catch { /* ignore */ }
-}
+export function reportPresence(foreground: boolean): void { void api.pushPresence(deviceId(), foreground).catch(() => {}); }
