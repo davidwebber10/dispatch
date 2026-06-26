@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { SessionService } from '../sessions/service.js';
 import type { EventBroadcaster } from '../ws/events.js';
 import { listRecentSessions } from '../sessions/cc-sessions.js';
+import { listRecentCodexSessions } from '../sessions/codex-sessions.js';
 
 export function createSessionsRouter(sessionService: SessionService, broadcaster?: EventBroadcaster): Router {
   const router = Router();
@@ -45,6 +46,15 @@ export function createSessionsRouter(sessionService: SessionService, broadcaster
     const session = sessionService.get(req.params.id);
     if (!session) return res.status(404).json({ error: 'Session not found' });
     try { res.json(await listRecentSessions(session.workingDir)); }
+    catch { res.json([]); }
+  });
+
+  // GET /api/sessions/:id/codex-recent — recent Codex sessions in this project's
+  // folder, for the new-thread "resume" picker.
+  router.get('/:id/codex-recent', async (req, res) => {
+    const session = sessionService.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    try { res.json(await listRecentCodexSessions(session.workingDir)); }
     catch { res.json([]); }
   });
 
