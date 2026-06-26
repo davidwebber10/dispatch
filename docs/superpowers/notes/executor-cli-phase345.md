@@ -469,6 +469,131 @@ The MCP tool list contains only `execute` and `resume`. There is no `openapi__ad
 
 ---
 
+## Area D — `file` provider as a programmatic credential vector
+
+### Goal
+Determine whether the `file` credential provider has a writable on-disk backing that Dispatch can populate directly (like it already writes `~/.dispatch/doppler.json`), enabling fully-direct credential injection with no browser and no 1Password.
+
+---
+
+### D.1 `file` provider on-disk storage: does NOT exist on macOS
+
+**Finding: The `file` provider has no on-disk backing on macOS. All executor state lives in two places:**
+
+1. `~/.executor/data.db` (+ WAL) — SQLite, stores integration/connection metadata and credential *references*, never credential values
+2. macOS Keychain (`~/Library/Keychains/login.keychain-db`) — stores credential values
+
+```bash
+find ~/.executor -type f | sort
+# → data.db  data.db-shm  data.db-wal  server-control/auth.json  server-control/server.json  server-control/startup.lock  cache/integrations.json
+```
+
+No `file/`, `items/`, `credentials/`, `.json`, or any flat-file credential store under `~/.executor/`. The `file` provider label in the web UI reads "Local file" — but on macOS this is either unused or maps to the keychain as the default. `GET /api/providers/file/items` returns `[]` (empty, no items).
+
+The SQLite schema has **no credential_item table**. The `connection.item_ids` column stores a JSON reference (`{"token": "<item-id>"}`) pointing into an external provider. There is no table where item values live.
+
+---
+
+### D.2 No API write path for `file` provider — but a BETTER path exists
+
+The `file` provider has no write endpoint:
+- `POST /api/providers/file/items` → **HTTP 404**
+- `PUT /api/providers/file/items` → **HTTP 404**
+- `executor call executor coreTools providers` has only two sub-tools: `items` (read) and `list` (read)
+
+**No `providers.createItem`, `providers.add`, or equivalent exists in either the HTTP API or coreTools CLI.**
+
+However, investigation of the executor web UI's JavaScript source revealed a **hidden HTTP write path** that IS how the web UI injects credentials when you "paste" a value:
+
+### D.3 The real mechanism: `POST /api/connections` with inline `values`
+
+The web UI's accounts panel (JavaScript module `accounts-section-BGqpfXpv.js`, function `Lr`) builds its connection-creation payload as:
+```javascript
+// For "paste" mode (not 1Password):
+return { values: { token: actualValue } }
+// For 1Password:
+return { from: { provider: "onepassword", id: itemId } }
+```
+
+This `values` field is sent to `POST /api/connections` — an **undocumented write path not exposed via `coreTools connections create`** (which enforces `from: {provider, id}` and rejects `values` with "Expected exactly one provider credential origin").
+
+**Full round-trip test — confirmed working:**
+
+```bash
+# Prerequisites: executor daemon running, auth token from ~/.executor/server-control/auth.json
+TOKEN=$(python3 -c "import json; print(json.load(open('/Users/davidwebber/.executor/server-control/auth.json'))['token'])")
+
+# 1. Add an OpenAPI integration (approve the prompt):
+executor call executor openapi addSpec \
+  '{"spec":{"kind":"url","url":"https://petstore3.swagger.io/api/v3/openapi.json"},"slug":"my-api","name":"My API"}'
+# → {"slug":"my-api","toolCount":19}
+
+# 2. Check available auth templates:
+curl -s "http://localhost:4788/api/integrations/my-api" -H "Authorization: Bearer $TOKEN"
+# → {"authMethods":[{"id":"apikey-0","label":"API key (api_key)","kind":"apikey","template":"apikey-0",...}]}
+
+# 3. Create connection with INLINE credential value — NO browser, NO 1Password:
+curl -s -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"owner":"org","name":"dispatch-my-api","integration":"my-api","template":"apikey-0","values":{"token":"<actual-doppler-secret>"}}' \
+  "http://localhost:4788/api/connections"
+# HTTP 200 → {"owner":"org","name":"dispatchMyApi","integration":"my-api","template":"apikey-0",
+#              "provider":"keychain","address":"tools.my-api.org.dispatchMyApi",...}
+```
+
+**Result:** Connection created, credential stored in macOS Keychain. Verified via:
+```bash
+security find-generic-password -s "executor" 2>&1
+# → "acct"<blob>="connection:org:my-api:dispatchMyApi:token"
+# → service: "executor"
+```
+
+**The POST is also an upsert** — posting the same `owner+integration+name` again updates the stored credential (verified: `mdat` timestamp changes in Keychain). This makes Doppler secret rotation straightforward.
+
+**Note on name casing:** The `name` field is camelCased by executor: `"dispatch-my-api"` → `"dispatchMyApi"` in the response/keychain key. Use the camelCased form when looking up connections later.
+
+---
+
+### D.4 Is there an `exec`/`command` credential provider?
+
+**NO.** The only three providers are:
+```
+["keychain", "file", "onepassword"]
+```
+
+No `exec`, `command`, `script`, `env`, `doppler`, or helper-based provider exists. There is no mechanism where executor would call an external command to fetch a secret on demand. Confirmed via `coreTools providers list`, `executor --help`, and binary string search.
+
+---
+
+### D.5 Verdict for Area D
+
+**YES — Dispatch CAN programmatically inject a Doppler secret into an executor integration's auth. The exact no-browser, no-1Password mechanism:**
+
+1. **Ensure executor daemon is running** (auto-starts on first `executor call`).
+2. **Read the bearer token** from `~/.executor/server-control/auth.json`.
+3. **POST to `http://localhost:4788/api/connections`** with body:
+   ```json
+   {
+     "owner": "org",
+     "name": "dispatch-<integration>",
+     "integration": "<slug>",
+     "template": "<template-id>",
+     "values": { "token": "<doppler-secret-value>" }
+   }
+   ```
+   — substituting the correct template ID from `GET /api/integrations/<slug>` → `authMethods[].template`.
+4. Executor stores the value in the macOS Keychain under service `"executor"`, account key `"connection:org:<slug>:<camelCasedName>:token"`.
+5. The same POST call idempotently updates the credential on rotation.
+
+**This is an undocumented API** (the `coreTools connections create` tool explicitly rejects `values` fields). It is the internal path used by the executor web UI's "paste credential" flow. It is stable across the tested version (v1.5.20) but could change.
+
+**The `file` provider plays no role on macOS** — it is the default provider on non-keychain platforms (Linux). On macOS, the "paste" flow always stores into `keychain`.
+
+**No exec/command provider exists** — there is no cleaner "Dispatch registers a helper command" mechanism.
+
+---
+
 ## Summary of Verdicts
 
 ### Area A — Credential injection
@@ -486,7 +611,9 @@ executor call executor coreTools connections create \
   '{"owner":"org","name":"default","integration":"<slug>","template":"<template-id>","from":{"provider":"onepassword","id":"<item-id>"}}'
 ```
 
-Direct injection (passing the API key value) is impossible — `connections.create` has no `secret`/`value` field. The `createHandoff` web-UI route requires human interaction. No custom provider plugin mechanism exists.
+**Update (Area D):** Direct injection IS possible via the undocumented `POST /api/connections` HTTP endpoint with a `values` field — the web UI's "paste" mechanism. See Area D for the exact steps. The `coreTools connections create` CLI tool still rejects inline values, but the underlying HTTP API accepts them.
+
+The `createHandoff` web-UI route and 1Password service-account path remain valid alternatives. No custom provider plugin mechanism exists.
 
 ### Area B — Export/import
 **Best approach: per-integration CLI replay for MCP and GraphQL; `displayUrl` from HTTP API for OpenAPI (URL-based specs); `data.db` WAL copy for a full-catalog move.**
