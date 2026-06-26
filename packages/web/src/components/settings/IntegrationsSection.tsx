@@ -49,13 +49,15 @@ export function IntegrationsSection() {
     } catch { setErr('Could not add — check the name is unique and the inputs are valid.'); }
     setBusy(false);
   }
-  async function toggle(i: Integration) { try { await api.setIntegrationEnabled(i.id, !i.enabled); await reload(); } catch { setErr('Could not update.'); } }
-  async function remove(id: string) { try { await api.removeIntegration(id); await reload(); } catch { setErr('Could not remove.'); } }
+  async function toggle(i: Integration) { if (busy) return; setBusy(true); setErr(''); try { await api.setIntegrationEnabled(i.id, !i.enabled); await reload(); } catch { setErr('Could not update.'); } setBusy(false); }
+  async function remove(id: string) { if (busy) return; setBusy(true); setErr(''); try { await api.removeIntegration(id); await reload(); } catch { setErr('Could not remove.'); } setBusy(false); }
 
   async function doExport() {
-    const doc = await api.exportIntegrations();
-    const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'integrations.json'; a.click(); URL.revokeObjectURL(a.href);
+    try {
+      const doc = await api.exportIntegrations();
+      const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'integrations.json'; a.click(); URL.revokeObjectURL(a.href);
+    } catch { setErr('Export failed — could not reach Dispatch.'); }
   }
   async function doImport(file: File) {
     setErr('');
@@ -92,7 +94,7 @@ export function IntegrationsSection() {
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
         <div style={{ display: 'flex', gap: 8 }}>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="name (e.g. linear)" style={{ ...input, flex: '0 0 32%' }} />
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="name — letters, digits, _ - (e.g. linear)" style={{ ...input, flex: '0 0 32%' }} />
           {!advanced && <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://mcp.example.com/sse" style={{ ...input, flex: 1 }} />}
           {advanced && <input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="command (e.g. npx)" style={{ ...input, flex: 1 }} />}
           <button onClick={() => void add()} disabled={!canAdd} style={addBtn(canAdd)}>{busy ? 'Adding…' : 'Add'}</button>
