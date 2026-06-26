@@ -190,6 +190,9 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
         borderRadius: isMobile ? 0 : (showActive ? 0 : 5), border: 'none', borderBottom: isMobile ? '1px solid var(--color-border)' : 'none',
         color: showActive ? '#fff' : 'var(--color-text-primary)', fontSize: isMobile ? 16 : fs, fontWeight: showActive ? 600 : isMobile ? 450 : 400,
         textAlign: 'left', cursor: 'pointer',
+        // Long-press opens the options menu — stop iOS from selecting the label
+        // text / showing the callout, and kill the tap-flash.
+        WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none', WebkitTapHighlightColor: 'transparent',
       }}
     >
       {tab.type === 'file'
