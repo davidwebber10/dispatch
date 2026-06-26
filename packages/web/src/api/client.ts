@@ -1,4 +1,4 @@
-import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession, IntegrationsStatus, IntegrationsList, AddIntegrationInput, AddIntegrationResult } from './types';
+import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession, Integration, AddIntegrationInput, IntegrationsExport } from './types';
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -119,11 +119,13 @@ export const api = {
   setSecret: (input: { name: string; value: string }) => req<DopplerSecret>('/api/secrets', { method: 'POST', body: body(input) }),
   deleteSecret: (name: string) => req<void>(`/api/secrets/${encodeURIComponent(name)}`, { method: 'DELETE' }),
 
-  // Integrations
-  getIntegrationsStatus: () => req<IntegrationsStatus>('/api/integrations/status'),
-  listIntegrations: () => req<IntegrationsList>('/api/integrations'),
-  addIntegration: (input: AddIntegrationInput) => req<AddIntegrationResult>('/api/integrations', { method: 'POST', body: body(input) }),
-  removeIntegration: (slug: string) => req<{ removed: boolean }>(`/api/integrations/${encodeURIComponent(slug)}`, { method: 'DELETE' }),
+  // Integrations (own MCP catalog)
+  listIntegrations: () => req<{ integrations: Integration[] }>('/api/integrations'),
+  addIntegration: (input: AddIntegrationInput) => req<Integration>('/api/integrations', { method: 'POST', body: body(input) }),
+  setIntegrationEnabled: (id: string, enabled: boolean) => req<Integration>(`/api/integrations/${encodeURIComponent(id)}`, { method: 'PATCH', body: body({ enabled }) }),
+  removeIntegration: (id: string) => req<{ removed: boolean }>(`/api/integrations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  exportIntegrations: () => req<IntegrationsExport>('/api/integrations/export'),
+  importIntegrations: (doc: IntegrationsExport) => req<{ added: string[]; skipped: string[] }>('/api/integrations/import', { method: 'POST', body: body(doc) }),
 
   // Browser auth relay
   listAuthRequests: () => req<AuthRequest[]>('/api/auth-requests'),

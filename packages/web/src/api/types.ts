@@ -211,12 +211,8 @@ export interface DopplerSecret { name: string; value: string }
 export interface DopplerProject { id: string; slug: string; name: string }
 export interface DopplerConfig { name: string; environment: string }
 
-export interface IntegrationsStatus { installed: boolean; version: string | null }
-export interface Integration { slug: string; description: string; kind: string; canRemove: boolean; canRefresh: boolean }
-export interface IntegrationsList { installed: boolean; integrations: Integration[] }
+export interface Integration { id: string; name: string; type: 'stdio' | 'remote'; command: string | null; args: string[]; url: string | null; headers: Record<string, string>; env: Record<string, string>; enabled: boolean; createdAt: string; updatedAt: string }
 export type AddIntegrationInput =
-  | { type: 'openapi'; url: string; slug: string }
-  | { type: 'mcp-stdio'; name: string; command: string; args: string[]; slug?: string }
-  | { type: 'mcp-remote'; name: string; endpoint: string; slug?: string }
-  | { type: 'graphql'; endpoint: string; slug: string };
-export interface AddIntegrationResult { slug: string; toolCount?: number }
+  | { type: 'remote'; name: string; url: string; headers?: Record<string, string>; env?: Record<string, string> }
+  | { type: 'stdio'; name: string; command: string; args?: string[]; env?: Record<string, string> };
+export interface IntegrationsExport { version: 1; integrations: Omit<Integration, 'id' | 'createdAt' | 'updatedAt'>[] }
