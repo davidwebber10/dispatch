@@ -26,7 +26,6 @@ class CapturingPty extends PTYManager {
 }
 
 const dopplerSpec: McpServerSpec = { name: 'doppler', command: 'node', args: ['/x/doppler-server.js'], envVars: ['DOPPLER_TOKEN', 'DOPPLER_PROJECT'] };
-const executorSpec: McpServerSpec = { name: 'executor', command: 'executor', args: ['mcp', '--elicitation-mode', 'model'] };
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-inj-'));
 const configPath = path.join(tmpDir, 'mcp.json');
@@ -39,12 +38,15 @@ function makeService() {
   const pty = new CapturingPty();
   const svc = new SessionService(db, pty, configPath);
   svc.setSecretsServerSpec(() => ({ spec: dopplerSpec, prompt: 'Use Doppler for secrets.' }));
-  svc.setIntegrationsInjection(() => ({ spec: executorSpec, prompt: 'Use executor for integrations.' }));
+  svc.setIntegrationsSpecs(() => [
+    { name: 'fs', command: 'npx', args: ['-y', 'server-fs'] },
+    { name: 'linear', command: 'npx', args: ['-y', 'mcp-remote', 'https://mcp.linear.app/sse'] },
+  ]);
   return { svc, pty };
 }
 
 describe('spawn-time MCP injection wiring', () => {
-  it('merges Doppler + executor into the Claude argv (--mcp-config + appended system prompt)', () => {
+  it('merges Doppler + catalog specs into the Claude argv (--mcp-config)', () => {
     const { svc, pty } = makeService();
     // externalId -> resume path -> skips best-effort async session-id capture
     svc.createTerminal('s1', 'claude-code', 'CC', true, undefined, 'ext-claude');
@@ -57,16 +59,17 @@ describe('spawn-time MCP injection wiring', () => {
     expect(args).toContain('--append-system-prompt');
     // Both servers present in the written config file
     const written = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(Object.keys(written.mcpServers).sort()).toEqual(['doppler', 'executor']);
+    expect(Object.keys(written.mcpServers).sort()).toEqual(['doppler', 'fs', 'linear']);
   });
 
-  it('merges Doppler + executor into the Codex argv (-c mcp_servers.* for both servers)', () => {
+  it('merges Doppler + catalog specs into the Codex argv (-c mcp_servers.* for all servers)', () => {
     const { svc, pty } = makeService();
     svc.createTerminal('s1', 'codex', 'CX', true, undefined, 'ext-codex');
     const call = pty.calls.find(c => c.command === 'codex');
     expect(call).toBeTruthy();
     const args = call!.args;
     expect(args).toContain('mcp_servers.doppler.command="node"');
-    expect(args).toContain('mcp_servers.executor.command="executor"');
+    expect(args).toContain('mcp_servers.fs.command="npx"');
+    expect(args).toContain('mcp_servers.linear.command="npx"');
   });
 });

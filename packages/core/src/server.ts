@@ -87,9 +87,9 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const sessionService = new SessionService(db, ptyManager, path.join(dispatchDir, 'mcp.json'));
   const agentService = new AgentService(db, sessionService, broadcaster);
   const secretsService = options.secretsService ?? new SecretsService(dispatchDir);
-  const integrationsService = new IntegrationsService();
+  const integrationsService = new IntegrationsService(db);
   sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
-  sessionService.setIntegrationsInjection(() => ({ spec: integrationsService.getServerSpec(), prompt: integrationsService.getSystemPrompt() }));
+  sessionService.setIntegrationsSpecs(() => integrationsService.getServerSpecs());
   const statusService = new StatusService(db, broadcaster);
 
   // Mount routes
@@ -224,9 +224,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Doppler secrets: token-backed connection + per-spawn injection (DOPPLER_* env +
   // an MCP server) so Claude Code / Codex agents can add & retrieve secrets.
   const secretsService = new SecretsService(dataDir);
-  const integrationsService = new IntegrationsService();
+  const integrationsService = new IntegrationsService(db);
   sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
-  sessionService.setIntegrationsInjection(() => ({ spec: integrationsService.getServerSpec(), prompt: integrationsService.getSystemPrompt() }));
+  sessionService.setIntegrationsSpecs(() => integrationsService.getServerSpecs());
   let effectiveShimEnv = browserShimEnv;
   const refreshPtyEnv = () => ptyManager.setDefaultEnv({ ...effectiveShimEnv, ...secretsService.getSpawnEnv() });
   secretsService.onChange(refreshPtyEnv);

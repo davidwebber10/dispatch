@@ -26,8 +26,8 @@ interface StatusContext {
 export class SessionService {
   /** Supplies the Doppler MCP spec for spawned CLIs; set by the server wiring. */
   private secretsServerSpec: (() => { spec: McpServerSpec | null; prompt: string | null }) | null = null;
-  /** Supplies the executor MCP spec for spawned CLIs; set by the server wiring. */
-  private integrationsInjection: (() => { spec: McpServerSpec | null; prompt: string | null }) | null = null;
+  /** Supplies the catalog MCP specs for spawned CLIs; set by the server wiring. */
+  private integrationsSpecs: (() => McpServerSpec[]) | null = null;
   /** How spawned CLIs phone home with lifecycle events; set by the server wiring. */
   private statusContext: StatusContext | null = null;
 
@@ -42,8 +42,8 @@ export class SessionService {
     this.secretsServerSpec = fn;
   }
 
-  setIntegrationsInjection(fn: () => { spec: McpServerSpec | null; prompt: string | null }): void {
-    this.integrationsInjection = fn;
+  setIntegrationsSpecs(fn: () => McpServerSpec[]): void {
+    this.integrationsSpecs = fn;
   }
 
   setStatusContext(ctx: StatusContext): void {
@@ -634,8 +634,8 @@ export class SessionService {
       const prompts: string[] = [];
       const sec = this.secretsServerSpec?.();
       if (sec?.spec) { specs.push(sec.spec); if (sec.prompt) prompts.push(sec.prompt); }
-      const intg = this.integrationsInjection?.();
-      if (intg?.spec) { specs.push(intg.spec); if (intg.prompt) prompts.push(intg.prompt); }
+      const intgSpecs = this.integrationsSpecs?.() ?? [];
+      specs.push(...intgSpecs);
       const secretsMcp = composeInjection(specs, { configPath: this.mcpConfigPath, prompts });
       let cmd: { command: string; args: string[] };
       if (runnerPrompt !== undefined) {

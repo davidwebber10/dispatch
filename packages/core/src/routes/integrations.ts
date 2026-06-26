@@ -1,53 +1,46 @@
 import { Router } from 'express';
-import type { IntegrationsService, AddIntegrationInput } from '../integrations/service.js';
-
-/** Validate a POST body as an AddIntegrationInput. Returns an error string or null. */
-function validateAddInput(b: any): string | null {
-  if (!b || typeof b !== 'object') return 'body required';
-  const s = (v: any) => typeof v === 'string' && v.trim().length > 0;
-  switch (b.type) {
-    case 'openapi': return s(b.url) && s(b.slug) ? null : 'openapi requires url and slug';
-    case 'mcp-stdio': return s(b.name) && s(b.command) && Array.isArray(b.args) && b.args.every((a: any) => typeof a === 'string') ? null : 'mcp-stdio requires name, command, and string[] args';
-    case 'mcp-remote': return s(b.name) && s(b.endpoint) ? null : 'mcp-remote requires name and endpoint';
-    case 'graphql': return s(b.endpoint) && s(b.slug) ? null : 'graphql requires endpoint and slug';
-    default: return `unknown integration type: ${String(b.type)}`;
-  }
-}
+import { IntegrationsService } from '../integrations/service.js';
+import type { AddIntegrationInput } from '../integrations/service.js';
 
 export function createIntegrationsRouter(integrations: IntegrationsService): Router {
   const router = Router();
 
-  router.get('/status', (_req, res) => res.json(integrations.status()));
+  // Always "installed" now — integrations live in the local DB.
+  router.get('/status', (_req, res) => res.json({ installed: true }));
 
-  router.get('/', async (_req, res) => {
-    if (!integrations.status().installed) return res.json({ installed: false, integrations: [] });
+  router.get('/', (_req, res) => {
     try {
-      const list = await integrations.list();
-      res.json({ installed: true, integrations: list });
-    } catch {
-      res.status(502).json({ error: 'Could not reach the executor catalog.' });
+      res.json({ installed: true, integrations: integrations.list() });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
-  router.post('/', async (req, res) => {
-    if (!integrations.status().installed) return res.status(409).json({ error: 'executor not installed' });
-    const err = validateAddInput(req.body);
+  router.post('/', (req, res) => {
+    const err = IntegrationsService.validate(req.body);
     if (err) return res.status(400).json({ error: err });
     try {
-      const result = await integrations.add(req.body as AddIntegrationInput);
+      const result = integrations.add(req.body as AddIntegrationInput);
       res.json(result);
-    } catch {
-      res.status(502).json({ error: 'Could not add the integration.' });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
     }
   });
 
-  router.delete('/:slug', async (req, res) => {
-    if (!integrations.status().installed) return res.status(409).json({ error: 'executor not installed' });
+  router.patch('/:id/enabled', (req, res) => {
+    const { enabled } = req.body;
+    if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be boolean' });
+    const result = integrations.setEnabled(req.params.id, enabled);
+    if (!result) return res.status(404).json({ error: 'integration not found' });
+    res.json(result);
+  });
+
+  router.delete('/:id', (req, res) => {
     try {
-      const result = await integrations.remove(req.params.slug);
+      const result = integrations.remove(req.params.id);
       res.json(result);
-    } catch {
-      res.status(502).json({ error: 'Could not remove the integration.' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
