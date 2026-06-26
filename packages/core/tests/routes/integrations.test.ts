@@ -52,6 +52,23 @@ describe('integrations routes', () => {
     expect(res.body).toEqual({ removed: true });
   });
 
+  it('PATCH /:id rejects a non-boolean enabled with 400', async () => {
+    const post = await request(app).post('/api/integrations').send({ type: 'stdio', name: 'fs', command: 'x' });
+    const res = await request(app).patch(`/api/integrations/${post.body.id}`).send({ enabled: 'yes' });
+    expect(res.status).toBe(400);
+  });
+
+  it('POST /import rejects an invalid body with 400', async () => {
+    const res = await request(app).post('/api/integrations/import').send({ integrations: 'nope' });
+    expect(res.status).toBe(400);
+  });
+
+  it('GET /export responds 200 with a versioned doc', async () => {
+    const res = await request(app).get('/api/integrations/export');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ version: 1, integrations: [] });
+  });
+
   it('export then import round-trips into a fresh app', async () => {
     await request(app).post('/api/integrations').send({ type: 'remote', name: 'linear', url: 'https://mcp.linear.app/sse' });
     const exp = await request(app).get('/api/integrations/export');

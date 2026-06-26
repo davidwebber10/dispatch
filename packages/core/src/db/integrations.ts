@@ -46,7 +46,7 @@ export function create(db: Database.Database, input: CreateIntegrationInput): In
 }
 
 export function list(db: Database.Database): Integration[] {
-  return (db.prepare('SELECT * FROM integrations ORDER BY created_at ASC, id ASC').all() as IntegrationRow[]).map(rowToIntegration);
+  return (db.prepare('SELECT * FROM integrations ORDER BY created_at ASC, rowid ASC').all() as IntegrationRow[]).map(rowToIntegration);
 }
 
 export function getById(db: Database.Database, id: string): Integration | null {

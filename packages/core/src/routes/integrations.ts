@@ -24,11 +24,15 @@ export function createIntegrationsRouter(integrations: IntegrationsService): Rou
     res.json(updated);
   });
 
-  router.delete('/:id', (req, res) => res.json(integrations.remove(req.params.id)));
+  router.delete('/:id', (req, res) => {
+    try { res.json(integrations.remove(req.params.id)); }
+    catch { res.status(500).json({ error: 'Could not remove the integration.' }); }
+  });
 
   router.get('/export', (_req, res) => res.json(integrations.export()));
 
   router.post('/import', (req, res) => {
+    if (!Array.isArray(req.body?.integrations)) return res.status(400).json({ error: 'Invalid import document.' });
     try {
       res.json(integrations.import(req.body as IntegrationsExport));
     } catch {
