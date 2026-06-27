@@ -4,9 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { loadManifest, validateEntry } from '../../src/tools/manifest.js';
 
+let root: string;
 let base: string;
-beforeEach(() => { base = fs.mkdtempSync(path.join(os.tmpdir(), 'tools-')); });
-afterEach(() => { fs.rmSync(base, { recursive: true, force: true }); });
+beforeEach(() => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'tools-'));
+  base = path.join(root, 'tools');
+});
+afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
 
 describe('manifest', () => {
   it('returns the default bundle when no user file', () => {
@@ -18,7 +22,7 @@ describe('manifest', () => {
   });
 
   it('merges user entries and overrides by name', () => {
-    fs.writeFileSync(path.join(path.dirname(base), 'tools.json'), JSON.stringify({
+    fs.writeFileSync(path.join(root, 'tools.json'), JSON.stringify({
       tools: [
         { name: 'mytool', description: 'mine', kind: 'binary', bins: ['mytool'], binary: { 'darwin-arm64': { url: 'https://x/mytool', archive: 'none' } } },
         { name: 'jq', description: 'overridden jq', kind: 'binary', bins: ['jq'], binary: { 'darwin-arm64': { url: 'https://x/jq', archive: 'none' } } },
@@ -30,7 +34,7 @@ describe('manifest', () => {
   });
 
   it('drops invalid user entries', () => {
-    fs.writeFileSync(path.join(path.dirname(base), 'tools.json'), JSON.stringify({
+    fs.writeFileSync(path.join(root, 'tools.json'), JSON.stringify({
       tools: [{ name: 'bad' /* missing kind/bins */ }, 'nope'],
     }));
     const m = loadManifest(base);
