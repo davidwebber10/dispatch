@@ -30,6 +30,8 @@ export class SessionService {
   private integrationsSpecs: (() => McpServerSpec[]) | null = null;
   /** How spawned CLIs phone home with lifecycle events; set by the server wiring. */
   private statusContext: StatusContext | null = null;
+  /** Supplies a tools-awareness note injected into the developer instructions; set by server wiring. */
+  private toolsAwareness?: () => string | null;
 
   constructor(
     private db: Database.Database,
@@ -44,6 +46,10 @@ export class SessionService {
 
   setIntegrationsSpecs(fn: () => McpServerSpec[]): void {
     this.integrationsSpecs = fn;
+  }
+
+  setToolsAwareness(fn: () => string | null): void {
+    this.toolsAwareness = fn;
   }
 
   setStatusContext(ctx: StatusContext): void {
@@ -636,7 +642,8 @@ export class SessionService {
       if (sec?.spec) { specs.push(sec.spec); if (sec.prompt) prompts.push(sec.prompt); }
       const intgSpecs = this.integrationsSpecs?.() ?? [];
       specs.push(...intgSpecs);
-      const secretsMcp = composeInjection(specs, { configPath: this.mcpConfigPath, prompts });
+      const developerNote = this.toolsAwareness?.() ?? null;
+      const secretsMcp = composeInjection(specs, { configPath: this.mcpConfigPath, prompts, developerNote });
       let cmd: { command: string; args: string[] };
       if (runnerPrompt !== undefined) {
         // Runner launches emit their own structured stream-json; no hooks needed.

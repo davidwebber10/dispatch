@@ -29,6 +29,8 @@ import { createStateRouter } from './routes/state.js';
 import { createGitRouter } from './routes/git.js';
 import { createSecretsRouter } from './routes/secrets.js';
 import { createSetupRouter } from './routes/setup.js';
+import { createToolsRouter } from './routes/tools.js';
+import { getToolsSpawnEnv, toolStatuses, awarenessNote } from './tools/status.js';
 import { SecretsService } from './secrets/service.js';
 import { IntegrationsService } from './integrations/service.js';
 import { createEventsRouter } from './routes/events.js';
@@ -47,6 +49,8 @@ interface CreateAppOptions {
   skipPty?: boolean;
   /** Directory for the Doppler token/config files (defaults to ~/.dispatch). */
   secretsDir?: string;
+  /** Directory for bundled CLI tools (defaults to <secretsDir>/tools). */
+  toolsDir?: string;
   /** Inject a pre-built SecretsService (e.g. with a fake Doppler client) for tests. */
   secretsService?: SecretsService;
 }
@@ -86,12 +90,14 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const authRequestService = new AuthRequestService(broadcaster);
 
   const dispatchDir = options.secretsDir ?? path.join(os.homedir(), '.dispatch');
+  const toolsBase = options.toolsDir ?? path.join(dispatchDir, 'tools');
   const sessionService = new SessionService(db, ptyManager, path.join(dispatchDir, 'mcp.json'));
   const agentService = new AgentService(db, sessionService, broadcaster);
   const secretsService = options.secretsService ?? new SecretsService(dispatchDir);
   const integrationsService = new IntegrationsService(db);
   sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
   sessionService.setIntegrationsSpecs(() => integrationsService.getServerSpecs());
+  sessionService.setToolsAwareness(() => awarenessNote(toolStatuses({ base: toolsBase })));
   const statusService = new StatusService(db, broadcaster);
   const pushService = new PushService(db, { vapidDir: dispatchDir });
 
@@ -119,6 +125,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   app.use('/api/state', createStateRouter(db));
   app.use('/api/integrations', createIntegrationsRouter(integrationsService));
   app.use('/api/push', createPushRouter(pushService));
+  app.use('/api/tools', createToolsRouter({ base: toolsBase }));
 
   // Attach internals for server wiring
   (app as any)._ptyManager = ptyManager;
@@ -249,10 +256,12 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // an MCP server) so Claude Code / Codex agents can add & retrieve secrets.
   const secretsService = new SecretsService(dataDir);
   const integrationsService = new IntegrationsService(db);
+  const toolsBase = path.join(dataDir, 'tools');
   sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
   sessionService.setIntegrationsSpecs(() => integrationsService.getServerSpecs());
+  sessionService.setToolsAwareness(() => awarenessNote(toolStatuses({ base: toolsBase })));
   let effectiveShimEnv = browserShimEnv;
-  const refreshPtyEnv = () => ptyManager.setDefaultEnv({ ...effectiveShimEnv, ...secretsService.getSpawnEnv() });
+  const refreshPtyEnv = () => ptyManager.setDefaultEnv({ ...effectiveShimEnv, ...secretsService.getSpawnEnv(), ...getToolsSpawnEnv({ base: toolsBase }) });
   secretsService.onChange(refreshPtyEnv);
   refreshPtyEnv();
 
@@ -322,6 +331,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.use('/api/state', createStateRouter(db));
   app.use('/api/integrations', createIntegrationsRouter(integrationsService));
   app.use('/api/push', createPushRouter(pushService));
+  app.use('/api/tools', createToolsRouter({ base: toolsBase }));
 
   // Serve the built web client (single-origin) when a build is present.
   // SPA fallback returns index.html for any non-/api, non-WS GET.
