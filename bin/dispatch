@@ -12,6 +12,7 @@
 #   dispatch logs [-f]    Show (or follow) the daemon logs
 #   dispatch update       git pull, rebuild, and restart
 #   dispatch run          Run the server in the foreground (no daemon)
+#   dispatch tools        Manage bundled CLI tools (install/list/uninstall)
 #
 set -uo pipefail
 
@@ -64,6 +65,8 @@ cmd_build() {
   ( cd "$REPO" && CI=true pnpm install ) || { red "pnpm install failed"; exit 1; }
   bold "Building server + web client…"
   ( cd "$REPO" && pnpm -r run build ) || { red "build failed"; exit 1; }
+  bold "Installing bundled CLI tools…"
+  node "$REPO/packages/core/dist/tools/cli.js" install || red "Some tools failed to install (continuing)."
   green "Build complete."
 }
 
@@ -222,6 +225,12 @@ cmd_run() {
   PORT="$PORT" DISPATCH_WEB_DIST="$WEBDIST" exec node "$SERVER_JS"
 }
 
+cmd_tools() {
+  ensure_built
+  require_node
+  node "$REPO/packages/core/dist/tools/cli.js" "$@"
+}
+
 usage() {
   cat <<'EOF'
 dispatch — control the Dispatch daemon (macOS / launchd).
@@ -236,6 +245,7 @@ dispatch — control the Dispatch daemon (macOS / launchd).
   dispatch logs [-f]   Show (or follow) the daemon logs
   dispatch update      git pull, rebuild, and restart
   dispatch run         Run the server in the foreground (no daemon)
+  dispatch tools       Manage bundled CLI tools (install/list/uninstall)
   dispatch doctor      Show setup status (agents, tailscale, secrets)
 EOF
 }
@@ -251,6 +261,7 @@ case "${1:-}" in
   logs)      shift; cmd_logs "${1:-}" ;;
   update)    cmd_update ;;
   run)       cmd_run ;;
+  tools)     shift; cmd_tools "$@" ;;
   doctor)    cmd_doctor ;;
   ""|help|-h|--help) usage ;;
   *) red "Unknown command: $1"; usage; exit 1 ;;
