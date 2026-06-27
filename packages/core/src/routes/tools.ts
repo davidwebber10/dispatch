@@ -5,7 +5,7 @@ export function createToolsRouter(opts?: { base?: string }): Router {
   const router = Router();
   router.get('/', (_req, res) => {
     try { res.json({ tools: toolStatuses({ base: opts?.base }) }); }
-    catch { res.json({ tools: [] }); }
+    catch (e) { console.warn('GET /api/tools failed:', e); res.json({ tools: [] }); }
   });
   return router;
 }

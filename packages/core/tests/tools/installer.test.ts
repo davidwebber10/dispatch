@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { installTool, readInstalled } from '../../src/tools/installer.js';
+import { installTool, uninstallTool, readInstalled } from '../../src/tools/installer.js';
 import { toolPaths, hostPlatformKey } from '../../src/tools/paths.js';
 import type { ToolEntry } from '../../src/tools/types.js';
 
@@ -54,6 +54,16 @@ it('script kind: runs the install script with TOOLS_BIN set', async () => {
   const entry: ToolEntry = { name: 'demo', description: 'd', kind: 'script', bins: ['demo'], script: { install: 'printf "#!/bin/sh\\n" > "$TOOLS_BIN/demo"; chmod +x "$TOOLS_BIN/demo"' } };
   await installTool(entry, { base });
   expect(fs.existsSync(path.join(toolPaths(base).bin, 'demo'))).toBe(true);
+});
+
+it('uninstallTool: removes the correct bin when tool name differs from binary name (e.g. ripgrep→rg)', () => {
+  // Use the plain temp base — loadManifest will read the default bundle which has ripgrep with bins:['rg']
+  const p = toolPaths(base);
+  fs.mkdirSync(p.bin, { recursive: true });
+  // Write a fake executable at bin/rg (as if ripgrep were installed)
+  fs.writeFileSync(path.join(p.bin, 'rg'), '#!/bin/sh\necho rg\n', { mode: 0o755 });
+  uninstallTool('ripgrep', base);
+  expect(fs.existsSync(path.join(p.bin, 'rg'))).toBe(false);
 });
 
 it('script kind: idempotent — second call is a no-op when binary already present', async () => {

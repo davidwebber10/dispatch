@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { execFileSync, execSync } from 'node:child_process';
 import { toolPaths, hostPlatformKey, type ToolPaths } from './paths.js';
 import type { ToolEntry } from './types.js';
+import { loadManifest } from './manifest.js';
 
 export type Downloader = (url: string) => Promise<Buffer>;
 export type Exec = (cmd: string, args: string[], opts?: { env?: Record<string, string>; cwd?: string }) => void;
@@ -93,8 +94,10 @@ export async function installTool(entry: ToolEntry, opts: { base?: string; downl
 export function uninstallTool(name: string, base?: string): void {
   const p = toolPaths(base);
   const installed = readInstalled(base);
-  const f = path.join(p.bin, name);
-  try { fs.rmSync(f, { force: true }); } catch { /* ignore */ }
+  const entry = loadManifest(base).find((e) => e.name === name);
+  for (const b of (entry?.bins ?? [name])) {
+    try { fs.rmSync(path.join(p.bin, b), { force: true }); } catch { /* ignore */ }
+  }
   delete installed[name];
   writeInstalled(p, installed);
 }

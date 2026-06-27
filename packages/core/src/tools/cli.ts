@@ -15,7 +15,7 @@ export async function runToolsCli(argv: string[], opts?: { base?: string }): Pro
   if (cmd === 'install') {
     const manifest = loadManifest(base);
     const targets = name ? manifest.filter((e) => e.name === name) : manifest;
-    if (!targets.length) { console.error(`no such tool: ${name}`); return 1; }
+    if (name && !targets.length) { console.error(`no such tool: ${name}`); return 1; }
     let failed = 0;
     for (const e of targets) {
       try { console.log(`installing ${e.name}…`); await installTool(e, { base }); }
@@ -25,8 +25,8 @@ export async function runToolsCli(argv: string[], opts?: { base?: string }): Pro
   }
   if (cmd === 'uninstall') {
     if (!name) { console.error('usage: tools uninstall <name>'); return 1; }
-    uninstallTool(name, base);
-    return 0;
+    try { uninstallTool(name, base); return 0; }
+    catch (e) { console.error(String((e as Error).message ?? e)); return 1; }
   }
   console.error('usage: dispatch tools <install|list|uninstall> [name]');
   return 1;
@@ -34,4 +34,4 @@ export async function runToolsCli(argv: string[], opts?: { base?: string }): Pro
 
 // Run directly: `node dist/tools/cli.js <args>`
 const isMain = process.argv[1] && process.argv[1].endsWith('tools/cli.js');
-if (isMain) { runToolsCli(process.argv.slice(2)).then((code) => process.exit(code)); }
+if (isMain) { runToolsCli(process.argv.slice(2)).then((code) => process.exit(code)).catch((e) => { console.error(e); process.exit(1); }); }
