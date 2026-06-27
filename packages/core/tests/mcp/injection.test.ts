@@ -7,6 +7,33 @@ import { composeInjection } from '../../src/mcp/injection.js';
 describe('composeInjection', () => {
   const configPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'inj-')), 'mcp.json');
 
+  it('folds developerNote into systemPrompt and codex developer_instructions', () => {
+    const r = composeInjection([], { configPath: '/tmp/mcp.json', prompts: [], developerNote: 'use jq' });
+    expect(r.systemPrompt).toBe('use jq');
+    const i = r.codexArgs.indexOf('developer_instructions=' + JSON.stringify('use jq'));
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(r.codexArgs[i - 1]).toBe('-c');
+  });
+
+  it('joins prompts and developerNote for the system prompt', () => {
+    const r = composeInjection([], { configPath: '/x', prompts: ['mcp hint'], developerNote: 'tools note' });
+    expect(r.systemPrompt).toBe('mcp hint\n\ntools note');
+  });
+
+  it('no developerNote → no developer_instructions arg', () => {
+    const r = composeInjection([], { configPath: '/x', prompts: [] });
+    expect(r.systemPrompt).toBeNull();
+    expect(r.codexArgs.some((a) => a.startsWith('developer_instructions='))).toBe(false);
+  });
+
+  it('still emits mcp config + args when specs exist', () => {
+    const cfg = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'inj-')), 'mcp.json');
+    const r = composeInjection([{ name: 'srv', command: 'node', args: ['x.js'] }], { configPath: cfg, prompts: [], developerNote: 'n' });
+    expect(r.claudeConfigPath).toBe(cfg);
+    expect(r.codexArgs.some((a) => a.startsWith('mcp_servers.srv.command='))).toBe(true);
+    expect(r.codexArgs.some((a) => a.startsWith('developer_instructions='))).toBe(true);
+  });
+
   it('returns nulls/[] when there are no specs', () => {
     const r = composeInjection([], { configPath, prompts: [] });
     expect(r).toEqual({ claudeConfigPath: null, codexArgs: [], systemPrompt: null });
