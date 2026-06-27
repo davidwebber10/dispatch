@@ -11,7 +11,6 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import { Spinner } from '../common/Spinner';
 import { renderMarkdown } from '../../lib/markdown';
 import { ToolCall, ToolResult } from './ToolCall';
-import { AskQuestionView } from './toolviews/AskQuestionView';
 
 /**
  * View mode: a READ-ONLY, chat-style render of the session's live transcript
@@ -337,12 +336,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
               if (it.kind === 'tool') {
                 const next = items[i + 1];
                 const result = next?.kind === 'tool-result' ? next : undefined;
-                if (it.toolName === 'AskUserQuestion') {
-                  const answerable = !result && i === items.length - 1 && tab?.type === 'claude-code';
-                  node = <AskQuestionView tool={it} result={result} answerable={answerable} terminalId={terminalId} onAnswerInTerminal={() => setMode(terminalId, 'expert')} />;
-                } else {
-                  node = <ToolCall tool={it} result={result} onViewFile={openFileInViewer} />;
-                }
+                node = <ToolCall tool={it} result={result} onViewFile={openFileInViewer} />;
                 if (result) i++;
               } else if (it.kind === 'tool-result') {
                 node = <ToolResult item={it} />;
