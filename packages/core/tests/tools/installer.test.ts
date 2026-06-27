@@ -1,5 +1,5 @@
 // packages/core/tests/tools/installer.test.ts
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -54,4 +54,18 @@ it('script kind: runs the install script with TOOLS_BIN set', async () => {
   const entry: ToolEntry = { name: 'demo', description: 'd', kind: 'script', bins: ['demo'], script: { install: 'printf "#!/bin/sh\\n" > "$TOOLS_BIN/demo"; chmod +x "$TOOLS_BIN/demo"' } };
   await installTool(entry, { base });
   expect(fs.existsSync(path.join(toolPaths(base).bin, 'demo'))).toBe(true);
+});
+
+it('script kind: idempotent — second call is a no-op when binary already present', async () => {
+  const counter = path.join(base, 'runs');
+  const installScript = [
+    `echo x >> "${counter}"`,
+    `printf '#!/bin/sh\\n' > "$TOOLS_BIN/demo"`,
+    `chmod +x "$TOOLS_BIN/demo"`,
+  ].join('; ');
+  const entry: ToolEntry = { name: 'demo', description: 'd', kind: 'script', bins: ['demo'], script: { install: installScript } };
+  await installTool(entry, { base });
+  await installTool(entry, { base }); // second call must short-circuit
+  const lines = fs.readFileSync(counter, 'utf8').trim().split('\n');
+  expect(lines).toHaveLength(1); // script ran exactly once
 });

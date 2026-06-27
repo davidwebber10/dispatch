@@ -48,14 +48,17 @@ export async function installTool(entry: ToolEntry, opts: { base?: string; downl
       fs.writeFileSync(dest, buf); fs.chmodSync(dest, 0o755);
     } else {
       const work = fs.mkdtempSync(path.join(p.cache, 'x-'));
-      const arc = path.join(work, asset.archive === 'zip' ? 'a.zip' : 'a.tgz');
-      fs.writeFileSync(arc, buf);
-      if (asset.archive === 'zip') exec('unzip', ['-oq', arc, '-d', work]);
-      else exec('tar', ['-xzf', arc, '-C', work]);
-      const from = path.join(work, asset.binPath ?? entry.bins[0]);
-      const dest = path.join(p.bin, entry.bins[0]);
-      fs.copyFileSync(from, dest); fs.chmodSync(dest, 0o755);
-      fs.rmSync(work, { recursive: true, force: true });
+      try {
+        const arc = path.join(work, asset.archive === 'zip' ? 'a.zip' : 'a.tgz');
+        fs.writeFileSync(arc, buf);
+        if (asset.archive === 'zip') exec('unzip', ['-oq', arc, '-d', work]);
+        else exec('tar', ['-xzf', arc, '-C', work]);
+        const from = path.join(work, asset.binPath ?? entry.bins[0]);
+        const dest = path.join(p.bin, entry.bins[0]);
+        fs.copyFileSync(from, dest); fs.chmodSync(dest, 0o755);
+      } finally {
+        fs.rmSync(work, { recursive: true, force: true });
+      }
     }
     installed[entry.name] = { sha: key };
     writeInstalled(p, installed);
@@ -80,6 +83,7 @@ export async function installTool(entry: ToolEntry, opts: { base?: string; downl
 
   // script
   if (!entry.script) throw new Error(`${entry.name}: missing script spec`);
+  if (installed[entry.name] && entry.bins.every((b) => fs.existsSync(path.join(p.bin, b)))) return;
   execSync(entry.script.install, { stdio: 'inherit', env: { ...process.env, TOOLS_PREFIX: p.dir, TOOLS_BIN: p.bin } });
   for (const b of entry.bins) if (!fs.existsSync(path.join(p.bin, b))) throw new Error(`${entry.name}: script did not produce ${b}`);
   installed[entry.name] = {};
