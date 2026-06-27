@@ -10,7 +10,7 @@ export function getToolsSpawnEnv(opts?: { base?: string; env?: Record<string, st
   for (const entry of loadManifest(opts?.base)) {
     for (const [want, src] of Object.entries(entry.envAlias ?? {})) {
       const v = env[src];
-      if (v && !env[want]) out[want] = v;
+      if (v && !out[want] && !env[want]) out[want] = v;
     }
   }
   return out;
