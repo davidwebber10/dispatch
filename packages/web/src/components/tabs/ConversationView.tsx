@@ -8,6 +8,7 @@ import { useTabs, findTerminal } from '../../stores/tabs';
 import { useThreadMode } from '../../stores/threadMode';
 import { useUI } from '../../stores/ui';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { useDraft } from '../../hooks/useDraft';
 import { Spinner } from '../common/Spinner';
 import { renderMarkdown } from '../../lib/markdown';
 import { ToolCall, ToolResult } from './ToolCall';
@@ -81,7 +82,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
   const tab = useTabs((s) => findTerminal(s.byProject, terminalId));
   const sessionId = tab?.sessionId;
   const setMode = useThreadMode((s) => s.set);
-  const [composeText, setComposeText] = useState('');
+  const [composeText, setComposeText, clearComposeText] = useDraft(terminalId);
   const [note, setNote] = useState('');
   function sendToTerminal() {
     const v = composeText.trim();
@@ -89,7 +90,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
     // Send text + Enter as SEPARATE writes (see TerminalTab.sendMobileInput).
     void api.sendInput(terminalId, v);
     setTimeout(() => void api.sendInput(terminalId, '\r'), 80);
-    setComposeText('');
+    clearComposeText();
     setMode(terminalId, 'expert'); // switch to Terminal so you watch it run
   }
   async function attachFiles(files: FileList | null) {

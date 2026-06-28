@@ -9,6 +9,7 @@ import { openTerminalSocket } from '../../api/terminal-socket';
 import { api } from '../../api/client';
 import type { Terminal } from '../../api/types';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { useDraft } from '../../hooks/useDraft';
 import { useSettings } from '../../stores/settings';
 
 type SoftKey = { label: string; seq: string; title?: string; Icon?: Icon };
@@ -89,7 +90,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
   const [note, setNote] = useState('');
   const [atBottom, setAtBottom] = useState(true);
   const [loading, setLoading] = useState(true);
-  const [mobileInput, setMobileInput] = useState('');
+  const [mobileInput, setMobileInput, clearMobileInput] = useDraft(terminalId);
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashQuery, setSlashQuery] = useState('');
   const isMobile = useIsMobile();
@@ -367,7 +368,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     if (!v) return;
     sockRef.current?.send(v);
     setTimeout(() => sockRef.current?.send('\r'), 80);
-    setMobileInput('');
+    clearMobileInput();
   }
 
   const { actions: softActions, slash: slashCmds } = keysFor(meta?.type);
