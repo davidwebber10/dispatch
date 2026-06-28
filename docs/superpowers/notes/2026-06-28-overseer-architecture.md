@@ -22,6 +22,13 @@ The human's unit of work climbs: code → tasks → orchestration → strategy �
 - **Down:** your thoughts/decisions captured **once, durably**, as the reference the agents pull from (not relayed).
 - You live *on* the membrane (author down, adjudicate up); the agent-to-agent traffic happens *below* it and you choose not to watch it.
 
+## The Overseer is a custom surface + a pure coordinator (load-bearing, not stylistic)
+
+- **Custom interface, not a thread/PTY/View.** The Overseer gets its own bespoke top-level surface (like Projects/Automations) with structured panels: your **directives / intent log**, **ongoing work** (missions + live threads), **decisions/approvals**, **reports** — plus the conversation. Not rendered as another terminal or chat thread.
+- **It does no work directly + has no noisy terminal — on purpose.** An overseer that also implements gets distracted, can't immediately acknowledge/route what you tell it, and pollutes your intent stream with build noise. *(Observed live: in the session that produced this note, the assistant was simultaneously taking David's stream of directives AND building features — and couldn't cleanly ACK incoming directives because it was mid-implementation. That failure mode IS the argument.)* The coordinator/worker split is what keeps the Overseer **always responsive** to your stream of thought and the intent channel **clean of implementation noise**.
+- **The human↔Overseer channel is never blocked by work.** Delegated work runs async in threads; the Overseer is always free to receive, ACK, and route.
+- **Overseer count (decided):** one Overseer *you talk to* per project (single stream of thought); multiple **missions** organized *inside* it (not multiple overseers-you-talk-to, which would re-fragment); "which project" is resolved by the active-project context; the cross-project **boss** is Phase 2.
+
 ## Key properties (what makes it NOT a watered-down agent stack)
 
 1. **Typed + transparent delegates.** The Overseer picks the right role and spawns a **real Dispatch thread** (same as `+` / `api.createTerminal`) — inspectable by you, not a hidden sub-agent chain.
