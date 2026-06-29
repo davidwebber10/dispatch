@@ -57,9 +57,11 @@ const chipBase: CSSProperties = {
 function StatusRibbon({
   ribbon,
   onNeedsClick,
+  onReset,
 }: {
   ribbon: Ribbon;
   onNeedsClick: () => void;
+  onReset: () => void;
 }) {
   const { working, done, needs, hasNeeds } = ribbon;
 
@@ -126,6 +128,23 @@ function StatusRibbon({
         <span style={{ fontSize: 11.5, color: 'var(--ts)' }}>Connected</span>
       </div>
 
+      {/* Reset Dispatch — clean slate (archives the conversation + its agents) */}
+      <button
+        onClick={onReset}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'transparent',
+          border: 'none',
+          padding: 0,
+          cursor: 'pointer',
+        }}
+        title="Reset Dispatch — start a fresh conversation (archives the current chat and its agents)"
+      >
+        <Icon name="ph-arrow-clockwise" size={15} color="var(--tt)" />
+      </button>
+
       {/* Gear settings icon */}
       <button
         style={{
@@ -150,6 +169,12 @@ function StatusRibbon({
 export function OverseerHeader() {
   const { ribbon } = useRenderVals();
   const goNeeds = useOverseer((s) => s.goNeeds);
+  const resetDispatch = useOverseer((s) => s.resetDispatch);
+  const onReset = () => {
+    if (window.confirm('Reset Dispatch to a clean slate?\n\nThis archives the current conversation and dismisses its agents, then starts fresh.')) {
+      resetDispatch();
+    }
+  };
 
   return (
     <header
@@ -169,7 +194,7 @@ export function OverseerHeader() {
       {/* Spacer pushes the ribbon to the right */}
       <div style={{ flex: 1, minWidth: 0 }} />
 
-      <StatusRibbon ribbon={ribbon} onNeedsClick={goNeeds} />
+      <StatusRibbon ribbon={ribbon} onNeedsClick={goNeeds} onReset={onReset} />
     </header>
   );
 }

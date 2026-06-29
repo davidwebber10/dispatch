@@ -8,6 +8,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import {
   Archive,
   ArrowBendDownRight,
+  ArrowClockwise,
   ArrowLeft,
   ArrowRight,
   ArrowsLeftRight,
@@ -60,6 +61,7 @@ const ICONS: Record<string, PhosphorIcon> = {
   'ph-plus': Plus,
   'ph-paper-plane-right': PaperPlaneRight,
   'ph-arrow-bend-down-right': ArrowBendDownRight,
+  'ph-arrow-clockwise': ArrowClockwise,
   'ph-arrows-left-right': ArrowsLeftRight,
   'ph-arrows-merge': ArrowsMerge,
   'ph-shield-check': ShieldCheck,

@@ -68,6 +68,8 @@ interface OverseerState {
   ensureForProject: (sessionId: string | null) => void;
   setCoordinatorStream: (stream: StreamMessage[]) => void;
   setPending: (terminalId: string, pending: PendingPermission | null) => void;
+  /** Clean slate: archive the coordinator + its agents and start a fresh Dispatch conversation. */
+  resetDispatch: () => void;
 }
 
 export const useOverseer = create<OverseerState>((set, get) => ({
@@ -196,6 +198,33 @@ export const useOverseer = create<OverseerState>((set, get) => ({
 
   setPending: (terminalId, pending) =>
     set((s) => ({ pendingByTerminal: { ...s.pendingByTerminal, [terminalId]: pending } })),
+
+  resetDispatch: () => {
+    const sessionId = get().coordinatorProject;
+    if (!sessionId) return;
+    const old = get().coordinatorId;
+    // Clear the view immediately so the chat reads as a clean slate while we work.
+    set({ coordinatorId: null, coordinatorStream: [], resolved: [], pendingByTerminal: {}, composer: '', ensuring: true });
+    void (async () => {
+      try {
+        // Archive the old coordinator + all its managed agents (full clean slate).
+        const terminals = await api.listTerminals(sessionId).catch(() => [] as unknown[]);
+        const ids = new Set<string>();
+        for (const t of terminals as any[]) {
+          const role = t?.config?.role;
+          if (role === 'coordinator' || role === 'agent') ids.add(t.id);
+        }
+        if (old) ids.add(old);
+        await Promise.all([...ids].map((id) => api.archiveTerminal(id).catch(() => {})));
+        await useTabs.getState().loadTabs(sessionId).catch(() => {}); // clear the rail
+        // Find-or-create → a brand-new coordinator (the old one is archived now).
+        const { terminalId } = await api.ensureOverseerCoordinator(sessionId);
+        if (get().coordinatorProject === sessionId) set({ coordinatorId: terminalId, ensuring: false });
+      } catch {
+        if (get().coordinatorProject === sessionId) set({ ensuring: false });
+      }
+    })();
+  },
 }));
 
 /**
