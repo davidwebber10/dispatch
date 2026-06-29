@@ -16,7 +16,7 @@
   },
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc && mkdir -p dist/tools && cp src/tools/default-tools.json dist/tools/default-tools.json",
+    "build": "tsc && node scripts/copy-tool-assets.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
