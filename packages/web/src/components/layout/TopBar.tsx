@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Gear, Sidebar, Broadcast, SquaresFour } from '@phosphor-icons/react';
+import { Gear, Sidebar, SquaresFour } from '@phosphor-icons/react';
 import { ConnectionStatus } from './ConnectionStatus';
 import { BrandSwitcher } from './BrandSwitcher';
 import { SettingsModal } from '../settings/SettingsModal';
@@ -16,9 +16,9 @@ const iconBtn: React.CSSProperties = {
 export function ModeSwitch({ compact = false }: { compact?: boolean } = {}) {
   const mode = useViewMode((s) => s.mode);
   const set = useViewMode((s) => s.set);
-  const opts: [typeof mode, typeof SquaresFour, string][] = [
+  const opts: [typeof mode, typeof SquaresFour | null, string][] = [
     ['operator', SquaresFour, 'Operator'],
-    ['overseer', Broadcast, 'Overseer'],
+    ['overseer', null, 'Dispatch'],
   ];
   return (
     <div style={{ display: 'flex', gap: 2, padding: 2, borderRadius: 9, background: 'var(--color-elevated)', border: '1px solid #2C2C32' }}>
@@ -30,7 +30,7 @@ export function ModeSwitch({ compact = false }: { compact?: boolean } = {}) {
             color: mode === m ? (m === 'overseer' ? 'var(--color-accent)' : 'var(--color-text-primary)') : 'var(--color-text-secondary)',
             font: '500 12px var(--font-sans)', transition: 'background .12s, color .12s',
           }}>
-          <Icon size={compact ? 16 : 14} weight={mode === m ? 'fill' : 'regular'} /> {!compact && label}
+          {Icon && <Icon size={compact ? 16 : 14} weight={mode === m ? 'fill' : 'regular'} />}{(!compact || !Icon) && label}
         </button>
       ))}
     </div>

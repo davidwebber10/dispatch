@@ -127,7 +127,7 @@ export function convItemsToStream(items: ConvItem[]): StreamMessage[] {
   items.forEach((it, i) => {
     const key = it.uuid ?? `c${i}`;
     if (it.kind === 'user' && it.text?.trim()) out.push(m('user', 'You', it.text, '', key));
-    else if (it.kind === 'assistant' && it.text?.trim()) out.push(m('overseer', 'Overseer', it.text, '', key));
+    else if (it.kind === 'assistant' && it.text?.trim()) out.push(m('overseer', 'Dispatch', it.text, '', key));
     // thinking/tool/tool-result/result/system are internal: the Overseer does no tool
     // work and rich escalations are surfaced as Needs in incr. 3, not in this stream.
   });

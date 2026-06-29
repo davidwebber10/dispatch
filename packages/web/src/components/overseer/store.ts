@@ -230,7 +230,7 @@ export function useRenderVals(): RenderVals {
     // First-run / empty conversation → the Overseer greeting.
     const stream: StreamMessage[] = coordinatorStream.length
       ? coordinatorStream
-      : [m('overseer', 'Overseer', CANNED.emptyGreeting, '', 'greeting')];
+      : [m('overseer', 'Dispatch', CANNED.emptyGreeting, '', 'greeting')];
 
     const moodText = hasNeeds
       ? `${needs.length} ${needs.length === 1 ? 'thing needs you' : 'things need you'}`

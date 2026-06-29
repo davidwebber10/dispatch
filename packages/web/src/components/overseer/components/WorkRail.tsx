@@ -11,7 +11,6 @@
 // simpler empty text. Inline styles only — no Tailwind classes.
 
 import { useState } from 'react';
-import { useIsMobile } from '../../../hooks/useIsMobile';
 import { Icon, MonoLabel, ProgressBar, StatusDot, TypeIconBox } from '../atoms';
 import { useOverseer, useRenderVals } from '../store';
 import type { AgentThread, Mission, Outcome } from '../types';
@@ -199,9 +198,7 @@ function MissionGroup({ mission }: { mission: Mission }) {
 // EmptyMissions
 // ---------------------------------------------------------------------------
 
-function EmptyMissions({ isMobile }: { isMobile: boolean }) {
-  const openDelegate = useOverseer((s) => s.openDelegate);
-
+function EmptyMissions() {
   return (
     <div
       style={{
@@ -236,32 +233,8 @@ function EmptyMissions({ isMobile }: { isMobile: boolean }) {
       <p style={{ fontSize: 13, color: 'var(--ts)', lineHeight: 1.5, margin: 0 }}>
         No missions yet.
         <br />
-        {isMobile
-          ? 'Fire a directive to begin.'
-          : 'Fire a directive, or delegate your first task.'}
+        Tell Dispatch what to work on.
       </p>
-
-      {/* CTA button */}
-      <button
-        onClick={openDelegate}
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 6,
-          padding: '7px 13px',
-          borderRadius: 8,
-          background: 'var(--acc)',
-          color: '#06140B',
-          border: 'none',
-          fontFamily: 'inherit',
-          fontSize: 12,
-          fontWeight: 600,
-          cursor: 'pointer',
-        }}
-      >
-        <Icon name="ph-plus" weight="bold" size={13} color="#06140B" />
-        Delegate a task
-      </button>
     </div>
   );
 }
@@ -271,8 +244,6 @@ function EmptyMissions({ isMobile }: { isMobile: boolean }) {
 // ---------------------------------------------------------------------------
 
 function RailHeader() {
-  const openDelegate = useOverseer((s) => s.openDelegate);
-
   return (
     <div
       style={{
@@ -286,27 +257,6 @@ function RailHeader() {
       <MonoLabel size={10.5} color="var(--tt)" spacing=".09em">
         Ongoing work
       </MonoLabel>
-      <span style={{ flex: 1 }} />
-      <button
-        onClick={openDelegate}
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 6,
-          padding: '6px 11px',
-          borderRadius: 8,
-          background: 'var(--acc)',
-          color: '#06140B',
-          border: 'none',
-          fontFamily: 'inherit',
-          fontSize: 12,
-          fontWeight: 600,
-          cursor: 'pointer',
-        }}
-      >
-        <Icon name="ph-plus" weight="bold" size={13} color="#06140B" />
-        Delegate
-      </button>
     </div>
   );
 }
@@ -316,9 +266,7 @@ function RailHeader() {
 // ---------------------------------------------------------------------------
 
 export function OngoingWorkOverview() {
-  const isMobile = useIsMobile();
   const rv = useRenderVals();
-  const openDelegate = useOverseer((s) => s.openDelegate);
   const { missions, noMissions } = rv;
 
   return (
@@ -331,36 +279,8 @@ export function OngoingWorkOverview() {
         overflow: 'hidden',
       }}
     >
-      {/* header — desktop: "Ongoing work" + Delegate; mobile: same (RailHeader is shared) */}
+      {/* header — "Ongoing work" label (shared desktop + mobile) */}
       <RailHeader />
-
-      {/* mobile-only: full-width "Delegate a task" primary CTA at top of scroll area */}
-      {isMobile && (
-        <div style={{ flex: 'none', padding: '12px 16px 0' }}>
-          <button
-            onClick={openDelegate}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 7,
-              width: '100%',
-              padding: '10px 0',
-              borderRadius: 9,
-              background: 'var(--acc)',
-              color: '#06140B',
-              border: 'none',
-              fontFamily: 'inherit',
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            <Icon name="ph-plus" weight="bold" size={14} color="#06140B" />
-            Delegate a task
-          </button>
-        </div>
-      )}
 
       {/* scroll body */}
       <div
@@ -375,7 +295,7 @@ export function OngoingWorkOverview() {
         }}
       >
         {noMissions ? (
-          <EmptyMissions isMobile={isMobile} />
+          <EmptyMissions />
         ) : (
           missions.map((mission) => <MissionGroup key={mission.key} mission={mission} />)
         )}

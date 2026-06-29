@@ -104,7 +104,7 @@ export function btn(label: string, primary?: boolean): NeedAction {
 
 export const CANNED = {
   emptyGreeting:
-    "I'm your Overseer for this project. Tell me what to move on and I'll open missions, spin up the right agents, and only surface what needs your call. I don't write code myself — so I'm always free to listen.",
+    "I'm Dispatch — the coordinator for this project. Tell me what to move on and I'll open missions, spin up the right agents, and only surface what needs your call. I don't write code myself — so I'm always free to listen.",
   sendReply: "Captured. I'll fold it in and surface anything that needs you — keep going.",
   needAck: (label: string) => '“' + label + '” — got it. I\'ll pass it down and close this out.',
   delegateAck: (typeLabel: string, text: string) =>
@@ -205,7 +205,7 @@ export function buildScenario(scenario: Scenario): ScenarioData {
       done: 0,
       missions: [],
       needs: [],
-      stream: [m('overseer', 'Overseer', CANNED.emptyGreeting, 'now', 0)],
+      stream: [m('overseer', 'Dispatch', CANNED.emptyGreeting, 'now', 0)],
     };
   }
 
@@ -232,14 +232,14 @@ export function buildScenario(scenario: Scenario): ScenarioData {
         m('user', 'You', "Let's tighten up auth before the release.", '9:02', 0),
         m(
           'overseer',
-          'Overseer',
+          'Dispatch',
           "Opened Auth refactor and put a planner on it. I'll bring you the plan to approve — nothing ships without you.",
           '9:02',
           1,
         ),
         m(
           'overseer',
-          'Overseer',
+          'Dispatch',
           "Plan's back and it's sound: cookie-based sessions, refresh rotation handled server-side. Approved on your standing rule. An implementer is on it now.",
           '9:14',
           2,
@@ -247,7 +247,7 @@ export function buildScenario(scenario: Scenario): ScenarioData {
         m('user', 'You', 'Good. The iOS crash reports are piling up too.', '9:31', 3),
         m(
           'overseer',
-          'Overseer',
+          'Dispatch',
           "Noted — spun up Mobile crash triage. A researcher is reproducing it first; I'll only bring you a fix worth reviewing.",
           '9:31',
           4,
@@ -262,7 +262,7 @@ export function buildScenario(scenario: Scenario): ScenarioData {
     m('user', 'You', "Let's tighten up auth before the release.", '9:02', 0),
     m(
       'overseer',
-      'Overseer',
+      'Dispatch',
       "Opened Auth refactor and put a planner on it. The plan's back and sound — cookie sessions, server-side rotation. Approved on your standing rule; an implementer and a reviewer are on it.",
       '9:14',
       1,
@@ -270,7 +270,7 @@ export function buildScenario(scenario: Scenario): ScenarioData {
     m('user', 'You', 'The iOS crash reports are piling up too, and search feels stale.', '9:31', 2),
     m(
       'overseer',
-      'Overseer',
+      'Dispatch',
       "On it — Mobile crash triage (researcher reproducing first) and Search relevance (reindexing with BM25). I'll report outcomes, not churn.",
       '9:31',
       3,
@@ -305,7 +305,7 @@ export function buildScenario(scenario: Scenario): ScenarioData {
   stream.push(
     m(
       'overseer',
-      'Overseer',
+      'Dispatch',
       "Three things up top need you — I've framed each. The auth one's a fork in the road, not a yes/no, so I put both sides side by side.",
       '10:12',
       4,
@@ -336,7 +336,7 @@ const STEPS_BY_TYPE: Record<AgentType, { s: 'done' | 'now' | 'next'; t: string }
   reviewer: [
     { s: 'done', t: 'Read the proposed rotation flow' },
     { s: 'now', t: 'Checking it against OWASP session guidance' },
-    { s: 'next', t: 'Return a verdict + risks to the Overseer' },
+    { s: 'next', t: 'Return a verdict + risks to Dispatch' },
   ],
   planner: [
     { s: 'done', t: 'Surveyed current auth surface' },

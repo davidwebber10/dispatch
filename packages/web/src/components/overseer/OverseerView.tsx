@@ -6,7 +6,7 @@
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { overseerRootStyle } from './atoms';
 import { OverseerMobile } from './OverseerMobile';
-import { useCoordinatorSync, useOverseer, useRenderVals } from './store';
+import { useCoordinatorSync, useRenderVals } from './store';
 import './tokens.css';
 
 import { OverseerHeader } from './components/Header';
@@ -15,7 +15,6 @@ import { ConversationStream } from './components/Stream';
 import { Composer } from './components/Composer';
 import { OngoingWorkOverview } from './components/WorkRail';
 import { ThreadDetail } from './components/ThreadDetail';
-import { DelegateModal } from './components/DelegateModal';
 import { WorkerLightbox } from './components/WorkerLightbox';
 
 export function OverseerView() {
@@ -24,7 +23,6 @@ export function OverseerView() {
   // mobile since OverseerView is the entry for both).
   useCoordinatorSync();
   const rv = useRenderVals();
-  const delegateOpen = useOverseer((s) => s.delegateOpen);
 
   if (isMobile) return <OverseerMobile />;
 
@@ -87,7 +85,6 @@ export function OverseerView() {
         </div>
       </div>
 
-      {delegateOpen && <DelegateModal />}
       <WorkerLightbox />
     </div>
   );

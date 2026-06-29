@@ -285,8 +285,12 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   const plusStyle: React.CSSProperties = isMobile ? { ...plusBtn, width: 34, height: 34, font: '500 26px/1 var(--font-sans)', borderRadius: 12 } : plusBtn;
   // Roll the project's threads up to one header indicator (needs_input > working
   // > error > idle), combining the backend's session.status with live tab state.
-  const indicator = projectIndicator(session.status, tabs.map((t) => t.status), tabs.some((t) => loadingMap[t.id]));
-  const threadItems = tabs.filter((t) => SECTIONS[0].types.includes(t.type));
+  // Dispatch-managed threads (the coordinator + typed agents) are owned by the
+  // Dispatch view; hide them from the Operator sidebar and its counts.
+  const isManaged = (t: Terminal) => (t.config?.role === 'coordinator') || !!(t.config as any)?.agentType;
+  const visibleTabs = tabs.filter((t) => !isManaged(t));
+  const indicator = projectIndicator(session.status, visibleTabs.map((t) => t.status), visibleTabs.some((t) => loadingMap[t.id]));
+  const threadItems = visibleTabs.filter((t) => SECTIONS[0].types.includes(t.type));
   useEffect(() => { if (isOpen) void useTabs.getState().loadTabs(session.id); }, [isOpen, session.id]);
 
   async function addTab(type: string, config?: Record<string, unknown>) {
@@ -320,7 +324,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   }
 
   const renderSection = (sec: (typeof SECTIONS)[number]) => {
-    const items = tabs.filter((t) => sec.types.includes(t.type));
+    const items = tabs.filter((t) => sec.types.includes(t.type) && !isManaged(t));
     if (sec.key !== 'threads' && !items.length) return null;
     return (
       <div key={sec.key} style={{ marginTop: sec.prominent ? DENSITY[density].sectionMt : Math.round(DENSITY[density].sectionMt * 0.7) }}>

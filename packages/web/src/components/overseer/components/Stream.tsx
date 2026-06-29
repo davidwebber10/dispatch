@@ -19,29 +19,11 @@ import type { StreamMessage } from '../types';
 function OverseerMsg({ msg }: { msg: StreamMessage }) {
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 11 }}>
-      {/* broadcast avatar 24×24 */}
-      <div
-        style={{
-          flex: 'none',
-          width: 24,
-          height: 24,
-          borderRadius: 7,
-          background: 'linear-gradient(150deg,#1b3a26,#0f1f16)',
-          border: '1px solid var(--accLine)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: 'var(--acc)',
-        }}
-      >
-        <Icon name="ph-broadcast" weight="fill" size={12} />
-      </div>
-
       {/* content column */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
         {/* name + time header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--acc)' }}>Overseer</span>
+          <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--acc)' }}>Dispatch</span>
           <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--tt)' }}>{msg.time}</span>
         </div>
         {/* body */}

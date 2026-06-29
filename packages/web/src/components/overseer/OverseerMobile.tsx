@@ -13,7 +13,6 @@ import { ConversationStream } from './components/Stream';
 import { Composer } from './components/Composer';
 import { OngoingWorkOverview } from './components/WorkRail';
 import { ThreadDetail } from './components/ThreadDetail';
-import { DelegateModal } from './components/DelegateModal';
 import { WorkerLightbox } from './components/WorkerLightbox';
 
 export function OverseerMobile() {
@@ -21,7 +20,6 @@ export function OverseerMobile() {
   const { ribbon, drillOpen } = rv;
   const mobileTab = useOverseer((s) => s.mobileTab);
   const setMobileTab = useOverseer((s) => s.setMobileTab);
-  const delegateOpen = useOverseer((s) => s.delegateOpen);
 
   const tabBtnBase = {
     flex: 1,
@@ -48,23 +46,8 @@ export function OverseerMobile() {
           background: 'var(--pane)',
         }}
       >
-        <div
-          style={{
-            width: 24,
-            height: 24,
-            borderRadius: 7,
-            background: 'linear-gradient(150deg,#1b3a26,#0f1f16)',
-            border: '1px solid var(--accLine)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: 'var(--acc)',
-          }}
-        >
-          <Icon name="ph-broadcast" weight="fill" size={13} />
-        </div>
         <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.15 }}>
-          <span style={{ fontSize: 13, fontWeight: 600 }}>Overseer</span>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>Dispatch</span>
           <span style={{ fontSize: 10, color: 'var(--tt)' }}>{ribbon.moodText}</span>
         </div>
         <span style={{ flex: 1 }} />
@@ -175,7 +158,6 @@ export function OverseerMobile() {
         </div>
       )}
 
-      {delegateOpen && <DelegateModal />}
       <WorkerLightbox />
     </div>
   );

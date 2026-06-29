@@ -17,29 +17,9 @@ import type { Ribbon } from '../types';
 function BrandBadge({ moodText }: { moodText: string }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center' }}>
-      {/* Gradient logo — 26×26 rounded square, broadcast icon fill */}
-      <div
-        style={{
-          flex: 'none',
-          width: 26,
-          height: 26,
-          borderRadius: 7,
-          background: 'linear-gradient(150deg,#1b3a26,#0f1f16)',
-          border: '1px solid var(--accLine)',
-          color: 'var(--acc)',
-          fontSize: 14,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          marginRight: 10,
-        }}
-      >
-        <Icon name="ph-broadcast" weight="fill" size={14} color="var(--acc)" />
-      </div>
-
-      {/* Title block: "Overseer" + moodText subline */}
+      {/* Title block: "Dispatch" + moodText subline */}
       <div style={{ lineHeight: 1.15 }}>
-        <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--tp)' }}>Overseer</div>
+        <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--tp)' }}>Dispatch</div>
         <div style={{ fontSize: 10.5, color: 'var(--tt)' }}>{moodText}</div>
       </div>
 

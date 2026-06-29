@@ -148,7 +148,7 @@ export function MobileApp() {
               <span style={{ fontWeight: 600, fontSize: 15, color: 'var(--color-text-primary)', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{overseerProjectName}</span>
             </button>
           ) : (
-            <span style={{ fontWeight: 600, fontSize: 15, color: 'var(--color-text-primary)' }}>Overseer</span>
+            <span style={{ fontWeight: 600, fontSize: 15, color: 'var(--color-text-primary)' }}>Dispatch</span>
           )}
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
             <ModeSwitch compact />

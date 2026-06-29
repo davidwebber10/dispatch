@@ -15,7 +15,6 @@ export function Composer() {
   const composer = useOverseer((s) => s.composer);
   const setComposer = useOverseer((s) => s.setComposer);
   const sendDirective = useOverseer((s) => s.sendDirective);
-  const openDelegate = useOverseer((s) => s.openDelegate);
   const isMobile = useIsMobile();
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -77,27 +76,6 @@ export function Composer() {
           padding: '7px 8px 7px 9px',
         }}
       >
-        {/* "+" → openDelegate */}
-        <button
-          onClick={openDelegate}
-          title="Delegate as a task"
-          style={{
-            flex: 'none',
-            width: 31,
-            height: 31,
-            borderRadius: 8,
-            background: 'var(--pane)',
-            border: '1px solid var(--border)',
-            color: 'var(--ts)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-          }}
-        >
-          <Icon name="ph-plus" size={17} />
-        </button>
-
         {/* autosizing textarea */}
         <textarea
           ref={textareaRef}
@@ -105,7 +83,7 @@ export function Composer() {
           value={composer}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
-          placeholder={isMobile ? 'Fire a directive…' : 'Fire a directive to the Overseer…'}
+          placeholder={isMobile ? 'Fire a directive…' : 'Fire a directive to Dispatch…'}
           style={{
             flex: 1,
             background: 'transparent',

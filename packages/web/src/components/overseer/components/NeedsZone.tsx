@@ -181,7 +181,7 @@ function NeedCard({
         <Icon name={need.icon} weight="fill" size={16} color="var(--yellow)" />
         <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--tp)' }}>{need.title}</span>
         <span style={{ flex: 1 }} />
-        {/* "raised by Overseer" — desktop only */}
+        {/* "raised by Dispatch" — desktop only */}
         {!isMobile && (
           <span
             style={{
@@ -193,8 +193,7 @@ function NeedCard({
               color: 'var(--tt)',
             }}
           >
-            <Icon name="ph-broadcast" size={11} color="var(--tt)" />
-            raised by Overseer
+            raised by Dispatch
           </span>
         )}
       </div>

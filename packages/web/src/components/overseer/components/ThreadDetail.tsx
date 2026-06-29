@@ -118,8 +118,8 @@ export function ThreadDetail({ mobile }: { mobile?: boolean }) {
           </span>
           <span style={{ fontSize: 12, color: 'var(--tp)', lineHeight: 1.5 }}>
             {isMobileView
-              ? "You’re steering this thread — the Overseer holds everything else."
-              : "You’re steering this thread — the Overseer is holding everything else."}
+              ? "You’re steering this thread — Dispatch holds everything else."
+              : "You’re steering this thread — Dispatch is holding everything else."}
           </span>
         </div>
 
@@ -211,9 +211,6 @@ export function ThreadDetail({ mobile }: { mobile?: boolean }) {
 
         {/* Surface note */}
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-          <span style={{ flex: 'none', display: 'flex', marginTop: 2 }}>
-            <Icon name="ph-broadcast" size={13} color="var(--acc)" />
-          </span>
           <span style={{ fontSize: 12, color: 'var(--ts)', lineHeight: 1.5 }}>
             {detail.surface}
           </span>
