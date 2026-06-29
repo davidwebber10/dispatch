@@ -68,6 +68,7 @@ export class StructuredSessionManager extends EventEmitter {
     s.child.stdin.write(JSON.stringify(obj) + '\n');
   }
 
+  // verified: persistent multi-turn over stdin on claude 2.1.195 — second user turn accepted and returned result on same process
   sendMessage(terminalId: string, text: string): void {
     this.write(terminalId, { type: 'user', message: { role: 'user', content: text } });
   }
