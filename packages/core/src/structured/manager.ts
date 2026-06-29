@@ -82,12 +82,18 @@ export class StructuredSessionManager extends EventEmitter {
         this.emit('session', terminalId, sid);
       }
       if (event?.type === 'control_request' && event?.request?.subtype === 'can_use_tool') {
-        if (session.escalate) {
-          // The membrane: do NOT auto-allow. Capture the pending decision and surface
-          // it so the user can approve/deny (or answer an AskUserQuestion). The CLI
-          // stays blocked on stdin until answerPermission() writes the response.
-          const r = event.request;
-          const questions = Array.isArray(r?.input?.questions) ? r.input.questions : undefined;
+        const r = event.request;
+        const questions = Array.isArray(r?.input?.questions) ? r.input.questions : undefined;
+        // AskUserQuestion can't be auto-allowed — it needs a real `answers` map written back —
+        // so it ALWAYS surfaces as pending, even on an otherwise-autonomous thread. (For an
+        // agent the service then routes that pending UP to its coordinator rather than to the
+        // human.) Every OTHER gated tool surfaces only when this thread escalates (the
+        // supervised membrane); otherwise it's auto-allowed.
+        const isAsk = r?.tool_name === 'AskUserQuestion' || questions !== undefined;
+        if (session.escalate || isAsk) {
+          // Do NOT auto-allow. Capture the pending decision and surface it so it can be
+          // approved/denied (or an AskUserQuestion answered). The CLI stays blocked on stdin
+          // until answerPermission() writes the response.
           const pending: PendingPermission = {
             requestId: event.request_id,
             toolName: r?.tool_name,
@@ -181,16 +187,17 @@ export class StructuredSessionManager extends EventEmitter {
   /**
    * Flip a live thread's escalation (the autonomy dial) without re-spawning.
    *   - escalate=true  → supervised: surface subsequent gated tools as Needs.
-   *   - escalate=false → autonomous: auto-allow. Any request CURRENTLY pending is
-   *     resolved with `allow` immediately (so a thread blocked on the membrane
-   *     unblocks the moment the user goes autonomous), and future ones auto-allow.
+   *   - escalate=false → autonomous: auto-allow. Any PLAIN gated tool currently pending is
+   *     resolved with `allow` immediately (so a thread blocked on the membrane unblocks the
+   *     moment the user goes autonomous), and future ones auto-allow. A pending AskUserQuestion
+   *     is left intact — it needs a real `answers` map, so it can't be silently auto-allowed.
    * Returns false when there's no live session for the terminal.
    */
   setEscalate(terminalId: string, escalate: boolean): boolean {
     const s = this.sessions.get(terminalId);
     if (!s) return false;
     s.escalate = escalate;
-    if (!escalate && s.pending) {
+    if (!escalate && s.pending && !s.pending.questions) {
       const rid = s.pending.requestId;
       const updatedInput = s.pending.input;
       this.write(terminalId, {

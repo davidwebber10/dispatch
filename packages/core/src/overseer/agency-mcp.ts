@@ -92,6 +92,27 @@ export const TOOLS = [
     },
   },
   {
+    name: 'answer_agent',
+    description:
+      'Answer a question one of your agents raised — it is PAUSED until you do. When an agent asks, ' +
+      'you receive a "🔔 Your agent … is PAUSED" message listing the question header(s) and options; ' +
+      'decide based on the mission and answer here. Provide `answers` as a map of each question header ' +
+      'to your chosen option label, exactly as listed (or use `answer` for a single-question prompt).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agentId: { type: 'string', description: 'The paused agent thread id (from the notification / list_agents).' },
+        answers: {
+          type: 'object',
+          description: 'Map of question header -> chosen option label, e.g. { "Approach": "Use Postgres" }.',
+          additionalProperties: { type: 'string' },
+        },
+        answer: { type: 'string', description: 'Shortcut for a single-question prompt: just the chosen option label (used when `answers` is omitted).' },
+      },
+      required: ['agentId'],
+    },
+  },
+  {
     name: 'complete_agent',
     description: 'Mark an agent done and archive its thread once its work is finished.',
     inputSchema: {
@@ -186,6 +207,27 @@ async function completeAgent(args: { agentId: string }): Promise<{ ok: true; age
   return { ok: true, agentId: args.agentId };
 }
 
+/**
+ * Answer a paused agent's AskUserQuestion. Resolves the agent's pending permission via the
+ * existing /permission endpoint, folding the chosen option(s) in as the AskUserQuestion
+ * `answers` map. Accepts either an explicit `answers` map (question header -> option label) or,
+ * for a single-question prompt, a bare `answer` (we look up the question's header to key it).
+ */
+async function answerAgent(args: { agentId: string; answers?: Record<string, string>; answer?: string }): Promise<{ ok: true; agentId: string }> {
+  if (!args?.agentId) throw new Error('agentId is required');
+  let answers = args.answers && typeof args.answers === 'object' ? args.answers : undefined;
+  if ((!answers || Object.keys(answers).length === 0) && typeof args.answer === 'string' && args.answer.trim()) {
+    const pending = await httpJson('GET', `${apiBase()}/api/terminals/${args.agentId}/permission`);
+    const header = pending?.questions?.[0]?.header || 'question';
+    answers = { [header]: args.answer };
+  }
+  if (!answers || Object.keys(answers).length === 0) {
+    throw new Error('provide `answers` (map of question header -> chosen option) or `answer` (single option label)');
+  }
+  await httpJson('POST', `${apiBase()}/api/terminals/${args.agentId}/permission`, { decision: 'allow', answers });
+  return { ok: true, agentId: args.agentId };
+}
+
 /** Run a named tool and shape the result as MCP `tools/call` content. Never throws. */
 export async function callTool(
   name: string,
@@ -198,6 +240,7 @@ export async function callTool(
       case 'list_agents': result = await listAgents(); break;
       case 'list_missions': result = await listMissions(); break;
       case 'message_agent': result = await messageAgent(args ?? {}); break;
+      case 'answer_agent': result = await answerAgent(args ?? {}); break;
       case 'complete_agent': result = await completeAgent(args ?? {}); break;
       default: throw new Error(`Unknown tool: ${name}`);
     }

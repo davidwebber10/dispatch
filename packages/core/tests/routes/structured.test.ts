@@ -51,8 +51,8 @@ async function pollExternalId(database: Database.Database, id: string, expected:
   throw new Error('timeout waiting for external_id to be captured');
 }
 
-it('an AGENT thread escalates a gated tool: GET shows pending, POST allow resolves it', async () => {
-  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent' } });
+it('a SUPERVISED agent thread escalates a gated tool: GET shows pending, POST allow resolves it', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent', autonomy: 'supervised' } });
   expect(t.status).toBe(201);
   const id = t.body.id;
   expect((await request(app).get(`/api/terminals/${id}/permission`)).body).toBeNull(); // nothing yet
@@ -81,7 +81,7 @@ it('answers map shape: POST allow with answers folds {questions, answers} into t
 });
 
 it('POST permission deny resolves with a message', async () => {
-  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent' } });
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent', autonomy: 'supervised' } });
   const id = t.body.id;
   await request(app).post(`/api/terminals/${id}/message`).send({ text: 'TRIGGER_PERMISSION' });
   await pollPermission(app, id);
@@ -123,12 +123,71 @@ it('an AUTONOMOUS agent thread does NOT escalate — gated tools auto-allow at s
   await request(app).post(`/api/terminals/${id}/stop`);
 });
 
+it('an agent is autonomous by default: gated tools auto-allow, but AskUserQuestion still surfaces', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent' } });
+  const id = t.body.id;
+  // A normal gated tool auto-allows — agents run free, no human prompt (the new default).
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'TRIGGER_PERMISSION' });
+  const wrote = await pollEvent(app, id, (e) => JSON.stringify(e).includes('WROTE'));
+  expect(JSON.stringify(wrote)).toContain('WROTE');
+  expect((await request(app).get(`/api/terminals/${id}/permission`)).body).toBeNull(); // never pended
+  // ... but AskUserQuestion can't be auto-allowed, so it STILL surfaces as pending.
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'TRIGGER_QUESTION' });
+  const pending = await pollPermission(app, id);
+  expect(pending.toolName).toBe('AskUserQuestion');
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+it('an agent question escalates UP to the project coordinator (not to the human)', async () => {
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coord-q-'));
+  const a = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fake] } });
+  const s = await request(a).post('/api/sessions').send({ provider: 'claude-code', workingDir: dir, name: 'q' });
+  const coordId = (await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', role: 'coordinator' } })).body.id;
+  const agentId = (await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent', mission: 'Login' } })).body.id;
+  await pollExternalId(db, coordId, 'sess-fake'); // coordinator is up
+
+  await request(a).post(`/api/terminals/${agentId}/message`).send({ text: 'TRIGGER_QUESTION' });
+
+  // The coordinator is told its agent is PAUSED asking (a directive injected into its thread).
+  const note = await pollEvent(a, coordId, (e) => e?.type === 'user' && JSON.stringify(e).includes(agentId), 4000);
+  expect(JSON.stringify(note)).toContain('PAUSED');
+  expect(JSON.stringify(note)).toContain('answer_agent');
+  // The agent is genuinely paused (so the coordinator CAN answer it) ...
+  const pending = await pollPermission(a, agentId);
+  expect(pending.toolName).toBe('AskUserQuestion');
+  // ... and answer_agent (→ POST /permission with the chosen option) resolves it.
+  const ans = await request(a).post(`/api/terminals/${agentId}/permission`).send({ decision: 'allow', answers: { Choice: 'A' } });
+  expect(ans.status).toBe(204);
+
+  await request(a).post(`/api/terminals/${agentId}/stop`);
+  await request(a).post(`/api/terminals/${coordId}/stop`);
+  fs.rmSync(cfgDir, { recursive: true, force: true });
+});
+
+it('stopping an agent notifies its coordinator (Dispatch is told to check in)', async () => {
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coord-life-'));
+  const a = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fake] } });
+  const s = await request(a).post('/api/sessions').send({ provider: 'claude-code', workingDir: dir, name: 'life' });
+  const coordId = (await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', role: 'coordinator' } })).body.id;
+  const agentId = (await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent', mission: 'Login' } })).body.id;
+  await pollExternalId(db, agentId, 'sess-fake'); // agent is up
+
+  await request(a).post(`/api/terminals/${agentId}/stop`);
+
+  // The coordinator hears that the user stopped its agent (a directive injected into its thread).
+  const note = await pollEvent(a, coordId, (e) => e?.type === 'user' && JSON.stringify(e).includes(agentId) && JSON.stringify(e).includes('stopped'), 4000);
+  expect(JSON.stringify(note)).toContain('Check in with the user');
+
+  await request(a).post(`/api/terminals/${coordId}/stop`);
+  fs.rmSync(cfgDir, { recursive: true, force: true });
+});
+
 it('POST /autonomy flips a supervised agent to autonomous: resolves the pending + persists config', async () => {
   const t = await request(app)
     .post(`/api/sessions/${sessionId}/terminals`)
-    .send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent' } });
+    .send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent', autonomy: 'supervised' } });
   const id = t.body.id;
-  // Supervised by default → a gated tool blocks on the membrane.
+  // Supervised (explicit) → a gated tool blocks on the membrane.
   await request(app).post(`/api/terminals/${id}/message`).send({ text: 'TRIGGER_PERMISSION' });
   await pollPermission(app, id);
 
@@ -222,7 +281,7 @@ it('captures the init session_id and persists it onto the terminal external_id',
 });
 
 it('lazily resumes a dead AGENT thread with -r <id> and re-applies escalate', async () => {
-  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent' } });
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent', autonomy: 'supervised' } });
   const id = t.body.id;
   await pollExternalId(db, id, 'sess-fake');
 

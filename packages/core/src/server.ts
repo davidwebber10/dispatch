@@ -86,8 +86,15 @@ class NoopPTYManager extends PTYManager {
  * once answered, 'resolved' (→ working). Routing it through StatusService means it
  * broadcasts terminal:status + fires the same push/notify path the PTY/hook flow uses.
  */
-function wirePermissionMembrane(structuredManager: StructuredSessionManager, statusService: StatusService): void {
-  structuredManager.on('permission', (terminalId: string, pending: { toolName?: string; questions?: unknown[] }) => {
+function wirePermissionMembrane(structuredManager: StructuredSessionManager, statusService: StatusService, sessionService: SessionService): void {
+  structuredManager.on('permission', (terminalId: string, pending: { toolName?: string; questions?: any[] }) => {
+    // An agent's AskUserQuestion escalates UP to its project's coordinator (Dispatch), not to
+    // the human. When that routing succeeds the agent stays "working" (it's waiting on the
+    // coordinator, an internal handoff) — only un-routable permissions reach the human.
+    if (sessionService.routeAgentQuestionToCoordinator(terminalId, pending)) {
+      statusService.markWorking(terminalId, 'Asking Dispatch…');
+      return;
+    }
     const activity = pending?.questions?.length
       ? 'Needs your answer'
       : `Needs approval: ${pending?.toolName ?? 'tool'}`;
@@ -124,7 +131,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   sessionService.setStructuredManager(structuredManager);
   if (options.structuredCommand) sessionService.setStructuredCommandOverride(options.structuredCommand);
   const statusService = new StatusService(db, broadcaster);
-  wirePermissionMembrane(structuredManager, statusService);
+  wirePermissionMembrane(structuredManager, statusService, sessionService);
   const pushService = new PushService(db, { vapidDir: dispatchDir });
 
   statusService.setThreadSettledHook(({ terminalId, sessionId, threadStatus }) => {
@@ -271,7 +278,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const statusService = new StatusService(db, broadcaster);
   const structuredManager = new StructuredSessionManager();
   sessionService.setStructuredManager(structuredManager);
-  wirePermissionMembrane(structuredManager, statusService);
+  wirePermissionMembrane(structuredManager, statusService, sessionService);
   const pushService = new PushService(db, { vapidDir: dataDir });
 
   statusService.setThreadSettledHook(({ terminalId, sessionId, threadStatus }) => {

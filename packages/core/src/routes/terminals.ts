@@ -131,6 +131,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     try {
       const ok = sessionService.interrupt(req.params.terminalId);
       if (!ok) return res.status(409).json({ error: 'No live structured session to interrupt' });
+      sessionService.noteAgentLifecycle(req.params.terminalId, 'interrupted'); // tell the coordinator
       res.status(204).end();
     } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
   });
@@ -186,6 +187,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // POST /api/terminals/:terminalId/stop
   router.post('/terminals/:terminalId/stop', (req, res) => {
     sessionService.stopTerminal(req.params.terminalId);
+    sessionService.noteAgentLifecycle(req.params.terminalId, 'stopped'); // tell the coordinator
     res.status(204).end();
   });
 

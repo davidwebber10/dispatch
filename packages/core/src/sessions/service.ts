@@ -543,6 +543,92 @@ export class SessionService {
     this.structuredManager.sendMessage(terminalId, text);
   }
 
+  /**
+   * The membrane's "up" channel. Inject a directive into the coordinator that supervises
+   * `agentTerminalId`, if any: an agent never bothers the human directly — its questions and
+   * lifecycle events surface to its project's coordinator (Dispatch), which decides what to do
+   * (answer, ask the human itself, re-plan). Returns true when a live coordinator received the
+   * note; false when the thread isn't a typed agent or the project has no coordinator.
+   */
+  private notifyCoordinatorOfAgent(agentTerminalId: string, note: string): boolean {
+    const agent = terminalsDb.getById(this.db, agentTerminalId);
+    if (!agent) return false;
+    let cfg: Record<string, any> = {};
+    try { cfg = JSON.parse(agent.config || '{}'); } catch { /* default {} */ }
+    if (cfg.role !== 'agent') return false; // only agents escalate UP; coordinators/plain → human
+    const coordinator = terminalsDb.listBySession(this.db, agent.session_id)
+      .map(terminalsDb.rowToTerminal)
+      .find((t) => t.type === 'claude-code' && !t.archivedAt && t.id !== agentTerminalId && t.config?.role === 'coordinator');
+    if (!coordinator) return false;
+    try {
+      this.ensureStructuredAlive(coordinator.id); // a daemon restart may have killed it
+      this.sendStructuredMessage(coordinator.id, note);
+      return true;
+    } catch { return false; }
+  }
+
+  /** Format an agent's pending AskUserQuestion as a directive the coordinator can act on. */
+  private formatAgentQuestion(agentId: string, label: string, mission: string | null, questions: any[]): string {
+    const qs = Array.isArray(questions) ? questions : [];
+    const lines = qs.map((q: any, i: number) => {
+      const header = (q?.header ?? `Q${i + 1}`).toString();
+      const question = (q?.question ?? '').toString();
+      const opts = Array.isArray(q?.options)
+        ? q.options.map((o: any) => (typeof o === 'string' ? o : (o?.label ?? o?.name ?? ''))).filter(Boolean)
+        : [];
+      return `  • [${header}] ${question}${opts.length ? `\n    options: ${opts.join(' | ')}` : ''}`;
+    });
+    const headers = qs.map((q: any, i: number) => (q?.header ?? `Q${i + 1}`).toString());
+    const exampleAnswers = headers.length
+      ? `{ ${headers.map((h) => `"${h}": "<chosen option>"`).join(', ')} }`
+      : '{ "<header>": "<chosen option>" }';
+    return (
+      `🔔 Your agent "${label}"${mission ? ` (mission "${mission}")` : ''} is PAUSED waiting on you to ` +
+      `answer a question (it cannot proceed until you do):\n${lines.join('\n')}\n\n` +
+      `Decide based on the mission and answer it now by calling:\n` +
+      `answer_agent({ agentId: "${agentId}", answers: ${exampleAnswers} })\n` +
+      `Pick from the listed options. Only raise it to the human yourself if you genuinely cannot decide.`
+    );
+  }
+
+  /**
+   * Membrane routing for an agent's pending AskUserQuestion: forward it to the project's
+   * coordinator instead of the human. Returns true when a coordinator was notified (the caller
+   * should keep the agent "working", not mark it needs_input); false to fall back to surfacing
+   * the question to the human (the pending isn't a question, the thread isn't an agent, or the
+   * project has no coordinator). Plain gated tools are never routed up — only questions.
+   */
+  routeAgentQuestionToCoordinator(agentTerminalId: string, pending: { toolName?: string; questions?: any[] }): boolean {
+    if (!pending?.questions?.length) return false; // only AskUserQuestion escalates up; plain tools → human
+    const agent = terminalsDb.getById(this.db, agentTerminalId);
+    if (!agent) return false;
+    let cfg: Record<string, any> = {};
+    try { cfg = JSON.parse(agent.config || '{}'); } catch { /* default {} */ }
+    const mission = typeof cfg.mission === 'string' && cfg.mission.trim() ? cfg.mission.trim() : null;
+    const note = this.formatAgentQuestion(agentTerminalId, agent.label || 'agent', mission, pending.questions);
+    return this.notifyCoordinatorOfAgent(agentTerminalId, note);
+  }
+
+  /**
+   * Tell the project's coordinator that the user just stopped or interrupted one of its agents,
+   * so Dispatch notices and reacts (checks in about why, re-plans) rather than silently losing
+   * the agent. No-op when the thread isn't a typed agent or there's no coordinator.
+   */
+  noteAgentLifecycle(agentTerminalId: string, kind: 'stopped' | 'interrupted'): void {
+    const agent = terminalsDb.getById(this.db, agentTerminalId);
+    if (!agent) return;
+    let cfg: Record<string, any> = {};
+    try { cfg = JSON.parse(agent.config || '{}'); } catch { /* default {} */ }
+    if (cfg.role !== 'agent') return;
+    const mission = typeof cfg.mission === 'string' && cfg.mission.trim() ? cfg.mission.trim() : null;
+    const note =
+      `⚠️ The user just ${kind} your agent "${agent.label || 'agent'}"${mission ? ` (mission "${mission}")` : ''} ` +
+      `[agentId ${agentTerminalId}] while it was working. They likely want a change of direction or noticed ` +
+      `something off. Check in with the user about why and adjust: re-spawn with new guidance, redirect the ` +
+      `work, or stand down. Do not silently ignore this.`;
+    this.notifyCoordinatorOfAgent(agentTerminalId, note);
+  }
+
   /** The gated tool/question a structured AGENT thread is blocked on, or null. */
   getPendingPermission(terminalId: string): import('../structured/manager.js').PendingPermission | null {
     return this.structuredManager?.getPending(terminalId) ?? null;
@@ -844,10 +930,13 @@ export class SessionService {
     // On resume, restore prior conversation from the claude transcript JSONL.
     const seedEvents = resumeSessionId ? readSessionBackfill(workDir, resumeSessionId) : undefined;
 
-    // Autonomy dial: only typed AGENT threads escalate (the membrane), and only
-    // while supervised. An 'autonomous' agent auto-allows (runs free). Persisted in
-    // config.autonomy, so this decision survives a resume after a daemon restart.
-    const escalate = config.role === 'agent' && config.autonomy !== 'autonomous';
+    // Autonomy dial: agents run AUTONOMOUSLY by default — they auto-allow every tool and
+    // never prompt the human; the only thing that pauses an agent is an AskUserQuestion,
+    // which the manager always surfaces and the service routes UP to the coordinator. Only
+    // an explicit config.autonomy === 'supervised' re-arms the per-tool membrane (rare opt-in,
+    // surfaces plain gated tools to the human). Persisted in config.autonomy so it survives a
+    // resume after a daemon restart.
+    const escalate = config.role === 'agent' && config.autonomy === 'supervised';
 
     const pid = this.structuredManager.spawn(terminal.id, {
       command: sc.command,

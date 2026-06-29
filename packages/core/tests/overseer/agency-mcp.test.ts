@@ -21,8 +21,8 @@ describe('agency-mcp', () => {
     const res = await handleRequest({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
     expect(res).not.toBeNull();
     const names = (res!.result as any).tools.map((t: any) => t.name).sort();
-    expect(names).toEqual(['complete_agent', 'list_agents', 'list_missions', 'message_agent', 'spawn_agent']);
-    expect(TOOLS).toHaveLength(5);
+    expect(names).toEqual(['answer_agent', 'complete_agent', 'list_agents', 'list_missions', 'message_agent', 'spawn_agent']);
+    expect(TOOLS).toHaveLength(6);
   });
 
   it('initialize returns protocolVersion + tools capability', async () => {
