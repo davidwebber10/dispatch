@@ -6,7 +6,7 @@
 // Interactions: ⌘/Ctrl+Enter → sendDirective; autosizing textarea (rows 1, max 120px).
 // Mobile: shorter placeholder ("Fire a directive…"); hint row omits the keyboard hint.
 
-import { useCallback, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import { Paperclip } from '@phosphor-icons/react';
 import { Icon, StatusDot } from '../atoms';
 import { useOverseer } from '../store';
@@ -40,6 +40,7 @@ export function Composer() {
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [uploadNote, setUploadNote] = useState('');
+  const [dragActive, setDragActive] = useState(false); // drives the drop-target visual cue
 
   // Mirror the agent ChatView attach UX: upload each pick to the project inbox, then
   // send an IMAGE on as a real base64 block buffered for the next directive (the model
@@ -110,37 +111,71 @@ export function Composer() {
     resetHeight();
   }, [sendDirective, resetHeight]);
 
+  // Drag-and-drop + paste image upload — route dropped/pasted files through the SAME
+  // attachFiles path as the Paperclip (upload to inbox; an image rides along as a real
+  // base64 block on the next directive, so the coordinator SEES it). Mirrors TerminalTab's
+  // drop+paste pattern. Gate on a FILE drag so the cue doesn't flash on text/element drags.
+  const onDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
+    if (!Array.from(e.dataTransfer.types || []).includes('Files')) return;
+    e.preventDefault();
+    setDragActive(true);
+  }, []);
+  const onDragLeave = useCallback((e: DragEvent<HTMLDivElement>) => {
+    // Only clear when the pointer truly leaves the composer (not when crossing a child),
+    // so the cue doesn't flicker between the attach button / textarea / send button.
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragActive(false);
+  }, []);
+  const onDrop = useCallback((e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragActive(false);
+    if (e.dataTransfer.files?.length) void attachFiles(e.dataTransfer.files);
+  }, [attachFiles]);
+  const onPaste = useCallback((e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = e.clipboardData?.files;
+    if (files && files.length) { e.preventDefault(); void attachFiles(files); }
+  }, [attachFiles]);
+
   return (
     <div
+      onDragOver={onDragOver}
+      onDragEnter={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
       style={{
         flex: 'none',
         borderTop: '1px solid var(--border)',
         padding: '12px 16px 13px',
         background: 'var(--base)',
+        position: 'relative',
       }}
     >
-      {/* upload status / pending-image indicator */}
-      {(uploadNote || imageCount > 0) && (
-        <div style={{ fontSize: 11, color: 'var(--tt)', marginBottom: 6 }}>
-          {uploadNote}
-          {imageCount > 0 && (
-            <span style={{ marginLeft: uploadNote ? 8 : 0 }}>
-              📎 {imageCount} image{imageCount === 1 ? '' : 's'} attached
-            </span>
+      {/* upload status / pending-image indicator (drag cue takes precedence while dragging) */}
+      {(dragActive || uploadNote || imageCount > 0) && (
+        <div style={{ fontSize: 11, color: dragActive ? 'var(--acc)' : 'var(--tt)', marginBottom: 6 }}>
+          {dragActive ? 'Drop image to attach' : (
+            <>
+              {uploadNote}
+              {imageCount > 0 && (
+                <span style={{ marginLeft: uploadNote ? 8 : 0 }}>
+                  📎 {imageCount} image{imageCount === 1 ? '' : 's'} attached
+                </span>
+              )}
+            </>
           )}
         </div>
       )}
 
-      {/* input row */}
+      {/* input row (border + tint shift to accent while a file is dragged over) */}
       <div
         style={{
           display: 'flex',
           alignItems: 'flex-end',
           gap: 8,
-          background: 'var(--elev)',
-          border: '1px solid var(--border)',
+          background: dragActive ? 'color-mix(in srgb, var(--acc) 10%, var(--elev))' : 'var(--elev)',
+          border: dragActive ? '1px solid var(--acc)' : '1px solid var(--border)',
           borderRadius: 12,
           padding: '7px 8px 7px 9px',
+          transition: 'border-color .12s, background .12s',
         }}
       >
         {/* attach → upload to inbox; images ride along with the next directive as a real block */}
@@ -175,6 +210,7 @@ export function Composer() {
           value={composer}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
+          onPaste={onPaste}
           placeholder={isMobile ? 'Fire a directive…' : 'Fire a directive to Dispatch…'}
           style={{
             flex: 1,
