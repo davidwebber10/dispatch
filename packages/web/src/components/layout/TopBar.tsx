@@ -11,8 +11,9 @@ const iconBtn: React.CSSProperties = {
   borderRadius: 7, background: 'var(--color-elevated)', border: '1px solid #2C2C32', cursor: 'pointer',
 };
 
-/** Operator (hands-on threads) ⇄ Overseer (management view) toggle. */
-export function ModeSwitch() {
+/** Operator (hands-on threads) ⇄ Overseer (management view) toggle.
+ *  `compact` = icon-only (for the narrow mobile header). */
+export function ModeSwitch({ compact = false }: { compact?: boolean } = {}) {
   const mode = useViewMode((s) => s.mode);
   const set = useViewMode((s) => s.set);
   const opts: [typeof mode, typeof SquaresFour, string][] = [
@@ -24,12 +25,12 @@ export function ModeSwitch() {
       {opts.map(([m, Icon, label]) => (
         <button key={m} onClick={() => set(m)} title={label}
           style={{
-            display: 'flex', alignItems: 'center', gap: 6, padding: '4px 11px', borderRadius: 7, border: 'none', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', gap: 6, padding: compact ? '6px 10px' : '4px 11px', borderRadius: 7, border: 'none', cursor: 'pointer',
             background: mode === m ? (m === 'overseer' ? 'rgba(62,207,106,.14)' : 'var(--color-hover)') : 'transparent',
             color: mode === m ? (m === 'overseer' ? 'var(--color-accent)' : 'var(--color-text-primary)') : 'var(--color-text-secondary)',
             font: '500 12px var(--font-sans)', transition: 'background .12s, color .12s',
           }}>
-          <Icon size={14} weight={mode === m ? 'fill' : 'regular'} /> {label}
+          <Icon size={compact ? 16 : 14} weight={mode === m ? 'fill' : 'regular'} /> {!compact && label}
         </button>
       ))}
     </div>
