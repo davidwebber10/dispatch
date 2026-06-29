@@ -15,7 +15,7 @@ function writeRollout(root: string, rel: string, lines: any[], mtimeMs?: number)
 describe('listRecentCodexSessions', () => {
   let root: string;
   beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'codexsess-')); });
-  afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
+  afterEach(() => { fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
 
   it('lists matching-cwd sessions newest-first with preview + count', async () => {
     const now = Date.now();

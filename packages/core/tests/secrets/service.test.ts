@@ -25,7 +25,7 @@ beforeEach(() => {
   fs.writeFileSync(mcpPath, '// fake doppler-mcp dist'); // so active() sees the entry exists
   delete process.env.DOPPLER_TOKEN;
 });
-afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+afterEach(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
 
 const svc = (verify = true) => new SecretsService(dir, () => fakeClient(verify), mcpPath);
 

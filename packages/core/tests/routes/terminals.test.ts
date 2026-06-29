@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../src/server.js';
 import Database from 'better-sqlite3';
@@ -28,6 +28,7 @@ describe('terminal routes', () => {
       .send({ provider: 'claude-code', workingDir: tmpDir, name: 'test' });
     sessionId = res.body.id;
   });
+  afterEach(() => { try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } catch { /* ignore */ } });
 
   it('GET /api/sessions/:id/terminals lists terminals (empty initially)', async () => {
     const res = await request(app).get(`/api/sessions/${sessionId}/terminals`);
@@ -82,7 +83,7 @@ describe('terminal routes', () => {
     } finally {
       if (oldHome === undefined) delete process.env.HOME; else process.env.HOME = oldHome;
       if (oldUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = oldUserProfile;
-      fs.rmSync(home, { recursive: true, force: true });
+      fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 
@@ -112,7 +113,7 @@ describe('terminal routes', () => {
     } finally {
       if (oldHome === undefined) delete process.env.HOME; else process.env.HOME = oldHome;
       if (oldUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = oldUserProfile;
-      fs.rmSync(home, { recursive: true, force: true });
+      fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 

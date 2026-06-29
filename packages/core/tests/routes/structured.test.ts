@@ -19,7 +19,10 @@ beforeEach(async () => {
   const s = await request(app).post('/api/sessions').send({ provider: 'claude-code', workingDir: dir, name: 't' });
   sessionId = s.body.id;
 });
-afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+afterEach(() => {
+  try { (app as any)?._structuredManager?.killAll(); } catch { /* ignore */ }
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+});
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function pollPermission(a: any, id: string, timeoutMs = 3000): Promise<any> {
