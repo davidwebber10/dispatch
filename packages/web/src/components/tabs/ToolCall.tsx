@@ -34,7 +34,9 @@ export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?
         <CaretRight size={11} weight="bold" style={{ flexShrink: 0, color: 'var(--color-text-tertiary)', visibility: expandable ? 'visible' : 'hidden', transition: 'transform .12s ease', transform: open ? 'rotate(90deg)' : 'none' }} />
         {headerIcon}
         <span style={{ minWidth: 0, flex: 1, fontSize: 12.5, color: 'var(--color-text-primary)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{headerName}</span>
-        {result && <span style={{ flexShrink: 0, fontSize: 11, color: err ? 'var(--color-status-red)' : 'var(--color-text-tertiary)' }}>{err ? 'error' : `${lines} line${lines !== 1 ? 's' : ''}`}</span>}
+        {result
+          ? <span style={{ flexShrink: 0, fontSize: 11, color: err ? 'var(--color-status-red)' : 'var(--color-text-secondary)' }}>{err ? 'error' : `${lines} line${lines !== 1 ? 's' : ''}`}</span>
+          : <span className="chat-shimmer" style={{ flexShrink: 0, fontSize: 11 }}>running…</span>}
       </button>
       {open && expandable && (
         <div style={{ borderTop: '1px solid var(--color-border)' }}>
@@ -80,7 +82,7 @@ export function ToolResult({ item }: { item: ConvItem }) {
   if (!text.trim()) return null;
   const lines = text.split('\n').length;
   const err = item.isError;
-  const color = err ? 'var(--color-status-red)' : 'var(--color-text-tertiary)';
+  const color = err ? 'var(--color-status-red)' : 'var(--color-text-secondary)';
   return (
     <div>
       <button

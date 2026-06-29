@@ -14,6 +14,18 @@ function safeJson(v: unknown): string {
   try { return JSON.stringify(v, null, 2); } catch { return String(v); }
 }
 
+/** tool_result.content is frequently an array of blocks ([{type:'text',text}]) —
+ * common for MCP tools and some built-ins — rather than a plain string. Flatten it
+ * to text so the Output tab and rich tool views render readable content instead of
+ * a raw JSON blob. Falls back to pretty JSON for any other (object) shape. */
+function flattenContent(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content.map((c: any) => (typeof c === 'string' ? c : (c?.text ?? ''))).join('');
+  }
+  return safeJson(content);
+}
+
 /** Best-effort file path from a (possibly complete) tool input JSON string. */
 function fileFromInput(json: string): string | undefined {
   try {
@@ -217,7 +229,7 @@ export function useStructuredChat(terminalId: string): StructuredChat {
           const add: ConvItem[] = [];
           for (const b of event.message.content) {
             if (b.type === 'tool_result') {
-              add.push({ kind: 'tool-result', toolId: b.tool_use_id, text: typeof b.content === 'string' ? b.content : safeJson(b.content), isError: b.is_error === true });
+              add.push({ kind: 'tool-result', toolId: b.tool_use_id, text: flattenContent(b.content), isError: b.is_error === true });
             } else if (b.type === 'text' && b.text) {
               // P0a: the backend buffers/echoes the user's own turn as a text block.
               add.push({ kind: 'user', text: b.text });

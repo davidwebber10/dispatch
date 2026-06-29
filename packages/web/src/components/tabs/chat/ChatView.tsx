@@ -130,35 +130,82 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   );
 }
 
-/** Walk the timeline, pairing each tool with its result by id (parallel-safe). */
+/**
+ * Walk the timeline, pairing each tool with its result by id (parallel-safe) and
+ * grouping each assistant turn into ONE row: a single Sparkle avatar + a shared
+ * left gutter holding that turn's text / thinking / tool cards / footer. A `user`
+ * turn breaks the group and renders its own right-aligned bubble.
+ */
 function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void) {
   // Map tool_use id -> its result item, so paired results aren't rendered standalone.
   const resultById = new Map<string, ConvItem>();
-  for (const it of items) if (it.kind === 'tool-result' && it.toolId) resultById.set(it.toolId, it);
+  // Set of tool ids that actually have a tool card, so an ORPHAN result (whose tool
+  // was trimmed from the replay ring / arrived out of order) is still rendered
+  // standalone instead of being silently dropped.
+  const toolIds = new Set<string>();
+  for (const it of items) {
+    if (it.kind === 'tool-result' && it.toolId) resultById.set(it.toolId, it);
+    if (it.kind === 'tool' && it.toolId) toolIds.add(it.toolId);
+  }
 
   const rows: React.ReactNode[] = [];
+  let group: { key: string; nodes: React.ReactNode[] } | null = null;
+  const flushGroup = () => {
+    if (group && group.nodes.length > 0) {
+      rows.push(
+        <MessageScroller.Item key={group.key} messageId={group.key} style={{ display: 'flex' }}>
+          <AssistantTurn>{group.nodes}</AssistantTurn>
+        </MessageScroller.Item>,
+      );
+    }
+    group = null;
+  };
+
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
+    const id = it.uuid ?? it.toolId ?? `${it.kind}-${i}`;
+
+    if (it.kind === 'user') {
+      flushGroup();
+      rows.push(
+        <MessageScroller.Item key={id} messageId={id} scrollAnchor style={{ display: 'flex', flexDirection: 'column' }}>
+          <UserBubble text={it.text ?? ''} />
+        </MessageScroller.Item>,
+      );
+      continue;
+    }
+
     let node: React.ReactNode = null;
-    let anchor = false;
-    if (it.kind === 'user') { node = <UserBubble text={it.text ?? ''} />; anchor = true; }
-    else if (it.kind === 'assistant') node = <AssistantText text={it.text ?? ''} />;
+    if (it.kind === 'assistant') node = <AssistantText text={it.text ?? ''} />;
     else if (it.kind === 'thinking') node = <Thinking text={it.text ?? ''} />;
     else if (it.kind === 'tool') {
       const result = it.toolId ? resultById.get(it.toolId) : items[i + 1]?.kind === 'tool-result' ? items[i + 1] : undefined;
       node = <ToolCall tool={it} result={result} onViewFile={onViewFile} />;
     } else if (it.kind === 'tool-result') {
-      if (it.toolId && resultById.has(it.toolId)) continue; // already shown paired with its tool
+      if (it.toolId && toolIds.has(it.toolId)) continue; // already shown paired with its tool
       node = <ToolResult item={it} />;
     } else if (it.kind === 'result') node = <ResultFooter item={it} />;
     if (node == null) continue;
-    rows.push(
-      <MessageScroller.Item key={i} messageId={String(i)} scrollAnchor={anchor} style={{ display: 'flex', flexDirection: 'column' }}>
-        {node}
-      </MessageScroller.Item>,
-    );
+
+    if (!group) group = { key: id, nodes: [] };
+    group.nodes.push(<div key={id}>{node}</div>);
   }
+  flushGroup();
   return rows;
+}
+
+/** One assistant turn: a single avatar + a flex-column gutter for all its blocks. */
+function AssistantTurn({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ flex: 1, minWidth: 0, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+      <div style={{ flexShrink: 0, width: 24, height: 24, borderRadius: 7, background: 'var(--color-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 1 }}>
+        <Sparkle size={14} weight="fill" color="var(--color-accent)" />
+      </div>
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {children}
+      </div>
+    </div>
+  );
 }
 
 function EmptyState({ model }: { model?: string }) {
@@ -180,22 +227,17 @@ function UserBubble({ text }: { text: string }) {
 }
 
 function AssistantText({ text }: { text: string }) {
-  return (
-    <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-      <div style={{ flexShrink: 0, width: 24, height: 24, borderRadius: 7, background: 'var(--color-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 1 }}>
-        <Sparkle size={14} weight="fill" color="var(--color-accent)" />
-      </div>
-      <div className="md-view" style={{ flex: 1, minWidth: 0 }} dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />
-    </div>
-  );
+  if (!text) return null;
+  // Avatar is rendered once per turn by AssistantTurn; this is just the prose.
+  return <div className="md-view" style={{ minWidth: 0 }} dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />;
 }
 
 function Thinking({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   if (!text.trim()) return null;
   return (
-    <div style={{ marginLeft: 34 }}>
-      <button onClick={() => setOpen((o) => !o)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', font: 'italic 400 12.5px var(--font-sans)', padding: 0 }}>
+    <div>
+      <button onClick={() => setOpen((o) => !o)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-secondary)', font: 'italic 400 12.5px var(--font-sans)', padding: 0 }}>
         <CaretRight size={11} weight="bold" style={{ transition: 'transform .12s', transform: open ? 'rotate(90deg)' : 'none' }} />
         <Brain size={13} weight="duotone" /> Thinking
       </button>
@@ -217,7 +259,7 @@ function ResultFooter({ item }: { item: ConvItem }) {
   if (item.turns) parts.push(`${item.turns} turn${item.turns !== 1 ? 's' : ''}`);
   if (item.isError) {
     return (
-      <div style={{ marginLeft: 34, display: 'flex', alignItems: 'center', gap: 6, color: 'var(--color-status-red)', font: '400 12px var(--font-sans)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--color-status-red)', font: '400 12px var(--font-sans)' }}>
         <WarningCircle size={14} weight="fill" /> {item.text || 'Turn ended with an error'}
         {parts.length > 0 && <span style={{ opacity: 0.7 }}> · {parts.join(' · ')}</span>}
       </div>
@@ -225,7 +267,7 @@ function ResultFooter({ item }: { item: ConvItem }) {
   }
   if (parts.length === 0) return null;
   return (
-    <div style={{ marginLeft: 34, display: 'flex', alignItems: 'center', gap: 6, color: 'var(--color-text-tertiary)', font: '400 11.5px var(--font-mono)' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--color-text-secondary)', font: '400 11.5px var(--font-mono)' }}>
       <CheckCircle size={13} weight="fill" color="var(--color-accent)" /> {parts.join(' · ')}
     </div>
   );
