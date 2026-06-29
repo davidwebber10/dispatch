@@ -32,6 +32,8 @@ export class SessionService {
   private statusContext: StatusContext | null = null;
   /** Supplies a tools-awareness note injected into the developer instructions; set by server wiring. */
   private toolsAwareness?: () => string | null;
+  /** Drives structured (stream-json) sessions for claude-code threads; set by server wiring. */
+  private structuredManager?: import('../structured/manager.js').StructuredSessionManager;
 
   constructor(
     private db: Database.Database,
@@ -51,6 +53,8 @@ export class SessionService {
   setToolsAwareness(fn: () => string | null): void {
     this.toolsAwareness = fn;
   }
+
+  setStructuredManager(m: import('../structured/manager.js').StructuredSessionManager): void { this.structuredManager = m; }
 
   setStatusContext(ctx: StatusContext): void {
     this.statusContext = ctx;
@@ -505,7 +509,13 @@ export class SessionService {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return;
     this.ptyManager.kill(terminalId);
+    this.structuredManager?.kill(terminalId);
     terminalsDb.updatePid(this.db, terminalId, null);
+  }
+
+  sendStructuredMessage(terminalId: string, text: string): void {
+    if (!this.structuredManager?.isAlive(terminalId)) throw new Error('no structured session for terminal');
+    this.structuredManager.sendMessage(terminalId, text);
   }
 
   writeToTerminal(terminalId: string, data: string): void {
@@ -586,6 +596,7 @@ export class SessionService {
     // Only kill PTY for terminal types that have processes
     if (terminalsDb.isPtyType(terminal.type)) {
       if (this.ptyManager.isAlive(terminalId)) this.ptyManager.kill(terminalId);
+      this.structuredManager?.kill(terminalId);
     }
     // Soft-delete: archive instead of remove
     terminalsDb.archive(this.db, terminalId);
@@ -644,6 +655,13 @@ export class SessionService {
       specs.push(...intgSpecs);
       const developerNote = this.toolsAwareness?.() ?? null;
       const secretsMcp = composeInjection(specs, { configPath: this.mcpConfigPath, prompts, developerNote });
+      if (config.transport === 'structured' && terminal.type === 'claude-code' && this.structuredManager) {
+        const sc = provider.buildStructuredCommand?.({ workDir, secretsMcp });
+        if (!sc) throw new Error('structured transport not supported for this provider');
+        const pid = this.structuredManager.spawn(terminalId, { command: sc.command, args: sc.args, workDir });
+        terminalsDb.updatePid(this.db, terminalId, pid);
+        return; // structured path complete — skip PTY spawn + session-id capture (no resume in slice 1)
+      }
       let cmd: { command: string; args: string[] };
       if (runnerPrompt !== undefined) {
         // Runner launches emit their own structured stream-json; no hooks needed.
