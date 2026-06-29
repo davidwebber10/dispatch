@@ -24,8 +24,8 @@ function safeJson(v: unknown): string {
 
 export function useStructuredStream(terminalId: string): ConvItem[] {
   const [items, setItems] = useState<ConvItem[]>([]);
-  const ref = useRef<{ close: () => void } | null>(null);
   useEffect(() => {
+    if (!terminalId) return;
     setItems([]);
     const sock = openStructuredSocket({
       terminalId,
@@ -35,7 +35,6 @@ export function useStructuredStream(terminalId: string): ConvItem[] {
       },
       onReset: () => setItems([]),
     });
-    ref.current = sock;
     return () => sock.close();
   }, [terminalId]);
   return items;

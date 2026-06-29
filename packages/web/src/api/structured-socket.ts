@@ -26,7 +26,6 @@ export function openStructuredSocket(opts: Opts) {
   const factory = opts.wsFactory ?? ((u) => new WebSocket(u) as unknown as TerminalWS);
 
   let ws: TerminalWS | null = null;
-  let open = false;
   let stopped = false;        // set by close() — a user-initiated teardown never reconnects
   let connectedOnce = false;  // distinguishes the first connect from a reconnect (for onReset)
   let backoff = 500;
@@ -37,7 +36,6 @@ export function openStructuredSocket(opts: Opts) {
     const sock = factory(url(opts.terminalId));
     ws = sock;
     sock.onopen = () => {
-      open = true;
       backoff = 500;
       // On a reconnect the server replays buffered events; tell the consumer
       // to clear first so it isn't appended to the stale view.
@@ -48,7 +46,6 @@ export function openStructuredSocket(opts: Opts) {
       try { opts.onEvent(JSON.parse(ev.data)); } catch { /* ignore malformed frames */ }
     };
     sock.onclose = () => {
-      open = false;
       opts.onClose?.();
       if (stopped) return;
       // Reconnect with backoff so the pane self-heals after a dropped connection.
@@ -58,9 +55,6 @@ export function openStructuredSocket(opts: Opts) {
   }
 
   connect();
-
-  // Suppress unused-variable warning — open is used for state tracking consistency
-  void open;
 
   return {
     close: () => {
