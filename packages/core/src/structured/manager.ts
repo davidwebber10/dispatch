@@ -16,6 +16,16 @@ export interface PendingPermission {
   questions?: any[];
 }
 
+/**
+ * A content block in a structured `user` turn. A turn is either a plain string
+ * (today's text-only path) or an array of these blocks — which lets a turn carry a
+ * REAL image (base64 inline, so the model SEES it) alongside optional text, instead
+ * of a path-reference text line.
+ */
+export type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } | { type: 'url'; url: string } };
+
 interface Session {
   child: ChildProcessWithoutNullStreams;
   rl: readline.Interface;
@@ -139,13 +149,19 @@ export class StructuredSessionManager extends EventEmitter {
   }
 
   // verified: persistent multi-turn over stdin on claude 2.1.195 — second user turn accepted and returned result on same process
-  sendMessage(terminalId: string, text: string): void {
-    this.write(terminalId, { type: 'user', message: { role: 'user', content: text } });
+  sendMessage(terminalId: string, content: string | ContentBlock[]): void {
+    // Wire shape: a plain string is sent as `content: <string>` (the CLI's simplest
+    // accepted shape, byte-identical to before); a block array is sent verbatim as
+    // `content: [...blocks]` so a real image block reaches the model — it SEES the
+    // picture, not a "Attached file: …" path line.
+    this.write(terminalId, { type: 'user', message: { role: 'user', content } });
     // P0a: the CLI does NOT echo the user's turn back as an event, so buffer a
-    // synthetic `user` event into the ring (same trim) and emit it. Replay on ws
-    // reconnect then restores the user's bubbles instead of leaving an
-    // assistant-only transcript.
-    const ev = { type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } };
+    // synthetic `user` event into the ring and emit it. Replay on ws reconnect then
+    // restores the user's bubbles instead of leaving an assistant-only transcript.
+    // Mirror the wire shape: a string becomes a single text block; blocks pass through
+    // unchanged (so an image block re-renders inline via the chat's image parser).
+    const echoContent: ContentBlock[] = typeof content === 'string' ? [{ type: 'text', text: content }] : content;
+    const ev = { type: 'user', message: { role: 'user', content: echoContent } };
     const s = this.sessions.get(terminalId);
     if (s) {
       s.events.push(ev);

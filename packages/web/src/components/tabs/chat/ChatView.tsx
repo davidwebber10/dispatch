@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
 import { PaperPlaneTilt, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip } from '@phosphor-icons/react';
 import type { ConvItem } from '../../../api/types';
-import { api } from '../../../api/client';
+import { api, type ContentBlock } from '../../../api/client';
 import { useStructuredChat } from './useStructuredChat';
 import { useTabs, findTerminal } from '../../../stores/tabs';
 import { useDraft } from '../../../hooks/useDraft';
@@ -11,6 +11,22 @@ import { WorkingIndicator } from '../../WorkingIndicator';
 import { ChatImage } from '../../ChatImage';
 import { ToolCall, ToolResult } from '../ToolCall';
 import { useUI } from '../../../stores/ui';
+
+// Anthropic-vision-supported image types. Only these become a REAL base64 image block
+// the model SEES; anything else (incl. SVG, which the model can't read) falls back to
+// the path-reference line so the agent can still Read it from the inbox on disk.
+const MODEL_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+/** Base64-encode a File's bytes (chunked so a large image can't blow the call stack). */
+async function fileToBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
 
 /**
  * ChatView — the structured (stream-json) thread surface, built on shadcn's
@@ -38,7 +54,9 @@ export function ChatView({ terminalId }: { terminalId: string }) {
     requestAnimationFrame(() => { if (taRef.current) taRef.current.style.height = 'auto'; });
   }
 
-  // Upload each picked file to the project inbox and append a reference line to the
+  // Upload each picked file to the project inbox. An IMAGE is then sent as a REAL base64
+  // content block (its own turn) so the model SEES it — and it echoes back + renders
+  // inline via the foundation's parser. A non-image keeps the path-reference line in the
   // draft so the user sends the path alongside their message (the agent can Read it).
   async function attachFiles(files: FileList | null) {
     if (!files || !files.length || !sessionId) return;
@@ -46,11 +64,18 @@ export function ChatView({ terminalId }: { terminalId: string }) {
       setUploadNote(`Uploading ${f.name}…`);
       try {
         const res = await api.uploadInbox(sessionId, f);
-        const cur = draftRef.current;
-        const next = cur + (cur ? '\n' : '') + 'Attached file: ' + res.path;
-        draftRef.current = next;
-        setDraft(next);
-        setUploadNote(`Attached ${f.name}`);
+        if (MODEL_IMAGE_MIME.has(f.type)) {
+          const data = await fileToBase64(f);
+          const block: ContentBlock = { type: 'image', source: { type: 'base64', media_type: f.type, data } };
+          send([block]);
+          setUploadNote(`Sent ${f.name}`);
+        } else {
+          const cur = draftRef.current;
+          const next = cur + (cur ? '\n' : '') + 'Attached file: ' + res.path;
+          draftRef.current = next;
+          setDraft(next);
+          setUploadNote(`Attached ${f.name}`);
+        }
       } catch {
         setUploadNote(`Upload failed: ${f.name}`);
       }

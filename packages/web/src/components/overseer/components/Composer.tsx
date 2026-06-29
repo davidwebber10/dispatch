@@ -6,18 +6,68 @@
 // Interactions: ⌘/Ctrl+Enter → sendDirective; autosizing textarea (rows 1, max 120px).
 // Mobile: shorter placeholder ("Fire a directive…"); hint row omits the keyboard hint.
 
-import { useCallback, useRef, type KeyboardEvent } from 'react';
+import { useCallback, useRef, useState, type KeyboardEvent } from 'react';
+import { Paperclip } from '@phosphor-icons/react';
 import { Icon, StatusDot } from '../atoms';
 import { useOverseer } from '../store';
 import { useIsMobile } from '../../../hooks/useIsMobile';
+import { api } from '../../../api/client';
+
+// Anthropic-vision-supported image types (mirrors the agent ChatView). Only these
+// become a REAL base64 image block the coordinator SEES; anything else falls back to a
+// path-reference line in the composer (the agents can still Read it from the inbox).
+const MODEL_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+/** Base64-encode a File's bytes (chunked so a large image can't blow the call stack). */
+async function fileToBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
 
 export function Composer() {
   const composer = useOverseer((s) => s.composer);
   const setComposer = useOverseer((s) => s.setComposer);
   const sendDirective = useOverseer((s) => s.sendDirective);
+  const addComposerImage = useOverseer((s) => s.addComposerImage);
+  const coordinatorProject = useOverseer((s) => s.coordinatorProject);
+  const imageCount = useOverseer((s) => s.composerImages.length);
   const isMobile = useIsMobile();
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [uploadNote, setUploadNote] = useState('');
+
+  // Mirror the agent ChatView attach UX: upload each pick to the project inbox, then
+  // send an IMAGE on as a real base64 block buffered for the next directive (the model
+  // SEES it); a non-image appends a path-reference line to the composer text.
+  const attachFiles = useCallback(
+    async (files: FileList | null) => {
+      if (!files || !files.length || !coordinatorProject) return;
+      for (const f of Array.from(files)) {
+        setUploadNote(`Uploading ${f.name}…`);
+        try {
+          const res = await api.uploadInbox(coordinatorProject, f);
+          if (MODEL_IMAGE_MIME.has(f.type)) {
+            const data = await fileToBase64(f);
+            addComposerImage({ type: 'image', source: { type: 'base64', media_type: f.type, data } });
+            setUploadNote(`Attached ${f.name}`);
+          } else {
+            const cur = useOverseer.getState().composer;
+            setComposer(cur + (cur ? '\n' : '') + 'Attached file: ' + res.path);
+            setUploadNote(`Attached ${f.name}`);
+          }
+        } catch {
+          setUploadNote(`Upload failed: ${f.name}`);
+        }
+      }
+      setTimeout(() => setUploadNote(''), 2500);
+    },
+    [coordinatorProject, addComposerImage, setComposer],
+  );
 
   // Auto-size: collapse to measure, then expand to content (max-height CSS caps at 120px).
   const autosize = useCallback((el: HTMLTextAreaElement) => {
@@ -64,6 +114,18 @@ export function Composer() {
         background: 'var(--base)',
       }}
     >
+      {/* upload status / pending-image indicator */}
+      {(uploadNote || imageCount > 0) && (
+        <div style={{ fontSize: 11, color: 'var(--tt)', marginBottom: 6 }}>
+          {uploadNote}
+          {imageCount > 0 && (
+            <span style={{ marginLeft: uploadNote ? 8 : 0 }}>
+              📎 {imageCount} image{imageCount === 1 ? '' : 's'} attached
+            </span>
+          )}
+        </div>
+      )}
+
       {/* input row */}
       <div
         style={{
@@ -76,6 +138,31 @@ export function Composer() {
           padding: '7px 8px 7px 9px',
         }}
       >
+        {/* attach → upload to inbox; images ride along with the next directive as a real block */}
+        <label
+          title="Attach file"
+          style={{
+            flex: 'none',
+            width: 32,
+            height: 32,
+            borderRadius: 8,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            background: 'var(--hover, rgba(255,255,255,.05))',
+            color: 'var(--ts)',
+          }}
+        >
+          <Paperclip size={16} />
+          <input
+            type="file"
+            multiple
+            style={{ display: 'none' }}
+            onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }}
+          />
+        </label>
+
         {/* autosizing textarea */}
         <textarea
           ref={textareaRef}

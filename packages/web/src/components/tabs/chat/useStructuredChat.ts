@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ConvItem } from '../../../api/types';
 import { openStructuredSocket } from '../../../api/structured-socket';
-import { api } from '../../../api/client';
+import { api, type ContentBlock } from '../../../api/client';
 
 export interface StructuredChat {
   items: ConvItem[];
   busy: boolean;        // a turn is in flight (sent or streaming, no result yet)
   model?: string;
-  send: (text: string) => void;
+  // Accepts plain text OR a content-block array (e.g. a real image block the model SEES).
+  send: (content: string | ContentBlock[]) => void;
 }
 
 function safeJson(v: unknown): string {
@@ -332,13 +333,16 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
     };
   }, [terminalId]);
 
-  const send = useCallback((text: string) => {
-    const v = text.trim();
-    if (!v || !terminalId) return;
-    // No optimistic user bubble: the backend echoes the turn as a `user` text event
-    // (which also survives reconnect replay), so an optimistic append would double up.
+  const send = useCallback((content: string | ContentBlock[]) => {
+    // A string turn is trimmed + empty-guarded as before; a block turn (e.g. an image)
+    // just needs at least one block. Both flow through the SAME widened API.
+    const payload = typeof content === 'string' ? content.trim() : content;
+    const empty = typeof payload === 'string' ? !payload : payload.length === 0;
+    if (empty || !terminalId) return;
+    // No optimistic user bubble: the backend echoes the turn as a `user` event (text or
+    // image blocks, surviving reconnect replay), so an optimistic append would double up.
     setBusy(true);
-    api.sendStructuredMessage(terminalId, v).catch(() => {
+    api.sendStructuredMessage(terminalId, payload).catch(() => {
       // P0c: the POST rejects (e.g. the claude process died → 400) — surface it and
       // stop spinning instead of leaving "Working…" forever.
       setBusy(false);

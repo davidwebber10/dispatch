@@ -1,5 +1,14 @@
 import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus, PendingPermission } from './types';
 
+/**
+ * A content block for a structured `user` turn (mirrors the daemon's wire shape). A
+ * turn is still allowed to be a plain string everywhere; a block array additionally
+ * lets it carry a REAL image (base64 inline, so the model SEES it) alongside text.
+ */
+export type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     method: init?.method ?? 'GET',
@@ -44,7 +53,10 @@ export const api = {
   },
   searchConversation: (id: string, q: string) => req<{ matches: SearchMatch[] }>(`/api/terminals/${id}/conversation/search?q=${encodeURIComponent(q)}`),
   sendInput: (id: string, data: string) => req<void>(`/api/terminals/${id}/input`, { method: 'POST', body: body({ data }) }),
-  sendStructuredMessage: (id: string, text: string) => req<void>(`/api/terminals/${id}/message`, { method: 'POST', body: body({ text }) }),
+  // A plain string keeps the original `{ text }` wire (byte-identical); a block array
+  // is sent as `{ content }` so an attached image travels as a real content block.
+  sendStructuredMessage: (id: string, content: string | ContentBlock[]) =>
+    req<void>(`/api/terminals/${id}/message`, { method: 'POST', body: body(typeof content === 'string' ? { text: content } : { content }) }),
   // The membrane: the gated tool/question a structured AGENT thread is blocked on (or null).
   getPermission: (terminalId: string) => req<PendingPermission | null>(`/api/terminals/${terminalId}/permission`),
   // Resolve it: allow (optionally with an AskUserQuestion answers map) or deny (with a message).

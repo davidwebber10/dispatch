@@ -3,7 +3,7 @@ import { renderHook, act } from '@testing-library/react';
 import { test, expect, vi, beforeEach } from 'vitest';
 import { useStructuredChat } from './useStructuredChat';
 import * as sock from '../../../api/structured-socket';
-import { api } from '../../../api/client';
+import { api, type ContentBlock } from '../../../api/client';
 
 // Captures the socket callbacks so a test can drive events directly.
 interface Cbs { onEvent: (e: any) => void; onReset?: () => void; onClose?: () => void }
@@ -175,6 +175,26 @@ test('send sets busy and does NOT optimistically append a user bubble', () => {
   expect(result.current.busy).toBe(true);
   expect(result.current.items.filter((i) => i.kind === 'user')).toHaveLength(0); // no optimistic dup
   expect(api.sendStructuredMessage).toHaveBeenCalledWith('t1', 'hello');
+});
+
+test('send accepts a content-block array (image) and threads it to the API verbatim', () => {
+  vi.spyOn(api, 'sendStructuredMessage').mockResolvedValue(undefined as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  const blocks: ContentBlock[] = [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }];
+  act(() => { result.current.send(blocks); });
+  expect(result.current.busy).toBe(true);
+  // No optimistic bubble: the backend echoes the image turn (and it survives reconnect replay).
+  expect(result.current.items.filter((i) => i.kind === 'user')).toHaveLength(0);
+  expect(result.current.items.filter((i) => i.kind === 'image')).toHaveLength(0);
+  expect(api.sendStructuredMessage).toHaveBeenCalledWith('t1', blocks);
+});
+
+test('send ignores an EMPTY content-block array (no API call, stays idle)', () => {
+  vi.spyOn(api, 'sendStructuredMessage').mockResolvedValue(undefined as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => { result.current.send([]); });
+  expect(result.current.busy).toBe(false);
+  expect(api.sendStructuredMessage).not.toHaveBeenCalled();
 });
 
 test('send POST rejection clears busy and appends an error result (P0c)', async () => {

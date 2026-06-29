@@ -17,7 +17,7 @@
 import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 import { useEffect, useMemo } from 'react';
-import { api } from '../../api/client';
+import { api, type ContentBlock } from '../../api/client';
 import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
 import { useThreadStatus } from '../../stores/threadStatus';
@@ -37,6 +37,7 @@ interface OverseerState {
   delegateType: AgentType;
   delegateText: string;
   composer: string;
+  composerImages: ContentBlock[]; // attached image blocks pending the next directive
   mobileTab: MobileTab;
   workerLightboxId: string | null; // NEW: the worker terminal whose chat View is open
 
@@ -58,6 +59,8 @@ interface OverseerState {
   pickType: (type: AgentType) => void;
   setDelegateText: (text: string) => void;
   setComposer: (text: string) => void;
+  /** Buffer an attached image block to ride along with the next directive send. */
+  addComposerImage: (block: ContentBlock) => void;
   sendDirective: () => void;
   needAction: (id: string, label: string) => void;
   doDelegate: () => void;
@@ -82,6 +85,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   delegateType: 'implementer',
   delegateText: '',
   composer: '',
+  composerImages: [],
   mobileTab: 'needs',
   workerLightboxId: null,
 
@@ -109,14 +113,23 @@ export const useOverseer = create<OverseerState>((set, get) => ({
 
   setComposer: (text) => set({ composer: text }),
 
+  addComposerImage: (block) => set((s) => ({ composerImages: [...s.composerImages, block] })),
+
   sendDirective: () => {
     const text = (get().composer || '').trim();
+    const images = get().composerImages;
     const id = get().coordinatorId;
-    if (!text || !id) return;
+    if ((!text && images.length === 0) || !id) return;
     // No optimistic bubble: the backend echoes the user's turn (and it survives
     // reconnect replay), so an optimistic append would double up.
-    set({ composer: '' });
-    api.sendStructuredMessage(id, text).catch(() => { /* surfaced in the stream */ });
+    set({ composer: '', composerImages: [] });
+    // Carry any attached image blocks through as a REAL content-block turn (images first,
+    // then the caption text) so the coordinator SEES the picture; a text-only directive
+    // keeps the original plain-string path untouched.
+    const payload: string | ContentBlock[] = images.length
+      ? [...images, ...(text ? [{ type: 'text', text } as ContentBlock] : [])]
+      : text;
+    api.sendStructuredMessage(id, payload).catch(() => { /* surfaced in the stream */ });
   },
 
   needAction: (id, label) => {
@@ -210,7 +223,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
     if (!sessionId) return;
     const old = get().coordinatorId;
     // Clear the view immediately so the chat reads as a clean slate while we work.
-    set({ coordinatorId: null, coordinatorStream: [], coordinatorBusy: false, resolved: [], pendingByTerminal: {}, composer: '', ensuring: true });
+    set({ coordinatorId: null, coordinatorStream: [], coordinatorBusy: false, resolved: [], pendingByTerminal: {}, composer: '', composerImages: [], ensuring: true });
     void (async () => {
       try {
         // Archive the old coordinator + all its managed agents (full clean slate).
