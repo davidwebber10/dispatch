@@ -225,14 +225,23 @@ export function useStructuredChat(terminalId: string): StructuredChat {
           return;
         }
 
-        if (type === 'user' && Array.isArray(event.message?.content)) {
+        if (type === 'user' && event.message) {
+          const content = event.message.content;
           const add: ConvItem[] = [];
-          for (const b of event.message.content) {
-            if (b.type === 'tool_result') {
-              add.push({ kind: 'tool-result', toolId: b.tool_use_id, text: flattenContent(b.content), isError: b.is_error === true });
-            } else if (b.type === 'text' && b.text) {
-              // P0a: the backend buffers/echoes the user's own turn as a text block.
-              add.push({ kind: 'user', text: b.text });
+          if (typeof content === 'string') {
+            // A plain human turn rebuilt from the transcript backfill (resume after a daemon
+            // restart) stores `content` as a STRING, not an array. Handle it so the user's own
+            // messages aren't dropped on reconnect — assistant turns are always array-shaped,
+            // which is why only the user's bubbles went missing after a restart.
+            if (content.trim()) add.push({ kind: 'user', text: content });
+          } else if (Array.isArray(content)) {
+            for (const b of content) {
+              if (b.type === 'tool_result') {
+                add.push({ kind: 'tool-result', toolId: b.tool_use_id, text: flattenContent(b.content), isError: b.is_error === true });
+              } else if (b.type === 'text' && b.text) {
+                // P0a: the backend buffers/echoes the user's own turn as a text block.
+                add.push({ kind: 'user', text: b.text });
+              }
             }
           }
           if (add.length) setItems((p) => [...p, ...add]);

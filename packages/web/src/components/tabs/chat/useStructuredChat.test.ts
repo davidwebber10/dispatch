@@ -122,6 +122,16 @@ test('maps an echoed user text block to a user bubble (P0a)', () => {
   expect(u?.text).toBe('hi claude');
 });
 
+test('maps a STRING-content user turn (transcript backfill on resume) to a user bubble', () => {
+  // After a daemon restart the chat is rebuilt from the transcript, where a human turn's
+  // content is a plain string (not an array). It must still render as a user bubble — the
+  // old Array.isArray-only handler dropped these, so the user's messages vanished on resume.
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: 'hello after restart' } }));
+  const u = result.current.items.find((i) => i.kind === 'user');
+  expect(u?.text).toBe('hello after restart');
+});
+
 test('result event populates the footer and clears busy', () => {
   const { result } = renderHook(() => useStructuredChat('t1'));
   act(() => cbs.onEvent({ type: 'stream_event', event: { type: 'message_start' } }));
