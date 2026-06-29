@@ -17,6 +17,8 @@ interface GroupsState {
   addToGroup: (groupId: string, tabId: string, targetBlockIndex?: number) => void;
   /** Dissolve a group — its tabs become individual again (tabs stay open). */
   unmerge: (groupId: string) => void;
+  /** Rename a group (empty string clears the custom name → chip falls back to "N Tabs"). */
+  rename: (groupId: string, name: string) => void;
   /** Close every tab in the group (calls useTabs.closeTab) and remove the group. */
   closeGroup: (groupId: string) => void;
   /** Remove one pane from the group (tab stays open as an individual). Dissolves the group if <=1 leaf remains. */
@@ -91,6 +93,15 @@ export const useGroups = create<GroupsState>((set, get) => ({
     const tabGroup = { ...get().tabGroup };
     for (const id of leafTabIds(g.layout)) if (tabGroup[id] === groupId) delete tabGroup[id];
     set({ groups, tabGroup });
+    persist(get());
+  },
+
+  rename: (groupId, name) => {
+    const g = get().groups[groupId];
+    if (!g) return;
+    const trimmed = name.trim();
+    const group: Group = { ...g, name: trimmed || undefined };
+    set({ groups: { ...get().groups, [groupId]: group } });
     persist(get());
   },
 

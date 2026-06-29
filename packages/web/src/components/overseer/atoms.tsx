@@ -6,6 +6,7 @@
 
 import type { CSSProperties, ReactNode } from 'react';
 import {
+  Archive,
   ArrowBendDownRight,
   ArrowLeft,
   ArrowRight,
@@ -38,6 +39,7 @@ import {
   ShieldCheck,
   Stack,
   SteeringWheel,
+  Stop,
   TerminalWindow,
   User,
   Warning,
@@ -74,6 +76,8 @@ const ICONS: Record<string, PhosphorIcon> = {
   'ph-steering-wheel': SteeringWheel,
   'ph-pencil-simple': PencilSimple,
   'ph-hand-palm': HandPalm,
+  'ph-stop': Stop,
+  'ph-archive': Archive,
   'ph-lightning': Lightning,
   'ph-check': Check,
   'ph-circle-notch': CircleNotch,

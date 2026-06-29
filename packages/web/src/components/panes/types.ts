@@ -23,6 +23,8 @@ export interface Group {
   id: string;
   layout: PaneNode;
   sessionId: string;
+  /** Optional user-given name for the group chip. When unset the chip shows "N Tabs". */
+  name?: string;
 }
 
 export const MAX_PANES = 4;

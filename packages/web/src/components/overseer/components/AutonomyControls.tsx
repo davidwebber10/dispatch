@@ -140,3 +140,76 @@ export function InterruptButton({ terminalId, scheme = 'scoped' }: { terminalId:
     </button>
   );
 }
+
+const actionBtn = (t: Tokens, color: string, busy: boolean): React.CSSProperties => ({
+  flex: 'none',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 5,
+  height: 26,
+  padding: '0 9px',
+  borderRadius: 7,
+  background: 'transparent',
+  border: `1px solid ${t.border}`,
+  color,
+  fontSize: 11,
+  fontWeight: 500,
+  lineHeight: 1,
+  cursor: busy ? 'default' : 'pointer',
+  fontFamily: 'inherit',
+  opacity: busy ? 0.6 : 1,
+});
+
+/** Stop — kill this agent's process. It stays in the rail (and the coordinator is told). */
+export function StopButton({ terminalId, scheme = 'scoped' }: { terminalId: string; scheme?: Scheme }) {
+  const t = SCHEMES[scheme];
+  const [busy, setBusy] = useState(false);
+
+  const onClick = async () => {
+    if (busy) return;
+    setBusy(true);
+    try { await api.stopTerminal(terminalId); }
+    catch { /* best-effort */ }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={busy}
+      title="Stop — end this agent's process (it stays in the rail)"
+      style={actionBtn(t, t.danger, busy)}
+    >
+      <Icon name="ph-stop" size={13} color={t.danger} />
+      Stop
+    </button>
+  );
+}
+
+/** Archive — remove this agent from the rail entirely. Fires `onArchived` on success. */
+export function ArchiveButton({ terminalId, scheme = 'scoped', onArchived }: { terminalId: string; scheme?: Scheme; onArchived?: () => void }) {
+  const t = SCHEMES[scheme];
+  const [busy, setBusy] = useState(false);
+
+  const onClick = async () => {
+    if (busy) return;
+    setBusy(true);
+    try { await api.archiveTerminal(terminalId); onArchived?.(); }
+    catch { /* best-effort */ }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={busy}
+      title="Archive — remove this agent from the rail"
+      style={actionBtn(t, t.dim, busy)}
+    >
+      <Icon name="ph-archive" size={13} color={t.dim} />
+      Archive
+    </button>
+  );
+}

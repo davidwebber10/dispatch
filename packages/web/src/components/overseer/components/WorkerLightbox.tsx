@@ -9,7 +9,7 @@
 import { ChatView } from '../../tabs/chat/ChatView';
 import { findTerminal, useTabs } from '../../../stores/tabs';
 import { Icon } from '../atoms';
-import { AutonomyToggle, InterruptButton } from './AutonomyControls';
+import { AutonomyToggle, InterruptButton, StopButton, ArchiveButton } from './AutonomyControls';
 import { useOverseer } from '../store';
 
 export function WorkerLightbox() {
@@ -87,6 +87,8 @@ export function WorkerLightbox() {
             <AutonomyToggle terminalId={workerLightboxId} autonomy={terminal?.config?.autonomy} scheme="scoped" />
           )}
           <InterruptButton terminalId={workerLightboxId} scheme="scoped" />
+          <StopButton terminalId={workerLightboxId} scheme="scoped" />
+          <ArchiveButton terminalId={workerLightboxId} scheme="scoped" onArchived={close} />
           <button
             onClick={close}
             title="Close"

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { EditorView, basicSetup } from 'codemirror';
 import { EditorState } from '@codemirror/state';
 import { oneDark } from '@codemirror/theme-one-dark';
@@ -7,15 +7,32 @@ import { api } from '../../api/client';
 import type { Terminal } from '../../api/types';
 import { isMarkdown, languageFor } from '../../lib/fileType';
 
+// Remember each file tab's rendered-markdown scroll position across tab switches
+// (TabHost unmounts the inactive tab, so the DOM scrollTop would otherwise reset to 0).
+// Keyed by terminal id; in-memory for the session.
+const mdScroll = new Map<string, number>();
+
 export function FileEditorTab({ terminal }: { terminal: Terminal }) {
   const path = (terminal.config?.path as string) || terminal.label;
   const md = isMarkdown(path);
   const host = useRef<HTMLDivElement>(null);
+  const mdView = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const [content, setContent] = useState('');
   const [dirty, setDirty] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [mode, setMode] = useState<'edit' | 'view'>(md ? 'view' : 'edit');
+
+  // Restore the saved scroll position once the markdown HTML is in the DOM (so
+  // scrollHeight is measured). useLayoutEffect → set before paint, no flash. Re-runs
+  // when content loads or the view is (re)shown; it never fights live scrolling
+  // because onScroll only writes the map, it doesn't change content.
+  useLayoutEffect(() => {
+    if (!(md && mode === 'view')) return;
+    const el = mdView.current;
+    const saved = mdScroll.get(terminal.id);
+    if (el && saved != null) el.scrollTop = saved;
+  }, [md, mode, content, loaded, terminal.id]);
 
   useEffect(() => {
     let on = true;
@@ -74,7 +91,13 @@ export function FileEditorTab({ terminal }: { terminal: Terminal }) {
         <button onClick={() => void save()} disabled={!dirty} style={{ marginLeft: 'auto', height: 26, padding: '0 12px', background: dirty ? 'var(--color-accent)' : 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 7, color: dirty ? '#08240F' : 'var(--color-text-secondary)', fontWeight: 600, fontSize: 12 }}>Save</button>
       </div>
       {md && mode === 'view'
-        ? <div className="md-view" style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '14px 28px' }} dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} />
+        ? <div
+            ref={mdView}
+            className="md-view"
+            onScroll={(e) => mdScroll.set(terminal.id, e.currentTarget.scrollTop)}
+            style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '14px 28px' }}
+            dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
+          />
         : <div ref={host} style={{ flex: 1, minHeight: 0, overflow: 'auto' }} />}
     </div>
   );

@@ -4,19 +4,21 @@
  * Operator mode only, gated by the `multiPane` setting.  Falls back to
  * classic TabBar behaviour when either condition is false.
  *
- * Features added on top of the classic bar:
- *  - Drag-to-reorder via @dnd-kit (horizontal sort)
- *  - Drag a single tab onto another tab/group → merge affordance on the
- *    target chip + on-drop calls useGroups.merge / addToGroup
- *  - Group chips: stack icon + member count, unmerge (ArrowsOut) + X close-all
- *  - Selecting a group chip activates the first tab in the group
- *    (App.tsx detects the active tab is grouped and renders PaneTree)
+ * Drag model (so dropzones never move under the cursor):
+ *  - On drag start the strip EXPANDS, revealing a fixed gap between/around
+ *    every tab. Each gap is a reorder dropzone; each tab is a merge dropzone.
+ *  - Drop in a GAP  → reorder the dragged tab to that position.
+ *  - Drop on a TAB  → merge the dragged tab into it (new group / +pane).
+ *  Tabs do NOT slide around while dragging, so the gap you aimed at stays put.
+ *  - Group chips: stack icon + count title ("N Tabs", renameable), split
+ *    (ArrowsSplit) + X close-all. Selecting a group activates its first tab
+ *    (App.tsx detects the active tab is grouped and renders PaneTree).
  *
  * Do NOT import this file in more than one place at a time; it is a
  * self-contained drop-in.  Wire it into App.tsx in place of <TabBar/>.
  */
 
-import { useState, useMemo, useRef } from 'react';
+import { Fragment, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   DndContext,
@@ -25,25 +27,22 @@ import {
   TouchSensor,
   useSensor,
   useSensors,
+  useDraggable,
+  useDroppable,
+  pointerWithin,
   closestCenter,
+  type CollisionDetection,
   type DragStartEvent,
+  type DragOverEvent,
   type DragEndEvent,
-  type DragMoveEvent,
 } from '@dnd-kit/core';
-import {
-  SortableContext,
-  useSortable,
-  horizontalListSortingStrategy,
-} from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
-import { SquaresFour, ArrowsOut } from '@phosphor-icons/react';
+import { SquaresFour, ArrowsSplit } from '@phosphor-icons/react';
 import { useTabs, findTerminal } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
 import { useSettings } from '../../stores/settings';
 import { useViewMode } from '../../stores/viewMode';
 import { useGroups } from './store';
 import { leafTabIds, leafCount, MAX_PANES } from './types';
-import { reorderIds } from '../../lib/reorder';
 
 /* ── Constants ───────────────────────────────────────────────────────── */
 const BAR_H      = 44;
@@ -51,6 +50,7 @@ const TAB_MIN_W  = 150;
 const TAB_MAX_W  = 230;
 const GRP_MIN_W  = 185;
 const GRP_MAX_W  = 290;
+const GAP_W      = 22; // width a reorder gap expands to while dragging
 
 /* ── Slot model ──────────────────────────────────────────────────────── */
 type SingleSlot = { kind: 'single'; id: string; tabId: string };
@@ -78,6 +78,13 @@ function persistTabs() {
     }));
   } catch { /* ignore */ }
 }
+
+/* Pointer-precise collision: prefer the droppable under the pointer (a gap or a
+   tab), falling back to nearest-center only when the pointer is in a dead zone. */
+const collisionDetection: CollisionDetection = (args) => {
+  const hits = pointerWithin(args);
+  return hits.length ? hits : closestCenter(args);
+};
 
 /* ═══════════════════════════════════════════════════════════════════════
    Classic TabBar fallback  (identical to components/layout/TabBar.tsx)
@@ -138,7 +145,7 @@ function ClassicTabBar({ onSelect }: { onSelect?: () => void }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   Merge affordance overlay  (shown on the target chip while dragging)
+   Merge affordance overlay  (shown on the target tab while hovering it)
    ═══════════════════════════════════════════════════════════════════════ */
 function MergeOverlay({ label }: { label: string }) {
   return (
@@ -160,11 +167,35 @@ function MergeOverlay({ label }: { label: string }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   Single-tab sortable chip
+   Reorder gap — a dropzone between/around tabs that expands while dragging.
    ═══════════════════════════════════════════════════════════════════════ */
-function SortableSingleChip({
-  slot, onSelect, isMergeTarget,
-}: { slot: SingleSlot; onSelect?: () => void; isMergeTarget: boolean }) {
+function DropGap({ index, dragging }: { index: number; dragging: boolean }) {
+  const { setNodeRef, isOver } = useDroppable({ id: `gap:${index}`, disabled: !dragging });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        position: 'relative', alignSelf: 'stretch', flexShrink: 0,
+        width: dragging ? GAP_W : 0,
+        transition: 'width .12s ease',
+        background: dragging && isOver ? 'color-mix(in srgb, var(--color-accent) 16%, transparent)' : 'transparent',
+      }}
+    >
+      {dragging && isOver && (
+        <div style={{
+          position: 'absolute', top: 4, bottom: 4, left: '50%', transform: 'translateX(-50%)',
+          width: 3, borderRadius: 2, background: 'var(--color-accent)',
+          boxShadow: '0 0 6px 1px color-mix(in srgb, var(--color-accent) 70%, transparent)',
+        }} />
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Single-tab chip  (draggable + a merge dropzone)
+   ═══════════════════════════════════════════════════════════════════════ */
+function SingleChip({ slot, onSelect }: { slot: SingleSlot; onSelect?: () => void }) {
   const activeTabId = useTabs((s) => s.activeTabId);
   const byProject   = useTabs((s) => s.byProject);
   const sessions    = useProjects((s) => s.sessions);
@@ -173,16 +204,17 @@ function SortableSingleChip({
   const proj = sessions.find((s) => s.id === t?.sessionId);
   const act  = slot.tabId === activeTabId;
 
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: slot.id });
+  const { setNodeRef: dragRef, listeners, attributes, isDragging } = useDraggable({ id: slot.id });
+  const { setNodeRef: dropRef, isOver } = useDroppable({ id: `merge:${slot.id}`, disabled: isDragging });
+  const ref = (n: HTMLElement | null) => { dragRef(n); dropRef(n); };
 
   return (
     <div
-      ref={setNodeRef}
+      ref={ref}
+      {...attributes}
+      {...listeners}
       style={{
         position: 'relative',
-        transform: CSS.Transform.toString(transform),
-        transition,
         display: 'flex', alignItems: 'center', gap: 10,
         padding: '0 10px 0 15px',
         minWidth: TAB_MIN_W, maxWidth: TAB_MAX_W, flexShrink: 0,
@@ -195,12 +227,10 @@ function SortableSingleChip({
         userSelect: 'none',
         touchAction: 'none',
       }}
-      {...attributes}
-      {...listeners}
       onClick={() => { onSelect?.(); useTabs.getState().setActiveTab(slot.tabId); }}
       onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); useTabs.getState().closeTab(slot.tabId); } }}
     >
-      {isMergeTarget && <MergeOverlay label="Merge" />}
+      {isOver && <MergeOverlay label="Merge" />}
 
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
         <span style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -221,7 +251,7 @@ function SortableSingleChip({
   );
 }
 
-/* Drag-overlay ghost for a single tab (no hooks that depend on slot changes) */
+/* Drag-overlay ghost for a single tab */
 function SingleTabGhost({ slot }: { slot: SingleSlot }) {
   const byProject = useTabs((s) => s.byProject);
   const sessions  = useProjects((s) => s.sessions);
@@ -254,28 +284,36 @@ function SingleTabGhost({ slot }: { slot: SingleSlot }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   Group-chip sortable chip
+   Group chip  (draggable + a merge/+pane dropzone; "N Tabs" title, renameable)
    ═══════════════════════════════════════════════════════════════════════ */
-function SortableGroupChip({
-  slot, onSelect, isMergeTarget,
-}: { slot: GroupSlot; onSelect?: () => void; isMergeTarget: boolean }) {
+function GroupChip({ slot, onSelect }: { slot: GroupSlot; onSelect?: () => void }) {
   const activeTabId = useTabs((s) => s.activeTabId);
   const byProject   = useTabs((s) => s.byProject);
+  const name        = useGroups((s) => s.groups[slot.groupId]?.name);
 
-  const act        = slot.tabIds.includes(activeTabId ?? '');
-  const count      = slot.tabIds.length;
-  const firstLabel = findTerminal(byProject, slot.tabIds[0])?.label ?? 'tab';
+  const act     = slot.tabIds.includes(activeTabId ?? '');
+  const count   = slot.tabIds.length;
+  const full    = count >= MAX_PANES;
+  const title   = name?.trim() || `${count} Tab${count !== 1 ? 's' : ''}`;
+  const members = slot.tabIds.map((id) => findTerminal(byProject, id)?.label ?? 'tab').join(', ');
 
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: slot.id });
+  const [editing, setEditing]     = useState(false);
+  const [draftName, setDraftName] = useState('');
+
+  const { setNodeRef: dragRef, listeners, attributes, isDragging } = useDraggable({ id: slot.id });
+  const { setNodeRef: dropRef, isOver } = useDroppable({ id: `merge:${slot.id}`, disabled: isDragging || full });
+  const ref = (n: HTMLElement | null) => { dragRef(n); dropRef(n); };
+
+  function commitRename() { useGroups.getState().rename(slot.groupId, draftName); setEditing(false); }
+  function startRename()  { setDraftName(name ?? ''); setEditing(true); }
 
   return (
     <div
-      ref={setNodeRef}
+      ref={ref}
+      {...attributes}
+      {...listeners}
       style={{
         position: 'relative',
-        transform: CSS.Transform.toString(transform),
-        transition,
         display: 'flex', alignItems: 'center', gap: 7,
         padding: '0 8px 0 12px',
         minWidth: GRP_MIN_W, maxWidth: GRP_MAX_W, flexShrink: 0,
@@ -288,11 +326,9 @@ function SortableGroupChip({
         userSelect: 'none',
         touchAction: 'none',
       }}
-      {...attributes}
-      {...listeners}
-      onClick={() => { onSelect?.(); useTabs.getState().setActiveTab(slot.tabIds[0]); }}
+      onClick={() => { if (editing) return; onSelect?.(); useTabs.getState().setActiveTab(slot.tabIds[0]); }}
     >
-      {isMergeTarget && <MergeOverlay label="Add pane" />}
+      {isOver && <MergeOverlay label="Add pane" />}
 
       {/* Stack icon */}
       <SquaresFour
@@ -300,24 +336,47 @@ function SortableGroupChip({
         style={{ flexShrink: 0, color: act ? 'var(--color-accent)' : 'var(--color-text-tertiary)' }}
       />
 
-      {/* Label */}
+      {/* Label — double-click the title to rename the group */}
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
-        <span style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {firstLabel}{count > 1 ? ` +${count - 1}` : ''}
-        </span>
-        <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}>
-          {count} pane{count !== 1 ? 's' : ''}
-        </span>
+        {editing ? (
+          <input
+            autoFocus
+            value={draftName}
+            onChange={(e) => setDraftName(e.target.value)}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+              else if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
+            }}
+            placeholder={`${count} Tabs`}
+            style={{ font: '500 12.5px var(--font-sans)', color: '#fff', background: 'var(--color-elevated)', border: '1px solid var(--color-accent)', borderRadius: 4, padding: '1px 4px', width: '100%', minWidth: 0, outline: 'none' }}
+          />
+        ) : (
+          <>
+            <span
+              onDoubleClick={(e) => { e.stopPropagation(); startRename(); }}
+              title="Double-click to rename group"
+              style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            >
+              {title}
+            </span>
+            <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {members}
+            </span>
+          </>
+        )}
       </div>
 
-      {/* Unmerge (dissolve group; tabs stay open) */}
+      {/* Split — dissolve the group; tabs return to individual tabs with their original names */}
       <button
         onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => { e.stopPropagation(); useGroups.getState().unmerge(slot.groupId); }}
-        title="Unmerge — split back into individual tabs"
+        title="Split — back into individual tabs"
         style={iconBtn}
       >
-        <ArrowsOut size={13} />
+        <ArrowsSplit size={13} />
       </button>
 
       {/* Close all tabs in the group */}
@@ -333,9 +392,11 @@ function SortableGroupChip({
 
 /* Drag-overlay ghost for a group chip */
 function GroupChipGhost({ slot }: { slot: GroupSlot }) {
-  const byProject  = useTabs((s) => s.byProject);
-  const count      = slot.tabIds.length;
-  const firstLabel = findTerminal(byProject, slot.tabIds[0])?.label ?? 'tab';
+  const byProject = useTabs((s) => s.byProject);
+  const name      = useGroups((s) => s.groups[slot.groupId]?.name);
+  const count     = slot.tabIds.length;
+  const title     = name?.trim() || `${count} Tab${count !== 1 ? 's' : ''}`;
+  const members   = slot.tabIds.map((id) => findTerminal(byProject, id)?.label ?? 'tab').join(', ');
 
   return (
     <div style={{
@@ -353,10 +414,10 @@ function GroupChipGhost({ slot }: { slot: GroupSlot }) {
       <SquaresFour size={14} weight="bold" style={{ flexShrink: 0, color: 'var(--color-accent)' }} />
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
         <span style={{ fontSize: 12.5, fontWeight: 500, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {firstLabel}{count > 1 ? ` +${count - 1}` : ''}
+          {title}
         </span>
-        <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}>
-          {count} pane{count !== 1 ? 's' : ''}
+        <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {members}
         </span>
       </div>
     </div>
@@ -364,136 +425,85 @@ function GroupChipGhost({ slot }: { slot: GroupSlot }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   Inner bar — full grouped/sortable implementation
+   Inner bar — gap/merge drag implementation
    ═══════════════════════════════════════════════════════════════════════ */
 function GroupedTabBarInner({ onSelect }: { onSelect?: () => void }) {
   const openTabIds = useTabs((s) => s.openTabIds);
   const groups     = useGroups((s) => s.groups);
   const tabGroup   = useGroups((s) => s.tabGroup);
 
-  /* ── Merge target: ref for reliable read in onDragEnd + state for render ── */
-  const mergeTargetRef               = useRef<string | null>(null);
-  const [mergeTarget, _setMergeTarget] = useState<string | null>(null);
-  function setMergeTarget(v: string | null) {
-    mergeTargetRef.current = v;
-    _setMergeTarget(v);
-  }
-
-  /* ── Active dragging slot id ─────────────────────────────────────── */
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [overId, setOverId]     = useState<string | null>(null); // current droppable (gap:* | merge:*)
 
   /* ── Build display slots ─────────────────────────────────────────── */
-  const slots: TabSlot[] = useMemo(() => {
-    const seenGroups = new Set<string>();
-    const result: TabSlot[] = [];
-    for (const tabId of openTabIds) {
-      const gid = tabGroup[tabId];
-      if (gid) {
-        if (!seenGroups.has(gid)) {
-          seenGroups.add(gid);
-          const g = groups[gid];
-          if (g) {
-            result.push({
-              kind: 'group',
-              id: `group:${gid}`,
-              groupId: gid,
-              tabIds: leafTabIds(g.layout),
-            });
-          }
-        }
-        // else: already added the group chip for this group
-      } else {
-        result.push({ kind: 'single', id: tabId, tabId });
+  const seenGroups = new Set<string>();
+  const slots: TabSlot[] = [];
+  for (const tabId of openTabIds) {
+    const gid = tabGroup[tabId];
+    if (gid) {
+      if (!seenGroups.has(gid)) {
+        seenGroups.add(gid);
+        const g = groups[gid];
+        if (g) slots.push({ kind: 'group', id: `group:${gid}`, groupId: gid, tabIds: leafTabIds(g.layout) });
       }
+    } else {
+      slots.push({ kind: 'single', id: tabId, tabId });
     }
-    return result;
-  }, [openTabIds, tabGroup, groups]);
+  }
 
-  /* ── Active slot (for DragOverlay render) ───────────────────────── */
   const activeSlot = activeId ? (slots.find((s) => s.id === activeId) ?? null) : null;
 
-  /* ── Sensors ─────────────────────────────────────────────────────────
-     Mouse uses a DISTANCE constraint: the drag begins after a few px of
-     travel, with no hold. (The old single PointerSensor used delay+tolerance,
-     which CANCELS a quick desktop drag — that's why drag felt dead.) Touch
-     keeps a short long-press so the bar can still be swipe-scrolled. ── */
+  /* ── Sensors: mouse = distance (no hold) so quick desktop drags work;
+       touch = short long-press so the bar can still be swipe-scrolled. ── */
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 8 } }),
   );
 
-  /* ── Handlers ────────────────────────────────────────────────────── */
+  /* ── Expand the dragged slot order into the flat openTabIds list + persist ── */
+  function applySlotOrder(orderedSlotIds: string[]) {
+    const slotById = new Map(slots.map((s) => [s.id, s]));
+    const next: string[] = [];
+    for (const sid of orderedSlotIds) {
+      const slot = slotById.get(sid);
+      if (!slot) continue;
+      if (slot.kind === 'single') next.push(slot.tabId);
+      else next.push(...slot.tabIds);
+    }
+    const covered = new Set(next);
+    for (const id of openTabIds) if (!covered.has(id)) next.push(id); // stale-data guard
+    useTabs.setState({ openTabIds: next });
+    persistTabs();
+  }
+
   function onDragStart({ active }: DragStartEvent) {
     setActiveId(String(active.id));
-    setMergeTarget(null);
+    setOverId(null);
   }
 
-  function onDragMove({ over, active }: DragMoveEvent) {
-    if (!over || String(over.id) === String(active.id)) {
-      setMergeTarget(null);
-      return;
-    }
-
-    const dragId    = String(active.id);
-    const overId    = String(over.id);
-    const dragSlot  = slots.find((s) => s.id === dragId);
-    const overSlot  = slots.find((s) => s.id === overId);
-
-    // Only single tabs can initiate a merge
-    if (!dragSlot || dragSlot.kind !== 'single' || !overSlot) {
-      setMergeTarget(null);
-      return;
-    }
-
-    // Cannot merge into a full group
-    if (overSlot.kind === 'group') {
-      const g = groups[overSlot.groupId];
-      if (!g || leafCount(g.layout) >= MAX_PANES) {
-        setMergeTarget(null);
-        return;
-      }
-    }
-
-    // Merge affordance when the dragged chip's center is within the
-    // middle 60 % of the target chip (outside that → sort only).
-    const overRect       = over.rect;
-    const translated     = active.rect.current.translated;
-    if (!translated) { setMergeTarget(null); return; }
-
-    const activeCenterX = translated.left + translated.width / 2;
-    const mergeLeft     = overRect.left + overRect.width * 0.2;
-    const mergeRight    = overRect.left + overRect.width * 0.8;
-
-    setMergeTarget(
-      activeCenterX >= mergeLeft && activeCenterX <= mergeRight ? overId : null,
-    );
+  function onDragOver({ over }: DragOverEvent) {
+    setOverId(over ? String(over.id) : null);
   }
 
-  function onDragEnd({ over, active }: DragEndEvent) {
-    const dragSlotId  = String(active.id);
-    const currentMerge = mergeTargetRef.current; // read ref for freshest value
-
+  function onDragEnd({ active, over }: DragEndEvent) {
+    const dragId = String(active.id);
     setActiveId(null);
-    setMergeTarget(null);
-
+    setOverId(null);
     if (!over) return;
-    const overSlotId = String(over.id);
-    if (dragSlotId === overSlotId) return;
+    const target = String(over.id);
 
-    /* ── Merge path ──────────────────────────────────────────────── */
-    if (currentMerge && currentMerge === overSlotId) {
-      const dragSlot  = slots.find((s) => s.id === dragSlotId);
-      const overSlot  = slots.find((s) => s.id === overSlotId);
-      if (!dragSlot || !overSlot || dragSlot.kind !== 'single') return;
-
+    /* ── Merge: dropped on a tab/group ──────────────────────────────── */
+    if (target.startsWith('merge:')) {
+      const overSlotId = target.slice('merge:'.length);
+      if (overSlotId === dragId) return;
+      const dragSlot = slots.find((s) => s.id === dragId);
+      const overSlot = slots.find((s) => s.id === overSlotId);
+      if (!dragSlot || !overSlot || dragSlot.kind !== 'single') return; // only a single tab merges in
       if (overSlot.kind === 'single') {
-        // Two individual tabs → new group (left | right layout)
         const sessionId = useTabs.getState().tabSession[dragSlot.tabId] ?? '';
         useGroups.getState().merge(sessionId, dragSlot.tabId, overSlot.tabId);
-        // Activate dragged tab — App.tsx will detect it's now grouped
-        useTabs.getState().setActiveTab(dragSlot.tabId);
+        useTabs.getState().setActiveTab(dragSlot.tabId); // App.tsx detects it's now grouped
       } else {
-        // Single tab dropped onto an existing group chip → add pane
         const g = groups[overSlot.groupId];
         if (g && leafCount(g.layout) < MAX_PANES) {
           useGroups.getState().addToGroup(overSlot.groupId, dragSlot.tabId);
@@ -503,34 +513,28 @@ function GroupedTabBarInner({ onSelect }: { onSelect?: () => void }) {
       return;
     }
 
-    /* ── Sort path ───────────────────────────────────────────────── */
-    const slotIds    = slots.map((s) => s.id);
-    const newSlotIds = reorderIds(slotIds, dragSlotId, overSlotId);
-    if (newSlotIds.every((id, i) => id === slotIds[i])) return; // no change
-
-    // Expand slot order back to the flat openTabIds list
-    const slotById = new Map(slots.map((s) => [s.id, s]));
-    const newOpenTabIds: string[] = [];
-    for (const sid of newSlotIds) {
-      const slot = slotById.get(sid);
-      if (!slot) continue;
-      if (slot.kind === 'single') newOpenTabIds.push(slot.tabId);
-      else newOpenTabIds.push(...slot.tabIds);
+    /* ── Reorder: dropped in a gap (index = insertion position) ─────── */
+    if (target.startsWith('gap:')) {
+      const gapIndex = Number(target.slice('gap:'.length));
+      const order = slots.map((s) => s.id);
+      const di = order.indexOf(dragId);
+      if (di === -1) return;
+      const without = order.filter((id) => id !== dragId);
+      const insertAt = gapIndex > di ? gapIndex - 1 : gapIndex;
+      without.splice(insertAt, 0, dragId);
+      if (without.every((id, i) => id === order[i])) return; // dropped in its own gap → no-op
+      applySlotOrder(without);
     }
-    // Defensive: append any openTabIds not covered (stale data guard)
-    const covered = new Set(newOpenTabIds);
-    for (const id of openTabIds) if (!covered.has(id)) newOpenTabIds.push(id);
-
-    useTabs.setState({ openTabIds: newOpenTabIds });
-    persistTabs();
   }
 
   function onDragCancel() {
     setActiveId(null);
-    setMergeTarget(null);
+    setOverId(null);
   }
 
   if (!slots.length) return null;
+
+  const dragging = !!activeId;
 
   return (
     <div style={{
@@ -541,33 +545,23 @@ function GroupedTabBarInner({ onSelect }: { onSelect?: () => void }) {
     }}>
       <DndContext
         sensors={sensors}
-        collisionDetection={closestCenter}
+        collisionDetection={collisionDetection}
         onDragStart={onDragStart}
-        onDragMove={onDragMove}
+        onDragOver={onDragOver}
         onDragEnd={onDragEnd}
         onDragCancel={onDragCancel}
       >
-        <SortableContext items={slots.map((s) => s.id)} strategy={horizontalListSortingStrategy}>
-          <div style={{ display: 'flex', height: '100%' }}>
-            {slots.map((slot) =>
-              slot.kind === 'single' ? (
-                <SortableSingleChip
-                  key={slot.id}
-                  slot={slot}
-                  onSelect={onSelect}
-                  isMergeTarget={mergeTarget === slot.id}
-                />
-              ) : (
-                <SortableGroupChip
-                  key={slot.id}
-                  slot={slot}
-                  onSelect={onSelect}
-                  isMergeTarget={mergeTarget === slot.id}
-                />
-              ),
-            )}
-          </div>
-        </SortableContext>
+        <div style={{ display: 'flex', height: '100%' }}>
+          <DropGap index={0} dragging={dragging} />
+          {slots.map((slot, i) => (
+            <Fragment key={slot.id}>
+              {slot.kind === 'single'
+                ? <SingleChip slot={slot} onSelect={onSelect} />
+                : <GroupChip  slot={slot} onSelect={onSelect} />}
+              <DropGap index={i + 1} dragging={dragging} />
+            </Fragment>
+          ))}
+        </div>
 
         {createPortal(
           <DragOverlay dropAnimation={null}>
