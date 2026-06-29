@@ -24,7 +24,7 @@ it('binary (archive:none): downloads, verifies sha256, places + chmods, idempote
   await installTool(entry, { base, download });
   const binFile = path.join(toolPaths(base).bin, 'demo');
   expect(fs.existsSync(binFile)).toBe(true);
-  expect(fs.statSync(binFile).mode & 0o111).toBeTruthy(); // executable
+  if (process.platform !== 'win32') expect(fs.statSync(binFile).mode & 0o111).toBeTruthy(); // executable (POSIX perms; Windows has no exec bit)
   expect(readInstalled(base).demo).toBeTruthy();
   await installTool(entry, { base, download }); // idempotent: no re-download
   expect(calls).toBe(1);
