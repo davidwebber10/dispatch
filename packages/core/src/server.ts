@@ -41,6 +41,8 @@ import { StatusService } from './status/service.js';
 import { createEventsBroadcaster, createNoopBroadcaster } from './ws/events.js';
 import type { EventBroadcaster } from './ws/events.js';
 import { handleTerminalConnection } from './ws/terminal.js';
+import { handleStructuredConnection } from './ws/structured.js';
+import { StructuredSessionManager } from './structured/manager.js';
 import { startPtyTimingLoop } from './sessions/status.js';
 import { TerminalMonitor } from './terminal-monitor.js';
 
@@ -53,6 +55,8 @@ interface CreateAppOptions {
   toolsDir?: string;
   /** Inject a pre-built SecretsService (e.g. with a fake Doppler client) for tests. */
   secretsService?: SecretsService;
+  /** Override the structured command (test seam: spawn fake-claude instead of real claude). */
+  structuredCommand?: { command: string; args: string[] };
 }
 
 /**
@@ -98,6 +102,9 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
   sessionService.setIntegrationsSpecs(() => integrationsService.getServerSpecs());
   sessionService.setToolsAwareness(() => awarenessNote(toolStatuses({ base: toolsBase })));
+  const structuredManager = new StructuredSessionManager();
+  sessionService.setStructuredManager(structuredManager);
+  if (options.structuredCommand) sessionService.setStructuredCommandOverride(options.structuredCommand);
   const statusService = new StatusService(db, broadcaster);
   const pushService = new PushService(db, { vapidDir: dispatchDir });
 
@@ -131,6 +138,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   (app as any)._ptyManager = ptyManager;
   (app as any)._sessionService = sessionService;
   (app as any)._pushService = pushService;
+  (app as any)._structuredManager = structuredManager;
 
   // Serve the built web client (single-origin) when a build is present.
   // SPA fallback returns index.html for any non-/api, non-WS GET.
@@ -222,11 +230,12 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Create WebSocket servers (noServer mode)
   const eventsWss = new WebSocketServer({ noServer: true });
   const terminalWss = new WebSocketServer({ noServer: true });
+  const structuredWss = new WebSocketServer({ noServer: true });
 
   // Keepalive: Cloudflare drops idle proxied WebSockets at ~100s. Ping clients
   // every 30s so terminal/events sockets survive quiet periods through the tunnel.
   const heartbeat = setInterval(() => {
-    for (const wss of [eventsWss, terminalWss]) {
+    for (const wss of [eventsWss, terminalWss, structuredWss]) {
       for (const client of wss.clients) {
         if (client.readyState === client.OPEN) client.ping();
       }
@@ -241,6 +250,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const sessionService = new SessionService(db, ptyManager, path.join(dataDir, 'mcp.json'));
   const agentService = new AgentService(db, sessionService, broadcaster, path.join(dataDir, 'runs'));
   const statusService = new StatusService(db, broadcaster);
+  const structuredManager = new StructuredSessionManager();
+  sessionService.setStructuredManager(structuredManager);
   const pushService = new PushService(db, { vapidDir: dataDir });
 
   statusService.setThreadSettledHook(({ terminalId, sessionId, threadStatus }) => {
@@ -349,7 +360,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   server.on('upgrade', (request, socket, head) => {
     const url = request.url || '';
 
-    if (url.match(/\/api\/terminals\/[^/]+\/ws/) || url.match(/\/api\/sessions\/[^/]+\/terminal/)) {
+    if (url.match(/\/api\/terminals\/[^/]+\/structured-ws/)) {
+      structuredWss.handleUpgrade(request, socket, head, (ws) => {
+        handleStructuredConnection(ws, request, structuredManager);
+      });
+    } else if (url.match(/\/api\/terminals\/[^/]+\/ws/) || url.match(/\/api\/sessions\/[^/]+\/terminal/)) {
       terminalWss.handleUpgrade(request, socket, head, (ws) => {
         handleTerminalConnection(ws, request, ptyManager, sessionService);
       });
@@ -424,6 +439,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     ptyManager.killAll();
     eventsWss.close();
     terminalWss.close();
+    structuredWss.close();
     server.close();
     db.close();
   };
