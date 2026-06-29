@@ -28,6 +28,18 @@ describe('buildLogonTaskXml', () => {
     });
     expect(x).toContain('a&amp;b&lt;c&gt;');
   });
+  test("single-quotes in nodePath/entry are PS-escaped as '' in the command string", () => {
+    const x = buildLogonTaskXml({
+      port: 1, nodePath: "C:\\node's exe\\node.exe", entry: "C:\\it's here\\server.js",
+      repoRoot: 'r', env: {}, logDir: 'l', userId: 'u',
+    });
+    // Decode XML escaping to inspect the raw command string
+    const src = x.replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+    // The PS-escaped single-quote doubling must appear before XML escaping re-applies
+    expect(src).toContain("'C:\\node''s exe\\node.exe'");
+    expect(src).toContain("'C:\\it''s here\\server.js'");
+  });
   test('uses append redirect *>> so logs persist across restarts', () => {
     // The *>> is inside an XML-escaped <Arguments> value, so > becomes &gt;
     // *>> → *&gt;&gt; in the serialised XML.

@@ -9,8 +9,10 @@ export function buildLogonTaskXml(opts: DaemonInstallOptions & { userId: string 
   // Wrapper command: set env then launch node with the server entry; redirect logs.
   const envSetup = Object.entries(opts.env)
     .map(([k, v]) => `$env:${k}='${v.replace(/'/g, "''")}';`).join(' ');
+  const psNode = opts.nodePath.replace(/'/g, "''");
+  const psEntry = opts.entry.replace(/'/g, "''");
   const cmd =
-    `${envSetup} & '${opts.nodePath}' '${opts.entry}' ` +
+    `${envSetup} & '${psNode}' '${psEntry}' ` +
     `*>> '${opts.logDir}\\dispatch.out.log'`;
   const args = `-NoLogo -NonInteractive -Command "${cmd}"`;
   return `<?xml version="1.0" encoding="UTF-16"?>
