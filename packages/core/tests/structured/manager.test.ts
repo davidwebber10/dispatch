@@ -1,5 +1,5 @@
 // packages/core/tests/structured/manager.test.ts
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { it, expect, beforeEach, afterEach } from 'vitest';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { StructuredSessionManager } from '../../src/structured/manager.js';
@@ -42,4 +42,20 @@ it('auto-allows can_use_tool control_requests (parity)', async () => {
   m.sendMessage('t1', 'TRIGGER_PERMISSION');
   const result = await waitForEvent(m, 't1', (e) => e.type === 'user' && JSON.stringify(e).includes('WROTE'));
   expect(JSON.stringify(result)).toContain('WROTE'); // allowed, not DENIED
+});
+
+it('re-spawn: old child exit does not evict the replacement session (Fix 1 regression)', async () => {
+  // First spawn — wait for init so the child is running
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+
+  // Re-spawn the same id: kill() is called inside spawn(), then a new child is inserted
+  spawnFake(m, 't1');
+
+  // Give the OLD child's 'exit' event time to fire (it was killed, so it exits quickly)
+  await new Promise((r) => setTimeout(r, 200));
+
+  // The new (replacement) session must still be alive — the stale exit handler must
+  // not have deleted it from the map
+  expect(m.isAlive('t1')).toBe(true);
 });

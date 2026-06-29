@@ -5,6 +5,7 @@ import * as readline from 'readline';
 
 interface Session {
   child: ChildProcessWithoutNullStreams;
+  rl: readline.Interface;
   events: unknown[]; // ring of recent events for replay
 }
 
@@ -26,10 +27,11 @@ export class StructuredSessionManager extends EventEmitter {
       env: { ...process.env, ...opts.env },
       stdio: ['pipe', 'pipe', 'pipe'],
     }) as ChildProcessWithoutNullStreams;
-    const session: Session = { child, events: [] };
-    this.sessions.set(terminalId, session);
+    child.stdin.on('error', () => {}); // Fix 2: suppress EPIPE if child closes stdin while alive
 
     const rl = readline.createInterface({ input: child.stdout });
+    const session: Session = { child, rl, events: [] };
+    this.sessions.set(terminalId, session);
     rl.on('line', (line) => {
       const trimmed = line.trim();
       if (!trimmed) return;
@@ -48,7 +50,11 @@ export class StructuredSessionManager extends EventEmitter {
     });
 
     child.on('exit', (code) => {
-      this.sessions.delete(terminalId);
+      // Fix 1: only clear the map if this child is still the current session
+      // (a re-spawn may have already replaced it; its exit must not evict the new child)
+      if (this.sessions.get(terminalId)?.child === child) {
+        this.sessions.delete(terminalId);
+      }
       this.emit('exit', terminalId, code ?? 0);
     });
     child.on('error', (err) => { this.emit('event', terminalId, { type: 'system', subtype: 'spawn_error', message: String(err) }); });
@@ -69,11 +75,12 @@ export class StructuredSessionManager extends EventEmitter {
   kill(terminalId: string): void {
     const s = this.sessions.get(terminalId);
     if (!s) return;
+    s.rl.close(); // Fix 3: close readline so buffered lines stop emitting after kill
     try { s.child.kill(); } catch { /* already gone */ }
     this.sessions.delete(terminalId);
   }
 
   isAlive(terminalId: string): boolean { return this.sessions.has(terminalId); }
 
-  getEvents(terminalId: string): unknown[] { return this.sessions.get(terminalId)?.events ?? []; }
+  getEvents(terminalId: string): unknown[] { return [...(this.sessions.get(terminalId)?.events ?? [])]; } // Fix 4: return copy
 }
