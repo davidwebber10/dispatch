@@ -79,6 +79,17 @@ export class StructuredSessionManager extends EventEmitter {
   // verified: persistent multi-turn over stdin on claude 2.1.195 — second user turn accepted and returned result on same process
   sendMessage(terminalId: string, text: string): void {
     this.write(terminalId, { type: 'user', message: { role: 'user', content: text } });
+    // P0a: the CLI does NOT echo the user's turn back as an event, so buffer a
+    // synthetic `user` event into the ring (same trim) and emit it. Replay on ws
+    // reconnect then restores the user's bubbles instead of leaving an
+    // assistant-only transcript.
+    const ev = { type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } };
+    const s = this.sessions.get(terminalId);
+    if (s) {
+      s.events.push(ev);
+      if (s.events.length > MAX_EVENTS) s.events.shift();
+    }
+    this.emit('event', terminalId, ev);
   }
 
   kill(terminalId: string): void {

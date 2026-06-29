@@ -10,6 +10,15 @@ export function handleStructuredConnection(ws: WebSocket, req: IncomingMessage, 
   // Replay buffered events, then stream live.
   for (const e of manager.getEvents(id)) { if (ws.readyState === 1) ws.send(JSON.stringify(e)); }
   const onEvent = (eid: string, event: unknown) => { if (eid === id && ws.readyState === 1) ws.send(JSON.stringify(event)); };
+  // P0b: the CLI never emits a `result` when its process exits/crashes mid-turn,
+  // so the client's `busy` would spin forever. Synthesize one from the manager's
+  // 'exit' so the existing result handler clears `busy` and shows the error.
+  const onExit = (eid: string, code: number) => {
+    if (eid === id && ws.readyState === 1) {
+      ws.send(JSON.stringify({ type: 'result', is_error: true, subtype: 'process_exit', result: `Process exited (${code})` }));
+    }
+  };
   manager.on('event', onEvent);
-  ws.on('close', () => manager.off('event', onEvent));
+  manager.on('exit', onExit);
+  ws.on('close', () => { manager.off('event', onEvent); manager.off('exit', onExit); });
 }

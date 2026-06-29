@@ -128,17 +128,26 @@ export interface RunStep {
 }
 
 export interface ConvItem {
-  kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'tool-result';
+  kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'tool-result' | 'result' | 'system';
   text?: string;
   toolName?: string;
   toolTitle?: string;
   toolDetail?: string;
+  toolId?: string;    // tool_use id, for pairing tool ↔ tool-result across interleaving
   isError?: boolean;
   ts?: string;
   uuid?: string;
   line?: number;      // source JSONL line index (enables jump-to from search)
   toolInput?: string; // tool call's raw arguments (for the Input tab)
   toolFile?: string;  // file path argument (for output-language inference)
+  // result (stream-json `result` event) — the turn's outcome footer
+  costUsd?: number;
+  turns?: number;
+  durationMs?: number;
+  tokensIn?: number;
+  tokensOut?: number;
+  model?: string;
+  level?: 'info' | 'error'; // for 'system' markers
 }
 
 export interface Conversation {

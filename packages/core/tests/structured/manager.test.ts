@@ -36,6 +36,18 @@ it('sendMessage writes a user turn and assistant events come back', async () => 
   expect(JSON.stringify(a)).toContain('echo:hello');
 });
 
+it('sendMessage buffers + emits a synthetic user event for reconnect replay (P0a)', async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  // The synthetic user echo is emitted synchronously from sendMessage.
+  const echoed = waitForEvent(m, 't1', (e) => e.type === 'user' && Array.isArray(e.message?.content) && e.message.content[0]?.text === 'hello');
+  m.sendMessage('t1', 'hello');
+  await echoed;
+  // …and it lives in the ring so a fresh ws connection replays it.
+  const buffered = m.getEvents('t1').find((e: any) => e.type === 'user' && e.message?.content?.[0]?.text === 'hello');
+  expect(buffered).toBeTruthy();
+});
+
 it('auto-allows can_use_tool control_requests (parity)', async () => {
   spawnFake(m, 't1');
   await waitForEvent(m, 't1', (e) => e.type === 'system');

@@ -25,6 +25,7 @@ interface SettingsState {
   accent: string;
   notify: boolean;
   pushEnabled: boolean;
+  multiPane: boolean;
   setFontSize: (n: number) => void;
   setScrollback: (n: number) => void;
   setSidebarFontSize: (n: number) => void;
@@ -33,6 +34,7 @@ interface SettingsState {
   setAccent: (c: string) => void;
   setNotify: (b: boolean) => Promise<void>;
   setPushEnabled: (b: boolean) => Promise<void>;
+  setMultiPane: (b: boolean) => void;
 }
 
 function load<T>(key: string, fallback: T): T {
@@ -56,11 +58,13 @@ export const useSettings = create<SettingsState>((set) => ({
   accent: initialAccent,
   notify: load('dispatch:notify', false),
   pushEnabled: load('dispatch:pushEnabled', false),
+  multiPane: load('dispatch:multiPane', true),
   setFontSize: (n) => { const fontSize = Math.max(9, Math.min(22, Math.round(n))); save('dispatch:fontSize', fontSize); set({ fontSize }); },
   setScrollback: (n) => { const scrollback = Math.max(1000, Math.min(100000, Math.round(n))); save('dispatch:scrollback', scrollback); set({ scrollback }); },
   setSidebarFontSize: (n) => { const sidebarFontSize = Math.max(10, Math.min(18, Math.round(n))); save('dispatch:sidebarFontSize', sidebarFontSize); set({ sidebarFontSize }); },
   setProjectFontSize: (n) => { const projectFontSize = Math.max(11, Math.min(22, Math.round(n))); save('dispatch:projectFontSize', projectFontSize); set({ projectFontSize }); },
   setDensity: (density) => { save('dispatch:density', density); set({ density }); },
+  setMultiPane: (b) => { save('dispatch:multiPane', b); set({ multiPane: b }); },
   setAccent: (accent) => { save('dispatch:accent', accent); applyAccent(accent); set({ accent }); },
   setNotify: async (b) => {
     if (b && typeof Notification !== 'undefined' && Notification.permission === 'default') {

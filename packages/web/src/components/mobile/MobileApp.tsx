@@ -19,6 +19,9 @@ import { useUI } from '../../stores/ui';
 import { Spinner } from '../common/Spinner';
 import { SortableList } from '../common/SortableList';
 import { timeAgo } from '../../lib/time';
+import { ModeSwitch } from '../layout/TopBar';
+import { OverseerView } from '../overseer/OverseerView';
+import { useViewMode } from '../../stores/viewMode';
 
 function homePath(p: string): string {
   return (p || '').replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
@@ -38,6 +41,7 @@ export function MobileApp() {
   const byProject = useTabs((s) => s.byProject);
   const editing = useAgentUI((s) => s.editing);
   const reconnectGen = useReconnect((s) => s.gen);
+  const viewMode = useViewMode((s) => s.mode);
 
   // Initialise straight from the URL so a reload restores the page (no flash to
   // the index, and the rail renders at the right level without an entry slide).
@@ -126,6 +130,25 @@ export function MobileApp() {
 
   const slot: React.CSSProperties = { flex: '0 0 100%', height: '100%', minWidth: 0 };
   const scrollSlot: React.CSSProperties = { ...slot, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y' };
+
+  // Overseer mode: a slim toggle bar over the full-screen Overseer (which renders
+  // its own mobile 3-tab layout). Bypasses the Operator slide-nav entirely.
+  if (viewMode === 'overseer') {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--color-base)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
+        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px', height: 'calc(44px + env(safe-area-inset-top))', paddingTop: 'env(safe-area-inset-top)', background: 'var(--color-pane)', borderBottom: '1px solid var(--color-border)' }}>
+          <ModeSwitch />
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button title="Settings" onClick={() => setSettings(true)} style={{ width: 32, height: 32, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 10, background: 'var(--color-elevated)', border: '1px solid #2C2C32', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
+              <Gear size={17} />
+            </button>
+          </div>
+        </div>
+        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}><OverseerView /></div>
+        <SettingsModal open={settings} onClose={() => setSettings(false)} />
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--color-base)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>

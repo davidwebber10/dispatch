@@ -61,7 +61,7 @@ export const claudeCodeProvider: SessionProvider = {
     };
   },
 
-  buildStructuredCommand({ workDir, secretsMcp }: { workDir: string; secretsMcp?: SecretsMcpInjection }) {
+  buildStructuredCommand({ workDir, secretsMcp, appendSystemPrompt }: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string }) {
     // The spike-verified stream-json control protocol. Parity permissions come from
     // the StructuredSessionManager's auto-allow loop, NOT --dangerously-skip-permissions.
     const args: string[] = [
@@ -69,11 +69,18 @@ export const claudeCodeProvider: SessionProvider = {
       '--input-format', 'stream-json',
       '--output-format', 'stream-json',
       '--verbose',
+      // Emit Anthropic streaming-protocol `stream_event`s (message_start,
+      // content_block_start/delta/stop, …) IN ADDITION to the whole
+      // assistant/user/result events, so the View can render tokens incrementally.
+      '--include-partial-messages',
       '--permission-mode', 'default',
       '--permission-prompt-tool', 'stdio',
       ...mcpArgs(secretsMcp),
       ...systemPromptArgs(secretsMcp),
     ];
+    // Overseer persona (coordinator / typed agent) — additive, on top of any
+    // secrets system prompt above; --append-system-prompt is repeatable.
+    if (appendSystemPrompt) args.push('--append-system-prompt', appendSystemPrompt);
     return { command: 'claude', args };
   },
 

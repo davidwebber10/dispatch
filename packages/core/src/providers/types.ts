@@ -73,6 +73,8 @@ export interface SessionProvider {
    * Build the command for a structured session transport using stream-json control
    * protocol. Returns the command with stream-json flags and optional MCP injection.
    * Permissions come from the session manager's auto-allow loop, not flags.
+   * `appendSystemPrompt` injects an additional `--append-system-prompt <text>` (e.g.
+   * a coordinator/typed-agent persona) on top of any secrets system prompt.
    */
-  buildStructuredCommand?(args: { workDir: string; secretsMcp?: SecretsMcpInjection }): { command: string; args: string[] };
+  buildStructuredCommand?(args: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string }): { command: string; args: string[] };
 }

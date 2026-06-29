@@ -1,0 +1,87 @@
+/* Tailwind v4 — theme + utilities only. Preflight is intentionally NOT imported
+   so the hand-rolled theme.css (the rest of the app) is left completely untouched.
+   shadcn semantic tokens are mapped onto Dispatch's existing dark palette so
+   shadcn chat components match the product exactly. */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+:root {
+  --background: #0F0F11;            /* color-base */
+  --foreground: #E9E9EC;            /* text-primary */
+  --card: #141416;                 /* pane */
+  --card-foreground: #E9E9EC;
+  --popover: #1B1B1E;              /* elevated */
+  --popover-foreground: #E9E9EC;
+  --primary: #3ECF6A;             /* accent */
+  --primary-foreground: #06140B;   /* near-black on accent */
+  --secondary: #1B1B1E;
+  --secondary-foreground: #E9E9EC;
+  --muted: #1B1B1E;
+  --muted-foreground: #8E8E96;     /* text-secondary */
+  --accent: #26262B;              /* hover */
+  --accent-foreground: #E9E9EC;
+  --destructive: #F0616D;          /* status-red */
+  --destructive-foreground: #E9E9EC;
+  --border: #29292E;
+  --input: #29292E;
+  --ring: #3ECF6A;
+  --radius: 0.625rem;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --font-sans: 'IBM Plex Sans', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* Scoped mini-preflight: the chat surface opts into the border/box-sizing
+   defaults shadcn components assume (since global preflight is omitted).
+   Anything rendered under `.chat-scope` gets them; the rest of the app does not. */
+@layer base {
+  .chat-scope,
+  .chat-scope *,
+  .chat-scope ::before,
+  .chat-scope ::after {
+    box-sizing: border-box;
+    border: 0 solid var(--border);
+  }
+}
+
+/* shadcn "shimmer" — a moving sheen for live status text ("Working…", "Thinking…").
+   (The shadcn registry ships this in shadcn/tailwind.css; reproduced here since we
+   import Tailwind without the full base bundle.) */
+@keyframes chat-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.chat-shimmer {
+  background: linear-gradient(90deg, var(--color-text-tertiary) 0%, var(--color-text-tertiary) 35%, var(--color-text-primary) 50%, var(--color-text-tertiary) 65%, var(--color-text-tertiary) 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: chat-shimmer 2s linear infinite;
+}

@@ -7,6 +7,7 @@ import { useSecrets } from '../../stores/secrets';
 import { useSetup } from '../../stores/setup';
 import { IntegrationsSection } from './IntegrationsSection';
 import { ToolsSection } from './ToolsSection';
+import { MultiPaneSetting } from '../panes/MultiPaneSetting';
 
 const sectionLabel: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
 const row: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 };
@@ -342,6 +343,9 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
 
               <div style={row}><span style={item}>Notify when a thread finishes</span><Toggle on={pushEnabled} onClick={() => void togglePush()} /></div>
               {pushMsg && <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>{pushMsg}</div>}
+              <Divider />
+
+              <MultiPaneSetting />
               <Divider />
 
               <div style={row}><span style={item}>Version</span><span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)' }}>Dispatch Web</span></div>

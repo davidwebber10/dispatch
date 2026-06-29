@@ -45,6 +45,9 @@ export const api = {
   searchConversation: (id: string, q: string) => req<{ matches: SearchMatch[] }>(`/api/terminals/${id}/conversation/search?q=${encodeURIComponent(q)}`),
   sendInput: (id: string, data: string) => req<void>(`/api/terminals/${id}/input`, { method: 'POST', body: body({ data }) }),
   sendStructuredMessage: (id: string, text: string) => req<void>(`/api/terminals/${id}/message`, { method: 'POST', body: body({ text }) }),
+  // Overseer: find-or-create this project's coordinator thread (idempotent) → { terminalId }.
+  ensureOverseerCoordinator: (sessionId: string) =>
+    req<{ terminalId: string }>(`/api/sessions/${sessionId}/overseer/coordinator`, { method: 'POST' }),
 
   getSetupState: () => req<SetupState>(`/api/setup/state`),
   recheckProviders: () => req<ProviderStatus[]>(`/api/setup/providers`),

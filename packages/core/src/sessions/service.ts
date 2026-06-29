@@ -14,6 +14,7 @@ import type { TerminalType } from '../db/terminals.js';
 import type { StatusHooksInjection } from '../providers/types.js';
 import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
 import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript.js';
+import { systemPromptFor } from '../overseer/prompts.js';
 
 interface StatusContext {
   serverUrl: string;
@@ -525,6 +526,32 @@ export class SessionService {
     this.structuredManager.sendMessage(terminalId, text);
   }
 
+  /**
+   * Find-or-create the project's Overseer coordinator: a structured claude-code
+   * thread tagged `config.role === 'coordinator'`. Returns the existing one if a
+   * non-archived coordinator already exists, else spawns a new one labelled
+   * "Overseer" via the normal createTerminal path. Idempotent (one per project).
+   */
+  ensureCoordinator(sessionId: string): terminalsDb.Terminal {
+    const session = sessionsDb.getById(this.db, sessionId);
+    if (!session) throw new Error('Session not found');
+
+    const existing = terminalsDb.listBySession(this.db, sessionId)
+      .map(terminalsDb.rowToTerminal)
+      .find((t) => t.type === 'claude-code' && t.config?.role === 'coordinator');
+    if (existing) return existing;
+
+    return this.createTerminal(
+      sessionId,
+      'claude-code',
+      'Overseer',
+      undefined,
+      undefined,
+      undefined,
+      { transport: 'structured', role: 'coordinator' },
+    );
+  }
+
   writeToTerminal(terminalId: string, data: string): void {
     this.ptyManager.write(terminalId, data);
   }
@@ -663,7 +690,9 @@ export class SessionService {
       const developerNote = this.toolsAwareness?.() ?? null;
       const secretsMcp = composeInjection(specs, { configPath: this.mcpConfigPath, prompts, developerNote });
       if (config.transport === 'structured' && terminal.type === 'claude-code' && this.structuredManager) {
-        const sc = this.structuredCommandOverride ?? provider.buildStructuredCommand?.({ workDir, secretsMcp });
+        // Inject the Overseer persona (coordinator / typed agent) from the thread's
+        // config so the structured CLI knows its role.
+        const sc = this.structuredCommandOverride ?? provider.buildStructuredCommand?.({ workDir, secretsMcp, appendSystemPrompt: systemPromptFor(config) });
         if (!sc) throw new Error('structured transport not supported for this provider');
         const pid = this.structuredManager.spawn(terminalId, { command: sc.command, args: sc.args, workDir });
         terminalsDb.updatePid(this.db, terminalId, pid);

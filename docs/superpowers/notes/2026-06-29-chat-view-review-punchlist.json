@@ -1,0 +1,367 @@
+{
+  "summary": "Multi-dimension adversarial review of the new shadcn structured chat view",
+  "agentCount": 5,
+  "logs": [],
+  "result": {
+    "items": [
+      {
+        "priority": "P0",
+        "title": "User turns are wiped on every websocket reconnect (one-sided transcript)",
+        "files": [
+          "/Users/davidwebber/Sites/dispatch/packages/core/src/structured/manager.ts",
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/useStructuredChat.ts"
+        ],
+        "change": "Buffer the user turn server-side so replay restores it. In manager.sendMessage (manager.ts ~L80) push a synthetic event into session.events and emit it: const ev={type:'user',message:{role:'user',content:[{type:'text',text}]}}; session.events.push(ev) (with the same MAX_EVENTS trim) then this.emit('event',terminalId,ev) — before/after writing stdin. In useStructuredChat the `user` handler (L54-63) must also map text blocks (b.type==='text') to {kind:'user',text}, not only tool_result. Then drop the optimistic append in send() (L86) OR de-dupe it against the echoed event, so optimistic and replayed views can't diverge.",
+        "rationale": "send() appends the ONLY source of user bubbles, but the backend never buffers/echoes the user turn and onReset() (structured-socket.ts L42) clears items on every reconnect. Mobile sleep / network blip / server bounce then leaves a confusing assistant-only transcript with no questions. This is the most damaging correctness bug and the user is mobile/PWA-heavy where reconnects are routine."
+      },
+      {
+        "priority": "P0",
+        "title": "busy never clears when the claude process exits/crashes mid-turn (Working spins forever)",
+        "files": [
+          "/Users/davidwebber/Sites/dispatch/packages/core/src/ws/structured.ts",
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/useStructuredChat.ts"
+        ],
+        "change": "manager already emits 'exit' (manager.ts L66) but ws/structured.ts only subscribes to 'event' and never forwards/closes on exit. Add in handleStructuredConnection: const onExit=(eid,code)=>{ if(eid===id && ws.readyState===1){ ws.send(JSON.stringify({type:'result',is_error:true,subtype:'process_exit',result:`Process exited (${code})`})); } }; manager.on('exit',onExit); and manager.off('exit',onExit) in ws.on('close'). The existing result handler (useStructuredChat L64-77) then clears busy. Also add a client safety net: pass onClose to useStructuredChat that calls setBusy(false), and/or a timeout that clears busy if no event arrives within N s of send. Also handle system/spawn_error (manager.ts L68) by clearing busy + appending an error result.",
+        "rationale": "busy is cleared ONLY by a `result` event. On child exit/crash no result is emitted and the structured ws stays open, so the indicator spins indefinitely with no recovery. system/spawn_error and control_request are likewise ignored. Real, frequent path (process dies on server restart / OOM)."
+      },
+      {
+        "priority": "P0",
+        "title": "send() POST rejection leaves the chat stuck on Working with no feedback",
+        "files": [
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/useStructuredChat.ts"
+        ],
+        "change": "Make send catch the rejection: api.sendStructuredMessage(terminalId,v).catch(()=>{ setBusy(false); setItems(p=>[...p,{kind:'result',isError:true,text:'Failed to send message'}]); }) (L88), and optionally flag/remove the optimistic user bubble so it's clear the turn never started.",
+        "rationale": "send() sets busy=true then fires a fire-and-forget POST. service.sendStructuredMessage throws (→400 'no structured session for terminal') whenever the claude process has died (e.g. after a server restart), so the message appears to send and Working spins forever with no error surfaced. Trivial fix, common path."
+      },
+      {
+        "priority": "P1",
+        "title": "Composer can send while a turn is busy → double-send into the CLI + premature busy clear",
+        "files": [
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/useStructuredChat.ts",
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/ChatView.tsx"
+        ],
+        "change": "Expose busy where needed and guard sending: disabled={!draft.trim()||busy} on the send button (ChatView L82), early-return from doSend when busy (L27), and ignore Enter when busy in onKeyDown (L74). Reflect busy in the button's enabled styling. If queued follow-ups are desired later, track a pending-turn count instead of a boolean so busy only clears on the last result.",
+        "rationale": "Sending mid-turn writes a second user message into the running stream-json process and appends a second optimistic bubble; when the FIRST turn's result arrives busy flips false (L65) while the second turn is still streaming, so Working flickers off then on. The boolean can't represent two in-flight turns."
+      },
+      {
+        "priority": "P1",
+        "title": "Orphan tool-result silently dropped — the pairing guard is always true",
+        "files": [
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/ChatView.tsx"
+        ],
+        "change": "resultById is keyed by each tool-result's OWN toolId (L98), so resultById.has(it.toolId) at L112 is always true. Build a set of TOOL ids instead and skip only when a matching tool exists: const toolIds=new Set(items.filter(i=>i.kind==='tool'&&i.toolId).map(i=>i.toolId)); ... if(it.toolId&&toolIds.has(it.toolId)) continue; else render <ToolResult item={it}/>. Fix the misleading comment.",
+        "rationale": "When the tool_use was shifted out of the 5000-entry ring buffer (replay) or arrives out of order, the result is rendered by neither the tool branch nor standalone — it's dropped, losing error output. Trivial, correct fix; locks down the headline tool-pairing logic."
+      },
+      {
+        "priority": "P1",
+        "title": "tool_result array content is dumped as raw JSON, garbling rich tool views",
+        "files": [
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/useStructuredChat.ts"
+        ],
+        "change": "Flatten content blocks before storing (L58): text: Array.isArray(b.content) ? b.content.map(c=>typeof c==='string'?c:(c?.text??'')).join('') : (typeof b.content==='string'?b.content:safeJson(b.content)). (The same shape lives in useStructuredStream.ts L15, which is being deleted — see dead-code item.)",
+        "rationale": "tool_result content is frequently [{type:'text',text:'…'}] (MCP tools and some built-ins). Today it's stored as a JSON blob, so the Output tab shows literal JSON and QueryView/WebView (which read result.text) receive garbled input — directly degrading the rich tool cards that are the headline of this view."
+      },
+      {
+        "priority": "P1",
+        "title": "Running tool cards have no in-progress affordance — long tools look frozen",
+        "files": [
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/ToolCall.tsx",
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/tailwind.css"
+        ],
+        "change": "When !result, render a live indicator in the header's right slot instead of nothing (ToolCall.tsx L37): e.g. <span className=\"chat-shimmer\" style={{fontSize:11}}>running…</span> (reuse the existing .chat-shimmer) or a pulsing accent dot. Optionally add a faint accent left-border/animated top hairline to the card while pending.",
+        "rationale": "The collapsed header only shows status when a result exists, so an in-flight Bash/Edit is visually identical to a finished tool that returned nothing. The only live signal in the whole view is the single bottom Working row — individual long tools feel dead. This is the main missing piece of the streaming/motion feel."
+      },
+      {
+        "priority": "P1",
+        "title": "No message grouping: ragged left gutter, duplicate avatars, flat turn rhythm",
+        "files": [
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/ChatView.tsx"
+        ],
+        "change": "In renderTimeline, group a run: at the first assistant/thinking/tool/result item after a user turn, open one row <div style={{display:'flex',gap:10}}> with the avatar rendered ONCE plus a flex-column gutter <div style={{flex:1,minWidth:0,display:'flex',flexDirection:'column',gap:8}}> holding all of that turn's text/tool/result/thinking; close it at the next user item. Drop per-item marginLeft:34 (Thinking L158, ResultFooter L181/L189) and the per-block avatar in AssistantText (L143-151). With grouping, set a small intra-turn gap (~8px) and add breathing room before each user turn (UserBubble wrapper marginTop ~16-24) so MessageScroller.Content's flat gap:16 (L53) no longer reads as one undifferentiated log. Optionally show the model name as a muted label beside the avatar on the first block.",
+        "rationale": "ToolCall (L110) and standalone ToolResult (L113) have no left offset while text/thinking/footer sit on a 34px rail, producing a visible avatar|indent|flush-card staircase; AssistantText also re-stamps the sparkle avatar for every text block, so one logical reply shows two near-identical avatars. Grouping into a single rail + identity is the core 'slick agentic chat' tell and also fixes the spacing rhythm."
+      },
+      {
+        "priority": "P1",
+        "title": "Composer disables autocapitalize/autocorrect/spellcheck on a natural-language input",
+        "files": [
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/ChatView.tsx"
+        ],
+        "change": "Change the textarea (L77) to autoCapitalize=\"sentences\" autoCorrect=\"on\" and remove spellCheck={false} (let it default true). Add enterKeyHint to label the return key. Gate strict code-style settings behind a future code mode if ever needed.",
+        "rationale": "These are correct for a terminal/code field but wrong for prose messages to Claude: every phone message starts lowercase, typos stay, no spell underline. One of the biggest one-handed typing penalties in the view; the user is mobile-heavy."
+      },
+      {
+        "priority": "P1",
+        "title": "Enter always sends — no newline on phones, no IME composition guard",
+        "files": [
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/ChatView.tsx"
+        ],
+        "change": "In onKeyDown (L74): if (e.nativeEvent.isComposing) return; first. Then const coarse=window.matchMedia('(pointer: coarse)').matches; if(e.key==='Enter'&&!e.shiftKey&&!coarse){e.preventDefault();doSend();}. On touch, Enter inserts a newline and the send button submits.",
+        "rationale": "On a phone there is no easy Shift, so Return can never insert a newline, and confirming a CJK IME composition with Enter fires a half-typed send. Both are common mobile failures."
+      },
+      {
+        "priority": "P1",
+        "title": "Composer can be hidden behind the mobile soft keyboard",
+        "files": [
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/ChatView.tsx",
+          "/Users/davidwebber/Sites/dispatch/packages/web/index.html"
+        ],
+        "change": "Track window.visualViewport: on its resize/scroll compute kb=Math.max(0, window.innerHeight - vv.height - vv.offsetTop) and apply it as bottom padding/translate on the composer container (currently L68). Add interactive-widget=resizes-content to the viewport meta in index.html for Chrome Android.",
+        "rationale": "Root is pinned height:100vh/100dvh; overflow:hidden (theme.css L16-17) and there is no visualViewport handling anywhere in the app. Neither 100vh nor 100dvh shrinks for the keyboard and overflow:hidden blocks scrolling the textarea up, so on iOS standalone the bottom composer sits behind the keyboard. env(safe-area-inset-bottom) only covers the home indicator. High impact for a mobile PWA."
+      },
+      {
+        "priority": "P1",
+        "title": "Restored multi-line draft renders collapsed to a single row",
+        "files": [
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/ChatView.tsx"
+        ],
+        "change": "Replace the onChange inline resize (L73) and the rAF reset (L32) with a useLayoutEffect keyed on draft: const el=taRef.current; if(el){el.style.height='auto'; el.style.height=Math.min(el.scrollHeight,180)+'px';}. This sizes correctly on mount, on draft restore, and after clear, and removes duplicated logic.",
+        "rationale": "Auto-grow runs only in onChange, but useDraft restores a saved draft on mount/thread-switch (common after iOS PWA resume reloads). With rows={1} and no height set, a multi-line restored draft shows only its first line until the user types — they can't see what they're about to send."
+      },
+      {
+        "priority": "P1",
+        "title": "Small metadata text uses text-tertiary (#5A5A61), failing readability/AA",
+        "files": [
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/ChatView.tsx",
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/ToolCall.tsx"
+        ],
+        "change": "Use --color-text-secondary (#8E8E96, ~5.9:1) instead of --color-text-tertiary (#5A5A61, ~2.8:1 on #0F0F11) for the smallest body metadata: ResultFooter usage line (ChatView L189), Thinking toggle (L159), EmptyState body (L127 already secondary, but the model line L130 is tertiary), ToolCall line-count (ToolCall.tsx L37) and ToolResult labels (ToolCall.tsx L88). Keep tertiary only for large/decorative glyphs.",
+        "rationale": "The 11.5px '$0.27 · 13,121 tok · 8.5s · 2 turns' footer and tool line counts are genuinely hard to read on a 390px screen; tertiary is well below the 4.5:1 threshold. Affects all users, not just AT."
+      },
+      {
+        "priority": "P2",
+        "title": "Timeline keyed by array index — mis-attaches expand/collapse state after list changes",
+        "files": [
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/ChatView.tsx"
+        ],
+        "change": "Replace key={i} / messageId={String(i)} (L117) with a stable id: key={it.toolId ?? it.uuid ?? `${it.kind}-${i}`} and the same for messageId. Better, assign a monotonic id in useStructuredChat as items are appended and use it for both.",
+        "rationale": "Items are skipped via continue and (today) optimistic user items vanish on reconnect, so the index→item mapping shifts and React reuses a ToolCall/Thinking instance at a position for a different logical item, mis-attaching its local open state. Also ties MessageScroller's scroll anchor to a positional id. (Dedupes the same finding raised under both correctness and code-quality.)"
+      },
+      {
+        "priority": "P2",
+        "title": "Delete the dead structured branch in ConversationView and the orphaned useStructuredStream",
+        "files": [
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/ConversationView.tsx",
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/useStructuredStream.ts",
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/useStructuredStream.test.ts"
+        ],
+        "change": "TabHost.AiThread returns ChatView for structured threads before ConversationView ever renders, so ConversationView's `structured` const (L28) is always false. Remove the structured const, the useStructuredStream import+call (L5/L31), liveItems, the if(structured) branch in sendToTerminal (L96-99), the structured poll-skip (L165), the displayLen/displayItems ternaries (L282/L314), and the structured placeholder (L429); collapse to the polled path. Then delete useStructuredStream.ts and useStructuredStream.test.ts (its only consumer). Optionally switch ConversationView to the exported isStructured helper if any check remains.",
+        "rationale": "Dead-but-misleading code that keeps a second, already-divergent copy of the event→ConvItem mapping (it lacks toolId and the array-content flattening) alive and implies ConversationView still handles structured threads. Removing it also eliminates the duplicate mapping so future stream-json schema changes can't silently break a hidden copy."
+      },
+      {
+        "priority": "P2",
+        "title": "No tests for the new core (useStructuredChat) — only test covers dead code",
+        "files": [
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/useStructuredChat.ts",
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/ChatView.tsx"
+        ],
+        "change": "Add useStructuredChat.test.ts (mock openStructuredSocket as the old test does) asserting: assistant text/thinking/tool_use mapping with toolId; tool_result pairing + isError + array-content flattening; result event populates costUsd/turns/durationMs/tokensIn/out and flips busy false; system/init sets model; send appends a user item + sets busy; and the new failure/exit paths clear busy. Factor renderTimeline's pairing/dedup into an exported pure helper so the orphan-result and parallel-pairing cases are unit-testable without rendering.",
+        "rationale": "The load-bearing, fiddly logic (tool↔result pairing/dedup, result capture, busy transitions) is entirely untested, and we are actively changing it for the P0/P1 fixes — tests lock those in. The only structured test exercises the soon-to-be-deleted hook."
+      },
+      {
+        "priority": "P2",
+        "title": "Icon-only buttons lack accessible names and there is no focus indicator",
+        "files": [
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/ChatView.tsx",
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/tailwind.css"
+        ],
+        "change": "Add aria-label=\"Jump to latest message\" to MessageScroller.Button (L211) and aria-label=\"Send message\" to the send button (L80, keep title for desktop tooltip); mark decorative phosphor icons aria-hidden. Add a :focus-within ring on the composer wrapper (L69) and a .chat-scope button:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px} rule in tailwind.css (the unused --ring token can back this).",
+        "rationale": "The jump control announces as just 'button' to VoiceOver/TalkBack, and the textarea sets outline:none with no replacement, leaving keyboard/switch users with no focus cue. Cheap, scoped to the chat surface."
+      },
+      {
+        "priority": "P2",
+        "title": "Inline expand/collapse hit areas are well under the 24px minimum",
+        "files": [
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/ToolCall.tsx",
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/ChatView.tsx"
+        ],
+        "change": "Give the ToolResult 'Output' toggle (ToolCall.tsx L88) and the Thinking toggle (ChatView.tsx L159) min-height:28px with vertical padding (~6px 0). Bump the send (34x34, L84) and jump (40x40, L213) buttons toward 40-44px for thumb reach.",
+        "rationale": "The Output (padding 1px 0) and Thinking (padding 0) toggles compute to ~14px tall tap targets — below WCAG 2.5.8 and hard to hit one-handed on a 390px screen."
+      },
+      {
+        "priority": "P2",
+        "title": "Long unbreakable tokens in assistant markdown clip off-screen",
+        "files": [
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/theme.css"
+        ],
+        "change": "Scope to chat to avoid touching other surfaces: add .chat-scope .md-view{overflow-wrap:anywhere} and .chat-scope .md-view code{word-break:break-word;overflow-wrap:anywhere}.",
+        "rationale": "The viewport sets overflowX:hidden (ChatView L52) and .md-view body/inline code (theme.css L61,67) set no wrapping, so a long URL/hash in a paragraph or inline `code` clips at the right edge on mobile. UserBubble already guards this; assistant text does not. (Fenced blocks are fine — they scroll.)"
+      },
+      {
+        "priority": "P2",
+        "title": "Assistant code blocks have no header (language label + copy)",
+        "files": [
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/tailwind.css",
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/lib/markdown.ts"
+        ],
+        "change": "Within .chat-scope, add a small top bar above each pre (language tag left, copy icon right) — either by post-processing renderMarkdown output to wrap pre blocks or a scoped wrapper component — and bump code font from .82em (~11.5px) to ~12.5px. Keep all rules under .chat-scope so the shared theme.css .md-view usage (File editor, ConversationView) is untouched.",
+        "rationale": "For a chat that surfaces lots of code/commands, a one-click copy + language label is the expected slick affordance and is currently absent; the code is also small at 11.5px. Must stay chat-scoped since .md-view is shared."
+      },
+      {
+        "priority": "P2",
+        "title": "Off-palette tool icon color (#5A8DD6) hardcoded across files",
+        "files": [
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/toolviews/registry.tsx",
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/ToolCall.tsx",
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/theme.css"
+        ],
+        "change": "Add a token (e.g. --color-tool:#5A8DD6 in theme.css) or reuse --color-text-secondary, and reference it for every tool icon: registry.tsx Database/PencilSimple/ListChecks/Globe (L26/33/41/48) and the fallback Wrench in ToolCall.tsx (L22).",
+        "rationale": "This blue isn't a theme token (palette is green accent + greys + status yellow/red), so the tool cards introduce a one-off accent that can't be retuned centrally and is duplicated in 5 places."
+      },
+      {
+        "priority": "P2",
+        "title": "User bubble is full-saturation accent green at 85% width — reads as a banner",
+        "files": [
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/ChatView.tsx"
+        ],
+        "change": "In UserBubble (L137) narrow maxWidth to ~72-75% and soften the fill, e.g. background:color-mix(in srgb, var(--color-accent) 18%, var(--color-elevated)) with color:var(--color-text-primary); reserve full-saturation accent for actionable affordances (send/jump/connected).",
+        "rationale": "A two-line prompt becomes a large lime block that competes with the accent used on the send button, jump button, footer check and Connected pill, diluting the accent's signal and reading like a success banner rather than a chat bubble."
+      },
+      {
+        "priority": "P2",
+        "title": "Empty state is bare and uninviting",
+        "files": [
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/ChatView.tsx"
+        ],
+        "change": "Make EmptyState (L125-133) a proper hero: larger sparkle, a friendlier headline ('Start a conversation with <model>'), project name/working dir as secondary context, and 2-3 clickable suggested-prompt chips that prefill the composer (styled with the shadcn radius + --color-elevated).",
+        "rationale": "This is the first impression of a 'first-class chat' surface and currently is just a sparkle, a generic line, and a raw model id — it neither orients nor invites. High impact for a low-cost surface."
+      },
+      {
+        "priority": "P2",
+        "title": "Messages pop in with no enter transition",
+        "files": [
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/tailwind.css",
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/ChatView.tsx"
+        ],
+        "change": "Add a scoped keyframe @keyframes chat-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}} and apply .chat-scope [data-message-id]{animation:chat-in .18s ease-out} (or a className on each MessageScroller.Item). Keep it short so backfilled history on thread-open doesn't visibly cascade.",
+        "rationale": "Since the protocol delivers whole message blocks (not per-token), a subtle entrance is the cheapest way to make the stream feel alive; today blocks/cards/footer snap in abruptly and the only motion is the Working shimmer."
+      },
+      {
+        "priority": "P2",
+        "title": "model is not reset on thread switch → stale model shown in EmptyState",
+        "files": [
+          "/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/useStructuredChat.ts"
+        ],
+        "change": "Add setModel(undefined) alongside setItems([])/setBusy(false) in the terminalId effect (L30-31). Leave model untouched inside onReset (same thread reconnecting).",
+        "rationale": "Switching from thread A (model X) to a not-yet-initialized thread B shows A's model in B's empty state until B's system/init arrives — and stays wrong if B never emits init. One-line fix."
+      }
+    ]
+  },
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Review"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Synthesize"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "review:visual",
+      "phaseIndex": 1,
+      "phaseTitle": "Review",
+      "agentId": "ab6fa790df413486b",
+      "model": "claude-opus-4-8",
+      "state": "done",
+      "startedAt": 1782697732157,
+      "queuedAt": 1782697732145,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "visual",
+      "promptPreview": "Repo root: /Users/davidwebber/Sites/dispatch\nThis is \"Dispatch\", a self-hosted web client (React 18 + Vite, hand-rolled CSS via theme.css custom properties; Tailwind v4 was JUST added, scoped, for the new chat). A \"structured\" thread drives the claude CLI over a stream-json control protocol; events arrive over a websocket and render as a chat. The NEW chat view (just built) is the subject of revie…",
+      "lastProgressAt": 1782697957462,
+      "tokens": 60951,
+      "toolCalls": 23,
+      "durationMs": 225305,
+      "resultPreview": "{\"dimension\":\"visual\",\"findings\":[{\"severity\":\"important\",\"title\":\"Ragged left gutter + repeated avatars: no message grouping for an assistant turn\",\"file\":\"/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/ChatView.tsx\",\"detail\":\"Assistant-side items don't share one column. AssistantText/Thinking/ResultFooter/WorkingIndicator all sit on a 34px gutter (avatar 24 + gap 10, or …"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "review:correctness",
+      "phaseIndex": 1,
+      "phaseTitle": "Review",
+      "agentId": "a99af4ed58b5bc375",
+      "model": "claude-opus-4-8",
+      "state": "done",
+      "startedAt": 1782697732157,
+      "queuedAt": 1782697732146,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "correctness",
+      "promptPreview": "Repo root: /Users/davidwebber/Sites/dispatch\nThis is \"Dispatch\", a self-hosted web client (React 18 + Vite, hand-rolled CSS via theme.css custom properties; Tailwind v4 was JUST added, scoped, for the new chat). A \"structured\" thread drives the claude CLI over a stream-json control protocol; events arrive over a websocket and render as a chat. The NEW chat view (just built) is the subject of revie…",
+      "lastProgressAt": 1782698013947,
+      "tokens": 58502,
+      "toolCalls": 20,
+      "durationMs": 281790,
+      "resultPreview": "{\"dimension\":\"correctness\",\"findings\":[{\"severity\":\"important\",\"title\":\"Optimistic user turns are lost on every ws reconnect/replay\",\"file\":\"/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/useStructuredChat.ts\",\"detail\":\"send() appends an optimistic {kind:'user'} bubble (line 86), and that is the ONLY source of user bubbles in the chat. The backend never echoes or buffers u…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "review:mobile-a11y",
+      "phaseIndex": 1,
+      "phaseTitle": "Review",
+      "agentId": "a4b7f23b4a135a003",
+      "model": "claude-opus-4-8",
+      "state": "done",
+      "startedAt": 1782697732158,
+      "queuedAt": 1782697732146,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "mobile-a11y",
+      "promptPreview": "Repo root: /Users/davidwebber/Sites/dispatch\nThis is \"Dispatch\", a self-hosted web client (React 18 + Vite, hand-rolled CSS via theme.css custom properties; Tailwind v4 was JUST added, scoped, for the new chat). A \"structured\" thread drives the claude CLI over a stream-json control protocol; events arrive over a websocket and render as a chat. The NEW chat view (just built) is the subject of revie…",
+      "lastProgressAt": 1782697977752,
+      "tokens": 55997,
+      "toolCalls": 21,
+      "durationMs": 245594,
+      "resultPreview": "{\"dimension\":\"mobile-a11y\",\"findings\":[{\"severity\":\"important\",\"title\":\"Composer disables autocapitalize/autocorrect/spellcheck on a natural-language input\",\"file\":\"/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/ChatView.tsx\",\"detail\":\"Line 77: the textarea sets autoCapitalize=\\\"off\\\" autoCorrect=\\\"off\\\" spellCheck={false}. That is the right call for a terminal/code field,…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "review:code-quality",
+      "phaseIndex": 1,
+      "phaseTitle": "Review",
+      "agentId": "abdaab0f004e3aead",
+      "model": "claude-opus-4-8",
+      "state": "done",
+      "startedAt": 1782697732158,
+      "queuedAt": 1782697732146,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "code-quality",
+      "promptPreview": "Repo root: /Users/davidwebber/Sites/dispatch\nThis is \"Dispatch\", a self-hosted web client (React 18 + Vite, hand-rolled CSS via theme.css custom properties; Tailwind v4 was JUST added, scoped, for the new chat). A \"structured\" thread drives the claude CLI over a stream-json control protocol; events arrive over a websocket and render as a chat. The NEW chat view (just built) is the subject of revie…",
+      "lastProgressAt": 1782697918573,
+      "tokens": 67743,
+      "toolCalls": 19,
+      "durationMs": 186415,
+      "resultPreview": "{\"dimension\":\"code-quality\",\"findings\":[{\"severity\":\"important\",\"title\":\"ConversationView's entire structured branch is now dead code (orphaned by TabHost)\",\"file\":\"/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/ConversationView.tsx\",\"detail\":\"TabHost.AiThread returns ChatView for structured threads (`if (isStructured(tab)) return <ChatView .../>`) BEFORE the View/Terminal togg…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 5,
+      "label": "synthesize",
+      "phaseIndex": 2,
+      "phaseTitle": "Synthesize",
+      "agentId": "aaa1258fab41186be",
+      "model": "claude-opus-4-8",
+      "state": "done",
+      "startedAt": 1782698013961,
+      "queuedAt": 1782698013948,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "promptPreview": "You are the lead engineer triaging review findings for the new shadcn structured chat view (see context). Dedupe across dimensions, drop low-value nits, and produce a single prioritized punch-list. P0 = must-fix correctness/regression, P1 = high-value UX/slickness, P2 = nice polish. For each item give the exact files and a concrete change.\n\nContext:\nRepo root: /Users/davidwebber/Sites/dispatch\nThi…",
+      "lastProgressAt": 1782698282924,
+      "tokens": 80690,
+      "toolCalls": 21,
+      "durationMs": 268963,
+      "resultPreview": "{\"items\":[{\"priority\":\"P0\",\"title\":\"User turns are wiped on every websocket reconnect (one-sided transcript)\",\"files\":[\"/Users/davidwebber/Sites/dispatch/packages/core/src/structured/manager.ts\",\"/Users/davidwebber/Sites/dispatch/packages/web/src/components/tabs/chat/useStructuredChat.ts\"],\"change\":\"Buffer the user turn server-side so replay restores it. In manager.sendMessage (manager.ts ~L80) pu…"
+    }
+  ],
+  "totalTokens": 323883,
+  "totalToolCalls": 104
+}
