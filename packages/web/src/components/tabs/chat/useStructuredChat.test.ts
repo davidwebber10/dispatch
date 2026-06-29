@@ -15,7 +15,25 @@ function mockSocket() {
   });
 }
 
-beforeEach(() => { vi.restoreAllMocks(); mockSocket(); });
+// Delta rendering is now coalesced into a single requestAnimationFrame flush, so
+// deltas don't render synchronously. We capture the scheduled rAF callbacks and run
+// them on demand via flushRaf() to validate the batched-but-incremental streaming.
+let rafCbs: FrameRequestCallback[] = [];
+function flushRaf() {
+  const due = rafCbs;
+  rafCbs = [];
+  act(() => { for (const cb of due) cb(0); });
+}
+
+beforeEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  rafCbs = [];
+  // Deferred rAF: queue the callback (returns a non-null handle) until flushRaf runs it.
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => rafCbs.push(cb));
+  vi.stubGlobal('cancelAnimationFrame', () => {});
+  mockSocket();
+});
 
 // Stream-event helpers
 const start = (index: number, content_block: any) => ({ type: 'stream_event', event: { type: 'content_block_start', index, content_block } });
@@ -27,19 +45,36 @@ test('streams assistant text incrementally and ignores the whole assistant event
   const { result } = renderHook(() => useStructuredChat('t1'));
   act(() => cbs.onEvent({ type: 'stream_event', event: { type: 'message_start' } }));
   act(() => cbs.onEvent(start(0, { type: 'text' })));
-  act(() => cbs.onEvent(textDelta(0, 'Hel')));
-  // mid-stream: one assistant item with partial text, busy true
+  // bubble appears immediately at content_block_start (empty), busy true — no flush needed
   expect(result.current.busy).toBe(true);
+  expect(result.current.items.filter((i) => i.kind === 'assistant')).toHaveLength(1);
+  act(() => cbs.onEvent(textDelta(0, 'Hel')));
+  flushRaf();
   let txt = result.current.items.filter((i) => i.kind === 'assistant');
   expect(txt).toHaveLength(1);
   expect(txt[0].text).toBe('Hel');
   act(() => cbs.onEvent(textDelta(0, 'lo!')));
   act(() => cbs.onEvent({ type: 'stream_event', event: { type: 'content_block_stop', index: 0 } }));
-  // whole assistant event must NOT add a second bubble
+  // whole assistant event must NOT add a second bubble, and the trailing 'lo!' (still
+  // buffered) must not be lost — the assistant handler flushes it before reconciling.
   act(() => cbs.onEvent({ type: 'assistant', message: { content: [{ type: 'text', text: 'Hello!' }] } }));
   txt = result.current.items.filter((i) => i.kind === 'assistant');
   expect(txt).toHaveLength(1);
   expect(txt[0].text).toBe('Hello!');
+});
+
+test('coalesces multiple deltas into a single rAF flush', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'stream_event', event: { type: 'message_start' } }));
+  act(() => cbs.onEvent(start(0, { type: 'text' })));
+  act(() => cbs.onEvent(textDelta(0, 'a')));
+  act(() => cbs.onEvent(textDelta(0, 'b')));
+  act(() => cbs.onEvent(textDelta(0, 'c')));
+  // three deltas → exactly ONE scheduled flush, text not yet applied
+  expect(rafCbs).toHaveLength(1);
+  expect(result.current.items.find((i) => i.kind === 'assistant')?.text).toBe('');
+  flushRaf();
+  expect(result.current.items.find((i) => i.kind === 'assistant')?.text).toBe('abc');
 });
 
 test('streams thinking deltas into a single thinking item', () => {
@@ -48,6 +83,7 @@ test('streams thinking deltas into a single thinking item', () => {
   act(() => cbs.onEvent(start(0, { type: 'thinking' })));
   act(() => cbs.onEvent(thinkDelta(0, 'let me ')));
   act(() => cbs.onEvent(thinkDelta(0, 'think')));
+  flushRaf();
   const think = result.current.items.filter((i) => i.kind === 'thinking');
   expect(think).toHaveLength(1);
   expect(think[0].text).toBe('let me think');
@@ -57,8 +93,11 @@ test('streams tool_use args, reconciles parsed input, and pairs the tool_result'
   const { result } = renderHook(() => useStructuredChat('t1'));
   act(() => cbs.onEvent({ type: 'stream_event', event: { type: 'message_start' } }));
   act(() => cbs.onEvent(start(0, { type: 'tool_use', name: 'Read', id: 'tu-1' })));
+  // tool bubble exists immediately (name/id) before any args flush
+  expect(result.current.items.find((i) => i.kind === 'tool')?.toolName).toBe('Read');
   act(() => cbs.onEvent(jsonDelta(0, '{"file_path":')));
   act(() => cbs.onEvent(jsonDelta(0, '"/a/b.ts"}')));
+  flushRaf();
   let tool = result.current.items.find((i) => i.kind === 'tool');
   expect(tool?.toolName).toBe('Read');
   expect(tool?.toolId).toBe('tu-1');
@@ -91,6 +130,19 @@ test('result event populates the footer and clears busy', () => {
   expect(result.current.busy).toBe(false);
   const r = result.current.items.find((i) => i.kind === 'result');
   expect(r).toMatchObject({ costUsd: 0.27, turns: 2, durationMs: 8500, tokensIn: 100, tokensOut: 200, isError: false });
+});
+
+test('result flushes buffered trailing text before appending the footer (no lost tokens)', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'stream_event', event: { type: 'message_start' } }));
+  act(() => cbs.onEvent(start(0, { type: 'text' })));
+  act(() => cbs.onEvent(textDelta(0, 'done')));
+  // result arrives before the rAF frame fires — the buffered 'done' must still land
+  act(() => cbs.onEvent({ type: 'result', is_error: false, num_turns: 1, duration_ms: 10 }));
+  const txt = result.current.items.filter((i) => i.kind === 'assistant');
+  expect(txt).toHaveLength(1);
+  expect(txt[0].text).toBe('done');
+  expect(result.current.items.find((i) => i.kind === 'result')).toBeTruthy();
 });
 
 test('system/init sets the model', () => {

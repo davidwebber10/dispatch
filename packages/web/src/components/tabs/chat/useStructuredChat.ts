@@ -22,8 +22,11 @@ function fileFromInput(json: string): string | undefined {
   } catch { return undefined; }
 }
 
-/** Tracks one in-progress streamed content block within the current turn. */
-interface BlockRec { key: string; kind: 'assistant' | 'thinking' | 'tool'; jsonAccum?: string }
+/** Tracks one in-progress streamed content block within the current turn.
+ * `text` accumulates text/thinking deltas; `jsonAccum` accumulates tool input
+ * JSON. Deltas are buffered here and applied to the items in a single rAF flush
+ * (see below) so a burst of tokens costs ~one render per frame, not per token. */
+interface BlockRec { key: string; kind: 'assistant' | 'thinking' | 'tool'; jsonAccum?: string; text?: string }
 
 /**
  * Drives a structured (stream-json) thread for the chat UI. Opens the live ws,
@@ -50,16 +53,60 @@ export function useStructuredChat(terminalId: string): StructuredChat {
   const turnRef = useRef(0);                           // monotonic turn id → unique block keys
   const blockMapRef = useRef<Map<number, BlockRec>>(new Map()); // content-block index → record
 
+  // rAF coalescing: deltas mutate the BlockRec buffers above + add the rec to a
+  // dirty set; a single rAF then applies ALL dirty recs in ONE setItems map, so a
+  // token burst renders ~once per frame instead of once per delta.
+  const pendingRef = useRef<Set<BlockRec>>(new Set()); // recs with buffered deltas not yet rendered
+  const rafRef = useRef<number | null>(null);          // scheduled flush handle (null ⇒ none pending)
+
   useEffect(() => {
     if (!terminalId) { setItems([]); setBusy(false); setModel(undefined); return; }
     setItems([]); setBusy(false); setModel(undefined);
     streamingRef.current = false; turnRef.current = 0; blockMapRef.current.clear();
+    pendingRef.current.clear();
+    if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+
+    // Apply every buffered delta to its item in a single setItems map, then clear
+    // the dirty set + the rAF handle. Keyed by item uuid (the block's stable key),
+    // so it works even after blockMapRef was cleared by a new message_start.
+    const flush = () => {
+      rafRef.current = null;
+      const pending = pendingRef.current;
+      if (pending.size === 0) return;
+      const byKey = new Map<string, BlockRec>();
+      for (const rec of pending) byKey.set(rec.key, rec);
+      pending.clear();
+      setItems((p) => p.map((it) => {
+        const rec = it.uuid ? byKey.get(it.uuid) : undefined;
+        if (!rec) return it;
+        if (rec.kind === 'tool') {
+          const accum = rec.jsonAccum ?? '';
+          const file = fileFromInput(accum); // resolves once accum is complete JSON
+          return { ...it, toolInput: accum, ...(file ? { toolFile: file } : {}) };
+        }
+        return { ...it, text: rec.text ?? '' }; // assistant / thinking
+      }));
+    };
+    const scheduleFlush = () => {
+      if (rafRef.current != null) return; // a flush is already queued for this frame
+      rafRef.current = requestAnimationFrame(flush);
+    };
+    // Force a synchronous flush now (cancelling any queued one). Used before the
+    // whole-`assistant` reconcile and `result` so no trailing tokens are lost and
+    // a stale frame can't later clobber the authoritative reconciled tool input.
+    const flushNow = () => {
+      if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+      flush();
+    };
 
     const sock = openStructuredSocket({
       terminalId,
       onReset: () => {
         // Reconnect: server replays its buffer. Clear the view + per-turn tracking so
         // replayed deltas rebuild cleanly. `streamingRef` stays sticky (per-thread).
+        // Drop any queued flush so a stale frame can't write into the cleared view.
+        if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+        pendingRef.current.clear();
         setItems([]); setBusy(false);
         blockMapRef.current.clear();
       },
@@ -94,10 +141,10 @@ export function useStructuredChat(terminalId: string): StructuredChat {
             const cb = se.content_block || {};
             const key = `s-${turnRef.current}-${idx}`;
             if (cb.type === 'text') {
-              blockMapRef.current.set(idx, { key, kind: 'assistant' });
+              blockMapRef.current.set(idx, { key, kind: 'assistant', text: '' });
               setItems((p) => [...p, { kind: 'assistant', text: '', uuid: key }]);
             } else if (cb.type === 'thinking') {
-              blockMapRef.current.set(idx, { key, kind: 'thinking' });
+              blockMapRef.current.set(idx, { key, kind: 'thinking', text: '' });
               setItems((p) => [...p, { kind: 'thinking', text: '', uuid: key }]);
             } else if (cb.type === 'tool_use') {
               blockMapRef.current.set(idx, { key, kind: 'tool', jsonAccum: '' });
@@ -110,17 +157,16 @@ export function useStructuredChat(terminalId: string): StructuredChat {
             const rec = blockMapRef.current.get(se.index);
             if (!rec) return;
             const d = se.delta || {};
+            // Buffer into the rec + mark dirty; the rAF flush renders it. No per-delta setItems.
             if (d.type === 'text_delta' && rec.kind === 'assistant') {
-              const t = d.text ?? '';
-              setItems((p) => p.map((it) => (it.uuid === rec.key ? { ...it, text: (it.text ?? '') + t } : it)));
+              rec.text = (rec.text ?? '') + (d.text ?? '');
+              pendingRef.current.add(rec); scheduleFlush();
             } else if (d.type === 'thinking_delta' && rec.kind === 'thinking') {
-              const t = d.thinking ?? '';
-              setItems((p) => p.map((it) => (it.uuid === rec.key ? { ...it, text: (it.text ?? '') + t } : it)));
+              rec.text = (rec.text ?? '') + (d.thinking ?? '');
+              pendingRef.current.add(rec); scheduleFlush();
             } else if (d.type === 'input_json_delta' && rec.kind === 'tool') {
               rec.jsonAccum = (rec.jsonAccum ?? '') + (d.partial_json ?? '');
-              const accum = rec.jsonAccum;
-              const file = fileFromInput(accum); // resolves once accum is complete JSON
-              setItems((p) => p.map((it) => (it.uuid === rec.key ? { ...it, toolInput: accum, ...(file ? { toolFile: file } : {}) } : it)));
+              pendingRef.current.add(rec); scheduleFlush();
             }
             return;
           }
@@ -136,6 +182,9 @@ export function useStructuredChat(terminalId: string): StructuredChat {
           // authoritative whole event (and append any tool we never saw start, e.g.
           // if its content_block_start was trimmed out of the replay ring).
           if (streamingRef.current) {
+            // Land any buffered deltas first so trailing text/thinking isn't lost and
+            // no later frame overwrites the authoritative tool input reconciled below.
+            flushNow();
             const tools = event.message.content.filter((b: any) => b.type === 'tool_use');
             if (tools.length) {
               setItems((p) => {
@@ -179,6 +228,7 @@ export function useStructuredChat(terminalId: string): StructuredChat {
         }
 
         if (type === 'result') {
+          flushNow(); // land any buffered trailing tokens before the footer
           setBusy(false);
           setItems((p) => [...p, {
             kind: 'result',
@@ -194,7 +244,12 @@ export function useStructuredChat(terminalId: string): StructuredChat {
         }
       },
     });
-    return () => sock.close();
+    return () => {
+      // Cancel a queued flush so a torn-down/replayed thread can't flush stale state.
+      if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+      pendingRef.current.clear();
+      sock.close();
+    };
   }, [terminalId]);
 
   const send = useCallback((text: string) => {

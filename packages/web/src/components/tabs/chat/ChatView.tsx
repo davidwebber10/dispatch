@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { MessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
-import { PaperPlaneTilt, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle } from '@phosphor-icons/react';
+import { PaperPlaneTilt, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip } from '@phosphor-icons/react';
 import type { ConvItem } from '../../../api/types';
 import { api } from '../../../api/client';
 import { useStructuredChat } from './useStructuredChat';
@@ -23,6 +23,10 @@ export function ChatView({ terminalId }: { terminalId: string }) {
 
   const [draft, setDraft, clearDraft] = useDraft(terminalId);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  // Mirror the draft in a ref so the async upload loop appends to the latest value
+  // (across awaits / multiple files) without clobbering what's already there.
+  const draftRef = useRef(draft); draftRef.current = draft;
+  const [uploadNote, setUploadNote] = useState('');
 
   function doSend() {
     const v = draft.trim();
@@ -30,6 +34,26 @@ export function ChatView({ terminalId }: { terminalId: string }) {
     send(v);
     clearDraft();
     requestAnimationFrame(() => { if (taRef.current) taRef.current.style.height = 'auto'; });
+  }
+
+  // Upload each picked file to the project inbox and append a reference line to the
+  // draft so the user sends the path alongside their message (the agent can Read it).
+  async function attachFiles(files: FileList | null) {
+    if (!files || !files.length || !sessionId) return;
+    for (const f of Array.from(files)) {
+      setUploadNote(`Uploading ${f.name}…`);
+      try {
+        const res = await api.uploadInbox(sessionId, f);
+        const cur = draftRef.current;
+        const next = cur + (cur ? '\n' : '') + 'Attached file: ' + res.path;
+        draftRef.current = next;
+        setDraft(next);
+        setUploadNote(`Attached ${f.name}`);
+      } catch {
+        setUploadNote(`Upload failed: ${f.name}`);
+      }
+    }
+    setTimeout(() => setUploadNote(''), 2500);
   }
 
   async function openFileInViewer(path: string) {
@@ -66,7 +90,22 @@ export function ChatView({ terminalId }: { terminalId: string }) {
 
       {/* Composer */}
       <div style={{ flexShrink: 0, borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', padding: '10px 14px max(10px, env(safe-area-inset-bottom))' }}>
-        <div style={{ maxWidth: 768, margin: '0 auto', display: 'flex', alignItems: 'flex-end', gap: 8, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 12, padding: '8px 8px 8px 12px' }}>
+        {uploadNote && (
+          <div style={{ maxWidth: 768, margin: '0 auto 6px', fontSize: 12, color: 'var(--color-text-tertiary)' }}>{uploadNote}</div>
+        )}
+        <div style={{ maxWidth: 768, margin: '0 auto', display: 'flex', alignItems: 'flex-end', gap: 8, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 12, padding: '8px 8px 8px 8px' }}>
+          <label
+            title="Attach file"
+            style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'var(--color-hover)', color: 'var(--color-text-secondary)' }}
+          >
+            <Paperclip size={17} />
+            <input
+              type="file"
+              multiple
+              style={{ display: 'none' }}
+              onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }}
+            />
+          </label>
           <textarea
             ref={taRef}
             value={draft}
