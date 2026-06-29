@@ -10,6 +10,11 @@ const spawnFake = (m: StructuredSessionManager, id: string) =>
 
 function waitForEvent(m: StructuredSessionManager, id: string, pred: (e: any) => boolean, timeoutMs = 8000): Promise<any> {
   return new Promise((resolve, reject) => {
+    // Check the already-buffered ring first: an event can fire before this listener
+    // attaches (the child emits its init line almost immediately after spawn), so a
+    // pure live-listener would miss it and hang.
+    const buffered = m.getEvents(id).find(pred);
+    if (buffered) { resolve(buffered); return; }
     const t = setTimeout(() => { m.off('event', on); reject(new Error('timeout')); }, timeoutMs);
     const on = (eid: string, e: any) => { if (eid === id && pred(e)) { clearTimeout(t); m.off('event', on); resolve(e); } };
     m.on('event', on);
@@ -151,6 +156,30 @@ it('killAll: terminates all active sessions', async () => {
   m.killAll();
   expect(m.isAlive('t1')).toBe(false);
   expect(m.isAlive('t2')).toBe(false);
+});
+
+it("captures the init session_id: emits 'session' and exposes getSessionId", async () => {
+  const sessionP = new Promise<string>((resolve) => m.once('session', (_id: string, sid: string) => resolve(sid)));
+  spawnFake(m, 't1');
+  const sid = await sessionP;
+  expect(sid).toBe('sess-fake'); // from fake-claude's init event
+  expect(m.getSessionId('t1')).toBe('sess-fake');
+});
+
+it('seedEvents: prior history is pushed into the ring and replays via getEvents', async () => {
+  const history = [
+    { type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'old prompt' }] } },
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'old reply' }] } },
+  ];
+  m.spawn('t1', { command: process.execPath, args: [fake], workDir: process.cwd(), seedEvents: history });
+  // The seeded history is at the FRONT of the ring, before any live init event.
+  const ev = m.getEvents('t1');
+  expect(ev[0]).toMatchObject({ type: 'user' });
+  expect(JSON.stringify(ev[0])).toContain('old prompt');
+  expect(JSON.stringify(ev[1])).toContain('old reply');
+  // …and live events still land after the backfill.
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  expect(m.getEvents('t1').some((e: any) => e.type === 'system')).toBe(true);
 });
 
 it('re-spawn: old child exit does not evict the replacement session (Fix 1 regression)', async () => {

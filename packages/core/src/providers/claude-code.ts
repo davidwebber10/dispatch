@@ -61,7 +61,7 @@ export const claudeCodeProvider: SessionProvider = {
     };
   },
 
-  buildStructuredCommand({ workDir, secretsMcp, appendSystemPrompt }: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string }) {
+  buildStructuredCommand({ workDir, secretsMcp, appendSystemPrompt, resumeSessionId }: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string }) {
     // The spike-verified stream-json control protocol. Parity permissions come from
     // the StructuredSessionManager's auto-allow loop, NOT --dangerously-skip-permissions.
     const args: string[] = [
@@ -81,6 +81,9 @@ export const claudeCodeProvider: SessionProvider = {
     // Overseer persona (coordinator / typed agent) — additive, on top of any
     // secrets system prompt above; --append-system-prompt is repeatable.
     if (appendSystemPrompt) args.push('--append-system-prompt', appendSystemPrompt);
+    // Resume an existing claude conversation (revive after a daemon restart). `-r <id>`
+    // continues the same session id (no fork), so the thread's external_id stays stable.
+    if (resumeSessionId) args.push('-r', resumeSessionId);
     return { command: 'claude', args };
   },
 

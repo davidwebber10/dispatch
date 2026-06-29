@@ -75,6 +75,9 @@ export interface SessionProvider {
    * Permissions come from the session manager's auto-allow loop, not flags.
    * `appendSystemPrompt` injects an additional `--append-system-prompt <text>` (e.g.
    * a coordinator/typed-agent persona) on top of any secrets system prompt.
+   * `resumeSessionId` appends `-r <id>` to resume an existing claude conversation
+   * (used to revive a structured thread after a daemon restart) while keeping all
+   * the structured stream-json flags + persona + MCP wiring.
    */
-  buildStructuredCommand?(args: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string }): { command: string; args: string[] };
+  buildStructuredCommand?(args: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string }): { command: string; args: string[] };
 }

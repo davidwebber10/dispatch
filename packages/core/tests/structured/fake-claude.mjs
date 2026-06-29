@@ -3,7 +3,8 @@
 // stdin control_responses / user turns. Lets us test the manager hermetically.
 import readline from 'node:readline';
 const send = (o) => process.stdout.write(JSON.stringify(o) + '\n');
-send({ type: 'system', subtype: 'init', apiKeySource: 'none', model: 'claude', session_id: 'sess-fake', testEnv: process.env.DISPATCH_TEST_ENV ?? null });
+// `argv` echoes the launch args so resume tests can assert `-r <id>` was applied.
+send({ type: 'system', subtype: 'init', apiKeySource: 'none', model: 'claude', session_id: 'sess-fake', testEnv: process.env.DISPATCH_TEST_ENV ?? null, argv: process.argv.slice(2) });
 const rl = readline.createInterface({ input: process.stdin });
 rl.on('line', (line) => {
   let msg; try { msg = JSON.parse(line); } catch { return; }

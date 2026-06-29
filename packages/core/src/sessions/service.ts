@@ -16,6 +16,7 @@ import type { StatusHooksInjection, SecretsMcpInjection } from '../providers/typ
 import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
 import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript.js';
 import { systemPromptFor } from '../overseer/prompts.js';
+import { readSessionBackfill } from './cc-sessions.js';
 
 interface StatusContext {
   serverUrl: string;
@@ -58,7 +59,19 @@ export class SessionService {
     this.toolsAwareness = fn;
   }
 
-  setStructuredManager(m: import('../structured/manager.js').StructuredSessionManager): void { this.structuredManager = m; }
+  setStructuredManager(m: import('../structured/manager.js').StructuredSessionManager): void {
+    this.structuredManager = m;
+    // Persist the claude session_id (surfaced from the structured init event) onto the
+    // terminal's external_id, mirroring how the PTY path captures session ids. This is
+    // what lets us resume the SAME conversation after a daemon restart. First-write-wins
+    // (a `-r` resume keeps the same id, so we never need to overwrite).
+    m.on('session', (terminalId: string, sessionId: string) => {
+      try {
+        const t = terminalsDb.getById(this.db, terminalId);
+        if (t && !t.external_id && sessionId) terminalsDb.updateExternalId(this.db, terminalId, sessionId);
+      } catch { /* best effort */ }
+    });
+  }
 
   setStructuredCommandOverride(cmd: { command: string; args: string[] }): void { this.structuredCommandOverride = cmd; }
 
@@ -523,6 +536,9 @@ export class SessionService {
   }
 
   sendStructuredMessage(terminalId: string, text: string): void {
+    // Lazily resume a thread that died on a daemon restart (resumes the same claude
+    // conversation when an external_id was captured) before delivering the message.
+    if (!this.structuredManager?.isAlive(terminalId)) this.ensureStructuredAlive(terminalId);
     if (!this.structuredManager?.isAlive(terminalId)) throw new Error('no structured session for terminal');
     this.structuredManager.sendMessage(terminalId, text);
   }
@@ -720,20 +736,11 @@ export class SessionService {
       const developerNote = this.toolsAwareness?.() ?? null;
       const secretsMcp = composeInjection(specs, { configPath: this.mcpConfigPath, prompts, developerNote });
       if (config.transport === 'structured' && terminal.type === 'claude-code' && this.structuredManager) {
-        // Coordinators get the Dispatch "agency" MCP server folded into their
-        // --mcp-config so they can autonomously spawn + steer typed agents.
-        const structuredMcp = config.role === 'coordinator'
-          ? this.withAgencyMcp(secretsMcp, terminalId, terminal.session_id)
-          : secretsMcp;
-        // Inject the Overseer persona (coordinator / typed agent) from the thread's
-        // config so the structured CLI knows its role.
-        const sc = this.structuredCommandOverride ?? provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config) });
-        if (!sc) throw new Error('structured transport not supported for this provider');
-        // The membrane: only Dispatch-spawned typed AGENT threads escalate gated tools
-        // to the user. Coordinators + plain structured chats keep auto-allowing (parity).
-        const pid = this.structuredManager.spawn(terminalId, { command: sc.command, args: sc.args, workDir, escalate: config.role === 'agent' });
-        terminalsDb.updatePid(this.db, terminalId, pid);
-        return; // structured path complete — skip PTY spawn + session-id capture (no resume in slice 1)
+        // Spawn (or, when an external_id is already known, RESUME) the structured
+        // stream-json thread. spawnStructured re-applies the full role/escalate/MCP
+        // wiring and backfills prior history on resume.
+        this.spawnStructured(terminal, config, workDir);
+        return; // structured path complete — skip PTY spawn + session-id capture
       }
       let cmd: { command: string; args: string[] };
       if (runnerPrompt !== undefined) {
@@ -759,6 +766,90 @@ export class SessionService {
     // discover the session id it assigned — so a later relaunch can resume.
     if (terminal.type !== 'shell' && !terminal.external_id) {
       void this.captureExternalSessionId(terminalId, terminal.type, workDir);
+    }
+  }
+
+  /**
+   * Spawn — or, when a claude session id is already known, RESUME — a structured
+   * stream-json thread, re-applying the SAME role / escalate / MCP wiring as the
+   * original spawn:
+   *   - coordinators get the Dispatch agency MCP folded in (autonomous spawn/steer),
+   *   - the Overseer persona is injected via --append-system-prompt,
+   *   - only typed AGENT threads escalate gated tools (the membrane).
+   * When `terminal.external_id` is set it appends `-r <id>` (resume the same claude
+   * conversation) and backfills the ring with prior history so the View isn't blank
+   * after a daemon restart. Idempotent: a no-op when the thread is already alive.
+   */
+  private spawnStructured(terminal: terminalsDb.TerminalRow, config: Record<string, any>, workDir: string): void {
+    if (!this.structuredManager) throw new Error('structured transport not supported for this provider');
+    if (this.structuredManager.isAlive(terminal.id)) return; // already running — don't double-spawn
+
+    const provider = getProvider(terminal.type);
+    // Same secrets/integrations/tools-awareness MCP wiring as a fresh PTY spawn.
+    const specs: McpServerSpec[] = [];
+    const prompts: string[] = [];
+    const sec = this.secretsServerSpec?.();
+    if (sec?.spec) { specs.push(sec.spec); if (sec.prompt) prompts.push(sec.prompt); }
+    const intgSpecs = this.integrationsSpecs?.() ?? [];
+    specs.push(...intgSpecs);
+    const developerNote = this.toolsAwareness?.() ?? null;
+    const secretsMcp = composeInjection(specs, { configPath: this.mcpConfigPath, prompts, developerNote });
+    const structuredMcp = config.role === 'coordinator'
+      ? this.withAgencyMcp(secretsMcp, terminal.id, terminal.session_id)
+      : secretsMcp;
+
+    const resumeSessionId = terminal.external_id || undefined;
+
+    let sc: { command: string; args: string[] };
+    if (this.structuredCommandOverride) {
+      // Test seam: spawn the fake instead of real claude. Still surface `-r <id>` on
+      // resume so the resume path is observable in tests.
+      sc = { command: this.structuredCommandOverride.command, args: [...this.structuredCommandOverride.args] };
+      if (resumeSessionId) sc.args.push('-r', resumeSessionId);
+    } else {
+      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config), resumeSessionId });
+      if (!built) throw new Error('structured transport not supported for this provider');
+      sc = built;
+    }
+
+    // On resume, restore prior conversation from the claude transcript JSONL.
+    const seedEvents = resumeSessionId ? readSessionBackfill(workDir, resumeSessionId) : undefined;
+
+    const pid = this.structuredManager.spawn(terminal.id, {
+      command: sc.command,
+      args: sc.args,
+      workDir,
+      escalate: config.role === 'agent',
+      seedEvents,
+    });
+    terminalsDb.updatePid(this.db, terminal.id, pid);
+  }
+
+  /**
+   * Lazily revive a structured thread on demand (its ws connects or it receives a
+   * message) after a daemon restart: if it's not alive but is a structured
+   * claude-code thread with a stored external_id, resume the same claude
+   * conversation. Idempotent — returns true if alive (or already was), false when
+   * it isn't a resumable structured thread (e.g. shell/PTY threads, or one whose
+   * session id was never captured). Never throws.
+   */
+  ensureStructuredAlive(terminalId: string): boolean {
+    if (!this.structuredManager) return false;
+    if (this.structuredManager.isAlive(terminalId)) return true;
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal || terminal.type !== 'claude-code' || terminal.archived_at) return false;
+    let config: Record<string, any> = {};
+    try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
+    if (config.transport !== 'structured') return false;
+    if (!terminal.external_id) return false; // no captured conversation to resume
+    const session = sessionsDb.getById(this.db, terminal.session_id);
+    if (!session) return false;
+    const workDir = terminal.working_dir || session.working_dir;
+    try {
+      this.spawnStructured(terminal, config, workDir);
+      return this.structuredManager.isAlive(terminalId);
+    } catch {
+      return false;
     }
   }
 

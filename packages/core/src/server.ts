@@ -400,7 +400,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
     if (url.match(/\/api\/terminals\/[^/]+\/structured-ws/)) {
       structuredWss.handleUpgrade(request, socket, head, (ws) => {
-        handleStructuredConnection(ws, request, structuredManager);
+        handleStructuredConnection(ws, request, structuredManager, (id) => sessionService.ensureStructuredAlive(id));
       });
     } else if (url.match(/\/api\/terminals\/[^/]+\/ws/) || url.match(/\/api\/sessions\/[^/]+\/terminal/)) {
       terminalWss.handleUpgrade(request, socket, head, (ws) => {

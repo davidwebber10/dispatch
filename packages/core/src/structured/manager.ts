@@ -24,6 +24,8 @@ interface Session {
   escalate: boolean;
   /** The single in-flight permission request awaiting a human decision, if any. */
   pending: PendingPermission | null;
+  /** The claude session_id parsed from the init/system event (for resume on restart). */
+  sessionId?: string;
 }
 
 const MAX_EVENTS = 5000;
@@ -45,7 +47,7 @@ export class StructuredSessionManager extends EventEmitter {
 
   setDefaultEnv(env: Record<string, string>): void { this.defaultEnv = env; }
 
-  spawn(terminalId: string, opts: { command: string; args: string[]; workDir: string; env?: Record<string, string>; escalate?: boolean }): number {
+  spawn(terminalId: string, opts: { command: string; args: string[]; workDir: string; env?: Record<string, string>; escalate?: boolean; seedEvents?: unknown[] }): number {
     if (this.sessions.has(terminalId)) this.kill(terminalId);
     const child = spawn(opts.command, opts.args, {
       cwd: opts.workDir,
@@ -56,6 +58,13 @@ export class StructuredSessionManager extends EventEmitter {
 
     const rl = readline.createInterface({ input: child.stdout });
     const session: Session = { child, rl, events: [], escalate: opts.escalate ?? false, pending: null };
+    // Resume backfill: seed the ring with prior history (restored from the claude
+    // transcript) BEFORE any live event lands, so a ws (re)connect replays the past
+    // conversation first and the View isn't blank after a daemon restart.
+    if (opts.seedEvents?.length) {
+      session.events.push(...opts.seedEvents);
+      if (session.events.length > MAX_EVENTS) session.events.splice(0, session.events.length - MAX_EVENTS);
+    }
     this.sessions.set(terminalId, session);
     rl.on('line', (line) => {
       const trimmed = line.trim();
@@ -64,6 +73,14 @@ export class StructuredSessionManager extends EventEmitter {
       try { event = JSON.parse(trimmed); } catch { return; } // skip non-JSON noise
       session.events.push(event);
       if (session.events.length > MAX_EVENTS) session.events.shift();
+      // Capture the claude session_id (carried on the init/system event, and echoed
+      // on later events). Surface it via a 'session' emit so the spawner can persist
+      // it onto the terminal's external_id and resume this conversation after a restart.
+      const sid: unknown = event?.session_id;
+      if (typeof sid === 'string' && sid && session.sessionId !== sid) {
+        session.sessionId = sid;
+        this.emit('session', terminalId, sid);
+      }
       if (event?.type === 'control_request' && event?.request?.subtype === 'can_use_tool') {
         if (session.escalate) {
           // The membrane: do NOT auto-allow. Capture the pending decision and surface
@@ -173,6 +190,9 @@ export class StructuredSessionManager extends EventEmitter {
   killAll(): void { for (const id of [...this.sessions.keys()]) this.kill(id); }
 
   isAlive(terminalId: string): boolean { return this.sessions.has(terminalId); }
+
+  /** The claude session_id captured for a live thread (from its init event), or undefined. */
+  getSessionId(terminalId: string): string | undefined { return this.sessions.get(terminalId)?.sessionId; }
 
   getEvents(terminalId: string): unknown[] { return [...(this.sessions.get(terminalId)?.events ?? [])]; } // Fix 4: return copy
 }

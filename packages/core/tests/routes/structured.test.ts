@@ -41,6 +41,15 @@ async function pollEvent(a: any, id: string, pred: (e: any) => boolean, timeoutM
   }
   throw new Error('timeout waiting for event');
 }
+async function pollExternalId(database: Database.Database, id: string, expected: string, timeoutMs = 3000): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const row = database.prepare('SELECT external_id FROM terminals WHERE id = ?').get(id) as { external_id: string | null } | undefined;
+    if (row && row.external_id === expected) return;
+    await sleep(25);
+  }
+  throw new Error('timeout waiting for external_id to be captured');
+}
 
 it('an AGENT thread escalates a gated tool: GET shows pending, POST allow resolves it', async () => {
   const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent' } });
@@ -147,4 +156,88 @@ it('a non-coordinator structured spawn writes no coordinator config', async () =
   expect(fs.existsSync(path.join(cfgDir, `coordinator-${t.body.id}.mcp.json`))).toBe(false);
   await request(a).post(`/api/terminals/${t.body.id}/stop`);
   fs.rmSync(cfgDir, { recursive: true, force: true });
+});
+
+// --- persistence / resume across a (simulated) daemon restart -------------------
+
+it('captures the init session_id and persists it onto the terminal external_id', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured' } });
+  const id = t.body.id;
+  await pollExternalId(db, id, 'sess-fake'); // fake-claude's init session_id is captured + stored
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+it('lazily resumes a dead AGENT thread with -r <id> and re-applies escalate', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent' } });
+  const id = t.body.id;
+  await pollExternalId(db, id, 'sess-fake');
+
+  // Simulate a daemon restart: the process is gone, but the DB row (with external_id) survives.
+  const mgr = (app as any)._structuredManager;
+  mgr.kill(id);
+  expect(mgr.isAlive(id)).toBe(false);
+
+  // A message lazily resumes the SAME claude conversation before delivering.
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'TRIGGER_PERMISSION' });
+  expect(mgr.isAlive(id)).toBe(true);
+
+  // The resume applied `-r sess-fake` (surfaced via fake-claude's argv echo).
+  const init = await pollEvent(app, id, (e) => e?.type === 'system' && Array.isArray(e.argv) && e.argv.includes('-r'));
+  expect(init.argv).toContain('sess-fake');
+
+  // escalate re-applied: the gated tool surfaces (an auto-allow thread would never be pending).
+  const pending = await pollPermission(app, id);
+  expect(pending.toolName).toBe('Write');
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+it('resuming a coordinator thread re-folds the dispatch agency MCP wiring', async () => {
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coord-resume-'));
+  const coordApp = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fake] } });
+  const s = await request(coordApp).post('/api/sessions').send({ provider: 'claude-code', workingDir: dir, name: 'cr' });
+  const t = await request(coordApp).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', role: 'coordinator' } });
+  const id = t.body.id;
+  await pollExternalId(db, id, 'sess-fake');
+
+  const cfgPath = path.join(cfgDir, `coordinator-${id}.mcp.json`);
+  expect(fs.existsSync(cfgPath)).toBe(true);
+
+  // Restart + delete the generated config to prove resume regenerates it.
+  const mgr = (coordApp as any)._structuredManager;
+  mgr.kill(id);
+  fs.rmSync(cfgPath);
+
+  await request(coordApp).post(`/api/terminals/${id}/message`).send({ text: 'hello' });
+  expect(mgr.isAlive(id)).toBe(true);
+
+  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8')); // re-folded on resume
+  expect(cfg.mcpServers.dispatch.command).toBe('node');
+  await request(coordApp).post(`/api/terminals/${id}/stop`);
+  fs.rmSync(cfgDir, { recursive: true, force: true });
+});
+
+it('does not re-spawn a still-alive structured thread (idempotent)', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured' } });
+  const id = t.body.id;
+  await pollExternalId(db, id, 'sess-fake');
+
+  const mgr = (app as any)._structuredManager;
+  const svc = (app as any)._sessionService;
+  const pidBefore = (db.prepare('SELECT pid FROM terminals WHERE id = ?').get(id) as { pid: number }).pid;
+
+  expect(svc.ensureStructuredAlive(id)).toBe(true); // no-op while alive
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'hello' });
+
+  const pidAfter = (db.prepare('SELECT pid FROM terminals WHERE id = ?').get(id) as { pid: number }).pid;
+  expect(pidAfter).toBe(pidBefore); // same process — never re-spawned
+  expect(mgr.isAlive(id)).toBe(true);
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+it('ensureStructuredAlive is a no-op for non-structured / unknown threads', async () => {
+  const svc = (app as any)._sessionService;
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'shell' });
+  expect(svc.ensureStructuredAlive(t.body.id)).toBe(false); // shell isn't a resumable structured thread
+  expect(svc.ensureStructuredAlive('does-not-exist')).toBe(false);
+  await request(app).post(`/api/terminals/${t.body.id}/stop`);
 });

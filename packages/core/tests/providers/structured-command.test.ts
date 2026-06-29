@@ -33,6 +33,25 @@ it('omits --append-system-prompt when no persona and no secrets prompt', () => {
   expect(cmd.args).not.toContain('--append-system-prompt');
 });
 
+it('appends -r <id> to resume an existing conversation, keeping all structured flags', () => {
+  const cmd = claudeCodeProvider.buildStructuredCommand!({ workDir: '/tmp', resumeSessionId: 'sess-123', appendSystemPrompt: 'persona' });
+  const i = cmd.args.indexOf('-r');
+  expect(i).toBeGreaterThanOrEqual(0);
+  expect(cmd.args[i + 1]).toBe('sess-123');
+  // resume must NOT drop the structured control-protocol flags or the persona
+  const a = cmd.args.join(' ');
+  expect(a).toContain('--input-format stream-json');
+  expect(a).toContain('--output-format stream-json');
+  expect(a).toContain('--permission-prompt-tool stdio');
+  expect(a).toContain('--include-partial-messages');
+  expect(cmd.args).toContain('--append-system-prompt');
+});
+
+it('omits -r when no resumeSessionId (a fresh structured spawn)', () => {
+  const cmd = claudeCodeProvider.buildStructuredCommand!({ workDir: '/tmp' });
+  expect(cmd.args).not.toContain('-r');
+});
+
 it('pinned claude still accepts --permission-prompt-tool stdio (smoke)', () => {
   let help = '';
   try { help = execFileSync('claude', ['--help'], { encoding: 'utf8' }); } catch { return; } // skip if claude absent (CI)
