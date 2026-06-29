@@ -4,12 +4,14 @@
  * Operator mode only, gated by the `multiPane` setting.  Falls back to
  * classic TabBar behaviour when either condition is false.
  *
- * Drag model (so dropzones never move under the cursor):
- *  - On drag start the strip EXPANDS, revealing a fixed gap between/around
- *    every tab. Each gap is a reorder dropzone; each tab is a merge dropzone.
- *  - Drop in a GAP  → reorder the dragged tab to that position.
- *  - Drop on a TAB  → merge the dragged tab into it (new group / +pane).
- *  Tabs do NOT slide around while dragging, so the gap you aimed at stays put.
+ * Drag model (dropzones never move under the cursor):
+ *  - On drag start the dragged tab lifts into a ghost that follows the cursor,
+ *    and its slot becomes ONE reorder dropzone (the "vacated space").
+ *  - Every OTHER tab is a MERGE dropzone; thin reorder gaps sit between them.
+ *  - Drop on a tab  → merge (new group / +pane). Drop in a space → reorder.
+ *  Nothing slides around mid-drag, and collisions are pointer-precise (the
+ *  dropzone under the cursor wins), with live droppable measuring so the
+ *  freshly-expanded spaces are hit accurately.
  *  - Group chips: stack icon + count title ("N Tabs", renameable), split
  *    (ArrowsSplit) + X close-all. Selecting a group activates its first tab
  *    (App.tsx detects the active tab is grouped and renders PaneTree).
@@ -23,6 +25,7 @@ import { createPortal } from 'react-dom';
 import {
   DndContext,
   DragOverlay,
+  MeasuringStrategy,
   MouseSensor,
   TouchSensor,
   useSensor,
@@ -50,7 +53,7 @@ const TAB_MIN_W  = 150;
 const TAB_MAX_W  = 230;
 const GRP_MIN_W  = 185;
 const GRP_MAX_W  = 290;
-const GAP_W      = 22; // width a reorder gap expands to while dragging
+const GAP_W      = 18; // width of a thin reorder gap between two tabs while dragging
 
 /* ── Slot model ──────────────────────────────────────────────────────── */
 type SingleSlot = { kind: 'single'; id: string; tabId: string };
@@ -166,36 +169,38 @@ function MergeOverlay({ label }: { label: string }) {
   );
 }
 
-/* ═══════════════════════════════════════════════════════════════════════
-   Reorder gap — a dropzone between/around tabs that expands while dragging.
-   ═══════════════════════════════════════════════════════════════════════ */
-function DropGap({ index, dragging }: { index: number; dragging: boolean }) {
-  const { setNodeRef, isOver } = useDroppable({ id: `gap:${index}`, disabled: !dragging });
+/* Centered accent insertion bar for a reorder dropzone that's being hovered. */
+function InsertBar() {
   return (
-    <div
-      ref={setNodeRef}
-      style={{
-        position: 'relative', alignSelf: 'stretch', flexShrink: 0,
-        width: dragging ? GAP_W : 0,
-        transition: 'width .12s ease',
-        background: dragging && isOver ? 'color-mix(in srgb, var(--color-accent) 16%, transparent)' : 'transparent',
-      }}
-    >
-      {dragging && isOver && (
-        <div style={{
-          position: 'absolute', top: 4, bottom: 4, left: '50%', transform: 'translateX(-50%)',
-          width: 3, borderRadius: 2, background: 'var(--color-accent)',
-          boxShadow: '0 0 6px 1px color-mix(in srgb, var(--color-accent) 70%, transparent)',
-        }} />
-      )}
+    <div style={{
+      position: 'absolute', top: 4, bottom: 4, left: '50%', transform: 'translateX(-50%)',
+      width: 3, borderRadius: 2, background: 'var(--color-accent)',
+      boxShadow: '0 0 6px 1px color-mix(in srgb, var(--color-accent) 70%, transparent)',
+      pointerEvents: 'none',
+    }} />
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Thin reorder gap between two (non-dragged) tabs.
+   ═══════════════════════════════════════════════════════════════════════ */
+function DropGap({ index }: { index: number }) {
+  const { setNodeRef, isOver } = useDroppable({ id: `gap:${index}` });
+  return (
+    <div ref={setNodeRef} style={{
+      position: 'relative', alignSelf: 'stretch', flexShrink: 0, width: GAP_W,
+      background: isOver ? 'color-mix(in srgb, var(--color-accent) 16%, transparent)' : 'transparent',
+    }}>
+      {isOver && <InsertBar />}
     </div>
   );
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   Single-tab chip  (draggable + a merge dropzone)
+   Single-tab chip.  Idle: draggable + a MERGE dropzone. While THIS tab is the
+   one being dragged it renders as its vacated-space REORDER dropzone instead.
    ═══════════════════════════════════════════════════════════════════════ */
-function SingleChip({ slot, onSelect }: { slot: SingleSlot; onSelect?: () => void }) {
+function SingleChip({ slot, index, onSelect }: { slot: SingleSlot; index: number; onSelect?: () => void }) {
   const activeTabId = useTabs((s) => s.activeTabId);
   const byProject   = useTabs((s) => s.byProject);
   const sessions    = useProjects((s) => s.sessions);
@@ -205,8 +210,30 @@ function SingleChip({ slot, onSelect }: { slot: SingleSlot; onSelect?: () => voi
   const act  = slot.tabId === activeTabId;
 
   const { setNodeRef: dragRef, listeners, attributes, isDragging } = useDraggable({ id: slot.id });
-  const { setNodeRef: dropRef, isOver } = useDroppable({ id: `merge:${slot.id}`, disabled: isDragging });
+  // One droppable whose role flips: a MERGE target when idle, the vacated-space
+  // REORDER target while this tab is the one being dragged.
+  const { setNodeRef: dropRef, isOver } = useDroppable({ id: isDragging ? `gap:${index}` : `merge:${slot.id}` });
   const ref = (n: HTMLElement | null) => { dragRef(n); dropRef(n); };
+
+  if (isDragging) {
+    return (
+      <div
+        ref={ref}
+        {...attributes}
+        {...listeners}
+        style={{
+          position: 'relative', alignSelf: 'stretch', flexShrink: 0,
+          minWidth: TAB_MIN_W, maxWidth: TAB_MAX_W,
+          boxSizing: 'border-box',
+          border: '1.5px dashed var(--color-border)', borderRadius: 7,
+          margin: '4px 0',
+          background: isOver ? 'color-mix(in srgb, var(--color-accent) 16%, transparent)' : 'color-mix(in srgb, var(--color-text-tertiary) 7%, transparent)',
+        }}
+      >
+        {isOver && <InsertBar />}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -219,11 +246,10 @@ function SingleChip({ slot, onSelect }: { slot: SingleSlot; onSelect?: () => voi
         padding: '0 10px 0 15px',
         minWidth: TAB_MIN_W, maxWidth: TAB_MAX_W, flexShrink: 0,
         height: '100%',
-        cursor: isDragging ? 'grabbing' : 'pointer',
+        cursor: 'pointer',
         borderRight: '1px solid var(--color-border)',
         background:   act ? 'var(--color-base)' : 'transparent',
         borderBottom: act ? '2px solid var(--color-accent)' : '2px solid transparent',
-        opacity: isDragging ? 0 : 1,
         userSelect: 'none',
         touchAction: 'none',
       }}
@@ -266,7 +292,7 @@ function SingleTabGhost({ slot }: { slot: SingleSlot }) {
       background: 'var(--color-pane)',
       borderRight: '1px solid var(--color-border)',
       borderBottom: '2px solid var(--color-accent)',
-      opacity: 0.92,
+      opacity: 0.95,
       boxShadow: '0 8px 28px rgba(0,0,0,.5)',
       cursor: 'grabbing',
       userSelect: 'none',
@@ -284,9 +310,10 @@ function SingleTabGhost({ slot }: { slot: SingleSlot }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   Group chip  (draggable + a merge/+pane dropzone; "N Tabs" title, renameable)
+   Group chip.  Idle: draggable + +pane dropzone; "N Tabs" title (renameable).
+   While dragged: renders as its vacated-space reorder dropzone.
    ═══════════════════════════════════════════════════════════════════════ */
-function GroupChip({ slot, onSelect }: { slot: GroupSlot; onSelect?: () => void }) {
+function GroupChip({ slot, index, onSelect }: { slot: GroupSlot; index: number; onSelect?: () => void }) {
   const activeTabId = useTabs((s) => s.activeTabId);
   const byProject   = useTabs((s) => s.byProject);
   const name        = useGroups((s) => s.groups[slot.groupId]?.name);
@@ -301,11 +328,33 @@ function GroupChip({ slot, onSelect }: { slot: GroupSlot; onSelect?: () => void 
   const [draftName, setDraftName] = useState('');
 
   const { setNodeRef: dragRef, listeners, attributes, isDragging } = useDraggable({ id: slot.id });
-  const { setNodeRef: dropRef, isOver } = useDroppable({ id: `merge:${slot.id}`, disabled: isDragging || full });
+  // A full group can't accept a +pane, so it has no merge id while idle.
+  const dropId = isDragging ? `gap:${index}` : (full ? undefined : `merge:${slot.id}`);
+  const { setNodeRef: dropRef, isOver } = useDroppable({ id: dropId ?? `grp-noop:${slot.id}`, disabled: dropId == null });
   const ref = (n: HTMLElement | null) => { dragRef(n); dropRef(n); };
 
   function commitRename() { useGroups.getState().rename(slot.groupId, draftName); setEditing(false); }
   function startRename()  { setDraftName(name ?? ''); setEditing(true); }
+
+  if (isDragging) {
+    return (
+      <div
+        ref={ref}
+        {...attributes}
+        {...listeners}
+        style={{
+          position: 'relative', alignSelf: 'stretch', flexShrink: 0,
+          minWidth: GRP_MIN_W, maxWidth: GRP_MAX_W,
+          boxSizing: 'border-box',
+          border: '1.5px dashed var(--color-border)', borderRadius: 7,
+          margin: '4px 0',
+          background: isOver ? 'color-mix(in srgb, var(--color-accent) 16%, transparent)' : 'color-mix(in srgb, var(--color-text-tertiary) 7%, transparent)',
+        }}
+      >
+        {isOver && <InsertBar />}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -318,11 +367,10 @@ function GroupChip({ slot, onSelect }: { slot: GroupSlot; onSelect?: () => void 
         padding: '0 8px 0 12px',
         minWidth: GRP_MIN_W, maxWidth: GRP_MAX_W, flexShrink: 0,
         height: '100%',
-        cursor: isDragging ? 'grabbing' : 'pointer',
+        cursor: 'pointer',
         borderRight: '1px solid var(--color-border)',
         background:   act ? 'var(--color-base)' : 'transparent',
         borderBottom: act ? '2px solid var(--color-accent)' : '2px solid transparent',
-        opacity: isDragging ? 0 : 1,
         userSelect: 'none',
         touchAction: 'none',
       }}
@@ -406,7 +454,7 @@ function GroupChipGhost({ slot }: { slot: GroupSlot }) {
       background: 'var(--color-pane)',
       borderRight: '1px solid var(--color-border)',
       borderBottom: '2px solid var(--color-accent)',
-      opacity: 0.92,
+      opacity: 0.95,
       boxShadow: '0 8px 28px rgba(0,0,0,.5)',
       cursor: 'grabbing',
       userSelect: 'none',
@@ -433,7 +481,7 @@ function GroupedTabBarInner({ onSelect }: { onSelect?: () => void }) {
   const tabGroup   = useGroups((s) => s.tabGroup);
 
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [overId, setOverId]     = useState<string | null>(null); // current droppable (gap:* | merge:*)
+  const [, setOverId]           = useState<string | null>(null); // re-render on over change (isOver reads live)
 
   /* ── Build display slots ─────────────────────────────────────────── */
   const seenGroups = new Set<string>();
@@ -451,7 +499,8 @@ function GroupedTabBarInner({ onSelect }: { onSelect?: () => void }) {
     }
   }
 
-  const activeSlot = activeId ? (slots.find((s) => s.id === activeId) ?? null) : null;
+  const dragIdx    = activeId ? slots.findIndex((s) => s.id === activeId) : -1;
+  const activeSlot = dragIdx >= 0 ? slots[dragIdx] : null;
 
   /* ── Sensors: mouse = distance (no hold) so quick desktop drags work;
        touch = short long-press so the bar can still be swipe-scrolled. ── */
@@ -460,7 +509,6 @@ function GroupedTabBarInner({ onSelect }: { onSelect?: () => void }) {
     useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 8 } }),
   );
 
-  /* ── Expand the dragged slot order into the flat openTabIds list + persist ── */
   function applySlotOrder(orderedSlotIds: string[]) {
     const slotById = new Map(slots.map((s) => [s.id, s]));
     const next: string[] = [];
@@ -513,7 +561,7 @@ function GroupedTabBarInner({ onSelect }: { onSelect?: () => void }) {
       return;
     }
 
-    /* ── Reorder: dropped in a gap (index = insertion position) ─────── */
+    /* ── Reorder: dropped in a gap / the vacated space (index = position) ── */
     if (target.startsWith('gap:')) {
       const gapIndex = Number(target.slice('gap:'.length));
       const order = slots.map((s) => s.id);
@@ -522,7 +570,7 @@ function GroupedTabBarInner({ onSelect }: { onSelect?: () => void }) {
       const without = order.filter((id) => id !== dragId);
       const insertAt = gapIndex > di ? gapIndex - 1 : gapIndex;
       without.splice(insertAt, 0, dragId);
-      if (without.every((id, i) => id === order[i])) return; // dropped in its own gap → no-op
+      if (without.every((id, i) => id === order[i])) return; // dropped in its own space → no-op
       applySlotOrder(without);
     }
   }
@@ -534,7 +582,7 @@ function GroupedTabBarInner({ onSelect }: { onSelect?: () => void }) {
 
   if (!slots.length) return null;
 
-  const dragging = !!activeId;
+  const dragging = dragIdx >= 0;
 
   return (
     <div style={{
@@ -546,21 +594,25 @@ function GroupedTabBarInner({ onSelect }: { onSelect?: () => void }) {
       <DndContext
         sensors={sensors}
         collisionDetection={collisionDetection}
+        measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
         onDragStart={onDragStart}
         onDragOver={onDragOver}
         onDragEnd={onDragEnd}
         onDragCancel={onDragCancel}
       >
         <div style={{ display: 'flex', height: '100%' }}>
-          <DropGap index={0} dragging={dragging} />
           {slots.map((slot, i) => (
             <Fragment key={slot.id}>
+              {/* thin reorder gap before slot i — only while dragging, and not
+                  flanking the dragged tab (its vacated space already covers that). */}
+              {dragging && i !== dragIdx && i !== dragIdx + 1 && <DropGap index={i} />}
               {slot.kind === 'single'
-                ? <SingleChip slot={slot} onSelect={onSelect} />
-                : <GroupChip  slot={slot} onSelect={onSelect} />}
-              <DropGap index={i + 1} dragging={dragging} />
+                ? <SingleChip slot={slot} index={i} onSelect={onSelect} />
+                : <GroupChip  slot={slot} index={i} onSelect={onSelect} />}
             </Fragment>
           ))}
+          {/* trailing reorder gap after the last slot */}
+          {dragging && slots.length !== dragIdx + 1 && <DropGap index={slots.length} />}
         </div>
 
         {createPortal(
