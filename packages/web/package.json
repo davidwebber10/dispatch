@@ -35,6 +35,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "codemirror": "^6.0.1",
+    "dompurify": "^3.4.11",
     "highlight.js": "^11.10.0",
     "lucide-react": "^1.21.0",
     "marked": "^14.1.4",

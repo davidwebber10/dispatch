@@ -84,6 +84,9 @@ export const api = {
   // Files (sandboxed to the session working dir)
   listFiles: (sessionId: string, p = '.') => req<FileEntry[]>(`/api/sessions/${sessionId}/files?path=${encodeURIComponent(p)}`),
   readFile: (sessionId: string, p: string) => req<{ content: string; path: string }>(`/api/sessions/${sessionId}/files/read?path=${encodeURIComponent(p)}`),
+  // Byte-route URL for an image file (sandboxed to the session working dir). Sync URL
+  // builder (no fetch) so it can feed an <img src> directly; the route streams raw bytes.
+  imageUrl: (sessionId: string, p: string) => `/api/sessions/${sessionId}/files/image?path=${encodeURIComponent(p)}`,
   writeFile: (sessionId: string, p: string, content: string) =>
     req<{ ok: true; path: string }>(`/api/sessions/${sessionId}/files/write?path=${encodeURIComponent(p)}`, { method: 'PUT', body: body({ content }) }),
   makeDirectory: (sessionId: string, p: string) =>

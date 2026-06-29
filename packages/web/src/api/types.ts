@@ -128,8 +128,13 @@ export interface RunStep {
 }
 
 export interface ConvItem {
-  kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'tool-result' | 'result' | 'system';
+  kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'tool-result' | 'result' | 'system' | 'image';
   text?: string;
+  // image (kind 'image') — a rendered picture in the timeline. `imageUrl` is either an
+  // inline data-URI (base64 source) or an http(s)/byte-route URL (path/file source).
+  imageUrl?: string;
+  imageAlt?: string;
+  imageMime?: string;
   toolName?: string;
   toolTitle?: string;
   toolDetail?: string;

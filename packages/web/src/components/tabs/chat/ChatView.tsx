@@ -8,6 +8,7 @@ import { useTabs, findTerminal } from '../../../stores/tabs';
 import { useDraft } from '../../../hooks/useDraft';
 import { Markdown } from '../../Markdown';
 import { WorkingIndicator } from '../../WorkingIndicator';
+import { ChatImage } from '../../ChatImage';
 import { ToolCall, ToolResult } from '../ToolCall';
 import { useUI } from '../../../stores/ui';
 
@@ -20,7 +21,7 @@ import { useUI } from '../../../stores/ui';
 export function ChatView({ terminalId }: { terminalId: string }) {
   const tab = useTabs((s) => findTerminal(s.byProject, terminalId));
   const sessionId = tab?.sessionId;
-  const { items, busy, model, send } = useStructuredChat(terminalId);
+  const { items, busy, model, send } = useStructuredChat(terminalId, sessionId);
 
   const [draft, setDraft, clearDraft] = useDraft(terminalId);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -179,6 +180,7 @@ function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void) {
 
     let node: React.ReactNode = null;
     if (it.kind === 'assistant') node = <AssistantText text={it.text ?? ''} />;
+    else if (it.kind === 'image') node = <ChatImage src={it.imageUrl ?? ''} alt={it.imageAlt} />;
     else if (it.kind === 'thinking') node = <Thinking text={it.text ?? ''} />;
     else if (it.kind === 'tool') {
       const result = it.toolId ? resultById.get(it.toolId) : items[i + 1]?.kind === 'tool-result' ? items[i + 1] : undefined;

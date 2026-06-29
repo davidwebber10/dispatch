@@ -34,6 +34,45 @@ function fileFromInput(json: string): string | undefined {
   } catch { return undefined; }
 }
 
+/**
+ * Turn an Anthropic-style image content block into an `'image'` ConvItem, or null if
+ * `b` isn't an image. Three source shapes:
+ *   - inline base64 (`source.type === 'base64'`) → a `data:` URI (needs no session)
+ *   - remote URL (`source.type === 'url'`)       → that URL verbatim
+ *   - a local path/file ref                      → the sandboxed byte route via api.imageUrl
+ * The path case needs a `sessionId` to build the route; without one we skip it (the
+ * data-URI / URL cases still parse, e.g. in unit tests with no session wired).
+ */
+function imageItemFromBlock(b: any, sessionId?: string): ConvItem | null {
+  if (!b || b.type !== 'image') return null;
+  const alt = typeof b.alt === 'string' ? b.alt : (typeof b.title === 'string' ? b.title : undefined);
+  const src = b.source ?? {};
+  if (src.type === 'base64' && src.data) {
+    const mime = src.media_type || 'image/png';
+    return { kind: 'image', imageUrl: `data:${mime};base64,${src.data}`, imageMime: mime, imageAlt: alt };
+  }
+  if ((src.type === 'url' || src.type === 'uri') && (src.url || src.uri)) {
+    return { kind: 'image', imageUrl: src.url || src.uri, imageAlt: alt };
+  }
+  // Path/file reference (various shapes the daemon may emit): resolve to the byte route.
+  const path = src.path ?? src.file_path ?? b.path ?? b.file_path ?? (typeof src === 'string' ? src : undefined);
+  if (path && sessionId) {
+    return { kind: 'image', imageUrl: api.imageUrl(sessionId, path), imageAlt: alt };
+  }
+  return null;
+}
+
+/** Collect every image ConvItem inside a content array (e.g. a tool_result's blocks). */
+function imagesFromContent(content: unknown, sessionId?: string): ConvItem[] {
+  if (!Array.isArray(content)) return [];
+  const out: ConvItem[] = [];
+  for (const b of content) {
+    const img = imageItemFromBlock(b, sessionId);
+    if (img) out.push(img);
+  }
+  return out;
+}
+
 /** Tracks one in-progress streamed content block within the current turn.
  * `text` accumulates text/thinking deltas; `jsonAccum` accumulates tool input
  * JSON. Deltas are buffered here and applied to the items in a single rAF flush
@@ -55,10 +94,16 @@ interface BlockRec { key: string; kind: 'assistant' | 'thinking' | 'tool'; jsonA
  * the footer from `result`. The user's own turns arrive as echoed `user` text
  * blocks (the backend buffers them), so reconnect replay restores them.
  */
-export function useStructuredChat(terminalId: string): StructuredChat {
+export function useStructuredChat(terminalId: string, sessionId?: string): StructuredChat {
   const [items, setItems] = useState<ConvItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [model, setModel] = useState<string | undefined>();
+
+  // Session is read by the image parser (path refs → byte route) but must NOT key the
+  // socket effect — it can resolve a render after terminalId, and we don't want that to
+  // tear down + reopen the ws. A ref lets the in-effect closures read the latest value.
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
 
   // Streaming bookkeeping (refs so rapid deltas don't churn renders for tracking).
   const streamingRef = useRef(false);                 // sticky once any stream_event seen
@@ -161,6 +206,12 @@ export function useStructuredChat(terminalId: string): StructuredChat {
             } else if (cb.type === 'tool_use') {
               blockMapRef.current.set(idx, { key, kind: 'tool', jsonAccum: '' });
               setItems((p) => [...p, { kind: 'tool', toolName: cb.name, toolId: cb.id, toolInput: '', uuid: key }]);
+            } else if (cb.type === 'image') {
+              // Images arrive whole at content_block_start (no deltas), so there's no
+              // BlockRec to track — append directly. The whole-`assistant` reconcile below
+              // only touches tool_use blocks, so this won't duplicate.
+              const img = imageItemFromBlock(cb, sessionIdRef.current);
+              if (img) setItems((p) => [...p, { ...img, uuid: key }]);
             }
             return;
           }
@@ -220,6 +271,7 @@ export function useStructuredChat(terminalId: string): StructuredChat {
             if (b.type === 'text' && b.text) add.push({ kind: 'assistant', text: b.text });
             else if (b.type === 'thinking') add.push({ kind: 'thinking', text: b.thinking ?? b.text ?? '' });
             else if (b.type === 'tool_use') add.push({ kind: 'tool', toolName: b.name, toolId: b.id, toolInput: safeJson(b.input), toolFile: b.input?.file_path ?? b.input?.path });
+            else if (b.type === 'image') { const img = imageItemFromBlock(b, sessionIdRef.current); if (img) add.push(img); }
           }
           if (add.length) setItems((p) => [...p, ...add]);
           return;
@@ -238,9 +290,16 @@ export function useStructuredChat(terminalId: string): StructuredChat {
             for (const b of content) {
               if (b.type === 'tool_result') {
                 add.push({ kind: 'tool-result', toolId: b.tool_use_id, text: flattenContent(b.content), isError: b.is_error === true });
+                // flattenContent yields the text body only; surface any image blocks nested
+                // inside the tool_result (e.g. a screenshot tool) as their own image items.
+                add.push(...imagesFromContent(b.content, sessionIdRef.current));
               } else if (b.type === 'text' && b.text) {
                 // P0a: the backend buffers/echoes the user's own turn as a text block.
                 add.push({ kind: 'user', text: b.text });
+              } else if (b.type === 'image') {
+                // A human-attached image on the user's own turn.
+                const img = imageItemFromBlock(b, sessionIdRef.current);
+                if (img) add.push(img);
               }
             }
           }
