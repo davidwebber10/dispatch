@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
 import { PaperPlaneTilt, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip } from '@phosphor-icons/react';
 import type { ConvItem } from '../../../api/types';
@@ -45,6 +45,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   // (across awaits / multiple files) without clobbering what's already there.
   const draftRef = useRef(draft); draftRef.current = draft;
   const [uploadNote, setUploadNote] = useState('');
+  const [dragActive, setDragActive] = useState(false); // drives the drop-target visual cue
 
   function doSend() {
     const v = draft.trim();
@@ -83,6 +84,30 @@ export function ChatView({ terminalId }: { terminalId: string }) {
     setTimeout(() => setUploadNote(''), 2500);
   }
 
+  // Drag-and-drop + paste image upload — route dropped/pasted files through the SAME
+  // attachFiles path as the Paperclip (upload to inbox; an image rides along as a real
+  // base64 block so the model SEES it). Mirrors the coordinator Composer + TerminalTab.
+  // Gate on a FILE drag so the cue doesn't flash on text/element drags.
+  function onDragOver(e: DragEvent<HTMLDivElement>) {
+    if (!Array.from(e.dataTransfer.types || []).includes('Files')) return;
+    e.preventDefault();
+    setDragActive(true);
+  }
+  function onDragLeave(e: DragEvent<HTMLDivElement>) {
+    // Only clear when the pointer truly leaves the composer (not when crossing a child),
+    // so the cue doesn't flicker between the attach button / textarea / send button.
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragActive(false);
+  }
+  function onDrop(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setDragActive(false);
+    if (e.dataTransfer.files?.length) void attachFiles(e.dataTransfer.files);
+  }
+  function onPaste(e: ClipboardEvent<HTMLTextAreaElement>) {
+    const files = e.clipboardData?.files;
+    if (files && files.length) { e.preventDefault(); void attachFiles(files); }
+  }
+
   async function openFileInViewer(path: string) {
     if (!sessionId) return;
     const st = useTabs.getState();
@@ -116,12 +141,20 @@ export function ChatView({ terminalId }: { terminalId: string }) {
         </MessageScroller.Root>
       </MessageScroller.Provider>
 
-      {/* Composer */}
-      <div style={{ flexShrink: 0, borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', padding: '10px 14px max(10px, env(safe-area-inset-bottom))' }}>
-        {uploadNote && (
-          <div style={{ maxWidth: 768, margin: '0 auto 6px', fontSize: 12, color: 'var(--color-text-tertiary)' }}>{uploadNote}</div>
+      {/* Composer (drop a file anywhere on it, or paste — routes through attachFiles) */}
+      <div
+        onDragOver={onDragOver}
+        onDragEnter={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+        style={{ flexShrink: 0, borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', padding: '10px 14px max(10px, env(safe-area-inset-bottom))' }}
+      >
+        {(dragActive || uploadNote) && (
+          <div style={{ maxWidth: 768, margin: '0 auto 6px', fontSize: 12, color: dragActive ? 'var(--color-accent)' : 'var(--color-text-tertiary)' }}>
+            {dragActive ? 'Drop image to attach' : uploadNote}
+          </div>
         )}
-        <div style={{ maxWidth: 768, margin: '0 auto', display: 'flex', alignItems: 'flex-end', gap: 8, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 12, padding: '8px 8px 8px 8px' }}>
+        <div style={{ maxWidth: 768, margin: '0 auto', display: 'flex', alignItems: 'flex-end', gap: 8, background: dragActive ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-elevated))' : 'var(--color-elevated)', border: dragActive ? '1px solid var(--color-accent)' : '1px solid var(--color-border)', borderRadius: 12, padding: '8px 8px 8px 8px', transition: 'border-color .12s, background .12s' }}>
           <label
             title="Attach file"
             style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'var(--color-hover)', color: 'var(--color-text-secondary)' }}
@@ -139,6 +172,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
             value={draft}
             onChange={(e) => { setDraft(e.target.value); const el = e.target; el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 180) + 'px'; }}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); } }}
+            onPaste={onPaste}
             placeholder="Message…"
             rows={1}
             autoCapitalize="off" autoCorrect="off" spellCheck={false}
