@@ -245,6 +245,30 @@ it('lazily resumes a dead AGENT thread with -r <id> and re-applies escalate', as
   await request(app).post(`/api/terminals/${id}/stop`);
 });
 
+it('lazily re-spawns a dead structured thread with NO external_id (fresh, no -r)', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured' } });
+  const id = t.body.id;
+  await pollExternalId(db, id, 'sess-fake');
+
+  const mgr = (app as any)._structuredManager;
+  const svc = (app as any)._sessionService;
+  // Simulate a thread whose session id was never captured (e.g. killed before init):
+  // kill the process AND null external_id. The bug: such a thread could not be revived,
+  // so sendStructuredMessage threw "no structured session" and the message vanished.
+  mgr.kill(id);
+  db.prepare('UPDATE terminals SET external_id = NULL WHERE id = ?').run(id);
+  expect(mgr.isAlive(id)).toBe(false);
+
+  // Fix: revive by spawning FRESH (no -r) rather than silently failing.
+  expect(svc.ensureStructuredAlive(id)).toBe(true);
+  expect(mgr.isAlive(id)).toBe(true);
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'hello' }); // now delivers
+
+  const init = await pollEvent(app, id, (e) => e?.type === 'system' && Array.isArray(e.argv));
+  expect(init.argv).not.toContain('-r'); // fresh, not a resume
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
 it('resuming a coordinator thread re-folds the dispatch agency MCP wiring', async () => {
   const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coord-resume-'));
   const coordApp = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fake] } });

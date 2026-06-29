@@ -608,7 +608,13 @@ export class SessionService {
     const existing = terminalsDb.listBySession(this.db, sessionId)
       .map(terminalsDb.rowToTerminal)
       .find((t) => t.type === 'claude-code' && t.config?.role === 'coordinator');
-    if (existing) return existing;
+    if (existing) {
+      // A coordinator record can outlive its process (daemon restart). Revive it so
+      // the caller gets a LIVE coordinator (resume if a session was captured, else fresh)
+      // instead of a dead one that silently swallows directives.
+      this.ensureStructuredAlive(existing.id);
+      return existing;
+    }
 
     return this.createTerminal(
       sessionId,
@@ -855,11 +861,11 @@ export class SessionService {
 
   /**
    * Lazily revive a structured thread on demand (its ws connects or it receives a
-   * message) after a daemon restart: if it's not alive but is a structured
-   * claude-code thread with a stored external_id, resume the same claude
-   * conversation. Idempotent — returns true if alive (or already was), false when
-   * it isn't a resumable structured thread (e.g. shell/PTY threads, or one whose
-   * session id was never captured). Never throws.
+   * message) after a daemon restart: if it's not alive but is a non-archived
+   * structured claude-code thread, re-spawn it — resuming the same claude
+   * conversation when an external_id was captured, else spawning fresh. Idempotent —
+   * returns true if alive (or already was), false only for non-structured/archived
+   * threads. Never throws.
    */
   ensureStructuredAlive(terminalId: string): boolean {
     if (!this.structuredManager) return false;
@@ -869,7 +875,10 @@ export class SessionService {
     let config: Record<string, any> = {};
     try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
     if (config.transport !== 'structured') return false;
-    if (!terminal.external_id) return false; // no captured conversation to resume
+    // No external_id ⇒ spawn FRESH. A structured thread that never captured a claude
+    // session id (created-but-not-yet-run, or a coordinator whose process the restart
+    // killed before init) must still come back to life rather than silently swallow
+    // messages. With an external_id, spawnStructured resumes the same conversation.
     const session = sessionsDb.getById(this.db, terminal.session_id);
     if (!session) return false;
     const workDir = terminal.working_dir || session.working_dir;
