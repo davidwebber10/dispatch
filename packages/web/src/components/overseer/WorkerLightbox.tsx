@@ -39,7 +39,7 @@ export function WorkerLightbox({ terminalId, onClose }: { terminalId: string; on
   const isCoordinator = cfg.role === 'coordinator';
   const agentType = cfg.agentType;
   const icon = isCoordinator
-    ? 'ph-broadcast'
+    ? 'ph-terminal-window'
     : agentType && AGENT_TYPE[agentType] ? AGENT_TYPE[agentType].icon : 'ph-terminal-window';
   const typeLabel = isCoordinator ? 'coordinator' : (agentType ? AGENT_TYPE[agentType].label : '');
   const vis = statusVisual(ts, terminal?.status);

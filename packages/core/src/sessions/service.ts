@@ -1,6 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import type Database from 'better-sqlite3';
 import { v4 as uuid } from 'uuid';
 import * as sessionsDb from '../db/sessions.js';
@@ -11,7 +12,7 @@ import { PTYManager } from '../pty/manager.js';
 import type { Session, CreateSessionInput } from '../types.js';
 import { rowToSession } from '../types.js';
 import type { TerminalType } from '../db/terminals.js';
-import type { StatusHooksInjection } from '../providers/types.js';
+import type { StatusHooksInjection, SecretsMcpInjection } from '../providers/types.js';
 import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
 import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript.js';
 import { systemPromptFor } from '../overseer/prompts.js';
@@ -690,9 +691,14 @@ export class SessionService {
       const developerNote = this.toolsAwareness?.() ?? null;
       const secretsMcp = composeInjection(specs, { configPath: this.mcpConfigPath, prompts, developerNote });
       if (config.transport === 'structured' && terminal.type === 'claude-code' && this.structuredManager) {
+        // Coordinators get the Dispatch "agency" MCP server folded into their
+        // --mcp-config so they can autonomously spawn + steer typed agents.
+        const structuredMcp = config.role === 'coordinator'
+          ? this.withAgencyMcp(secretsMcp, terminalId, terminal.session_id)
+          : secretsMcp;
         // Inject the Overseer persona (coordinator / typed agent) from the thread's
         // config so the structured CLI knows its role.
-        const sc = this.structuredCommandOverride ?? provider.buildStructuredCommand?.({ workDir, secretsMcp, appendSystemPrompt: systemPromptFor(config) });
+        const sc = this.structuredCommandOverride ?? provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config) });
         if (!sc) throw new Error('structured transport not supported for this provider');
         const pid = this.structuredManager.spawn(terminalId, { command: sc.command, args: sc.args, workDir });
         terminalsDb.updatePid(this.db, terminalId, pid);
@@ -722,6 +728,42 @@ export class SessionService {
     // discover the session id it assigned — so a later relaunch can resume.
     if (terminal.type !== 'shell' && !terminal.external_id) {
       void this.captureExternalSessionId(terminalId, terminal.type, workDir);
+    }
+  }
+
+  /**
+   * Fold the Dispatch "agency" MCP server into a coordinator's --mcp-config so it
+   * can autonomously spawn + steer typed agents. Reads any existing combined config
+   * (Doppler / integrations), adds a `dispatch` server pointing at the compiled
+   * agency-mcp.js, and writes a coordinator-specific config file (never clobbering
+   * the shared mcp.json). DISPATCH_SESSION = this project's session, so the agent
+   * threads the coordinator spawns land in the same project. Best-effort: on any IO
+   * error, falls back to the un-augmented config so the coordinator still launches.
+   */
+  private withAgencyMcp(secretsMcp: SecretsMcpInjection, terminalId: string, sessionId: string): SecretsMcpInjection {
+    try {
+      let mcpServers: Record<string, unknown> = {};
+      if (secretsMcp.claudeConfigPath) {
+        try {
+          const existing = JSON.parse(fs.readFileSync(secretsMcp.claudeConfigPath, 'utf8'));
+          if (existing && typeof existing.mcpServers === 'object' && existing.mcpServers) mcpServers = existing.mcpServers;
+        } catch { /* unreadable → start fresh */ }
+      }
+      const agencyPath = fileURLToPath(new URL('../overseer/agency-mcp.js', import.meta.url));
+      mcpServers.dispatch = {
+        command: 'node',
+        args: [agencyPath],
+        env: {
+          DISPATCH_SESSION: sessionId,
+          DISPATCH_PORT: String(process.env.PORT || 3456),
+        },
+      };
+      const coordPath = path.join(path.dirname(this.mcpConfigPath), `coordinator-${terminalId}.mcp.json`);
+      fs.mkdirSync(path.dirname(coordPath), { recursive: true });
+      fs.writeFileSync(coordPath, JSON.stringify({ mcpServers }, null, 2));
+      return { ...secretsMcp, claudeConfigPath: coordPath };
+    } catch {
+      return secretsMcp;
     }
   }
 

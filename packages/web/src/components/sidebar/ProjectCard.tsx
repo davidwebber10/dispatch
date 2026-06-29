@@ -252,7 +252,7 @@ function SectionHeader({ label, count, prominent, children }: { label: string; c
   );
 }
 
-export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSelectAgent, onNewAgent, onBrowseFiles, fadeActiveKey, highlightTabId }: { session: Session; active: boolean; open?: boolean; onToggle?: () => void; onSelectTab: (id: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void; onBrowseFiles?: (projectId: string) => void; fadeActiveKey?: number; highlightTabId?: string | null }) {
+export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSelectAgent, onNewAgent, onBrowseFiles, fadeActiveKey, highlightTabId, showManaged = false }: { session: Session; active: boolean; open?: boolean; onToggle?: () => void; onSelectTab: (id: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void; onBrowseFiles?: (projectId: string) => void; fadeActiveKey?: number; highlightTabId?: string | null; showManaged?: boolean }) {
   const allAgents = useAgents((s) => s.schedules);
   const agents = allAgents.filter((a) => a.projectId === session.id);
   const agentSel = useAgents((s) => s.selectedId);
@@ -288,7 +288,14 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   // Dispatch-managed threads (the coordinator + typed agents) are owned by the
   // Dispatch view; hide them from the Operator sidebar and its counts.
   const isManaged = (t: Terminal) => (t.config?.role === 'coordinator') || !!(t.config as any)?.agentType;
-  const visibleTabs = tabs.filter((t) => !isManaged(t));
+  // Dispatch mode (showManaged): show ONLY the ephemeral typed agents — exclude
+  // the coordinator and normal threads. Operator (default): hide all managed rows.
+  const isEphemeralAgent = (t: Terminal) => {
+    const role = t.config?.role;
+    return role === 'agent' || (!!(t.config as any)?.agentType && role !== 'coordinator');
+  };
+  const showRow = (t: Terminal) => (showManaged ? isEphemeralAgent(t) : !isManaged(t));
+  const visibleTabs = tabs.filter(showRow);
   const indicator = projectIndicator(session.status, visibleTabs.map((t) => t.status), visibleTabs.some((t) => loadingMap[t.id]));
   const threadItems = visibleTabs.filter((t) => SECTIONS[0].types.includes(t.type));
   useEffect(() => { if (isOpen) void useTabs.getState().loadTabs(session.id); }, [isOpen, session.id]);
@@ -324,7 +331,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   }
 
   const renderSection = (sec: (typeof SECTIONS)[number]) => {
-    const items = tabs.filter((t) => sec.types.includes(t.type) && !isManaged(t));
+    const items = tabs.filter((t) => sec.types.includes(t.type) && showRow(t));
     if (sec.key !== 'threads' && !items.length) return null;
     return (
       <div key={sec.key} style={{ marginTop: sec.prominent ? DENSITY[density].sectionMt : Math.round(DENSITY[density].sectionMt * 0.7) }}>

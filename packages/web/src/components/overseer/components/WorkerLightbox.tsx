@@ -63,7 +63,6 @@ export function WorkerLightbox() {
             background: 'var(--pane)',
           }}
         >
-          <Icon name="ph-broadcast" weight="fill" size={14} color="var(--acc)" />
           <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', lineHeight: 1.2 }}>
             <span
               style={{

@@ -54,8 +54,8 @@ export function MobileApp() {
   const [settings, setSettings] = useState(false);
   const [listFadeKey, setListFadeKey] = useState(0); // bumps when the thread list reappears → re-fades the active row
   useEffect(() => { if (level === 1) setListFadeKey((k) => k + 1); }, [level]);
-  // Entering Overseer mode always starts at the project list.
-  useEffect(() => { if (viewMode === 'overseer') setOverseerProject(null); }, [viewMode]);
+  // Leaving Dispatch mode closes the coordinator overlay (back to the project).
+  useEffect(() => { if (viewMode !== 'overseer') setDispatchOpen(false); }, [viewMode]);
   // The thread list highlights a row ONLY for the thread you last opened (set in
   // openThread), so backing out of it highlights its row (then fades). Opening a
   // project fresh clears it → nothing highlighted.
@@ -64,8 +64,9 @@ export function MobileApp() {
   const [browseFiles, setBrowseFiles] = useState(false);
   const [query, setQuery] = useState('');
   const [bottomTab, setBottomTab] = useState<'projects' | 'agents'>('projects');
-  // Overseer mode (mobile): null = the project list; set = that project's Overseer.
-  const [overseerProject, setOverseerProject] = useState<string | null>(null);
+  // Dispatch mode (mobile): the coordinator view opens as a full-screen overlay
+  // over the active project (mirrors browseFiles). Closing returns to the project.
+  const [dispatchOpen, setDispatchOpen] = useState(false);
 
   const project = projects.find((p) => p.id === projectId) ?? null;
 
@@ -135,64 +136,6 @@ export function MobileApp() {
   const slot: React.CSSProperties = { flex: '0 0 100%', height: '100%', minWidth: 0 };
   const scrollSlot: React.CSSProperties = { ...slot, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y' };
 
-  // Overseer mode: a project list you tap into → that project's Overseer (its own
-  // mobile 3-tab layout). Back returns to the list. Bypasses the Operator slide-nav.
-  if (viewMode === 'overseer') {
-    const overseerProjectName = overseerProject ? (projects.find((p) => p.id === overseerProject)?.name ?? 'Project') : null;
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--color-base)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
-        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px', height: 'calc(44px + env(safe-area-inset-top))', paddingTop: 'env(safe-area-inset-top)', background: 'var(--color-pane)', borderBottom: '1px solid var(--color-border)' }}>
-          {overseerProject ? (
-            <button onClick={() => setOverseerProject(null)} style={{ background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, padding: '4px 2px', minWidth: 0 }}>
-              <CaretLeft size={20} weight="bold" />
-              <span style={{ fontWeight: 600, fontSize: 15, color: 'var(--color-text-primary)', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{overseerProjectName}</span>
-            </button>
-          ) : (
-            <span style={{ fontWeight: 600, fontSize: 15, color: 'var(--color-text-primary)' }}>Dispatch</span>
-          )}
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <ModeSwitch compact />
-            <button title="Settings" onClick={() => setSettings(true)} style={{ width: 32, height: 32, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 10, background: 'var(--color-elevated)', border: '1px solid #2C2C32', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
-              <Gear size={17} />
-            </button>
-          </div>
-        </div>
-
-        {overseerProject ? (
-          <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}><OverseerView /></div>
-        ) : (
-          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-            <div style={{ padding: 10, flexShrink: 0 }}>
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search projects"
-                style={{ width: '100%', height: 40, padding: '0 13px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 12, color: 'var(--color-text-primary)', fontSize: 16 }} />
-            </div>
-            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y', padding: '0 4px 12px' }}>
-              {filtered.map((p) => {
-                const ptabs = byProject[p.id] ?? [];
-                const working = p.status === 'working' || ptabs.some((t) => t.status === 'working');
-                return (
-                  <button key={p.id} onClick={() => { useProjects.getState().setActive(p.id); setOverseerProject(p.id); }}
-                    style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', textAlign: 'left', padding: '15px 12px', background: 'transparent', border: 'none', borderBottom: '1px solid var(--color-border)', cursor: 'pointer' }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ fontSize: 16, fontWeight: 600, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{p.name}</span>
-                      <div style={{ font: '400 12px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>{homePath(p.workingDir)}</div>
-                    </div>
-                    {working
-                      ? <Spinner size={13} />
-                      : <span style={{ flexShrink: 0, font: '400 12px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{timeAgo(p.lastActivityAt)}</span>}
-                    <CaretRight size={18} color="var(--color-text-tertiary)" />
-                  </button>
-                );
-              })}
-              {!filtered.length && <div style={{ padding: 16, color: 'var(--color-text-tertiary)', fontSize: 13 }}>No projects</div>}
-            </div>
-          </div>
-        )}
-        <SettingsModal open={settings} onClose={() => setSettings(false)} />
-      </div>
-    );
-  }
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--color-base)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
       <header style={{ position: 'relative', height: 'calc(50px + env(safe-area-inset-top))', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px', paddingTop: 'env(safe-area-inset-top)', background: 'var(--color-pane)' }}>
@@ -205,7 +148,9 @@ export function MobileApp() {
           </button>
         )}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-          {level === 0 && <ModeSwitch compact />}
+          {/* Operator/Dispatch toggle lives at the project list AND inside the project
+              (level 1) so the mode can be switched without leaving the project. */}
+          {(level === 0 || level === 1) && <ModeSwitch compact />}
           <ModeToggle terminalId={level === 2 && leaf === 'tab' ? leafTabId : null} />
           <button title="Settings" onClick={() => setSettings(true)} style={{ width: 32, height: 32, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 12, background: 'var(--color-elevated)', border: '1px solid #2C2C32', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
             <Gear size={17} />
@@ -271,11 +216,21 @@ export function MobileApp() {
             </div>
           </div>
 
-          {/* Level 1 — the project's threads + agents */}
+          {/* Level 1 — the project's threads + agents. The Operator/Dispatch toggle
+              (in the header) swaps the list: Operator → normal threads; Dispatch →
+              the ephemeral agents, plus a button to open the Dispatch coordinator. */}
           <div style={scrollSlot}>
             {project ? (
               <div style={{ padding: '8px 4px' }}>
-                <ProjectCard session={project} active fadeActiveKey={listFadeKey} highlightTabId={highlightThreadId} onSelectTab={openThread} onSelectAgent={openAgent} onNewAgent={(pid) => useAgentUI.getState().openNew(pid)} onBrowseFiles={() => setBrowseFiles(true)} />
+                {viewMode === 'overseer' && (
+                  <button onClick={() => setDispatchOpen(true)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 11, width: '100%', margin: '4px 0 10px', padding: '14px 12px', background: 'rgba(62,207,106,.12)', border: '1px solid color-mix(in srgb, var(--color-accent) 40%, transparent)', borderRadius: 12, color: 'var(--color-accent)', fontSize: 16, fontWeight: 600, textAlign: 'left', cursor: 'pointer' }}>
+                    <Robot size={20} weight="fill" style={{ flexShrink: 0 }} />
+                    <span style={{ flex: 1 }}>Open Dispatch</span>
+                    <CaretRight size={16} color="var(--color-accent)" />
+                  </button>
+                )}
+                <ProjectCard session={project} active showManaged={viewMode === 'overseer'} fadeActiveKey={listFadeKey} highlightTabId={highlightThreadId} onSelectTab={openThread} onSelectAgent={openAgent} onNewAgent={(pid) => useAgentUI.getState().openNew(pid)} onBrowseFiles={() => setBrowseFiles(true)} />
               </div>
             ) : <div style={{ padding: 16, color: 'var(--color-text-tertiary)' }}>No project selected</div>}
           </div>
@@ -307,6 +262,20 @@ export function MobileApp() {
           </header>
           <div style={{ flex: 1, minHeight: 0 }}>
             <FilesPane projectId={project.id} onOpenFile={(id) => { setBrowseFiles(false); openThread(id); }} />
+          </div>
+        </div>
+      )}
+
+      {dispatchOpen && project && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'var(--color-base)', display: 'flex', flexDirection: 'column', paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
+          <header style={{ height: 50, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 10px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
+            <button onClick={() => setDispatchOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, padding: '4px 2px', minWidth: 0 }}>
+              <CaretLeft size={20} weight="bold" />
+              <span style={{ fontWeight: 600, fontSize: 16, color: 'var(--color-text-primary)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project.name}</span>
+            </button>
+          </header>
+          <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+            <OverseerView />
           </div>
         </div>
       )}
