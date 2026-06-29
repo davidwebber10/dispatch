@@ -1,9 +1,18 @@
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
-import { execFileSync, spawnSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import type { DaemonController, DaemonInstallOptions, DaemonStatus } from './daemon.js';
 import { buildLogonTaskXml } from './win32-task-xml.js';
+
+/**
+ * Synchronous sleep via Atomics so we stay synchronous without shelling out.
+ * `timeout.exe` errors ("Input redirection is not supported") when stdin is
+ * not a real console — the normal case for non-interactive daemon operations.
+ */
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
 
 export type Runner = (cmd: string, args: string[]) => string;
 const TASK = 'Dispatch';
@@ -28,7 +37,7 @@ export function createWin32Daemon(run: Runner = defaultRun, userId: () => string
       // schtasks /End is asynchronous; MultipleInstancesPolicy=IgnoreNew will silently
       // drop /Run if the old process is still alive. A short delay avoids the race.
       // NOTE: this 2-second wait should be validated during Windows bring-up.
-      spawnSync('timeout', ['/T', '2', '/NOBREAK'], { shell: false, stdio: 'ignore' });
+      sleepSync(2000);
       run('schtasks', ['/Run', '/TN', TASK]);
     },
     status(): DaemonStatus {
