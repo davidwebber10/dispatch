@@ -135,6 +135,10 @@ export interface ConvItem {
   imageUrl?: string;
   imageAlt?: string;
   imageMime?: string;
+  // True when this image rode in on the HUMAN's own `user` turn (an attachment they sent),
+  // vs. an agent/tool-emitted or coordinator-posted picture. Lets a surface (e.g. the
+  // Overseer stream) attribute it to "You" instead of the assistant. Undefined ⇒ not-user.
+  imageFromUser?: boolean;
   toolName?: string;
   toolTitle?: string;
   toolDetail?: string;

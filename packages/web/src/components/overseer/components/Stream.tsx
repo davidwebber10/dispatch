@@ -23,7 +23,7 @@
 
 import { useEffect, useRef } from 'react';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
-import { CaretDoubleDown } from '@phosphor-icons/react';
+import { CaretDoubleDown, WarningCircle } from '@phosphor-icons/react';
 import { Icon } from '../atoms';
 import { Markdown } from '../../Markdown';
 import { ChatImage } from '../../ChatImage';
@@ -90,6 +90,30 @@ function ImageMsg({ msg, showHeader }: { msg: StreamMessage; showHeader: boolean
   );
 }
 
+// ---- User image message -----------------------------------------------------
+// A picture the HUMAN attached on their own turn — right-aligned under a "You" header,
+// mirroring UserMsg's alignment so an attachment reads as the user's message (not a
+// Dispatch turn). src/alt are already resolved upstream in convItemsToStream.
+
+function UserImageMsg({ msg }: { msg: StreamMessage }) {
+  if (!msg.imageUrl) return null;
+  return (
+    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+      <div style={{ maxWidth: '72%', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+        {/* time + "You" header — right-aligned, parity with UserMsg */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--tt)' }}>{msg.time}</span>
+          <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--ts)' }}>You</span>
+        </div>
+        {/* body — ChatImage caps its own height */}
+        <div style={{ minWidth: 0, maxWidth: '100%' }}>
+          <ChatImage src={msg.imageUrl} alt={msg.imageAlt} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---- User message -----------------------------------------------------------
 
 function UserMsg({ msg }: { msg: StreamMessage }) {
@@ -132,6 +156,35 @@ function UserMsg({ msg }: { msg: StreamMessage }) {
   );
 }
 
+// ---- Error notice (centered, red) -------------------------------------------
+// A transient "Failed to send message" surfaced when a directive POST is rejected
+// (BUG 1: previously swallowed). Mirrors the agent chat's red error footer so a failed
+// send is VISIBLE instead of silently vanishing. Centered like a note, but error-toned.
+
+function ErrorMsg({ msg }: { msg: StreamMessage }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center' }}>
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 7,
+          padding: '5px 12px',
+          borderRadius: 20,
+          background: 'color-mix(in srgb, var(--red) 14%, transparent)',
+          border: '1px solid color-mix(in srgb, var(--red) 45%, transparent)',
+          fontSize: 11.5,
+          color: 'var(--red)',
+          maxWidth: '80%',
+        }}
+      >
+        <WarningCircle size={14} weight="fill" />
+        {msg.text || 'Failed to send message'}
+      </span>
+    </div>
+  );
+}
+
 // ---- Note pill (centered) ---------------------------------------------------
 
 function NoteMsg({ msg }: { msg: StreamMessage }) {
@@ -170,7 +223,16 @@ function renderStream(stream: StreamMessage[]) {
   let prevDispatch = false;
 
   for (const msg of stream) {
-    if (msg.isOverseer) {
+    if (msg.isImage && msg.isUser) {
+      // A human-attached image — right-aligned as the user's own turn; breaks the Dispatch run.
+      if (!msg.imageUrl) continue;
+      rows.push(
+        <MessageScroller.Item key={msg.key} messageId={msg.key} style={{ display: 'flex', flexDirection: 'column' }}>
+          <UserImageMsg msg={msg} />
+        </MessageScroller.Item>,
+      );
+      prevDispatch = false;
+    } else if (msg.isOverseer) {
       if (!msg.text) continue; // renders nothing — don't push, don't touch the run
       rows.push(
         <MessageScroller.Item key={msg.key} messageId={msg.key} style={{ display: 'flex', flexDirection: 'column' }}>
@@ -190,6 +252,13 @@ function renderStream(stream: StreamMessage[]) {
       rows.push(
         <MessageScroller.Item key={msg.key} messageId={msg.key} style={{ display: 'flex', flexDirection: 'column' }}>
           <UserMsg msg={msg} />
+        </MessageScroller.Item>,
+      );
+      prevDispatch = false;
+    } else if (msg.isError) {
+      rows.push(
+        <MessageScroller.Item key={msg.key} messageId={msg.key} style={{ display: 'flex', flexDirection: 'column' }}>
+          <ErrorMsg msg={msg} />
         </MessageScroller.Item>,
       );
       prevDispatch = false;

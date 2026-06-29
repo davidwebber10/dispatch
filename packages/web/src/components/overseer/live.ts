@@ -135,15 +135,17 @@ function summaryText(live: number, done: number): string {
  * An 'image' ConvItem → an image StreamMessage. Constructed inline (not via the m()
  * factory, which only knows text kinds) so it stays disjoint from data.ts; carries the
  * already-resolved src/alt straight through to <ChatImage>. Key matches m()'s "s"+i scheme.
+ * `fromUser` marks a picture the HUMAN attached on their own turn so the stream attributes
+ * it to "You" (right-aligned) instead of rendering it as a Dispatch turn.
  */
-function imageMessage(imageUrl: string, imageAlt: string | undefined, i: string): StreamMessage {
+function imageMessage(imageUrl: string, imageAlt: string | undefined, i: string, fromUser: boolean): StreamMessage {
   return {
     kind: 'image',
-    who: null,
+    who: fromUser ? 'You' : null,
     text: '',
     time: '',
     key: `s${i}`,
-    isUser: false,
+    isUser: fromUser,
     isOverseer: false,
     isNote: false,
     isImage: true,
@@ -159,7 +161,7 @@ export function convItemsToStream(items: ConvItem[]): StreamMessage[] {
     const key = it.uuid ?? `c${i}`;
     if (it.kind === 'user' && it.text?.trim()) out.push(m('user', 'You', it.text, '', key));
     else if (it.kind === 'assistant' && it.text?.trim()) out.push(m('overseer', 'Dispatch', it.text, '', key));
-    else if (it.kind === 'image' && it.imageUrl) out.push(imageMessage(it.imageUrl, it.imageAlt, key));
+    else if (it.kind === 'image' && it.imageUrl) out.push(imageMessage(it.imageUrl, it.imageAlt, key, it.imageFromUser === true));
     // thinking/tool/tool-result/result/system are internal: the Overseer does no tool
     // work and rich escalations are surfaced as Needs in incr. 3, not in this stream.
   });

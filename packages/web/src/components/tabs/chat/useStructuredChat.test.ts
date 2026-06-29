@@ -214,3 +214,46 @@ test('onClose clears busy (P0b safety net)', () => {
   act(() => cbs.onClose?.());
   expect(result.current.busy).toBe(false);
 });
+
+test('tags a human-attached image on the user turn with imageFromUser (BUG 3)', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: [
+    { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+    { type: 'text', text: 'what is this?' },
+  ] } }));
+  const img = result.current.items.find((i) => i.kind === 'image');
+  expect(img?.imageFromUser).toBe(true); // → attributed to "You" downstream
+  expect(img?.imageUrl).toBe('data:image/png;base64,AAAA');
+});
+
+test('does NOT tag tool_result / assistant images as imageFromUser (BUG 3 boundary)', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  // a tool-emitted screenshot nested in a tool_result (arrives on a `user` event)
+  act(() => cbs.onEvent({ type: 'user', message: { content: [
+    { type: 'tool_result', tool_use_id: 'x', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'BBBB' } }] },
+  ] } }));
+  // an assistant-emitted image (e.g. post_image)
+  act(() => cbs.onEvent({ type: 'assistant', message: { content: [
+    { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'CCCC' } },
+  ] } }));
+  const imgs = result.current.items.filter((i) => i.kind === 'image');
+  expect(imgs).toHaveLength(2);
+  expect(imgs.every((i) => !i.imageFromUser)).toBe(true); // neither is the human's own turn
+});
+
+test('resolves a PATH-form image via the byte route ONLY when sessionId is wired (BUG 2)', () => {
+  // With a sessionId the path resolves to the sandboxed byte route…
+  const withSession = renderHook(() => useStructuredChat('t1', 'sess-1'));
+  act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: [
+    { type: 'image', source: { path: '/inbox/pic.png' } },
+  ] } }));
+  const img = withSession.result.current.items.find((i) => i.kind === 'image');
+  expect(img?.imageUrl).toBe(api.imageUrl('sess-1', '/inbox/pic.png'));
+
+  // …without one (the pre-fix coordinator path) the same block is DROPPED.
+  const noSession = renderHook(() => useStructuredChat('t2'));
+  act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: [
+    { type: 'image', source: { path: '/inbox/pic.png' } },
+  ] } }));
+  expect(noSession.result.current.items.filter((i) => i.kind === 'image')).toHaveLength(0);
+});

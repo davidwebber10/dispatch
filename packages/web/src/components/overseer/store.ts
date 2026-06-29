@@ -46,6 +46,7 @@ interface OverseerState {
   coordinatorProject: string | null; // the session the coordinator belongs to
   coordinatorStream: StreamMessage[]; // pushed in by useCoordinatorSync()
   coordinatorBusy: boolean; // coordinator turn in flight; pushed in by useCoordinatorSync()
+  sendError: string | null; // last directive send that FAILED (POST rejected); surfaced inline, cleared on next send
   ensuring: boolean; // a find-or-create coordinator request is in flight
   resolved: string[]; // optimistically dismissed need ids
   pendingByTerminal: Record<string, PendingPermission | null>; // fetched escalations (the membrane), keyed by agent terminal id
@@ -95,6 +96,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   coordinatorProject: null,
   coordinatorStream: [],
   coordinatorBusy: false,
+  sendError: null,
   ensuring: false,
   resolved: [],
   pendingByTerminal: {},
@@ -124,15 +126,23 @@ export const useOverseer = create<OverseerState>((set, get) => ({
     const id = get().coordinatorId;
     if ((!text && images.length === 0) || !id) return;
     // No optimistic bubble: the backend echoes the user's turn (and it survives
-    // reconnect replay), so an optimistic append would double up.
-    set({ composer: '', composerImages: [] });
+    // reconnect replay), so an optimistic append would double up. Clear any prior
+    // send-failure notice — this is a fresh attempt.
+    set({ composer: '', composerImages: [], sendError: null });
     // Carry any attached image blocks through as a REAL content-block turn (images first,
     // then the caption text) so the coordinator SEES the picture; a text-only directive
     // keeps the original plain-string path untouched.
     const payload: string | ContentBlock[] = images.length
       ? [...images, ...(text ? [{ type: 'text', text } as ContentBlock] : [])]
       : text;
-    api.sendStructuredMessage(id, payload).catch(() => { /* surfaced in the stream */ });
+    // Surface a failed POST instead of swallowing it: without this, a rejected send (e.g.
+    // the coordinator's claude process died → 400) left ZERO feedback — the user's directive
+    // (and any attached image) just vanished, reading as "nothing happened". Mirrors the
+    // agent chat's visible "Failed to send message" (useStructuredChat.ts). useRenderVals
+    // renders sendError as an inline error row; the next send attempt clears it.
+    api.sendStructuredMessage(id, payload).catch(() => {
+      if (get().coordinatorId === id) set({ sendError: 'Failed to send message' });
+    });
   },
 
   needAction: (id, label) => {
@@ -197,6 +207,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       coordinatorId: null,
       coordinatorStream: [],
       coordinatorBusy: false,
+      sendError: null,
       resolved: [],
       pendingByTerminal: {},
       ensuring: true,
@@ -229,7 +240,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
     if (!sessionId) return;
     const old = get().coordinatorId;
     // Clear the view immediately so the chat reads as a clean slate while we work.
-    set({ coordinatorId: null, coordinatorStream: [], coordinatorBusy: false, resolved: [], pendingByTerminal: {}, composer: '', composerImages: [], ensuring: true });
+    set({ coordinatorId: null, coordinatorStream: [], coordinatorBusy: false, sendError: null, resolved: [], pendingByTerminal: {}, composer: '', composerImages: [], ensuring: true });
     void (async () => {
       try {
         // Archive the old coordinator + all its managed agents (full clean slate).
@@ -263,6 +274,7 @@ export function useCoordinatorSync(): void {
   const activeId = useProjects((s) => s.activeId);
   const ensureForProject = useOverseer((s) => s.ensureForProject);
   const coordinatorId = useOverseer((s) => s.coordinatorId);
+  const coordinatorProject = useOverseer((s) => s.coordinatorProject);
   const setCoordinatorStream = useOverseer((s) => s.setCoordinatorStream);
   const setCoordinatorBusy = useOverseer((s) => s.setCoordinatorBusy);
 
@@ -270,7 +282,12 @@ export function useCoordinatorSync(): void {
     ensureForProject(activeId);
   }, [activeId, ensureForProject]);
 
-  const { items, busy } = useStructuredChat(coordinatorId ?? '');
+  // Pass the coordinator's project as the sessionId (matching the agent ChatView) so
+  // PATH-form image blocks resolve via the sandboxed byte route instead of being dropped
+  // — without it, imageItemFromBlock returns null for path refs and images vanish after a
+  // daemon-restart/transcript-resume. (The hook reads sessionId via a ref, so this does
+  // NOT re-key the socket effect.)
+  const { items, busy } = useStructuredChat(coordinatorId ?? '', coordinatorProject ?? undefined);
   const stream = useMemo(() => convItemsToStream(items), [items]);
   useEffect(() => {
     setCoordinatorStream(stream);
@@ -360,11 +377,12 @@ export function useNeedsSync(): void {
 // Derived view model. Pure read over the live stores (no websocket here — that's
 // owned by useCoordinatorSync), memoized so the snapshot reference is stable.
 export function useRenderVals(): RenderVals {
-  const { coordinatorId, coordinatorStream, coordinatorBusy, resolved, pendingByTerminal, archivedByProject } = useOverseer(
+  const { coordinatorId, coordinatorStream, coordinatorBusy, sendError, resolved, pendingByTerminal, archivedByProject } = useOverseer(
     useShallow((s) => ({
       coordinatorId: s.coordinatorId,
       coordinatorStream: s.coordinatorStream,
       coordinatorBusy: s.coordinatorBusy,
+      sendError: s.sendError,
       resolved: s.resolved,
       pendingByTerminal: s.pendingByTerminal,
       archivedByProject: s.archivedByProject,
@@ -393,9 +411,14 @@ export function useRenderVals(): RenderVals {
     const emptyMode = !hasCoordinator || (noMissions && coordinatorStream.length === 0);
 
     // First-run / empty conversation → the Overseer greeting.
-    const stream: StreamMessage[] = coordinatorStream.length
+    const base: StreamMessage[] = coordinatorStream.length
       ? coordinatorStream
       : [m('overseer', 'Dispatch', CANNED.emptyGreeting, '', 'greeting')];
+    // Append a transient send-failure notice (BUG 1: previously swallowed) so a rejected
+    // directive is VISIBLE inline; cleared by the next send attempt / project switch.
+    const stream: StreamMessage[] = sendError
+      ? [...base, { kind: 'note', who: null, text: sendError, time: '', key: 'send-error', isUser: false, isOverseer: false, isNote: false, isError: true }]
+      : base;
 
     const moodText = hasNeeds
       ? `${needs.length} ${needs.length === 1 ? 'thing needs you' : 'things need you'}`
@@ -418,5 +441,5 @@ export function useRenderVals(): RenderVals {
       drillOpen: false,
       overviewOpen: true,
     };
-  }, [coordinatorId, coordinatorStream, coordinatorBusy, resolved, pendingByTerminal, archivedByProject, activeId, byProject, byTerminal]);
+  }, [coordinatorId, coordinatorStream, coordinatorBusy, sendError, resolved, pendingByTerminal, archivedByProject, activeId, byProject, byTerminal]);
 }

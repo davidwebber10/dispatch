@@ -85,6 +85,10 @@ export interface StreamMessage {
   isImage?: boolean;
   imageUrl?: string;
   imageAlt?: string;
+  // error (transient) — a failed-to-send notice surfaced inline so a swallowed send
+  // failure is VISIBLE (mirrors the agent chat's red "Failed to send message" footer).
+  // Optional so the m() factory and every existing StreamMessage stay valid without change.
+  isError?: boolean;
 }
 
 // An action button on a need card (factory: btn(label, primary)).

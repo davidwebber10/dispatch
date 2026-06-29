@@ -298,9 +298,11 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
                 // P0a: the backend buffers/echoes the user's own turn as a text block.
                 add.push({ kind: 'user', text: b.text });
               } else if (b.type === 'image') {
-                // A human-attached image on the user's own turn.
+                // A human-attached image on the user's own turn — tag it so surfaces can
+                // attribute it to "You" (vs. the tool_result images above, which stay
+                // unattributed assistant/tool output).
                 const img = imageItemFromBlock(b, sessionIdRef.current);
-                if (img) add.push(img);
+                if (img) add.push({ ...img, imageFromUser: true });
               }
             }
           }
