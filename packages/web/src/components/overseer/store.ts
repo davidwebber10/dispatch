@@ -22,8 +22,9 @@ import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
 import { useThreadStatus } from '../../stores/threadStatus';
 import { useStructuredChat } from '../tabs/chat/useStructuredChat';
+import type { PendingPermission } from '../../api/types';
 import { CANNED, m } from './data';
-import { convItemsToStream, groupByMission, needsFromThreads } from './live';
+import { convItemsToStream, groupByMission, isManagedWorker, mapStatus, needsFromThreads } from './live';
 import type { AgentType, Ribbon, RenderVals, Scenario, StreamMessage } from './types';
 
 export type MobileTab = 'needs' | 'stream' | 'work';
@@ -45,6 +46,7 @@ interface OverseerState {
   coordinatorStream: StreamMessage[]; // pushed in by useCoordinatorSync()
   ensuring: boolean; // a find-or-create coordinator request is in flight
   resolved: string[]; // optimistically dismissed need ids
+  pendingByTerminal: Record<string, PendingPermission | null>; // fetched escalations (the membrane), keyed by agent terminal id
 
   // ---- actions (public surface) ----
   setScenario: (scenario: Scenario) => void;
@@ -65,6 +67,7 @@ interface OverseerState {
   closeWorkerLightbox: () => void;
   ensureForProject: (sessionId: string | null) => void;
   setCoordinatorStream: (stream: StreamMessage[]) => void;
+  setPending: (terminalId: string, pending: PendingPermission | null) => void;
 }
 
 export const useOverseer = create<OverseerState>((set, get) => ({
@@ -83,6 +86,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   coordinatorStream: [],
   ensuring: false,
   resolved: [],
+  pendingByTerminal: {},
 
   // ---- actions ----
   setScenario: (scenario) => set({ scenario }), // vestigial no-op (real state is live data)
@@ -111,9 +115,27 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   },
 
   needAction: (id, label) => {
-    // Increment 1 is coarse. The need id is the worker terminal id.
-    //   "Open" → pop the worker lightbox so the user can monitor/interject.
-    //   anything else → ack the coordinator (real approve/deny/answer = incr. 3).
+    // The need id is the agent terminal id. When we have its fetched escalation,
+    // the action is a REAL permission decision; otherwise fall back to the coarse
+    // Open/ack behavior for non-permission needs_input cases.
+    const pending = get().pendingByTerminal[id];
+    if (pending) {
+      const removeCard = () =>
+        set((s) => ({ resolved: [...s.resolved, id], pendingByTerminal: { ...s.pendingByTerminal, [id]: null } }));
+      if (/^deny$/i.test(label)) {
+        api.answerPermission(id, { requestId: pending.requestId, decision: 'deny' }).catch(() => {});
+      } else if (pending.questions?.[0]) {
+        // An AskUserQuestion option: answer maps the question text → the chosen label.
+        const question = pending.questions[0].question;
+        api.answerPermission(id, { requestId: pending.requestId, decision: 'allow', answers: { [question]: label } }).catch(() => {});
+      } else {
+        // A plain gated tool: Approve.
+        api.answerPermission(id, { requestId: pending.requestId, decision: 'allow' }).catch(() => {});
+      }
+      removeCard(); // optimistic
+      return;
+    }
+    // Coarse fallback (non-permission needs_input): Open → lightbox, else ack coordinator.
     if (/open/i.test(label)) {
       set({ workerLightboxId: id });
       return;
@@ -154,6 +176,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       coordinatorId: null,
       coordinatorStream: [],
       resolved: [],
+      pendingByTerminal: {},
       ensuring: true,
     });
     // Refresh the project's threads so managed workers show even before the shell loads them.
@@ -170,6 +193,9 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   },
 
   setCoordinatorStream: (stream) => set({ coordinatorStream: stream }),
+
+  setPending: (terminalId, pending) =>
+    set((s) => ({ pendingByTerminal: { ...s.pendingByTerminal, [terminalId]: pending } })),
 }));
 
 /**
@@ -196,14 +222,60 @@ export function useCoordinatorSync(): void {
   }, [stream, setCoordinatorStream]);
 }
 
+/**
+ * Fetch + maintain the REAL escalations (the membrane) for the active project. For
+ * each agent thread currently blocked (needs_input) we fetch its pending gated tool /
+ * AskUserQuestion once and stash it so useRenderVals() can build a rich approve/deny/
+ * answer Need. When a thread stops being blocked we drop its entry (and any optimistic
+ * resolve) so a later re-escalation re-fetches fresh. Call ONCE from the Overseer root.
+ */
+export function useNeedsSync(): void {
+  const activeId = useProjects((s) => s.activeId);
+  const byProject = useTabs((s) => s.byProject);
+  const byTerminal = useThreadStatus((s) => s.byTerminal);
+  const setPending = useOverseer((s) => s.setPending);
+
+  const waitingKey = useMemo(() => {
+    const terminals = (activeId && byProject[activeId]) || [];
+    return terminals
+      .filter(isManagedWorker)
+      .filter((t) => mapStatus(t, byTerminal[t.id]) === 'waiting')
+      .map((t) => t.id)
+      .join(',');
+  }, [activeId, byProject, byTerminal]);
+
+  useEffect(() => {
+    const ids = waitingKey ? waitingKey.split(',') : [];
+    const known = useOverseer.getState().pendingByTerminal;
+    // Fetch escalations we haven't fetched yet (undefined = unknown; null = resolved/none).
+    for (const id of ids) {
+      if (known[id] === undefined) {
+        api.getPermission(id)
+          .then((p) => setPending(id, p))
+          .catch(() => { /* surfaced as the coarse fallback card */ });
+      }
+    }
+    // Drop entries for threads no longer blocked → a re-escalation re-fetches fresh.
+    const stale = Object.keys(known).filter((id) => !ids.includes(id));
+    if (stale.length) {
+      useOverseer.setState((s) => {
+        const next = { ...s.pendingByTerminal };
+        for (const id of stale) delete next[id];
+        return { pendingByTerminal: next, resolved: s.resolved.filter((r) => !stale.includes(r)) };
+      });
+    }
+  }, [waitingKey, setPending]);
+}
+
 // Derived view model. Pure read over the live stores (no websocket here — that's
 // owned by useCoordinatorSync), memoized so the snapshot reference is stable.
 export function useRenderVals(): RenderVals {
-  const { coordinatorId, coordinatorStream, resolved } = useOverseer(
+  const { coordinatorId, coordinatorStream, resolved, pendingByTerminal } = useOverseer(
     useShallow((s) => ({
       coordinatorId: s.coordinatorId,
       coordinatorStream: s.coordinatorStream,
       resolved: s.resolved,
+      pendingByTerminal: s.pendingByTerminal,
     })),
   );
   const activeId = useProjects((s) => s.activeId);
@@ -213,7 +285,7 @@ export function useRenderVals(): RenderVals {
   return useMemo(() => {
     const terminals = (activeId && byProject[activeId]) || [];
     const missions = groupByMission(terminals, byTerminal);
-    const needs = needsFromThreads(terminals, byTerminal).filter((n) => !resolved.includes(n.id));
+    const needs = needsFromThreads(terminals, byTerminal, pendingByTerminal).filter((n) => !resolved.includes(n.id));
 
     let working = 0;
     let done = 0;
@@ -252,5 +324,5 @@ export function useRenderVals(): RenderVals {
       drillOpen: false,
       overviewOpen: true,
     };
-  }, [coordinatorId, coordinatorStream, resolved, activeId, byProject, byTerminal]);
+  }, [coordinatorId, coordinatorStream, resolved, pendingByTerminal, activeId, byProject, byTerminal]);
 }

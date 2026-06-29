@@ -21,6 +21,86 @@ beforeEach(async () => {
 });
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+async function pollPermission(a: any, id: string, timeoutMs = 3000): Promise<any> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const r = await request(a).get(`/api/terminals/${id}/permission`);
+    if (r.body) return r.body;
+    await sleep(25);
+  }
+  throw new Error('timeout waiting for pending permission');
+}
+async function pollEvent(a: any, id: string, pred: (e: any) => boolean, timeoutMs = 3000): Promise<any> {
+  const mgr = (a as any)._structuredManager;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const ev = mgr.getEvents(id).find(pred);
+    if (ev) return ev;
+    await sleep(25);
+  }
+  throw new Error('timeout waiting for event');
+}
+
+it('an AGENT thread escalates a gated tool: GET shows pending, POST allow resolves it', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent' } });
+  expect(t.status).toBe(201);
+  const id = t.body.id;
+  expect((await request(app).get(`/api/terminals/${id}/permission`)).body).toBeNull(); // nothing yet
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'TRIGGER_PERMISSION' });
+  const pending = await pollPermission(app, id);
+  expect(pending).toMatchObject({ toolName: 'Write', requestId: 'req-1' });
+  const ans = await request(app).post(`/api/terminals/${id}/permission`).send({ decision: 'allow' });
+  expect(ans.status).toBe(204);
+  expect((await request(app).get(`/api/terminals/${id}/permission`)).body).toBeNull(); // cleared
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+it('answers map shape: POST allow with answers folds {questions, answers} into the tool updatedInput', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'planner', role: 'agent' } });
+  const id = t.body.id;
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'TRIGGER_QUESTION' });
+  const pending = await pollPermission(app, id);
+  expect(pending.questions[0].question).toBe('Pick one');
+  const ans = await request(app).post(`/api/terminals/${id}/permission`).send({ decision: 'allow', answers: { 'Pick one': 'A' } });
+  expect(ans.status).toBe(204);
+  const echoed = await pollEvent(app, id, (e) => e?.type === 'user' && JSON.stringify(e).includes('"answers"'));
+  const tr = echoed.message.content[0];
+  expect(tr.updatedInput.answers).toEqual({ 'Pick one': 'A' });
+  expect(tr.updatedInput.questions[0].question).toBe('Pick one');
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+it('POST permission deny resolves with a message', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent' } });
+  const id = t.body.id;
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'TRIGGER_PERMISSION' });
+  await pollPermission(app, id);
+  const ans = await request(app).post(`/api/terminals/${id}/permission`).send({ decision: 'deny', message: 'nope' });
+  expect(ans.status).toBe(204);
+  const echoed = await pollEvent(app, id, (e) => e?.type === 'user' && JSON.stringify(e).includes('DENIED'));
+  expect(echoed.message.content[0].message).toBe('nope');
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+it('POST permission with no pending → 404; bad decision → 400', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'reviewer', role: 'agent' } });
+  const id = t.body.id;
+  expect((await request(app).post(`/api/terminals/${id}/permission`).send({ decision: 'allow' })).status).toBe(404);
+  expect((await request(app).post(`/api/terminals/${id}/permission`).send({ decision: 'maybe' })).status).toBe(400);
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+it('a plain structured thread (no role) auto-allows gated tools — no escalation', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured' } });
+  const id = t.body.id;
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'TRIGGER_PERMISSION' });
+  const wrote = await pollEvent(app, id, (e) => JSON.stringify(e).includes('WROTE')); // auto-allowed
+  expect(JSON.stringify(wrote)).toContain('WROTE');
+  expect((await request(app).get(`/api/terminals/${id}/permission`)).body).toBeNull(); // never pending
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
 it('creates a structured thread and accepts a message', async () => {
   const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured' } });
   expect(t.status).toBe(201);

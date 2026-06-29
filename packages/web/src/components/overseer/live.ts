@@ -11,7 +11,7 @@
 //   coordinator → { transport: 'structured', role: 'coordinator' }            (excluded here)
 //   worker      → { transport: 'structured', agentType, mission? }            (managed)
 
-import type { ConvItem, Terminal } from '../../api/types';
+import type { ConvItem, PendingPermission, PermissionQuestion, Terminal } from '../../api/types';
 import { btn, m, mission as makeMission, outc, th } from './data';
 import {
   AGENT_TYPE,
@@ -164,17 +164,77 @@ export function groupByMission(terminals: Terminal[], statuses: StatusMap): Miss
   });
 }
 
+type QuestionOption = NonNullable<PermissionQuestion['options']>[number];
+
+/** The display label for an AskUserQuestion option (string or {label,name}). */
+export function optionLabel(o: QuestionOption): string {
+  if (typeof o === 'string') return o;
+  return (o?.label ?? o?.name ?? '').toString() || 'Option';
+}
+
+/** A compact one-line summary of a gated tool's input (the command/path it wants to run). */
+function commandFromPending(pending: PendingPermission): string {
+  const inp = (pending.input ?? {}) as Record<string, unknown>;
+  if (typeof inp.command === 'string') return inp.command;
+  if (typeof inp.file_path === 'string') return `${pending.toolName} ${inp.file_path}`;
+  if (typeof inp.path === 'string') return `${pending.toolName} ${inp.path}`;
+  try {
+    const s = JSON.stringify(inp);
+    if (s && s !== '{}') return `${pending.toolName} ${s.length > 120 ? s.slice(0, 117) + '…' : s}`;
+  } catch { /* fall through */ }
+  return pending.toolName;
+}
+
 /**
- * Coarse Needs: structured worker threads currently `needs_input` → a "waiting on you"
- * card with an "Open" action (pops the worker lightbox). Rich approve/deny/answer is incr. 3.
+ * Build a REAL Need from an agent thread's pending escalation:
+ *   - AskUserQuestion (questions[]) → a 'question' Need; each option is an action button.
+ *   - any other gated tool → an 'approval' Need showing the tool + command, Approve/Deny.
+ * The Need id is the worker terminal id (the resolve key); store.needAction maps the
+ * clicked label back to an api.answerPermission call.
+ */
+export function needFromPending(t: Terminal, at: AgentThread, pending: PendingPermission): Need {
+  const q = pending.questions?.[0];
+  if (q) {
+    const opts = Array.isArray(q.options) ? q.options : [];
+    const actions = opts.map((o, i) => btn(optionLabel(o), i === 0));
+    return {
+      id: t.id,
+      isQuestion: true,
+      icon: 'ph-chat-teardrop-text',
+      title: q.header ? `${q.header} — ${at.typeLabel} #${at.id}` : `Question — ${at.typeLabel} #${at.id}`,
+      framing: q.question || `This ${at.typeLabel} needs your input.`,
+      actions: actions.length ? actions : [btn('Open', true)],
+    } satisfies Need;
+  }
+  return {
+    id: t.id,
+    isApproval: true,
+    icon: 'ph-shield-check',
+    title: `Permission — ${at.typeLabel} #${at.id}`,
+    framing: `To continue, this ${at.typeLabel} needs to use ${pending.toolName}.`,
+    cmds: [commandFromPending(pending)],
+    actions: [btn('Approve', true), btn('Deny')],
+  } satisfies Need;
+}
+
+/**
+ * Needs from the project's structured worker threads currently `needs_input`. When the
+ * thread's pending escalation has been fetched (pendings[id]) we render a REAL approve/
+ * deny/answer card; otherwise we fall back to a coarse "waiting on you" card with Open.
  * Each Need's id is the worker terminal id (also its resolve key).
  */
-export function needsFromThreads(terminals: Terminal[], statuses: StatusMap): Need[] {
+export function needsFromThreads(
+  terminals: Terminal[],
+  statuses: StatusMap,
+  pendings: Record<string, PendingPermission | null | undefined> = {},
+): Need[] {
   return terminals
     .filter(isManagedWorker)
     .filter((t) => mapStatus(t, statuses[t.id]) === 'waiting')
     .map((t) => {
       const at = terminalToAgentThread(t, statuses[t.id]);
+      const pending = pendings[t.id];
+      if (pending) return needFromPending(t, at, pending);
       const where = missionName(t);
       return {
         id: t.id,

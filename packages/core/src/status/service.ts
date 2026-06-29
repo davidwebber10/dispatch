@@ -50,6 +50,15 @@ export class StatusService {
     if (terminal) this.apply(terminal.session_id, terminalId, 'working', activity);
   }
 
+  /**
+   * Escalation edge: a structured AGENT thread hit a gated tool / AskUserQuestion
+   * and is blocked awaiting a human decision (the membrane). Surfaces as needs_input.
+   */
+  markNeedsInput(terminalId: string, activity?: string): void {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (terminal) this.apply(terminal.session_id, terminalId, 'needs_input', activity);
+  }
+
   private apply(sessionId: string, terminalId: string, status: ThreadStatus, activity?: string): void {
     const prior = terminalsDb.getById(this.db, terminalId)?.status; // persisted enum before update
     const terminalStatus = TO_TERMINAL[status];

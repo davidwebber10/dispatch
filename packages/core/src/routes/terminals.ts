@@ -85,6 +85,28 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
   });
 
+  // GET /api/terminals/:terminalId/permission — the gated tool/question this thread
+  // is blocked on (the membrane), or null when nothing is pending.
+  router.get('/terminals/:terminalId/permission', (req, res) => {
+    res.json(sessionService.getPendingPermission(req.params.terminalId));
+  });
+
+  // POST /api/terminals/:terminalId/permission { requestId?, decision:'allow'|'deny', answers?, message? }
+  // — resolve the pending gated tool. allow folds an AskUserQuestion `answers` map into
+  // the tool input; deny sends a message. On success the thread returns to working.
+  router.post('/terminals/:terminalId/permission', (req, res) => {
+    const { requestId, decision, answers, message } = req.body ?? {};
+    if (decision !== 'allow' && decision !== 'deny') {
+      return res.status(400).json({ error: "decision must be 'allow' or 'deny'" });
+    }
+    try {
+      const ok = sessionService.answerPermission(req.params.terminalId, requestId, { decision, answers, message });
+      if (!ok) return res.status(404).json({ error: 'no pending permission' });
+      statusService?.markWorking(req.params.terminalId, 'Working…');
+      res.status(204).end();
+    } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
+  });
+
   // POST /api/terminals/:terminalId/input { data } — write raw bytes to the live PTY.
   router.post('/terminals/:terminalId/input', (req, res) => {
     const data = req.body?.data;

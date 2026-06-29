@@ -527,6 +527,35 @@ export class SessionService {
     this.structuredManager.sendMessage(terminalId, text);
   }
 
+  /** The gated tool/question a structured AGENT thread is blocked on, or null. */
+  getPendingPermission(terminalId: string): import('../structured/manager.js').PendingPermission | null {
+    return this.structuredManager?.getPending(terminalId) ?? null;
+  }
+
+  /**
+   * Resolve a structured thread's pending gated tool. `allow` echoes the original
+   * input back to the tool, folding in the original `questions` and any AskUserQuestion
+   * `answers` map; `deny` sends a message. Returns false when nothing is pending.
+   */
+  answerPermission(
+    terminalId: string,
+    requestId: string,
+    opts: { decision: 'allow' | 'deny'; answers?: Record<string, string>; message?: string },
+  ): boolean {
+    if (!this.structuredManager) return false;
+    const pending = this.structuredManager.getPending(terminalId);
+    if (!pending) return false;
+    if (opts.decision === 'allow') {
+      const updatedInput = {
+        ...(pending.input ?? {}),
+        ...(pending.questions ? { questions: pending.questions } : {}),
+        ...(opts.answers ? { answers: opts.answers } : {}),
+      };
+      return this.structuredManager.answerPermission(terminalId, requestId || pending.requestId, { behavior: 'allow', updatedInput });
+    }
+    return this.structuredManager.answerPermission(terminalId, requestId || pending.requestId, { behavior: 'deny', message: opts.message || 'Denied' });
+  }
+
   /**
    * Find-or-create the project's Overseer coordinator: a structured claude-code
    * thread tagged `config.role === 'coordinator'`. Returns the existing one if a
@@ -700,7 +729,9 @@ export class SessionService {
         // config so the structured CLI knows its role.
         const sc = this.structuredCommandOverride ?? provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config) });
         if (!sc) throw new Error('structured transport not supported for this provider');
-        const pid = this.structuredManager.spawn(terminalId, { command: sc.command, args: sc.args, workDir });
+        // The membrane: only Dispatch-spawned typed AGENT threads escalate gated tools
+        // to the user. Coordinators + plain structured chats keep auto-allowing (parity).
+        const pid = this.structuredManager.spawn(terminalId, { command: sc.command, args: sc.args, workDir, escalate: config.role === 'agent' });
         terminalsDb.updatePid(this.db, terminalId, pid);
         return; // structured path complete — skip PTY spawn + session-id capture (no resume in slice 1)
       }

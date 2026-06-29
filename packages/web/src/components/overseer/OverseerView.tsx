@@ -6,7 +6,7 @@
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { overseerRootStyle } from './atoms';
 import { OverseerMobile } from './OverseerMobile';
-import { useCoordinatorSync, useRenderVals } from './store';
+import { useCoordinatorSync, useNeedsSync, useRenderVals } from './store';
 import './tokens.css';
 
 import { OverseerHeader } from './components/Header';
@@ -19,9 +19,10 @@ import { WorkerLightbox } from './components/WorkerLightbox';
 
 export function OverseerView() {
   const isMobile = useIsMobile();
-  // Single owner of the live coordinator subscription (runs for both desktop and
-  // mobile since OverseerView is the entry for both).
+  // Single owner of the live coordinator subscription + the membrane escalation sync
+  // (both run for desktop and mobile since OverseerView is the entry for both).
   useCoordinatorSync();
+  useNeedsSync();
   const rv = useRenderVals();
 
   if (isMobile) return <OverseerMobile />;

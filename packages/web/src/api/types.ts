@@ -158,6 +158,27 @@ export interface Conversation {
   unsupported?: boolean;
 }
 
+/** One AskUserQuestion prompt inside a pending escalation. */
+export interface PermissionQuestion {
+  question: string;
+  header?: string;
+  options?: Array<string | { label?: string; name?: string; description?: string }>;
+  multiSelect?: boolean;
+}
+
+/**
+ * The gated tool / question a structured AGENT thread is blocked on (the membrane).
+ * `questions` is present for AskUserQuestion; otherwise it's a plain gated tool whose
+ * arguments live in `input`.
+ */
+export interface PendingPermission {
+  requestId: string;
+  toolName: string;
+  input?: Record<string, unknown>;
+  toolUseId?: string;
+  questions?: PermissionQuestion[];
+}
+
 export interface SearchMatch {
   line: number;        // source JSONL line index (jump target)
   kind: string;

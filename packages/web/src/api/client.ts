@@ -1,4 +1,4 @@
-import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus } from './types';
+import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus, PendingPermission } from './types';
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -45,6 +45,11 @@ export const api = {
   searchConversation: (id: string, q: string) => req<{ matches: SearchMatch[] }>(`/api/terminals/${id}/conversation/search?q=${encodeURIComponent(q)}`),
   sendInput: (id: string, data: string) => req<void>(`/api/terminals/${id}/input`, { method: 'POST', body: body({ data }) }),
   sendStructuredMessage: (id: string, text: string) => req<void>(`/api/terminals/${id}/message`, { method: 'POST', body: body({ text }) }),
+  // The membrane: the gated tool/question a structured AGENT thread is blocked on (or null).
+  getPermission: (terminalId: string) => req<PendingPermission | null>(`/api/terminals/${terminalId}/permission`),
+  // Resolve it: allow (optionally with an AskUserQuestion answers map) or deny (with a message).
+  answerPermission: (terminalId: string, payload: { requestId?: string; decision: 'allow' | 'deny'; answers?: Record<string, string>; message?: string }) =>
+    req<void>(`/api/terminals/${terminalId}/permission`, { method: 'POST', body: body(payload) }),
   // Overseer: find-or-create this project's coordinator thread (idempotent) → { terminalId }.
   ensureOverseerCoordinator: (sessionId: string) =>
     req<{ terminalId: string }>(`/api/sessions/${sessionId}/overseer/coordinator`, { method: 'POST' }),

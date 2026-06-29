@@ -14,11 +14,19 @@ rl.on('line', (line) => {
       send({ type: 'control_request', request_id: 'req-1', request: { subtype: 'can_use_tool', tool_name: 'Write', input: { file_path: 'x.txt', content: 'hi' }, tool_use_id: 'tu-1' } });
       return;
     }
+    if (text === 'TRIGGER_QUESTION') {
+      // AskUserQuestion arrives as a can_use_tool whose input carries questions[]
+      send({ type: 'control_request', request_id: 'req-2', request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [{ question: 'Pick one', header: 'Choice', options: ['A', 'B'], multiSelect: false }] }, tool_use_id: 'tu-2' } });
+      return;
+    }
     send({ type: 'assistant', message: { content: [{ type: 'text', text: 'echo:' + text }] } });
     send({ type: 'result', subtype: 'success', is_error: false });
   } else if (msg.type === 'control_response') {
-    const allowed = msg.response?.response?.behavior === 'allow';
-    send({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tu-1', content: allowed ? 'WROTE' : 'DENIED' }] } });
+    const r = msg.response?.response ?? {};
+    const allowed = r.behavior === 'allow';
+    // Echo the resolved decision back so tests can assert the updatedInput / answers
+    // map shape and the deny message the manager wrote.
+    send({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tu-1', content: allowed ? 'WROTE' : 'DENIED', updatedInput: r.updatedInput, message: r.message }] } });
     send({ type: 'result', subtype: 'success', is_error: false });
   }
 });

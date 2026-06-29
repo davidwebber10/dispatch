@@ -80,6 +80,24 @@ class NoopPTYManager extends PTYManager {
   override killAll(): void { this.alive.clear(); }
 }
 
+/**
+ * Wire the structured-thread "membrane": when an escalating AGENT thread hits a
+ * gated tool / AskUserQuestion the manager emits 'permission' (→ needs_input) and,
+ * once answered, 'resolved' (→ working). Routing it through StatusService means it
+ * broadcasts terminal:status + fires the same push/notify path the PTY/hook flow uses.
+ */
+function wirePermissionMembrane(structuredManager: StructuredSessionManager, statusService: StatusService): void {
+  structuredManager.on('permission', (terminalId: string, pending: { toolName?: string; questions?: unknown[] }) => {
+    const activity = pending?.questions?.length
+      ? 'Needs your answer'
+      : `Needs approval: ${pending?.toolName ?? 'tool'}`;
+    statusService.markNeedsInput(terminalId, activity);
+  });
+  structuredManager.on('resolved', (terminalId: string) => {
+    statusService.markWorking(terminalId, 'Working…');
+  });
+}
+
 export function createApp(options: CreateAppOptions): import('express').Express {
   const { db, skipPty = false } = options;
 
@@ -106,6 +124,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   sessionService.setStructuredManager(structuredManager);
   if (options.structuredCommand) sessionService.setStructuredCommandOverride(options.structuredCommand);
   const statusService = new StatusService(db, broadcaster);
+  wirePermissionMembrane(structuredManager, statusService);
   const pushService = new PushService(db, { vapidDir: dispatchDir });
 
   statusService.setThreadSettledHook(({ terminalId, sessionId, threadStatus }) => {
@@ -252,6 +271,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const statusService = new StatusService(db, broadcaster);
   const structuredManager = new StructuredSessionManager();
   sessionService.setStructuredManager(structuredManager);
+  wirePermissionMembrane(structuredManager, statusService);
   const pushService = new PushService(db, { vapidDir: dataDir });
 
   statusService.setThreadSettledHook(({ terminalId, sessionId, threadStatus }) => {

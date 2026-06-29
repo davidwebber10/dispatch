@@ -18,7 +18,16 @@ export function handleStructuredConnection(ws: WebSocket, req: IncomingMessage, 
       ws.send(JSON.stringify({ type: 'result', is_error: true, subtype: 'process_exit', result: `Process exited (${code})` }));
     }
   };
+  // Forward escalations (the membrane) so a structured chat view can render the
+  // pending gated tool / question inline too, not just the Overseer Needs zone.
+  const onPermission = (eid: string, pending: unknown) => {
+    if (eid === id && ws.readyState === 1) ws.send(JSON.stringify({ type: 'permission', pending }));
+  };
+  // Replay a still-pending permission on (re)connect so a refresh re-surfaces it.
+  const initialPending = manager.getPending(id);
+  if (initialPending && ws.readyState === 1) ws.send(JSON.stringify({ type: 'permission', pending: initialPending }));
   manager.on('event', onEvent);
   manager.on('exit', onExit);
-  ws.on('close', () => { manager.off('event', onEvent); manager.off('exit', onExit); });
+  manager.on('permission', onPermission);
+  ws.on('close', () => { manager.off('event', onEvent); manager.off('exit', onExit); manager.off('permission', onPermission); });
 }
