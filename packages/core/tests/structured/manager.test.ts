@@ -1,0 +1,45 @@
+// packages/core/tests/structured/manager.test.ts
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { StructuredSessionManager } from '../../src/structured/manager.js';
+
+const fake = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fake-claude.mjs');
+const spawnFake = (m: StructuredSessionManager, id: string) =>
+  m.spawn(id, { command: process.execPath, args: [fake], workDir: process.cwd() });
+
+function waitForEvent(m: StructuredSessionManager, id: string, pred: (e: any) => boolean, timeoutMs = 3000): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => { m.off('event', on); reject(new Error('timeout')); }, timeoutMs);
+    const on = (eid: string, e: any) => { if (eid === id && pred(e)) { clearTimeout(t); m.off('event', on); resolve(e); } };
+    m.on('event', on);
+  });
+}
+
+let m: StructuredSessionManager;
+beforeEach(() => { m = new StructuredSessionManager(); });
+afterEach(() => { m.kill('t1'); });
+
+it('spawns, emits parsed events, and buffers them', async () => {
+  spawnFake(m, 't1');
+  const init = await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  expect(init.apiKeySource).toBe('none');
+  expect(m.isAlive('t1')).toBe(true);
+  expect(m.getEvents('t1').some((e: any) => e.type === 'system')).toBe(true);
+});
+
+it('sendMessage writes a user turn and assistant events come back', async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  m.sendMessage('t1', 'hello');
+  const a = await waitForEvent(m, 't1', (e) => e.type === 'assistant');
+  expect(JSON.stringify(a)).toContain('echo:hello');
+});
+
+it('auto-allows can_use_tool control_requests (parity)', async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  m.sendMessage('t1', 'TRIGGER_PERMISSION');
+  const result = await waitForEvent(m, 't1', (e) => e.type === 'user' && JSON.stringify(e).includes('WROTE'));
+  expect(JSON.stringify(result)).toContain('WROTE'); // allowed, not DENIED
+});
