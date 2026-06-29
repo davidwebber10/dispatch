@@ -3,8 +3,9 @@
  *
  * A standalone, hand-rolled stdio JSON-RPC 2.0 MCP server (no MCP SDK is
  * installed). It is spawned by the coordinator's `claude` process via the
- * `dispatch` entry in its `--mcp-config`, and gives the coordinator four tools to
- * AUTONOMOUSLY spawn + steer typed agent threads inside its own project.
+ * `dispatch` entry in its `--mcp-config`, and gives the coordinator the tools to
+ * AUTONOMOUSLY spawn + steer typed agent threads inside its own project, organized
+ * into named missions.
  *
  * Framing: line-delimited JSON (NDJSON) — one JSON-RPC message per line on
  * stdin, one JSON-RPC response per line on stdout. This is the MCP stdio
@@ -35,14 +36,16 @@ function sessionId(): string {
   return process.env.DISPATCH_SESSION || '';
 }
 
-/** The four tools the coordinator can call. */
+/** The tools the coordinator can call. */
 export const TOOLS = [
   {
     name: 'spawn_agent',
     description:
       'Create a typed agent thread in this project and seed it with a task. Pick the type ' +
       'by the work needed: researcher to investigate, planner to plan, implementer to build, ' +
-      'reviewer to check. Returns the new agentId.',
+      'reviewer to check. Group related work by passing a concise `mission` name (e.g. ' +
+      '"Auth refactor"); reuse the SAME mission for related agents so the rail groups them ' +
+      'under one initiative (call list_missions first to reuse an existing name). Returns the new agentId.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -53,6 +56,12 @@ export const TOOLS = [
         },
         name: { type: 'string', description: 'Optional label for the agent thread.' },
         task: { type: 'string', description: 'The task / mission to seed the agent with.' },
+        mission: {
+          type: 'string',
+          description:
+            'Optional concise mission name that groups this agent with related work ' +
+            '(e.g. "Auth refactor"). Reuse the same name across related agents; defaults to "General" when unset.',
+        },
       },
       required: ['agentType', 'task'],
     },
@@ -60,6 +69,14 @@ export const TOOLS = [
   {
     name: 'list_agents',
     description: 'List the typed agent threads in this project with their id, label, agentType, and status.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'list_missions',
+    description:
+      'List the distinct missions agents are grouped under, with counts: [{ mission, live, total }] ' +
+      '(live = agents not yet done). Call this before spawn_agent to reuse an existing mission name ' +
+      'for related work instead of fragmenting into many one-off groups.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -107,27 +124,53 @@ async function httpJson(method: string, url: string, body?: unknown): Promise<an
 
 // --- tool implementations --------------------------------------------------
 
-async function spawnAgent(args: { agentType: AgentType; name?: string; task: string }): Promise<{ agentId: string; label: string }> {
+async function spawnAgent(args: { agentType: AgentType; name?: string; task: string; mission?: string }): Promise<{ agentId: string; label: string; mission?: string }> {
   if (!args?.agentType) throw new Error('agentType is required');
   if (!args?.task) throw new Error('task is required');
   const label = args.name || `${args.agentType} agent`;
+  const mission = typeof args.mission === 'string' ? args.mission.trim() : '';
   const terminal = await httpJson('POST', `${apiBase()}/api/sessions/${sessionId()}/terminals`, {
     type: 'claude-code',
     label,
-    config: { transport: 'structured', agentType: args.agentType, role: 'agent' },
+    config: { transport: 'structured', agentType: args.agentType, role: 'agent', ...(mission ? { mission } : {}) },
   });
   const agentId: string | undefined = terminal?.id;
   if (!agentId) throw new Error('spawn did not return a terminal id');
   await httpJson('POST', `${apiBase()}/api/terminals/${agentId}/message`, { text: args.task });
-  return { agentId, label };
+  return { agentId, label, ...(mission ? { mission } : {}) };
+}
+
+/** Predicate: a terminal is one of our spawned typed agents (vs the coordinator / plain tabs). */
+function isAgentTerminal(t: any): boolean {
+  return t?.config?.role === 'agent' || typeof t?.config?.agentType === 'string';
 }
 
 async function listAgents(): Promise<Array<{ id: string; label: string; agentType: string | null; status: string }>> {
   const terminals = await httpJson('GET', `${apiBase()}/api/sessions/${sessionId()}/terminals`);
   const list = Array.isArray(terminals) ? terminals : [];
   return list
-    .filter((t: any) => t?.config?.role === 'agent' || typeof t?.config?.agentType === 'string')
+    .filter(isAgentTerminal)
     .map((t: any) => ({ id: t.id, label: t.label, agentType: t?.config?.agentType ?? null, status: t.status }));
+}
+
+/**
+ * Distinct mission names the spawned agents are grouped under, with counts. Mirrors the
+ * rail's grouping (web live.ts groupByMission): a missing/blank `config.mission` falls
+ * back to "General". `live` = agents not yet `done`; `total` = all agents in that mission.
+ * Lets the coordinator reuse an existing mission name instead of fragmenting the rail.
+ */
+async function listMissions(): Promise<Array<{ mission: string; live: number; total: number }>> {
+  const terminals = await httpJson('GET', `${apiBase()}/api/sessions/${sessionId()}/terminals`);
+  const list = Array.isArray(terminals) ? terminals : [];
+  const counts = new Map<string, { mission: string; live: number; total: number }>();
+  for (const t of list.filter(isAgentTerminal)) {
+    const mn = typeof t?.config?.mission === 'string' && t.config.mission.trim() ? t.config.mission.trim() : 'General';
+    let entry = counts.get(mn);
+    if (!entry) { entry = { mission: mn, live: 0, total: 0 }; counts.set(mn, entry); }
+    entry.total++;
+    if (t.status !== 'done') entry.live++;
+  }
+  return Array.from(counts.values());
 }
 
 async function messageAgent(args: { agentId: string; text: string }): Promise<{ ok: true; agentId: string }> {
@@ -153,6 +196,7 @@ export async function callTool(
     switch (name) {
       case 'spawn_agent': result = await spawnAgent(args ?? {}); break;
       case 'list_agents': result = await listAgents(); break;
+      case 'list_missions': result = await listMissions(); break;
       case 'message_agent': result = await messageAgent(args ?? {}); break;
       case 'complete_agent': result = await completeAgent(args ?? {}); break;
       default: throw new Error(`Unknown tool: ${name}`);

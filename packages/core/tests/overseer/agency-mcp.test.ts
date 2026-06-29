@@ -17,12 +17,12 @@ describe('agency-mcp', () => {
     vi.restoreAllMocks();
   });
 
-  it('tools/list returns the four agency tools', async () => {
+  it('tools/list returns the agency tools', async () => {
     const res = await handleRequest({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
     expect(res).not.toBeNull();
     const names = (res!.result as any).tools.map((t: any) => t.name).sort();
-    expect(names).toEqual(['complete_agent', 'list_agents', 'message_agent', 'spawn_agent']);
-    expect(TOOLS).toHaveLength(4);
+    expect(names).toEqual(['complete_agent', 'list_agents', 'list_missions', 'message_agent', 'spawn_agent']);
+    expect(TOOLS).toHaveLength(5);
   });
 
   it('initialize returns protocolVersion + tools capability', async () => {
@@ -63,6 +63,54 @@ describe('agency-mcp', () => {
     expect(msgUrl).toBe('http://localhost:9999/api/terminals/agent-1/message');
     expect(msgInit.method).toBe('POST');
     expect(JSON.parse(msgInit.body)).toEqual({ text: 'investigate X' });
+  });
+
+  it('spawn_agent forwards a mission into the create body config', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'a3', label: 'implementer agent' }) })
+      .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
+    global.fetch = fetchMock as any;
+    const out = await callTool('spawn_agent', { agentType: 'implementer', task: 'do it', mission: 'Auth refactor' });
+    expect(out.isError).toBeUndefined();
+    expect(JSON.parse(out.content[0].text)).toEqual({ agentId: 'a3', label: 'implementer agent', mission: 'Auth refactor' });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      type: 'claude-code',
+      label: 'implementer agent',
+      config: { transport: 'structured', agentType: 'implementer', role: 'agent', mission: 'Auth refactor' },
+    });
+  });
+
+  it('spawn_agent omits mission from config when not provided', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'a4', label: 'researcher agent' }) })
+      .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
+    global.fetch = fetchMock as any;
+    await callTool('spawn_agent', { agentType: 'researcher', task: 'look' });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
+      transport: 'structured', agentType: 'researcher', role: 'agent',
+    });
+  });
+
+  it('list_missions aggregates distinct missions with live/total counts', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify([
+        { id: 'c1', label: 'Overseer', status: 'working', config: { role: 'coordinator' } },
+        { id: 'a1', label: 'researcher', status: 'working', config: { role: 'agent', agentType: 'researcher', mission: 'Auth refactor' } },
+        { id: 'a2', label: 'implementer', status: 'done', config: { role: 'agent', agentType: 'implementer', mission: 'Auth refactor' } },
+        { id: 'a3', label: 'planner', status: 'needs_input', config: { agentType: 'planner', mission: 'Checkout bug' } },
+        { id: 'a4', label: 'reviewer', status: 'waiting', config: { agentType: 'reviewer' } },
+        { id: 's1', label: 'Terminal', status: 'waiting', config: {} },
+      ]),
+    });
+    global.fetch = fetchMock as any;
+    const out = await callTool('list_missions', {});
+    expect(out.isError).toBeUndefined();
+    expect(JSON.parse(out.content[0].text)).toEqual([
+      { mission: 'Auth refactor', live: 1, total: 2 },
+      { mission: 'Checkout bug', live: 1, total: 1 },
+      { mission: 'General', live: 1, total: 1 },
+    ]);
+    expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/sessions/sess-1/terminals');
   });
 
   it('spawn_agent honors a custom name as the label', async () => {
