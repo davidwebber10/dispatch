@@ -61,6 +61,22 @@ export const claudeCodeProvider: SessionProvider = {
     };
   },
 
+  buildStructuredCommand({ workDir, secretsMcp }: { workDir: string; secretsMcp?: SecretsMcpInjection }) {
+    // The spike-verified stream-json control protocol. Parity permissions come from
+    // the StructuredSessionManager's auto-allow loop, NOT --dangerously-skip-permissions.
+    const args: string[] = [
+      '-p',
+      '--input-format', 'stream-json',
+      '--output-format', 'stream-json',
+      '--verbose',
+      '--permission-mode', 'default',
+      '--permission-prompt-tool', 'stdio',
+      ...mcpArgs(secretsMcp),
+      ...systemPromptArgs(secretsMcp),
+    ];
+    return { command: 'claude', args };
+  },
+
   buildStatusHooks({ serverUrl, terminalId }) {
     // HTTP hooks POST each lifecycle event's payload to the events route, which
     // normalizes it (status + activity) and captures session_id on the first hit.

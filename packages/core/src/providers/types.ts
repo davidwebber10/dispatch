@@ -69,4 +69,10 @@ export interface SessionProvider {
    * Returns null if the ID could not be determined.
    */
   captureSessionId?(args: { workDir: string; spawnTime: number; deadlineMs: number }): Promise<string | null>;
+  /**
+   * Build the command for a structured session transport using stream-json control
+   * protocol. Returns the command with stream-json flags and optional MCP injection.
+   * Permissions come from the session manager's auto-allow loop, not flags.
+   */
+  buildStructuredCommand?(args: { workDir: string; secretsMcp?: SecretsMcpInjection }): { command: string; args: string[] };
 }
