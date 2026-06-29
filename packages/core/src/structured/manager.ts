@@ -178,6 +178,46 @@ export class StructuredSessionManager extends EventEmitter {
     return true;
   }
 
+  /**
+   * Flip a live thread's escalation (the autonomy dial) without re-spawning.
+   *   - escalate=true  → supervised: surface subsequent gated tools as Needs.
+   *   - escalate=false → autonomous: auto-allow. Any request CURRENTLY pending is
+   *     resolved with `allow` immediately (so a thread blocked on the membrane
+   *     unblocks the moment the user goes autonomous), and future ones auto-allow.
+   * Returns false when there's no live session for the terminal.
+   */
+  setEscalate(terminalId: string, escalate: boolean): boolean {
+    const s = this.sessions.get(terminalId);
+    if (!s) return false;
+    s.escalate = escalate;
+    if (!escalate && s.pending) {
+      const rid = s.pending.requestId;
+      const updatedInput = s.pending.input;
+      this.write(terminalId, {
+        type: 'control_response',
+        response: { subtype: 'success', request_id: rid, response: { behavior: 'allow', updatedInput } },
+      });
+      s.pending = null;
+      this.emit('resolved', terminalId);
+    }
+    return true;
+  }
+
+  /**
+   * Gracefully interrupt the current turn WITHOUT killing the process: send the
+   * stream-json `interrupt` control on the same stdin channel the CLI uses for
+   * control_responses. Mirrors how the CLI frames its own control_requests
+   * (top-level `request_id` + `request.subtype`). The conversation stays alive and
+   * can be steered/resumed afterwards. Returns false when there's no live session.
+   */
+  interrupt(terminalId: string): boolean {
+    const s = this.sessions.get(terminalId);
+    if (!s || !s.child.stdin.writable) return false;
+    const requestId = `interrupt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    this.write(terminalId, { type: 'control_request', request_id: requestId, request: { subtype: 'interrupt' } });
+    return true;
+  }
+
   kill(terminalId: string): void {
     const s = this.sessions.get(terminalId);
     if (!s) return;

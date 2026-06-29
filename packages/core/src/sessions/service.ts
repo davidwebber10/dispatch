@@ -573,6 +573,29 @@ export class SessionService {
   }
 
   /**
+   * Set a thread's autonomy (the per-agent dial). Persists `config.autonomy` onto
+   * the terminal (merged into its config JSON so resume respects it) AND flips the
+   * live escalation: 'autonomous' → auto-allow (resolves any currently-pending
+   * request + future ones); 'supervised' → surface gated tools as Needs again.
+   * Returns false when the terminal doesn't exist.
+   */
+  setAutonomy(terminalId: string, mode: 'supervised' | 'autonomous'): boolean {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) return false;
+    let config: Record<string, any> = {};
+    try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
+    config.autonomy = mode;
+    terminalsDb.updateConfig(this.db, terminalId, config);
+    this.structuredManager?.setEscalate(terminalId, mode !== 'autonomous');
+    return true;
+  }
+
+  /** Gracefully interrupt a structured thread's current turn (does NOT kill it). */
+  interrupt(terminalId: string): boolean {
+    return this.structuredManager?.interrupt(terminalId) ?? false;
+  }
+
+  /**
    * Find-or-create the project's Overseer coordinator: a structured claude-code
    * thread tagged `config.role === 'coordinator'`. Returns the existing one if a
    * non-archived coordinator already exists, else spawns a new one labelled
@@ -815,11 +838,16 @@ export class SessionService {
     // On resume, restore prior conversation from the claude transcript JSONL.
     const seedEvents = resumeSessionId ? readSessionBackfill(workDir, resumeSessionId) : undefined;
 
+    // Autonomy dial: only typed AGENT threads escalate (the membrane), and only
+    // while supervised. An 'autonomous' agent auto-allows (runs free). Persisted in
+    // config.autonomy, so this decision survives a resume after a daemon restart.
+    const escalate = config.role === 'agent' && config.autonomy !== 'autonomous';
+
     const pid = this.structuredManager.spawn(terminal.id, {
       command: sc.command,
       args: sc.args,
       workDir,
-      escalate: config.role === 'agent',
+      escalate,
       seedEvents,
     });
     terminalsDb.updatePid(this.db, terminal.id, pid);

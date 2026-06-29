@@ -50,6 +50,11 @@ export const api = {
   // Resolve it: allow (optionally with an AskUserQuestion answers map) or deny (with a message).
   answerPermission: (terminalId: string, payload: { requestId?: string; decision: 'allow' | 'deny'; answers?: Record<string, string>; message?: string }) =>
     req<void>(`/api/terminals/${terminalId}/permission`, { method: 'POST', body: body(payload) }),
+  // Autonomy dial: supervised (surface gated tools as Needs) ⇄ autonomous (auto-allow, run free).
+  setAutonomy: (terminalId: string, mode: 'supervised' | 'autonomous') =>
+    req<Terminal>(`/api/terminals/${terminalId}/autonomy`, { method: 'POST', body: body({ mode }) }),
+  // Graceful interrupt: stop the current turn WITHOUT killing the thread.
+  interrupt: (terminalId: string) => req<void>(`/api/terminals/${terminalId}/interrupt`, { method: 'POST' }),
   // Overseer: find-or-create this project's coordinator thread (idempotent) → { terminalId }.
   ensureOverseerCoordinator: (sessionId: string) =>
     req<{ terminalId: string }>(`/api/sessions/${sessionId}/overseer/coordinator`, { method: 'POST' }),

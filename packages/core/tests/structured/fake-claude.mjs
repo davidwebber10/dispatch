@@ -22,6 +22,10 @@ rl.on('line', (line) => {
     }
     send({ type: 'assistant', message: { content: [{ type: 'text', text: 'echo:' + text }] } });
     send({ type: 'result', subtype: 'success', is_error: false });
+  } else if (msg.type === 'control_request') {
+    // Echo client→CLI controls (e.g. interrupt) back so tests can assert the frame
+    // the manager wrote to stdin (top-level request_id + request.subtype).
+    send({ type: 'system', subtype: 'control_request_received', request_id: msg.request_id, request: msg.request });
   } else if (msg.type === 'control_response') {
     const r = msg.response?.response ?? {};
     const allowed = r.behavior === 'allow';

@@ -107,6 +107,34 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
   });
 
+  // POST /api/terminals/:terminalId/autonomy { mode:'supervised'|'autonomous' }
+  // — set the per-agent autonomy dial. Supervised surfaces gated tools as Needs
+  // (the membrane); autonomous auto-allows (runs free), resolving any currently
+  // pending request. Persisted in config.autonomy so it survives a resume.
+  router.post('/terminals/:terminalId/autonomy', (req, res) => {
+    const { mode } = req.body ?? {};
+    if (mode !== 'supervised' && mode !== 'autonomous') {
+      return res.status(400).json({ error: "mode must be 'supervised' or 'autonomous'" });
+    }
+    try {
+      const ok = sessionService.setAutonomy(req.params.terminalId, mode);
+      if (!ok) return res.status(404).json({ error: 'Terminal not found' });
+      const terminal = sessionService.getTerminal(req.params.terminalId);
+      if (terminal) broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: terminal.sessionId });
+      res.json(terminal ?? { ok: true });
+    } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
+  });
+
+  // POST /api/terminals/:terminalId/interrupt — gracefully stop the current turn
+  // WITHOUT killing the thread (sends the structured `interrupt` control on stdin).
+  router.post('/terminals/:terminalId/interrupt', (req, res) => {
+    try {
+      const ok = sessionService.interrupt(req.params.terminalId);
+      if (!ok) return res.status(409).json({ error: 'No live structured session to interrupt' });
+      res.status(204).end();
+    } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
+  });
+
   // POST /api/terminals/:terminalId/input { data } — write raw bytes to the live PTY.
   router.post('/terminals/:terminalId/input', (req, res) => {
     const data = req.body?.data;

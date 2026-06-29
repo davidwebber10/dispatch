@@ -110,6 +110,60 @@ it('a plain structured thread (no role) auto-allows gated tools — no escalatio
   await request(app).post(`/api/terminals/${id}/stop`);
 });
 
+it('an AUTONOMOUS agent thread does NOT escalate — gated tools auto-allow at spawn', async () => {
+  const t = await request(app)
+    .post(`/api/sessions/${sessionId}/terminals`)
+    .send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent', autonomy: 'autonomous' } });
+  expect(t.status).toBe(201);
+  const id = t.body.id;
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'TRIGGER_PERMISSION' });
+  const wrote = await pollEvent(app, id, (e) => JSON.stringify(e).includes('WROTE')); // auto-allowed
+  expect(JSON.stringify(wrote)).toContain('WROTE');
+  expect((await request(app).get(`/api/terminals/${id}/permission`)).body).toBeNull(); // never pending
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+it('POST /autonomy flips a supervised agent to autonomous: resolves the pending + persists config', async () => {
+  const t = await request(app)
+    .post(`/api/sessions/${sessionId}/terminals`)
+    .send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent' } });
+  const id = t.body.id;
+  // Supervised by default → a gated tool blocks on the membrane.
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'TRIGGER_PERMISSION' });
+  await pollPermission(app, id);
+
+  // Flip to autonomous: the pending request auto-resolves (allow) and config persists.
+  const flip = await request(app).post(`/api/terminals/${id}/autonomy`).send({ mode: 'autonomous' });
+  expect(flip.status).toBe(200);
+  await pollEvent(app, id, (e) => e?.type === 'user' && JSON.stringify(e).includes('WROTE'));
+  expect((await request(app).get(`/api/terminals/${id}/permission`)).body).toBeNull();
+  const row = db.prepare('SELECT config FROM terminals WHERE id = ?').get(id) as { config: string };
+  expect(JSON.parse(row.config).autonomy).toBe('autonomous');
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+it('POST /autonomy rejects an invalid mode (400)', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured' } });
+  const r = await request(app).post(`/api/terminals/${t.body.id}/autonomy`).send({ mode: 'banana' });
+  expect(r.status).toBe(400);
+  await request(app).post(`/api/terminals/${t.body.id}/stop`);
+});
+
+it('POST /interrupt sends the interrupt control frame to a live thread (204)', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured' } });
+  const id = t.body.id;
+  const r = await request(app).post(`/api/terminals/${id}/interrupt`);
+  expect(r.status).toBe(204);
+  const echoed = await pollEvent(app, id, (e) => e?.type === 'system' && e.subtype === 'control_request_received');
+  expect(echoed.request.subtype).toBe('interrupt');
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+it('POST /interrupt with no live session → 409', async () => {
+  const r = await request(app).post(`/api/terminals/does-not-exist/interrupt`);
+  expect(r.status).toBe(409);
+});
+
 it('creates a structured thread and accepts a message', async () => {
   const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured' } });
   expect(t.status).toBe(201);

@@ -21,6 +21,15 @@ function waitForEvent(m: StructuredSessionManager, id: string, pred: (e: any) =>
   });
 }
 
+async function waitFor(pred: () => boolean, timeoutMs = 3000): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (pred()) return;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  throw new Error('waitFor timeout');
+}
+
 function waitForPermission(m: StructuredSessionManager, id: string, timeoutMs = 3000): Promise<any> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => { m.off('permission', on); reject(new Error('timeout')); }, timeoutMs);
@@ -139,6 +148,49 @@ it('escalate defaults to false: still auto-allows (parity)', async () => {
   expect(JSON.stringify(result)).toContain('WROTE'); // auto-allowed
   expect(emitted).toBe(false); // no escalation
   expect(m.getPending('t1')).toBeNull();
+});
+
+it('setEscalate(false) auto-allows a currently-pending request and future ones (autonomy dial)', async () => {
+  spawnFakeEscalate(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  // A gated tool is surfaced (supervised) and blocks on the membrane.
+  const pendingP = waitForPermission(m, 't1');
+  m.sendMessage('t1', 'TRIGGER_PERMISSION');
+  await pendingP;
+  expect(m.getPending('t1')).toBeTruthy();
+
+  // Flip to autonomous: the in-flight request resolves with allow immediately.
+  const wrote = waitForEvent(m, 't1', (e) => e.type === 'user' && JSON.stringify(e).includes('WROTE'));
+  expect(m.setEscalate('t1', false)).toBe(true);
+  await wrote;
+  expect(m.getPending('t1')).toBeNull();
+
+  // Future gated tools auto-allow too — never go pending.
+  const before = m.getEvents('t1').length;
+  let escalated = false;
+  const onPerm = () => { escalated = true; };
+  m.on('permission', onPerm);
+  m.sendMessage('t1', 'TRIGGER_PERMISSION');
+  await waitFor(() => m.getEvents('t1').slice(before).some((e: any) => JSON.stringify(e).includes('WROTE')));
+  m.off('permission', onPerm);
+  expect(escalated).toBe(false);
+  expect(m.getPending('t1')).toBeNull();
+});
+
+it('interrupt sends the interrupt control frame on stdin (graceful — process stays alive)', async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  const echoed = waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'control_request_received');
+  expect(m.interrupt('t1')).toBe(true);
+  const ev = await echoed;
+  expect(ev.request.subtype).toBe('interrupt'); // {type:'control_request', request:{subtype:'interrupt'}}
+  expect(typeof ev.request_id).toBe('string');
+  expect(m.isAlive('t1')).toBe(true); // NOT killed
+});
+
+it('interrupt / setEscalate return false when there is no live session', () => {
+  expect(m.interrupt('nope')).toBe(false);
+  expect(m.setEscalate('nope', false)).toBe(false);
 });
 
 it('setDefaultEnv: env vars reach child process', async () => {

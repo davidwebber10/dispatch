@@ -13,6 +13,7 @@ import { useTabs, findTerminal } from '../../stores/tabs';
 import { useThreadStatus, type ThreadStatus } from '../../stores/threadStatus';
 import { AGENT_TYPE, type AgentType } from './types';
 import { Icon } from './atoms';
+import { AutonomyToggle, InterruptButton } from './components/AutonomyControls';
 
 // Map the live thread status to a dot color + label + whether it should pulse.
 function statusVisual(ts: ThreadStatus | undefined, fallback?: string): { color: string; label: string; pulse: boolean } {
@@ -35,7 +36,7 @@ export function WorkerLightbox({ terminalId, onClose }: { terminalId: string; on
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const cfg = (terminal?.config ?? {}) as { role?: string; agentType?: AgentType; mission?: string };
+  const cfg = (terminal?.config ?? {}) as { role?: string; agentType?: AgentType; mission?: string; autonomy?: string };
   const isCoordinator = cfg.role === 'coordinator';
   const agentType = cfg.agentType;
   const icon = isCoordinator
@@ -122,6 +123,12 @@ export function WorkerLightbox({ terminalId, onClose }: { terminalId: string; on
               {cfg.mission ? <span style={{ color: 'var(--color-text-tertiary)' }}>{` · ${cfg.mission}`}</span> : null}
             </span>
           </div>
+
+          {/* autonomy dial (agent threads only — coordinators never escalate) + graceful interrupt */}
+          {!isCoordinator && (
+            <AutonomyToggle terminalId={terminalId} autonomy={cfg.autonomy} scheme="global" />
+          )}
+          <InterruptButton terminalId={terminalId} scheme="global" />
 
           {/* close */}
           <button
