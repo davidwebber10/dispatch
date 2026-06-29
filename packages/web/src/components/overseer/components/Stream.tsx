@@ -11,12 +11,21 @@
 
 import { useEffect, useRef } from 'react';
 import { Icon } from '../atoms';
+import { Markdown } from '../../Markdown';
+import { WorkingIndicator } from '../../WorkingIndicator';
 import { useRenderVals } from '../store';
 import type { StreamMessage } from '../types';
+
+// `.md-view`'s CSS consumes the GLOBAL `--color-*` tokens (defined on :root), which
+// cascade into `.overseer-root` unchanged — that's why markdown renders correctly here
+// with no overseer-specific CSS. The overseer's own `--tp`/`--acc`/`--elev` aliases hold
+// identical values, but `.md-view` does NOT read them, so consolidating/renaming the
+// overseer token set would not affect markdown rendering (don't assume it does).
 
 // ---- Overseer message -------------------------------------------------------
 
 function OverseerMsg({ msg }: { msg: StreamMessage }) {
+  if (!msg.text) return null; // parity with the agent AssistantText — no empty 64ch body
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 11 }}>
       {/* content column */}
@@ -26,18 +35,10 @@ function OverseerMsg({ msg }: { msg: StreamMessage }) {
           <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--acc)' }}>Dispatch</span>
           <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--tt)' }}>{msg.time}</span>
         </div>
-        {/* body */}
-        <p
-          style={{
-            margin: 0,
-            fontSize: 13.5,
-            lineHeight: 1.55,
-            color: 'var(--tp)',
-            maxWidth: '64ch',
-          }}
-        >
-          {msg.text}
-        </p>
+        {/* body — markdown-rendered, parity with the agent assistant prose */}
+        <div style={{ maxWidth: '64ch', minWidth: 0 }}>
+          <Markdown source={msg.text} />
+        </div>
       </div>
     </div>
   );
@@ -62,7 +63,8 @@ function UserMsg({ msg }: { msg: StreamMessage }) {
           <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--tt)' }}>{msg.time}</span>
           <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--ts)' }}>You</span>
         </div>
-        {/* bubble */}
+        {/* bubble — plain text (NOT markdown), parity with the agent UserBubble; a
+            user's directive shows verbatim. pre-wrap keeps multi-line directives' breaks. */}
         <div
           style={{
             background: 'var(--elev)',
@@ -73,6 +75,8 @@ function UserMsg({ msg }: { msg: StreamMessage }) {
             fontSize: 13.5,
             lineHeight: 1.55,
             color: 'var(--tp)',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
           }}
         >
           {msg.text}
@@ -111,16 +115,24 @@ function NoteMsg({ msg }: { msg: StreamMessage }) {
 // ---- ConversationStream (exported) ------------------------------------------
 
 export function ConversationStream() {
-  const { stream } = useRenderVals();
+  const { stream, busy } = useRenderVals();
+  const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Scroll to bottom whenever a new message arrives.
+  // Follow the conversation ONLY when the user is already parked at the bottom — an
+  // unconditional scrollIntoView would yank a user who has scrolled up to read.
+  // "Pinned" = within ~48px of the bottom (matches the agent chat's scrollEdgeThreshold).
+  // Re-runs on a new message and on the busy toggle (so the WorkingIndicator stays in view).
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [stream.length]);
+    const el = scrollRef.current;
+    if (!el) return;
+    const pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    if (pinned) bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [stream.length, busy]);
 
   return (
     <div
+      ref={scrollRef}
       style={{
         flex: 1,
         minHeight: 0,
@@ -137,7 +149,9 @@ export function ConversationStream() {
         if (msg.isNote) return <NoteMsg key={msg.key} msg={msg} />;
         return null;
       })}
-      {/* sentinel — scrolled into view on new messages */}
+      {/* single indeterminate spinner while the coordinator works — last child, before the sentinel */}
+      {busy && <WorkingIndicator />}
+      {/* sentinel — scrolled into view on new messages (only while pinned) */}
       <div ref={bottomRef} style={{ flex: 'none', height: 0 }} />
     </div>
   );

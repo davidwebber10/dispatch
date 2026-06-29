@@ -150,6 +150,7 @@ export interface RenderVals {
   needs: Need[];
   missions: Mission[];
   stream: StreamMessage[];
+  busy: boolean;              // coordinator turn in flight → show the WorkingIndicator
   drillDetail: ThreadDetail | null;
   hasNeeds: boolean;
   noMissions: boolean;

@@ -44,6 +44,7 @@ interface OverseerState {
   coordinatorId: string | null; // the active project's coordinator terminal
   coordinatorProject: string | null; // the session the coordinator belongs to
   coordinatorStream: StreamMessage[]; // pushed in by useCoordinatorSync()
+  coordinatorBusy: boolean; // coordinator turn in flight; pushed in by useCoordinatorSync()
   ensuring: boolean; // a find-or-create coordinator request is in flight
   resolved: string[]; // optimistically dismissed need ids
   pendingByTerminal: Record<string, PendingPermission | null>; // fetched escalations (the membrane), keyed by agent terminal id
@@ -67,6 +68,7 @@ interface OverseerState {
   closeWorkerLightbox: () => void;
   ensureForProject: (sessionId: string | null) => void;
   setCoordinatorStream: (stream: StreamMessage[]) => void;
+  setCoordinatorBusy: (busy: boolean) => void;
   setPending: (terminalId: string, pending: PendingPermission | null) => void;
   /** Clean slate: archive the coordinator + its agents and start a fresh Dispatch conversation. */
   resetDispatch: () => void;
@@ -86,6 +88,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   coordinatorId: null,
   coordinatorProject: null,
   coordinatorStream: [],
+  coordinatorBusy: false,
   ensuring: false,
   resolved: [],
   pendingByTerminal: {},
@@ -177,6 +180,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       coordinatorProject: sessionId,
       coordinatorId: null,
       coordinatorStream: [],
+      coordinatorBusy: false,
       resolved: [],
       pendingByTerminal: {},
       ensuring: true,
@@ -196,6 +200,8 @@ export const useOverseer = create<OverseerState>((set, get) => ({
 
   setCoordinatorStream: (stream) => set({ coordinatorStream: stream }),
 
+  setCoordinatorBusy: (busy) => set({ coordinatorBusy: busy }),
+
   setPending: (terminalId, pending) =>
     set((s) => ({ pendingByTerminal: { ...s.pendingByTerminal, [terminalId]: pending } })),
 
@@ -204,7 +210,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
     if (!sessionId) return;
     const old = get().coordinatorId;
     // Clear the view immediately so the chat reads as a clean slate while we work.
-    set({ coordinatorId: null, coordinatorStream: [], resolved: [], pendingByTerminal: {}, composer: '', ensuring: true });
+    set({ coordinatorId: null, coordinatorStream: [], coordinatorBusy: false, resolved: [], pendingByTerminal: {}, composer: '', ensuring: true });
     void (async () => {
       try {
         // Archive the old coordinator + all its managed agents (full clean slate).
@@ -239,16 +245,20 @@ export function useCoordinatorSync(): void {
   const ensureForProject = useOverseer((s) => s.ensureForProject);
   const coordinatorId = useOverseer((s) => s.coordinatorId);
   const setCoordinatorStream = useOverseer((s) => s.setCoordinatorStream);
+  const setCoordinatorBusy = useOverseer((s) => s.setCoordinatorBusy);
 
   useEffect(() => {
     ensureForProject(activeId);
   }, [activeId, ensureForProject]);
 
-  const { items } = useStructuredChat(coordinatorId ?? '');
+  const { items, busy } = useStructuredChat(coordinatorId ?? '');
   const stream = useMemo(() => convItemsToStream(items), [items]);
   useEffect(() => {
     setCoordinatorStream(stream);
   }, [stream, setCoordinatorStream]);
+  useEffect(() => {
+    setCoordinatorBusy(busy);
+  }, [busy, setCoordinatorBusy]);
 }
 
 /**
@@ -299,10 +309,11 @@ export function useNeedsSync(): void {
 // Derived view model. Pure read over the live stores (no websocket here — that's
 // owned by useCoordinatorSync), memoized so the snapshot reference is stable.
 export function useRenderVals(): RenderVals {
-  const { coordinatorId, coordinatorStream, resolved, pendingByTerminal } = useOverseer(
+  const { coordinatorId, coordinatorStream, coordinatorBusy, resolved, pendingByTerminal } = useOverseer(
     useShallow((s) => ({
       coordinatorId: s.coordinatorId,
       coordinatorStream: s.coordinatorStream,
+      coordinatorBusy: s.coordinatorBusy,
       resolved: s.resolved,
       pendingByTerminal: s.pendingByTerminal,
     })),
@@ -346,6 +357,7 @@ export function useRenderVals(): RenderVals {
       needs,
       missions,
       stream,
+      busy: coordinatorBusy,
       drillDetail: null, // the live drill surface is the worker lightbox, not the rail
       hasNeeds,
       noMissions,
@@ -353,5 +365,5 @@ export function useRenderVals(): RenderVals {
       drillOpen: false,
       overviewOpen: true,
     };
-  }, [coordinatorId, coordinatorStream, resolved, pendingByTerminal, activeId, byProject, byTerminal]);
+  }, [coordinatorId, coordinatorStream, coordinatorBusy, resolved, pendingByTerminal, activeId, byProject, byTerminal]);
 }

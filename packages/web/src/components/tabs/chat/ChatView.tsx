@@ -1,12 +1,13 @@
-import { useRef, useState } from 'react';
-import { MessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
+import { useEffect, useRef, useState } from 'react';
+import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
 import { PaperPlaneTilt, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip } from '@phosphor-icons/react';
 import type { ConvItem } from '../../../api/types';
 import { api } from '../../../api/client';
 import { useStructuredChat } from './useStructuredChat';
 import { useTabs, findTerminal } from '../../../stores/tabs';
 import { useDraft } from '../../../hooks/useDraft';
-import { renderMarkdown } from '../../../lib/markdown';
+import { Markdown } from '../../Markdown';
+import { WorkingIndicator } from '../../WorkingIndicator';
 import { ToolCall, ToolResult } from '../ToolCall';
 import { useUI } from '../../../stores/ui';
 
@@ -85,6 +86,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
             </MessageScroller.Content>
           </MessageScroller.Viewport>
           <JumpButton />
+          <StickToEndOnLoad terminalId={terminalId} count={items.length} />
         </MessageScroller.Root>
       </MessageScroller.Provider>
 
@@ -168,7 +170,7 @@ function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void) {
     if (it.kind === 'user') {
       flushGroup();
       rows.push(
-        <MessageScroller.Item key={id} messageId={id} scrollAnchor style={{ display: 'flex', flexDirection: 'column' }}>
+        <MessageScroller.Item key={id} messageId={id} style={{ display: 'flex', flexDirection: 'column' }}>
           <UserBubble text={it.text ?? ''} />
         </MessageScroller.Item>,
       );
@@ -229,7 +231,7 @@ function UserBubble({ text }: { text: string }) {
 function AssistantText({ text }: { text: string }) {
   if (!text) return null;
   // Avatar is rendered once per turn by AssistantTurn; this is just the prose.
-  return <div className="md-view" style={{ minWidth: 0 }} dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />;
+  return <Markdown source={text} />;
 }
 
 function Thinking({ text }: { text: string }) {
@@ -273,15 +275,51 @@ function ResultFooter({ item }: { item: ConvItem }) {
   );
 }
 
-function WorkingIndicator() {
-  return (
-    <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-      <div style={{ flexShrink: 0, width: 24, height: 24, borderRadius: 7, background: 'var(--color-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <Sparkle size={14} weight="fill" color="var(--color-accent)" className="dispatch-wiggle" />
-      </div>
-      <span className="chat-shimmer" style={{ font: '500 13.5px var(--font-sans)' }}>Working…</span>
-    </div>
-  );
+/**
+ * Render-nothing helper: keep a freshly-opened (or freshly-switched) thread pinned to
+ * the bottom through its post-mount backfill burst. shadcn's autoScroll follows LIVE
+ * deltas while the user is pinned, but the initial replay arrives as a rapid append
+ * burst that can strand the viewport above the fold (a content change can flip the
+ * scroller out of "following-bottom" before it catches up). We force scrollToEnd('auto')
+ * — instant, so it never animates against the user — on each append while still engaged,
+ * then hand off to native autoScroll the moment the user scrolls off-tail.
+ */
+function StickToEndOnLoad({ terminalId, count }: { terminalId: string; count: number }) {
+  const { scrollToEnd } = useMessageScroller();
+  const { end } = useMessageScrollerScrollable(); // end === true ⇒ off-tail (content below the fold)
+  const settledRef = useRef(false);
+  const prevCountRef = useRef(-1);
+  const termRef = useRef(terminalId);
+
+  useEffect(() => {
+    // New thread → re-arm so its own backfill re-sticks to the bottom.
+    if (termRef.current !== terminalId) {
+      termRef.current = terminalId;
+      settledRef.current = false;
+      prevCountRef.current = -1;
+    }
+    // `items` only ever GROWS or RESETS-TO-EMPTY (useStructuredChat appends or setItems([])),
+    // so a count regression unambiguously means the list was cleared/replaced — a ws-reconnect
+    // `onReset` replay (same terminalId) or a non-keyed remount whose outgoing-thread count
+    // (e.g. 50) still sits in prevCountRef while the new backfill climbs 0→N<50. Re-arm so the
+    // append burst exceeds prevCount and re-sticks. (Handles tab-switch + reconnect + replay.)
+    if (count < prevCountRef.current) prevCountRef.current = -1;
+    if (settledRef.current) return;
+    if (count > prevCountRef.current) {
+      // Backfill / live append while still engaged → snap to the bottom. We scroll even
+      // when `end` reads off-tail: during the burst the viewport legitimately starts above
+      // the fold and must be pulled down. (Right after our own scroll `end` reads stale-true
+      // for a frame — but that frame is a count-GROWTH tick, handled here, never below.)
+      prevCountRef.current = count;
+      scrollToEnd({ behavior: 'auto' });
+      return;
+    }
+    // Count held steady AND we're parked off-tail → the user scrolled up themselves.
+    // Disengage for the rest of this thread; native autoScroll owns follow-while-pinned now.
+    if (end) settledRef.current = true;
+  }, [terminalId, count, end, scrollToEnd]);
+
+  return null;
 }
 
 /** shadcn MessageScroller.Button — floating "jump to latest", shown only off-tail. */
