@@ -12,6 +12,7 @@
 import { useEffect, useRef } from 'react';
 import { Icon } from '../atoms';
 import { Markdown } from '../../Markdown';
+import { ChatImage } from '../../ChatImage';
 import { WorkingIndicator } from '../../WorkingIndicator';
 import { useRenderVals } from '../store';
 import type { StreamMessage } from '../types';
@@ -38,6 +39,31 @@ function OverseerMsg({ msg }: { msg: StreamMessage }) {
         {/* body — markdown-rendered, parity with the agent assistant prose */}
         <div style={{ maxWidth: '64ch', minWidth: 0 }}>
           <Markdown source={msg.text} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Image message ----------------------------------------------------------
+// Left-aligned on the coordinator's side (parity with OverseerMsg): a picture the
+// coordinator surfaced — an agent/tool-emitted image, or one posted via `post_image`.
+// The body is the shared <ChatImage>; src/alt are already resolved (data-URI or byte
+// route) upstream in convItemsToStream, so this stays a dumb passthrough.
+
+function ImageMsg({ msg }: { msg: StreamMessage }) {
+  if (!msg.imageUrl) return null;
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 11 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+        {/* name + time header — matches OverseerMsg so an image reads as a Dispatch turn */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--acc)' }}>Dispatch</span>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--tt)' }}>{msg.time}</span>
+        </div>
+        {/* body — bounded to the same 64ch column as prose; ChatImage caps its own height */}
+        <div style={{ maxWidth: '64ch', minWidth: 0 }}>
+          <ChatImage src={msg.imageUrl} alt={msg.imageAlt} />
         </div>
       </div>
     </div>
@@ -146,6 +172,7 @@ export function ConversationStream() {
       {stream.map((msg) => {
         if (msg.isOverseer) return <OverseerMsg key={msg.key} msg={msg} />;
         if (msg.isUser) return <UserMsg key={msg.key} msg={msg} />;
+        if (msg.isImage) return <ImageMsg key={msg.key} msg={msg} />;
         if (msg.isNote) return <NoteMsg key={msg.key} msg={msg} />;
         return null;
       })}
