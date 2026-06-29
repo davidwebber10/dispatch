@@ -54,6 +54,8 @@ export function MobileApp() {
   const [settings, setSettings] = useState(false);
   const [listFadeKey, setListFadeKey] = useState(0); // bumps when the thread list reappears → re-fades the active row
   useEffect(() => { if (level === 1) setListFadeKey((k) => k + 1); }, [level]);
+  // Entering Overseer mode always starts at the project list.
+  useEffect(() => { if (viewMode === 'overseer') setOverseerProject(null); }, [viewMode]);
   // The thread list highlights a row ONLY for the thread you last opened (set in
   // openThread), so backing out of it highlights its row (then fades). Opening a
   // project fresh clears it → nothing highlighted.
@@ -62,6 +64,8 @@ export function MobileApp() {
   const [browseFiles, setBrowseFiles] = useState(false);
   const [query, setQuery] = useState('');
   const [bottomTab, setBottomTab] = useState<'projects' | 'agents'>('projects');
+  // Overseer mode (mobile): null = the project list; set = that project's Overseer.
+  const [overseerProject, setOverseerProject] = useState<string | null>(null);
 
   const project = projects.find((p) => p.id === projectId) ?? null;
 
@@ -131,20 +135,59 @@ export function MobileApp() {
   const slot: React.CSSProperties = { flex: '0 0 100%', height: '100%', minWidth: 0 };
   const scrollSlot: React.CSSProperties = { ...slot, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y' };
 
-  // Overseer mode: a slim toggle bar over the full-screen Overseer (which renders
-  // its own mobile 3-tab layout). Bypasses the Operator slide-nav entirely.
+  // Overseer mode: a project list you tap into → that project's Overseer (its own
+  // mobile 3-tab layout). Back returns to the list. Bypasses the Operator slide-nav.
   if (viewMode === 'overseer') {
+    const overseerProjectName = overseerProject ? (projects.find((p) => p.id === overseerProject)?.name ?? 'Project') : null;
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--color-base)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
         <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px', height: 'calc(44px + env(safe-area-inset-top))', paddingTop: 'env(safe-area-inset-top)', background: 'var(--color-pane)', borderBottom: '1px solid var(--color-border)' }}>
-          <ModeSwitch />
+          {overseerProject ? (
+            <button onClick={() => setOverseerProject(null)} style={{ background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, padding: '4px 2px', minWidth: 0 }}>
+              <CaretLeft size={20} weight="bold" />
+              <span style={{ fontWeight: 600, fontSize: 15, color: 'var(--color-text-primary)', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{overseerProjectName}</span>
+            </button>
+          ) : (
+            <span style={{ fontWeight: 600, fontSize: 15, color: 'var(--color-text-primary)' }}>Overseer</span>
+          )}
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <ModeSwitch compact />
             <button title="Settings" onClick={() => setSettings(true)} style={{ width: 32, height: 32, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 10, background: 'var(--color-elevated)', border: '1px solid #2C2C32', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
               <Gear size={17} />
             </button>
           </div>
         </div>
-        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}><OverseerView /></div>
+
+        {overseerProject ? (
+          <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}><OverseerView /></div>
+        ) : (
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ padding: 10, flexShrink: 0 }}>
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search projects"
+                style={{ width: '100%', height: 40, padding: '0 13px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 12, color: 'var(--color-text-primary)', fontSize: 16 }} />
+            </div>
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y', padding: '0 4px 12px' }}>
+              {filtered.map((p) => {
+                const ptabs = byProject[p.id] ?? [];
+                const working = p.status === 'working' || ptabs.some((t) => t.status === 'working');
+                return (
+                  <button key={p.id} onClick={() => { useProjects.getState().setActive(p.id); setOverseerProject(p.id); }}
+                    style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', textAlign: 'left', padding: '15px 12px', background: 'transparent', border: 'none', borderBottom: '1px solid var(--color-border)', cursor: 'pointer' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ fontSize: 16, fontWeight: 600, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{p.name}</span>
+                      <div style={{ font: '400 12px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>{homePath(p.workingDir)}</div>
+                    </div>
+                    {working
+                      ? <Spinner size={13} />
+                      : <span style={{ flexShrink: 0, font: '400 12px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{timeAgo(p.lastActivityAt)}</span>}
+                    <CaretRight size={18} color="var(--color-text-tertiary)" />
+                  </button>
+                );
+              })}
+              {!filtered.length && <div style={{ padding: 16, color: 'var(--color-text-tertiary)', fontSize: 13 }}>No projects</div>}
+            </div>
+          </div>
+        )}
         <SettingsModal open={settings} onClose={() => setSettings(false)} />
       </div>
     );

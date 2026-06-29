@@ -30,7 +30,6 @@ import { useSettings } from './stores/settings';
 import { useServers } from './stores/servers';
 import { useViewMode } from './stores/viewMode';
 import { useGroups } from './components/panes/store';
-import { useOverseer } from './components/overseer/store';
 
 function maybeNotify(sessionId: string) {
   const { notify, pushEnabled } = useSettings.getState();
@@ -108,10 +107,7 @@ export default function App() {
       <AppShell>
         <Workspace
           sidebar={viewMode === 'overseer'
-            ? <OverseerProjectSidebar
-                onSelectProject={(id) => useProjects.getState().setActive(id)}
-                onOpenWorker={(tid) => useOverseer.getState().drillInto(tid)}
-              />
+            ? <OverseerProjectSidebar />
             : <ProjectSidebar
                 onSelectTab={selectTab}
                 onSelectAgent={(id) => useAgentUI.getState().selectAgent(id)}
