@@ -14,7 +14,7 @@ import { Icon } from '../atoms';
 import { Markdown } from '../../Markdown';
 import { ChatImage } from '../../ChatImage';
 import { WorkingIndicator } from '../../WorkingIndicator';
-import { useRenderVals } from '../store';
+import { useOverseer, useRenderVals } from '../store';
 import type { StreamMessage } from '../types';
 
 // `.md-view`'s CSS consumes the GLOBAL `--color-*` tokens (defined on :root), which
@@ -142,19 +142,59 @@ function NoteMsg({ msg }: { msg: StreamMessage }) {
 
 export function ConversationStream() {
   const { stream, busy } = useRenderVals();
+  const coordinatorId = useOverseer((s) => s.coordinatorId);
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Follow the conversation ONLY when the user is already parked at the bottom — an
-  // unconditional scrollIntoView would yank a user who has scrolled up to read.
-  // "Pinned" = within ~48px of the bottom (matches the agent chat's scrollEdgeThreshold).
-  // Re-runs on a new message and on the busy toggle (so the WorkingIndicator stays in view).
+  // Initial-stick state — mirrors the agent ChatView's StickToEndOnLoad. The coordinator
+  // stream comes from the same incremental useStructuredChat source as the agent chat, so
+  // on open it backfills as a rapid 0→N append burst with the viewport stranded at the TOP.
+  // `settledRef` = have we handed off to the live pinned gate yet? `prevLenRef` tracks the
+  // last seen length (-1 = re-armed). `termRef` detects a coordinator-thread switch.
+  const settledRef = useRef(false);
+  const prevLenRef = useRef(-1);
+  const termRef = useRef(coordinatorId);
+
+  // Two regimes:
+  //  • INITIAL OPEN / backfill — force an INSTANT jump to the newest message regardless of
+  //    the pinned gate, and keep re-snapping through the append burst (so a tall history that
+  //    starts at scrollTop:0 doesn't strand the view at the top). `behavior:'auto'` so it
+  //    never animates up from the top. Disengage once the user scrolls off the bottom.
+  //  • LIVE updates — follow ONLY while the user is parked at the bottom (~48px, matching the
+  //    agent chat's scrollEdgeThreshold), so a reader who scrolled up isn't yanked down.
+  // Re-runs on a new message, the busy toggle (keeps the WorkingIndicator in view), and a
+  // coordinator-thread switch.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+
+    // New coordinator thread, or a reset/reconnect that cleared the stream (length regressed)
+    // → re-arm so the fresh backfill burst re-sticks to the bottom from scratch.
+    if (termRef.current !== coordinatorId || stream.length < prevLenRef.current) {
+      termRef.current = coordinatorId;
+      settledRef.current = false;
+      prevLenRef.current = -1;
+    }
+
+    if (!settledRef.current) {
+      if (stream.length > prevLenRef.current) {
+        // Backfill / first hydration tick → snap to the bottom instantly and keep arming.
+        prevLenRef.current = stream.length;
+        bottomRef.current?.scrollIntoView({ behavior: 'auto' });
+        return;
+      }
+      // Count held steady while still armed: if the user has scrolled off the bottom, hand
+      // off to the live pinned gate; otherwise fall through and keep them pinned (e.g. so the
+      // WorkingIndicator stays in view on a busy toggle).
+      if (!pinned) {
+        settledRef.current = true;
+        return;
+      }
+    }
+
     if (pinned) bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [stream.length, busy]);
+  }, [stream.length, busy, coordinatorId]);
 
   return (
     <div
@@ -178,7 +218,7 @@ export function ConversationStream() {
       })}
       {/* single indeterminate spinner while the coordinator works — last child, before the sentinel */}
       {busy && <WorkingIndicator />}
-      {/* sentinel — scrolled into view on new messages (only while pinned) */}
+      {/* sentinel — scrolled into view: forced on initial backfill, gated by pinned when live */}
       <div ref={bottomRef} style={{ flex: 'none', height: 0 }} />
     </div>
   );

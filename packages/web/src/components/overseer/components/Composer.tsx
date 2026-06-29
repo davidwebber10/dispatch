@@ -91,7 +91,12 @@ export function Composer() {
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      // Don't submit mid-IME-composition: CJK candidate selection commits with Enter, so
+      // firing the directive there would swallow the composition (important for CJK input).
+      if (e.nativeEvent.isComposing) return;
+      // Enter (without Shift) submits — this also covers the ⌘/Ctrl+Enter hint; Shift+Enter
+      // inserts a newline. Mirrors the agent ChatView composer's submit behavior.
+      if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         sendDirective();
         resetHeight();
