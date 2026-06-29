@@ -28,7 +28,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       }
 
       if (isPtyType(type)) {
-        const terminal = sessionService.createTerminal(req.params.id, type, label, skipPermissions, workingDir, externalId);
+        const terminal = sessionService.createTerminal(req.params.id, type, label, skipPermissions, workingDir, externalId, config);
         broadcaster?.broadcast({ type: 'terminal:created', terminal });
         broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: req.params.id });
         res.status(201).json(terminal);
@@ -75,6 +75,14 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // GET /api/terminals/:terminalId/conversation/search?q=... — full-history search.
   router.get('/terminals/:terminalId/conversation/search', (req, res) => {
     res.json(sessionService.searchConversation(req.params.terminalId, String(req.query.q ?? '')));
+  });
+
+  // POST /api/terminals/:terminalId/message { text } — send a structured message to a stream-json session.
+  router.post('/terminals/:terminalId/message', (req, res) => {
+    const text = req.body?.text;
+    if (typeof text !== 'string' || !text) return res.status(400).json({ error: 'text (string) is required' });
+    try { sessionService.sendStructuredMessage(req.params.terminalId, text); res.status(204).end(); }
+    catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
   });
 
   // POST /api/terminals/:terminalId/input { data } — write raw bytes to the live PTY.

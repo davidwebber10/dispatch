@@ -34,6 +34,8 @@ export class SessionService {
   private toolsAwareness?: () => string | null;
   /** Drives structured (stream-json) sessions for claude-code threads; set by server wiring. */
   private structuredManager?: import('../structured/manager.js').StructuredSessionManager;
+  /** Override for structured command (test seam: lets tests spawn fake-claude instead of real claude). */
+  private structuredCommandOverride?: { command: string; args: string[] };
 
   constructor(
     private db: Database.Database,
@@ -55,6 +57,8 @@ export class SessionService {
   }
 
   setStructuredManager(m: import('../structured/manager.js').StructuredSessionManager): void { this.structuredManager = m; }
+
+  setStructuredCommandOverride(cmd: { command: string; args: string[] }): void { this.structuredCommandOverride = cmd; }
 
   setStatusContext(ctx: StatusContext): void {
     this.statusContext = ctx;
@@ -181,7 +185,7 @@ export class SessionService {
 
   // --- Terminal-level operations ---
 
-  createTerminal(sessionId: string, type: TerminalType, label?: string, skipPermissions?: boolean, workingDir?: string, externalId?: string): terminalsDb.Terminal {
+  createTerminal(sessionId: string, type: TerminalType, label?: string, skipPermissions?: boolean, workingDir?: string, externalId?: string, config?: Record<string, any>): terminalsDb.Terminal {
     const session = sessionsDb.getById(this.db, sessionId);
     if (!session) throw new Error('Session not found');
 
@@ -204,6 +208,7 @@ export class SessionService {
       skipPermissions,
       workingDir: resolvedDir,
       externalId,
+      config,
     });
 
     try {
@@ -656,7 +661,7 @@ export class SessionService {
       const developerNote = this.toolsAwareness?.() ?? null;
       const secretsMcp = composeInjection(specs, { configPath: this.mcpConfigPath, prompts, developerNote });
       if (config.transport === 'structured' && terminal.type === 'claude-code' && this.structuredManager) {
-        const sc = provider.buildStructuredCommand?.({ workDir, secretsMcp });
+        const sc = this.structuredCommandOverride ?? provider.buildStructuredCommand?.({ workDir, secretsMcp });
         if (!sc) throw new Error('structured transport not supported for this provider');
         const pid = this.structuredManager.spawn(terminalId, { command: sc.command, args: sc.args, workDir });
         terminalsDb.updatePid(this.db, terminalId, pid);
