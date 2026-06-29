@@ -21,7 +21,8 @@ import { createPortal } from 'react-dom';
 import {
   DndContext,
   DragOverlay,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   useSensor,
   useSensors,
   closestCenter,
@@ -411,9 +412,14 @@ function GroupedTabBarInner({ onSelect }: { onSelect?: () => void }) {
   /* ── Active slot (for DragOverlay render) ───────────────────────── */
   const activeSlot = activeId ? (slots.find((s) => s.id === activeId) ?? null) : null;
 
-  /* ── Sensors ─────────────────────────────────────────────────────── */
+  /* ── Sensors ─────────────────────────────────────────────────────────
+     Mouse uses a DISTANCE constraint: the drag begins after a few px of
+     travel, with no hold. (The old single PointerSensor used delay+tolerance,
+     which CANCELS a quick desktop drag — that's why drag felt dead.) Touch
+     keeps a short long-press so the bar can still be swipe-scrolled. ── */
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { delay: 150, tolerance: 6 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 8 } }),
   );
 
   /* ── Handlers ────────────────────────────────────────────────────── */
