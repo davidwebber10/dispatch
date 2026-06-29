@@ -5,6 +5,7 @@ import { useTabs } from '../../stores/tabs';
 
 const TYPES: { type: string; label: string; config?: Record<string, unknown> }[] = [
   { type: 'claude-code', label: 'Claude Code' },
+  { type: 'claude-code', label: 'Claude (structured)', config: { transport: 'structured' } },
   { type: 'codex', label: 'Codex' },
   { type: 'shell', label: 'Terminal' },
 ];
@@ -26,7 +27,17 @@ export function NewTabMenu({ sessionId, onClose, onCreated, onPickClaude, onPick
 
   async function add(t: (typeof TYPES)[number]) {
     onClose();
-    // Claude Code opens the name/resume modal instead of creating instantly.
+    // Structured transport creates directly; PTY Claude Code opens the name/resume modal.
+    if (t.config?.transport === 'structured') {
+      try {
+        const term = await api.createTerminal(sessionId, { type: t.type, ...(t.config ? { config: t.config } : {}) });
+        await useTabs.getState().loadTabs(sessionId);
+        useTabs.getState().markLoading(term.id);
+        onCreated?.(term.id);
+      } catch { /* surfaced via connection state */ }
+      return;
+    }
+    // Claude Code (PTY) and Codex open the name/resume modal instead of creating instantly.
     if (t.type === 'claude-code' && onPickClaude) { onPickClaude(); return; }
     if (t.type === 'codex' && onPickCodex) { onPickCodex(); return; }
     try {
@@ -44,8 +55,8 @@ export function NewTabMenu({ sessionId, onClose, onCreated, onPickClaude, onPick
           <div onClick={(e) => { e.stopPropagation(); onClose(); }} style={{ position: 'fixed', inset: 0, zIndex: 200 }} />
           <div onClick={(e) => e.stopPropagation()} style={{ position: 'fixed', top: pos?.top ?? -9999, left: pos?.left ?? -9999, visibility: pos ? 'visible' : 'hidden', zIndex: 201, width: MENU_W, background: '#1B1B1E', border: '1px solid #2C2C32', borderRadius: 9, padding: 4, boxShadow: '0 20px 50px -20px rgba(0,0,0,.8)' }}>
             <div style={{ font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)', padding: '4px 8px' }}>NEW THREAD</div>
-            {TYPES.map((t) => (
-              <button key={t.type} onClick={() => void add(t)} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13, whiteSpace: 'nowrap' }}>{t.label}</button>
+            {TYPES.map((t, i) => (
+              <button key={`${t.type}-${i}`} onClick={() => void add(t)} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13, whiteSpace: 'nowrap' }}>{t.label}</button>
             ))}
           </div>
         </>,
