@@ -22,7 +22,7 @@ import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
 import { useThreadStatus } from '../../stores/threadStatus';
 import { useStructuredChat } from '../tabs/chat/useStructuredChat';
-import type { PendingPermission } from '../../api/types';
+import type { PendingPermission, Terminal } from '../../api/types';
 import { CANNED, m } from './data';
 import { convItemsToStream, groupByMission, isManagedWorker, mapStatus, needsFromThreads } from './live';
 import type { AgentType, Ribbon, RenderVals, Scenario, StreamMessage } from './types';
@@ -49,6 +49,7 @@ interface OverseerState {
   ensuring: boolean; // a find-or-create coordinator request is in flight
   resolved: string[]; // optimistically dismissed need ids
   pendingByTerminal: Record<string, PendingPermission | null>; // fetched escalations (the membrane), keyed by agent terminal id
+  archivedByProject: Record<string, Terminal[]>; // archived (complete_agent'd) terminals per project; surfaced as done outcomes
 
   // ---- actions (public surface) ----
   setScenario: (scenario: Scenario) => void;
@@ -73,6 +74,7 @@ interface OverseerState {
   setCoordinatorStream: (stream: StreamMessage[]) => void;
   setCoordinatorBusy: (busy: boolean) => void;
   setPending: (terminalId: string, pending: PendingPermission | null) => void;
+  setArchivedTerminals: (projectId: string, terminals: Terminal[]) => void;
   /** Clean slate: archive the coordinator + its agents and start a fresh Dispatch conversation. */
   resetDispatch: () => void;
 }
@@ -96,6 +98,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   ensuring: false,
   resolved: [],
   pendingByTerminal: {},
+  archivedByProject: {},
 
   // ---- actions ----
   setScenario: (scenario) => set({ scenario }), // vestigial no-op (real state is live data)
@@ -218,6 +221,9 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   setPending: (terminalId, pending) =>
     set((s) => ({ pendingByTerminal: { ...s.pendingByTerminal, [terminalId]: pending } })),
 
+  setArchivedTerminals: (projectId, terminals) =>
+    set((s) => ({ archivedByProject: { ...s.archivedByProject, [projectId]: terminals } })),
+
   resetDispatch: () => {
     const sessionId = get().coordinatorProject;
     if (!sessionId) return;
@@ -272,6 +278,38 @@ export function useCoordinatorSync(): void {
   useEffect(() => {
     setCoordinatorBusy(busy);
   }, [busy, setCoordinatorBusy]);
+
+  // Keep the project's archived (complete_agent'd) workers in the store so the rail can
+  // render them as done outcomes. Folded in here (the single root-mounted sync) to avoid
+  // touching the Overseer root component.
+  useArchivedSync(activeId);
+}
+
+/**
+ * Fetch + maintain the project's ARCHIVED structured terminals (the live list excludes
+ * archived_at, so completed agents are invisible without this). Refetches when the project
+ * changes OR when the live worker set changes — an agent completing drops out of the live
+ * list (that change re-triggers), so it gets picked up in the archived list right after.
+ */
+function useArchivedSync(activeId: string | null): void {
+  const byProject = useTabs((s) => s.byProject);
+  const setArchivedTerminals = useOverseer((s) => s.setArchivedTerminals);
+
+  // Signature of the live managed-worker ids: changes when an agent is archived (drops out).
+  const liveSig = useMemo(() => {
+    const terminals = (activeId && byProject[activeId]) || [];
+    return terminals.filter(isManagedWorker).map((t) => t.id).join(',');
+  }, [activeId, byProject]);
+
+  useEffect(() => {
+    if (!activeId) return;
+    let cancelled = false;
+    api
+      .listArchivedTerminals(activeId)
+      .then((list) => { if (!cancelled) setArchivedTerminals(activeId, list); })
+      .catch(() => { /* best-effort: the live rail still renders without archived outcomes */ });
+    return () => { cancelled = true; };
+  }, [activeId, liveSig, setArchivedTerminals]);
 }
 
 /**
@@ -322,13 +360,14 @@ export function useNeedsSync(): void {
 // Derived view model. Pure read over the live stores (no websocket here — that's
 // owned by useCoordinatorSync), memoized so the snapshot reference is stable.
 export function useRenderVals(): RenderVals {
-  const { coordinatorId, coordinatorStream, coordinatorBusy, resolved, pendingByTerminal } = useOverseer(
+  const { coordinatorId, coordinatorStream, coordinatorBusy, resolved, pendingByTerminal, archivedByProject } = useOverseer(
     useShallow((s) => ({
       coordinatorId: s.coordinatorId,
       coordinatorStream: s.coordinatorStream,
       coordinatorBusy: s.coordinatorBusy,
       resolved: s.resolved,
       pendingByTerminal: s.pendingByTerminal,
+      archivedByProject: s.archivedByProject,
     })),
   );
   const activeId = useProjects((s) => s.activeId);
@@ -337,7 +376,8 @@ export function useRenderVals(): RenderVals {
 
   return useMemo(() => {
     const terminals = (activeId && byProject[activeId]) || [];
-    const missions = groupByMission(terminals, byTerminal);
+    const archived = (activeId && archivedByProject[activeId]) || [];
+    const missions = groupByMission(terminals, byTerminal, archived);
     const needs = needsFromThreads(terminals, byTerminal, pendingByTerminal).filter((n) => !resolved.includes(n.id));
 
     let working = 0;
@@ -378,5 +418,5 @@ export function useRenderVals(): RenderVals {
       drillOpen: false,
       overviewOpen: true,
     };
-  }, [coordinatorId, coordinatorStream, coordinatorBusy, resolved, pendingByTerminal, activeId, byProject, byTerminal]);
+  }, [coordinatorId, coordinatorStream, coordinatorBusy, resolved, pendingByTerminal, archivedByProject, activeId, byProject, byTerminal]);
 }
