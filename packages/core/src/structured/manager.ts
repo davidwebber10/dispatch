@@ -111,6 +111,10 @@ export class StructuredSessionManager extends EventEmitter {
           });
         }
       }
+      // Turn boundary: a `result` event ends the current turn → the thread is idle.
+      // Consumers use this to settle status (working → idle) and, for an agent, to push
+      // a completion notice to its coordinator.
+      if (event?.type === 'result') this.emit('idle', terminalId);
       this.emit('event', terminalId, event);
     });
 
@@ -148,6 +152,8 @@ export class StructuredSessionManager extends EventEmitter {
       if (s.events.length > MAX_EVENTS) s.events.shift();
     }
     this.emit('event', terminalId, ev);
+    // Turn start: delivering a message kicks off work → the thread is busy.
+    this.emit('busy', terminalId);
   }
 
   /** The in-flight permission/question awaiting a human decision, or null. */

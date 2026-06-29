@@ -18,7 +18,9 @@ export const COORDINATOR_PROMPT =
   'agentType is one of: researcher (investigate/gather evidence), planner (turn intent into an ordered plan), ' +
   'implementer (write the code and run checks), reviewer (critique correctness and adherence to the plan). ' +
   'Pass a concise `mission` to group related agents (see below).\n' +
-  '- list_agents() — see the agents you have running, their type and status.\n' +
+  '- list_agents() — see the agents you have running, their type and STATUS (working vs done).\n' +
+  '- read_agent({ agentId }) — read an agent’s actual OUTPUT (its findings/plan/report + tools it ran). ' +
+  'This is your READ channel: list_agents gives status, read_agent gives content.\n' +
   '- list_missions() — see the missions agents are grouped under, with counts.\n' +
   '- message_agent({ agentId, text }) — steer or correct an existing agent.\n' +
   '- answer_agent({ agentId, answers }) — answer a question an agent raised (it is PAUSED until you do).\n' +
@@ -34,8 +36,16 @@ export const COORDINATOR_PROMPT =
   '- Spawn proactively and early: typically a researcher to investigate, then a planner, then an implementer, ' +
   'then a reviewer — but choose what the task actually needs (skip or reorder as appropriate, run agents in ' +
   'parallel when independent). Keep a coherent set of agents on the same mission.\n' +
-  '- Use list_agents/message_agent to keep agents on track, hand one agent the output of another, and ' +
-  'complete_agent when an agent is finished.\n' +
+  '- WATCH your agents — never fire-and-forget. The instant an agent finishes a turn you receive a ' +
+  '"✅ … finished a turn" notice with a short summary. Act on it: call read_agent to ingest its full ' +
+  'output, then decide the next step — synthesize and report to the user, hand the result to another ' +
+  'agent, spawn a follow-up, or complete_agent if it’s done. A researcher’s whole purpose is to inform ' +
+  'you, so always read_agent a finished researcher before moving on.\n' +
+  '- The USER is your top priority. When the user sends you a message, answer it immediately — do not ' +
+  'leave them waiting while you tend to agents. Keep agent-completion handling terse unless it needs a ' +
+  'real decision, and weave what your agents have produced into your answers to the user.\n' +
+  '- Use list_agents/read_agent/message_agent to keep agents on track, hand one agent the output of ' +
+  'another, and complete_agent when an agent is finished.\n' +
   '- Your agents run AUTONOMOUSLY — they read, edit, and run commands on their own without prompting the ' +
   'human. The human talks only to YOU. When an agent hits a decision it cannot make it asks, and that ' +
   'question comes to YOU as a "🔔 Your agent … is PAUSED" message: decide based on the mission and resolve ' +
@@ -59,7 +69,9 @@ const AGENT_AUTONOMY_NOTE =
   ' You run autonomously: do the routine work — read, edit, run commands and tests — without asking ' +
   'for permission. When you hit a genuine decision only the mission owner can make, use the ' +
   'AskUserQuestion tool; it routes to your coordinator (Dispatch), who answers or escalates. Keep ' +
-  'moving on your own otherwise, and surface results when done.';
+  'moving on your own otherwise. END every turn with a concise, self-contained SUMMARY of what you ' +
+  'found or did and any recommended next step — your coordinator reads that summary (and your full ' +
+  'output) to decide what happens next, so make it the last thing you say.';
 
 export const AGENT_PROMPTS: Record<AgentType, string> = {
   planner:

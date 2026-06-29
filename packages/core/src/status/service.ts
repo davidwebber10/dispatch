@@ -59,6 +59,16 @@ export class StatusService {
     if (terminal) this.apply(terminal.session_id, terminalId, 'needs_input', activity);
   }
 
+  /**
+   * Settle edge: a structured thread's turn completed (the `result` event). Flips it off
+   * `working` so the rail + list_agents reflect reality (fixes the stale-working bug) and
+   * fires the settled hook (push / coordinator completion notice).
+   */
+  markIdle(terminalId: string, activity?: string): void {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (terminal) this.apply(terminal.session_id, terminalId, 'idle', activity);
+  }
+
   private apply(sessionId: string, terminalId: string, status: ThreadStatus, activity?: string): void {
     const prior = terminalsDb.getById(this.db, terminalId)?.status; // persisted enum before update
     const terminalStatus = TO_TERMINAL[status];

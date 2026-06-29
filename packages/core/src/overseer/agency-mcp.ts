@@ -113,6 +113,21 @@ export const TOOLS = [
     },
   },
   {
+    name: 'read_agent',
+    description:
+      "Read an agent's actual OUTPUT — its assistant text (findings, plan, report) and the tools it ran. " +
+      'Use this to INGEST what an agent produced: after a "✅ … finished a turn" notice, or any time you ' +
+      'need to see an agent\'s work. list_agents only returns status, never content — read_agent is the ' +
+      'read channel. Returns { status, output, tools }.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agentId: { type: 'string', description: 'The agent thread id (from spawn_agent / list_agents / a completion notice).' },
+      },
+      required: ['agentId'],
+    },
+  },
+  {
     name: 'complete_agent',
     description: 'Mark an agent done and archive its thread once its work is finished.',
     inputSchema: {
@@ -208,6 +223,23 @@ async function completeAgent(args: { agentId: string }): Promise<{ ok: true; age
 }
 
 /**
+ * The READ channel: pull an agent's output so the coordinator can ingest it. Fetches the
+ * agent's transcript and returns its assistant text (the substantive findings/report) plus
+ * the tools it ran and its current status. This is what closes the orchestration loop —
+ * list_agents gives status, read_agent gives content.
+ */
+async function readAgent(args: { agentId: string }): Promise<{ agentId: string; status: string | null; output: string; tools: string[] }> {
+  if (!args?.agentId) throw new Error('agentId is required');
+  const conv = await httpJson('GET', `${apiBase()}/api/terminals/${args.agentId}/conversation?limit=500`);
+  const items: any[] = Array.isArray(conv?.items) ? conv.items : [];
+  const output = items.filter((it) => it?.kind === 'assistant' && it.text).map((it) => it.text).join('\n\n').trim();
+  const tools = items.filter((it) => it?.kind === 'tool' && it.toolName).map((it) => it.toolName as string);
+  let status: string | null = null;
+  try { const t = await httpJson('GET', `${apiBase()}/api/terminals/${args.agentId}`); status = t?.status ?? null; } catch { /* ignore */ }
+  return { agentId: args.agentId, status, output: output || '(no assistant output captured yet)', tools: tools.slice(-30) };
+}
+
+/**
  * Answer a paused agent's AskUserQuestion. Resolves the agent's pending permission via the
  * existing /permission endpoint, folding the chosen option(s) in as the AskUserQuestion
  * `answers` map. Accepts either an explicit `answers` map (question header -> option label) or,
@@ -241,6 +273,7 @@ export async function callTool(
       case 'list_missions': result = await listMissions(); break;
       case 'message_agent': result = await messageAgent(args ?? {}); break;
       case 'answer_agent': result = await answerAgent(args ?? {}); break;
+      case 'read_agent': result = await readAgent(args ?? {}); break;
       case 'complete_agent': result = await completeAgent(args ?? {}); break;
       default: throw new Error(`Unknown tool: ${name}`);
     }

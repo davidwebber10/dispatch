@@ -21,8 +21,8 @@ describe('agency-mcp', () => {
     const res = await handleRequest({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
     expect(res).not.toBeNull();
     const names = (res!.result as any).tools.map((t: any) => t.name).sort();
-    expect(names).toEqual(['answer_agent', 'complete_agent', 'list_agents', 'list_missions', 'message_agent', 'spawn_agent']);
-    expect(TOOLS).toHaveLength(6);
+    expect(names).toEqual(['answer_agent', 'complete_agent', 'list_agents', 'list_missions', 'message_agent', 'read_agent', 'spawn_agent']);
+    expect(TOOLS).toHaveLength(7);
   });
 
   it('initialize returns protocolVersion + tools capability', async () => {
@@ -63,6 +63,30 @@ describe('agency-mcp', () => {
     expect(msgUrl).toBe('http://localhost:9999/api/terminals/agent-1/message');
     expect(msgInit.method).toBe('POST');
     expect(JSON.parse(msgInit.body)).toEqual({ text: 'investigate X' });
+  });
+
+  it('read_agent returns the agent assistant output + tools + status (the read channel)', async () => {
+    const fetchMock = vi.fn()
+      // 1) GET /conversation -> items
+      .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ items: [
+        { kind: 'user', text: 'investigate the repo' },
+        { kind: 'assistant', text: 'Found A' },
+        { kind: 'tool', toolName: 'Grep' },
+        { kind: 'assistant', text: 'Recommend B' },
+      ] }) })
+      // 2) GET /terminals/:id -> status
+      .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ id: 'agent-1', status: 'waiting' }) });
+    global.fetch = fetchMock as any;
+
+    const out = await callTool('read_agent', { agentId: 'agent-1' });
+    expect(out.isError).toBeUndefined();
+    expect(JSON.parse(out.content[0].text)).toEqual({
+      agentId: 'agent-1',
+      status: 'waiting',
+      output: 'Found A\n\nRecommend B',
+      tools: ['Grep'],
+    });
+    expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/terminals/agent-1/conversation?limit=500');
   });
 
   it('spawn_agent forwards a mission into the create body config', async () => {

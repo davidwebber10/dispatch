@@ -182,6 +182,46 @@ it('stopping an agent notifies its coordinator (Dispatch is told to check in)', 
   fs.rmSync(cfgDir, { recursive: true, force: true });
 });
 
+it('a structured turn flips status working → idle on the result event (no more stuck "working")', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'researcher', role: 'agent' } });
+  const id = t.body.id;
+  await pollExternalId(db, id, 'sess-fake');
+  // A normal message → the fake replies + emits `result` (turn end).
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'investigate' });
+  // Status settles to 'waiting' (idle) once the result lands — it no longer stays 'working' forever.
+  const start = Date.now();
+  let status = '';
+  while (Date.now() - start < 3000) {
+    status = (db.prepare('SELECT status FROM terminals WHERE id = ?').get(id) as { status: string }).status;
+    if (status === 'waiting') break;
+    await sleep(25);
+  }
+  expect(status).toBe('waiting');
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+it('an agent completing a turn pushes an immediate completion notice to its coordinator', async () => {
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coord-done-'));
+  const a = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fake] } });
+  const s = await request(a).post('/api/sessions').send({ provider: 'claude-code', workingDir: dir, name: 'done' });
+  const coordId = (await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', role: 'coordinator' } })).body.id;
+  const agentId = (await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'researcher', role: 'agent', mission: 'Repo map' } })).body.id;
+  await pollExternalId(db, coordId, 'sess-fake');
+
+  // Seed the agent with a task → it replies + emits `result` (turn end).
+  await request(a).post(`/api/terminals/${agentId}/message`).send({ text: 'map the repo' });
+
+  // The coordinator gets an IMMEDIATE "✅ … finished a turn" notice naming the agent, its last
+  // output (the summary), and the read_agent pointer — the closed orchestration loop.
+  const note = await pollEvent(a, coordId, (e) => e?.type === 'user' && JSON.stringify(e).includes(agentId) && JSON.stringify(e).includes('finished a turn'), 4000);
+  expect(JSON.stringify(note)).toContain('read_agent');
+  expect(JSON.stringify(note)).toContain('echo:map the repo'); // the agent's last output, folded into the summary
+
+  await request(a).post(`/api/terminals/${agentId}/stop`);
+  await request(a).post(`/api/terminals/${coordId}/stop`);
+  fs.rmSync(cfgDir, { recursive: true, force: true });
+});
+
 it('POST /autonomy flips a supervised agent to autonomous: resolves the pending + persists config', async () => {
   const t = await request(app)
     .post(`/api/sessions/${sessionId}/terminals`)

@@ -103,6 +103,15 @@ function wirePermissionMembrane(structuredManager: StructuredSessionManager, sta
   structuredManager.on('resolved', (terminalId: string) => {
     statusService.markWorking(terminalId, 'Working…');
   });
+  // Turn boundaries → accurate status, and the moment an AGENT settles, push an immediate
+  // completion notice up to its coordinator (so Dispatch ingests results, not fire-and-forget).
+  structuredManager.on('busy', (terminalId: string) => {
+    statusService.markWorking(terminalId, 'Working…');
+  });
+  structuredManager.on('idle', (terminalId: string) => {
+    statusService.markIdle(terminalId);
+    sessionService.noteAgentCompletion(terminalId);
+  });
 }
 
 export function createApp(options: CreateAppOptions): import('express').Express {

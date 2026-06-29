@@ -629,6 +629,44 @@ export class SessionService {
     this.notifyCoordinatorOfAgent(agentTerminalId, note);
   }
 
+  /** The agent's most recent assistant text, pulled live from the structured event ring
+   *  (no transcript-file latency), truncated for a nudge. '' when there's none yet. */
+  private lastAssistantText(terminalId: string, max = 600): string {
+    const events = (this.structuredManager?.getEvents(terminalId) ?? []) as any[];
+    for (let i = events.length - 1; i >= 0; i--) {
+      const e = events[i];
+      if (e?.type === 'assistant' && Array.isArray(e.message?.content)) {
+        const text = e.message.content.filter((b: any) => b?.type === 'text').map((b: any) => b.text ?? '').join('').trim();
+        if (text) return text.length > max ? text.slice(0, max) + '…' : text;
+      }
+    }
+    return '';
+  }
+
+  /**
+   * An agent's turn just completed (the `result` event). Push an IMMEDIATE, concise completion
+   * notice to its coordinator (the closed orchestration loop): a one-line summary from the agent's
+   * last output + a pointer to read_agent for the full transcript, so Dispatch ingests the result
+   * and decides the next step instead of forgetting the agent. No-op for non-agents / no coordinator.
+   */
+  noteAgentCompletion(agentTerminalId: string): void {
+    const agent = terminalsDb.getById(this.db, agentTerminalId);
+    if (!agent) return;
+    let cfg: Record<string, any> = {};
+    try { cfg = JSON.parse(agent.config || '{}'); } catch { /* default {} */ }
+    if (cfg.role !== 'agent') return;
+    const mission = typeof cfg.mission === 'string' && cfg.mission.trim() ? cfg.mission.trim() : null;
+    const summary = this.lastAssistantText(agentTerminalId);
+    const note =
+      `✅ Your agent "${agent.label || 'agent'}"${mission ? ` (mission "${mission}")` : ''} ` +
+      `[agentId ${agentTerminalId}] just finished a turn.\n` +
+      (summary ? `Its latest output: ${summary}\n\n` : '') +
+      `Read its full work with read_agent({ agentId: "${agentTerminalId}" }), then decide the next step — ` +
+      `ingest the result, hand it to another agent, spawn a follow-up, or report back to the user. Keep this ` +
+      `brief unless it needs action; the user's own messages are always your top priority.`;
+    this.notifyCoordinatorOfAgent(agentTerminalId, note);
+  }
+
   /** The gated tool/question a structured AGENT thread is blocked on, or null. */
   getPendingPermission(terminalId: string): import('../structured/manager.js').PendingPermission | null {
     return this.structuredManager?.getPending(terminalId) ?? null;
