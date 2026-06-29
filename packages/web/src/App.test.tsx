@@ -13,5 +13,6 @@ afterEach(() => vi.unstubAllGlobals());
 
 test('renders the app shell with the Dispatch brand', () => {
   render(<App />);
-  expect(screen.getByText('Dispatch')).toBeInTheDocument();
+  // "Dispatch" appears twice in the top bar: the product brand and the mode toggle.
+  expect(screen.getAllByText('Dispatch').length).toBeGreaterThan(0);
 });

@@ -1,15 +1,18 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Wrench, Brain, Terminal as TerminalIcon, CaretRight, MagnifyingGlass, X, ArrowUp, CaretDoubleDown, Paperclip, PaperPlaneTilt, FileText, Sparkle } from '@phosphor-icons/react';
+import { Wrench, Brain, Terminal as TerminalIcon, MagnifyingGlass, X, ArrowUp, CaretDoubleDown, Paperclip, PaperPlaneTilt, Sparkle } from '@phosphor-icons/react';
 import { api } from '../../api/client';
 import type { ConvItem, SearchMatch } from '../../api/types';
+import { useStructuredStream } from './useStructuredStream';
 import { useActivity } from '../../stores/activity';
 import { useThreadStatus } from '../../stores/threadStatus';
 import { useTabs, findTerminal } from '../../stores/tabs';
 import { useThreadMode } from '../../stores/threadMode';
 import { useUI } from '../../stores/ui';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { useDraft } from '../../hooks/useDraft';
 import { Spinner } from '../common/Spinner';
-import { renderMarkdown, highlightCode, langFromPath } from '../../lib/markdown';
+import { renderMarkdown } from '../../lib/markdown';
+import { ToolCall, ToolResult } from './ToolCall';
 
 /**
  * View mode: a READ-ONLY, chat-style render of the session's live transcript
@@ -21,9 +24,15 @@ const LIMIT = 120; // jsonl lines per window (initial load + each older chunk)
 
 export function ConversationView({ terminalId }: { terminalId: string }) {
   const isMobile = useIsMobile(); // desktop floats the View/Terminal toggle over the top-right
+  const tab = useTabs((s) => findTerminal(s.byProject, terminalId));
+  const structured = (tab?.config as any)?.transport === 'structured';
+
+  // Structured path: live items from the ws stream (no polling).
+  const liveItems = useStructuredStream(structured ? terminalId : '');
+
   const [items, setItems] = useState<ConvItem[]>([]);
   const [unsupported, setUnsupported] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!structured);
   const [hasMore, setHasMore] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const earliest = useRef(0);   // top edge (startLine) of the loaded window
@@ -77,19 +86,24 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
   }
 
   // --- compose box → hand off to Terminal (View never writes to View) --
-  const tab = useTabs((s) => findTerminal(s.byProject, terminalId));
   const sessionId = tab?.sessionId;
   const setMode = useThreadMode((s) => s.set);
-  const [composeText, setComposeText] = useState('');
+  const [composeText, setComposeText, clearComposeText] = useDraft(terminalId);
   const [note, setNote] = useState('');
   function sendToTerminal() {
     const v = composeText.trim();
     if (!v) return;
-    // Send text + Enter as SEPARATE writes (see TerminalTab.sendMobileInput).
-    void api.sendInput(terminalId, v);
-    setTimeout(() => void api.sendInput(terminalId, '\r'), 80);
-    setComposeText('');
-    setMode(terminalId, 'expert'); // switch to Terminal so you watch it run
+    if (structured) {
+      // Structured transport: POST text directly; do NOT switch to Terminal mode.
+      void api.sendStructuredMessage(terminalId, v);
+      clearComposeText();
+    } else {
+      // PTY path: Send text + Enter as SEPARATE writes (see TerminalTab.sendMobileInput).
+      void api.sendInput(terminalId, v);
+      setTimeout(() => void api.sendInput(terminalId, '\r'), 80);
+      clearComposeText();
+      setMode(terminalId, 'expert'); // switch to Terminal so you watch it run
+    }
   }
   async function attachFiles(files: FileList | null) {
     if (!files || !files.length || !sessionId) return;
@@ -146,7 +160,9 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
   }
 
   // --- mount: load recent + poll for new messages at the bottom --------
+  // Skipped entirely for structured threads (live ws stream via useStructuredStream).
   useEffect(() => {
+    if (structured) return;
     let on = true;
     let timer: ReturnType<typeof setTimeout>;
     setItems([]); setUnsupported(false); setHasMore(false); setLoading(true);
@@ -170,7 +186,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
       if (on) timer = setTimeout(poll, busyRef.current ? 1000 : 2500);
     })();
     return () => { on = false; clearTimeout(timer); };
-  }, [terminalId]);
+  }, [terminalId, structured]);
 
   // Scroll up to the previous user message (the one just above the viewport).
   function scrollToPrevUser() {
@@ -263,9 +279,10 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
   }, [items]);
 
   // --- auto-scroll to bottom on new items (only if already at bottom) ---
+  const displayLen = structured ? liveItems.length : items.length;
   useEffect(() => {
     if (atBottom.current && atEnd.current && scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
-  }, [items.length, busy]);
+  }, [displayLen, busy]);
 
   function onScroll() {
     const el = scroller.current;
@@ -292,6 +309,9 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
       </div>
     );
   }
+
+  // Structured threads render from the live ws stream; polled threads use the local `items` state.
+  const displayItems = structured ? liveItems : items;
 
   return (
     <div ref={outer} style={{ position: 'relative', display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, background: 'var(--color-base)' }}>
@@ -323,17 +343,17 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
               {loadingOlder ? <><Spinner size={12} /> Loading earlier…</> : 'Scroll up for earlier messages'}
             </div>
           )}
-          {items.length === 0 && !hasMore && (
+          {displayItems.length === 0 && !hasMore && (
             <div style={{ color: 'var(--color-text-tertiary)', fontSize: 13, padding: '8px 0' }}>No messages yet. Switch to Terminal to interact.</div>
           )}
           {(() => {
             const rows: React.ReactNode[] = [];
-            for (let i = 0; i < items.length; i++) {
-              const it = items[i];
+            for (let i = 0; i < displayItems.length; i++) {
+              const it = displayItems[i];
               const key = earliest.current + i;
               let node: React.ReactNode;
               if (it.kind === 'tool') {
-                const next = items[i + 1];
+                const next = displayItems[i + 1];
                 const result = next?.kind === 'tool-result' ? next : undefined;
                 node = <ToolCall tool={it} result={result} onViewFile={openFileInViewer} />;
                 if (result) i++;
@@ -406,7 +426,7 @@ export function ConversationView({ terminalId }: { terminalId: string }) {
         <input
           value={composeText}
           onChange={(e) => setComposeText(e.target.value)}
-          placeholder="Message — sends in Terminal…"
+          placeholder={structured ? 'Message…' : 'Message — sends in Terminal…'}
           autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck={false}
           enterKeyHint="send"
           style={{ flex: 1, minWidth: 0, height: 38, padding: '0 13px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 11, color: 'var(--color-text-primary)', fontSize: 16, outline: 'none' }}
@@ -486,90 +506,6 @@ function Item({ item }: { item: ConvItem }) {
   }
   // tool-result
   return <ToolResult item={item} />;
-}
-
-/** A tool call: single-line summary; expand to an Input/Output tabbed, syntax-
- *  highlighted shelf. If it references a file, the shelf offers "View file". */
-function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?: ConvItem; onViewFile?: (path: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<'input' | 'output'>('output');
-  const name = tool.toolTitle ?? tool.toolName ?? 'Tool';
-  const input = tool.toolInput ?? '';
-  const out = result?.text ?? '';
-  const hasIn = !!input.trim();
-  const hasOut = !!out.trim();
-  const err = result?.isError;
-  const lines = hasOut ? out.split('\n').length : 0;
-  const expandable = hasIn || hasOut;
-  const effTab: 'input' | 'output' = (tab === 'input' && hasIn) ? 'input' : (hasOut ? 'output' : 'input');
-  const content = effTab === 'input' ? input : out;
-  const lang = effTab === 'input' ? (tool.toolName === 'Bash' ? 'bash' : 'json') : langFromPath(tool.toolFile);
-  return (
-    <div style={{ border: '1px solid var(--color-border)', borderRadius: 9, background: 'var(--color-elevated)', overflow: 'hidden' }}>
-      <button
-        onClick={() => expandable && setOpen((o) => !o)}
-        style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: expandable ? 'pointer' : 'default', padding: '8px 10px', display: 'flex', gap: 8, alignItems: 'center' }}
-      >
-        <CaretRight size={11} weight="bold" style={{ flexShrink: 0, color: 'var(--color-text-tertiary)', visibility: expandable ? 'visible' : 'hidden', transition: 'transform .12s ease', transform: open ? 'rotate(90deg)' : 'none' }} />
-        <Wrench size={13} color="#5A8DD6" style={{ flexShrink: 0 }} />
-        <span style={{ minWidth: 0, flex: 1, fontSize: 12.5, color: 'var(--color-text-primary)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
-        {result && <span style={{ flexShrink: 0, fontSize: 11, color: err ? 'var(--color-status-red)' : 'var(--color-text-tertiary)' }}>{err ? 'error' : `${lines} line${lines !== 1 ? 's' : ''}`}</span>}
-      </button>
-      {open && expandable && (
-        <div style={{ borderTop: '1px solid var(--color-border)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '6px 8px 0', background: 'var(--color-pane)' }}>
-            {hasIn && <TabButton active={effTab === 'input'} onClick={() => setTab('input')}>Input</TabButton>}
-            {hasOut && <TabButton active={effTab === 'output'} onClick={() => setTab('output')}>Output</TabButton>}
-            {tool.toolFile && onViewFile && (
-              <button
-                onClick={() => onViewFile(tool.toolFile!)}
-                title={tool.toolFile}
-                style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', color: 'var(--color-accent)', font: '500 11.5px var(--font-sans)', cursor: 'pointer', padding: '3px 4px' }}
-              >
-                <FileText size={13} weight="bold" /> View file
-              </button>
-            )}
-          </div>
-          <pre className="hljs" style={{ margin: 0, font: '400 11.5px var(--font-mono)', lineHeight: 1.5, padding: '9px 11px', maxHeight: 360, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-            <code dangerouslySetInnerHTML={{ __html: highlightCode(content, lang) }} />
-          </pre>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button onClick={onClick} style={{
-      padding: '4px 11px', fontSize: 11.5, borderRadius: '6px 6px 0 0', border: 'none', cursor: 'pointer',
-      background: active ? 'var(--color-elevated)' : 'transparent', color: active ? 'var(--color-text-primary)' : 'var(--color-text-secondary)', fontWeight: active ? 600 : 400,
-    }}>{children}</button>
-  );
-}
-
-/** A tool result, minimized to a one-line summary and expandable on click. */
-function ToolResult({ item }: { item: ConvItem }) {
-  const [open, setOpen] = useState(false);
-  const text = item.text ?? '';
-  if (!text.trim()) return null;
-  const lines = text.split('\n').length;
-  const err = item.isError;
-  const color = err ? 'var(--color-status-red)' : 'var(--color-text-tertiary)';
-  return (
-    <div>
-      <button
-        onClick={() => setOpen((o) => !o)}
-        style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', cursor: 'pointer', padding: '1px 0', font: '400 11.5px var(--font-mono)', color }}
-      >
-        <CaretRight size={10} weight="bold" style={{ transition: 'transform .12s ease', transform: open ? 'rotate(90deg)' : 'none' }} />
-        {err ? 'Error output' : 'Output'}<span style={{ opacity: 0.6 }}> · {lines} line{lines !== 1 ? 's' : ''}</span>
-      </button>
-      {open && (
-        <pre style={{ margin: '4px 0 0', font: '400 11.5px var(--font-mono)', lineHeight: 1.5, color, background: 'var(--color-elevated)', border: `1px solid ${err ? 'rgba(240,97,109,.3)' : 'var(--color-border)'}`, borderRadius: 8, padding: '8px 10px', maxHeight: 280, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{text}</pre>
-      )}
-    </div>
-  );
 }
 
 function Typing({ label }: { label?: string }) {

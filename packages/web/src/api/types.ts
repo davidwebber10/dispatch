@@ -128,17 +128,26 @@ export interface RunStep {
 }
 
 export interface ConvItem {
-  kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'tool-result';
+  kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'tool-result' | 'result' | 'system';
   text?: string;
   toolName?: string;
   toolTitle?: string;
   toolDetail?: string;
+  toolId?: string;    // tool_use id, for pairing tool ↔ tool-result across interleaving
   isError?: boolean;
   ts?: string;
   uuid?: string;
   line?: number;      // source JSONL line index (enables jump-to from search)
   toolInput?: string; // tool call's raw arguments (for the Input tab)
   toolFile?: string;  // file path argument (for output-language inference)
+  // result (stream-json `result` event) — the turn's outcome footer
+  costUsd?: number;
+  turns?: number;
+  durationMs?: number;
+  tokensIn?: number;
+  tokensOut?: number;
+  model?: string;
+  level?: 'info' | 'error'; // for 'system' markers
 }
 
 export interface Conversation {
@@ -147,6 +156,27 @@ export interface Conversation {
   startLine: number;   // top edge of the returned window
   hasMore: boolean;    // older lines exist above the window
   unsupported?: boolean;
+}
+
+/** One AskUserQuestion prompt inside a pending escalation. */
+export interface PermissionQuestion {
+  question: string;
+  header?: string;
+  options?: Array<string | { label?: string; name?: string; description?: string }>;
+  multiSelect?: boolean;
+}
+
+/**
+ * The gated tool / question a structured AGENT thread is blocked on (the membrane).
+ * `questions` is present for AskUserQuestion; otherwise it's a plain gated tool whose
+ * arguments live in `input`.
+ */
+export interface PendingPermission {
+  requestId: string;
+  toolName: string;
+  input?: Record<string, unknown>;
+  toolUseId?: string;
+  questions?: PermissionQuestion[];
 }
 
 export interface SearchMatch {
@@ -199,6 +229,7 @@ export interface AgentOverview {
 
 // Recent Claude Code sessions (resume picker) — mirrors core /api/sessions/:id/cc-recent.
 export interface CcRecentSession { id: string; mtime: number; preview: string; messageCount: number; truncated: boolean; }
+export interface CodexRecentSession { id: string; mtime: number; preview: string; messageCount: number; truncated: boolean; }
 
 // Setup / onboarding — mirrors core /api/setup.
 export interface ProviderStatus { name: 'claude' | 'codex'; installed: boolean; version?: string; signedIn: boolean | 'unknown'; }
@@ -210,6 +241,8 @@ export interface DopplerStatus { connected: boolean; project: string | null; con
 export interface DopplerSecret { name: string; value: string }
 export interface DopplerProject { id: string; slug: string; name: string }
 export interface DopplerConfig { name: string; environment: string }
+
+export interface ToolStatus { name: string; description: string; kind: 'binary' | 'npm' | 'script'; installed: boolean; version?: string; authed: boolean; docs?: string }
 
 export interface Integration { id: string; name: string; type: 'stdio' | 'remote'; command: string | null; args: string[]; url: string | null; headers: Record<string, string>; env: Record<string, string>; enabled: boolean; createdAt: string; updatedAt: string }
 export type AddIntegrationInput =

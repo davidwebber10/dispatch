@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { SortableList } from '../common/SortableList';
 import { FolderOpen, CaretRight } from '@phosphor-icons/react';
 import type { Session, Terminal, AgentSchedule } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
@@ -16,6 +17,7 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import { timeAgo } from '../../lib/time';
 import { NewTabMenu } from './NewTabMenu';
 import { NewClaudeThreadModal } from './NewClaudeThreadModal';
+import { NewCodexThreadModal } from './NewCodexThreadModal';
 import { RenameProjectModal } from './RenameProjectModal';
 import { RenameThreadModal } from './RenameThreadModal';
 import { api } from '../../api/client';
@@ -156,31 +158,13 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
     return () => clearTimeout(t);
   }, [fadeKey, active]);
   const showActive = active && !dimmed;
-  // Mobile long-press → open the same context menu desktop gets on right-click.
-  const lpTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lpStart = useRef<{ x: number; y: number } | null>(null);
-  const lpFired = useRef(false);
-  const cancelLp = () => { if (lpTimer.current) { clearTimeout(lpTimer.current); lpTimer.current = null; } };
   return (
     <button
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      onClick={(e) => { if (lpFired.current) { lpFired.current = false; return; } onClick(e); }}
+      onClick={(e) => onClick(e)}
       onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onMiddle(); } }}
       onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContext(e.clientX, e.clientY); }}
-      onTouchStart={(e) => {
-        if (!isMobile) return;
-        const t = e.touches[0]; if (!t) return;
-        lpStart.current = { x: t.clientX, y: t.clientY }; lpFired.current = false;
-        cancelLp();
-        lpTimer.current = setTimeout(() => { lpFired.current = true; onContext(lpStart.current!.x, lpStart.current!.y); try { navigator.vibrate?.(8); } catch { /* */ } }, 450);
-      }}
-      onTouchMove={(e) => {
-        const s = lpStart.current, t = e.touches[0];
-        if (s && t && Math.abs(t.clientX - s.x) + Math.abs(t.clientY - s.y) > 10) cancelLp();
-      }}
-      onTouchEnd={cancelLp}
-      onTouchCancel={cancelLp}
       style={{
         display: 'flex', alignItems: 'center', gap: isMobile ? 12 : 9, width: '100%', padding: isMobile ? '15px 12px' : `${padY}px 9px`,
         // Selecting snaps instantly; the transition only applies while the mobile
@@ -200,6 +184,11 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
         : <span style={{ width: dot, height: dot, borderRadius: '50%', background: color, flexShrink: 0 }} />}
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tab.label}</span>
       <span style={{ flexShrink: 0, marginLeft: 8, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+        {isMobile && (
+          <span role="button" title="Thread options" aria-label="Thread options"
+            onClick={(e) => { e.stopPropagation(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); onContext(r.left, r.bottom); }}
+            style={{ width: 28, height: 28, marginRight: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: 'var(--color-text-secondary)', fontSize: 18, lineHeight: 1 }}>⋯</span>
+        )}
         {hover && !isMobile ? (
           <span role="button" title="Archive thread" onClick={(e) => { e.stopPropagation(); onArchive(); }}
             style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, color: 'var(--color-text-secondary)', fontSize: 14, lineHeight: 1, cursor: 'pointer' }}>×</span>
@@ -263,7 +252,7 @@ function SectionHeader({ label, count, prominent, children }: { label: string; c
   );
 }
 
-export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSelectAgent, onNewAgent, onBrowseFiles, fadeActiveKey, highlightTabId }: { session: Session; active: boolean; open?: boolean; onToggle?: () => void; onSelectTab: (id: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void; onBrowseFiles?: (projectId: string) => void; fadeActiveKey?: number; highlightTabId?: string | null }) {
+export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSelectAgent, onNewAgent, onBrowseFiles, fadeActiveKey, highlightTabId, showManaged = false }: { session: Session; active: boolean; open?: boolean; onToggle?: () => void; onSelectTab: (id: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void; onBrowseFiles?: (projectId: string) => void; fadeActiveKey?: number; highlightTabId?: string | null; showManaged?: boolean }) {
   const allAgents = useAgents((s) => s.schedules);
   const agents = allAgents.filter((a) => a.projectId === session.id);
   const agentSel = useAgents((s) => s.selectedId);
@@ -284,6 +273,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   const [projArchive, setProjArchive] = useState(false);
   const [renameProj, setRenameProj] = useState(false);
   const [newClaude, setNewClaude] = useState(false);
+  const [newCodex, setNewCodex] = useState(false);
   const [projTab, setProjTab] = useState<'threads' | 'agents'>('threads');
   const loadingMap = useTabs((s) => s.loading);
   const pfs = useSettings((s) => s.projectFontSize);
@@ -295,8 +285,19 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   const plusStyle: React.CSSProperties = isMobile ? { ...plusBtn, width: 34, height: 34, font: '500 26px/1 var(--font-sans)', borderRadius: 12 } : plusBtn;
   // Roll the project's threads up to one header indicator (needs_input > working
   // > error > idle), combining the backend's session.status with live tab state.
-  const indicator = projectIndicator(session.status, tabs.map((t) => t.status), tabs.some((t) => loadingMap[t.id]));
-  const threadItems = tabs.filter((t) => SECTIONS[0].types.includes(t.type));
+  // Dispatch-managed threads (the coordinator + typed agents) are owned by the
+  // Dispatch view; hide them from the Operator sidebar and its counts.
+  const isManaged = (t: Terminal) => (t.config?.role === 'coordinator') || !!(t.config as any)?.agentType;
+  // Dispatch mode (showManaged): show ONLY the ephemeral typed agents — exclude
+  // the coordinator and normal threads. Operator (default): hide all managed rows.
+  const isEphemeralAgent = (t: Terminal) => {
+    const role = t.config?.role;
+    return role === 'agent' || (!!(t.config as any)?.agentType && role !== 'coordinator');
+  };
+  const showRow = (t: Terminal) => (showManaged ? isEphemeralAgent(t) : !isManaged(t));
+  const visibleTabs = tabs.filter(showRow);
+  const indicator = projectIndicator(session.status, visibleTabs.map((t) => t.status), visibleTabs.some((t) => loadingMap[t.id]));
+  const threadItems = visibleTabs.filter((t) => SECTIONS[0].types.includes(t.type));
   useEffect(() => { if (isOpen) void useTabs.getState().loadTabs(session.id); }, [isOpen, session.id]);
 
   async function addTab(type: string, config?: Record<string, unknown>) {
@@ -330,7 +331,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   }
 
   const renderSection = (sec: (typeof SECTIONS)[number]) => {
-    const items = tabs.filter((t) => sec.types.includes(t.type));
+    const items = tabs.filter((t) => sec.types.includes(t.type) && showRow(t));
     if (sec.key !== 'threads' && !items.length) return null;
     return (
       <div key={sec.key} style={{ marginTop: sec.prominent ? DENSITY[density].sectionMt : Math.round(DENSITY[density].sectionMt * 0.7) }}>
@@ -373,15 +374,15 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
         //  unselected: transparent, no border
         //  hover:      faint wash, no border (a quick affordance)
         //  open:       calm bg + neutral border (a contained card)
-        //  selected:   accent wash + accent border (the active project)
+        //  selected:   accent border only, no wash (the active project)
         background: isMobile ? 'transparent'
-          : active ? 'linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 9%, transparent), transparent)'
+          : active ? 'transparent'
           : isOpen ? 'rgba(255,255,255,0.022)'
           : hover ? 'rgba(255,255,255,0.05)'
           : 'transparent',
-        border: (!isMobile && active) ? '1px solid color-mix(in srgb, var(--color-accent) 45%, transparent)'
-          : (!isMobile && isOpen) ? '1px solid var(--color-border)'
-          : '1px solid transparent',
+        border: (!isMobile && active) ? '2px solid color-mix(in srgb, var(--color-accent) 45%, transparent)'
+          : (!isMobile && isOpen) ? '2px solid #3a3a42'
+          : '2px solid transparent',
         borderRadius: 8, padding: isMobile ? 0 : '4px 0', marginBottom: 4, cursor: 'default', transition: 'background 0.12s ease, border-color 0.12s ease',
       }}
     >
@@ -391,9 +392,6 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
         onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setProjMenu({ x: e.clientX, y: e.clientY }); }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          {!isMobile && (
-            <CaretRight size={11} weight="bold" style={{ flexShrink: 0, color: 'var(--color-text-tertiary)', transition: 'transform .15s ease', transform: isOpen ? 'rotate(90deg)' : 'none' }} />
-          )}
           <span style={{ fontWeight: 600, fontSize: isMobile ? 19 : pfs, color: (!isMobile && active) ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{session.name}</span>
           {!isMobile && (
             <span title={session.lastActivityAt ?? ''} style={{ marginLeft: 'auto', flexShrink: 0, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', lineHeight: 1 }}>
@@ -414,31 +412,36 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
         <div style={{ overflow: 'hidden', minHeight: 0 }}>
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, marginTop: isMobile ? 6 : 4, marginBottom: 6, padding: isMobile ? '0 12px' : '0 9px', borderBottom: '1px solid var(--color-border)', background: 'rgba(255,255,255,0.03)' }}>
             <TabPill label="Threads" count={threadItems.length} active={projTab === 'threads'} mobile={isMobile} onClick={() => setProjTab('threads')} />
-            <TabPill label="Agents" count={agents.length} active={projTab === 'agents'} mobile={isMobile} onClick={() => setProjTab('agents')} />
+            <TabPill label="Automations" count={agents.length} active={projTab === 'agents'} mobile={isMobile} onClick={() => setProjTab('agents')} />
             <span style={{ flex: 1 }} />
             {projTab === 'threads' ? (
               <span style={{ alignSelf: 'center', position: 'relative', display: 'inline-flex' }}>
                 <button title="Add thread" onClick={(e) => { e.stopPropagation(); setMenu((o) => !o); }} style={plusStyle}>+</button>
-                {menu && <NewTabMenu sessionId={session.id} onClose={() => setMenu(false)} onCreated={onSelectTab} onPickClaude={() => { setMenu(false); setNewClaude(true); }} />}
+                {menu && <NewTabMenu sessionId={session.id} onClose={() => setMenu(false)} onCreated={onSelectTab} onPickClaude={() => { setMenu(false); setNewClaude(true); }} onPickCodex={() => { setMenu(false); setNewCodex(true); }} />}
               </span>
             ) : (
-              <button title="Add agent" onClick={(e) => { e.stopPropagation(); onNewAgent?.(session.id); }} style={{ ...plusStyle, alignSelf: 'center' }}>+</button>
+              <button title="Add automation" onClick={(e) => { e.stopPropagation(); onNewAgent?.(session.id); }} style={{ ...plusStyle, alignSelf: 'center' }}>+</button>
             )}
           </div>
           {projTab === 'threads' ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: isMobile ? 0 : DENSITY[density].rowGap }}>
-              {threadItems.map((t) => (
-                <SwipeRow key={t.id} disabled={!isMobile}
-                  actionLabel={t.type === 'file' ? 'Unpin' : 'Delete'}
-                  actionColor={t.type === 'file' ? '#3F3F46' : 'var(--color-status-red)'}
-                  onAction={() => { if (t.type === 'file') void archive(t); else setPendingDelete({ kind: 'thread', thread: t }); }}>
-                  <ThreadRow tab={t} active={t.id === highlightId} fadeKey={fadeActiveKey}
-                    onClick={(e) => { e.stopPropagation(); onSelectTab(t.id); }}
-                    onMiddle={() => useTabs.getState().openTab(t.id, true)}
-                    onArchive={() => setArchiveTarget(t)}
-                    onContext={(x, y) => setCtxMenu({ tab: t, x, y })} />
-                </SwipeRow>
-              ))}
+              <SortableList
+                items={threadItems}
+                disabled={false}
+                onReorder={(orderedIds) => void useTabs.getState().reorder(session.id, orderedIds)}
+                renderItem={(t) => (
+                  <SwipeRow key={t.id} disabled={!isMobile}
+                    actionLabel={t.type === 'file' ? 'Unpin' : 'Delete'}
+                    actionColor={t.type === 'file' ? '#3F3F46' : 'var(--color-status-red)'}
+                    onAction={() => { if (t.type === 'file') void archive(t); else setPendingDelete({ kind: 'thread', thread: t }); }}>
+                    <ThreadRow tab={t} active={t.id === highlightId} fadeKey={fadeActiveKey}
+                      onClick={(e) => { e.stopPropagation(); onSelectTab(t.id); }}
+                      onMiddle={() => useTabs.getState().openTab(t.id, true)}
+                      onArchive={() => setArchiveTarget(t)}
+                      onContext={(x, y) => setCtxMenu({ tab: t, x, y })} />
+                  </SwipeRow>
+                )}
+              />
               {!threadItems.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No threads yet</div>}
             </div>
           ) : (
@@ -448,7 +451,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
                   <AgentRow agent={a} active={agentFocused && a.id === agentSel} onClick={() => onSelectAgent?.(a.id)} />
                 </SwipeRow>
               ))}
-              {!agents.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No agents yet</div>}
+              {!agents.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No automations yet</div>}
             </div>
           )}
           {SECTIONS.slice(1).map(renderSection)}
@@ -504,7 +507,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
 
       <ConfirmModal
         open={!!pendingDelete}
-        title={pendingDelete?.kind === 'agent' ? 'Delete agent?' : 'Delete thread?'}
+        title={pendingDelete?.kind === 'agent' ? 'Delete automation?' : 'Delete thread?'}
         message={
           pendingDelete?.kind === 'agent'
             ? `“${pendingDelete.agent.name}” will be permanently deleted.`
@@ -547,6 +550,10 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
 
       {newClaude && (
         <NewClaudeThreadModal sessionId={session.id} onClose={() => setNewClaude(false)} onCreated={onSelectTab} />
+      )}
+
+      {newCodex && (
+        <NewCodexThreadModal sessionId={session.id} onClose={() => setNewCodex(false)} onCreated={onSelectTab} />
       )}
     </div>
   );

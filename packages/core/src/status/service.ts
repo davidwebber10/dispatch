@@ -22,7 +22,13 @@ const TO_TERMINAL: Record<ThreadStatus, string> = {
  * broadcasts `terminal:status` (with the rich threadStatus + activity) + session status.
  */
 export class StatusService {
+  private threadSettledHook: ((info: { terminalId: string; sessionId: string; threadStatus: ThreadStatus }) => void) | null = null;
+
   constructor(private db: Database.Database, private broadcaster: EventBroadcaster) {}
+
+  setThreadSettledHook(fn: (info: { terminalId: string; sessionId: string; threadStatus: ThreadStatus }) => void): void {
+    this.threadSettledHook = fn;
+  }
 
   ingest(provider: string, terminalId: string, payload: unknown): void {
     const norm = provider === 'codex' ? normalizeCodex(payload) : normalizeClaude(payload);
@@ -44,10 +50,33 @@ export class StatusService {
     if (terminal) this.apply(terminal.session_id, terminalId, 'working', activity);
   }
 
+  /**
+   * Escalation edge: a structured AGENT thread hit a gated tool / AskUserQuestion
+   * and is blocked awaiting a human decision (the membrane). Surfaces as needs_input.
+   */
+  markNeedsInput(terminalId: string, activity?: string): void {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (terminal) this.apply(terminal.session_id, terminalId, 'needs_input', activity);
+  }
+
+  /**
+   * Settle edge: a structured thread's turn completed (the `result` event). Flips it off
+   * `working` so the rail + list_agents reflect reality (fixes the stale-working bug) and
+   * fires the settled hook (push / coordinator completion notice).
+   */
+  markIdle(terminalId: string, activity?: string): void {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (terminal) this.apply(terminal.session_id, terminalId, 'idle', activity);
+  }
+
   private apply(sessionId: string, terminalId: string, status: ThreadStatus, activity?: string): void {
+    const prior = terminalsDb.getById(this.db, terminalId)?.status; // persisted enum before update
     const terminalStatus = TO_TERMINAL[status];
     try { terminalsDb.updateStatus(this.db, terminalId, terminalStatus); } catch { /* best effort */ }
     this.broadcaster.broadcast({ type: 'terminal:status', terminalId, status: terminalStatus, threadStatus: status, activity: activity ?? null });
+    if (prior === 'working' && (terminalStatus === 'waiting' || terminalStatus === 'needs_input')) {
+      try { this.threadSettledHook?.({ terminalId, sessionId, threadStatus: status }); } catch { /* hook must never break status */ }
+    }
     this.aggregateSession(sessionId);
   }
 

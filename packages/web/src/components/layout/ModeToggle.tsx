@@ -14,6 +14,8 @@ export function ModeToggle({ terminalId, floating = false }: { terminalId: strin
   const mode = useThreadMode((s) => (terminalId ? s.modes[terminalId] : undefined)) ?? 'expert';
   const setMode = useThreadMode((s) => s.set);
   if (!terminalId || !tab || (tab.type !== 'claude-code' && tab.type !== 'codex')) return null;
+  // Structured (stream-json) threads are chat-only — no PTY, so no View/Terminal toggle.
+  if ((tab.config as { transport?: string } | undefined)?.transport === 'structured') return null;
   const opts: [ThreadMode, typeof Eye, string][] = [['normal', Eye, 'View'], ['expert', TerminalWindow, 'Terminal']];
   const dim = floating ? { w: 46, h: 32, icon: 19, radius: 9, pad: 3 } : { w: 36, h: 24, icon: 15, radius: 6, pad: 2 };
   return (

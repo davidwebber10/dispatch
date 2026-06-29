@@ -6,6 +6,8 @@ import { useServers, currentLabel } from '../../stores/servers';
 import { useSecrets } from '../../stores/secrets';
 import { useSetup } from '../../stores/setup';
 import { IntegrationsSection } from './IntegrationsSection';
+import { ToolsSection } from './ToolsSection';
+import { MultiPaneSetting } from '../panes/MultiPaneSetting';
 
 const sectionLabel: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
 const row: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 };
@@ -238,9 +240,22 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   const accent = useSettings((s) => s.accent);
   const density = useSettings((s) => s.density);
   const notify = useSettings((s) => s.notify);
+  const pushEnabled = useSettings((s) => s.pushEnabled);
+  const [pushMsg, setPushMsg] = useState('');
+  async function togglePush() {
+    setPushMsg('');
+    try { await useSettings.getState().setPushEnabled(!pushEnabled); }
+    catch (e: any) {
+      const r = String(e?.message);
+      setPushMsg(r === 'ios-install' ? 'On iPhone/iPad, add Dispatch to your Home Screen first, then enable.'
+        : r === 'unsupported' ? 'Push notifications aren\'t supported in this browser.'
+        : r === 'denied' ? 'Notification permission was denied.'
+        : 'Couldn\'t enable push notifications — please try again.');
+    }
+  }
   const servers = useServers((s) => s.servers);
   const openSetup = useSetup((s) => s.open);
-  const [tab, setTab] = useState<'general' | 'integrations' | 'secrets'>('general');
+  const [tab, setTab] = useState<'general' | 'integrations' | 'secrets' | 'tools'>('general');
   if (!open) return null;
 
   const st = status === 'open' ? { c: 'var(--color-accent)', t: 'Connected' } : status === 'connecting' ? { c: 'var(--color-status-yellow)', t: 'Connecting' } : { c: 'var(--color-status-red)', t: 'Offline' };
@@ -255,7 +270,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
 
         {/* Tabs */}
         <div style={{ flexShrink: 0, display: 'flex', gap: 4, padding: '12px 20px 0', borderBottom: '1px solid var(--color-hover)' }}>
-          {([['general', 'General'], ['integrations', 'Integrations'], ['secrets', 'Secrets']] as const).map(([key, label]) => (
+          {([['general', 'General'], ['integrations', 'Integrations'], ['secrets', 'Secrets'], ['tools', 'Tools']] as const).map(([key, label]) => (
             <button key={key} onClick={() => setTab(key)} style={{
               position: 'relative', padding: '8px 14px 11px', background: 'none', border: 'none', cursor: 'pointer',
               fontSize: 13, fontWeight: tab === key ? 600 : 500,
@@ -326,7 +341,11 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
               </div>
               <Divider />
 
-              <div style={row}><span style={item}>Alert when input needed</span><Toggle on={notify} onClick={() => void useSettings.getState().setNotify(!notify)} /></div>
+              <div style={row}><span style={item}>Notify when a thread finishes</span><Toggle on={pushEnabled} onClick={() => void togglePush()} /></div>
+              {pushMsg && <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>{pushMsg}</div>}
+              <Divider />
+
+              <MultiPaneSetting />
               <Divider />
 
               <div style={row}><span style={item}>Version</span><span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)' }}>Dispatch Web</span></div>
@@ -334,6 +353,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
           )}
           {tab === 'integrations' && <IntegrationsSection />}
           {tab === 'secrets' && <SecretsSection />}
+          {tab === 'tools' && <ToolsSection />}
         </div>
 
         <div style={{ flexShrink: 0, display: 'flex', justifyContent: 'flex-end', padding: '14px 20px', borderTop: '1px solid var(--color-hover)' }}>

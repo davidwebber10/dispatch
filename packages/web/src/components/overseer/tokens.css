@@ -1,0 +1,78 @@
+/* Overseer view — design tokens, keyframes, and scoped resets (spec §1a / §6).
+ *
+ * All custom properties are declared with low specificity via :where() so inline
+ * styles on .overseer-root always win. Everything is scoped under .overseer-root so
+ * the module cannot bleed into the rest of the Dispatch app. */
+
+:where(.overseer-root) {
+  --canvas: #08080A;          /* app backdrop behind the panel */
+  --base: #0F0F11;            /* main app surface (left column, composer, footers) */
+  --pane: #141416;            /* right rail surface, headers, chips' inner boxes */
+  --elev: #1B1B1E;            /* raised cards / chips / inputs */
+  --hover: #26262B;           /* thread chip hover bg */
+  --border: #29292E;          /* hairline borders, dividers, progress track */
+  --acc: #3ECF6A;             /* green accent: Overseer, working, primary actions */
+  --accDim: rgba(62, 207, 106, 0.12);   /* accent tint backgrounds */
+  --accLine: rgba(62, 207, 106, 0.4);   /* accent borders */
+  --yellow: #F5C542;          /* "needs you" / waiting / escalation */
+  --yellowDim: rgba(245, 197, 66, 0.1);
+  --yellowLine: rgba(245, 197, 66, 0.35);
+  --red: #F0616D;             /* interrupt / error */
+  --tp: #E9E9EC;              /* text primary */
+  --ts: #8E8E96;              /* text secondary */
+  --tt: #5A5A61;              /* text tertiary / placeholders */
+  --mono: 'JetBrains Mono', monospace;
+  --pulse: 2.4s;              /* breathe animation duration; 0s when motion disabled */
+}
+
+/* scoped resets / chrome */
+.overseer-root,
+.overseer-root * {
+  box-sizing: border-box;
+}
+.overseer-root ::selection {
+  background: rgba(62, 207, 106, 0.25);
+}
+.overseer-root ::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+.overseer-root ::-webkit-scrollbar-thumb {
+  background: #26262b;
+  border-radius: 7px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.overseer-root ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.overseer-root textarea::placeholder,
+.overseer-root input::placeholder {
+  color: #5a5a61;
+}
+
+/* keyframes (spec §6) */
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.28;
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes slidein {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

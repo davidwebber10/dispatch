@@ -1,0 +1,82 @@
+{
+  "tools": [
+    {
+      "name": "jq",
+      "description": "Command-line JSON processor",
+      "kind": "binary",
+      "bins": ["jq"],
+      "binary": {
+        "darwin-arm64": { "url": "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-macos-arm64", "archive": "none", "sha256": "0bbe619e663e0de2c550be2fe0d240d076799d6f8a652b70fa04aea8a8362e8a" },
+        "darwin-x64":   { "url": "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-macos-amd64", "archive": "none", "sha256": "4155822bbf5ea90f5c79cf254665975eb4274d426d0709770c21774de5407443" }
+      },
+      "docs": "https://jqlang.github.io/jq/"
+    },
+    {
+      "name": "ripgrep",
+      "description": "Fast recursive search (rg)",
+      "kind": "binary",
+      "bins": ["rg"],
+      "binary": {
+        "darwin-arm64": { "url": "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-aarch64-apple-darwin.tar.gz", "archive": "tar.gz", "binPath": "ripgrep-14.1.1-aarch64-apple-darwin/rg", "sha256": "24ad76777745fbff131c8fbc466742b011f925bfa4fffa2ded6def23b5b937be" },
+        "darwin-x64":   { "url": "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-apple-darwin.tar.gz", "archive": "tar.gz", "binPath": "ripgrep-14.1.1-x86_64-apple-darwin/rg", "sha256": "fc87e78f7cb3fea12d69072e7ef3b21509754717b746368fd40d88963630e2b3" }
+      },
+      "docs": "https://github.com/BurntSushi/ripgrep"
+    },
+    {
+      "name": "gh",
+      "description": "GitHub CLI",
+      "kind": "binary",
+      "bins": ["gh"],
+      "authEnv": ["GH_TOKEN"],
+      "envAlias": { "GH_TOKEN": "GITHUB_TOKEN" },
+      "binary": {
+        "darwin-arm64": { "url": "https://github.com/cli/cli/releases/download/v2.95.0/gh_2.95.0_macOS_arm64.zip", "archive": "zip", "binPath": "gh_2.95.0_macOS_arm64/bin/gh", "sha256": "3677f9c27965825f9c7d50395473c134edaea4b484373ef6b25de653570a0489" },
+        "darwin-x64":   { "url": "https://github.com/cli/cli/releases/download/v2.95.0/gh_2.95.0_macOS_amd64.zip", "archive": "zip", "binPath": "gh_2.95.0_macOS_amd64/bin/gh", "sha256": "985707e9ac60c95ed51cddd808c338b481abe69fffa77e9d6547c3750045f77e" }
+      },
+      "docs": "https://cli.github.com/"
+    },
+    {
+      "name": "doppler",
+      "description": "Doppler secrets CLI",
+      "kind": "binary",
+      "bins": ["doppler"],
+      "authEnv": ["DOPPLER_TOKEN"],
+      "binary": {
+        "darwin-arm64": { "url": "https://github.com/DopplerHQ/cli/releases/download/3.76.0/doppler_3.76.0_macOS_arm64.tar.gz", "archive": "tar.gz", "binPath": "doppler", "sha256": "f8a546d4b177255816f3b1262347bb643b0bcb8cf82d5859e5426c11f56636dc" },
+        "darwin-x64":   { "url": "https://github.com/DopplerHQ/cli/releases/download/3.76.0/doppler_3.76.0_macOS_amd64.tar.gz", "archive": "tar.gz", "binPath": "doppler", "sha256": "1a70842d5de95232c5bae732721058690c748db5e5c7510e828116392e9f0682" }
+      },
+      "docs": "https://docs.doppler.com/docs/cli"
+    },
+    {
+      "name": "databricks",
+      "description": "Databricks CLI",
+      "kind": "binary",
+      "bins": ["databricks"],
+      "authEnv": ["DATABRICKS_HOST", "DATABRICKS_TOKEN"],
+      "binary": {
+        "darwin-arm64": { "url": "https://github.com/databricks/cli/releases/download/v1.5.0/databricks_cli_1.5.0_darwin_arm64.tar.gz", "archive": "tar.gz", "binPath": "databricks", "sha256": "41ccc456d609f628413b231c467bb53fb066ecab2e96df492a4df98361e5f001" },
+        "darwin-x64":   { "url": "https://github.com/databricks/cli/releases/download/v1.5.0/databricks_cli_1.5.0_darwin_amd64.tar.gz", "archive": "tar.gz", "binPath": "databricks", "sha256": "f3ea3bf46303650722e0ee47caba03e786d41a2c8b9129d34e03c0272cda0fcc" }
+      },
+      "docs": "https://docs.databricks.com/dev-tools/cli/"
+    },
+    {
+      "name": "shopify",
+      "description": "Shopify CLI",
+      "kind": "npm",
+      "bins": ["shopify"],
+      "npm": { "package": "@shopify/cli", "version": "latest" },
+      "docs": "https://shopify.dev/docs/api/shopify-cli"
+    },
+    {
+      "name": "aws",
+      "description": "AWS CLI v2",
+      "kind": "script",
+      "bins": ["aws"],
+      "authEnv": ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
+      "script": {
+        "install": "set -e; tmp=$(mktemp -d); curl -fsSL \"https://awscli.amazonaws.com/AWSCLIV2.pkg\" -o \"$tmp/awscli.pkg\"; pkgutil --expand-full \"$tmp/awscli.pkg\" \"$tmp/x\"; PFX=$(find \"$tmp/x\" -type d -name 'aws-cli' | head -1); ln -sf \"$PFX/aws\" \"$TOOLS_BIN/aws\"; ln -sf \"$PFX/aws_completer\" \"$TOOLS_BIN/aws_completer\" 2>/dev/null || true"
+      },
+      "docs": "https://docs.aws.amazon.com/cli/"
+    }
+  ]
+}

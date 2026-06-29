@@ -13,6 +13,13 @@ describe('dispatch CLI routing', () => {
   test('unknown command throws a usage error', () => {
     expect(() => runCommand(['bogus'], {} as any)).toThrow(/usage/i);
   });
+
+  test('tools → toolsRunner with passthrough args', () => {
+    const toolsRunner = vi.fn();
+    runCommand(['tools', 'install', '--force'], { toolsRunner } as any);
+    expect(toolsRunner).toHaveBeenCalledOnce();
+    expect(toolsRunner).toHaveBeenCalledWith(['install', '--force']);
+  });
 });
 
 describe('status HTTP probe', () => {

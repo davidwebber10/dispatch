@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useProjects } from '../../stores/projects';
 import { ProjectCard } from './ProjectCard';
 import { NewProjectModal } from './NewProjectModal';
+import { SortableList } from '../common/SortableList';
+import { useIsMobile } from '../../hooks/useIsMobile';
 
 type Sort = 'recent' | 'alpha' | 'custom';
 
@@ -16,8 +18,6 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent }: { onS
   const [showNew, setShowNew] = useState(false);
   const [sort, setSort] = useState<Sort>(() => (localStorage.getItem('dispatch:sort') as Sort) || 'recent');
   const [sortOpen, setSortOpen] = useState(false);
-  const [dragId, setDragId] = useState<string | null>(null);
-  const [overId, setOverId] = useState<string | null>(null);
   // Expansion is independent of the active highlight: opening a thread makes its
   // project active (and auto-expands it); clicking a project header just toggles
   // its expansion without stealing the highlight.
@@ -26,6 +26,7 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent }: { onS
   useEffect(() => { try { localStorage.setItem('dispatch:sort', sort); } catch { /* ignore */ } }, [sort]);
   useEffect(() => { if (activeId) setExpanded((e) => (e.has(activeId) ? e : new Set(e).add(activeId))); }, [activeId]);
   const toggleExpand = (id: string) => setExpanded((e) => { const n = new Set(e); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const isMobile = useIsMobile();
 
   const filtered = sessions
     .filter((s) => s.name.toLowerCase().includes(query.toLowerCase()))
@@ -35,25 +36,6 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent }: { onS
       if (sort === 'alpha') return a.name.localeCompare(b.name);
       return (Date.parse(b.lastActivityAt || b.updatedAt || '') || 0) - (Date.parse(a.lastActivityAt || a.updatedAt || '') || 0);
     });
-
-  // Dragging only makes sense over the unfiltered, full list.
-  const canDrag = !query;
-
-  function onDrop(targetId: string) {
-    if (dragId && dragId !== targetId) {
-      const ids = sessions.map((s) => s.id);
-      const from = ids.indexOf(dragId);
-      const to = ids.indexOf(targetId);
-      if (from !== -1 && to !== -1) {
-        const item = ids.splice(from, 1)[0];
-        ids.splice(from < to ? to - 1 : to, 0, item); // land just above the indicated card
-        if (sort !== 'custom') setSort('custom'); // a manual drag implies a manual order
-        useProjects.getState().reorder(ids);
-      }
-    }
-    setDragId(null);
-    setOverId(null);
-  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -80,23 +62,14 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent }: { onS
         <button title="New project" onClick={() => setShowNew(true)} style={{ ...icon, background: 'var(--color-accent)', border: 'none', color: '#08240F', font: '700 18px/1 var(--font-sans)' }}>+</button>
       </div>
       <div style={{ padding: '0 8px 8px' }}>
-      {filtered.map((s) => (
-        <div
-          key={s.id}
-          draggable={canDrag}
-          onDragStart={(e) => { setDragId(s.id); e.dataTransfer.effectAllowed = 'move'; }}
-          onDragOver={(e) => { if (dragId && dragId !== s.id) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (overId !== s.id) setOverId(s.id); } }}
-          onDragLeave={() => { if (overId === s.id) setOverId(null); }}
-          onDrop={(e) => { e.preventDefault(); onDrop(s.id); }}
-          onDragEnd={() => { setDragId(null); setOverId(null); }}
-          style={{
-            borderTop: overId === s.id ? '2px solid var(--color-accent)' : '2px solid transparent',
-            opacity: dragId === s.id ? 0.45 : 1,
-          }}
-        >
+      <SortableList
+        items={filtered}
+        disabled={!!query || isMobile}
+        onReorder={(orderedIds) => { if (sort !== 'custom') setSort('custom'); useProjects.getState().reorder(orderedIds); }}
+        renderItem={(s) => (
           <ProjectCard session={s} active={s.id === activeId} open={expanded.has(s.id)} onToggle={() => toggleExpand(s.id)} onSelectTab={onSelectTab} onSelectAgent={onSelectAgent} onNewAgent={onNewAgent} />
-        </div>
-      ))}
+        )}
+      />
       {!filtered.length && <div style={{ color: 'var(--color-text-tertiary)', fontSize: 12.5, padding: '4px 6px' }}>No projects</div>}
       </div>
       </div>

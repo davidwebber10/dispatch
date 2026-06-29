@@ -81,3 +81,6 @@ body { background: var(--color-canvas); color: var(--color-text-primary); font-f
 /* Force monochrome text presentation for symbol glyphs Claude prints (⏺ ◐ ◉ …),
    which iOS otherwise renders as color emoji in the terminal (DOM renderer). */
 .xterm, .xterm-rows { font-variant-emoji: text; }
+
+@keyframes dispatch-wiggle { 0%, 100% { rotate: -0.5deg } 50% { rotate: 0.5deg } }
+.dispatch-wiggle { animation: dispatch-wiggle .4s ease-in-out infinite; }

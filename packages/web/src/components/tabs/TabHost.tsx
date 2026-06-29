@@ -6,17 +6,30 @@ import { BrowserTab } from './BrowserTab';
 import { NotesTab } from './NotesTab';
 import { FileEditorTab } from './FileEditorTab';
 import { ConversationView } from './ConversationView';
+import { ChatView } from './chat/ChatView';
 import { useThreadMode } from '../../stores/threadMode';
 import { useTabs } from '../../stores/tabs';
 import { ModeToggle } from '../layout/ModeToggle';
 import { useIsMobile } from '../../hooks/useIsMobile';
 
-/** AI thread (claude-code/codex): View (read-only) or Terminal (interactive).
- *  The mode toggle lives in the main top bar (see ModeToggle). Defaults to
- *  Terminal so a new thread opens where you can type. */
+/** True for stream-json ("structured") threads, which have no PTY and render as
+ *  a chat (never a terminal). */
+export function isStructured(tab: Pick<Terminal, 'config'>): boolean {
+  return (tab.config as { transport?: string } | undefined)?.transport === 'structured';
+}
+
+/** AI thread (claude-code/codex). Structured (stream-json) threads have no PTY,
+ *  so they render as a pure chat (ChatView) with no Terminal mode. Other AI
+ *  threads keep the View (read-only) / Terminal (interactive) toggle, defaulting
+ *  to Terminal so a new thread opens where you can type. */
 function AiThread({ tab }: { tab: Terminal }) {
   const mode = useThreadMode((s) => s.modes[tab.id]) ?? 'expert';
   const isMobile = useIsMobile();
+
+  // Structured threads: chat-only. No xterm (it would crash on a missing PTY),
+  // no mode toggle.
+  if (isStructured(tab)) return <ChatView terminalId={tab.id} />;
+
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
       {mode === 'normal' ? <ConversationView terminalId={tab.id} /> : <TerminalTab terminalId={tab.id} />}

@@ -36,6 +36,59 @@ async function readCapped(file: string, size: number): Promise<{ text: string; t
   }
 }
 
+/** Cap on a transcript file we'll read whole for backfill (skip beyond — documented limitation). */
+const MAX_BACKFILL_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Convert a Claude Code transcript JSONL into a compact list of structured
+ * stream-json events (the same `{ type: 'user'|'assistant', message }` shapes the
+ * live structured stream emits) so a resumed thread can replay its prior
+ * conversation. Keeps user + assistant turns (including their tool_use / tool_result
+ * content blocks, which the View already renders) and drops bookkeeping entries
+ * (summaries, injected `isMeta` context, sub-agent `isSidechain` lines). Returns at
+ * most `limit` entries, newest-trimmed. Never throws.
+ */
+export function backfillEventsFromTranscript(text: string, limit = 2000): unknown[] {
+  const out: unknown[] = [];
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let o: any;
+    try { o = JSON.parse(trimmed); } catch { continue; } // partial/garbled line
+    if (!o || (o.type !== 'user' && o.type !== 'assistant')) continue;
+    if (o.isMeta || o.isSidechain) continue;
+    const msg = o.message;
+    if (!msg || typeof msg !== 'object') continue;
+    const content = msg.content;
+    const hasContent =
+      typeof content === 'string' ? content.trim().length > 0
+      : Array.isArray(content) ? content.length > 0
+      : false;
+    if (!hasContent) continue;
+    out.push({ type: o.type, message: msg });
+  }
+  return out.length > limit ? out.slice(out.length - limit) : out;
+}
+
+/**
+ * Synchronously read a claude session's transcript and return it as structured
+ * backfill events (see backfillEventsFromTranscript). Resolves the standard
+ * `~/.claude/projects/<enc-workDir>/<sessionId>.jsonl` path. Returns [] on any
+ * error or when the file is missing / too large to read whole.
+ */
+export function readSessionBackfill(workDir: string, sessionId: string, limit = 2000): unknown[] {
+  try {
+    const encoded = workDir.replace(/\//g, '-');
+    const file = path.join(os.homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
+    const stat = fs.statSync(file);
+    if (stat.size > MAX_BACKFILL_BYTES) return []; // too large — skip backfill
+    const text = fs.readFileSync(file, 'utf-8');
+    return backfillEventsFromTranscript(text, limit);
+  } catch {
+    return [];
+  }
+}
+
 /**
  * List a project's recent Claude Code sessions (for the "resume" picker), newest
  * first. Reads `~/.claude/projects/<workDir-with-/replaced-by->/<uuid>.jsonl`.

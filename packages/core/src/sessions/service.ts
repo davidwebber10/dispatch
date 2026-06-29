@@ -1,6 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import type Database from 'better-sqlite3';
 import { v4 as uuid } from 'uuid';
 import * as sessionsDb from '../db/sessions.js';
@@ -11,10 +12,12 @@ import { PTYManager } from '../pty/manager.js';
 import type { Session, CreateSessionInput } from '../types.js';
 import { rowToSession } from '../types.js';
 import type { TerminalType } from '../db/terminals.js';
-import type { StatusHooksInjection } from '../providers/types.js';
+import type { StatusHooksInjection, SecretsMcpInjection } from '../providers/types.js';
 import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
 import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript.js';
 import { platform } from '../platform/index.js';
+import { systemPromptFor } from '../overseer/prompts.js';
+import { readSessionBackfill } from './cc-sessions.js';
 
 interface StatusContext {
   serverUrl: string;
@@ -31,6 +34,12 @@ export class SessionService {
   private integrationsSpecs: (() => McpServerSpec[]) | null = null;
   /** How spawned CLIs phone home with lifecycle events; set by the server wiring. */
   private statusContext: StatusContext | null = null;
+  /** Supplies a tools-awareness note injected into the developer instructions; set by server wiring. */
+  private toolsAwareness?: () => string | null;
+  /** Drives structured (stream-json) sessions for claude-code threads; set by server wiring. */
+  private structuredManager?: import('../structured/manager.js').StructuredSessionManager;
+  /** Override for structured command (test seam: lets tests spawn fake-claude instead of real claude). */
+  private structuredCommandOverride?: { command: string; args: string[] };
 
   constructor(
     private db: Database.Database,
@@ -46,6 +55,26 @@ export class SessionService {
   setIntegrationsSpecs(fn: () => McpServerSpec[]): void {
     this.integrationsSpecs = fn;
   }
+
+  setToolsAwareness(fn: () => string | null): void {
+    this.toolsAwareness = fn;
+  }
+
+  setStructuredManager(m: import('../structured/manager.js').StructuredSessionManager): void {
+    this.structuredManager = m;
+    // Persist the claude session_id (surfaced from the structured init event) onto the
+    // terminal's external_id, mirroring how the PTY path captures session ids. This is
+    // what lets us resume the SAME conversation after a daemon restart. First-write-wins
+    // (a `-r` resume keeps the same id, so we never need to overwrite).
+    m.on('session', (terminalId: string, sessionId: string) => {
+      try {
+        const t = terminalsDb.getById(this.db, terminalId);
+        if (t && !t.external_id && sessionId) terminalsDb.updateExternalId(this.db, terminalId, sessionId);
+      } catch { /* best effort */ }
+    });
+  }
+
+  setStructuredCommandOverride(cmd: { command: string; args: string[] }): void { this.structuredCommandOverride = cmd; }
 
   setStatusContext(ctx: StatusContext): void {
     this.statusContext = ctx;
@@ -149,6 +178,7 @@ export class SessionService {
     const terminals = terminalsDb.listBySession(this.db, id);
     for (const terminal of terminals) {
       this.ptyManager.kill(terminal.id);
+      this.structuredManager?.kill(terminal.id);
       terminalsDb.updatePid(this.db, terminal.id, null);
     }
 
@@ -163,6 +193,7 @@ export class SessionService {
     const terminals = terminalsDb.listBySession(this.db, id);
     for (const terminal of terminals) {
       if (this.ptyManager.isAlive(terminal.id)) this.ptyManager.kill(terminal.id);
+      this.structuredManager?.kill(terminal.id);
     }
     terminalsDb.removeBySession(this.db, id);
 
@@ -172,7 +203,7 @@ export class SessionService {
 
   // --- Terminal-level operations ---
 
-  createTerminal(sessionId: string, type: TerminalType, label?: string, skipPermissions?: boolean, workingDir?: string, externalId?: string): terminalsDb.Terminal {
+  createTerminal(sessionId: string, type: TerminalType, label?: string, skipPermissions?: boolean, workingDir?: string, externalId?: string, config?: Record<string, any>): terminalsDb.Terminal {
     const session = sessionsDb.getById(this.db, sessionId);
     if (!session) throw new Error('Session not found');
 
@@ -195,6 +226,7 @@ export class SessionService {
       skipPermissions,
       workingDir: resolvedDir,
       externalId,
+      config,
     });
 
     try {
@@ -500,7 +532,224 @@ export class SessionService {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return;
     this.ptyManager.kill(terminalId);
+    this.structuredManager?.kill(terminalId);
     terminalsDb.updatePid(this.db, terminalId, null);
+  }
+
+  sendStructuredMessage(terminalId: string, text: string): void {
+    // Lazily resume a thread that died on a daemon restart (resumes the same claude
+    // conversation when an external_id was captured) before delivering the message.
+    if (!this.structuredManager?.isAlive(terminalId)) this.ensureStructuredAlive(terminalId);
+    if (!this.structuredManager?.isAlive(terminalId)) throw new Error('no structured session for terminal');
+    this.structuredManager.sendMessage(terminalId, text);
+  }
+
+  /**
+   * The membrane's "up" channel. Inject a directive into the coordinator that supervises
+   * `agentTerminalId`, if any: an agent never bothers the human directly — its questions and
+   * lifecycle events surface to its project's coordinator (Dispatch), which decides what to do
+   * (answer, ask the human itself, re-plan). Returns true when a live coordinator received the
+   * note; false when the thread isn't a typed agent or the project has no coordinator.
+   */
+  private notifyCoordinatorOfAgent(agentTerminalId: string, note: string): boolean {
+    const agent = terminalsDb.getById(this.db, agentTerminalId);
+    if (!agent) return false;
+    let cfg: Record<string, any> = {};
+    try { cfg = JSON.parse(agent.config || '{}'); } catch { /* default {} */ }
+    if (cfg.role !== 'agent') return false; // only agents escalate UP; coordinators/plain → human
+    const coordinator = terminalsDb.listBySession(this.db, agent.session_id)
+      .map(terminalsDb.rowToTerminal)
+      .find((t) => t.type === 'claude-code' && !t.archivedAt && t.id !== agentTerminalId && t.config?.role === 'coordinator');
+    if (!coordinator) return false;
+    try {
+      this.ensureStructuredAlive(coordinator.id); // a daemon restart may have killed it
+      this.sendStructuredMessage(coordinator.id, note);
+      return true;
+    } catch { return false; }
+  }
+
+  /** Format an agent's pending AskUserQuestion as a directive the coordinator can act on. */
+  private formatAgentQuestion(agentId: string, label: string, mission: string | null, questions: any[]): string {
+    const qs = Array.isArray(questions) ? questions : [];
+    const lines = qs.map((q: any, i: number) => {
+      const header = (q?.header ?? `Q${i + 1}`).toString();
+      const question = (q?.question ?? '').toString();
+      const opts = Array.isArray(q?.options)
+        ? q.options.map((o: any) => (typeof o === 'string' ? o : (o?.label ?? o?.name ?? ''))).filter(Boolean)
+        : [];
+      return `  • [${header}] ${question}${opts.length ? `\n    options: ${opts.join(' | ')}` : ''}`;
+    });
+    const headers = qs.map((q: any, i: number) => (q?.header ?? `Q${i + 1}`).toString());
+    const exampleAnswers = headers.length
+      ? `{ ${headers.map((h) => `"${h}": "<chosen option>"`).join(', ')} }`
+      : '{ "<header>": "<chosen option>" }';
+    return (
+      `🔔 Your agent "${label}"${mission ? ` (mission "${mission}")` : ''} is PAUSED waiting on you to ` +
+      `answer a question (it cannot proceed until you do):\n${lines.join('\n')}\n\n` +
+      `Decide based on the mission and answer it now by calling:\n` +
+      `answer_agent({ agentId: "${agentId}", answers: ${exampleAnswers} })\n` +
+      `Pick from the listed options. Only raise it to the human yourself if you genuinely cannot decide.`
+    );
+  }
+
+  /**
+   * Membrane routing for an agent's pending AskUserQuestion: forward it to the project's
+   * coordinator instead of the human. Returns true when a coordinator was notified (the caller
+   * should keep the agent "working", not mark it needs_input); false to fall back to surfacing
+   * the question to the human (the pending isn't a question, the thread isn't an agent, or the
+   * project has no coordinator). Plain gated tools are never routed up — only questions.
+   */
+  routeAgentQuestionToCoordinator(agentTerminalId: string, pending: { toolName?: string; questions?: any[] }): boolean {
+    if (!pending?.questions?.length) return false; // only AskUserQuestion escalates up; plain tools → human
+    const agent = terminalsDb.getById(this.db, agentTerminalId);
+    if (!agent) return false;
+    let cfg: Record<string, any> = {};
+    try { cfg = JSON.parse(agent.config || '{}'); } catch { /* default {} */ }
+    const mission = typeof cfg.mission === 'string' && cfg.mission.trim() ? cfg.mission.trim() : null;
+    const note = this.formatAgentQuestion(agentTerminalId, agent.label || 'agent', mission, pending.questions);
+    return this.notifyCoordinatorOfAgent(agentTerminalId, note);
+  }
+
+  /**
+   * Tell the project's coordinator that the user just stopped or interrupted one of its agents,
+   * so Dispatch notices and reacts (checks in about why, re-plans) rather than silently losing
+   * the agent. No-op when the thread isn't a typed agent or there's no coordinator.
+   */
+  noteAgentLifecycle(agentTerminalId: string, kind: 'stopped' | 'interrupted'): void {
+    const agent = terminalsDb.getById(this.db, agentTerminalId);
+    if (!agent) return;
+    let cfg: Record<string, any> = {};
+    try { cfg = JSON.parse(agent.config || '{}'); } catch { /* default {} */ }
+    if (cfg.role !== 'agent') return;
+    const mission = typeof cfg.mission === 'string' && cfg.mission.trim() ? cfg.mission.trim() : null;
+    const note =
+      `⚠️ The user just ${kind} your agent "${agent.label || 'agent'}"${mission ? ` (mission "${mission}")` : ''} ` +
+      `[agentId ${agentTerminalId}] while it was working. They likely want a change of direction or noticed ` +
+      `something off. Check in with the user about why and adjust: re-spawn with new guidance, redirect the ` +
+      `work, or stand down. Do not silently ignore this.`;
+    this.notifyCoordinatorOfAgent(agentTerminalId, note);
+  }
+
+  /** The agent's most recent assistant text, pulled live from the structured event ring
+   *  (no transcript-file latency), truncated for a nudge. '' when there's none yet. */
+  private lastAssistantText(terminalId: string, max = 600): string {
+    const events = (this.structuredManager?.getEvents(terminalId) ?? []) as any[];
+    for (let i = events.length - 1; i >= 0; i--) {
+      const e = events[i];
+      if (e?.type === 'assistant' && Array.isArray(e.message?.content)) {
+        const text = e.message.content.filter((b: any) => b?.type === 'text').map((b: any) => b.text ?? '').join('').trim();
+        if (text) return text.length > max ? text.slice(0, max) + '…' : text;
+      }
+    }
+    return '';
+  }
+
+  /**
+   * An agent's turn just completed (the `result` event). Push an IMMEDIATE, concise completion
+   * notice to its coordinator (the closed orchestration loop): a one-line summary from the agent's
+   * last output + a pointer to read_agent for the full transcript, so Dispatch ingests the result
+   * and decides the next step instead of forgetting the agent. No-op for non-agents / no coordinator.
+   */
+  noteAgentCompletion(agentTerminalId: string): void {
+    const agent = terminalsDb.getById(this.db, agentTerminalId);
+    if (!agent) return;
+    let cfg: Record<string, any> = {};
+    try { cfg = JSON.parse(agent.config || '{}'); } catch { /* default {} */ }
+    if (cfg.role !== 'agent') return;
+    const mission = typeof cfg.mission === 'string' && cfg.mission.trim() ? cfg.mission.trim() : null;
+    const summary = this.lastAssistantText(agentTerminalId);
+    const note =
+      `✅ Your agent "${agent.label || 'agent'}"${mission ? ` (mission "${mission}")` : ''} ` +
+      `[agentId ${agentTerminalId}] just finished a turn.\n` +
+      (summary ? `Its latest output: ${summary}\n\n` : '') +
+      `Read its full work with read_agent({ agentId: "${agentTerminalId}" }), then decide the next step — ` +
+      `ingest the result, hand it to another agent, spawn a follow-up, or report back to the user. Keep this ` +
+      `brief unless it needs action; the user's own messages are always your top priority.`;
+    this.notifyCoordinatorOfAgent(agentTerminalId, note);
+  }
+
+  /** The gated tool/question a structured AGENT thread is blocked on, or null. */
+  getPendingPermission(terminalId: string): import('../structured/manager.js').PendingPermission | null {
+    return this.structuredManager?.getPending(terminalId) ?? null;
+  }
+
+  /**
+   * Resolve a structured thread's pending gated tool. `allow` echoes the original
+   * input back to the tool, folding in the original `questions` and any AskUserQuestion
+   * `answers` map; `deny` sends a message. Returns false when nothing is pending.
+   */
+  answerPermission(
+    terminalId: string,
+    requestId: string,
+    opts: { decision: 'allow' | 'deny'; answers?: Record<string, string>; message?: string },
+  ): boolean {
+    if (!this.structuredManager) return false;
+    const pending = this.structuredManager.getPending(terminalId);
+    if (!pending) return false;
+    if (opts.decision === 'allow') {
+      const updatedInput = {
+        ...(pending.input ?? {}),
+        ...(pending.questions ? { questions: pending.questions } : {}),
+        ...(opts.answers ? { answers: opts.answers } : {}),
+      };
+      return this.structuredManager.answerPermission(terminalId, requestId || pending.requestId, { behavior: 'allow', updatedInput });
+    }
+    return this.structuredManager.answerPermission(terminalId, requestId || pending.requestId, { behavior: 'deny', message: opts.message || 'Denied' });
+  }
+
+  /**
+   * Set a thread's autonomy (the per-agent dial). Persists `config.autonomy` onto
+   * the terminal (merged into its config JSON so resume respects it) AND flips the
+   * live escalation: 'autonomous' → auto-allow (resolves any currently-pending
+   * request + future ones); 'supervised' → surface gated tools as Needs again.
+   * Returns false when the terminal doesn't exist.
+   */
+  setAutonomy(terminalId: string, mode: 'supervised' | 'autonomous'): boolean {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) return false;
+    let config: Record<string, any> = {};
+    try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
+    config.autonomy = mode;
+    terminalsDb.updateConfig(this.db, terminalId, config);
+    this.structuredManager?.setEscalate(terminalId, mode !== 'autonomous');
+    return true;
+  }
+
+  /** Gracefully interrupt a structured thread's current turn (does NOT kill it). */
+  interrupt(terminalId: string): boolean {
+    return this.structuredManager?.interrupt(terminalId) ?? false;
+  }
+
+  /**
+   * Find-or-create the project's Overseer coordinator: a structured claude-code
+   * thread tagged `config.role === 'coordinator'`. Returns the existing one if a
+   * non-archived coordinator already exists, else spawns a new one labelled
+   * "Overseer" via the normal createTerminal path. Idempotent (one per project).
+   */
+  ensureCoordinator(sessionId: string): terminalsDb.Terminal {
+    const session = sessionsDb.getById(this.db, sessionId);
+    if (!session) throw new Error('Session not found');
+
+    const existing = terminalsDb.listBySession(this.db, sessionId)
+      .map(terminalsDb.rowToTerminal)
+      .find((t) => t.type === 'claude-code' && t.config?.role === 'coordinator');
+    if (existing) {
+      // A coordinator record can outlive its process (daemon restart). Revive it so
+      // the caller gets a LIVE coordinator (resume if a session was captured, else fresh)
+      // instead of a dead one that silently swallows directives.
+      this.ensureStructuredAlive(existing.id);
+      return existing;
+    }
+
+    return this.createTerminal(
+      sessionId,
+      'claude-code',
+      'Overseer',
+      undefined,
+      undefined,
+      undefined,
+      { transport: 'structured', role: 'coordinator' },
+    );
   }
 
   writeToTerminal(terminalId: string, data: string): void {
@@ -581,6 +830,7 @@ export class SessionService {
     // Only kill PTY for terminal types that have processes
     if (terminalsDb.isPtyType(terminal.type)) {
       if (this.ptyManager.isAlive(terminalId)) this.ptyManager.kill(terminalId);
+      this.structuredManager?.kill(terminalId);
     }
     // Soft-delete: archive instead of remove
     terminalsDb.archive(this.db, terminalId);
@@ -638,7 +888,15 @@ export class SessionService {
       if (sec?.spec) { specs.push(sec.spec); if (sec.prompt) prompts.push(sec.prompt); }
       const intgSpecs = this.integrationsSpecs?.() ?? [];
       specs.push(...intgSpecs);
-      const secretsMcp = composeInjection(specs, { configPath: this.mcpConfigPath, prompts });
+      const developerNote = this.toolsAwareness?.() ?? null;
+      const secretsMcp = composeInjection(specs, { configPath: this.mcpConfigPath, prompts, developerNote });
+      if (config.transport === 'structured' && terminal.type === 'claude-code' && this.structuredManager) {
+        // Spawn (or, when an external_id is already known, RESUME) the structured
+        // stream-json thread. spawnStructured re-applies the full role/escalate/MCP
+        // wiring and backfills prior history on resume.
+        this.spawnStructured(terminal, config, workDir);
+        return; // structured path complete — skip PTY spawn + session-id capture
+      }
       let cmd: { command: string; args: string[] };
       if (runnerPrompt !== undefined) {
         // Runner launches emit their own structured stream-json; no hooks needed.
@@ -663,6 +921,137 @@ export class SessionService {
     // discover the session id it assigned — so a later relaunch can resume.
     if (terminal.type !== 'shell' && !terminal.external_id) {
       void this.captureExternalSessionId(terminalId, terminal.type, workDir);
+    }
+  }
+
+  /**
+   * Spawn — or, when a claude session id is already known, RESUME — a structured
+   * stream-json thread, re-applying the SAME role / escalate / MCP wiring as the
+   * original spawn:
+   *   - coordinators get the Dispatch agency MCP folded in (autonomous spawn/steer),
+   *   - the Overseer persona is injected via --append-system-prompt,
+   *   - only typed AGENT threads escalate gated tools (the membrane).
+   * When `terminal.external_id` is set it appends `-r <id>` (resume the same claude
+   * conversation) and backfills the ring with prior history so the View isn't blank
+   * after a daemon restart. Idempotent: a no-op when the thread is already alive.
+   */
+  private spawnStructured(terminal: terminalsDb.TerminalRow, config: Record<string, any>, workDir: string): void {
+    if (!this.structuredManager) throw new Error('structured transport not supported for this provider');
+    if (this.structuredManager.isAlive(terminal.id)) return; // already running — don't double-spawn
+
+    const provider = getProvider(terminal.type);
+    // Same secrets/integrations/tools-awareness MCP wiring as a fresh PTY spawn.
+    const specs: McpServerSpec[] = [];
+    const prompts: string[] = [];
+    const sec = this.secretsServerSpec?.();
+    if (sec?.spec) { specs.push(sec.spec); if (sec.prompt) prompts.push(sec.prompt); }
+    const intgSpecs = this.integrationsSpecs?.() ?? [];
+    specs.push(...intgSpecs);
+    const developerNote = this.toolsAwareness?.() ?? null;
+    const secretsMcp = composeInjection(specs, { configPath: this.mcpConfigPath, prompts, developerNote });
+    const structuredMcp = config.role === 'coordinator'
+      ? this.withAgencyMcp(secretsMcp, terminal.id, terminal.session_id)
+      : secretsMcp;
+
+    const resumeSessionId = terminal.external_id || undefined;
+
+    let sc: { command: string; args: string[] };
+    if (this.structuredCommandOverride) {
+      // Test seam: spawn the fake instead of real claude. Still surface `-r <id>` on
+      // resume so the resume path is observable in tests.
+      sc = { command: this.structuredCommandOverride.command, args: [...this.structuredCommandOverride.args] };
+      if (resumeSessionId) sc.args.push('-r', resumeSessionId);
+    } else {
+      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config), resumeSessionId });
+      if (!built) throw new Error('structured transport not supported for this provider');
+      sc = built;
+    }
+
+    // On resume, restore prior conversation from the claude transcript JSONL.
+    const seedEvents = resumeSessionId ? readSessionBackfill(workDir, resumeSessionId) : undefined;
+
+    // Autonomy dial: agents run AUTONOMOUSLY by default — they auto-allow every tool and
+    // never prompt the human; the only thing that pauses an agent is an AskUserQuestion,
+    // which the manager always surfaces and the service routes UP to the coordinator. Only
+    // an explicit config.autonomy === 'supervised' re-arms the per-tool membrane (rare opt-in,
+    // surfaces plain gated tools to the human). Persisted in config.autonomy so it survives a
+    // resume after a daemon restart.
+    const escalate = config.role === 'agent' && config.autonomy === 'supervised';
+
+    const pid = this.structuredManager.spawn(terminal.id, {
+      command: sc.command,
+      args: sc.args,
+      workDir,
+      escalate,
+      seedEvents,
+    });
+    terminalsDb.updatePid(this.db, terminal.id, pid);
+  }
+
+  /**
+   * Lazily revive a structured thread on demand (its ws connects or it receives a
+   * message) after a daemon restart: if it's not alive but is a non-archived
+   * structured claude-code thread, re-spawn it — resuming the same claude
+   * conversation when an external_id was captured, else spawning fresh. Idempotent —
+   * returns true if alive (or already was), false only for non-structured/archived
+   * threads. Never throws.
+   */
+  ensureStructuredAlive(terminalId: string): boolean {
+    if (!this.structuredManager) return false;
+    if (this.structuredManager.isAlive(terminalId)) return true;
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal || terminal.type !== 'claude-code' || terminal.archived_at) return false;
+    let config: Record<string, any> = {};
+    try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
+    if (config.transport !== 'structured') return false;
+    // No external_id ⇒ spawn FRESH. A structured thread that never captured a claude
+    // session id (created-but-not-yet-run, or a coordinator whose process the restart
+    // killed before init) must still come back to life rather than silently swallow
+    // messages. With an external_id, spawnStructured resumes the same conversation.
+    const session = sessionsDb.getById(this.db, terminal.session_id);
+    if (!session) return false;
+    const workDir = terminal.working_dir || session.working_dir;
+    try {
+      this.spawnStructured(terminal, config, workDir);
+      return this.structuredManager.isAlive(terminalId);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Fold the Dispatch "agency" MCP server into a coordinator's --mcp-config so it
+   * can autonomously spawn + steer typed agents. Reads any existing combined config
+   * (Doppler / integrations), adds a `dispatch` server pointing at the compiled
+   * agency-mcp.js, and writes a coordinator-specific config file (never clobbering
+   * the shared mcp.json). DISPATCH_SESSION = this project's session, so the agent
+   * threads the coordinator spawns land in the same project. Best-effort: on any IO
+   * error, falls back to the un-augmented config so the coordinator still launches.
+   */
+  private withAgencyMcp(secretsMcp: SecretsMcpInjection, terminalId: string, sessionId: string): SecretsMcpInjection {
+    try {
+      let mcpServers: Record<string, unknown> = {};
+      if (secretsMcp.claudeConfigPath) {
+        try {
+          const existing = JSON.parse(fs.readFileSync(secretsMcp.claudeConfigPath, 'utf8'));
+          if (existing && typeof existing.mcpServers === 'object' && existing.mcpServers) mcpServers = existing.mcpServers;
+        } catch { /* unreadable → start fresh */ }
+      }
+      const agencyPath = fileURLToPath(new URL('../overseer/agency-mcp.js', import.meta.url));
+      mcpServers.dispatch = {
+        command: 'node',
+        args: [agencyPath],
+        env: {
+          DISPATCH_SESSION: sessionId,
+          DISPATCH_PORT: String(process.env.PORT || 3456),
+        },
+      };
+      const coordPath = path.join(path.dirname(this.mcpConfigPath), `coordinator-${terminalId}.mcp.json`);
+      fs.mkdirSync(path.dirname(coordPath), { recursive: true });
+      fs.writeFileSync(coordPath, JSON.stringify({ mcpServers }, null, 2));
+      return { ...secretsMcp, claudeConfigPath: coordPath };
+    } catch {
+      return secretsMcp;
     }
   }
 

@@ -1,4 +1,4 @@
-import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession, Integration, AddIntegrationInput, IntegrationsExport } from './types';
+import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus, PendingPermission } from './types';
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -31,6 +31,7 @@ export const api = {
   createTerminal: (sessionId: string, input: { type: string; label?: string; workingDir?: string; externalId?: string; config?: Record<string, unknown> }) =>
     req<Terminal>(`/api/sessions/${sessionId}/terminals`, { method: 'POST', body: body(input) }),
   recentCcSessions: (sessionId: string) => req<CcRecentSession[]>(`/api/sessions/${sessionId}/cc-recent`),
+  recentCodexSessions: (sessionId: string) => req<CodexRecentSession[]>(`/api/sessions/${sessionId}/codex-recent`),
   branchTerminal: (terminalId: string) => req<Terminal>(`/api/terminals/${terminalId}/branch`, { method: 'POST' }),
   getTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}`),
   getConversation: (id: string, params: { since?: number; before?: number; limit?: number } = {}) => {
@@ -43,6 +44,20 @@ export const api = {
   },
   searchConversation: (id: string, q: string) => req<{ matches: SearchMatch[] }>(`/api/terminals/${id}/conversation/search?q=${encodeURIComponent(q)}`),
   sendInput: (id: string, data: string) => req<void>(`/api/terminals/${id}/input`, { method: 'POST', body: body({ data }) }),
+  sendStructuredMessage: (id: string, text: string) => req<void>(`/api/terminals/${id}/message`, { method: 'POST', body: body({ text }) }),
+  // The membrane: the gated tool/question a structured AGENT thread is blocked on (or null).
+  getPermission: (terminalId: string) => req<PendingPermission | null>(`/api/terminals/${terminalId}/permission`),
+  // Resolve it: allow (optionally with an AskUserQuestion answers map) or deny (with a message).
+  answerPermission: (terminalId: string, payload: { requestId?: string; decision: 'allow' | 'deny'; answers?: Record<string, string>; message?: string }) =>
+    req<void>(`/api/terminals/${terminalId}/permission`, { method: 'POST', body: body(payload) }),
+  // Autonomy dial: supervised (surface gated tools as Needs) ⇄ autonomous (auto-allow, run free).
+  setAutonomy: (terminalId: string, mode: 'supervised' | 'autonomous') =>
+    req<Terminal>(`/api/terminals/${terminalId}/autonomy`, { method: 'POST', body: body({ mode }) }),
+  // Graceful interrupt: stop the current turn WITHOUT killing the thread.
+  interrupt: (terminalId: string) => req<void>(`/api/terminals/${terminalId}/interrupt`, { method: 'POST' }),
+  // Overseer: find-or-create this project's coordinator thread (idempotent) → { terminalId }.
+  ensureOverseerCoordinator: (sessionId: string) =>
+    req<{ terminalId: string }>(`/api/sessions/${sessionId}/overseer/coordinator`, { method: 'POST' }),
 
   getSetupState: () => req<SetupState>(`/api/setup/state`),
   recheckProviders: () => req<ProviderStatus[]>(`/api/setup/providers`),
@@ -119,6 +134,9 @@ export const api = {
   setSecret: (input: { name: string; value: string }) => req<DopplerSecret>('/api/secrets', { method: 'POST', body: body(input) }),
   deleteSecret: (name: string) => req<void>(`/api/secrets/${encodeURIComponent(name)}`, { method: 'DELETE' }),
 
+  // Tools (bundled CLIs)
+  getTools: () => req<{ tools: ToolStatus[] }>('/api/tools'),
+
   // Integrations (own MCP catalog)
   listIntegrations: () => req<{ integrations: Integration[] }>('/api/integrations'),
   addIntegration: (input: AddIntegrationInput) => req<Integration>('/api/integrations', { method: 'POST', body: body(input) }),
@@ -126,6 +144,12 @@ export const api = {
   removeIntegration: (id: string) => req<{ removed: boolean }>(`/api/integrations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   exportIntegrations: () => req<IntegrationsExport>('/api/integrations/export'),
   importIntegrations: (doc: IntegrationsExport) => req<{ added: string[]; skipped: string[] }>('/api/integrations/import', { method: 'POST', body: body(doc) }),
+
+  // Push notifications
+  getPushKey: () => req<{ publicKey: string }>('/api/push/key'),
+  pushSubscribe: (deviceId: string, subscription: unknown) => req<{ ok: true }>('/api/push/subscribe', { method: 'POST', body: body({ deviceId, subscription }) }),
+  pushUnsubscribe: (deviceId: string) => req<{ ok: true }>('/api/push/unsubscribe', { method: 'POST', body: body({ deviceId }) }),
+  pushPresence: (deviceId: string, foreground: boolean) => req<{ ok: true }>('/api/push/presence', { method: 'POST', body: body({ deviceId, foreground }) }),
 
   // Browser auth relay
   listAuthRequests: () => req<AuthRequest[]>('/api/auth-requests'),

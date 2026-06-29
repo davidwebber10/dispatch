@@ -62,3 +62,38 @@ describe('StatusService', () => {
     expect(() => new StatusService(db, broadcaster).ingest('claude', 'nope', { hook_event_name: 'Stop', session_id: 'x' })).not.toThrow();
   });
 });
+
+describe('StatusService thread-settled hook', () => {
+  function setup() {
+    const db2 = new Database(':memory:');
+    initSchema(db2);
+    sessionsDb.create(db2, { id: 's1', provider: 'claude-code', name: 'P', workingDir: '/tmp' });
+    terminalsDb.create(db2, { id: 't1', sessionId: 's1', type: 'claude-code', label: 'CC' });
+    const broadcaster2 = { broadcast: () => {} } as any;
+    const fired: any[] = [];
+    const svc = new StatusService(db2, broadcaster2);
+    svc.setThreadSettledHook((info) => fired.push(info));
+    return { db: db2, svc, fired };
+  }
+
+  it('fires when a thread goes working → idle', () => {
+    const { svc, fired } = setup();
+    svc.markWorking('t1');                  // → working
+    svc.ingest('claude-code', 't1', { hook_event_name: 'Stop' }); // → idle (waiting)
+    expect(fired.length).toBe(1);
+    expect(fired[0]).toMatchObject({ terminalId: 't1', sessionId: 's1', threadStatus: 'idle' });
+  });
+
+  it('fires on working → needs_input', () => {
+    const { svc, fired } = setup();
+    svc.markWorking('t1');
+    svc.ingest('claude-code', 't1', { hook_event_name: 'Notification', message: 'permission needed' });
+    expect(fired.some((f) => f.threadStatus === 'needs_input')).toBe(true);
+  });
+
+  it('does NOT fire when already idle (no working→ transition)', () => {
+    const { svc, fired } = setup();
+    svc.ingest('claude-code', 't1', { hook_event_name: 'Stop' }); // starts non-working → idle
+    expect(fired.length).toBe(0);
+  });
+});

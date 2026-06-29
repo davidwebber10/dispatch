@@ -2,6 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import './theme.css';
+import './tailwind.css';
 
 // iOS PWA cold start: env(safe-area-inset-*) can resolve to 0px until the
 // viewport is "exercised" (a documented WebKit bug — otherwise it only corrects

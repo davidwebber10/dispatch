@@ -61,6 +61,32 @@ export const claudeCodeProvider: SessionProvider = {
     };
   },
 
+  buildStructuredCommand({ workDir, secretsMcp, appendSystemPrompt, resumeSessionId }: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string }) {
+    // The spike-verified stream-json control protocol. Parity permissions come from
+    // the StructuredSessionManager's auto-allow loop, NOT --dangerously-skip-permissions.
+    const args: string[] = [
+      '-p',
+      '--input-format', 'stream-json',
+      '--output-format', 'stream-json',
+      '--verbose',
+      // Emit Anthropic streaming-protocol `stream_event`s (message_start,
+      // content_block_start/delta/stop, …) IN ADDITION to the whole
+      // assistant/user/result events, so the View can render tokens incrementally.
+      '--include-partial-messages',
+      '--permission-mode', 'default',
+      '--permission-prompt-tool', 'stdio',
+      ...mcpArgs(secretsMcp),
+      ...systemPromptArgs(secretsMcp),
+    ];
+    // Overseer persona (coordinator / typed agent) — additive, on top of any
+    // secrets system prompt above; --append-system-prompt is repeatable.
+    if (appendSystemPrompt) args.push('--append-system-prompt', appendSystemPrompt);
+    // Resume an existing claude conversation (revive after a daemon restart). `-r <id>`
+    // continues the same session id (no fork), so the thread's external_id stays stable.
+    if (resumeSessionId) args.push('-r', resumeSessionId);
+    return { command: 'claude', args };
+  },
+
   buildStatusHooks({ serverUrl, terminalId }) {
     // HTTP hooks POST each lifecycle event's payload to the events route, which
     // normalizes it (status + activity) and captures session_id on the first hit.

@@ -69,4 +69,15 @@ export interface SessionProvider {
    * Returns null if the ID could not be determined.
    */
   captureSessionId?(args: { workDir: string; spawnTime: number; deadlineMs: number }): Promise<string | null>;
+  /**
+   * Build the command for a structured session transport using stream-json control
+   * protocol. Returns the command with stream-json flags and optional MCP injection.
+   * Permissions come from the session manager's auto-allow loop, not flags.
+   * `appendSystemPrompt` injects an additional `--append-system-prompt <text>` (e.g.
+   * a coordinator/typed-agent persona) on top of any secrets system prompt.
+   * `resumeSessionId` appends `-r <id>` to resume an existing claude conversation
+   * (used to revive a structured thread after a daemon restart) while keeping all
+   * the structured stream-json flags + persona + MCP wiring.
+   */
+  buildStructuredCommand?(args: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string }): { command: string; args: string[] };
 }

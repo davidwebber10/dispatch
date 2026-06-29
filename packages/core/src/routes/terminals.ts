@@ -28,7 +28,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       }
 
       if (isPtyType(type)) {
-        const terminal = sessionService.createTerminal(req.params.id, type, label, skipPermissions, workingDir, externalId);
+        const terminal = sessionService.createTerminal(req.params.id, type, label, skipPermissions, workingDir, externalId, config);
         broadcaster?.broadcast({ type: 'terminal:created', terminal });
         broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: req.params.id });
         res.status(201).json(terminal);
@@ -75,6 +75,65 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // GET /api/terminals/:terminalId/conversation/search?q=... — full-history search.
   router.get('/terminals/:terminalId/conversation/search', (req, res) => {
     res.json(sessionService.searchConversation(req.params.terminalId, String(req.query.q ?? '')));
+  });
+
+  // POST /api/terminals/:terminalId/message { text } — send a structured message to a stream-json session.
+  router.post('/terminals/:terminalId/message', (req, res) => {
+    const text = req.body?.text;
+    if (typeof text !== 'string' || !text) return res.status(400).json({ error: 'text (string) is required' });
+    try { sessionService.sendStructuredMessage(req.params.terminalId, text); res.status(204).end(); }
+    catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
+  });
+
+  // GET /api/terminals/:terminalId/permission — the gated tool/question this thread
+  // is blocked on (the membrane), or null when nothing is pending.
+  router.get('/terminals/:terminalId/permission', (req, res) => {
+    res.json(sessionService.getPendingPermission(req.params.terminalId));
+  });
+
+  // POST /api/terminals/:terminalId/permission { requestId?, decision:'allow'|'deny', answers?, message? }
+  // — resolve the pending gated tool. allow folds an AskUserQuestion `answers` map into
+  // the tool input; deny sends a message. On success the thread returns to working.
+  router.post('/terminals/:terminalId/permission', (req, res) => {
+    const { requestId, decision, answers, message } = req.body ?? {};
+    if (decision !== 'allow' && decision !== 'deny') {
+      return res.status(400).json({ error: "decision must be 'allow' or 'deny'" });
+    }
+    try {
+      const ok = sessionService.answerPermission(req.params.terminalId, requestId, { decision, answers, message });
+      if (!ok) return res.status(404).json({ error: 'no pending permission' });
+      statusService?.markWorking(req.params.terminalId, 'Working…');
+      res.status(204).end();
+    } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
+  });
+
+  // POST /api/terminals/:terminalId/autonomy { mode:'supervised'|'autonomous' }
+  // — set the per-agent autonomy dial. Supervised surfaces gated tools as Needs
+  // (the membrane); autonomous auto-allows (runs free), resolving any currently
+  // pending request. Persisted in config.autonomy so it survives a resume.
+  router.post('/terminals/:terminalId/autonomy', (req, res) => {
+    const { mode } = req.body ?? {};
+    if (mode !== 'supervised' && mode !== 'autonomous') {
+      return res.status(400).json({ error: "mode must be 'supervised' or 'autonomous'" });
+    }
+    try {
+      const ok = sessionService.setAutonomy(req.params.terminalId, mode);
+      if (!ok) return res.status(404).json({ error: 'Terminal not found' });
+      const terminal = sessionService.getTerminal(req.params.terminalId);
+      if (terminal) broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: terminal.sessionId });
+      res.json(terminal ?? { ok: true });
+    } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
+  });
+
+  // POST /api/terminals/:terminalId/interrupt — gracefully stop the current turn
+  // WITHOUT killing the thread (sends the structured `interrupt` control on stdin).
+  router.post('/terminals/:terminalId/interrupt', (req, res) => {
+    try {
+      const ok = sessionService.interrupt(req.params.terminalId);
+      if (!ok) return res.status(409).json({ error: 'No live structured session to interrupt' });
+      sessionService.noteAgentLifecycle(req.params.terminalId, 'interrupted'); // tell the coordinator
+      res.status(204).end();
+    } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
   });
 
   // POST /api/terminals/:terminalId/input { data } — write raw bytes to the live PTY.
@@ -128,6 +187,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // POST /api/terminals/:terminalId/stop
   router.post('/terminals/:terminalId/stop', (req, res) => {
     sessionService.stopTerminal(req.params.terminalId);
+    sessionService.noteAgentLifecycle(req.params.terminalId, 'stopped'); // tell the coordinator
     res.status(204).end();
   });
 

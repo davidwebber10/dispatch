@@ -1,9 +1,12 @@
 import { useEffect, useRef } from 'react';
 import { AppShell } from './components/layout/AppShell';
 import { Workspace } from './components/layout/Workspace';
-import { TabBar } from './components/layout/TabBar';
+import { GroupedTabBar } from './components/panes/GroupedTabBar';
+import { GroupedPaneView } from './components/panes/GroupedPaneView';
 import { ProjectSidebar } from './components/sidebar/ProjectSidebar';
 import { TabHost } from './components/tabs/TabHost';
+import { OverseerView } from './components/overseer/OverseerView';
+import { OverseerProjectSidebar } from './components/overseer/OverseerProjectSidebar';
 import { EmptyWorkspace } from './components/layout/EmptyWorkspace';
 import { Inspector } from './components/inspector/Inspector';
 import { AgentPane } from './components/agents/AgentPane';
@@ -25,9 +28,12 @@ import { useReconnect } from './stores/reconnect';
 import { useResume } from './hooks/useResume';
 import { useSettings } from './stores/settings';
 import { useServers } from './stores/servers';
+import { useViewMode } from './stores/viewMode';
+import { useGroups } from './components/panes/store';
 
 function maybeNotify(sessionId: string) {
-  const { notify } = useSettings.getState();
+  const { notify, pushEnabled } = useSettings.getState();
+  if (pushEnabled) return; // server push handles it (this tab counts as away)
   if (!notify || typeof Notification === 'undefined' || Notification.permission !== 'granted' || !document.hidden) return;
   const proj = useProjects.getState().sessions.find((x) => x.id === sessionId);
   try { new Notification('Dispatch — input needed', { body: proj?.name ?? 'A session needs your input', icon: '/icons/icon-192.png' }); } catch { /* ignore */ }
@@ -41,6 +47,11 @@ export default function App() {
   const agentFocused = useAgentUI((s) => s.focused);
   const agentSelected = useAgents((s) => s.selectedId);
   const editing = useAgentUI((s) => s.editing);
+  const viewMode = useViewMode((s) => s.mode);
+  const multiPane = useSettings((s) => s.multiPane);
+  // The group the active tab belongs to (if any). Subscribing keeps the operator
+  // main reactive: merging/unmerging the active tab swaps single ⇄ grouped view.
+  const activeGroupId = useGroups((s) => (activeTerminalId ? s.tabGroup[activeTerminalId] : undefined));
   const reconnectGen = useReconnect((s) => s.gen);
   const sockRef = useRef<{ close(): void; reconnect(): void } | null>(null);
 
@@ -66,6 +77,15 @@ export default function App() {
     return () => { sock.close(); sockRef.current = null; };
   }, []);
 
+  useEffect(() => {
+    const report = () => { if (useSettings.getState().pushEnabled) void import('./lib/push').then((m) => m.reportPresence(document.visibilityState === 'visible' && document.hasFocus())).catch(() => {}); };
+    report();
+    document.addEventListener('visibilitychange', report);
+    window.addEventListener('focus', report);
+    window.addEventListener('blur', report);
+    return () => { document.removeEventListener('visibilitychange', report); window.removeEventListener('focus', report); window.removeEventListener('blur', report); };
+  }, []);
+
   // Returning from the background: re-establish the events socket and remount
   // every terminal (which iOS may have silently killed) so the UI is live
   // again without the user having to back out of the view.
@@ -86,24 +106,30 @@ export default function App() {
       <AuthBanner />
       <AppShell>
         <Workspace
-          sidebar={<ProjectSidebar
-            onSelectTab={selectTab}
-            onSelectAgent={(id) => useAgentUI.getState().selectAgent(id)}
-            onNewAgent={(pid) => useAgentUI.getState().openNew(pid)}
-          />}
+          sidebar={viewMode === 'overseer'
+            ? <OverseerProjectSidebar />
+            : <ProjectSidebar
+                onSelectTab={selectTab}
+                onSelectAgent={(id) => useAgentUI.getState().selectAgent(id)}
+                onNewAgent={(pid) => useAgentUI.getState().openNew(pid)}
+              />}
           main={
-            showAgent
-              ? <AgentPane />
-              : (
-                <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-                  <TabBar onSelect={() => useAgentUI.getState().blur()} />
-                  {activeTerminalId
-                    ? <TabHost key={`${activeTerminalId}:${reconnectGen}`} terminalId={activeTerminalId} />
-                    : <EmptyWorkspace onSelectTab={selectTab} />}
-                </div>
-              )
+            viewMode === 'overseer'
+              ? <OverseerView />
+              : showAgent
+                ? <AgentPane />
+                : (
+                  <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+                    <GroupedTabBar onSelect={() => useAgentUI.getState().blur()} />
+                    {activeTerminalId
+                      ? (multiPane && viewMode === 'operator' && activeGroupId
+                          ? <GroupedPaneView key={`${activeGroupId}:${reconnectGen}`} groupId={activeGroupId} />
+                          : <TabHost key={`${activeTerminalId}:${reconnectGen}`} terminalId={activeTerminalId} />)
+                      : <EmptyWorkspace onSelectTab={selectTab} />}
+                  </div>
+                )
           }
-          inspector={<Inspector projectId={activeId} terminalId={activeTerminalId} onOpenFile={selectTab} />}
+          inspector={viewMode === 'overseer' ? null : <Inspector projectId={activeId} terminalId={activeTerminalId} onOpenFile={selectTab} />}
         />
       </AppShell>
       {editing && <EditAgentModal scheduleId={editing.scheduleId} presetProjectId={editing.preset} onClose={() => useAgentUI.getState().closeEdit()} onSaved={(id) => useAgentUI.getState().selectAgent(id)} />}

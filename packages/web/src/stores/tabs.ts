@@ -14,6 +14,7 @@ interface TabsState {
   loading: Record<string, boolean>;   // terminals that just started / reloaded (transient spinner)
   markLoading: (id: string) => void;
   loadTabs: (projectId: string) => Promise<void>;
+  reorder: (projectId: string, orderedIds: string[]) => Promise<void>;
   setActiveTab: (id: string) => void;                       // open + focus
   openTab: (id: string, background?: boolean) => void;       // open (optionally without switching)
   closeTab: (id: string) => void;
@@ -56,6 +57,16 @@ export const useTabs = create<TabsState>((set, get) => ({
     for (const t of tabs) tabSession[t.id] = t.sessionId;
     set({ byProject: { ...get().byProject, [projectId]: tabs }, tabSession });
     persist(get());
+  },
+  reorder: async (projectId, orderedIds) => {
+    const current = get().byProject[projectId] ?? [];
+    const byId = new Map(current.map((t) => [t.id, t]));
+    const reordered = orderedIds.map((id) => byId.get(id)).filter((t): t is NonNullable<typeof t> => !!t);
+    // keep any rows not present in orderedIds (defensive) appended in their old order
+    for (const t of current) if (!orderedIds.includes(t.id)) reordered.push(t);
+    set({ byProject: { ...get().byProject, [projectId]: reordered } });
+    try { await api.reorderTerminals(projectId, orderedIds); }
+    catch (e) { console.error('useTabs.reorder: reorderTerminals failed, reverting', e); await get().loadTabs(projectId); }  // restore server truth on failure
   },
   openTab: (id, background = false) => {
     const { openTabIds, activeTabId, byProject } = get();

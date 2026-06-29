@@ -19,6 +19,11 @@ export interface Ctx {
   platformId?: NodeJS.Platform;
   /** Optional injectable HTTP probe for testability. Defaults to a spawnSync-based check. */
   probe?: (port: number) => boolean;
+  /**
+   * Optional injectable runner for the bundled-tools CLI (test seam). Receives the
+   * passthrough argv after `tools`. Defaults to spawning `node <coreDist>/tools/cli.js`.
+   */
+  toolsRunner?: (args: string[]) => void;
 }
 
 function buildInstallOpts(ctx: Ctx): DaemonInstallOptions {
@@ -68,9 +73,12 @@ export function runCommand(argv: string[], ctx: Ctx): void {
     case 'logs':
       cmdLogs(ctx, rest);
       return;
+    case 'tools':
+      cmdTools(ctx, rest);
+      return;
     default:
       throw new Error(
-        `usage: dispatch <build|install|uninstall|start|stop|restart|status|update|run|logs>`,
+        `usage: dispatch <build|install|uninstall|start|stop|restart|status|update|run|logs|tools>`,
       );
   }
 }
@@ -99,11 +107,43 @@ export function probeHttp(port: number, probe?: (port: number) => boolean): stri
     : `HTTP: not responding on ${url}`;
 }
 
+/**
+ * Resolve the path to the bundled-tools CLI (packages/core/dist/tools/cli.js),
+ * derived from the same repo root the CLI computes for `entry`/the server path.
+ */
+function toolsCliPath(ctx: Ctx): string {
+  const repoRoot = ctx.repoRoot ?? process.cwd();
+  return path.join(repoRoot, 'packages', 'core', 'dist', 'tools', 'cli.js');
+}
+
 function cmdBuild(ctx: Ctx): void {
   // On win32 pnpm/git are .cmd shims that execFile cannot launch directly without
   // shell: true. On macOS/Linux the binaries are real executables — no shell needed.
   const shellOpt = ctx.platformId === 'win32' ? { shell: true } : {};
   execFileSync('pnpm', ['-r', 'run', 'build'], { stdio: 'inherit', ...shellOpt });
+  // Best-effort: install the bundled CLI tools after a successful build. Mirrors the
+  // old bash `node .../tools/cli.js install || warn` — never fail the build on this.
+  try {
+    execFileSync(ctx.nodePath ?? process.execPath, [toolsCliPath(ctx), 'install'], {
+      stdio: 'inherit',
+    });
+  } catch {
+    console.error('Some tools failed to install (continuing).');
+  }
+}
+
+/**
+ * `dispatch tools <args>` — delegate to the bundled-tools CLI, inheriting stdio so
+ * its output shows. On win32 use the same shell:true pattern as pnpm/git for safety.
+ */
+function cmdTools(ctx: Ctx, args: string[]): void {
+  if (ctx.toolsRunner !== undefined) {
+    ctx.toolsRunner(args);
+    return;
+  }
+  const shellOpt = ctx.platformId === 'win32' ? { shell: true } : {};
+  const node = ctx.nodePath ?? process.execPath;
+  spawnSync(node, [toolsCliPath(ctx), ...args], { stdio: 'inherit', ...shellOpt });
 }
 
 function cmdUpdate(ctx: Ctx): void {

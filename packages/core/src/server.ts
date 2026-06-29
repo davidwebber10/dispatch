@@ -26,14 +26,20 @@ import { createStateRouter } from './routes/state.js';
 import { createGitRouter } from './routes/git.js';
 import { createSecretsRouter } from './routes/secrets.js';
 import { createSetupRouter } from './routes/setup.js';
+import { createToolsRouter } from './routes/tools.js';
+import { getToolsSpawnEnv, toolStatuses, awarenessNote } from './tools/status.js';
 import { SecretsService } from './secrets/service.js';
 import { IntegrationsService } from './integrations/service.js';
 import { createEventsRouter } from './routes/events.js';
 import { createIntegrationsRouter } from './routes/integrations.js';
+import { PushService } from './push/service.js';
+import { createPushRouter } from './routes/push.js';
 import { StatusService } from './status/service.js';
 import { createEventsBroadcaster, createNoopBroadcaster } from './ws/events.js';
 import type { EventBroadcaster } from './ws/events.js';
 import { handleTerminalConnection } from './ws/terminal.js';
+import { handleStructuredConnection } from './ws/structured.js';
+import { StructuredSessionManager } from './structured/manager.js';
 import { startPtyTimingLoop } from './sessions/status.js';
 import { TerminalMonitor } from './terminal-monitor.js';
 import { platform } from './platform/index.js';
@@ -43,8 +49,12 @@ interface CreateAppOptions {
   skipPty?: boolean;
   /** Directory for the Doppler token/config files (defaults to ~/.dispatch). */
   secretsDir?: string;
+  /** Directory for bundled CLI tools (defaults to <secretsDir>/tools). */
+  toolsDir?: string;
   /** Inject a pre-built SecretsService (e.g. with a fake Doppler client) for tests. */
   secretsService?: SecretsService;
+  /** Override the structured command (test seam: spawn fake-claude instead of real claude). */
+  structuredCommand?: { command: string; args: string[] };
 }
 
 /**
@@ -68,6 +78,40 @@ class NoopPTYManager extends PTYManager {
   override killAll(): void { this.alive.clear(); }
 }
 
+/**
+ * Wire the structured-thread "membrane": when an escalating AGENT thread hits a
+ * gated tool / AskUserQuestion the manager emits 'permission' (→ needs_input) and,
+ * once answered, 'resolved' (→ working). Routing it through StatusService means it
+ * broadcasts terminal:status + fires the same push/notify path the PTY/hook flow uses.
+ */
+function wirePermissionMembrane(structuredManager: StructuredSessionManager, statusService: StatusService, sessionService: SessionService): void {
+  structuredManager.on('permission', (terminalId: string, pending: { toolName?: string; questions?: any[] }) => {
+    // An agent's AskUserQuestion escalates UP to its project's coordinator (Dispatch), not to
+    // the human. When that routing succeeds the agent stays "working" (it's waiting on the
+    // coordinator, an internal handoff) — only un-routable permissions reach the human.
+    if (sessionService.routeAgentQuestionToCoordinator(terminalId, pending)) {
+      statusService.markWorking(terminalId, 'Asking Dispatch…');
+      return;
+    }
+    const activity = pending?.questions?.length
+      ? 'Needs your answer'
+      : `Needs approval: ${pending?.toolName ?? 'tool'}`;
+    statusService.markNeedsInput(terminalId, activity);
+  });
+  structuredManager.on('resolved', (terminalId: string) => {
+    statusService.markWorking(terminalId, 'Working…');
+  });
+  // Turn boundaries → accurate status, and the moment an AGENT settles, push an immediate
+  // completion notice up to its coordinator (so Dispatch ingests results, not fire-and-forget).
+  structuredManager.on('busy', (terminalId: string) => {
+    statusService.markWorking(terminalId, 'Working…');
+  });
+  structuredManager.on('idle', (terminalId: string) => {
+    statusService.markIdle(terminalId);
+    sessionService.noteAgentCompletion(terminalId);
+  });
+}
+
 export function createApp(options: CreateAppOptions): import('express').Express {
   const { db, skipPty = false } = options;
 
@@ -82,13 +126,29 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const authRequestService = new AuthRequestService(broadcaster);
 
   const dispatchDir = options.secretsDir ?? platform.dataDir();
+  const toolsBase = options.toolsDir ?? path.join(dispatchDir, 'tools');
   const sessionService = new SessionService(db, ptyManager, path.join(dispatchDir, 'mcp.json'));
   const agentService = new AgentService(db, sessionService, broadcaster);
   const secretsService = options.secretsService ?? new SecretsService(dispatchDir);
   const integrationsService = new IntegrationsService(db);
   sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
   sessionService.setIntegrationsSpecs(() => integrationsService.getServerSpecs());
+  sessionService.setToolsAwareness(() => awarenessNote(toolStatuses({ base: toolsBase })));
+  const structuredManager = new StructuredSessionManager();
+  sessionService.setStructuredManager(structuredManager);
+  if (options.structuredCommand) sessionService.setStructuredCommandOverride(options.structuredCommand);
   const statusService = new StatusService(db, broadcaster);
+  wirePermissionMembrane(structuredManager, statusService, sessionService);
+  const pushService = new PushService(db, { vapidDir: dispatchDir });
+
+  statusService.setThreadSettledHook(({ terminalId, sessionId, threadStatus }) => {
+    const term = terminalsDb.getById(db, terminalId);
+    const sess = sessionsDb.getById(db, sessionId);
+    const title = sess?.name || 'Dispatch';
+    const label = term?.label || 'Thread';
+    const body = threadStatus === 'needs_input' ? `${label} needs your input` : `${label} finished`;
+    void pushService.notifyThread({ terminalId, title, body });
+  });
 
   // Mount routes
   app.use('/api/sessions', createSessionsRouter(sessionService, broadcaster));
@@ -104,10 +164,14 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   app.use('/api/auth-requests', createAuthRouter(authRequestService));
   app.use('/api/state', createStateRouter(db));
   app.use('/api/integrations', createIntegrationsRouter(integrationsService));
+  app.use('/api/push', createPushRouter(pushService));
+  app.use('/api/tools', createToolsRouter({ base: toolsBase }));
 
   // Attach internals for server wiring
   (app as any)._ptyManager = ptyManager;
   (app as any)._sessionService = sessionService;
+  (app as any)._pushService = pushService;
+  (app as any)._structuredManager = structuredManager;
 
   // Serve the built web client (single-origin) when a build is present.
   // SPA fallback returns index.html for any non-/api, non-WS GET.
@@ -169,11 +233,12 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Create WebSocket servers (noServer mode)
   const eventsWss = new WebSocketServer({ noServer: true });
   const terminalWss = new WebSocketServer({ noServer: true });
+  const structuredWss = new WebSocketServer({ noServer: true });
 
   // Keepalive: Cloudflare drops idle proxied WebSockets at ~100s. Ping clients
   // every 30s so terminal/events sockets survive quiet periods through the tunnel.
   const heartbeat = setInterval(() => {
-    for (const wss of [eventsWss, terminalWss]) {
+    for (const wss of [eventsWss, terminalWss, structuredWss]) {
       for (const client of wss.clients) {
         if (client.readyState === client.OPEN) client.ping();
       }
@@ -188,15 +253,34 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const sessionService = new SessionService(db, ptyManager, path.join(dataDir, 'mcp.json'));
   const agentService = new AgentService(db, sessionService, broadcaster, path.join(dataDir, 'runs'));
   const statusService = new StatusService(db, broadcaster);
+  const structuredManager = new StructuredSessionManager();
+  sessionService.setStructuredManager(structuredManager);
+  wirePermissionMembrane(structuredManager, statusService, sessionService);
+  const pushService = new PushService(db, { vapidDir: dataDir });
+
+  statusService.setThreadSettledHook(({ terminalId, sessionId, threadStatus }) => {
+    const term = terminalsDb.getById(db, terminalId);
+    const sess = sessionsDb.getById(db, sessionId);
+    const title = sess?.name || 'Dispatch';
+    const label = term?.label || 'Thread';
+    const body = threadStatus === 'needs_input' ? `${label} needs your input` : `${label} finished`;
+    void pushService.notifyThread({ terminalId, title, body });
+  });
 
   // Doppler secrets: token-backed connection + per-spawn injection (DOPPLER_* env +
   // an MCP server) so Claude Code / Codex agents can add & retrieve secrets.
   const secretsService = new SecretsService(dataDir);
   const integrationsService = new IntegrationsService(db);
+  const toolsBase = path.join(dataDir, 'tools');
   sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
   sessionService.setIntegrationsSpecs(() => integrationsService.getServerSpecs());
+  sessionService.setToolsAwareness(() => awarenessNote(toolStatuses({ base: toolsBase })));
   let effectiveShimEnv = browserShimEnv;
-  const refreshPtyEnv = () => ptyManager.setDefaultEnv({ ...effectiveShimEnv, ...secretsService.getSpawnEnv() });
+  const refreshPtyEnv = () => {
+    const spawnEnv = { ...effectiveShimEnv, ...secretsService.getSpawnEnv(), ...getToolsSpawnEnv({ base: toolsBase }) };
+    ptyManager.setDefaultEnv(spawnEnv);
+    structuredManager.setDefaultEnv(spawnEnv);
+  };
   secretsService.onChange(refreshPtyEnv);
   refreshPtyEnv();
 
@@ -250,6 +334,20 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     }
   });
 
+  // Mirror the PTY exit handler for structured-transport terminals
+  structuredManager.on('exit', (id: string, _exitCode: number) => {
+    if (!db.open) return;
+    const terminal = terminalsDb.getById(db, id);
+    if (terminal) {
+      terminalsDb.updatePid(db, id, null);
+      terminalsDb.updateStatus(db, id, 'waiting');
+      broadcaster.broadcast({ type: 'terminal:status', terminalId: id, status: 'waiting' });
+      broadcaster.broadcast({ type: 'terminal:exit', terminalId: id, sessionId: terminal.session_id });
+      sessionsDb.updatePid(db, terminal.session_id, null);
+      rollupSession(terminal.session_id);
+    }
+  });
+
   // Mount routes
   app.use('/api/sessions', createSessionsRouter(sessionService, broadcaster));
   app.use('/api', createTerminalsRouter(sessionService, broadcaster, statusService));
@@ -265,6 +363,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   app.use('/api/state', createStateRouter(db));
   app.use('/api/integrations', createIntegrationsRouter(integrationsService));
+  app.use('/api/push', createPushRouter(pushService));
+  app.use('/api/tools', createToolsRouter({ base: toolsBase }));
 
   // Serve the built web client (single-origin) when a build is present.
   // SPA fallback returns index.html for any non-/api, non-WS GET.
@@ -282,7 +382,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   server.on('upgrade', (request, socket, head) => {
     const url = request.url || '';
 
-    if (url.match(/\/api\/terminals\/[^/]+\/ws/) || url.match(/\/api\/sessions\/[^/]+\/terminal/)) {
+    if (url.match(/\/api\/terminals\/[^/]+\/structured-ws/)) {
+      structuredWss.handleUpgrade(request, socket, head, (ws) => {
+        handleStructuredConnection(ws, request, structuredManager, (id) => sessionService.ensureStructuredAlive(id));
+      });
+    } else if (url.match(/\/api\/terminals\/[^/]+\/ws/) || url.match(/\/api\/sessions\/[^/]+\/terminal/)) {
       terminalWss.handleUpgrade(request, socket, head, (ws) => {
         handleTerminalConnection(ws, request, ptyManager, sessionService);
       });
@@ -355,8 +459,10 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     clearInterval(agentSchedulerInterval);
     clearInterval(heartbeat);
     ptyManager.killAll();
+    structuredManager.killAll();
     eventsWss.close();
     terminalWss.close();
+    structuredWss.close();
     server.close();
     db.close();
   };

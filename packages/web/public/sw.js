@@ -2,7 +2,7 @@
 // Deliberately conservative because the origin sits behind Cloudflare Access:
 // API / WebSocket / Access / upload paths are never intercepted, and the HTML
 // shell is revalidated over the network so an expired session re-authenticates.
-const VERSION = 'dispatch-v2';
+const VERSION = 'dispatch-v3';
 const CACHE = `dispatch-${VERSION}`;
 
 self.addEventListener('install', () => self.skipWaiting());
@@ -55,4 +55,28 @@ self.addEventListener('fetch', (event) => {
       }
     })());
   }
+});
+
+// --- Web push: show a notification when a thread finishes / needs input ---
+self.addEventListener('push', (event) => {
+  let d = {};
+  try { d = event.data ? event.data.json() : {}; } catch { d = {}; }
+  const title = d.title || 'Dispatch';
+  event.waitUntil(self.registration.showNotification(title, {
+    body: d.body || '',
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
+    tag: d.terminalId || undefined,   // coalesce repeated pings per thread
+    data: { terminalId: d.terminalId || null },
+  }));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil((async () => {
+    const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const existing = all.find((c) => c.url.startsWith(self.location.origin));
+    if (existing) { await existing.focus(); return; }
+    await self.clients.openWindow('/');
+  })());
 });
