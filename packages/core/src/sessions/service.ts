@@ -162,6 +162,7 @@ export class SessionService {
     const terminals = terminalsDb.listBySession(this.db, id);
     for (const terminal of terminals) {
       this.ptyManager.kill(terminal.id);
+      this.structuredManager?.kill(terminal.id);
       terminalsDb.updatePid(this.db, terminal.id, null);
     }
 
@@ -176,6 +177,7 @@ export class SessionService {
     const terminals = terminalsDb.listBySession(this.db, id);
     for (const terminal of terminals) {
       if (this.ptyManager.isAlive(terminal.id)) this.ptyManager.kill(terminal.id);
+      this.structuredManager?.kill(terminal.id);
     }
     terminalsDb.removeBySession(this.db, id);
 

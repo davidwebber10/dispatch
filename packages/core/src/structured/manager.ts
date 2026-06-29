@@ -19,12 +19,20 @@ const MAX_EVENTS = 5000;
  */
 export class StructuredSessionManager extends EventEmitter {
   private sessions = new Map<string, Session>();
+  private defaultEnv: Record<string, string> = {};
+
+  constructor() {
+    super();
+    this.setMaxListeners(0); // Fix 4: many ws viewers each add an 'event' listener
+  }
+
+  setDefaultEnv(env: Record<string, string>): void { this.defaultEnv = env; }
 
   spawn(terminalId: string, opts: { command: string; args: string[]; workDir: string; env?: Record<string, string> }): number {
     if (this.sessions.has(terminalId)) this.kill(terminalId);
     const child = spawn(opts.command, opts.args, {
       cwd: opts.workDir,
-      env: { ...process.env, ...opts.env },
+      env: { ...process.env, ...this.defaultEnv, ...opts.env },
       stdio: ['pipe', 'pipe', 'pipe'],
     }) as ChildProcessWithoutNullStreams;
     child.stdin.on('error', () => {}); // Fix 2: suppress EPIPE if child closes stdin while alive
@@ -80,6 +88,8 @@ export class StructuredSessionManager extends EventEmitter {
     try { s.child.kill(); } catch { /* already gone */ }
     this.sessions.delete(terminalId);
   }
+
+  killAll(): void { for (const id of [...this.sessions.keys()]) this.kill(id); }
 
   isAlive(terminalId: string): boolean { return this.sessions.has(terminalId); }
 

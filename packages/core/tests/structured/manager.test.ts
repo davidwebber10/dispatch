@@ -18,7 +18,7 @@ function waitForEvent(m: StructuredSessionManager, id: string, pred: (e: any) =>
 
 let m: StructuredSessionManager;
 beforeEach(() => { m = new StructuredSessionManager(); });
-afterEach(() => { m.kill('t1'); });
+afterEach(() => { m.kill('t1'); m.kill('t2'); });
 
 it('spawns, emits parsed events, and buffers them', async () => {
   spawnFake(m, 't1');
@@ -42,6 +42,23 @@ it('auto-allows can_use_tool control_requests (parity)', async () => {
   m.sendMessage('t1', 'TRIGGER_PERMISSION');
   const result = await waitForEvent(m, 't1', (e) => e.type === 'user' && JSON.stringify(e).includes('WROTE'));
   expect(JSON.stringify(result)).toContain('WROTE'); // allowed, not DENIED
+});
+
+it('setDefaultEnv: env vars reach child process', async () => {
+  m.setDefaultEnv({ DISPATCH_TEST_ENV: 'xyz' });
+  spawnFake(m, 't1');
+  const init = await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  expect(init.testEnv).toBe('xyz');
+});
+
+it('killAll: terminates all active sessions', async () => {
+  spawnFake(m, 't1');
+  spawnFake(m, 't2');
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  await waitForEvent(m, 't2', (e) => e.type === 'system' && e.subtype === 'init');
+  m.killAll();
+  expect(m.isAlive('t1')).toBe(false);
+  expect(m.isAlive('t2')).toBe(false);
 });
 
 it('re-spawn: old child exit does not evict the replacement session (Fix 1 regression)', async () => {

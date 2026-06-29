@@ -272,7 +272,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   sessionService.setIntegrationsSpecs(() => integrationsService.getServerSpecs());
   sessionService.setToolsAwareness(() => awarenessNote(toolStatuses({ base: toolsBase })));
   let effectiveShimEnv = browserShimEnv;
-  const refreshPtyEnv = () => ptyManager.setDefaultEnv({ ...effectiveShimEnv, ...secretsService.getSpawnEnv(), ...getToolsSpawnEnv({ base: toolsBase }) });
+  const refreshPtyEnv = () => {
+    const spawnEnv = { ...effectiveShimEnv, ...secretsService.getSpawnEnv(), ...getToolsSpawnEnv({ base: toolsBase }) };
+    ptyManager.setDefaultEnv(spawnEnv);
+    structuredManager.setDefaultEnv(spawnEnv);
+  };
   secretsService.onChange(refreshPtyEnv);
   refreshPtyEnv();
 
@@ -323,6 +327,20 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       agentService.handleTerminalExit(id, exitCode);
     } catch (err) {
       console.error('agent run exit handler failed', err);
+    }
+  });
+
+  // Mirror the PTY exit handler for structured-transport terminals
+  structuredManager.on('exit', (id: string, _exitCode: number) => {
+    if (!db.open) return;
+    const terminal = terminalsDb.getById(db, id);
+    if (terminal) {
+      terminalsDb.updatePid(db, id, null);
+      terminalsDb.updateStatus(db, id, 'waiting');
+      broadcaster.broadcast({ type: 'terminal:status', terminalId: id, status: 'waiting' });
+      broadcaster.broadcast({ type: 'terminal:exit', terminalId: id, sessionId: terminal.session_id });
+      sessionsDb.updatePid(db, terminal.session_id, null);
+      rollupSession(terminal.session_id);
     }
   });
 
@@ -437,6 +455,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     clearInterval(agentSchedulerInterval);
     clearInterval(heartbeat);
     ptyManager.killAll();
+    structuredManager.killAll();
     eventsWss.close();
     terminalWss.close();
     structuredWss.close();
