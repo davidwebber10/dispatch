@@ -94,6 +94,14 @@ Both Claude Code (`claude`) and Codex (`codex`) run **natively on Windows** — 
 They install as Node.js packages and expose `.cmd` shims on the PATH. See
 [`docs/providers.md`](docs/providers.md) for details.
 
+> **Native install required (not WSL2).** Install the agent CLIs *natively on Windows*, on the
+> Windows PATH. Native-Windows Dispatch is a Windows process and drives agents in its own
+> environment — `claude`/`codex` installed inside **WSL2** live in a separate Linux namespace
+> (filesystem, `~/.claude`, PATH, env) and are **not** reachable by the native daemon (command
+> resolution, working-dir handoff, transcript reading, and secrets/MCP injection won't line up).
+> For a WSL2-based setup, run Dispatch *inside* WSL2 instead — its runtime works, though the
+> managed `dispatch install` daemon lifecycle is macOS/Windows only (use `dispatch run` in WSL2).
+
 ```powershell
 where.exe claude; claude --version    # Claude Code
 where.exe codex;  codex --version     # Codex

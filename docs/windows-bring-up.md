@@ -11,6 +11,14 @@ into `%USERPROFILE%\.claude\projects\<encoded>` — the encoding must match what
 Claude Code actually uses byte-for-byte. This is isolated to a single method so a fix, if
 needed, is local and does not require broader changes.
 
+**Prerequisite — agents must be native-Windows installs.** This checklist assumes `claude`/`codex`
+are installed *natively on Windows* (on the Windows PATH). Native-Windows Dispatch **cannot** drive
+agents installed inside **WSL2**: WSL2 is a separate Linux namespace (its own filesystem, `~/.claude`,
+PATH, and env), so command resolution, working-directory handoff, transcript reading (steps 3 / 7b),
+and secrets/MCP injection won't line up. If the agents live in WSL2, run **Dispatch inside WSL2**
+instead — a different setup, and note the Linux daemon-install lifecycle is not implemented (use
+`dispatch run`). **Confirm which install path is in use before starting this checklist.**
+
 Work through all seven steps in order. Record any discrepancies against the expected
 behaviour described below and report them before closing out the bring-up.
 

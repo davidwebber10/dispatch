@@ -50,6 +50,7 @@ couch, or your phone — including as an installable PWA. Put it behind a
 **Known v1 gaps on Windows:**
 - The in-app browser/OAuth-capture relay is not wired; OAuth flows open in the system browser directly instead.
 - The Tailscale-status panel shows "unavailable" (Tailscale itself still works for network access).
+- **Agents must be installed *natively* on Windows.** Dispatch runs as a native Windows process and drives agents in the same environment, so `claude`/`codex` installed inside **WSL2** are not reachable — WSL2 is a separate Linux namespace (its own filesystem, `~/.claude`, PATH, and env), so command resolution, working-directory handoff, transcript reading, and secrets/MCP injection all assume the native-Windows side. For a WSL2-based setup, run **Dispatch itself inside WSL2** rather than the native Windows daemon.
 
 ---
 
