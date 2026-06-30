@@ -14,8 +14,8 @@ import { rowToSession } from '../types.js';
  * that persists after all retries is swallowed — cleanup is best-effort.
  */
 function safeUnlinkSync(p: string): void {
-  const MAX_ATTEMPTS = 10;
-  const DELAY_MS = 20;
+  const MAX_ATTEMPTS = 25;
+  const DELAY_MS = 40;
   const TRANSIENT = new Set(['EBUSY', 'EPERM', 'EACCES']);
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {

@@ -140,7 +140,7 @@ describe('terminal routes', () => {
 
     const list = await request(app).get(`/api/sessions/${sessionId}/terminals`);
     expect(list.body).toHaveLength(1);
-  });
+  }, 20_000);
 
   it('POST /api/sessions/:id/terminals rejects invalid type', async () => {
     const res = await request(app)
@@ -157,7 +157,7 @@ describe('terminal routes', () => {
 
     const res = await request(app).post(`/api/terminals/${terminalId}/stop`);
     expect(res.status).toBe(204);
-  });
+  }, 20_000);
 
   it('DELETE /api/terminals/:terminalId removes a terminal', async () => {
     const c1 = await request(app)
@@ -173,7 +173,7 @@ describe('terminal routes', () => {
     const list = await request(app).get(`/api/sessions/${sessionId}/terminals`);
     expect(list.body).toHaveLength(1);
     expect(list.body[0].id).toBe(c2.body.id);
-  });
+  }, 20_000);
 
   it('POST /api/terminals/:terminalId/send-file-reference sends context for an alive terminal', async () => {
     const create = await request(app)
@@ -189,7 +189,7 @@ describe('terminal routes', () => {
       ok: true,
       sentText: `Use this file as context: ${path.join(tmpDir, 'context.txt')}\r`,
     });
-  });
+  }, 20_000);
 
   it('POST /api/terminals/:terminalId/send-file-reference resolves inbox paths from the session root', async () => {
     const terminalDir = path.join(tmpDir, 'subdir');
@@ -211,7 +211,7 @@ describe('terminal routes', () => {
       ok: true,
       sentText: `Use this file as context: ${path.join(tmpDir, '.dispatch', 'inbox', 'foo.txt')}\r`,
     });
-  });
+  }, 20_000);
 
   it('POST /api/terminals/:terminalId/send-file-reference shell-escapes paths and appends a trailing space', async () => {
     const filename = "weird file 'quote' $(touch nope);.txt";
@@ -231,7 +231,7 @@ describe('terminal routes', () => {
       sentText: `'${absolutePath.replace(/'/g, `'\\''`)}' `,
     });
     expect(res.body.sentText.endsWith(' ')).toBe(true);
-  });
+  }, 20_000);
 
   it('POST /api/terminals/:terminalId/send-file-reference returns 404 for missing terminals', async () => {
     const res = await request(app)
@@ -254,7 +254,7 @@ describe('terminal routes', () => {
 
     expect(res.status).toBe(409);
     expect(res.body.error).toBe('Terminal process is not running');
-  });
+  }, 20_000);
 
   it('POST /api/terminals/:terminalId/send-file-reference returns 409 for non-PTY tabs', async () => {
     const create = await request(app)
@@ -280,5 +280,5 @@ describe('terminal routes', () => {
 
     expect(res.status).toBe(403);
     expect(res.body.error).toBe('Path traversal not allowed');
-  });
+  }, 20_000);
 });

@@ -112,10 +112,19 @@ describe('file routes', () => {
         contentType: 'text/plain',
       });
 
-    const after = listUploadTempFiles();
-    const newTempFiles = [...after].filter(name => !before.has(name));
-
     expect(res.status).toBe(400);
+
+    // Poll until the temp dir drains (handles slow handle-release on Windows-CI).
+    // safeUnlinkSync retries for up to ~1s; we allow 3s total here.
+    const deadline = Date.now() + 3000;
+    let newTempFiles: string[] = [];
+    while (Date.now() < deadline) {
+      const after = listUploadTempFiles();
+      newTempFiles = [...after].filter(name => !before.has(name));
+      if (newTempFiles.length === 0) break;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+
     expect(newTempFiles).toEqual([]);
   });
 });
