@@ -536,12 +536,12 @@ export class SessionService {
     terminalsDb.updatePid(this.db, terminalId, null);
   }
 
-  sendStructuredMessage(terminalId: string, text: string): void {
+  sendStructuredMessage(terminalId: string, content: string | import('../structured/manager.js').ContentBlock[]): void {
     // Lazily resume a thread that died on a daemon restart (resumes the same claude
     // conversation when an external_id was captured) before delivering the message.
     if (!this.structuredManager?.isAlive(terminalId)) this.ensureStructuredAlive(terminalId);
     if (!this.structuredManager?.isAlive(terminalId)) throw new Error('no structured session for terminal');
-    this.structuredManager.sendMessage(terminalId, text);
+    this.structuredManager.sendMessage(terminalId, content);
   }
 
   /**

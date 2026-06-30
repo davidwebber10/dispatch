@@ -1,14 +1,32 @@
-import { useRef, useState } from 'react';
-import { MessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
+import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
+import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
 import { PaperPlaneTilt, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip } from '@phosphor-icons/react';
 import type { ConvItem } from '../../../api/types';
-import { api } from '../../../api/client';
+import { api, type ContentBlock } from '../../../api/client';
 import { useStructuredChat } from './useStructuredChat';
 import { useTabs, findTerminal } from '../../../stores/tabs';
 import { useDraft } from '../../../hooks/useDraft';
-import { renderMarkdown } from '../../../lib/markdown';
+import { Markdown } from '../../Markdown';
+import { WorkingIndicator } from '../../WorkingIndicator';
+import { ChatImage } from '../../ChatImage';
 import { ToolCall, ToolResult } from '../ToolCall';
 import { useUI } from '../../../stores/ui';
+
+// Anthropic-vision-supported image types. Only these become a REAL base64 image block
+// the model SEES; anything else (incl. SVG, which the model can't read) falls back to
+// the path-reference line so the agent can still Read it from the inbox on disk.
+const MODEL_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+/** Base64-encode a File's bytes (chunked so a large image can't blow the call stack). */
+async function fileToBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
 
 /**
  * ChatView — the structured (stream-json) thread surface, built on shadcn's
@@ -19,7 +37,7 @@ import { useUI } from '../../../stores/ui';
 export function ChatView({ terminalId }: { terminalId: string }) {
   const tab = useTabs((s) => findTerminal(s.byProject, terminalId));
   const sessionId = tab?.sessionId;
-  const { items, busy, model, send } = useStructuredChat(terminalId);
+  const { items, busy, model, send } = useStructuredChat(terminalId, sessionId);
 
   const [draft, setDraft, clearDraft] = useDraft(terminalId);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -27,6 +45,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   // (across awaits / multiple files) without clobbering what's already there.
   const draftRef = useRef(draft); draftRef.current = draft;
   const [uploadNote, setUploadNote] = useState('');
+  const [dragActive, setDragActive] = useState(false); // drives the drop-target visual cue
 
   function doSend() {
     const v = draft.trim();
@@ -36,7 +55,9 @@ export function ChatView({ terminalId }: { terminalId: string }) {
     requestAnimationFrame(() => { if (taRef.current) taRef.current.style.height = 'auto'; });
   }
 
-  // Upload each picked file to the project inbox and append a reference line to the
+  // Upload each picked file to the project inbox. An IMAGE is then sent as a REAL base64
+  // content block (its own turn) so the model SEES it — and it echoes back + renders
+  // inline via the foundation's parser. A non-image keeps the path-reference line in the
   // draft so the user sends the path alongside their message (the agent can Read it).
   async function attachFiles(files: FileList | null) {
     if (!files || !files.length || !sessionId) return;
@@ -44,16 +65,47 @@ export function ChatView({ terminalId }: { terminalId: string }) {
       setUploadNote(`Uploading ${f.name}…`);
       try {
         const res = await api.uploadInbox(sessionId, f);
-        const cur = draftRef.current;
-        const next = cur + (cur ? '\n' : '') + 'Attached file: ' + res.path;
-        draftRef.current = next;
-        setDraft(next);
-        setUploadNote(`Attached ${f.name}`);
+        if (MODEL_IMAGE_MIME.has(f.type)) {
+          const data = await fileToBase64(f);
+          const block: ContentBlock = { type: 'image', source: { type: 'base64', media_type: f.type, data } };
+          send([block]);
+          setUploadNote(`Sent ${f.name}`);
+        } else {
+          const cur = draftRef.current;
+          const next = cur + (cur ? '\n' : '') + 'Attached file: ' + res.path;
+          draftRef.current = next;
+          setDraft(next);
+          setUploadNote(`Attached ${f.name}`);
+        }
       } catch {
         setUploadNote(`Upload failed: ${f.name}`);
       }
     }
     setTimeout(() => setUploadNote(''), 2500);
+  }
+
+  // Drag-and-drop + paste image upload — route dropped/pasted files through the SAME
+  // attachFiles path as the Paperclip (upload to inbox; an image rides along as a real
+  // base64 block so the model SEES it). Mirrors the coordinator Composer + TerminalTab.
+  // Gate on a FILE drag so the cue doesn't flash on text/element drags.
+  function onDragOver(e: DragEvent<HTMLDivElement>) {
+    if (!Array.from(e.dataTransfer.types || []).includes('Files')) return;
+    e.preventDefault();
+    setDragActive(true);
+  }
+  function onDragLeave(e: DragEvent<HTMLDivElement>) {
+    // Only clear when the pointer truly leaves the composer (not when crossing a child),
+    // so the cue doesn't flicker between the attach button / textarea / send button.
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragActive(false);
+  }
+  function onDrop(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setDragActive(false);
+    if (e.dataTransfer.files?.length) void attachFiles(e.dataTransfer.files);
+  }
+  function onPaste(e: ClipboardEvent<HTMLTextAreaElement>) {
+    const files = e.clipboardData?.files;
+    if (files && files.length) { e.preventDefault(); void attachFiles(files); }
   }
 
   async function openFileInViewer(path: string) {
@@ -85,15 +137,24 @@ export function ChatView({ terminalId }: { terminalId: string }) {
             </MessageScroller.Content>
           </MessageScroller.Viewport>
           <JumpButton />
+          <StickToEndOnLoad terminalId={terminalId} count={items.length} />
         </MessageScroller.Root>
       </MessageScroller.Provider>
 
-      {/* Composer */}
-      <div style={{ flexShrink: 0, borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', padding: '10px 14px max(10px, env(safe-area-inset-bottom))' }}>
-        {uploadNote && (
-          <div style={{ maxWidth: 768, margin: '0 auto 6px', fontSize: 12, color: 'var(--color-text-tertiary)' }}>{uploadNote}</div>
+      {/* Composer (drop a file anywhere on it, or paste — routes through attachFiles) */}
+      <div
+        onDragOver={onDragOver}
+        onDragEnter={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+        style={{ flexShrink: 0, borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', padding: '10px 14px max(10px, env(safe-area-inset-bottom))' }}
+      >
+        {(dragActive || uploadNote) && (
+          <div style={{ maxWidth: 768, margin: '0 auto 6px', fontSize: 12, color: dragActive ? 'var(--color-accent)' : 'var(--color-text-tertiary)' }}>
+            {dragActive ? 'Drop image to attach' : uploadNote}
+          </div>
         )}
-        <div style={{ maxWidth: 768, margin: '0 auto', display: 'flex', alignItems: 'flex-end', gap: 8, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 12, padding: '8px 8px 8px 8px' }}>
+        <div style={{ maxWidth: 768, margin: '0 auto', display: 'flex', alignItems: 'flex-end', gap: 8, background: dragActive ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-elevated))' : 'var(--color-elevated)', border: dragActive ? '1px solid var(--color-accent)' : '1px solid var(--color-border)', borderRadius: 12, padding: '8px 8px 8px 8px', transition: 'border-color .12s, background .12s' }}>
           <label
             title="Attach file"
             style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'var(--color-hover)', color: 'var(--color-text-secondary)' }}
@@ -111,6 +172,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
             value={draft}
             onChange={(e) => { setDraft(e.target.value); const el = e.target; el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 180) + 'px'; }}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); } }}
+            onPaste={onPaste}
             placeholder="Message…"
             rows={1}
             autoCapitalize="off" autoCorrect="off" spellCheck={false}
@@ -168,7 +230,7 @@ function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void) {
     if (it.kind === 'user') {
       flushGroup();
       rows.push(
-        <MessageScroller.Item key={id} messageId={id} scrollAnchor style={{ display: 'flex', flexDirection: 'column' }}>
+        <MessageScroller.Item key={id} messageId={id} style={{ display: 'flex', flexDirection: 'column' }}>
           <UserBubble text={it.text ?? ''} />
         </MessageScroller.Item>,
       );
@@ -177,6 +239,7 @@ function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void) {
 
     let node: React.ReactNode = null;
     if (it.kind === 'assistant') node = <AssistantText text={it.text ?? ''} />;
+    else if (it.kind === 'image') node = <ChatImage src={it.imageUrl ?? ''} alt={it.imageAlt} />;
     else if (it.kind === 'thinking') node = <Thinking text={it.text ?? ''} />;
     else if (it.kind === 'tool') {
       const result = it.toolId ? resultById.get(it.toolId) : items[i + 1]?.kind === 'tool-result' ? items[i + 1] : undefined;
@@ -229,7 +292,7 @@ function UserBubble({ text }: { text: string }) {
 function AssistantText({ text }: { text: string }) {
   if (!text) return null;
   // Avatar is rendered once per turn by AssistantTurn; this is just the prose.
-  return <div className="md-view" style={{ minWidth: 0 }} dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />;
+  return <Markdown source={text} />;
 }
 
 function Thinking({ text }: { text: string }) {
@@ -273,15 +336,51 @@ function ResultFooter({ item }: { item: ConvItem }) {
   );
 }
 
-function WorkingIndicator() {
-  return (
-    <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-      <div style={{ flexShrink: 0, width: 24, height: 24, borderRadius: 7, background: 'var(--color-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <Sparkle size={14} weight="fill" color="var(--color-accent)" className="dispatch-wiggle" />
-      </div>
-      <span className="chat-shimmer" style={{ font: '500 13.5px var(--font-sans)' }}>Working…</span>
-    </div>
-  );
+/**
+ * Render-nothing helper: keep a freshly-opened (or freshly-switched) thread pinned to
+ * the bottom through its post-mount backfill burst. shadcn's autoScroll follows LIVE
+ * deltas while the user is pinned, but the initial replay arrives as a rapid append
+ * burst that can strand the viewport above the fold (a content change can flip the
+ * scroller out of "following-bottom" before it catches up). We force scrollToEnd('auto')
+ * — instant, so it never animates against the user — on each append while still engaged,
+ * then hand off to native autoScroll the moment the user scrolls off-tail.
+ */
+function StickToEndOnLoad({ terminalId, count }: { terminalId: string; count: number }) {
+  const { scrollToEnd } = useMessageScroller();
+  const { end } = useMessageScrollerScrollable(); // end === true ⇒ off-tail (content below the fold)
+  const settledRef = useRef(false);
+  const prevCountRef = useRef(-1);
+  const termRef = useRef(terminalId);
+
+  useEffect(() => {
+    // New thread → re-arm so its own backfill re-sticks to the bottom.
+    if (termRef.current !== terminalId) {
+      termRef.current = terminalId;
+      settledRef.current = false;
+      prevCountRef.current = -1;
+    }
+    // `items` only ever GROWS or RESETS-TO-EMPTY (useStructuredChat appends or setItems([])),
+    // so a count regression unambiguously means the list was cleared/replaced — a ws-reconnect
+    // `onReset` replay (same terminalId) or a non-keyed remount whose outgoing-thread count
+    // (e.g. 50) still sits in prevCountRef while the new backfill climbs 0→N<50. Re-arm so the
+    // append burst exceeds prevCount and re-sticks. (Handles tab-switch + reconnect + replay.)
+    if (count < prevCountRef.current) prevCountRef.current = -1;
+    if (settledRef.current) return;
+    if (count > prevCountRef.current) {
+      // Backfill / live append while still engaged → snap to the bottom. We scroll even
+      // when `end` reads off-tail: during the burst the viewport legitimately starts above
+      // the fold and must be pulled down. (Right after our own scroll `end` reads stale-true
+      // for a frame — but that frame is a count-GROWTH tick, handled here, never below.)
+      prevCountRef.current = count;
+      scrollToEnd({ behavior: 'auto' });
+      return;
+    }
+    // Count held steady AND we're parked off-tail → the user scrolled up themselves.
+    // Disengage for the rest of this thread; native autoScroll owns follow-while-pinned now.
+    if (end) settledRef.current = true;
+  }, [terminalId, count, end, scrollToEnd]);
+
+  return null;
 }
 
 /** shadcn MessageScroller.Button — floating "jump to latest", shown only off-tail. */

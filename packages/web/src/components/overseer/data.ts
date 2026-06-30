@@ -441,6 +441,7 @@ export function derive(s: DeriveState): RenderVals {
     needs,
     missions,
     stream,
+    busy: false, // mock scenarios have no live coordinator turn in flight
     drillDetail: s.drill ? detail(s.drill, missions) : null,
     hasNeeds,
     noMissions: missions.length === 0,

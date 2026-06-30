@@ -63,11 +63,21 @@ function elapsedSince(iso?: string): string {
   return `${Math.floor(min / 60)}h`;
 }
 
-/** True for a structured worker thread the Overseer manages (i.e. not the coordinator). */
-export function isManagedWorker(t: Terminal): boolean {
-  if (t.type !== 'claude-code' || t.archivedAt) return false;
+/**
+ * A structured worker terminal (typed agent, not the coordinator), IGNORING archive
+ * state. Used directly for the separately-fetched archived list so completed
+ * (complete_agent'd) agents can still surface as outcomes; the live rail uses
+ * isManagedWorker, which additionally rejects archived rows.
+ */
+export function isStructuredWorker(t: Terminal): boolean {
+  if (t.type !== 'claude-code') return false;
   const c = t.config ?? {};
   return c.transport === 'structured' && c.role !== 'coordinator';
+}
+
+/** True for a LIVE structured worker thread the Overseer manages (i.e. not the coordinator, not archived). */
+export function isManagedWorker(t: Terminal): boolean {
+  return !t.archivedAt && isStructuredWorker(t);
 }
 
 /**
@@ -121,6 +131,29 @@ function summaryText(live: number, done: number): string {
   return parts.join(' · ');
 }
 
+/**
+ * An 'image' ConvItem → an image StreamMessage. Constructed inline (not via the m()
+ * factory, which only knows text kinds) so it stays disjoint from data.ts; carries the
+ * already-resolved src/alt straight through to <ChatImage>. Key matches m()'s "s"+i scheme.
+ * `fromUser` marks a picture the HUMAN attached on their own turn so the stream attributes
+ * it to "You" (right-aligned) instead of rendering it as a Dispatch turn.
+ */
+function imageMessage(imageUrl: string, imageAlt: string | undefined, i: string, fromUser: boolean): StreamMessage {
+  return {
+    kind: 'image',
+    who: fromUser ? 'You' : null,
+    text: '',
+    time: '',
+    key: `s${i}`,
+    isUser: fromUser,
+    isOverseer: false,
+    isNote: false,
+    isImage: true,
+    imageUrl,
+    imageAlt,
+  };
+}
+
 /** The coordinator conversation (ConvItem timeline) → the Overseer message stream. */
 export function convItemsToStream(items: ConvItem[]): StreamMessage[] {
   const out: StreamMessage[] = [];
@@ -128,30 +161,54 @@ export function convItemsToStream(items: ConvItem[]): StreamMessage[] {
     const key = it.uuid ?? `c${i}`;
     if (it.kind === 'user' && it.text?.trim()) out.push(m('user', 'You', it.text, '', key));
     else if (it.kind === 'assistant' && it.text?.trim()) out.push(m('overseer', 'Dispatch', it.text, '', key));
+    else if (it.kind === 'image' && it.imageUrl) out.push(imageMessage(it.imageUrl, it.imageAlt, key, it.imageFromUser === true));
     // thinking/tool/tool-result/result/system are internal: the Overseer does no tool
     // work and rich escalations are surfaced as Needs in incr. 3, not in this stream.
   });
   return out;
 }
 
-/** Group the project's structured worker threads by mission (live → working/waiting; done → outcome). */
-export function groupByMission(terminals: Terminal[], statuses: StatusMap): Mission[] {
+/**
+ * Group the project's structured worker threads by mission (live → working/waiting;
+ * done → outcome). Archived workers (completed via complete_agent — fetched separately
+ * since the live list excludes archived_at) fold in as done outcomes so they stay
+ * visible and clickable instead of vanishing. De-duped against the live set by id so a
+ * just-archived agent never shows twice while the live list catches up.
+ */
+export function groupByMission(
+  terminals: Terminal[],
+  statuses: StatusMap,
+  archived: Terminal[] = [],
+): Mission[] {
   const order: string[] = [];
-  const groups = new Map<string, Terminal[]>();
-  for (const t of terminals.filter(isManagedWorker)) {
-    const name = missionName(t);
-    if (!groups.has(name)) {
-      groups.set(name, []);
+  const groups = new Map<string, { live: Terminal[]; archived: Terminal[] }>();
+  const ensure = (name: string) => {
+    let g = groups.get(name);
+    if (!g) {
+      g = { live: [], archived: [] };
+      groups.set(name, g);
       order.push(name);
     }
-    groups.get(name)!.push(t);
+    return g;
+  };
+
+  const liveIds = new Set<string>();
+  for (const t of terminals.filter(isManagedWorker)) {
+    liveIds.add(t.id);
+    ensure(missionName(t)).live.push(t);
   }
+  for (const t of archived.filter(isStructuredWorker)) {
+    if (liveIds.has(t.id)) continue; // de-dupe: live list wins while it catches up
+    ensure(missionName(t)).archived.push(t);
+  }
+
   return order.map((name) => {
+    const g = groups.get(name)!;
     const threads: AgentThread[] = [];
     const outcomes: Outcome[] = [];
     let live = 0;
     let done = 0;
-    for (const t of groups.get(name)!) {
+    for (const t of g.live) {
       if (mapStatus(t, statuses[t.id]) === 'done') {
         outcomes.push(terminalToOutcome(t));
         done++;
@@ -159,6 +216,10 @@ export function groupByMission(terminals: Terminal[], statuses: StatusMap): Miss
         threads.push(terminalToAgentThread(t, statuses[t.id]));
         live++;
       }
+    }
+    for (const t of g.archived) {
+      outcomes.push(terminalToOutcome(t)); // archived → mapStatus()='done' (archivedAt set)
+      done++;
     }
     return makeMission(name, summaryText(live, done), threads, outcomes);
   });

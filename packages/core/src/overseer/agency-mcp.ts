@@ -22,6 +22,8 @@
  * crashes on a bad request.
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import * as readline from 'readline';
 
 const PROTOCOL_VERSION = '2024-11-05';
@@ -136,6 +138,30 @@ export const TOOLS = [
         agentId: { type: 'string', description: 'The agent thread id to complete / archive.' },
       },
       required: ['agentId'],
+    },
+  },
+  {
+    name: 'post_image',
+    description:
+      'Show the user an image INLINE in this conversation — a screenshot, chart, diagram, rendered ' +
+      'UI, or any visual an agent produced (e.g. a file an agent saved under .dispatch/inbox). Pass ' +
+      '`path`, a path to an image file inside this project (png/jpg/jpeg/gif/webp/svg); it is read and ' +
+      'rendered in the Dispatch thread the user is watching. Reach for this whenever a picture conveys ' +
+      'the result better than words — to surface a screenshot of a working change, a generated graph, ' +
+      'or a visual diff — rather than only describing it. The path must be inside the project working ' +
+      'directory (paths outside it are rejected).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description:
+            'Path to an image file inside this project, relative to the project root ' +
+            '(e.g. ".dispatch/inbox/screenshot.png").',
+        },
+        alt: { type: 'string', description: 'Optional alt text / caption describing the image.' },
+      },
+      required: ['path'],
     },
   },
 ] as const;
@@ -260,11 +286,62 @@ async function answerAgent(args: { agentId: string; answers?: Record<string, str
   return { ok: true, agentId: args.agentId };
 }
 
+// --- post_image (surface a picture inline in the coordinator thread) -------
+
+/** Extension → MIME for the images the byte route serves; the gate that keeps this read-image-only. */
+const IMAGE_MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+};
+
+/**
+ * Resolve `requestedPath` within `root`, or null if it escapes the sandbox. Mirrors the
+ * byte route's resolveSafe (routes/files.ts): an absolute or `..` path landing outside the
+ * root is rejected; in-tree paths (e.g. `.dispatch/inbox/shot.png`) pass.
+ */
+function resolveSafe(root: string, requestedPath: string): string | null {
+  const resolvedRoot = path.resolve(root);
+  const resolved = path.resolve(resolvedRoot, requestedPath);
+  const relative = path.relative(resolvedRoot, resolved);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) return null;
+  return resolved;
+}
+
+/** An MCP image content block — base64 bytes + mime (+ best-effort alt the foundation parser reads). */
+type McpImageContent = { type: 'image'; data: string; mimeType: string; alt?: string };
+
+/**
+ * Read a project image file and return it as an MCP image content block so it renders INLINE in
+ * the Dispatch thread. The path is sandboxed to the MCP server's working dir — which is the
+ * coordinator's project root, so the session working dir (mirrors the byte route's resolveSafe) —
+ * and only the known image extensions are accepted, so this can't be turned into an arbitrary-file
+ * read. base64 is the MCP transport for binary content; `mimeType` lets the host render it.
+ */
+async function postImage(args: { path: string; alt?: string }): Promise<McpImageContent> {
+  if (!args?.path) throw new Error('path is required');
+  const resolved = resolveSafe(process.cwd(), args.path);
+  if (!resolved) throw new Error('path is outside the working directory');
+  const mimeType = IMAGE_MIME[path.extname(resolved).toLowerCase()];
+  if (!mimeType) throw new Error('unsupported image type (expected png/jpg/jpeg/gif/webp/svg)');
+  const stat = fs.statSync(resolved);
+  if (!stat.isFile()) throw new Error('not a file');
+  const data = fs.readFileSync(resolved).toString('base64');
+  const alt = typeof args.alt === 'string' && args.alt.trim() ? args.alt : undefined;
+  return { type: 'image', data, mimeType, ...(alt ? { alt } : {}) };
+}
+
+/** An MCP `tools/call` content block: text for data tools, an image block for post_image. */
+type McpContent = { type: 'text'; text: string } | McpImageContent;
+
 /** Run a named tool and shape the result as MCP `tools/call` content. Never throws. */
 export async function callTool(
   name: string,
   args: any,
-): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
+): Promise<{ content: McpContent[]; isError?: boolean }> {
   try {
     let result: unknown;
     switch (name) {
@@ -275,6 +352,8 @@ export async function callTool(
       case 'answer_agent': result = await answerAgent(args ?? {}); break;
       case 'read_agent': result = await readAgent(args ?? {}); break;
       case 'complete_agent': result = await completeAgent(args ?? {}); break;
+      // post_image's result IS the content block (an image, not JSON text) — return it directly.
+      case 'post_image': return { content: [await postImage(args ?? {})] };
       default: throw new Error(`Unknown tool: ${name}`);
     }
     return { content: [{ type: 'text', text: JSON.stringify(result) }] };

@@ -7,7 +7,7 @@
 
 export type AgentType = 'planner' | 'implementer' | 'researcher' | 'reviewer';
 export type ThreadStatus = 'working' | 'waiting' | 'done' | 'error';
-export type MessageKind = 'user' | 'overseer' | 'note';
+export type MessageKind = 'user' | 'overseer' | 'note' | 'image';
 
 // TYPE registry — phosphor class + display label per agent type.
 export const AGENT_TYPE = {
@@ -77,6 +77,18 @@ export interface StreamMessage {
   isUser: boolean;
   isOverseer: boolean;
   isNote: boolean;
+  // image (kind 'image') — a picture posted into the coordinator stream: an image an
+  // agent/tool emitted, or one the coordinator posts via the `post_image` MCP tool.
+  // These mirror the source 'image' ConvItem (see live.convItemsToStream); `imageUrl` is
+  // already a renderable src (data-URI or byte-route URL). Optional so the m() factory and
+  // every existing StreamMessage stay valid without change.
+  isImage?: boolean;
+  imageUrl?: string;
+  imageAlt?: string;
+  // error (transient) — a failed-to-send notice surfaced inline so a swallowed send
+  // failure is VISIBLE (mirrors the agent chat's red "Failed to send message" footer).
+  // Optional so the m() factory and every existing StreamMessage stay valid without change.
+  isError?: boolean;
 }
 
 // An action button on a need card (factory: btn(label, primary)).
@@ -150,6 +162,7 @@ export interface RenderVals {
   needs: Need[];
   missions: Mission[];
   stream: StreamMessage[];
+  busy: boolean;              // coordinator turn in flight → show the WorkingIndicator
   drillDetail: ThreadDetail | null;
   hasNeeds: boolean;
   noMissions: boolean;

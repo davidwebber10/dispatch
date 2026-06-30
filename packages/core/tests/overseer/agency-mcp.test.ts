@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { handleRequest, callTool, TOOLS } from '../../src/overseer/agency-mcp.js';
 
 describe('agency-mcp', () => {
@@ -21,8 +24,8 @@ describe('agency-mcp', () => {
     const res = await handleRequest({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
     expect(res).not.toBeNull();
     const names = (res!.result as any).tools.map((t: any) => t.name).sort();
-    expect(names).toEqual(['answer_agent', 'complete_agent', 'list_agents', 'list_missions', 'message_agent', 'read_agent', 'spawn_agent']);
-    expect(TOOLS).toHaveLength(7);
+    expect(names).toEqual(['answer_agent', 'complete_agent', 'list_agents', 'list_missions', 'message_agent', 'post_image', 'read_agent', 'spawn_agent']);
+    expect(TOOLS).toHaveLength(8);
   });
 
   it('initialize returns protocolVersion + tools capability', async () => {
@@ -196,5 +199,73 @@ describe('agency-mcp', () => {
     const r = res!.result as any;
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain('Unknown tool');
+  });
+});
+
+describe('agency-mcp post_image', () => {
+  // post_image sandboxes to process.cwd() (the coordinator's project root). Run each case
+  // inside a throwaway dir we chdir into, so a relative path resolves there and "outside the
+  // working dir" is meaningful — restored + cleaned up after each test.
+  let tmpDir: string;
+  let prevCwd: string;
+  // A 1×1 transparent PNG. The exact bytes are irrelevant — we only assert the base64 round-trips.
+  const PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pV4AAAAAElFTkSuQmCC';
+
+  beforeEach(() => {
+    prevCwd = process.cwd();
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agency-postimg-'));
+    process.chdir(tmpDir);
+  });
+  afterEach(() => {
+    process.chdir(prevCwd);
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  it('reads an image file and returns an MCP image content block (base64 + mime + alt)', async () => {
+    fs.writeFileSync(path.join(process.cwd(), 'shot.png'), Buffer.from(PNG_BASE64, 'base64'));
+    const out = await callTool('post_image', { path: 'shot.png', alt: 'a screenshot' });
+    expect(out.isError).toBeUndefined();
+    expect(out.content).toHaveLength(1);
+    const block = out.content[0] as any;
+    expect(block.type).toBe('image');
+    expect(block.mimeType).toBe('image/png');
+    expect(block.data).toBe(PNG_BASE64);
+    expect(block.alt).toBe('a screenshot');
+  });
+
+  it('resolves an in-tree subdir path (e.g. .dispatch/inbox) and infers mime from extension', async () => {
+    const dir = path.join(process.cwd(), '.dispatch', 'inbox');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'chart.webp'), Buffer.from(PNG_BASE64, 'base64'));
+    const out = await callTool('post_image', { path: '.dispatch/inbox/chart.webp' });
+    expect(out.isError).toBeUndefined();
+    const block = out.content[0] as any;
+    expect(block.type).toBe('image');
+    expect(block.mimeType).toBe('image/webp');
+    expect(block.alt).toBeUndefined();
+  });
+
+  it('rejects a path that escapes the working dir (sandbox)', async () => {
+    const out = await callTool('post_image', { path: '../escape.png' });
+    expect(out.isError).toBe(true);
+    expect((out.content[0] as any).text).toContain('outside the working directory');
+  });
+
+  it('rejects an unsupported (non-image) extension before reading it', async () => {
+    fs.writeFileSync(path.join(process.cwd(), 'notes.txt'), 'hello');
+    const out = await callTool('post_image', { path: 'notes.txt' });
+    expect(out.isError).toBe(true);
+    expect((out.content[0] as any).text).toContain('unsupported image type');
+  });
+
+  it('reports a missing path as isError (never throws)', async () => {
+    const out = await callTool('post_image', {});
+    expect(out.isError).toBe(true);
+    expect((out.content[0] as any).text).toContain('path is required');
+  });
+
+  it('reports a non-existent in-tree file as isError', async () => {
+    const out = await callTool('post_image', { path: 'gone.png' });
+    expect(out.isError).toBe(true);
   });
 });

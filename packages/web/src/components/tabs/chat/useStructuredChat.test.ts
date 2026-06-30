@@ -3,7 +3,7 @@ import { renderHook, act } from '@testing-library/react';
 import { test, expect, vi, beforeEach } from 'vitest';
 import { useStructuredChat } from './useStructuredChat';
 import * as sock from '../../../api/structured-socket';
-import { api } from '../../../api/client';
+import { api, type ContentBlock } from '../../../api/client';
 
 // Captures the socket callbacks so a test can drive events directly.
 interface Cbs { onEvent: (e: any) => void; onReset?: () => void; onClose?: () => void }
@@ -177,6 +177,26 @@ test('send sets busy and does NOT optimistically append a user bubble', () => {
   expect(api.sendStructuredMessage).toHaveBeenCalledWith('t1', 'hello');
 });
 
+test('send accepts a content-block array (image) and threads it to the API verbatim', () => {
+  vi.spyOn(api, 'sendStructuredMessage').mockResolvedValue(undefined as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  const blocks: ContentBlock[] = [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }];
+  act(() => { result.current.send(blocks); });
+  expect(result.current.busy).toBe(true);
+  // No optimistic bubble: the backend echoes the image turn (and it survives reconnect replay).
+  expect(result.current.items.filter((i) => i.kind === 'user')).toHaveLength(0);
+  expect(result.current.items.filter((i) => i.kind === 'image')).toHaveLength(0);
+  expect(api.sendStructuredMessage).toHaveBeenCalledWith('t1', blocks);
+});
+
+test('send ignores an EMPTY content-block array (no API call, stays idle)', () => {
+  vi.spyOn(api, 'sendStructuredMessage').mockResolvedValue(undefined as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => { result.current.send([]); });
+  expect(result.current.busy).toBe(false);
+  expect(api.sendStructuredMessage).not.toHaveBeenCalled();
+});
+
 test('send POST rejection clears busy and appends an error result (P0c)', async () => {
   vi.spyOn(api, 'sendStructuredMessage').mockRejectedValue(new Error('400'));
   const { result } = renderHook(() => useStructuredChat('t1'));
@@ -193,4 +213,47 @@ test('onClose clears busy (P0b safety net)', () => {
   expect(result.current.busy).toBe(true);
   act(() => cbs.onClose?.());
   expect(result.current.busy).toBe(false);
+});
+
+test('tags a human-attached image on the user turn with imageFromUser (BUG 3)', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: [
+    { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+    { type: 'text', text: 'what is this?' },
+  ] } }));
+  const img = result.current.items.find((i) => i.kind === 'image');
+  expect(img?.imageFromUser).toBe(true); // → attributed to "You" downstream
+  expect(img?.imageUrl).toBe('data:image/png;base64,AAAA');
+});
+
+test('does NOT tag tool_result / assistant images as imageFromUser (BUG 3 boundary)', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  // a tool-emitted screenshot nested in a tool_result (arrives on a `user` event)
+  act(() => cbs.onEvent({ type: 'user', message: { content: [
+    { type: 'tool_result', tool_use_id: 'x', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'BBBB' } }] },
+  ] } }));
+  // an assistant-emitted image (e.g. post_image)
+  act(() => cbs.onEvent({ type: 'assistant', message: { content: [
+    { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'CCCC' } },
+  ] } }));
+  const imgs = result.current.items.filter((i) => i.kind === 'image');
+  expect(imgs).toHaveLength(2);
+  expect(imgs.every((i) => !i.imageFromUser)).toBe(true); // neither is the human's own turn
+});
+
+test('resolves a PATH-form image via the byte route ONLY when sessionId is wired (BUG 2)', () => {
+  // With a sessionId the path resolves to the sandboxed byte route…
+  const withSession = renderHook(() => useStructuredChat('t1', 'sess-1'));
+  act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: [
+    { type: 'image', source: { path: '/inbox/pic.png' } },
+  ] } }));
+  const img = withSession.result.current.items.find((i) => i.kind === 'image');
+  expect(img?.imageUrl).toBe(api.imageUrl('sess-1', '/inbox/pic.png'));
+
+  // …without one (the pre-fix coordinator path) the same block is DROPPED.
+  const noSession = renderHook(() => useStructuredChat('t2'));
+  act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: [
+    { type: 'image', source: { path: '/inbox/pic.png' } },
+  ] } }));
+  expect(noSession.result.current.items.filter((i) => i.kind === 'image')).toHaveLength(0);
 });

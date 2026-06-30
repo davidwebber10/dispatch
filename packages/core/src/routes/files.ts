@@ -117,6 +117,48 @@ export function createFilesRouter(db: Database.Database): Router {
     }
   });
 
+  // GET /api/sessions/:id/files/image?path=img.png — stream raw image bytes
+  // Additive sibling of /read for binary images (an <img src> can't consume the JSON
+  // /read returns). Uses the STRICT resolveSafe sandbox (NOT resolveRead's absolute-path
+  // escape hatch): permits in-tree paths like .dispatch/inbox, rejects anything outside
+  // the working dir. Content-Type is chosen by extension; non-image extensions are
+  // refused so this can't be repurposed to exfiltrate arbitrary file types.
+  const IMAGE_MIME: Record<string, string> = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.svg': 'image/svg+xml',
+  };
+  router.get('/image', (req, res) => {
+    const session = (req as any).session;
+    const requestedPath = req.query.path as string;
+    if (!requestedPath) return res.status(400).json({ error: 'Missing path parameter' });
+
+    const resolved = resolveSafe(session.workingDir, requestedPath);
+    if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
+
+    const mime = IMAGE_MIME[path.extname(resolved).toLowerCase()];
+    if (!mime) return res.status(415).json({ error: 'Unsupported image type' });
+
+    try {
+      const stat = fs.statSync(resolved);
+      if (!stat.isFile()) return res.status(404).json({ error: 'Not a file' });
+      res.setHeader('Content-Type', mime);
+      res.setHeader('Content-Length', String(stat.size));
+      // Hardening: stop MIME sniffing, and sandbox the response so a (theoretically)
+      // script-bearing SVG can't execute if the byte URL is navigated to directly.
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Content-Security-Policy', 'sandbox');
+      const stream = fs.createReadStream(resolved);
+      stream.on('error', () => { if (!res.headersSent) res.status(400).end(); else res.destroy(); });
+      stream.pipe(res);
+    } catch (err: any) {
+      res.status(404).json({ error: err.message });
+    }
+  });
+
   // PUT /api/sessions/:id/files/write?path=file.txt — write file
   router.put('/write', (req, res) => {
     const session = (req as any).session;

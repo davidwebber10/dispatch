@@ -77,11 +77,16 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     res.json(sessionService.searchConversation(req.params.terminalId, String(req.query.q ?? '')));
   });
 
-  // POST /api/terminals/:terminalId/message { text } — send a structured message to a stream-json session.
+  // POST /api/terminals/:terminalId/message { text } | { content } — send a structured
+  // message to a stream-json session. Back-compat: a plain `text` string still works;
+  // `content` additionally accepts a string OR an array of content blocks (e.g. a real
+  // base64 image block, so an attached image reaches the model as a picture it can SEE).
   router.post('/terminals/:terminalId/message', (req, res) => {
-    const text = req.body?.text;
-    if (typeof text !== 'string' || !text) return res.status(400).json({ error: 'text (string) is required' });
-    try { sessionService.sendStructuredMessage(req.params.terminalId, text); res.status(204).end(); }
+    const { text, content } = req.body ?? {};
+    const payload = content !== undefined ? content : text;
+    const ok = typeof payload === 'string' ? payload.length > 0 : Array.isArray(payload) && payload.length > 0;
+    if (!ok) return res.status(400).json({ error: 'text (string) or content (string | block[]) is required' });
+    try { sessionService.sendStructuredMessage(req.params.terminalId, payload); res.status(204).end(); }
     catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
   });
 

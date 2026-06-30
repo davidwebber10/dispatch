@@ -1,7 +1,7 @@
 // Overseer membrane — escalation Need derivation (the real approve/deny/answer cards).
 import { describe, it, expect } from 'vitest';
-import { needsFromThreads } from './live';
-import type { PendingPermission, Terminal } from '../../api/types';
+import { convItemsToStream, needsFromThreads } from './live';
+import type { ConvItem, PendingPermission, Terminal } from '../../api/types';
 
 function term(id: string, config: Record<string, unknown>, status = 'needs_input'): Terminal {
   return {
@@ -69,5 +69,35 @@ describe('needsFromThreads — the membrane', () => {
     const working = agent('w');
     const needs = needsFromThreads([coord, working], { c: waiting, w: { threadStatus: 'working' } }, {});
     expect(needs).toHaveLength(0);
+  });
+});
+
+describe('convItemsToStream — message attribution', () => {
+  const img = (imageFromUser?: boolean): ConvItem => ({ kind: 'image', imageUrl: 'data:image/png;base64,AAAA', imageFromUser });
+
+  it('attributes a human-attached image to "You" (right-aligned), not Dispatch (BUG 3)', () => {
+    const [msg] = convItemsToStream([img(true)]);
+    expect(msg.isImage).toBe(true);
+    expect(msg.isUser).toBe(true);
+    expect(msg.who).toBe('You');
+    expect(msg.isOverseer).toBe(false);
+  });
+
+  it('keeps an agent/tool/coordinator image unattributed (renders as a Dispatch turn)', () => {
+    const [msg] = convItemsToStream([img(false)]);
+    expect(msg.isImage).toBe(true);
+    expect(msg.isUser).toBe(false);
+    expect(msg.who).toBeNull();
+  });
+
+  it('maps user text → You and assistant text → Dispatch', () => {
+    const stream = convItemsToStream([
+      { kind: 'user', text: 'do the thing' },
+      { kind: 'assistant', text: 'on it' },
+    ]);
+    expect(stream.map((m) => [m.isUser, m.isOverseer, m.text])).toEqual([
+      [true, false, 'do the thing'],
+      [false, true, 'on it'],
+    ]);
   });
 });

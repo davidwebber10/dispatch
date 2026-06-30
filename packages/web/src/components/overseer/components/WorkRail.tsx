@@ -98,15 +98,25 @@ function AgentThreadChip({ thread }: { thread: AgentThread }) {
 // ---------------------------------------------------------------------------
 
 function OutcomeCard({ outcome }: { outcome: Outcome }) {
+  const drillInto = useOverseer((s) => s.drillInto);
+  const [hovered, setHovered] = useState(false);
+
   return (
     <div
+      data-key={outcome.key}
+      onClick={() => drillInto(outcome.key)}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       style={{
         display: 'flex',
         gap: 10,
         padding: '9px 12px',
-        border: '1px dashed var(--border)',
+        background: hovered ? 'var(--hover)' : 'transparent',
+        border: `1px dashed ${hovered ? '#36363c' : 'var(--border)'}`,
         borderRadius: 9,
         alignItems: 'flex-start',
+        cursor: 'pointer',
+        transition: 'background 0.12s, border-color 0.12s',
       }}
     >
       {/* seal-check icon box */}
@@ -141,8 +151,13 @@ function OutcomeCard({ outcome }: { outcome: Outcome }) {
         </span>
       </div>
 
-      {/* link arrow */}
-      <Icon name="ph-arrow-up-right" size={13} color="var(--tt)" style={{ flex: 'none', marginTop: 2 }} />
+      {/* link arrow — brightens on hover now that the card opens the retained transcript */}
+      <Icon
+        name="ph-arrow-up-right"
+        size={13}
+        color={hovered ? 'var(--ts)' : 'var(--tt)'}
+        style={{ flex: 'none', marginTop: 2 }}
+      />
     </div>
   );
 }

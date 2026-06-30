@@ -287,6 +287,24 @@ it('rejects a message with no text', async () => {
   expect(res.status).toBe(400);
 });
 
+it('accepts a content-block ARRAY (image) payload → 204 and forwards it verbatim (no top-level text required)', async () => {
+  // Regression for the coordinator image-send 400: the route must accept a `content`-only
+  // (image block) body, NOT require a top-level `text` string. Pre-1173b32 the validation
+  // was `text (string) is required` and rejected this exact shape.
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured' } });
+  const id = t.body.id;
+  const content = [
+    { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+    { type: 'text', text: 'what color?' },
+  ];
+  const res = await request(app).post(`/api/terminals/${id}/message`).send({ content });
+  expect(res.status).toBe(204); // NOT 400
+  // …and the image block reached the manager (echoed verbatim into the event ring).
+  const echoed = await pollEvent(app, id, (e) => e?.type === 'user' && Array.isArray(e?.message?.content) && e.message.content.some((b: any) => b?.type === 'image'));
+  expect(echoed.message.content[0]).toMatchObject({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } });
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
 it('a coordinator spawn folds the dispatch agency server into its --mcp-config', async () => {
   // secretsDir controls where the SessionService writes mcp configs, so we can read
   // the per-coordinator config file the structured spawn writes before launch.
