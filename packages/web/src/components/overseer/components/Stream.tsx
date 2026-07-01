@@ -32,6 +32,7 @@ import { WorkingIndicator } from '../../WorkingIndicator';
 import { Spinner } from '../../common/Spinner';
 import { useOverseer, useRenderVals } from '../store';
 import { useDispatchName } from '../../../stores/settings';
+import { useBootstrapOlderPages } from '../../../hooks/useBootstrapOlderPages';
 import type { StreamMessage } from '../types';
 
 // `.md-view`'s CSS consumes the GLOBAL `--color-*` tokens (defined on :root), which
@@ -447,6 +448,7 @@ export function ConversationStream() {
           <LoadingOlderPill show={coordinatorLoadingOlder} />
           <JumpButton />
           <StickToEndOnLoad coordinatorId={coordinatorId} count={stream.length} onReady={handleReady} />
+          <BootstrapOlderPages hasMore={coordinatorHasMore} loadingOlder={coordinatorLoadingOlder} loadOlder={coordinatorLoadOlder} />
         </MessageScroller.Root>
       </MessageScroller.Provider>
       {/* Root is visibility:hidden until `ready` — surface feedback in its place so the
@@ -559,6 +561,18 @@ function StickToEndOnLoad({
     if (quietTimerRef.current != null) clearTimeout(quietTimerRef.current);
   }, []);
 
+  return null;
+}
+
+/**
+ * Render-nothing helper: pages in older coordinator history right after mount/thread-switch/
+ * reconnect when the initial content is too short to overflow the viewport — otherwise the
+ * reader has nothing to scroll and onViewportScroll's near-top trigger never fires, stranding
+ * `hasMore: true` history that's unreachable through the UI. See useBootstrapOlderPages's
+ * doc comment (shared with the agent ChatView, which has the identical gap).
+ */
+function BootstrapOlderPages(props: { hasMore: boolean; loadingOlder: boolean; loadOlder: () => void }) {
+  useBootstrapOlderPages(props);
   return null;
 }
 

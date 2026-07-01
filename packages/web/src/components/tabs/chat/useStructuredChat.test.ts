@@ -514,6 +514,51 @@ test('a reconnect reset (onReset) re-arms pagination so a later loadOlder re-pro
   expect(spy).toHaveBeenLastCalledWith('t1', { before: undefined, limit: 120 });
 });
 
+test('loadOlder dedups a page that overlaps content already rendered from the ws replay (no visible duplicate)', async () => {
+  // The live ws tail already rendered this turn — it carries no uuid/line (the live
+  // protocol has neither; see convItemFingerprint's doc comment).
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'assistant', message: { content: [{ type: 'text', text: 'recent turn' }] } }));
+  expect(result.current.items.map((i) => i.text)).toEqual(['recent turn']);
+
+  // The first loadOlder() call's REST window (before: undefined = newest) overlaps it.
+  vi.spyOn(api, 'getConversation').mockResolvedValue({
+    items: [
+      { kind: 'user', text: 'genuinely older', uuid: 'u1', ts: '2024-01-01T00:00:00Z', line: 3 },
+      { kind: 'assistant', text: 'recent turn', uuid: 'u2', ts: '2024-01-01T00:00:01Z', line: 4 },
+    ],
+    cursor: 50, startLine: 3, hasMore: true,
+  } as any);
+  act(() => { result.current.loadOlder(); });
+  await flushAsync();
+
+  // Only the genuinely-new item is prepended; the duplicate is dropped, not shown twice.
+  expect(result.current.items.map((i) => i.text)).toEqual(['genuinely older', 'recent turn']);
+});
+
+test('loadOlder still advances the anchor/hasMore when an ENTIRE page duplicates existing items (no stall)', async () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'assistant', message: { content: [{ type: 'text', text: 'dup' }] } }));
+
+  const spy = vi.spyOn(api, 'getConversation').mockResolvedValueOnce({
+    items: [{ kind: 'assistant', text: 'dup', uuid: 'u1', ts: 't', line: 1 }],
+    cursor: 50, startLine: 1, hasMore: true,
+  } as any);
+  act(() => { result.current.loadOlder(); });
+  await flushAsync();
+  // No visible duplicate was appended…
+  expect(result.current.items).toHaveLength(1);
+  expect(result.current.hasMore).toBe(true);
+
+  // …but the anchor moved past the duplicate page, so the NEXT call reaches strictly-older
+  // content instead of re-fetching the same exhausted window forever.
+  spy.mockResolvedValueOnce({ items: [], cursor: 50, startLine: 1, hasMore: false } as any);
+  act(() => { result.current.loadOlder(); });
+  await flushAsync();
+  expect(spy).toHaveBeenLastCalledWith('t1', { before: 1, limit: 120 });
+  expect(result.current.hasMore).toBe(false);
+});
+
 test('resolves a PATH-form image via the byte route ONLY when sessionId is wired (BUG 2)', () => {
   // With a sessionId the path resolves to the sandboxed byte route…
   const withSession = renderHook(() => useStructuredChat('t1', 'sess-1'));

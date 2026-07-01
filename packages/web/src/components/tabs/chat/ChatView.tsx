@@ -4,6 +4,7 @@ import { PaperPlaneTilt, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircl
 import type { ConvItem } from '../../../api/types';
 import { api, type ContentBlock } from '../../../api/client';
 import { useStructuredChat } from './useStructuredChat';
+import { useBootstrapOlderPages } from '../../../hooks/useBootstrapOlderPages';
 import { AskQuestionCard } from './AskQuestionCard';
 import { useTabs, findTerminal } from '../../../stores/tabs';
 import { useDraft } from '../../../hooks/useDraft';
@@ -195,6 +196,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
           <LoadingOlderPill show={loadingOlder} />
           <JumpButton />
           <StickToEndOnLoad terminalId={terminalId} count={items.length} />
+          <BootstrapOlderPages hasMore={hasMore} loadingOlder={loadingOlder} loadOlder={loadOlder} />
         </MessageScroller.Root>
       </MessageScroller.Provider>
 
@@ -521,6 +523,17 @@ function StickToEndOnLoad({ terminalId, count }: { terminalId: string; count: nu
     if (end) settledRef.current = true;
   }, [terminalId, count, end, scrollToEnd]);
 
+  return null;
+}
+
+/**
+ * Render-nothing helper: pages in older history right after mount/thread-switch/reconnect
+ * when the initial content is too short to overflow the viewport — otherwise the reader has
+ * nothing to scroll and onViewportScroll's near-top trigger never fires, stranding `hasMore:
+ * true` history that's unreachable through the UI. See useBootstrapOlderPages's doc comment.
+ */
+function BootstrapOlderPages(props: { hasMore: boolean; loadingOlder: boolean; loadOlder: () => void }) {
+  useBootstrapOlderPages(props);
   return null;
 }
 

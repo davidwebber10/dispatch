@@ -66,12 +66,35 @@ export interface StructuredChat {
    * coordinator-relayed turn reads as a plain "You" bubble instead of "via Dispatch" once
    * paged in). Accepted for v1: the live tail, where users spend most of their time, stays
    * full-fidelity via the ws; only older, scrolled-past-the-fold history degrades.
+   *
+   * FIRST-CALL OVERLAP: `before` starts undefined, so the first call fetches the newest
+   * REST window — which can genuinely overlap the ws-replayed tail already in `items`. We
+   * don't try to pre-seed a precise anchor for this (the live/backfilled ws protocol carries
+   * no line number or transcript uuid to align against — see convItemFingerprint), so the
+   * implementation instead fingerprints and drops any item that duplicates one already
+   * rendered, prepending only the genuinely-new remainder (possibly none, on a fully
+   * overlapping page — hasMore/the anchor still advance, so the next call reaches past it).
    */
   loadOlder: () => void;
 }
 
 function safeJson(v: unknown): string {
   try { return JSON.stringify(v, null, 2); } catch { return String(v); }
+}
+
+/**
+ * Content fingerprint for dedup'ing a loadOlder() page against what's already in `items`.
+ * NOT uuid/line based: the live ws protocol carries neither (raw `assistant`/`user` events
+ * have no per-line uuid, and backfillEventsFromTranscript strips it too — see cc-sessions.ts),
+ * so an item built from the ws replay has no stable id to compare against a REST-parsed
+ * item's real transcript uuid/line. `ts` is excluded for the same reason (ws items never set
+ * it). This is a heuristic, not an identity: two genuinely distinct turns with identical
+ * rendered content (rare) would collide — accepted since the alternative (no dedup) is a
+ * user-visible duplicate on every first loadOlder() call whose REST window overlaps the
+ * already-rendered ws tail (see loadOlder's own doc comment on the shape-parity gap).
+ */
+function convItemFingerprint(it: ConvItem): string {
+  return [it.kind, it.toolId ?? '', it.toolName ?? '', it.text ?? '', it.toolInput ?? ''].join(' ');
 }
 
 /** tool_result.content is frequently an array of blocks ([{type:'text',text}]) —
@@ -569,7 +592,21 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
         oldestLineRef.current = conv.startLine;
         hasMoreRef.current = conv.hasMore;
         setHasMore(conv.hasMore);
-        if (conv.items.length) setItems((prev) => [...conv.items, ...prev]);
+        if (conv.items.length) {
+          // The very first loadOlder() call has no real anchor yet (`before: undefined`
+          // fetches the newest REST window, which can overlap what the ws replay already
+          // rendered — see the doc comment above `loadOlder` on the shape-parity gap and
+          // convItemFingerprint on why this can't be a uuid/line check). Filtering the
+          // overlap out here — rather than trying to fetch strictly-older content up front —
+          // is what makes the page's content correct regardless of anchor precision; a
+          // page that turns out to be ENTIRELY duplicate still isn't a dead end, since
+          // oldestLineRef/hasMore above already advanced past it for the next call.
+          setItems((prev) => {
+            const seen = new Set(prev.map(convItemFingerprint));
+            const fresh = conv.items.filter((it) => !seen.has(convItemFingerprint(it)));
+            return fresh.length ? [...fresh, ...prev] : prev;
+          });
+        }
       })
       .catch(() => { /* transient — the next near-top scroll retries */ })
       .finally(() => {
