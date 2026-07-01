@@ -23,7 +23,7 @@
 
 import { useEffect, useRef } from 'react';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
-import { CaretDoubleDown, WarningCircle } from '@phosphor-icons/react';
+import { Bell, CaretDoubleDown, CheckCircle, Lightbulb, WarningCircle } from '@phosphor-icons/react';
 import { Icon } from '../atoms';
 import { Markdown } from '../../Markdown';
 import { ChatImage } from '../../ChatImage';
@@ -50,6 +50,86 @@ function DispatchHeader({ time }: { time: string }) {
   );
 }
 
+// ---- Insight callout (inside Dispatch turns) --------------------------------
+// A Dispatch turn can embed an "insight" block delimited by a star-headed opener line and a
+// closing rule of dashes:
+//   ★ Insight ─────────────────────────────────────
+//   …content…
+//   ─────────────────────────────────────────────────
+// Rendered verbatim those are just literal rows of dashes in the markdown. splitInsights()
+// walks msg.text into prose / insight segments (frontend-only — the upstream text is
+// untouched); each insight run becomes a tinted callout while every non-insight run still
+// flows through the existing <Markdown>.
+
+// Opener: "★ Insight" followed by only whitespace / dashes (box-drawing, em/en dash, hyphen).
+const INSIGHT_OPEN = /^\s*★\s*Insight[\s─—–-]*$/;
+// A closing (or separating) rule: a line that is nothing but 3+ dashes.
+const RULE_LINE = /^\s*[─—–-]{3,}\s*$/;
+
+type StreamSeg = { type: 'md' | 'insight'; content: string };
+
+function splitInsights(text: string): StreamSeg[] {
+  const lines = text.split('\n');
+  const out: StreamSeg[] = [];
+  let md: string[] = [];
+  const flushMd = () => {
+    const content = md.join('\n');
+    if (content.trim()) out.push({ type: 'md', content }); // drop blank gaps around a callout
+    md = [];
+  };
+  for (let i = 0; i < lines.length; i++) {
+    if (INSIGHT_OPEN.test(lines[i])) {
+      const body: string[] = [];
+      let j = i + 1;
+      for (; j < lines.length && !RULE_LINE.test(lines[j]); j++) body.push(lines[j]);
+      flushMd();
+      out.push({ type: 'insight', content: body.join('\n').trim() });
+      i = j; // skip past the closing rule (or land on EOF when the block was unterminated)
+    } else {
+      md.push(lines[i]);
+    }
+  }
+  flushMd();
+  return out;
+}
+
+function InsightCallout({ content }: { content: string }) {
+  return (
+    <div
+      style={{
+        borderRadius: 9,
+        border: '1px solid var(--accLine)',
+        borderLeft: '2px solid var(--acc)',
+        background: 'var(--accDim)',
+        padding: '8px 13px 9px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+      }}
+    >
+      {/* subtle "Insight" label with a lightbulb accent */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <Lightbulb size={13} weight="fill" color="var(--acc)" style={{ flex: 'none' }} />
+        <span
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: 0.5,
+            textTransform: 'uppercase',
+            color: 'var(--acc)',
+          }}
+        >
+          Insight
+        </span>
+      </div>
+      {/* enclosed content — still markdown, so lists/code inside a callout render normally */}
+      <div style={{ minWidth: 0 }}>
+        <Markdown source={content} />
+      </div>
+    </div>
+  );
+}
+
 // ---- Overseer message -------------------------------------------------------
 
 function OverseerMsg({ msg, showHeader }: { msg: StreamMessage; showHeader: boolean }) {
@@ -59,9 +139,15 @@ function OverseerMsg({ msg, showHeader }: { msg: StreamMessage; showHeader: bool
       {/* content column — fills the pane (no 64ch cap); side padding lives on Content */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0, flex: 1 }}>
         {showHeader && <DispatchHeader time={msg.time} />}
-        {/* body — markdown-rendered, parity with the agent assistant prose */}
-        <div style={{ minWidth: 0 }}>
-          <Markdown source={msg.text} />
+        {/* body — prose through <Markdown>, any ★ Insight blocks lifted into callouts */}
+        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {splitInsights(msg.text).map((seg, i) =>
+            seg.type === 'insight' ? (
+              <InsightCallout key={i} content={seg.content} />
+            ) : (
+              <Markdown key={i} source={seg.content} />
+            ),
+          )}
         </div>
       </div>
     </div>
@@ -185,6 +271,85 @@ function ErrorMsg({ msg }: { msg: StreamMessage }) {
   );
 }
 
+// ---- Agency system notice (centered, muted) ---------------------------------
+// The coordinator conversation receives injected LIFECYCLE notices about its own agents
+// (posted by service.notifyCoordinatorOfAgent → they land as USER-role stream items, so
+// without this they'd render as a right-aligned "You" bubble, as if the human typed the raw
+// coordinator-facing blob — agentId + "call answer_agent(…) / re-spawn with new guidance …
+// Do not silently ignore this" instructions and all).
+//
+// We recognise the three notice shapes by their leading emoji + phrase and re-present each as
+// a CONCISE, muted system line, dropping the internal orchestration text (agentId, the
+// coordinator instructions). Detection is frontend-only: the injected text is unchanged
+// upstream (packages/core/src/sessions/service.ts), we only reshape its PRESENTATION here.
+// Source templates:
+//   ✅ Your agent "<label>" […] just finished a turn.…             (noteAgentCompletion)
+//   🔔 Your agent "<label>" […] is PAUSED waiting on you …         (formatAgentQuestion)
+//   ⚠️ The user just <stopped|interrupted> your agent "<label>" …  (noteAgentLifecycle)
+
+type NoticeIconCmp = typeof CheckCircle; // all phosphor icons share one component type
+
+interface AgencyNotice {
+  icon: NoticeIconCmp; // phosphor icon for this notice type
+  color: string;       // per-type accent (icon tint only; the text stays muted)
+  summary: string;     // concise, user-facing one-liner (internal blob dropped)
+}
+
+// The agent LABEL is always the FIRST double-quoted run in the notice; a later
+// `(mission "…")` is the SECOND, so the first match is the name. '' when absent.
+function firstQuoted(text: string): string {
+  const m = text.match(/"([^"]+)"/);
+  return m ? m[1] : '';
+}
+
+// Detect an injected agency notice on a USER message (returns null for a real user turn).
+// Guarded on emoji AT START *and* a signature phrase so a human message that merely opens
+// with the same emoji isn't mistaken for a system notice.
+function detectAgencyNotice(text: string): AgencyNotice | null {
+  const t = text.trimStart();
+  const name = firstQuoted(t);
+  // ✅ finished a turn
+  if (t.startsWith('✅') && /your agent|finished a turn/i.test(t)) {
+    return { icon: CheckCircle, color: 'var(--acc)', summary: name ? `Agent "${name}" finished` : 'Agent finished a turn' };
+  }
+  // 🔔 paused / waiting on an answer
+  if (t.startsWith('🔔') && /your agent|is PAUSED/i.test(t)) {
+    return { icon: Bell, color: 'var(--yellow)', summary: name ? `Agent "${name}" needs an answer` : 'Agent needs an answer' };
+  }
+  // ⚠️ user stopped / interrupted an agent (match the base ⚠ codepoint — the source carries a
+  // trailing VS16). Echo the actual verb the notice used.
+  if (t.startsWith('⚠') && /your agent|just (stopped|interrupted)/i.test(t)) {
+    const verb = /just interrupted/i.test(t) ? 'interrupted' : 'stopped';
+    return { icon: WarningCircle, color: 'var(--red)', summary: name ? `You ${verb} agent "${name}"` : `You ${verb} an agent` };
+  }
+  return null;
+}
+
+function AgencyNoticeMsg({ notice }: { notice: AgencyNotice }) {
+  const NoticeIcon = notice.icon;
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center' }}>
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 7,
+          padding: '4px 12px',
+          borderRadius: 20,
+          background: 'var(--elev)',
+          border: '1px solid var(--border)',
+          fontSize: 11.5,
+          color: 'var(--ts)',
+          maxWidth: '86%',
+        }}
+      >
+        <NoticeIcon size={13} weight="fill" color={notice.color} style={{ flex: 'none' }} />
+        <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{notice.summary}</span>
+      </span>
+    </div>
+  );
+}
+
 // ---- Note pill (centered) ---------------------------------------------------
 
 function NoteMsg({ msg }: { msg: StreamMessage }) {
@@ -249,9 +414,12 @@ function renderStream(stream: StreamMessage[]) {
       );
       prevDispatch = true;
     } else if (msg.isUser) {
+      // An injected agency lifecycle notice masquerades as a user turn — render it as a muted
+      // system line, not a "You" bubble. A real user message falls through to UserMsg.
+      const notice = detectAgencyNotice(msg.text);
       rows.push(
         <MessageScroller.Item key={msg.key} messageId={msg.key} style={{ display: 'flex', flexDirection: 'column' }}>
-          <UserMsg msg={msg} />
+          {notice ? <AgencyNoticeMsg notice={notice} /> : <UserMsg msg={msg} />}
         </MessageScroller.Item>,
       );
       prevDispatch = false;
