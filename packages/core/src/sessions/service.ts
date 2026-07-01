@@ -8,6 +8,7 @@ import * as sessionsDb from '../db/sessions.js';
 import * as terminalsDb from '../db/terminals.js';
 import * as agentsDb from '../db/agents.js';
 import * as appState from '../db/app-state.js';
+import * as messageSourceDb from '../db/message-source.js';
 import { getProvider } from '../providers/registry.js';
 import { PTYManager } from '../pty/manager.js';
 import type { Session, CreateSessionInput } from '../types.js';
@@ -17,7 +18,7 @@ import type { StatusHooksInjection, SecretsMcpInjection } from '../providers/typ
 import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
 import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript.js';
 import { systemPromptFor, modelFor } from '../overseer/prompts.js';
-import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus } from './cc-sessions.js';
+import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources } from './cc-sessions.js';
 
 interface StatusContext {
   serverUrl: string;
@@ -79,6 +80,25 @@ export class SessionService {
         const t = terminalsDb.getById(this.db, terminalId);
         if (t && !t.external_id && sessionId) terminalsDb.updateExternalId(this.db, terminalId, sessionId);
       } catch { /* best effort */ }
+    });
+    // Durable source persistence: the manager emits this once a tagged turn's `result`
+    // lands (its transcript lines are guaranteed flushed by then — see manager.ts's
+    // `result` handler). Resolve it to the newest not-yet-recorded real user-text uuid in
+    // this terminal's transcript and persist the pair, so a later disk-hydrated chat (after
+    // the CLI process has exited) can still show the "via Dispatch" badge (see
+    // readSessionBackfill's caller below and getConversation, both of which merge this back in).
+    m.on('message-source', (terminalId: string, source: messageSourceDb.MessageSource) => {
+      try {
+        const t = terminalsDb.getById(this.db, terminalId);
+        if (!t) return;
+        const session = sessionsDb.getById(this.db, t.session_id);
+        const workDir = t.working_dir || session?.working_dir;
+        const sessionId = t.external_id;
+        if (!workDir || !sessionId) return;
+        const exclude = messageSourceDb.listUuids(this.db, terminalId);
+        const uuid = findNewestUnresolvedUserUuid(workDir, sessionId, exclude);
+        if (uuid) messageSourceDb.record(this.db, terminalId, uuid, source);
+      } catch { /* best effort — a missed tag just degrades to a plain bubble, never an error */ }
     });
   }
 
@@ -530,6 +550,20 @@ export class SessionService {
     const items: ConvItem[] = [];
     for (let i = start; i < end; i++) {
       for (const it of parseClaudeTranscript(usable[i])) items.push({ ...it, line: i });
+    }
+    // Merge durably-stored `source` tags onto user turns (see db/message-source.ts) — the
+    // REST transcript parser (conversation/transcript.ts) never sets this itself, matching
+    // backfillEventsFromTranscript's identical on-disk gap (see the seedEvents merge above /
+    // cc-sessions.ts's applyDurableSources). Fixes the archived-thread / loadOlder path,
+    // where a chat is hydrated ENTIRELY from this endpoint (no live ws to fall back on).
+    const userUuids = items.filter((it) => it.kind === 'user' && it.uuid).map((it) => it.uuid as string);
+    if (userUuids.length) {
+      const sourceByUuid = messageSourceDb.getForUuids(this.db, terminalId, userUuids);
+      if (sourceByUuid.size) {
+        for (const it of items) {
+          if (it.kind === 'user' && it.uuid && sourceByUuid.has(it.uuid)) it.source = sourceByUuid.get(it.uuid);
+        }
+      }
     }
     return { items, cursor: total, startLine: start, hasMore: start > 0 };
   }
@@ -1208,7 +1242,16 @@ export class SessionService {
     }
 
     // On resume, restore prior conversation from the claude transcript JSONL.
-    const seedEvents = resumeSessionId ? readSessionBackfill(workDir, resumeSessionId) : undefined;
+    const rawSeedEvents = resumeSessionId ? readSessionBackfill(workDir, resumeSessionId) : undefined;
+    // Merge back any durably-stored `source` tags (see db/message-source.ts) — the
+    // transcript itself carries none, so a revived thread would otherwise lose the "via
+    // Dispatch" badge on every turn sent before the CLI process last exited.
+    const seedEvents = rawSeedEvents?.length
+      ? applyDurableSources(
+          rawSeedEvents,
+          messageSourceDb.getForUuids(this.db, terminal.id, rawSeedEvents.map((e) => (e as any)?.uuid).filter((u): u is string => typeof u === 'string')),
+        )
+      : rawSeedEvents;
 
     // Autonomy dial: agents run AUTONOMOUSLY by default — they auto-allow every tool and
     // never prompt the human; the only thing that pauses an agent is an AskUserQuestion,

@@ -399,7 +399,7 @@ function EmptyState({ model }: { model?: string }) {
 // name}" label (same ArrowBendDownRight "relayed" icon the coordinator's own Stream uses for
 // injected notices) and a muted/bordered bubble instead of the bright human-accent one.
 // `source === 'user'` or undefined (untagged/legacy) renders exactly like before.
-function UserBubble({ text, source }: { text: string; source?: 'user' | 'coordinator' }) {
+export function UserBubble({ text, source }: { text: string; source?: 'user' | 'coordinator' }) {
   const dispatchName = useDispatchName();
   const viaCoordinator = source === 'coordinator';
   return (
