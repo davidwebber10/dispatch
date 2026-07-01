@@ -69,8 +69,9 @@ export function mission(
   summary: string,
   threads: AgentThread[],
   outcomes: Outcome[],
+  queued: AgentThread[] = [],
 ): Mission {
-  return { name, summary, threads, outcomes, hasOutcomes: outcomes.length > 0, key: name };
+  return { name, summary, threads, queued, outcomes, hasOutcomes: outcomes.length > 0, key: name };
 }
 
 export function m(

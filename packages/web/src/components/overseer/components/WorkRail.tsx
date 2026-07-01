@@ -12,12 +12,14 @@
 
 import { useState } from 'react';
 import { Icon, MonoLabel, StatusDot, TypeIconBox } from '../atoms';
+import { Spinner } from '../../common/Spinner';
 import { useOverseer, useRenderVals } from '../store';
 import type { AgentThread, Mission, Outcome } from '../types';
 
 // Which slice of each mission the rail shows: LIVE (in-progress AgentThreadChips) — the
-// default, keeping the view to only active work — or DONE (finished/archived OutcomeCards).
-type RailTab = 'live' | 'done';
+// default, keeping the view to only active work — QUEUED (accepted-but-unlaunched workers,
+// each with a Start button) — or DONE (finished/archived OutcomeCards).
+type RailTab = 'live' | 'queued' | 'done';
 
 // live.groupByMission tags each mission with `doneFreshness` — the most-recent "last active"
 // stamp among its DONE agents (0 if none). It's additive (not on the Mission contract), so we
@@ -38,9 +40,9 @@ function AgentThreadChip({ thread }: { thread: AgentThread }) {
   // secondary meta. Falls back to type #id if a worker was spawned without a name.
   const name = thread.dlabel || `${thread.typeLabel} #${thread.id}`;
   // A real live-activity string only earns a line when it's distinct from the name (else it
-  // would just echo the title). While working we still show a "Working…" cue even without one.
-  const activity = thread.action && thread.action !== name ? thread.action : '';
-  const bodyText = thread.isWorking ? activity || 'Working…' : activity;
+  // would just echo the title). No "Working…" filler when there's no activity — the top-right
+  // status pill already carries the working cue, so the body row simply drops out.
+  const bodyText = thread.action && thread.action !== name ? thread.action : '';
 
   return (
     <div
@@ -52,7 +54,7 @@ function AgentThreadChip({ thread }: { thread: AgentThread }) {
       style={{
         display: 'flex',
         gap: 10,
-        padding: '11px 12px',
+        padding: '8px 12px',
         background: hovered ? 'var(--hover)' : 'var(--elev)',
         border: `1px solid ${hovered ? '#36363c' : 'var(--border)'}`,
         borderRadius: 9,
@@ -81,12 +83,18 @@ function AgentThreadChip({ thread }: { thread: AgentThread }) {
           >
             {name}
           </span>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flex: 'none' }}>
-            <StatusDot color={thread.dotColor} anim={thread.dotAnim} size={6} />
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ts)' }}>
-              {thread.statusLabel}
+          {/* Working → just the shared app spinner (no "working" word). Every other status
+              (waiting/error) keeps its dot + mono label. Queued/done use their own chips. */}
+          {thread.isWorking ? (
+            <Spinner size={12} />
+          ) : (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flex: 'none' }}>
+              <StatusDot color={thread.dotColor} anim={thread.dotAnim} size={6} />
+              <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ts)' }}>
+                {thread.statusLabel}
+              </span>
             </span>
-          </span>
+          )}
         </div>
 
         {/* row 2: secondary meta — type · #id + elapsed */}
@@ -122,6 +130,98 @@ function AgentThreadChip({ thread }: { thread: AgentThread }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// QueuedChip — an accepted-but-unlaunched worker (status='queued'), with a Start button
+// ---------------------------------------------------------------------------
+
+function QueuedChip({ thread }: { thread: AgentThread }) {
+  const startAgent = useOverseer((s) => s.startAgent);
+  const [hovered, setHovered] = useState(false);
+
+  // Same identity line as the live chip — its own spawn name, falling back to type #id.
+  const name = thread.dlabel || `${thread.typeLabel} #${thread.id}`;
+
+  return (
+    <div
+      data-key={thread.key}
+      data-label={thread.dlabel}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display: 'flex',
+        gap: 10,
+        alignItems: 'center',
+        padding: '8px 10px 8px 12px',
+        background: hovered ? 'var(--hover)' : 'var(--elev)',
+        border: `1px dashed ${hovered ? '#36363c' : 'var(--border)'}`,
+        borderRadius: 9,
+        transition: 'background 0.12s, border-color 0.12s',
+      }}
+    >
+      {/* type icon box */}
+      <TypeIconBox icon={thread.typeIcon} size={28} />
+
+      {/* body */}
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {/* row 1: descriptive name (primary) + queued status */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span
+            style={{
+              flex: 1,
+              minWidth: 0,
+              fontSize: 13,
+              fontWeight: 600,
+              color: 'var(--tp)',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {name}
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flex: 'none' }}>
+            <StatusDot color={thread.dotColor} anim="none" size={6} />
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ts)' }}>
+              {thread.statusLabel}
+            </span>
+          </span>
+        </div>
+
+        {/* row 2: secondary meta — type · #id */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ts)' }}>
+            {thread.typeLabel} · #{thread.id}
+          </span>
+        </div>
+      </div>
+
+      {/* Start → launch this queued worker now */}
+      <button
+        onClick={() => startAgent(thread.key)}
+        title="Start this agent now"
+        style={{
+          flex: 'none',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 5,
+          padding: '5px 11px',
+          borderRadius: 7,
+          background: 'var(--acc)',
+          color: '#06140B',
+          border: 'none',
+          fontFamily: 'inherit',
+          fontSize: 12,
+          fontWeight: 600,
+          cursor: 'pointer',
+        }}
+      >
+        <Icon name="ph-lightning" weight="fill" size={12} color="#06140B" />
+        Start
+      </button>
     </div>
   );
 }
@@ -229,10 +329,12 @@ function MissionGroup({ mission, tab }: { mission: Mission; tab: RailTab }) {
         </MonoLabel>
       </div>
 
-      {/* entries for the active tab: LIVE → thread chips, DONE → outcome cards */}
+      {/* entries for the active tab: LIVE → thread chips, QUEUED → start-able chips, DONE → outcome cards */}
       {tab === 'live'
         ? mission.threads.map((thread) => <AgentThreadChip key={thread.key} thread={thread} />)
-        : mission.outcomes.map((outcome) => <OutcomeCard key={outcome.key} outcome={outcome} />)}
+        : tab === 'queued'
+          ? mission.queued.map((thread) => <QueuedChip key={thread.key} thread={thread} />)
+          : mission.outcomes.map((outcome) => <OutcomeCard key={outcome.key} outcome={outcome} />)}
     </div>
   );
 }
@@ -245,11 +347,13 @@ function FilterToggle({
   tab,
   onTab,
   liveCount,
+  queuedCount,
   doneCount,
 }: {
   tab: RailTab;
   onTab: (t: RailTab) => void;
   liveCount: number;
+  queuedCount: number;
   doneCount: number;
 }) {
   const seg = (value: RailTab, label: string, count: number) => {
@@ -292,6 +396,7 @@ function FilterToggle({
       }}
     >
       {seg('live', 'Live', liveCount)}
+      {seg('queued', 'Queued', queuedCount)}
       {seg('done', 'Done', doneCount)}
     </div>
   );
@@ -305,7 +410,11 @@ function EmptyFilter({ tab }: { tab: RailTab }) {
   return (
     <div style={{ marginTop: 18, padding: '0 4px', textAlign: 'center' }}>
       <p style={{ fontSize: 12.5, color: 'var(--ts)', lineHeight: 1.5, margin: 0 }}>
-        {tab === 'live' ? 'No active work right now.' : 'Nothing finished yet.'}
+        {tab === 'live'
+          ? 'No active work right now.'
+          : tab === 'queued'
+            ? 'Nothing queued.'
+            : 'Nothing finished yet.'}
       </p>
     </div>
   );
@@ -364,11 +473,13 @@ function RailHeader({
   tab,
   onTab,
   liveCount,
+  queuedCount,
   doneCount,
 }: {
   tab: RailTab;
   onTab: (t: RailTab) => void;
   liveCount: number;
+  queuedCount: number;
   doneCount: number;
 }) {
   return (
@@ -386,7 +497,7 @@ function RailHeader({
         Ongoing work
       </MonoLabel>
       <span style={{ flex: 1 }} />
-      <FilterToggle tab={tab} onTab={onTab} liveCount={liveCount} doneCount={doneCount} />
+      <FilterToggle tab={tab} onTab={onTab} liveCount={liveCount} queuedCount={queuedCount} doneCount={doneCount} />
     </div>
   );
 }
@@ -404,9 +515,13 @@ export function OngoingWorkOverview() {
   const [tab, setTab] = useState<RailTab>('live');
 
   const liveCount = missions.reduce((n, mm) => n + mm.threads.length, 0);
+  const queuedCount = missions.reduce((n, mm) => n + mm.queued.length, 0);
   const doneCount = missions.reduce((n, mm) => n + mm.outcomes.length, 0);
+  // Count of the active tab's entries for a given mission (drives which missions are shown).
+  const countInTab = (mm: Mission) =>
+    tab === 'live' ? mm.threads.length : tab === 'queued' ? mm.queued.length : mm.outcomes.length;
   // Only missions that actually have an entry in the active tab — keeps the view uncluttered.
-  const inTab = missions.filter((mm) => (tab === 'live' ? mm.threads.length : mm.outcomes.length) > 0);
+  const inTab = missions.filter((mm) => countInTab(mm) > 0);
   // Done tab: float the mission with the most-recently-active finished work to the top (its
   // outcomes are already newest-first from live.groupByMission). Live tab keeps its natural
   // group order untouched.
@@ -423,8 +538,8 @@ export function OngoingWorkOverview() {
         overflow: 'hidden',
       }}
     >
-      {/* header — "Ongoing work" label + Live/Done toggle (shared desktop + mobile) */}
-      <RailHeader tab={tab} onTab={setTab} liveCount={liveCount} doneCount={doneCount} />
+      {/* header — "Ongoing work" label + Live/Queued/Done toggle (shared desktop + mobile) */}
+      <RailHeader tab={tab} onTab={setTab} liveCount={liveCount} queuedCount={queuedCount} doneCount={doneCount} />
 
       {/* scroll body */}
       <div

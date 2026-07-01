@@ -109,12 +109,18 @@ export function isManagedWorker(t: Terminal): boolean {
  */
 export function mapStatus(t: Terminal, s?: LiveStatus): ThreadStatus {
   if (t.archivedAt) return 'done';
+  // `coarse` is the persisted enum (string-wide, so it can hold values TerminalStatus
+  // doesn't yet type — e.g. 'queued', set by the backend for an accepted-but-unlaunched
+  // worker). A queued worker has no live thread events, so surface it ahead of the rich
+  // threadStatus checks.
+  const coarse = s?.status ?? t.status;
+  if (coarse === 'queued') return 'queued';
   const rich = s?.threadStatus;
   if (rich === 'working' || rich === 'starting') return 'working';
   if (rich === 'needs_input') return 'waiting';
   if (rich === 'idle' || rich === 'done') return 'done';
   if (rich === 'error') return 'error';
-  switch (s?.status ?? t.status) {
+  switch (coarse) {
     case 'working':
       return 'working';
     case 'needs_input':
@@ -235,10 +241,15 @@ export function groupByMission(
   return order.map((name) => {
     const g = groups.get(name)!;
     const threads: AgentThread[] = [];
+    const queued: AgentThread[] = [];
     const doneTerminals: Terminal[] = [];
     let live = 0;
     for (const t of g.live) {
-      if (mapStatus(t, statuses[t.id]) === 'done') {
+      const st = mapStatus(t, statuses[t.id]);
+      if (st === 'queued') {
+        // Accepted but not yet launched — its own bucket (not counted as live/done).
+        queued.push(terminalToAgentThread(t, statuses[t.id]));
+      } else if (st === 'done') {
         doneTerminals.push(t);
       } else {
         threads.push(terminalToAgentThread(t, statuses[t.id]));
@@ -255,7 +266,7 @@ export function groupByMission(
     // Done tab reads to float the freshest MISSION to the top without reordering the shared
     // Mission[] (which would disturb the Live tab) — see WorkRail's Done branch.
     const doneFreshness = doneTerminals.length ? lastActiveMs(doneTerminals[0]) : 0;
-    return { ...makeMission(name, summaryText(live, doneTerminals.length), threads, outcomes), doneFreshness };
+    return { ...makeMission(name, summaryText(live, doneTerminals.length), threads, outcomes, queued), doneFreshness };
   });
 }
 

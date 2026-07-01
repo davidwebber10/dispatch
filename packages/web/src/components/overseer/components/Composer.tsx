@@ -33,13 +33,59 @@ async function fileToBase64(file: File): Promise<string> {
   return btoa(binary);
 }
 
+/** A staged (pre-send) image preview with an × to drop it from the buffer. */
+function StagedThumbnail({ src, onRemove }: { src: string; onRemove: () => void }) {
+  return (
+    <div style={{ position: 'relative', width: 48, height: 48, flex: 'none' }}>
+      <img
+        src={src}
+        alt="attachment"
+        style={{
+          width: '100%',
+          height: '100%',
+          objectFit: 'cover',
+          borderRadius: 8,
+          border: '1px solid var(--border)',
+          display: 'block',
+        }}
+      />
+      <button
+        type="button"
+        onClick={onRemove}
+        title="Remove image"
+        style={{
+          position: 'absolute',
+          top: -6,
+          right: -6,
+          width: 18,
+          height: 18,
+          padding: 0,
+          borderRadius: '50%',
+          background: 'var(--base)',
+          border: '1px solid var(--border)',
+          color: 'var(--ts)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: 'pointer',
+          lineHeight: 1,
+        }}
+      >
+        <Icon name="ph-x" weight="bold" size={10} color="var(--ts)" />
+      </button>
+    </div>
+  );
+}
+
 export function Composer() {
   const composer = useOverseer((s) => s.composer);
   const setComposer = useOverseer((s) => s.setComposer);
   const sendDirective = useOverseer((s) => s.sendDirective);
   const addComposerImage = useOverseer((s) => s.addComposerImage);
+  const removeComposerImage = useOverseer((s) => s.removeComposerImage);
   const coordinatorProject = useOverseer((s) => s.coordinatorProject);
-  const imageCount = useOverseer((s) => s.composerImages.length);
+  const composerImages = useOverseer((s) => s.composerImages);
+  const imageCount = composerImages.length;
   const isMobile = useIsMobile();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -160,18 +206,24 @@ export function Composer() {
         position: 'relative',
       }}
     >
-      {/* upload status / pending-image indicator (drag cue takes precedence while dragging) */}
-      {(dragActive || uploadNote || imageCount > 0) && (
+      {/* drag cue / upload status text (drag cue takes precedence while dragging) */}
+      {(dragActive || uploadNote) && (
         <div style={{ fontSize: 11, color: dragActive ? 'var(--acc)' : 'var(--tt)', marginBottom: 6 }}>
-          {dragActive ? 'Drop image to attach' : (
-            <>
-              {uploadNote}
-              {imageCount > 0 && (
-                <span style={{ marginLeft: uploadNote ? 8 : 0 }}>
-                  📎 {imageCount} image{imageCount === 1 ? '' : 's'} attached
-                </span>
-              )}
-            </>
+          {dragActive ? 'Drop image to attach' : uploadNote}
+        </div>
+      )}
+
+      {/* staged image thumbnails — each removable via its × (hidden behind the drag cue) */}
+      {!dragActive && imageCount > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+          {composerImages.map((block, i) =>
+            block.type === 'image' ? (
+              <StagedThumbnail
+                key={i}
+                src={`data:${block.source.media_type};base64,${block.source.data}`}
+                onRemove={() => removeComposerImage(i)}
+              />
+            ) : null,
           )}
         </div>
       )}

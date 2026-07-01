@@ -63,9 +63,13 @@ interface OverseerState {
   setComposer: (text: string) => void;
   /** Buffer an attached image block to ride along with the next directive send. */
   addComposerImage: (block: ContentBlock) => void;
+  /** Drop a staged composer image by its buffer index (its × in the thumbnail strip). */
+  removeComposerImage: (index: number) => void;
   sendDirective: () => void;
   needAction: (id: string, label: string) => void;
   doDelegate: () => void;
+  /** Launch a QUEUED worker now (status='queued' → live), then refresh the rail. */
+  startAgent: (id: string) => void;
   setMobileTab: (tab: MobileTab) => void;
   goNeeds: () => void;
 
@@ -119,6 +123,9 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   setComposer: (text) => set({ composer: text }),
 
   addComposerImage: (block) => set((s) => ({ composerImages: [...s.composerImages, block] })),
+
+  removeComposerImage: (index) =>
+    set((s) => ({ composerImages: s.composerImages.filter((_, i) => i !== index) })),
 
   sendDirective: () => {
     const text = (get().composer || '').trim();
@@ -188,6 +195,16 @@ export const useOverseer = create<OverseerState>((set, get) => ({
         config: { transport: 'structured', agentType: delegateType, mission },
       })
       .then(() => useTabs.getState().loadTabs(sessionId))
+      .catch(() => { /* ignore; the next refetch reconciles */ });
+  },
+
+  startAgent: (id) => {
+    // Launch a queued worker, then reload the project's threads so it moves out of the
+    // Queued bucket into live work (mirrors doDelegate's create→reload flow).
+    const sessionId = get().coordinatorProject ?? useProjects.getState().activeId;
+    api
+      .startTerminal(id)
+      .then(() => { if (sessionId) return useTabs.getState().loadTabs(sessionId); })
       .catch(() => { /* ignore; the next refetch reconciles */ });
   },
 

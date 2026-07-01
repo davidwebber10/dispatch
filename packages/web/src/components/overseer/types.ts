@@ -6,7 +6,7 @@
 // data.ts — the store stays a plain state bag.
 
 export type AgentType = 'planner' | 'implementer' | 'researcher' | 'reviewer';
-export type ThreadStatus = 'working' | 'waiting' | 'done' | 'error';
+export type ThreadStatus = 'working' | 'waiting' | 'done' | 'error' | 'queued';
 export type MessageKind = 'user' | 'overseer' | 'note' | 'image';
 
 // TYPE registry — phosphor class + display label per agent type.
@@ -23,6 +23,7 @@ export const STATUS = {
   waiting: { color: 'var(--yellow)', label: 'waiting on you' },
   done:    { color: 'var(--ts)',     label: 'done' },
   error:   { color: 'var(--red)',    label: 'error' },
+  queued:  { color: 'var(--tt)',     label: 'queued' },
 } as const;
 
 // An ephemeral typed agent thread (factory: th(type,id,action,status,elapsed,progress)).
@@ -57,11 +58,12 @@ export interface Outcome {
   key: string;                // "o"+type+id
 }
 
-// A mission groups threads + outcomes (factory: mission(name,summary,threads,outcomes)).
+// A mission groups threads + outcomes (factory: mission(name,summary,threads,outcomes,queued)).
 export interface Mission {
   name: string;               // "Auth refactor"
   summary: string;            // "2 live · 1 done"
   threads: AgentThread[];
+  queued: AgentThread[];      // workers accepted but not yet launched (status==='queued')
   outcomes: Outcome[];
   hasOutcomes: boolean;
   key: string;                // === name

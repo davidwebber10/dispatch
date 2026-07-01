@@ -79,6 +79,8 @@ export const api = {
     req<Terminal>(`/api/terminals/${id}`, { method: 'PATCH', body: body(fields) }),
   relaunchTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}/relaunch`, { method: 'POST' }),
   restoreTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}/restore`, { method: 'POST' }),
+  // Launch a QUEUED worker (status='queued') now — moves it from the Queued bucket into live work.
+  startTerminal: (id: string) => req<void>(`/api/terminals/${id}/start`, { method: 'POST' }),
   stopTerminal: (id: string) => req<void>(`/api/terminals/${id}/stop`, { method: 'POST' }),
   archiveTerminal: (id: string) => req<void>(`/api/terminals/${id}`, { method: 'DELETE' }),
   reorderTerminals: (sessionId: string, order: string[]) =>
