@@ -238,9 +238,9 @@ export function ChatView({ terminalId }: { terminalId: string }) {
 
 /**
  * Walk the timeline, pairing each tool with its result by id (parallel-safe) and
- * grouping each assistant turn into ONE row: a single Sparkle avatar + a shared
- * left gutter holding that turn's text / thinking / tool cards / footer. A `user`
- * turn breaks the group and renders its own right-aligned bubble.
+ * grouping each assistant turn into ONE row: a flush-left column holding that
+ * turn's text / thinking / tool cards / footer. A `user` turn breaks the group
+ * and renders its own right-aligned bubble.
  */
 function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void) {
   // Map tool_use id -> its result item, so paired results aren't rendered standalone.
@@ -305,16 +305,11 @@ function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void) {
   return rows;
 }
 
-/** One assistant turn: a single avatar + a flex-column gutter for all its blocks. */
+/** One assistant turn: a flush-left flex-column holding all its blocks. */
 function AssistantTurn({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ flex: 1, minWidth: 0, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-      <div style={{ flexShrink: 0, width: 24, height: 24, borderRadius: 7, background: 'var(--color-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 1 }}>
-        <Sparkle size={14} weight="fill" color="var(--color-accent)" />
-      </div>
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {children}
-      </div>
+    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {children}
     </div>
   );
 }
@@ -339,7 +334,6 @@ function UserBubble({ text }: { text: string }) {
 
 function AssistantText({ text }: { text: string }) {
   if (!text) return null;
-  // Avatar is rendered once per turn by AssistantTurn; this is just the prose.
   return <Markdown source={text} />;
 }
 
