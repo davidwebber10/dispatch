@@ -40,9 +40,11 @@ function AgentThreadChip({ thread }: { thread: AgentThread }) {
   // secondary meta. Falls back to type #id if a worker was spawned without a name.
   const name = thread.dlabel || `${thread.typeLabel} #${thread.id}`;
   // A real live-activity string only earns a line when it's distinct from the name (else it
-  // would just echo the title). No "Working…" filler when there's no activity — the top-right
-  // status pill already carries the working cue, so the body row simply drops out.
-  const bodyText = thread.action && thread.action !== name ? thread.action : '';
+  // would just echo the title) AND distinct from the backend's generic "no specific activity
+  // yet" placeholder (statusService.markWorking(id, 'Working…') on resolved/busy — see
+  // packages/core/src/server.ts). The top-right status pill already carries the working cue,
+  // so the body row simply drops out rather than shimmering that filler word.
+  const bodyText = thread.action && thread.action !== name && thread.action !== 'Working…' ? thread.action : '';
 
   return (
     <div
@@ -97,11 +99,14 @@ function AgentThreadChip({ thread }: { thread: AgentThread }) {
           )}
         </div>
 
-        {/* row 2: secondary meta — type · #id + elapsed */}
+        {/* row 2: secondary meta — type · #id (· model, when known) + elapsed */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ts)' }}>
             {thread.typeLabel} · #{thread.id}
           </span>
+          {thread.model && (
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--tt)' }}>{thread.model}</span>
+          )}
           <span style={{ flex: 1 }} />
           {thread.elapsed && (
             <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--tt)', flex: 'none' }}>

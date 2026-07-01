@@ -1018,6 +1018,15 @@ export class SessionService {
 
     const resumeSessionId = terminal.external_id || undefined;
 
+    // Resolve the model up front and persist it into the terminal's config if it
+    // wasn't already pinned there — so it survives a daemon-restart resume and is
+    // returned to the frontend as part of the terminal row's config.
+    const resolvedModel = modelFor(config);
+    if (resolvedModel && !config.model) {
+      config.model = resolvedModel;
+      terminalsDb.updateConfig(this.db, terminal.id, config);
+    }
+
     let sc: { command: string; args: string[] };
     if (this.structuredCommandOverride) {
       // Test seam: spawn the fake instead of real claude. Still surface `-r <id>` on
@@ -1025,7 +1034,7 @@ export class SessionService {
       sc = { command: this.structuredCommandOverride.command, args: [...this.structuredCommandOverride.args] };
       if (resumeSessionId) sc.args.push('-r', resumeSessionId);
     } else {
-      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config), resumeSessionId, model: modelFor(config) });
+      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config), resumeSessionId, model: resolvedModel });
       if (!built) throw new Error('structured transport not supported for this provider');
       sc = built;
     }
