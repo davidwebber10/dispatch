@@ -9,3 +9,4 @@ coverage/
 .env.*
 .vscode/
 .idea/
+.worktrees/
