@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ConvItem } from '../../../api/types';
+import type { ConvItem, PendingPermission } from '../../../api/types';
 import { openStructuredSocket } from '../../../api/structured-socket';
 import { api, type ContentBlock } from '../../../api/client';
 
@@ -9,6 +9,12 @@ export interface StructuredChat {
   model?: string;
   // Accepts plain text OR a content-block array (e.g. a real image block the model SEES).
   send: (content: string | ContentBlock[]) => void;
+  /** The AskUserQuestion / gated tool this thread is blocked on, or null. */
+  pending: PendingPermission | null;
+  /** Answer the pending AskUserQuestion. `answers` is keyed by question TEXT →
+   *  the chosen option label(s) (multi-select joined with ", "). Verified wire shape
+   *  against real `claude --permission-prompt-tool stdio`. */
+  answer: (answers: Record<string, string>) => void;
 }
 
 function safeJson(v: unknown): string {
@@ -99,6 +105,11 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
   const [items, setItems] = useState<ConvItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [model, setModel] = useState<string | undefined>();
+  // The AskUserQuestion the CLI is blocked on (mirrored in a ref so the `answer`
+  // callback and the tool_result handler read the latest value without re-subscribing).
+  const [pending, setPendingState] = useState<PendingPermission | null>(null);
+  const permissionRef = useRef<PendingPermission | null>(null);
+  const setPending = useCallback((p: PendingPermission | null) => { permissionRef.current = p; setPendingState(p); }, []);
 
   // Session is read by the image parser (path refs → byte route) but must NOT key the
   // socket effect — it can resolve a render after terminalId, and we don't want that to
@@ -118,8 +129,8 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
   const rafRef = useRef<number | null>(null);          // scheduled flush handle (null ⇒ none pending)
 
   useEffect(() => {
-    if (!terminalId) { setItems([]); setBusy(false); setModel(undefined); return; }
-    setItems([]); setBusy(false); setModel(undefined);
+    if (!terminalId) { setItems([]); setBusy(false); setModel(undefined); setPending(null); return; }
+    setItems([]); setBusy(false); setModel(undefined); setPending(null);
     streamingRef.current = false; turnRef.current = 0; blockMapRef.current.clear();
     pendingRef.current.clear();
     if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
@@ -166,6 +177,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
         if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
         pendingRef.current.clear();
         setItems([]); setBusy(false);
+        setPending(null); // the server re-sends a still-pending permission after replay
         blockMapRef.current.clear();
       },
       onClose: () => {
@@ -179,6 +191,15 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
         if (type === 'system' && event.subtype === 'init') {
           const m = event.model || event.session?.model || event.modelId;
           if (m) setModel(m);
+          return;
+        }
+
+        // Escalation frame (ws/structured.ts) — an AskUserQuestion / gated tool the CLI
+        // is blocked on. Surface it for the interactive card and stop the "Working…"
+        // spinner: we're now waiting on the HUMAN, not the model. Answering resumes busy.
+        if (type === 'permission') {
+          setPending((event.pending as PendingPermission) ?? null);
+          setBusy(false);
           return;
         }
 
@@ -290,6 +311,9 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
           } else if (Array.isArray(content)) {
             for (const b of content) {
               if (b.type === 'tool_result') {
+                // The pending AskUserQuestion just produced its result → it's answered
+                // (by us or elsewhere); drop the interactive card.
+                if (b.tool_use_id && permissionRef.current?.toolUseId === b.tool_use_id) setPending(null);
                 add.push({ kind: 'tool-result', toolId: b.tool_use_id, text: flattenContent(b.content), isError: b.is_error === true });
                 // flattenContent yields the text body only; surface any image blocks nested
                 // inside the tool_result (e.g. a screenshot tool) as their own image items.
@@ -333,7 +357,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
       pendingRef.current.clear();
       sock.close();
     };
-  }, [terminalId]);
+  }, [terminalId, setPending]);
 
   const send = useCallback((content: string | ContentBlock[]) => {
     // A string turn is trimmed + empty-guarded as before; a block turn (e.g. an image)
@@ -352,5 +376,20 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
     });
   }, [terminalId]);
 
-  return { items, busy, model, send };
+  // Answer the pending AskUserQuestion. `answers` is keyed by question TEXT → the chosen
+  // option label(s). We fire the REST call (the ws has no inbound channel), clear the card
+  // optimistically, and resume the spinner — the CLI unblocks and streams the next turn.
+  const answer = useCallback((answers: Record<string, string>) => {
+    const p = permissionRef.current;
+    if (!p || !terminalId) return;
+    setPending(null);
+    setBusy(true);
+    api.answerPermission(terminalId, { requestId: p.requestId, decision: 'allow', answers }).catch(() => {
+      // The POST failed (e.g. the process died) — re-surface the question so it isn't lost.
+      setBusy(false);
+      setPending(p);
+    });
+  }, [terminalId, setPending]);
+
+  return { items, busy, model, send, pending, answer };
 }

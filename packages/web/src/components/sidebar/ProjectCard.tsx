@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SortableList } from '../common/SortableList';
-import { FolderOpen, CaretRight } from '@phosphor-icons/react';
+import { FolderOpen, CaretRight, Lightning } from '@phosphor-icons/react';
 import type { Session, Terminal, AgentSchedule } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
 import { projectIndicator } from '../../lib/status';
@@ -252,7 +252,7 @@ function SectionHeader({ label, count, prominent, children }: { label: string; c
   );
 }
 
-export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSelectAgent, onNewAgent, onBrowseFiles, fadeActiveKey, highlightTabId, showManaged = false }: { session: Session; active: boolean; open?: boolean; onToggle?: () => void; onSelectTab: (id: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void; onBrowseFiles?: (projectId: string) => void; fadeActiveKey?: number; highlightTabId?: string | null; showManaged?: boolean }) {
+export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSelectAgent, onNewAgent, onBrowseFiles, onDispatch, fadeActiveKey, highlightTabId, showManaged = false }: { session: Session; active: boolean; open?: boolean; onToggle?: () => void; onSelectTab: (id: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void; onBrowseFiles?: (projectId: string) => void; onDispatch?: (projectId: string) => void; fadeActiveKey?: number; highlightTabId?: string | null; showManaged?: boolean }) {
   const allAgents = useAgents((s) => s.schedules);
   const agents = allAgents.filter((a) => a.projectId === session.id);
   const agentSel = useAgents((s) => s.selectedId);
@@ -410,6 +410,27 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
       </div>
       <div style={{ display: 'grid', gridTemplateRows: isOpen ? '1fr' : '0fr', transition: 'grid-template-rows 0.12s ease' }}>
         <div style={{ overflow: 'hidden', minHeight: 0 }}>
+          {/* Dispatch coordinator — desktop opens it as a tab; mobile as a full-screen overlay. */}
+          {onDispatch && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onDispatch(session.id); }}
+              title="Open Dispatch coordinator"
+              style={{
+                display: 'flex', alignItems: 'center', gap: isMobile ? 11 : 8, width: '100%',
+                margin: isMobile ? '6px 0 10px' : '4px 0 6px',
+                padding: isMobile ? '14px 12px' : '7px 9px',
+                background: 'color-mix(in srgb, var(--color-accent) 12%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--color-accent) 34%, transparent)',
+                borderRadius: isMobile ? 12 : 7,
+                color: 'var(--color-accent)', font: `600 ${isMobile ? 16 : 12.5}px var(--font-sans)`,
+                textAlign: 'left', cursor: 'pointer',
+              }}
+            >
+              <Lightning size={isMobile ? 20 : 15} weight="fill" style={{ flexShrink: 0 }} />
+              <span style={{ flex: 1 }}>Dispatch</span>
+              <CaretRight size={isMobile ? 16 : 13} style={{ flexShrink: 0, opacity: 0.75 }} />
+            </button>
+          )}
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, marginTop: isMobile ? 6 : 4, marginBottom: 6, padding: isMobile ? '0 12px' : '0 9px', borderBottom: '1px solid var(--color-border)', background: 'rgba(255,255,255,0.03)' }}>
             <TabPill label="Threads" count={threadItems.length} active={projTab === 'threads'} mobile={isMobile} onClick={() => setProjTab('threads')} />
             <TabPill label="Automations" count={agents.length} active={projTab === 'agents'} mobile={isMobile} onClick={() => setProjTab('agents')} />

@@ -241,6 +241,48 @@ test('does NOT tag tool_result / assistant images as imageFromUser (BUG 3 bounda
   expect(imgs.every((i) => !i.imageFromUser)).toBe(true); // neither is the human's own turn
 });
 
+test('a permission frame surfaces the pending AskUserQuestion and stops the working spinner', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  // The assistant emitted the AskUserQuestion tool_use → busy is true, thread blocked on stdin.
+  act(() => cbs.onEvent({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'AskUserQuestion', id: 'tu-9', input: { questions: [] } }] } }));
+  expect(result.current.busy).toBe(true);
+  const pending = { requestId: 'req-9', toolName: 'AskUserQuestion', toolUseId: 'tu-9', questions: [{ question: 'Pick one', header: 'Choice', options: ['A', 'B'], multiSelect: false }] };
+  act(() => cbs.onEvent({ type: 'permission', pending }));
+  expect(result.current.pending?.requestId).toBe('req-9');
+  expect(result.current.pending?.questions?.[0]?.question).toBe('Pick one');
+  // We're now waiting on the HUMAN, not the model — the "Working…" spinner must stop.
+  expect(result.current.busy).toBe(false);
+});
+
+test('answer() POSTs allow with the answers map (keyed by question text) and clears pending + resumes busy', () => {
+  const spy = vi.spyOn(api, 'answerPermission').mockResolvedValue(undefined as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  const pending = { requestId: 'req-9', toolName: 'AskUserQuestion', toolUseId: 'tu-9', questions: [{ question: 'Pick one', header: 'Choice', options: ['A', 'B'], multiSelect: false }] };
+  act(() => cbs.onEvent({ type: 'permission', pending }));
+  act(() => { result.current.answer({ 'Pick one': 'A' }); });
+  expect(spy).toHaveBeenCalledWith('t1', { requestId: 'req-9', decision: 'allow', answers: { 'Pick one': 'A' } });
+  expect(result.current.pending).toBeNull();
+  // The thread is unblocked and working again → spinner resumes until the next result.
+  expect(result.current.busy).toBe(true);
+});
+
+test('the AskUserQuestion tool_result clears any lingering pending (answered / resumed elsewhere)', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  const pending = { requestId: 'req-9', toolName: 'AskUserQuestion', toolUseId: 'tu-9', questions: [{ question: 'Pick one', options: ['A'] }] };
+  act(() => cbs.onEvent({ type: 'permission', pending }));
+  expect(result.current.pending).not.toBeNull();
+  act(() => cbs.onEvent({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tu-9', content: 'answered' }] } }));
+  expect(result.current.pending).toBeNull();
+});
+
+test('a reconnect reset clears pending (stale question not re-shown before replay)', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'permission', pending: { requestId: 'req-9', toolName: 'AskUserQuestion', toolUseId: 'tu-9', questions: [{ question: 'Q', options: ['A'] }] } }));
+  expect(result.current.pending).not.toBeNull();
+  act(() => cbs.onReset?.());
+  expect(result.current.pending).toBeNull();
+});
+
 test('resolves a PATH-form image via the byte route ONLY when sessionId is wired (BUG 2)', () => {
   // With a sessionId the path resolves to the sandboxed byte route…
   const withSession = renderHook(() => useStructuredChat('t1', 'sess-1'));

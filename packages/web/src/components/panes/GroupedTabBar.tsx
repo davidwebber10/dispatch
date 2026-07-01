@@ -39,11 +39,10 @@ import {
   type DragOverEvent,
   type DragEndEvent,
 } from '@dnd-kit/core';
-import { SquaresFour, ArrowsSplit } from '@phosphor-icons/react';
-import { useTabs, findTerminal } from '../../stores/tabs';
+import { SquaresFour, ArrowsSplit, Lightning } from '@phosphor-icons/react';
+import { useTabs, findTerminal, isDispatchTab, tabLabel, tabProjectId } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
 import { useSettings } from '../../stores/settings';
-import { useViewMode } from '../../stores/viewMode';
 import { useGroups } from './store';
 import { leafTabIds, leafCount, MAX_PANES } from './types';
 
@@ -109,17 +108,17 @@ function ClassicTabBar({ onSelect }: { onSelect?: () => void }) {
       borderBottom: '1px solid var(--color-border)',
     }}>
       {openTabIds.map((id) => {
-        const t    = findTerminal(byProject, id);
-        const proj = sessions.find((s) => s.id === t?.sessionId);
+        const proj = sessions.find((s) => s.id === tabProjectId(id, byProject));
         const act  = id === activeTabId;
+        const dispatch = isDispatchTab(id);
         return (
           <div
             key={id}
             onClick={() => { onSelect?.(); useTabs.getState().setActiveTab(id); }}
             onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); useTabs.getState().closeTab(id); } }}
             style={{
-              display: 'flex', alignItems: 'center', gap: 10,
-              padding: '0 10px 0 15px',
+              display: 'flex', alignItems: 'center', gap: dispatch ? 8 : 10,
+              padding: dispatch ? '0 10px 0 13px' : '0 10px 0 15px',
               minWidth: TAB_MIN_W, maxWidth: TAB_MAX_W, flexShrink: 0,
               cursor: 'pointer',
               borderRight: '1px solid var(--color-border)',
@@ -127,9 +126,10 @@ function ClassicTabBar({ onSelect }: { onSelect?: () => void }) {
               borderBottom:  act ? '2px solid var(--color-accent)' : '2px solid transparent',
             }}
           >
+            {dispatch && <Lightning size={14} weight="fill" style={{ flexShrink: 0, color: 'var(--color-accent)' }} />}
             <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
               <span style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {t?.label ?? 'tab'}
+                {tabLabel(id, byProject)}
               </span>
               <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {proj?.name ?? ''}
@@ -143,6 +143,45 @@ function ClassicTabBar({ onSelect }: { onSelect?: () => void }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Dispatch (virtual) tab chip — static, non-draggable, never groupable. Lives
+   in the strip like any other tab but has no backend terminal / drag behaviour.
+   ═══════════════════════════════════════════════════════════════════════ */
+function DispatchChip({ tabId, onSelect }: { tabId: string; onSelect?: () => void }) {
+  const activeTabId = useTabs((s) => s.activeTabId);
+  const byProject   = useTabs((s) => s.byProject);
+  const sessions    = useProjects((s) => s.sessions);
+  const proj = sessions.find((s) => s.id === tabProjectId(tabId, byProject));
+  const act  = tabId === activeTabId;
+  return (
+    <div
+      onClick={() => { onSelect?.(); useTabs.getState().setActiveTab(tabId); }}
+      onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); useTabs.getState().closeTab(tabId); } }}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '0 10px 0 13px',
+        minWidth: TAB_MIN_W, maxWidth: TAB_MAX_W, flexShrink: 0,
+        height: '100%', cursor: 'pointer',
+        borderRight: '1px solid var(--color-border)',
+        background:   act ? 'var(--color-base)' : 'transparent',
+        borderBottom: act ? '2px solid var(--color-accent)' : '2px solid transparent',
+        userSelect: 'none',
+      }}
+    >
+      <Lightning size={14} weight="fill" style={{ flexShrink: 0, color: 'var(--color-accent)' }} />
+      <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
+        <span style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Dispatch</span>
+        <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{proj?.name ?? ''}</span>
+      </div>
+      <button
+        onClick={(e) => { e.stopPropagation(); useTabs.getState().closeTab(tabId); }}
+        title="Close tab"
+        style={iconBtn}
+      >×</button>
     </div>
   );
 }
@@ -607,7 +646,9 @@ function GroupedTabBarInner({ onSelect }: { onSelect?: () => void }) {
                   flanking the dragged tab (its vacated space already covers that). */}
               {dragging && i !== dragIdx && i !== dragIdx + 1 && <DropGap index={i} />}
               {slot.kind === 'single'
-                ? <SingleChip slot={slot} index={i} onSelect={onSelect} />
+                ? (isDispatchTab(slot.tabId)
+                    ? <DispatchChip tabId={slot.tabId} onSelect={onSelect} />
+                    : <SingleChip slot={slot} index={i} onSelect={onSelect} />)
                 : <GroupChip  slot={slot} index={i} onSelect={onSelect} />}
             </Fragment>
           ))}
@@ -632,9 +673,8 @@ function GroupedTabBarInner({ onSelect }: { onSelect?: () => void }) {
    ═══════════════════════════════════════════════════════════════════════ */
 export function GroupedTabBar({ onSelect }: { onSelect?: () => void }) {
   const multiPane = useSettings((s) => s.multiPane);
-  const mode      = useViewMode((s) => s.mode);
 
-  if (mode !== 'operator' || !multiPane) {
+  if (!multiPane) {
     return <ClassicTabBar onSelect={onSelect} />;
   }
   return <GroupedTabBarInner onSelect={onSelect} />;
