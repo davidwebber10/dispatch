@@ -26,6 +26,14 @@ interface StatusContext {
   codexHelperPath: string;
 }
 
+/** Grace period before the boot kickstart runs, so a save-burst on shutdown can coalesce. */
+const KICKSTART_SETTLE_MS = 4000;
+
+/** The re-prompt delivered to a structured thread that the last daemon shutdown interrupted mid-turn. */
+const KICKSTART_CONTINUE_PROMPT =
+  '⚙️ Dispatch restarted and interrupted you mid-task — re-read your last steps above and continue your ' +
+  'mission from where you left off. If you had already finished, briefly say so instead of redoing work.';
+
 export class SessionService {
   /** Supplies the Doppler MCP spec for spawned CLIs; set by the server wiring. */
   private secretsServerSpec: (() => { spec: McpServerSpec | null; prompt: string | null }) | null = null;
@@ -1015,6 +1023,69 @@ export class SessionService {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * One-shot boot recovery: auto-resume overseer threads (the coordinator and its
+   * typed agents) that the last daemon shutdown interrupted mid-turn. The signal is
+   * free — a non-archived structured terminal still in `status='working'` at boot
+   * died mid-turn (clean shutdown skips the settle-to-`waiting` write, and
+   * clearStalePids only touches sessions). Kicking is a single sendStructuredMessage:
+   * it revives the thread (spawn/`-r` + transcript backfill) AND re-prompts it to
+   * continue.
+   *
+   * Idempotency (so a restart-during-recovery doesn't double-prompt or make a
+   * finished agent redo work):
+   *   - skip a thread whose transcript tail shows a COMPLETED turn — the shutdown
+   *     race left it stale-`working` but it actually finished;
+   *   - skip a thread already stamped `config.kickedAt` with no newer transcript
+   *     activity since (we kicked it on a prior boot and it hasn't moved).
+   * Each kicked thread is stamped `config.kickedAt` afterwards.
+   *
+   * DEFERRED (follow-up): `needs_input` agents lose their in-memory pending on
+   * restart. They aren't `working`, so this kicker correctly skips them — reviving
+   * them needs a different path (re-surface the question), not a mid-task nudge.
+   */
+  async kickstartInterruptedAgents(settleMs: number = KICKSTART_SETTLE_MS): Promise<{ kicked: string[]; skipped: string[] }> {
+    const kicked: string[] = [];
+    const skipped: string[] = [];
+    if (!this.structuredManager) return { kicked, skipped };
+
+    // (a) Settle: let any burst of save writes from the shutdown coalesce before we read status.
+    if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
+
+    // (b) Enumerate every non-archived claude-code terminal left `working` across all sessions.
+    const rows = terminalsDb.listWorkingStructured(this.db);
+    for (const row of rows) {
+      let config: Record<string, any> = {};
+      try { config = JSON.parse(row.config || '{}'); } catch { skipped.push(row.id); continue; }
+      // Structured overseer threads only: the coordinator and its typed agents.
+      if (config.transport !== 'structured') { skipped.push(row.id); continue; }
+      if (config.role !== 'coordinator' && config.role !== 'agent') { skipped.push(row.id); continue; }
+
+      // (c) Idempotency. Compare against the transcript, which advances as the thread works.
+      const session = sessionsDb.getById(this.db, row.session_id);
+      const workDir = row.working_dir || session?.working_dir || null;
+      const tail = (workDir && row.external_id) ? transcriptTailStatus(workDir, row.external_id) : null;
+
+      // Already kicked on a prior boot and nothing new happened since → don't re-prompt.
+      const kickedAt = typeof config.kickedAt === 'string' ? Date.parse(config.kickedAt) : NaN;
+      if (!Number.isNaN(kickedAt) && (!tail || tail.mtimeMs <= kickedAt)) { skipped.push(row.id); continue; }
+
+      // The turn actually completed (shutdown race left it stale-working) → nothing to resume.
+      if (tail?.completed) { skipped.push(row.id); continue; }
+
+      // (d) Kick (revive + re-prompt) and stamp so a later restart won't double-kick.
+      try {
+        this.sendStructuredMessage(row.id, KICKSTART_CONTINUE_PROMPT);
+        config.kickedAt = new Date().toISOString();
+        terminalsDb.updateConfig(this.db, row.id, config);
+        kicked.push(row.id);
+      } catch {
+        skipped.push(row.id);
+      }
+    }
+    return { kicked, skipped };
   }
 
   /**

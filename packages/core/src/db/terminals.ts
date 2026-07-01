@@ -104,6 +104,19 @@ export function listArchivedBySession(db: Database.Database, sessionId: string):
     .all(sessionId) as TerminalRow[];
 }
 
+/**
+ * Cross-session lookup for the boot kickstart: every non-archived claude-code
+ * terminal left in `status='working'`. At boot that status is the interrupted
+ * signal — a thread that died mid-turn (clean shutdown skips the settle-to-waiting
+ * write, and clearStalePids only touches sessions). The caller filters to
+ * structured overseer threads and applies idempotency.
+ */
+export function listWorkingStructured(db: Database.Database): TerminalRow[] {
+  return db.prepare(
+    "SELECT * FROM terminals WHERE status = 'working' AND archived_at IS NULL AND type = 'claude-code'",
+  ).all() as TerminalRow[];
+}
+
 export function updatePid(db: Database.Database, id: string, pid: number | null): void {
   db.prepare('UPDATE terminals SET pid = ? WHERE id = ?').run(pid, id);
 }

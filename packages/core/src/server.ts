@@ -478,6 +478,15 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   console.log(`Dispatch server listening on port ${port}`);
 
+  // Boot recovery: auto-resume overseer threads (coordinator + typed agents) that
+  // the previous shutdown interrupted mid-turn. Fire-and-forget — it waits a short
+  // settle delay before reading status, so it must not block startup.
+  void sessionService.kickstartInterruptedAgents()
+    .then(({ kicked, skipped }) => {
+      if (kicked.length) console.log(`Kickstart: resumed ${kicked.length} interrupted thread(s); skipped ${skipped.length}`);
+    })
+    .catch((err) => console.error('kickstart failed', err));
+
   // Start PTY timing loop for Codex-style providers
   const ptyTimingInterval = startPtyTimingLoop(db, ptyManager, broadcaster);
   const agentSchedulerInterval = setInterval(() => {

@@ -89,6 +89,64 @@ export function readSessionBackfill(workDir: string, sessionId: string, limit = 
   }
 }
 
+export interface TranscriptTailStatus {
+  /** The transcript file's last-modified epoch ms — a reliable "newer activity" clock. */
+  mtimeMs: number;
+  /**
+   * The last user/assistant turn completed cleanly: an assistant message with no
+   * dangling `tool_use` block. An interrupted turn instead ends on an assistant
+   * message that still has a `tool_use`, or on a `user` `tool_result` the model
+   * never answered — both report `false`.
+   */
+  completed: boolean;
+}
+
+/** Only the file's tail is needed to classify the last turn; avoid reading multi-MB transcripts whole. */
+const TAIL_BYTES = 256 * 1024;
+
+function messageHasToolUse(message: unknown): boolean {
+  const content = (message as any)?.content;
+  if (!Array.isArray(content)) return false;
+  return content.some((b: any) => b && b.type === 'tool_use');
+}
+
+/**
+ * Classify the tail of a claude session's transcript for the boot kickstart's
+ * idempotency: is the last turn complete, and when did the file last change?
+ * Reads only the last TAIL_BYTES (dropping the first, possibly-partial line).
+ * Returns null when the transcript is missing/unreadable (e.g. a thread that
+ * never captured an external_id) — the caller treats that as "no evidence of a
+ * completed turn." Never throws.
+ */
+export function transcriptTailStatus(workDir: string, sessionId: string): TranscriptTailStatus | null {
+  try {
+    const encoded = workDir.replace(/\//g, '-');
+    const file = path.join(os.homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
+    const stat = fs.statSync(file);
+    const start = Math.max(0, stat.size - TAIL_BYTES);
+    const len = stat.size - start;
+    const buf = Buffer.alloc(len);
+    const fd = fs.openSync(file, 'r');
+    try { fs.readSync(fd, buf, 0, len, start); } finally { fs.closeSync(fd); }
+    const lines = buf.toString('utf-8').split('\n');
+    if (start > 0) lines.shift(); // the first line is likely truncated mid-JSON
+    let last: any = null;
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let o: any;
+      try { o = JSON.parse(trimmed); } catch { continue; }
+      if (!o || (o.type !== 'user' && o.type !== 'assistant')) continue;
+      if (o.isMeta || o.isSidechain) continue;
+      last = o;
+    }
+    const completed = !!last && last.type === 'assistant' && !messageHasToolUse(last.message);
+    return { mtimeMs: stat.mtimeMs, completed };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * List a project's recent Claude Code sessions (for the "resume" picker), newest
  * first. Reads `~/.claude/projects/<workDir-with-/replaced-by->/<uuid>.jsonl`.
