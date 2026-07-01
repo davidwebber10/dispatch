@@ -241,6 +241,128 @@ it('POST /message tags the echoed event with `meta.source`; untagged sends carry
   await request(app).post(`/api/terminals/${id}/stop`);
 });
 
+// --- durable source persistence: survives the CLI process exiting -------------
+//
+// fake-claude.mjs only emits NDJSON over stdout — it never writes an actual transcript
+// JSONL to disk the way the real `claude` CLI does. So these tests point HOME at a temp
+// dir (same pattern as sessions/kickstart.test.ts) and hand-write the transcript line a
+// real CLI would have produced for the turn under test, BEFORE sending it — giving
+// findNewestUnresolvedUserUuid / readSessionBackfill / getConversation a real uuid to
+// resolve against, exactly like production.
+describe('durable source persistence: survives the CLI process exiting', () => {
+  const realHome = process.env.HOME;
+  let home: string;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), 'struct-durable-home-'));
+    process.env.HOME = home;
+  });
+  afterEach(() => {
+    if (realHome === undefined) delete process.env.HOME;
+    else process.env.HOME = realHome;
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  function writeTranscript(workDir: string, transcriptSessionId: string, lines: unknown[]): void {
+    const projDir = path.join(home, '.claude', 'projects', workDir.replace(/\//g, '-'));
+    fs.mkdirSync(projDir, { recursive: true });
+    // Trailing newline, matching a real transcript: getConversation's `usable` array drops
+    // the LAST split('\n') element on the assumption it may be a partial write-in-progress —
+    // without a trailing newline here, that logic would wrongly discard our one real line.
+    fs.writeFileSync(path.join(projDir, `${transcriptSessionId}.jsonl`), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  }
+
+  async function pollMessageSourceRow(database: Database.Database, terminalId: string, timeoutMs = 3000): Promise<{ uuid: string; source: string }> {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const row = database.prepare('SELECT uuid, source FROM message_source WHERE terminal_id = ?').get(terminalId) as { uuid: string; source: string } | undefined;
+      if (row) return row;
+      await sleep(25);
+    }
+    throw new Error('timeout waiting for a durable message_source row');
+  }
+
+  it('a message source survives the CLI process exiting and the thread being lazily revived (backfill ring)', async () => {
+    const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured' } });
+    const id = t.body.id;
+    await pollExternalId(db, id, 'sess-fake');
+
+    writeTranscript(dir, 'sess-fake', [
+      { type: 'user', uuid: 'coord-msg-uuid', message: { role: 'user', content: [{ type: 'text', text: 'from the coordinator' }] } },
+    ]);
+
+    await request(app).post(`/api/terminals/${id}/message`).send({ text: 'from the coordinator', source: 'coordinator' });
+    // Turn completes (fake replies + emits `result`) → manager resolves + persists durably.
+    await pollEvent(app, id, (e) => e?.type === 'result');
+    const row = await pollMessageSourceRow(db, id);
+    expect(row).toEqual({ uuid: 'coord-msg-uuid', source: 'coordinator' });
+
+    // Simulate the CLI process exiting (e.g. auto-archive) — the live ring/process is gone.
+    const mgr = (app as any)._structuredManager;
+    mgr.kill(id);
+    expect(mgr.isAlive(id)).toBe(false);
+
+    // Reconnect/reload: a new message lazily revives the thread, seeding the ring PURELY
+    // from the on-disk transcript (readSessionBackfill) — this is the exact path that lost
+    // the source tag before this fix (the in-memory echo never reached disk).
+    await request(app).post(`/api/terminals/${id}/message`).send({ text: 'next turn' });
+    expect(mgr.isAlive(id)).toBe(true);
+
+    const revived = mgr.getEvents(id).find((e: any) => e?.uuid === 'coord-msg-uuid');
+    expect(revived).toBeTruthy();
+    expect(revived.meta).toEqual({ source: 'coordinator' }); // survived the exit + disk re-hydration
+
+    await request(app).post(`/api/terminals/${id}/stop`);
+  });
+
+  it('a durable source also survives on the REST conversation endpoint (archived-thread / loadOlder hydration path)', async () => {
+    const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured' } });
+    const id = t.body.id;
+    await pollExternalId(db, id, 'sess-fake');
+
+    writeTranscript(dir, 'sess-fake', [
+      { type: 'user', uuid: 'coord-msg-uuid-2', message: { role: 'user', content: [{ type: 'text', text: 'from the coordinator' }] } },
+    ]);
+
+    await request(app).post(`/api/terminals/${id}/message`).send({ text: 'from the coordinator', source: 'coordinator' });
+    await pollEvent(app, id, (e) => e?.type === 'result');
+    await pollMessageSourceRow(db, id);
+
+    const conv = await request(app).get(`/api/terminals/${id}/conversation`);
+    expect(conv.status).toBe(200);
+    const item = conv.body.items.find((it: any) => it.uuid === 'coord-msg-uuid-2');
+    expect(item).toBeTruthy();
+    expect(item.source).toBe('coordinator');
+
+    await request(app).post(`/api/terminals/${id}/stop`);
+  });
+
+  it('an untagged send has no durable row and stays a plain bubble after revival', async () => {
+    const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured' } });
+    const id = t.body.id;
+    await pollExternalId(db, id, 'sess-fake');
+
+    writeTranscript(dir, 'sess-fake', [
+      { type: 'user', uuid: 'plain-msg-uuid', message: { role: 'user', content: [{ type: 'text', text: 'plain human turn' }] } },
+    ]);
+
+    await request(app).post(`/api/terminals/${id}/message`).send({ text: 'plain human turn' }); // no source
+    await pollEvent(app, id, (e) => e?.type === 'result');
+    await sleep(150); // give a (would-be-incorrect) resolution a chance to land
+
+    expect(db.prepare('SELECT COUNT(*) c FROM message_source WHERE terminal_id = ?').get(id)).toEqual({ c: 0 });
+
+    const mgr = (app as any)._structuredManager;
+    mgr.kill(id);
+    await request(app).post(`/api/terminals/${id}/message`).send({ text: 'next turn' });
+    const revived = mgr.getEvents(id).find((e: any) => e?.uuid === 'plain-msg-uuid');
+    expect(revived).toBeTruthy();
+    expect(revived.meta).toBeUndefined();
+
+    await request(app).post(`/api/terminals/${id}/stop`);
+  });
+});
+
 it('a direct user message to an agent (source:"user") notifies its coordinator — bypassing message_agent', async () => {
   const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coord-usermsg-'));
   const a = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fake] } });

@@ -70,6 +70,46 @@ it('sendMessage writes a user turn and assistant events come back', async () => 
   expect(JSON.stringify(a)).toContain('echo:hello');
 });
 
+it("emits 'message-source' with the tagged source once the turn's result lands (durable-persist trigger)", async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  const sourceP = waitForManagerEvent(m, 'message-source', 't1');
+  m.sendMessage('t1', 'hello', 'coordinator');
+  const [source] = await sourceP;
+  expect(source).toBe('coordinator');
+});
+
+it("does NOT emit 'message-source' for an untagged send", async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  let emitted = false;
+  const on = (eid: string) => { if (eid === 't1') emitted = true; };
+  m.on('message-source', on);
+  m.sendMessage('t1', 'hello'); // no source
+  await waitForEvent(m, 't1', (e) => e.type === 'result');
+  await new Promise((r) => setTimeout(r, 50)); // give a stray emit a chance to land
+  m.off('message-source', on);
+  expect(emitted).toBe(false);
+});
+
+it("a later untagged send does not leak a PRIOR turn's source onto the next result", async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  const firstSourceP = waitForManagerEvent(m, 'message-source', 't1');
+  m.sendMessage('t1', 'hello', 'coordinator');
+  await firstSourceP;
+
+  const resultsBefore = m.getEvents('t1').filter((e: any) => e.type === 'result').length;
+  let emitted = false;
+  const on = (eid: string) => { if (eid === 't1') emitted = true; };
+  m.on('message-source', on);
+  m.sendMessage('t1', 'a plain follow-up'); // untagged — must clear the pending tag
+  await waitFor(() => m.getEvents('t1').filter((e: any) => e.type === 'result').length > resultsBefore);
+  await new Promise((r) => setTimeout(r, 50)); // give a stray emit a chance to land after the 2nd result
+  m.off('message-source', on);
+  expect(emitted).toBe(false);
+});
+
 it('sendMessage buffers + emits a synthetic user event for reconnect replay (P0a)', async () => {
   spawnFake(m, 't1');
   await waitForEvent(m, 't1', (e) => e.type === 'system');

@@ -110,6 +110,19 @@ export function initSchema(db: Database.Database): void {
       created_at  TEXT NOT NULL,
       updated_at  TEXT NOT NULL
     );
+
+    -- Durable "who sent this turn" tag, keyed by Claude Code's own per-line transcript
+    -- uuid. The in-memory echo (structured/manager.ts) carries meta.source only for the
+    -- life of the CLI process; once it exits, a re-hydrated chat rebuilds purely from the
+    -- on-disk transcript, which has no such field. This table is the durable side-channel
+    -- so a resolved uuid can be looked back up on any later disk read.
+    CREATE TABLE IF NOT EXISTS message_source (
+      terminal_id TEXT NOT NULL,
+      uuid        TEXT NOT NULL,
+      source      TEXT NOT NULL,
+      created_at  TEXT NOT NULL,
+      PRIMARY KEY (terminal_id, uuid)
+    );
   `);
 
   // Migrations: add columns that may not exist on older databases

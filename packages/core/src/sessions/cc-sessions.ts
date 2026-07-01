@@ -107,6 +107,61 @@ export function readSessionBackfill(workDir: string, sessionId: string, limit = 
   }
 }
 
+/**
+ * The newest 'user' transcript-line uuid carrying REAL text content (not a bare
+ * tool_result, which is also written as a `type: 'user'` line) that ISN'T already in
+ * `excludeUuids`. Used right after a turn's `result` fires (see structured/manager.ts's
+ * 'message-source' emit + sessions/service.ts's listener) to identify the uuid Claude Code
+ * just assigned to the human/coordinator turn that started it — the CLI never echoes that
+ * uuid back over stdout, so a fresh disk read is the only way to learn it. Scans the WHOLE
+ * transcript (cheap: this runs against the same files backfill already reads whole) and
+ * keeps the LAST match, since `excludeUuids` only screens out turns already resolved.
+ * Returns undefined on any error (missing file, no match) — resolution is best-effort.
+ */
+export function findNewestUnresolvedUserUuid(workDir: string, sessionId: string, excludeUuids: Set<string>): string | undefined {
+  try {
+    const encoded = workDir.replace(/\//g, '-');
+    const file = path.join(os.homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
+    const text = fs.readFileSync(file, 'utf-8');
+    let found: string | undefined;
+    for (const line of text.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let o: any;
+      try { o = JSON.parse(trimmed); } catch { continue; } // partial/garbled line
+      if (!o || o.type !== 'user' || o.isMeta || o.isSidechain || typeof o.uuid !== 'string') continue;
+      if (excludeUuids.has(o.uuid)) continue;
+      const content = o.message?.content;
+      const hasRealText = typeof content === 'string' ? content.trim().length > 0
+        : Array.isArray(content) ? content.some((b: any) => b?.type === 'text' && typeof b.text === 'string' && b.text.trim().length > 0)
+        : false;
+      if (hasRealText) found = o.uuid; // keep scanning — we want the newest match
+    }
+    return found;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Merge durably-stored `source` tags (keyed by transcript uuid — see db/message-source.ts)
+ * back onto backfilled events. backfillEventsFromTranscript's output never carries `meta`
+ * (the on-disk transcript has no such field — only the live in-memory echo did, gone once
+ * the CLI process exits), so a revived/re-hydrated thread loses the "via Dispatch" badge
+ * unless this runs. Pure — the caller resolves `sourceByUuid` from SQLite. Leaves events
+ * with no matching uuid untouched (graceful degradation for untagged/legacy turns).
+ */
+export function applyDurableSources(events: unknown[], sourceByUuid: Map<string, string>): unknown[] {
+  if (!sourceByUuid.size) return events;
+  return events.map((e) => {
+    const o = e as any;
+    if (o?.type === 'user' && typeof o.uuid === 'string' && sourceByUuid.has(o.uuid)) {
+      return { ...o, meta: { ...(o.meta ?? {}), source: sourceByUuid.get(o.uuid) } };
+    }
+    return e;
+  });
+}
+
 export interface TranscriptTokenStats {
   /** The last non-synthetic model seen in the transcript (models can vary across a resumed session). */
   model: string;
