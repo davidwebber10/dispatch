@@ -43,10 +43,10 @@ export function OverseerView({ onBack }: { onBack?: () => void } = {}) {
     // this, any width reclaimed upstream (e.g. an unused inspector rail) never reaches here.
     // No header, no card framing — the Dispatch tab renders flush like any other tab
     // (see TabHost's AiThread/ChatView), starting directly with the conversation body.
-    <div className="overseer-root" style={{ ...overseerRootStyle, flex: 1, minWidth: 0, minHeight: 0, display: 'flex', background: 'var(--base)' }}>
+    <div className="overseer-root" style={{ ...overseerRootStyle, flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'row', background: 'var(--base)' }}>
       {/* LEFT — conversation membrane (the Needs queue now lives in the header alert
           dropdown — see NeedsAlert — so it no longer sits above the stream). */}
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         <ConversationStream />
         <Composer />
       </div>
