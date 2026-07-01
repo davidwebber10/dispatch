@@ -422,7 +422,7 @@ export function ConversationStream() {
           style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', visibility: ready ? 'visible' : 'hidden' }}
         >
           <MessageScroller.Viewport preserveScrollOnPrepend style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
-            <MessageScroller.Content style={{ padding: '20px 26px 12px', display: 'flex', flexDirection: 'column', gap: 17 }}>
+            <MessageScroller.Content style={{ maxWidth: 768, margin: '0 auto', padding: '20px 26px 12px', display: 'flex', flexDirection: 'column', gap: 17 }}>
               {renderStream(stream)}
               {/* single indeterminate spinner while the coordinator works */}
               {busy && (

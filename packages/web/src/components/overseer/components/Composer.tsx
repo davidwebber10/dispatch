@@ -214,14 +214,14 @@ export function Composer() {
     >
       {/* drag cue / upload status text (drag cue takes precedence while dragging) */}
       {(dragActive || uploadNote) && (
-        <div style={{ fontSize: 11, color: dragActive ? 'var(--acc)' : 'var(--tt)', marginBottom: 6 }}>
+        <div style={{ maxWidth: 768, margin: '0 auto 6px', fontSize: 11, color: dragActive ? 'var(--acc)' : 'var(--tt)' }}>
           {dragActive ? 'Drop image to attach' : uploadNote}
         </div>
       )}
 
       {/* staged image thumbnails — each removable via its × (hidden behind the drag cue) */}
       {!dragActive && imageCount > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+        <div style={{ maxWidth: 768, margin: '0 auto', display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
           {composerImages.map((block, i) =>
             block.type === 'image' ? (
               <StagedThumbnail
@@ -234,9 +234,13 @@ export function Composer() {
         </div>
       )}
 
-      {/* input row (border + tint shift to accent while a file is dragged over) */}
+      {/* input row (border + tint shift to accent while a file is dragged over). Capped +
+          centered to line up with the message column above (Stream.tsx) — same convention
+          as the agent ChatView's composer (packages/web/src/components/tabs/chat/ChatView.tsx). */}
       <div
         style={{
+          maxWidth: 768,
+          margin: '0 auto',
           display: 'flex',
           alignItems: 'flex-end',
           gap: 8,
@@ -310,9 +314,10 @@ export function Composer() {
           "⌘↵ send" keyboard hint right (desktop only) */}
       <div
         style={{
+          maxWidth: 768,
+          margin: '8px auto 0',
           display: 'flex',
           alignItems: 'center',
-          marginTop: 8,
         }}
       >
         <ContextIndicator
