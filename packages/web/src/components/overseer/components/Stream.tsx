@@ -21,14 +21,17 @@
 // No prop drilling — reads the store directly.
 // Desktop: flex:1 scroll (in the left conversation column). Mobile: fills the Stream tab.
 
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
-import { CaretDoubleDown, WarningCircle } from '@phosphor-icons/react';
+import { Bell, CaretDoubleDown, CheckCircle, WarningCircle } from '@phosphor-icons/react';
 import { Icon } from '../atoms';
-import { Markdown } from '../../Markdown';
+import { AgentCard } from './AgentCard';
 import { ChatImage } from '../../ChatImage';
+import { InsightText } from '../../InsightText';
 import { WorkingIndicator } from '../../WorkingIndicator';
+import { Spinner } from '../../common/Spinner';
 import { useOverseer, useRenderVals } from '../store';
+import { useDispatchName } from '../../../stores/settings';
 import type { StreamMessage } from '../types';
 
 // `.md-view`'s CSS consumes the GLOBAL `--color-*` tokens (defined on :root), which
@@ -42,15 +45,19 @@ import type { StreamMessage } from '../types';
 // same run omit it (chat-app grouping) but keep the body left-aligned at the same x.
 
 function DispatchHeader({ time }: { time: string }) {
+  const name = useDispatchName();
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-      <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--acc)' }}>Dispatch</span>
+      <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--acc)' }}>{name}</span>
       <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--tt)' }}>{time}</span>
     </div>
   );
 }
 
 // ---- Overseer message -------------------------------------------------------
+// Body prose renders through the SHARED <InsightText> (packages/web/src/components/
+// InsightText.tsx), so any ★ Insight blocks become tinted callouts here EXACTLY as they do
+// in the agent ChatView — the parsing/callout logic lives in one place, not per surface.
 
 function OverseerMsg({ msg, showHeader }: { msg: StreamMessage; showHeader: boolean }) {
   if (!msg.text) return null; // parity with the agent AssistantText — no empty body
@@ -59,10 +66,8 @@ function OverseerMsg({ msg, showHeader }: { msg: StreamMessage; showHeader: bool
       {/* content column — fills the pane (no 64ch cap); side padding lives on Content */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0, flex: 1 }}>
         {showHeader && <DispatchHeader time={msg.time} />}
-        {/* body — markdown-rendered, parity with the agent assistant prose */}
-        <div style={{ minWidth: 0 }}>
-          <Markdown source={msg.text} />
-        </div>
+        {/* body — prose + ★ Insight callouts, scoped to the overseer token set */}
+        <InsightText source={msg.text} scheme="scoped" />
       </div>
     </div>
   );
@@ -185,6 +190,112 @@ function ErrorMsg({ msg }: { msg: StreamMessage }) {
   );
 }
 
+// ---- Agency system notice (centered, muted) ---------------------------------
+// The coordinator conversation receives injected LIFECYCLE notices about its own agents
+// (posted by service.notifyCoordinatorOfAgent → they land as USER-role stream items, so
+// without this they'd render as a right-aligned "You" bubble, as if the human typed the raw
+// coordinator-facing blob — agentId + "call answer_agent(…) / re-spawn with new guidance …
+// Do not silently ignore this" instructions and all).
+//
+// We recognise the three notice shapes by their leading emoji + phrase and re-present each as
+// a CONCISE, muted system line, dropping the internal orchestration text (agentId, the
+// coordinator instructions). Detection is frontend-only: the injected text is unchanged
+// upstream (packages/core/src/sessions/service.ts), we only reshape its PRESENTATION here.
+// Source templates:
+//   ✅ Your agent "<label>" […] just finished a turn.…             (noteAgentCompletion)
+//   🔔 Your agent "<label>" […] is PAUSED waiting on you …         (formatAgentQuestion)
+//   ⚠️ The user just <stopped|interrupted> your agent "<label>" …  (noteAgentLifecycle)
+
+type NoticeIconCmp = typeof CheckCircle; // all phosphor icons share one component type
+
+interface AgencyNotice {
+  icon: NoticeIconCmp;      // phosphor icon for this notice type
+  color: string;            // per-type accent (icon tint only; the text stays muted)
+  summary: string;          // concise, user-facing one-liner (internal blob dropped)
+  agentId: string | null;   // parsed terminal id → tap the pill to open that agent's lightbox
+}
+
+// The agent LABEL is always the FIRST double-quoted run in the notice; a later
+// `(mission "…")` is the SECOND, so the first match is the name. '' when absent.
+function firstQuoted(text: string): string {
+  const m = text.match(/"([^"]+)"/);
+  return m ? m[1] : '';
+}
+
+// The agent's terminal id is embedded in the raw (pre-reshape) notice so the pill can deep-link
+// to that agent's lightbox. Two shapes across the templates (packages/core/src/sessions/
+// service.ts): `[agentId <id>]` (finished ✅ / stopped ⚠️) and `agentId: "<id>"` (paused 🔔's
+// answer_agent call). Try the bracket form first, then the quoted form. null ⇒ leave the pill
+// non-clickable.
+function parseAgentId(text: string): string | null {
+  const bracket = text.match(/\[agentId\s+([^\]\s]+)\]/);
+  if (bracket) return bracket[1];
+  const quoted = text.match(/agentId:\s*"([^"]+)"/);
+  if (quoted) return quoted[1];
+  return null;
+}
+
+// Detect an injected agency notice on a USER message (returns null for a real user turn).
+// Guarded on emoji AT START *and* a signature phrase so a human message that merely opens
+// with the same emoji isn't mistaken for a system notice.
+function detectAgencyNotice(text: string): AgencyNotice | null {
+  const t = text.trimStart();
+  const name = firstQuoted(t);
+  const agentId = parseAgentId(t);
+  // ✅ finished a turn
+  if (t.startsWith('✅') && /your agent|finished a turn/i.test(t)) {
+    return { icon: CheckCircle, color: 'var(--acc)', summary: name ? `Agent "${name}" finished` : 'Agent finished a turn', agentId };
+  }
+  // 🔔 paused / waiting on an answer
+  if (t.startsWith('🔔') && /your agent|is PAUSED/i.test(t)) {
+    return { icon: Bell, color: 'var(--yellow)', summary: name ? `Agent "${name}" needs an answer` : 'Agent needs an answer', agentId };
+  }
+  // ⚠️ user stopped / interrupted an agent (match the base ⚠ codepoint — the source carries a
+  // trailing VS16). Echo the actual verb the notice used.
+  if (t.startsWith('⚠') && /your agent|just (stopped|interrupted)/i.test(t)) {
+    const verb = /just interrupted/i.test(t) ? 'interrupted' : 'stopped';
+    return { icon: WarningCircle, color: 'var(--red)', summary: name ? `You ${verb} agent "${name}"` : `You ${verb} an agent`, agentId };
+  }
+  return null;
+}
+
+function AgencyNoticeMsg({ notice }: { notice: AgencyNotice }) {
+  const NoticeIcon = notice.icon;
+  const drillInto = useOverseer((s) => s.drillInto);
+  const [hover, setHover] = useState(false);
+  // A notice that carries an agentId deep-links into that agent's lightbox (same action the
+  // rail chips use). Notices without a parseable id stay inert — no cursor / hover affordance.
+  const clickable = !!notice.agentId;
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center' }}>
+      <span
+        onClick={clickable ? () => drillInto(notice.agentId!) : undefined}
+        onMouseEnter={clickable ? () => setHover(true) : undefined}
+        onMouseLeave={clickable ? () => setHover(false) : undefined}
+        role={clickable ? 'button' : undefined}
+        title={clickable ? 'Open this agent' : undefined}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 7,
+          padding: '4px 12px',
+          borderRadius: 20,
+          background: clickable && hover ? 'var(--hover)' : 'var(--elev)',
+          border: `1px solid ${clickable && hover ? 'var(--accLine)' : 'var(--border)'}`,
+          fontSize: 11.5,
+          color: 'var(--ts)',
+          maxWidth: '86%',
+          cursor: clickable ? 'pointer' : 'default',
+          transition: 'background .12s, border-color .12s',
+        }}
+      >
+        <NoticeIcon size={13} weight="fill" color={notice.color} style={{ flex: 'none' }} />
+        <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{notice.summary}</span>
+      </span>
+    </div>
+  );
+}
+
 // ---- Note pill (centered) ---------------------------------------------------
 
 function NoteMsg({ msg }: { msg: StreamMessage }) {
@@ -223,7 +334,15 @@ function renderStream(stream: StreamMessage[]) {
   let prevDispatch = false;
 
   for (const msg of stream) {
-    if (msg.isImage && msg.isUser) {
+    if (msg.isAgentCard) {
+      if (!msg.agentId) continue;
+      rows.push(
+        <MessageScroller.Item key={msg.key} messageId={msg.key} style={{ display: 'flex', flexDirection: 'column' }}>
+          <AgentCard msg={msg} />
+        </MessageScroller.Item>,
+      );
+      prevDispatch = false;
+    } else if (msg.isImage && msg.isUser) {
       // A human-attached image — right-aligned as the user's own turn; breaks the Dispatch run.
       if (!msg.imageUrl) continue;
       rows.push(
@@ -249,9 +368,12 @@ function renderStream(stream: StreamMessage[]) {
       );
       prevDispatch = true;
     } else if (msg.isUser) {
+      // An injected agency lifecycle notice masquerades as a user turn — render it as a muted
+      // system line, not a "You" bubble. A real user message falls through to UserMsg.
+      const notice = detectAgencyNotice(msg.text);
       rows.push(
         <MessageScroller.Item key={msg.key} messageId={msg.key} style={{ display: 'flex', flexDirection: 'column' }}>
-          <UserMsg msg={msg} />
+          {notice ? <AgencyNoticeMsg notice={notice} /> : <UserMsg msg={msg} />}
         </MessageScroller.Item>,
       );
       prevDispatch = false;
@@ -280,12 +402,27 @@ export function ConversationStream() {
   const { stream, busy } = useRenderVals();
   const coordinatorId = useOverseer((s) => s.coordinatorId);
 
+  // `ready` gates PAINT of the scroller: hidden (visibility, not display — geometry/scroll
+  // math still works) until the post-open backfill burst has fully caught up, so the reader
+  // never sees the intermediate jumps land. See StickToEndOnLoad's doc comment for why this
+  // is necessary even though that effect already jumps to the correct spot on every commit.
+  // A stable callback: StickToEndOnLoad's effect depends on it, and an identity that changed
+  // every render would re-run that effect (and re-arm its quiet-window timer) on every
+  // unrelated ConversationStream re-render — never letting it settle.
+  const [ready, setReady] = useState(false);
+  const handleReady = useCallback(() => setReady(true), []);
+  // Re-hide on a thread switch (e.g. changing projects) — a layout effect so it lands before
+  // paint and the outgoing thread's "ready" state can never flash into the incoming one.
+  useLayoutEffect(() => setReady(false), [coordinatorId]);
+
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+    <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <MessageScroller.Provider autoScroll defaultScrollPosition="end" scrollEdgeThreshold={48}>
-        <MessageScroller.Root style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex' }}>
+        <MessageScroller.Root
+          style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', visibility: ready ? 'visible' : 'hidden' }}
+        >
           <MessageScroller.Viewport preserveScrollOnPrepend style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
-            <MessageScroller.Content style={{ padding: '20px 26px 12px', display: 'flex', flexDirection: 'column', gap: 17 }}>
+            <MessageScroller.Content style={{ maxWidth: 768, margin: '0 auto', padding: '20px 26px 12px', display: 'flex', flexDirection: 'column', gap: 17 }}>
               {renderStream(stream)}
               {/* single indeterminate spinner while the coordinator works */}
               {busy && (
@@ -296,42 +433,101 @@ export function ConversationStream() {
             </MessageScroller.Content>
           </MessageScroller.Viewport>
           <JumpButton />
-          <StickToEndOnLoad coordinatorId={coordinatorId} count={stream.length} />
+          <StickToEndOnLoad coordinatorId={coordinatorId} count={stream.length} onReady={handleReady} />
         </MessageScroller.Root>
       </MessageScroller.Provider>
+      {/* Root is visibility:hidden until `ready` — surface feedback in its place so the
+          settle window doesn't read as a blank freeze. Sits outside Root so it isn't hidden too. */}
+      {!ready && (
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Spinner size={20} />
+        </div>
+      )}
     </div>
   );
 }
 
 /**
  * Render-nothing helper: keep a freshly-opened (or freshly-switched) coordinator thread
- * pinned to the bottom through its post-mount backfill burst. The stream comes from the
- * same incremental useStructuredChat source as the agent chat, so on open it backfills as
- * a rapid 0→N append burst that can strand the viewport above the fold (a content change
- * can flip the scroller out of "following-bottom" before it catches up). We force
- * scrollToEnd('auto') — instant, so it never animates against the user — on each append
- * while still engaged, then hand off to native autoScroll the moment the user scrolls
- * off-tail. Mirrors the agent ChatView's StickToEndOnLoad, re-armed per coordinator thread.
+ * pinned to the bottom through its post-mount backfill burst, and tell the parent
+ * (`onReady`) once it's safe to actually PAINT the viewport.
+ *
+ * The scrollToEnd('auto')-per-append approach below was already correct in isolation — it
+ * really does jump to the (new, longer) bottom on every single commit, instantly, never
+ * smooth. It was NOT enough on its own, though: root cause (confirmed by reading the wire
+ * path, not guessed) is that a long coordinator thread's replay-on-connect is not one atomic
+ * burst. `structured.ts`'s replay loop `ws.send`s every buffered protocol event
+ * one at a time (up to MAX_EVENTS=5000, packages/core/src/structured/manager.ts), and each
+ * event that starts a new content block (a new assistant-text/tool_use/image ConvItem)
+ * arrives as its own WebSocket 'message' task rather than batched with the others. Each one
+ * triggers its own React commit, and this effect DOES correctly jump to the bottom on every
+ * one of those commits — but the browser paints between them, so a long history's replay
+ * renders as dozens-to-hundreds of individually-correct, individually-PAINTED "one step
+ * further" jumps, which is visually indistinguishable from a slow continuous scroll (the
+ * reported ~10s crawl). There is no competing smooth-scroll animation anywhere in this file
+ * or the vendored scroller — verified: this codebase never sets `scrollAnchor` on any
+ * MessageScroller.Item, so the vendored primitive's own align:'start' re-anchor path (which
+ * WOULD explain a crawl) is dead code for our usage; its internal auto-scroll always targets
+ * the end too, same as ours, so the two were never actually fighting.
+ *
+ * Fix: don't just jump correctly on every commit — HIDE every intermediate jump. Every real
+ * append (while not yet revealed) restarts a short "quiet window" timer; once ~180ms passes
+ * with no further growth, the burst has caught up and `onReady` fires ONCE so the parent can
+ * flip the viewport from hidden to visible, landing the reader already at the bottom with
+ * zero visible motion no matter how long the burst took. A count REGRESSION (ws-reconnect
+ * replay clearing and re-backfilling the same thread) re-arms the latch too, so a later
+ * reconnect on a still-open thread hides through ITS catch-up as well, not just the first
+ * open. Once revealed, ordinary live growth (a new turn arriving seconds/minutes on) does
+ * NOT re-hide the view — mirrors the agent ChatView's StickToEndOnLoad, re-armed per thread.
  */
-function StickToEndOnLoad({ coordinatorId, count }: { coordinatorId: string | null; count: number }) {
+function StickToEndOnLoad({
+  coordinatorId,
+  count,
+  onReady,
+}: {
+  coordinatorId: string | null;
+  count: number;
+  onReady: () => void;
+}) {
   const { scrollToEnd } = useMessageScroller();
   const { end } = useMessageScrollerScrollable(); // end === true ⇒ off-tail (content below the fold)
   const settledRef = useRef(false);
   const prevCountRef = useRef(-1);
   const termRef = useRef(coordinatorId);
+  const readyRef = useRef(false); // latched — onReady fires at most once per catch-up
+  const quietTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    // New coordinator thread → re-arm so its own backfill re-sticks to the bottom.
+  useLayoutEffect(() => {
+    // New coordinator thread → re-arm so its own backfill re-sticks to the bottom, and hide
+    // again until it settles.
     if (termRef.current !== coordinatorId) {
       termRef.current = coordinatorId;
       settledRef.current = false;
       prevCountRef.current = -1;
+      readyRef.current = false;
+      if (quietTimerRef.current != null) { clearTimeout(quietTimerRef.current); quietTimerRef.current = null; }
     }
     // `stream` only ever GROWS or RESETS-TO-EMPTY, so a count regression unambiguously means
     // the list was cleared/replaced (ws-reconnect replay, or a remount whose outgoing count
     // still sits in prevCountRef while the new backfill climbs from 0). Re-arm so the append
-    // burst exceeds prevCount and re-sticks.
-    if (count < prevCountRef.current) prevCountRef.current = -1;
+    // burst exceeds prevCount and re-sticks — and re-latch the reveal gate, since a reconnect
+    // on an already-open thread is its own catch-up burst that deserves the same hiding.
+    if (count < prevCountRef.current) {
+      prevCountRef.current = -1;
+      readyRef.current = false;
+    }
+
+    // Reveal latch — independent of the scroll-follow state below (which can permanently
+    // disengage once the reader scrolls up mid-burst): any real count change restarts the
+    // quiet-window timer.
+    if (!readyRef.current && count !== prevCountRef.current) {
+      if (quietTimerRef.current != null) clearTimeout(quietTimerRef.current);
+      quietTimerRef.current = setTimeout(() => {
+        quietTimerRef.current = null;
+        if (!readyRef.current) { readyRef.current = true; onReady(); }
+      }, 180);
+    }
+
     if (settledRef.current) return;
     if (count > prevCountRef.current) {
       // Backfill / live append while still engaged → snap to the bottom, even when `end`
@@ -344,7 +540,11 @@ function StickToEndOnLoad({ coordinatorId, count }: { coordinatorId: string | nu
     // Count held steady AND we're parked off-tail → the user scrolled up themselves.
     // Disengage for the rest of this thread; native autoScroll owns follow-while-pinned now.
     if (end) settledRef.current = true;
-  }, [coordinatorId, count, end, scrollToEnd]);
+  }, [coordinatorId, count, end, scrollToEnd, onReady]);
+
+  useEffect(() => () => {
+    if (quietTimerRef.current != null) clearTimeout(quietTimerRef.current);
+  }, []);
 
   return null;
 }

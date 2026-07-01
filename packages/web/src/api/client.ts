@@ -55,8 +55,10 @@ export const api = {
   sendInput: (id: string, data: string) => req<void>(`/api/terminals/${id}/input`, { method: 'POST', body: body({ data }) }),
   // A plain string keeps the original `{ text }` wire (byte-identical); a block array
   // is sent as `{ content }` so an attached image travels as a real content block.
+  // `source: 'user'` tags this as a direct human send (the single chokepoint every
+  // composer funnels through), distinct from the coordinator's own agency-mcp sends.
   sendStructuredMessage: (id: string, content: string | ContentBlock[]) =>
-    req<void>(`/api/terminals/${id}/message`, { method: 'POST', body: body(typeof content === 'string' ? { text: content } : { content }) }),
+    req<void>(`/api/terminals/${id}/message`, { method: 'POST', body: body({ ...(typeof content === 'string' ? { text: content } : { content }), source: 'user' }) }),
   // The membrane: the gated tool/question a structured AGENT thread is blocked on (or null).
   getPermission: (terminalId: string) => req<PendingPermission | null>(`/api/terminals/${terminalId}/permission`),
   // Resolve it: allow (optionally with an AskUserQuestion answers map) or deny (with a message).
@@ -67,6 +69,8 @@ export const api = {
     req<Terminal>(`/api/terminals/${terminalId}/autonomy`, { method: 'POST', body: body({ mode }) }),
   // Graceful interrupt: stop the current turn WITHOUT killing the thread.
   interrupt: (terminalId: string) => req<void>(`/api/terminals/${terminalId}/interrupt`, { method: 'POST' }),
+  // Trigger native Claude Code compaction on the thread's current context.
+  compactTerminal: (terminalId: string) => req<void>(`/api/terminals/${terminalId}/compact`, { method: 'POST' }),
   // Overseer: find-or-create this project's coordinator thread (idempotent) → { terminalId }.
   ensureOverseerCoordinator: (sessionId: string) =>
     req<{ terminalId: string }>(`/api/sessions/${sessionId}/overseer/coordinator`, { method: 'POST' }),
@@ -79,6 +83,8 @@ export const api = {
     req<Terminal>(`/api/terminals/${id}`, { method: 'PATCH', body: body(fields) }),
   relaunchTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}/relaunch`, { method: 'POST' }),
   restoreTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}/restore`, { method: 'POST' }),
+  // Launch a QUEUED worker (status='queued') now — moves it from the Queued bucket into live work.
+  startTerminal: (id: string) => req<void>(`/api/terminals/${id}/start`, { method: 'POST' }),
   stopTerminal: (id: string) => req<void>(`/api/terminals/${id}/stop`, { method: 'POST' }),
   archiveTerminal: (id: string) => req<void>(`/api/terminals/${id}`, { method: 'DELETE' }),
   reorderTerminals: (sessionId: string, order: string[]) =>
@@ -114,6 +120,27 @@ export const api = {
     if (!res.ok) throw new Error(`upload failed: ${res.status}`);
     return (await res.json()) as InboxUpload;
   },
+
+  // Voice dictation — upload recorded audio; the daemon resolves the key + calls the provider.
+  transcribe: async (
+    blob: Blob,
+    opts: { provider: string; model: string; secretName: string; mimeType: string; language?: string },
+  ): Promise<{ text: string; language?: string }> => {
+    const fd = new FormData();
+    fd.append('file', blob, 'audio');
+    fd.append('provider', opts.provider);
+    fd.append('model', opts.model);
+    fd.append('secretName', opts.secretName);
+    fd.append('mimeType', opts.mimeType);
+    if (opts.language) fd.append('language', opts.language);
+    const res = await fetch('/api/transcribe', { method: 'POST', body: fd });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(e.error || `transcribe failed: ${res.status}`);
+    }
+    return (await res.json()) as { text: string; language?: string };
+  },
+
   sendFileReference: (terminalId: string, p: string, mode: 'agent-context' | 'shell-path' = 'agent-context') =>
     req<{ ok: true; sentText: string }>(`/api/terminals/${terminalId}/send-file-reference`, { method: 'POST', body: body({ path: p, mode }) }),
 

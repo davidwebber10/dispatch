@@ -11,7 +11,7 @@ const SORTS: [Sort, string][] = [['recent', 'Most recent'], ['alpha', 'Alphabeti
 
 const icon: React.CSSProperties = { width: 32, height: 32, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: 'pointer' };
 
-export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent }: { onSelectTab: (terminalId: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void }) {
+export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispatch }: { onSelectTab: (terminalId: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void; onDispatch?: (projectId: string) => void }) {
   const sessions = useProjects((s) => s.sessions);
   const activeId = useProjects((s) => s.activeId);
   const [query, setQuery] = useState('');
@@ -67,7 +67,7 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent }: { onS
         disabled={!!query || isMobile}
         onReorder={(orderedIds) => { if (sort !== 'custom') setSort('custom'); useProjects.getState().reorder(orderedIds); }}
         renderItem={(s) => (
-          <ProjectCard session={s} active={s.id === activeId} open={expanded.has(s.id)} onToggle={() => toggleExpand(s.id)} onSelectTab={onSelectTab} onSelectAgent={onSelectAgent} onNewAgent={onNewAgent} />
+          <ProjectCard session={s} active={s.id === activeId} open={expanded.has(s.id)} onToggle={() => toggleExpand(s.id)} onSelectTab={onSelectTab} onSelectAgent={onSelectAgent} onNewAgent={onNewAgent} onDispatch={onDispatch} />
         )}
       />
       {!filtered.length && <div style={{ color: 'var(--color-text-tertiary)', fontSize: 12.5, padding: '4px 6px' }}>No projects</div>}

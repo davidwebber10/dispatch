@@ -16,8 +16,8 @@ import type { StatusHooksInjection, SecretsMcpInjection } from '../providers/typ
 import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
 import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript.js';
 import { platform } from '../platform/index.js';
-import { systemPromptFor } from '../overseer/prompts.js';
-import { readSessionBackfill } from './cc-sessions.js';
+import { systemPromptFor, modelFor } from '../overseer/prompts.js';
+import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus } from './cc-sessions.js';
 
 interface StatusContext {
   serverUrl: string;
@@ -26,6 +26,14 @@ interface StatusContext {
   /** Absolute path to the Codex notify helper script. */
   codexHelperPath: string;
 }
+
+/** Grace period before the boot kickstart runs, so a save-burst on shutdown can coalesce. */
+const KICKSTART_SETTLE_MS = 4000;
+
+/** The re-prompt delivered to a structured thread that the last daemon shutdown interrupted mid-turn. */
+const KICKSTART_CONTINUE_PROMPT =
+  '⚙️ Dispatch restarted and interrupted you mid-task — re-read your last steps above and continue your ' +
+  'mission from where you left off. If you had already finished, briefly say so instead of redoing work.';
 
 export class SessionService {
   /** Supplies the Doppler MCP spec for spawned CLIs; set by the server wiring. */
@@ -235,6 +243,76 @@ export class SessionService {
       terminalsDb.remove(this.db, terminalId);
       throw new Error(`Failed to start ${displayLabel}: ${err.message}`);
     }
+
+    return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
+  }
+
+  /**
+   * Create a structured terminal row WITHOUT spawning its process — the "create"
+   * half of createTerminal, minus the spawn. The row is persisted as
+   * `status='queued'` with the seed task parked in `config.queuedTask` and the
+   * `config.queued=true` guard flag set (which keeps ensureStructuredAlive from
+   * lazily reviving it — see the guard there). No CLI is launched until
+   * `startQueuedTerminal` promotes it: strips the flags, spawns, and delivers the
+   * parked task. Lets the coordinator queue work up front without paying for a
+   * live process per queued agent.
+   */
+  createQueuedTerminal(sessionId: string, type: TerminalType, label: string | undefined, config: Record<string, any> | undefined, task: string): terminalsDb.Terminal {
+    const session = sessionsDb.getById(this.db, sessionId);
+    if (!session) throw new Error('Session not found');
+
+    const terminalId = uuid();
+    const displayLabel = label || this.defaultTerminalLabel(sessionId, type);
+
+    terminalsDb.create(this.db, {
+      id: terminalId,
+      sessionId,
+      type,
+      label: displayLabel,
+      workingDir: session.working_dir,
+      config: { ...(config ?? {}), queued: true, queuedTask: task },
+    });
+    terminalsDb.updateStatus(this.db, terminalId, 'queued');
+
+    // dependsOn may already be satisfied (the depended-on agent finished — or was
+    // archived — before this one was even queued). Don't leave it waiting forever
+    // on an `idle` event that already fired; promote it right away.
+    const dependsOn = typeof config?.dependsOn === 'string' ? config.dependsOn : '';
+    if (dependsOn && this.isAgentDone(dependsOn)) {
+      this.startQueuedTerminal(terminalId, this.composeDependentTask(dependsOn, task));
+    }
+
+    return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
+  }
+
+  /**
+   * Promote a queued terminal (created via createQueuedTerminal) to a live one:
+   * strip the `queued`/`queuedTask`/`dependsOn` markers from its config, reset
+   * status off 'queued', spawn its process, then deliver the parked task — or
+   * `taskOverride` in its place when given (used by the `dependsOn` auto-start
+   * path to inject the finished dependency's output ahead of the original task;
+   * a plain manual start delivers the original task unchanged). Returns the
+   * terminal as-is when it isn't actually queued (idempotent), or null when it
+   * doesn't exist.
+   */
+  startQueuedTerminal(terminalId: string, taskOverride?: string): terminalsDb.Terminal | null {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) return null;
+    let config: Record<string, any> = {};
+    try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
+    if (config.queued !== true) return terminalsDb.rowToTerminal(terminal); // not queued — nothing to promote
+
+    const task = typeof taskOverride === 'string' ? taskOverride : (typeof config.queuedTask === 'string' ? config.queuedTask : '');
+    // Strip the queued markers BEFORE spawning so the row reads as a normal live
+    // thread (and the ensureStructuredAlive guard no longer bails on it). dependsOn
+    // is stripped too — once started, whether early (override) or auto (dependency
+    // met), it's no longer meaningfully "waiting" on anything.
+    const { queued, queuedTask, dependsOn, ...rest } = config;
+    terminalsDb.updateConfig(this.db, terminalId, rest);
+    terminalsDb.updateStatus(this.db, terminalId, 'waiting');
+
+    this.spawnTerminal(terminalId);
+    if (task) this.sendStructuredMessage(terminalId, task);
 
     return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
   }
@@ -536,12 +614,12 @@ export class SessionService {
     terminalsDb.updatePid(this.db, terminalId, null);
   }
 
-  sendStructuredMessage(terminalId: string, content: string | import('../structured/manager.js').ContentBlock[]): void {
+  sendStructuredMessage(terminalId: string, content: string | import('../structured/manager.js').ContentBlock[], source?: import('../structured/manager.js').MessageSource): void {
     // Lazily resume a thread that died on a daemon restart (resumes the same claude
     // conversation when an external_id was captured) before delivering the message.
     if (!this.structuredManager?.isAlive(terminalId)) this.ensureStructuredAlive(terminalId);
     if (!this.structuredManager?.isAlive(terminalId)) throw new Error('no structured session for terminal');
-    this.structuredManager.sendMessage(terminalId, content);
+    this.structuredManager.sendMessage(terminalId, content, source);
   }
 
   /**
@@ -630,6 +708,40 @@ export class SessionService {
     this.notifyCoordinatorOfAgent(agentTerminalId, note);
   }
 
+  /** Summarize a user-sent payload for a coordinator notice: a string's first line
+   *  (truncated per the `lastAssistantText` idiom); a block array's first text block, or a
+   *  placeholder when it carries no text (e.g. an image-only send). */
+  private summarizeUserPayload(payload: string | import('../structured/manager.js').ContentBlock[], max = 600): string {
+    const raw = typeof payload === 'string'
+      ? payload
+      : ((payload.find((b: any) => b?.type === 'text') as any)?.text ?? '');
+    if (!raw) return '(sent an image)';
+    const firstLine = String(raw).split('\n')[0].trim();
+    return firstLine.length > max ? firstLine.slice(0, max) + '…' : firstLine;
+  }
+
+  /**
+   * Tell the project's coordinator that the user just messaged one of its agents DIRECTLY,
+   * bypassing message_agent — so Dispatch notices a possible change of direction instead of
+   * assuming the agent is still following its original instructions. No-op when the thread
+   * isn't a typed agent or there's no coordinator.
+   */
+  noteUserMessageToAgent(agentTerminalId: string, payload: string | import('../structured/manager.js').ContentBlock[]): void {
+    const agent = terminalsDb.getById(this.db, agentTerminalId);
+    if (!agent) return;
+    let cfg: Record<string, any> = {};
+    try { cfg = JSON.parse(agent.config || '{}'); } catch { /* default {} */ }
+    if (cfg.role !== 'agent') return;
+    const mission = typeof cfg.mission === 'string' && cfg.mission.trim() ? cfg.mission.trim() : null;
+    const summary = this.summarizeUserPayload(payload);
+    const note =
+      `💬 The user just sent your agent "${agent.label || 'agent'}"${mission ? ` (mission "${mission}")` : ''} ` +
+      `[agentId ${agentTerminalId}] a message directly, not through you: "${summary}". This may change what you ` +
+      `asked it to do. Read how it responds with read_agent and adjust — don't assume it's still following your ` +
+      `original instructions.`;
+    this.notifyCoordinatorOfAgent(agentTerminalId, note);
+  }
+
   /** The agent's most recent assistant text, pulled live from the structured event ring
    *  (no transcript-file latency), truncated for a nudge. '' when there's none yet. */
   private lastAssistantText(terminalId: string, max = 600): string {
@@ -645,17 +757,81 @@ export class SessionService {
   }
 
   /**
+   * An agent's most recent assistant output. Tries the live structured event ring
+   * first (lastAssistantText — no transcript-file latency); falls back to the
+   * persisted transcript (same source read_agent/getConversation use) so an agent
+   * with no live session — e.g. archived, or the daemon restarted since it ran —
+   * still yields its output. '' when there's truly none.
+   */
+  private agentOutputText(terminalId: string, max = 600): string {
+    const live = this.lastAssistantText(terminalId, max);
+    if (live) return live;
+    const text = this.getConversation(terminalId, { limit: 500 }).items
+      .filter((it) => it.kind === 'assistant' && it.text)
+      .map((it) => it.text)
+      .join('\n\n')
+      .trim();
+    if (!text) return '';
+    return text.length > max ? text.slice(0, max) + '…' : text;
+  }
+
+  /**
+   * Whether a terminal has already finished at least one turn — used to detect an
+   * already-satisfied `dependsOn` at queue time. Archived is always done (nothing
+   * more will happen to it). Otherwise the status must be settled (not still
+   * working, blocked on a human, or itself unstarted/queued) AND it must have
+   * already produced output — a brand-new thread also reads status='waiting' (the
+   * DB default) before its first turn even runs, so status alone would false-positive.
+   */
+  private isAgentDone(terminalId: string): boolean {
+    const t = terminalsDb.getById(this.db, terminalId);
+    if (!t) return false;
+    if (t.archived_at) return true;
+    if (t.status === 'working' || t.status === 'needs_input' || t.status === 'queued') return false;
+    return this.agentOutputText(terminalId) !== '';
+  }
+
+  /**
+   * The task a dependent agent receives once the agent it was waiting on has
+   * finished: that agent's final output prepended as context, then the
+   * dependent's originally parked task.
+   */
+  private composeDependentTask(finishedTerminalId: string, originalTask: string): string {
+    const finished = terminalsDb.getById(this.db, finishedTerminalId);
+    const finishedLabel = finished?.label || 'agent';
+    const output = this.agentOutputText(finishedTerminalId) || '(no output captured)';
+    return `The agent you were waiting on ("${finishedLabel}") has finished. Its final output:\n\n${output}\n\n---\n\nYour task: ${originalTask}`;
+  }
+
+  /**
+   * Auto-start any agents queued with `dependsOn` pointing at this just-finished
+   * terminal, feeding each the finished agent's output ahead of its parked task.
+   */
+  private startQueuedDependents(finishedTerminalId: string): void {
+    for (const dep of terminalsDb.listQueuedDependents(this.db, finishedTerminalId)) {
+      let depConfig: Record<string, any> = {};
+      try { depConfig = JSON.parse(dep.config || '{}'); } catch { /* default {} */ }
+      const originalTask = typeof depConfig.queuedTask === 'string' ? depConfig.queuedTask : '';
+      this.startQueuedTerminal(dep.id, this.composeDependentTask(finishedTerminalId, originalTask));
+    }
+  }
+
+  /**
    * An agent's turn just completed (the `result` event). Push an IMMEDIATE, concise completion
    * notice to its coordinator (the closed orchestration loop): a one-line summary from the agent's
    * last output + a pointer to read_agent for the full transcript, so Dispatch ingests the result
-   * and decides the next step instead of forgetting the agent. No-op for non-agents / no coordinator.
+   * and decides the next step instead of forgetting the agent. Also auto-starts any queued agents
+   * whose `dependsOn` pointed at this one. The dependents step runs regardless of role; the
+   * coordinator notice below is agent-only / no-op for non-agents.
    */
   noteAgentCompletion(agentTerminalId: string): void {
+    this.startQueuedDependents(agentTerminalId);
     const agent = terminalsDb.getById(this.db, agentTerminalId);
     if (!agent) return;
     let cfg: Record<string, any> = {};
     try { cfg = JSON.parse(agent.config || '{}'); } catch { /* default {} */ }
     if (cfg.role !== 'agent') return;
+    this.persistAgentTokenUsage(agentTerminalId, agent, cfg);
     const mission = typeof cfg.mission === 'string' && cfg.mission.trim() ? cfg.mission.trim() : null;
     const summary = this.lastAssistantText(agentTerminalId);
     const note =
@@ -666,6 +842,27 @@ export class SessionService {
       `ingest the result, hand it to another agent, spawn a follow-up, or report back to the user. Keep this ` +
       `brief unless it needs action; the user's own messages are always your top priority.`;
     this.notifyCoordinatorOfAgent(agentTerminalId, note);
+  }
+
+  /**
+   * Persist an agent terminal's cumulative token usage into `config.totalTokens`
+   * when its turn settles — computed ONCE here (from the transcript's summed
+   * `usage` fields, via readTerminalTokenUsage/sumTranscriptTokens) and written
+   * into config, mirroring how `config.model` is captured at spawn time in
+   * spawnStructured. This is what lets the Work-tab's Done cards show a token count
+   * for free (read off the terminal row) instead of a per-card live fetch, which
+   * would be too expensive across dozens of finished agents. Best-effort: no-ops
+   * when there's no external_id yet or the transcript can't be read.
+   */
+  private persistAgentTokenUsage(terminalId: string, agent: terminalsDb.TerminalRow, cfg: Record<string, any>): void {
+    if (!agent.external_id) return;
+    const session = sessionsDb.getById(this.db, agent.session_id);
+    const workDir = agent.working_dir || session?.working_dir;
+    if (!workDir) return;
+    const stats = readTerminalTokenUsage(workDir, agent.external_id);
+    if (!stats || !stats.totalTokens) return;
+    cfg.totalTokens = stats.totalTokens;
+    terminalsDb.updateConfig(this.db, terminalId, cfg);
   }
 
   /** The gated tool/question a structured AGENT thread is blocked on, or null. */
@@ -718,6 +915,13 @@ export class SessionService {
   /** Gracefully interrupt a structured thread's current turn (does NOT kill it). */
   interrupt(terminalId: string): boolean {
     return this.structuredManager?.interrupt(terminalId) ?? false;
+  }
+
+  /** Trigger native Claude Code compaction on a structured thread's current turn. */
+  compact(terminalId: string): boolean {
+    if (!this.structuredManager?.isAlive(terminalId)) return false;
+    this.structuredManager.compact(terminalId);
+    return true;
   }
 
   /**
@@ -955,6 +1159,15 @@ export class SessionService {
 
     const resumeSessionId = terminal.external_id || undefined;
 
+    // Resolve the model up front and persist it into the terminal's config if it
+    // wasn't already pinned there — so it survives a daemon-restart resume and is
+    // returned to the frontend as part of the terminal row's config.
+    const resolvedModel = modelFor(config);
+    if (resolvedModel && !config.model) {
+      config.model = resolvedModel;
+      terminalsDb.updateConfig(this.db, terminal.id, config);
+    }
+
     let sc: { command: string; args: string[] };
     if (this.structuredCommandOverride) {
       // Test seam: spawn the fake instead of real claude. Still surface `-r <id>` on
@@ -962,7 +1175,7 @@ export class SessionService {
       sc = { command: this.structuredCommandOverride.command, args: [...this.structuredCommandOverride.args] };
       if (resumeSessionId) sc.args.push('-r', resumeSessionId);
     } else {
-      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config), resumeSessionId });
+      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config), resumeSessionId, model: resolvedModel });
       if (!built) throw new Error('structured transport not supported for this provider');
       sc = built;
     }
@@ -1004,6 +1217,10 @@ export class SessionService {
     let config: Record<string, any> = {};
     try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
     if (config.transport !== 'structured') return false;
+    // A queued row is deliberately parked (created-but-not-spawned): never let a
+    // ws-connect (drill-in) or stray message auto-spawn it. Only the explicit
+    // startQueuedTerminal promote path (which strips this flag first) may spawn it.
+    if (config.queued === true) return false;
     // No external_id ⇒ spawn FRESH. A structured thread that never captured a claude
     // session id (created-but-not-yet-run, or a coordinator whose process the restart
     // killed before init) must still come back to life rather than silently swallow
@@ -1017,6 +1234,69 @@ export class SessionService {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * One-shot boot recovery: auto-resume overseer threads (the coordinator and its
+   * typed agents) that the last daemon shutdown interrupted mid-turn. The signal is
+   * free — a non-archived structured terminal still in `status='working'` at boot
+   * died mid-turn (clean shutdown skips the settle-to-`waiting` write, and
+   * clearStalePids only touches sessions). Kicking is a single sendStructuredMessage:
+   * it revives the thread (spawn/`-r` + transcript backfill) AND re-prompts it to
+   * continue.
+   *
+   * Idempotency (so a restart-during-recovery doesn't double-prompt or make a
+   * finished agent redo work):
+   *   - skip a thread whose transcript tail shows a COMPLETED turn — the shutdown
+   *     race left it stale-`working` but it actually finished;
+   *   - skip a thread already stamped `config.kickedAt` with no newer transcript
+   *     activity since (we kicked it on a prior boot and it hasn't moved).
+   * Each kicked thread is stamped `config.kickedAt` afterwards.
+   *
+   * DEFERRED (follow-up): `needs_input` agents lose their in-memory pending on
+   * restart. They aren't `working`, so this kicker correctly skips them — reviving
+   * them needs a different path (re-surface the question), not a mid-task nudge.
+   */
+  async kickstartInterruptedAgents(settleMs: number = KICKSTART_SETTLE_MS): Promise<{ kicked: string[]; skipped: string[] }> {
+    const kicked: string[] = [];
+    const skipped: string[] = [];
+    if (!this.structuredManager) return { kicked, skipped };
+
+    // (a) Settle: let any burst of save writes from the shutdown coalesce before we read status.
+    if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
+
+    // (b) Enumerate every non-archived claude-code terminal left `working` across all sessions.
+    const rows = terminalsDb.listWorkingStructured(this.db);
+    for (const row of rows) {
+      let config: Record<string, any> = {};
+      try { config = JSON.parse(row.config || '{}'); } catch { skipped.push(row.id); continue; }
+      // Structured overseer threads only: the coordinator and its typed agents.
+      if (config.transport !== 'structured') { skipped.push(row.id); continue; }
+      if (config.role !== 'coordinator' && config.role !== 'agent') { skipped.push(row.id); continue; }
+
+      // (c) Idempotency. Compare against the transcript, which advances as the thread works.
+      const session = sessionsDb.getById(this.db, row.session_id);
+      const workDir = row.working_dir || session?.working_dir || null;
+      const tail = (workDir && row.external_id) ? transcriptTailStatus(workDir, row.external_id) : null;
+
+      // Already kicked on a prior boot and nothing new happened since → don't re-prompt.
+      const kickedAt = typeof config.kickedAt === 'string' ? Date.parse(config.kickedAt) : NaN;
+      if (!Number.isNaN(kickedAt) && (!tail || tail.mtimeMs <= kickedAt)) { skipped.push(row.id); continue; }
+
+      // The turn actually completed (shutdown race left it stale-working) → nothing to resume.
+      if (tail?.completed) { skipped.push(row.id); continue; }
+
+      // (d) Kick (revive + re-prompt) and stamp so a later restart won't double-kick.
+      try {
+        this.sendStructuredMessage(row.id, KICKSTART_CONTINUE_PROMPT);
+        config.kickedAt = new Date().toISOString();
+        terminalsDb.updateConfig(this.db, row.id, config);
+        kicked.push(row.id);
+      } catch {
+        skipped.push(row.id);
+      }
+    }
+    return { kicked, skipped };
   }
 
   /**

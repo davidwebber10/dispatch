@@ -7,6 +7,7 @@ import { useSecrets } from '../../stores/secrets';
 import { useSetup } from '../../stores/setup';
 import { IntegrationsSection } from './IntegrationsSection';
 import { ToolsSection } from './ToolsSection';
+import { TranscriptionSection } from './TranscriptionSection';
 import { MultiPaneSetting } from '../panes/MultiPaneSetting';
 
 const sectionLabel: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
@@ -239,6 +240,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   const projectFontSize = useSettings((s) => s.projectFontSize);
   const accent = useSettings((s) => s.accent);
   const density = useSettings((s) => s.density);
+  const coordinatorName = useSettings((s) => s.coordinatorName);
   const notify = useSettings((s) => s.notify);
   const pushEnabled = useSettings((s) => s.pushEnabled);
   const [pushMsg, setPushMsg] = useState('');
@@ -255,7 +257,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   }
   const servers = useServers((s) => s.servers);
   const openSetup = useSetup((s) => s.open);
-  const [tab, setTab] = useState<'general' | 'integrations' | 'secrets' | 'tools'>('general');
+  const [tab, setTab] = useState<'general' | 'integrations' | 'secrets' | 'tools' | 'transcription'>('general');
   if (!open) return null;
 
   const st = status === 'open' ? { c: 'var(--color-accent)', t: 'Connected' } : status === 'connecting' ? { c: 'var(--color-status-yellow)', t: 'Connecting' } : { c: 'var(--color-status-red)', t: 'Offline' };
@@ -268,11 +270,12 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 20, lineHeight: 1 }}>×</button>
         </div>
 
-        {/* Tabs */}
-        <div style={{ flexShrink: 0, display: 'flex', gap: 4, padding: '12px 20px 0', borderBottom: '1px solid var(--color-hover)' }}>
-          {([['general', 'General'], ['integrations', 'Integrations'], ['secrets', 'Secrets'], ['tools', 'Tools']] as const).map(([key, label]) => (
+        {/* Tabs — horizontally scrollable so the row (5 categories) never wraps or
+            squishes on a narrow (mobile) modal; iOS momentum + hidden scrollbar. */}
+        <div style={{ flexShrink: 0, display: 'flex', gap: 4, padding: '12px 20px 0', borderBottom: '1px solid var(--color-hover)', overflowX: 'auto', overflowY: 'hidden', flexWrap: 'nowrap', WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none' }}>
+          {([['general', 'General'], ['integrations', 'Integrations'], ['secrets', 'Secrets'], ['tools', 'Tools'], ['transcription', 'Transcription']] as const).map(([key, label]) => (
             <button key={key} onClick={() => setTab(key)} style={{
-              position: 'relative', padding: '8px 14px 11px', background: 'none', border: 'none', cursor: 'pointer',
+              position: 'relative', flexShrink: 0, whiteSpace: 'nowrap', padding: '8px 14px 11px', background: 'none', border: 'none', cursor: 'pointer',
               fontSize: 13, fontWeight: tab === key ? 600 : 500,
               color: tab === key ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
               borderBottom: `2px solid ${tab === key ? 'var(--color-accent)' : 'transparent'}`, marginBottom: -1,
@@ -286,6 +289,22 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <span style={sectionLabel}>GETTING STARTED</span>
                 <button onClick={() => { openSetup(); onClose(); }} style={{ alignSelf: 'flex-start', height: 30, padding: '0 14px', background: 'transparent', border: '1px solid #2c2c32', borderRadius: 7, color: 'var(--color-text-primary)', fontSize: 12.5, cursor: 'pointer' }}>Re-run setup wizard</button>
+              </div>
+              <Divider />
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <span style={sectionLabel}>COORDINATOR</span>
+                <div style={row}>
+                  <span style={item}>Name</span>
+                  <input
+                    value={coordinatorName}
+                    onChange={(e) => useSettings.getState().setCoordinatorName(e.target.value)}
+                    placeholder="Dispatch"
+                    aria-label="Coordinator name"
+                    style={{ width: 180, height: 30, padding: '0 9px', background: '#1b1b1e', border: '1px solid #2c2c32', borderRadius: 7, color: 'var(--color-text-primary)', font: '400 12px var(--font-sans)' }}
+                  />
+                </div>
+                <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>Shown wherever your coordinator appears. Leave blank to use “Dispatch”.</div>
               </div>
               <Divider />
 
@@ -354,6 +373,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
           {tab === 'integrations' && <IntegrationsSection />}
           {tab === 'secrets' && <SecretsSection />}
           {tab === 'tools' && <ToolsSection />}
+          {tab === 'transcription' && <TranscriptionSection />}
         </div>
 
         <div style={{ flexShrink: 0, display: 'flex', justifyContent: 'flex-end', padding: '14px 20px', borderTop: '1px solid var(--color-hover)' }}>

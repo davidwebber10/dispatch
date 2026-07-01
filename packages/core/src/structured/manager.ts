@@ -26,6 +26,9 @@ export type ContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } | { type: 'url'; url: string } };
 
+/** Who actually sent a turn: the human directly, or the coordinator via its agency tools. */
+export type MessageSource = 'user' | 'coordinator';
+
 interface Session {
   child: ChildProcessWithoutNullStreams;
   rl: readline.Interface;
@@ -36,9 +39,44 @@ interface Session {
   pending: PendingPermission | null;
   /** The claude session_id parsed from the init/system event (for resume on restart). */
   sessionId?: string;
+  /**
+   * name+input of the most recent can_use_tool request seen in the CURRENT turn, reset
+   * after each `result` boundary. Lets the `result` handler tell a turn that ended because
+   * the agent called a wake-scheduler tool (see WAKE_TOOLS) apart from one that's actually
+   * done — the last tool called before `result` is a reliable proxy for "why did this turn
+   * end" since can_use_tool fires for every tool call regardless of escalate/auto-allow.
+   */
+  lastToolUse?: { name: string; input: unknown };
 }
 
 const MAX_EVENTS = 5000;
+
+/**
+ * Harness tools that deliberately END the current turn to sleep until a timer/event fires
+ * (ScheduleWakeup after a delay, CronCreate on its next cron match) — unlike Monitor, which
+ * blocks WITHIN the turn and never reaches this boundary. Seeing one as the last tool call
+ * before `result` means the thread is dormant-but-will-resume, not finished.
+ */
+const WAKE_TOOLS = new Set(['ScheduleWakeup', 'CronCreate']);
+
+/**
+ * A short "why it's dormant" label built from the wake tool's own input. ScheduleWakeup
+ * always carries a human-written `reason` (required by its schema); CronCreate has no
+ * reason field, so fall back to its cron expression. Never throws — a malformed/missing
+ * input just degrades to a generic label.
+ */
+function wakeActivity(toolName: string, input: unknown): string {
+  const inp = (input ?? {}) as Record<string, unknown>;
+  if (toolName === 'ScheduleWakeup') {
+    const reason = typeof inp.reason === 'string' && inp.reason.trim() ? inp.reason.trim() : undefined;
+    return reason ? `Scheduled — ${reason}` : 'Scheduled — will resume automatically';
+  }
+  if (toolName === 'CronCreate') {
+    const cron = typeof inp.cron === 'string' && inp.cron.trim() ? inp.cron.trim() : undefined;
+    return cron ? `Scheduled — cron "${cron}"` : 'Scheduled — will resume automatically';
+  }
+  return 'Scheduled — will resume automatically';
+}
 
 /**
  * Drives one `claude` stream-json process per structured terminal. Parallel to
@@ -93,6 +131,10 @@ export class StructuredSessionManager extends EventEmitter {
       }
       if (event?.type === 'control_request' && event?.request?.subtype === 'can_use_tool') {
         const r = event.request;
+        // Track regardless of the allow/deny path below — every tool call passes through
+        // here (this membrane fires even when auto-allowing), so it's a reliable "last tool
+        // called this turn" signal for the result-boundary wake check further down.
+        if (typeof r?.tool_name === 'string') session.lastToolUse = { name: r.tool_name, input: r?.input };
         const questions = Array.isArray(r?.input?.questions) ? r.input.questions : undefined;
         // AskUserQuestion can't be auto-allowed — it needs a real `answers` map written back —
         // so it ALWAYS surfaces as pending, even on an otherwise-autonomous thread. (For an
@@ -121,10 +163,18 @@ export class StructuredSessionManager extends EventEmitter {
           });
         }
       }
-      // Turn boundary: a `result` event ends the current turn → the thread is idle.
-      // Consumers use this to settle status (working → idle) and, for an agent, to push
-      // a completion notice to its coordinator.
-      if (event?.type === 'result') this.emit('idle', terminalId);
+      // Turn boundary: a `result` event ends the current turn. Normally that means the
+      // thread is idle — but if the LAST tool called this turn was a wake-scheduler (see
+      // WAKE_TOOLS), the agent deliberately ended its turn to sleep until a timer/event
+      // fires, not because it's done. Consumers use 'idle' to settle status and, for an
+      // agent, push a completion notice to its coordinator — 'scheduled' must NOT do either
+      // (the agent hasn't finished).
+      if (event?.type === 'result') {
+        const wake = session.lastToolUse && WAKE_TOOLS.has(session.lastToolUse.name) ? session.lastToolUse : undefined;
+        session.lastToolUse = undefined; // reset for the next turn
+        if (wake) this.emit('scheduled', terminalId, wakeActivity(wake.name, wake.input));
+        else this.emit('idle', terminalId);
+      }
       this.emit('event', terminalId, event);
     });
 
@@ -149,11 +199,13 @@ export class StructuredSessionManager extends EventEmitter {
   }
 
   // verified: persistent multi-turn over stdin on claude 2.1.195 — second user turn accepted and returned result on same process
-  sendMessage(terminalId: string, content: string | ContentBlock[]): void {
+  sendMessage(terminalId: string, content: string | ContentBlock[], source?: MessageSource): void {
     // Wire shape: a plain string is sent as `content: <string>` (the CLI's simplest
     // accepted shape, byte-identical to before); a block array is sent verbatim as
     // `content: [...blocks]` so a real image block reaches the model — it SEES the
-    // picture, not a "Attached file: …" path line.
+    // picture, not a "Attached file: …" path line. `source` is UI-only bookkeeping for the
+    // synthetic echo below — it must never reach the CLI's stdin (it would pollute the
+    // model's context with metadata about who's typing).
     this.write(terminalId, { type: 'user', message: { role: 'user', content } });
     // P0a: the CLI does NOT echo the user's turn back as an event, so buffer a
     // synthetic `user` event into the ring and emit it. Replay on ws reconnect then
@@ -161,7 +213,9 @@ export class StructuredSessionManager extends EventEmitter {
     // Mirror the wire shape: a string becomes a single text block; blocks pass through
     // unchanged (so an image block re-renders inline via the chat's image parser).
     const echoContent: ContentBlock[] = typeof content === 'string' ? [{ type: 'text', text: content }] : content;
-    const ev = { type: 'user', message: { role: 'user', content: echoContent } };
+    const ev: { type: 'user'; message: { role: 'user'; content: ContentBlock[] }; meta?: { source: MessageSource } } =
+      { type: 'user', message: { role: 'user', content: echoContent } };
+    if (source) ev.meta = { source };
     const s = this.sessions.get(terminalId);
     if (s) {
       s.events.push(ev);
@@ -170,6 +224,18 @@ export class StructuredSessionManager extends EventEmitter {
     this.emit('event', terminalId, ev);
     // Turn start: delivering a message kicks off work → the thread is busy.
     this.emit('busy', terminalId);
+  }
+
+  /**
+   * Trigger native Claude Code compaction: writes the same `/compact` slash-command
+   * text a human would type, on the same stdin channel sendMessage uses. Unlike
+   * sendMessage this does NOT buffer/emit a synthetic echo event — a "/compact"
+   * bubble must never render in the chat. The CLI responds with a `system/status`
+   * pair (`{status:"compacting"}` then `{status:null, compact_result:...}`) followed
+   * by a fresh `system/init`, all forwarded verbatim through the normal 'event' path.
+   */
+  compact(terminalId: string): void {
+    this.write(terminalId, { type: 'user', message: { role: 'user', content: '/compact' } });
   }
 
   /** The in-flight permission/question awaiting a human decision, or null. */

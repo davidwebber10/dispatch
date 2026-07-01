@@ -51,6 +51,7 @@ export function th(
     isWorking: status === 'working',
     isWaiting: status === 'waiting',
     isDone: status === 'done',
+    isScheduled: status === 'scheduled',
     dotAnim: status === 'working' ? 'breathe var(--pulse) ease-in-out infinite' : 'none',
     progressW: (progress || 0) + '%',
     showProgress: status === 'working',
@@ -69,8 +70,9 @@ export function mission(
   summary: string,
   threads: AgentThread[],
   outcomes: Outcome[],
+  queued: AgentThread[] = [],
 ): Mission {
-  return { name, summary, threads, outcomes, hasOutcomes: outcomes.length > 0, key: name };
+  return { name, summary, threads, queued, outcomes, hasOutcomes: outcomes.length > 0, key: name };
 }
 
 export function m(
@@ -422,18 +424,12 @@ export function derive(s: DeriveState): RenderVals {
   const stream = [...data.stream, ...s.extra];
 
   const hasNeeds = needs.length > 0;
-  const moodText = hasNeeds
-    ? needs.length + (needs.length === 1 ? ' thing needs you' : ' things need you')
-    : s.scenario === 'empty'
-      ? 'Ready when you are'
-      : 'Calm — nothing needs you';
 
   const ribbon: Ribbon = {
     working: data.working,
     done: data.done,
     needs: needs.length,
     hasNeeds,
-    moodText,
   };
 
   return {

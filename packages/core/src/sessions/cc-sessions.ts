@@ -89,6 +89,176 @@ export function readSessionBackfill(workDir: string, sessionId: string, limit = 
   }
 }
 
+export interface TranscriptTokenStats {
+  /** The last non-synthetic model seen in the transcript (models can vary across a resumed session). */
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  /** input + output + cache_read — matches the Claude CLI's own token display. */
+  totalTokens: number;
+  messageCount: number;
+}
+
+/**
+ * Sum per-message `usage` fields across a Claude transcript JSONL's assistant lines.
+ * Shared by the session-stats route (layers cost-pricing on top) and the agent
+ * completion hook (persists `totalTokens` onto the terminal's config) so the summing
+ * logic lives in one place.
+ */
+export function sumTranscriptTokens(raw: string): TranscriptTokenStats {
+  let model = '';
+  let messageCount = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheCreationTokens = 0;
+
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const entry = JSON.parse(line);
+      const msg = entry.message;
+      if (!msg || typeof msg !== 'object') continue;
+      if (msg.usage) {
+        const u = msg.usage;
+        inputTokens += u.input_tokens || 0;
+        outputTokens += u.output_tokens || 0;
+        cacheReadTokens += u.cache_read_input_tokens || 0;
+        cacheCreationTokens += u.cache_creation_input_tokens || 0;
+        messageCount++;
+      }
+      if (msg.model && msg.model !== '<synthetic>') model = msg.model;
+    } catch { /* partial/garbled line */ }
+  }
+
+  return {
+    model,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheCreationTokens,
+    totalTokens: inputTokens + outputTokens + cacheReadTokens,
+    messageCount,
+  };
+}
+
+/**
+ * Read a terminal's transcript by workDir + session id and sum its token usage (see
+ * sumTranscriptTokens). Resolves the same `~/.claude/projects/<enc-workDir>/<id>.jsonl`
+ * path as readSessionBackfill. Returns null when the file is missing/unreadable.
+ */
+export function readTerminalTokenUsage(workDir: string, sessionId: string): TranscriptTokenStats | null {
+  try {
+    const encoded = workDir.replace(/\//g, '-');
+    const file = path.join(os.homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
+    return sumTranscriptTokens(fs.readFileSync(file, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+export interface TranscriptTailStatus {
+  /** The transcript file's last-modified epoch ms — a reliable "newer activity" clock. */
+  mtimeMs: number;
+  /**
+   * The last user/assistant turn completed cleanly: an assistant message with no
+   * dangling `tool_use` block. An interrupted turn instead ends on an assistant
+   * message that still has a `tool_use`, or on a `user` `tool_result` the model
+   * never answered — both report `false`.
+   */
+  completed: boolean;
+}
+
+/** Only the file's tail is needed to classify the last turn; avoid reading multi-MB transcripts whole. */
+const TAIL_BYTES = 256 * 1024;
+
+function messageHasToolUse(message: unknown): boolean {
+  const content = (message as any)?.content;
+  if (!Array.isArray(content)) return false;
+  return content.some((b: any) => b && b.type === 'tool_use');
+}
+
+/**
+ * Shared tail-read for transcriptTailStatus/transcriptTailScheduled: reads only the last
+ * TAIL_BYTES (dropping the first, possibly-partial line) and returns the file's mtime plus
+ * the last non-meta/non-sidechain user/assistant message. Returns null when the transcript
+ * is missing/unreadable (e.g. a thread that never captured an external_id). Never throws.
+ */
+function readLastTurn(workDir: string, sessionId: string): { mtimeMs: number; last: any } | null {
+  try {
+    const encoded = workDir.replace(/\//g, '-');
+    const file = path.join(os.homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
+    const stat = fs.statSync(file);
+    const start = Math.max(0, stat.size - TAIL_BYTES);
+    const len = stat.size - start;
+    const buf = Buffer.alloc(len);
+    const fd = fs.openSync(file, 'r');
+    try { fs.readSync(fd, buf, 0, len, start); } finally { fs.closeSync(fd); }
+    const lines = buf.toString('utf-8').split('\n');
+    if (start > 0) lines.shift(); // the first line is likely truncated mid-JSON
+    let last: any = null;
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let o: any;
+      try { o = JSON.parse(trimmed); } catch { continue; }
+      if (!o || (o.type !== 'user' && o.type !== 'assistant')) continue;
+      if (o.isMeta || o.isSidechain) continue;
+      last = o;
+    }
+    return { mtimeMs: stat.mtimeMs, last };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Classify the tail of a claude session's transcript for the boot kickstart's
+ * idempotency: is the last turn complete, and when did the file last change?
+ * Returns null when the transcript is missing/unreadable — the caller treats that as
+ * "no evidence of a completed turn." Never throws.
+ */
+export function transcriptTailStatus(workDir: string, sessionId: string): TranscriptTailStatus | null {
+  const r = readLastTurn(workDir, sessionId);
+  if (!r) return null;
+  const completed = !!r.last && r.last.type === 'assistant' && !messageHasToolUse(r.last.message);
+  return { mtimeMs: r.mtimeMs, completed };
+}
+
+// Mirrors structured/manager.ts's WAKE_TOOLS — kept as an independent literal (not imported)
+// since this module classifies transcripts on disk, a different boundary than the live SDK
+// stream manager.ts parses; duplicating two tool names is cheaper than coupling the modules.
+const WAKE_TOOLS = new Set(['ScheduleWakeup', 'CronCreate']);
+
+function lastToolUseName(message: unknown): string | undefined {
+  const content = (message as any)?.content;
+  if (!Array.isArray(content)) return undefined;
+  for (let i = content.length - 1; i >= 0; i--) {
+    const b = content[i];
+    if (b && b.type === 'tool_use' && typeof b.name === 'string') return b.name;
+  }
+  return undefined;
+}
+
+/**
+ * Boot-recovery sibling to transcriptTailStatus: was the transcript's last turn left
+ * dangling on a wake-scheduler tool (ScheduleWakeup/CronCreate)? Those end the turn
+ * deliberately — the CLI process exits waiting on an external timer — so a tail that looks
+ * "interrupted" (transcriptTailStatus's `completed: false`, a dangling tool_use) is actually
+ * a dormant-but-will-resume thread, not a genuinely stuck one. Callers should check this
+ * BEFORE treating `!completed` as evidence the thread needs a kickstart. Returns false (not
+ * null) on a missing/unreadable transcript — "no evidence of scheduling" is the safe default
+ * for a boot-recovery caller that already treats that case as "not evidently completed."
+ */
+export function transcriptTailScheduled(workDir: string, sessionId: string): boolean {
+  const r = readLastTurn(workDir, sessionId);
+  if (!r || !r.last || r.last.type !== 'assistant') return false;
+  const name = lastToolUseName(r.last.message);
+  return !!name && WAKE_TOOLS.has(name);
+}
+
 /**
  * List a project's recent Claude Code sessions (for the "resume" picker), newest
  * first. Reads `~/.claude/projects/<workDir-with-/replaced-by->/<uuid>.jsonl`.

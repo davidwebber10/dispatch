@@ -17,6 +17,7 @@ interface TabsState {
   reorder: (projectId: string, orderedIds: string[]) => Promise<void>;
   setActiveTab: (id: string) => void;                       // open + focus
   openTab: (id: string, background?: boolean) => void;       // open (optionally without switching)
+  openDispatch: (sessionId: string) => void;                 // open + focus the project's virtual Dispatch tab
   closeTab: (id: string) => void;
   hydrate: () => Promise<void>;                              // restore open tabs after a page refresh
   applyEvent: (e: ServerEvent) => void;
@@ -28,6 +29,30 @@ export function findTerminal(byProject: Record<string, Terminal[]>, id: string):
     if (t) return t;
   }
   return undefined;
+}
+
+/* ── Virtual "Dispatch" tab ──────────────────────────────────────────────
+   The Dispatch (coordinator/overseer) surface opens as a tab in the main
+   window, but it is NOT a backend terminal — it's a client-only virtual tab
+   whose id encodes the project it belongs to (`dispatch:<sessionId>`). This
+   keeps it out of `byProject` (so it never leaks into the sidebar thread list
+   or status counts) while still flowing through the normal open/close/persist
+   paths. One Dispatch tab per project. */
+export const DISPATCH_PREFIX = 'dispatch:';
+export const dispatchTabId = (sessionId: string): string => `${DISPATCH_PREFIX}${sessionId}`;
+export const isDispatchTab = (id: string | null | undefined): boolean => !!id && id.startsWith(DISPATCH_PREFIX);
+export const dispatchSessionId = (id: string): string => id.slice(DISPATCH_PREFIX.length);
+
+/** Display label for a tab id — 'Dispatch' for the virtual tab, else the terminal's label. */
+export function tabLabel(id: string, byProject: Record<string, Terminal[]>): string {
+  if (isDispatchTab(id)) return 'Dispatch';
+  return findTerminal(byProject, id)?.label ?? 'tab';
+}
+
+/** The project (session) id a tab belongs to — works for the virtual Dispatch tab too. */
+export function tabProjectId(id: string, byProject: Record<string, Terminal[]>): string | undefined {
+  if (isDispatchTab(id)) return dispatchSessionId(id);
+  return findTerminal(byProject, id)?.sessionId;
 }
 
 function persist(s: Pick<TabsState, 'openTabIds' | 'activeTabId' | 'tabSession'>) {
@@ -72,12 +97,21 @@ export const useTabs = create<TabsState>((set, get) => ({
     const { openTabIds, activeTabId, byProject } = get();
     const next = openTabIds.includes(id) ? openTabIds : [...openTabIds, id];
     const t = findTerminal(byProject, id);
-    const tabSession = t ? { ...get().tabSession, [id]: t.sessionId } : get().tabSession;
+    // Virtual Dispatch tabs have no backend terminal; fall back to the sessionId
+    // recorded in tabSession so they still follow into their project + persist.
+    const sessionId = t?.sessionId ?? get().tabSession[id];
+    const tabSession = sessionId ? { ...get().tabSession, [id]: sessionId } : get().tabSession;
     set({ openTabIds: next, activeTabId: background ? activeTabId : id, tabSession });
-    if (!background && t) useProjects.getState().setActive(t.sessionId);   // follow the tab into its project
+    if (!background && sessionId) useProjects.getState().setActive(sessionId);   // follow the tab into its project
     persist(get());
   },
   setActiveTab: (id) => get().openTab(id, false),
+  openDispatch: (sessionId) => {
+    const id = dispatchTabId(sessionId);
+    // Seed the session mapping first so openTab can follow it into the project.
+    set({ tabSession: { ...get().tabSession, [id]: sessionId } });
+    get().openTab(id, false);
+  },
   closeTab: (id) => {
     const { openTabIds, activeTabId, tabSession } = get();
     const idx = openTabIds.indexOf(id);
@@ -101,14 +135,15 @@ export const useTabs = create<TabsState>((set, get) => ({
     await Promise.all(sessionIds.map((sid) => get().loadTabs(sid).catch(() => { /* project gone */ })));
 
     const { byProject } = get();
-    const alive = wantIds.filter((id) => findTerminal(byProject, id));
+    // Keep virtual Dispatch tabs (no backend terminal) alongside surviving real tabs.
+    const alive = wantIds.filter((id) => isDispatchTab(id) || findTerminal(byProject, id));
     const active = wantActive && alive.includes(wantActive) ? wantActive : (alive[0] ?? null);
     set({ openTabIds: alive, activeTabId: active });
     persist(get());
 
     if (active) {
-      const t = findTerminal(get().byProject, active);
-      if (t) useProjects.getState().setActive(t.sessionId);
+      const sid = tabProjectId(active, get().byProject);
+      if (sid) useProjects.getState().setActive(sid);
     }
   },
   applyEvent: (e) => {

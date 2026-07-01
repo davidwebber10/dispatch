@@ -1,17 +1,22 @@
-// Overseer view — "Always listening" directive composer (spec §6 "Composer", §7, §9).
+// Overseer view — directive composer (spec §6 "Composer", §7, §9).
 //
 // Layout: outer container (flex:none, border-top) > input row ("+" | textarea | send)
-//         + hint row (breathing dot · "Always listening…" · spacer · "⌘↵ send").
+//         + hint row (right-aligned "⌘↵ send", desktop only).
 // Store: composer, setComposer, sendDirective, openDelegate (no prop drilling).
 // Interactions: ⌘/Ctrl+Enter → sendDirective; autosizing textarea (rows 1, max 120px).
-// Mobile: shorter placeholder ("Fire a directive…"); hint row omits the keyboard hint.
+// Mobile: shorter placeholder ("Fire a directive…"); hint row is omitted.
 
 import { useCallback, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import { Paperclip } from '@phosphor-icons/react';
-import { Icon, StatusDot } from '../atoms';
+import { Icon } from '../atoms';
 import { useOverseer } from '../store';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { api } from '../../../api/client';
+import { useDictation } from '../../../hooks/useDictation';
+import { DictationControl } from '../../dictation/DictationControl';
+import { InputActionsMenu } from '../../dictation/InputActionsMenu';
+import { useSettings } from '../../../stores/settings';
+import { ContextIndicator } from '../../ContextIndicator';
 
 // Anthropic-vision-supported image types (mirrors the agent ChatView). Only these
 // become a REAL base64 image block the coordinator SEES; anything else falls back to a
@@ -29,14 +34,72 @@ async function fileToBase64(file: File): Promise<string> {
   return btoa(binary);
 }
 
+/** A staged (pre-send) image preview with an × to drop it from the buffer. */
+function StagedThumbnail({ src, onRemove }: { src: string; onRemove: () => void }) {
+  return (
+    <div style={{ position: 'relative', width: 48, height: 48, flex: 'none' }}>
+      <img
+        src={src}
+        alt="attachment"
+        style={{
+          width: '100%',
+          height: '100%',
+          objectFit: 'cover',
+          borderRadius: 8,
+          border: '1px solid var(--border)',
+          display: 'block',
+        }}
+      />
+      <button
+        type="button"
+        onClick={onRemove}
+        title="Remove image"
+        style={{
+          position: 'absolute',
+          top: -6,
+          right: -6,
+          width: 18,
+          height: 18,
+          padding: 0,
+          borderRadius: '50%',
+          background: 'var(--base)',
+          border: '1px solid var(--border)',
+          color: 'var(--ts)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: 'pointer',
+          lineHeight: 1,
+        }}
+      >
+        <Icon name="ph-x" weight="bold" size={10} color="var(--ts)" />
+      </button>
+    </div>
+  );
+}
+
 export function Composer() {
   const composer = useOverseer((s) => s.composer);
   const setComposer = useOverseer((s) => s.setComposer);
   const sendDirective = useOverseer((s) => s.sendDirective);
   const addComposerImage = useOverseer((s) => s.addComposerImage);
+  const removeComposerImage = useOverseer((s) => s.removeComposerImage);
   const coordinatorProject = useOverseer((s) => s.coordinatorProject);
-  const imageCount = useOverseer((s) => s.composerImages.length);
+  const composerImages = useOverseer((s) => s.composerImages);
+  const coordinatorContextTokens = useOverseer((s) => s.coordinatorContextTokens);
+  const coordinatorCompacting = useOverseer((s) => s.coordinatorCompacting);
+  const coordinatorCompactResult = useOverseer((s) => s.coordinatorCompactResult);
+  const coordinatorModel = useOverseer((s) => s.coordinatorModel);
+  const compactCoordinator = useOverseer((s) => s.compactCoordinator);
+  const imageCount = composerImages.length;
   const isMobile = useIsMobile();
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const sttConfigured = useSettings((s) => !!s.sttProvider && !!s.sttModel && !!s.sttSecretName);
+  const dictation = useDictation((text) => {
+    const cur = useOverseer.getState().composer;
+    setComposer(cur + (cur ? ' ' : '') + text);
+  });
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [uploadNote, setUploadNote] = useState('');
@@ -149,25 +212,35 @@ export function Composer() {
         position: 'relative',
       }}
     >
-      {/* upload status / pending-image indicator (drag cue takes precedence while dragging) */}
-      {(dragActive || uploadNote || imageCount > 0) && (
-        <div style={{ fontSize: 11, color: dragActive ? 'var(--acc)' : 'var(--tt)', marginBottom: 6 }}>
-          {dragActive ? 'Drop image to attach' : (
-            <>
-              {uploadNote}
-              {imageCount > 0 && (
-                <span style={{ marginLeft: uploadNote ? 8 : 0 }}>
-                  📎 {imageCount} image{imageCount === 1 ? '' : 's'} attached
-                </span>
-              )}
-            </>
+      {/* drag cue / upload status text (drag cue takes precedence while dragging) */}
+      {(dragActive || uploadNote) && (
+        <div style={{ maxWidth: 768, margin: '0 auto 6px', fontSize: 11, color: dragActive ? 'var(--acc)' : 'var(--tt)' }}>
+          {dragActive ? 'Drop image to attach' : uploadNote}
+        </div>
+      )}
+
+      {/* staged image thumbnails — each removable via its × (hidden behind the drag cue) */}
+      {!dragActive && imageCount > 0 && (
+        <div style={{ maxWidth: 768, margin: '0 auto', display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+          {composerImages.map((block, i) =>
+            block.type === 'image' ? (
+              <StagedThumbnail
+                key={i}
+                src={`data:${block.source.media_type};base64,${block.source.data}`}
+                onRemove={() => removeComposerImage(i)}
+              />
+            ) : null,
           )}
         </div>
       )}
 
-      {/* input row (border + tint shift to accent while a file is dragged over) */}
+      {/* input row (border + tint shift to accent while a file is dragged over). Capped +
+          centered to line up with the message column above (Stream.tsx) — same convention
+          as the agent ChatView's composer (packages/web/src/components/tabs/chat/ChatView.tsx). */}
       <div
         style={{
+          maxWidth: 768,
+          margin: '0 auto',
           display: 'flex',
           alignItems: 'flex-end',
           gap: 8,
@@ -178,55 +251,42 @@ export function Composer() {
           transition: 'border-color .12s, background .12s',
         }}
       >
-        {/* attach → upload to inbox; images ride along with the next directive as a real block */}
-        <label
-          title="Attach file"
-          style={{
-            flex: 'none',
-            width: 32,
-            height: 32,
-            borderRadius: 8,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-            background: 'var(--hover, rgba(255,255,255,.05))',
-            color: 'var(--ts)',
-          }}
-        >
-          <Paperclip size={16} />
-          <input
-            type="file"
-            multiple
-            style={{ display: 'none' }}
-            onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }}
+        {/* attach → upload to inbox; images ride along with the next directive as a real block.
+            Mobile: paperclip becomes a "+" flyout (Add file / Dictate). Desktop: unchanged. */}
+        {isMobile ? (
+          <InputActionsMenu
+            onAddFile={() => fileInputRef.current?.click()}
+            onDictate={() => void dictation.start()}
+            dictateDisabled={!sttConfigured}
+            dictateHint="Set up in Settings → Transcription"
+            triggerStyle={{ width: 32, height: 32, borderRadius: 8, border: 'none', background: 'var(--hover, rgba(255,255,255,.05))' }}
           />
-        </label>
+        ) : (
+          <label
+            title="Attach file"
+            style={{ flex: 'none', width: 32, height: 32, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'var(--hover, rgba(255,255,255,.05))', color: 'var(--ts)' }}
+          >
+            <Paperclip size={16} />
+            <input type="file" multiple style={{ display: 'none' }} onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }} />
+          </label>
+        )}
+        <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }} />
 
-        {/* autosizing textarea */}
-        <textarea
-          ref={textareaRef}
-          rows={1}
-          value={composer}
-          onChange={handleChange}
-          onKeyDown={handleKeyDown}
-          onPaste={onPaste}
-          placeholder={isMobile ? 'Fire a directive…' : 'Fire a directive to Dispatch…'}
-          style={{
-            flex: 1,
-            background: 'transparent',
-            border: 'none',
-            outline: 'none',
-            resize: 'none',
-            color: 'var(--tp)',
-            fontSize: 13.5,
-            lineHeight: 1.5,
-            maxHeight: 120,
-            padding: '7px 2px',
-            fontFamily: 'inherit',
-            overflow: 'auto',
-          }}
-        />
+        {/* autosizing textarea — swapped for the recording UI while dictating (mobile) */}
+        {isMobile && dictation.state !== 'idle' ? (
+          <DictationControl dictation={dictation} />
+        ) : (
+          <textarea
+            ref={textareaRef}
+            rows={1}
+            value={composer}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            onPaste={onPaste}
+            placeholder={isMobile ? 'Fire a directive…' : 'Fire a directive to Dispatch…'}
+            style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', resize: 'none', color: 'var(--tp)', fontSize: 13.5, lineHeight: 1.5, maxHeight: 120, padding: '7px 2px', fontFamily: 'inherit', overflow: 'auto' }}
+          />
+        )}
 
         {/* send → sendDirective */}
         <button
@@ -250,36 +310,34 @@ export function Composer() {
         </button>
       </div>
 
-      {/* hint row (spec §6: breathing dot · "Always listening…" · spacer · "⌘↵ send") */}
+      {/* status row (always rendered, both mobile + desktop): context indicator left,
+          "⌘↵ send" keyboard hint right (desktop only) */}
       <div
         style={{
+          maxWidth: 768,
+          margin: '8px auto 0',
           display: 'flex',
           alignItems: 'center',
-          gap: 7,
-          marginTop: 8,
         }}
       >
-        <StatusDot
-          color="var(--acc)"
-          anim="breathe var(--pulse) ease-in-out infinite"
-          size={6}
+        <ContextIndicator
+          contextTokens={coordinatorContextTokens}
+          compacting={coordinatorCompacting}
+          compactResult={coordinatorCompactResult}
+          model={coordinatorModel}
+          compact={compactCoordinator}
         />
-        <span style={{ fontSize: 10.5, color: 'var(--tt)' }}>
-          Always listening — capture is instant, never blocked by the work below
-        </span>
         {!isMobile && (
-          <>
-            <span style={{ flex: 1 }} />
-            <span
-              style={{
-                fontFamily: 'var(--mono)',
-                fontSize: 10,
-                color: 'var(--tt)',
-              }}
-            >
-              ⌘↵ send
-            </span>
-          </>
+          <span
+            style={{
+              fontFamily: 'var(--mono)',
+              fontSize: 10,
+              color: 'var(--tt)',
+              marginLeft: 'auto',
+            }}
+          >
+            ⌘↵ send
+          </span>
         )}
       </div>
     </div>

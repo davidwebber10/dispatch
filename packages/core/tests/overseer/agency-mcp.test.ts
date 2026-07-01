@@ -24,8 +24,8 @@ describe('agency-mcp', () => {
     const res = await handleRequest({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
     expect(res).not.toBeNull();
     const names = (res!.result as any).tools.map((t: any) => t.name).sort();
-    expect(names).toEqual(['answer_agent', 'complete_agent', 'list_agents', 'list_missions', 'message_agent', 'post_image', 'read_agent', 'spawn_agent']);
-    expect(TOOLS).toHaveLength(8);
+    expect(names).toEqual(['answer_agent', 'complete_agent', 'list_agents', 'list_missions', 'message_agent', 'post_image', 'queue_agent', 'read_agent', 'spawn_agent', 'start_agent']);
+    expect(TOOLS).toHaveLength(10);
   });
 
   it('initialize returns protocolVersion + tools capability', async () => {
@@ -65,7 +65,7 @@ describe('agency-mcp', () => {
     const [msgUrl, msgInit] = fetchMock.mock.calls[1];
     expect(msgUrl).toBe('http://localhost:9999/api/terminals/agent-1/message');
     expect(msgInit.method).toBe('POST');
-    expect(JSON.parse(msgInit.body)).toEqual({ text: 'investigate X' });
+    expect(JSON.parse(msgInit.body)).toEqual({ text: 'investigate X', source: 'coordinator' });
   });
 
   it('read_agent returns the agent assistant output + tools + status (the read channel)', async () => {
@@ -174,7 +174,7 @@ describe('agency-mcp', () => {
     const out = await callTool('message_agent', { agentId: 'a1', text: 'focus on auth' });
     expect(out.isError).toBeUndefined();
     expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/terminals/a1/message');
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ text: 'focus on auth' });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ text: 'focus on auth', source: 'coordinator' });
   });
 
   it('complete_agent archives the thread (DELETE)', async () => {
@@ -184,6 +184,78 @@ describe('agency-mcp', () => {
     expect(out.isError).toBeUndefined();
     expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/terminals/a1');
     expect(fetchMock.mock.calls[0][1].method).toBe('DELETE');
+  });
+
+  it('queue_agent parks the task in a single queued create (no seed message) and returns queued:true', async () => {
+    const fetchMock = vi.fn()
+      // create terminal (queued) -> returns the new terminal JSON. No second (message) fetch.
+      .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'q1', label: 'researcher agent' }) });
+    global.fetch = fetchMock as any;
+
+    const out = await callTool('queue_agent', { agentType: 'researcher', task: 'investigate X' });
+    expect(out.isError).toBeUndefined();
+    expect(JSON.parse(out.content[0].text)).toEqual({ agentId: 'q1', label: 'researcher agent', queued: true });
+
+    // Unlike spawn_agent, queueing does NOT seed a message — the task is parked in the create body.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [createUrl, createInit] = fetchMock.mock.calls[0];
+    expect(createUrl).toBe('http://localhost:9999/api/sessions/sess-1/terminals');
+    expect(createInit.method).toBe('POST');
+    expect(JSON.parse(createInit.body)).toEqual({
+      type: 'claude-code',
+      label: 'researcher agent',
+      queued: true,
+      task: 'investigate X',
+      config: { transport: 'structured', agentType: 'researcher', role: 'agent' },
+    });
+  });
+
+  it('queue_agent forwards a mission into the create body config', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'q2', label: 'implementer agent' }) });
+    global.fetch = fetchMock as any;
+    const out = await callTool('queue_agent', { agentType: 'implementer', task: 'do it', mission: 'Auth refactor' });
+    expect(out.isError).toBeUndefined();
+    expect(JSON.parse(out.content[0].text)).toEqual({ agentId: 'q2', label: 'implementer agent', mission: 'Auth refactor', queued: true });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
+      transport: 'structured', agentType: 'implementer', role: 'agent', mission: 'Auth refactor',
+    });
+  });
+
+  it('queue_agent forwards dependsOn into the create body config', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'q3', label: 'implementer agent' }) });
+    global.fetch = fetchMock as any;
+    const out = await callTool('queue_agent', { agentType: 'implementer', task: 'do it', dependsOn: 'agent-1' });
+    expect(out.isError).toBeUndefined();
+    expect(JSON.parse(out.content[0].text)).toEqual({ agentId: 'q3', label: 'implementer agent', queued: true });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
+      transport: 'structured', agentType: 'implementer', role: 'agent', dependsOn: 'agent-1',
+    });
+  });
+
+  it('queue_agent omits dependsOn from config when not provided', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'q4', label: 'researcher agent' }) });
+    global.fetch = fetchMock as any;
+    await callTool('queue_agent', { agentType: 'researcher', task: 'look' });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
+      transport: 'structured', agentType: 'researcher', role: 'agent',
+    });
+  });
+
+  it('start_agent promotes a queued agent via POST /start (no body) and returns ok', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
+    global.fetch = fetchMock as any;
+    const out = await callTool('start_agent', { agentId: 'q1' });
+    expect(out.isError).toBeUndefined();
+    expect(JSON.parse(out.content[0].text)).toEqual({ ok: true, agentId: 'q1' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [startUrl, startInit] = fetchMock.mock.calls[0];
+    expect(startUrl).toBe('http://localhost:9999/api/terminals/q1/start');
+    expect(startInit.method).toBe('POST');
+    // Promotion carries no payload — httpJson omits both body and content-type.
+    expect(startInit.body).toBeUndefined();
   });
 
   it('returns MCP isError content (never throws) on HTTP failure', async () => {

@@ -1,14 +1,21 @@
-import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
+import { useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
-import { PaperPlaneTilt, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip } from '@phosphor-icons/react';
+import { PaperPlaneTilt, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip, ArrowBendDownRight } from '@phosphor-icons/react';
 import type { ConvItem } from '../../../api/types';
 import { api, type ContentBlock } from '../../../api/client';
 import { useStructuredChat } from './useStructuredChat';
+import { AskQuestionCard } from './AskQuestionCard';
 import { useTabs, findTerminal } from '../../../stores/tabs';
 import { useDraft } from '../../../hooks/useDraft';
-import { Markdown } from '../../Markdown';
+import { useIsMobile } from '../../../hooks/useIsMobile';
+import { useSettings, useDispatchName } from '../../../stores/settings';
+import { useDictation } from '../../../hooks/useDictation';
+import { DictationControl } from '../../dictation/DictationControl';
+import { InputActionsMenu } from '../../dictation/InputActionsMenu';
+import { InsightText } from '../../InsightText';
 import { WorkingIndicator } from '../../WorkingIndicator';
 import { ChatImage } from '../../ChatImage';
+import { ContextIndicator } from '../../ContextIndicator';
 import { ToolCall, ToolResult } from '../ToolCall';
 import { useUI } from '../../../stores/ui';
 
@@ -37,7 +44,7 @@ async function fileToBase64(file: File): Promise<string> {
 export function ChatView({ terminalId }: { terminalId: string }) {
   const tab = useTabs((s) => findTerminal(s.byProject, terminalId));
   const sessionId = tab?.sessionId;
-  const { items, busy, model, send } = useStructuredChat(terminalId, sessionId);
+  const { items, busy, model, send, pending, answer, contextTokens, compacting, compactResult, compact } = useStructuredChat(terminalId, sessionId);
 
   const [draft, setDraft, clearDraft] = useDraft(terminalId);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -46,6 +53,17 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   const draftRef = useRef(draft); draftRef.current = draft;
   const [uploadNote, setUploadNote] = useState('');
   const [dragActive, setDragActive] = useState(false); // drives the drop-target visual cue
+
+  // Mobile voice dictation. The composer's left control becomes a + flyout (Add file /
+  // Dictate); choosing Dictate swaps the textarea for the recording UI, and the confirmed
+  // transcript is appended to the current draft. Desktop is unaffected.
+  const isMobile = useIsMobile();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const sttConfigured = useSettings((s) => !!s.sttProvider && !!s.sttModel && !!s.sttSecretName);
+  const dictation = useDictation((text) => {
+    const next = (draftRef.current ? draftRef.current + ' ' : '') + text;
+    draftRef.current = next; setDraft(next);
+  });
 
   function doSend() {
     const v = draft.trim();
@@ -129,6 +147,15 @@ export function ChatView({ terminalId }: { terminalId: string }) {
             <MessageScroller.Content style={{ maxWidth: 768, margin: '0 auto', padding: '24px 20px 8px', display: 'flex', flexDirection: 'column', gap: 16 }}>
               {items.length === 0 && !busy && <EmptyState model={model} />}
               {renderTimeline(items, openFileInViewer)}
+              {pending?.questions && pending.questions.length > 0 && (
+                <MessageScroller.Item messageId="__ask" style={{ display: 'flex' }}>
+                  {/* Interactive AskUserQuestion — answering unblocks the CLI (which is
+                      parked on stdin). Keyed by requestId so a new question mounts fresh. */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <AskQuestionCard key={pending.requestId} questions={pending.questions} onAnswer={answer} />
+                  </div>
+                </MessageScroller.Item>
+              )}
               {busy && (
                 <MessageScroller.Item messageId="__working" style={{ display: 'flex' }}>
                   <WorkingIndicator />
@@ -155,18 +182,34 @@ export function ChatView({ terminalId }: { terminalId: string }) {
           </div>
         )}
         <div style={{ maxWidth: 768, margin: '0 auto', display: 'flex', alignItems: 'flex-end', gap: 8, background: dragActive ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-elevated))' : 'var(--color-elevated)', border: dragActive ? '1px solid var(--color-accent)' : '1px solid var(--color-border)', borderRadius: 12, padding: '8px 8px 8px 8px', transition: 'border-color .12s, background .12s' }}>
-          <label
-            title="Attach file"
-            style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'var(--color-hover)', color: 'var(--color-text-secondary)' }}
-          >
-            <Paperclip size={17} />
-            <input
-              type="file"
-              multiple
-              style={{ display: 'none' }}
-              onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }}
+          {isMobile ? (
+            <InputActionsMenu
+              onAddFile={() => fileInputRef.current?.click()}
+              onDictate={() => void dictation.start()}
+              dictateDisabled={!sttConfigured}
+              dictateHint="Set up in Settings → Transcription"
+              triggerStyle={{ width: 34, height: 34, borderRadius: 9, border: 'none', background: 'var(--color-hover)' }}
             />
-          </label>
+          ) : (
+            <label
+              title="Attach file"
+              style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'var(--color-hover)', color: 'var(--color-text-secondary)' }}
+            >
+              <Paperclip size={17} />
+              <input
+                type="file"
+                multiple
+                style={{ display: 'none' }}
+                onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }}
+              />
+            </label>
+          )}
+          {/* hidden input the mobile + menu triggers (routes through the same attachFiles) */}
+          <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }} />
+          {isMobile && dictation.state !== 'idle' ? (
+            <DictationControl dictation={dictation} />
+          ) : (
+            <>
           <textarea
             ref={taRef}
             value={draft}
@@ -186,6 +229,13 @@ export function ChatView({ terminalId }: { terminalId: string }) {
           >
             <PaperPlaneTilt size={17} weight="fill" />
           </button>
+            </>
+          )}
+        </div>
+
+        {/* thin status row: muted context-window fill indicator, tappable for detail */}
+        <div style={{ maxWidth: 768, margin: '6px auto 0', display: 'flex', justifyContent: 'flex-end' }}>
+          <ContextIndicator contextTokens={contextTokens} compacting={compacting} compactResult={compactResult} model={model} compact={compact} />
         </div>
       </div>
     </div>
@@ -194,9 +244,9 @@ export function ChatView({ terminalId }: { terminalId: string }) {
 
 /**
  * Walk the timeline, pairing each tool with its result by id (parallel-safe) and
- * grouping each assistant turn into ONE row: a single Sparkle avatar + a shared
- * left gutter holding that turn's text / thinking / tool cards / footer. A `user`
- * turn breaks the group and renders its own right-aligned bubble.
+ * grouping each assistant turn into ONE row: a flush-left column holding that
+ * turn's text / thinking / tool cards / footer. A `user` turn breaks the group
+ * and renders its own right-aligned bubble.
  */
 function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void) {
   // Map tool_use id -> its result item, so paired results aren't rendered standalone.
@@ -231,7 +281,7 @@ function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void) {
       flushGroup();
       rows.push(
         <MessageScroller.Item key={id} messageId={id} style={{ display: 'flex', flexDirection: 'column' }}>
-          <UserBubble text={it.text ?? ''} />
+          <UserBubble text={it.text ?? ''} source={it.source} />
         </MessageScroller.Item>,
       );
       continue;
@@ -242,6 +292,10 @@ function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void) {
     else if (it.kind === 'image') node = <ChatImage src={it.imageUrl ?? ''} alt={it.imageAlt} />;
     else if (it.kind === 'thinking') node = <Thinking text={it.text ?? ''} />;
     else if (it.kind === 'tool') {
+      // AskUserQuestion is rendered by the interactive <AskQuestionCard> (live) — never
+      // as a generic tool card, which would sit stuck on "running…" (its tool_result only
+      // arrives once answered). Its paired tool_result is already suppressed below.
+      if (it.toolName === 'AskUserQuestion') continue;
       const result = it.toolId ? resultById.get(it.toolId) : items[i + 1]?.kind === 'tool-result' ? items[i + 1] : undefined;
       node = <ToolCall tool={it} result={result} onViewFile={onViewFile} />;
     } else if (it.kind === 'tool-result') {
@@ -257,16 +311,11 @@ function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void) {
   return rows;
 }
 
-/** One assistant turn: a single avatar + a flex-column gutter for all its blocks. */
+/** One assistant turn: a flush-left flex-column holding all its blocks. */
 function AssistantTurn({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ flex: 1, minWidth: 0, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-      <div style={{ flexShrink: 0, width: 24, height: 24, borderRadius: 7, background: 'var(--color-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 1 }}>
-        <Sparkle size={14} weight="fill" color="var(--color-accent)" />
-      </div>
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {children}
-      </div>
+    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {children}
     </div>
   );
 }
@@ -281,18 +330,47 @@ function EmptyState({ model }: { model?: string }) {
   );
 }
 
-function UserBubble({ text }: { text: string }) {
+// A 'user'-role turn the coordinator sent on the human's behalf (spawn_agent / message_agent)
+// still needs its own right-aligned slot in the timeline (it's structurally a user turn), but
+// reading it as "sent by the human" would be misleading — so it gets a small "via {Dispatch
+// name}" label (same ArrowBendDownRight "relayed" icon the coordinator's own Stream uses for
+// injected notices) and a muted/bordered bubble instead of the bright human-accent one.
+// `source === 'user'` or undefined (untagged/legacy) renders exactly like before.
+function UserBubble({ text, source }: { text: string; source?: 'user' | 'coordinator' }) {
+  const dispatchName = useDispatchName();
+  const viaCoordinator = source === 'coordinator';
   return (
-    <div style={{ alignSelf: 'flex-end', maxWidth: '85%', background: 'var(--color-accent)', color: '#06140B', borderRadius: '14px 14px 4px 14px', padding: '9px 13px', font: '400 15px var(--font-sans)', lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-      {text}
+    <div style={{ alignSelf: 'flex-end', maxWidth: '85%', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+      {viaCoordinator && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, color: 'var(--color-accent)' }}>
+          <ArrowBendDownRight size={12} weight="bold" />
+          via {dispatchName}
+        </div>
+      )}
+      <div
+        style={{
+          background: viaCoordinator ? 'var(--color-elevated)' : 'var(--color-accent)',
+          border: viaCoordinator ? '1px solid var(--color-border)' : 'none',
+          color: viaCoordinator ? 'var(--color-text-primary)' : '#06140B',
+          borderRadius: '14px 14px 4px 14px',
+          padding: '9px 13px',
+          font: '400 15px var(--font-sans)',
+          lineHeight: 1.5,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+        }}
+      >
+        {text}
+      </div>
     </div>
   );
 }
 
+// Assistant prose flows through the SHARED <InsightText> so ★ Insight blocks become tinted
+// callouts here identically to the coordinator stream (scheme="global" → app --color-* tokens).
 function AssistantText({ text }: { text: string }) {
   if (!text) return null;
-  // Avatar is rendered once per turn by AssistantTurn; this is just the prose.
-  return <Markdown source={text} />;
+  return <InsightText source={text} scheme="global" />;
 }
 
 function Thinking({ text }: { text: string }) {
@@ -342,8 +420,10 @@ function ResultFooter({ item }: { item: ConvItem }) {
  * deltas while the user is pinned, but the initial replay arrives as a rapid append
  * burst that can strand the viewport above the fold (a content change can flip the
  * scroller out of "following-bottom" before it catches up). We force scrollToEnd('auto')
- * — instant, so it never animates against the user — on each append while still engaged,
- * then hand off to native autoScroll the moment the user scrolls off-tail.
+ * — instant, never smooth — on each append while still engaged, then hand off to native
+ * autoScroll the moment the user scrolls off-tail. Crucially this runs in a LAYOUT effect
+ * (pre-paint): the stick lands before the browser paints each backfill frame, so the thread
+ * opens ALREADY at the bottom instead of visibly scrolling top→bottom through its history.
  */
 function StickToEndOnLoad({ terminalId, count }: { terminalId: string; count: number }) {
   const { scrollToEnd } = useMessageScroller();
@@ -352,7 +432,7 @@ function StickToEndOnLoad({ terminalId, count }: { terminalId: string; count: nu
   const prevCountRef = useRef(-1);
   const termRef = useRef(terminalId);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     // New thread → re-arm so its own backfill re-sticks to the bottom.
     if (termRef.current !== terminalId) {
       termRef.current = terminalId;

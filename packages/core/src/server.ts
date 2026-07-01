@@ -25,6 +25,8 @@ import { createFilesRouter } from './routes/files.js';
 import { createStateRouter } from './routes/state.js';
 import { createGitRouter } from './routes/git.js';
 import { createSecretsRouter } from './routes/secrets.js';
+import { createTranscribeRouter } from './routes/transcribe.js';
+import { TranscriptionService } from './transcription/service.js';
 import { createSetupRouter } from './routes/setup.js';
 import { createToolsRouter } from './routes/tools.js';
 import { getToolsSpawnEnv, toolStatuses, awarenessNote } from './tools/status.js';
@@ -110,6 +112,13 @@ function wirePermissionMembrane(structuredManager: StructuredSessionManager, sta
     statusService.markIdle(terminalId);
     sessionService.noteAgentCompletion(terminalId);
   });
+  // A wake-scheduler tool (ScheduleWakeup/CronCreate) ended the turn deliberately — the
+  // thread is dormant, not finished. Deliberately does NOT call noteAgentCompletion: the
+  // agent hasn't produced a result for its coordinator yet, it's just asleep until its timer
+  // fires and the CLI process resumes on its own.
+  structuredManager.on('scheduled', (terminalId: string, activity: string) => {
+    statusService.markScheduled(terminalId, activity);
+  });
 }
 
 export function createApp(options: CreateAppOptions): import('express').Express {
@@ -158,6 +167,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   app.use('/api/providers', createProvidersRouter());
   app.use('/api/servers', createServersRouter(db));
   app.use('/api/secrets', createSecretsRouter(secretsService));
+  app.use('/api/transcribe', createTranscribeRouter(new TranscriptionService(secretsService)));
   app.use('/api/setup', createSetupRouter(db, secretsService));
   app.use('/api/sessions/:id/files', createFilesRouter(db));
   app.use('/api/sessions/:id/git', createGitRouter(db));
@@ -356,6 +366,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.use('/api/providers', createProvidersRouter());
   app.use('/api/servers', createServersRouter(db));
   app.use('/api/secrets', createSecretsRouter(secretsService));
+  app.use('/api/transcribe', createTranscribeRouter(new TranscriptionService(secretsService)));
   app.use('/api/setup', createSetupRouter(db, secretsService));
   app.use('/api/sessions/:id/files', createFilesRouter(db));
   app.use('/api/sessions/:id/git', createGitRouter(db));
@@ -441,6 +452,15 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   });
 
   console.log(`Dispatch server listening on port ${port}`);
+
+  // Boot recovery: auto-resume overseer threads (coordinator + typed agents) that
+  // the previous shutdown interrupted mid-turn. Fire-and-forget — it waits a short
+  // settle delay before reading status, so it must not block startup.
+  void sessionService.kickstartInterruptedAgents()
+    .then(({ kicked, skipped }) => {
+      if (kicked.length) console.log(`Kickstart: resumed ${kicked.length} interrupted thread(s); skipped ${skipped.length}`);
+    })
+    .catch((err) => console.error('kickstart failed', err));
 
   // Start PTY timing loop for Codex-style providers
   const ptyTimingInterval = startPtyTimingLoop(db, ptyManager, broadcaster);

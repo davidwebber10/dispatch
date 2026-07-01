@@ -139,6 +139,10 @@ export interface ConvItem {
   // vs. an agent/tool-emitted or coordinator-posted picture. Lets a surface (e.g. the
   // Overseer stream) attribute it to "You" instead of the assistant. Undefined ⇒ not-user.
   imageFromUser?: boolean;
+  // Who actually sent this turn (kind 'user' only): the human directly, or the coordinator
+  // acting on their behalf (spawn_agent / message_agent). Undefined ⇒ untagged/legacy —
+  // render exactly like 'user' (mirrors the imageFromUser default-false-like fallback).
+  source?: 'user' | 'coordinator';
   toolName?: string;
   toolTitle?: string;
   toolDetail?: string;

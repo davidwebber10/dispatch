@@ -1,14 +1,48 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ConvItem } from '../../../api/types';
+import type { ConvItem, PendingPermission } from '../../../api/types';
 import { openStructuredSocket } from '../../../api/structured-socket';
 import { api, type ContentBlock } from '../../../api/client';
+
+/** Fallback context window (tokens) for when no model is known yet. Every model Dispatch
+ *  actually runs (sonnet-5, opus-4.x) has a native 1M-token window; only Haiku is 200k. */
+export const CONTEXT_WINDOW = 1_000_000;
+
+/** The real context window (tokens) for a given model id. Sonnet-5 and Opus-4.x — the
+ *  only models Dispatch's tiering assigns to coordinator/implementer/planner/researcher/
+ *  reviewer roles — natively support 1M tokens with no beta flag needed. Haiku is the
+ *  one exception, capped at 200k. */
+export function contextWindowFor(model?: string): number {
+  return model?.includes('haiku') ? 200_000 : 1_000_000;
+}
+
+/** The outcome of the most recent native compaction, or null before any has run. */
+export interface CompactResult {
+  success: boolean;
+  error?: string;
+}
 
 export interface StructuredChat {
   items: ConvItem[];
   busy: boolean;        // a turn is in flight (sent or streaming, no result yet)
   model?: string;
+  /** Context tokens used AS OF the latest assistant turn (input + cache_read + cache_creation).
+   *  Undefined until the first assistant event of the thread lands. Compare against
+   *  contextWindowFor(model) to render a fill indicator. */
+  contextTokens?: number;
+  /** True while a native `/compact` triggered via `compact()` is in progress. */
+  compacting: boolean;
+  /** Outcome of the most recently finished compaction (transient — for a toast/indicator). */
+  compactResult: CompactResult | null;
   // Accepts plain text OR a content-block array (e.g. a real image block the model SEES).
   send: (content: string | ContentBlock[]) => void;
+  /** The AskUserQuestion / gated tool this thread is blocked on, or null. */
+  pending: PendingPermission | null;
+  /** Answer the pending AskUserQuestion. `answers` is keyed by question TEXT →
+   *  the chosen option label(s) (multi-select joined with ", "). Verified wire shape
+   *  against real `claude --permission-prompt-tool stdio`. */
+  answer: (answers: Record<string, string>) => void;
+  /** Trigger native Claude Code compaction on this thread (no chat bubble is added). */
+  compact: () => void;
 }
 
 function safeJson(v: unknown): string {
@@ -77,8 +111,26 @@ function imagesFromContent(content: unknown, sessionId?: string): ConvItem[] {
 /** Tracks one in-progress streamed content block within the current turn.
  * `text` accumulates text/thinking deltas; `jsonAccum` accumulates tool input
  * JSON. Deltas are buffered here and applied to the items in a single rAF flush
- * (see below) so a burst of tokens costs ~one render per frame, not per token. */
-interface BlockRec { key: string; kind: 'assistant' | 'thinking' | 'tool'; jsonAccum?: string; text?: string }
+ * (see below) so a burst of tokens costs ~one render per frame, not per token.
+ * `revealed` is how much of `text` has been shown so far for assistant/thinking
+ * blocks — see REVEAL_CATCHUP below; unused for tool blocks. */
+interface BlockRec { key: string; kind: 'assistant' | 'thinking' | 'tool'; jsonAccum?: string; text?: string; revealed?: number }
+
+/** Reveal pacing for streamed prose (assistant/thinking text). Confirmed via
+ * instrumented reproduction that neither the ws client nor the daemon buffer
+ * stream_event deltas (structured-socket.ts forwards onmessage synchronously;
+ * the daemon's readline/emit/ws.send chain has no timers or queues) — the CLI
+ * itself delivers text in bursts of roughly a sentence every several hundred ms
+ * rather than a steady per-token trickle. Snapping straight to each burst reads
+ * as choppy pop-in even though the render itself is cheap (no dropped frames).
+ * Each frame closes CATCHUP of the remaining gap (min 1 char), so a typical
+ * ~100-char burst reveals over ~150-250ms — smoothed, but never far behind the
+ * data that already arrived. Tool-call JSON isn't prose and stays un-animated. */
+const REVEAL_CATCHUP = 0.3;
+function nextRevealed(revealed: number, targetLen: number): number {
+  const gap = targetLen - revealed;
+  return gap <= 0 ? targetLen : revealed + Math.max(1, Math.ceil(gap * REVEAL_CATCHUP));
+}
 
 /**
  * Drives a structured (stream-json) thread for the chat UI. Opens the live ws,
@@ -99,6 +151,14 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
   const [items, setItems] = useState<ConvItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [model, setModel] = useState<string | undefined>();
+  const [contextTokens, setContextTokens] = useState<number | undefined>();
+  const [compacting, setCompacting] = useState(false);
+  const [compactResult, setCompactResult] = useState<CompactResult | null>(null);
+  // The AskUserQuestion the CLI is blocked on (mirrored in a ref so the `answer`
+  // callback and the tool_result handler read the latest value without re-subscribing).
+  const [pending, setPendingState] = useState<PendingPermission | null>(null);
+  const permissionRef = useRef<PendingPermission | null>(null);
+  const setPending = useCallback((p: PendingPermission | null) => { permissionRef.current = p; setPendingState(p); }, []);
 
   // Session is read by the image parser (path refs → byte route) but must NOT key the
   // socket effect — it can resolve a render after terminalId, and we don't want that to
@@ -118,8 +178,13 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
   const rafRef = useRef<number | null>(null);          // scheduled flush handle (null ⇒ none pending)
 
   useEffect(() => {
-    if (!terminalId) { setItems([]); setBusy(false); setModel(undefined); return; }
-    setItems([]); setBusy(false); setModel(undefined);
+    if (!terminalId) {
+      setItems([]); setBusy(false); setModel(undefined); setPending(null);
+      setContextTokens(undefined); setCompacting(false); setCompactResult(null);
+      return;
+    }
+    setItems([]); setBusy(false); setModel(undefined); setPending(null);
+    setContextTokens(undefined); setCompacting(false); setCompactResult(null);
     streamingRef.current = false; turnRef.current = 0; blockMapRef.current.clear();
     pendingRef.current.clear();
     if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
@@ -127,13 +192,30 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
     // Apply every buffered delta to its item in a single setItems map, then clear
     // the dirty set + the rAF handle. Keyed by item uuid (the block's stable key),
     // so it works even after blockMapRef was cleared by a new message_start.
-    const flush = () => {
+    // `instant`: skip the reveal animation and jump straight to the full target
+    // text — used at natural turn-settling checkpoints (see flushNow) so no
+    // latency is added to when the final text becomes fully visible.
+    const flush = (instant: boolean) => {
       rafRef.current = null;
       const pending = pendingRef.current;
       if (pending.size === 0) return;
       const byKey = new Map<string, BlockRec>();
       for (const rec of pending) byKey.set(rec.key, rec);
       pending.clear();
+      // Compute each rec's next `revealed` length in plain sync code BEFORE calling
+      // setItems — React doesn't guarantee the setItems updater runs synchronously
+      // before the next line, so anything the "is still animating?" decision depends
+      // on has to be settled here, not as a side effect inside the updater closure.
+      let animating = false;
+      for (const rec of byKey.values()) {
+        if (rec.kind === 'tool') continue; // tool JSON isn't revealed gradually
+        const target = rec.text ?? '';
+        rec.revealed = instant ? target.length : nextRevealed(rec.revealed ?? 0, target.length);
+        if (rec.revealed < target.length) {
+          animating = true;
+          pending.add(rec); // not caught up — stays dirty so next frame continues the reveal
+        }
+      }
       setItems((p) => p.map((it) => {
         const rec = it.uuid ? byKey.get(it.uuid) : undefined;
         if (!rec) return it;
@@ -142,19 +224,23 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
           const file = fileFromInput(accum); // resolves once accum is complete JSON
           return { ...it, toolInput: accum, ...(file ? { toolFile: file } : {}) };
         }
-        return { ...it, text: rec.text ?? '' }; // assistant / thinking
+        // assistant / thinking: reveal the accumulated text gradually (see REVEAL_CATCHUP)
+        // instead of snapping to it, so a bursty delta doesn't pop in all at once.
+        return { ...it, text: (rec.text ?? '').slice(0, rec.revealed ?? 0) };
       }));
+      if (animating) scheduleFlush();
     };
     const scheduleFlush = () => {
       if (rafRef.current != null) return; // a flush is already queued for this frame
-      rafRef.current = requestAnimationFrame(flush);
+      rafRef.current = requestAnimationFrame(() => flush(false));
     };
-    // Force a synchronous flush now (cancelling any queued one). Used before the
-    // whole-`assistant` reconcile and `result` so no trailing tokens are lost and
-    // a stale frame can't later clobber the authoritative reconciled tool input.
+    // Force a synchronous, fully-revealed flush now (cancelling any queued one). Used
+    // before the whole-`assistant` reconcile and `result` so no trailing tokens are
+    // lost, a stale frame can't later clobber the authoritative reconciled tool input,
+    // and the turn's final text isn't left mid-reveal when the footer lands.
     const flushNow = () => {
       if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
-      flush();
+      flush(true);
     };
 
     const sock = openStructuredSocket({
@@ -166,6 +252,8 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
         if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
         pendingRef.current.clear();
         setItems([]); setBusy(false);
+        setPending(null); // the server re-sends a still-pending permission after replay
+        setContextTokens(undefined); setCompacting(false); setCompactResult(null); // replay rebuilds these
         blockMapRef.current.clear();
       },
       onClose: () => {
@@ -179,6 +267,31 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
         if (type === 'system' && event.subtype === 'init') {
           const m = event.model || event.session?.model || event.modelId;
           if (m) setModel(m);
+          return;
+        }
+
+        // Native compaction lifecycle: `status:"compacting"` while it runs, then a
+        // follow-up status (status:null) carrying compact_result — a fresh system/init
+        // for the post-compaction context follows separately and lands in the branch above.
+        if (type === 'system' && event.subtype === 'status') {
+          if (event.status === 'compacting') {
+            setCompacting(true);
+            setCompactResult(null);
+          } else {
+            setCompacting(false);
+            if (event.compact_result === 'success' || event.compact_result === 'failed') {
+              setCompactResult({ success: event.compact_result === 'success', error: event.compact_error });
+            }
+          }
+          return;
+        }
+
+        // Escalation frame (ws/structured.ts) — an AskUserQuestion / gated tool the CLI
+        // is blocked on. Surface it for the interactive card and stop the "Working…"
+        // spinner: we're now waiting on the HUMAN, not the model. Answering resumes busy.
+        if (type === 'permission') {
+          setPending((event.pending as PendingPermission) ?? null);
+          setBusy(false);
           return;
         }
 
@@ -241,6 +354,14 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
 
         if (type === 'assistant' && Array.isArray(event.message?.content)) {
           setBusy(true);
+          // Context fill: the LATEST assistant call's usage (not a running sum — result.usage
+          // sums every API round-trip in a multi-tool turn, badly over-counting). Recomputed
+          // on every assistant event so it always reflects the most recent call.
+          const usage = event.message?.usage;
+          if (usage) {
+            const tokens = (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
+            setContextTokens(tokens);
+          }
           // Streaming mode: text/thinking already rendered from deltas — ignore them
           // to avoid duplication. Reconcile each tool_use's parsed input from the
           // authoritative whole event (and append any tool we never saw start, e.g.
@@ -280,23 +401,29 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
 
         if (type === 'user' && event.message) {
           const content = event.message.content;
+          // Who actually sent this turn — tagged by the backend on the echoed event (absent
+          // on untagged/legacy sends, which render as a plain "You" bubble). See ConvItem.source.
+          const source = event.meta?.source as ConvItem['source'] | undefined;
           const add: ConvItem[] = [];
           if (typeof content === 'string') {
             // A plain human turn rebuilt from the transcript backfill (resume after a daemon
             // restart) stores `content` as a STRING, not an array. Handle it so the user's own
             // messages aren't dropped on reconnect — assistant turns are always array-shaped,
             // which is why only the user's bubbles went missing after a restart.
-            if (content.trim()) add.push({ kind: 'user', text: content });
+            if (content.trim()) add.push({ kind: 'user', text: content, ...(source ? { source } : {}) });
           } else if (Array.isArray(content)) {
             for (const b of content) {
               if (b.type === 'tool_result') {
+                // The pending AskUserQuestion just produced its result → it's answered
+                // (by us or elsewhere); drop the interactive card.
+                if (b.tool_use_id && permissionRef.current?.toolUseId === b.tool_use_id) setPending(null);
                 add.push({ kind: 'tool-result', toolId: b.tool_use_id, text: flattenContent(b.content), isError: b.is_error === true });
                 // flattenContent yields the text body only; surface any image blocks nested
                 // inside the tool_result (e.g. a screenshot tool) as their own image items.
                 add.push(...imagesFromContent(b.content, sessionIdRef.current));
               } else if (b.type === 'text' && b.text) {
                 // P0a: the backend buffers/echoes the user's own turn as a text block.
-                add.push({ kind: 'user', text: b.text });
+                add.push({ kind: 'user', text: b.text, ...(source ? { source } : {}) });
               } else if (b.type === 'image') {
                 // A human-attached image on the user's own turn — tag it so surfaces can
                 // attribute it to "You" (vs. the tool_result images above, which stay
@@ -333,7 +460,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
       pendingRef.current.clear();
       sock.close();
     };
-  }, [terminalId]);
+  }, [terminalId, setPending]);
 
   const send = useCallback((content: string | ContentBlock[]) => {
     // A string turn is trimmed + empty-guarded as before; a block turn (e.g. an image)
@@ -352,5 +479,27 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
     });
   }, [terminalId]);
 
-  return { items, busy, model, send };
+  // Answer the pending AskUserQuestion. `answers` is keyed by question TEXT → the chosen
+  // option label(s). We fire the REST call (the ws has no inbound channel), clear the card
+  // optimistically, and resume the spinner — the CLI unblocks and streams the next turn.
+  const answer = useCallback((answers: Record<string, string>) => {
+    const p = permissionRef.current;
+    if (!p || !terminalId) return;
+    setPending(null);
+    setBusy(true);
+    api.answerPermission(terminalId, { requestId: p.requestId, decision: 'allow', answers }).catch(() => {
+      // The POST failed (e.g. the process died) — re-surface the question so it isn't lost.
+      setBusy(false);
+      setPending(p);
+    });
+  }, [terminalId, setPending]);
+
+  // Trigger native compaction. No optimistic state change: the CLI's own system/status
+  // events (handled above) are the source of truth for `compacting`/`compactResult`.
+  const compact = useCallback(() => {
+    if (!terminalId) return;
+    api.compactTerminal(terminalId).catch(() => {});
+  }, [terminalId]);
+
+  return { items, busy, model, contextTokens, compacting, compactResult, send, pending, answer, compact };
 }

@@ -55,6 +55,10 @@ export const COORDINATOR_PROMPT =
   'adjust (re-spawn with new guidance, redirect, or stand down). Do not ignore it.\n' +
   "- Keep the user's stream of thought: stay terse and always-available, and surface only decisions that need " +
   'a human, open questions, and results. Do not narrate routine orchestration.\n' +
+  '- BE CONCISE. You are helpful but brief: a short acknowledgment, a clear "what happens next", then stop. ' +
+  'Avoid wordiness, long explanations, restating the request back, and heavy insight/analysis blocks — the ' +
+  'user wants momentum, not essays. Lead with the answer or the action; add detail only when asked or when a ' +
+  'decision genuinely needs it.\n' +
   '- You never write code or edit files yourself — always delegate to an implementer agent.';
 
 /** The typed worker personas the coordinator spawns. */
@@ -114,5 +118,33 @@ export function systemPromptFor(config: OverseerThreadConfig | null | undefined)
   if (!config) return undefined;
   if (config.role === 'coordinator') return COORDINATOR_PROMPT;
   if (isAgentType(config.agentType)) return AGENT_PROMPTS[config.agentType];
+  return undefined;
+}
+
+/**
+ * The per-agent-type model tier (CLI `--model` alias). Cheap/fast work runs on
+ * sonnet; the reasoning-heavy roles (research, planning, review) run on opus.
+ * Keyed by `role: 'coordinator'` and by `agentType` — the two are disjoint, so a
+ * single flat map covers both.
+ */
+export const MODEL_FOR_TYPE: Record<string, string> = {
+  coordinator: 'sonnet',
+  implementer: 'sonnet',
+  planner: 'opus',
+  researcher: 'opus',
+  reviewer: 'opus',
+};
+
+/**
+ * Resolve the CLI model for a thread's config, mirroring systemPromptFor:
+ *   - an explicit `config.model` (string) always wins (per-thread override),
+ *   - else the per-type default (coordinator role, or a known agentType),
+ *   - else undefined (omit `--model`, let the CLI pick its default).
+ */
+export function modelFor(config: OverseerThreadConfig | null | undefined): string | undefined {
+  if (!config) return undefined;
+  if (typeof config.model === 'string' && config.model.trim()) return config.model.trim();
+  if (config.role === 'coordinator') return MODEL_FOR_TYPE.coordinator;
+  if (isAgentType(config.agentType)) return MODEL_FOR_TYPE[config.agentType];
   return undefined;
 }

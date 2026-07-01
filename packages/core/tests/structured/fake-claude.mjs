@@ -20,6 +20,18 @@ rl.on('line', (line) => {
       send({ type: 'control_request', request_id: 'req-2', request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [{ question: 'Pick one', header: 'Choice', options: ['A', 'B'], multiSelect: false }] }, tool_use_id: 'tu-2' } });
       return;
     }
+    if (text === 'TRIGGER_SCHEDULE') {
+      // A wake-scheduler tool call (ScheduleWakeup) — auto-allowed like any other
+      // non-escalating tool; the generic control_response branch below reports it.
+      send({ type: 'control_request', request_id: 'req-3', request: { subtype: 'can_use_tool', tool_name: 'ScheduleWakeup', input: { delaySeconds: 60, reason: 'watching CI run', prompt: 'continue' }, tool_use_id: 'tu-3' } });
+      return;
+    }
+    if (text === 'TRIGGER_CRON') {
+      // CronCreate — the OTHER wake-scheduler tool; unlike ScheduleWakeup it has no
+      // `reason` field, just a cron expression.
+      send({ type: 'control_request', request_id: 'req-4', request: { subtype: 'can_use_tool', tool_name: 'CronCreate', input: { cron: '*/5 * * * *', prompt: 'poll' }, tool_use_id: 'tu-4' } });
+      return;
+    }
     send({ type: 'assistant', message: { content: [{ type: 'text', text: 'echo:' + text }] } });
     send({ type: 'result', subtype: 'success', is_error: false });
   } else if (msg.type === 'control_request') {

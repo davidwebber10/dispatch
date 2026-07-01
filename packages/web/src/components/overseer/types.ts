@@ -6,8 +6,20 @@
 // data.ts — the store stays a plain state bag.
 
 export type AgentType = 'planner' | 'implementer' | 'researcher' | 'reviewer';
-export type ThreadStatus = 'working' | 'waiting' | 'done' | 'error';
-export type MessageKind = 'user' | 'overseer' | 'note' | 'image';
+// 'scheduled' = a LIVE thread that ended its turn by calling a wake-scheduler tool
+// (ScheduleWakeup/CronCreate) — it's dormant and will resume on its own, so it renders
+// inside the live rail (see live.ts groupByMission) with distinct dormant styling rather
+// than being mistaken for 'done'. Deliberately not named 'waiting': that word already means
+// two different things elsewhere (persisted terminals.status='waiting' = idle/back-at-
+// prompt; this ThreadStatus='waiting' = "needs your input") — 'scheduled' needs neither a
+// human nor a "done" read; it's just asleep.
+export type ThreadStatus = 'working' | 'waiting' | 'done' | 'error' | 'queued' | 'scheduled';
+export type MessageKind = 'user' | 'overseer' | 'note' | 'image' | 'agentCard';
+
+// The coordinator tool call an 'agentCard' StreamMessage was built from (spec: agent-card
+// increment). Mirrors the agency-mcp tool names 1:1 so the card's action label reads as a
+// plain-English past tense of the tool the coordinator just called.
+export type AgentCardAction = 'spawned' | 'queued' | 'messaged' | 'started';
 
 // TYPE registry — phosphor class + display label per agent type.
 export const AGENT_TYPE = {
@@ -17,12 +29,17 @@ export const AGENT_TYPE = {
   reviewer:    { icon: 'ph-seal-check',       label: 'reviewer' },
 } as const;
 
-// STATUS registry — dot color + label per status.
+// STATUS registry — dot color + label per status. `scheduled` deliberately reuses the calm
+// `--ts` secondary-text color (NOT `--yellow`, which means "needs you") — muted, but a step
+// brighter than `--tt` (queued's color) so a dormant live agent doesn't read identically to
+// an unlaunched one.
 export const STATUS = {
-  working: { color: 'var(--acc)',    label: 'working' },
-  waiting: { color: 'var(--yellow)', label: 'waiting on you' },
-  done:    { color: 'var(--ts)',     label: 'done' },
-  error:   { color: 'var(--red)',    label: 'error' },
+  working:   { color: 'var(--acc)',    label: 'working' },
+  waiting:   { color: 'var(--yellow)', label: 'waiting on you' },
+  done:      { color: 'var(--ts)',     label: 'done' },
+  error:     { color: 'var(--red)',    label: 'error' },
+  queued:    { color: 'var(--tt)',     label: 'queued' },
+  scheduled: { color: 'var(--ts)',     label: 'scheduled' },
 } as const;
 
 // An ephemeral typed agent thread (factory: th(type,id,action,status,elapsed,progress)).
@@ -39,12 +56,15 @@ export interface AgentThread {
   isWorking: boolean;
   isWaiting: boolean;
   isDone: boolean;
+  isScheduled: boolean;       // dormant — ended its turn on a wake-scheduler tool, will resume on its own
   dotAnim: string;            // "breathe var(--pulse) ease-in-out infinite" | "none"
   progressW: string;          // "62%"
   showProgress: boolean;      // true only when status==='working'
   metaRight: string;          // working→elapsed, waiting→"held "+elapsed, else elapsed
   key: string;                // type+id, e.g. "implementer4"
   dlabel?: string;            // added later: "implementer #4 · Auth refactor"
+  model?: string;             // terminal.config.model, e.g. "sonnet" / "opus" — data plumbing only, WorkRail renders it
+  totalTokens?: number;       // terminal.config.totalTokens — data plumbing only, WorkRail renders it
 }
 
 // A finished thread, collapsed (factory: outc(type,id,title,meta)).
@@ -55,13 +75,16 @@ export interface Outcome {
   meta: string;               // "PR #218 · +24 −6" / "locked in · 8m ago"
   typeLabel: string;          // 'implementer'
   key: string;                // "o"+type+id
+  model?: string;             // terminal.config.model, e.g. "sonnet" / "opus" — data plumbing only, WorkRail renders it
+  totalTokens?: number;       // terminal.config.totalTokens — data plumbing only, WorkRail renders it
 }
 
-// A mission groups threads + outcomes (factory: mission(name,summary,threads,outcomes)).
+// A mission groups threads + outcomes (factory: mission(name,summary,threads,outcomes,queued)).
 export interface Mission {
   name: string;               // "Auth refactor"
   summary: string;            // "2 live · 1 done"
   threads: AgentThread[];
+  queued: AgentThread[];      // workers accepted but not yet launched (status==='queued')
   outcomes: Outcome[];
   hasOutcomes: boolean;
   key: string;                // === name
@@ -89,6 +112,18 @@ export interface StreamMessage {
   // failure is VISIBLE (mirrors the agent chat's red "Failed to send message" footer).
   // Optional so the m() factory and every existing StreamMessage stay valid without change.
   isError?: boolean;
+  // agentCard (kind 'agentCard') — the coordinator called spawn_agent/queue_agent/
+  // message_agent/start_agent on one of its own typed agents (see live.convItemsToStream,
+  // which pairs the tool_use + tool_result ConvItems into this). Rendered as a tappable
+  // AgentCard (overseer/components/AgentCard.tsx) instead of plain text; tapping it opens
+  // that agent's lightbox via drillInto(agentId). agentType/agentMission are undefined for
+  // message_agent/start_agent when the originating spawn/queue call isn't in view.
+  isAgentCard?: boolean;
+  agentId?: string;
+  agentName?: string;
+  agentType?: AgentType;
+  agentMission?: string;
+  agentAction?: AgentCardAction;
 }
 
 // An action button on a need card (factory: btn(label, primary)).
@@ -121,7 +156,6 @@ export interface Ribbon {
   done: number;
   needs: number;              // = visible (unresolved) needs count
   hasNeeds: boolean;
-  moodText: string;
 }
 
 // Drill-in activity step (built in detail()).

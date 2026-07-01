@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { CaretDoubleDown, Paperclip, CaretUp, CaretDown, CaretLeft, CaretRight, ArrowElbowDownLeft, MagnifyingGlass, X, type Icon } from '@phosphor-icons/react';
+import { CaretDoubleDown, CaretUp, CaretDown, CaretLeft, CaretRight, ArrowElbowDownLeft, MagnifyingGlass, X, type Icon } from '@phosphor-icons/react';
 import { Spinner } from '../common/Spinner';
 import '@xterm/xterm/css/xterm.css';
 import { openTerminalSocket } from '../../api/terminal-socket';
@@ -11,6 +11,9 @@ import type { Terminal } from '../../api/types';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useDraft } from '../../hooks/useDraft';
 import { useSettings } from '../../stores/settings';
+import { useDictation } from '../../hooks/useDictation';
+import { DictationControl } from '../dictation/DictationControl';
+import { InputActionsMenu } from '../dictation/InputActionsMenu';
 
 type SoftKey = { label: string; seq: string; title?: string; Icon?: Icon };
 // Slash commands live in a searchable sheet behind the "/" key. Run-commands end
@@ -91,6 +94,11 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
   const [atBottom, setAtBottom] = useState(true);
   const [loading, setLoading] = useState(true);
   const [mobileInput, setMobileInput, clearMobileInput] = useDraft(terminalId);
+  const termFileInputRef = useRef<HTMLInputElement>(null);
+  const sttConfigured = useSettings((s) => !!s.sttProvider && !!s.sttModel && !!s.sttSecretName);
+  const dictation = useDictation((text) => {
+    setMobileInput((mobileInput ? mobileInput + ' ' : '') + text);
+  });
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashQuery, setSlashQuery] = useState('');
   const isMobile = useIsMobile();
@@ -449,19 +457,26 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
             onSubmit={(e) => { e.preventDefault(); sendMobileInput(); }}
             style={{ display: 'flex', gap: 8, padding: '2px 8px 8px', background: 'var(--color-pane)', flexShrink: 0, alignItems: 'center', paddingBottom: 'calc(8px + env(safe-area-inset-bottom))' }}
           >
-            <label title="Attach image" style={{ height: 40, width: 40, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 12, color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
-              <Paperclip size={20} weight="regular" />
-              <input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => { onFiles(e.target.files); e.currentTarget.value = ''; }} />
-            </label>
-            <input
-              value={mobileInput}
-              onChange={(e) => setMobileInput(e.target.value)}
-              placeholder="Type a message or command…"
-              autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck={false}
-              enterKeyHint="send"
-              /* 16px font avoids iOS auto-zoom on focus */
-              style={{ flex: 1, minWidth: 0, height: 40, padding: '0 13px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 12, color: 'var(--color-text-primary)', fontSize: 16 }}
+            <InputActionsMenu
+              onAddFile={() => termFileInputRef.current?.click()}
+              onDictate={() => void dictation.start()}
+              dictateDisabled={!sttConfigured}
+              dictateHint="Set up in Settings → Transcription"
             />
+            <input ref={termFileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => { onFiles(e.target.files); e.currentTarget.value = ''; }} />
+            {dictation.state !== 'idle' ? (
+              <DictationControl dictation={dictation} />
+            ) : (
+              <input
+                value={mobileInput}
+                onChange={(e) => setMobileInput(e.target.value)}
+                placeholder="Type a message or command…"
+                autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck={false}
+                enterKeyHint="send"
+                /* 16px font avoids iOS auto-zoom on focus */
+                style={{ flex: 1, minWidth: 0, height: 40, padding: '0 13px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 12, color: 'var(--color-text-primary)', fontSize: 16 }}
+              />
+            )}
             <button type="submit" style={{ height: 40, padding: '0 18px', flexShrink: 0, background: 'var(--color-accent)', color: '#06140B', border: 'none', borderRadius: 12, fontWeight: 600, fontSize: 15, cursor: 'pointer' }}>Send</button>
           </form>
         </>

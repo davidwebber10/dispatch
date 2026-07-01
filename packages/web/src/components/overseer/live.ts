@@ -15,6 +15,7 @@ import type { ConvItem, PendingPermission, PermissionQuestion, Terminal } from '
 import { btn, m, mission as makeMission, outc, th } from './data';
 import {
   AGENT_TYPE,
+  type AgentCardAction,
   type AgentThread,
   type AgentType,
   type Mission,
@@ -46,6 +47,17 @@ function missionName(t: Terminal): string {
   return typeof mn === 'string' && mn.trim() ? mn.trim() : 'General';
 }
 
+/**
+ * The agent's OWN distinct display name — `terminal.label`, the same string the
+ * WorkerLightbox shows as its title (see overseer/components/WorkerLightbox.tsx). This is
+ * per-agent, unlike `missionName` which every agent in a group shares. Falls back to the
+ * type label (e.g. "implementer") when a worker was spawned without an explicit name.
+ */
+function agentName(t: Terminal, type: AgentType): string {
+  const l = typeof t.label === 'string' ? t.label.trim() : '';
+  return l || AGENT_TYPE[type].label;
+}
+
 /** A stable small display number for "#id" derived from the terminal id (cosmetic). */
 function displayNum(id: string): number {
   let h = 0;
@@ -61,6 +73,18 @@ function elapsedSince(iso?: string): string {
   if (min < 1) return '0m';
   if (min < 60) return `${min}m`;
   return `${Math.floor(min / 60)}h`;
+}
+
+/**
+ * The best "last active" instant (epoch ms) for ordering FINISHED work newest-first:
+ * the live activity stamp when present, else the archive time, else creation. Returns 0
+ * for an absent/unparseable stamp so those rows sink to the bottom rather than NaN-poison
+ * the sort.
+ */
+function lastActiveMs(t: Terminal): number {
+  const iso = t.lastActivityAt || t.archivedAt || t.createdAt;
+  const ms = iso ? new Date(iso).getTime() : NaN;
+  return Number.isFinite(ms) ? ms : 0;
 }
 
 /**
@@ -86,12 +110,24 @@ export function isManagedWorker(t: Terminal): boolean {
  */
 export function mapStatus(t: Terminal, s?: LiveStatus): ThreadStatus {
   if (t.archivedAt) return 'done';
+  // `coarse` is the persisted enum (string-wide, so it can hold values TerminalStatus
+  // doesn't yet type — e.g. 'queued', set by the backend for an accepted-but-unlaunched
+  // worker). A queued worker has no live thread events, so surface it ahead of the rich
+  // threadStatus checks.
+  const coarse = s?.status ?? t.status;
+  if (coarse === 'queued') return 'queued';
+  // Same reasoning as 'queued' above: 'scheduled' is set directly on the persisted status by
+  // StatusService.markScheduled (see structured/manager.ts's 'scheduled' emit) and needs to
+  // win BEFORE the richer threadStatus checks below — it isn't 'idle'/'done' even though the
+  // thread just settled a turn, and it isn't 'waiting' (that means needs_input, which would
+  // wrongly surface it in the Needs-you zone via needsFromThreads).
+  if (coarse === 'scheduled') return 'scheduled';
   const rich = s?.threadStatus;
   if (rich === 'working' || rich === 'starting') return 'working';
   if (rich === 'needs_input') return 'waiting';
   if (rich === 'idle' || rich === 'done') return 'done';
   if (rich === 'error') return 'error';
-  switch (s?.status ?? t.status) {
+  switch (coarse) {
     case 'working':
       return 'working';
     case 'needs_input':
@@ -110,18 +146,34 @@ export function terminalToAgentThread(t: Terminal, s?: LiveStatus): AgentThread 
   const type = asAgentType(t.config?.agentType);
   const status = mapStatus(t, s);
   const id = displayNum(t.id);
-  const action = (s?.activity && s.activity.trim()) || missionName(t) || AGENT_TYPE[type].label;
+  const name = agentName(t, type);
+  // The chip's identity line shows THIS agent's own name — never the mission (that is the
+  // group header). A live activity string, when we have one, is more specific so it wins;
+  // absent that, we fall back to the agent name, not the shared mission.
+  const action = (s?.activity && s.activity.trim()) || name;
   const elapsed = elapsedSince(t.createdAt);
   // No real progress signal in incr. 1 — show a steady mid fill while working.
   const base = th(type, id, action, status, elapsed, status === 'working' ? 50 : 100);
-  return { ...base, key: t.id, dlabel: `${AGENT_TYPE[type].label} #${id} · ${missionName(t)}` };
+  // The model the agent was spawned with (e.g. "sonnet"/"opus"), persisted on the terminal at
+  // spawn time — plain data plumbing so WorkRail can render it; undefined for older terminals
+  // spawned before this field existed.
+  const model = typeof t.config?.model === 'string' ? t.config.model : undefined;
+  // The terminal's cumulative token usage, persisted into config once its turn settles
+  // (see SessionService.persistAgentTokenUsage) — same plain data-plumbing pattern as
+  // `model`. Undefined for a still-working agent or one that finished before this field
+  // existed; WorkRail only renders it when present.
+  const totalTokens = typeof t.config?.totalTokens === 'number' ? t.config.totalTokens : undefined;
+  // dlabel is the drill-in / data-label name; keep it the agent's own name so the rail and
+  // the opened WorkerLightbox agree on identity.
+  return { ...base, key: t.id, dlabel: name, model, totalTokens };
 }
 
 function terminalToOutcome(t: Terminal): Outcome {
   const at = terminalToAgentThread(t);
-  const title = missionName(t) !== 'General' ? missionName(t) : at.action || `${at.typeLabel} task`;
+  // Outcome cards are entries too → title with the agent's own name, not the mission.
+  const title = at.dlabel || at.action || `${at.typeLabel} task`;
   const meta = at.elapsed ? `done · ${at.elapsed} ago` : 'done';
-  return { ...outc(at.type, at.id, title, meta), key: t.id };
+  return { ...outc(at.type, at.id, title, meta), key: t.id, model: at.model, totalTokens: at.totalTokens };
 }
 
 function summaryText(live: number, done: number): string {
@@ -154,16 +206,90 @@ function imageMessage(imageUrl: string, imageAlt: string | undefined, i: string,
   };
 }
 
+/**
+ * agency-mcp tool names (packages/core/src/overseer/agency-mcp.ts) whose tool_use/
+ * tool_result PAIR gets turned into an AgentCard instead of being dropped. Each returns
+ * `{ agentId, ... }` on success (verified against the tool implementations) — spawn/queue
+ * also return `label` (the resolved display name) and an optional `mission`; message/start
+ * return only `{ ok, agentId }`, so their card's name/type/mission are backfilled from the
+ * `knownAgents` map built while walking earlier spawn/queue results in the same timeline.
+ */
+const AGENT_TOOL_ACTION: Record<string, AgentCardAction> = {
+  spawn_agent: 'spawned',
+  queue_agent: 'queued',
+  message_agent: 'messaged',
+  start_agent: 'started',
+};
+
+/** An 'agentCard' ConvItem pair → an agentCard StreamMessage. Mirrors imageMessage's shape:
+ * constructed inline (not via the m() factory) so it stays disjoint from data.ts. */
+function agentCardMessage(
+  agentId: string,
+  name: string,
+  agentType: AgentType | undefined,
+  mission: string | undefined,
+  action: AgentCardAction,
+  key: string,
+): StreamMessage {
+  return {
+    kind: 'agentCard',
+    who: null,
+    text: '',
+    time: '',
+    key,
+    isUser: false,
+    isOverseer: false,
+    isNote: false,
+    isAgentCard: true,
+    agentId,
+    agentName: name,
+    agentType,
+    agentMission: mission,
+    agentAction: action,
+  };
+}
+
 /** The coordinator conversation (ConvItem timeline) → the Overseer message stream. */
 export function convItemsToStream(items: ConvItem[]): StreamMessage[] {
   const out: StreamMessage[] = [];
+  // Pairs an agent tool_use (by toolId) with its later tool_result — tool calls always
+  // precede their result in the timeline, so a single forward pass suffices.
+  const pendingCalls = new Map<string, { toolName: string; args: Record<string, unknown> }>();
+  // agentId -> the name/type/mission resolved from a successful spawn_agent/queue_agent in
+  // THIS window, so a later message_agent/start_agent card (whose args are just agentId+text)
+  // can still show a real name/icon instead of a bare id.
+  const knownAgents = new Map<string, { name: string; agentType: AgentType; mission?: string }>();
+
   items.forEach((it, i) => {
     const key = it.uuid ?? `c${i}`;
     if (it.kind === 'user' && it.text?.trim()) out.push(m('user', 'You', it.text, '', key));
     else if (it.kind === 'assistant' && it.text?.trim()) out.push(m('overseer', 'Dispatch', it.text, '', key));
     else if (it.kind === 'image' && it.imageUrl) out.push(imageMessage(it.imageUrl, it.imageAlt, key, it.imageFromUser === true));
-    // thinking/tool/tool-result/result/system are internal: the Overseer does no tool
-    // work and rich escalations are surfaced as Needs in incr. 3, not in this stream.
+    else if (it.kind === 'tool' && it.toolId && it.toolName && AGENT_TOOL_ACTION[it.toolName]) {
+      let args: Record<string, unknown> = {};
+      try { args = it.toolInput ? JSON.parse(it.toolInput) : {}; } catch { /* still streaming / malformed input */ }
+      pendingCalls.set(it.toolId, { toolName: it.toolName, args });
+    } else if (it.kind === 'tool-result' && it.toolId && !it.isError) {
+      const call = pendingCalls.get(it.toolId);
+      if (!call) return; // no matching tool_use in this window (e.g. trimmed backlog)
+      let result: Record<string, unknown> = {};
+      try { result = it.text ? JSON.parse(it.text) : {}; } catch { return; } // not a JSON tool result
+      const agentId = typeof result.agentId === 'string' ? result.agentId : undefined;
+      if (!agentId) return;
+      const action = AGENT_TOOL_ACTION[call.toolName];
+      if (call.toolName === 'spawn_agent' || call.toolName === 'queue_agent') {
+        const name = (typeof result.label === 'string' && result.label.trim()) || 'Agent';
+        const agentType = asAgentType(call.args.agentType);
+        const missionName = typeof result.mission === 'string' && result.mission.trim() ? result.mission.trim() : undefined;
+        knownAgents.set(agentId, { name, agentType, mission: missionName });
+        out.push(agentCardMessage(agentId, name, agentType, missionName, action, `ac${key}`));
+      } else {
+        const known = knownAgents.get(agentId);
+        out.push(agentCardMessage(agentId, known?.name ?? agentId, known?.agentType, known?.mission, action, `ac${key}`));
+      }
+    }
+    // thinking/result/system are internal: the Overseer does no tool work and rich
+    // escalations are surfaced as Needs in incr. 3, not in this stream.
   });
   return out;
 }
@@ -205,23 +331,32 @@ export function groupByMission(
   return order.map((name) => {
     const g = groups.get(name)!;
     const threads: AgentThread[] = [];
-    const outcomes: Outcome[] = [];
+    const queued: AgentThread[] = [];
+    const doneTerminals: Terminal[] = [];
     let live = 0;
-    let done = 0;
     for (const t of g.live) {
-      if (mapStatus(t, statuses[t.id]) === 'done') {
-        outcomes.push(terminalToOutcome(t));
-        done++;
+      const st = mapStatus(t, statuses[t.id]);
+      if (st === 'queued') {
+        // Accepted but not yet launched — its own bucket (not counted as live/done).
+        queued.push(terminalToAgentThread(t, statuses[t.id]));
+      } else if (st === 'done') {
+        doneTerminals.push(t);
       } else {
         threads.push(terminalToAgentThread(t, statuses[t.id]));
         live++;
       }
     }
-    for (const t of g.archived) {
-      outcomes.push(terminalToOutcome(t)); // archived → mapStatus()='done' (archivedAt set)
-      done++;
-    }
-    return makeMission(name, summaryText(live, done), threads, outcomes);
+    // archived → mapStatus()='done' (archivedAt set); folds in with the just-finished live rows.
+    doneTerminals.push(...g.archived);
+    // Finished work sorts newest-active first so the freshest outcome sits at the top of the
+    // group (LIVE `threads` are left in their original order — the Live tab is untouched).
+    doneTerminals.sort((a, b) => lastActiveMs(b) - lastActiveMs(a));
+    const outcomes = doneTerminals.map(terminalToOutcome);
+    // `doneFreshness` = the group's most-recent finished stamp (0 if none). Additive tag the
+    // Done tab reads to float the freshest MISSION to the top without reordering the shared
+    // Mission[] (which would disturb the Live tab) — see WorkRail's Done branch.
+    const doneFreshness = doneTerminals.length ? lastActiveMs(doneTerminals[0]) : 0;
+    return { ...makeMission(name, summaryText(live, doneTerminals.length), threads, outcomes, queued), doneFreshness };
   });
 }
 

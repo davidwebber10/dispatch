@@ -15,5 +15,13 @@ export function aggregateSessionStatus(terminalStatuses: string[]): SessionStatu
   if (terminalStatuses.includes('needs_input')) return 'needs_input';
   if (terminalStatuses.includes('working')) return 'working';
   if (terminalStatuses.includes('error')) return 'error';
+  // A 'scheduled' terminal (dormant — mid-turn on a ScheduleWakeup/CronCreate wait, see
+  // structured/manager.ts) hasn't finished, it's just not running right now. SessionStatus
+  // has no dedicated value for that nuance (unlike the richer Overseer ThreadStatus this
+  // codebase also has), and widening this shared type ripples into every consumer of it —
+  // out of scope here. Folding it into 'working' keeps it ranked below a truly active/
+  // needs_input terminal while stopping it from defaulting to 'waiting', which would
+  // misreport the session as idle/done — the exact bug this feature exists to fix.
+  if (terminalStatuses.includes('scheduled')) return 'working';
   return 'waiting';
 }

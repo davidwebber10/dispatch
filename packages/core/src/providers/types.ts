@@ -78,6 +78,8 @@ export interface SessionProvider {
    * `resumeSessionId` appends `-r <id>` to resume an existing claude conversation
    * (used to revive a structured thread after a daemon restart) while keeping all
    * the structured stream-json flags + persona + MCP wiring.
+   * `model` pins the CLI model for this thread (e.g. a per-agent-type tier) via
+   * `--model <alias>`; omitted flag means the CLI's default model.
    */
-  buildStructuredCommand?(args: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string }): { command: string; args: string[] };
+  buildStructuredCommand?(args: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string; model?: string }): { command: string; args: string[] };
 }

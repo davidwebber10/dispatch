@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SortableList } from '../common/SortableList';
-import { FolderOpen, CaretRight } from '@phosphor-icons/react';
+import { FolderOpen, CaretRight, Lightning, TerminalWindow, ChatCircle } from '@phosphor-icons/react';
 import type { Session, Terminal, AgentSchedule } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
 import { projectIndicator } from '../../lib/status';
@@ -12,7 +12,7 @@ import { StatusDot } from '../common/StatusDot';
 import { Spinner } from '../common/Spinner';
 import { ConfirmModal } from '../common/ConfirmModal';
 import { providerColor, fileVisual } from '../common/typeIcons';
-import { useSettings, type Density } from '../../stores/settings';
+import { useSettings, useDispatchName, type Density } from '../../stores/settings';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { timeAgo } from '../../lib/time';
 import { NewTabMenu } from './NewTabMenu';
@@ -148,6 +148,14 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
   const padY = isMobile ? 15 : DENSITY[density].rowY;
   const working = loading || tab.status === 'working';
   const needsAttn = tab.status === 'needs_input' || tab.status === 'error';
+  // A structured (stream-json) Claude thread is the chat surface (ChatView) → a chat
+  // bubble; PTY Claude / Codex / shell are terminal-backed → one TerminalWindow glyph.
+  // Both are tinted by provider color (blue/green/neutral) so the kind still reads at a
+  // glance; browser/notes keep a dot. Every leading glyph sits in a fixed-width slot
+  // (iconSlot) so labels line up no matter which glyph — or dot — a row shows.
+  const structuredClaude = tab.type === 'claude-code' && (tab.config as { transport?: string })?.transport === 'structured';
+  const isTerminalThread = !structuredClaude && (tab.type === 'claude-code' || tab.type === 'codex' || tab.type === 'shell');
+  const iconSlot = isMobile ? 18 : 15;
   // On mobile, the active row's highlight fades out a couple seconds after the
   // thread list (re)appears (fadeKey bumps), so the list reads as clean.
   const [dimmed, setDimmed] = useState(false);
@@ -179,9 +187,15 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
         WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none', WebkitTapHighlightColor: 'transparent',
       }}
     >
-      {tab.type === 'file'
-        ? (() => { const fv = fileVisual(tab.label); return <fv.Icon size={isMobile ? 18 : 15} weight="fill" color={fv.color} style={{ flexShrink: 0 }} />; })()
-        : <span style={{ width: dot, height: dot, borderRadius: '50%', background: color, flexShrink: 0 }} />}
+      <span style={{ width: iconSlot, height: iconSlot, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        {tab.type === 'file'
+          ? (() => { const fv = fileVisual(tab.label); return <fv.Icon size={iconSlot} weight="fill" color={fv.color} />; })()
+          : structuredClaude
+            ? <ChatCircle size={isMobile ? 17 : 14} weight="fill" color={color} />
+            : isTerminalThread
+              ? <TerminalWindow size={isMobile ? 17 : 14} weight="fill" color={color} />
+              : <span style={{ width: dot, height: dot, borderRadius: '50%', background: color }} />}
+      </span>
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tab.label}</span>
       <span style={{ flexShrink: 0, marginLeft: 8, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
         {isMobile && (
@@ -252,8 +266,9 @@ function SectionHeader({ label, count, prominent, children }: { label: string; c
   );
 }
 
-export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSelectAgent, onNewAgent, onBrowseFiles, fadeActiveKey, highlightTabId, showManaged = false }: { session: Session; active: boolean; open?: boolean; onToggle?: () => void; onSelectTab: (id: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void; onBrowseFiles?: (projectId: string) => void; fadeActiveKey?: number; highlightTabId?: string | null; showManaged?: boolean }) {
+export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSelectAgent, onNewAgent, onBrowseFiles, onDispatch, fadeActiveKey, highlightTabId, showManaged = false }: { session: Session; active: boolean; open?: boolean; onToggle?: () => void; onSelectTab: (id: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void; onBrowseFiles?: (projectId: string) => void; onDispatch?: (projectId: string) => void; fadeActiveKey?: number; highlightTabId?: string | null; showManaged?: boolean }) {
   const allAgents = useAgents((s) => s.schedules);
+  const dispatchName = useDispatchName();
   const agents = allAgents.filter((a) => a.projectId === session.id);
   const agentSel = useAgents((s) => s.selectedId);
   const agentFocused = useAgentUI((s) => s.focused);
@@ -410,6 +425,27 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
       </div>
       <div style={{ display: 'grid', gridTemplateRows: isOpen ? '1fr' : '0fr', transition: 'grid-template-rows 0.12s ease' }}>
         <div style={{ overflow: 'hidden', minHeight: 0 }}>
+          {/* Dispatch coordinator — desktop opens it as a tab; mobile as a full-screen overlay. */}
+          {onDispatch && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onDispatch(session.id); }}
+              title={`Open ${dispatchName} coordinator`}
+              style={{
+                display: 'flex', alignItems: 'center', gap: isMobile ? 11 : 8,
+                margin: isMobile ? '6px 12px 10px' : '4px 9px 6px',
+                padding: isMobile ? '14px 12px' : '7px 9px',
+                background: 'var(--color-elevated)',
+                border: '1px solid var(--color-border)',
+                borderRadius: isMobile ? 12 : 7,
+                color: 'var(--color-text-secondary)', font: `600 ${isMobile ? 16 : 12.5}px var(--font-sans)`,
+                textAlign: 'left', cursor: 'pointer',
+              }}
+            >
+              <Lightning size={isMobile ? 20 : 15} weight="fill" style={{ flexShrink: 0 }} />
+              <span style={{ flex: 1 }}>Open {dispatchName}</span>
+              <CaretRight size={isMobile ? 16 : 13} style={{ flexShrink: 0, opacity: 0.75 }} />
+            </button>
+          )}
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, marginTop: isMobile ? 6 : 4, marginBottom: 6, padding: isMobile ? '0 12px' : '0 9px', borderBottom: '1px solid var(--color-border)', background: 'rgba(255,255,255,0.03)' }}>
             <TabPill label="Threads" count={threadItems.length} active={projTab === 'threads'} mobile={isMobile} onClick={() => setProjTab('threads')} />
             <TabPill label="Automations" count={agents.length} active={projTab === 'agents'} mobile={isMobile} onClick={() => setProjTab('agents')} />

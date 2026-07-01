@@ -21,7 +21,7 @@ import { api, type ContentBlock } from '../../api/client';
 import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
 import { useThreadStatus } from '../../stores/threadStatus';
-import { useStructuredChat } from '../tabs/chat/useStructuredChat';
+import { useStructuredChat, type CompactResult } from '../tabs/chat/useStructuredChat';
 import type { PendingPermission, Terminal } from '../../api/types';
 import { CANNED, m } from './data';
 import { convItemsToStream, groupByMission, isManagedWorker, mapStatus, needsFromThreads } from './live';
@@ -46,6 +46,10 @@ interface OverseerState {
   coordinatorProject: string | null; // the session the coordinator belongs to
   coordinatorStream: StreamMessage[]; // pushed in by useCoordinatorSync()
   coordinatorBusy: boolean; // coordinator turn in flight; pushed in by useCoordinatorSync()
+  coordinatorContextTokens?: number; // context fill for the ContextIndicator; pushed in by useCoordinatorSync()
+  coordinatorCompacting: boolean; // a native /compact is in progress on the coordinator thread
+  coordinatorCompactResult: CompactResult | null; // outcome of the coordinator's last compaction attempt
+  coordinatorModel?: string; // resolved model name for the coordinator thread
   sendError: string | null; // last directive send that FAILED (POST rejected); surfaced inline, cleared on next send
   ensuring: boolean; // a find-or-create coordinator request is in flight
   resolved: string[]; // optimistically dismissed need ids
@@ -63,9 +67,13 @@ interface OverseerState {
   setComposer: (text: string) => void;
   /** Buffer an attached image block to ride along with the next directive send. */
   addComposerImage: (block: ContentBlock) => void;
+  /** Drop a staged composer image by its buffer index (its × in the thumbnail strip). */
+  removeComposerImage: (index: number) => void;
   sendDirective: () => void;
   needAction: (id: string, label: string) => void;
   doDelegate: () => void;
+  /** Launch a QUEUED worker now (status='queued' → live), then refresh the rail. */
+  startAgent: (id: string) => void;
   setMobileTab: (tab: MobileTab) => void;
   goNeeds: () => void;
 
@@ -74,6 +82,10 @@ interface OverseerState {
   ensureForProject: (sessionId: string | null) => void;
   setCoordinatorStream: (stream: StreamMessage[]) => void;
   setCoordinatorBusy: (busy: boolean) => void;
+  /** Pushed in by useCoordinatorSync() from the same useStructuredChat() call as the stream/busy above. */
+  setCoordinatorContextInfo: (info: { contextTokens?: number; compacting: boolean; compactResult: CompactResult | null; model?: string }) => void;
+  /** Trigger native compaction on the coordinator thread (mirrors useStructuredChat's own `compact`). */
+  compactCoordinator: () => void;
   setPending: (terminalId: string, pending: PendingPermission | null) => void;
   setArchivedTerminals: (projectId: string, terminals: Terminal[]) => void;
   /** Clean slate: archive the coordinator + its agents and start a fresh Dispatch conversation. */
@@ -96,6 +108,10 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   coordinatorProject: null,
   coordinatorStream: [],
   coordinatorBusy: false,
+  coordinatorContextTokens: undefined,
+  coordinatorCompacting: false,
+  coordinatorCompactResult: null,
+  coordinatorModel: undefined,
   sendError: null,
   ensuring: false,
   resolved: [],
@@ -119,6 +135,9 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   setComposer: (text) => set({ composer: text }),
 
   addComposerImage: (block) => set((s) => ({ composerImages: [...s.composerImages, block] })),
+
+  removeComposerImage: (index) =>
+    set((s) => ({ composerImages: s.composerImages.filter((_, i) => i !== index) })),
 
   sendDirective: () => {
     const text = (get().composer || '').trim();
@@ -191,6 +210,16 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       .catch(() => { /* ignore; the next refetch reconciles */ });
   },
 
+  startAgent: (id) => {
+    // Launch a queued worker, then reload the project's threads so it moves out of the
+    // Queued bucket into live work (mirrors doDelegate's create→reload flow).
+    const sessionId = get().coordinatorProject ?? useProjects.getState().activeId;
+    api
+      .startTerminal(id)
+      .then(() => { if (sessionId) return useTabs.getState().loadTabs(sessionId); })
+      .catch(() => { /* ignore; the next refetch reconciles */ });
+  },
+
   setMobileTab: (tab) => set({ mobileTab: tab }),
 
   // On desktop the needs zone is already visible (no-op visually); on mobile this
@@ -207,6 +236,10 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       coordinatorId: null,
       coordinatorStream: [],
       coordinatorBusy: false,
+      coordinatorContextTokens: undefined,
+      coordinatorCompacting: false,
+      coordinatorCompactResult: null,
+      coordinatorModel: undefined,
       sendError: null,
       resolved: [],
       pendingByTerminal: {},
@@ -229,6 +262,19 @@ export const useOverseer = create<OverseerState>((set, get) => ({
 
   setCoordinatorBusy: (busy) => set({ coordinatorBusy: busy }),
 
+  setCoordinatorContextInfo: (info) =>
+    set({
+      coordinatorContextTokens: info.contextTokens,
+      coordinatorCompacting: info.compacting,
+      coordinatorCompactResult: info.compactResult,
+      coordinatorModel: info.model,
+    }),
+
+  compactCoordinator: () => {
+    const id = get().coordinatorId;
+    if (id) api.compactTerminal(id).catch(() => {});
+  },
+
   setPending: (terminalId, pending) =>
     set((s) => ({ pendingByTerminal: { ...s.pendingByTerminal, [terminalId]: pending } })),
 
@@ -240,7 +286,21 @@ export const useOverseer = create<OverseerState>((set, get) => ({
     if (!sessionId) return;
     const old = get().coordinatorId;
     // Clear the view immediately so the chat reads as a clean slate while we work.
-    set({ coordinatorId: null, coordinatorStream: [], coordinatorBusy: false, sendError: null, resolved: [], pendingByTerminal: {}, composer: '', composerImages: [], ensuring: true });
+    set({
+      coordinatorId: null,
+      coordinatorStream: [],
+      coordinatorBusy: false,
+      coordinatorContextTokens: undefined,
+      coordinatorCompacting: false,
+      coordinatorCompactResult: null,
+      coordinatorModel: undefined,
+      sendError: null,
+      resolved: [],
+      pendingByTerminal: {},
+      composer: '',
+      composerImages: [],
+      ensuring: true,
+    });
     void (async () => {
       try {
         // Archive the old coordinator + all its managed agents (full clean slate).
@@ -263,6 +323,69 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   },
 }));
 
+// ---------------------------------------------------------------------------
+// Active-project persistence — survive a page refresh.
+//
+// The active project id is OWNED by useProjects (stores/projects.ts): on refresh
+// that store re-initializes with activeId=null and its load() falls back to
+// `get().activeId ?? sessions[0]?.id` — i.e. the FIRST server-ordered project —
+// so the user's selection is lost. We can't edit projects.ts from here, so we
+// persist/restore from this module (the overseer drives project selection via
+// ensureForProject). Key mirrors the codebase's `dispatch:` convention.
+const ACTIVE_PROJECT_KEY = 'dispatch:overseer:activeProject';
+
+function readStoredActiveProject(): string | null {
+  try {
+    return localStorage.getItem(ACTIVE_PROJECT_KEY);
+  } catch {
+    return null; // storage unavailable (private mode / SSR) — no persisted value
+  }
+}
+
+function writeStoredActiveProject(id: string | null): void {
+  try {
+    if (id) localStorage.setItem(ACTIVE_PROJECT_KEY, id);
+    else localStorage.removeItem(ACTIVE_PROJECT_KEY);
+  } catch {
+    /* storage unavailable — best-effort persistence, never throw into a store write */
+  }
+}
+
+// Captured ONCE, before the first useProjects write can clobber localStorage: on
+// load, useProjects auto-selects sessions[0] and our subscribe below would persist
+// that over the top of the real last selection. Reading here freezes the true value.
+const storedActiveProject = readStoredActiveProject();
+let activeProjectRestored = false;
+
+// One-shot restore: as soon as the project list is available, re-select the stored
+// project IFF it still exists; otherwise leave the existing default in place. Gated
+// so the user owns the selection after the first (async) list load.
+function restoreActiveProject(sessions: readonly { id: string }[], activeId: string | null): void {
+  if (activeProjectRestored || sessions.length === 0) return;
+  activeProjectRestored = true;
+  if (
+    storedActiveProject &&
+    storedActiveProject !== activeId &&
+    sessions.some((s) => s.id === storedActiveProject)
+  ) {
+    useProjects.getState().setActive(storedActiveProject);
+  }
+}
+
+// Persist every switch, and run the one-shot restore once the list loads (projects
+// load async, after this module evaluates, so restore rides in on the subscribe).
+useProjects.subscribe((state, prev) => {
+  if (state.activeId !== prev.activeId) writeStoredActiveProject(state.activeId);
+  restoreActiveProject(state.sessions, state.activeId);
+});
+// Cover the race where projects were ALREADY loaded before this module evaluated —
+// subscribe only fires on future changes, so try an immediate restore too (no-ops
+// while the list is still empty, leaving the subscribe path to handle it later).
+{
+  const s = useProjects.getState();
+  restoreActiveProject(s.sessions, s.activeId);
+}
+
 /**
  * Single owner of the live coordinator subscription. Call this ONCE from the
  * Overseer root (OverseerView) — it ensures the coordinator for the active project
@@ -277,6 +400,7 @@ export function useCoordinatorSync(): void {
   const coordinatorProject = useOverseer((s) => s.coordinatorProject);
   const setCoordinatorStream = useOverseer((s) => s.setCoordinatorStream);
   const setCoordinatorBusy = useOverseer((s) => s.setCoordinatorBusy);
+  const setCoordinatorContextInfo = useOverseer((s) => s.setCoordinatorContextInfo);
 
   useEffect(() => {
     ensureForProject(activeId);
@@ -287,7 +411,7 @@ export function useCoordinatorSync(): void {
   // — without it, imageItemFromBlock returns null for path refs and images vanish after a
   // daemon-restart/transcript-resume. (The hook reads sessionId via a ref, so this does
   // NOT re-key the socket effect.)
-  const { items, busy } = useStructuredChat(coordinatorId ?? '', coordinatorProject ?? undefined);
+  const { items, busy, model, contextTokens, compacting, compactResult } = useStructuredChat(coordinatorId ?? '', coordinatorProject ?? undefined);
   const stream = useMemo(() => convItemsToStream(items), [items]);
   useEffect(() => {
     setCoordinatorStream(stream);
@@ -295,6 +419,9 @@ export function useCoordinatorSync(): void {
   useEffect(() => {
     setCoordinatorBusy(busy);
   }, [busy, setCoordinatorBusy]);
+  useEffect(() => {
+    setCoordinatorContextInfo({ contextTokens, compacting, compactResult, model });
+  }, [contextTokens, compacting, compactResult, model, setCoordinatorContextInfo]);
 
   // Keep the project's archived (complete_agent'd) workers in the store so the rail can
   // render them as done outcomes. Folded in here (the single root-mounted sync) to avoid
@@ -420,13 +547,7 @@ export function useRenderVals(): RenderVals {
       ? [...base, { kind: 'note', who: null, text: sendError, time: '', key: 'send-error', isUser: false, isOverseer: false, isNote: false, isError: true }]
       : base;
 
-    const moodText = hasNeeds
-      ? `${needs.length} ${needs.length === 1 ? 'thing needs you' : 'things need you'}`
-      : noMissions
-        ? 'Ready when you are'
-        : 'Calm — nothing needs you';
-
-    const ribbon: Ribbon = { working, done, needs: needs.length, hasNeeds, moodText };
+    const ribbon: Ribbon = { working, done, needs: needs.length, hasNeeds };
 
     return {
       ribbon,

@@ -144,6 +144,14 @@ export class SecretsService {
     if (!p || !cf) throw new Error('project and config are required');
     return this.requireClient().listSecrets(p, cf);
   }
+
+  /** Resolve a single secret's value by name (server-side only; never returned to clients). */
+  async getSecret(name: string): Promise<string | null> {
+    const c = this.read();
+    if (!c.token || !c.project || !c.config) throw new Error('Doppler is not connected');
+    return this.clientFactory(c.token).getSecret(c.project, c.config, name);
+  }
+
   async setSecret(name: string, value: string): Promise<void> {
     const c = this.read();
     if (!c.project || !c.config) throw new Error('project and config are required');
