@@ -19,7 +19,7 @@ export function makeOpenAICompatibleAdapter(id: string, baseURL: string): SttAda
     id,
     async transcribe(model: string, apiKey: string, input: TranscribeInput): Promise<TranscribeResult> {
       const form = new FormData();
-      form.append('file', new Blob([input.audio], { type: input.mimeType }), filenameForMime(input.mimeType));
+      form.append('file', new Blob([new Uint8Array(input.audio)], { type: input.mimeType }), filenameForMime(input.mimeType));
       form.append('model', model);
       if (input.language) form.append('language', input.language);
       if (input.prompt) form.append('prompt', input.prompt);
