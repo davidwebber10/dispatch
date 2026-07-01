@@ -6,6 +6,8 @@ interface Props {
   onDictate: () => void;
   dictateDisabled?: boolean;
   dictateHint?: string;
+  /** Host-supplied override so the trigger can mirror the adjacent send button's footprint. */
+  triggerStyle?: React.CSSProperties;
 }
 
 const trigger = {
@@ -19,7 +21,7 @@ const rowBtn = (disabled?: boolean) => ({
   cursor: disabled ? 'default' : 'pointer', textAlign: 'left' as const, borderRadius: 8,
 });
 
-export function InputActionsMenu({ onAddFile, onDictate, dictateDisabled, dictateHint }: Props) {
+export function InputActionsMenu({ onAddFile, onDictate, dictateDisabled, dictateHint, triggerStyle }: Props) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
 
@@ -32,12 +34,12 @@ export function InputActionsMenu({ onAddFile, onDictate, dictateDisabled, dictat
 
   return (
     <div ref={wrapRef} style={{ position: 'relative', flexShrink: 0 }}>
-      <button type="button" aria-label="More input options" onClick={() => setOpen((o) => !o)} style={trigger}>
+      <button type="button" aria-label="More input options" onClick={() => setOpen((o) => !o)} style={{ ...trigger, ...triggerStyle }}>
         <Plus size={20} weight="bold" />
       </button>
       {open && (
         <div style={{
-          position: 'absolute', bottom: 48, left: 0, minWidth: 200, padding: 6,
+          position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, minWidth: 200, padding: 6,
           background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 12,
           boxShadow: '0 12px 34px -10px rgba(0,0,0,.7)', zIndex: 40,
         }}>

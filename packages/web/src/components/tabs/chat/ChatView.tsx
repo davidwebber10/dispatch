@@ -187,6 +187,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
               onDictate={() => void dictation.start()}
               dictateDisabled={!sttConfigured}
               dictateHint="Set up in Settings → Transcription"
+              triggerStyle={{ width: 34, height: 34, borderRadius: 9, border: 'none', background: 'var(--color-hover)' }}
             />
           ) : (
             <label

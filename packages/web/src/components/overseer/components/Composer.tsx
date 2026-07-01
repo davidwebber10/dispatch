@@ -197,6 +197,7 @@ export function Composer() {
             onDictate={() => void dictation.start()}
             dictateDisabled={!sttConfigured}
             dictateHint="Set up in Settings → Transcription"
+            triggerStyle={{ width: 32, height: 32, borderRadius: 8, border: 'none', background: 'var(--hover, rgba(255,255,255,.05))' }}
           />
         ) : (
           <label
