@@ -114,6 +114,27 @@ export const api = {
     if (!res.ok) throw new Error(`upload failed: ${res.status}`);
     return (await res.json()) as InboxUpload;
   },
+
+  // Voice dictation — upload recorded audio; the daemon resolves the key + calls the provider.
+  transcribe: async (
+    blob: Blob,
+    opts: { provider: string; model: string; secretName: string; mimeType: string; language?: string },
+  ): Promise<{ text: string; language?: string }> => {
+    const fd = new FormData();
+    fd.append('file', blob, 'audio');
+    fd.append('provider', opts.provider);
+    fd.append('model', opts.model);
+    fd.append('secretName', opts.secretName);
+    fd.append('mimeType', opts.mimeType);
+    if (opts.language) fd.append('language', opts.language);
+    const res = await fetch('/api/transcribe', { method: 'POST', body: fd });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(e.error || `transcribe failed: ${res.status}`);
+    }
+    return (await res.json()) as { text: string; language?: string };
+  },
+
   sendFileReference: (terminalId: string, p: string, mode: 'agent-context' | 'shell-path' = 'agent-context') =>
     req<{ ok: true; sentText: string }>(`/api/terminals/${terminalId}/send-file-reference`, { method: 'POST', body: body({ path: p, mode }) }),
 
