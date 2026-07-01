@@ -75,6 +75,18 @@ function elapsedSince(iso?: string): string {
 }
 
 /**
+ * The best "last active" instant (epoch ms) for ordering FINISHED work newest-first:
+ * the live activity stamp when present, else the archive time, else creation. Returns 0
+ * for an absent/unparseable stamp so those rows sink to the bottom rather than NaN-poison
+ * the sort.
+ */
+function lastActiveMs(t: Terminal): number {
+  const iso = t.lastActivityAt || t.archivedAt || t.createdAt;
+  const ms = iso ? new Date(iso).getTime() : NaN;
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+/**
  * A structured worker terminal (typed agent, not the coordinator), IGNORING archive
  * state. Used directly for the separately-fetched archived list so completed
  * (complete_agent'd) agents can still surface as outcomes; the live rail uses
@@ -223,23 +235,27 @@ export function groupByMission(
   return order.map((name) => {
     const g = groups.get(name)!;
     const threads: AgentThread[] = [];
-    const outcomes: Outcome[] = [];
+    const doneTerminals: Terminal[] = [];
     let live = 0;
-    let done = 0;
     for (const t of g.live) {
       if (mapStatus(t, statuses[t.id]) === 'done') {
-        outcomes.push(terminalToOutcome(t));
-        done++;
+        doneTerminals.push(t);
       } else {
         threads.push(terminalToAgentThread(t, statuses[t.id]));
         live++;
       }
     }
-    for (const t of g.archived) {
-      outcomes.push(terminalToOutcome(t)); // archived → mapStatus()='done' (archivedAt set)
-      done++;
-    }
-    return makeMission(name, summaryText(live, done), threads, outcomes);
+    // archived → mapStatus()='done' (archivedAt set); folds in with the just-finished live rows.
+    doneTerminals.push(...g.archived);
+    // Finished work sorts newest-active first so the freshest outcome sits at the top of the
+    // group (LIVE `threads` are left in their original order — the Live tab is untouched).
+    doneTerminals.sort((a, b) => lastActiveMs(b) - lastActiveMs(a));
+    const outcomes = doneTerminals.map(terminalToOutcome);
+    // `doneFreshness` = the group's most-recent finished stamp (0 if none). Additive tag the
+    // Done tab reads to float the freshest MISSION to the top without reordering the shared
+    // Mission[] (which would disturb the Live tab) — see WorkRail's Done branch.
+    const doneFreshness = doneTerminals.length ? lastActiveMs(doneTerminals[0]) : 0;
+    return { ...makeMission(name, summaryText(live, doneTerminals.length), threads, outcomes), doneFreshness };
   });
 }
 

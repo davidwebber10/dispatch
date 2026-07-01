@@ -11,13 +11,19 @@
 // simpler empty text. Inline styles only — no Tailwind classes.
 
 import { useState } from 'react';
-import { Icon, MonoLabel, ProgressBar, StatusDot, TypeIconBox } from '../atoms';
+import { Icon, MonoLabel, StatusDot, TypeIconBox } from '../atoms';
 import { useOverseer, useRenderVals } from '../store';
 import type { AgentThread, Mission, Outcome } from '../types';
 
 // Which slice of each mission the rail shows: LIVE (in-progress AgentThreadChips) — the
 // default, keeping the view to only active work — or DONE (finished/archived OutcomeCards).
 type RailTab = 'live' | 'done';
+
+// live.groupByMission tags each mission with `doneFreshness` — the most-recent "last active"
+// stamp among its DONE agents (0 if none). It's additive (not on the Mission contract), so we
+// read it through this local widening only where the Done tab needs it.
+type MissionRow = Mission & { doneFreshness?: number };
+const doneFreshness = (m: Mission): number => (m as MissionRow).doneFreshness ?? 0;
 
 // ---------------------------------------------------------------------------
 // AgentThreadChip
@@ -26,6 +32,15 @@ type RailTab = 'live' | 'done';
 function AgentThreadChip({ thread }: { thread: AgentThread }) {
   const drillInto = useOverseer((s) => s.drillInto);
   const [hovered, setHovered] = useState(false);
+
+  // The agent's OWN descriptive name (its spawn label, carried on dlabel) is the prominent
+  // line so running agents are told apart at a glance — type · #id + status drop to small
+  // secondary meta. Falls back to type #id if a worker was spawned without a name.
+  const name = thread.dlabel || `${thread.typeLabel} #${thread.id}`;
+  // A real live-activity string only earns a line when it's distinct from the name (else it
+  // would just echo the title). While working we still show a "Working…" cue even without one.
+  const activity = thread.action && thread.action !== name ? thread.action : '';
+  const bodyText = thread.isWorking ? activity || 'Working…' : activity;
 
   return (
     <div
@@ -49,20 +64,24 @@ function AgentThreadChip({ thread }: { thread: AgentThread }) {
       <TypeIconBox icon={thread.typeIcon} size={28} />
 
       {/* body */}
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 5 }}>
-        {/* row 1: typeLabel · #id + status */}
-        <div style={{ display: 'flex', alignItems: 'center' }}>
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {/* row 1: descriptive name (primary) + status */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span
             style={{
-              fontFamily: 'var(--mono)',
-              fontSize: 10.5,
-              color: 'var(--ts)',
+              flex: 1,
+              minWidth: 0,
+              fontSize: 13,
+              fontWeight: 600,
+              color: 'var(--tp)',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
             }}
           >
-            {thread.typeLabel} · #{thread.id}
+            {name}
           </span>
-          <span style={{ flex: 1 }} />
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flex: 'none' }}>
             <StatusDot color={thread.dotColor} anim={thread.dotAnim} size={6} />
             <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ts)' }}>
               {thread.statusLabel}
@@ -70,26 +89,36 @@ function AgentThreadChip({ thread }: { thread: AgentThread }) {
           </span>
         </div>
 
-        {/* row 2: action line */}
-        <div
-          style={{
-            fontSize: 13,
-            color: 'var(--tp)',
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-          }}
-        >
-          {thread.action}
-        </div>
-
-        {/* row 3: progress bar + elapsed (working only) */}
-        {thread.showProgress && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <ProgressBar width={thread.progressW} />
+        {/* row 2: secondary meta — type · #id + elapsed */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ts)' }}>
+            {thread.typeLabel} · #{thread.id}
+          </span>
+          <span style={{ flex: 1 }} />
+          {thread.elapsed && (
             <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--tt)', flex: 'none' }}>
               {thread.elapsed}
             </span>
+          )}
+        </div>
+
+        {/* row 3: live activity — shimmers while working (an indeterminate cue; no progress bar,
+            since an agent's work has no determinate percentage). Reuses the shared chat-shimmer
+            class (same primitive WorkingIndicator uses). */}
+        {bodyText && (
+          <div
+            className={thread.isWorking ? 'chat-shimmer' : undefined}
+            style={{
+              fontSize: 12.5,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              // chat-shimmer paints its own gradient text via background-clip; an inline color
+              // would override it, so only set a color when NOT shimmering.
+              ...(thread.isWorking ? null : { color: 'var(--ts)' }),
+            }}
+          >
+            {bodyText}
           </div>
         )}
       </div>
@@ -377,7 +406,12 @@ export function OngoingWorkOverview() {
   const liveCount = missions.reduce((n, mm) => n + mm.threads.length, 0);
   const doneCount = missions.reduce((n, mm) => n + mm.outcomes.length, 0);
   // Only missions that actually have an entry in the active tab — keeps the view uncluttered.
-  const visible = missions.filter((mm) => (tab === 'live' ? mm.threads.length : mm.outcomes.length) > 0);
+  const inTab = missions.filter((mm) => (tab === 'live' ? mm.threads.length : mm.outcomes.length) > 0);
+  // Done tab: float the mission with the most-recently-active finished work to the top (its
+  // outcomes are already newest-first from live.groupByMission). Live tab keeps its natural
+  // group order untouched.
+  const visible =
+    tab === 'done' ? [...inTab].sort((a, b) => doneFreshness(b) - doneFreshness(a)) : inTab;
 
   return (
     <div
