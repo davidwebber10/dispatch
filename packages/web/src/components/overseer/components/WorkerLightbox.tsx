@@ -97,7 +97,10 @@ export function WorkerLightbox() {
               display: 'flex',
               flexDirection: 'column',
               gap: 10,
-              padding: '11px 13px',
+              // Top padding clears the iOS status bar/notch — the modal card only gets a 12px
+              // margin from the outer overlay (WorkerLightbox.tsx:74), which isn't enough on
+              // its own, so pad further whenever the safe area is taller than the base 11px.
+              padding: 'max(11px, env(safe-area-inset-top)) 13px 11px',
               borderBottom: '1px solid var(--border)',
               background: 'var(--pane)',
             }}
