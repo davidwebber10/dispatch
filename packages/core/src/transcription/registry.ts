@@ -2,6 +2,7 @@ import type { SttAdapter } from './types.js';
 import { makeOpenAICompatibleAdapter } from './openai-compatible.js';
 import { deepgramAdapter } from './deepgram.js';
 import { elevenlabsAdapter } from './elevenlabs.js';
+import { assemblyaiAdapter } from './assemblyai.js';
 
 export interface ProviderEntry {
   id: string;
@@ -20,7 +21,7 @@ export const REGISTRY: Record<string, ProviderEntry> = {
   openai: { id: 'openai', label: 'OpenAI', models: ['gpt-4o-mini-transcribe', 'gpt-4o-transcribe', 'whisper-1'], adapter: openai, status: 'ready' },
   deepgram: { id: 'deepgram', label: 'Deepgram', models: ['nova-3', 'nova-2'], adapter: deepgramAdapter, status: 'ready' },
   elevenlabs: { id: 'elevenlabs', label: 'ElevenLabs', models: ['scribe_v2', 'scribe_v1'], adapter: elevenlabsAdapter, status: 'ready' },
-  assemblyai: { id: 'assemblyai', label: 'AssemblyAI', models: ['universal-3-pro', 'universal-2'], adapter: null, status: 'coming-soon' },
+  assemblyai: { id: 'assemblyai', label: 'AssemblyAI', models: ['universal-3-pro', 'universal-2'], adapter: assemblyaiAdapter, status: 'ready' },
   google: { id: 'google', label: 'Google Cloud STT', models: [], adapter: null, status: 'coming-soon' },
   azure: { id: 'azure', label: 'Azure AI Speech', models: [], adapter: null, status: 'coming-soon' },
 };
