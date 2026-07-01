@@ -22,10 +22,16 @@ import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
 import { useThreadStatus } from '../../stores/threadStatus';
 import { useStructuredChat, type CompactResult } from '../tabs/chat/useStructuredChat';
+import { clearStoredDraft } from '../../hooks/useDraft';
 import type { PendingPermission, Terminal } from '../../api/types';
 import { CANNED, m } from './data';
 import { convItemsToStream, groupByMission, isManagedWorker, mapStatus, needsFromThreads } from './live';
 import type { AgentType, Ribbon, RenderVals, Scenario, StreamMessage } from './types';
+
+// A stable empty-array reference for the composerImages selector fallback — a fresh
+// `[]` literal on every read would fail Zustand's Object.is check and re-render the
+// Composer on every unrelated store update.
+const EMPTY_IMAGES: ContentBlock[] = [];
 
 export type MobileTab = 'needs' | 'stream' | 'work';
 
@@ -36,8 +42,13 @@ interface OverseerState {
   delegateOpen: boolean;
   delegateType: AgentType;
   delegateText: string;
-  composer: string;
-  composerImages: ContentBlock[]; // attached image blocks pending the next directive
+  // NOTE: the composer's DRAFT TEXT is not stored here — it's owned by the Composer
+  // component itself via useDraft(coordinatorProject), mirroring the agent ChatView's
+  // per-terminal draft. A single shared string here would leak between different
+  // projects' Dispatch tabs (they all render the same singleton store). Staged image
+  // attachments (below) are still store-owned since they don't persist to localStorage,
+  // but MUST be keyed per project for the same reason.
+  composerImagesByProject: Record<string, ContentBlock[]>; // attached image blocks pending the next directive, per coordinator project
   mobileTab: MobileTab;
   workerLightboxId: string | null; // NEW: the worker terminal whose chat View is open
 
@@ -50,6 +61,13 @@ interface OverseerState {
   coordinatorCompacting: boolean; // a native /compact is in progress on the coordinator thread
   coordinatorCompactResult: CompactResult | null; // outcome of the coordinator's last compaction attempt
   coordinatorModel?: string; // resolved model name for the coordinator thread
+  // Older-history pagination for the coordinator's own ConversationStream, mirroring the
+  // agent ChatView's use of useStructuredChat's loadOlder/hasMore/loadingOlder. `loadOlder`
+  // is threaded through as a plain function value (not an api.* call) because it closes
+  // over internal state (the REST paging anchor) that lives inside that hook instance.
+  coordinatorHasMore: boolean;
+  coordinatorLoadingOlder: boolean;
+  coordinatorLoadOlder: () => void;
   sendError: string | null; // last directive send that FAILED (POST rejected); surfaced inline, cleared on next send
   ensuring: boolean; // a find-or-create coordinator request is in flight
   resolved: string[]; // optimistically dismissed need ids
@@ -64,12 +82,12 @@ interface OverseerState {
   closeDelegate: () => void;
   pickType: (type: AgentType) => void;
   setDelegateText: (text: string) => void;
-  setComposer: (text: string) => void;
-  /** Buffer an attached image block to ride along with the next directive send. */
+  /** Buffer an attached image block to ride along with the next directive send (current project only). */
   addComposerImage: (block: ContentBlock) => void;
   /** Drop a staged composer image by its buffer index (its × in the thumbnail strip). */
   removeComposerImage: (index: number) => void;
-  sendDirective: () => void;
+  /** Send a directive with the given text (the Composer's own local draft) + any staged images. */
+  sendDirective: (text: string) => void;
   needAction: (id: string, label: string) => void;
   doDelegate: () => void;
   /** Launch a QUEUED worker now (status='queued' → live), then refresh the rail. */
@@ -86,6 +104,8 @@ interface OverseerState {
   setCoordinatorContextInfo: (info: { contextTokens?: number; compacting: boolean; compactResult: CompactResult | null; model?: string }) => void;
   /** Trigger native compaction on the coordinator thread (mirrors useStructuredChat's own `compact`). */
   compactCoordinator: () => void;
+  /** Pushed in by useCoordinatorSync() from the same useStructuredChat() call's hasMore/loadingOlder/loadOlder. */
+  setCoordinatorPaging: (info: { hasMore: boolean; loadingOlder: boolean; loadOlder: () => void }) => void;
   setPending: (terminalId: string, pending: PendingPermission | null) => void;
   setArchivedTerminals: (projectId: string, terminals: Terminal[]) => void;
   /** Clean slate: archive the coordinator + its agents and start a fresh Dispatch conversation. */
@@ -99,8 +119,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   delegateOpen: false,
   delegateType: 'implementer',
   delegateText: '',
-  composer: '',
-  composerImages: [],
+  composerImagesByProject: {},
   mobileTab: 'needs',
   workerLightboxId: null,
 
@@ -112,6 +131,9 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   coordinatorCompacting: false,
   coordinatorCompactResult: null,
   coordinatorModel: undefined,
+  coordinatorHasMore: true,
+  coordinatorLoadingOlder: false,
+  coordinatorLoadOlder: () => {},
   sendError: null,
   ensuring: false,
   resolved: [],
@@ -132,28 +154,42 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   pickType: (type) => set({ delegateType: type }),
   setDelegateText: (text) => set({ delegateText: text }),
 
-  setComposer: (text) => set({ composer: text }),
-
-  addComposerImage: (block) => set((s) => ({ composerImages: [...s.composerImages, block] })),
+  addComposerImage: (block) =>
+    set((s) => {
+      const project = s.coordinatorProject;
+      if (!project) return {};
+      const cur = s.composerImagesByProject[project] ?? EMPTY_IMAGES;
+      return { composerImagesByProject: { ...s.composerImagesByProject, [project]: [...cur, block] } };
+    }),
 
   removeComposerImage: (index) =>
-    set((s) => ({ composerImages: s.composerImages.filter((_, i) => i !== index) })),
+    set((s) => {
+      const project = s.coordinatorProject;
+      if (!project) return {};
+      const cur = s.composerImagesByProject[project] ?? EMPTY_IMAGES;
+      return { composerImagesByProject: { ...s.composerImagesByProject, [project]: cur.filter((_, i) => i !== index) } };
+    }),
 
-  sendDirective: () => {
-    const text = (get().composer || '').trim();
-    const images = get().composerImages;
+  sendDirective: (text) => {
+    const trimmed = (text || '').trim();
+    const project = get().coordinatorProject;
+    const images = (project && get().composerImagesByProject[project]) || EMPTY_IMAGES;
     const id = get().coordinatorId;
-    if ((!text && images.length === 0) || !id) return;
+    if ((!trimmed && images.length === 0) || !id) return;
     // No optimistic bubble: the backend echoes the user's turn (and it survives
     // reconnect replay), so an optimistic append would double up. Clear any prior
-    // send-failure notice — this is a fresh attempt.
-    set({ composer: '', composerImages: [], sendError: null });
+    // send-failure notice — this is a fresh attempt. (The draft TEXT is cleared by the
+    // Composer itself, via its own useDraft's clear(), right after this call.)
+    set((s) => ({
+      composerImagesByProject: project ? { ...s.composerImagesByProject, [project]: [] } : s.composerImagesByProject,
+      sendError: null,
+    }));
     // Carry any attached image blocks through as a REAL content-block turn (images first,
     // then the caption text) so the coordinator SEES the picture; a text-only directive
     // keeps the original plain-string path untouched.
     const payload: string | ContentBlock[] = images.length
-      ? [...images, ...(text ? [{ type: 'text', text } as ContentBlock] : [])]
-      : text;
+      ? [...images, ...(trimmed ? [{ type: 'text', text: trimmed } as ContentBlock] : [])]
+      : trimmed;
     // Surface a failed POST instead of swallowing it: without this, a rejected send (e.g.
     // the coordinator's claude process died → 400) left ZERO feedback — the user's directive
     // (and any attached image) just vanished, reading as "nothing happened". Mirrors the
@@ -240,6 +276,9 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       coordinatorCompacting: false,
       coordinatorCompactResult: null,
       coordinatorModel: undefined,
+      coordinatorHasMore: true,
+      coordinatorLoadingOlder: false,
+      coordinatorLoadOlder: () => {},
       sendError: null,
       resolved: [],
       pendingByTerminal: {},
@@ -275,6 +314,9 @@ export const useOverseer = create<OverseerState>((set, get) => ({
     if (id) api.compactTerminal(id).catch(() => {});
   },
 
+  setCoordinatorPaging: (info) =>
+    set({ coordinatorHasMore: info.hasMore, coordinatorLoadingOlder: info.loadingOlder, coordinatorLoadOlder: info.loadOlder }),
+
   setPending: (terminalId, pending) =>
     set((s) => ({ pendingByTerminal: { ...s.pendingByTerminal, [terminalId]: pending } })),
 
@@ -285,8 +327,12 @@ export const useOverseer = create<OverseerState>((set, get) => ({
     const sessionId = get().coordinatorProject;
     if (!sessionId) return;
     const old = get().coordinatorId;
-    // Clear the view immediately so the chat reads as a clean slate while we work.
-    set({
+    // Clear the view immediately so the chat reads as a clean slate while we work. The
+    // draft TEXT lives outside this store (see composerImagesByProject's doc comment
+    // above) — best-effort clear its persisted copy so a reload doesn't resurrect it;
+    // composerImagesByProject is store-owned so it's reset here directly.
+    clearStoredDraft(sessionId);
+    set((s) => ({
       coordinatorId: null,
       coordinatorStream: [],
       coordinatorBusy: false,
@@ -294,13 +340,15 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       coordinatorCompacting: false,
       coordinatorCompactResult: null,
       coordinatorModel: undefined,
+      coordinatorHasMore: true,
+      coordinatorLoadingOlder: false,
+      coordinatorLoadOlder: () => {},
       sendError: null,
       resolved: [],
       pendingByTerminal: {},
-      composer: '',
-      composerImages: [],
+      composerImagesByProject: { ...s.composerImagesByProject, [sessionId]: [] },
       ensuring: true,
-    });
+    }));
     void (async () => {
       try {
         // Archive the old coordinator + all its managed agents (full clean slate).
@@ -322,6 +370,12 @@ export const useOverseer = create<OverseerState>((set, get) => ({
     })();
   },
 }));
+
+/** The active coordinator's staged (pre-send) image attachments — scoped to the
+ * current project so switching Dispatch tabs never shows another project's images. */
+export function useComposerImages(): ContentBlock[] {
+  return useOverseer((s) => (s.coordinatorProject ? s.composerImagesByProject[s.coordinatorProject] : undefined) ?? EMPTY_IMAGES);
+}
 
 // ---------------------------------------------------------------------------
 // Active-project persistence — survive a page refresh.
@@ -401,6 +455,7 @@ export function useCoordinatorSync(): void {
   const setCoordinatorStream = useOverseer((s) => s.setCoordinatorStream);
   const setCoordinatorBusy = useOverseer((s) => s.setCoordinatorBusy);
   const setCoordinatorContextInfo = useOverseer((s) => s.setCoordinatorContextInfo);
+  const setCoordinatorPaging = useOverseer((s) => s.setCoordinatorPaging);
 
   useEffect(() => {
     ensureForProject(activeId);
@@ -411,7 +466,7 @@ export function useCoordinatorSync(): void {
   // — without it, imageItemFromBlock returns null for path refs and images vanish after a
   // daemon-restart/transcript-resume. (The hook reads sessionId via a ref, so this does
   // NOT re-key the socket effect.)
-  const { items, busy, model, contextTokens, compacting, compactResult } = useStructuredChat(coordinatorId ?? '', coordinatorProject ?? undefined);
+  const { items, busy, model, contextTokens, compacting, compactResult, hasMore, loadingOlder, loadOlder } = useStructuredChat(coordinatorId ?? '', coordinatorProject ?? undefined);
   const stream = useMemo(() => convItemsToStream(items), [items]);
   useEffect(() => {
     setCoordinatorStream(stream);
@@ -422,6 +477,9 @@ export function useCoordinatorSync(): void {
   useEffect(() => {
     setCoordinatorContextInfo({ contextTokens, compacting, compactResult, model });
   }, [contextTokens, compacting, compactResult, model, setCoordinatorContextInfo]);
+  useEffect(() => {
+    setCoordinatorPaging({ hasMore, loadingOlder, loadOlder });
+  }, [hasMore, loadingOlder, loadOlder, setCoordinatorPaging]);
 
   // Keep the project's archived (complete_agent'd) workers in the store so the rail can
   // render them as done outcomes. Folded in here (the single root-mounted sync) to avoid
