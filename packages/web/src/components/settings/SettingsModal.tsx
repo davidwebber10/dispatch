@@ -7,6 +7,7 @@ import { useSecrets } from '../../stores/secrets';
 import { useSetup } from '../../stores/setup';
 import { IntegrationsSection } from './IntegrationsSection';
 import { ToolsSection } from './ToolsSection';
+import { TranscriptionSection } from './TranscriptionSection';
 import { MultiPaneSetting } from '../panes/MultiPaneSetting';
 
 const sectionLabel: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
@@ -255,7 +256,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   }
   const servers = useServers((s) => s.servers);
   const openSetup = useSetup((s) => s.open);
-  const [tab, setTab] = useState<'general' | 'integrations' | 'secrets' | 'tools'>('general');
+  const [tab, setTab] = useState<'general' | 'integrations' | 'secrets' | 'tools' | 'transcription'>('general');
   if (!open) return null;
 
   const st = status === 'open' ? { c: 'var(--color-accent)', t: 'Connected' } : status === 'connecting' ? { c: 'var(--color-status-yellow)', t: 'Connecting' } : { c: 'var(--color-status-red)', t: 'Offline' };
@@ -270,7 +271,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
 
         {/* Tabs */}
         <div style={{ flexShrink: 0, display: 'flex', gap: 4, padding: '12px 20px 0', borderBottom: '1px solid var(--color-hover)' }}>
-          {([['general', 'General'], ['integrations', 'Integrations'], ['secrets', 'Secrets'], ['tools', 'Tools']] as const).map(([key, label]) => (
+          {([['general', 'General'], ['integrations', 'Integrations'], ['secrets', 'Secrets'], ['tools', 'Tools'], ['transcription', 'Transcription']] as const).map(([key, label]) => (
             <button key={key} onClick={() => setTab(key)} style={{
               position: 'relative', padding: '8px 14px 11px', background: 'none', border: 'none', cursor: 'pointer',
               fontSize: 13, fontWeight: tab === key ? 600 : 500,
@@ -354,6 +355,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
           {tab === 'integrations' && <IntegrationsSection />}
           {tab === 'secrets' && <SecretsSection />}
           {tab === 'tools' && <ToolsSection />}
+          {tab === 'transcription' && <TranscriptionSection />}
         </div>
 
         <div style={{ flexShrink: 0, display: 'flex', justifyContent: 'flex-end', padding: '14px 20px', borderTop: '1px solid var(--color-hover)' }}>
