@@ -29,6 +29,7 @@ import { AgentCard } from './AgentCard';
 import { ChatImage } from '../../ChatImage';
 import { InsightText } from '../../InsightText';
 import { WorkingIndicator } from '../../WorkingIndicator';
+import { Spinner } from '../../common/Spinner';
 import { useOverseer, useRenderVals } from '../store';
 import { useDispatchName } from '../../../stores/settings';
 import type { StreamMessage } from '../types';
@@ -415,7 +416,7 @@ export function ConversationStream() {
   useLayoutEffect(() => setReady(false), [coordinatorId]);
 
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+    <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <MessageScroller.Provider autoScroll defaultScrollPosition="end" scrollEdgeThreshold={48}>
         <MessageScroller.Root
           style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', visibility: ready ? 'visible' : 'hidden' }}
@@ -435,6 +436,13 @@ export function ConversationStream() {
           <StickToEndOnLoad coordinatorId={coordinatorId} count={stream.length} onReady={handleReady} />
         </MessageScroller.Root>
       </MessageScroller.Provider>
+      {/* Root is visibility:hidden until `ready` — surface feedback in its place so the
+          settle window doesn't read as a blank freeze. Sits outside Root so it isn't hidden too. */}
+      {!ready && (
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Spinner size={20} />
+        </div>
+      )}
     </div>
   );
 }
