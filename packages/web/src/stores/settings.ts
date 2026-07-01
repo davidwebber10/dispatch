@@ -23,7 +23,7 @@ interface SettingsState {
   projectFontSize: number;
   density: Density;
   accent: string;
-  coordinatorName: string;   // raw value; empty falls back to "Dispatch" at display (see useDispatchName)
+  coordinatorName: string;   // raw value; empty falls back to "Control Plane" at display (see useDispatchName)
   notify: boolean;
   pushEnabled: boolean;
   multiPane: boolean;
@@ -64,7 +64,7 @@ export const useSettings = create<SettingsState>((set) => ({
   projectFontSize: load('dispatch:projectFontSize', 15),
   density: load<Density>('dispatch:density', 'cozy'),
   accent: initialAccent,
-  coordinatorName: load('dispatch:coordinatorName', 'Dispatch'),
+  coordinatorName: load('dispatch:coordinatorName', 'Control Plane'),
   notify: load('dispatch:notify', false),
   pushEnabled: load('dispatch:pushEnabled', false),
   multiPane: load('dispatch:multiPane', true),
@@ -103,11 +103,11 @@ export const useSettings = create<SettingsState>((set) => ({
 }));
 
 /**
- * The coordinator's user-facing display name — the ONE place the "fall back to Dispatch"
- * rule lives. Every site that shows the coordinator's name (overseer header, message
- * attribution, project entry button, the Dispatch tab) reads from here, so a change in
+ * The coordinator's user-facing display name — the ONE place the "fall back to Control
+ * Plane" rule lives. Every site that shows the coordinator's name (overseer header, message
+ * attribution, project entry button, the coordinator's own tab) reads from here, so a change in
  * Settings updates all of them live (zustand subscription). An empty/whitespace stored
- * value renders as "Dispatch". Do not read `dispatch:coordinatorName` from localStorage
+ * value renders as "Control Plane". Do not read `dispatch:coordinatorName` from localStorage
  * directly anywhere else.
  */
-export const useDispatchName = (): string => useSettings((s) => s.coordinatorName.trim() || 'Dispatch');
+export const useDispatchName = (): string => useSettings((s) => s.coordinatorName.trim() || 'Control Plane');

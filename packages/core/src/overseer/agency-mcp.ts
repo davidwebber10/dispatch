@@ -198,7 +198,7 @@ export const TOOLS = [
       'Show the user an image INLINE in this conversation — a screenshot, chart, diagram, rendered ' +
       'UI, or any visual an agent produced (e.g. a file an agent saved under .dispatch/inbox). Pass ' +
       '`path`, a path to an image file inside this project (png/jpg/jpeg/gif/webp/svg); it is read and ' +
-      'rendered in the Dispatch thread the user is watching. Reach for this whenever a picture conveys ' +
+      'rendered in the Control Plane thread the user is watching. Reach for this whenever a picture conveys ' +
       'the result better than words — to surface a screenshot of a working change, a generated graph, ' +
       'or a visual diff — rather than only describing it. The path must be inside the project working ' +
       'directory (paths outside it are rejected).',
@@ -404,7 +404,7 @@ type McpImageContent = { type: 'image'; data: string; mimeType: string; alt?: st
 
 /**
  * Read a project image file and return it as an MCP image content block so it renders INLINE in
- * the Dispatch thread. The path is sandboxed to the MCP server's working dir — which is the
+ * the Control Plane thread. The path is sandboxed to the MCP server's working dir — which is the
  * coordinator's project root, so the session working dir (mirrors the byte route's resolveSafe) —
  * and only the known image extensions are accepted, so this can't be turned into an arbitrary-file
  * read. base64 is the MCP transport for binary content; `mimeType` lets the host render it.

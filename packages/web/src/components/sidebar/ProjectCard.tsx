@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SortableList } from '../common/SortableList';
-import { FolderOpen, CaretRight, Lightning, TerminalWindow, ChatCircle } from '@phosphor-icons/react';
+import { FolderOpen, CaretRight, Network, TerminalWindow, ChatCircle } from '@phosphor-icons/react';
 import type { Session, Terminal, AgentSchedule } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
 import { projectIndicator } from '../../lib/status';
@@ -441,7 +441,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
                 textAlign: 'left', cursor: 'pointer',
               }}
             >
-              <Lightning size={isMobile ? 20 : 15} weight="fill" style={{ flexShrink: 0 }} />
+              <Network size={isMobile ? 20 : 15} weight="fill" style={{ flexShrink: 0 }} />
               <span style={{ flex: 1 }}>Open {dispatchName}</span>
               <CaretRight size={isMobile ? 16 : 13} style={{ flexShrink: 0, opacity: 0.75 }} />
             </button>

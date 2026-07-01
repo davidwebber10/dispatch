@@ -290,7 +290,7 @@ export function convItemsToStream(items: ConvItem[]): StreamMessage[] {
   items.forEach((it) => {
     const key = stableKey(it);
     if (it.kind === 'user' && it.text?.trim()) out.push(m('user', 'You', it.text, '', key));
-    else if (it.kind === 'assistant' && it.text?.trim()) out.push(m('overseer', 'Dispatch', it.text, '', key));
+    else if (it.kind === 'assistant' && it.text?.trim()) out.push(m('overseer', 'Control Plane', it.text, '', key));
     else if (it.kind === 'image' && it.imageUrl) out.push(imageMessage(it.imageUrl, it.imageAlt, key, it.imageFromUser === true));
     else if (it.kind === 'tool' && it.toolId && it.toolName && AGENT_TOOL_ACTION[it.toolName]) {
       let args: Record<string, unknown> = {};

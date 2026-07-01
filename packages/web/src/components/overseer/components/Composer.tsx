@@ -299,7 +299,7 @@ export function Composer() {
             onChange={handleChange}
             onKeyDown={handleKeyDown}
             onPaste={onPaste}
-            placeholder={isMobile ? 'Fire a directive…' : 'Fire a directive to Dispatch…'}
+            placeholder={isMobile ? 'Fire a directive…' : 'Fire a directive to Control Plane…'}
             style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', resize: 'none', color: 'var(--tp)', fontSize: 13.5, lineHeight: 1.5, maxHeight: 120, padding: '7px 2px', fontFamily: 'inherit', overflow: 'auto' }}
           />
         )}
