@@ -9,6 +9,7 @@
 import { ChatView } from '../../tabs/chat/ChatView';
 import { findTerminal, useTabs } from '../../../stores/tabs';
 import { Icon } from '../atoms';
+import { AgentDetailHeader } from './AgentDetailHeader';
 import { AutonomyToggle, InterruptButton, StopButton, ArchiveButton } from './AutonomyControls';
 import { useOverseer } from '../store';
 
@@ -19,9 +20,6 @@ export function WorkerLightbox() {
 
   if (!workerLightboxId) return null;
 
-  const agentType = typeof terminal?.config?.agentType === 'string' ? (terminal.config.agentType as string) : '';
-  const mission = typeof terminal?.config?.mission === 'string' ? (terminal.config.mission as string) : '';
-  const title = terminal?.label || (agentType ? `${agentType} thread` : 'Worker thread');
   // The autonomy dial is per-agent; coordinators never escalate, so only agent threads show it.
   const isAgent = terminal?.config?.role === 'agent';
 
@@ -66,23 +64,7 @@ export function WorkerLightbox() {
             background: 'var(--pane)',
           }}
         >
-          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', lineHeight: 1.2 }}>
-            <span
-              style={{
-                fontSize: 13,
-                fontWeight: 600,
-                color: 'var(--tp)',
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-              }}
-            >
-              {title}
-            </span>
-            {mission && (
-              <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--tt)' }}>{mission}</span>
-            )}
-          </div>
+          <AgentDetailHeader terminalId={workerLightboxId} />
           {isAgent && (
             <AutonomyToggle terminalId={workerLightboxId} autonomy={terminal?.config?.autonomy} scheme="scoped" />
           )}
