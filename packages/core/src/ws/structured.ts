@@ -15,8 +15,13 @@ export function handleStructuredConnection(
   const id = m?.[1];
   if (!id) { ws.close(4000, 'Invalid URL'); return; }
   try { onConnect?.(id); } catch { /* resume is best-effort; still replay whatever's buffered */ }
-  // Replay buffered events, then stream live.
-  for (const e of manager.getEvents(id)) { if (ws.readyState === 1) ws.send(JSON.stringify(e)); }
+  // Replay buffered events, then stream live. A `tail=N` query param bounds replay to the
+  // last N ring events instead of the full history — on a long thread (1000+ events) folding
+  // every one into a non-virtualized list is what makes chat-open take ~10s; the CLI session
+  // itself is resumed independently and sees its full transcript regardless of what we replay.
+  const tailParam = Number(new URL(req.url ?? '', 'http://internal').searchParams.get('tail'));
+  const events = Number.isFinite(tailParam) && tailParam > 0 ? manager.getEventsTail(id, tailParam) : manager.getEvents(id);
+  for (const e of events) { if (ws.readyState === 1) ws.send(JSON.stringify(e)); }
   const onEvent = (eid: string, event: unknown) => { if (eid === id && ws.readyState === 1) ws.send(JSON.stringify(event)); };
   // P0b: the CLI never emits a `result` when its process exits/crashes mid-turn,
   // so the client's `busy` would spin forever. Synthesize one from the manager's

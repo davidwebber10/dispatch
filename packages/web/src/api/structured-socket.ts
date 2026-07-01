@@ -17,9 +17,14 @@ interface Opts {
   wsFactory?: (url: string) => TerminalWS;
 }
 
+// Bounds initial replay to the last N ring events (see ws/structured.ts) instead of the
+// full history — on a long thread that's the difference between an instant open and a
+// ~10s one spent folding thousands of events into a non-virtualized list.
+const REPLAY_TAIL = 200;
+
 function url(terminalId: string): string {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${proto}://${location.host}/api/terminals/${terminalId}/structured-ws`;
+  return `${proto}://${location.host}/api/terminals/${terminalId}/structured-ws?tail=${REPLAY_TAIL}`;
 }
 
 export function openStructuredSocket(opts: Opts) {

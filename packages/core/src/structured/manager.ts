@@ -330,4 +330,12 @@ export class StructuredSessionManager extends EventEmitter {
   getSessionId(terminalId: string): string | undefined { return this.sessions.get(terminalId)?.sessionId; }
 
   getEvents(terminalId: string): unknown[] { return [...(this.sessions.get(terminalId)?.events ?? [])]; } // Fix 4: return copy
+
+  /** Like getEvents, but only the most recent `n` (or all, if the ring has fewer).
+   *  Used to bound ws-connect replay — folding the full ring into a non-virtualized
+   *  list is O(N) React reconciles and dominates chat-open latency on long threads. */
+  getEventsTail(terminalId: string, n: number): unknown[] {
+    const events = this.sessions.get(terminalId)?.events ?? [];
+    return n >= events.length ? [...events] : events.slice(events.length - n);
+  }
 }
