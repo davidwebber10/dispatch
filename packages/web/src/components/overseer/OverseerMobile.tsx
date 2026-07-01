@@ -21,9 +21,13 @@ import { WorkerLightbox } from './components/WorkerLightbox';
 
 // Pulsing count pill that rides the "Work" tab title — surfaces the live working-agent count
 // (the value the old header badge showed) with a breathing accent dot as a subtle "active
-// work" flash. Hidden entirely when nothing is working so a calm board stays calm.
-function WorkCountPill({ count }: { count: number }) {
-  if (count <= 0) return null;
+// work" flash. Hidden entirely when nothing is working AND nothing is queued so a calm board
+// stays calm. When there's also queued (accepted-but-unlaunched) work, a small static/muted
+// "· N queued" segment rides alongside it — dimmer than the accent pill so it doesn't compete
+// with the pulse. If only queued work exists (no active agents), the pill shows just that
+// muted segment on its own, with no leading pulse/active number.
+function WorkCountPill({ count, queuedCount }: { count: number; queuedCount: number }) {
+  if (count <= 0 && queuedCount <= 0) return null;
   return (
     <span
       style={{
@@ -41,15 +45,27 @@ function WorkCountPill({ count }: { count: number }) {
         lineHeight: 1.4,
       }}
     >
-      <StatusDot color="var(--acc)" anim="breathe var(--pulse) ease-in-out infinite" size={5} />
-      {count}
+      {count > 0 && (
+        <>
+          <StatusDot color="var(--acc)" anim="breathe var(--pulse) ease-in-out infinite" size={5} />
+          {count}
+        </>
+      )}
+      {queuedCount > 0 && (
+        <span style={{ color: 'var(--tt)', fontWeight: 600 }}>
+          {count > 0 ? '· ' : ''}{queuedCount} queued
+        </span>
+      )}
     </span>
   );
 }
 
 export function OverseerMobile({ onBack }: { onBack?: () => void }) {
   const rv = useRenderVals();
-  const { ribbon, drillOpen } = rv;
+  const { ribbon, missions, drillOpen } = rv;
+  // Same derivation WorkRail's Queued tab count uses (missions[].queued bucket) — reused here
+  // rather than recomputed differently so the tab pill and the rail's own count can't drift.
+  const queuedCount = missions.reduce((n, mm) => n + mm.queued.length, 0);
   const name = useDispatchName();
   const mobileTab = useOverseer((s) => s.mobileTab);
   const setMobileTab = useOverseer((s) => s.setMobileTab);
@@ -138,7 +154,7 @@ export function OverseerMobile({ onBack }: { onBack?: () => void }) {
           }}
         >
           Work
-          <WorkCountPill count={ribbon.working} />
+          <WorkCountPill count={ribbon.working} queuedCount={queuedCount} />
         </button>
       </div>
 
