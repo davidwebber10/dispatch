@@ -47,6 +47,15 @@ const MAX_BACKFILL_BYTES = 16 * 1024 * 1024;
  * content blocks, which the View already renders) and drops bookkeeping entries
  * (summaries, injected `isMeta` context, sub-agent `isSidechain` lines). Returns at
  * most `limit` entries, newest-trimmed. Never throws.
+ *
+ * Each entry's `uuid` (Claude Code's own per-line message id — present on both this
+ * on-disk transcript AND the live CLI's stream-json stdout, verified against a real
+ * captured session) is threaded through onto the emitted event when present, so a
+ * client folding these backfilled events sees the SAME identity it would from a live
+ * ws replay or a REST/transcript-parsed page (see conversation/transcript.ts, which
+ * attaches the identical field). That shared identity is what lets the web client
+ * dedup/anchor a REST page against an already-rendered ws tail by real message
+ * identity instead of a lossy content fingerprint.
  */
 export function backfillEventsFromTranscript(text: string, limit = 2000): unknown[] {
   const out: unknown[] = [];
@@ -65,7 +74,7 @@ export function backfillEventsFromTranscript(text: string, limit = 2000): unknow
       : Array.isArray(content) ? content.length > 0
       : false;
     if (!hasContent) continue;
-    out.push({ type: o.type, message: msg });
+    out.push(typeof o.uuid === 'string' ? { type: o.type, message: msg, uuid: o.uuid } : { type: o.type, message: msg });
   }
   const capped = out.length > limit ? out.slice(out.length - limit) : out;
   const tail = capped[capped.length - 1] as { type: string; message: unknown } | undefined;

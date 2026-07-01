@@ -68,14 +68,18 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     res.json(terminal);
   });
 
-  // GET /api/terminals/:terminalId/conversation?since=N&before=M&limit=L — windowed
-  // transcript (View). Default: most recent `limit` lines; `since`: new lines after N
-  // (poll); `before`: the `limit` lines before M (older history for infinite scroll).
+  // GET /api/terminals/:terminalId/conversation?since=N&before=M&beforeUuid=U&limit=L —
+  // windowed transcript (View). Default: most recent `limit` lines; `since`: new lines
+  // after N (poll); `before`: the `limit` lines before M (older history for infinite
+  // scroll); `beforeUuid`: same, but anchored on a transcript-line uuid instead of a line
+  // index (see getConversation's doc comment — lets a ws-replayed page anchor precisely).
   router.get('/terminals/:terminalId/conversation', (req, res) => {
     const num = (v: unknown) => (v != null ? Number(v) : undefined);
+    const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
     res.json(sessionService.getConversation(req.params.terminalId, {
       since: num(req.query.since),
       before: num(req.query.before),
+      beforeUuid: str(req.query.beforeUuid),
       limit: num(req.query.limit),
     }));
   });

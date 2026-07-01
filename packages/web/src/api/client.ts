@@ -43,10 +43,11 @@ export const api = {
   recentCodexSessions: (sessionId: string) => req<CodexRecentSession[]>(`/api/sessions/${sessionId}/codex-recent`),
   branchTerminal: (terminalId: string) => req<Terminal>(`/api/terminals/${terminalId}/branch`, { method: 'POST' }),
   getTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}`),
-  getConversation: (id: string, params: { since?: number; before?: number; limit?: number } = {}) => {
+  getConversation: (id: string, params: { since?: number; before?: number; beforeUuid?: string; limit?: number } = {}) => {
     const q = new URLSearchParams();
     if (params.since != null) q.set('since', String(params.since));
     if (params.before != null) q.set('before', String(params.before));
+    if (params.beforeUuid != null) q.set('beforeUuid', params.beforeUuid);
     if (params.limit != null) q.set('limit', String(params.limit));
     const qs = q.toString();
     return req<Conversation>(`/api/terminals/${id}/conversation${qs ? `?${qs}` : ''}`);

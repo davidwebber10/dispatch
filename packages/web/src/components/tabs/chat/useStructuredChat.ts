@@ -67,13 +67,15 @@ export interface StructuredChat {
    * paged in). Accepted for v1: the live tail, where users spend most of their time, stays
    * full-fidelity via the ws; only older, scrolled-past-the-fold history degrades.
    *
-   * FIRST-CALL OVERLAP: `before` starts undefined, so the first call fetches the newest
-   * REST window — which can genuinely overlap the ws-replayed tail already in `items`. We
-   * don't try to pre-seed a precise anchor for this (the live/backfilled ws protocol carries
-   * no line number or transcript uuid to align against — see convItemFingerprint), so the
-   * implementation instead fingerprints and drops any item that duplicates one already
-   * rendered, prepending only the genuinely-new remainder (possibly none, on a fully
-   * overlapping page — hasMore/the anchor still advance, so the next call reaches past it).
+   * FIRST-CALL ANCHOR: `before` starts undefined, but the first call also passes
+   * `beforeUuid` — the oldest already-rendered item's real Claude Code message identity
+   * (the same `uuid` a ws-replayed item now carries — see the 'assistant'/'user' handlers
+   * below and getConversation's doc comment on `beforeUuid`) — so the server can resolve a
+   * precise line anchor instead of defaulting to the newest REST window. When no rendered
+   * item has a uuid yet (e.g. only the client's own optimistic echo is on screen) or the
+   * anchor isn't found on disk yet, this still falls back to the newest window; the dedup
+   * below (real identity, with a content fingerprint as a fallback) makes that overlap
+   * harmless either way, so anchor imprecision is a wasted fetch, never a correctness bug.
    */
   loadOlder: () => void;
 }
@@ -83,15 +85,13 @@ function safeJson(v: unknown): string {
 }
 
 /**
- * Content fingerprint for dedup'ing a loadOlder() page against what's already in `items`.
- * NOT uuid/line based: the live ws protocol carries neither (raw `assistant`/`user` events
- * have no per-line uuid, and backfillEventsFromTranscript strips it too — see cc-sessions.ts),
- * so an item built from the ws replay has no stable id to compare against a REST-parsed
- * item's real transcript uuid/line. `ts` is excluded for the same reason (ws items never set
- * it). This is a heuristic, not an identity: two genuinely distinct turns with identical
- * rendered content (rare) would collide — accepted since the alternative (no dedup) is a
- * user-visible duplicate on every first loadOlder() call whose REST window overlaps the
- * already-rendered ws tail (see loadOlder's own doc comment on the shape-parity gap).
+ * Content-fingerprint FALLBACK for dedup'ing a loadOlder() page against what's already in
+ * `items`, for items on either side that lack the real `uuid` identity (see loadOlder's own
+ * dedup, which checks uuid FIRST and only consults this for the remainder — e.g. the
+ * client's own optimistic echo of a just-sent turn, which predates any uuid the CLI/transcript
+ * assigns it). `ts` is excluded since a ws-built item doesn't always set it. This is a
+ * heuristic, not an identity: two genuinely distinct turns with identical rendered content
+ * (rare) would collide — accepted as the fallback of last resort, not the primary check.
  */
 function convItemFingerprint(it: ConvItem): string {
   return [it.kind, it.toolId ?? '', it.toolName ?? '', it.text ?? '', it.toolInput ?? ''].join(' ');
@@ -217,6 +217,16 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
   const loadingOlderRef = useRef(false);
   const oldestLineRef = useRef<number | undefined>(undefined); // REST `before` anchor; undefined = not yet probed
   const pageTokenRef = useRef(0); // bumped on terminal switch to discard a stale in-flight fetch
+  // Mirrors `items` so loadOlder's stable callback can read the CURRENT oldest item's
+  // uuid (for the first call's precise `beforeUuid` anchor) without depending on `items`
+  // in its own closure — same rationale as the hasMore/loadingOlder refs above.
+  const itemsRef = useRef<ConvItem[]>([]);
+  useEffect(() => { itemsRef.current = items; }, [items]);
+  // Bug 1 (archived agent shows an empty chat): latches once we've hydrated from the REST
+  // transcript after a `system/inactive` signal (no live process ⇒ nothing to ws-replay),
+  // so a later reconnect / duplicate signal doesn't re-fetch. Reset alongside the other
+  // per-thread refs below.
+  const inactiveHydratedRef = useRef(false);
 
   // Session is read by the image parser (path refs → byte route) but must NOT key the
   // socket effect — it can resolve a render after terminalId, and we don't want that to
@@ -242,6 +252,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
       hasMoreRef.current = true; setHasMore(true);
       loadingOlderRef.current = false; setLoadingOlder(false);
       oldestLineRef.current = undefined; pageTokenRef.current += 1;
+      inactiveHydratedRef.current = false;
       return;
     }
     setItems([]); setBusy(false); setModel(undefined); setPending(null);
@@ -249,6 +260,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
     hasMoreRef.current = true; setHasMore(true);
     loadingOlderRef.current = false; setLoadingOlder(false);
     oldestLineRef.current = undefined; pageTokenRef.current += 1; // discard any in-flight fetch from the previous thread
+    inactiveHydratedRef.current = false;
     streamingRef.current = false; turnRef.current = 0; blockMapRef.current.clear();
     pendingRef.current.clear();
     if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
@@ -325,6 +337,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
         hasMoreRef.current = true; setHasMore(true);
         loadingOlderRef.current = false; setLoadingOlder(false);
         oldestLineRef.current = undefined; pageTokenRef.current += 1;
+        inactiveHydratedRef.current = false;
       },
       onClose: () => {
         // P0b safety net: if the ws drops we can't trust an in-flight turn to ever
@@ -337,6 +350,32 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
         if (type === 'system' && event.subtype === 'init') {
           const m = event.model || event.session?.model || event.modelId;
           if (m) setModel(m);
+          return;
+        }
+
+        // BUG 1 fix: no live process backs this thread (e.g. an archived agent — see
+        // service.ts's ensureStructuredAlive, which deliberately never revives one), so the
+        // ws replay above sent nothing and `items` would otherwise stay stuck on EmptyState
+        // forever even though the conversation fully exists on disk. Hydrate the initial
+        // view from the REST transcript instead, exactly like a manual loadOlder() page.
+        // Latched (not re-fired on a reconnect) and only applied if nothing has populated
+        // `items` in the meantime (defensive — a live 'event' landing first wins).
+        if (type === 'system' && event.subtype === 'inactive') {
+          if (inactiveHydratedRef.current) return;
+          inactiveHydratedRef.current = true;
+          const tok = pageTokenRef.current;
+          loadingOlderRef.current = true; setLoadingOlder(true);
+          api.getConversation(terminalId, { limit: OLDER_PAGE_LIMIT })
+            .then((conv) => {
+              if (tok !== pageTokenRef.current) return; // thread switched / ws reset mid-flight
+              oldestLineRef.current = conv.startLine;
+              hasMoreRef.current = conv.hasMore; setHasMore(conv.hasMore);
+              if (conv.items.length) setItems((prev) => (prev.length ? prev : conv.items));
+            })
+            .catch(() => { /* transient — the next near-top scroll retries via loadOlder */ })
+            .finally(() => {
+              if (tok === pageTokenRef.current) { loadingOlderRef.current = false; setLoadingOlder(false); }
+            });
           return;
         }
 
@@ -432,6 +471,13 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
             const tokens = (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
             setContextTokens(tokens);
           }
+          // Claude Code's own per-message-block identity (verified against a real captured
+          // session — see backfillEventsFromTranscript's doc comment): the SAME field the
+          // on-disk transcript writes per line, so an item built from this live event and one
+          // built from a REST/transcript-parsed page (conversation/transcript.ts) share one
+          // stable identity. Threaded onto every item below so loadOlder's dedup/anchor can
+          // use real identity instead of a lossy content fingerprint.
+          const uuid = typeof event.uuid === 'string' ? event.uuid : undefined;
           // Streaming mode: text/thinking already rendered from deltas — ignore them
           // to avoid duplication. Reconcile each tool_use's parsed input from the
           // authoritative whole event (and append any tool we never saw start, e.g.
@@ -440,17 +486,27 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
             // Land any buffered deltas first so trailing text/thinking isn't lost and
             // no later frame overwrites the authoritative tool input reconciled below.
             flushNow();
+            // Every block this whole event reports belongs to the message that was just
+            // streamed (blockMapRef is cleared per message_start — see above), so these are
+            // exactly the synthetic per-block keys (`s-turn-idx`) created at content_block_start
+            // for THIS message. Upgrading them to the real `uuid` here is what lets a later
+            // loadOlder() page recognize (and correctly dedup) this same item from disk.
+            const blockKeys = new Set(Array.from(blockMapRef.current.values(), (r) => r.key));
             const tools = event.message.content.filter((b: any) => b.type === 'tool_use');
-            if (tools.length) {
+            if (tools.length || (uuid && blockKeys.size)) {
               setItems((p) => {
                 const haveIds = new Set(p.filter((i) => i.kind === 'tool' && i.toolId).map((i) => i.toolId));
                 const next = p.map((it) => {
-                  if (it.kind !== 'tool' || !it.toolId) return it;
-                  const m = tools.find((b: any) => b.id === it.toolId);
-                  return m ? { ...it, toolInput: safeJson(m.input), toolFile: m.input?.file_path ?? m.input?.path ?? it.toolFile } : it;
+                  const patch: Partial<ConvItem> = {};
+                  if (uuid && it.uuid && blockKeys.has(it.uuid)) patch.uuid = uuid;
+                  if (it.kind === 'tool' && it.toolId) {
+                    const m = tools.find((b: any) => b.id === it.toolId);
+                    if (m) { patch.toolInput = safeJson(m.input); patch.toolFile = m.input?.file_path ?? m.input?.path ?? it.toolFile; }
+                  }
+                  return Object.keys(patch).length ? { ...it, ...patch } : it;
                 });
                 for (const b of tools) {
-                  if (!haveIds.has(b.id)) next.push({ kind: 'tool', toolName: b.name, toolId: b.id, toolInput: safeJson(b.input), toolFile: b.input?.file_path ?? b.input?.path });
+                  if (!haveIds.has(b.id)) next.push({ kind: 'tool', toolName: b.name, toolId: b.id, toolInput: safeJson(b.input), toolFile: b.input?.file_path ?? b.input?.path, ...(uuid ? { uuid } : {}) });
                 }
                 return next;
               });
@@ -460,9 +516,9 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
           // Fallback (no stream_events ever arrived): build from the whole event.
           const add: ConvItem[] = [];
           for (const b of event.message.content) {
-            if (b.type === 'text' && b.text) add.push({ kind: 'assistant', text: b.text });
-            else if (b.type === 'thinking') add.push({ kind: 'thinking', text: b.thinking ?? b.text ?? '' });
-            else if (b.type === 'tool_use') add.push({ kind: 'tool', toolName: b.name, toolId: b.id, toolInput: safeJson(b.input), toolFile: b.input?.file_path ?? b.input?.path });
+            if (b.type === 'text' && b.text) add.push({ kind: 'assistant', text: b.text, ...(uuid ? { uuid } : {}) });
+            else if (b.type === 'thinking') add.push({ kind: 'thinking', text: b.thinking ?? b.text ?? '', ...(uuid ? { uuid } : {}) });
+            else if (b.type === 'tool_use') add.push({ kind: 'tool', toolName: b.name, toolId: b.id, toolInput: safeJson(b.input), toolFile: b.input?.file_path ?? b.input?.path, ...(uuid ? { uuid } : {}) });
             else if (b.type === 'image') { const img = imageItemFromBlock(b, sessionIdRef.current); if (img) add.push(img); }
           }
           if (add.length) setItems((p) => [...p, ...add]);
@@ -474,26 +530,32 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
           // Who actually sent this turn — tagged by the backend on the echoed event (absent
           // on untagged/legacy sends, which render as a plain "You" bubble). See ConvItem.source.
           const source = event.meta?.source as ConvItem['source'] | undefined;
+          // See the 'assistant' handler above — the same Claude Code per-message-block
+          // identity, present on a live 'user' event too (verified against a real captured
+          // session). Absent on the client's own optimistic echo (manager.ts's sendMessage
+          // synthesizes that event before the CLI's real one exists) — fine, since that item
+          // is never going to collide with an older REST page anyway.
+          const uuid = typeof event.uuid === 'string' ? event.uuid : undefined;
           const add: ConvItem[] = [];
           if (typeof content === 'string') {
             // A plain human turn rebuilt from the transcript backfill (resume after a daemon
             // restart) stores `content` as a STRING, not an array. Handle it so the user's own
             // messages aren't dropped on reconnect — assistant turns are always array-shaped,
             // which is why only the user's bubbles went missing after a restart.
-            if (content.trim()) add.push({ kind: 'user', text: content, ...(source ? { source } : {}) });
+            if (content.trim()) add.push({ kind: 'user', text: content, ...(source ? { source } : {}), ...(uuid ? { uuid } : {}) });
           } else if (Array.isArray(content)) {
             for (const b of content) {
               if (b.type === 'tool_result') {
                 // The pending AskUserQuestion just produced its result → it's answered
                 // (by us or elsewhere); drop the interactive card.
                 if (b.tool_use_id && permissionRef.current?.toolUseId === b.tool_use_id) setPending(null);
-                add.push({ kind: 'tool-result', toolId: b.tool_use_id, text: flattenContent(b.content), isError: b.is_error === true });
+                add.push({ kind: 'tool-result', toolId: b.tool_use_id, text: flattenContent(b.content), isError: b.is_error === true, ...(uuid ? { uuid } : {}) });
                 // flattenContent yields the text body only; surface any image blocks nested
                 // inside the tool_result (e.g. a screenshot tool) as their own image items.
                 add.push(...imagesFromContent(b.content, sessionIdRef.current));
               } else if (b.type === 'text' && b.text) {
                 // P0a: the backend buffers/echoes the user's own turn as a text block.
-                add.push({ kind: 'user', text: b.text, ...(source ? { source } : {}) });
+                add.push({ kind: 'user', text: b.text, ...(source ? { source } : {}), ...(uuid ? { uuid } : {}) });
               } else if (b.type === 'image') {
                 // A human-attached image on the user's own turn — tag it so surfaces can
                 // attribute it to "You" (vs. the tool_result images above, which stay
@@ -586,24 +648,37 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
     loadingOlderRef.current = true;
     setLoadingOlder(true);
     const tok = pageTokenRef.current;
-    api.getConversation(terminalId, { before: oldestLineRef.current, limit: OLDER_PAGE_LIMIT })
+    // First call only (no numeric anchor probed yet): anchor precisely on the oldest
+    // already-rendered item's real identity, so this fetches genuinely-older content
+    // instead of the newest REST window (which would just overlap the ws-replayed tail —
+    // see getConversation's doc comment on `beforeUuid`). Items without a uuid (the
+    // client's own optimistic echo, or a pre-fix legacy item) are skipped in favor of the
+    // next one that has one; if none do, this falls back to today's `before: undefined`.
+    const beforeUuid = oldestLineRef.current === undefined
+      ? itemsRef.current.find((it) => it.uuid)?.uuid
+      : undefined;
+    api.getConversation(terminalId, { before: oldestLineRef.current, ...(beforeUuid ? { beforeUuid } : {}), limit: OLDER_PAGE_LIMIT })
       .then((conv) => {
         if (tok !== pageTokenRef.current) return; // thread switched / ws reset mid-flight — discard
         oldestLineRef.current = conv.startLine;
         hasMoreRef.current = conv.hasMore;
         setHasMore(conv.hasMore);
         if (conv.items.length) {
-          // The very first loadOlder() call has no real anchor yet (`before: undefined`
-          // fetches the newest REST window, which can overlap what the ws replay already
-          // rendered — see the doc comment above `loadOlder` on the shape-parity gap and
-          // convItemFingerprint on why this can't be a uuid/line check). Filtering the
-          // overlap out here — rather than trying to fetch strictly-older content up front —
-          // is what makes the page's content correct regardless of anchor precision; a
-          // page that turns out to be ENTIRELY duplicate still isn't a dead end, since
-          // oldestLineRef/hasMore above already advanced past it for the next call.
+          // Dedup against what's already rendered by real identity (shared Claude Code
+          // message uuid — see the 'assistant'/'user' handlers above and transcript.ts)
+          // when both sides have one; that catches the case a content fingerprint alone
+          // misses (a tool call whose ws-rendered toolId/pretty-JSON toolInput differ from
+          // the REST/transcript-parsed version's bare-string input, e.g. Bash — same tool
+          // call, different formatting). Fingerprint stays as a fallback for items on
+          // either side that predate this identity (the client's own optimistic echo, an
+          // image, which the REST parser never emits anyway).
           setItems((prev) => {
-            const seen = new Set(prev.map(convItemFingerprint));
-            const fresh = conv.items.filter((it) => !seen.has(convItemFingerprint(it)));
+            const seenUuids = new Set(prev.map((it) => it.uuid).filter((u): u is string => !!u));
+            const seenFingerprints = new Set(prev.map(convItemFingerprint));
+            const fresh = conv.items.filter((it) => {
+              if (it.uuid && seenUuids.has(it.uuid)) return false;
+              return !seenFingerprints.has(convItemFingerprint(it));
+            });
             return fresh.length ? [...fresh, ...prev] : prev;
           });
         }

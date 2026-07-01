@@ -462,13 +462,20 @@ export class SessionService {
    *   - `since`: lines after index `since` (polling for new messages at the bottom).
    *   - `before`: the `limit` lines ending just before index `before` (loading
    *     older history at the top, for reverse infinite scroll).
+   *   - `beforeUuid`: like `before`, but the anchor is the transcript-line `uuid` of
+   *     the OLDEST item a caller has already rendered (from a ws replay, which has no
+   *     line index of its own — see ConvItem.uuid). Resolved to a line index here so
+   *     the very first reverse-scroll page can fetch genuinely-older content instead
+   *     of defaulting to the newest window, which would just overlap what's already
+   *     on screen. Falls back to the newest-window default when the uuid isn't found
+   *     (e.g. it hasn't reached disk yet, or predates this transcript file).
    * Returns the parsed `items`, `cursor` (= total line count, the bottom edge for
    * polling), `startLine` (top edge of the returned window), and `hasMore`
    * (whether older lines exist above the window). Claude Code only for now.
    */
   getConversation(
     terminalId: string,
-    opts: { since?: number; before?: number; limit?: number } = {},
+    opts: { since?: number; before?: number; beforeUuid?: string; limit?: number } = {},
   ): { items: ConvItem[]; cursor: number; startLine: number; hasMore: boolean; unsupported?: boolean } {
     const empty = { items: [] as ConvItem[], cursor: 0, startLine: 0, hasMore: false };
     const terminal = terminalsDb.getById(this.db, terminalId);
@@ -494,9 +501,21 @@ export class SessionService {
     const total = usable.length;
     const limit = opts.limit && opts.limit > 0 ? opts.limit : 200;
 
+    // Resolve beforeUuid to a line index by scanning backward from the tail — the anchor
+    // is always a recently-rendered ws item, so it's near the end, not deep in the file.
+    let beforeFromUuid: number | undefined;
+    if (opts.beforeUuid) {
+      for (let i = total - 1; i >= 0; i--) {
+        try { if (JSON.parse(usable[i])?.uuid === opts.beforeUuid) { beforeFromUuid = i; break; } } catch { /* partial/garbled line */ }
+      }
+    }
+
     let start: number;
     let end: number;
-    if (opts.before !== undefined && opts.before > 0) {       // older window (scroll up)
+    if (beforeFromUuid !== undefined) {                       // precise anchor (scroll up, first page)
+      end = beforeFromUuid;
+      start = Math.max(0, end - limit);
+    } else if (opts.before !== undefined && opts.before > 0) { // older window (scroll up)
       end = Math.min(opts.before, total);
       start = Math.max(0, end - limit);
     } else if (opts.since !== undefined && opts.since > 0) {  // new lines (poll)
