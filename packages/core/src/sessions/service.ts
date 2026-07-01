@@ -6,6 +6,7 @@ import type Database from 'better-sqlite3';
 import { v4 as uuid } from 'uuid';
 import * as sessionsDb from '../db/sessions.js';
 import * as terminalsDb from '../db/terminals.js';
+import * as agentsDb from '../db/agents.js';
 import * as appState from '../db/app-state.js';
 import { getProvider } from '../providers/registry.js';
 import { PTYManager } from '../pty/manager.js';
@@ -202,6 +203,10 @@ export class SessionService {
       if (this.ptyManager.isAlive(terminal.id)) this.ptyManager.kill(terminal.id);
       this.structuredManager?.kill(terminal.id);
     }
+    // Drop the agent_runs → terminals FK references first; otherwise the hard
+    // delete below trips a FOREIGN KEY constraint for any session that ever had
+    // a scheduled-agent run, and the whole archive fails.
+    agentsDb.clearTerminalRefsBySession(this.db, id);
     terminalsDb.removeBySession(this.db, id);
 
     if (this.ptyManager.isAlive(id)) this.ptyManager.kill(id);
