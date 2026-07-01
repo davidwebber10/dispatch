@@ -46,6 +46,17 @@ function missionName(t: Terminal): string {
   return typeof mn === 'string' && mn.trim() ? mn.trim() : 'General';
 }
 
+/**
+ * The agent's OWN distinct display name — `terminal.label`, the same string the
+ * WorkerLightbox shows as its title (see overseer/components/WorkerLightbox.tsx). This is
+ * per-agent, unlike `missionName` which every agent in a group shares. Falls back to the
+ * type label (e.g. "implementer") when a worker was spawned without an explicit name.
+ */
+function agentName(t: Terminal, type: AgentType): string {
+  const l = typeof t.label === 'string' ? t.label.trim() : '';
+  return l || AGENT_TYPE[type].label;
+}
+
 /** A stable small display number for "#id" derived from the terminal id (cosmetic). */
 function displayNum(id: string): number {
   let h = 0;
@@ -110,16 +121,23 @@ export function terminalToAgentThread(t: Terminal, s?: LiveStatus): AgentThread 
   const type = asAgentType(t.config?.agentType);
   const status = mapStatus(t, s);
   const id = displayNum(t.id);
-  const action = (s?.activity && s.activity.trim()) || missionName(t) || AGENT_TYPE[type].label;
+  const name = agentName(t, type);
+  // The chip's identity line shows THIS agent's own name — never the mission (that is the
+  // group header). A live activity string, when we have one, is more specific so it wins;
+  // absent that, we fall back to the agent name, not the shared mission.
+  const action = (s?.activity && s.activity.trim()) || name;
   const elapsed = elapsedSince(t.createdAt);
   // No real progress signal in incr. 1 — show a steady mid fill while working.
   const base = th(type, id, action, status, elapsed, status === 'working' ? 50 : 100);
-  return { ...base, key: t.id, dlabel: `${AGENT_TYPE[type].label} #${id} · ${missionName(t)}` };
+  // dlabel is the drill-in / data-label name; keep it the agent's own name so the rail and
+  // the opened WorkerLightbox agree on identity.
+  return { ...base, key: t.id, dlabel: name };
 }
 
 function terminalToOutcome(t: Terminal): Outcome {
   const at = terminalToAgentThread(t);
-  const title = missionName(t) !== 'General' ? missionName(t) : at.action || `${at.typeLabel} task`;
+  // Outcome cards are entries too → title with the agent's own name, not the mission.
+  const title = at.dlabel || at.action || `${at.typeLabel} task`;
   const meta = at.elapsed ? `done · ${at.elapsed} ago` : 'done';
   return { ...outc(at.type, at.id, title, meta), key: t.id };
 }
