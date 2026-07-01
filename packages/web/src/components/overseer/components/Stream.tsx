@@ -401,6 +401,16 @@ function renderStream(stream: StreamMessage[]) {
 export function ConversationStream() {
   const { stream, busy } = useRenderVals();
   const coordinatorId = useOverseer((s) => s.coordinatorId);
+  const coordinatorHasMore = useOverseer((s) => s.coordinatorHasMore);
+  const coordinatorLoadingOlder = useOverseer((s) => s.coordinatorLoadingOlder);
+  const coordinatorLoadOlder = useOverseer((s) => s.coordinatorLoadOlder);
+
+  // Reverse-infinite-scroll trigger, mirroring the agent ChatView's own onScroll threshold
+  // (packages/web/src/components/tabs/chat/ChatView.tsx). preserveScrollOnPrepend on the
+  // Viewport below then holds the reader's visual position across the prepend for free.
+  function onViewportScroll(e: React.UIEvent<HTMLDivElement>) {
+    if (e.currentTarget.scrollTop < 120 && coordinatorHasMore && !coordinatorLoadingOlder) coordinatorLoadOlder();
+  }
 
   // `ready` gates PAINT of the scroller: hidden (visibility, not display — geometry/scroll
   // math still works) until the post-open backfill burst has fully caught up, so the reader
@@ -421,7 +431,7 @@ export function ConversationStream() {
         <MessageScroller.Root
           style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', visibility: ready ? 'visible' : 'hidden' }}
         >
-          <MessageScroller.Viewport preserveScrollOnPrepend style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
+          <MessageScroller.Viewport preserveScrollOnPrepend onScroll={onViewportScroll} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
             <MessageScroller.Content style={{ maxWidth: 768, margin: '0 auto', padding: '20px 26px 12px', display: 'flex', flexDirection: 'column', gap: 17 }}>
               {renderStream(stream)}
               {/* single indeterminate spinner while the coordinator works */}
@@ -432,6 +442,9 @@ export function ConversationStream() {
               )}
             </MessageScroller.Content>
           </MessageScroller.Viewport>
+          {/* Floating (NOT a Content child — mirrors ChatView's LoadingOlderPill, see its
+              doc comment) "Loading earlier…" pill while a loadOlder() fetch is in flight. */}
+          <LoadingOlderPill show={coordinatorLoadingOlder} />
           <JumpButton />
           <StickToEndOnLoad coordinatorId={coordinatorId} count={stream.length} onReady={handleReady} />
         </MessageScroller.Root>
@@ -547,6 +560,17 @@ function StickToEndOnLoad({
   }, []);
 
   return null;
+}
+
+/** Floating "Loading earlier…" pill while loadOlder() is in flight. See ChatView's
+ *  LoadingOlderPill doc comment for why this stays OUTSIDE MessageScroller.Content. */
+function LoadingOlderPill({ show }: { show: boolean }) {
+  if (!show) return null;
+  return (
+    <div style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 20, background: 'var(--elev)', border: '1px solid var(--border)', color: 'var(--tt)', fontSize: 11.5, zIndex: 5, pointerEvents: 'none' }}>
+      <Spinner size={11} color="var(--acc)" /> Loading earlier…
+    </div>
+  );
 }
 
 /** Floating "scroll to bottom" pill — shown only when the reader is off-tail. */

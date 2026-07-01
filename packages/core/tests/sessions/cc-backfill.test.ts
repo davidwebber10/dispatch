@@ -46,3 +46,37 @@ it('returns [] for empty / unparseable input', () => {
   expect(backfillEventsFromTranscript('')).toEqual([]);
   expect(backfillEventsFromTranscript('garbage\nmore garbage')).toEqual([]);
 });
+
+// Claude Code transcripts never write a trailing `result` line, so a revived thread's
+// replay would otherwise end on `assistant` with nothing to clear the client's `busy`
+// flag (stuck "Working…" spinner after a daemon restart). See useStructuredChat.ts's
+// `subtype === 'backfill'` handler, which swallows this synthetic event.
+it('appends a synthetic backfill result when the transcript tail is a completed assistant turn', () => {
+  const transcript = [
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'do the thing' }] } }),
+    JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'done' }] } }),
+  ].join('\n');
+  const events = backfillEventsFromTranscript(transcript) as any[];
+  expect(events).toHaveLength(3);
+  expect(events[2]).toEqual({ type: 'result', subtype: 'backfill', is_error: false });
+});
+
+it('does NOT append a synthetic result when the tail has a dangling tool_use (mid-turn, interrupted)', () => {
+  const transcript = [
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'do the thing' }] } }),
+    JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tu1', name: 'Bash', input: { command: 'ls' } }] } }),
+  ].join('\n');
+  const events = backfillEventsFromTranscript(transcript) as any[];
+  expect(events).toHaveLength(2);
+  expect(events.some((e: any) => e.type === 'result')).toBe(false);
+});
+
+it('does NOT append a synthetic result when the tail ends on a user turn', () => {
+  const transcript = [
+    JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tu1', name: 'Bash', input: {} }] } }),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu1', content: 'ok' }] } }),
+  ].join('\n');
+  const events = backfillEventsFromTranscript(transcript) as any[];
+  expect(events).toHaveLength(2);
+  expect(events.some((e: any) => e.type === 'result')).toBe(false);
+});

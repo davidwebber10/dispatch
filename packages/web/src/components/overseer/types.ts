@@ -65,6 +65,7 @@ export interface AgentThread {
   dlabel?: string;            // added later: "implementer #4 · Auth refactor"
   model?: string;             // terminal.config.model, e.g. "sonnet" / "opus" — data plumbing only, WorkRail renders it
   totalTokens?: number;       // terminal.config.totalTokens — data plumbing only, WorkRail renders it
+  outputTokens?: number;      // terminal.config.outputTokens — data plumbing only, WorkRail renders it
 }
 
 // A finished thread, collapsed (factory: outc(type,id,title,meta)).
@@ -77,6 +78,7 @@ export interface Outcome {
   key: string;                // "o"+type+id
   model?: string;             // terminal.config.model, e.g. "sonnet" / "opus" — data plumbing only, WorkRail renders it
   totalTokens?: number;       // terminal.config.totalTokens — data plumbing only, WorkRail renders it
+  outputTokens?: number;      // terminal.config.outputTokens — data plumbing only, WorkRail renders it
 }
 
 // A mission groups threads + outcomes (factory: mission(name,summary,threads,outcomes,queued)).

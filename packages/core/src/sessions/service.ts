@@ -845,13 +845,17 @@ export class SessionService {
 
   /**
    * Persist an agent terminal's cumulative token usage into `config.totalTokens`
-   * when its turn settles — computed ONCE here (from the transcript's summed
-   * `usage` fields, via readTerminalTokenUsage/sumTranscriptTokens) and written
-   * into config, mirroring how `config.model` is captured at spawn time in
-   * spawnStructured. This is what lets the Work-tab's Done cards show a token count
-   * for free (read off the terminal row) instead of a per-card live fetch, which
-   * would be too expensive across dozens of finished agents. Best-effort: no-ops
-   * when there's no external_id yet or the transcript can't be read.
+   * (and its output-only count into `config.outputTokens`) when its turn settles —
+   * computed ONCE here (from the transcript's summed `usage` fields, via
+   * readTerminalTokenUsage/sumTranscriptTokens) and written into config, mirroring
+   * how `config.model` is captured at spawn time in spawnStructured. This is what
+   * lets the Work-tab's Done cards show a token count for free (read off the
+   * terminal row) instead of a per-card live fetch, which would be too expensive
+   * across dozens of finished agents. `outputTokens` — tokens the agent actually
+   * generated, excluding the cache-read/cache-write/input tokens that dominate the
+   * cumulative total — is what the Done card displays, since it better reflects
+   * "how much work this agent did" than the cache-dominated cumulative figure.
+   * Best-effort: no-ops when there's no external_id yet or the transcript can't be read.
    */
   private persistAgentTokenUsage(terminalId: string, agent: terminalsDb.TerminalRow, cfg: Record<string, any>): void {
     if (!agent.external_id) return;
@@ -861,6 +865,7 @@ export class SessionService {
     const stats = readTerminalTokenUsage(workDir, agent.external_id);
     if (!stats || !stats.totalTokens) return;
     cfg.totalTokens = stats.totalTokens;
+    cfg.outputTokens = stats.outputTokens;
     terminalsDb.updateConfig(this.db, terminalId, cfg);
   }
 

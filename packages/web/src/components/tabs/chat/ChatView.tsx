@@ -14,6 +14,7 @@ import { DictationControl } from '../../dictation/DictationControl';
 import { InputActionsMenu } from '../../dictation/InputActionsMenu';
 import { InsightText } from '../../InsightText';
 import { WorkingIndicator } from '../../WorkingIndicator';
+import { Spinner } from '../../common/Spinner';
 import { ChatImage } from '../../ChatImage';
 import { ContextIndicator } from '../../ContextIndicator';
 import { ToolCall, ToolResult } from '../ToolCall';
@@ -44,7 +45,33 @@ async function fileToBase64(file: File): Promise<string> {
 export function ChatView({ terminalId }: { terminalId: string }) {
   const tab = useTabs((s) => findTerminal(s.byProject, terminalId));
   const sessionId = tab?.sessionId;
-  const { items, busy, model, send, pending, answer, contextTokens, compacting, compactResult, compact } = useStructuredChat(terminalId, sessionId);
+  const { items, busy, model, send, pending, answer, contextTokens, compacting, compactResult, compact, hasMore, loadingOlder, loadOlder } = useStructuredChat(terminalId, sessionId);
+
+  // Reverse-infinite-scroll: fetch the next older page once the reader nears the top.
+  // Mirrors ConversationView's own `scrollTop < 120` threshold; MessageScroller.Viewport's
+  // `preserveScrollOnPrepend` (below) then holds the reader's visual position across the
+  // prepend with no scroll math of our own needed.
+  function onViewportScroll(e: React.UIEvent<HTMLDivElement>) {
+    if (e.currentTarget.scrollTop < 120 && hasMore && !loadingOlder) loadOlder();
+  }
+
+  // Detect a loadOlder() prepend (items[0] changed, but the array isn't a full reset — the
+  // PREVIOUS first item is still present somewhere later on) and remember that previous
+  // first item as a permanent group boundary. Without this, renderTimeline's turn-grouping
+  // (below) would silently MERGE the newly-prepended older content into whatever group used
+  // to start the array — same top-level DOM node, just grown taller in place — which
+  // MessageScroller's preserveScrollOnPrepend can't compensate for (it only recognizes a
+  // prepend as NEW SIBLING nodes appearing before an unmoved existing one, not an existing
+  // node silently growing). Forcing a flush at each boundary turns every older page into
+  // its own new sibling group instead, matching what the scroller expects — see its use in
+  // renderTimeline. Plain ref writes during render (no effect) — same pattern as `draftRef`
+  // above, needed here because renderTimeline() below must see this render's boundary.
+  const prevItemsRef = useRef<ConvItem[]>([]);
+  const pageBoundariesRef = useRef<Set<ConvItem>>(new Set());
+  if (items.length && prevItemsRef.current.length && items[0] !== prevItemsRef.current[0]) {
+    pageBoundariesRef.current.add(prevItemsRef.current[0]);
+  }
+  prevItemsRef.current = items;
 
   const [draft, setDraft, clearDraft] = useDraft(terminalId);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -143,10 +170,10 @@ export function ChatView({ terminalId }: { terminalId: string }) {
     <div className="chat-scope" style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, background: 'var(--color-base)' }}>
       <MessageScroller.Provider autoScroll defaultScrollPosition="end" scrollEdgeThreshold={48}>
         <MessageScroller.Root style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex' }}>
-          <MessageScroller.Viewport preserveScrollOnPrepend style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
+          <MessageScroller.Viewport preserveScrollOnPrepend onScroll={onViewportScroll} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
             <MessageScroller.Content style={{ maxWidth: 768, margin: '0 auto', padding: '24px 20px 8px', display: 'flex', flexDirection: 'column', gap: 16 }}>
               {items.length === 0 && !busy && <EmptyState model={model} />}
-              {renderTimeline(items, openFileInViewer)}
+              {renderTimeline(items, openFileInViewer, pageBoundariesRef.current)}
               {pending?.questions && pending.questions.length > 0 && (
                 <MessageScroller.Item messageId="__ask" style={{ display: 'flex' }}>
                   {/* Interactive AskUserQuestion — answering unblocks the CLI (which is
@@ -163,6 +190,9 @@ export function ChatView({ terminalId }: { terminalId: string }) {
               )}
             </MessageScroller.Content>
           </MessageScroller.Viewport>
+          {/* Floating (NOT a Content child — see LoadingOlderPill's doc comment for why)
+              "Loading earlier…" pill while a loadOlder() fetch is in flight. */}
+          <LoadingOlderPill show={loadingOlder} />
           <JumpButton />
           <StickToEndOnLoad terminalId={terminalId} count={items.length} />
         </MessageScroller.Root>
@@ -242,13 +272,34 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   );
 }
 
+// Stable fallback id for a ConvItem that has neither `uuid` nor `toolId` (e.g. a plain
+// 'user'/'assistant'/'result' item built by useStructuredChat's non-streaming reconcile
+// path). Keyed by OBJECT IDENTITY, not array index: an item's index shifts every time
+// loadOlder() prepends an older page in FRONT of it, and an index-derived key would force
+// React to unmount+remount that node on every page — breaking MessageScroller's
+// preserveScrollOnPrepend, which tracks the reader's scroll anchor by DOM node identity.
+// Item objects themselves are never mutated in place after creation (the streaming reveal
+// path only rewrites items that already carry a real uuid), so a WeakMap-cached id stays
+// attached to the same logical item for its whole life in `items`.
+let fallbackIdCounter = 0;
+const fallbackIds = new WeakMap<ConvItem, string>();
+function stableId(it: ConvItem): string {
+  if (it.uuid) return it.uuid;
+  if (it.toolId) return it.toolId;
+  let id = fallbackIds.get(it);
+  if (!id) { id = `fallback-${++fallbackIdCounter}`; fallbackIds.set(it, id); }
+  return id;
+}
+
 /**
  * Walk the timeline, pairing each tool with its result by id (parallel-safe) and
  * grouping each assistant turn into ONE row: a flush-left column holding that
  * turn's text / thinking / tool cards / footer. A `user` turn breaks the group
- * and renders its own right-aligned bubble.
+ * and renders its own right-aligned bubble. `pageBoundaries` (see ChatView's doc
+ * comment on pageBoundariesRef) also forces a break — otherwise a loadOlder() prepend
+ * could silently merge into a group that already existed, defeating scroll preservation.
  */
-function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void) {
+function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void, pageBoundaries: Set<ConvItem>) {
   // Map tool_use id -> its result item, so paired results aren't rendered standalone.
   const resultById = new Map<string, ConvItem>();
   // Set of tool ids that actually have a tool card, so an ORPHAN result (whose tool
@@ -275,7 +326,9 @@ function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void) {
 
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
-    const id = it.uuid ?? it.toolId ?? `${it.kind}-${i}`;
+    const id = stableId(it);
+
+    if (pageBoundaries.has(it)) flushGroup();
 
     if (it.kind === 'user') {
       flushGroup();
@@ -305,6 +358,14 @@ function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void) {
     if (node == null) continue;
 
     if (!group) group = { key: id, nodes: [] };
+    // Anchor the group's React key to its LAST item, re-set on every push (not just at
+    // creation). A group's start can move earlier when loadOlder() prepends older history
+    // that merges into it (no `user` boundary between them) — keying by the first item would
+    // then change the key every time, forcing React to unmount+remount the node and breaking
+    // MessageScroller's preserveScrollOnPrepend (it tracks anchor position by DOM node
+    // identity). The group's LAST item is untouched by anything prepended before it, so
+    // keying there keeps the node — and the reader's scroll position — stable across a page.
+    group.key = id;
     group.nodes.push(<div key={id}>{node}</div>);
   }
   flushGroup();
@@ -461,6 +522,23 @@ function StickToEndOnLoad({ terminalId, count }: { terminalId: string; count: nu
   }, [terminalId, count, end, scrollToEnd]);
 
   return null;
+}
+
+/**
+ * Floating "Loading earlier…" pill shown while loadOlder() is in flight. Deliberately
+ * rendered as a sibling of MessageScroller.Viewport (absolutely positioned over it), NOT
+ * as a Content child: the vendored scroller's preserveScrollOnPrepend keeps the reader's
+ * position by diffing Content's actual children across a mutation, and toggling a node
+ * in and out of that list right alongside the real prepend (both land in the same React
+ * commit) can race that diff. Floating it outside Content sidesteps that entirely.
+ */
+function LoadingOlderPill({ show }: { show: boolean }) {
+  if (!show) return null;
+  return (
+    <div style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 20, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)', fontSize: 11.5, zIndex: 5, pointerEvents: 'none' }}>
+      <Spinner size={11} /> Loading earlier…
+    </div>
+  );
 }
 
 /** shadcn MessageScroller.Button — floating "jump to latest", shown only off-tail. */

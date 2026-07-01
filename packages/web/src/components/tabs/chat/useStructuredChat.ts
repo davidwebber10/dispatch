@@ -7,6 +7,10 @@ import { api, type ContentBlock } from '../../../api/client';
  *  actually runs (sonnet-5, opus-4.x) has a native 1M-token window; only Haiku is 200k. */
 export const CONTEXT_WINDOW = 1_000_000;
 
+/** JSONL lines fetched per older-history page via loadOlder(), mirroring ConversationView's
+ *  own reverse-infinite-scroll window size (packages/web/src/components/tabs/ConversationView.tsx). */
+const OLDER_PAGE_LIMIT = 120;
+
 /** The real context window (tokens) for a given model id. Sonnet-5 and Opus-4.x — the
  *  only models Dispatch's tiering assigns to coordinator/implementer/planner/researcher/
  *  reviewer roles — natively support 1M tokens with no beta flag needed. Haiku is the
@@ -43,6 +47,27 @@ export interface StructuredChat {
   answer: (answers: Record<string, string>) => void;
   /** Trigger native Claude Code compaction on this thread (no chat bubble is added). */
   compact: () => void;
+  /** Whether an older page of history is believed to exist above the current window.
+   *  Optimistic (true) until the first loadOlder() call settles. */
+  hasMore: boolean;
+  /** True while an older-page fetch (loadOlder) is in flight. */
+  loadingOlder: boolean;
+  /**
+   * Page in the next older window of transcript history and prepend it to `items`. A
+   * structured thread opens via a bounded ws replay (last 200 ring events, see
+   * structured-socket.ts — that bound is what fixed the ~10s open delay on long threads),
+   * so this reaches further back through the REST transcript endpoint instead
+   * (`GET .../conversation?before=&limit=`, the same one ConversationView's own
+   * reverse-infinite-scroll uses). No-ops while already loading or once hasMore is false.
+   *
+   * KNOWN SHAPE-PARITY GAP: the REST parser (conversation/transcript.ts) is leaner than the
+   * ws fold above — it never emits `image` items, never carries `toolId` (tool_use/
+   * tool_result pairing falls back to array adjacency), and never carries `source` (a
+   * coordinator-relayed turn reads as a plain "You" bubble instead of "via Dispatch" once
+   * paged in). Accepted for v1: the live tail, where users spend most of their time, stays
+   * full-fidelity via the ws; only older, scrolled-past-the-fold history degrades.
+   */
+  loadOlder: () => void;
 }
 
 function safeJson(v: unknown): string {
@@ -160,6 +185,16 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
   const permissionRef = useRef<PendingPermission | null>(null);
   const setPending = useCallback((p: PendingPermission | null) => { permissionRef.current = p; setPendingState(p); }, []);
 
+  // Older-history pagination (loadOlder). Refs mirror the state so the stable loadOlder
+  // callback below always reads the CURRENT hasMore/loadingOlder without needing them in
+  // its dependency array (which would otherwise change its identity on every fetch).
+  const [hasMore, setHasMore] = useState(true); // optimistic until the first loadOlder() settles
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const hasMoreRef = useRef(true);
+  const loadingOlderRef = useRef(false);
+  const oldestLineRef = useRef<number | undefined>(undefined); // REST `before` anchor; undefined = not yet probed
+  const pageTokenRef = useRef(0); // bumped on terminal switch to discard a stale in-flight fetch
+
   // Session is read by the image parser (path refs → byte route) but must NOT key the
   // socket effect — it can resolve a render after terminalId, and we don't want that to
   // tear down + reopen the ws. A ref lets the in-effect closures read the latest value.
@@ -181,10 +216,16 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
     if (!terminalId) {
       setItems([]); setBusy(false); setModel(undefined); setPending(null);
       setContextTokens(undefined); setCompacting(false); setCompactResult(null);
+      hasMoreRef.current = true; setHasMore(true);
+      loadingOlderRef.current = false; setLoadingOlder(false);
+      oldestLineRef.current = undefined; pageTokenRef.current += 1;
       return;
     }
     setItems([]); setBusy(false); setModel(undefined); setPending(null);
     setContextTokens(undefined); setCompacting(false); setCompactResult(null);
+    hasMoreRef.current = true; setHasMore(true);
+    loadingOlderRef.current = false; setLoadingOlder(false);
+    oldestLineRef.current = undefined; pageTokenRef.current += 1; // discard any in-flight fetch from the previous thread
     streamingRef.current = false; turnRef.current = 0; blockMapRef.current.clear();
     pendingRef.current.clear();
     if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
@@ -255,6 +296,12 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
         setPending(null); // the server re-sends a still-pending permission after replay
         setContextTokens(undefined); setCompacting(false); setCompactResult(null); // replay rebuilds these
         blockMapRef.current.clear();
+        // Re-arm pagination too: `items` above is being fully rebuilt from a fresh replay,
+        // so a stale REST anchor from before the reconnect could otherwise skip a gap of
+        // history between the new tail replay and where the old anchor left off.
+        hasMoreRef.current = true; setHasMore(true);
+        loadingOlderRef.current = false; setLoadingOlder(false);
+        oldestLineRef.current = undefined; pageTokenRef.current += 1;
       },
       onClose: () => {
         // P0b safety net: if the ws drops we can't trust an in-flight turn to ever
@@ -440,6 +487,12 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
         if (type === 'result') {
           flushNow(); // land any buffered trailing tokens before the footer
           setBusy(false);
+          // Synthetic result from backfillEventsFromTranscript (see cc-sessions.ts): Claude
+          // Code transcripts never write a real trailing `result` line, so a revived
+          // completed thread's replay would otherwise end on `assistant` with nothing to
+          // clear `busy`. It carries no telemetry, so swallow it before it becomes a
+          // rendered <ResultFooter/> card.
+          if (event.subtype === 'backfill') return;
           setItems((p) => [...p, {
             kind: 'result',
             isError: event.is_error === true,
@@ -501,5 +554,28 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
     api.compactTerminal(terminalId).catch(() => {});
   }, [terminalId]);
 
-  return { items, busy, model, contextTokens, compacting, compactResult, send, pending, answer, compact };
+  // Page in the next older window of REST-backed history and prepend it to `items` (see
+  // the loadOlder doc comment on StructuredChat above for the shape-parity gap this
+  // accepts). Reads/writes via refs (not the hasMore/loadingOlder state directly) so this
+  // callback stays stable per terminalId instead of churning on every fetch.
+  const loadOlder = useCallback(() => {
+    if (!terminalId || loadingOlderRef.current || !hasMoreRef.current) return;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    const tok = pageTokenRef.current;
+    api.getConversation(terminalId, { before: oldestLineRef.current, limit: OLDER_PAGE_LIMIT })
+      .then((conv) => {
+        if (tok !== pageTokenRef.current) return; // thread switched / ws reset mid-flight — discard
+        oldestLineRef.current = conv.startLine;
+        hasMoreRef.current = conv.hasMore;
+        setHasMore(conv.hasMore);
+        if (conv.items.length) setItems((prev) => [...conv.items, ...prev]);
+      })
+      .catch(() => { /* transient — the next near-top scroll retries */ })
+      .finally(() => {
+        if (tok === pageTokenRef.current) { loadingOlderRef.current = false; setLoadingOlder(false); }
+      });
+  }, [terminalId]);
+
+  return { items, busy, model, contextTokens, compacting, compactResult, send, pending, answer, compact, hasMore, loadingOlder, loadOlder };
 }

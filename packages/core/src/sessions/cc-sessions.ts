@@ -67,7 +67,16 @@ export function backfillEventsFromTranscript(text: string, limit = 2000): unknow
     if (!hasContent) continue;
     out.push({ type: o.type, message: msg });
   }
-  return out.length > limit ? out.slice(out.length - limit) : out;
+  const capped = out.length > limit ? out.slice(out.length - limit) : out;
+  const tail = capped[capped.length - 1] as { type: string; message: unknown } | undefined;
+  if (tail && tail.type === 'assistant' && !messageHasToolUse(tail.message)) {
+    // Claude Code transcripts never write a trailing `result` line, so a revived thread's
+    // ring buffer would otherwise end on `assistant` with nothing to clear the client's
+    // `busy` flag. Synthesize one purely for that signal; the client recognizes
+    // subtype:'backfill' and swallows it before it reaches the rendered timeline.
+    capped.push({ type: 'result', subtype: 'backfill', is_error: false });
+  }
+  return capped;
 }
 
 /**
@@ -114,6 +123,10 @@ export function sumTranscriptTokens(raw: string): TranscriptTokenStats {
   let outputTokens = 0;
   let cacheReadTokens = 0;
   let cacheCreationTokens = 0;
+  // Claude Code writes one JSONL line per content block (thinking/text/tool_use) within a
+  // single assistant message, repeating the identical whole-message `usage` on every line.
+  // Dedup by message.id so a message split across N lines is only counted once.
+  const seenMessageIds = new Set<string>();
 
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
@@ -121,7 +134,12 @@ export function sumTranscriptTokens(raw: string): TranscriptTokenStats {
       const entry = JSON.parse(line);
       const msg = entry.message;
       if (!msg || typeof msg !== 'object') continue;
+      if (msg.model && msg.model !== '<synthetic>') model = msg.model;
       if (msg.usage) {
+        if (msg.id) {
+          if (seenMessageIds.has(msg.id)) continue;
+          seenMessageIds.add(msg.id);
+        }
         const u = msg.usage;
         inputTokens += u.input_tokens || 0;
         outputTokens += u.output_tokens || 0;
@@ -129,7 +147,6 @@ export function sumTranscriptTokens(raw: string): TranscriptTokenStats {
         cacheCreationTokens += u.cache_creation_input_tokens || 0;
         messageCount++;
       }
-      if (msg.model && msg.model !== '<synthetic>') model = msg.model;
     } catch { /* partial/garbled line */ }
   }
 

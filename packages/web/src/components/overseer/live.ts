@@ -163,9 +163,13 @@ export function terminalToAgentThread(t: Terminal, s?: LiveStatus): AgentThread 
   // `model`. Undefined for a still-working agent or one that finished before this field
   // existed; WorkRail only renders it when present.
   const totalTokens = typeof t.config?.totalTokens === 'number' ? t.config.totalTokens : undefined;
+  // Tokens the agent actually generated (excludes cache-read/cache-write/input) — persisted
+  // alongside totalTokens; the Done card renders THIS, since the cumulative figure is
+  // dominated by repeated cache-read tokens and doesn't reflect "how much work it did".
+  const outputTokens = typeof t.config?.outputTokens === 'number' ? t.config.outputTokens : undefined;
   // dlabel is the drill-in / data-label name; keep it the agent's own name so the rail and
   // the opened WorkerLightbox agree on identity.
-  return { ...base, key: t.id, dlabel: name, model, totalTokens };
+  return { ...base, key: t.id, dlabel: name, model, totalTokens, outputTokens };
 }
 
 function terminalToOutcome(t: Terminal): Outcome {
@@ -173,7 +177,13 @@ function terminalToOutcome(t: Terminal): Outcome {
   // Outcome cards are entries too → title with the agent's own name, not the mission.
   const title = at.dlabel || at.action || `${at.typeLabel} task`;
   const meta = at.elapsed ? `done · ${at.elapsed} ago` : 'done';
-  return { ...outc(at.type, at.id, title, meta), key: t.id, model: at.model, totalTokens: at.totalTokens };
+  return {
+    ...outc(at.type, at.id, title, meta),
+    key: t.id,
+    model: at.model,
+    totalTokens: at.totalTokens,
+    outputTokens: at.outputTokens,
+  };
 }
 
 function summaryText(live: number, done: number): string {
@@ -249,6 +259,23 @@ function agentCardMessage(
   };
 }
 
+// Stable fallback key for a ConvItem with no `uuid` (e.g. a plain 'user'/'assistant' item
+// built by useStructuredChat's non-streaming reconcile path). Keyed by OBJECT IDENTITY, not
+// array index: loadOlder() prepends an older page in FRONT of existing items, shifting every
+// later index — an index-derived key would then force React to unmount+remount that
+// StreamMessage's node on every page, breaking MessageScroller's preserveScrollOnPrepend
+// (it tracks the reader's scroll anchor by DOM node identity). Item objects are never
+// mutated in place after creation, so a WeakMap-cached key stays attached to the same
+// logical item for its whole life in `items` (mirrors ChatView.tsx's stableId).
+let fallbackKeyCounter = 0;
+const fallbackKeys = new WeakMap<ConvItem, string>();
+function stableKey(it: ConvItem): string {
+  if (it.uuid) return it.uuid;
+  let key = fallbackKeys.get(it);
+  if (!key) { key = `fallback-${++fallbackKeyCounter}`; fallbackKeys.set(it, key); }
+  return key;
+}
+
 /** The coordinator conversation (ConvItem timeline) → the Overseer message stream. */
 export function convItemsToStream(items: ConvItem[]): StreamMessage[] {
   const out: StreamMessage[] = [];
@@ -260,8 +287,8 @@ export function convItemsToStream(items: ConvItem[]): StreamMessage[] {
   // can still show a real name/icon instead of a bare id.
   const knownAgents = new Map<string, { name: string; agentType: AgentType; mission?: string }>();
 
-  items.forEach((it, i) => {
-    const key = it.uuid ?? `c${i}`;
+  items.forEach((it) => {
+    const key = stableKey(it);
     if (it.kind === 'user' && it.text?.trim()) out.push(m('user', 'You', it.text, '', key));
     else if (it.kind === 'assistant' && it.text?.trim()) out.push(m('overseer', 'Dispatch', it.text, '', key));
     else if (it.kind === 'image' && it.imageUrl) out.push(imageMessage(it.imageUrl, it.imageAlt, key, it.imageFromUser === true));
