@@ -32,7 +32,7 @@ export function InputActionsMenu({ onAddFile, onDictate, dictateDisabled, dictat
 
   return (
     <div ref={wrapRef} style={{ position: 'relative', flexShrink: 0 }}>
-      <button aria-label="More input options" onClick={() => setOpen((o) => !o)} style={trigger}>
+      <button type="button" aria-label="More input options" onClick={() => setOpen((o) => !o)} style={trigger}>
         <Plus size={20} weight="bold" />
       </button>
       {open && (
@@ -41,10 +41,10 @@ export function InputActionsMenu({ onAddFile, onDictate, dictateDisabled, dictat
           background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 12,
           boxShadow: '0 12px 34px -10px rgba(0,0,0,.7)', zIndex: 40,
         }}>
-          <button style={rowBtn()} onClick={() => { setOpen(false); onAddFile(); }}>
+          <button type="button" style={rowBtn()} onClick={() => { setOpen(false); onAddFile(); }}>
             <Paperclip size={18} /> Add file
           </button>
-          <button style={rowBtn(dictateDisabled)} disabled={dictateDisabled} onClick={() => { setOpen(false); onDictate(); }}>
+          <button type="button" style={rowBtn(dictateDisabled)} disabled={dictateDisabled} onClick={() => { setOpen(false); onDictate(); }}>
             <Microphone size={18} /> Dictate
           </button>
           {dictateDisabled && dictateHint && (
