@@ -3,8 +3,17 @@ import type { ConvItem, PendingPermission } from '../../../api/types';
 import { openStructuredSocket } from '../../../api/structured-socket';
 import { api, type ContentBlock } from '../../../api/client';
 
-/** The default Claude Code context window (tokens); no beta flag currently widens it. */
-export const CONTEXT_WINDOW = 200_000;
+/** Fallback context window (tokens) for when no model is known yet. Every model Dispatch
+ *  actually runs (sonnet-5, opus-4.x) has a native 1M-token window; only Haiku is 200k. */
+export const CONTEXT_WINDOW = 1_000_000;
+
+/** The real context window (tokens) for a given model id. Sonnet-5 and Opus-4.x — the
+ *  only models Dispatch's tiering assigns to coordinator/implementer/planner/researcher/
+ *  reviewer roles — natively support 1M tokens with no beta flag needed. Haiku is the
+ *  one exception, capped at 200k. */
+export function contextWindowFor(model?: string): number {
+  return model?.includes('haiku') ? 200_000 : 1_000_000;
+}
 
 /** The outcome of the most recent native compaction, or null before any has run. */
 export interface CompactResult {
@@ -18,7 +27,7 @@ export interface StructuredChat {
   model?: string;
   /** Context tokens used AS OF the latest assistant turn (input + cache_read + cache_creation).
    *  Undefined until the first assistant event of the thread lands. Compare against
-   *  CONTEXT_WINDOW to render a fill indicator. */
+   *  contextWindowFor(model) to render a fill indicator. */
   contextTokens?: number;
   /** True while a native `/compact` triggered via `compact()` is in progress. */
   compacting: boolean;

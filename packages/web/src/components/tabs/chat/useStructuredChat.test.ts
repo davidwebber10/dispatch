@@ -1,7 +1,7 @@
 // packages/web/src/components/tabs/chat/useStructuredChat.test.ts
 import { renderHook, act } from '@testing-library/react';
 import { test, expect, vi, beforeEach } from 'vitest';
-import { useStructuredChat } from './useStructuredChat';
+import { useStructuredChat, contextWindowFor } from './useStructuredChat';
 import * as sock from '../../../api/structured-socket';
 import { api, type ContentBlock } from '../../../api/client';
 
@@ -48,6 +48,13 @@ const start = (index: number, content_block: any) => ({ type: 'stream_event', ev
 const textDelta = (index: number, text: string) => ({ type: 'stream_event', event: { type: 'content_block_delta', index, delta: { type: 'text_delta', text } } });
 const thinkDelta = (index: number, thinking: string) => ({ type: 'stream_event', event: { type: 'content_block_delta', index, delta: { type: 'thinking_delta', thinking } } });
 const jsonDelta = (index: number, partial_json: string) => ({ type: 'stream_event', event: { type: 'content_block_delta', index, delta: { type: 'input_json_delta', partial_json } } });
+
+test('contextWindowFor returns 1M for sonnet/opus and 200k for haiku (undefined defaults to 1M)', () => {
+  expect(contextWindowFor('claude-sonnet-5')).toBe(1_000_000);
+  expect(contextWindowFor('claude-opus-4-8')).toBe(1_000_000);
+  expect(contextWindowFor('claude-haiku-4-5-20251001')).toBe(200_000);
+  expect(contextWindowFor(undefined)).toBe(1_000_000);
+});
 
 test('streams assistant text incrementally and ignores the whole assistant event (no dup)', () => {
   const { result } = renderHook(() => useStructuredChat('t1'));

@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react';
 import { CheckCircle, WarningCircle } from '@phosphor-icons/react';
 import { Modal } from './common/Modal';
 import { Spinner } from './common/Spinner';
-import { CONTEXT_WINDOW, type CompactResult } from './tabs/chat/useStructuredChat';
+import { contextWindowFor, type CompactResult } from './tabs/chat/useStructuredChat';
 
 export interface ContextDetailModalProps {
   contextTokens?: number;
@@ -17,7 +17,8 @@ const row: CSSProperties = { display: 'flex', justifyContent: 'space-between', a
 
 /** Utility modal for the <ContextIndicator> pill: tokens/window/model detail + a Compact button. */
 export function ContextDetailModal({ contextTokens, model, compacting, compactResult, compact, onClose }: ContextDetailModalProps) {
-  const pct = Math.min(100, Math.round(((contextTokens ?? 0) / CONTEXT_WINDOW) * 100));
+  const contextWindow = contextWindowFor(model);
+  const pct = Math.min(100, Math.round(((contextTokens ?? 0) / contextWindow) * 100));
   return (
     <Modal open onClose={onClose} title="Context window">
       <div>
@@ -27,7 +28,7 @@ export function ContextDetailModal({ contextTokens, model, compacting, compactRe
         </div>
         <div style={row}>
           <span style={{ color: 'var(--color-text-secondary)' }}>Context window</span>
-          <span style={{ fontFamily: 'var(--font-mono)' }}>{CONTEXT_WINDOW.toLocaleString()} max</span>
+          <span style={{ fontFamily: 'var(--font-mono)' }}>{contextWindow.toLocaleString()} max</span>
         </div>
         <div style={row}>
           <span style={{ color: 'var(--color-text-secondary)' }}>Fill</span>

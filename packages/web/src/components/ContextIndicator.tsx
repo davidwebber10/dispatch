@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { CheckCircle, WarningCircle } from '@phosphor-icons/react';
 import { Spinner } from './common/Spinner';
 import { ContextDetailModal } from './ContextDetailModal';
-import { CONTEXT_WINDOW, type CompactResult } from './tabs/chat/useStructuredChat';
+import { contextWindowFor, type CompactResult } from './tabs/chat/useStructuredChat';
 
 /** How long a compaction's success/failure flash stays visible before the indicator
  *  reverts to its normal percentage display. */
@@ -38,7 +38,7 @@ export function ContextIndicator({ contextTokens, compacting, compactResult, mod
 
   if (contextTokens === undefined && !compacting && !flash) return null;
 
-  const pct = Math.min(100, Math.round(((contextTokens ?? 0) / CONTEXT_WINDOW) * 100));
+  const pct = Math.min(100, Math.round(((contextTokens ?? 0) / contextWindowFor(model)) * 100));
   const barColor = pct >= 90 ? 'var(--color-status-red)' : pct >= 75 ? 'var(--color-status-yellow)' : 'var(--color-accent)';
 
   return (
