@@ -100,6 +100,35 @@ it('POST permission with no pending → 404; bad decision → 400', async () => 
   await request(app).post(`/api/terminals/${id}/stop`);
 });
 
+it("a coordinator's own AskUserQuestion is auto-denied — nothing in the harness ever answers it, so it must not deadlock the turn", async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', role: 'coordinator' } });
+  const id = t.body.id;
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'TRIGGER_QUESTION' });
+  const echoed = await pollEvent(app, id, (e) => e?.type === 'user' && JSON.stringify(e).includes('DENIED'));
+  expect(echoed.message.content[0].message).toContain('Do not use AskUserQuestion as a coordinator');
+  expect((await request(app).get(`/api/terminals/${id}/permission`)).body).toBeNull(); // never left pending
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+it('a message delivered while a permission is genuinely pending must not clobber needs_input back to working', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent', autonomy: 'supervised' } });
+  const id = t.body.id;
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'TRIGGER_PERMISSION' });
+  await pollPermission(app, id);
+  expect((await request(app).get(`/api/terminals/${id}`)).body.status).toBe('needs_input');
+
+  // A queued message (e.g. a human ping, or an agent-completion notice) arrives while the
+  // turn is still blocked on the pending tool — it must not silently flip the status back
+  // to "working" and hide the still-unresolved pending from the UI.
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'hello?' });
+  expect((await request(app).get(`/api/terminals/${id}`)).body.status).toBe('needs_input');
+  expect((await request(app).get(`/api/terminals/${id}/permission`)).body).not.toBeNull(); // still pending
+
+  const ans = await request(app).post(`/api/terminals/${id}/permission`).send({ decision: 'allow' });
+  expect(ans.status).toBe(204);
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
 it('a plain structured thread (no role) auto-allows gated tools — no escalation', async () => {
   const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured' } });
   const id = t.body.id;

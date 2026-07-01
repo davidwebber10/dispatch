@@ -62,6 +62,16 @@ it('pins --model <alias> when a model is given, and omits it otherwise', () => {
   expect(withoutModel.args).not.toContain('--model');
 });
 
+it('adds --disallowedTools AskUserQuestion for a coordinator thread, omits it otherwise', () => {
+  const coordinator = claudeCodeProvider.buildStructuredCommand!({ workDir: '/tmp', isCoordinator: true });
+  const i = coordinator.args.indexOf('--disallowedTools');
+  expect(i).toBeGreaterThanOrEqual(0);
+  expect(coordinator.args[i + 1]).toBe('AskUserQuestion');
+
+  const agent = claudeCodeProvider.buildStructuredCommand!({ workDir: '/tmp' });
+  expect(agent.args).not.toContain('--disallowedTools');
+});
+
 it('pinned claude still accepts --permission-prompt-tool stdio (smoke)', () => {
   let help = '';
   try { help = execFileSync('claude', ['--help'], { encoding: 'utf8' }); } catch { return; } // skip if claude absent (CI)

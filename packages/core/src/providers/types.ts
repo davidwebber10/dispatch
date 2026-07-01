@@ -80,6 +80,10 @@ export interface SessionProvider {
    * the structured stream-json flags + persona + MCP wiring.
    * `model` pins the CLI model for this thread (e.g. a per-agent-type tier) via
    * `--model <alias>`; omitted flag means the CLI's default model.
+   * `isCoordinator` marks a Dispatch coordinator thread — it talks to the human via
+   * plain chat text and to its own subagents via `answer_agent`/`message_agent`, so
+   * `AskUserQuestion` (which nothing in the harness ever answers for a coordinator)
+   * is disallowed outright rather than merely discouraged in the system prompt.
    */
-  buildStructuredCommand?(args: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string; model?: string }): { command: string; args: string[] };
+  buildStructuredCommand?(args: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string; model?: string; isCoordinator?: boolean }): { command: string; args: string[] };
 }
