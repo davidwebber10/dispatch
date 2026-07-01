@@ -47,8 +47,8 @@ export function DictationControl({ dictation }: { dictation: Dictation }) {
     return (
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
         <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: 'var(--color-status-red)' }}>{error}</span>
-        <button onClick={() => void dictation.start()} style={{ background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', fontSize: 13 }}>Retry</button>
-        <button onClick={dictation.reset} style={{ background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 13 }}>Dismiss</button>
+        <button type="button" onClick={() => void dictation.start()} style={{ background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', fontSize: 13 }}>Retry</button>
+        <button type="button" onClick={dictation.reset} style={{ background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 13 }}>Dismiss</button>
       </div>
     );
   }
@@ -64,11 +64,11 @@ export function DictationControl({ dictation }: { dictation: Dictation }) {
   // recording
   return (
     <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-      <button aria-label="Cancel dictation" onClick={dictation.cancel} style={iconBtn('var(--color-hover)', 'var(--color-text-secondary)')}>
+      <button type="button" aria-label="Cancel dictation" onClick={dictation.cancel} style={iconBtn('var(--color-hover)', 'var(--color-text-secondary)')}>
         <X size={18} weight="bold" />
       </button>
       <Waveform dictation={dictation} />
-      <button aria-label="Confirm dictation" onClick={() => void dictation.confirm()} style={iconBtn('var(--color-accent)', '#06140B')}>
+      <button type="button" aria-label="Confirm dictation" onClick={() => void dictation.confirm()} style={iconBtn('var(--color-accent)', '#06140B')}>
         <Check size={18} weight="bold" />
       </button>
     </div>
