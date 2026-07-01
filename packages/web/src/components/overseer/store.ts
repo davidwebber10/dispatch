@@ -68,6 +68,16 @@ interface OverseerState {
   coordinatorHasMore: boolean;
   coordinatorLoadingOlder: boolean;
   coordinatorLoadOlder: () => void;
+  // The coordinator's OWN pending AskUserQuestion / gated tool (the "Open Dispatch" chat is a
+  // human-facing thread, so a coordinator that calls AskUserQuestion blocks its CLI on stdin
+  // until answered — exactly like an agent). It is NOT surfaced as a Need (isStructuredWorker
+  // excludes coordinators) and useNeedsSync never fetches it, so without this it would show
+  // NOWHERE and the chat would silently freeze. Pushed in by useCoordinatorSync() from the same
+  // useStructuredChat() call; the Stream renders it inline via <AskQuestionCard>, mirroring the
+  // agent ChatView. `coordinatorAnswer` is that hook's own answer() (stable per terminal); a
+  // no-op until a pending is live.
+  coordinatorPending: PendingPermission | null;
+  coordinatorAnswer: (answers: Record<string, string>) => void;
   sendError: string | null; // last directive send that FAILED (POST rejected); surfaced inline, cleared on next send
   ensuring: boolean; // a find-or-create coordinator request is in flight
   resolved: string[]; // optimistically dismissed need ids
@@ -106,6 +116,8 @@ interface OverseerState {
   compactCoordinator: () => void;
   /** Pushed in by useCoordinatorSync() from the same useStructuredChat() call's hasMore/loadingOlder/loadOlder. */
   setCoordinatorPaging: (info: { hasMore: boolean; loadingOlder: boolean; loadOlder: () => void }) => void;
+  /** Pushed in by useCoordinatorSync() from the same useStructuredChat() call's pending/answer — the coordinator's OWN gated question, surfaced inline in its stream. */
+  setCoordinatorPending: (pending: PendingPermission | null, answer: (answers: Record<string, string>) => void) => void;
   setPending: (terminalId: string, pending: PendingPermission | null) => void;
   setArchivedTerminals: (projectId: string, terminals: Terminal[]) => void;
   /** Clean slate: archive the coordinator + its agents and start a fresh Dispatch conversation. */
@@ -134,6 +146,8 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   coordinatorHasMore: true,
   coordinatorLoadingOlder: false,
   coordinatorLoadOlder: () => {},
+  coordinatorPending: null,
+  coordinatorAnswer: () => {},
   sendError: null,
   ensuring: false,
   resolved: [],
@@ -279,6 +293,8 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       coordinatorHasMore: true,
       coordinatorLoadingOlder: false,
       coordinatorLoadOlder: () => {},
+      coordinatorPending: null,
+      coordinatorAnswer: () => {},
       sendError: null,
       resolved: [],
       pendingByTerminal: {},
@@ -316,6 +332,9 @@ export const useOverseer = create<OverseerState>((set, get) => ({
 
   setCoordinatorPaging: (info) =>
     set({ coordinatorHasMore: info.hasMore, coordinatorLoadingOlder: info.loadingOlder, coordinatorLoadOlder: info.loadOlder }),
+
+  setCoordinatorPending: (coordinatorPending, coordinatorAnswer) =>
+    set({ coordinatorPending, coordinatorAnswer }),
 
   setPending: (terminalId, pending) =>
     set((s) => ({ pendingByTerminal: { ...s.pendingByTerminal, [terminalId]: pending } })),
@@ -456,6 +475,7 @@ export function useCoordinatorSync(): void {
   const setCoordinatorBusy = useOverseer((s) => s.setCoordinatorBusy);
   const setCoordinatorContextInfo = useOverseer((s) => s.setCoordinatorContextInfo);
   const setCoordinatorPaging = useOverseer((s) => s.setCoordinatorPaging);
+  const setCoordinatorPending = useOverseer((s) => s.setCoordinatorPending);
 
   useEffect(() => {
     ensureForProject(activeId);
@@ -466,7 +486,7 @@ export function useCoordinatorSync(): void {
   // — without it, imageItemFromBlock returns null for path refs and images vanish after a
   // daemon-restart/transcript-resume. (The hook reads sessionId via a ref, so this does
   // NOT re-key the socket effect.)
-  const { items, busy, model, contextTokens, compacting, compactResult, hasMore, loadingOlder, loadOlder } = useStructuredChat(coordinatorId ?? '', coordinatorProject ?? undefined);
+  const { items, busy, model, contextTokens, compacting, compactResult, pending, answer, hasMore, loadingOlder, loadOlder } = useStructuredChat(coordinatorId ?? '', coordinatorProject ?? undefined);
   const stream = useMemo(() => convItemsToStream(items), [items]);
   useEffect(() => {
     setCoordinatorStream(stream);
@@ -480,6 +500,11 @@ export function useCoordinatorSync(): void {
   useEffect(() => {
     setCoordinatorPaging({ hasMore, loadingOlder, loadOlder });
   }, [hasMore, loadingOlder, loadOlder, setCoordinatorPaging]);
+  // Surface the coordinator's OWN pending AskUserQuestion inline in its stream — without this
+  // a coordinator that asks the human a question freezes with the question shown nowhere.
+  useEffect(() => {
+    setCoordinatorPending(pending, answer);
+  }, [pending, answer, setCoordinatorPending]);
 
   // Keep the project's archived (complete_agent'd) workers in the store so the rail can
   // render them as done outcomes. Folded in here (the single root-mounted sync) to avoid
