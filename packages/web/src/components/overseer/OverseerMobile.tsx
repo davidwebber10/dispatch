@@ -1,6 +1,8 @@
 // Overseer view — mobile root (spec §1c / §6). Collapses the two desktop regions into
 // two tabs (Stream / Work) plus a full-screen drill overlay; "Needs you" now lives in
-// the header alert dropdown (NeedsAlert) rather than a third tab. The header and tab
+// the header alert dropdown (NeedsAlert) rather than a third tab. The live working-count
+// rides the Work tab title as a pulsing count pill (WorkCountPill) so active work is
+// signalled from the tab bar even while the Stream tab is showing. The header and tab
 // control are rendered inline here; the tab bodies and the overlay reuse the same shared
 // region components as desktop (each adapts its own desktop/mobile rendering via
 // useIsMobile — see CONTRACT.md). All data flows through the store / useRenderVals().
@@ -16,6 +18,34 @@ import { Composer } from './components/Composer';
 import { OngoingWorkOverview } from './components/WorkRail';
 import { ThreadDetail } from './components/ThreadDetail';
 import { WorkerLightbox } from './components/WorkerLightbox';
+
+// Pulsing count pill that rides the "Work" tab title — surfaces the live working-agent count
+// (the value the old header badge showed) with a breathing accent dot as a subtle "active
+// work" flash. Hidden entirely when nothing is working so a calm board stays calm.
+function WorkCountPill({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        padding: '1px 6px 1px 5px',
+        borderRadius: 999,
+        background: 'var(--accDim)',
+        border: '1px solid var(--accLine)',
+        color: 'var(--acc)',
+        fontFamily: 'var(--mono)',
+        fontSize: 10.5,
+        fontWeight: 700,
+        lineHeight: 1.4,
+      }}
+    >
+      <StatusDot color="var(--acc)" anim="breathe var(--pulse) ease-in-out infinite" size={5} />
+      {count}
+    </span>
+  );
+}
 
 export function OverseerMobile({ onBack }: { onBack?: () => void }) {
   const rv = useRenderVals();
@@ -42,8 +72,10 @@ export function OverseerMobile({ onBack }: { onBack?: () => void }) {
   return (
     <div className="overseer-root" style={{ ...overseerRootStyle, position: 'relative', overflow: 'hidden' }}>
       {/* header — single consolidated bar: back ‹ + coordinator name, then the "needs you"
-          alert and working-count badge (the separate back-nav bar above was collapsed into
-          this row to reclaim vertical space). */}
+          alert (the separate back-nav bar above was collapsed into this row to reclaim
+          vertical space). The live working-count no longer lives here — it moved onto the
+          Work tab as a pulsing count pill (see WorkCountPill below), which also leaves
+          NeedsAlert as the rightmost header item so its popover anchors cleanly. */}
       <div
         style={{
           flex: 'none',
@@ -67,24 +99,9 @@ export function OverseerMobile({ onBack }: { onBack?: () => void }) {
         <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--tp)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
         <span style={{ flex: 1 }} />
         {/* "Needs you" alert — ⚠ + count; opens the held-items popover (replaces the old
-            Needs tab). */}
+            Needs tab). Kept as the last (rightmost) header item so its popover right-anchors
+            cleanly under the ⚠ on mobile. */}
         <NeedsAlert />
-        <span
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            padding: '4px 9px',
-            borderRadius: 7,
-            background: 'var(--elev)',
-            border: '1px solid var(--border)',
-            fontSize: 11,
-            color: 'var(--ts)',
-          }}
-        >
-          <StatusDot color="var(--acc)" anim="breathe var(--pulse) ease-in-out infinite" size={5} />
-          {ribbon.working}
-        </span>
       </div>
 
       {/* tabs */}
@@ -112,11 +129,16 @@ export function OverseerMobile({ onBack }: { onBack?: () => void }) {
           onClick={() => setMobileTab('work')}
           style={{
             ...tabBtnBase,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 7,
             background: activeTab === 'work' ? 'var(--elev)' : 'transparent',
             color: activeTab === 'work' ? 'var(--tp)' : 'var(--ts)',
           }}
         >
           Work
+          <WorkCountPill count={ribbon.working} />
         </button>
       </div>
 

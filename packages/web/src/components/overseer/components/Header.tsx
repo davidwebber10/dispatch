@@ -1,8 +1,10 @@
 // Overseer view — desktop header (spec §6 "Header (desktop, 54px)").
 //
 // BrandBadge: coordinator display name (configurable, see useDispatchName) + "dispatch" chip.
-// StatusRibbon: NeedsAlert (⚠ + count → opens the held-items popover) · "N working"
-// (breathing acc dot) · "N done today" · divider · "Connected" (static dot) · reset · gear.
+// StatusRibbon: NeedsAlert (⚠ + count → opens the held-items popover) · "N done today" ·
+// divider · "Connected" (static dot) · reset · gear. (The live working-count no longer rides
+// the header — it moved onto the Work tab as a pulsing count pill; see OverseerMobile. Desktop
+// keeps surfacing it via the work rail's "Live N" toggle — see WorkRail.)
 //
 // Desktop-only: the mobile header is rendered inline by OverseerMobile (which reuses the
 // same NeedsAlert). Reads: useRenderVals().ribbon + useOverseer(s => s.resetDispatch).
@@ -63,29 +65,13 @@ function StatusRibbon({
   ribbon: Ribbon;
   onReset: () => void;
 }) {
-  const { working, done } = ribbon;
+  const { done } = ribbon;
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       {/* "Needs you" alert — ⚠ + count; click opens the held-items popover (replaces the
           old inline needs zone + "N need you" ribbon button). */}
       <NeedsAlert />
-
-      {/* "N working" chip — elevated bg, breathing accent dot */}
-      <div
-        style={{
-          ...chipBase,
-          background: 'var(--elev)',
-          border: '1px solid var(--border)',
-          color: 'var(--ts)',
-        }}
-      >
-        <StatusDot
-          color="var(--acc)"
-          anim="breathe var(--pulse) ease-in-out infinite"
-        />
-        {working} working
-      </div>
 
       {/* "N done today" chip — no bg, check-circle icon */}
       <div

@@ -11,6 +11,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from '../atoms';
 import { useRenderVals } from '../store';
+import { useIsMobile } from '../../../hooks/useIsMobile';
 import { NeedsZone } from './NeedsZone';
 
 // Calm empty state shown in the popover when nothing is held.
@@ -40,9 +41,25 @@ export function NeedsAlert() {
   const { needs: count, hasNeeds } = ribbon;
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const isMobile = useIsMobile();
+  // On mobile the popover anchors to the VIEWPORT (position: fixed, right-gutter) rather than
+  // to the button's wrapper. Wrapper-relative `right: 0` overflowed the left edge whenever the
+  // ⚠ wasn't hard against the screen's right edge (a near-full-width popover extending left
+  // ran off-screen — the "floats top-left / misaligned" bug). Fixed + right-gutter keeps it
+  // pinned under the ⚠ and always inside the viewport. We stamp the top from the button's
+  // measured bottom on open (the mobile header is fixed at the top, so it doesn't drift).
+  const [anchorTop, setAnchorTop] = useState(0);
+
+  const toggle = () => {
+    if (!open && isMobile && wrapRef.current) {
+      setAnchorTop(wrapRef.current.getBoundingClientRect().bottom + 8);
+    }
+    setOpen((o) => !o);
+  };
 
   // Dismiss on outside click / Escape (a lightweight popover; no portal needed since the
-  // dropdown is anchored inside the header wrapper).
+  // dropdown is anchored inside the header wrapper — the fixed-positioned mobile variant is
+  // still a DOM descendant of wrapRef, so the outside-click check below still holds).
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
@@ -62,7 +79,7 @@ export function NeedsAlert() {
   return (
     <div ref={wrapRef} style={{ position: 'relative', flex: 'none' }}>
       <button
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggle}
         aria-label={
           hasNeeds ? `${count} ${count === 1 ? 'thing needs' : 'things need'} you` : 'Nothing needs you'
         }
@@ -90,9 +107,12 @@ export function NeedsAlert() {
         <div
           role="dialog"
           style={{
-            position: 'absolute',
-            top: 'calc(100% + 8px)',
-            right: 0,
+            // Mobile: pin to the viewport (fixed) with a 12px right gutter and a measured top,
+            // so it right-anchors under the ⚠ and can't spill off the left edge. Desktop keeps
+            // the simpler wrapper-relative anchor — the wide header always has room to the left.
+            position: isMobile ? 'fixed' : 'absolute',
+            top: isMobile ? anchorTop : 'calc(100% + 8px)',
+            right: isMobile ? 12 : 0,
             width: 380,
             maxWidth: 'calc(100vw - 24px)',
             maxHeight: 'min(70vh, 560px)',
