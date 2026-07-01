@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
-import { Check, X, CircleNotch } from '@phosphor-icons/react';
+import { Check, X } from '@phosphor-icons/react';
 import type { Dictation } from '../../hooks/useDictation';
+import { Spinner } from '../common/Spinner';
 
 const iconBtn = (bg: string, color: string) => ({
   flexShrink: 0, width: 40, height: 40, borderRadius: 12, border: 'none',
@@ -55,7 +56,7 @@ export function DictationControl({ dictation }: { dictation: Dictation }) {
   if (state === 'transcribing') {
     return (
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 10, color: 'var(--color-text-secondary)', fontSize: 13 }}>
-        <CircleNotch size={18} className="dispatch-spin" /> Transcribing…
+        <Spinner size={16} /> Transcribing…
       </div>
     );
   }
