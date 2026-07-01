@@ -23,7 +23,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
-import { Bell, CaretDoubleDown, CheckCircle, WarningCircle } from '@phosphor-icons/react';
+import { Bell, CaretDoubleDown, ChatTeardropText, CheckCircle, WarningCircle } from '@phosphor-icons/react';
 import { Icon } from '../atoms';
 import { AgentCard } from './AgentCard';
 import { ChatImage } from '../../ChatImage';
@@ -198,14 +198,18 @@ function ErrorMsg({ msg }: { msg: StreamMessage }) {
 // coordinator-facing blob — agentId + "call answer_agent(…) / re-spawn with new guidance …
 // Do not silently ignore this" instructions and all).
 //
-// We recognise the three notice shapes by their leading emoji + phrase and re-present each as
-// a CONCISE, muted system line, dropping the internal orchestration text (agentId, the
-// coordinator instructions). Detection is frontend-only: the injected text is unchanged
-// upstream (packages/core/src/sessions/service.ts), we only reshape its PRESENTATION here.
+// We recognise these notice shapes by their leading emoji + phrase and re-present each as a
+// muted system line, dropping the internal orchestration text (agentId, the coordinator
+// instructions). Detection is frontend-only: the injected text is unchanged upstream
+// (packages/core/src/sessions/service.ts), we only reshape its PRESENTATION here.
 // Source templates:
 //   ✅ Your agent "<label>" […] just finished a turn.…             (noteAgentCompletion)
 //   🔔 Your agent "<label>" […] is PAUSED waiting on you …         (formatAgentQuestion)
 //   ⚠️ The user just <stopped|interrupted> your agent "<label>" …  (noteAgentLifecycle)
+//
+// 💬 (noteUserMessageToAgent — "the user just sent your agent … a message directly") is denser
+// (it carries the user's actual message, which is worth keeping legible) so it gets its own
+// card below — DirectMessageNoticeMsg — instead of collapsing to the one-line pill.
 
 type NoticeIconCmp = typeof CheckCircle; // all phosphor icons share one component type
 
@@ -297,6 +301,114 @@ function AgencyNoticeMsg({ notice }: { notice: AgencyNotice }) {
   );
 }
 
+// ---- Direct-message notice (centered, card) ---------------------------------
+// 💬 noteUserMessageToAgent (packages/core/src/sessions/service.ts): the user bypassed the
+// coordinator and messaged one of its agents directly. Unlike the pill notices above, the
+// user's actual words are the point of this notice — collapsing them to a one-liner would
+// defeat it — so this gets a small card: agent name/mission as the label (same de-emphasized
+// mission-line convention AgentCard uses), the quoted message as the focal content, and the
+// "go check on it" instruction shrunk to muted guidance instead of one run-on sentence.
+
+interface DirectMessageNotice {
+  name: string;             // agent label — '"agent"' fallback mirrors detectAgencyNotice's summaries
+  mission: string | null;
+  quote: string;            // the user's message, as sent to the agent
+  agentId: string | null;   // → drillInto; never shown raw (parity with AgencyNoticeMsg/AgentCard)
+}
+
+function parseMission(text: string): string | null {
+  const m = text.match(/\(mission "([^"]+)"\)/);
+  return m ? m[1] : null;
+}
+
+// The quoted message sits between the template's two fixed markers — anchoring on those
+// (rather than balancing quote characters) keeps this correct even if the user's own message
+// contains a `"`. Non-greedy so a message that itself contains the closing marker text can't
+// swallow past its own end.
+function parseDirectMessageQuote(text: string): string {
+  const m = text.match(/not through you: "([\s\S]*?)"\. This may change/);
+  return m ? m[1] : '';
+}
+
+function detectDirectMessageNotice(text: string): DirectMessageNotice | null {
+  const t = text.trimStart();
+  if (!(t.startsWith('💬') && /sent your agent/i.test(t))) return null;
+  return {
+    name: firstQuoted(t) || 'agent',
+    mission: parseMission(t),
+    quote: parseDirectMessageQuote(t) || t.replace(/^💬\s*/, ''),
+    agentId: parseAgentId(t),
+  };
+}
+
+function DirectMessageNoticeMsg({ notice }: { notice: DirectMessageNotice }) {
+  const drillInto = useOverseer((s) => s.drillInto);
+  const [hover, setHover] = useState(false);
+  const clickable = !!notice.agentId;
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center' }}>
+      <div
+        onClick={clickable ? () => drillInto(notice.agentId!) : undefined}
+        onMouseEnter={clickable ? () => setHover(true) : undefined}
+        onMouseLeave={clickable ? () => setHover(false) : undefined}
+        role={clickable ? 'button' : undefined}
+        title={clickable ? 'Open this agent' : undefined}
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 6,
+          padding: '9px 13px',
+          borderRadius: 11,
+          background: clickable && hover ? 'var(--hover)' : 'var(--elev)',
+          border: `1px solid ${clickable && hover ? 'var(--accLine)' : 'var(--border)'}`,
+          maxWidth: '86%',
+          cursor: clickable ? 'pointer' : 'default',
+          transition: 'background .12s, border-color .12s',
+        }}
+      >
+        {/* label row — icon + agent name (prominent), mission de-emphasized alongside it */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+          <ChatTeardropText size={14} weight="fill" color="var(--acc)" style={{ flex: 'none' }} />
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--tp)', whiteSpace: 'nowrap' }}>
+            Direct message to "{notice.name}"
+          </span>
+          {notice.mission && (
+            <span
+              style={{
+                fontSize: 10.5,
+                color: 'var(--ts)',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              · {notice.mission}
+            </span>
+          )}
+        </div>
+        {/* focal content — the user's own words, quoted */}
+        <div
+          style={{
+            fontSize: 12.5,
+            lineHeight: 1.5,
+            color: 'var(--tp)',
+            paddingLeft: 20,
+            borderLeft: '2px solid var(--border)',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+          }}
+        >
+          “{notice.quote}”
+        </div>
+        {/* de-emphasized guidance — was the run-on sentence's tail, now a muted footnote */}
+        <div style={{ fontSize: 10.5, color: 'var(--tt)', paddingLeft: 20 }}>
+          This may change what you asked it to do — read how it responds and adjust.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---- Note pill (centered) ---------------------------------------------------
 
 function NoteMsg({ msg }: { msg: StreamMessage }) {
@@ -370,11 +482,18 @@ function renderStream(stream: StreamMessage[]) {
       prevDispatch = true;
     } else if (msg.isUser) {
       // An injected agency lifecycle notice masquerades as a user turn — render it as a muted
-      // system line, not a "You" bubble. A real user message falls through to UserMsg.
-      const notice = detectAgencyNotice(msg.text);
+      // system line/card, not a "You" bubble. A real user message falls through to UserMsg.
+      const dmNotice = detectDirectMessageNotice(msg.text);
+      const notice = dmNotice ? null : detectAgencyNotice(msg.text);
       rows.push(
         <MessageScroller.Item key={msg.key} messageId={msg.key} style={{ display: 'flex', flexDirection: 'column' }}>
-          {notice ? <AgencyNoticeMsg notice={notice} /> : <UserMsg msg={msg} />}
+          {dmNotice ? (
+            <DirectMessageNoticeMsg notice={dmNotice} />
+          ) : notice ? (
+            <AgencyNoticeMsg notice={notice} />
+          ) : (
+            <UserMsg msg={msg} />
+          )}
         </MessageScroller.Item>,
       );
       prevDispatch = false;
