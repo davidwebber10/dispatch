@@ -7,6 +7,14 @@ it('returns the coordinator prompt for role=coordinator', () => {
   expect(systemPromptFor({ role: 'coordinator', agentType: 'planner' })).toBe(COORDINATOR_PROMPT);
 });
 
+it('the coordinator persona is concise-directive aware but keeps orchestration instructions', () => {
+  // The concise communication-style directive is present…
+  expect(COORDINATOR_PROMPT).toContain('BE CONCISE');
+  // …without dropping the core orchestration wiring.
+  expect(COORDINATOR_PROMPT).toContain('spawn_agent');
+  expect(COORDINATOR_PROMPT).toContain('answer_agent');
+});
+
 it('returns the typed-agent prompt for a known agentType', () => {
   expect(systemPromptFor({ agentType: 'planner' })).toBe(AGENT_PROMPTS.planner);
   expect(systemPromptFor({ agentType: 'implementer' })).toBe(AGENT_PROMPTS.implementer);
