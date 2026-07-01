@@ -436,3 +436,69 @@ it('ensureStructuredAlive is a no-op for non-structured / unknown threads', asyn
   expect(svc.ensureStructuredAlive('does-not-exist')).toBe(false);
   await request(app).post(`/api/terminals/${t.body.id}/stop`);
 });
+
+// --- queued terminals (create-without-spawn + promote) -------------------------
+
+it('queued create persists status=queued and parks the task WITHOUT spawning a process', async () => {
+  const mgr = (app as any)._structuredManager;
+  const t = await request(app)
+    .post(`/api/sessions/${sessionId}/terminals`)
+    .send({ type: 'claude-code', queued: true, task: 'do the thing', config: { transport: 'structured', agentType: 'implementer', role: 'agent' } });
+  expect(t.status).toBe(201);
+  const id = t.body.id;
+  expect(t.body.status).toBe('queued');
+  // The task is parked and the guard flag is set — but nothing is running.
+  const row = db.prepare('SELECT config FROM terminals WHERE id = ?').get(id) as { config: string };
+  const cfg = JSON.parse(row.config);
+  expect(cfg.queued).toBe(true);
+  expect(cfg.queuedTask).toBe('do the thing');
+  expect(cfg.agentType).toBe('implementer'); // caller config preserved
+  expect(mgr.isAlive(id)).toBe(false); // no process spawned
+});
+
+it('ensureStructuredAlive REFUSES to spawn a queued row (the guard)', async () => {
+  const svc = (app as any)._sessionService;
+  const mgr = (app as any)._structuredManager;
+  const t = await request(app)
+    .post(`/api/sessions/${sessionId}/terminals`)
+    .send({ type: 'claude-code', queued: true, task: 'later', config: { transport: 'structured', agentType: 'researcher', role: 'agent' } });
+  const id = t.body.id;
+  // A drill-in (ws-connect) or stray message routes through ensureStructuredAlive — which
+  // must NOT wake a parked row, or the queue would spawn itself the moment anyone looked at it.
+  expect(svc.ensureStructuredAlive(id)).toBe(false);
+  expect(mgr.isAlive(id)).toBe(false);
+});
+
+it('POST /start promotes a queued terminal: strips the markers, spawns, delivers the parked task', async () => {
+  const mgr = (app as any)._structuredManager;
+  const t = await request(app)
+    .post(`/api/sessions/${sessionId}/terminals`)
+    .send({ type: 'claude-code', queued: true, task: 'map the repo', config: { transport: 'structured', agentType: 'researcher', role: 'agent' } });
+  const id = t.body.id;
+  expect(mgr.isAlive(id)).toBe(false);
+
+  const started = await request(app).post(`/api/terminals/${id}/start`);
+  expect(started.status).toBe(200);
+  expect(started.body.status).not.toBe('queued');
+  expect(mgr.isAlive(id)).toBe(true); // now running
+
+  // The queued markers are stripped from the persisted config; original config survives.
+  const cfg = JSON.parse((db.prepare('SELECT config FROM terminals WHERE id = ?').get(id) as { config: string }).config);
+  expect(cfg.queued).toBeUndefined();
+  expect(cfg.queuedTask).toBeUndefined();
+  expect(cfg.transport).toBe('structured');
+  expect(cfg.agentType).toBe('researcher');
+
+  // …and the parked task is delivered to the freshly-spawned thread (fake echoes it back).
+  const echoed = await pollEvent(app, id, (e) => JSON.stringify(e).includes('echo:map the repo'));
+  expect(JSON.stringify(echoed)).toContain('echo:map the repo');
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+it('POST /start on a non-queued terminal is a no-op (200, unchanged); unknown id → 404', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured' } });
+  const id = t.body.id;
+  expect((await request(app).post(`/api/terminals/${id}/start`)).status).toBe(200);
+  expect((await request(app).post(`/api/terminals/does-not-exist/start`)).status).toBe(404);
+  await request(app).post(`/api/terminals/${id}/stop`);
+});

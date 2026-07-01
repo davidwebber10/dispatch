@@ -19,15 +19,23 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     }
   });
 
-  // POST /api/sessions/:id/terminals — create a new tab
+  // POST /api/sessions/:id/terminals — create a new tab. When `queued:true` (with
+  // `task`), the structured thread is persisted as status='queued' WITHOUT spawning
+  // its process — POST /api/terminals/:id/start promotes it later.
   router.post('/sessions/:id/terminals', (req, res) => {
     try {
-      const { type, label, skipPermissions, workingDir, externalId, config } = req.body;
+      const { type, label, skipPermissions, workingDir, externalId, config, queued, task } = req.body;
       if (!type || !VALID_TYPES.includes(type)) {
         return res.status(400).json({ error: `Invalid type. Must be one of: ${VALID_TYPES.join(', ')}` });
       }
 
       if (isPtyType(type)) {
+        if (queued) {
+          const terminal = sessionService.createQueuedTerminal(req.params.id, type, label, config, typeof task === 'string' ? task : '');
+          broadcaster?.broadcast({ type: 'terminal:created', terminal });
+          broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: req.params.id });
+          return res.status(201).json(terminal);
+        }
         const terminal = sessionService.createTerminal(req.params.id, type, label, skipPermissions, workingDir, externalId, config);
         broadcaster?.broadcast({ type: 'terminal:created', terminal });
         broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: req.params.id });
@@ -152,6 +160,20 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       if (data.includes('\r') && data !== '\x1b') statusService?.markWorking(req.params.terminalId, 'Thinking…');
       res.status(204).end();
     } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
+  });
+
+  // POST /api/terminals/:terminalId/start — promote a queued terminal to a live
+  // one: strip the queued markers, spawn the process, deliver the parked task.
+  router.post('/terminals/:terminalId/start', (req, res) => {
+    try {
+      const terminal = sessionService.startQueuedTerminal(req.params.terminalId);
+      if (!terminal) return res.status(404).json({ error: 'Terminal not found' });
+      broadcaster?.broadcast({ type: 'terminal:created', terminal });
+      broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: terminal.sessionId });
+      res.json(terminal);
+    } catch (e: any) {
+      res.status(400).json({ error: e?.message ?? String(e) });
+    }
   });
 
   // POST /api/terminals/:terminalId/relaunch

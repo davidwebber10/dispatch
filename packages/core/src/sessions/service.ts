@@ -247,6 +247,63 @@ export class SessionService {
   }
 
   /**
+   * Create a structured terminal row WITHOUT spawning its process — the "create"
+   * half of createTerminal, minus the spawn. The row is persisted as
+   * `status='queued'` with the seed task parked in `config.queuedTask` and the
+   * `config.queued=true` guard flag set (which keeps ensureStructuredAlive from
+   * lazily reviving it — see the guard there). No CLI is launched until
+   * `startQueuedTerminal` promotes it: strips the flags, spawns, and delivers the
+   * parked task. Lets the coordinator queue work up front without paying for a
+   * live process per queued agent.
+   */
+  createQueuedTerminal(sessionId: string, type: TerminalType, label: string | undefined, config: Record<string, any> | undefined, task: string): terminalsDb.Terminal {
+    const session = sessionsDb.getById(this.db, sessionId);
+    if (!session) throw new Error('Session not found');
+
+    const terminalId = uuid();
+    const displayLabel = label || this.defaultTerminalLabel(sessionId, type);
+
+    terminalsDb.create(this.db, {
+      id: terminalId,
+      sessionId,
+      type,
+      label: displayLabel,
+      workingDir: session.working_dir,
+      config: { ...(config ?? {}), queued: true, queuedTask: task },
+    });
+    terminalsDb.updateStatus(this.db, terminalId, 'queued');
+
+    return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
+  }
+
+  /**
+   * Promote a queued terminal (created via createQueuedTerminal) to a live one:
+   * strip the `queued`/`queuedTask` markers from its config, reset status off
+   * 'queued', spawn its process, then deliver the parked task. Returns the
+   * terminal as-is when it isn't actually queued (idempotent), or null when it
+   * doesn't exist.
+   */
+  startQueuedTerminal(terminalId: string): terminalsDb.Terminal | null {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) return null;
+    let config: Record<string, any> = {};
+    try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
+    if (config.queued !== true) return terminalsDb.rowToTerminal(terminal); // not queued — nothing to promote
+
+    const task = typeof config.queuedTask === 'string' ? config.queuedTask : '';
+    // Strip the queued markers BEFORE spawning so the row reads as a normal live
+    // thread (and the ensureStructuredAlive guard no longer bails on it).
+    const { queued, queuedTask, ...rest } = config;
+    terminalsDb.updateConfig(this.db, terminalId, rest);
+    terminalsDb.updateStatus(this.db, terminalId, 'waiting');
+
+    this.spawnTerminal(terminalId);
+    if (task) this.sendStructuredMessage(terminalId, task);
+
+    return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
+  }
+
+  /**
    * Create a terminal that launches the provider in autonomous "runner" mode:
    * the prompt is passed as a launch arg so the agent executes it to completion
    * (and the process exits when done) instead of opening an interactive REPL
@@ -1010,6 +1067,10 @@ export class SessionService {
     let config: Record<string, any> = {};
     try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
     if (config.transport !== 'structured') return false;
+    // A queued row is deliberately parked (created-but-not-spawned): never let a
+    // ws-connect (drill-in) or stray message auto-spawn it. Only the explicit
+    // startQueuedTerminal promote path (which strips this flag first) may spawn it.
+    if (config.queued === true) return false;
     // No external_id ⇒ spawn FRESH. A structured thread that never captured a claude
     // session id (created-but-not-yet-run, or a coordinator whose process the restart
     // killed before init) must still come back to life rather than silently swallow
