@@ -4,8 +4,14 @@ import { PaperPlaneTilt, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircl
 import type { ConvItem } from '../../../api/types';
 import { api, type ContentBlock } from '../../../api/client';
 import { useStructuredChat } from './useStructuredChat';
+import { AskQuestionCard } from './AskQuestionCard';
 import { useTabs, findTerminal } from '../../../stores/tabs';
 import { useDraft } from '../../../hooks/useDraft';
+import { useIsMobile } from '../../../hooks/useIsMobile';
+import { useSettings } from '../../../stores/settings';
+import { useDictation } from '../../../hooks/useDictation';
+import { DictationControl } from '../../dictation/DictationControl';
+import { InputActionsMenu } from '../../dictation/InputActionsMenu';
 import { Markdown } from '../../Markdown';
 import { WorkingIndicator } from '../../WorkingIndicator';
 import { ChatImage } from '../../ChatImage';
@@ -37,7 +43,7 @@ async function fileToBase64(file: File): Promise<string> {
 export function ChatView({ terminalId }: { terminalId: string }) {
   const tab = useTabs((s) => findTerminal(s.byProject, terminalId));
   const sessionId = tab?.sessionId;
-  const { items, busy, model, send } = useStructuredChat(terminalId, sessionId);
+  const { items, busy, model, send, pending, answer } = useStructuredChat(terminalId, sessionId);
 
   const [draft, setDraft, clearDraft] = useDraft(terminalId);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -46,6 +52,17 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   const draftRef = useRef(draft); draftRef.current = draft;
   const [uploadNote, setUploadNote] = useState('');
   const [dragActive, setDragActive] = useState(false); // drives the drop-target visual cue
+
+  // Mobile voice dictation. The composer's left control becomes a + flyout (Add file /
+  // Dictate); choosing Dictate swaps the textarea for the recording UI, and the confirmed
+  // transcript is appended to the current draft. Desktop is unaffected.
+  const isMobile = useIsMobile();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const sttConfigured = useSettings((s) => !!s.sttProvider && !!s.sttModel && !!s.sttSecretName);
+  const dictation = useDictation((text) => {
+    const next = (draftRef.current ? draftRef.current + ' ' : '') + text;
+    draftRef.current = next; setDraft(next);
+  });
 
   function doSend() {
     const v = draft.trim();
@@ -129,6 +146,15 @@ export function ChatView({ terminalId }: { terminalId: string }) {
             <MessageScroller.Content style={{ maxWidth: 768, margin: '0 auto', padding: '24px 20px 8px', display: 'flex', flexDirection: 'column', gap: 16 }}>
               {items.length === 0 && !busy && <EmptyState model={model} />}
               {renderTimeline(items, openFileInViewer)}
+              {pending?.questions && pending.questions.length > 0 && (
+                <MessageScroller.Item messageId="__ask" style={{ display: 'flex' }}>
+                  {/* Interactive AskUserQuestion — answering unblocks the CLI (which is
+                      parked on stdin). Keyed by requestId so a new question mounts fresh. */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <AskQuestionCard key={pending.requestId} questions={pending.questions} onAnswer={answer} />
+                  </div>
+                </MessageScroller.Item>
+              )}
               {busy && (
                 <MessageScroller.Item messageId="__working" style={{ display: 'flex' }}>
                   <WorkingIndicator />
@@ -155,18 +181,33 @@ export function ChatView({ terminalId }: { terminalId: string }) {
           </div>
         )}
         <div style={{ maxWidth: 768, margin: '0 auto', display: 'flex', alignItems: 'flex-end', gap: 8, background: dragActive ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-elevated))' : 'var(--color-elevated)', border: dragActive ? '1px solid var(--color-accent)' : '1px solid var(--color-border)', borderRadius: 12, padding: '8px 8px 8px 8px', transition: 'border-color .12s, background .12s' }}>
-          <label
-            title="Attach file"
-            style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'var(--color-hover)', color: 'var(--color-text-secondary)' }}
-          >
-            <Paperclip size={17} />
-            <input
-              type="file"
-              multiple
-              style={{ display: 'none' }}
-              onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }}
+          {isMobile ? (
+            <InputActionsMenu
+              onAddFile={() => fileInputRef.current?.click()}
+              onDictate={() => void dictation.start()}
+              dictateDisabled={!sttConfigured}
+              dictateHint="Set up in Settings → Transcription"
             />
-          </label>
+          ) : (
+            <label
+              title="Attach file"
+              style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'var(--color-hover)', color: 'var(--color-text-secondary)' }}
+            >
+              <Paperclip size={17} />
+              <input
+                type="file"
+                multiple
+                style={{ display: 'none' }}
+                onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }}
+              />
+            </label>
+          )}
+          {/* hidden input the mobile + menu triggers (routes through the same attachFiles) */}
+          <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }} />
+          {isMobile && dictation.state !== 'idle' ? (
+            <DictationControl dictation={dictation} />
+          ) : (
+            <>
           <textarea
             ref={taRef}
             value={draft}
@@ -186,6 +227,8 @@ export function ChatView({ terminalId }: { terminalId: string }) {
           >
             <PaperPlaneTilt size={17} weight="fill" />
           </button>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -242,6 +285,10 @@ function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void) {
     else if (it.kind === 'image') node = <ChatImage src={it.imageUrl ?? ''} alt={it.imageAlt} />;
     else if (it.kind === 'thinking') node = <Thinking text={it.text ?? ''} />;
     else if (it.kind === 'tool') {
+      // AskUserQuestion is rendered by the interactive <AskQuestionCard> (live) — never
+      // as a generic tool card, which would sit stuck on "running…" (its tool_result only
+      // arrives once answered). Its paired tool_result is already suppressed below.
+      if (it.toolName === 'AskUserQuestion') continue;
       const result = it.toolId ? resultById.get(it.toolId) : items[i + 1]?.kind === 'tool-result' ? items[i + 1] : undefined;
       node = <ToolCall tool={it} result={result} onViewFile={onViewFile} />;
     } else if (it.kind === 'tool-result') {
