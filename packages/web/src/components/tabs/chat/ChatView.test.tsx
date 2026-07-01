@@ -14,9 +14,9 @@ test('an explicit source="user" turn also renders with no "via" label', () => {
   expect(screen.queryByText(/^via /)).not.toBeInTheDocument();
 });
 
-test('a coordinator-relayed turn (source="coordinator") gets a "via {Dispatch name}" label', () => {
+test('a coordinator-relayed turn (source="coordinator") gets a "via {coordinator name}" label', () => {
   render(<UserBubble text="do the thing" source="coordinator" />);
   expect(screen.getByText('do the thing')).toBeInTheDocument();
-  // Default coordinatorName is '' → useDispatchName falls back to "Dispatch".
-  expect(screen.getByText(/via Dispatch/)).toBeInTheDocument();
+  // Default coordinatorName is '' → useDispatchName falls back to "Control Plane".
+  expect(screen.getByText(/via Control Plane/)).toBeInTheDocument();
 });
