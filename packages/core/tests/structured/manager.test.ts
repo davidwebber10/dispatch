@@ -243,6 +243,19 @@ it('seedEvents: prior history is pushed into the ring and replays via getEvents'
   expect(m.getEvents('t1').some((e: any) => e.type === 'system')).toBe(true);
 });
 
+it('getEventsTail returns only the last N ring events, preserving order', async () => {
+  const history = Array.from({ length: 50 }, (_, i) => ({ type: 'user', message: { content: [{ type: 'text', text: `msg-${i}` }] } }));
+  m.spawn('t1', { command: process.execPath, args: [fake], workDir: process.cwd(), seedEvents: history });
+
+  const tail = m.getEventsTail('t1', 10);
+  expect(tail).toHaveLength(10);
+  expect(JSON.stringify(tail[0])).toContain('msg-40');
+  expect(JSON.stringify(tail[9])).toContain('msg-49');
+
+  // Full history matches getEvents() when n exceeds the ring size.
+  expect(m.getEventsTail('t1', 10_000)).toEqual(m.getEvents('t1'));
+});
+
 it("emits 'scheduled' (not 'idle') when the turn's last tool call was ScheduleWakeup, carrying its `reason` as the activity", async () => {
   spawnFake(m, 't1');
   await waitForEvent(m, 't1', (e) => e.type === 'system');
