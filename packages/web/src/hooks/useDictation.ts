@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSettings } from '../stores/settings';
 import { api } from '../api/client';
 
@@ -38,6 +38,9 @@ export function useDictation(onTranscript: (text: string) => void): Dictation {
     try { audioCtxRef.current?.close(); } catch { /* */ }
     recorderRef.current = null; streamRef.current = null; analyserRef.current = null; audioCtxRef.current = null;
   }, []);
+
+  // Release mic/AudioContext if the component unmounts mid-recording (teardown is stable, so this runs on unmount only).
+  useEffect(() => teardown, [teardown]);
 
   const start = useCallback(async () => {
     setError(null);
