@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SortableList } from '../common/SortableList';
-import { FolderOpen, CaretRight, Lightning, TerminalWindow } from '@phosphor-icons/react';
+import { FolderOpen, CaretRight, Lightning, TerminalWindow, ChatCircle } from '@phosphor-icons/react';
 import type { Session, Terminal, AgentSchedule } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
 import { projectIndicator } from '../../lib/status';
@@ -148,11 +148,13 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
   const padY = isMobile ? 15 : DENSITY[density].rowY;
   const working = loading || tab.status === 'working';
   const needsAttn = tab.status === 'needs_input' || tab.status === 'error';
-  // Claude / Codex / shell threads share one TerminalWindow glyph, tinted by provider
-  // color (blue/green/neutral) so the kind still reads at a glance; browser/notes keep a
-  // dot. Every leading glyph sits in a fixed-width slot (iconSlot) so labels line up no
-  // matter which glyph — or dot — a row shows (no per-row horizontal offset).
-  const isTerminalThread = tab.type === 'claude-code' || tab.type === 'codex' || tab.type === 'shell';
+  // A structured (stream-json) Claude thread is the chat surface (ChatView) → a chat
+  // bubble; PTY Claude / Codex / shell are terminal-backed → one TerminalWindow glyph.
+  // Both are tinted by provider color (blue/green/neutral) so the kind still reads at a
+  // glance; browser/notes keep a dot. Every leading glyph sits in a fixed-width slot
+  // (iconSlot) so labels line up no matter which glyph — or dot — a row shows.
+  const structuredClaude = tab.type === 'claude-code' && (tab.config as { transport?: string })?.transport === 'structured';
+  const isTerminalThread = !structuredClaude && (tab.type === 'claude-code' || tab.type === 'codex' || tab.type === 'shell');
   const iconSlot = isMobile ? 18 : 15;
   // On mobile, the active row's highlight fades out a couple seconds after the
   // thread list (re)appears (fadeKey bumps), so the list reads as clean.
@@ -188,9 +190,11 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
       <span style={{ width: iconSlot, height: iconSlot, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
         {tab.type === 'file'
           ? (() => { const fv = fileVisual(tab.label); return <fv.Icon size={iconSlot} weight="fill" color={fv.color} />; })()
-          : isTerminalThread
-            ? <TerminalWindow size={isMobile ? 17 : 14} weight="fill" color={color} />
-            : <span style={{ width: dot, height: dot, borderRadius: '50%', background: color }} />}
+          : structuredClaude
+            ? <ChatCircle size={isMobile ? 17 : 14} weight="fill" color={color} />
+            : isTerminalThread
+              ? <TerminalWindow size={isMobile ? 17 : 14} weight="fill" color={color} />
+              : <span style={{ width: dot, height: dot, borderRadius: '50%', background: color }} />}
       </span>
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tab.label}</span>
       <span style={{ flexShrink: 0, marginLeft: 8, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
