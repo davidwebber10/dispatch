@@ -269,11 +269,12 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 20, lineHeight: 1 }}>×</button>
         </div>
 
-        {/* Tabs */}
-        <div style={{ flexShrink: 0, display: 'flex', gap: 4, padding: '12px 20px 0', borderBottom: '1px solid var(--color-hover)' }}>
+        {/* Tabs — horizontally scrollable so the row (5 categories) never wraps or
+            squishes on a narrow (mobile) modal; iOS momentum + hidden scrollbar. */}
+        <div style={{ flexShrink: 0, display: 'flex', gap: 4, padding: '12px 20px 0', borderBottom: '1px solid var(--color-hover)', overflowX: 'auto', flexWrap: 'nowrap', WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none' }}>
           {([['general', 'General'], ['integrations', 'Integrations'], ['secrets', 'Secrets'], ['tools', 'Tools'], ['transcription', 'Transcription']] as const).map(([key, label]) => (
             <button key={key} onClick={() => setTab(key)} style={{
-              position: 'relative', padding: '8px 14px 11px', background: 'none', border: 'none', cursor: 'pointer',
+              position: 'relative', flexShrink: 0, whiteSpace: 'nowrap', padding: '8px 14px 11px', background: 'none', border: 'none', cursor: 'pointer',
               fontSize: 13, fontWeight: tab === key ? 600 : 500,
               color: tab === key ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
               borderBottom: `2px solid ${tab === key ? 'var(--color-accent)' : 'transparent'}`, marginBottom: -1,
