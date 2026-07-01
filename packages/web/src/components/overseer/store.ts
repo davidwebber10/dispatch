@@ -263,6 +263,69 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   },
 }));
 
+// ---------------------------------------------------------------------------
+// Active-project persistence — survive a page refresh.
+//
+// The active project id is OWNED by useProjects (stores/projects.ts): on refresh
+// that store re-initializes with activeId=null and its load() falls back to
+// `get().activeId ?? sessions[0]?.id` — i.e. the FIRST server-ordered project —
+// so the user's selection is lost. We can't edit projects.ts from here, so we
+// persist/restore from this module (the overseer drives project selection via
+// ensureForProject). Key mirrors the codebase's `dispatch:` convention.
+const ACTIVE_PROJECT_KEY = 'dispatch:overseer:activeProject';
+
+function readStoredActiveProject(): string | null {
+  try {
+    return localStorage.getItem(ACTIVE_PROJECT_KEY);
+  } catch {
+    return null; // storage unavailable (private mode / SSR) — no persisted value
+  }
+}
+
+function writeStoredActiveProject(id: string | null): void {
+  try {
+    if (id) localStorage.setItem(ACTIVE_PROJECT_KEY, id);
+    else localStorage.removeItem(ACTIVE_PROJECT_KEY);
+  } catch {
+    /* storage unavailable — best-effort persistence, never throw into a store write */
+  }
+}
+
+// Captured ONCE, before the first useProjects write can clobber localStorage: on
+// load, useProjects auto-selects sessions[0] and our subscribe below would persist
+// that over the top of the real last selection. Reading here freezes the true value.
+const storedActiveProject = readStoredActiveProject();
+let activeProjectRestored = false;
+
+// One-shot restore: as soon as the project list is available, re-select the stored
+// project IFF it still exists; otherwise leave the existing default in place. Gated
+// so the user owns the selection after the first (async) list load.
+function restoreActiveProject(sessions: readonly { id: string }[], activeId: string | null): void {
+  if (activeProjectRestored || sessions.length === 0) return;
+  activeProjectRestored = true;
+  if (
+    storedActiveProject &&
+    storedActiveProject !== activeId &&
+    sessions.some((s) => s.id === storedActiveProject)
+  ) {
+    useProjects.getState().setActive(storedActiveProject);
+  }
+}
+
+// Persist every switch, and run the one-shot restore once the list loads (projects
+// load async, after this module evaluates, so restore rides in on the subscribe).
+useProjects.subscribe((state, prev) => {
+  if (state.activeId !== prev.activeId) writeStoredActiveProject(state.activeId);
+  restoreActiveProject(state.sessions, state.activeId);
+});
+// Cover the race where projects were ALREADY loaded before this module evaluated —
+// subscribe only fires on future changes, so try an immediate restore too (no-ops
+// while the list is still empty, leaving the subscribe path to handle it later).
+{
+  const s = useProjects.getState();
+  restoreActiveProject(s.sessions, s.activeId);
+}
+
 /**
  * Single owner of the live coordinator subscription. Call this ONCE from the
  * Overseer root (OverseerView) — it ensures the coordinator for the active project
