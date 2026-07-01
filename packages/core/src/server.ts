@@ -97,22 +97,6 @@ function wirePermissionMembrane(structuredManager: StructuredSessionManager, sta
       statusService.markWorking(terminalId, 'Asking Dispatch…');
       return;
     }
-    // A coordinator has nothing that ever answers its own AskUserQuestion — it isn't an
-    // agent (so routing above never applies to it) and its persona only knows how to talk to
-    // the human in plain chat text. Left pending, the turn would sit blocked on stdin forever
-    // while every subsequent message queues up behind it. Deny it immediately rather than
-    // surfacing a "needs input" the coordinator itself can never resolve. (--disallowedTools
-    // AskUserQuestion on the coordinator's CLI command is the primary guard; this is defense
-    // in depth in case that's ever missing.)
-    if (pending?.questions?.length && sessionService.isCoordinatorThread(terminalId)) {
-      // answerPermission() writes the deny then emits 'resolved', which the handler below
-      // already flips back to "working" — no separate status call needed here.
-      sessionService.answerPermission(terminalId, '', {
-        decision: 'deny',
-        message: 'Do not use AskUserQuestion as a coordinator — reply to the user in plain chat text instead.',
-      });
-      return;
-    }
     const activity = pending?.questions?.length
       ? 'Needs your answer'
       : `Needs approval: ${pending?.toolName ?? 'tool'}`;
@@ -123,12 +107,7 @@ function wirePermissionMembrane(structuredManager: StructuredSessionManager, sta
   });
   // Turn boundaries → accurate status, and the moment an AGENT settles, push an immediate
   // completion notice up to its coordinator (so Dispatch ingests results, not fire-and-forget).
-  // Guarded: a message delivered while a permission is still genuinely unresolved (the human
-  // hasn't answered a needs_input yet) must NOT flip the thread back to "working" — that was
-  // the deadlock-masking bug, where every queued message silently clobbered needs_input back
-  // to working and hid the stuck state from the UI.
   structuredManager.on('busy', (terminalId: string) => {
-    if (structuredManager.getPending(terminalId)) return;
     statusService.markWorking(terminalId, 'Working…');
   });
   structuredManager.on('idle', (terminalId: string) => {

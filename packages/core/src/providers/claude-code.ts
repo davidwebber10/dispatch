@@ -61,7 +61,7 @@ export const claudeCodeProvider: SessionProvider = {
     };
   },
 
-  buildStructuredCommand({ workDir, secretsMcp, appendSystemPrompt, resumeSessionId, model, isCoordinator }: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string; model?: string; isCoordinator?: boolean }) {
+  buildStructuredCommand({ workDir, secretsMcp, appendSystemPrompt, resumeSessionId, model }: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string; model?: string }) {
     // The spike-verified stream-json control protocol. Parity permissions come from
     // the StructuredSessionManager's auto-allow loop, NOT --dangerously-skip-permissions.
     const args: string[] = [
@@ -78,11 +78,6 @@ export const claudeCodeProvider: SessionProvider = {
       ...mcpArgs(secretsMcp),
       ...systemPromptArgs(secretsMcp),
     ];
-    // A coordinator has no path that ever answers AskUserQuestion (it's meant to reply
-    // to the human in plain text and use answer_agent for its own subagents), so a call
-    // to it would block the turn on stdin forever. Deny it at the CLI level rather than
-    // relying on the system prompt alone.
-    if (isCoordinator) args.push('--disallowedTools', 'AskUserQuestion');
     // Overseer persona (coordinator / typed agent) — additive, on top of any
     // secrets system prompt above; --append-system-prompt is repeatable.
     if (appendSystemPrompt) args.push('--append-system-prompt', appendSystemPrompt);

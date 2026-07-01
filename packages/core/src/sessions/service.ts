@@ -711,15 +711,6 @@ export class SessionService {
     return this.notifyCoordinatorOfAgent(agentTerminalId, note);
   }
 
-  /** Whether a terminal is a Dispatch coordinator thread (`config.role === 'coordinator'`). */
-  isCoordinatorThread(terminalId: string): boolean {
-    const terminal = terminalsDb.getById(this.db, terminalId);
-    if (!terminal) return false;
-    let cfg: Record<string, any> = {};
-    try { cfg = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
-    return cfg.role === 'coordinator';
-  }
-
   /**
    * Tell the project's coordinator that the user just stopped or interrupted one of its agents,
    * so Dispatch notices and reacts (checks in about why, re-plans) rather than silently losing
@@ -1211,7 +1202,7 @@ export class SessionService {
       sc = { command: this.structuredCommandOverride.command, args: [...this.structuredCommandOverride.args] };
       if (resumeSessionId) sc.args.push('-r', resumeSessionId);
     } else {
-      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config), resumeSessionId, model: resolvedModel, isCoordinator: config.role === 'coordinator' });
+      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config), resumeSessionId, model: resolvedModel });
       if (!built) throw new Error('structured transport not supported for this provider');
       sc = built;
     }
