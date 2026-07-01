@@ -21,12 +21,12 @@
 // No prop drilling — reads the store directly.
 // Desktop: flex:1 scroll (in the left conversation column). Mobile: fills the Stream tab.
 
-import { useEffect, useRef } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
-import { Bell, CaretDoubleDown, CheckCircle, Lightbulb, WarningCircle } from '@phosphor-icons/react';
+import { Bell, CaretDoubleDown, CheckCircle, WarningCircle } from '@phosphor-icons/react';
 import { Icon } from '../atoms';
-import { Markdown } from '../../Markdown';
 import { ChatImage } from '../../ChatImage';
+import { InsightText } from '../../InsightText';
 import { WorkingIndicator } from '../../WorkingIndicator';
 import { useOverseer, useRenderVals } from '../store';
 import { useDispatchName } from '../../../stores/settings';
@@ -52,87 +52,10 @@ function DispatchHeader({ time }: { time: string }) {
   );
 }
 
-// ---- Insight callout (inside Dispatch turns) --------------------------------
-// A Dispatch turn can embed an "insight" block delimited by a star-headed opener line and a
-// closing rule of dashes:
-//   ★ Insight ─────────────────────────────────────
-//   …content…
-//   ─────────────────────────────────────────────────
-// Rendered verbatim those are just literal rows of dashes in the markdown. splitInsights()
-// walks msg.text into prose / insight segments (frontend-only — the upstream text is
-// untouched); each insight run becomes a tinted callout while every non-insight run still
-// flows through the existing <Markdown>.
-
-// Opener: "★ Insight" followed by only whitespace / dashes (box-drawing, em/en dash, hyphen).
-const INSIGHT_OPEN = /^\s*★\s*Insight[\s─—–-]*$/;
-// A closing (or separating) rule: a line that is nothing but 3+ dashes.
-const RULE_LINE = /^\s*[─—–-]{3,}\s*$/;
-
-type StreamSeg = { type: 'md' | 'insight'; content: string };
-
-function splitInsights(text: string): StreamSeg[] {
-  const lines = text.split('\n');
-  const out: StreamSeg[] = [];
-  let md: string[] = [];
-  const flushMd = () => {
-    const content = md.join('\n');
-    if (content.trim()) out.push({ type: 'md', content }); // drop blank gaps around a callout
-    md = [];
-  };
-  for (let i = 0; i < lines.length; i++) {
-    if (INSIGHT_OPEN.test(lines[i])) {
-      const body: string[] = [];
-      let j = i + 1;
-      for (; j < lines.length && !RULE_LINE.test(lines[j]); j++) body.push(lines[j]);
-      flushMd();
-      out.push({ type: 'insight', content: body.join('\n').trim() });
-      i = j; // skip past the closing rule (or land on EOF when the block was unterminated)
-    } else {
-      md.push(lines[i]);
-    }
-  }
-  flushMd();
-  return out;
-}
-
-function InsightCallout({ content }: { content: string }) {
-  return (
-    <div
-      style={{
-        borderRadius: 9,
-        border: '1px solid var(--accLine)',
-        borderLeft: '2px solid var(--acc)',
-        background: 'var(--accDim)',
-        padding: '8px 13px 9px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 4,
-      }}
-    >
-      {/* subtle "Insight" label with a lightbulb accent */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <Lightbulb size={13} weight="fill" color="var(--acc)" style={{ flex: 'none' }} />
-        <span
-          style={{
-            fontSize: 10,
-            fontWeight: 700,
-            letterSpacing: 0.5,
-            textTransform: 'uppercase',
-            color: 'var(--acc)',
-          }}
-        >
-          Insight
-        </span>
-      </div>
-      {/* enclosed content — still markdown, so lists/code inside a callout render normally */}
-      <div style={{ minWidth: 0 }}>
-        <Markdown source={content} />
-      </div>
-    </div>
-  );
-}
-
 // ---- Overseer message -------------------------------------------------------
+// Body prose renders through the SHARED <InsightText> (packages/web/src/components/
+// InsightText.tsx), so any ★ Insight blocks become tinted callouts here EXACTLY as they do
+// in the agent ChatView — the parsing/callout logic lives in one place, not per surface.
 
 function OverseerMsg({ msg, showHeader }: { msg: StreamMessage; showHeader: boolean }) {
   if (!msg.text) return null; // parity with the agent AssistantText — no empty body
@@ -141,16 +64,8 @@ function OverseerMsg({ msg, showHeader }: { msg: StreamMessage; showHeader: bool
       {/* content column — fills the pane (no 64ch cap); side padding lives on Content */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0, flex: 1 }}>
         {showHeader && <DispatchHeader time={msg.time} />}
-        {/* body — prose through <Markdown>, any ★ Insight blocks lifted into callouts */}
-        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {splitInsights(msg.text).map((seg, i) =>
-            seg.type === 'insight' ? (
-              <InsightCallout key={i} content={seg.content} />
-            ) : (
-              <Markdown key={i} source={seg.content} />
-            ),
-          )}
-        </div>
+        {/* body — prose + ★ Insight callouts, scoped to the overseer token set */}
+        <InsightText source={msg.text} scheme="scoped" />
       </div>
     </div>
   );
@@ -292,9 +207,10 @@ function ErrorMsg({ msg }: { msg: StreamMessage }) {
 type NoticeIconCmp = typeof CheckCircle; // all phosphor icons share one component type
 
 interface AgencyNotice {
-  icon: NoticeIconCmp; // phosphor icon for this notice type
-  color: string;       // per-type accent (icon tint only; the text stays muted)
-  summary: string;     // concise, user-facing one-liner (internal blob dropped)
+  icon: NoticeIconCmp;      // phosphor icon for this notice type
+  color: string;            // per-type accent (icon tint only; the text stays muted)
+  summary: string;          // concise, user-facing one-liner (internal blob dropped)
+  agentId: string | null;   // parsed terminal id → tap the pill to open that agent's lightbox
 }
 
 // The agent LABEL is always the FIRST double-quoted run in the notice; a later
@@ -304,45 +220,71 @@ function firstQuoted(text: string): string {
   return m ? m[1] : '';
 }
 
+// The agent's terminal id is embedded in the raw (pre-reshape) notice so the pill can deep-link
+// to that agent's lightbox. Two shapes across the templates (packages/core/src/sessions/
+// service.ts): `[agentId <id>]` (finished ✅ / stopped ⚠️) and `agentId: "<id>"` (paused 🔔's
+// answer_agent call). Try the bracket form first, then the quoted form. null ⇒ leave the pill
+// non-clickable.
+function parseAgentId(text: string): string | null {
+  const bracket = text.match(/\[agentId\s+([^\]\s]+)\]/);
+  if (bracket) return bracket[1];
+  const quoted = text.match(/agentId:\s*"([^"]+)"/);
+  if (quoted) return quoted[1];
+  return null;
+}
+
 // Detect an injected agency notice on a USER message (returns null for a real user turn).
 // Guarded on emoji AT START *and* a signature phrase so a human message that merely opens
 // with the same emoji isn't mistaken for a system notice.
 function detectAgencyNotice(text: string): AgencyNotice | null {
   const t = text.trimStart();
   const name = firstQuoted(t);
+  const agentId = parseAgentId(t);
   // ✅ finished a turn
   if (t.startsWith('✅') && /your agent|finished a turn/i.test(t)) {
-    return { icon: CheckCircle, color: 'var(--acc)', summary: name ? `Agent "${name}" finished` : 'Agent finished a turn' };
+    return { icon: CheckCircle, color: 'var(--acc)', summary: name ? `Agent "${name}" finished` : 'Agent finished a turn', agentId };
   }
   // 🔔 paused / waiting on an answer
   if (t.startsWith('🔔') && /your agent|is PAUSED/i.test(t)) {
-    return { icon: Bell, color: 'var(--yellow)', summary: name ? `Agent "${name}" needs an answer` : 'Agent needs an answer' };
+    return { icon: Bell, color: 'var(--yellow)', summary: name ? `Agent "${name}" needs an answer` : 'Agent needs an answer', agentId };
   }
   // ⚠️ user stopped / interrupted an agent (match the base ⚠ codepoint — the source carries a
   // trailing VS16). Echo the actual verb the notice used.
   if (t.startsWith('⚠') && /your agent|just (stopped|interrupted)/i.test(t)) {
     const verb = /just interrupted/i.test(t) ? 'interrupted' : 'stopped';
-    return { icon: WarningCircle, color: 'var(--red)', summary: name ? `You ${verb} agent "${name}"` : `You ${verb} an agent` };
+    return { icon: WarningCircle, color: 'var(--red)', summary: name ? `You ${verb} agent "${name}"` : `You ${verb} an agent`, agentId };
   }
   return null;
 }
 
 function AgencyNoticeMsg({ notice }: { notice: AgencyNotice }) {
   const NoticeIcon = notice.icon;
+  const drillInto = useOverseer((s) => s.drillInto);
+  const [hover, setHover] = useState(false);
+  // A notice that carries an agentId deep-links into that agent's lightbox (same action the
+  // rail chips use). Notices without a parseable id stay inert — no cursor / hover affordance.
+  const clickable = !!notice.agentId;
   return (
     <div style={{ display: 'flex', justifyContent: 'center' }}>
       <span
+        onClick={clickable ? () => drillInto(notice.agentId!) : undefined}
+        onMouseEnter={clickable ? () => setHover(true) : undefined}
+        onMouseLeave={clickable ? () => setHover(false) : undefined}
+        role={clickable ? 'button' : undefined}
+        title={clickable ? 'Open this agent' : undefined}
         style={{
           display: 'inline-flex',
           alignItems: 'center',
           gap: 7,
           padding: '4px 12px',
           borderRadius: 20,
-          background: 'var(--elev)',
-          border: '1px solid var(--border)',
+          background: clickable && hover ? 'var(--hover)' : 'var(--elev)',
+          border: `1px solid ${clickable && hover ? 'var(--accLine)' : 'var(--border)'}`,
           fontSize: 11.5,
           color: 'var(--ts)',
           maxWidth: '86%',
+          cursor: clickable ? 'pointer' : 'default',
+          transition: 'background .12s, border-color .12s',
         }}
       >
         <NoticeIcon size={13} weight="fill" color={notice.color} style={{ flex: 'none' }} />
@@ -479,9 +421,12 @@ export function ConversationStream() {
  * same incremental useStructuredChat source as the agent chat, so on open it backfills as
  * a rapid 0→N append burst that can strand the viewport above the fold (a content change
  * can flip the scroller out of "following-bottom" before it catches up). We force
- * scrollToEnd('auto') — instant, so it never animates against the user — on each append
- * while still engaged, then hand off to native autoScroll the moment the user scrolls
- * off-tail. Mirrors the agent ChatView's StickToEndOnLoad, re-armed per coordinator thread.
+ * scrollToEnd('auto') — instant, never smooth — on each append while still engaged, then
+ * hand off to native autoScroll the moment the user scrolls off-tail. Crucially this runs in
+ * a LAYOUT effect (pre-paint): the stick is applied before the browser paints each backfill
+ * frame, so the thread opens ALREADY at the bottom instead of visibly crawling top→bottom
+ * through the whole history (which, for a long coordinator log, took ~10s). Mirrors the agent
+ * ChatView's StickToEndOnLoad, re-armed per coordinator thread.
  */
 function StickToEndOnLoad({ coordinatorId, count }: { coordinatorId: string | null; count: number }) {
   const { scrollToEnd } = useMessageScroller();
@@ -490,7 +435,7 @@ function StickToEndOnLoad({ coordinatorId, count }: { coordinatorId: string | nu
   const prevCountRef = useRef(-1);
   const termRef = useRef(coordinatorId);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     // New coordinator thread → re-arm so its own backfill re-sticks to the bottom.
     if (termRef.current !== coordinatorId) {
       termRef.current = coordinatorId;

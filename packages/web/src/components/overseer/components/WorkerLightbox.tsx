@@ -5,23 +5,59 @@
 // Operator uses — so the user can monitor at the worker level and interject mid-work.
 // Reads workerLightboxId + closeWorkerLightbox from the store; titled from the
 // terminal's live label/type. Returns null when nothing is open.
+//
+// Header is responsive: DESKTOP packs the detail block + per-agent controls + close into
+// one row. MOBILE stacks them — the detail block (name/summary/meta) gets a full-width row
+// of its own (the single row starved it to an ellipsis), with the actions wrapping onto a
+// compact row below.
 
 import { ChatView } from '../../tabs/chat/ChatView';
-import { findTerminal, useTabs } from '../../../stores/tabs';
+import { useIsMobile } from '../../../hooks/useIsMobile';
 import { Icon } from '../atoms';
 import { AgentDetailHeader } from './AgentDetailHeader';
-import { AutonomyToggle, InterruptButton, StopButton, ArchiveButton } from './AutonomyControls';
+import { InterruptButton, StopButton, ArchiveButton } from './AutonomyControls';
 import { useOverseer } from '../store';
 
 export function WorkerLightbox() {
   const workerLightboxId = useOverseer((s) => s.workerLightboxId);
   const close = useOverseer((s) => s.closeWorkerLightbox);
-  const terminal = useTabs((s) => (workerLightboxId ? findTerminal(s.byProject, workerLightboxId) : undefined));
+  const isMobile = useIsMobile();
 
   if (!workerLightboxId) return null;
 
-  // The autonomy dial is per-agent; coordinators never escalate, so only agent threads show it.
-  const isAgent = terminal?.config?.role === 'agent';
+  const closeBtn = (
+    <button
+      onClick={close}
+      title="Close"
+      style={{
+        flex: 'none',
+        width: 26,
+        height: 26,
+        borderRadius: 7,
+        background: 'transparent',
+        border: '1px solid var(--border)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: 'var(--ts)',
+        cursor: 'pointer',
+        padding: 0,
+      }}
+    >
+      <Icon name="ph-x" size={14} color="var(--ts)" />
+    </button>
+  );
+
+  // Per-agent controls — graceful interrupt, stop, archive. (The Supervised/Auto autonomy dial
+  // was dropped: agents run fine without it and it only crowded the header.) Shared verbatim by
+  // both header layouts (only one renders at a time).
+  const actions = (
+    <>
+      <InterruptButton terminalId={workerLightboxId} scheme="scoped" />
+      <StopButton terminalId={workerLightboxId} scheme="scoped" />
+      <ArchiveButton terminalId={workerLightboxId} scheme="scoped" onArchived={close} />
+    </>
+  );
 
   return (
     <div
@@ -35,14 +71,15 @@ export function WorkerLightbox() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: 24,
+        padding: isMobile ? 12 : 24,
         zIndex: 60,
       }}
     >
       <div
         style={{
-          width: 'min(880px, 96vw)',
-          height: 'min(82vh, 900px)',
+          // Mobile fills the padded viewport (a near-fullscreen sheet); desktop is a centered card.
+          width: isMobile ? '100%' : 'min(880px, 96vw)',
+          height: isMobile ? '100%' : 'min(82vh, 900px)',
           display: 'flex',
           flexDirection: 'column',
           background: 'var(--base)',
@@ -53,45 +90,45 @@ export function WorkerLightbox() {
         }}
       >
         {/* Header */}
-        <div
-          style={{
-            flex: 'none',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 9,
-            padding: '11px 14px',
-            borderBottom: '1px solid var(--border)',
-            background: 'var(--pane)',
-          }}
-        >
-          <AgentDetailHeader terminalId={workerLightboxId} />
-          {isAgent && (
-            <AutonomyToggle terminalId={workerLightboxId} autonomy={terminal?.config?.autonomy} scheme="scoped" />
-          )}
-          <InterruptButton terminalId={workerLightboxId} scheme="scoped" />
-          <StopButton terminalId={workerLightboxId} scheme="scoped" />
-          <ArchiveButton terminalId={workerLightboxId} scheme="scoped" onArchived={close} />
-          <button
-            onClick={close}
-            title="Close"
+        {isMobile ? (
+          <div
             style={{
               flex: 'none',
-              width: 26,
-              height: 26,
-              borderRadius: 7,
-              background: 'transparent',
-              border: '1px solid var(--border)',
               display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'var(--ts)',
-              cursor: 'pointer',
-              padding: 0,
+              flexDirection: 'column',
+              gap: 10,
+              padding: '11px 13px',
+              borderBottom: '1px solid var(--border)',
+              background: 'var(--pane)',
             }}
           >
-            <Icon name="ph-x" size={14} color="var(--ts)" />
-          </button>
-        </div>
+            {/* name (bumped for prominence) + summary + meta, full width; close top-right */}
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 9 }}>
+              <AgentDetailHeader terminalId={workerLightboxId} nameSize={15} />
+              {closeBtn}
+            </div>
+            {/* actions — wrap onto as many rows as needed rather than overflow */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 7 }}>
+              {actions}
+            </div>
+          </div>
+        ) : (
+          <div
+            style={{
+              flex: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 9,
+              padding: '11px 14px',
+              borderBottom: '1px solid var(--border)',
+              background: 'var(--pane)',
+            }}
+          >
+            <AgentDetailHeader terminalId={workerLightboxId} />
+            {actions}
+            {closeBtn}
+          </div>
+        )}
 
         {/* The structured chat View — monitor + interject */}
         <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>

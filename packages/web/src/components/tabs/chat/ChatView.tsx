@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
+import { useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
 import { PaperPlaneTilt, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip } from '@phosphor-icons/react';
 import type { ConvItem } from '../../../api/types';
@@ -12,7 +12,7 @@ import { useSettings } from '../../../stores/settings';
 import { useDictation } from '../../../hooks/useDictation';
 import { DictationControl } from '../../dictation/DictationControl';
 import { InputActionsMenu } from '../../dictation/InputActionsMenu';
-import { Markdown } from '../../Markdown';
+import { InsightText } from '../../InsightText';
 import { WorkingIndicator } from '../../WorkingIndicator';
 import { ChatImage } from '../../ChatImage';
 import { ToolCall, ToolResult } from '../ToolCall';
@@ -332,9 +332,11 @@ function UserBubble({ text }: { text: string }) {
   );
 }
 
+// Assistant prose flows through the SHARED <InsightText> so ★ Insight blocks become tinted
+// callouts here identically to the coordinator stream (scheme="global" → app --color-* tokens).
 function AssistantText({ text }: { text: string }) {
   if (!text) return null;
-  return <Markdown source={text} />;
+  return <InsightText source={text} scheme="global" />;
 }
 
 function Thinking({ text }: { text: string }) {
@@ -384,8 +386,10 @@ function ResultFooter({ item }: { item: ConvItem }) {
  * deltas while the user is pinned, but the initial replay arrives as a rapid append
  * burst that can strand the viewport above the fold (a content change can flip the
  * scroller out of "following-bottom" before it catches up). We force scrollToEnd('auto')
- * — instant, so it never animates against the user — on each append while still engaged,
- * then hand off to native autoScroll the moment the user scrolls off-tail.
+ * — instant, never smooth — on each append while still engaged, then hand off to native
+ * autoScroll the moment the user scrolls off-tail. Crucially this runs in a LAYOUT effect
+ * (pre-paint): the stick lands before the browser paints each backfill frame, so the thread
+ * opens ALREADY at the bottom instead of visibly scrolling top→bottom through its history.
  */
 function StickToEndOnLoad({ terminalId, count }: { terminalId: string; count: number }) {
   const { scrollToEnd } = useMessageScroller();
@@ -394,7 +398,7 @@ function StickToEndOnLoad({ terminalId, count }: { terminalId: string; count: nu
   const prevCountRef = useRef(-1);
   const termRef = useRef(terminalId);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     // New thread → re-arm so its own backfill re-sticks to the bottom.
     if (termRef.current !== terminalId) {
       termRef.current = terminalId;

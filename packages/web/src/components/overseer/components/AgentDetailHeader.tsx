@@ -59,7 +59,7 @@ function firstLine(text: string, max = 140): string {
   return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line;
 }
 
-export function AgentDetailHeader({ terminalId }: { terminalId: string }) {
+export function AgentDetailHeader({ terminalId, nameSize = 13 }: { terminalId: string; nameSize?: number }) {
   const terminal = useTabs((s) => findTerminal(s.byProject, terminalId));
   const externalId = terminal?.externalId ?? null;
 
@@ -153,7 +153,7 @@ export function AgentDetailHeader({ terminalId }: { terminalId: string }) {
     <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2, lineHeight: 1.2 }}>
       <span
         style={{
-          fontSize: 13,
+          fontSize: nameSize,
           fontWeight: 600,
           color: 'var(--tp)',
           whiteSpace: 'nowrap',
