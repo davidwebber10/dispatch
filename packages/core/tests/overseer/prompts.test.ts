@@ -1,5 +1,5 @@
 import { it, expect } from 'vitest';
-import { systemPromptFor, COORDINATOR_PROMPT, AGENT_PROMPTS } from '../../src/overseer/prompts.js';
+import { systemPromptFor, modelFor, MODEL_FOR_TYPE, COORDINATOR_PROMPT, AGENT_PROMPTS } from '../../src/overseer/prompts.js';
 
 it('returns the coordinator prompt for role=coordinator', () => {
   expect(systemPromptFor({ role: 'coordinator' })).toBe(COORDINATOR_PROMPT);
@@ -22,4 +22,29 @@ it('returns undefined for unknown / empty / missing config', () => {
   expect(systemPromptFor({ role: 'operator' })).toBeUndefined();
   // mission alone (no role/agentType) injects no persona
   expect(systemPromptFor({ mission: 'ship auth' })).toBeUndefined();
+});
+
+it('modelFor resolves the per-type tier (sonnet for coordinator/implementer, opus for the rest)', () => {
+  expect(modelFor({ role: 'coordinator' })).toBe('sonnet');
+  expect(modelFor({ role: 'agent', agentType: 'implementer' })).toBe('sonnet');
+  expect(modelFor({ role: 'agent', agentType: 'planner' })).toBe('opus');
+  expect(modelFor({ role: 'agent', agentType: 'researcher' })).toBe('opus');
+  expect(modelFor({ role: 'agent', agentType: 'reviewer' })).toBe('opus');
+  // role wins over agentType (a coordinator carrying a stray agentType still runs sonnet)
+  expect(modelFor({ role: 'coordinator', agentType: 'planner' })).toBe('sonnet');
+  // matches the exported map
+  expect(modelFor({ agentType: 'reviewer' })).toBe(MODEL_FOR_TYPE.reviewer);
+});
+
+it('modelFor honors an explicit config.model override, then falls through to undefined', () => {
+  expect(modelFor({ role: 'coordinator', model: 'opus' })).toBe('opus');
+  expect(modelFor({ agentType: 'implementer', model: 'haiku' })).toBe('haiku');
+  expect(modelFor({ model: '  sonnet  ' })).toBe('sonnet'); // trimmed
+  // no role / no agentType / no model → omit the flag
+  expect(modelFor(undefined)).toBeUndefined();
+  expect(modelFor(null)).toBeUndefined();
+  expect(modelFor({})).toBeUndefined();
+  expect(modelFor({ mission: 'ship auth' })).toBeUndefined();
+  expect(modelFor({ agentType: 'gardener' })).toBeUndefined();
+  expect(modelFor({ role: 'agent', model: '   ' })).toBeUndefined(); // blank override ignored, role 'agent' has no tier
 });

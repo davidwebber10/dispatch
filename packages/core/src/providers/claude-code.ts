@@ -61,7 +61,7 @@ export const claudeCodeProvider: SessionProvider = {
     };
   },
 
-  buildStructuredCommand({ workDir, secretsMcp, appendSystemPrompt, resumeSessionId }: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string }) {
+  buildStructuredCommand({ workDir, secretsMcp, appendSystemPrompt, resumeSessionId, model }: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string; model?: string }) {
     // The spike-verified stream-json control protocol. Parity permissions come from
     // the StructuredSessionManager's auto-allow loop, NOT --dangerously-skip-permissions.
     const args: string[] = [
@@ -84,6 +84,9 @@ export const claudeCodeProvider: SessionProvider = {
     // Resume an existing claude conversation (revive after a daemon restart). `-r <id>`
     // continues the same session id (no fork), so the thread's external_id stays stable.
     if (resumeSessionId) args.push('-r', resumeSessionId);
+    // Pin the model tier for this thread (per-agent-type default or explicit override).
+    // Omitted → the CLI's own default model.
+    if (model) args.push('--model', model);
     return { command: 'claude', args };
   },
 

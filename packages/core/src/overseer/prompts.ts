@@ -116,3 +116,31 @@ export function systemPromptFor(config: OverseerThreadConfig | null | undefined)
   if (isAgentType(config.agentType)) return AGENT_PROMPTS[config.agentType];
   return undefined;
 }
+
+/**
+ * The per-agent-type model tier (CLI `--model` alias). Cheap/fast work runs on
+ * sonnet; the reasoning-heavy roles (research, planning, review) run on opus.
+ * Keyed by `role: 'coordinator'` and by `agentType` — the two are disjoint, so a
+ * single flat map covers both.
+ */
+export const MODEL_FOR_TYPE: Record<string, string> = {
+  coordinator: 'sonnet',
+  implementer: 'sonnet',
+  planner: 'opus',
+  researcher: 'opus',
+  reviewer: 'opus',
+};
+
+/**
+ * Resolve the CLI model for a thread's config, mirroring systemPromptFor:
+ *   - an explicit `config.model` (string) always wins (per-thread override),
+ *   - else the per-type default (coordinator role, or a known agentType),
+ *   - else undefined (omit `--model`, let the CLI pick its default).
+ */
+export function modelFor(config: OverseerThreadConfig | null | undefined): string | undefined {
+  if (!config) return undefined;
+  if (typeof config.model === 'string' && config.model.trim()) return config.model.trim();
+  if (config.role === 'coordinator') return MODEL_FOR_TYPE.coordinator;
+  if (isAgentType(config.agentType)) return MODEL_FOR_TYPE[config.agentType];
+  return undefined;
+}

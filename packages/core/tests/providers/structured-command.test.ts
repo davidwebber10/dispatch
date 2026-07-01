@@ -52,6 +52,16 @@ it('omits -r when no resumeSessionId (a fresh structured spawn)', () => {
   expect(cmd.args).not.toContain('-r');
 });
 
+it('pins --model <alias> when a model is given, and omits it otherwise', () => {
+  const withModel = claudeCodeProvider.buildStructuredCommand!({ workDir: '/tmp', model: 'sonnet' });
+  const i = withModel.args.indexOf('--model');
+  expect(i).toBeGreaterThanOrEqual(0);
+  expect(withModel.args[i + 1]).toBe('sonnet');
+
+  const withoutModel = claudeCodeProvider.buildStructuredCommand!({ workDir: '/tmp' });
+  expect(withoutModel.args).not.toContain('--model');
+});
+
 it('pinned claude still accepts --permission-prompt-tool stdio (smoke)', () => {
   let help = '';
   try { help = execFileSync('claude', ['--help'], { encoding: 'utf8' }); } catch { return; } // skip if claude absent (CI)

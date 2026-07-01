@@ -15,8 +15,8 @@ import type { TerminalType } from '../db/terminals.js';
 import type { StatusHooksInjection, SecretsMcpInjection } from '../providers/types.js';
 import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
 import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript.js';
-import { systemPromptFor } from '../overseer/prompts.js';
-import { readSessionBackfill } from './cc-sessions.js';
+import { systemPromptFor, modelFor } from '../overseer/prompts.js';
+import { readSessionBackfill, transcriptTailStatus } from './cc-sessions.js';
 
 interface StatusContext {
   serverUrl: string;
@@ -960,7 +960,7 @@ export class SessionService {
       sc = { command: this.structuredCommandOverride.command, args: [...this.structuredCommandOverride.args] };
       if (resumeSessionId) sc.args.push('-r', resumeSessionId);
     } else {
-      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config), resumeSessionId });
+      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config), resumeSessionId, model: modelFor(config) });
       if (!built) throw new Error('structured transport not supported for this provider');
       sc = built;
     }
