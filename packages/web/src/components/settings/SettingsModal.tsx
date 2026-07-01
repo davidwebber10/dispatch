@@ -271,7 +271,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
 
         {/* Tabs — horizontally scrollable so the row (5 categories) never wraps or
             squishes on a narrow (mobile) modal; iOS momentum + hidden scrollbar. */}
-        <div style={{ flexShrink: 0, display: 'flex', gap: 4, padding: '12px 20px 0', borderBottom: '1px solid var(--color-hover)', overflowX: 'auto', flexWrap: 'nowrap', WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none' }}>
+        <div style={{ flexShrink: 0, display: 'flex', gap: 4, padding: '12px 20px 0', borderBottom: '1px solid var(--color-hover)', overflowX: 'auto', overflowY: 'hidden', flexWrap: 'nowrap', WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none' }}>
           {([['general', 'General'], ['integrations', 'Integrations'], ['secrets', 'Secrets'], ['tools', 'Tools'], ['transcription', 'Transcription']] as const).map(([key, label]) => (
             <button key={key} onClick={() => setTab(key)} style={{
               position: 'relative', flexShrink: 0, whiteSpace: 'nowrap', padding: '8px 14px 11px', background: 'none', border: 'none', cursor: 'pointer',
