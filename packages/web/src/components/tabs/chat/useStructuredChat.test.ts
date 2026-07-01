@@ -24,6 +24,14 @@ function flushRaf() {
   rafCbs = [];
   act(() => { for (const cb of due) cb(0); });
 }
+// Assistant/thinking text now reveals gradually across several frames (each frame
+// closes ~30% of the remaining gap — see REVEAL_CATCHUP in useStructuredChat.ts)
+// instead of snapping to the full text in one flush. Tests that only care about the
+// FINAL settled text should drain every frame the reveal animation schedules.
+function drainRaf(maxFrames = 50) {
+  let n = 0;
+  while (rafCbs.length && n++ < maxFrames) flushRaf();
+}
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -49,7 +57,7 @@ test('streams assistant text incrementally and ignores the whole assistant event
   expect(result.current.busy).toBe(true);
   expect(result.current.items.filter((i) => i.kind === 'assistant')).toHaveLength(1);
   act(() => cbs.onEvent(textDelta(0, 'Hel')));
-  flushRaf();
+  drainRaf();
   let txt = result.current.items.filter((i) => i.kind === 'assistant');
   expect(txt).toHaveLength(1);
   expect(txt[0].text).toBe('Hel');
@@ -73,8 +81,24 @@ test('coalesces multiple deltas into a single rAF flush', () => {
   // three deltas → exactly ONE scheduled flush, text not yet applied
   expect(rafCbs).toHaveLength(1);
   expect(result.current.items.find((i) => i.kind === 'assistant')?.text).toBe('');
-  flushRaf();
+  drainRaf();
   expect(result.current.items.find((i) => i.kind === 'assistant')?.text).toBe('abc');
+});
+
+test('reveals bursty text gradually across frames instead of snapping to it (smoothing fix)', () => {
+  // The CLI delivers text in bursts (not a steady per-token trickle) — snapping the
+  // whole burst in on the very next frame reads as choppy pop-in. A big burst should
+  // reveal over multiple frames, landing on the full text once the animation settles.
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'stream_event', event: { type: 'message_start' } }));
+  act(() => cbs.onEvent(start(0, { type: 'text' })));
+  act(() => cbs.onEvent(textDelta(0, 'a'.repeat(100))));
+  flushRaf(); // exactly one frame of the reveal animation
+  const afterOneFrame = result.current.items.find((i) => i.kind === 'assistant')?.text ?? '';
+  expect(afterOneFrame.length).toBeGreaterThan(0);
+  expect(afterOneFrame.length).toBeLessThan(100); // not snapped straight to the full burst
+  drainRaf(); // let the catch-up animation finish
+  expect(result.current.items.find((i) => i.kind === 'assistant')?.text).toBe('a'.repeat(100));
 });
 
 test('streams thinking deltas into a single thinking item', () => {
@@ -83,7 +107,7 @@ test('streams thinking deltas into a single thinking item', () => {
   act(() => cbs.onEvent(start(0, { type: 'thinking' })));
   act(() => cbs.onEvent(thinkDelta(0, 'let me ')));
   act(() => cbs.onEvent(thinkDelta(0, 'think')));
-  flushRaf();
+  drainRaf();
   const think = result.current.items.filter((i) => i.kind === 'thinking');
   expect(think).toHaveLength(1);
   expect(think[0].text).toBe('let me think');

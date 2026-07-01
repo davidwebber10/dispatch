@@ -83,8 +83,26 @@ function imagesFromContent(content: unknown, sessionId?: string): ConvItem[] {
 /** Tracks one in-progress streamed content block within the current turn.
  * `text` accumulates text/thinking deltas; `jsonAccum` accumulates tool input
  * JSON. Deltas are buffered here and applied to the items in a single rAF flush
- * (see below) so a burst of tokens costs ~one render per frame, not per token. */
-interface BlockRec { key: string; kind: 'assistant' | 'thinking' | 'tool'; jsonAccum?: string; text?: string }
+ * (see below) so a burst of tokens costs ~one render per frame, not per token.
+ * `revealed` is how much of `text` has been shown so far for assistant/thinking
+ * blocks — see REVEAL_CATCHUP below; unused for tool blocks. */
+interface BlockRec { key: string; kind: 'assistant' | 'thinking' | 'tool'; jsonAccum?: string; text?: string; revealed?: number }
+
+/** Reveal pacing for streamed prose (assistant/thinking text). Confirmed via
+ * instrumented reproduction that neither the ws client nor the daemon buffer
+ * stream_event deltas (structured-socket.ts forwards onmessage synchronously;
+ * the daemon's readline/emit/ws.send chain has no timers or queues) — the CLI
+ * itself delivers text in bursts of roughly a sentence every several hundred ms
+ * rather than a steady per-token trickle. Snapping straight to each burst reads
+ * as choppy pop-in even though the render itself is cheap (no dropped frames).
+ * Each frame closes CATCHUP of the remaining gap (min 1 char), so a typical
+ * ~100-char burst reveals over ~150-250ms — smoothed, but never far behind the
+ * data that already arrived. Tool-call JSON isn't prose and stays un-animated. */
+const REVEAL_CATCHUP = 0.3;
+function nextRevealed(revealed: number, targetLen: number): number {
+  const gap = targetLen - revealed;
+  return gap <= 0 ? targetLen : revealed + Math.max(1, Math.ceil(gap * REVEAL_CATCHUP));
+}
 
 /**
  * Drives a structured (stream-json) thread for the chat UI. Opens the live ws,
@@ -138,13 +156,30 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
     // Apply every buffered delta to its item in a single setItems map, then clear
     // the dirty set + the rAF handle. Keyed by item uuid (the block's stable key),
     // so it works even after blockMapRef was cleared by a new message_start.
-    const flush = () => {
+    // `instant`: skip the reveal animation and jump straight to the full target
+    // text — used at natural turn-settling checkpoints (see flushNow) so no
+    // latency is added to when the final text becomes fully visible.
+    const flush = (instant: boolean) => {
       rafRef.current = null;
       const pending = pendingRef.current;
       if (pending.size === 0) return;
       const byKey = new Map<string, BlockRec>();
       for (const rec of pending) byKey.set(rec.key, rec);
       pending.clear();
+      // Compute each rec's next `revealed` length in plain sync code BEFORE calling
+      // setItems — React doesn't guarantee the setItems updater runs synchronously
+      // before the next line, so anything the "is still animating?" decision depends
+      // on has to be settled here, not as a side effect inside the updater closure.
+      let animating = false;
+      for (const rec of byKey.values()) {
+        if (rec.kind === 'tool') continue; // tool JSON isn't revealed gradually
+        const target = rec.text ?? '';
+        rec.revealed = instant ? target.length : nextRevealed(rec.revealed ?? 0, target.length);
+        if (rec.revealed < target.length) {
+          animating = true;
+          pending.add(rec); // not caught up — stays dirty so next frame continues the reveal
+        }
+      }
       setItems((p) => p.map((it) => {
         const rec = it.uuid ? byKey.get(it.uuid) : undefined;
         if (!rec) return it;
@@ -153,19 +188,23 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
           const file = fileFromInput(accum); // resolves once accum is complete JSON
           return { ...it, toolInput: accum, ...(file ? { toolFile: file } : {}) };
         }
-        return { ...it, text: rec.text ?? '' }; // assistant / thinking
+        // assistant / thinking: reveal the accumulated text gradually (see REVEAL_CATCHUP)
+        // instead of snapping to it, so a bursty delta doesn't pop in all at once.
+        return { ...it, text: (rec.text ?? '').slice(0, rec.revealed ?? 0) };
       }));
+      if (animating) scheduleFlush();
     };
     const scheduleFlush = () => {
       if (rafRef.current != null) return; // a flush is already queued for this frame
-      rafRef.current = requestAnimationFrame(flush);
+      rafRef.current = requestAnimationFrame(() => flush(false));
     };
-    // Force a synchronous flush now (cancelling any queued one). Used before the
-    // whole-`assistant` reconcile and `result` so no trailing tokens are lost and
-    // a stale frame can't later clobber the authoritative reconciled tool input.
+    // Force a synchronous, fully-revealed flush now (cancelling any queued one). Used
+    // before the whole-`assistant` reconcile and `result` so no trailing tokens are
+    // lost, a stale frame can't later clobber the authoritative reconciled tool input,
+    // and the turn's final text isn't left mid-reveal when the footer lands.
     const flushNow = () => {
       if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
-      flush();
+      flush(true);
     };
 
     const sock = openStructuredSocket({
