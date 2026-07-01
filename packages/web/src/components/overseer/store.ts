@@ -598,7 +598,7 @@ export function useRenderVals(): RenderVals {
     // First-run / empty conversation → the Overseer greeting.
     const base: StreamMessage[] = coordinatorStream.length
       ? coordinatorStream
-      : [m('overseer', 'Dispatch', CANNED.emptyGreeting, '', 'greeting')];
+      : [m('overseer', 'Control Plane', CANNED.emptyGreeting, '', 'greeting')];
     // Append a transient send-failure notice (BUG 1: previously swallowed) so a rejected
     // directive is VISIBLE inline; cleared by the next send attempt / project switch.
     const stream: StreamMessage[] = sendError

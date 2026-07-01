@@ -480,7 +480,7 @@ function EmptyMissions() {
       <p style={{ fontSize: 13, color: 'var(--ts)', lineHeight: 1.5, margin: 0 }}>
         No missions yet.
         <br />
-        Tell Dispatch what to work on.
+        Tell Control Plane what to work on.
       </p>
     </div>
   );

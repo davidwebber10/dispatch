@@ -118,8 +118,8 @@ export function ThreadDetail({ mobile }: { mobile?: boolean }) {
           </span>
           <span style={{ fontSize: 12, color: 'var(--tp)', lineHeight: 1.5 }}>
             {isMobileView
-              ? "You’re steering this thread — Dispatch holds everything else."
-              : "You’re steering this thread — Dispatch is holding everything else."}
+              ? "You’re steering this thread — Control Plane holds everything else."
+              : "You’re steering this thread — Control Plane is holding everything else."}
           </span>
         </div>
 

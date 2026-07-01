@@ -39,7 +39,7 @@ import {
   type DragOverEvent,
   type DragEndEvent,
 } from '@dnd-kit/core';
-import { SquaresFour, ArrowsSplit, Lightning } from '@phosphor-icons/react';
+import { SquaresFour, ArrowsSplit, Network } from '@phosphor-icons/react';
 import { useTabs, findTerminal, isDispatchTab, tabLabel, tabProjectId } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
 import { useSettings, useDispatchName } from '../../stores/settings';
@@ -127,7 +127,7 @@ function ClassicTabBar({ onSelect }: { onSelect?: () => void }) {
               borderBottom:  act ? '2px solid var(--color-accent)' : '2px solid transparent',
             }}
           >
-            {dispatch && <Lightning size={14} weight="fill" style={{ flexShrink: 0, color: 'var(--color-accent)' }} />}
+            {dispatch && <Network size={14} weight="fill" style={{ flexShrink: 0, color: 'var(--color-accent)' }} />}
             <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
               <span style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {dispatch ? dispatchName : tabLabel(id, byProject)}
@@ -174,7 +174,7 @@ function DispatchChip({ tabId, onSelect }: { tabId: string; onSelect?: () => voi
         userSelect: 'none',
       }}
     >
-      <Lightning size={14} weight="fill" style={{ flexShrink: 0, color: 'var(--color-accent)' }} />
+      <Network size={14} weight="fill" style={{ flexShrink: 0, color: 'var(--color-accent)' }} />
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
         <span style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dispatchName}</span>
         <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{proj?.name ?? ''}</span>

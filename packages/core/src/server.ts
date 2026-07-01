@@ -94,7 +94,7 @@ function wirePermissionMembrane(structuredManager: StructuredSessionManager, sta
     // the human. When that routing succeeds the agent stays "working" (it's waiting on the
     // coordinator, an internal handoff) — only un-routable permissions reach the human.
     if (sessionService.routeAgentQuestionToCoordinator(terminalId, pending)) {
-      statusService.markWorking(terminalId, 'Asking Dispatch…');
+      statusService.markWorking(terminalId, 'Asking Control Plane…');
       return;
     }
     const activity = pending?.questions?.length
