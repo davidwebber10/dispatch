@@ -1,16 +1,17 @@
 // Overseer view — desktop header (spec §6 "Header (desktop, 54px)").
 //
 // BrandBadge: gradient broadcast logo + "Overseer" title + moodText subline + "dispatch" chip.
-// StatusRibbon: "N need you" (yellow, clickable → goNeeds, only if hasNeeds) · "N working"
-// (breathing acc dot) · "N done today" · divider · "Connected" (static dot) · gear.
+// StatusRibbon: NeedsAlert (⚠ + count → opens the held-items popover) · "N working"
+// (breathing acc dot) · "N done today" · divider · "Connected" (static dot) · reset · gear.
 //
-// Desktop-only: the mobile header is rendered inline by OverseerMobile.
-// Reads: useRenderVals().ribbon + useOverseer(s => s.goNeeds). No props.
+// Desktop-only: the mobile header is rendered inline by OverseerMobile (which reuses the
+// same NeedsAlert). Reads: useRenderVals().ribbon + useOverseer(s => s.resetDispatch).
 
 import type { CSSProperties } from 'react';
-import { Icon, MonoLabel, StatusDot } from '../atoms';
+import { Icon, StatusDot } from '../atoms';
 import { useOverseer, useRenderVals } from '../store';
 import type { Ribbon } from '../types';
+import { NeedsAlert } from './NeedsAlert';
 
 // ─── BrandBadge ──────────────────────────────────────────────────────────────
 
@@ -56,40 +57,18 @@ const chipBase: CSSProperties = {
 
 function StatusRibbon({
   ribbon,
-  onNeedsClick,
   onReset,
 }: {
   ribbon: Ribbon;
-  onNeedsClick: () => void;
   onReset: () => void;
 }) {
-  const { working, done, needs, hasNeeds } = ribbon;
+  const { working, done } = ribbon;
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      {/* "N need you" — yellow, clickable, only when hasNeeds */}
-      {hasNeeds && (
-        <button
-          onClick={onNeedsClick}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 5,
-            padding: '5px 11px',
-            borderRadius: 8,
-            background: 'var(--yellowDim)',
-            border: '1px solid var(--yellowLine)',
-            color: 'var(--yellow)',
-            fontSize: 12,
-            fontWeight: 600,
-            fontFamily: 'inherit',
-            cursor: 'pointer',
-          }}
-        >
-          <Icon name="ph-warning" weight="fill" size={13} color="var(--yellow)" />
-          {needs} need you
-        </button>
-      )}
+      {/* "Needs you" alert — ⚠ + count; click opens the held-items popover (replaces the
+          old inline needs zone + "N need you" ribbon button). */}
+      <NeedsAlert />
 
       {/* "N working" chip — elevated bg, breathing accent dot */}
       <div
@@ -168,7 +147,6 @@ function StatusRibbon({
 
 export function OverseerHeader() {
   const { ribbon } = useRenderVals();
-  const goNeeds = useOverseer((s) => s.goNeeds);
   const resetDispatch = useOverseer((s) => s.resetDispatch);
   const onReset = () => {
     if (window.confirm('Reset Dispatch to a clean slate?\n\nThis archives the current conversation and dismisses its agents, then starts fresh.')) {
@@ -194,7 +172,7 @@ export function OverseerHeader() {
       {/* Spacer pushes the ribbon to the right */}
       <div style={{ flex: 1, minWidth: 0 }} />
 
-      <StatusRibbon ribbon={ribbon} onNeedsClick={goNeeds} onReset={onReset} />
+      <StatusRibbon ribbon={ribbon} onReset={onReset} />
     </header>
   );
 }

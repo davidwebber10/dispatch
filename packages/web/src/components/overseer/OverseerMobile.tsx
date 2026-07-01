@@ -1,14 +1,15 @@
 // Overseer view — mobile root (spec §1c / §6). Collapses the two desktop regions into
-// three tabs (Needs / Stream / Work) plus a full-screen drill overlay. The header and
-// tab control are rendered inline here; the tab bodies and the overlay reuse the same
-// shared region components as desktop (each adapts its own desktop/mobile rendering via
+// two tabs (Stream / Work) plus a full-screen drill overlay; "Needs you" now lives in
+// the header alert dropdown (NeedsAlert) rather than a third tab. The header and tab
+// control are rendered inline here; the tab bodies and the overlay reuse the same shared
+// region components as desktop (each adapts its own desktop/mobile rendering via
 // useIsMobile — see CONTRACT.md). All data flows through the store / useRenderVals().
 
-import { Icon, StatusDot, overseerRootStyle } from './atoms';
+import { StatusDot, overseerRootStyle } from './atoms';
 import { useOverseer, useRenderVals } from './store';
 import './tokens.css';
 
-import { NeedsZone } from './components/NeedsZone';
+import { NeedsAlert } from './components/NeedsAlert';
 import { ConversationStream } from './components/Stream';
 import { Composer } from './components/Composer';
 import { OngoingWorkOverview } from './components/WorkRail';
@@ -20,6 +21,10 @@ export function OverseerMobile() {
   const { ribbon, drillOpen } = rv;
   const mobileTab = useOverseer((s) => s.mobileTab);
   const setMobileTab = useOverseer((s) => s.setMobileTab);
+  // "Needs you" is no longer a tab — it moved to the header alert dropdown. The store still
+  // defaults mobileTab to 'needs' (and goNeeds can set it), so fold that onto Stream here
+  // rather than editing the shared store.
+  const activeTab = mobileTab === 'work' ? 'work' : 'stream';
 
   const tabBtnBase = {
     flex: 1,
@@ -51,6 +56,9 @@ export function OverseerMobile() {
           <span style={{ fontSize: 10, color: 'var(--tt)' }}>{ribbon.moodText}</span>
         </div>
         <span style={{ flex: 1 }} />
+        {/* "Needs you" alert — ⚠ + count; opens the held-items popover (replaces the old
+            Needs tab). */}
+        <NeedsAlert />
         <span
           style={{
             display: 'inline-flex',
@@ -81,41 +89,11 @@ export function OverseerMobile() {
         }}
       >
         <button
-          onClick={() => setMobileTab('needs')}
-          style={{
-            ...tabBtnBase,
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 6,
-            background: mobileTab === 'needs' ? 'var(--elev)' : 'transparent',
-            color: mobileTab === 'needs' ? 'var(--yellow)' : 'var(--ts)',
-          }}
-        >
-          <Icon name="ph-warning" weight="fill" size={13} />
-          Needs you
-          {ribbon.hasNeeds && (
-            <span
-              style={{
-                background: 'var(--yellow)',
-                color: '#1a1400',
-                borderRadius: 9,
-                fontSize: 9.5,
-                fontWeight: 700,
-                padding: '1px 6px',
-                fontFamily: 'var(--mono)',
-              }}
-            >
-              {ribbon.needs}
-            </span>
-          )}
-        </button>
-        <button
           onClick={() => setMobileTab('stream')}
           style={{
             ...tabBtnBase,
-            background: mobileTab === 'stream' ? 'var(--elev)' : 'transparent',
-            color: mobileTab === 'stream' ? 'var(--tp)' : 'var(--ts)',
+            background: activeTab === 'stream' ? 'var(--elev)' : 'transparent',
+            color: activeTab === 'stream' ? 'var(--tp)' : 'var(--ts)',
           }}
         >
           Stream
@@ -124,8 +102,8 @@ export function OverseerMobile() {
           onClick={() => setMobileTab('work')}
           style={{
             ...tabBtnBase,
-            background: mobileTab === 'work' ? 'var(--elev)' : 'transparent',
-            color: mobileTab === 'work' ? 'var(--tp)' : 'var(--ts)',
+            background: activeTab === 'work' ? 'var(--elev)' : 'transparent',
+            color: activeTab === 'work' ? 'var(--tp)' : 'var(--ts)',
           }}
         >
           Work
@@ -133,14 +111,13 @@ export function OverseerMobile() {
       </div>
 
       {/* active tab body (the mobile variant of each component fills height + owns scroll) */}
-      {mobileTab === 'needs' && <NeedsZone />}
-      {mobileTab === 'stream' && (
+      {activeTab === 'stream' && (
         <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
           <ConversationStream />
           <Composer />
         </div>
       )}
-      {mobileTab === 'work' && <OngoingWorkOverview />}
+      {activeTab === 'work' && <OngoingWorkOverview />}
 
       {/* full-screen drill overlay (spec §1c) — ThreadDetail renders its mobile variant */}
       {drillOpen && (

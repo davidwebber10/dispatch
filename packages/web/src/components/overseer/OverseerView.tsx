@@ -10,7 +10,6 @@ import { useCoordinatorSync, useNeedsSync, useRenderVals } from './store';
 import './tokens.css';
 
 import { OverseerHeader } from './components/Header';
-import { NeedsZone } from './components/NeedsZone';
 import { ConversationStream } from './components/Stream';
 import { Composer } from './components/Composer';
 import { OngoingWorkOverview } from './components/WorkRail';
@@ -61,9 +60,9 @@ export function OverseerView() {
 
           {/* body: left conversation column + fixed right rail */}
           <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
-            {/* LEFT — conversation membrane */}
+            {/* LEFT — conversation membrane (the Needs queue now lives in the header alert
+                dropdown — see NeedsAlert — so it no longer sits above the stream). */}
             <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-              {rv.hasNeeds && <NeedsZone />}
               <ConversationStream />
               <Composer />
             </div>
