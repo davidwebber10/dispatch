@@ -1,14 +1,14 @@
-// Overseer view — "Always listening" directive composer (spec §6 "Composer", §7, §9).
+// Overseer view — directive composer (spec §6 "Composer", §7, §9).
 //
 // Layout: outer container (flex:none, border-top) > input row ("+" | textarea | send)
-//         + hint row (breathing dot · "Always listening…" · spacer · "⌘↵ send").
+//         + hint row (right-aligned "⌘↵ send", desktop only).
 // Store: composer, setComposer, sendDirective, openDelegate (no prop drilling).
 // Interactions: ⌘/Ctrl+Enter → sendDirective; autosizing textarea (rows 1, max 120px).
-// Mobile: shorter placeholder ("Fire a directive…"); hint row omits the keyboard hint.
+// Mobile: shorter placeholder ("Fire a directive…"); hint row is omitted.
 
 import { useCallback, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import { Paperclip } from '@phosphor-icons/react';
-import { Icon, StatusDot } from '../atoms';
+import { Icon } from '../atoms';
 import { useOverseer } from '../store';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { api } from '../../../api/client';
@@ -248,38 +248,26 @@ export function Composer() {
         </button>
       </div>
 
-      {/* hint row (spec §6: breathing dot · "Always listening…" · spacer · "⌘↵ send") */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 7,
-          marginTop: 8,
-        }}
-      >
-        <StatusDot
-          color="var(--acc)"
-          anim="breathe var(--pulse) ease-in-out infinite"
-          size={6}
-        />
-        <span style={{ fontSize: 10.5, color: 'var(--tt)' }}>
-          Always listening — capture is instant, never blocked by the work below
-        </span>
-        {!isMobile && (
-          <>
-            <span style={{ flex: 1 }} />
-            <span
-              style={{
-                fontFamily: 'var(--mono)',
-                fontSize: 10,
-                color: 'var(--tt)',
-              }}
-            >
-              ⌘↵ send
-            </span>
-          </>
-        )}
-      </div>
+      {/* hint row (desktop only): right-aligned "⌘↵ send" keyboard hint */}
+      {!isMobile && (
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'flex-end',
+            marginTop: 8,
+          }}
+        >
+          <span
+            style={{
+              fontFamily: 'var(--mono)',
+              fontSize: 10,
+              color: 'var(--tt)',
+            }}
+          >
+            ⌘↵ send
+          </span>
+        </div>
+      )}
     </div>
   );
 }
