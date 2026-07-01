@@ -12,6 +12,10 @@ import { Icon, StatusDot } from '../atoms';
 import { useOverseer } from '../store';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { api } from '../../../api/client';
+import { useDictation } from '../../../hooks/useDictation';
+import { DictationControl } from '../../dictation/DictationControl';
+import { InputActionsMenu } from '../../dictation/InputActionsMenu';
+import { useSettings } from '../../../stores/settings';
 
 // Anthropic-vision-supported image types (mirrors the agent ChatView). Only these
 // become a REAL base64 image block the coordinator SEES; anything else falls back to a
@@ -37,6 +41,13 @@ export function Composer() {
   const coordinatorProject = useOverseer((s) => s.coordinatorProject);
   const imageCount = useOverseer((s) => s.composerImages.length);
   const isMobile = useIsMobile();
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const sttConfigured = useSettings((s) => !!s.sttProvider && !!s.sttModel && !!s.sttSecretName);
+  const dictation = useDictation((text) => {
+    const cur = useOverseer.getState().composer;
+    setComposer(cur + (cur ? ' ' : '') + text);
+  });
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [uploadNote, setUploadNote] = useState('');
@@ -178,55 +189,41 @@ export function Composer() {
           transition: 'border-color .12s, background .12s',
         }}
       >
-        {/* attach → upload to inbox; images ride along with the next directive as a real block */}
-        <label
-          title="Attach file"
-          style={{
-            flex: 'none',
-            width: 32,
-            height: 32,
-            borderRadius: 8,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-            background: 'var(--hover, rgba(255,255,255,.05))',
-            color: 'var(--ts)',
-          }}
-        >
-          <Paperclip size={16} />
-          <input
-            type="file"
-            multiple
-            style={{ display: 'none' }}
-            onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }}
+        {/* attach → upload to inbox; images ride along with the next directive as a real block.
+            Mobile: paperclip becomes a "+" flyout (Add file / Dictate). Desktop: unchanged. */}
+        {isMobile ? (
+          <InputActionsMenu
+            onAddFile={() => fileInputRef.current?.click()}
+            onDictate={() => void dictation.start()}
+            dictateDisabled={!sttConfigured}
+            dictateHint="Set up in Settings → Transcription"
           />
-        </label>
+        ) : (
+          <label
+            title="Attach file"
+            style={{ flex: 'none', width: 32, height: 32, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'var(--hover, rgba(255,255,255,.05))', color: 'var(--ts)' }}
+          >
+            <Paperclip size={16} />
+            <input type="file" multiple style={{ display: 'none' }} onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }} />
+          </label>
+        )}
+        <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }} />
 
-        {/* autosizing textarea */}
-        <textarea
-          ref={textareaRef}
-          rows={1}
-          value={composer}
-          onChange={handleChange}
-          onKeyDown={handleKeyDown}
-          onPaste={onPaste}
-          placeholder={isMobile ? 'Fire a directive…' : 'Fire a directive to Dispatch…'}
-          style={{
-            flex: 1,
-            background: 'transparent',
-            border: 'none',
-            outline: 'none',
-            resize: 'none',
-            color: 'var(--tp)',
-            fontSize: 13.5,
-            lineHeight: 1.5,
-            maxHeight: 120,
-            padding: '7px 2px',
-            fontFamily: 'inherit',
-            overflow: 'auto',
-          }}
-        />
+        {/* autosizing textarea — swapped for the recording UI while dictating (mobile) */}
+        {isMobile && dictation.state !== 'idle' ? (
+          <DictationControl dictation={dictation} />
+        ) : (
+          <textarea
+            ref={textareaRef}
+            rows={1}
+            value={composer}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            onPaste={onPaste}
+            placeholder={isMobile ? 'Fire a directive…' : 'Fire a directive to Dispatch…'}
+            style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', resize: 'none', color: 'var(--tp)', fontSize: 13.5, lineHeight: 1.5, maxHeight: 120, padding: '7px 2px', fontFamily: 'inherit', overflow: 'auto' }}
+          />
+        )}
 
         {/* send → sendDirective */}
         <button
