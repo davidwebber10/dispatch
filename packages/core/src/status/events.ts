@@ -4,7 +4,11 @@
  * Pure and provider-agnostic so it's easy to test and extend.
  */
 
-export type ThreadStatus = 'starting' | 'working' | 'needs_input' | 'idle' | 'done' | 'error';
+// 'scheduled' is only ever produced by the structured SDK path (StructuredSessionManager's
+// 'scheduled' emit, see structured/manager.ts) — a dormant thread that called a wake-scheduler
+// tool (ScheduleWakeup/CronCreate) to end its turn deliberately. Hook-based normalizeClaude/
+// normalizeCodex below never produce it; PTY-driven threads have no such signal to observe.
+export type ThreadStatus = 'starting' | 'working' | 'needs_input' | 'idle' | 'done' | 'error' | 'scheduled';
 
 export interface NormalizedEvent {
   /** null = this event doesn't change the status (still useful for sessionId capture). */

@@ -181,14 +181,12 @@ function messageHasToolUse(message: unknown): boolean {
 }
 
 /**
- * Classify the tail of a claude session's transcript for the boot kickstart's
- * idempotency: is the last turn complete, and when did the file last change?
- * Reads only the last TAIL_BYTES (dropping the first, possibly-partial line).
- * Returns null when the transcript is missing/unreadable (e.g. a thread that
- * never captured an external_id) — the caller treats that as "no evidence of a
- * completed turn." Never throws.
+ * Shared tail-read for transcriptTailStatus/transcriptTailScheduled: reads only the last
+ * TAIL_BYTES (dropping the first, possibly-partial line) and returns the file's mtime plus
+ * the last non-meta/non-sidechain user/assistant message. Returns null when the transcript
+ * is missing/unreadable (e.g. a thread that never captured an external_id). Never throws.
  */
-export function transcriptTailStatus(workDir: string, sessionId: string): TranscriptTailStatus | null {
+function readLastTurn(workDir: string, sessionId: string): { mtimeMs: number; last: any } | null {
   try {
     const encoded = workDir.replace(/\//g, '-');
     const file = path.join(os.homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
@@ -210,11 +208,55 @@ export function transcriptTailStatus(workDir: string, sessionId: string): Transc
       if (o.isMeta || o.isSidechain) continue;
       last = o;
     }
-    const completed = !!last && last.type === 'assistant' && !messageHasToolUse(last.message);
-    return { mtimeMs: stat.mtimeMs, completed };
+    return { mtimeMs: stat.mtimeMs, last };
   } catch {
     return null;
   }
+}
+
+/**
+ * Classify the tail of a claude session's transcript for the boot kickstart's
+ * idempotency: is the last turn complete, and when did the file last change?
+ * Returns null when the transcript is missing/unreadable — the caller treats that as
+ * "no evidence of a completed turn." Never throws.
+ */
+export function transcriptTailStatus(workDir: string, sessionId: string): TranscriptTailStatus | null {
+  const r = readLastTurn(workDir, sessionId);
+  if (!r) return null;
+  const completed = !!r.last && r.last.type === 'assistant' && !messageHasToolUse(r.last.message);
+  return { mtimeMs: r.mtimeMs, completed };
+}
+
+// Mirrors structured/manager.ts's WAKE_TOOLS — kept as an independent literal (not imported)
+// since this module classifies transcripts on disk, a different boundary than the live SDK
+// stream manager.ts parses; duplicating two tool names is cheaper than coupling the modules.
+const WAKE_TOOLS = new Set(['ScheduleWakeup', 'CronCreate']);
+
+function lastToolUseName(message: unknown): string | undefined {
+  const content = (message as any)?.content;
+  if (!Array.isArray(content)) return undefined;
+  for (let i = content.length - 1; i >= 0; i--) {
+    const b = content[i];
+    if (b && b.type === 'tool_use' && typeof b.name === 'string') return b.name;
+  }
+  return undefined;
+}
+
+/**
+ * Boot-recovery sibling to transcriptTailStatus: was the transcript's last turn left
+ * dangling on a wake-scheduler tool (ScheduleWakeup/CronCreate)? Those end the turn
+ * deliberately — the CLI process exits waiting on an external timer — so a tail that looks
+ * "interrupted" (transcriptTailStatus's `completed: false`, a dangling tool_use) is actually
+ * a dormant-but-will-resume thread, not a genuinely stuck one. Callers should check this
+ * BEFORE treating `!completed` as evidence the thread needs a kickstart. Returns false (not
+ * null) on a missing/unreadable transcript — "no evidence of scheduling" is the safe default
+ * for a boot-recovery caller that already treats that case as "not evidently completed."
+ */
+export function transcriptTailScheduled(workDir: string, sessionId: string): boolean {
+  const r = readLastTurn(workDir, sessionId);
+  if (!r || !r.last || r.last.type !== 'assistant') return false;
+  const name = lastToolUseName(r.last.message);
+  return !!name && WAKE_TOOLS.has(name);
 }
 
 /**

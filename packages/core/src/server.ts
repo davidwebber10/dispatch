@@ -114,6 +114,13 @@ function wirePermissionMembrane(structuredManager: StructuredSessionManager, sta
     statusService.markIdle(terminalId);
     sessionService.noteAgentCompletion(terminalId);
   });
+  // A wake-scheduler tool (ScheduleWakeup/CronCreate) ended the turn deliberately — the
+  // thread is dormant, not finished. Deliberately does NOT call noteAgentCompletion: the
+  // agent hasn't produced a result for its coordinator yet, it's just asleep until its timer
+  // fires and the CLI process resumes on its own.
+  structuredManager.on('scheduled', (terminalId: string, activity: string) => {
+    statusService.markScheduled(terminalId, activity);
+  });
 }
 
 export function createApp(options: CreateAppOptions): import('express').Express {

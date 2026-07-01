@@ -6,7 +6,14 @@
 // data.ts — the store stays a plain state bag.
 
 export type AgentType = 'planner' | 'implementer' | 'researcher' | 'reviewer';
-export type ThreadStatus = 'working' | 'waiting' | 'done' | 'error' | 'queued';
+// 'scheduled' = a LIVE thread that ended its turn by calling a wake-scheduler tool
+// (ScheduleWakeup/CronCreate) — it's dormant and will resume on its own, so it renders
+// inside the live rail (see live.ts groupByMission) with distinct dormant styling rather
+// than being mistaken for 'done'. Deliberately not named 'waiting': that word already means
+// two different things elsewhere (persisted terminals.status='waiting' = idle/back-at-
+// prompt; this ThreadStatus='waiting' = "needs your input") — 'scheduled' needs neither a
+// human nor a "done" read; it's just asleep.
+export type ThreadStatus = 'working' | 'waiting' | 'done' | 'error' | 'queued' | 'scheduled';
 export type MessageKind = 'user' | 'overseer' | 'note' | 'image' | 'agentCard';
 
 // The coordinator tool call an 'agentCard' StreamMessage was built from (spec: agent-card
@@ -22,13 +29,17 @@ export const AGENT_TYPE = {
   reviewer:    { icon: 'ph-seal-check',       label: 'reviewer' },
 } as const;
 
-// STATUS registry — dot color + label per status.
+// STATUS registry — dot color + label per status. `scheduled` deliberately reuses the calm
+// `--ts` secondary-text color (NOT `--yellow`, which means "needs you") — muted, but a step
+// brighter than `--tt` (queued's color) so a dormant live agent doesn't read identically to
+// an unlaunched one.
 export const STATUS = {
-  working: { color: 'var(--acc)',    label: 'working' },
-  waiting: { color: 'var(--yellow)', label: 'waiting on you' },
-  done:    { color: 'var(--ts)',     label: 'done' },
-  error:   { color: 'var(--red)',    label: 'error' },
-  queued:  { color: 'var(--tt)',     label: 'queued' },
+  working:   { color: 'var(--acc)',    label: 'working' },
+  waiting:   { color: 'var(--yellow)', label: 'waiting on you' },
+  done:      { color: 'var(--ts)',     label: 'done' },
+  error:     { color: 'var(--red)',    label: 'error' },
+  queued:    { color: 'var(--tt)',     label: 'queued' },
+  scheduled: { color: 'var(--ts)',     label: 'scheduled' },
 } as const;
 
 // An ephemeral typed agent thread (factory: th(type,id,action,status,elapsed,progress)).
@@ -45,6 +56,7 @@ export interface AgentThread {
   isWorking: boolean;
   isWaiting: boolean;
   isDone: boolean;
+  isScheduled: boolean;       // dormant — ended its turn on a wake-scheduler tool, will resume on its own
   dotAnim: string;            // "breathe var(--pulse) ease-in-out infinite" | "none"
   progressW: string;          // "62%"
   showProgress: boolean;      // true only when status==='working'

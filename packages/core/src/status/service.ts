@@ -5,7 +5,10 @@ import type { EventBroadcaster } from '../ws/events.js';
 import { normalizeClaude, normalizeCodex, type ThreadStatus } from './events.js';
 import { aggregateSessionStatus } from './aggregate.js';
 
-// Normalized thread status -> the persisted terminal-status enum.
+// Normalized thread status -> the persisted terminal-status enum. `terminals.status` is a
+// free-form TEXT column (no CHECK constraint) — 'scheduled' rides the same convention as
+// 'queued' (see sessions/service.ts createQueuedTerminal): a value TerminalStatus doesn't
+// narrowly type, but the column happily stores and round-trips.
 const TO_TERMINAL: Record<ThreadStatus, string> = {
   starting: 'working',
   working: 'working',
@@ -13,6 +16,7 @@ const TO_TERMINAL: Record<ThreadStatus, string> = {
   idle: 'waiting',
   done: 'waiting',
   error: 'error',
+  scheduled: 'scheduled',
 };
 
 /**
@@ -67,6 +71,26 @@ export class StatusService {
   markIdle(terminalId: string, activity?: string): void {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (terminal) this.apply(terminal.session_id, terminalId, 'idle', activity);
+  }
+
+  /**
+   * Dormant edge: a structured thread ended its turn by calling a wake-scheduler tool
+   * (ScheduleWakeup/CronCreate) — it will resume on its own, so it must NOT be treated as
+   * idle/done (no completion notice to a coordinator, no "finished" push). Distinct from
+   * markIdle purely so callers (wirePermissionMembrane) can't accidentally wire it to
+   * noteAgentCompletion the way the 'idle' listener does.
+   */
+  markScheduled(terminalId: string, activity?: string): void {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) return;
+    this.apply(terminal.session_id, terminalId, 'scheduled', activity);
+    // Best-effort: stamp when it went dormant for a future "resumes when…" tooltip. The
+    // terminal row is already in hand (no extra read); updateConfig replaces the whole
+    // blob, so merge onto the existing parsed config rather than clobbering it.
+    try {
+      const config = JSON.parse(terminal.config || '{}');
+      terminalsDb.updateConfig(this.db, terminalId, { ...config, scheduledWake: activity ?? 'Scheduled — will resume automatically' });
+    } catch { /* best effort */ }
   }
 
   private apply(sessionId: string, terminalId: string, status: ThreadStatus, activity?: string): void {

@@ -39,9 +39,44 @@ interface Session {
   pending: PendingPermission | null;
   /** The claude session_id parsed from the init/system event (for resume on restart). */
   sessionId?: string;
+  /**
+   * name+input of the most recent can_use_tool request seen in the CURRENT turn, reset
+   * after each `result` boundary. Lets the `result` handler tell a turn that ended because
+   * the agent called a wake-scheduler tool (see WAKE_TOOLS) apart from one that's actually
+   * done — the last tool called before `result` is a reliable proxy for "why did this turn
+   * end" since can_use_tool fires for every tool call regardless of escalate/auto-allow.
+   */
+  lastToolUse?: { name: string; input: unknown };
 }
 
 const MAX_EVENTS = 5000;
+
+/**
+ * Harness tools that deliberately END the current turn to sleep until a timer/event fires
+ * (ScheduleWakeup after a delay, CronCreate on its next cron match) — unlike Monitor, which
+ * blocks WITHIN the turn and never reaches this boundary. Seeing one as the last tool call
+ * before `result` means the thread is dormant-but-will-resume, not finished.
+ */
+const WAKE_TOOLS = new Set(['ScheduleWakeup', 'CronCreate']);
+
+/**
+ * A short "why it's dormant" label built from the wake tool's own input. ScheduleWakeup
+ * always carries a human-written `reason` (required by its schema); CronCreate has no
+ * reason field, so fall back to its cron expression. Never throws — a malformed/missing
+ * input just degrades to a generic label.
+ */
+function wakeActivity(toolName: string, input: unknown): string {
+  const inp = (input ?? {}) as Record<string, unknown>;
+  if (toolName === 'ScheduleWakeup') {
+    const reason = typeof inp.reason === 'string' && inp.reason.trim() ? inp.reason.trim() : undefined;
+    return reason ? `Scheduled — ${reason}` : 'Scheduled — will resume automatically';
+  }
+  if (toolName === 'CronCreate') {
+    const cron = typeof inp.cron === 'string' && inp.cron.trim() ? inp.cron.trim() : undefined;
+    return cron ? `Scheduled — cron "${cron}"` : 'Scheduled — will resume automatically';
+  }
+  return 'Scheduled — will resume automatically';
+}
 
 /**
  * Drives one `claude` stream-json process per structured terminal. Parallel to
@@ -96,6 +131,10 @@ export class StructuredSessionManager extends EventEmitter {
       }
       if (event?.type === 'control_request' && event?.request?.subtype === 'can_use_tool') {
         const r = event.request;
+        // Track regardless of the allow/deny path below — every tool call passes through
+        // here (this membrane fires even when auto-allowing), so it's a reliable "last tool
+        // called this turn" signal for the result-boundary wake check further down.
+        if (typeof r?.tool_name === 'string') session.lastToolUse = { name: r.tool_name, input: r?.input };
         const questions = Array.isArray(r?.input?.questions) ? r.input.questions : undefined;
         // AskUserQuestion can't be auto-allowed — it needs a real `answers` map written back —
         // so it ALWAYS surfaces as pending, even on an otherwise-autonomous thread. (For an
@@ -124,10 +163,18 @@ export class StructuredSessionManager extends EventEmitter {
           });
         }
       }
-      // Turn boundary: a `result` event ends the current turn → the thread is idle.
-      // Consumers use this to settle status (working → idle) and, for an agent, to push
-      // a completion notice to its coordinator.
-      if (event?.type === 'result') this.emit('idle', terminalId);
+      // Turn boundary: a `result` event ends the current turn. Normally that means the
+      // thread is idle — but if the LAST tool called this turn was a wake-scheduler (see
+      // WAKE_TOOLS), the agent deliberately ended its turn to sleep until a timer/event
+      // fires, not because it's done. Consumers use 'idle' to settle status and, for an
+      // agent, push a completion notice to its coordinator — 'scheduled' must NOT do either
+      // (the agent hasn't finished).
+      if (event?.type === 'result') {
+        const wake = session.lastToolUse && WAKE_TOOLS.has(session.lastToolUse.name) ? session.lastToolUse : undefined;
+        session.lastToolUse = undefined; // reset for the next turn
+        if (wake) this.emit('scheduled', terminalId, wakeActivity(wake.name, wake.input));
+        else this.emit('idle', terminalId);
+      }
       this.emit('event', terminalId, event);
     });
 

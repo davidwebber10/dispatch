@@ -38,6 +38,15 @@ function waitForPermission(m: StructuredSessionManager, id: string, timeoutMs = 
   });
 }
 
+/** Waits for the manager's own (terminalId, ...rest) emit — 'scheduled'/'idle' — for `id`. */
+function waitForManagerEvent(m: StructuredSessionManager, event: string, id: string, timeoutMs = 3000): Promise<any[]> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => { m.off(event, on); reject(new Error(`timeout waiting for '${event}'`)); }, timeoutMs);
+    const on = (eid: string, ...rest: any[]) => { if (eid === id) { clearTimeout(t); m.off(event, on); resolve(rest); } };
+    m.on(event, on);
+  });
+}
+
 const spawnFakeEscalate = (m: StructuredSessionManager, id: string) =>
   m.spawn(id, { command: process.execPath, args: [fake], workDir: process.cwd(), escalate: true });
 
@@ -232,6 +241,53 @@ it('seedEvents: prior history is pushed into the ring and replays via getEvents'
   // …and live events still land after the backfill.
   await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
   expect(m.getEvents('t1').some((e: any) => e.type === 'system')).toBe(true);
+});
+
+it("emits 'scheduled' (not 'idle') when the turn's last tool call was ScheduleWakeup, carrying its `reason` as the activity", async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  const scheduledP = waitForManagerEvent(m, 'scheduled', 't1');
+  let sawIdle = false;
+  const onIdle = (eid: string) => { if (eid === 't1') sawIdle = true; };
+  m.on('idle', onIdle);
+  m.sendMessage('t1', 'TRIGGER_SCHEDULE');
+  const [activity] = await scheduledP;
+  expect(activity).toContain('watching CI run');
+  m.off('idle', onIdle);
+  expect(sawIdle).toBe(false); // the agent hasn't finished — must not settle as idle
+});
+
+it("emits 'scheduled' for CronCreate too, falling back to its cron expression (no `reason` field on that tool)", async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  const scheduledP = waitForManagerEvent(m, 'scheduled', 't1');
+  m.sendMessage('t1', 'TRIGGER_CRON');
+  const [activity] = await scheduledP;
+  expect(activity).toContain('*/5 * * * *');
+});
+
+it("still emits 'idle' (not 'scheduled') for an ordinary turn with no tool calls", async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  const idleP = waitForManagerEvent(m, 'idle', 't1');
+  let sawScheduled = false;
+  const onScheduled = (eid: string) => { if (eid === 't1') sawScheduled = true; };
+  m.on('scheduled', onScheduled);
+  m.sendMessage('t1', 'hello');
+  await idleP;
+  m.off('scheduled', onScheduled);
+  expect(sawScheduled).toBe(false);
+});
+
+it('resets the wake-tool memo after each turn: ScheduleWakeup then a plain turn ends the SECOND one on idle, not a stale scheduled', async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  const firstScheduled = waitForManagerEvent(m, 'scheduled', 't1');
+  m.sendMessage('t1', 'TRIGGER_SCHEDULE');
+  await firstScheduled;
+  const idleP = waitForManagerEvent(m, 'idle', 't1');
+  m.sendMessage('t1', 'hello'); // a fresh turn with no tool call — must NOT reuse the prior memo
+  await idleP;
 });
 
 it('re-spawn: old child exit does not evict the replacement session (Fix 1 regression)', async () => {

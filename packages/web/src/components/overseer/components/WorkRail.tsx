@@ -90,10 +90,20 @@ function AgentThreadChip({ thread }: { thread: AgentThread }) {
           >
             {name}
           </span>
-          {/* Working → just the shared app spinner (no "working" word). Every other status
-              (waiting/error) keeps its dot + mono label. Queued/done use their own chips. */}
+          {/* Working → just the shared app spinner (no "working" word). Scheduled (dormant —
+              ended its turn on ScheduleWakeup/CronCreate, will resume on its own) swaps the
+              living StatusDot for a still moon glyph so it visibly reads as ASLEEP rather than
+              either "working" or "done" — the whole point of this status existing. Every other
+              status (waiting/error) keeps its dot + mono label. Queued/done use their own chips. */}
           {thread.isWorking ? (
             <Spinner size={12} />
+          ) : thread.isScheduled ? (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flex: 'none' }}>
+              <Icon name="ph-moon" size={11} color={thread.dotColor} />
+              <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ts)' }}>
+                {thread.statusLabel}
+              </span>
+            </span>
           ) : (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flex: 'none' }}>
               <StatusDot color={thread.dotColor} anim={thread.dotAnim} size={6} />

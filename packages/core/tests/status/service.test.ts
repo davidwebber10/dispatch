@@ -61,6 +61,21 @@ describe('StatusService', () => {
   it('ignores events for unknown terminals', () => {
     expect(() => new StatusService(db, broadcaster).ingest('claude', 'nope', { hook_event_name: 'Stop', session_id: 'x' })).not.toThrow();
   });
+
+  it('markScheduled persists status="scheduled" (free-form, not "waiting"/"idle") and broadcasts it', () => {
+    const s = new StatusService(db, broadcaster);
+    s.markWorking('term');
+    s.markScheduled('term', 'Scheduled — watching CI run');
+    expect(terminalsDb.getById(db, 'term')?.status).toBe('scheduled');
+    expect(statusEvents().at(-1)).toMatchObject({ terminalId: 'term', status: 'scheduled', threadStatus: 'scheduled', activity: 'Scheduled — watching CI run' });
+  });
+
+  it('markScheduled stamps config.scheduledWake (best effort, for a future "resumes when…" tooltip) without clobbering existing config', () => {
+    terminalsDb.updateConfig(db, 'term', { transport: 'structured', agentType: 'implementer' });
+    new StatusService(db, broadcaster).markScheduled('term', 'Scheduled — watching CI run');
+    const config = terminalsDb.getById(db, 'term')?.config;
+    expect(JSON.parse(config || '{}')).toMatchObject({ transport: 'structured', agentType: 'implementer', scheduledWake: 'Scheduled — watching CI run' });
+  });
 });
 
 describe('StatusService thread-settled hook', () => {
@@ -94,6 +109,13 @@ describe('StatusService thread-settled hook', () => {
   it('does NOT fire when already idle (no working→ transition)', () => {
     const { svc, fired } = setup();
     svc.ingest('claude-code', 't1', { hook_event_name: 'Stop' }); // starts non-working → idle
+    expect(fired.length).toBe(0);
+  });
+
+  it('does NOT fire on working → scheduled — a dormant agent has not finished, so no completion/push notice', () => {
+    const { svc, fired } = setup();
+    svc.markWorking('t1');
+    svc.markScheduled('t1', 'Scheduled — watching CI run');
     expect(fired.length).toBe(0);
   });
 });

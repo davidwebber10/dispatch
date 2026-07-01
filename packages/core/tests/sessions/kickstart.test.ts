@@ -6,7 +6,7 @@ import Database from 'better-sqlite3';
 import { initSchema } from '../../src/db/schema.js';
 import * as sessionsDb from '../../src/db/sessions.js';
 import * as terminalsDb from '../../src/db/terminals.js';
-import { transcriptTailStatus } from '../../src/sessions/cc-sessions.js';
+import { transcriptTailScheduled, transcriptTailStatus } from '../../src/sessions/cc-sessions.js';
 
 // --- transcriptTailStatus: the boot-kickstart idempotency classifier ---------
 // It reads ~/.claude/projects/<enc-workDir>/<sessionId>.jsonl, so we point HOME at
@@ -72,6 +72,82 @@ describe('transcriptTailStatus', () => {
 
   it('returns null when the transcript file is missing', () => {
     expect(transcriptTailStatus(workDir, 'no-such-session')).toBeNull();
+  });
+});
+
+// --- transcriptTailScheduled: the boot-recovery backstop for a dormant wake-scheduler turn ---
+// Sibling to transcriptTailStatus above: a transcript that LOOKS interrupted (completed=false,
+// a dangling tool_use) may actually be a thread that deliberately went dormant on
+// ScheduleWakeup/CronCreate — this disambiguates that case. Shares the same temp-HOME setup.
+describe('transcriptTailScheduled', () => {
+  const realHome = process.env.HOME;
+  let home: string;
+  const workDir = '/tmp/kickstart-scheduled-proj';
+  const projDir = () => path.join(home, '.claude', 'projects', workDir.replace(/\//g, '-'));
+
+  beforeAll(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), 'kickstart-scheduled-home-'));
+    process.env.HOME = home;
+    fs.mkdirSync(projDir(), { recursive: true });
+  });
+  afterAll(() => {
+    if (realHome === undefined) delete process.env.HOME;
+    else process.env.HOME = realHome;
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  function writeTranscript(id: string, lines: unknown[]): void {
+    fs.writeFileSync(path.join(projDir(), `${id}.jsonl`), lines.map((l) => JSON.stringify(l)).join('\n'));
+  }
+
+  it("is true when the last assistant turn's final tool_use is ScheduleWakeup", () => {
+    writeTranscript('wake', [
+      { type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'go' }] } },
+      { type: 'assistant', message: { content: [
+        { type: 'text', text: 'ok, scheduling a check-in' },
+        { type: 'tool_use', id: 'x1', name: 'ScheduleWakeup', input: { delaySeconds: 60, reason: 'watch CI', prompt: 'continue' } },
+      ] } },
+    ]);
+    expect(transcriptTailScheduled(workDir, 'wake')).toBe(true);
+    // Same transcript reads completed=false via the plain classifier — that ambiguity
+    // (dormant vs. genuinely stuck) is exactly what this backstop resolves.
+    expect(transcriptTailStatus(workDir, 'wake')!.completed).toBe(false);
+  });
+
+  it('is true for CronCreate too (no `reason` field on that tool, still a wake tool)', () => {
+    writeTranscript('cron', [
+      { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'x1', name: 'CronCreate', input: { cron: '*/5 * * * *', prompt: 'poll' } }] } },
+    ]);
+    expect(transcriptTailScheduled(workDir, 'cron')).toBe(true);
+  });
+
+  it('is false when the last tool_use is an ordinary tool — a genuinely stuck/dangling turn', () => {
+    writeTranscript('stuck', [
+      { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'x1', name: 'Bash', input: { command: 'ls' } }] } },
+    ]);
+    expect(transcriptTailScheduled(workDir, 'stuck')).toBe(false);
+  });
+
+  it('checks only the LAST tool_use in a multi-tool-call turn', () => {
+    writeTranscript('multi', [
+      { type: 'assistant', message: { content: [
+        { type: 'tool_use', id: 'x1', name: 'ScheduleWakeup', input: { delaySeconds: 60, reason: 'r', prompt: 'p' } },
+        { type: 'tool_use', id: 'x2', name: 'Bash', input: { command: 'ls' } },
+      ] } },
+    ]);
+    // Bash was the LAST call this turn, not ScheduleWakeup — genuinely dangling.
+    expect(transcriptTailScheduled(workDir, 'multi')).toBe(false);
+  });
+
+  it('is false when the last turn completed cleanly (no dangling tool_use)', () => {
+    writeTranscript('clean', [
+      { type: 'assistant', message: { content: [{ type: 'text', text: 'all done' }] } },
+    ]);
+    expect(transcriptTailScheduled(workDir, 'clean')).toBe(false);
+  });
+
+  it('is false (not throwing) when the transcript is missing', () => {
+    expect(transcriptTailScheduled(workDir, 'no-such-session')).toBe(false);
   });
 });
 

@@ -1,6 +1,6 @@
 // Overseer membrane — escalation Need derivation (the real approve/deny/answer cards).
 import { describe, it, expect } from 'vitest';
-import { convItemsToStream, needsFromThreads } from './live';
+import { convItemsToStream, groupByMission, mapStatus, needsFromThreads } from './live';
 import type { ConvItem, PendingPermission, Terminal } from '../../api/types';
 
 function term(id: string, config: Record<string, unknown>, status = 'needs_input'): Terminal {
@@ -69,6 +69,31 @@ describe('needsFromThreads — the membrane', () => {
     const working = agent('w');
     const needs = needsFromThreads([coord, working], { c: waiting, w: { threadStatus: 'working' } }, {});
     expect(needs).toHaveLength(0);
+  });
+});
+
+// A dormant thread that ended its turn on a wake-scheduler tool (ScheduleWakeup/CronCreate,
+// see structured/manager.ts) — StatusService.markScheduled persists this on BOTH the coarse
+// `status` and the rich `threadStatus` fields (mirrors how every other status round-trips).
+const scheduled = { status: 'scheduled', threadStatus: 'scheduled', activity: 'Scheduled — watching CI run' };
+
+describe('scheduled status — dormant wake-scheduler threads (not done, not waiting-on-you)', () => {
+  it('mapStatus routes a persisted "scheduled" terminal to ThreadStatus "scheduled"', () => {
+    expect(mapStatus(agent('s1'), scheduled)).toBe('scheduled');
+  });
+
+  it('a scheduled thread never appears in needsFromThreads — nothing for the human to do', () => {
+    const needs = needsFromThreads([agent('s2')], { s2: scheduled }, {});
+    expect(needs).toHaveLength(0);
+  });
+
+  it('groupByMission places a scheduled thread in the LIVE bucket, not queued/outcomes', () => {
+    const missions = groupByMission([agent('s3', 'implementer', 'Auth')], { s3: scheduled });
+    expect(missions).toHaveLength(1);
+    expect(missions[0].threads.map((t) => t.key)).toEqual(['s3']);
+    expect(missions[0].threads[0].isScheduled).toBe(true);
+    expect(missions[0].queued).toHaveLength(0);
+    expect(missions[0].outcomes).toHaveLength(0);
   });
 });
 

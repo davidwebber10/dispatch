@@ -116,6 +116,12 @@ export function mapStatus(t: Terminal, s?: LiveStatus): ThreadStatus {
   // threadStatus checks.
   const coarse = s?.status ?? t.status;
   if (coarse === 'queued') return 'queued';
+  // Same reasoning as 'queued' above: 'scheduled' is set directly on the persisted status by
+  // StatusService.markScheduled (see structured/manager.ts's 'scheduled' emit) and needs to
+  // win BEFORE the richer threadStatus checks below — it isn't 'idle'/'done' even though the
+  // thread just settled a turn, and it isn't 'waiting' (that means needs_input, which would
+  // wrongly surface it in the Needs-you zone via needsFromThreads).
+  if (coarse === 'scheduled') return 'scheduled';
   const rich = s?.threadStatus;
   if (rich === 'working' || rich === 'starting') return 'working';
   if (rich === 'needs_input') return 'waiting';

@@ -51,6 +51,7 @@ export function th(
     isWorking: status === 'working',
     isWaiting: status === 'waiting',
     isDone: status === 'done',
+    isScheduled: status === 'scheduled',
     dotAnim: status === 'working' ? 'breathe var(--pulse) ease-in-out infinite' : 'none',
     progressW: (progress || 0) + '%',
     showProgress: status === 'working',

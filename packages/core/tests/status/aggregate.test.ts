@@ -25,4 +25,21 @@ describe('aggregateSessionStatus', () => {
     expect(aggregateSessionStatus(['', 'working'])).toBe('working');
     expect(aggregateSessionStatus(['', ''])).toBe('waiting');
   });
+
+  // 'scheduled' = a dormant thread mid-wait on ScheduleWakeup/CronCreate (see
+  // structured/manager.ts). It hasn't finished, so it must not silently read as
+  // 'waiting' (== idle/done here) — but SessionStatus has no dedicated slot for it, so
+  // it folds into 'working', ranked below an actually-active/needs_input terminal.
+  it('scheduled (dormant) folds into working — never collapses to waiting/done', () => {
+    expect(aggregateSessionStatus(['scheduled'])).toBe('working');
+  });
+
+  it('an actively-working or needs_input terminal still outranks a scheduled one', () => {
+    expect(aggregateSessionStatus(['scheduled', 'working'])).toBe('working');
+    expect(aggregateSessionStatus(['scheduled', 'needs_input'])).toBe('needs_input');
+  });
+
+  it('a stale error still outranks a scheduled terminal', () => {
+    expect(aggregateSessionStatus(['scheduled', 'error'])).toBe('error');
+  });
 });
