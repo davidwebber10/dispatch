@@ -27,6 +27,11 @@ type RailTab = 'live' | 'queued' | 'done';
 type MissionRow = Mission & { doneFreshness?: number };
 const doneFreshness = (m: Mission): number => (m as MissionRow).doneFreshness ?? 0;
 
+/** Compact token count for a Done card's meta line: "842 tok" below 1000, "12.4k tok" above. */
+function formatTokens(n: number): string {
+  return n < 1000 ? `${n} tok` : `${(n / 1000).toFixed(1)}k tok`;
+}
+
 // ---------------------------------------------------------------------------
 // AgentThreadChip
 // ---------------------------------------------------------------------------
@@ -286,6 +291,7 @@ function OutcomeCard({ outcome }: { outcome: Outcome }) {
         </span>
         <span style={{ fontFamily: 'var(--mono)', fontSize: 9.5, color: 'var(--tt)' }}>
           {outcome.typeLabel} #{outcome.id} · {outcome.meta}
+          {outcome.totalTokens !== undefined && ` · ${formatTokens(outcome.totalTokens)}`}
         </span>
       </div>
 

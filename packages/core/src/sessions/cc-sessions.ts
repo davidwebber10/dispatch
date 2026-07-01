@@ -89,6 +89,76 @@ export function readSessionBackfill(workDir: string, sessionId: string, limit = 
   }
 }
 
+export interface TranscriptTokenStats {
+  /** The last non-synthetic model seen in the transcript (models can vary across a resumed session). */
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  /** input + output + cache_read — matches the Claude CLI's own token display. */
+  totalTokens: number;
+  messageCount: number;
+}
+
+/**
+ * Sum per-message `usage` fields across a Claude transcript JSONL's assistant lines.
+ * Shared by the session-stats route (layers cost-pricing on top) and the agent
+ * completion hook (persists `totalTokens` onto the terminal's config) so the summing
+ * logic lives in one place.
+ */
+export function sumTranscriptTokens(raw: string): TranscriptTokenStats {
+  let model = '';
+  let messageCount = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheCreationTokens = 0;
+
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const entry = JSON.parse(line);
+      const msg = entry.message;
+      if (!msg || typeof msg !== 'object') continue;
+      if (msg.usage) {
+        const u = msg.usage;
+        inputTokens += u.input_tokens || 0;
+        outputTokens += u.output_tokens || 0;
+        cacheReadTokens += u.cache_read_input_tokens || 0;
+        cacheCreationTokens += u.cache_creation_input_tokens || 0;
+        messageCount++;
+      }
+      if (msg.model && msg.model !== '<synthetic>') model = msg.model;
+    } catch { /* partial/garbled line */ }
+  }
+
+  return {
+    model,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheCreationTokens,
+    totalTokens: inputTokens + outputTokens + cacheReadTokens,
+    messageCount,
+  };
+}
+
+/**
+ * Read a terminal's transcript by workDir + session id and sum its token usage (see
+ * sumTranscriptTokens). Resolves the same `~/.claude/projects/<enc-workDir>/<id>.jsonl`
+ * path as readSessionBackfill. Returns null when the file is missing/unreadable.
+ */
+export function readTerminalTokenUsage(workDir: string, sessionId: string): TranscriptTokenStats | null {
+  try {
+    const encoded = workDir.replace(/\//g, '-');
+    const file = path.join(os.homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
+    return sumTranscriptTokens(fs.readFileSync(file, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
 export interface TranscriptTailStatus {
   /** The transcript file's last-modified epoch ms — a reliable "newer activity" clock. */
   mtimeMs: number;

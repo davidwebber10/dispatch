@@ -4,6 +4,7 @@ import os from 'os';
 import { Router } from 'express';
 import type Database from 'better-sqlite3';
 import * as appState from '../db/app-state.js';
+import { sumTranscriptTokens } from '../sessions/cc-sessions.js';
 
 export function createStateRouter(db: Database.Database): Router {
   const router = Router();
@@ -90,15 +91,7 @@ export function createStateRouter(db: Database.Database): Router {
       }
 
       const content = fs.readFileSync(jsonlPath, 'utf-8');
-      const lines = content.split('\n').filter(l => l.trim());
-
-      let model = '';
-      let messageCount = 0;
-      let totalCost = 0;
-      let totalInputTokens = 0;
-      let totalOutputTokens = 0;
-      let totalCacheRead = 0;
-      let totalCacheCreation = 0;
+      const stats = sumTranscriptTokens(content);
 
       // Per-model pricing (per million tokens)
       const pricing: Record<string, { input: number; output: number; cacheRead: number; cacheCreate: number }> = {
@@ -106,52 +99,22 @@ export function createStateRouter(db: Database.Database): Router {
         'claude-sonnet-4-6': { input: 3, output: 15, cacheRead: 0.3, cacheCreate: 3.75 },
         'claude-haiku-4-5-20251001': { input: 0.8, output: 4, cacheRead: 0.08, cacheCreate: 1 },
       };
-      const defaultPricing = pricing['claude-sonnet-4-6'];
-
-      for (const line of lines) {
-        try {
-          const entry = JSON.parse(line);
-          const msg = entry.message;
-          if (!msg || typeof msg !== 'object') continue;
-          if (msg.usage) {
-            const u = msg.usage;
-            const m = msg.model || '';
-            const p = pricing[m] || defaultPricing;
-            const input = u.input_tokens || 0;
-            const output = u.output_tokens || 0;
-            const cacheRead = u.cache_read_input_tokens || 0;
-            const cacheCreate = u.cache_creation_input_tokens || 0;
-
-            totalInputTokens += input;
-            totalOutputTokens += output;
-            totalCacheRead += cacheRead;
-            totalCacheCreation += cacheCreate;
-
-            totalCost += (input / 1e6) * p.input
-                       + (output / 1e6) * p.output
-                       + (cacheRead / 1e6) * p.cacheRead
-                       + (cacheCreate / 1e6) * p.cacheCreate;
-            messageCount++;
-          }
-          if (msg.model && msg.model !== '<synthetic>') {
-            model = msg.model;
-          }
-        } catch {}
-      }
-
-      // Token count matches Claude CLI: input + output + cache_read
-      const displayTokens = totalInputTokens + totalOutputTokens + totalCacheRead;
+      const p = pricing[stats.model] || pricing['claude-sonnet-4-6'];
+      const totalCost = (stats.inputTokens / 1e6) * p.input
+                       + (stats.outputTokens / 1e6) * p.output
+                       + (stats.cacheReadTokens / 1e6) * p.cacheRead
+                       + (stats.cacheCreationTokens / 1e6) * p.cacheCreate;
 
       res.json({
         found: true,
-        model,
-        inputTokens: totalInputTokens,
-        outputTokens: totalOutputTokens,
-        cacheReadTokens: totalCacheRead,
-        cacheCreationTokens: totalCacheCreation,
-        totalTokens: displayTokens,
+        model: stats.model,
+        inputTokens: stats.inputTokens,
+        outputTokens: stats.outputTokens,
+        cacheReadTokens: stats.cacheReadTokens,
+        cacheCreationTokens: stats.cacheCreationTokens,
+        totalTokens: stats.totalTokens,
         estimatedCostUSD: Math.round(totalCost * 100) / 100,
-        messageCount,
+        messageCount: stats.messageCount,
       });
     } catch (err: any) {
       res.json({ found: false, error: err.message });

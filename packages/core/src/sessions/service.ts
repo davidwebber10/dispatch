@@ -16,7 +16,7 @@ import type { StatusHooksInjection, SecretsMcpInjection } from '../providers/typ
 import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
 import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript.js';
 import { systemPromptFor, modelFor } from '../overseer/prompts.js';
-import { readSessionBackfill, transcriptTailStatus } from './cc-sessions.js';
+import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus } from './cc-sessions.js';
 
 interface StatusContext {
   serverUrl: string;
@@ -830,6 +830,7 @@ export class SessionService {
     let cfg: Record<string, any> = {};
     try { cfg = JSON.parse(agent.config || '{}'); } catch { /* default {} */ }
     if (cfg.role !== 'agent') return;
+    this.persistAgentTokenUsage(agentTerminalId, agent, cfg);
     const mission = typeof cfg.mission === 'string' && cfg.mission.trim() ? cfg.mission.trim() : null;
     const summary = this.lastAssistantText(agentTerminalId);
     const note =
@@ -840,6 +841,27 @@ export class SessionService {
       `ingest the result, hand it to another agent, spawn a follow-up, or report back to the user. Keep this ` +
       `brief unless it needs action; the user's own messages are always your top priority.`;
     this.notifyCoordinatorOfAgent(agentTerminalId, note);
+  }
+
+  /**
+   * Persist an agent terminal's cumulative token usage into `config.totalTokens`
+   * when its turn settles — computed ONCE here (from the transcript's summed
+   * `usage` fields, via readTerminalTokenUsage/sumTranscriptTokens) and written
+   * into config, mirroring how `config.model` is captured at spawn time in
+   * spawnStructured. This is what lets the Work-tab's Done cards show a token count
+   * for free (read off the terminal row) instead of a per-card live fetch, which
+   * would be too expensive across dozens of finished agents. Best-effort: no-ops
+   * when there's no external_id yet or the transcript can't be read.
+   */
+  private persistAgentTokenUsage(terminalId: string, agent: terminalsDb.TerminalRow, cfg: Record<string, any>): void {
+    if (!agent.external_id) return;
+    const session = sessionsDb.getById(this.db, agent.session_id);
+    const workDir = agent.working_dir || session?.working_dir;
+    if (!workDir) return;
+    const stats = readTerminalTokenUsage(workDir, agent.external_id);
+    if (!stats || !stats.totalTokens) return;
+    cfg.totalTokens = stats.totalTokens;
+    terminalsDb.updateConfig(this.db, terminalId, cfg);
   }
 
   /** The gated tool/question a structured AGENT thread is blocked on, or null. */

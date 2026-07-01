@@ -152,9 +152,14 @@ export function terminalToAgentThread(t: Terminal, s?: LiveStatus): AgentThread 
   // spawn time — plain data plumbing so WorkRail can render it; undefined for older terminals
   // spawned before this field existed.
   const model = typeof t.config?.model === 'string' ? t.config.model : undefined;
+  // The terminal's cumulative token usage, persisted into config once its turn settles
+  // (see SessionService.persistAgentTokenUsage) — same plain data-plumbing pattern as
+  // `model`. Undefined for a still-working agent or one that finished before this field
+  // existed; WorkRail only renders it when present.
+  const totalTokens = typeof t.config?.totalTokens === 'number' ? t.config.totalTokens : undefined;
   // dlabel is the drill-in / data-label name; keep it the agent's own name so the rail and
   // the opened WorkerLightbox agree on identity.
-  return { ...base, key: t.id, dlabel: name, model };
+  return { ...base, key: t.id, dlabel: name, model, totalTokens };
 }
 
 function terminalToOutcome(t: Terminal): Outcome {
@@ -162,7 +167,7 @@ function terminalToOutcome(t: Terminal): Outcome {
   // Outcome cards are entries too → title with the agent's own name, not the mission.
   const title = at.dlabel || at.action || `${at.typeLabel} task`;
   const meta = at.elapsed ? `done · ${at.elapsed} ago` : 'done';
-  return { ...outc(at.type, at.id, title, meta), key: t.id, model: at.model };
+  return { ...outc(at.type, at.id, title, meta), key: t.id, model: at.model, totalTokens: at.totalTokens };
 }
 
 function summaryText(live: number, done: number): string {
