@@ -3,10 +3,27 @@ import type { ConvItem, PendingPermission } from '../../../api/types';
 import { openStructuredSocket } from '../../../api/structured-socket';
 import { api, type ContentBlock } from '../../../api/client';
 
+/** The default Claude Code context window (tokens); no beta flag currently widens it. */
+export const CONTEXT_WINDOW = 200_000;
+
+/** The outcome of the most recent native compaction, or null before any has run. */
+export interface CompactResult {
+  success: boolean;
+  error?: string;
+}
+
 export interface StructuredChat {
   items: ConvItem[];
   busy: boolean;        // a turn is in flight (sent or streaming, no result yet)
   model?: string;
+  /** Context tokens used AS OF the latest assistant turn (input + cache_read + cache_creation).
+   *  Undefined until the first assistant event of the thread lands. Compare against
+   *  CONTEXT_WINDOW to render a fill indicator. */
+  contextTokens?: number;
+  /** True while a native `/compact` triggered via `compact()` is in progress. */
+  compacting: boolean;
+  /** Outcome of the most recently finished compaction (transient — for a toast/indicator). */
+  compactResult: CompactResult | null;
   // Accepts plain text OR a content-block array (e.g. a real image block the model SEES).
   send: (content: string | ContentBlock[]) => void;
   /** The AskUserQuestion / gated tool this thread is blocked on, or null. */
@@ -15,6 +32,8 @@ export interface StructuredChat {
    *  the chosen option label(s) (multi-select joined with ", "). Verified wire shape
    *  against real `claude --permission-prompt-tool stdio`. */
   answer: (answers: Record<string, string>) => void;
+  /** Trigger native Claude Code compaction on this thread (no chat bubble is added). */
+  compact: () => void;
 }
 
 function safeJson(v: unknown): string {
@@ -123,6 +142,9 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
   const [items, setItems] = useState<ConvItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [model, setModel] = useState<string | undefined>();
+  const [contextTokens, setContextTokens] = useState<number | undefined>();
+  const [compacting, setCompacting] = useState(false);
+  const [compactResult, setCompactResult] = useState<CompactResult | null>(null);
   // The AskUserQuestion the CLI is blocked on (mirrored in a ref so the `answer`
   // callback and the tool_result handler read the latest value without re-subscribing).
   const [pending, setPendingState] = useState<PendingPermission | null>(null);
@@ -147,8 +169,13 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
   const rafRef = useRef<number | null>(null);          // scheduled flush handle (null ⇒ none pending)
 
   useEffect(() => {
-    if (!terminalId) { setItems([]); setBusy(false); setModel(undefined); setPending(null); return; }
+    if (!terminalId) {
+      setItems([]); setBusy(false); setModel(undefined); setPending(null);
+      setContextTokens(undefined); setCompacting(false); setCompactResult(null);
+      return;
+    }
     setItems([]); setBusy(false); setModel(undefined); setPending(null);
+    setContextTokens(undefined); setCompacting(false); setCompactResult(null);
     streamingRef.current = false; turnRef.current = 0; blockMapRef.current.clear();
     pendingRef.current.clear();
     if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
@@ -217,6 +244,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
         pendingRef.current.clear();
         setItems([]); setBusy(false);
         setPending(null); // the server re-sends a still-pending permission after replay
+        setContextTokens(undefined); setCompacting(false); setCompactResult(null); // replay rebuilds these
         blockMapRef.current.clear();
       },
       onClose: () => {
@@ -230,6 +258,22 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
         if (type === 'system' && event.subtype === 'init') {
           const m = event.model || event.session?.model || event.modelId;
           if (m) setModel(m);
+          return;
+        }
+
+        // Native compaction lifecycle: `status:"compacting"` while it runs, then a
+        // follow-up status (status:null) carrying compact_result — a fresh system/init
+        // for the post-compaction context follows separately and lands in the branch above.
+        if (type === 'system' && event.subtype === 'status') {
+          if (event.status === 'compacting') {
+            setCompacting(true);
+            setCompactResult(null);
+          } else {
+            setCompacting(false);
+            if (event.compact_result === 'success' || event.compact_result === 'failed') {
+              setCompactResult({ success: event.compact_result === 'success', error: event.compact_error });
+            }
+          }
           return;
         }
 
@@ -301,6 +345,14 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
 
         if (type === 'assistant' && Array.isArray(event.message?.content)) {
           setBusy(true);
+          // Context fill: the LATEST assistant call's usage (not a running sum — result.usage
+          // sums every API round-trip in a multi-tool turn, badly over-counting). Recomputed
+          // on every assistant event so it always reflects the most recent call.
+          const usage = event.message?.usage;
+          if (usage) {
+            const tokens = (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
+            setContextTokens(tokens);
+          }
           // Streaming mode: text/thinking already rendered from deltas — ignore them
           // to avoid duplication. Reconcile each tool_use's parsed input from the
           // authoritative whole event (and append any tool we never saw start, e.g.
@@ -433,5 +485,12 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
     });
   }, [terminalId, setPending]);
 
-  return { items, busy, model, send, pending, answer };
+  // Trigger native compaction. No optimistic state change: the CLI's own system/status
+  // events (handled above) are the source of truth for `compacting`/`compactResult`.
+  const compact = useCallback(() => {
+    if (!terminalId) return;
+    api.compactTerminal(terminalId).catch(() => {});
+  }, [terminalId]);
+
+  return { items, busy, model, contextTokens, compacting, compactResult, send, pending, answer, compact };
 }

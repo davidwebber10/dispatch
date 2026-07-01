@@ -179,6 +179,18 @@ export class StructuredSessionManager extends EventEmitter {
     this.emit('busy', terminalId);
   }
 
+  /**
+   * Trigger native Claude Code compaction: writes the same `/compact` slash-command
+   * text a human would type, on the same stdin channel sendMessage uses. Unlike
+   * sendMessage this does NOT buffer/emit a synthetic echo event — a "/compact"
+   * bubble must never render in the chat. The CLI responds with a `system/status`
+   * pair (`{status:"compacting"}` then `{status:null, compact_result:...}`) followed
+   * by a fresh `system/init`, all forwarded verbatim through the normal 'event' path.
+   */
+  compact(terminalId: string): void {
+    this.write(terminalId, { type: 'user', message: { role: 'user', content: '/compact' } });
+  }
+
   /** The in-flight permission/question awaiting a human decision, or null. */
   getPending(terminalId: string): PendingPermission | null {
     return this.sessions.get(terminalId)?.pending ?? null;

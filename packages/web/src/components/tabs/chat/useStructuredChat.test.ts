@@ -198,6 +198,73 @@ test('system/init sets the model', () => {
   expect(result.current.model).toBe('claude-x');
 });
 
+test('system/status toggles compacting and surfaces the result on the follow-up status', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  expect(result.current.compacting).toBe(false);
+  expect(result.current.compactResult).toBeNull();
+
+  act(() => cbs.onEvent({ type: 'system', subtype: 'status', status: 'compacting' }));
+  expect(result.current.compacting).toBe(true);
+  expect(result.current.compactResult).toBeNull();
+
+  act(() => cbs.onEvent({ type: 'system', subtype: 'status', status: null, compact_result: 'success' }));
+  expect(result.current.compacting).toBe(false);
+  expect(result.current.compactResult).toEqual({ success: true, error: undefined });
+});
+
+test('system/status surfaces a failed compaction with its error', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'status', status: 'compacting' }));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'status', status: null, compact_result: 'failed', compact_error: 'boom' }));
+  expect(result.current.compacting).toBe(false);
+  expect(result.current.compactResult).toEqual({ success: false, error: 'boom' });
+});
+
+test('a new compacting status clears the previous result', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'status', status: 'compacting' }));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'status', status: null, compact_result: 'success' }));
+  expect(result.current.compactResult).not.toBeNull();
+  act(() => cbs.onEvent({ type: 'system', subtype: 'status', status: 'compacting' }));
+  expect(result.current.compactResult).toBeNull();
+});
+
+test('compact() POSTs to the compact route', () => {
+  const spy = vi.spyOn(api, 'compactTerminal').mockResolvedValue(undefined as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => { result.current.compact(); });
+  expect(spy).toHaveBeenCalledWith('t1');
+});
+
+test('contextTokens is computed from the LATEST assistant event usage, not accumulated across turns', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  expect(result.current.contextTokens).toBeUndefined();
+
+  act(() => cbs.onEvent({
+    type: 'assistant',
+    message: { content: [{ type: 'text', text: 'first' }], usage: { input_tokens: 100, cache_read_input_tokens: 50, cache_creation_input_tokens: 10 } },
+  }));
+  expect(result.current.contextTokens).toBe(160);
+
+  // A second assistant event REPLACES the figure (reflects the latest call) rather
+  // than summing across turns — unlike `result.usage`, which over-counts.
+  act(() => cbs.onEvent({
+    type: 'assistant',
+    message: { content: [{ type: 'text', text: 'second' }], usage: { input_tokens: 200, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } },
+  }));
+  expect(result.current.contextTokens).toBe(200);
+});
+
+test('contextTokens is NOT taken from the result event usage (would over-count a multi-tool turn)', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({
+    type: 'assistant',
+    message: { content: [{ type: 'text', text: 'a' }], usage: { input_tokens: 100, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } },
+  }));
+  act(() => cbs.onEvent({ type: 'result', is_error: false, num_turns: 3, duration_ms: 10, usage: { input_tokens: 9999, output_tokens: 1 } }));
+  expect(result.current.contextTokens).toBe(100);
+});
+
 test('fallback: whole assistant handling when no stream_events ever arrive', () => {
   const { result } = renderHook(() => useStructuredChat('t1'));
   act(() => cbs.onEvent({ type: 'assistant', message: { content: [{ type: 'text', text: 'plain' }, { type: 'tool_use', name: 'Bash', id: 'b1', input: { command: 'ls' } }] } }));

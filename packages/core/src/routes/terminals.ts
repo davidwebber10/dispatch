@@ -156,6 +156,16 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
   });
 
+  // POST /api/terminals/:terminalId/compact — trigger native Claude Code compaction on
+  // the thread's current context (writes `/compact` on stdin; no chat bubble is added).
+  router.post('/terminals/:terminalId/compact', (req, res) => {
+    try {
+      const ok = sessionService.compact(req.params.terminalId);
+      if (!ok) return res.status(409).json({ error: 'No live structured session to compact' });
+      res.status(204).end();
+    } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
+  });
+
   // POST /api/terminals/:terminalId/input { data } — write raw bytes to the live PTY.
   router.post('/terminals/:terminalId/input', (req, res) => {
     const data = req.body?.data;

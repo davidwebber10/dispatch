@@ -894,6 +894,13 @@ export class SessionService {
     return this.structuredManager?.interrupt(terminalId) ?? false;
   }
 
+  /** Trigger native Claude Code compaction on a structured thread's current turn. */
+  compact(terminalId: string): boolean {
+    if (!this.structuredManager?.isAlive(terminalId)) return false;
+    this.structuredManager.compact(terminalId);
+    return true;
+  }
+
   /**
    * Find-or-create the project's Overseer coordinator: a structured claude-code
    * thread tagged `config.role === 'coordinator'`. Returns the existing one if a

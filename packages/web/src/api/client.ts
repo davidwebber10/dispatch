@@ -69,6 +69,8 @@ export const api = {
     req<Terminal>(`/api/terminals/${terminalId}/autonomy`, { method: 'POST', body: body({ mode }) }),
   // Graceful interrupt: stop the current turn WITHOUT killing the thread.
   interrupt: (terminalId: string) => req<void>(`/api/terminals/${terminalId}/interrupt`, { method: 'POST' }),
+  // Trigger native Claude Code compaction on the thread's current context.
+  compactTerminal: (terminalId: string) => req<void>(`/api/terminals/${terminalId}/compact`, { method: 'POST' }),
   // Overseer: find-or-create this project's coordinator thread (idempotent) → { terminalId }.
   ensureOverseerCoordinator: (sessionId: string) =>
     req<{ terminalId: string }>(`/api/sessions/${sessionId}/overseer/coordinator`, { method: 'POST' }),
