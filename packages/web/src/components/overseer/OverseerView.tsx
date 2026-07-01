@@ -16,7 +16,7 @@ import { OngoingWorkOverview } from './components/WorkRail';
 import { ThreadDetail } from './components/ThreadDetail';
 import { WorkerLightbox } from './components/WorkerLightbox';
 
-export function OverseerView() {
+export function OverseerView({ onBack }: { onBack?: () => void } = {}) {
   const isMobile = useIsMobile();
   // Single owner of the live coordinator subscription + the membrane escalation sync
   // (both run for desktop and mobile since OverseerView is the entry for both).
@@ -24,7 +24,10 @@ export function OverseerView() {
   useNeedsSync();
   const rv = useRenderVals();
 
-  if (isMobile) return <OverseerMobile />;
+  // Mobile renders inside the MobileApp full-screen overlay, so its consolidated header
+  // owns the back affordance (onBack closes the overlay). Desktop opens as a tab and has
+  // no back-nav — onBack is simply absent there.
+  if (isMobile) return <OverseerMobile onBack={onBack} />;
 
   return (
     <div className="overseer-root" style={overseerRootStyle}>

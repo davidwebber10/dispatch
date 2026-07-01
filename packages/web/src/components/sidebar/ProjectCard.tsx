@@ -12,7 +12,7 @@ import { StatusDot } from '../common/StatusDot';
 import { Spinner } from '../common/Spinner';
 import { ConfirmModal } from '../common/ConfirmModal';
 import { providerColor, fileVisual } from '../common/typeIcons';
-import { useSettings, type Density } from '../../stores/settings';
+import { useSettings, useDispatchName, type Density } from '../../stores/settings';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { timeAgo } from '../../lib/time';
 import { NewTabMenu } from './NewTabMenu';
@@ -254,6 +254,7 @@ function SectionHeader({ label, count, prominent, children }: { label: string; c
 
 export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSelectAgent, onNewAgent, onBrowseFiles, onDispatch, fadeActiveKey, highlightTabId, showManaged = false }: { session: Session; active: boolean; open?: boolean; onToggle?: () => void; onSelectTab: (id: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void; onBrowseFiles?: (projectId: string) => void; onDispatch?: (projectId: string) => void; fadeActiveKey?: number; highlightTabId?: string | null; showManaged?: boolean }) {
   const allAgents = useAgents((s) => s.schedules);
+  const dispatchName = useDispatchName();
   const agents = allAgents.filter((a) => a.projectId === session.id);
   const agentSel = useAgents((s) => s.selectedId);
   const agentFocused = useAgentUI((s) => s.focused);
@@ -414,7 +415,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
           {onDispatch && (
             <button
               onClick={(e) => { e.stopPropagation(); onDispatch(session.id); }}
-              title="Open Dispatch coordinator"
+              title={`Open ${dispatchName} coordinator`}
               style={{
                 display: 'flex', alignItems: 'center', gap: isMobile ? 11 : 8, width: '100%',
                 margin: isMobile ? '6px 0 10px' : '4px 0 6px',
@@ -427,7 +428,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
               }}
             >
               <Lightning size={isMobile ? 20 : 15} weight="fill" style={{ flexShrink: 0 }} />
-              <span style={{ flex: 1 }}>Dispatch</span>
+              <span style={{ flex: 1 }}>{dispatchName}</span>
               <CaretRight size={isMobile ? 16 : 13} style={{ flexShrink: 0, opacity: 0.75 }} />
             </button>
           )}

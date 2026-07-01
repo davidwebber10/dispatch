@@ -23,12 +23,14 @@ interface SettingsState {
   projectFontSize: number;
   density: Density;
   accent: string;
+  coordinatorName: string;   // raw value; empty falls back to "Dispatch" at display (see useDispatchName)
   notify: boolean;
   pushEnabled: boolean;
   multiPane: boolean;
   sttProvider: string;
   sttModel: string;
   sttSecretName: string;
+  setCoordinatorName: (name: string) => void;
   setFontSize: (n: number) => void;
   setScrollback: (n: number) => void;
   setSidebarFontSize: (n: number) => void;
@@ -62,6 +64,7 @@ export const useSettings = create<SettingsState>((set) => ({
   projectFontSize: load('dispatch:projectFontSize', 15),
   density: load<Density>('dispatch:density', 'cozy'),
   accent: initialAccent,
+  coordinatorName: load('dispatch:coordinatorName', 'Dispatch'),
   notify: load('dispatch:notify', false),
   pushEnabled: load('dispatch:pushEnabled', false),
   multiPane: load('dispatch:multiPane', true),
@@ -73,6 +76,7 @@ export const useSettings = create<SettingsState>((set) => ({
   setSidebarFontSize: (n) => { const sidebarFontSize = Math.max(10, Math.min(18, Math.round(n))); save('dispatch:sidebarFontSize', sidebarFontSize); set({ sidebarFontSize }); },
   setProjectFontSize: (n) => { const projectFontSize = Math.max(11, Math.min(22, Math.round(n))); save('dispatch:projectFontSize', projectFontSize); set({ projectFontSize }); },
   setDensity: (density) => { save('dispatch:density', density); set({ density }); },
+  setCoordinatorName: (coordinatorName) => { save('dispatch:coordinatorName', coordinatorName); set({ coordinatorName }); },
   setMultiPane: (b) => { save('dispatch:multiPane', b); set({ multiPane: b }); },
   setAccent: (accent) => { save('dispatch:accent', accent); applyAccent(accent); set({ accent }); },
   setSttProvider: (id) => { save('dispatch:sttProvider', id); set({ sttProvider: id }); },
@@ -97,3 +101,13 @@ export const useSettings = create<SettingsState>((set) => ({
     }
   },
 }));
+
+/**
+ * The coordinator's user-facing display name — the ONE place the "fall back to Dispatch"
+ * rule lives. Every site that shows the coordinator's name (overseer header, message
+ * attribution, project entry button, the Dispatch tab) reads from here, so a change in
+ * Settings updates all of them live (zustand subscription). An empty/whitespace stored
+ * value renders as "Dispatch". Do not read `dispatch:coordinatorName` from localStorage
+ * directly anywhere else.
+ */
+export const useDispatchName = (): string => useSettings((s) => s.coordinatorName.trim() || 'Dispatch');

@@ -99,7 +99,7 @@ Derived view model (memoized over a shallow state slice). Shape (`types.ts`):
 
 ```ts
 interface RenderVals {
-  ribbon: Ribbon;            // { working, done, needs, hasNeeds, moodText }
+  ribbon: Ribbon;            // { working, done, needs, hasNeeds }
   needs: Need[];             // unresolved needs only
   missions: Mission[];       // cloned; spawned prepended to missions[0].threads; every thread has dlabel
   stream: StreamMessage[];   // base scenario stream + extra
@@ -142,7 +142,7 @@ store/atoms directly (no props). Use `useIsMobile()` from `@/hooks/useIsMobile` 
 
 | File | Export | Reads | Renders / notes |
 |---|---|---|---|
-| `components/Header.tsx` | `OverseerHeader` | `useRenderVals().ribbon`; `useOverseer(goNeeds)` | **Desktop** header (spec §6 "Header"): brand badge + `moodText`, `dispatch` chip, ribbon (`{needs} need you` yellow→`goNeeds` when `hasNeeds`, `{working} working` w/ breathing dot, `{done} done today`, divider, `Connected`, gear). The mobile header is inline in `OverseerMobile` — Header is desktop-only. |
+| `components/Header.tsx` | `OverseerHeader` | `useRenderVals().ribbon`; `useOverseer(goNeeds)`; `useDispatchName()` | **Desktop** header (spec §6 "Header"): brand badge (configurable coordinator name), `dispatch` chip, ribbon (`{needs} need you` yellow→`goNeeds` when `hasNeeds`, `{working} working` w/ breathing dot, `{done} done today`, divider, `Connected`, gear). The mobile header is inline in `OverseerMobile` — Header is desktop-only. |
 | `components/NeedsZone.tsx` | `NeedsZone` | `useRenderVals().needs`, `.ribbon.needs`; `useOverseer(needAction)` | Hero queue (spec §6 "Needs zone"): zone header (`Needs you`, `{N} held · everything else is handled`) + a NeedCard per `need`. Conflict → two context panels (`⇆` divider) ; approval → mono `cmds` chips; question → framing only. Action buttons via `PillButton`, `onClick={() => needAction(need.id, action.label)}`. **Mobile**: stacked conflict panels (no `⇆`), omit "raised by Overseer", fill tab height + own scroll. Rendered in desktop left column (only when `hasNeeds`) and the mobile Needs tab. |
 | `components/Stream.tsx` | `ConversationStream` | `useRenderVals().stream` | Scrollable message list (spec §6 "Conversation stream"): `msg.isOverseer` / `msg.isUser` / `msg.isNote` variants. Desktop `flex:1` scroll; mobile fills the Stream tab above the composer. |
 | `components/Composer.tsx` | `Composer` | `useOverseer(composer, setComposer, sendDirective, openDelegate)` | "Always listening" composer (spec §6 "Composer"): "+" → `openDelegate`, textarea (`value=composer`, `onChange→setComposer`), send → `sendDirective`. `onKeyDown`: ⌘/Ctrl+Enter → `preventDefault()` + `sendDirective()`. Desktop hint row ("Always listening…", "⌘↵ send"); mobile compact hint. |

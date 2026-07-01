@@ -42,7 +42,7 @@ import {
 import { SquaresFour, ArrowsSplit, Lightning } from '@phosphor-icons/react';
 import { useTabs, findTerminal, isDispatchTab, tabLabel, tabProjectId } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
-import { useSettings } from '../../stores/settings';
+import { useSettings, useDispatchName } from '../../stores/settings';
 import { useGroups } from './store';
 import { leafTabIds, leafCount, MAX_PANES } from './types';
 
@@ -97,6 +97,7 @@ function ClassicTabBar({ onSelect }: { onSelect?: () => void }) {
   const activeTabId = useTabs((s) => s.activeTabId);
   const byProject   = useTabs((s) => s.byProject);
   const sessions    = useProjects((s) => s.sessions);
+  const dispatchName = useDispatchName();
 
   if (!openTabIds.length) return null;
 
@@ -129,7 +130,7 @@ function ClassicTabBar({ onSelect }: { onSelect?: () => void }) {
             {dispatch && <Lightning size={14} weight="fill" style={{ flexShrink: 0, color: 'var(--color-accent)' }} />}
             <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
               <span style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {tabLabel(id, byProject)}
+                {dispatch ? dispatchName : tabLabel(id, byProject)}
               </span>
               <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {proj?.name ?? ''}
@@ -155,6 +156,7 @@ function DispatchChip({ tabId, onSelect }: { tabId: string; onSelect?: () => voi
   const activeTabId = useTabs((s) => s.activeTabId);
   const byProject   = useTabs((s) => s.byProject);
   const sessions    = useProjects((s) => s.sessions);
+  const dispatchName = useDispatchName();
   const proj = sessions.find((s) => s.id === tabProjectId(tabId, byProject));
   const act  = tabId === activeTabId;
   return (
@@ -174,7 +176,7 @@ function DispatchChip({ tabId, onSelect }: { tabId: string; onSelect?: () => voi
     >
       <Lightning size={14} weight="fill" style={{ flexShrink: 0, color: 'var(--color-accent)' }} />
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
-        <span style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Dispatch</span>
+        <span style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dispatchName}</span>
         <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{proj?.name ?? ''}</span>
       </div>
       <button

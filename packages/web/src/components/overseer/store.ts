@@ -483,13 +483,7 @@ export function useRenderVals(): RenderVals {
       ? [...base, { kind: 'note', who: null, text: sendError, time: '', key: 'send-error', isUser: false, isOverseer: false, isNote: false, isError: true }]
       : base;
 
-    const moodText = hasNeeds
-      ? `${needs.length} ${needs.length === 1 ? 'thing needs you' : 'things need you'}`
-      : noMissions
-        ? 'Ready when you are'
-        : 'Calm — nothing needs you';
-
-    const ribbon: Ribbon = { working, done, needs: needs.length, hasNeeds, moodText };
+    const ribbon: Ribbon = { working, done, needs: needs.length, hasNeeds };
 
     return {
       ribbon,

@@ -251,14 +251,10 @@ export function MobileApp() {
 
       {dispatchOpen && project && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'var(--color-base)', display: 'flex', flexDirection: 'column', paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
-          <header style={{ height: 50, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 10px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
-            <button onClick={() => setDispatchOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, padding: '4px 2px', minWidth: 0 }}>
-              <CaretLeft size={20} weight="bold" />
-              <span style={{ fontWeight: 600, fontSize: 16, color: 'var(--color-text-primary)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project.name}</span>
-            </button>
-          </header>
+          {/* No separate back-nav bar here — OverseerView's single consolidated header carries
+              the back ‹ (via onBack), the coordinator name, and the needs/working badges. */}
           <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-            <OverseerView />
+            <OverseerView onBack={() => setDispatchOpen(false)} />
           </div>
         </div>
       )}

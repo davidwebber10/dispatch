@@ -422,18 +422,12 @@ export function derive(s: DeriveState): RenderVals {
   const stream = [...data.stream, ...s.extra];
 
   const hasNeeds = needs.length > 0;
-  const moodText = hasNeeds
-    ? needs.length + (needs.length === 1 ? ' thing needs you' : ' things need you')
-    : s.scenario === 'empty'
-      ? 'Ready when you are'
-      : 'Calm — nothing needs you';
 
   const ribbon: Ribbon = {
     working: data.working,
     done: data.done,
     needs: needs.length,
     hasNeeds,
-    moodText,
   };
 
   return {

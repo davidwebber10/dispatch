@@ -121,7 +121,6 @@ export interface Ribbon {
   done: number;
   needs: number;              // = visible (unresolved) needs count
   hasNeeds: boolean;
-  moodText: string;
 }
 
 // Drill-in activity step (built in detail()).

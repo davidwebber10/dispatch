@@ -29,6 +29,7 @@ import { Markdown } from '../../Markdown';
 import { ChatImage } from '../../ChatImage';
 import { WorkingIndicator } from '../../WorkingIndicator';
 import { useOverseer, useRenderVals } from '../store';
+import { useDispatchName } from '../../../stores/settings';
 import type { StreamMessage } from '../types';
 
 // `.md-view`'s CSS consumes the GLOBAL `--color-*` tokens (defined on :root), which
@@ -42,9 +43,10 @@ import type { StreamMessage } from '../types';
 // same run omit it (chat-app grouping) but keep the body left-aligned at the same x.
 
 function DispatchHeader({ time }: { time: string }) {
+  const name = useDispatchName();
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-      <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--acc)' }}>Dispatch</span>
+      <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--acc)' }}>{name}</span>
       <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--tt)' }}>{time}</span>
     </div>
   );

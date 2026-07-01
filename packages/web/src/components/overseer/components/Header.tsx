@@ -1,6 +1,6 @@
 // Overseer view — desktop header (spec §6 "Header (desktop, 54px)").
 //
-// BrandBadge: gradient broadcast logo + "Overseer" title + moodText subline + "dispatch" chip.
+// BrandBadge: coordinator display name (configurable, see useDispatchName) + "dispatch" chip.
 // StatusRibbon: NeedsAlert (⚠ + count → opens the held-items popover) · "N working"
 // (breathing acc dot) · "N done today" · divider · "Connected" (static dot) · reset · gear.
 //
@@ -11,17 +11,18 @@ import type { CSSProperties } from 'react';
 import { Icon, StatusDot } from '../atoms';
 import { useOverseer, useRenderVals } from '../store';
 import type { Ribbon } from '../types';
+import { useDispatchName } from '../../../stores/settings';
 import { NeedsAlert } from './NeedsAlert';
 
 // ─── BrandBadge ──────────────────────────────────────────────────────────────
 
-function BrandBadge({ moodText }: { moodText: string }) {
+function BrandBadge() {
+  const name = useDispatchName();
   return (
     <div style={{ display: 'flex', alignItems: 'center' }}>
-      {/* Title block: "Dispatch" + moodText subline */}
+      {/* Title block: the coordinator's configurable display name (see useDispatchName) */}
       <div style={{ lineHeight: 1.15 }}>
-        <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--tp)' }}>Dispatch</div>
-        <div style={{ fontSize: 10.5, color: 'var(--tt)' }}>{moodText}</div>
+        <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--tp)' }}>{name}</div>
       </div>
 
       {/* "dispatch" project chip — mono, folder icon, margin-left 6px from title block */}
@@ -167,7 +168,7 @@ export function OverseerHeader() {
         padding: '0 18px',
       }}
     >
-      <BrandBadge moodText={ribbon.moodText} />
+      <BrandBadge />
 
       {/* Spacer pushes the ribbon to the right */}
       <div style={{ flex: 1, minWidth: 0 }} />

@@ -240,6 +240,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   const projectFontSize = useSettings((s) => s.projectFontSize);
   const accent = useSettings((s) => s.accent);
   const density = useSettings((s) => s.density);
+  const coordinatorName = useSettings((s) => s.coordinatorName);
   const notify = useSettings((s) => s.notify);
   const pushEnabled = useSettings((s) => s.pushEnabled);
   const [pushMsg, setPushMsg] = useState('');
@@ -288,6 +289,22 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <span style={sectionLabel}>GETTING STARTED</span>
                 <button onClick={() => { openSetup(); onClose(); }} style={{ alignSelf: 'flex-start', height: 30, padding: '0 14px', background: 'transparent', border: '1px solid #2c2c32', borderRadius: 7, color: 'var(--color-text-primary)', fontSize: 12.5, cursor: 'pointer' }}>Re-run setup wizard</button>
+              </div>
+              <Divider />
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <span style={sectionLabel}>COORDINATOR</span>
+                <div style={row}>
+                  <span style={item}>Name</span>
+                  <input
+                    value={coordinatorName}
+                    onChange={(e) => useSettings.getState().setCoordinatorName(e.target.value)}
+                    placeholder="Dispatch"
+                    aria-label="Coordinator name"
+                    style={{ width: 180, height: 30, padding: '0 9px', background: '#1b1b1e', border: '1px solid #2c2c32', borderRadius: 7, color: 'var(--color-text-primary)', font: '400 12px var(--font-sans)' }}
+                  />
+                </div>
+                <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>Shown wherever your coordinator appears. Leave blank to use “Dispatch”.</div>
               </div>
               <Divider />
 

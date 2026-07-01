@@ -5,8 +5,9 @@
 // region components as desktop (each adapts its own desktop/mobile rendering via
 // useIsMobile — see CONTRACT.md). All data flows through the store / useRenderVals().
 
-import { StatusDot, overseerRootStyle } from './atoms';
+import { Icon, StatusDot, overseerRootStyle } from './atoms';
 import { useOverseer, useRenderVals } from './store';
+import { useDispatchName } from '../../stores/settings';
 import './tokens.css';
 
 import { NeedsAlert } from './components/NeedsAlert';
@@ -16,9 +17,10 @@ import { OngoingWorkOverview } from './components/WorkRail';
 import { ThreadDetail } from './components/ThreadDetail';
 import { WorkerLightbox } from './components/WorkerLightbox';
 
-export function OverseerMobile() {
+export function OverseerMobile({ onBack }: { onBack?: () => void }) {
   const rv = useRenderVals();
   const { ribbon, drillOpen } = rv;
+  const name = useDispatchName();
   const mobileTab = useOverseer((s) => s.mobileTab);
   const setMobileTab = useOverseer((s) => s.setMobileTab);
   // "Needs you" is no longer a tab — it moved to the header alert dropdown. The store still
@@ -39,22 +41,30 @@ export function OverseerMobile() {
 
   return (
     <div className="overseer-root" style={{ ...overseerRootStyle, position: 'relative', overflow: 'hidden' }}>
-      {/* header */}
+      {/* header — single consolidated bar: back ‹ + coordinator name, then the "needs you"
+          alert and working-count badge (the separate back-nav bar above was collapsed into
+          this row to reclaim vertical space). */}
       <div
         style={{
           flex: 'none',
           display: 'flex',
           alignItems: 'center',
-          gap: 9,
-          padding: '9px 16px',
+          gap: 8,
+          padding: '9px 12px',
           borderBottom: '1px solid var(--border)',
           background: 'var(--pane)',
         }}
       >
-        <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.15 }}>
-          <span style={{ fontSize: 13, fontWeight: 600 }}>Dispatch</span>
-          <span style={{ fontSize: 10, color: 'var(--tt)' }}>{ribbon.moodText}</span>
-        </div>
+        {onBack && (
+          <button
+            onClick={onBack}
+            aria-label="Back"
+            style={{ flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: 'none', padding: '2px 0', margin: '-2px 2px -2px 0', color: 'var(--acc)', cursor: 'pointer' }}
+          >
+            <Icon name="ph-arrow-left" size={20} color="var(--acc)" />
+          </button>
+        )}
+        <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--tp)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
         <span style={{ flex: 1 }} />
         {/* "Needs you" alert — ⚠ + count; opens the held-items popover (replaces the old
             Needs tab). */}
