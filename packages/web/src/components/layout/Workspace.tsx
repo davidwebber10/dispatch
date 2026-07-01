@@ -5,7 +5,7 @@ import { DragHandle, useResizableWidth } from '../../hooks/useResizableWidth';
 const SKEY = 'dispatch:sidebar-width';
 const IKEY = 'dispatch:inspector-width';
 const S_MIN = 180, S_MAX = 520, S_DEF = 260;
-const I_MIN = 220, I_MAX = 600, I_DEF = 320;
+const I_MIN = 300, I_MAX = 600, I_DEF = 320;
 // Dragging a handle below this width (well under the min) collapses that column.
 const S_COLLAPSE = 110, I_COLLAPSE = 150;
 

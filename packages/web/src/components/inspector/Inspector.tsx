@@ -2,7 +2,7 @@ import { DetailsPane } from './DetailsPane';
 import { FilesPane } from './FilesPane';
 import { useUI } from '../../stores/ui';
 
-export function Inspector({ projectId, terminalId, onOpenFile }: { projectId: string | null; terminalId: string | null; onOpenFile: (terminalId: string) => void }) {
+export function Inspector({ projectId, terminalId, onOpenFile, detailsSlot }: { projectId: string | null; terminalId: string | null; onOpenFile: (terminalId: string) => void; detailsSlot?: React.ReactNode }) {
   const tab = useUI((s) => s.inspectorTab);
   const setTab = useUI((s) => s.setInspectorTab);
   return (
@@ -18,7 +18,7 @@ export function Inspector({ projectId, terminalId, onOpenFile }: { projectId: st
         ))}
       </div>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-        {tab === 'details' ? <DetailsPane projectId={projectId} terminalId={terminalId} /> : <FilesPane projectId={projectId} onOpenFile={onOpenFile} />}
+        {tab === 'details' ? (detailsSlot ?? <DetailsPane projectId={projectId} terminalId={terminalId} />) : <FilesPane projectId={projectId} onOpenFile={onOpenFile} />}
       </div>
     </div>
   );

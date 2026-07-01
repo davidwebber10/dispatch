@@ -8,6 +8,7 @@ import { TabHost } from './components/tabs/TabHost';
 import { OverseerView } from './components/overseer/OverseerView';
 import { EmptyWorkspace } from './components/layout/EmptyWorkspace';
 import { Inspector } from './components/inspector/Inspector';
+import { DispatchWorkPane } from './components/overseer/components/DispatchWorkPane';
 import { AgentPane } from './components/agents/AgentPane';
 import { EditAgentModal } from './components/agents/EditAgentModal';
 import { AuthBanner } from './components/auth/AuthBanner';
@@ -129,7 +130,7 @@ export default function App() {
                 </div>
               )
           }
-          inspector={isDispatchTab(activeTerminalId) ? null : <Inspector projectId={activeId} terminalId={activeTerminalId} onOpenFile={selectTab} />}
+          inspector={<Inspector projectId={activeId} terminalId={activeTerminalId} onOpenFile={selectTab} detailsSlot={isDispatchTab(activeTerminalId) ? <DispatchWorkPane /> : undefined} />}
         />
       </AppShell>
       {editing && <EditAgentModal scheduleId={editing.scheduleId} presetProjectId={editing.preset} onClose={() => useAgentUI.getState().closeEdit()} onSaved={(id) => useAgentUI.getState().selectAgent(id)} />}
