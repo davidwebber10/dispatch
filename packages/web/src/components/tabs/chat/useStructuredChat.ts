@@ -340,13 +340,16 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
 
         if (type === 'user' && event.message) {
           const content = event.message.content;
+          // Who actually sent this turn — tagged by the backend on the echoed event (absent
+          // on untagged/legacy sends, which render as a plain "You" bubble). See ConvItem.source.
+          const source = event.meta?.source as ConvItem['source'] | undefined;
           const add: ConvItem[] = [];
           if (typeof content === 'string') {
             // A plain human turn rebuilt from the transcript backfill (resume after a daemon
             // restart) stores `content` as a STRING, not an array. Handle it so the user's own
             // messages aren't dropped on reconnect — assistant turns are always array-shaped,
             // which is why only the user's bubbles went missing after a restart.
-            if (content.trim()) add.push({ kind: 'user', text: content });
+            if (content.trim()) add.push({ kind: 'user', text: content, ...(source ? { source } : {}) });
           } else if (Array.isArray(content)) {
             for (const b of content) {
               if (b.type === 'tool_result') {
@@ -359,7 +362,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
                 add.push(...imagesFromContent(b.content, sessionIdRef.current));
               } else if (b.type === 'text' && b.text) {
                 // P0a: the backend buffers/echoes the user's own turn as a text block.
-                add.push({ kind: 'user', text: b.text });
+                add.push({ kind: 'user', text: b.text, ...(source ? { source } : {}) });
               } else if (b.type === 'image') {
                 // A human-attached image on the user's own turn — tag it so surfaces can
                 // attribute it to "You" (vs. the tool_result images above, which stay

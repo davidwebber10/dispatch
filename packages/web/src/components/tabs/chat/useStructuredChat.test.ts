@@ -146,6 +146,19 @@ test('maps an echoed user text block to a user bubble (P0a)', () => {
   expect(u?.text).toBe('hi claude');
 });
 
+test('tags an echoed user event with meta.source (coordinator vs explicit user vs untagged)', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'do the thing' }] }, meta: { source: 'coordinator' } }));
+  expect(result.current.items.find((i) => i.kind === 'user' && i.text === 'do the thing')?.source).toBe('coordinator');
+
+  act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'from a human' }] }, meta: { source: 'user' } }));
+  expect(result.current.items.find((i) => i.kind === 'user' && i.text === 'from a human')?.source).toBe('user');
+
+  // Untagged (older daemon / no meta) must stay undefined — render exactly like today.
+  act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'untagged' }] } }));
+  expect(result.current.items.find((i) => i.kind === 'user' && i.text === 'untagged')?.source).toBeUndefined();
+});
+
 test('maps a STRING-content user turn (transcript backfill on resume) to a user bubble', () => {
   // After a daemon restart the chat is rebuilt from the transcript, where a human turn's
   // content is a plain string (not an array). It must still render as a user bubble — the

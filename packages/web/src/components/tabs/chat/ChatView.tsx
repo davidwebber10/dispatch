@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
-import { PaperPlaneTilt, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip } from '@phosphor-icons/react';
+import { PaperPlaneTilt, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip, ArrowBendDownRight } from '@phosphor-icons/react';
 import type { ConvItem } from '../../../api/types';
 import { api, type ContentBlock } from '../../../api/client';
 import { useStructuredChat } from './useStructuredChat';
@@ -8,7 +8,7 @@ import { AskQuestionCard } from './AskQuestionCard';
 import { useTabs, findTerminal } from '../../../stores/tabs';
 import { useDraft } from '../../../hooks/useDraft';
 import { useIsMobile } from '../../../hooks/useIsMobile';
-import { useSettings } from '../../../stores/settings';
+import { useSettings, useDispatchName } from '../../../stores/settings';
 import { useDictation } from '../../../hooks/useDictation';
 import { DictationControl } from '../../dictation/DictationControl';
 import { InputActionsMenu } from '../../dictation/InputActionsMenu';
@@ -275,7 +275,7 @@ function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void) {
       flushGroup();
       rows.push(
         <MessageScroller.Item key={id} messageId={id} style={{ display: 'flex', flexDirection: 'column' }}>
-          <UserBubble text={it.text ?? ''} />
+          <UserBubble text={it.text ?? ''} source={it.source} />
         </MessageScroller.Item>,
       );
       continue;
@@ -324,10 +324,38 @@ function EmptyState({ model }: { model?: string }) {
   );
 }
 
-function UserBubble({ text }: { text: string }) {
+// A 'user'-role turn the coordinator sent on the human's behalf (spawn_agent / message_agent)
+// still needs its own right-aligned slot in the timeline (it's structurally a user turn), but
+// reading it as "sent by the human" would be misleading — so it gets a small "via {Dispatch
+// name}" label (same ArrowBendDownRight "relayed" icon the coordinator's own Stream uses for
+// injected notices) and a muted/bordered bubble instead of the bright human-accent one.
+// `source === 'user'` or undefined (untagged/legacy) renders exactly like before.
+function UserBubble({ text, source }: { text: string; source?: 'user' | 'coordinator' }) {
+  const dispatchName = useDispatchName();
+  const viaCoordinator = source === 'coordinator';
   return (
-    <div style={{ alignSelf: 'flex-end', maxWidth: '85%', background: 'var(--color-accent)', color: '#06140B', borderRadius: '14px 14px 4px 14px', padding: '9px 13px', font: '400 15px var(--font-sans)', lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-      {text}
+    <div style={{ alignSelf: 'flex-end', maxWidth: '85%', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+      {viaCoordinator && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, color: 'var(--color-accent)' }}>
+          <ArrowBendDownRight size={12} weight="bold" />
+          via {dispatchName}
+        </div>
+      )}
+      <div
+        style={{
+          background: viaCoordinator ? 'var(--color-elevated)' : 'var(--color-accent)',
+          border: viaCoordinator ? '1px solid var(--color-border)' : 'none',
+          color: viaCoordinator ? 'var(--color-text-primary)' : '#06140B',
+          borderRadius: '14px 14px 4px 14px',
+          padding: '9px 13px',
+          font: '400 15px var(--font-sans)',
+          lineHeight: 1.5,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+        }}
+      >
+        {text}
+      </div>
     </div>
   );
 }
