@@ -15,6 +15,7 @@ import { InputActionsMenu } from '../../dictation/InputActionsMenu';
 import { InsightText } from '../../InsightText';
 import { WorkingIndicator } from '../../WorkingIndicator';
 import { ChatImage } from '../../ChatImage';
+import { ContextIndicator } from '../../ContextIndicator';
 import { ToolCall, ToolResult } from '../ToolCall';
 import { useUI } from '../../../stores/ui';
 
@@ -43,7 +44,7 @@ async function fileToBase64(file: File): Promise<string> {
 export function ChatView({ terminalId }: { terminalId: string }) {
   const tab = useTabs((s) => findTerminal(s.byProject, terminalId));
   const sessionId = tab?.sessionId;
-  const { items, busy, model, send, pending, answer } = useStructuredChat(terminalId, sessionId);
+  const { items, busy, model, send, pending, answer, contextTokens, compacting, compactResult, compact } = useStructuredChat(terminalId, sessionId);
 
   const [draft, setDraft, clearDraft] = useDraft(terminalId);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -230,6 +231,11 @@ export function ChatView({ terminalId }: { terminalId: string }) {
           </button>
             </>
           )}
+        </div>
+
+        {/* thin status row: muted context-window fill indicator, tappable for detail */}
+        <div style={{ maxWidth: 768, margin: '6px auto 0', display: 'flex', justifyContent: 'flex-end' }}>
+          <ContextIndicator contextTokens={contextTokens} compacting={compacting} compactResult={compactResult} model={model} compact={compact} />
         </div>
       </div>
     </div>

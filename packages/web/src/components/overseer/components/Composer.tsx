@@ -16,6 +16,7 @@ import { useDictation } from '../../../hooks/useDictation';
 import { DictationControl } from '../../dictation/DictationControl';
 import { InputActionsMenu } from '../../dictation/InputActionsMenu';
 import { useSettings } from '../../../stores/settings';
+import { ContextIndicator } from '../../ContextIndicator';
 
 // Anthropic-vision-supported image types (mirrors the agent ChatView). Only these
 // become a REAL base64 image block the coordinator SEES; anything else falls back to a
@@ -85,6 +86,11 @@ export function Composer() {
   const removeComposerImage = useOverseer((s) => s.removeComposerImage);
   const coordinatorProject = useOverseer((s) => s.coordinatorProject);
   const composerImages = useOverseer((s) => s.composerImages);
+  const coordinatorContextTokens = useOverseer((s) => s.coordinatorContextTokens);
+  const coordinatorCompacting = useOverseer((s) => s.coordinatorCompacting);
+  const coordinatorCompactResult = useOverseer((s) => s.coordinatorCompactResult);
+  const coordinatorModel = useOverseer((s) => s.coordinatorModel);
+  const compactCoordinator = useOverseer((s) => s.compactCoordinator);
   const imageCount = composerImages.length;
   const isMobile = useIsMobile();
 
@@ -300,26 +306,35 @@ export function Composer() {
         </button>
       </div>
 
-      {/* hint row (desktop only): right-aligned "⌘↵ send" keyboard hint */}
-      {!isMobile && (
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'flex-end',
-            marginTop: 8,
-          }}
-        >
+      {/* status row (always rendered, both mobile + desktop): context indicator left,
+          "⌘↵ send" keyboard hint right (desktop only) */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          marginTop: 8,
+        }}
+      >
+        <ContextIndicator
+          contextTokens={coordinatorContextTokens}
+          compacting={coordinatorCompacting}
+          compactResult={coordinatorCompactResult}
+          model={coordinatorModel}
+          compact={compactCoordinator}
+        />
+        {!isMobile && (
           <span
             style={{
               fontFamily: 'var(--mono)',
               fontSize: 10,
               color: 'var(--tt)',
+              marginLeft: 'auto',
             }}
           >
             ⌘↵ send
           </span>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

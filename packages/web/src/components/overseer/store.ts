@@ -21,7 +21,7 @@ import { api, type ContentBlock } from '../../api/client';
 import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
 import { useThreadStatus } from '../../stores/threadStatus';
-import { useStructuredChat } from '../tabs/chat/useStructuredChat';
+import { useStructuredChat, type CompactResult } from '../tabs/chat/useStructuredChat';
 import type { PendingPermission, Terminal } from '../../api/types';
 import { CANNED, m } from './data';
 import { convItemsToStream, groupByMission, isManagedWorker, mapStatus, needsFromThreads } from './live';
@@ -46,6 +46,10 @@ interface OverseerState {
   coordinatorProject: string | null; // the session the coordinator belongs to
   coordinatorStream: StreamMessage[]; // pushed in by useCoordinatorSync()
   coordinatorBusy: boolean; // coordinator turn in flight; pushed in by useCoordinatorSync()
+  coordinatorContextTokens?: number; // context fill for the ContextIndicator; pushed in by useCoordinatorSync()
+  coordinatorCompacting: boolean; // a native /compact is in progress on the coordinator thread
+  coordinatorCompactResult: CompactResult | null; // outcome of the coordinator's last compaction attempt
+  coordinatorModel?: string; // resolved model name for the coordinator thread
   sendError: string | null; // last directive send that FAILED (POST rejected); surfaced inline, cleared on next send
   ensuring: boolean; // a find-or-create coordinator request is in flight
   resolved: string[]; // optimistically dismissed need ids
@@ -78,6 +82,10 @@ interface OverseerState {
   ensureForProject: (sessionId: string | null) => void;
   setCoordinatorStream: (stream: StreamMessage[]) => void;
   setCoordinatorBusy: (busy: boolean) => void;
+  /** Pushed in by useCoordinatorSync() from the same useStructuredChat() call as the stream/busy above. */
+  setCoordinatorContextInfo: (info: { contextTokens?: number; compacting: boolean; compactResult: CompactResult | null; model?: string }) => void;
+  /** Trigger native compaction on the coordinator thread (mirrors useStructuredChat's own `compact`). */
+  compactCoordinator: () => void;
   setPending: (terminalId: string, pending: PendingPermission | null) => void;
   setArchivedTerminals: (projectId: string, terminals: Terminal[]) => void;
   /** Clean slate: archive the coordinator + its agents and start a fresh Dispatch conversation. */
@@ -100,6 +108,10 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   coordinatorProject: null,
   coordinatorStream: [],
   coordinatorBusy: false,
+  coordinatorContextTokens: undefined,
+  coordinatorCompacting: false,
+  coordinatorCompactResult: null,
+  coordinatorModel: undefined,
   sendError: null,
   ensuring: false,
   resolved: [],
@@ -224,6 +236,10 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       coordinatorId: null,
       coordinatorStream: [],
       coordinatorBusy: false,
+      coordinatorContextTokens: undefined,
+      coordinatorCompacting: false,
+      coordinatorCompactResult: null,
+      coordinatorModel: undefined,
       sendError: null,
       resolved: [],
       pendingByTerminal: {},
@@ -246,6 +262,19 @@ export const useOverseer = create<OverseerState>((set, get) => ({
 
   setCoordinatorBusy: (busy) => set({ coordinatorBusy: busy }),
 
+  setCoordinatorContextInfo: (info) =>
+    set({
+      coordinatorContextTokens: info.contextTokens,
+      coordinatorCompacting: info.compacting,
+      coordinatorCompactResult: info.compactResult,
+      coordinatorModel: info.model,
+    }),
+
+  compactCoordinator: () => {
+    const id = get().coordinatorId;
+    if (id) api.compactTerminal(id).catch(() => {});
+  },
+
   setPending: (terminalId, pending) =>
     set((s) => ({ pendingByTerminal: { ...s.pendingByTerminal, [terminalId]: pending } })),
 
@@ -257,7 +286,21 @@ export const useOverseer = create<OverseerState>((set, get) => ({
     if (!sessionId) return;
     const old = get().coordinatorId;
     // Clear the view immediately so the chat reads as a clean slate while we work.
-    set({ coordinatorId: null, coordinatorStream: [], coordinatorBusy: false, sendError: null, resolved: [], pendingByTerminal: {}, composer: '', composerImages: [], ensuring: true });
+    set({
+      coordinatorId: null,
+      coordinatorStream: [],
+      coordinatorBusy: false,
+      coordinatorContextTokens: undefined,
+      coordinatorCompacting: false,
+      coordinatorCompactResult: null,
+      coordinatorModel: undefined,
+      sendError: null,
+      resolved: [],
+      pendingByTerminal: {},
+      composer: '',
+      composerImages: [],
+      ensuring: true,
+    });
     void (async () => {
       try {
         // Archive the old coordinator + all its managed agents (full clean slate).
@@ -357,6 +400,7 @@ export function useCoordinatorSync(): void {
   const coordinatorProject = useOverseer((s) => s.coordinatorProject);
   const setCoordinatorStream = useOverseer((s) => s.setCoordinatorStream);
   const setCoordinatorBusy = useOverseer((s) => s.setCoordinatorBusy);
+  const setCoordinatorContextInfo = useOverseer((s) => s.setCoordinatorContextInfo);
 
   useEffect(() => {
     ensureForProject(activeId);
@@ -367,7 +411,7 @@ export function useCoordinatorSync(): void {
   // — without it, imageItemFromBlock returns null for path refs and images vanish after a
   // daemon-restart/transcript-resume. (The hook reads sessionId via a ref, so this does
   // NOT re-key the socket effect.)
-  const { items, busy } = useStructuredChat(coordinatorId ?? '', coordinatorProject ?? undefined);
+  const { items, busy, model, contextTokens, compacting, compactResult } = useStructuredChat(coordinatorId ?? '', coordinatorProject ?? undefined);
   const stream = useMemo(() => convItemsToStream(items), [items]);
   useEffect(() => {
     setCoordinatorStream(stream);
@@ -375,6 +419,9 @@ export function useCoordinatorSync(): void {
   useEffect(() => {
     setCoordinatorBusy(busy);
   }, [busy, setCoordinatorBusy]);
+  useEffect(() => {
+    setCoordinatorContextInfo({ contextTokens, compacting, compactResult, model });
+  }, [contextTokens, compacting, compactResult, model, setCoordinatorContextInfo]);
 
   // Keep the project's archived (complete_agent'd) workers in the store so the rail can
   // render them as done outcomes. Folded in here (the single root-mounted sync) to avoid
