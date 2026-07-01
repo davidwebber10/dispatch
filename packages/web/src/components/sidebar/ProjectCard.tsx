@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SortableList } from '../common/SortableList';
-import { FolderOpen, CaretRight, Lightning } from '@phosphor-icons/react';
+import { FolderOpen, CaretRight, Lightning, TerminalWindow } from '@phosphor-icons/react';
 import type { Session, Terminal, AgentSchedule } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
 import { projectIndicator } from '../../lib/status';
@@ -148,6 +148,12 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
   const padY = isMobile ? 15 : DENSITY[density].rowY;
   const working = loading || tab.status === 'working';
   const needsAttn = tab.status === 'needs_input' || tab.status === 'error';
+  // Claude / Codex / shell threads share one TerminalWindow glyph, tinted by provider
+  // color (blue/green/neutral) so the kind still reads at a glance; browser/notes keep a
+  // dot. Every leading glyph sits in a fixed-width slot (iconSlot) so labels line up no
+  // matter which glyph — or dot — a row shows (no per-row horizontal offset).
+  const isTerminalThread = tab.type === 'claude-code' || tab.type === 'codex' || tab.type === 'shell';
+  const iconSlot = isMobile ? 18 : 15;
   // On mobile, the active row's highlight fades out a couple seconds after the
   // thread list (re)appears (fadeKey bumps), so the list reads as clean.
   const [dimmed, setDimmed] = useState(false);
@@ -179,9 +185,13 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
         WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none', WebkitTapHighlightColor: 'transparent',
       }}
     >
-      {tab.type === 'file'
-        ? (() => { const fv = fileVisual(tab.label); return <fv.Icon size={isMobile ? 18 : 15} weight="fill" color={fv.color} style={{ flexShrink: 0 }} />; })()
-        : <span style={{ width: dot, height: dot, borderRadius: '50%', background: color, flexShrink: 0 }} />}
+      <span style={{ width: iconSlot, height: iconSlot, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        {tab.type === 'file'
+          ? (() => { const fv = fileVisual(tab.label); return <fv.Icon size={iconSlot} weight="fill" color={fv.color} />; })()
+          : isTerminalThread
+            ? <TerminalWindow size={isMobile ? 17 : 14} weight="fill" color={color} />
+            : <span style={{ width: dot, height: dot, borderRadius: '50%', background: color }} />}
+      </span>
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tab.label}</span>
       <span style={{ flexShrink: 0, marginLeft: 8, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
         {isMobile && (
@@ -417,18 +427,18 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
               onClick={(e) => { e.stopPropagation(); onDispatch(session.id); }}
               title={`Open ${dispatchName} coordinator`}
               style={{
-                display: 'flex', alignItems: 'center', gap: isMobile ? 11 : 8, width: '100%',
-                margin: isMobile ? '6px 0 10px' : '4px 0 6px',
+                display: 'flex', alignItems: 'center', gap: isMobile ? 11 : 8,
+                margin: isMobile ? '6px 12px 10px' : '4px 9px 6px',
                 padding: isMobile ? '14px 12px' : '7px 9px',
-                background: 'color-mix(in srgb, var(--color-accent) 12%, transparent)',
-                border: '1px solid color-mix(in srgb, var(--color-accent) 34%, transparent)',
+                background: 'var(--color-elevated)',
+                border: '1px solid var(--color-border)',
                 borderRadius: isMobile ? 12 : 7,
-                color: 'var(--color-accent)', font: `600 ${isMobile ? 16 : 12.5}px var(--font-sans)`,
+                color: 'var(--color-text-secondary)', font: `600 ${isMobile ? 16 : 12.5}px var(--font-sans)`,
                 textAlign: 'left', cursor: 'pointer',
               }}
             >
               <Lightning size={isMobile ? 20 : 15} weight="fill" style={{ flexShrink: 0 }} />
-              <span style={{ flex: 1 }}>{dispatchName}</span>
+              <span style={{ flex: 1 }}>Open {dispatchName}</span>
               <CaretRight size={isMobile ? 16 : 13} style={{ flexShrink: 0, opacity: 0.75 }} />
             </button>
           )}
