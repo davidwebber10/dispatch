@@ -26,6 +26,9 @@ interface SettingsState {
   notify: boolean;
   pushEnabled: boolean;
   multiPane: boolean;
+  sttProvider: string;
+  sttModel: string;
+  sttSecretName: string;
   setFontSize: (n: number) => void;
   setScrollback: (n: number) => void;
   setSidebarFontSize: (n: number) => void;
@@ -35,6 +38,9 @@ interface SettingsState {
   setNotify: (b: boolean) => Promise<void>;
   setPushEnabled: (b: boolean) => Promise<void>;
   setMultiPane: (b: boolean) => void;
+  setSttProvider: (id: string) => void;
+  setSttModel: (id: string) => void;
+  setSttSecretName: (name: string) => void;
 }
 
 function load<T>(key: string, fallback: T): T {
@@ -59,6 +65,9 @@ export const useSettings = create<SettingsState>((set) => ({
   notify: load('dispatch:notify', false),
   pushEnabled: load('dispatch:pushEnabled', false),
   multiPane: load('dispatch:multiPane', true),
+  sttProvider: load('dispatch:sttProvider', 'groq'),
+  sttModel: load('dispatch:sttModel', 'whisper-large-v3-turbo'),
+  sttSecretName: load('dispatch:sttSecretName', ''),
   setFontSize: (n) => { const fontSize = Math.max(9, Math.min(22, Math.round(n))); save('dispatch:fontSize', fontSize); set({ fontSize }); },
   setScrollback: (n) => { const scrollback = Math.max(1000, Math.min(100000, Math.round(n))); save('dispatch:scrollback', scrollback); set({ scrollback }); },
   setSidebarFontSize: (n) => { const sidebarFontSize = Math.max(10, Math.min(18, Math.round(n))); save('dispatch:sidebarFontSize', sidebarFontSize); set({ sidebarFontSize }); },
@@ -66,6 +75,9 @@ export const useSettings = create<SettingsState>((set) => ({
   setDensity: (density) => { save('dispatch:density', density); set({ density }); },
   setMultiPane: (b) => { save('dispatch:multiPane', b); set({ multiPane: b }); },
   setAccent: (accent) => { save('dispatch:accent', accent); applyAccent(accent); set({ accent }); },
+  setSttProvider: (id) => { save('dispatch:sttProvider', id); set({ sttProvider: id }); },
+  setSttModel: (id) => { save('dispatch:sttModel', id); set({ sttModel: id }); },
+  setSttSecretName: (name) => { save('dispatch:sttSecretName', name); set({ sttSecretName: name }); },
   setNotify: async (b) => {
     if (b && typeof Notification !== 'undefined' && Notification.permission === 'default') {
       try { await Notification.requestPermission(); } catch { /* denied */ }
