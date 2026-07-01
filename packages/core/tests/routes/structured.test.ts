@@ -222,6 +222,89 @@ it('an agent completing a turn pushes an immediate completion notice to its coor
   fs.rmSync(cfgDir, { recursive: true, force: true });
 });
 
+it('POST /message tags the echoed event with `meta.source`; untagged sends carry no meta', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured' } });
+  const id = t.body.id;
+
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'hello' }); // no source
+  const untagged = await pollEvent(app, id, (e) => e?.type === 'user' && JSON.stringify(e).includes('hello'));
+  expect(untagged.meta).toBeUndefined();
+
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'from a human', source: 'user' });
+  const userTagged = await pollEvent(app, id, (e) => e?.type === 'user' && JSON.stringify(e).includes('from a human'));
+  expect(userTagged.meta).toEqual({ source: 'user' });
+
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'from the coordinator', source: 'coordinator' });
+  const coordTagged = await pollEvent(app, id, (e) => e?.type === 'user' && JSON.stringify(e).includes('from the coordinator'));
+  expect(coordTagged.meta).toEqual({ source: 'coordinator' });
+
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+it('a direct user message to an agent (source:"user") notifies its coordinator — bypassing message_agent', async () => {
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coord-usermsg-'));
+  const a = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fake] } });
+  const s = await request(a).post('/api/sessions').send({ provider: 'claude-code', workingDir: dir, name: 'usermsg' });
+  const coordId = (await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', role: 'coordinator' } })).body.id;
+  const agentId = (await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent', mission: 'Login' } })).body.id;
+  await pollExternalId(db, coordId, 'sess-fake');
+
+  await request(a).post(`/api/terminals/${agentId}/message`).send({ text: 'stop that, refactor the auth flow instead', source: 'user' });
+
+  // The coordinator hears that the user went around it directly (a directive injected into its thread).
+  const note = await pollEvent(a, coordId, (e) => e?.type === 'user' && JSON.stringify(e).includes(agentId) && JSON.stringify(e).includes('not through you'), 4000);
+  expect(JSON.stringify(note)).toContain('💬');
+  expect(JSON.stringify(note)).toContain('stop that, refactor the auth flow instead');
+  expect(JSON.stringify(note)).toContain('read_agent');
+
+  await request(a).post(`/api/terminals/${agentId}/stop`);
+  await request(a).post(`/api/terminals/${coordId}/stop`);
+  fs.rmSync(cfgDir, { recursive: true, force: true });
+});
+
+it('an image-only direct user send summarizes as "(sent an image)" in the coordinator notice', async () => {
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coord-userimg-'));
+  const a = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fake] } });
+  const s = await request(a).post('/api/sessions').send({ provider: 'claude-code', workingDir: dir, name: 'userimg' });
+  const coordId = (await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', role: 'coordinator' } })).body.id;
+  const agentId = (await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent', mission: 'Login' } })).body.id;
+  await pollExternalId(db, coordId, 'sess-fake');
+
+  const content = [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }];
+  await request(a).post(`/api/terminals/${agentId}/message`).send({ content, source: 'user' });
+
+  const note = await pollEvent(a, coordId, (e) => e?.type === 'user' && JSON.stringify(e).includes(agentId) && JSON.stringify(e).includes('not through you'), 4000);
+  expect(JSON.stringify(note)).toContain('(sent an image)');
+
+  await request(a).post(`/api/terminals/${agentId}/stop`);
+  await request(a).post(`/api/terminals/${coordId}/stop`);
+  fs.rmSync(cfgDir, { recursive: true, force: true });
+});
+
+it('untagged and source:"coordinator" sends to an agent do NOT notify the coordinator (no self-notify)', async () => {
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coord-noself-'));
+  const a = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fake] } });
+  const s = await request(a).post('/api/sessions').send({ provider: 'claude-code', workingDir: dir, name: 'noself' });
+  const coordId = (await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', role: 'coordinator' } })).body.id;
+  const agentId = (await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent', mission: 'Login' } })).body.id;
+  await pollExternalId(db, coordId, 'sess-fake');
+
+  await request(a).post(`/api/terminals/${agentId}/message`).send({ text: 'keep going' }); // untagged
+  await request(a).post(`/api/terminals/${agentId}/message`).send({ text: 'keep going still', source: 'coordinator' });
+  await sleep(300); // give an (incorrect) notify a chance to land before asserting its absence
+
+  // The coordinator DOES hear routine "finished a turn" completion notices for its agent
+  // (unrelated to this feature) — assert specifically that the direct-user-message notice
+  // (unique phrase "not through you") never fires for these untagged/coordinator sends.
+  const mgr = (a as any)._structuredManager;
+  const coordEvents = mgr.getEvents(coordId) as any[];
+  expect(coordEvents.some((e) => e?.type === 'user' && JSON.stringify(e).includes('not through you'))).toBe(false);
+
+  await request(a).post(`/api/terminals/${agentId}/stop`);
+  await request(a).post(`/api/terminals/${coordId}/stop`);
+  fs.rmSync(cfgDir, { recursive: true, force: true });
+});
+
 it('POST /autonomy flips a supervised agent to autonomous: resolves the pending + persists config', async () => {
   const t = await request(app)
     .post(`/api/sessions/${sessionId}/terminals`)
@@ -501,4 +584,114 @@ it('POST /start on a non-queued terminal is a no-op (200, unchanged); unknown id
   expect((await request(app).post(`/api/terminals/${id}/start`)).status).toBe(200);
   expect((await request(app).post(`/api/terminals/does-not-exist/start`)).status).toBe(404);
   await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+// --- queue_agent dependsOn (auto-start on a dependency's completion) -----------
+
+it('dependsOn is stored on the queued terminal\'s config, and does NOT auto-start while unmet', async () => {
+  const mgr = (app as any)._structuredManager;
+  const a = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', label: 'Agent A', config: { transport: 'structured', agentType: 'researcher', role: 'agent' } });
+  await pollExternalId(db, a.body.id, 'sess-fake'); // A is alive but hasn't finished a turn yet
+
+  const b = await request(app)
+    .post(`/api/sessions/${sessionId}/terminals`)
+    .send({ type: 'claude-code', label: 'Agent B', queued: true, task: 'do B work', config: { transport: 'structured', agentType: 'implementer', role: 'agent', dependsOn: a.body.id } });
+  expect(b.status).toBe(201);
+  expect(b.body.status).toBe('queued');
+
+  const cfg = JSON.parse((db.prepare('SELECT config FROM terminals WHERE id = ?').get(b.body.id) as { config: string }).config);
+  expect(cfg.dependsOn).toBe(a.body.id);
+  expect(cfg.queued).toBe(true);
+  expect(cfg.queuedTask).toBe('do B work');
+  expect(mgr.isAlive(b.body.id)).toBe(false); // A hasn't produced output yet — B stays queued
+
+  await request(app).post(`/api/terminals/${a.body.id}/stop`);
+});
+
+it('auto-starts a queued dependent the moment the agent it depends on finishes, injecting its output as context', async () => {
+  const mgr = (app as any)._structuredManager;
+  const a = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', label: 'Agent A', config: { transport: 'structured', agentType: 'researcher', role: 'agent' } });
+  await pollExternalId(db, a.body.id, 'sess-fake');
+
+  const b = await request(app)
+    .post(`/api/sessions/${sessionId}/terminals`)
+    .send({ type: 'claude-code', label: 'Agent B', queued: true, task: 'do B work', config: { transport: 'structured', agentType: 'implementer', role: 'agent', dependsOn: a.body.id } });
+  const bId = b.body.id;
+  expect(mgr.isAlive(bId)).toBe(false);
+
+  // A finishes a turn (fake echoes the text back + emits `result`).
+  await request(app).post(`/api/terminals/${a.body.id}/message`).send({ text: 'investigate X' });
+  await pollEvent(app, a.body.id, (e) => e?.type === 'assistant' && JSON.stringify(e).includes('echo:investigate X'));
+
+  // B auto-starts off A's `idle` event — no start_agent call needed.
+  const start = Date.now();
+  while (Date.now() - start < 3000 && !mgr.isAlive(bId)) await sleep(25);
+  expect(mgr.isAlive(bId)).toBe(true);
+
+  const delivered = await pollEvent(app, bId, (e) => e?.type === 'user' && JSON.stringify(e).includes('do B work'));
+  const text = delivered.message.content[0].text;
+  expect(text).toContain('The agent you were waiting on ("Agent A") has finished');
+  expect(text).toContain('echo:investigate X'); // A's final output, injected as context
+  expect(text).toContain('Your task: do B work'); // B's originally parked task, appended
+
+  const cfg = JSON.parse((db.prepare('SELECT config FROM terminals WHERE id = ?').get(bId) as { config: string }).config);
+  expect(cfg.dependsOn).toBeUndefined();
+  expect(cfg.queued).toBeUndefined();
+  expect(cfg.queuedTask).toBeUndefined();
+
+  await request(app).post(`/api/terminals/${a.body.id}/stop`);
+  await request(app).post(`/api/terminals/${bId}/stop`);
+});
+
+it('start_agent on a terminal with an unmet dependsOn starts it early anyway — original task, no injected context', async () => {
+  const mgr = (app as any)._structuredManager;
+  const a = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', label: 'Agent A', config: { transport: 'structured', agentType: 'researcher', role: 'agent' } });
+  await pollExternalId(db, a.body.id, 'sess-fake'); // A never gets messaged — never finishes
+
+  const b = await request(app)
+    .post(`/api/sessions/${sessionId}/terminals`)
+    .send({ type: 'claude-code', label: 'Agent B', queued: true, task: 'original B task', config: { transport: 'structured', agentType: 'implementer', role: 'agent', dependsOn: a.body.id } });
+  const bId = b.body.id;
+
+  const started = await request(app).post(`/api/terminals/${bId}/start`);
+  expect(started.status).toBe(200);
+  expect(started.body.status).not.toBe('queued');
+  expect(mgr.isAlive(bId)).toBe(true);
+
+  const delivered = await pollEvent(app, bId, (e) => e?.type === 'user' && JSON.stringify(e).includes('original B task'));
+  expect(delivered.message.content[0].text).toBe('original B task'); // manual override: no injected context
+
+  const cfg = JSON.parse((db.prepare('SELECT config FROM terminals WHERE id = ?').get(bId) as { config: string }).config);
+  expect(cfg.dependsOn).toBeUndefined();
+
+  await request(app).post(`/api/terminals/${a.body.id}/stop`);
+  await request(app).post(`/api/terminals/${bId}/stop`);
+});
+
+it('dependsOn already satisfied at queue time (dependency already finished) auto-starts immediately — no idle event needed', async () => {
+  const mgr = (app as any)._structuredManager;
+  const a = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', label: 'Agent A', config: { transport: 'structured', agentType: 'researcher', role: 'agent' } });
+  await pollExternalId(db, a.body.id, 'sess-fake');
+  await request(app).post(`/api/terminals/${a.body.id}/message`).send({ text: 'map the repo' });
+  await pollEvent(app, a.body.id, (e) => e?.type === 'assistant' && JSON.stringify(e).includes('echo:map the repo')); // A is already done
+
+  // Only NOW queue B, depending on an agent that already finished — its `idle` event
+  // already fired in the past, so B must not be left waiting on one that'll never come.
+  const b = await request(app)
+    .post(`/api/sessions/${sessionId}/terminals`)
+    .send({ type: 'claude-code', label: 'Agent B', queued: true, task: 'do B work', config: { transport: 'structured', agentType: 'implementer', role: 'agent', dependsOn: a.body.id } });
+  const bId = b.body.id;
+
+  // Promoted synchronously inside the create call itself.
+  expect(b.body.status).not.toBe('queued');
+  expect(mgr.isAlive(bId)).toBe(true);
+
+  const delivered = await pollEvent(app, bId, (e) => e?.type === 'user' && JSON.stringify(e).includes('do B work'));
+  const text = delivered.message.content[0].text;
+  expect(text).toContain('The agent you were waiting on ("Agent A") has finished');
+  expect(text).toContain('echo:map the repo');
+  expect(text).toContain('Your task: do B work');
+
+  await request(app).post(`/api/terminals/${a.body.id}/stop`);
+  await request(app).post(`/api/terminals/${bId}/stop`);
 });

@@ -89,13 +89,20 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // message to a stream-json session. Back-compat: a plain `text` string still works;
   // `content` additionally accepts a string OR an array of content blocks (e.g. a real
   // base64 image block, so an attached image reaches the model as a picture it can SEE).
+  // Optional `source: 'user' | 'coordinator'` tags WHO sent the turn (for the UI-facing echo
+  // only — never forwarded to the CLI); a bare 'user' send to a typed agent also notifies its
+  // coordinator, since that's the one path where a human message could silently override
+  // what the coordinator thinks it told the agent to do.
   router.post('/terminals/:terminalId/message', (req, res) => {
-    const { text, content } = req.body ?? {};
+    const { text, content, source } = req.body ?? {};
     const payload = content !== undefined ? content : text;
     const ok = typeof payload === 'string' ? payload.length > 0 : Array.isArray(payload) && payload.length > 0;
     if (!ok) return res.status(400).json({ error: 'text (string) or content (string | block[]) is required' });
-    try { sessionService.sendStructuredMessage(req.params.terminalId, payload); res.status(204).end(); }
-    catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
+    try {
+      sessionService.sendStructuredMessage(req.params.terminalId, payload, source);
+      if (source === 'user') sessionService.noteUserMessageToAgent(req.params.terminalId, payload); // tell the coordinator
+      res.status(204).end();
+    } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
   });
 
   // GET /api/terminals/:terminalId/permission — the gated tool/question this thread

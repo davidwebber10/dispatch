@@ -65,7 +65,7 @@ describe('agency-mcp', () => {
     const [msgUrl, msgInit] = fetchMock.mock.calls[1];
     expect(msgUrl).toBe('http://localhost:9999/api/terminals/agent-1/message');
     expect(msgInit.method).toBe('POST');
-    expect(JSON.parse(msgInit.body)).toEqual({ text: 'investigate X' });
+    expect(JSON.parse(msgInit.body)).toEqual({ text: 'investigate X', source: 'coordinator' });
   });
 
   it('read_agent returns the agent assistant output + tools + status (the read channel)', async () => {
@@ -174,7 +174,7 @@ describe('agency-mcp', () => {
     const out = await callTool('message_agent', { agentId: 'a1', text: 'focus on auth' });
     expect(out.isError).toBeUndefined();
     expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/terminals/a1/message');
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ text: 'focus on auth' });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ text: 'focus on auth', source: 'coordinator' });
   });
 
   it('complete_agent archives the thread (DELETE)', async () => {
@@ -219,6 +219,28 @@ describe('agency-mcp', () => {
     expect(JSON.parse(out.content[0].text)).toEqual({ agentId: 'q2', label: 'implementer agent', mission: 'Auth refactor', queued: true });
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
       transport: 'structured', agentType: 'implementer', role: 'agent', mission: 'Auth refactor',
+    });
+  });
+
+  it('queue_agent forwards dependsOn into the create body config', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'q3', label: 'implementer agent' }) });
+    global.fetch = fetchMock as any;
+    const out = await callTool('queue_agent', { agentType: 'implementer', task: 'do it', dependsOn: 'agent-1' });
+    expect(out.isError).toBeUndefined();
+    expect(JSON.parse(out.content[0].text)).toEqual({ agentId: 'q3', label: 'implementer agent', queued: true });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
+      transport: 'structured', agentType: 'implementer', role: 'agent', dependsOn: 'agent-1',
+    });
+  });
+
+  it('queue_agent omits dependsOn from config when not provided', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'q4', label: 'researcher agent' }) });
+    global.fetch = fetchMock as any;
+    await callTool('queue_agent', { agentType: 'researcher', task: 'look' });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
+      transport: 'structured', agentType: 'researcher', role: 'agent',
     });
   });
 

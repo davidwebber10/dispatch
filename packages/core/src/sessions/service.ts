@@ -273,27 +273,40 @@ export class SessionService {
     });
     terminalsDb.updateStatus(this.db, terminalId, 'queued');
 
+    // dependsOn may already be satisfied (the depended-on agent finished — or was
+    // archived — before this one was even queued). Don't leave it waiting forever
+    // on an `idle` event that already fired; promote it right away.
+    const dependsOn = typeof config?.dependsOn === 'string' ? config.dependsOn : '';
+    if (dependsOn && this.isAgentDone(dependsOn)) {
+      this.startQueuedTerminal(terminalId, this.composeDependentTask(dependsOn, task));
+    }
+
     return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
   }
 
   /**
    * Promote a queued terminal (created via createQueuedTerminal) to a live one:
-   * strip the `queued`/`queuedTask` markers from its config, reset status off
-   * 'queued', spawn its process, then deliver the parked task. Returns the
+   * strip the `queued`/`queuedTask`/`dependsOn` markers from its config, reset
+   * status off 'queued', spawn its process, then deliver the parked task — or
+   * `taskOverride` in its place when given (used by the `dependsOn` auto-start
+   * path to inject the finished dependency's output ahead of the original task;
+   * a plain manual start delivers the original task unchanged). Returns the
    * terminal as-is when it isn't actually queued (idempotent), or null when it
    * doesn't exist.
    */
-  startQueuedTerminal(terminalId: string): terminalsDb.Terminal | null {
+  startQueuedTerminal(terminalId: string, taskOverride?: string): terminalsDb.Terminal | null {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return null;
     let config: Record<string, any> = {};
     try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
     if (config.queued !== true) return terminalsDb.rowToTerminal(terminal); // not queued — nothing to promote
 
-    const task = typeof config.queuedTask === 'string' ? config.queuedTask : '';
+    const task = typeof taskOverride === 'string' ? taskOverride : (typeof config.queuedTask === 'string' ? config.queuedTask : '');
     // Strip the queued markers BEFORE spawning so the row reads as a normal live
-    // thread (and the ensureStructuredAlive guard no longer bails on it).
-    const { queued, queuedTask, ...rest } = config;
+    // thread (and the ensureStructuredAlive guard no longer bails on it). dependsOn
+    // is stripped too — once started, whether early (override) or auto (dependency
+    // met), it's no longer meaningfully "waiting" on anything.
+    const { queued, queuedTask, dependsOn, ...rest } = config;
     terminalsDb.updateConfig(this.db, terminalId, rest);
     terminalsDb.updateStatus(this.db, terminalId, 'waiting');
 
@@ -600,12 +613,12 @@ export class SessionService {
     terminalsDb.updatePid(this.db, terminalId, null);
   }
 
-  sendStructuredMessage(terminalId: string, content: string | import('../structured/manager.js').ContentBlock[]): void {
+  sendStructuredMessage(terminalId: string, content: string | import('../structured/manager.js').ContentBlock[], source?: import('../structured/manager.js').MessageSource): void {
     // Lazily resume a thread that died on a daemon restart (resumes the same claude
     // conversation when an external_id was captured) before delivering the message.
     if (!this.structuredManager?.isAlive(terminalId)) this.ensureStructuredAlive(terminalId);
     if (!this.structuredManager?.isAlive(terminalId)) throw new Error('no structured session for terminal');
-    this.structuredManager.sendMessage(terminalId, content);
+    this.structuredManager.sendMessage(terminalId, content, source);
   }
 
   /**
@@ -694,6 +707,40 @@ export class SessionService {
     this.notifyCoordinatorOfAgent(agentTerminalId, note);
   }
 
+  /** Summarize a user-sent payload for a coordinator notice: a string's first line
+   *  (truncated per the `lastAssistantText` idiom); a block array's first text block, or a
+   *  placeholder when it carries no text (e.g. an image-only send). */
+  private summarizeUserPayload(payload: string | import('../structured/manager.js').ContentBlock[], max = 600): string {
+    const raw = typeof payload === 'string'
+      ? payload
+      : ((payload.find((b: any) => b?.type === 'text') as any)?.text ?? '');
+    if (!raw) return '(sent an image)';
+    const firstLine = String(raw).split('\n')[0].trim();
+    return firstLine.length > max ? firstLine.slice(0, max) + '…' : firstLine;
+  }
+
+  /**
+   * Tell the project's coordinator that the user just messaged one of its agents DIRECTLY,
+   * bypassing message_agent — so Dispatch notices a possible change of direction instead of
+   * assuming the agent is still following its original instructions. No-op when the thread
+   * isn't a typed agent or there's no coordinator.
+   */
+  noteUserMessageToAgent(agentTerminalId: string, payload: string | import('../structured/manager.js').ContentBlock[]): void {
+    const agent = terminalsDb.getById(this.db, agentTerminalId);
+    if (!agent) return;
+    let cfg: Record<string, any> = {};
+    try { cfg = JSON.parse(agent.config || '{}'); } catch { /* default {} */ }
+    if (cfg.role !== 'agent') return;
+    const mission = typeof cfg.mission === 'string' && cfg.mission.trim() ? cfg.mission.trim() : null;
+    const summary = this.summarizeUserPayload(payload);
+    const note =
+      `💬 The user just sent your agent "${agent.label || 'agent'}"${mission ? ` (mission "${mission}")` : ''} ` +
+      `[agentId ${agentTerminalId}] a message directly, not through you: "${summary}". This may change what you ` +
+      `asked it to do. Read how it responds with read_agent and adjust — don't assume it's still following your ` +
+      `original instructions.`;
+    this.notifyCoordinatorOfAgent(agentTerminalId, note);
+  }
+
   /** The agent's most recent assistant text, pulled live from the structured event ring
    *  (no transcript-file latency), truncated for a nudge. '' when there's none yet. */
   private lastAssistantText(terminalId: string, max = 600): string {
@@ -709,12 +756,75 @@ export class SessionService {
   }
 
   /**
+   * An agent's most recent assistant output. Tries the live structured event ring
+   * first (lastAssistantText — no transcript-file latency); falls back to the
+   * persisted transcript (same source read_agent/getConversation use) so an agent
+   * with no live session — e.g. archived, or the daemon restarted since it ran —
+   * still yields its output. '' when there's truly none.
+   */
+  private agentOutputText(terminalId: string, max = 600): string {
+    const live = this.lastAssistantText(terminalId, max);
+    if (live) return live;
+    const text = this.getConversation(terminalId, { limit: 500 }).items
+      .filter((it) => it.kind === 'assistant' && it.text)
+      .map((it) => it.text)
+      .join('\n\n')
+      .trim();
+    if (!text) return '';
+    return text.length > max ? text.slice(0, max) + '…' : text;
+  }
+
+  /**
+   * Whether a terminal has already finished at least one turn — used to detect an
+   * already-satisfied `dependsOn` at queue time. Archived is always done (nothing
+   * more will happen to it). Otherwise the status must be settled (not still
+   * working, blocked on a human, or itself unstarted/queued) AND it must have
+   * already produced output — a brand-new thread also reads status='waiting' (the
+   * DB default) before its first turn even runs, so status alone would false-positive.
+   */
+  private isAgentDone(terminalId: string): boolean {
+    const t = terminalsDb.getById(this.db, terminalId);
+    if (!t) return false;
+    if (t.archived_at) return true;
+    if (t.status === 'working' || t.status === 'needs_input' || t.status === 'queued') return false;
+    return this.agentOutputText(terminalId) !== '';
+  }
+
+  /**
+   * The task a dependent agent receives once the agent it was waiting on has
+   * finished: that agent's final output prepended as context, then the
+   * dependent's originally parked task.
+   */
+  private composeDependentTask(finishedTerminalId: string, originalTask: string): string {
+    const finished = terminalsDb.getById(this.db, finishedTerminalId);
+    const finishedLabel = finished?.label || 'agent';
+    const output = this.agentOutputText(finishedTerminalId) || '(no output captured)';
+    return `The agent you were waiting on ("${finishedLabel}") has finished. Its final output:\n\n${output}\n\n---\n\nYour task: ${originalTask}`;
+  }
+
+  /**
+   * Auto-start any agents queued with `dependsOn` pointing at this just-finished
+   * terminal, feeding each the finished agent's output ahead of its parked task.
+   */
+  private startQueuedDependents(finishedTerminalId: string): void {
+    for (const dep of terminalsDb.listQueuedDependents(this.db, finishedTerminalId)) {
+      let depConfig: Record<string, any> = {};
+      try { depConfig = JSON.parse(dep.config || '{}'); } catch { /* default {} */ }
+      const originalTask = typeof depConfig.queuedTask === 'string' ? depConfig.queuedTask : '';
+      this.startQueuedTerminal(dep.id, this.composeDependentTask(finishedTerminalId, originalTask));
+    }
+  }
+
+  /**
    * An agent's turn just completed (the `result` event). Push an IMMEDIATE, concise completion
    * notice to its coordinator (the closed orchestration loop): a one-line summary from the agent's
    * last output + a pointer to read_agent for the full transcript, so Dispatch ingests the result
-   * and decides the next step instead of forgetting the agent. No-op for non-agents / no coordinator.
+   * and decides the next step instead of forgetting the agent. Also auto-starts any queued agents
+   * whose `dependsOn` pointed at this one. The dependents step runs regardless of role; the
+   * coordinator notice below is agent-only / no-op for non-agents.
    */
   noteAgentCompletion(agentTerminalId: string): void {
+    this.startQueuedDependents(agentTerminalId);
     const agent = terminalsDb.getById(this.db, agentTerminalId);
     if (!agent) return;
     let cfg: Record<string, any> = {};

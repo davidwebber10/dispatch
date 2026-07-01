@@ -105,6 +105,18 @@ export function listArchivedBySession(db: Database.Database, sessionId: string):
 }
 
 /**
+ * Queued terminals (across all sessions) whose `config.dependsOn` points at
+ * `agentId` — the agents waiting on it to finish (queue_agent's `dependsOn`).
+ * `config` is opaque JSON, so this filters in JS rather than in SQL.
+ */
+export function listQueuedDependents(db: Database.Database, agentId: string): TerminalRow[] {
+  const rows = db.prepare("SELECT * FROM terminals WHERE status = 'queued' AND archived_at IS NULL").all() as TerminalRow[];
+  return rows.filter((r) => {
+    try { return JSON.parse(r.config || '{}').dependsOn === agentId; } catch { return false; }
+  });
+}
+
+/**
  * Cross-session lookup for the boot kickstart: every non-archived claude-code
  * terminal left in `status='working'`. At boot that status is the interrupted
  * signal — a thread that died mid-turn (clean shutdown skips the settle-to-waiting

@@ -26,6 +26,9 @@ export type ContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } | { type: 'url'; url: string } };
 
+/** Who actually sent a turn: the human directly, or the coordinator via its agency tools. */
+export type MessageSource = 'user' | 'coordinator';
+
 interface Session {
   child: ChildProcessWithoutNullStreams;
   rl: readline.Interface;
@@ -149,11 +152,13 @@ export class StructuredSessionManager extends EventEmitter {
   }
 
   // verified: persistent multi-turn over stdin on claude 2.1.195 — second user turn accepted and returned result on same process
-  sendMessage(terminalId: string, content: string | ContentBlock[]): void {
+  sendMessage(terminalId: string, content: string | ContentBlock[], source?: MessageSource): void {
     // Wire shape: a plain string is sent as `content: <string>` (the CLI's simplest
     // accepted shape, byte-identical to before); a block array is sent verbatim as
     // `content: [...blocks]` so a real image block reaches the model — it SEES the
-    // picture, not a "Attached file: …" path line.
+    // picture, not a "Attached file: …" path line. `source` is UI-only bookkeeping for the
+    // synthetic echo below — it must never reach the CLI's stdin (it would pollute the
+    // model's context with metadata about who's typing).
     this.write(terminalId, { type: 'user', message: { role: 'user', content } });
     // P0a: the CLI does NOT echo the user's turn back as an event, so buffer a
     // synthetic `user` event into the ring and emit it. Replay on ws reconnect then
@@ -161,7 +166,9 @@ export class StructuredSessionManager extends EventEmitter {
     // Mirror the wire shape: a string becomes a single text block; blocks pass through
     // unchanged (so an image block re-renders inline via the chat's image parser).
     const echoContent: ContentBlock[] = typeof content === 'string' ? [{ type: 'text', text: content }] : content;
-    const ev = { type: 'user', message: { role: 'user', content: echoContent } };
+    const ev: { type: 'user'; message: { role: 'user'; content: ContentBlock[] }; meta?: { source: MessageSource } } =
+      { type: 'user', message: { role: 'user', content: echoContent } };
+    if (source) ev.meta = { source };
     const s = this.sessions.get(terminalId);
     if (s) {
       s.events.push(ev);

@@ -74,8 +74,11 @@ export const TOOLS = [
       'Like spawn_agent, but QUEUE the agent instead of starting it: the thread is created and its ' +
       'task is parked, but no process runs until you call start_agent. Use this to line up work ' +
       "you're not ready to run yet — stage a batch, respect a dependency, or pace how many agents run " +
-      'at once — without paying for a live process per queued agent. Same args as spawn_agent; group ' +
-      'related work with a shared `mission`. Returns the new agentId (its status is "queued").',
+      'at once — without paying for a live process per queued agent. Pass `dependsOn` to auto-start it ' +
+      "the moment that agent finishes: it's spawned automatically and receives the finished agent's " +
+      'final output prepended to its task (no need to call start_agent yourself). If the dependency has ' +
+      'already finished, it starts immediately. Otherwise same args as spawn_agent; group related work ' +
+      'with a shared `mission`. Returns the new agentId (its status is "queued").',
     inputSchema: {
       type: 'object',
       properties: {
@@ -92,6 +95,13 @@ export const TOOLS = [
             'Optional concise mission name that groups this agent with related work ' +
             '(e.g. "Auth refactor"). Reuse the same name across related agents; defaults to "General" when unset.',
         },
+        dependsOn: {
+          type: 'string',
+          description:
+            'Optional agentId this queued agent should wait on. When that agent finishes, this one ' +
+            "auto-starts with the finished agent's final output added as context ahead of its task. " +
+            'Already-finished dependency? It starts right away.',
+        },
       },
       required: ['agentType', 'task'],
     },
@@ -100,7 +110,8 @@ export const TOOLS = [
     name: 'start_agent',
     description:
       'Start a queued agent (created by queue_agent): spawn its process and deliver its parked task. ' +
-      'The agent begins working immediately. No-op if the agent was already started.',
+      'The agent begins working immediately. No-op if the agent was already started. If the agent has ' +
+      'an unmet `dependsOn`, this starts it early anyway, with its original task and no injected context.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -239,26 +250,33 @@ async function spawnAgent(args: { agentType: AgentType; name?: string; task: str
   });
   const agentId: string | undefined = terminal?.id;
   if (!agentId) throw new Error('spawn did not return a terminal id');
-  await httpJson('POST', `${apiBase()}/api/terminals/${agentId}/message`, { text: args.task });
+  await httpJson('POST', `${apiBase()}/api/terminals/${agentId}/message`, { text: args.task, source: 'coordinator' });
   return { agentId, label, ...(mission ? { mission } : {}) };
 }
 
 /**
  * Queue an agent: create the thread with the task parked (`queued:true`) but DON'T spawn its
  * process — the create route routes this to createQueuedTerminal (status='queued', no CLI). A
- * later start_agent promotes it. Mirrors spawnAgent's args/mission handling.
+ * later start_agent promotes it — or, when `dependsOn` is set, the server auto-promotes it once
+ * that agent finishes (see SessionService.startQueuedDependents), or immediately if it already
+ * has. `dependsOn` rides inside `config` (opaque to the route) alongside the other agent markers.
+ * Mirrors spawnAgent's args/mission handling.
  */
-async function queueAgent(args: { agentType: AgentType; name?: string; task: string; mission?: string }): Promise<{ agentId: string; label: string; mission?: string; queued: true }> {
+async function queueAgent(args: { agentType: AgentType; name?: string; task: string; mission?: string; dependsOn?: string }): Promise<{ agentId: string; label: string; mission?: string; queued: true }> {
   if (!args?.agentType) throw new Error('agentType is required');
   if (!args?.task) throw new Error('task is required');
   const label = args.name || `${args.agentType} agent`;
   const mission = typeof args.mission === 'string' ? args.mission.trim() : '';
+  const dependsOn = typeof args.dependsOn === 'string' ? args.dependsOn.trim() : '';
   const terminal = await httpJson('POST', `${apiBase()}/api/sessions/${sessionId()}/terminals`, {
     type: 'claude-code',
     label,
     queued: true,
     task: args.task,
-    config: { transport: 'structured', agentType: args.agentType, role: 'agent', ...(mission ? { mission } : {}) },
+    config: {
+      transport: 'structured', agentType: args.agentType, role: 'agent',
+      ...(mission ? { mission } : {}), ...(dependsOn ? { dependsOn } : {}),
+    },
   });
   const agentId: string | undefined = terminal?.id;
   if (!agentId) throw new Error('queue did not return a terminal id');
@@ -308,7 +326,7 @@ async function listMissions(): Promise<Array<{ mission: string; live: number; to
 async function messageAgent(args: { agentId: string; text: string }): Promise<{ ok: true; agentId: string }> {
   if (!args?.agentId) throw new Error('agentId is required');
   if (!args?.text) throw new Error('text is required');
-  await httpJson('POST', `${apiBase()}/api/terminals/${args.agentId}/message`, { text: args.text });
+  await httpJson('POST', `${apiBase()}/api/terminals/${args.agentId}/message`, { text: args.text, source: 'coordinator' });
   return { ok: true, agentId: args.agentId };
 }
 

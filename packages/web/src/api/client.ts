@@ -55,8 +55,10 @@ export const api = {
   sendInput: (id: string, data: string) => req<void>(`/api/terminals/${id}/input`, { method: 'POST', body: body({ data }) }),
   // A plain string keeps the original `{ text }` wire (byte-identical); a block array
   // is sent as `{ content }` so an attached image travels as a real content block.
+  // `source: 'user'` tags this as a direct human send (the single chokepoint every
+  // composer funnels through), distinct from the coordinator's own agency-mcp sends.
   sendStructuredMessage: (id: string, content: string | ContentBlock[]) =>
-    req<void>(`/api/terminals/${id}/message`, { method: 'POST', body: body(typeof content === 'string' ? { text: content } : { content }) }),
+    req<void>(`/api/terminals/${id}/message`, { method: 'POST', body: body({ ...(typeof content === 'string' ? { text: content } : { content }), source: 'user' }) }),
   // The membrane: the gated tool/question a structured AGENT thread is blocked on (or null).
   getPermission: (terminalId: string) => req<PendingPermission | null>(`/api/terminals/${terminalId}/permission`),
   // Resolve it: allow (optionally with an AskUserQuestion answers map) or deny (with a message).
