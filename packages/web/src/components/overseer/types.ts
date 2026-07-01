@@ -7,7 +7,12 @@
 
 export type AgentType = 'planner' | 'implementer' | 'researcher' | 'reviewer';
 export type ThreadStatus = 'working' | 'waiting' | 'done' | 'error' | 'queued';
-export type MessageKind = 'user' | 'overseer' | 'note' | 'image';
+export type MessageKind = 'user' | 'overseer' | 'note' | 'image' | 'agentCard';
+
+// The coordinator tool call an 'agentCard' StreamMessage was built from (spec: agent-card
+// increment). Mirrors the agency-mcp tool names 1:1 so the card's action label reads as a
+// plain-English past tense of the tool the coordinator just called.
+export type AgentCardAction = 'spawned' | 'queued' | 'messaged' | 'started';
 
 // TYPE registry — phosphor class + display label per agent type.
 export const AGENT_TYPE = {
@@ -46,6 +51,7 @@ export interface AgentThread {
   metaRight: string;          // working→elapsed, waiting→"held "+elapsed, else elapsed
   key: string;                // type+id, e.g. "implementer4"
   dlabel?: string;            // added later: "implementer #4 · Auth refactor"
+  model?: string;             // terminal.config.model, e.g. "sonnet" / "opus" — data plumbing only, WorkRail renders it
 }
 
 // A finished thread, collapsed (factory: outc(type,id,title,meta)).
@@ -56,6 +62,7 @@ export interface Outcome {
   meta: string;               // "PR #218 · +24 −6" / "locked in · 8m ago"
   typeLabel: string;          // 'implementer'
   key: string;                // "o"+type+id
+  model?: string;             // terminal.config.model, e.g. "sonnet" / "opus" — data plumbing only, WorkRail renders it
 }
 
 // A mission groups threads + outcomes (factory: mission(name,summary,threads,outcomes,queued)).
@@ -91,6 +98,18 @@ export interface StreamMessage {
   // failure is VISIBLE (mirrors the agent chat's red "Failed to send message" footer).
   // Optional so the m() factory and every existing StreamMessage stay valid without change.
   isError?: boolean;
+  // agentCard (kind 'agentCard') — the coordinator called spawn_agent/queue_agent/
+  // message_agent/start_agent on one of its own typed agents (see live.convItemsToStream,
+  // which pairs the tool_use + tool_result ConvItems into this). Rendered as a tappable
+  // AgentCard (overseer/components/AgentCard.tsx) instead of plain text; tapping it opens
+  // that agent's lightbox via drillInto(agentId). agentType/agentMission are undefined for
+  // message_agent/start_agent when the originating spawn/queue call isn't in view.
+  isAgentCard?: boolean;
+  agentId?: string;
+  agentName?: string;
+  agentType?: AgentType;
+  agentMission?: string;
+  agentAction?: AgentCardAction;
 }
 
 // An action button on a need card (factory: btn(label, primary)).

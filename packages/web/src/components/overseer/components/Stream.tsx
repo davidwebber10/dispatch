@@ -21,10 +21,11 @@
 // No prop drilling — reads the store directly.
 // Desktop: flex:1 scroll (in the left conversation column). Mobile: fills the Stream tab.
 
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
 import { Bell, CaretDoubleDown, CheckCircle, WarningCircle } from '@phosphor-icons/react';
 import { Icon } from '../atoms';
+import { AgentCard } from './AgentCard';
 import { ChatImage } from '../../ChatImage';
 import { InsightText } from '../../InsightText';
 import { WorkingIndicator } from '../../WorkingIndicator';
@@ -332,7 +333,15 @@ function renderStream(stream: StreamMessage[]) {
   let prevDispatch = false;
 
   for (const msg of stream) {
-    if (msg.isImage && msg.isUser) {
+    if (msg.isAgentCard) {
+      if (!msg.agentId) continue;
+      rows.push(
+        <MessageScroller.Item key={msg.key} messageId={msg.key} style={{ display: 'flex', flexDirection: 'column' }}>
+          <AgentCard msg={msg} />
+        </MessageScroller.Item>,
+      );
+      prevDispatch = false;
+    } else if (msg.isImage && msg.isUser) {
       // A human-attached image — right-aligned as the user's own turn; breaks the Dispatch run.
       if (!msg.imageUrl) continue;
       rows.push(
@@ -392,10 +401,25 @@ export function ConversationStream() {
   const { stream, busy } = useRenderVals();
   const coordinatorId = useOverseer((s) => s.coordinatorId);
 
+  // `ready` gates PAINT of the scroller: hidden (visibility, not display — geometry/scroll
+  // math still works) until the post-open backfill burst has fully caught up, so the reader
+  // never sees the intermediate jumps land. See StickToEndOnLoad's doc comment for why this
+  // is necessary even though that effect already jumps to the correct spot on every commit.
+  // A stable callback: StickToEndOnLoad's effect depends on it, and an identity that changed
+  // every render would re-run that effect (and re-arm its quiet-window timer) on every
+  // unrelated ConversationStream re-render — never letting it settle.
+  const [ready, setReady] = useState(false);
+  const handleReady = useCallback(() => setReady(true), []);
+  // Re-hide on a thread switch (e.g. changing projects) — a layout effect so it lands before
+  // paint and the outgoing thread's "ready" state can never flash into the incoming one.
+  useLayoutEffect(() => setReady(false), [coordinatorId]);
+
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <MessageScroller.Provider autoScroll defaultScrollPosition="end" scrollEdgeThreshold={48}>
-        <MessageScroller.Root style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex' }}>
+        <MessageScroller.Root
+          style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', visibility: ready ? 'visible' : 'hidden' }}
+        >
           <MessageScroller.Viewport preserveScrollOnPrepend style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
             <MessageScroller.Content style={{ padding: '20px 26px 12px', display: 'flex', flexDirection: 'column', gap: 17 }}>
               {renderStream(stream)}
@@ -408,7 +432,7 @@ export function ConversationStream() {
             </MessageScroller.Content>
           </MessageScroller.Viewport>
           <JumpButton />
-          <StickToEndOnLoad coordinatorId={coordinatorId} count={stream.length} />
+          <StickToEndOnLoad coordinatorId={coordinatorId} count={stream.length} onReady={handleReady} />
         </MessageScroller.Root>
       </MessageScroller.Provider>
     </div>
@@ -417,36 +441,85 @@ export function ConversationStream() {
 
 /**
  * Render-nothing helper: keep a freshly-opened (or freshly-switched) coordinator thread
- * pinned to the bottom through its post-mount backfill burst. The stream comes from the
- * same incremental useStructuredChat source as the agent chat, so on open it backfills as
- * a rapid 0→N append burst that can strand the viewport above the fold (a content change
- * can flip the scroller out of "following-bottom" before it catches up). We force
- * scrollToEnd('auto') — instant, never smooth — on each append while still engaged, then
- * hand off to native autoScroll the moment the user scrolls off-tail. Crucially this runs in
- * a LAYOUT effect (pre-paint): the stick is applied before the browser paints each backfill
- * frame, so the thread opens ALREADY at the bottom instead of visibly crawling top→bottom
- * through the whole history (which, for a long coordinator log, took ~10s). Mirrors the agent
- * ChatView's StickToEndOnLoad, re-armed per coordinator thread.
+ * pinned to the bottom through its post-mount backfill burst, and tell the parent
+ * (`onReady`) once it's safe to actually PAINT the viewport.
+ *
+ * The scrollToEnd('auto')-per-append approach below was already correct in isolation — it
+ * really does jump to the (new, longer) bottom on every single commit, instantly, never
+ * smooth. It was NOT enough on its own, though: root cause (confirmed by reading the wire
+ * path, not guessed) is that a long coordinator thread's replay-on-connect is not one atomic
+ * burst. `structured.ts`'s replay loop `ws.send`s every buffered protocol event
+ * one at a time (up to MAX_EVENTS=5000, packages/core/src/structured/manager.ts), and each
+ * event that starts a new content block (a new assistant-text/tool_use/image ConvItem)
+ * arrives as its own WebSocket 'message' task rather than batched with the others. Each one
+ * triggers its own React commit, and this effect DOES correctly jump to the bottom on every
+ * one of those commits — but the browser paints between them, so a long history's replay
+ * renders as dozens-to-hundreds of individually-correct, individually-PAINTED "one step
+ * further" jumps, which is visually indistinguishable from a slow continuous scroll (the
+ * reported ~10s crawl). There is no competing smooth-scroll animation anywhere in this file
+ * or the vendored scroller — verified: this codebase never sets `scrollAnchor` on any
+ * MessageScroller.Item, so the vendored primitive's own align:'start' re-anchor path (which
+ * WOULD explain a crawl) is dead code for our usage; its internal auto-scroll always targets
+ * the end too, same as ours, so the two were never actually fighting.
+ *
+ * Fix: don't just jump correctly on every commit — HIDE every intermediate jump. Every real
+ * append (while not yet revealed) restarts a short "quiet window" timer; once ~180ms passes
+ * with no further growth, the burst has caught up and `onReady` fires ONCE so the parent can
+ * flip the viewport from hidden to visible, landing the reader already at the bottom with
+ * zero visible motion no matter how long the burst took. A count REGRESSION (ws-reconnect
+ * replay clearing and re-backfilling the same thread) re-arms the latch too, so a later
+ * reconnect on a still-open thread hides through ITS catch-up as well, not just the first
+ * open. Once revealed, ordinary live growth (a new turn arriving seconds/minutes on) does
+ * NOT re-hide the view — mirrors the agent ChatView's StickToEndOnLoad, re-armed per thread.
  */
-function StickToEndOnLoad({ coordinatorId, count }: { coordinatorId: string | null; count: number }) {
+function StickToEndOnLoad({
+  coordinatorId,
+  count,
+  onReady,
+}: {
+  coordinatorId: string | null;
+  count: number;
+  onReady: () => void;
+}) {
   const { scrollToEnd } = useMessageScroller();
   const { end } = useMessageScrollerScrollable(); // end === true ⇒ off-tail (content below the fold)
   const settledRef = useRef(false);
   const prevCountRef = useRef(-1);
   const termRef = useRef(coordinatorId);
+  const readyRef = useRef(false); // latched — onReady fires at most once per catch-up
+  const quietTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useLayoutEffect(() => {
-    // New coordinator thread → re-arm so its own backfill re-sticks to the bottom.
+    // New coordinator thread → re-arm so its own backfill re-sticks to the bottom, and hide
+    // again until it settles.
     if (termRef.current !== coordinatorId) {
       termRef.current = coordinatorId;
       settledRef.current = false;
       prevCountRef.current = -1;
+      readyRef.current = false;
+      if (quietTimerRef.current != null) { clearTimeout(quietTimerRef.current); quietTimerRef.current = null; }
     }
     // `stream` only ever GROWS or RESETS-TO-EMPTY, so a count regression unambiguously means
     // the list was cleared/replaced (ws-reconnect replay, or a remount whose outgoing count
     // still sits in prevCountRef while the new backfill climbs from 0). Re-arm so the append
-    // burst exceeds prevCount and re-sticks.
-    if (count < prevCountRef.current) prevCountRef.current = -1;
+    // burst exceeds prevCount and re-sticks — and re-latch the reveal gate, since a reconnect
+    // on an already-open thread is its own catch-up burst that deserves the same hiding.
+    if (count < prevCountRef.current) {
+      prevCountRef.current = -1;
+      readyRef.current = false;
+    }
+
+    // Reveal latch — independent of the scroll-follow state below (which can permanently
+    // disengage once the reader scrolls up mid-burst): any real count change restarts the
+    // quiet-window timer.
+    if (!readyRef.current && count !== prevCountRef.current) {
+      if (quietTimerRef.current != null) clearTimeout(quietTimerRef.current);
+      quietTimerRef.current = setTimeout(() => {
+        quietTimerRef.current = null;
+        if (!readyRef.current) { readyRef.current = true; onReady(); }
+      }, 180);
+    }
+
     if (settledRef.current) return;
     if (count > prevCountRef.current) {
       // Backfill / live append while still engaged → snap to the bottom, even when `end`
@@ -459,7 +532,11 @@ function StickToEndOnLoad({ coordinatorId, count }: { coordinatorId: string | nu
     // Count held steady AND we're parked off-tail → the user scrolled up themselves.
     // Disengage for the rest of this thread; native autoScroll owns follow-while-pinned now.
     if (end) settledRef.current = true;
-  }, [coordinatorId, count, end, scrollToEnd]);
+  }, [coordinatorId, count, end, scrollToEnd, onReady]);
+
+  useEffect(() => () => {
+    if (quietTimerRef.current != null) clearTimeout(quietTimerRef.current);
+  }, []);
 
   return null;
 }

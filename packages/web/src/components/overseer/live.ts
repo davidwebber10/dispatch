@@ -15,6 +15,7 @@ import type { ConvItem, PendingPermission, PermissionQuestion, Terminal } from '
 import { btn, m, mission as makeMission, outc, th } from './data';
 import {
   AGENT_TYPE,
+  type AgentCardAction,
   type AgentThread,
   type AgentType,
   type Mission,
@@ -147,9 +148,13 @@ export function terminalToAgentThread(t: Terminal, s?: LiveStatus): AgentThread 
   const elapsed = elapsedSince(t.createdAt);
   // No real progress signal in incr. 1 — show a steady mid fill while working.
   const base = th(type, id, action, status, elapsed, status === 'working' ? 50 : 100);
+  // The model the agent was spawned with (e.g. "sonnet"/"opus"), persisted on the terminal at
+  // spawn time — plain data plumbing so WorkRail can render it; undefined for older terminals
+  // spawned before this field existed.
+  const model = typeof t.config?.model === 'string' ? t.config.model : undefined;
   // dlabel is the drill-in / data-label name; keep it the agent's own name so the rail and
   // the opened WorkerLightbox agree on identity.
-  return { ...base, key: t.id, dlabel: name };
+  return { ...base, key: t.id, dlabel: name, model };
 }
 
 function terminalToOutcome(t: Terminal): Outcome {
@@ -157,7 +162,7 @@ function terminalToOutcome(t: Terminal): Outcome {
   // Outcome cards are entries too → title with the agent's own name, not the mission.
   const title = at.dlabel || at.action || `${at.typeLabel} task`;
   const meta = at.elapsed ? `done · ${at.elapsed} ago` : 'done';
-  return { ...outc(at.type, at.id, title, meta), key: t.id };
+  return { ...outc(at.type, at.id, title, meta), key: t.id, model: at.model };
 }
 
 function summaryText(live: number, done: number): string {
@@ -190,16 +195,90 @@ function imageMessage(imageUrl: string, imageAlt: string | undefined, i: string,
   };
 }
 
+/**
+ * agency-mcp tool names (packages/core/src/overseer/agency-mcp.ts) whose tool_use/
+ * tool_result PAIR gets turned into an AgentCard instead of being dropped. Each returns
+ * `{ agentId, ... }` on success (verified against the tool implementations) — spawn/queue
+ * also return `label` (the resolved display name) and an optional `mission`; message/start
+ * return only `{ ok, agentId }`, so their card's name/type/mission are backfilled from the
+ * `knownAgents` map built while walking earlier spawn/queue results in the same timeline.
+ */
+const AGENT_TOOL_ACTION: Record<string, AgentCardAction> = {
+  spawn_agent: 'spawned',
+  queue_agent: 'queued',
+  message_agent: 'messaged',
+  start_agent: 'started',
+};
+
+/** An 'agentCard' ConvItem pair → an agentCard StreamMessage. Mirrors imageMessage's shape:
+ * constructed inline (not via the m() factory) so it stays disjoint from data.ts. */
+function agentCardMessage(
+  agentId: string,
+  name: string,
+  agentType: AgentType | undefined,
+  mission: string | undefined,
+  action: AgentCardAction,
+  key: string,
+): StreamMessage {
+  return {
+    kind: 'agentCard',
+    who: null,
+    text: '',
+    time: '',
+    key,
+    isUser: false,
+    isOverseer: false,
+    isNote: false,
+    isAgentCard: true,
+    agentId,
+    agentName: name,
+    agentType,
+    agentMission: mission,
+    agentAction: action,
+  };
+}
+
 /** The coordinator conversation (ConvItem timeline) → the Overseer message stream. */
 export function convItemsToStream(items: ConvItem[]): StreamMessage[] {
   const out: StreamMessage[] = [];
+  // Pairs an agent tool_use (by toolId) with its later tool_result — tool calls always
+  // precede their result in the timeline, so a single forward pass suffices.
+  const pendingCalls = new Map<string, { toolName: string; args: Record<string, unknown> }>();
+  // agentId -> the name/type/mission resolved from a successful spawn_agent/queue_agent in
+  // THIS window, so a later message_agent/start_agent card (whose args are just agentId+text)
+  // can still show a real name/icon instead of a bare id.
+  const knownAgents = new Map<string, { name: string; agentType: AgentType; mission?: string }>();
+
   items.forEach((it, i) => {
     const key = it.uuid ?? `c${i}`;
     if (it.kind === 'user' && it.text?.trim()) out.push(m('user', 'You', it.text, '', key));
     else if (it.kind === 'assistant' && it.text?.trim()) out.push(m('overseer', 'Dispatch', it.text, '', key));
     else if (it.kind === 'image' && it.imageUrl) out.push(imageMessage(it.imageUrl, it.imageAlt, key, it.imageFromUser === true));
-    // thinking/tool/tool-result/result/system are internal: the Overseer does no tool
-    // work and rich escalations are surfaced as Needs in incr. 3, not in this stream.
+    else if (it.kind === 'tool' && it.toolId && it.toolName && AGENT_TOOL_ACTION[it.toolName]) {
+      let args: Record<string, unknown> = {};
+      try { args = it.toolInput ? JSON.parse(it.toolInput) : {}; } catch { /* still streaming / malformed input */ }
+      pendingCalls.set(it.toolId, { toolName: it.toolName, args });
+    } else if (it.kind === 'tool-result' && it.toolId && !it.isError) {
+      const call = pendingCalls.get(it.toolId);
+      if (!call) return; // no matching tool_use in this window (e.g. trimmed backlog)
+      let result: Record<string, unknown> = {};
+      try { result = it.text ? JSON.parse(it.text) : {}; } catch { return; } // not a JSON tool result
+      const agentId = typeof result.agentId === 'string' ? result.agentId : undefined;
+      if (!agentId) return;
+      const action = AGENT_TOOL_ACTION[call.toolName];
+      if (call.toolName === 'spawn_agent' || call.toolName === 'queue_agent') {
+        const name = (typeof result.label === 'string' && result.label.trim()) || 'Agent';
+        const agentType = asAgentType(call.args.agentType);
+        const missionName = typeof result.mission === 'string' && result.mission.trim() ? result.mission.trim() : undefined;
+        knownAgents.set(agentId, { name, agentType, mission: missionName });
+        out.push(agentCardMessage(agentId, name, agentType, missionName, action, `ac${key}`));
+      } else {
+        const known = knownAgents.get(agentId);
+        out.push(agentCardMessage(agentId, known?.name ?? agentId, known?.agentType, known?.mission, action, `ac${key}`));
+      }
+    }
+    // thinking/result/system are internal: the Overseer does no tool work and rich
+    // escalations are surfaced as Needs in incr. 3, not in this stream.
   });
   return out;
 }
