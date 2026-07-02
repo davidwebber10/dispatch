@@ -32,7 +32,6 @@ import { WorkingIndicator } from '../../WorkingIndicator';
 import { Spinner } from '../../common/Spinner';
 import { AskQuestionCard } from '../../tabs/chat/AskQuestionCard';
 import { useOverseer, useRenderVals } from '../store';
-import { useDispatchName } from '../../../stores/settings';
 import { useBootstrapOlderPages } from '../../../hooks/useBootstrapOlderPages';
 import type { StreamMessage } from '../types';
 
@@ -42,15 +41,16 @@ import type { StreamMessage } from '../types';
 // identical values, but `.md-view` does NOT read them, so consolidating/renaming the
 // overseer token set would not affect markdown rendering (don't assume it does).
 
-// ---- Dispatch header (name + time) ------------------------------------------
+// ---- Dispatch header (time only) --------------------------------------------
 // Shown once at the top of a run of consecutive Dispatch turns. Subsequent turns in the
-// same run omit it (chat-app grouping) but keep the body left-aligned at the same x.
+// same run omit it (chat-app grouping) but keep the body left-aligned at the same x. No name
+// label here — every turn in this stream is the coordinator's own, so labeling the speaker
+// would be redundant (contrast the agent ChatView's UserBubble, which DOES need a "via
+// {name}" badge since that stream mixes the human's turns with coordinator-relayed ones).
 
 function DispatchHeader({ time }: { time: string }) {
-  const name = useDispatchName();
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-      <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--acc)' }}>{name}</span>
       <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--tt)' }}>{time}</span>
     </div>
   );

@@ -7,6 +7,7 @@ import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import type { PendingPermission } from '../../../api/types';
 import { useOverseer } from '../store';
+import { m } from '../data';
 import { ConversationStream } from './Stream';
 
 // jsdom lacks the observers + scroll APIs the MessageScroller primitive touches.
@@ -60,5 +61,21 @@ describe('ConversationStream — coordinator AskUserQuestion surfaced inline', (
   it('renders no question card when nothing is pending', () => {
     render(<ConversationStream />);
     expect(screen.queryByText('Have you finished logging in to Salsify?')).not.toBeInTheDocument();
+  });
+});
+
+// Regression test: the coordinator's own stream used to render a "Control Plane" name label
+// above every message, which is redundant — every turn in this view is inherently the
+// coordinator's own. The label was removed (only the timestamp header remains); this locks
+// that in without touching the agent ChatView's UserBubble "via {name}" badge, which stays
+// (it distinguishes a coordinator-relayed message from a human's own direct one).
+describe('ConversationStream — coordinator message header', () => {
+  it('renders the message body without a redundant coordinator name label', () => {
+    useOverseer.setState({
+      coordinatorStream: [m('overseer', 'Control Plane', 'Stage deploy failed and rolled back cleanly.', '9:02', 1)],
+    });
+    render(<ConversationStream />);
+    expect(screen.getByText('Stage deploy failed and rolled back cleanly.')).toBeInTheDocument();
+    expect(screen.queryByText('Control Plane')).not.toBeInTheDocument();
   });
 });
