@@ -86,3 +86,50 @@ describe('renderTimeline — answered AskUserQuestion stays in history (regressi
     expect(screen.getByText(/Cut the release\?/)).toBeInTheDocument();
   });
 });
+
+// Regression coverage for the reported bug: expanding a tool call while its subagent is
+// still actively streaming used to auto-collapse ~a second later. Root cause — a live
+// content_block_start appends a NEW item to `items` for every block within the SAME
+// still-open assistant turn (see useStructuredChat's stream_event handler), and
+// renderTimeline re-anchors the enclosing turn's MessageScroller.Item `key` to whichever
+// item is now LAST in the group on every such append. A changed `key` forces React to
+// unmount + remount the whole turn subtree, wiping ToolCall's local `useState` expand flag.
+// This simulates exactly that: expand a tool call, then rerender with a new tool item
+// appended to the same (still-open) turn, and assert the expansion survives.
+describe('renderTimeline — an expanded tool call survives a live streaming re-render (regression)', () => {
+  it('stays expanded when a new item is appended to the same turn', () => {
+    const toolA: ConvItem = { kind: 'tool', toolId: 'tu-a', toolName: 'Bash', toolTitle: 'Bash', toolInput: 'ls -la' };
+    const resultA: ConvItem = { kind: 'tool-result', toolId: 'tu-a', text: 'file1\nfile2' };
+    const { rerender } = render(
+      <MessageScroller.Provider>
+        <MessageScroller.Root>
+          <MessageScroller.Viewport>
+            <MessageScroller.Content>
+              {renderTimeline([toolA, resultA], () => {}, new Set())}
+            </MessageScroller.Content>
+          </MessageScroller.Viewport>
+        </MessageScroller.Root>
+      </MessageScroller.Provider>,
+    );
+
+    fireEvent.click(screen.getByText('Bash'));
+    expect(screen.getByText('Output')).toBeInTheDocument(); // expanded: tab strip visible
+
+    // A new content block starts elsewhere in the SAME (still-open) assistant turn —
+    // e.g. the subagent kicks off a second tool call before finishing its reply.
+    const toolB: ConvItem = { kind: 'tool', toolId: 'tu-b', toolName: 'Read', toolTitle: 'Read', toolInput: 'file.txt' };
+    rerender(
+      <MessageScroller.Provider>
+        <MessageScroller.Root>
+          <MessageScroller.Viewport>
+            <MessageScroller.Content>
+              {renderTimeline([toolA, resultA, toolB], () => {}, new Set())}
+            </MessageScroller.Content>
+          </MessageScroller.Viewport>
+        </MessageScroller.Root>
+      </MessageScroller.Provider>,
+    );
+
+    expect(screen.getByText('Output')).toBeInTheDocument(); // still expanded, not auto-collapsed
+  });
+});

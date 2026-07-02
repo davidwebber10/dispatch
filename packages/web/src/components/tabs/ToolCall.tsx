@@ -1,16 +1,19 @@
-import { useState } from 'react';
 import { CaretRight, Wrench, FileText } from '@phosphor-icons/react';
 import type { ConvItem } from '../../api/types';
 import { highlightCode, langFromPath } from '../../lib/markdown';
 import { getToolView, parseToolInput } from './toolviews/registry';
+import { useToolExpanded, useToolTab } from '../../hooks/useToolUIState';
 
 /** A tool call: single-line summary; expand to an Input/Output tabbed, syntax-
  *  highlighted shelf. If it references a file, the shelf offers "View file".
  *  Recognized tools (query, edit, todo, web) get a rich body via the registry;
  *  everything else falls back to the generic Input/Output panel. */
 export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?: ConvItem; onViewFile?: (path: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<'input' | 'output'>('output');
+  // Keyed by the tool's OWN stable id (never the paired result's) — see useToolUIState's
+  // doc comment for why this must survive a remount instead of living in plain useState.
+  const id = tool.uuid ?? tool.toolId;
+  const [open, setOpen] = useToolExpanded(id, false);
+  const [tab, setTab] = useToolTab(id, 'output');
   const name = tool.toolTitle ?? tool.toolName ?? 'Tool';
   const input = tool.toolInput ?? '';
   const out = result?.text ?? '';
@@ -77,7 +80,7 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
 
 /** A tool result, minimized to a one-line summary and expandable on click. */
 export function ToolResult({ item }: { item: ConvItem }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useToolExpanded(item.uuid ?? item.toolId, false);
   const text = item.text ?? '';
   if (!text.trim()) return null;
   const lines = text.split('\n').length;
