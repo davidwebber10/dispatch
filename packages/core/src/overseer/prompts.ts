@@ -78,21 +78,24 @@ const AGENT_AUTONOMY_NOTE =
   'output) to decide what happens next, so make it the last thing you say.';
 
 /**
- * Browser-auth relay note: a CLI you run (gh, npm, etc.) may need a browser login. Dispatch
- * relays the URL to the operator automatically (via the $BROWSER/$GH_BROWSER shim → a banner
- * in the UI), but the CLI process itself still blocks on the OAuth callback — and your Bash
- * tool call has a bounded timeout, which will kill that process (and its loopback listener)
- * before a slow or remote human finishes the browser step.
+ * Browser-auth relay note: a CLI you run (gh, npm, etc.) may need a browser login. WHEN a CLI
+ * actually invokes $BROWSER/$GH_BROWSER to open a URL, Dispatch relays it to the operator
+ * automatically (shim → a banner in the UI) — but not every CLI does that; some (e.g. `gh auth
+ * login --web`, despite the flag name) just print a one-time code + URL to their own output and
+ * poll in the background, with no browser launch and no local callback server at all. Either
+ * way, the underlying process may run for a while waiting on a slow or remote human, and your
+ * Bash tool call has a bounded timeout that will kill it if it's still in the foreground.
  */
 const AGENT_BROWSER_AUTH_NOTE =
-  ' If a command you run needs browser-based login, prefer a device-code flow (a one-time code, ' +
-  'no callback server, nothing to keep alive) over a `--web`/loopback flow when the CLI offers ' +
-  'both. Always pass non-interactive flags (e.g. `gh auth login --web --hostname github.com ' +
-  '--git-protocol https`) so it never blocks on a TTY prompt. If it must hold a browser-callback ' +
-  'server open, launch it DETACHED so it outlives this tool call — e.g. `nohup gh auth login ' +
+  ' If a command you run needs browser-based login: always pass non-interactive flags (e.g. `gh ' +
+  'auth login --web --hostname github.com --git-protocol https`) so it never blocks on a TTY ' +
+  'prompt, and launch it DETACHED so it outlives this tool call — e.g. `nohup gh auth login ' +
   '--web > /tmp/auth.log 2>&1 & disown` — then move on and check back later (retry the original ' +
-  'command, or read the log) instead of blocking on it. You do not need to print or explain the ' +
-  'auth URL yourself — the operator already sees a relayed link.';
+  'command, or read the log) instead of blocking on it. Some CLIs relay their URL to the operator ' +
+  'automatically via a banner in the UI — you do not need to print or explain that URL yourself. ' +
+  'But others only print a one-time code/URL to their own output with no auto-relay: if you do ' +
+  'not see confirmation the auth completed, read the log/output yourself and include the code and ' +
+  'URL verbatim in your summary so the operator (or your coordinator) can act on it manually.';
 
 export const AGENT_PROMPTS: Record<AgentType, string> = {
   planner:
