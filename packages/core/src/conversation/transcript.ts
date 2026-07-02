@@ -18,6 +18,11 @@ export interface ConvItem {
   line?: number;       // source JSONL line index (set by the caller; enables jump-to)
   toolInput?: string;  // the tool call's raw arguments (pretty JSON), for the Input tab
   toolFile?: string;   // file path argument, for output-language inference
+  /** Who sent a 'user'-kind item — set by the caller (SessionService.getConversation) from
+   *  the durable message_source table, since the raw transcript line itself has no such
+   *  field (see db/message-source.ts). Undefined for untagged/legacy turns — renders as a
+   *  plain "You" bubble, same as today. */
+  source?: 'user' | 'coordinator';
 }
 
 export function parseClaudeTranscript(text: string): ConvItem[] {

@@ -5,6 +5,7 @@ import { useSettings, ACCENTS } from '../../stores/settings';
 import { useServers, currentLabel } from '../../stores/servers';
 import { useSecrets } from '../../stores/secrets';
 import { useSetup } from '../../stores/setup';
+import { useUpdate } from '../../stores/update';
 import { IntegrationsSection } from './IntegrationsSection';
 import { ToolsSection } from './ToolsSection';
 import { TranscriptionSection } from './TranscriptionSection';
@@ -257,6 +258,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   }
   const servers = useServers((s) => s.servers);
   const openSetup = useSetup((s) => s.open);
+  const currentVersion = useUpdate((s) => s.currentVersion);
   const [tab, setTab] = useState<'general' | 'integrations' | 'secrets' | 'tools' | 'transcription'>('general');
   if (!open) return null;
 
@@ -299,12 +301,12 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
                   <input
                     value={coordinatorName}
                     onChange={(e) => useSettings.getState().setCoordinatorName(e.target.value)}
-                    placeholder="Dispatch"
+                    placeholder="Control Plane"
                     aria-label="Coordinator name"
                     style={{ width: 180, height: 30, padding: '0 9px', background: '#1b1b1e', border: '1px solid #2c2c32', borderRadius: 7, color: 'var(--color-text-primary)', font: '400 12px var(--font-sans)' }}
                   />
                 </div>
-                <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>Shown wherever your coordinator appears. Leave blank to use “Dispatch”.</div>
+                <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>Shown wherever your coordinator appears. Leave blank to use “Control Plane”.</div>
               </div>
               <Divider />
 
@@ -367,7 +369,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
               <MultiPaneSetting />
               <Divider />
 
-              <div style={row}><span style={item}>Version</span><span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)' }}>Dispatch Web</span></div>
+              <div style={row}><span style={item}>Version</span><span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)' }}>{currentVersion ? `Dispatch Web v${currentVersion}` : 'Dispatch Web'}</span></div>
             </>
           )}
           {tab === 'integrations' && <IntegrationsSection />}

@@ -6,7 +6,9 @@ import type Database from 'better-sqlite3';
 import { v4 as uuid } from 'uuid';
 import * as sessionsDb from '../db/sessions.js';
 import * as terminalsDb from '../db/terminals.js';
+import * as agentsDb from '../db/agents.js';
 import * as appState from '../db/app-state.js';
+import * as messageSourceDb from '../db/message-source.js';
 import { getProvider } from '../providers/registry.js';
 import { PTYManager } from '../pty/manager.js';
 import type { Session, CreateSessionInput } from '../types.js';
@@ -17,7 +19,8 @@ import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
 import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript.js';
 import { platform } from '../platform/index.js';
 import { systemPromptFor, modelFor } from '../overseer/prompts.js';
-import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus } from './cc-sessions.js';
+import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources } from './cc-sessions.js';
+import { TERMINAL_ID_ENV_VAR } from '../auth/shim.js';
 
 interface StatusContext {
   serverUrl: string;
@@ -79,6 +82,25 @@ export class SessionService {
         const t = terminalsDb.getById(this.db, terminalId);
         if (t && !t.external_id && sessionId) terminalsDb.updateExternalId(this.db, terminalId, sessionId);
       } catch { /* best effort */ }
+    });
+    // Durable source persistence: the manager emits this once a tagged turn's `result`
+    // lands (its transcript lines are guaranteed flushed by then — see manager.ts's
+    // `result` handler). Resolve it to the newest not-yet-recorded real user-text uuid in
+    // this terminal's transcript and persist the pair, so a later disk-hydrated chat (after
+    // the CLI process has exited) can still show the "via Dispatch" badge (see
+    // readSessionBackfill's caller below and getConversation, both of which merge this back in).
+    m.on('message-source', (terminalId: string, source: messageSourceDb.MessageSource) => {
+      try {
+        const t = terminalsDb.getById(this.db, terminalId);
+        if (!t) return;
+        const session = sessionsDb.getById(this.db, t.session_id);
+        const workDir = t.working_dir || session?.working_dir;
+        const sessionId = t.external_id;
+        if (!workDir || !sessionId) return;
+        const exclude = messageSourceDb.listUuids(this.db, terminalId);
+        const uuid = findNewestUnresolvedUserUuid(workDir, sessionId, exclude);
+        if (uuid) messageSourceDb.record(this.db, terminalId, uuid, source);
+      } catch { /* best effort — a missed tag just degrades to a plain bubble, never an error */ }
     });
   }
 
@@ -203,6 +225,10 @@ export class SessionService {
       if (this.ptyManager.isAlive(terminal.id)) this.ptyManager.kill(terminal.id);
       this.structuredManager?.kill(terminal.id);
     }
+    // Drop the agent_runs → terminals FK references first; otherwise the hard
+    // delete below trips a FOREIGN KEY constraint for any session that ever had
+    // a scheduled-agent run, and the whole archive fails.
+    agentsDb.clearTerminalRefsBySession(this.db, id);
     terminalsDb.removeBySession(this.db, id);
 
     if (this.ptyManager.isAlive(id)) this.ptyManager.kill(id);
@@ -458,13 +484,20 @@ export class SessionService {
    *   - `since`: lines after index `since` (polling for new messages at the bottom).
    *   - `before`: the `limit` lines ending just before index `before` (loading
    *     older history at the top, for reverse infinite scroll).
+   *   - `beforeUuid`: like `before`, but the anchor is the transcript-line `uuid` of
+   *     the OLDEST item a caller has already rendered (from a ws replay, which has no
+   *     line index of its own — see ConvItem.uuid). Resolved to a line index here so
+   *     the very first reverse-scroll page can fetch genuinely-older content instead
+   *     of defaulting to the newest window, which would just overlap what's already
+   *     on screen. Falls back to the newest-window default when the uuid isn't found
+   *     (e.g. it hasn't reached disk yet, or predates this transcript file).
    * Returns the parsed `items`, `cursor` (= total line count, the bottom edge for
    * polling), `startLine` (top edge of the returned window), and `hasMore`
    * (whether older lines exist above the window). Claude Code only for now.
    */
   getConversation(
     terminalId: string,
-    opts: { since?: number; before?: number; limit?: number } = {},
+    opts: { since?: number; before?: number; beforeUuid?: string; limit?: number } = {},
   ): { items: ConvItem[]; cursor: number; startLine: number; hasMore: boolean; unsupported?: boolean } {
     const empty = { items: [] as ConvItem[], cursor: 0, startLine: 0, hasMore: false };
     const terminal = terminalsDb.getById(this.db, terminalId);
@@ -490,9 +523,21 @@ export class SessionService {
     const total = usable.length;
     const limit = opts.limit && opts.limit > 0 ? opts.limit : 200;
 
+    // Resolve beforeUuid to a line index by scanning backward from the tail — the anchor
+    // is always a recently-rendered ws item, so it's near the end, not deep in the file.
+    let beforeFromUuid: number | undefined;
+    if (opts.beforeUuid) {
+      for (let i = total - 1; i >= 0; i--) {
+        try { if (JSON.parse(usable[i])?.uuid === opts.beforeUuid) { beforeFromUuid = i; break; } } catch { /* partial/garbled line */ }
+      }
+    }
+
     let start: number;
     let end: number;
-    if (opts.before !== undefined && opts.before > 0) {       // older window (scroll up)
+    if (beforeFromUuid !== undefined) {                       // precise anchor (scroll up, first page)
+      end = beforeFromUuid;
+      start = Math.max(0, end - limit);
+    } else if (opts.before !== undefined && opts.before > 0) { // older window (scroll up)
       end = Math.min(opts.before, total);
       start = Math.max(0, end - limit);
     } else if (opts.since !== undefined && opts.since > 0) {  // new lines (poll)
@@ -507,6 +552,20 @@ export class SessionService {
     const items: ConvItem[] = [];
     for (let i = start; i < end; i++) {
       for (const it of parseClaudeTranscript(usable[i])) items.push({ ...it, line: i });
+    }
+    // Merge durably-stored `source` tags onto user turns (see db/message-source.ts) — the
+    // REST transcript parser (conversation/transcript.ts) never sets this itself, matching
+    // backfillEventsFromTranscript's identical on-disk gap (see the seedEvents merge above /
+    // cc-sessions.ts's applyDurableSources). Fixes the archived-thread / loadOlder path,
+    // where a chat is hydrated ENTIRELY from this endpoint (no live ws to fall back on).
+    const userUuids = items.filter((it) => it.kind === 'user' && it.uuid).map((it) => it.uuid as string);
+    if (userUuids.length) {
+      const sourceByUuid = messageSourceDb.getForUuids(this.db, terminalId, userUuids);
+      if (sourceByUuid.size) {
+        for (const it of items) {
+          if (it.kind === 'user' && it.uuid && sourceByUuid.has(it.uuid)) it.source = sourceByUuid.get(it.uuid);
+        }
+      }
     }
     return { items, cursor: total, startLine: start, hasMore: start > 0 };
   }
@@ -846,13 +905,17 @@ export class SessionService {
 
   /**
    * Persist an agent terminal's cumulative token usage into `config.totalTokens`
-   * when its turn settles — computed ONCE here (from the transcript's summed
-   * `usage` fields, via readTerminalTokenUsage/sumTranscriptTokens) and written
-   * into config, mirroring how `config.model` is captured at spawn time in
-   * spawnStructured. This is what lets the Work-tab's Done cards show a token count
-   * for free (read off the terminal row) instead of a per-card live fetch, which
-   * would be too expensive across dozens of finished agents. Best-effort: no-ops
-   * when there's no external_id yet or the transcript can't be read.
+   * (and its output-only count into `config.outputTokens`) when its turn settles —
+   * computed ONCE here (from the transcript's summed `usage` fields, via
+   * readTerminalTokenUsage/sumTranscriptTokens) and written into config, mirroring
+   * how `config.model` is captured at spawn time in spawnStructured. This is what
+   * lets the Work-tab's Done cards show a token count for free (read off the
+   * terminal row) instead of a per-card live fetch, which would be too expensive
+   * across dozens of finished agents. `outputTokens` — tokens the agent actually
+   * generated, excluding the cache-read/cache-write/input tokens that dominate the
+   * cumulative total — is what the Done card displays, since it better reflects
+   * "how much work this agent did" than the cache-dominated cumulative figure.
+   * Best-effort: no-ops when there's no external_id yet or the transcript can't be read.
    */
   private persistAgentTokenUsage(terminalId: string, agent: terminalsDb.TerminalRow, cfg: Record<string, any>): void {
     if (!agent.external_id) return;
@@ -862,6 +925,7 @@ export class SessionService {
     const stats = readTerminalTokenUsage(workDir, agent.external_id);
     if (!stats || !stats.totalTokens) return;
     cfg.totalTokens = stats.totalTokens;
+    cfg.outputTokens = stats.outputTokens;
     terminalsDb.updateConfig(this.db, terminalId, cfg);
   }
 
@@ -1118,7 +1182,7 @@ export class SessionService {
       args = cmd.args;
     }
 
-    const pid = this.ptyManager.spawn(terminalId, command, args, workDir);
+    const pid = this.ptyManager.spawn(terminalId, command, args, workDir, { [TERMINAL_ID_ENV_VAR]: terminalId });
     terminalsDb.updatePid(this.db, terminalId, pid);
 
     // If this was a fresh spawn (no external_id yet), let the provider try to
@@ -1181,7 +1245,16 @@ export class SessionService {
     }
 
     // On resume, restore prior conversation from the claude transcript JSONL.
-    const seedEvents = resumeSessionId ? readSessionBackfill(workDir, resumeSessionId) : undefined;
+    const rawSeedEvents = resumeSessionId ? readSessionBackfill(workDir, resumeSessionId) : undefined;
+    // Merge back any durably-stored `source` tags (see db/message-source.ts) — the
+    // transcript itself carries none, so a revived thread would otherwise lose the "via
+    // Dispatch" badge on every turn sent before the CLI process last exited.
+    const seedEvents = rawSeedEvents?.length
+      ? applyDurableSources(
+          rawSeedEvents,
+          messageSourceDb.getForUuids(this.db, terminal.id, rawSeedEvents.map((e) => (e as any)?.uuid).filter((u): u is string => typeof u === 'string')),
+        )
+      : rawSeedEvents;
 
     // Autonomy dial: agents run AUTONOMOUSLY by default — they auto-allow every tool and
     // never prompt the human; the only thing that pauses an agent is an AskUserQuestion,
@@ -1197,6 +1270,7 @@ export class SessionService {
       workDir,
       escalate,
       seedEvents,
+      env: { [TERMINAL_ID_ENV_VAR]: terminal.id },
     });
     terminalsDb.updatePid(this.db, terminal.id, pid);
   }

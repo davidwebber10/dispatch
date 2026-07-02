@@ -2,14 +2,17 @@
 //
 // Layout: outer container (flex:none, border-top) > input row ("+" | textarea | send)
 //         + hint row (right-aligned "⌘↵ send", desktop only).
-// Store: composer, setComposer, sendDirective, openDelegate (no prop drilling).
-// Interactions: ⌘/Ctrl+Enter → sendDirective; autosizing textarea (rows 1, max 120px).
+// Draft text: owned locally via useDraft(coordinatorProject) — NOT a store field, so
+//   each project's Dispatch tab keeps its own draft (mirrors the agent ChatView's
+//   per-terminal draft). Store: composerImages, sendDirective(text), openDelegate.
+// Interactions: ⌘/Ctrl+Enter → sendDirective + clear draft; autosizing textarea (rows 1, max 120px).
 // Mobile: shorter placeholder ("Fire a directive…"); hint row is omitted.
 
 import { useCallback, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import { Paperclip } from '@phosphor-icons/react';
 import { Icon } from '../atoms';
-import { useOverseer } from '../store';
+import { useOverseer, useComposerImages } from '../store';
+import { useDraft } from '../../../hooks/useDraft';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { api } from '../../../api/client';
 import { useDictation } from '../../../hooks/useDictation';
@@ -79,13 +82,11 @@ function StagedThumbnail({ src, onRemove }: { src: string; onRemove: () => void 
 }
 
 export function Composer() {
-  const composer = useOverseer((s) => s.composer);
-  const setComposer = useOverseer((s) => s.setComposer);
   const sendDirective = useOverseer((s) => s.sendDirective);
   const addComposerImage = useOverseer((s) => s.addComposerImage);
   const removeComposerImage = useOverseer((s) => s.removeComposerImage);
   const coordinatorProject = useOverseer((s) => s.coordinatorProject);
-  const composerImages = useOverseer((s) => s.composerImages);
+  const composerImages = useComposerImages();
   const coordinatorContextTokens = useOverseer((s) => s.coordinatorContextTokens);
   const coordinatorCompacting = useOverseer((s) => s.coordinatorCompacting);
   const coordinatorCompactResult = useOverseer((s) => s.coordinatorCompactResult);
@@ -94,11 +95,22 @@ export function Composer() {
   const imageCount = composerImages.length;
   const isMobile = useIsMobile();
 
+  // Draft TEXT is scoped per coordinator project (not a global store field) — otherwise
+  // every Dispatch tab (one per project) would share the SAME draft, leaking text
+  // between unrelated projects. Mirrors the agent ChatView's per-terminal useDraft.
+  const [composer, setComposer, clearComposer] = useDraft(coordinatorProject ?? '');
+  // Mirror the draft in a ref so the async upload loop / dictation callback append to
+  // the latest value (across awaits / multiple files) without clobbering it — same
+  // pattern as ChatView's draftRef.
+  const composerRef = useRef(composer); composerRef.current = composer;
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sttConfigured = useSettings((s) => !!s.sttProvider && !!s.sttModel && !!s.sttSecretName);
   const dictation = useDictation((text) => {
-    const cur = useOverseer.getState().composer;
-    setComposer(cur + (cur ? ' ' : '') + text);
+    const cur = composerRef.current;
+    const next = cur + (cur ? ' ' : '') + text;
+    composerRef.current = next;
+    setComposer(next);
   });
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -120,8 +132,10 @@ export function Composer() {
             addComposerImage({ type: 'image', source: { type: 'base64', media_type: f.type, data } });
             setUploadNote(`Attached ${f.name}`);
           } else {
-            const cur = useOverseer.getState().composer;
-            setComposer(cur + (cur ? '\n' : '') + 'Attached file: ' + res.path);
+            const cur = composerRef.current;
+            const next = cur + (cur ? '\n' : '') + 'Attached file: ' + res.path;
+            composerRef.current = next;
+            setComposer(next);
             setUploadNote(`Attached ${f.name}`);
           }
         } catch {
@@ -162,17 +176,19 @@ export function Composer() {
       // inserts a newline. Mirrors the agent ChatView composer's submit behavior.
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        sendDirective();
+        sendDirective(composer);
+        clearComposer();
         resetHeight();
       }
     },
-    [sendDirective, resetHeight],
+    [sendDirective, composer, clearComposer, resetHeight],
   );
 
   const handleSend = useCallback(() => {
-    sendDirective();
+    sendDirective(composer);
+    clearComposer();
     resetHeight();
-  }, [sendDirective, resetHeight]);
+  }, [sendDirective, composer, clearComposer, resetHeight]);
 
   // Drag-and-drop + paste image upload — route dropped/pasted files through the SAME
   // attachFiles path as the Paperclip (upload to inbox; an image rides along as a real
@@ -283,7 +299,7 @@ export function Composer() {
             onChange={handleChange}
             onKeyDown={handleKeyDown}
             onPaste={onPaste}
-            placeholder={isMobile ? 'Fire a directive…' : 'Fire a directive to Dispatch…'}
+            placeholder={isMobile ? 'Fire a directive…' : 'Fire a directive to Control Plane…'}
             style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', resize: 'none', color: 'var(--tp)', fontSize: 13.5, lineHeight: 1.5, maxHeight: 120, padding: '7px 2px', fontFamily: 'inherit', overflow: 'auto' }}
           />
         )}

@@ -87,6 +87,42 @@ describe('terminal routes', () => {
     }
   });
 
+  it('GET /terminals/:id/conversation?beforeUuid=X anchors precisely on a transcript-line uuid (avoids overlapping the newest window)', async () => {
+    // Regression for the tool-ordering bug (a6ff2ef follow-up): loadOlder's FIRST call used
+    // to always fetch the newest REST window (`before` unset), which could overlap a ws-
+    // replayed tail already rendered client-side. `beforeUuid` lets the client anchor on the
+    // real identity of the oldest item it already has, so this call reaches genuinely older
+    // content directly instead of relying on dedup to paper over the overlap.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-conv-anchor-'));
+    const oldHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      const wd = '/tmp/proj-anchor';
+      const sid = 'sess-anchor';
+      terminalsDb.create(db, { id: 'cc-anchor', sessionId, type: 'claude-code', label: 'thread', skipPermissions: true, workingDir: wd, externalId: sid });
+      const dir = path.join(home, '.claude', 'projects', wd.replace(/\//g, '-'));
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, `${sid}.jsonl`),
+        '{"type":"user","message":{"role":"user","content":"first"},"uuid":"u1"}\n' +
+        '{"type":"assistant","message":{"content":[{"type":"text","text":"second"}]},"uuid":"u2"}\n' +
+        '{"type":"user","message":{"role":"user","content":"third"},"uuid":"u3"}\n');
+
+      // "third" (u3) is the oldest item already rendered from the ws tail — anchoring on it
+      // must return strictly what precedes it (first, second), never third itself.
+      const r = await request(app).get('/api/terminals/cc-anchor/conversation?beforeUuid=u3').expect(200);
+      expect(r.body.items.map((i: any) => i.text)).toEqual(['first', 'second']);
+      expect(r.body.hasMore).toBe(false);
+
+      // An unresolvable anchor (not yet on disk, or from a different thread) falls back to
+      // the newest-window default rather than returning nothing.
+      const r2 = await request(app).get('/api/terminals/cc-anchor/conversation?beforeUuid=does-not-exist').expect(200);
+      expect(r2.body.items.map((i: any) => i.text)).toEqual(['first', 'second', 'third']);
+    } finally {
+      if (oldHome === undefined) delete process.env.HOME; else process.env.HOME = oldHome;
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it('GET /conversation recovers a missing session id from the transcript dir + persists it', async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-conv-rec-'));
     const oldHome = process.env.HOME;

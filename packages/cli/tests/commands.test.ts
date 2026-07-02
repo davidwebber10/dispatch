@@ -20,6 +20,13 @@ describe('dispatch CLI routing', () => {
     expect(toolsRunner).toHaveBeenCalledOnce();
     expect(toolsRunner).toHaveBeenCalledWith(['install', '--force']);
   });
+
+  test('release is a recognized command — does not throw unknown-command error', () => {
+    // release requires gh and a clean git tree; we just verify routing doesn't throw
+    // "usage: dispatch <...>" for 'release'. Any other error (gh not found, dirty tree)
+    // is expected and acceptable here since we're testing routing, not release logic.
+    expect(() => runCommand(['release'], {} as any)).not.toThrow(/usage/i);
+  });
 });
 
 describe('status HTTP probe', () => {

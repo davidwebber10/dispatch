@@ -47,6 +47,14 @@ interface Session {
    * end" since can_use_tool fires for every tool call regardless of escalate/auto-allow.
    */
   lastToolUse?: { name: string; input: unknown };
+  /**
+   * The `source` of the turn most recently sent to this session, awaiting resolution to a
+   * real transcript uuid once its `result` boundary fires (see the `result` handler below
+   * and sessions/service.ts's 'message-source' listener). Set on every sendMessage call
+   * (including to undefined for an untagged send) so a later tagged turn never resolves
+   * against a stale value; consumed (cleared) at the next `result`.
+   */
+  pendingSource?: MessageSource;
 }
 
 const MAX_EVENTS = 5000;
@@ -174,6 +182,12 @@ export class StructuredSessionManager extends EventEmitter {
         session.lastToolUse = undefined; // reset for the next turn
         if (wake) this.emit('scheduled', terminalId, wakeActivity(wake.name, wake.input));
         else this.emit('idle', terminalId);
+        // The turn that just ended is now fully flushed to the transcript (result is always
+        // the LAST thing the CLI writes for a turn) — so if it was sent with a source tag,
+        // this is the earliest safe moment to resolve it to a real disk uuid (see
+        // sessions/service.ts's 'message-source' listener, which does the disk read + persist).
+        if (session.pendingSource) this.emit('message-source', terminalId, session.pendingSource);
+        session.pendingSource = undefined;
       }
       this.emit('event', terminalId, event);
     });
@@ -203,9 +217,11 @@ export class StructuredSessionManager extends EventEmitter {
     // Wire shape: a plain string is sent as `content: <string>` (the CLI's simplest
     // accepted shape, byte-identical to before); a block array is sent verbatim as
     // `content: [...blocks]` so a real image block reaches the model — it SEES the
-    // picture, not a "Attached file: …" path line. `source` is UI-only bookkeeping for the
-    // synthetic echo below — it must never reach the CLI's stdin (it would pollute the
-    // model's context with metadata about who's typing).
+    // picture, not a "Attached file: …" path line. `source` must never reach the CLI's
+    // stdin (it would pollute the model's context with metadata about who's typing) — it's
+    // only for the synthetic echo below (live UI) and, via `pendingSource`, for the durable
+    // persist a caller does once this turn's `result` resolves it to a real uuid (see the
+    // `result` handler above and sessions/service.ts's 'message-source' listener).
     this.write(terminalId, { type: 'user', message: { role: 'user', content } });
     // P0a: the CLI does NOT echo the user's turn back as an event, so buffer a
     // synthetic `user` event into the ring and emit it. Replay on ws reconnect then
@@ -220,6 +236,9 @@ export class StructuredSessionManager extends EventEmitter {
     if (s) {
       s.events.push(ev);
       if (s.events.length > MAX_EVENTS) s.events.shift();
+      // Always overwritten (even to undefined for an untagged send) so a stale tag from a
+      // prior turn can never leak onto this one's `result` resolution.
+      s.pendingSource = source;
     }
     this.emit('event', terminalId, ev);
     // Turn start: delivering a message kicks off work → the thread is busy.

@@ -6,6 +6,12 @@ function read(id: string): string {
   try { return localStorage.getItem(PREFIX + id) ?? ''; } catch { return ''; }
 }
 
+/** Remove a persisted draft from OUTSIDE a mounted useDraft(id) instance — e.g. a
+ * store action clearing a specific id's draft as part of a broader reset. */
+export function clearStoredDraft(id: string): void {
+  try { localStorage.removeItem(PREFIX + id); } catch { /* storage unavailable */ }
+}
+
 /**
  * An unsent text draft that survives a page reload. The PWA reloads on resume to
  * pick up new deploys (see watchForUpdates in main.tsx), and iOS evicts/reloads

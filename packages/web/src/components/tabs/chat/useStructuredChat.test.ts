@@ -186,6 +186,27 @@ test('result event populates the footer and clears busy', () => {
   expect(r).toMatchObject({ costUsd: 0.27, turns: 2, durationMs: 8500, tokensIn: 100, tokensOut: 200, isError: false });
 });
 
+test('a synthetic backfill result (completed revived thread) clears busy but appends no footer card', () => {
+  // Mirrors backfillEventsFromTranscript's replay for a thread that finished before a
+  // daemon restart: an assistant turn followed by the synthesized `subtype: 'backfill'`
+  // result (Claude Code transcripts never write a real trailing result line).
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'assistant', message: { content: [{ type: 'text', text: 'done' }] } }));
+  expect(result.current.busy).toBe(true);
+  act(() => cbs.onEvent({ type: 'result', subtype: 'backfill', is_error: false }));
+  expect(result.current.busy).toBe(false);
+  expect(result.current.items.find((i) => i.kind === 'result')).toBeUndefined();
+});
+
+test('a backfilled INTERRUPTED thread (dangling tool_use, no synthetic result) stays busy', () => {
+  // The server only synthesizes a backfill result for a completed tail — a thread that
+  // was mid-turn when the daemon restarted (dangling tool_use, no trailing result) must
+  // stay busy so kickstart-recovery, not this fix, is what resumes it.
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', id: 'tu-1', input: { command: 'ls' } }] } }));
+  expect(result.current.busy).toBe(true);
+});
+
 test('result flushes buffered trailing text before appending the footer (no lost tokens)', () => {
   const { result } = renderHook(() => useStructuredChat('t1'));
   act(() => cbs.onEvent({ type: 'stream_event', event: { type: 'message_start' } }));
@@ -392,6 +413,274 @@ test('a reconnect reset clears pending (stale question not re-shown before repla
   expect(result.current.pending).not.toBeNull();
   act(() => cbs.onReset?.());
   expect(result.current.pending).toBeNull();
+});
+
+// Drains every pending microtask (loadOlder chains .then().catch().finally(), so a single
+// `await Promise.resolve()` isn't enough to observe the settled state).
+async function flushAsync() {
+  await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+}
+
+test('loadOlder starts optimistic (hasMore=true, loadingOlder=false) before any fetch', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  expect(result.current.hasMore).toBe(true);
+  expect(result.current.loadingOlder).toBe(false);
+});
+
+test('loadOlder fetches the tail window (no `before`) on the first call, prepends items, and applies hasMore', async () => {
+  const spy = vi.spyOn(api, 'getConversation').mockResolvedValue({
+    items: [{ kind: 'user', text: 'older msg', uuid: 'u1', line: 5 }],
+    cursor: 50, startLine: 5, hasMore: true,
+  } as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => { result.current.loadOlder(); });
+  expect(result.current.loadingOlder).toBe(true);
+  await flushAsync();
+  expect(spy).toHaveBeenCalledWith('t1', { before: undefined, limit: 120 });
+  expect(result.current.loadingOlder).toBe(false);
+  expect(result.current.hasMore).toBe(true);
+  expect(result.current.items[0]).toMatchObject({ kind: 'user', text: 'older msg' });
+});
+
+test('a second loadOlder call anchors `before` on the previous response\'s startLine', async () => {
+  const spy = vi.spyOn(api, 'getConversation')
+    .mockResolvedValueOnce({ items: [{ kind: 'user', text: 'page1', uuid: 'p1', line: 40 }], cursor: 50, startLine: 40, hasMore: true } as any)
+    .mockResolvedValueOnce({ items: [{ kind: 'user', text: 'page2', uuid: 'p2', line: 20 }], cursor: 50, startLine: 20, hasMore: false } as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => { result.current.loadOlder(); });
+  await flushAsync();
+  act(() => { result.current.loadOlder(); });
+  await flushAsync();
+  expect(spy).toHaveBeenNthCalledWith(1, 't1', { before: undefined, limit: 120 });
+  expect(spy).toHaveBeenNthCalledWith(2, 't1', { before: 40, limit: 120 });
+  expect(result.current.hasMore).toBe(false);
+  // Prepended oldest-first: page2 (older) ends up above page1 (newer).
+  expect(result.current.items.map((i) => i.text)).toEqual(['page2', 'page1']);
+});
+
+test('loadOlder is a no-op while a fetch is already in flight (no concurrent duplicate request)', async () => {
+  let resolveFetch!: (v: unknown) => void;
+  const spy = vi.spyOn(api, 'getConversation').mockReturnValue(new Promise((r) => { resolveFetch = r; }) as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => { result.current.loadOlder(); });
+  act(() => { result.current.loadOlder(); }); // fires while the first is still pending
+  expect(spy).toHaveBeenCalledTimes(1);
+  resolveFetch({ items: [], cursor: 0, startLine: 0, hasMore: false });
+  await flushAsync();
+});
+
+test('loadOlder is a no-op once hasMore is false', async () => {
+  const spy = vi.spyOn(api, 'getConversation').mockResolvedValue({ items: [], cursor: 0, startLine: 0, hasMore: false } as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => { result.current.loadOlder(); });
+  await flushAsync();
+  expect(result.current.hasMore).toBe(false);
+  act(() => { result.current.loadOlder(); }); // hasMore is now false — must not re-fetch
+  expect(spy).toHaveBeenCalledTimes(1);
+});
+
+test('switching terminalId re-arms pagination and discards a stale in-flight older-page fetch', async () => {
+  let resolveFetch!: (v: unknown) => void;
+  vi.spyOn(api, 'getConversation').mockReturnValue(new Promise((r) => { resolveFetch = r; }) as any);
+  const { result, rerender } = renderHook(({ id }) => useStructuredChat(id), { initialProps: { id: 't1' } });
+  act(() => { result.current.loadOlder(); });
+  expect(result.current.loadingOlder).toBe(true);
+
+  rerender({ id: 't2' }); // switch threads before the t1 fetch resolves
+  expect(result.current.hasMore).toBe(true); // re-armed optimistic for the new thread
+  expect(result.current.loadingOlder).toBe(false);
+
+  // The stale t1 response lands late — it must NOT be applied to t2's state.
+  resolveFetch({ items: [{ kind: 'user', text: 'stale t1 page', uuid: 'stale', line: 0 }], cursor: 10, startLine: 0, hasMore: false });
+  await flushAsync();
+  expect(result.current.items.some((i) => i.text === 'stale t1 page')).toBe(false);
+  expect(result.current.loadingOlder).toBe(false);
+});
+
+test('a reconnect reset (onReset) re-arms pagination so a later loadOlder re-probes from the fresh tail', async () => {
+  const spy = vi.spyOn(api, 'getConversation').mockResolvedValue({ items: [], cursor: 0, startLine: 0, hasMore: false } as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => { result.current.loadOlder(); });
+  await flushAsync();
+  expect(result.current.hasMore).toBe(false); // exhausted before the reconnect
+
+  act(() => cbs.onReset?.());
+  expect(result.current.hasMore).toBe(true); // re-armed — a fresh replay may have new older content
+  expect(result.current.loadingOlder).toBe(false);
+
+  act(() => { result.current.loadOlder(); });
+  await flushAsync();
+  // The post-reset fetch re-probes the tail (no `before`), not the exhausted anchor.
+  expect(spy).toHaveBeenLastCalledWith('t1', { before: undefined, limit: 120 });
+});
+
+test('loadOlder dedups a page that overlaps content already rendered from the ws replay (no visible duplicate)', async () => {
+  // The live ws tail already rendered this turn — it carries no uuid/line (the live
+  // protocol has neither; see convItemFingerprint's doc comment).
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'assistant', message: { content: [{ type: 'text', text: 'recent turn' }] } }));
+  expect(result.current.items.map((i) => i.text)).toEqual(['recent turn']);
+
+  // The first loadOlder() call's REST window (before: undefined = newest) overlaps it.
+  vi.spyOn(api, 'getConversation').mockResolvedValue({
+    items: [
+      { kind: 'user', text: 'genuinely older', uuid: 'u1', ts: '2024-01-01T00:00:00Z', line: 3 },
+      { kind: 'assistant', text: 'recent turn', uuid: 'u2', ts: '2024-01-01T00:00:01Z', line: 4 },
+    ],
+    cursor: 50, startLine: 3, hasMore: true,
+  } as any);
+  act(() => { result.current.loadOlder(); });
+  await flushAsync();
+
+  // Only the genuinely-new item is prepended; the duplicate is dropped, not shown twice.
+  expect(result.current.items.map((i) => i.text)).toEqual(['genuinely older', 'recent turn']);
+});
+
+test('loadOlder still advances the anchor/hasMore when an ENTIRE page duplicates existing items (no stall)', async () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'assistant', message: { content: [{ type: 'text', text: 'dup' }] } }));
+
+  const spy = vi.spyOn(api, 'getConversation').mockResolvedValueOnce({
+    items: [{ kind: 'assistant', text: 'dup', uuid: 'u1', ts: 't', line: 1 }],
+    cursor: 50, startLine: 1, hasMore: true,
+  } as any);
+  act(() => { result.current.loadOlder(); });
+  await flushAsync();
+  // No visible duplicate was appended…
+  expect(result.current.items).toHaveLength(1);
+  expect(result.current.hasMore).toBe(true);
+
+  // …but the anchor moved past the duplicate page, so the NEXT call reaches strictly-older
+  // content instead of re-fetching the same exhausted window forever.
+  spy.mockResolvedValueOnce({ items: [], cursor: 50, startLine: 1, hasMore: false } as any);
+  act(() => { result.current.loadOlder(); });
+  await flushAsync();
+  expect(spy).toHaveBeenLastCalledWith('t1', { before: 1, limit: 120 });
+  expect(result.current.hasMore).toBe(false);
+});
+
+// ---- BUG 1 (archived agent shows an empty chat) -----------------------------------------
+// ws/structured.ts sends `{ type: 'system', subtype: 'inactive' }` before replay when no
+// live process backs the thread (see service.ts's ensureStructuredAlive, which correctly
+// never revives an archived terminal). The ws replay then has nothing to send — without a
+// fallback, `items` stays `[]` forever and the view is stuck on EmptyState even though the
+// full conversation exists on disk.
+
+test("BUG 1 regression: a 'system'/'inactive' signal hydrates the initial view from the REST transcript instead of staying empty", async () => {
+  const spy = vi.spyOn(api, 'getConversation').mockResolvedValue({
+    items: [
+      { kind: 'user', text: 'from disk', uuid: 'u1', line: 10 },
+      { kind: 'assistant', text: 'reply', uuid: 'u2', line: 11 },
+    ],
+    cursor: 50, startLine: 10, hasMore: true,
+  } as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  expect(result.current.items).toHaveLength(0);
+  act(() => cbs.onEvent({ type: 'system', subtype: 'inactive' }));
+  expect(result.current.loadingOlder).toBe(true);
+  await flushAsync();
+  expect(spy).toHaveBeenCalledWith('t1', { limit: 120 });
+  expect(result.current.items.map((i) => i.text)).toEqual(['from disk', 'reply']);
+  expect(result.current.hasMore).toBe(true);
+  expect(result.current.loadingOlder).toBe(false);
+});
+
+test('the inactive hydration only fires once (no duplicate fetch from a second signal)', async () => {
+  const spy = vi.spyOn(api, 'getConversation').mockResolvedValue({ items: [], cursor: 0, startLine: 0, hasMore: false } as any);
+  renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'inactive' }));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'inactive' }));
+  await flushAsync();
+  expect(spy).toHaveBeenCalledTimes(1);
+});
+
+test('the inactive hydration does not clobber items a live event already populated first', async () => {
+  let resolveFetch!: (v: unknown) => void;
+  vi.spyOn(api, 'getConversation').mockReturnValue(new Promise((r) => { resolveFetch = r; }) as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'inactive' }));
+  // A live event lands before the REST fetch resolves (e.g. the thread was revived
+  // elsewhere right as this signal was in flight) — it must win over a stale REST page.
+  act(() => cbs.onEvent({ type: 'assistant', message: { content: [{ type: 'text', text: 'live wins' }] } }));
+  resolveFetch({ items: [{ kind: 'user', text: 'stale disk read', uuid: 'u1', line: 0 }], cursor: 5, startLine: 0, hasMore: false });
+  await flushAsync();
+  expect(result.current.items.map((i) => i.text)).toEqual(['live wins']);
+});
+
+// ---- BUG 2 (tool rows render above the prompt that kicked off the agent) ----------------
+// Root fix: the ws fold and the REST/transcript parser now share Claude Code's own
+// per-message-block `uuid` (threaded onto ConvItems in the 'assistant'/'user' handlers
+// above), so loadOlder's dedup can match real identity instead of a lossy content
+// fingerprint that a tool item's asymmetric shape (toolId presence, toolInput formatting)
+// defeats.
+
+test('BUG 2 regression: loadOlder dedups a tool item via shared uuid identity even though its toolId/toolInput formatting differs between ws and REST', async () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  // ws already rendered a prompt, then a tool call — the RICH ws shape (real toolId,
+  // pretty-JSON toolInput from the whole-assistant-event reconcile).
+  act(() => cbs.onEvent({ type: 'user', uuid: 'u-prompt', message: { role: 'user', content: [{ type: 'text', text: 'run ls' }] } }));
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'u-tool', message: { content: [{ type: 'tool_use', name: 'Bash', id: 'tu-1', input: { command: 'ls -la' } }] } }));
+  expect(result.current.items.map((i) => i.kind)).toEqual(['user', 'tool']);
+
+  // The first loadOlder() call's REST window overlaps: the SAME two turns, but shaped like
+  // conversation/transcript.ts's parser — no toolId at all, and Bash's toolInput is the bare
+  // command string (transcript.ts's toolInputString), not pretty JSON. A content fingerprint
+  // (kind+toolId+toolName+text+toolInput) would NOT match this pair — that mismatch was the
+  // actual bug (the "fresh" REST tool row got prepended ABOVE the already-deduped prompt).
+  vi.spyOn(api, 'getConversation').mockResolvedValue({
+    items: [
+      { kind: 'user', text: 'run ls', uuid: 'u-prompt', line: 4 },
+      { kind: 'tool', toolName: 'Bash', toolInput: 'ls -la', uuid: 'u-tool', line: 5 },
+    ],
+    cursor: 10, startLine: 4, hasMore: false,
+  } as any);
+  act(() => { result.current.loadOlder(); });
+  await flushAsync();
+
+  // No duplicate tool row above the prompt — order is exactly as originally ws-rendered,
+  // and the richer ws-side tool item (real toolId) is what's kept, not overwritten.
+  expect(result.current.items.map((i) => i.kind)).toEqual(['user', 'tool']);
+  expect(result.current.items.find((i) => i.kind === 'tool')?.toolId).toBe('tu-1');
+});
+
+test('streaming mode: the whole-assistant reconcile event upgrades a text item\'s synthetic block key to the real transcript uuid', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'stream_event', event: { type: 'message_start' } }));
+  act(() => cbs.onEvent(start(0, { type: 'text' })));
+  act(() => cbs.onEvent(textDelta(0, 'hello')));
+  drainRaf();
+  const before = result.current.items.find((i) => i.kind === 'assistant');
+  expect(before?.uuid).toMatch(/^s-/); // synthetic per-block streaming key, before the reconcile lands
+
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'real-uuid-1', message: { content: [{ type: 'text', text: 'hello' }] } }));
+  const after = result.current.items.find((i) => i.kind === 'assistant');
+  expect(after?.uuid).toBe('real-uuid-1'); // upgraded to the real identity
+  expect(after?.text).toBe('hello'); // content itself untouched by the upgrade
+});
+
+test('streaming mode: a reconciled tool item gets its synthetic key upgraded to the real uuid alongside the toolInput reconcile', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'stream_event', event: { type: 'message_start' } }));
+  act(() => cbs.onEvent(start(0, { type: 'tool_use', name: 'Read', id: 'tu-1' })));
+  act(() => cbs.onEvent(jsonDelta(0, '{"file_path":"/a.ts"}')));
+  flushRaf();
+  const before = result.current.items.find((i) => i.kind === 'tool');
+  expect(before?.uuid).toMatch(/^s-/);
+
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'real-uuid-2', message: { content: [{ type: 'tool_use', name: 'Read', id: 'tu-1', input: { file_path: '/a.ts' } }] } }));
+  const after = result.current.items.find((i) => i.kind === 'tool');
+  expect(after?.uuid).toBe('real-uuid-2');
+  expect(after?.toolInput).toContain('/a.ts'); // the pre-existing toolInput reconcile still happens too
+  expect(result.current.items.filter((i) => i.kind === 'tool')).toHaveLength(1); // no duplicate appended
+});
+
+test("loadOlder's first call anchors on the oldest rendered item's uuid (beforeUuid), not just before:undefined", async () => {
+  const spy = vi.spyOn(api, 'getConversation').mockResolvedValue({ items: [], cursor: 0, startLine: 0, hasMore: false } as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'u-oldest', message: { content: [{ type: 'text', text: 'oldest rendered' }] } }));
+  act(() => { result.current.loadOlder(); });
+  await flushAsync();
+  expect(spy).toHaveBeenCalledWith('t1', { before: undefined, beforeUuid: 'u-oldest', limit: 120 });
 });
 
 test('resolves a PATH-form image via the byte route ONLY when sessionId is wired (BUG 2)', () => {

@@ -49,6 +49,14 @@ export interface AuthRequest {
   updatedAt: string;
 }
 
+export interface UpdateState {
+  available: boolean;
+  version: string | null;
+  url: string | null;
+  publishedAt: string | null;
+  currentVersion: string;
+}
+
 export interface SessionStats {
   found: boolean;
   model?: string;

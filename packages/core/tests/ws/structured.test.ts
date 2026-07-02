@@ -69,3 +69,32 @@ it("bounds replay to the last N events when `?tail=N` is present", () => {
   expect(JSON.stringify(seeded[0])).toContain('msg-25');
   expect(JSON.stringify(seeded[4])).toContain('msg-29');
 });
+
+// BUG 1 regression (archived agent shows an empty chat): onConnect returning false means no
+// live process backs this thread (e.g. service.ts's ensureStructuredAlive correctly refuses
+// to revive an archived terminal) — the ring buffer has nothing to replay and never will, so
+// the client needs an explicit signal to hydrate from the REST transcript instead of sitting
+// on an empty view forever. See useStructuredChat's 'system'/'inactive' handler.
+it("sends a 'system'/'inactive' sentinel BEFORE replay when onConnect reports no live process", () => {
+  const ws = fakeWs();
+  handleStructuredConnection(ws as any, { url: '/api/terminals/t1/structured-ws' } as any, m, () => false);
+  expect(ws.sent[0]).toEqual({ type: 'system', subtype: 'inactive' });
+});
+
+it("sends no 'inactive' sentinel when onConnect reports the process is alive (already alive or revived)", () => {
+  const ws = fakeWs();
+  handleStructuredConnection(ws as any, { url: '/api/terminals/t1/structured-ws' } as any, m, () => true);
+  expect(ws.sent.some((e) => e.type === 'system' && e.subtype === 'inactive')).toBe(false);
+});
+
+it('sends no inactive sentinel when no onConnect hook is supplied (defaults to alive, back-compat)', () => {
+  const ws = fakeWs();
+  handleStructuredConnection(ws as any, { url: '/api/terminals/t1/structured-ws' } as any, m);
+  expect(ws.sent.some((e) => e.type === 'system' && e.subtype === 'inactive')).toBe(false);
+});
+
+it("a throwing onConnect is treated as best-effort-alive (no inactive sentinel, replay still attempted)", () => {
+  const ws = fakeWs();
+  handleStructuredConnection(ws as any, { url: '/api/terminals/t1/structured-ws' } as any, m, () => { throw new Error('boom'); });
+  expect(ws.sent.some((e) => e.type === 'system' && e.subtype === 'inactive')).toBe(false);
+});

@@ -163,9 +163,13 @@ export function terminalToAgentThread(t: Terminal, s?: LiveStatus): AgentThread 
   // `model`. Undefined for a still-working agent or one that finished before this field
   // existed; WorkRail only renders it when present.
   const totalTokens = typeof t.config?.totalTokens === 'number' ? t.config.totalTokens : undefined;
+  // Tokens the agent actually generated (excludes cache-read/cache-write/input) — persisted
+  // alongside totalTokens; the Done card renders THIS, since the cumulative figure is
+  // dominated by repeated cache-read tokens and doesn't reflect "how much work it did".
+  const outputTokens = typeof t.config?.outputTokens === 'number' ? t.config.outputTokens : undefined;
   // dlabel is the drill-in / data-label name; keep it the agent's own name so the rail and
   // the opened WorkerLightbox agree on identity.
-  return { ...base, key: t.id, dlabel: name, model, totalTokens };
+  return { ...base, key: t.id, dlabel: name, model, totalTokens, outputTokens };
 }
 
 function terminalToOutcome(t: Terminal): Outcome {
@@ -173,7 +177,13 @@ function terminalToOutcome(t: Terminal): Outcome {
   // Outcome cards are entries too → title with the agent's own name, not the mission.
   const title = at.dlabel || at.action || `${at.typeLabel} task`;
   const meta = at.elapsed ? `done · ${at.elapsed} ago` : 'done';
-  return { ...outc(at.type, at.id, title, meta), key: t.id, model: at.model, totalTokens: at.totalTokens };
+  return {
+    ...outc(at.type, at.id, title, meta),
+    key: t.id,
+    model: at.model,
+    totalTokens: at.totalTokens,
+    outputTokens: at.outputTokens,
+  };
 }
 
 function summaryText(live: number, done: number): string {
@@ -249,26 +259,76 @@ function agentCardMessage(
   };
 }
 
+/** An answered AskUserQuestion tool_use/tool_result pair → an answeredQuestion StreamMessage.
+ * Mirrors imageMessage/agentCardMessage's shape: constructed inline (not via the m() factory,
+ * which only knows text kinds) so it stays disjoint from data.ts. */
+function answeredQuestionMessage(questions: PermissionQuestion[], resultText: string, key: string): StreamMessage {
+  return {
+    kind: 'answeredQuestion',
+    who: null,
+    text: '',
+    time: '',
+    key,
+    isUser: false,
+    isOverseer: false,
+    isNote: false,
+    isAnsweredQuestion: true,
+    questions,
+    resultText,
+  };
+}
+
+// Stable fallback key for a ConvItem with no `uuid` (e.g. a plain 'user'/'assistant' item
+// built by useStructuredChat's non-streaming reconcile path). Keyed by OBJECT IDENTITY, not
+// array index: loadOlder() prepends an older page in FRONT of existing items, shifting every
+// later index — an index-derived key would then force React to unmount+remount that
+// StreamMessage's node on every page, breaking MessageScroller's preserveScrollOnPrepend
+// (it tracks the reader's scroll anchor by DOM node identity). Item objects are never
+// mutated in place after creation, so a WeakMap-cached key stays attached to the same
+// logical item for its whole life in `items` (mirrors ChatView.tsx's stableId).
+let fallbackKeyCounter = 0;
+const fallbackKeys = new WeakMap<ConvItem, string>();
+function stableKey(it: ConvItem): string {
+  if (it.uuid) return it.uuid;
+  let key = fallbackKeys.get(it);
+  if (!key) { key = `fallback-${++fallbackKeyCounter}`; fallbackKeys.set(it, key); }
+  return key;
+}
+
 /** The coordinator conversation (ConvItem timeline) → the Overseer message stream. */
 export function convItemsToStream(items: ConvItem[]): StreamMessage[] {
   const out: StreamMessage[] = [];
   // Pairs an agent tool_use (by toolId) with its later tool_result — tool calls always
   // precede their result in the timeline, so a single forward pass suffices.
   const pendingCalls = new Map<string, { toolName: string; args: Record<string, unknown> }>();
+  // Same pairing, for the coordinator's OWN AskUserQuestion tool_use/tool_result — kept
+  // separate from pendingCalls (a different StreamMessage shape) though never the same toolId.
+  const pendingQuestions = new Map<string, PermissionQuestion[]>();
   // agentId -> the name/type/mission resolved from a successful spawn_agent/queue_agent in
   // THIS window, so a later message_agent/start_agent card (whose args are just agentId+text)
   // can still show a real name/icon instead of a bare id.
   const knownAgents = new Map<string, { name: string; agentType: AgentType; mission?: string }>();
 
-  items.forEach((it, i) => {
-    const key = it.uuid ?? `c${i}`;
+  items.forEach((it) => {
+    const key = stableKey(it);
     if (it.kind === 'user' && it.text?.trim()) out.push(m('user', 'You', it.text, '', key));
-    else if (it.kind === 'assistant' && it.text?.trim()) out.push(m('overseer', 'Dispatch', it.text, '', key));
+    else if (it.kind === 'assistant' && it.text?.trim()) out.push(m('overseer', 'Control Plane', it.text, '', key));
     else if (it.kind === 'image' && it.imageUrl) out.push(imageMessage(it.imageUrl, it.imageAlt, key, it.imageFromUser === true));
-    else if (it.kind === 'tool' && it.toolId && it.toolName && AGENT_TOOL_ACTION[it.toolName]) {
+    else if (it.kind === 'tool' && it.toolId && it.toolName === 'AskUserQuestion') {
+      try {
+        const input = it.toolInput ? JSON.parse(it.toolInput) : {};
+        if (Array.isArray(input.questions)) pendingQuestions.set(it.toolId, input.questions);
+      } catch { /* still streaming / malformed input */ }
+    } else if (it.kind === 'tool' && it.toolId && it.toolName && AGENT_TOOL_ACTION[it.toolName]) {
       let args: Record<string, unknown> = {};
       try { args = it.toolInput ? JSON.parse(it.toolInput) : {}; } catch { /* still streaming / malformed input */ }
       pendingCalls.set(it.toolId, { toolName: it.toolName, args });
+    } else if (it.kind === 'tool-result' && it.toolId && pendingQuestions.has(it.toolId)) {
+      // The coordinator's own AskUserQuestion just got its (durable, transcript-backed)
+      // answer — render the collapsed record instead of dropping the pair silently, which
+      // is what happened before this branch existed (nothing here ever matched a
+      // 'tool'/AskUserQuestion or its paired 'tool-result', so both fell through unhandled).
+      out.push(answeredQuestionMessage(pendingQuestions.get(it.toolId)!, it.text ?? '', `aq${key}`));
     } else if (it.kind === 'tool-result' && it.toolId && !it.isError) {
       const call = pendingCalls.get(it.toolId);
       if (!call) return; // no matching tool_use in this window (e.g. trimmed backlog)

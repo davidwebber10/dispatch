@@ -47,6 +47,15 @@ const MAX_BACKFILL_BYTES = 16 * 1024 * 1024;
  * content blocks, which the View already renders) and drops bookkeeping entries
  * (summaries, injected `isMeta` context, sub-agent `isSidechain` lines). Returns at
  * most `limit` entries, newest-trimmed. Never throws.
+ *
+ * Each entry's `uuid` (Claude Code's own per-line message id — present on both this
+ * on-disk transcript AND the live CLI's stream-json stdout, verified against a real
+ * captured session) is threaded through onto the emitted event when present, so a
+ * client folding these backfilled events sees the SAME identity it would from a live
+ * ws replay or a REST/transcript-parsed page (see conversation/transcript.ts, which
+ * attaches the identical field). That shared identity is what lets the web client
+ * dedup/anchor a REST page against an already-rendered ws tail by real message
+ * identity instead of a lossy content fingerprint.
  */
 export function backfillEventsFromTranscript(text: string, limit = 2000): unknown[] {
   const out: unknown[] = [];
@@ -65,9 +74,18 @@ export function backfillEventsFromTranscript(text: string, limit = 2000): unknow
       : Array.isArray(content) ? content.length > 0
       : false;
     if (!hasContent) continue;
-    out.push({ type: o.type, message: msg });
+    out.push(typeof o.uuid === 'string' ? { type: o.type, message: msg, uuid: o.uuid } : { type: o.type, message: msg });
   }
-  return out.length > limit ? out.slice(out.length - limit) : out;
+  const capped = out.length > limit ? out.slice(out.length - limit) : out;
+  const tail = capped[capped.length - 1] as { type: string; message: unknown } | undefined;
+  if (tail && tail.type === 'assistant' && !messageHasToolUse(tail.message)) {
+    // Claude Code transcripts never write a trailing `result` line, so a revived thread's
+    // ring buffer would otherwise end on `assistant` with nothing to clear the client's
+    // `busy` flag. Synthesize one purely for that signal; the client recognizes
+    // subtype:'backfill' and swallows it before it reaches the rendered timeline.
+    capped.push({ type: 'result', subtype: 'backfill', is_error: false });
+  }
+  return capped;
 }
 
 /**
@@ -87,6 +105,61 @@ export function readSessionBackfill(workDir: string, sessionId: string, limit = 
   } catch {
     return [];
   }
+}
+
+/**
+ * The newest 'user' transcript-line uuid carrying REAL text content (not a bare
+ * tool_result, which is also written as a `type: 'user'` line) that ISN'T already in
+ * `excludeUuids`. Used right after a turn's `result` fires (see structured/manager.ts's
+ * 'message-source' emit + sessions/service.ts's listener) to identify the uuid Claude Code
+ * just assigned to the human/coordinator turn that started it — the CLI never echoes that
+ * uuid back over stdout, so a fresh disk read is the only way to learn it. Scans the WHOLE
+ * transcript (cheap: this runs against the same files backfill already reads whole) and
+ * keeps the LAST match, since `excludeUuids` only screens out turns already resolved.
+ * Returns undefined on any error (missing file, no match) — resolution is best-effort.
+ */
+export function findNewestUnresolvedUserUuid(workDir: string, sessionId: string, excludeUuids: Set<string>): string | undefined {
+  try {
+    const encoded = workDir.replace(/\//g, '-');
+    const file = path.join(os.homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
+    const text = fs.readFileSync(file, 'utf-8');
+    let found: string | undefined;
+    for (const line of text.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let o: any;
+      try { o = JSON.parse(trimmed); } catch { continue; } // partial/garbled line
+      if (!o || o.type !== 'user' || o.isMeta || o.isSidechain || typeof o.uuid !== 'string') continue;
+      if (excludeUuids.has(o.uuid)) continue;
+      const content = o.message?.content;
+      const hasRealText = typeof content === 'string' ? content.trim().length > 0
+        : Array.isArray(content) ? content.some((b: any) => b?.type === 'text' && typeof b.text === 'string' && b.text.trim().length > 0)
+        : false;
+      if (hasRealText) found = o.uuid; // keep scanning — we want the newest match
+    }
+    return found;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Merge durably-stored `source` tags (keyed by transcript uuid — see db/message-source.ts)
+ * back onto backfilled events. backfillEventsFromTranscript's output never carries `meta`
+ * (the on-disk transcript has no such field — only the live in-memory echo did, gone once
+ * the CLI process exits), so a revived/re-hydrated thread loses the "via Dispatch" badge
+ * unless this runs. Pure — the caller resolves `sourceByUuid` from SQLite. Leaves events
+ * with no matching uuid untouched (graceful degradation for untagged/legacy turns).
+ */
+export function applyDurableSources(events: unknown[], sourceByUuid: Map<string, string>): unknown[] {
+  if (!sourceByUuid.size) return events;
+  return events.map((e) => {
+    const o = e as any;
+    if (o?.type === 'user' && typeof o.uuid === 'string' && sourceByUuid.has(o.uuid)) {
+      return { ...o, meta: { ...(o.meta ?? {}), source: sourceByUuid.get(o.uuid) } };
+    }
+    return e;
+  });
 }
 
 export interface TranscriptTokenStats {
@@ -114,6 +187,10 @@ export function sumTranscriptTokens(raw: string): TranscriptTokenStats {
   let outputTokens = 0;
   let cacheReadTokens = 0;
   let cacheCreationTokens = 0;
+  // Claude Code writes one JSONL line per content block (thinking/text/tool_use) within a
+  // single assistant message, repeating the identical whole-message `usage` on every line.
+  // Dedup by message.id so a message split across N lines is only counted once.
+  const seenMessageIds = new Set<string>();
 
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
@@ -121,7 +198,12 @@ export function sumTranscriptTokens(raw: string): TranscriptTokenStats {
       const entry = JSON.parse(line);
       const msg = entry.message;
       if (!msg || typeof msg !== 'object') continue;
+      if (msg.model && msg.model !== '<synthetic>') model = msg.model;
       if (msg.usage) {
+        if (msg.id) {
+          if (seenMessageIds.has(msg.id)) continue;
+          seenMessageIds.add(msg.id);
+        }
         const u = msg.usage;
         inputTokens += u.input_tokens || 0;
         outputTokens += u.output_tokens || 0;
@@ -129,7 +211,6 @@ export function sumTranscriptTokens(raw: string): TranscriptTokenStats {
         cacheCreationTokens += u.cache_creation_input_tokens || 0;
         messageCount++;
       }
-      if (msg.model && msg.model !== '<synthetic>') model = msg.model;
     } catch { /* partial/garbled line */ }
   }
 

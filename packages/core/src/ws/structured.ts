@@ -9,12 +9,22 @@ export function handleStructuredConnection(
   manager: StructuredSessionManager,
   // Hook that lazily revives a thread that died on a daemon restart BEFORE we replay
   // its buffered events — so the resume's history backfill is already in the ring.
-  onConnect?: (terminalId: string) => void,
+  // Returns whether a live process now backs the thread (true if already alive, or
+  // successfully revived); false for e.g. an archived thread, which is deliberately
+  // never revived (see service.ts's ensureStructuredAlive).
+  onConnect?: (terminalId: string) => boolean | void,
 ): void {
   const m = req.url?.match(/\/api\/terminals\/([^/]+)\/structured-ws/);
   const id = m?.[1];
   if (!id) { ws.close(4000, 'Invalid URL'); return; }
-  try { onConnect?.(id); } catch { /* resume is best-effort; still replay whatever's buffered */ }
+  let alive = true;
+  try { alive = onConnect?.(id) ?? true; } catch { /* resume is best-effort; still replay whatever's buffered */ }
+  // BUG 1 fix: no live process ⇒ nothing buffered to replay and nothing ever will be — tell
+  // the client so it can hydrate its initial view from the REST transcript endpoint instead
+  // of sitting on an empty EmptyState forever (see useStructuredChat's 'system'/'inactive'
+  // handler). A thread that's merely queued (not yet started) also reports inactive here;
+  // that's fine — its REST fallback correctly finds nothing either, same as today.
+  if (!alive && ws.readyState === 1) ws.send(JSON.stringify({ type: 'system', subtype: 'inactive' }));
   // Replay buffered events, then stream live. A `tail=N` query param bounds replay to the
   // last N ring events instead of the full history — on a long thread (1000+ events) folding
   // every one into a non-virtualized list is what makes chat-open take ~10s; the CLI session

@@ -301,7 +301,7 @@ function OutcomeCard({ outcome }: { outcome: Outcome }) {
         </span>
         <span style={{ fontFamily: 'var(--mono)', fontSize: 9.5, color: 'var(--tt)' }}>
           {outcome.typeLabel} #{outcome.id} · {outcome.meta}
-          {outcome.totalTokens !== undefined && ` · ${formatTokens(outcome.totalTokens)}`}
+          {outcome.outputTokens !== undefined && ` · ${formatTokens(outcome.outputTokens)}`}
         </span>
       </div>
 
@@ -480,7 +480,7 @@ function EmptyMissions() {
       <p style={{ fontSize: 13, color: 'var(--ts)', lineHeight: 1.5, margin: 0 }}>
         No missions yet.
         <br />
-        Tell Dispatch what to work on.
+        Tell Control Plane what to work on.
       </p>
     </div>
   );

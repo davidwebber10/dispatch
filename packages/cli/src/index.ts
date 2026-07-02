@@ -76,9 +76,12 @@ export function runCommand(argv: string[], ctx: Ctx): void {
     case 'tools':
       cmdTools(ctx, rest);
       return;
+    case 'release':
+      cmdRelease(ctx, rest);
+      return;
     default:
       throw new Error(
-        `usage: dispatch <build|install|uninstall|start|stop|restart|status|update|run|logs|tools>`,
+        `usage: dispatch <build|install|uninstall|start|stop|restart|status|update|run|logs|tools|release>`,
       );
   }
 }
@@ -156,6 +159,94 @@ function cmdUpdate(ctx: Ctx): void {
 function cmdRun(ctx: Ctx): void {
   const env = { ...process.env, PORT: String(ctx.port), ...(ctx.env ?? {}) };
   spawnSync(ctx.nodePath ?? process.execPath, [ctx.entry ?? ''], { stdio: 'inherit', env });
+}
+
+/**
+ * `dispatch release [version]` — tag + push + cut a GitHub release.
+ * Requires the working tree to be clean and HEAD to be on main and in sync with origin/main.
+ * If no version is provided, bumps the patch number of the latest v* tag (or reads
+ * from package.json if no tags exist). Delegates tagging/push/release to git and gh.
+ */
+function cmdRelease(ctx: Ctx, args: string[]): void {
+  const shellOpt = ctx.platformId === 'win32' ? { shell: true } : {};
+  const repoRoot = ctx.repoRoot ?? process.cwd();
+
+  // 1. Require gh CLI.
+  const ghCheck = spawnSync('gh', ['--version'], { encoding: 'utf-8', ...shellOpt });
+  if (ghCheck.status !== 0) {
+    throw new Error('gh CLI not found — install: https://cli.github.com');
+  }
+
+  // 2. Working tree must be clean.
+  const statusOut = execFileSync('git', ['status', '--porcelain'],
+    { cwd: repoRoot, encoding: 'utf-8', ...shellOpt });
+  if (statusOut.trim() !== '') {
+    throw new Error('Working tree has uncommitted changes — commit or stash before releasing.');
+  }
+
+  // 3. Must be on main.
+  const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'],
+    { cwd: repoRoot, encoding: 'utf-8', ...shellOpt }).trim();
+  if (branch !== 'main') {
+    throw new Error(`Releases must be cut from main (currently on '${branch}').`);
+  }
+
+  // 4. Fetch origin main --tags.
+  try {
+    execFileSync('git', ['fetch', 'origin', 'main', '--tags'],
+      { cwd: repoRoot, stdio: 'inherit', ...shellOpt });
+  } catch {
+    throw new Error('git fetch origin main --tags failed.');
+  }
+
+  // 5. Sync check: HEAD must equal origin/main.
+  const localHead = execFileSync('git', ['rev-parse', 'HEAD'],
+    { cwd: repoRoot, encoding: 'utf-8', ...shellOpt }).trim();
+  const remoteHead = execFileSync('git', ['rev-parse', 'origin/main'],
+    { cwd: repoRoot, encoding: 'utf-8', ...shellOpt }).trim();
+  if (localHead !== remoteHead) {
+    throw new Error(
+      `Local main (${localHead}) differs from origin/main (${remoteHead}). Push or pull first, then retry.`,
+    );
+  }
+
+  // 6. Determine version.
+  let version = args[0] ?? '';
+  if (!version) {
+    const tagsOut = execFileSync('git', ['tag', '-l', 'v*', '--sort=-v:refname'],
+      { cwd: repoRoot, encoding: 'utf-8', ...shellOpt });
+    const lastTag = tagsOut.split('\n').map(l => l.trim()).filter(Boolean)[0] ?? '';
+    if (!lastTag) {
+      // No tags — read version from package.json.
+      const pkgJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf-8')) as { version: string };
+      version = 'v' + pkgJson.version;
+    } else {
+      // Bump patch of the last tag.
+      const withoutV = lastTag.slice(1); // e.g. "1.2.3"
+      const parts = withoutV.split('.');
+      const patch = parseInt(parts[2] ?? '0', 10);
+      version = `v${parts[0]}.${parts[1]}.${patch + 1}`;
+    }
+  }
+  if (!version.startsWith('v')) {
+    version = 'v' + version;
+  }
+
+  // 7. Ensure tag does not already exist.
+  const tagCheck = spawnSync('git', ['rev-parse', version],
+    { cwd: repoRoot, encoding: 'utf-8', ...shellOpt });
+  if (tagCheck.status === 0) {
+    throw new Error(`Tag ${version} already exists.`);
+  }
+
+  // 8. Tag, push, release.
+  execFileSync('git', ['tag', '-a', version, '-m', version],
+    { stdio: 'inherit', cwd: repoRoot, ...shellOpt });
+  execFileSync('git', ['push', 'origin', version],
+    { stdio: 'inherit', cwd: repoRoot, ...shellOpt });
+  execFileSync('gh', ['release', 'create', version, '--repo', 'davidwebber10/dispatch', '--generate-notes'],
+    { stdio: 'inherit', cwd: repoRoot, ...shellOpt });
+  console.log(`Released ${version}.`);
 }
 
 /** Returns the last `n` lines of `content`. Pure helper — no I/O, cross-platform. */

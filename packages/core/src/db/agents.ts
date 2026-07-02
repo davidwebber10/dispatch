@@ -274,6 +274,19 @@ export function attachTerminal(db: Database.Database, runId: string, terminalId:
   return getRun(db, runId);
 }
 
+/**
+ * Null out the terminal reference on every run whose terminal belongs to a
+ * session. Callers hard-delete a session's terminals on archive; the
+ * agent_runs.terminal_id FK (with foreign_keys ON) would otherwise block that
+ * delete. Runs keep their project_id and history — only the dead terminal
+ * pointer is cleared.
+ */
+export function clearTerminalRefsBySession(db: Database.Database, sessionId: string): void {
+  db.prepare(
+    'UPDATE agent_runs SET terminal_id = NULL, updated_at = ? WHERE terminal_id IN (SELECT id FROM terminals WHERE session_id = ?)',
+  ).run(nowIso(), sessionId);
+}
+
 export function updateRunStatus(
   db: Database.Database,
   runId: string,

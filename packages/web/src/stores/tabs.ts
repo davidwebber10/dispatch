@@ -43,9 +43,9 @@ export const dispatchTabId = (sessionId: string): string => `${DISPATCH_PREFIX}$
 export const isDispatchTab = (id: string | null | undefined): boolean => !!id && id.startsWith(DISPATCH_PREFIX);
 export const dispatchSessionId = (id: string): string => id.slice(DISPATCH_PREFIX.length);
 
-/** Display label for a tab id — 'Dispatch' for the virtual tab, else the terminal's label. */
+/** Display label for a tab id — 'Control Plane' for the virtual tab, else the terminal's label. */
 export function tabLabel(id: string, byProject: Record<string, Terminal[]>): string {
-  if (isDispatchTab(id)) return 'Dispatch';
+  if (isDispatchTab(id)) return 'Control Plane';
   return findTerminal(byProject, id)?.label ?? 'tab';
 }
 

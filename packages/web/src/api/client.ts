@@ -1,4 +1,4 @@
-import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus, PendingPermission } from './types';
+import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus, PendingPermission, UpdateState } from './types';
 
 /**
  * A content block for a structured `user` turn (mirrors the daemon's wire shape). A
@@ -43,10 +43,11 @@ export const api = {
   recentCodexSessions: (sessionId: string) => req<CodexRecentSession[]>(`/api/sessions/${sessionId}/codex-recent`),
   branchTerminal: (terminalId: string) => req<Terminal>(`/api/terminals/${terminalId}/branch`, { method: 'POST' }),
   getTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}`),
-  getConversation: (id: string, params: { since?: number; before?: number; limit?: number } = {}) => {
+  getConversation: (id: string, params: { since?: number; before?: number; beforeUuid?: string; limit?: number } = {}) => {
     const q = new URLSearchParams();
     if (params.since != null) q.set('since', String(params.since));
     if (params.before != null) q.set('before', String(params.before));
+    if (params.beforeUuid != null) q.set('beforeUuid', params.beforeUuid);
     if (params.limit != null) q.set('limit', String(params.limit));
     const qs = q.toString();
     return req<Conversation>(`/api/terminals/${id}/conversation${qs ? `?${qs}` : ''}`);
@@ -199,4 +200,13 @@ export const api = {
   completeAuth: (id: string) => req<AuthRequest>(`/api/auth-requests/${id}/complete`, { method: 'POST' }),
   forwardAuthCallback: (id: string, url: string) =>
     req<AuthRequest>(`/api/auth-requests/${id}/callback`, { method: 'POST', body: body({ url }) }),
+
+  // Auto-updater
+  getUpdateState: () => req<UpdateState>('/api/state/update'),
+  // Bespoke (not `req()`): a 409 preflight failure is a meaningful { ok: false, reason }
+  // payload the banner needs to render, not an exception to throw away.
+  applyUpdate: async () => {
+    const res = await fetch('/api/update/apply', { method: 'POST' });
+    return (await res.json()) as { ok: boolean; reason?: string };
+  },
 };
