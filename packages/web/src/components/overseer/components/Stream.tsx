@@ -572,7 +572,7 @@ export function ConversationStream() {
           style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', visibility: ready || hasPendingQuestion ? 'visible' : 'hidden' }}
         >
           <MessageScroller.Viewport preserveScrollOnPrepend onScroll={onViewportScroll} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
-            <MessageScroller.Content style={{ maxWidth: 768, margin: '0 auto', padding: '20px 26px 12px', display: 'flex', flexDirection: 'column', gap: 17 }}>
+            <MessageScroller.Content style={{ maxWidth: 1200, margin: '0 auto', padding: '20px 26px 12px', display: 'flex', flexDirection: 'column', gap: 17 }}>
               {renderStream(stream)}
               {/* The coordinator's OWN AskUserQuestion, rendered inline (mirrors the agent
                   ChatView). Answering unblocks its CLI, which is parked on stdin — without this
