@@ -30,7 +30,7 @@ import { ChatImage } from '../../ChatImage';
 import { InsightText } from '../../InsightText';
 import { WorkingIndicator } from '../../WorkingIndicator';
 import { Spinner } from '../../common/Spinner';
-import { AskQuestionCard } from '../../tabs/chat/AskQuestionCard';
+import { AskQuestionCard, AnsweredQuestionCard } from '../../tabs/chat/AskQuestionCard';
 import { useOverseer, useRenderVals } from '../store';
 import { useBootstrapOlderPages } from '../../../hooks/useBootstrapOlderPages';
 import type { StreamMessage } from '../types';
@@ -448,7 +448,20 @@ function renderStream(stream: StreamMessage[]) {
   let prevDispatch = false;
 
   for (const msg of stream) {
-    if (msg.isAgentCard) {
+    if (msg.isAnsweredQuestion) {
+      // The coordinator's OWN AskUserQuestion, already answered — a durable, collapsed
+      // record (see live.convItemsToStream) so it stays in history instead of vanishing the
+      // instant the live coordinatorPending overlay below clears.
+      if (!msg.questions?.length) continue;
+      rows.push(
+        <MessageScroller.Item key={msg.key} messageId={msg.key} style={{ display: 'flex' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <AnsweredQuestionCard questions={msg.questions} resultText={msg.resultText ?? ''} />
+          </div>
+        </MessageScroller.Item>,
+      );
+      prevDispatch = false;
+    } else if (msg.isAgentCard) {
       if (!msg.agentId) continue;
       rows.push(
         <MessageScroller.Item key={msg.key} messageId={msg.key} style={{ display: 'flex', flexDirection: 'column' }}>

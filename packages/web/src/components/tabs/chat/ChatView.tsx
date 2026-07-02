@@ -1,11 +1,11 @@
 import { useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
 import { PaperPlaneTilt, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip, ArrowBendDownRight } from '@phosphor-icons/react';
-import type { ConvItem } from '../../../api/types';
+import type { ConvItem, PermissionQuestion } from '../../../api/types';
 import { api, type ContentBlock } from '../../../api/client';
 import { useStructuredChat } from './useStructuredChat';
 import { useBootstrapOlderPages } from '../../../hooks/useBootstrapOlderPages';
-import { AskQuestionCard } from './AskQuestionCard';
+import { AskQuestionCard, AnsweredQuestionCard } from './AskQuestionCard';
 import { useTabs, findTerminal } from '../../../stores/tabs';
 import { useDraft } from '../../../hooks/useDraft';
 import { useIsMobile } from '../../../hooks/useIsMobile';
@@ -301,7 +301,7 @@ function stableId(it: ConvItem): string {
  * comment on pageBoundariesRef) also forces a break — otherwise a loadOlder() prepend
  * could silently merge into a group that already existed, defeating scroll preservation.
  */
-function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void, pageBoundaries: Set<ConvItem>) {
+export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void, pageBoundaries: Set<ConvItem>) {
   // Map tool_use id -> its result item, so paired results aren't rendered standalone.
   const resultById = new Map<string, ConvItem>();
   // Set of tool ids that actually have a tool card, so an ORPHAN result (whose tool
@@ -347,12 +347,22 @@ function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void, page
     else if (it.kind === 'image') node = <ChatImage src={it.imageUrl ?? ''} alt={it.imageAlt} />;
     else if (it.kind === 'thinking') node = <Thinking text={it.text ?? ''} />;
     else if (it.kind === 'tool') {
-      // AskUserQuestion is rendered by the interactive <AskQuestionCard> (live) — never
-      // as a generic tool card, which would sit stuck on "running…" (its tool_result only
-      // arrives once answered). Its paired tool_result is already suppressed below.
-      if (it.toolName === 'AskUserQuestion') continue;
       const result = it.toolId ? resultById.get(it.toolId) : items[i + 1]?.kind === 'tool-result' ? items[i + 1] : undefined;
-      node = <ToolCall tool={it} result={result} onViewFile={onViewFile} />;
+      if (it.toolName === 'AskUserQuestion') {
+        // While still pending (no tool_result yet) the interactive <AskQuestionCard> below
+        // (the live overlay) covers it — node stays null and this item renders nothing here,
+        // same as before. Once answered, its tool_result is a REAL, durable part of the
+        // transcript (same as any other tool call) — render the collapsed record instead of
+        // dropping it forever (the previous behavior: this whole branch used to `continue`
+        // unconditionally, which is why an answered question vanished with no trace).
+        if (result) {
+          let questions: PermissionQuestion[] = [];
+          try { questions = JSON.parse(it.toolInput ?? '{}')?.questions ?? []; } catch { /* malformed */ }
+          if (questions.length) node = <AnsweredQuestionCard questions={questions} resultText={result.text ?? ''} />;
+        }
+      } else {
+        node = <ToolCall tool={it} result={result} onViewFile={onViewFile} />;
+      }
     } else if (it.kind === 'tool-result') {
       if (it.toolId && toolIds.has(it.toolId)) continue; // already shown paired with its tool
       node = <ToolResult item={it} />;

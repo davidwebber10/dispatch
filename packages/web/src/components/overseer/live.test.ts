@@ -126,3 +126,44 @@ describe('convItemsToStream — message attribution', () => {
     ]);
   });
 });
+
+// Regression coverage for the "answering the coordinator's own AskUserQuestion makes it
+// vanish" bug: before this branch existed, an AskUserQuestion tool_use/tool_result pair
+// matched none of convItemsToStream's cases and was silently dropped — the live
+// coordinatorPending overlay (Stream.tsx) was the ONLY place it ever rendered, and it
+// unmounts the instant the question is answered. Now the answered pair becomes a durable
+// 'answeredQuestion' StreamMessage that stays in the stream.
+describe('convItemsToStream — answered AskUserQuestion', () => {
+  it('turns an AskUserQuestion tool_use + its tool_result into an answeredQuestion message', () => {
+    const items: ConvItem[] = [
+      { kind: 'tool', toolId: 'tu-1', toolName: 'AskUserQuestion', toolInput: JSON.stringify({ questions: [{ question: 'Deploy now?', options: ['Yes', 'No'] }] }) },
+      { kind: 'tool-result', toolId: 'tu-1', text: 'Your questions have been answered: "Deploy now?"="Yes". You can now continue with these answers in mind.' },
+    ];
+    const stream = convItemsToStream(items);
+    expect(stream).toHaveLength(1);
+    expect(stream[0].isAnsweredQuestion).toBe(true);
+    expect(stream[0].kind).toBe('answeredQuestion');
+    expect(stream[0].questions?.[0]?.question).toBe('Deploy now?');
+    expect(stream[0].resultText).toContain('"Deploy now?"="Yes"');
+  });
+
+  it('renders nothing for a still-pending AskUserQuestion (no tool_result yet)', () => {
+    const items: ConvItem[] = [
+      { kind: 'tool', toolId: 'tu-2', toolName: 'AskUserQuestion', toolInput: JSON.stringify({ questions: [{ question: 'Which env?', options: ['staging', 'prod'] }] }) },
+    ];
+    expect(convItemsToStream(items)).toHaveLength(0);
+  });
+
+  it('does not confuse an AskUserQuestion tool_result with an agent-management tool_result sharing the pairing pass', () => {
+    const items: ConvItem[] = [
+      { kind: 'tool', toolId: 'tu-3', toolName: 'AskUserQuestion', toolInput: JSON.stringify({ questions: [{ question: 'Proceed?', options: ['Yes'] }] }) },
+      { kind: 'tool', toolId: 'tu-4', toolName: 'spawn_agent', toolInput: JSON.stringify({ agentType: 'implementer' }) },
+      { kind: 'tool-result', toolId: 'tu-3', text: 'Your questions have been answered: "Proceed?"="Yes". You can now continue with these answers in mind.' },
+      { kind: 'tool-result', toolId: 'tu-4', text: JSON.stringify({ agentId: 'a1', label: 'Implementer' }) },
+    ];
+    const stream = convItemsToStream(items);
+    expect(stream).toHaveLength(2);
+    expect(stream.find((m) => m.isAnsweredQuestion)?.questions?.[0]?.question).toBe('Proceed?');
+    expect(stream.find((m) => m.isAgentCard)?.agentId).toBe('a1');
+  });
+});

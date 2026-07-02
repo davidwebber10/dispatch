@@ -5,6 +5,8 @@
 // STATUS registries below (see spec §10 "production notes"). Keep derivation in
 // data.ts — the store stays a plain state bag.
 
+import type { PermissionQuestion } from '../../api/types';
+
 export type AgentType = 'planner' | 'implementer' | 'researcher' | 'reviewer';
 // 'scheduled' = a LIVE thread that ended its turn by calling a wake-scheduler tool
 // (ScheduleWakeup/CronCreate) — it's dormant and will resume on its own, so it renders
@@ -14,7 +16,7 @@ export type AgentType = 'planner' | 'implementer' | 'researcher' | 'reviewer';
 // prompt; this ThreadStatus='waiting' = "needs your input") — 'scheduled' needs neither a
 // human nor a "done" read; it's just asleep.
 export type ThreadStatus = 'working' | 'waiting' | 'done' | 'error' | 'queued' | 'scheduled';
-export type MessageKind = 'user' | 'overseer' | 'note' | 'image' | 'agentCard';
+export type MessageKind = 'user' | 'overseer' | 'note' | 'image' | 'agentCard' | 'answeredQuestion';
 
 // The coordinator tool call an 'agentCard' StreamMessage was built from (spec: agent-card
 // increment). Mirrors the agency-mcp tool names 1:1 so the card's action label reads as a
@@ -126,6 +128,13 @@ export interface StreamMessage {
   agentType?: AgentType;
   agentMission?: string;
   agentAction?: AgentCardAction;
+  // answeredQuestion (kind 'answeredQuestion') — an AskUserQuestion tool_use/tool_result pair
+  // from the coordinator's OWN history (see live.convItemsToStream). Rendered as a collapsed,
+  // expandable <AnsweredQuestionCard> so an answered question stays visible in the stream
+  // instead of vanishing once the live coordinatorPending overlay clears — see Stream.tsx.
+  isAnsweredQuestion?: boolean;
+  questions?: PermissionQuestion[];
+  resultText?: string;
 }
 
 // An action button on a need card (factory: btn(label, primary)).
