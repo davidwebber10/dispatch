@@ -19,6 +19,7 @@ import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
 import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript.js';
 import { systemPromptFor, modelFor } from '../overseer/prompts.js';
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources } from './cc-sessions.js';
+import { TERMINAL_ID_ENV_VAR } from '../auth/shim.js';
 
 interface StatusContext {
   serverUrl: string;
@@ -1179,7 +1180,7 @@ export class SessionService {
       args = cmd.args;
     }
 
-    const pid = this.ptyManager.spawn(terminalId, command, args, workDir);
+    const pid = this.ptyManager.spawn(terminalId, command, args, workDir, { [TERMINAL_ID_ENV_VAR]: terminalId });
     terminalsDb.updatePid(this.db, terminalId, pid);
 
     // If this was a fresh spawn (no external_id yet), let the provider try to
@@ -1267,6 +1268,7 @@ export class SessionService {
       workDir,
       escalate,
       seedEvents,
+      env: { [TERMINAL_ID_ENV_VAR]: terminal.id },
     });
     terminalsDb.updatePid(this.db, terminal.id, pid);
   }
