@@ -47,6 +47,13 @@ import { handleStructuredConnection } from './ws/structured.js';
 import { StructuredSessionManager } from './structured/manager.js';
 import { startPtyTimingLoop } from './sessions/status.js';
 import { TerminalMonitor } from './terminal-monitor.js';
+import { startUpdateCheckLoop } from './update/checker.js';
+import { createUpdateRouter } from './routes/update.js';
+
+/** Repo root, derived the same way as the webDist fallback below (works from both src/ in dev and dist/ once built, since both sit at the same depth under packages/core). */
+function resolveRepoRoot(): string {
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+}
 
 interface CreateAppOptions {
   db: Database.Database;
@@ -178,6 +185,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   app.use('/api/integrations', createIntegrationsRouter(integrationsService));
   app.use('/api/push', createPushRouter(pushService));
   app.use('/api/tools', createToolsRouter({ base: toolsBase }));
+  app.use('/api/update', createUpdateRouter(broadcaster, resolveRepoRoot()));
 
   // Attach internals for server wiring
   (app as any)._ptyManager = ptyManager;
@@ -408,6 +416,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.use('/api/integrations', createIntegrationsRouter(integrationsService));
   app.use('/api/push', createPushRouter(pushService));
   app.use('/api/tools', createToolsRouter({ base: toolsBase }));
+  const repoRoot = resolveRepoRoot();
+  app.use('/api/update', createUpdateRouter(broadcaster, repoRoot));
 
   // Serve the built web client (single-origin) when a build is present.
   // SPA fallback returns index.html for any non-/api, non-WS GET.
@@ -496,6 +506,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   // Start PTY timing loop for Codex-style providers
   const ptyTimingInterval = startPtyTimingLoop(db, ptyManager, broadcaster);
+  // Poll GitHub Releases for a newer version than what's running (immediately, then ~45 min)
+  const updateCheckInterval = startUpdateCheckLoop(db, broadcaster);
   const agentSchedulerInterval = setInterval(() => {
     try {
       agentService.processDueRuns();
@@ -508,6 +520,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const cleanup = () => {
     console.log('Shutting down Dispatch server...');
     clearInterval(ptyTimingInterval);
+    clearInterval(updateCheckInterval);
     clearInterval(agentSchedulerInterval);
     clearInterval(heartbeat);
     ptyManager.killAll();

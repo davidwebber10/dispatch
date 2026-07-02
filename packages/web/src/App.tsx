@@ -12,6 +12,7 @@ import { DispatchWorkPane } from './components/overseer/components/DispatchWorkP
 import { AgentPane } from './components/agents/AgentPane';
 import { EditAgentModal } from './components/agents/EditAgentModal';
 import { AuthBanner } from './components/auth/AuthBanner';
+import { UpdateBanner } from './components/update/UpdateBanner';
 import { MobileApp } from './components/mobile/MobileApp';
 import { SetupWizard } from './components/setup/SetupWizard';
 import { useIsMobile } from './hooks/useIsMobile';
@@ -22,6 +23,7 @@ import { useTabs, isDispatchTab } from './stores/tabs';
 import { useActivity } from './stores/activity';
 import { useThreadStatus } from './stores/threadStatus';
 import { useAuth } from './stores/auth';
+import { useUpdate } from './stores/update';
 import { useAgents } from './stores/agents';
 import { useAgentUI } from './stores/agentUI';
 import { useReconnect } from './stores/reconnect';
@@ -59,6 +61,7 @@ export default function App() {
     void useServers.getState().load();
     void useTabs.getState().hydrate();
     void useAuth.getState().load();
+    void useUpdate.getState().load();
     void useAgents.getState().loadSchedules();
     const sock = createEventsSocket({
       onStatus: (s) => useConnection.getState().setStatus(s),
@@ -68,6 +71,7 @@ export default function App() {
         useActivity.getState().applyEvent(e);
         useThreadStatus.getState().applyEvent(e);
         useAuth.getState().applyEvent(e);
+        useUpdate.getState().applyEvent(e);
         useAgents.getState().applyEvent(e);
         if (e.type === 'session:status' && e.status === 'needs_input' && typeof e.sessionId === 'string') maybeNotify(e.sessionId);
       },
@@ -94,7 +98,7 @@ export default function App() {
   });
 
   if (isMobile) {
-    return (<><SetupWizard /><AuthBanner /><MobileApp /></>);
+    return (<><SetupWizard /><AuthBanner /><UpdateBanner /><MobileApp /></>);
   }
 
   const showAgent = agentFocused && !!agentSelected;
@@ -103,6 +107,7 @@ export default function App() {
     <>
       <SetupWizard />
       <AuthBanner />
+      <UpdateBanner />
       <AppShell>
         <Workspace
           sidebar={
