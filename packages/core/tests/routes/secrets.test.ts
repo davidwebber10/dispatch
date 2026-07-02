@@ -31,7 +31,7 @@ beforeEach(() => {
   initSchema(db);
   app = createApp({ db, skipPty: true, secretsService });
 });
-afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+afterEach(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
 
 describe('secrets routes', () => {
   it('GET /status starts disconnected and never returns a token', async () => {

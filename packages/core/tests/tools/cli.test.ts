@@ -15,7 +15,7 @@ beforeEach(() => {
     { name: 'demo', description: 'demo tool', kind: 'binary', bins: ['demo'], binary: { 'darwin-arm64': { url: 'https://x/demo', archive: 'none' }, 'darwin-x64': { url: 'https://x/demo', archive: 'none' } } },
   ] }));
 });
-afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
 
 it('list returns 0 and reports the manifest', async () => {
   const code = await runToolsCli(['list'], { base });

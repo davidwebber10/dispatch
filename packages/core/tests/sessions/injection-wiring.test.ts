@@ -29,7 +29,7 @@ const dopplerSpec: McpServerSpec = { name: 'doppler', command: 'node', args: ['/
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-inj-'));
 const configPath = path.join(tmpDir, 'mcp.json');
-afterAll(() => { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ } });
+afterAll(() => { try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } catch { /* ignore */ } });
 
 function makeService() {
   const db = new Database(':memory:');

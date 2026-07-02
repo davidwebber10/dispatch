@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { platform } from '../platform/index.js';
 
 const exec = promisify(execFile);
 
@@ -10,8 +11,7 @@ export interface ProviderStatus { name: 'claude' | 'codex'; installed: boolean; 
 export interface TailscaleStatus { installed: boolean; running: boolean; dnsName?: string; url?: string; }
 
 async function which(bin: string): Promise<string | null> {
-  try { const { stdout } = await exec('which', [bin]); return stdout.trim() || null; }
-  catch { return null; }
+  return platform.resolveCommand(bin);
 }
 
 function detectSignedIn(name: 'claude' | 'codex'): boolean | 'unknown' {

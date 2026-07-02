@@ -14,7 +14,7 @@ beforeEach(() => {
     { name: 'gh', description: 'GitHub CLI', kind: 'binary', bins: ['gh'], authEnv: ['GH_TOKEN'], envAlias: { GH_TOKEN: 'GITHUB_TOKEN' }, binary: { 'darwin-arm64': { url: 'https://x/gh', archive: 'none' }, 'darwin-x64': { url: 'https://x/gh', archive: 'none' } } },
   ] }));
 });
-afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
 
 it('reports installed + authed status', () => {
   // not installed yet

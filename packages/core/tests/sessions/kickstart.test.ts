@@ -13,6 +13,7 @@ import { transcriptTailScheduled, transcriptTailStatus } from '../../src/session
 // a temp dir for this file (vitest isolates each test file in its own process).
 describe('transcriptTailStatus', () => {
   const realHome = process.env.HOME;
+  const realUserProfile = process.env.USERPROFILE;
   let home: string;
   const workDir = '/tmp/kickstart-proj';
   const projDir = () => path.join(home, '.claude', 'projects', workDir.replace(/\//g, '-'));
@@ -20,11 +21,16 @@ describe('transcriptTailStatus', () => {
   beforeAll(() => {
     home = fs.mkdtempSync(path.join(os.tmpdir(), 'kickstart-home-'));
     process.env.HOME = home;
+    // On Windows os.homedir() reads USERPROFILE (not HOME); set both so the
+    // product code resolves to the same temp dir on every platform.
+    process.env.USERPROFILE = home;
     fs.mkdirSync(projDir(), { recursive: true });
   });
   afterAll(() => {
     if (realHome === undefined) delete process.env.HOME;
     else process.env.HOME = realHome;
+    if (realUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = realUserProfile;
     fs.rmSync(home, { recursive: true, force: true });
   });
 
@@ -81,6 +87,7 @@ describe('transcriptTailStatus', () => {
 // ScheduleWakeup/CronCreate — this disambiguates that case. Shares the same temp-HOME setup.
 describe('transcriptTailScheduled', () => {
   const realHome = process.env.HOME;
+  const realUserProfile = process.env.USERPROFILE;
   let home: string;
   const workDir = '/tmp/kickstart-scheduled-proj';
   const projDir = () => path.join(home, '.claude', 'projects', workDir.replace(/\//g, '-'));
@@ -88,11 +95,16 @@ describe('transcriptTailScheduled', () => {
   beforeAll(() => {
     home = fs.mkdtempSync(path.join(os.tmpdir(), 'kickstart-scheduled-home-'));
     process.env.HOME = home;
+    // On Windows os.homedir() reads USERPROFILE (not HOME); set both so the
+    // product code resolves to the same temp dir on every platform.
+    process.env.USERPROFILE = home;
     fs.mkdirSync(projDir(), { recursive: true });
   });
   afterAll(() => {
     if (realHome === undefined) delete process.env.HOME;
     else process.env.HOME = realHome;
+    if (realUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = realUserProfile;
     fs.rmSync(home, { recursive: true, force: true });
   });
 

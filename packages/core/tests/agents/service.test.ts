@@ -282,7 +282,7 @@ describe('AgentService', () => {
     expect(steps.some((s) => s.kind === 'result')).toBe(true);
     expect(steps.filter((s) => s.timeline).length).toBeGreaterThan(0);
 
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it('deleteSchedule removes a schedule that has runs and stops its terminals', () => {

@@ -1,5 +1,5 @@
 // packages/core/tests/tools/installer.test.ts
-import { it, expect, beforeEach, afterEach } from 'vitest';
+import { it, expect, beforeEach, afterEach, describe } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,7 +11,7 @@ import type { ToolEntry } from '../../src/tools/types.js';
 
 let base: string;
 beforeEach(() => { base = fs.mkdtempSync(path.join(os.tmpdir(), 'tools-i-')); });
-afterEach(() => { fs.rmSync(base, { recursive: true, force: true }); });
+afterEach(() => { fs.rmSync(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
 
 const plat = hostPlatformKey();
 
@@ -24,7 +24,7 @@ it('binary (archive:none): downloads, verifies sha256, places + chmods, idempote
   await installTool(entry, { base, download });
   const binFile = path.join(toolPaths(base).bin, 'demo');
   expect(fs.existsSync(binFile)).toBe(true);
-  expect(fs.statSync(binFile).mode & 0o111).toBeTruthy(); // executable
+  if (process.platform !== 'win32') expect(fs.statSync(binFile).mode & 0o111).toBeTruthy(); // executable (POSIX perms; Windows has no exec bit)
   expect(readInstalled(base).demo).toBeTruthy();
   await installTool(entry, { base, download }); // idempotent: no re-download
   expect(calls).toBe(1);
@@ -36,7 +36,8 @@ it('binary: sha256 mismatch aborts and installs nothing', async () => {
   expect(fs.existsSync(path.join(toolPaths(base).bin, 'demo'))).toBe(false);
 });
 
-it('binary (tar.gz): extracts binPath into bin/', async () => {
+// tar.gz extraction uses the system `tar` binary — POSIX-only (no native tar.exe on Windows CI).
+it.skipIf(process.platform === 'win32')('binary (tar.gz): extracts binPath into bin/', async () => {
   // build a real tar.gz fixture with the system tar
   const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'stg-'));
   fs.mkdirSync(path.join(stage, 'pkg'));
@@ -47,10 +48,11 @@ it('binary (tar.gz): extracts binPath into bin/', async () => {
   const entry: ToolEntry = { name: 'ripgrep', description: 'd', kind: 'binary', bins: ['rg'], binary: { [plat]: { url: 'https://x/rg.tgz', archive: 'tar.gz', binPath: 'pkg/rg' } } };
   await installTool(entry, { base, download: async () => buf });
   expect(fs.existsSync(path.join(toolPaths(base).bin, 'rg'))).toBe(true);
-  fs.rmSync(stage, { recursive: true, force: true });
+  fs.rmSync(stage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
-it('script kind: runs the install script with TOOLS_BIN set', async () => {
+// script kind runs a POSIX shell snippet (printf/chmod) — Windows has no /bin/sh.
+it.skipIf(process.platform === 'win32')('script kind: runs the install script with TOOLS_BIN set', async () => {
   const entry: ToolEntry = { name: 'demo', description: 'd', kind: 'script', bins: ['demo'], script: { install: 'printf "#!/bin/sh\\n" > "$TOOLS_BIN/demo"; chmod +x "$TOOLS_BIN/demo"' } };
   await installTool(entry, { base });
   expect(fs.existsSync(path.join(toolPaths(base).bin, 'demo'))).toBe(true);
@@ -66,7 +68,8 @@ it('uninstallTool: removes the correct bin when tool name differs from binary na
   expect(fs.existsSync(path.join(p.bin, 'rg'))).toBe(false);
 });
 
-it('script kind: idempotent — second call is a no-op when binary already present', async () => {
+// script kind idempotency test uses a POSIX shell snippet (echo/printf/chmod) — Windows has no /bin/sh.
+it.skipIf(process.platform === 'win32')('script kind: idempotent — second call is a no-op when binary already present', async () => {
   const counter = path.join(base, 'runs');
   const installScript = [
     `echo x >> "${counter}"`,

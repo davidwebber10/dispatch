@@ -25,7 +25,7 @@ beforeEach(() => {
   fs.writeFileSync(mcpPath, '// fake doppler-mcp dist'); // so active() sees the entry exists
   delete process.env.DOPPLER_TOKEN;
 });
-afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+afterEach(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
 
 const svc = (verify = true) => new SecretsService(dir, () => fakeClient(verify), mcpPath);
 
@@ -62,7 +62,10 @@ describe('SecretsService', () => {
     await s.setConnection({ token: 'dp.sa.x' });
     expect(s.status().connected).toBe(false);
     expect((s.status() as Record<string, unknown>).token).toBeUndefined();
-    expect((fs.statSync(path.join(dir, 'doppler.json')).mode & 0o777)).toBe(0o600);
+    // Windows has no 0600 file permissions — only check mode on unix.
+    if (process.platform !== 'win32') {
+      expect((fs.statSync(path.join(dir, 'doppler.json')).mode & 0o777)).toBe(0o600);
+    }
   });
 
   it('rejects an invalid token', async () => {
