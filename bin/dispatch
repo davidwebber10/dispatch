@@ -11,6 +11,7 @@
 #   dispatch status       Show daemon + HTTP health status
 #   dispatch logs [-f]    Show (or follow) the daemon logs
 #   dispatch update       git pull, rebuild, and restart
+#   dispatch release [v]  Tag + push + cut a GitHub release (from main, in sync with origin)
 #   dispatch run          Run the server in the foreground (no daemon)
 #   dispatch tools        Manage bundled CLI tools (install/list/uninstall)
 #
@@ -218,6 +219,61 @@ cmd_update() {
   cmd_restart
 }
 
+cmd_release() {
+  if ! command -v gh >/dev/null 2>&1; then
+    red "gh CLI not found. Install it: https://cli.github.com"
+    exit 1
+  fi
+  if [ -n "$(git -C "$REPO" status --porcelain)" ]; then
+    red "Working tree has uncommitted changes — commit or stash before releasing."
+    exit 1
+  fi
+  local branch
+  branch="$(git -C "$REPO" rev-parse --abbrev-ref HEAD)"
+  if [ "$branch" != "main" ]; then
+    red "Releases must be cut from main (currently on '$branch')."
+    exit 1
+  fi
+  bold "Fetching latest tags and main from origin…"
+  git -C "$REPO" fetch origin main --tags -q || { red "git fetch failed"; exit 1; }
+  local local_head remote_head
+  local_head="$(git -C "$REPO" rev-parse HEAD)"
+  remote_head="$(git -C "$REPO" rev-parse origin/main 2>/dev/null || echo "")"
+  if [ -z "$remote_head" ]; then
+    red "Could not resolve origin/main — check your git remote."
+    exit 1
+  fi
+  if [ "$local_head" != "$remote_head" ]; then
+    red "Local main ($local_head) differs from origin/main ($remote_head)."
+    info "Releases are cut from the public tip of main — push or pull first, then retry."
+    exit 1
+  fi
+
+  local version="${1:-}"
+  if [ -z "$version" ]; then
+    local last_tag major minor patch
+    last_tag="$(git -C "$REPO" tag -l 'v*' --sort=-v:refname | head -n1)"
+    if [ -z "$last_tag" ]; then
+      version="v$(node -p "require('$REPO/package.json').version")"
+    else
+      IFS='.' read -r major minor patch <<< "${last_tag#v}"
+      version="v${major}.${minor}.$((patch + 1))"
+    fi
+  fi
+  [[ "$version" == v* ]] || version="v$version"
+
+  if git -C "$REPO" rev-parse "$version" >/dev/null 2>&1; then
+    red "Tag $version already exists."
+    exit 1
+  fi
+
+  bold "Cutting release $version from $(git -C "$REPO" rev-parse --short HEAD)…"
+  git -C "$REPO" tag -a "$version" -m "$version" || { red "git tag failed"; exit 1; }
+  git -C "$REPO" push origin "$version" || { red "git push origin $version failed"; exit 1; }
+  gh release create "$version" --repo davidwebber10/dispatch --generate-notes || { red "gh release create failed"; exit 1; }
+  green "Released $version."
+}
+
 cmd_run() {
   ensure_built
   require_node
@@ -244,6 +300,7 @@ dispatch — control the Dispatch daemon (macOS / launchd).
   dispatch status      Show daemon + HTTP health status
   dispatch logs [-f]   Show (or follow) the daemon logs
   dispatch update      git pull, rebuild, and restart
+  dispatch release [v] Tag + push + cut a GitHub release (from main, in sync with origin)
   dispatch run         Run the server in the foreground (no daemon)
   dispatch tools       Manage bundled CLI tools (install/list/uninstall)
   dispatch doctor      Show setup status (agents, tailscale, secrets)
@@ -260,6 +317,7 @@ case "${1:-}" in
   status)    cmd_status ;;
   logs)      shift; cmd_logs "${1:-}" ;;
   update)    cmd_update ;;
+  release)   shift; cmd_release "${1:-}" ;;
   run)       cmd_run ;;
   tools)     shift; cmd_tools "$@" ;;
   doctor)    cmd_doctor ;;

@@ -5,6 +5,7 @@ import { Router } from 'express';
 import type Database from 'better-sqlite3';
 import * as appState from '../db/app-state.js';
 import { sumTranscriptTokens } from '../sessions/cc-sessions.js';
+import { getRunningVersion, isNewerVersion } from '../update/version.js';
 
 export function createStateRouter(db: Database.Database): Router {
   const router = Router();
@@ -126,6 +127,25 @@ export function createStateRouter(db: Database.Database): Router {
     // This will be populated by the server's terminalMonitor
     // For now return empty — the real data comes via WebSocket events
     res.json({ activity: 'unknown' });
+  });
+
+  // GET /api/state/update — latest known GitHub release, re-checked against the
+  // running version on every read (not a trusted stored flag) so a late-joining
+  // client — or one that reconnects after `dispatch update` already ran — never
+  // sees a stale "update available" banner for a release it's already running.
+  router.get('/update', (_req, res) => {
+    const tag = appState.get(db, 'latest_release_tag');
+    const url = appState.get(db, 'latest_release_url');
+    const publishedAt = appState.get(db, 'latest_release_published_at');
+    const currentVersion = getRunningVersion();
+    const available = !!tag && isNewerVersion(tag, currentVersion);
+    res.json({
+      available,
+      version: available ? tag : null,
+      url: available ? url : null,
+      publishedAt: available ? publishedAt : null,
+      currentVersion,
+    });
   });
 
   // GET /api/state/tailscale — return Tailscale status

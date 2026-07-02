@@ -1,4 +1,4 @@
-import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus, PendingPermission } from './types';
+import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus, PendingPermission, UpdateState } from './types';
 
 /**
  * A content block for a structured `user` turn (mirrors the daemon's wire shape). A
@@ -200,4 +200,13 @@ export const api = {
   completeAuth: (id: string) => req<AuthRequest>(`/api/auth-requests/${id}/complete`, { method: 'POST' }),
   forwardAuthCallback: (id: string, url: string) =>
     req<AuthRequest>(`/api/auth-requests/${id}/callback`, { method: 'POST', body: body({ url }) }),
+
+  // Auto-updater
+  getUpdateState: () => req<UpdateState>('/api/state/update'),
+  // Bespoke (not `req()`): a 409 preflight failure is a meaningful { ok: false, reason }
+  // payload the banner needs to render, not an exception to throw away.
+  applyUpdate: async () => {
+    const res = await fetch('/api/update/apply', { method: 'POST' });
+    return (await res.json()) as { ok: boolean; reason?: string };
+  },
 };
