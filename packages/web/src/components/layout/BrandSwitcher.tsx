@@ -1,9 +1,13 @@
 import { useState } from 'react';
 import { Terminal } from '@phosphor-icons/react';
 import { useServers, currentServer, currentLabel } from '../../stores/servers';
+import { useUpdate } from '../../stores/update';
 
 export function BrandSwitcher() {
   const [open, setOpen] = useState(false);
+  // Same source as the Settings version line: the connected daemon's running version,
+  // loaded into the update store at startup (App bootstrap → GET /api/state/update).
+  const version = useUpdate((s) => s.currentVersion);
   const servers = useServers((s) => s.servers);
   const origin = window.location.origin;
   const label = currentLabel(servers, origin);
@@ -25,6 +29,7 @@ export function BrandSwitcher() {
       }}>
         <span style={{ width: 17, height: 17, borderRadius: 5, background: 'var(--color-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Terminal size={11} weight="bold" color="#08240F" /></span>
         <span style={{ fontWeight: 600, fontSize: 13, letterSpacing: '-0.3px', color: 'var(--color-text-primary)' }}>Dispatch</span>
+        {version && <span title="Daemon version" style={{ font: '500 10px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>v{version}</span>}
         <span style={{ font: '500 12px var(--font-mono)', color: 'var(--color-text-secondary)' }}>{label}</span>
         <span style={{ color: 'var(--color-text-tertiary)', fontSize: 10 }}>▾</span>
       </button>

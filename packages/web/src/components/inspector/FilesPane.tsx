@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CaretRight, DownloadSimple } from '@phosphor-icons/react';
+import { CaretRight, DownloadSimple, PencilSimple, TrashSimple } from '@phosphor-icons/react';
 import { api } from '../../api/client';
 import type { FileEntry } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
@@ -8,6 +8,18 @@ import { useSettings } from '../../stores/settings';
 import { fileVisual } from '../common/typeIcons';
 
 const INDENT = 14;
+
+const MENU_ITEM: React.CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 10px',
+  background: 'none', border: 'none', font: '400 13px var(--font-sans)', cursor: 'pointer',
+  borderRadius: 6, textAlign: 'left',
+};
+
+/** Parent directory of a working-dir-relative path (or '.' for a top-level entry). */
+function parentDir(relPath: string): string {
+  const slash = relPath.lastIndexOf('/');
+  return slash >= 0 ? relPath.slice(0, slash) : '.';
+}
 
 function homeAbbrev(p: string): string {
   return p.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
@@ -95,6 +107,27 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
     catch { /* download/picker failed — nothing actionable to show in v1 */ }
   }
 
+  async function renameEntry(entry: FileEntry) {
+    if (!projectId) return;
+    const next = window.prompt(`Rename "${entry.name}" to:`, entry.name);
+    if (!next || next === entry.name) return;
+    const slash = entry.path.lastIndexOf('/');
+    const dir = slash >= 0 ? entry.path.slice(0, slash + 1) : '';
+    try {
+      await api.renameFile(projectId, entry.path, dir + next);
+      await loadDir(parentDir(entry.path));
+    } catch (err: any) { window.alert(`Rename failed: ${err?.message ?? err}`); }
+  }
+
+  async function deleteEntry(entry: FileEntry) {
+    if (!projectId) return;
+    if (!window.confirm(`Delete "${entry.name}"? This cannot be undone.`)) return;
+    try {
+      await api.deleteFile(projectId, entry.path);
+      await loadDir(parentDir(entry.path));
+    } catch (err: any) { window.alert(`Delete failed: ${err?.message ?? err}`); }
+  }
+
   function toggle(path: string) {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -159,10 +192,19 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
         <>
           <div onMouseDown={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null); }}
             style={{ position: 'fixed', inset: 0, zIndex: 999 }} />
-          <div role="menu" style={{ position: 'fixed', left: menu.x, top: menu.y, zIndex: 1000, minWidth: 156, padding: 4, background: 'var(--color-elevated, #26262b)', border: '1px solid #37373d', borderRadius: 8, boxShadow: '0 10px 30px -10px rgba(0,0,0,.7)' }}>
+          <div role="menu" style={{ position: 'fixed', left: menu.x, top: menu.y, zIndex: 1000, minWidth: 168, padding: 4, background: 'var(--color-elevated, #26262b)', border: '1px solid #37373d', borderRadius: 8, boxShadow: '0 10px 30px -10px rgba(0,0,0,.7)' }}>
             <button type="button" onClick={() => { const entry = menu.entry; setMenu(null); void saveAs(entry); }}
-              style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 10px', background: 'none', border: 'none', color: '#e9e9ec', font: '400 13px var(--font-sans)', cursor: 'pointer', borderRadius: 6, textAlign: 'left' }}>
+              style={{ ...MENU_ITEM, color: '#e9e9ec' }}>
               <DownloadSimple size={15} /> Save As…
+            </button>
+            <button type="button" onClick={() => { const entry = menu.entry; setMenu(null); void renameEntry(entry); }}
+              style={{ ...MENU_ITEM, color: '#e9e9ec' }}>
+              <PencilSimple size={15} /> Rename
+            </button>
+            <div style={{ height: 1, background: '#37373d', margin: '4px 6px' }} />
+            <button type="button" onClick={() => { const entry = menu.entry; setMenu(null); void deleteEntry(entry); }}
+              style={{ ...MENU_ITEM, color: '#f87171' }}>
+              <TrashSimple size={15} /> Delete
             </button>
           </div>
         </>

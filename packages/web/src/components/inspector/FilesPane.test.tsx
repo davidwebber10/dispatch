@@ -41,3 +41,36 @@ test('right-click a file → Save As… downloads it via the download URL', asyn
   expect(captured!.href).toContain('/api/sessions/s1/files/download?path=README.md');
   expect(captured!.download).toBe('README.md');
 });
+
+test('right-click → Rename calls renameFile with the new path', async () => {
+  const rename = vi.spyOn(api, 'renameFile').mockResolvedValue({ ok: true, path: 'NOTES.md' });
+  vi.spyOn(window, 'prompt').mockReturnValue('NOTES.md');
+
+  render(<FilesPane projectId="s1" onOpenFile={() => {}} />);
+  fireEvent.contextMenu(await screen.findByText(/README\.md/), { clientX: 5, clientY: 5 });
+  fireEvent.click(await screen.findByText('Rename'));
+
+  await waitFor(() => expect(rename).toHaveBeenCalledWith('s1', 'README.md', 'NOTES.md'));
+});
+
+test('right-click → Delete calls deleteFile after confirmation', async () => {
+  const del = vi.spyOn(api, 'deleteFile').mockResolvedValue({ ok: true });
+  vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+  render(<FilesPane projectId="s1" onOpenFile={() => {}} />);
+  fireEvent.contextMenu(await screen.findByText(/README\.md/), { clientX: 5, clientY: 5 });
+  fireEvent.click(await screen.findByText('Delete'));
+
+  await waitFor(() => expect(del).toHaveBeenCalledWith('s1', 'README.md'));
+});
+
+test('Delete does nothing when the confirm is dismissed', async () => {
+  const del = vi.spyOn(api, 'deleteFile').mockResolvedValue({ ok: true });
+  vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+  render(<FilesPane projectId="s1" onOpenFile={() => {}} />);
+  fireEvent.contextMenu(await screen.findByText(/README\.md/), { clientX: 5, clientY: 5 });
+  fireEvent.click(await screen.findByText('Delete'));
+
+  expect(del).not.toHaveBeenCalled();
+});
