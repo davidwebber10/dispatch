@@ -106,6 +106,9 @@ export const api = {
   // Byte-route URL for an image file (sandboxed to the session working dir). Sync URL
   // builder (no fetch) so it can feed an <img src> directly; the route streams raw bytes.
   imageUrl: (sessionId: string, p: string) => `/api/sessions/${sessionId}/files/image?path=${encodeURIComponent(p)}`,
+  // Attachment URL for any file type (sandboxed to the session working dir). Sync URL builder;
+  // the route streams raw bytes with Content-Disposition: attachment so the browser saves it.
+  downloadUrl: (sessionId: string, p: string) => `/api/sessions/${sessionId}/files/download?path=${encodeURIComponent(p)}`,
   writeFile: (sessionId: string, p: string, content: string) =>
     req<{ ok: true; path: string }>(`/api/sessions/${sessionId}/files/write?path=${encodeURIComponent(p)}`, { method: 'PUT', body: body({ content }) }),
   makeDirectory: (sessionId: string, p: string) =>
