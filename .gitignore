@@ -10,3 +10,7 @@ coverage/
 .vscode/
 .idea/
 .worktrees/
+
+# Runtime data + tool scratch (never tracked)
+.dispatch/
+.playwright-mcp/

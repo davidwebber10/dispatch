@@ -166,9 +166,17 @@ it('an agent question escalates UP to the project coordinator (not to the human)
   // The agent is genuinely paused (so the coordinator CAN answer it) ...
   const pending = await pollPermission(a, agentId);
   expect(pending.toolName).toBe('AskUserQuestion');
-  // ... and answer_agent (→ POST /permission with the chosen option) resolves it.
+  expect(pending.questions[0]).toMatchObject({ header: 'Choice', question: 'Pick one' }); // header !== question text
+  // ... and answer_agent (→ POST /permission with the chosen option) resolves it. The coordinator
+  // contract documents answering by HEADER (formatAgentQuestion's example), but the real `claude`
+  // CLI's AskUserQuestion result mapper looks up each answer by `question` TEXT — so a header-keyed
+  // answer must be remapped onto the question text before it reaches the tool, or the CLI reports
+  // "The user did not answer the questions" even though this POST returns 204.
   const ans = await request(a).post(`/api/terminals/${agentId}/permission`).send({ decision: 'allow', answers: { Choice: 'A' } });
   expect(ans.status).toBe(204);
+  const echoed = await pollEvent(a, agentId, (e) => e?.type === 'user' && JSON.stringify(e).includes('"answers"'));
+  const tr = echoed.message.content[0];
+  expect(tr.updatedInput.answers).toEqual({ 'Pick one': 'A' }); // keyed by question TEXT, not header 'Choice'
 
   await request(a).post(`/api/terminals/${agentId}/stop`);
   await request(a).post(`/api/terminals/${coordId}/stop`);

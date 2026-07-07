@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { handleRequest, callTool, TOOLS } from '../../src/overseer/agency-mcp.js';
+import { modelFor } from '../../src/overseer/prompts.js';
 
 describe('agency-mcp', () => {
   const origFetch = global.fetch;
@@ -116,6 +117,61 @@ describe('agency-mcp', () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
       transport: 'structured', agentType: 'researcher', role: 'agent',
     });
+  });
+
+  it('spawn_agent forwards an explicit model override into the create body config', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'a5', label: 'researcher agent' }) })
+      .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
+    global.fetch = fetchMock as any;
+    await callTool('spawn_agent', { agentType: 'researcher', task: 'quick lookup', model: 'sonnet' });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
+      transport: 'structured', agentType: 'researcher', role: 'agent', model: 'sonnet',
+    });
+  });
+
+  it('spawn_agent omits model from config when not provided (tier default applies later at spawn time)', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'a6', label: 'researcher agent' }) })
+      .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
+    global.fetch = fetchMock as any;
+    await callTool('spawn_agent', { agentType: 'researcher', task: 'look' });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
+      transport: 'structured', agentType: 'researcher', role: 'agent',
+    });
+  });
+
+  it('end-to-end: spawn_agent config resolves via modelFor to the explicit override, or the implementer tier default when omitted', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'a7', label: 'implementer agent' }) })
+      .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
+    global.fetch = fetchMock as any;
+    await callTool('spawn_agent', { agentType: 'implementer', task: 'hard problem', model: 'opus' });
+    const overriddenConfig = JSON.parse(fetchMock.mock.calls[0][1].body).config;
+    expect(modelFor(overriddenConfig)).toBe('opus'); // override wins over the implementer's sonnet default
+
+    fetchMock.mockReset();
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'a8', label: 'implementer agent' }) })
+      .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
+    await callTool('spawn_agent', { agentType: 'implementer', task: 'do it' });
+    const defaultConfig = JSON.parse(fetchMock.mock.calls[0][1].body).config;
+    expect(modelFor(defaultConfig)).toBe('sonnet'); // falls back to the implementer tier default (no regression)
+  });
+
+  it('end-to-end: queue_agent config resolves via modelFor to the explicit override, or the researcher tier default when omitted', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'q7', label: 'researcher agent' }) });
+    global.fetch = fetchMock as any;
+    await callTool('queue_agent', { agentType: 'researcher', task: 'quick lookup', model: 'sonnet' });
+    const overriddenConfig = JSON.parse(fetchMock.mock.calls[0][1].body).config;
+    expect(modelFor(overriddenConfig)).toBe('sonnet'); // override wins over the researcher's opus default
+
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'q8', label: 'researcher agent' }) });
+    await callTool('queue_agent', { agentType: 'researcher', task: 'investigate' });
+    const defaultConfig = JSON.parse(fetchMock.mock.calls[0][1].body).config;
+    expect(modelFor(defaultConfig)).toBe('opus'); // falls back to the researcher tier default (no regression)
   });
 
   it('list_missions aggregates distinct missions with live/total counts', async () => {
@@ -241,6 +297,26 @@ describe('agency-mcp', () => {
     await callTool('queue_agent', { agentType: 'researcher', task: 'look' });
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
       transport: 'structured', agentType: 'researcher', role: 'agent',
+    });
+  });
+
+  it('queue_agent forwards an explicit model override into the create body config', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'q5', label: 'implementer agent' }) });
+    global.fetch = fetchMock as any;
+    await callTool('queue_agent', { agentType: 'implementer', task: 'hard problem', model: 'opus' });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
+      transport: 'structured', agentType: 'implementer', role: 'agent', model: 'opus',
+    });
+  });
+
+  it('queue_agent omits model from config when not provided (tier default applies later at spawn time)', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'q6', label: 'implementer agent' }) });
+    global.fetch = fetchMock as any;
+    await callTool('queue_agent', { agentType: 'implementer', task: 'do it' });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
+      transport: 'structured', agentType: 'implementer', role: 'agent',
     });
   });
 

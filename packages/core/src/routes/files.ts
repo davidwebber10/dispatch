@@ -159,6 +159,42 @@ export function createFilesRouter(db: Database.Database): Router {
     }
   });
 
+  // GET /api/sessions/:id/files/download?path=file.ext — stream any file as a download.
+  // Binary-safe sibling of /read (text-only JSON) and /image (inline images only): forces a
+  // browser "Save As"/download of ANY file type via Content-Disposition: attachment. Uses the
+  // STRICT resolveSafe sandbox — same guard as the directory listing this is triggered from.
+  router.get('/download', (req, res) => {
+    const session = (req as any).session;
+    const requestedPath = req.query.path as string;
+    if (!requestedPath) return res.status(400).json({ error: 'Missing path parameter' });
+
+    const resolved = resolveSafe(session.workingDir, requestedPath);
+    if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
+
+    try {
+      const stat = fs.statSync(resolved);
+      if (!stat.isFile()) return res.status(404).json({ error: 'Not a file' });
+
+      const name = path.basename(resolved);
+      // Sanitize for the header: drop anything outside printable ASCII (this also kills CR/LF
+      // header injection) plus quotes/backslashes; the real name rides the RFC 5987 field.
+      const asciiName = name.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_');
+
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('Content-Length', String(stat.size));
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(name)}`,
+      );
+      const stream = fs.createReadStream(resolved);
+      stream.on('error', () => { if (!res.headersSent) res.status(400).end(); else res.destroy(); });
+      stream.pipe(res);
+    } catch (err: any) {
+      res.status(404).json({ error: err.message });
+    }
+  });
+
   // PUT /api/sessions/:id/files/write?path=file.txt — write file
   router.put('/write', (req, res) => {
     const session = (req as any).session;

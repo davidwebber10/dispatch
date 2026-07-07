@@ -64,6 +64,16 @@ export const TOOLS = [
             'Optional concise mission name that groups this agent with related work ' +
             '(e.g. "Auth refactor"). Reuse the same name across related agents; defaults to "General" when unset.',
         },
+        model: {
+          type: 'string',
+          description:
+            'Optional model override for this agent — pins it to a specific Claude model instead of ' +
+            'the automatic per-type default. Accepts short aliases ("sonnet", "opus", "haiku") or a full ' +
+            'model id (e.g. "claude-opus-4-8"). Omit to use the default tier for the type: researcher, ' +
+            'planner, and reviewer run on opus; implementer runs on sonnet. Override when a task is ' +
+            'unusually easy for its role (e.g. drop a researcher to sonnet for a quick lookup) or ' +
+            'unusually hard (e.g. bump an implementer to opus for a hard problem).',
+        },
       },
       required: ['agentType', 'task'],
     },
@@ -101,6 +111,16 @@ export const TOOLS = [
             'Optional agentId this queued agent should wait on. When that agent finishes, this one ' +
             "auto-starts with the finished agent's final output added as context ahead of its task. " +
             'Already-finished dependency? It starts right away.',
+        },
+        model: {
+          type: 'string',
+          description:
+            'Optional model override for this agent — pins it to a specific Claude model instead of ' +
+            'the automatic per-type default. Accepts short aliases ("sonnet", "opus", "haiku") or a full ' +
+            'model id (e.g. "claude-opus-4-8"). Omit to use the default tier for the type: researcher, ' +
+            'planner, and reviewer run on opus; implementer runs on sonnet. Override when a task is ' +
+            'unusually easy for its role (e.g. drop a researcher to sonnet for a quick lookup) or ' +
+            'unusually hard (e.g. bump an implementer to opus for a hard problem).',
         },
       },
       required: ['agentType', 'task'],
@@ -238,15 +258,19 @@ async function httpJson(method: string, url: string, body?: unknown): Promise<an
 
 // --- tool implementations --------------------------------------------------
 
-async function spawnAgent(args: { agentType: AgentType; name?: string; task: string; mission?: string }): Promise<{ agentId: string; label: string; mission?: string }> {
+async function spawnAgent(args: { agentType: AgentType; name?: string; task: string; mission?: string; model?: string }): Promise<{ agentId: string; label: string; mission?: string }> {
   if (!args?.agentType) throw new Error('agentType is required');
   if (!args?.task) throw new Error('task is required');
   const label = args.name || `${args.agentType} agent`;
   const mission = typeof args.mission === 'string' ? args.mission.trim() : '';
+  const model = typeof args.model === 'string' ? args.model.trim() : '';
   const terminal = await httpJson('POST', `${apiBase()}/api/sessions/${sessionId()}/terminals`, {
     type: 'claude-code',
     label,
-    config: { transport: 'structured', agentType: args.agentType, role: 'agent', ...(mission ? { mission } : {}) },
+    config: {
+      transport: 'structured', agentType: args.agentType, role: 'agent',
+      ...(mission ? { mission } : {}), ...(model ? { model } : {}),
+    },
   });
   const agentId: string | undefined = terminal?.id;
   if (!agentId) throw new Error('spawn did not return a terminal id');
@@ -262,12 +286,13 @@ async function spawnAgent(args: { agentType: AgentType; name?: string; task: str
  * has. `dependsOn` rides inside `config` (opaque to the route) alongside the other agent markers.
  * Mirrors spawnAgent's args/mission handling.
  */
-async function queueAgent(args: { agentType: AgentType; name?: string; task: string; mission?: string; dependsOn?: string }): Promise<{ agentId: string; label: string; mission?: string; queued: true }> {
+async function queueAgent(args: { agentType: AgentType; name?: string; task: string; mission?: string; dependsOn?: string; model?: string }): Promise<{ agentId: string; label: string; mission?: string; queued: true }> {
   if (!args?.agentType) throw new Error('agentType is required');
   if (!args?.task) throw new Error('task is required');
   const label = args.name || `${args.agentType} agent`;
   const mission = typeof args.mission === 'string' ? args.mission.trim() : '';
   const dependsOn = typeof args.dependsOn === 'string' ? args.dependsOn.trim() : '';
+  const model = typeof args.model === 'string' ? args.model.trim() : '';
   const terminal = await httpJson('POST', `${apiBase()}/api/sessions/${sessionId()}/terminals`, {
     type: 'claude-code',
     label,
@@ -275,7 +300,7 @@ async function queueAgent(args: { agentType: AgentType; name?: string; task: str
     task: args.task,
     config: {
       transport: 'structured', agentType: args.agentType, role: 'agent',
-      ...(mission ? { mission } : {}), ...(dependsOn ? { dependsOn } : {}),
+      ...(mission ? { mission } : {}), ...(dependsOn ? { dependsOn } : {}), ...(model ? { model } : {}),
     },
   });
   const agentId: string | undefined = terminal?.id;

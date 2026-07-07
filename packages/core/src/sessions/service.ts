@@ -935,9 +935,32 @@ export class SessionService {
   }
 
   /**
+   * The real `claude` CLI's AskUserQuestion tool result mapper looks up each answer by
+   * the question's `question` TEXT (`answers[q.question]`), never its `header` — but
+   * formatAgentQuestion / answer_agent's coordinator-facing contract documents answering
+   * by header (for readability in the notice), and agency-mcp.ts's bare-`answer` shortcut
+   * builds a header-keyed map too. Remap here, once, so every caller — however it keyed
+   * its answers — lands on the question-text keys the CLI actually reads. Accepts either
+   * key per question so the already-correct web path (AskQuestionCard.tsx / store.ts,
+   * which already key by `q.question`) passes through unchanged.
+   */
+  private remapAnswersToQuestionText(questions: any[] | undefined, answers: Record<string, string>): Record<string, string> {
+    const qs = Array.isArray(questions) ? questions : [];
+    const remapped: Record<string, string> = {};
+    for (const q of qs) {
+      const key = q?.question;
+      if (typeof key !== 'string' || !key) continue;
+      const value = answers[key] ?? (typeof q?.header === 'string' ? answers[q.header] : undefined);
+      if (value !== undefined) remapped[key] = value;
+    }
+    return remapped;
+  }
+
+  /**
    * Resolve a structured thread's pending gated tool. `allow` echoes the original
    * input back to the tool, folding in the original `questions` and any AskUserQuestion
-   * `answers` map; `deny` sends a message. Returns false when nothing is pending.
+   * `answers` map (remapped onto question-text keys — see remapAnswersToQuestionText);
+   * `deny` sends a message. Returns false when nothing is pending.
    */
   answerPermission(
     terminalId: string,
@@ -948,10 +971,11 @@ export class SessionService {
     const pending = this.structuredManager.getPending(terminalId);
     if (!pending) return false;
     if (opts.decision === 'allow') {
+      const remappedAnswers = opts.answers ? this.remapAnswersToQuestionText(pending.questions, opts.answers) : undefined;
       const updatedInput = {
         ...(pending.input ?? {}),
         ...(pending.questions ? { questions: pending.questions } : {}),
-        ...(opts.answers ? { answers: opts.answers } : {}),
+        ...(remappedAnswers && Object.keys(remappedAnswers).length ? { answers: remappedAnswers } : {}),
       };
       return this.structuredManager.answerPermission(terminalId, requestId || pending.requestId, { behavior: 'allow', updatedInput });
     }

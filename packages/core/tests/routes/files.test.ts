@@ -127,4 +127,44 @@ describe('file routes', () => {
 
     expect(newTempFiles).toEqual([]);
   });
+
+  // Collect the response body as raw bytes so binary integrity can be asserted.
+  function binaryParser(res: any, cb: (err: Error | null, body: Buffer) => void) {
+    const chunks: Buffer[] = [];
+    res.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+    res.on('end', () => cb(null, Buffer.concat(chunks)));
+  }
+
+  it('downloads a file as an attachment, byte-for-byte', async () => {
+    // Non-UTF-8 bytes: proves the endpoint is binary-safe (unlike /read).
+    const payload = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0xfe, 0x01]);
+    fs.writeFileSync(path.join(tmpDir, 'art.png'), payload);
+
+    const res = await request(app)
+      .get('/api/sessions/s1/files/download?path=art.png')
+      .buffer(true)
+      .parse(binaryParser);
+
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/application\/octet-stream/);
+    expect(res.headers['content-disposition']).toContain('attachment');
+    expect(res.headers['content-disposition']).toContain('filename="art.png"');
+    expect(res.body.equals(payload)).toBe(true);
+  });
+
+  it('blocks path traversal on download', async () => {
+    const res = await request(app).get('/api/sessions/s1/files/download?path=../../etc/passwd');
+    expect(res.status).toBe(403);
+  });
+
+  it('404s downloading a missing file', async () => {
+    const res = await request(app).get('/api/sessions/s1/files/download?path=nope.bin');
+    expect(res.status).toBe(404);
+  });
+
+  it('404s downloading a directory', async () => {
+    fs.mkdirSync(path.join(tmpDir, 'folder'));
+    const res = await request(app).get('/api/sessions/s1/files/download?path=folder');
+    expect(res.status).toBe(404);
+  });
 });
