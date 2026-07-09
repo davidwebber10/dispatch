@@ -214,4 +214,8 @@ export interface RenderVals {
   emptyMode: boolean;
   drillOpen: boolean;
   overviewOpen: boolean;
+  /** True when the store's loaded coordinator belongs to the project currently shown.
+   *  Consumers gate direct coordinator reads (pending, older-history paging) on this so a
+   *  freshly-switched tab never acts on the previous project's coordinator. */
+  projectMatches: boolean;
 }

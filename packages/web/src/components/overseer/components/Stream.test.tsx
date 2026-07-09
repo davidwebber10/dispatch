@@ -7,6 +7,7 @@ import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import type { ConvItem, PendingPermission } from '../../../api/types';
 import { useOverseer } from '../store';
+import { useProjects } from '../../../stores/projects';
 import { m } from '../data';
 import { convItemsToStream } from '../live';
 import { ConversationStream } from './Stream';
@@ -21,6 +22,10 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
+  // ConversationStream now gates coordinator fields on activeId === coordinatorProject
+  // (the cross-tab bleed fix) — tests must set the viewed project to match, or the
+  // gating (correctly) blanks the stream as belonging to another project.
+  useProjects.setState({ activeId: 'proj-1' });
   useOverseer.setState({
     coordinatorId: 'coord-1',
     coordinatorProject: 'proj-1',

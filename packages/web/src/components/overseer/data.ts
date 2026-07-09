@@ -444,5 +444,6 @@ export function derive(s: DeriveState): RenderVals {
     emptyMode: s.scenario === 'empty',
     drillOpen: !!s.drill,
     overviewOpen: !s.drill,
+    projectMatches: true,
   };
 }
