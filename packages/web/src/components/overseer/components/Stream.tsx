@@ -533,7 +533,7 @@ function renderStream(stream: StreamMessage[]) {
 // ---- ConversationStream (exported) ------------------------------------------
 
 export function ConversationStream() {
-  const { stream, busy } = useRenderVals();
+  const { stream, busy, projectMatches } = useRenderVals();
   const coordinatorId = useOverseer((s) => s.coordinatorId);
   const coordinatorPending = useOverseer((s) => s.coordinatorPending);
   const coordinatorAnswer = useOverseer((s) => s.coordinatorAnswer);
@@ -545,7 +545,7 @@ export function ConversationStream() {
   // (packages/web/src/components/tabs/chat/ChatView.tsx). preserveScrollOnPrepend on the
   // Viewport below then holds the reader's visual position across the prepend for free.
   function onViewportScroll(e: React.UIEvent<HTMLDivElement>) {
-    if (e.currentTarget.scrollTop < 120 && coordinatorHasMore && !coordinatorLoadingOlder) coordinatorLoadOlder();
+    if (e.currentTarget.scrollTop < 120 && projectMatches && coordinatorHasMore && !coordinatorLoadingOlder) coordinatorLoadOlder();
   }
 
   // `ready` gates PAINT of the scroller: hidden (visibility, not display — geometry/scroll
@@ -560,7 +560,7 @@ export function ConversationStream() {
   // A pending question is blocking, critical UI — the CLI is parked on stdin awaiting an answer,
   // so the stream is NOT mid-burst and there's nothing for the settle-gate to hide. Force the
   // view visible whenever one is pending so the question can never be swallowed by the paint gate.
-  const hasPendingQuestion = !!coordinatorPending?.questions?.length;
+  const hasPendingQuestion = projectMatches && !!coordinatorPending?.questions?.length;
   // Re-hide on a thread switch (e.g. changing projects) — a layout effect so it lands before
   // paint and the outgoing thread's "ready" state can never flash into the incoming one.
   useLayoutEffect(() => setReady(false), [coordinatorId]);
@@ -579,7 +579,7 @@ export function ConversationStream() {
                   the "Open Dispatch" chat silently freezes (the question surfaces nowhere else,
                   since a coordinator is not a managed worker and useNeedsSync skips it). Keyed by
                   requestId so a new question mounts fresh. */}
-              {coordinatorPending?.questions && coordinatorPending.questions.length > 0 && (
+              {projectMatches && coordinatorPending?.questions && coordinatorPending.questions.length > 0 && (
                 <MessageScroller.Item messageId="__ask" style={{ display: 'flex' }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <AskQuestionCard key={coordinatorPending.requestId} questions={coordinatorPending.questions} onAnswer={coordinatorAnswer} />
@@ -599,7 +599,7 @@ export function ConversationStream() {
           <LoadingOlderPill show={coordinatorLoadingOlder} />
           <JumpButton />
           <StickToEndOnLoad coordinatorId={coordinatorId} count={stream.length} onReady={handleReady} />
-          <BootstrapOlderPages hasMore={coordinatorHasMore} loadingOlder={coordinatorLoadingOlder} loadOlder={coordinatorLoadOlder} />
+          <BootstrapOlderPages hasMore={projectMatches && coordinatorHasMore} loadingOlder={coordinatorLoadingOlder} loadOlder={coordinatorLoadOlder} />
         </MessageScroller.Root>
       </MessageScroller.Provider>
       {/* Root is visibility:hidden until `ready` — surface feedback in its place so the
