@@ -563,6 +563,10 @@ export function ConversationStream() {
   const hasPendingQuestion = projectMatches && !!coordinatorPending?.questions?.length;
   // Re-hide on a thread switch (e.g. changing projects) — a layout effect so it lands before
   // paint and the outgoing thread's "ready" state can never flash into the incoming one.
+  // NOTE: coordinatorId is read RAW (ungated) on purpose — it's a thread-IDENTITY signal for the
+  // scroll/paint machinery (re-arm the latch, reset `ready`), never rendered transcript content.
+  // The content reads above are project-gated; this identity read must not be, or the paint gate
+  // wouldn't re-arm across the swap. Don't "fix" this to projectMatches — it's not a content leak.
   useLayoutEffect(() => setReady(false), [coordinatorId]);
 
   return (
