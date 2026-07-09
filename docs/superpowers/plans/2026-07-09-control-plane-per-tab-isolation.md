@@ -350,3 +350,30 @@ Then re-enter `superpowers:systematic-debugging` with that evidence to identify 
 
 - **Why gate instead of rewrite the store to per-project maps?** Only one `<OverseerView>` is mounted at a time and `activeId` already tracks the active Control Plane tab's project, so the visible bug is purely temporal (stale reads during the async swap). Gating on `coordinatorProject === activeId` is the smallest change that makes it impossible to render another project's data, and it keeps the coordinator stream on the SAME identity as missions/needs/archived (which all already key on `activeId`). A full per-project-map refactor would touch every consumer for no additional user-visible correctness.
 - **Mobile is covered for free:** `mobile/MobileApp.tsx` calls `useProjects.setActive(projectId)` before showing `<OverseerView>`, so `activeId` equals the open Control Plane's project there too; the same gate applies.
+
+---
+
+## Verification results (2026-07-09)
+
+Live verification run against the rebuilt daemon on `http://localhost:3456` (build clean, `dispatch status` = loaded/reachable), using the `verify` skill and `superpowers:systematic-debugging`.
+
+### Task 3 — bleed: **PASS**
+
+- The POLYWOOD Analytics Control Plane held its own transcript across repeated fast tab switches; never flashed another project's content.
+- The Dispatch Control Plane tab rendered **Dispatch-attributed** content, never POLYWOOD's — i.e. no cross-project bleed. The project-gate (`coordinatorProject === activeId`) does its job.
+- **Surprise (out of scope):** the Dispatch tab surfaced *this very verification session's* transcript. Cause is unrelated to this fix — the Dispatch coordinator terminal has an empty `external_id`, so `getConversation` → `recoverSessionId` (`packages/core/src/sessions/service.ts:611`) falls back to the **newest `*.jsonl` in the project dir**, which was the plain-terminal `claude` session running the verification. Tracked as a separate follow-up.
+
+### Task 4 — duplication: **REPRODUCED, root cause confirmed, fix deferred to its own branch**
+
+The in-tab duplication **did reproduce** (the entire POLYWOOD Analytics transcript rendered twice in one Control Plane tab). Evidence captured before any fix:
+
+- Server side **clean**: REST `conversation` = 15 items, single copy, `hasMore:false`; ws replay = 15 uuids, 15 distinct, **0 dup uuids**. ⇒ duplication is purely client-side.
+- `conversation?limit=120` with **no** `beforeUuid` returns the full 15-item window; with `beforeUuid=<oldest uuid>` returns **0** (correctly nothing older).
+- Network on tab-open showed a burst of anchorless `conversation?limit=120` fetches.
+- DOM = exactly 2 copies; **no** React "same key" warning ⇒ distinct keys ⇒ dedup-miss/append, not a key collision.
+
+**Root cause (confirmed):** `useStructuredChat`'s ws `onEvent` handlers append items with no dedup (`setItems(p => [...p, item])`); the only dedup lives in `loadOlder`. `useBootstrapOlderPages` fires `loadOlder()` on mount. On the first call, before the ws replay has settled a real transcript `uuid` (items empty, or still holding synthetic `s-<turn>-<idx>` streaming keys), `beforeUuid` is unresolvable → `getConversation` returns the **newest window = the whole transcript**. When that REST page resolves before the ws replay populates `items`, the REST copy lands first and the replay then **re-appends the same turns with no dedup** → the conversation renders twice, persisting as settled React state. A mount-time race, hence intermittent.
+
+**Orthogonal to this PR:** for the same-project case `projectMatches === true`, so this branch's gate *allows* `loadOlder`; it neither causes nor fixes the duplication. The defect lives in the shared `useStructuredChat` / `useBootstrapOlderPages` machinery (the agent ChatView uses it too) and is present on `main`.
+
+**Fix (separate branch `fix/control-plane-transcript-duplication`):** anchor-guard in `loadOlder` — never issue an anchorless full-window fetch; on the first call, only fetch once a real transcript uuid (not a synthetic `s-` key) is available to anchor `beforeUuid`, else bail and let bootstrap/scroll retry once the replay settles. `loadOlder` serves strictly-older history; the newest window is owned by the ws replay.
