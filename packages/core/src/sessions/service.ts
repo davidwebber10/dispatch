@@ -604,9 +604,16 @@ export class SessionService {
   }
 
   /**
-   * Recover a missing transcript link: pick the newest *.jsonl in the project's
-   * Claude transcript dir, and persist it as the terminal's external_id when it's
-   * the only one (unambiguous) so resume + future loads work too.
+   * Recover a missing transcript link, but ONLY when it's unambiguous: if the project's
+   * Claude transcript dir holds exactly one *.jsonl, adopt it as the terminal's external_id
+   * (so resume + future loads work too). With 0 files there's nothing to recover; with 2+ we
+   * cannot tell the terminal's own transcript from unrelated `claude` sessions that share the
+   * project dir (the user's own terminal runs, other coordinators), so we return null rather
+   * than guess "newest" — guessing rendered a conversation the terminal never owned (issue #7:
+   * a coordinator with no external_id surfaced a stranger's session). A terminal that actually
+   * ran captured its external_id at the structured `init` event (first-write-wins, see
+   * setStructuredManager), so it never depends on this fallback; a never-run coordinator
+   * correctly falls back to the empty greeting instead of an arbitrary transcript.
    */
   private recoverSessionId(terminalId: string, dir: string): string | null {
     let files: { id: string; m: number }[];
@@ -616,10 +623,8 @@ export class SessionService {
         .map((f) => ({ id: f.replace(/\.jsonl$/, ''), m: fs.statSync(path.join(dir, f)).mtimeMs }))
         .sort((a, b) => b.m - a.m);
     } catch { return null; }
-    if (!files.length) return null;
-    if (files.length === 1) {
-      try { terminalsDb.updateExternalId(this.db, terminalId, files[0].id); } catch { /* best effort */ }
-    }
+    if (files.length !== 1) return null; // 0 = nothing to recover; 2+ = ambiguous, don't guess
+    try { terminalsDb.updateExternalId(this.db, terminalId, files[0].id); } catch { /* best effort */ }
     return files[0].id;
   }
 
