@@ -645,18 +645,27 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
   // callback stays stable per terminalId instead of churning on every fetch.
   const loadOlder = useCallback(() => {
     if (!terminalId || loadingOlderRef.current || !hasMoreRef.current) return;
-    loadingOlderRef.current = true;
-    setLoadingOlder(true);
     const tok = pageTokenRef.current;
     // First call only (no numeric anchor probed yet): anchor precisely on the oldest
     // already-rendered item's real identity, so this fetches genuinely-older content
     // instead of the newest REST window (which would just overlap the ws-replayed tail —
-    // see getConversation's doc comment on `beforeUuid`). Items without a uuid (the
-    // client's own optimistic echo, or a pre-fix legacy item) are skipped in favor of the
-    // next one that has one; if none do, this falls back to today's `before: undefined`.
-    const beforeUuid = oldestLineRef.current === undefined
-      ? itemsRef.current.find((it) => it.uuid)?.uuid
+    // see getConversation's doc comment on `beforeUuid`). A "real" identity is a Claude Code
+    // transcript uuid — NOT the synthetic `s-<turn>-<idx>` key a still-streaming block carries
+    // before the whole-assistant reconcile upgrades it (see content_block_start), which the
+    // server can't resolve on disk.
+    const firstCall = oldestLineRef.current === undefined;
+    const beforeUuid = firstCall
+      ? itemsRef.current.find((it) => it.uuid && !it.uuid.startsWith('s-'))?.uuid
       : undefined;
+    // ANCHORLESS-FETCH GUARD: on the first call, if the ws replay hasn't settled a real-uuid
+    // item yet (items empty, or only synthetic streaming keys), do NOT fetch. An anchorless
+    // request makes getConversation return the NEWEST window — the whole transcript — which the
+    // ws onEvent handlers then re-append with no dedup, rendering the conversation twice. Bail
+    // and let BootstrapOlderPages / a near-top scroll retry once the replay settles an anchor.
+    // loadOlder serves strictly-older history; the newest window is owned by the ws replay.
+    if (firstCall && !beforeUuid) return;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
     api.getConversation(terminalId, { before: oldestLineRef.current, ...(beforeUuid ? { beforeUuid } : {}), limit: OLDER_PAGE_LIMIT })
       .then((conv) => {
         if (tok !== pageTokenRef.current) return; // thread switched / ws reset mid-flight — discard
