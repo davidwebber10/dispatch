@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Gear, CaretLeft, CaretRight, Plus, Folders, Robot } from '@phosphor-icons/react';
+import { Gear, CaretLeft, CaretRight, Plus, Folders, PushPin, Robot } from '@phosphor-icons/react';
 import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
 import { ModeToggle } from '../layout/ModeToggle';
 import { ProjectCard } from '../sidebar/ProjectCard';
 import { AllAgentsView } from '../agents/AllAgentsView';
+import { PinnedThreadsView } from './PinnedThreadsView';
 import { NewProjectModal } from '../sidebar/NewProjectModal';
 import { FilesPane } from '../inspector/FilesPane';
 import { TabHost } from '../tabs/TabHost';
@@ -58,7 +59,7 @@ export function MobileApp() {
   const [newProject, setNewProject] = useState(false);
   const [browseFiles, setBrowseFiles] = useState(false);
   const [query, setQuery] = useState('');
-  const [bottomTab, setBottomTab] = useState<'projects' | 'agents'>('projects');
+  const [bottomTab, setBottomTab] = useState<'projects' | 'pinned' | 'agents'>('projects');
   // Dispatch mode (mobile): the coordinator view opens as a full-screen overlay
   // over the active project (mirrors browseFiles). Closing returns to the project.
   const [dispatchOpen, setDispatchOpen] = useState(false);
@@ -87,6 +88,14 @@ export function MobileApp() {
     useProjects.getState().setActive(pid); setProjectId(pid);
     useAgentUI.getState().selectAgent(scheduleId); setLeaf('agent'); setLevel(2);
     history.pushState({ nav: 2, projectId: pid, leaf: 'agent', agentId: scheduleId }, '', `/p/${pid}/a/${scheduleId}`);
+  };
+  // Same pattern from the cross-project Pinned tab: seed the project, then jump
+  // straight to the thread (back returns to the root, still on the Pinned tab).
+  const openThreadFromList = (pid: string, tabId: string) => {
+    useProjects.getState().setActive(pid); setProjectId(pid);
+    useAgentUI.getState().blur(); useTabs.getState().setActiveTab(tabId); setLeafTabId(tabId); setLeaf('tab'); setLevel(2);
+    setHighlightThreadId(tabId);
+    history.pushState({ nav: 2, projectId: pid, leaf: 'tab', tabId }, '', `/p/${pid}/t/${tabId}`);
   };
   const back = () => history.back();
 
@@ -157,6 +166,8 @@ export function MobileApp() {
           <div style={{ ...slot, display: 'flex', flexDirection: 'column' }}>
             {bottomTab === 'agents' ? (
               <AllAgentsView onOpenAgent={openAgentFromList} />
+            ) : bottomTab === 'pinned' ? (
+              <PinnedThreadsView onOpenThread={openThreadFromList} />
             ) : (
             <>
             <div style={{ display: 'flex', gap: 8, padding: 10, flexShrink: 0 }}>
@@ -193,9 +204,9 @@ export function MobileApp() {
             </div>
             </>
             )}
-            {/* Bottom tab bar — Projects / Agents (only at the root; slides away with the rail) */}
+            {/* Bottom tab bar — Projects / Pinned / Automations (only at the root; slides away with the rail) */}
             <div style={{ flexShrink: 0, display: 'flex', borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
-              {([['projects', 'Projects', Folders], ['agents', 'Automations', Robot]] as const).map(([key, label, Icon]) => {
+              {([['projects', 'Projects', Folders], ['pinned', 'Pinned', PushPin], ['agents', 'Automations', Robot]] as const).map(([key, label, Icon]) => {
                 const on = bottomTab === key;
                 return (
                   <button key={key} onClick={() => setBottomTab(key)}
