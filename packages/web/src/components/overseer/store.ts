@@ -33,6 +33,42 @@ import type { AgentType, Ribbon, RenderVals, Scenario, StreamMessage } from './t
 // Composer on every unrelated store update.
 const EMPTY_IMAGES: ContentBlock[] = [];
 
+// A stable empty-stream reference so viewCoordinatorFields returns the SAME array
+// on every mismatched read — a fresh `[]` literal would fail Zustand/useMemo Object.is
+// checks and churn re-renders while another project's swap is in flight.
+const EMPTY_STREAM: StreamMessage[] = [];
+
+/**
+ * True only when the store's loaded coordinator belongs to the project the view is
+ * currently showing. When false, the coordinator fields (`coordinatorStream`/`coordinatorId`/
+ * `coordinatorBusy`/pending/paging) still hold ANOTHER project's data — the async
+ * ensureForProject swap on a tab switch hasn't landed yet — and MUST NOT be rendered,
+ * or one Control Plane tab shows a different project's transcript (the cross-tab bleed).
+ * `activeId` uniquely identifies the mounted Control Plane's project (one dispatch tab per
+ * project; useTabs.openTab sets activeTabId + activeId together).
+ */
+export function coordinatorMatchesView(coordinatorProject: string | null, activeId: string | null): boolean {
+  return !!activeId && coordinatorProject === activeId;
+}
+
+/** Project-gated projection of the coordinator fields for the current view: pass-through
+ *  when the loaded coordinator matches the viewed project, blanked otherwise. */
+export function viewCoordinatorFields(args: {
+  coordinatorProject: string | null;
+  activeId: string | null;
+  coordinatorStream: StreamMessage[];
+  coordinatorBusy: boolean;
+  coordinatorId: string | null;
+}): { stream: StreamMessage[]; busy: boolean; hasCoordinator: boolean; projectMatches: boolean } {
+  const projectMatches = coordinatorMatchesView(args.coordinatorProject, args.activeId);
+  return {
+    stream: projectMatches ? args.coordinatorStream : EMPTY_STREAM,
+    busy: projectMatches ? args.coordinatorBusy : false,
+    hasCoordinator: projectMatches && !!args.coordinatorId,
+    projectMatches,
+  };
+}
+
 export type MobileTab = 'needs' | 'stream' | 'work';
 
 interface OverseerState {
@@ -587,9 +623,10 @@ export function useNeedsSync(): void {
 // Derived view model. Pure read over the live stores (no websocket here — that's
 // owned by useCoordinatorSync), memoized so the snapshot reference is stable.
 export function useRenderVals(): RenderVals {
-  const { coordinatorId, coordinatorStream, coordinatorBusy, sendError, resolved, pendingByTerminal, archivedByProject } = useOverseer(
+  const { coordinatorId, coordinatorProject, coordinatorStream, coordinatorBusy, sendError, resolved, pendingByTerminal, archivedByProject } = useOverseer(
     useShallow((s) => ({
       coordinatorId: s.coordinatorId,
+      coordinatorProject: s.coordinatorProject,
       coordinatorStream: s.coordinatorStream,
       coordinatorBusy: s.coordinatorBusy,
       sendError: s.sendError,
@@ -615,14 +652,24 @@ export function useRenderVals(): RenderVals {
       done += mi.outcomes.length;
     }
 
+    // Project-gate the coordinator fields: if the store still holds ANOTHER project's
+    // coordinator (the async ensureForProject swap on a tab switch hasn't landed), treat
+    // it as empty so this tab never paints the previous project's transcript.
+    const { stream: gatedStream, busy: gatedBusy, hasCoordinator, projectMatches } = viewCoordinatorFields({
+      coordinatorProject,
+      activeId,
+      coordinatorStream,
+      coordinatorBusy,
+      coordinatorId,
+    });
+
     const hasNeeds = needs.length > 0;
     const noMissions = missions.length === 0;
-    const hasCoordinator = !!coordinatorId;
-    const emptyMode = !hasCoordinator || (noMissions && coordinatorStream.length === 0);
+    const emptyMode = !hasCoordinator || (noMissions && gatedStream.length === 0);
 
     // First-run / empty conversation → the Overseer greeting.
-    const base: StreamMessage[] = coordinatorStream.length
-      ? coordinatorStream
+    const base: StreamMessage[] = gatedStream.length
+      ? gatedStream
       : [m('overseer', 'Control Plane', CANNED.emptyGreeting, '', 'greeting')];
     // Append a transient send-failure notice (BUG 1: previously swallowed) so a rejected
     // directive is VISIBLE inline; cleared by the next send attempt / project switch.
@@ -637,13 +684,14 @@ export function useRenderVals(): RenderVals {
       needs,
       missions,
       stream,
-      busy: coordinatorBusy,
+      busy: gatedBusy,
       drillDetail: null, // the live drill surface is the worker lightbox, not the rail
       hasNeeds,
       noMissions,
       emptyMode,
       drillOpen: false,
       overviewOpen: true,
+      projectMatches,
     };
-  }, [coordinatorId, coordinatorStream, coordinatorBusy, sendError, resolved, pendingByTerminal, archivedByProject, activeId, byProject, byTerminal]);
+  }, [coordinatorId, coordinatorProject, coordinatorStream, coordinatorBusy, sendError, resolved, pendingByTerminal, archivedByProject, activeId, byProject, byTerminal]);
 }

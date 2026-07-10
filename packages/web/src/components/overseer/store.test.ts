@@ -4,8 +4,9 @@
 // Composer.tsx's useDraft(coordinatorProject)); this file covers the store-owned
 // piece, composerImagesByProject, plus sendDirective's per-project image scoping.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { useOverseer } from './store';
+import { useOverseer, coordinatorMatchesView, viewCoordinatorFields } from './store';
 import { api } from '../../api/client';
+import type { StreamMessage } from './types';
 
 const img = (data: string) => ({ type: 'image' as const, source: { type: 'base64' as const, media_type: 'image/png' as const, data } });
 
@@ -66,5 +67,38 @@ describe('composer image staging — scoped per coordinator project', () => {
 
     expect(spy).not.toHaveBeenCalled();
     expect(useOverseer.getState().composerImagesByProject['proj-a']).toEqual([img('a1')]);
+  });
+});
+
+const sm = (key: string): StreamMessage =>
+  ({ kind: 'text', who: 'overseer', text: key, time: '', key, isUser: false, isOverseer: true, isNote: false } as unknown as StreamMessage);
+
+describe('coordinatorMatchesView — the loaded coordinator belongs to the viewed project', () => {
+  it('true only when both ids are set and equal', () => {
+    expect(coordinatorMatchesView('proj-a', 'proj-a')).toBe(true);
+    expect(coordinatorMatchesView('proj-a', 'proj-b')).toBe(false);
+    expect(coordinatorMatchesView(null, 'proj-a')).toBe(false);
+    expect(coordinatorMatchesView('proj-a', null)).toBe(false);
+    expect(coordinatorMatchesView(null, null)).toBe(false);
+  });
+});
+
+describe('viewCoordinatorFields — a stale-project coordinator is never surfaced', () => {
+  const stream = [sm('a1'), sm('a2')];
+
+  it('passes the coordinator fields through when the project matches', () => {
+    const out = viewCoordinatorFields({ coordinatorProject: 'proj-a', activeId: 'proj-a', coordinatorStream: stream, coordinatorBusy: true, coordinatorId: 'coord-a' });
+    expect(out.projectMatches).toBe(true);
+    expect(out.stream).toBe(stream);
+    expect(out.busy).toBe(true);
+    expect(out.hasCoordinator).toBe(true);
+  });
+
+  it('blanks the stream/busy/hasCoordinator when the store holds ANOTHER project', () => {
+    const out = viewCoordinatorFields({ coordinatorProject: 'proj-a', activeId: 'proj-b', coordinatorStream: stream, coordinatorBusy: true, coordinatorId: 'coord-a' });
+    expect(out.projectMatches).toBe(false);
+    expect(out.stream).toEqual([]);
+    expect(out.busy).toBe(false);
+    expect(out.hasCoordinator).toBe(false);
   });
 });

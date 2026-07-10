@@ -70,31 +70,50 @@ it("bounds replay to the last N events when `?tail=N` is present", () => {
   expect(JSON.stringify(seeded[4])).toContain('msg-29');
 });
 
-// BUG 1 regression (archived agent shows an empty chat): onConnect returning false means no
-// live process backs this thread (e.g. service.ts's ensureStructuredAlive correctly refuses
-// to revive an archived terminal) — the ring buffer has nothing to replay and never will, so
-// the client needs an explicit signal to hydrate from the REST transcript instead of sitting
-// on an empty view forever. See useStructuredChat's 'system'/'inactive' handler.
-it("sends a 'system'/'inactive' sentinel BEFORE replay when onConnect reports no live process", () => {
+// The 'system'/'inactive' sentinel tells the client to hydrate its initial view from the REST
+// transcript instead of sitting on an empty view. The rule is "send it iff there is nothing to
+// REPLAY" — because whatever isn't in the ring won't reach the client through the live channel.
+// This covers BOTH: (1) no live process (archived/queued — the ring has nothing and never
+// will), and (2) an ALIVE thread whose in-memory ring is empty after a daemon restart (the CLI
+// is resumed with its session, but its history was never backfilled into the ring, and the live
+// channel only carries FUTURE turns). See useStructuredChat's 'system'/'inactive' handler; it
+// only hydrates if `items` is still empty, so the sentinel is harmless when replay is non-empty.
+it("sends a 'system'/'inactive' sentinel when there's nothing to replay and no live process (archived)", () => {
   const ws = fakeWs();
   handleStructuredConnection(ws as any, { url: '/api/terminals/t1/structured-ws' } as any, m, () => false);
   expect(ws.sent[0]).toEqual({ type: 'system', subtype: 'inactive' });
 });
 
-it("sends no 'inactive' sentinel when onConnect reports the process is alive (already alive or revived)", () => {
+// Regression: an ALIVE coordinator whose ring is empty (process survived a daemon restart, so
+// ensureStructuredAlive never revived+backfilled it) must still get the sentinel — otherwise its
+// long transcript never loads and it shows the new-session greeting despite having history.
+it("sends the 'inactive' sentinel for an ALIVE thread when its ring is empty (nothing to replay)", () => {
+  const ws = fakeWs();
+  handleStructuredConnection(ws as any, { url: '/api/terminals/t1/structured-ws' } as any, m, () => true);
+  expect(ws.sent.some((e) => e.type === 'system' && e.subtype === 'inactive')).toBe(true);
+});
+
+it("sends NO sentinel when the ring HAS events to replay (alive — replay provides the content)", () => {
+  const history = Array.from({ length: 3 }, (_, i) => ({ type: 'user', message: { content: [{ type: 'text', text: `msg-${i}` }] } }));
+  m.spawn('t1', { command: process.execPath, args: [fake], workDir: process.cwd(), seedEvents: history });
   const ws = fakeWs();
   handleStructuredConnection(ws as any, { url: '/api/terminals/t1/structured-ws' } as any, m, () => true);
   expect(ws.sent.some((e) => e.type === 'system' && e.subtype === 'inactive')).toBe(false);
+  expect(ws.sent.filter((e) => JSON.stringify(e).includes('msg-'))).toHaveLength(3); // replay happened
 });
 
-it('sends no inactive sentinel when no onConnect hook is supplied (defaults to alive, back-compat)', () => {
+it('sends NO sentinel when no onConnect hook is supplied and the ring has events (back-compat)', () => {
+  const history = [{ type: 'user', message: { content: [{ type: 'text', text: 'msg-0' }] } }];
+  m.spawn('t1', { command: process.execPath, args: [fake], workDir: process.cwd(), seedEvents: history });
   const ws = fakeWs();
   handleStructuredConnection(ws as any, { url: '/api/terminals/t1/structured-ws' } as any, m);
   expect(ws.sent.some((e) => e.type === 'system' && e.subtype === 'inactive')).toBe(false);
 });
 
-it("a throwing onConnect is treated as best-effort-alive (no inactive sentinel, replay still attempted)", () => {
+it('a throwing onConnect is best-effort (does not crash) and still replays buffered events', () => {
+  const history = [{ type: 'user', message: { content: [{ type: 'text', text: 'msg-0' }] } }];
+  m.spawn('t1', { command: process.execPath, args: [fake], workDir: process.cwd(), seedEvents: history });
   const ws = fakeWs();
   handleStructuredConnection(ws as any, { url: '/api/terminals/t1/structured-ws' } as any, m, () => { throw new Error('boom'); });
-  expect(ws.sent.some((e) => e.type === 'system' && e.subtype === 'inactive')).toBe(false);
+  expect(ws.sent.filter((e) => JSON.stringify(e).includes('msg-'))).toHaveLength(1);
 });
