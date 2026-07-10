@@ -12,7 +12,7 @@ function parseReplayBytes(url: string | undefined): number | undefined {
     if (!raw) return undefined;
     const requested = Number(raw);
     if (!Number.isFinite(requested) || requested <= 0) return undefined;
-    return Math.min(Math.floor(requested), 1_000_000);
+    return Math.min(Math.floor(requested), 4_000_000);
   } catch {
     return undefined;
   }
@@ -65,8 +65,15 @@ export function handleTerminalConnection(
   }
 
   // Send scrollback buffer
-  const buffer = ptyManager.getBuffer(targetId, parseReplayBytes(req.url));
+  const replayBytes = parseReplayBytes(req.url);
+  const buffer = ptyManager.getBuffer(targetId, replayBytes);
   if (buffer) ws.send(buffer);
+  // A trimmed replay can't reconstruct a diff-painting TUI's screen (codex only
+  // redraws changed cells, so the viewer would see just the actively-updating
+  // rows on black). Deliver a SIGWINCH so the app repaints everything.
+  if (buffer && !ptyManager.isReplayComplete(targetId, replayBytes)) {
+    ptyManager.nudgeRepaint(targetId);
+  }
 
   // Forward PTY output to WebSocket
   const onData = (id: string, data: string) => {

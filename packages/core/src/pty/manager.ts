@@ -5,6 +5,7 @@ import { EventEmitter } from 'events';
 interface ManagedPty {
   process: pty.IPty;
   buffer: RingBuffer;
+  resizeGen: number; // bumped on every client resize — lets nudgeRepaint skip its restore when a real resize interleaves
 }
 
 export class PTYManager extends EventEmitter {
@@ -42,7 +43,7 @@ export class PTYManager extends EventEmitter {
     });
 
     const buffer = new RingBuffer();
-    const managed: ManagedPty = { process: proc, buffer };
+    const managed: ManagedPty = { process: proc, buffer, resizeGen: 0 };
     this.ptys.set(sessionId, managed);
 
     proc.onData((data: string) => {
@@ -67,7 +68,35 @@ export class PTYManager extends EventEmitter {
   resize(sessionId: string, cols: number, rows: number): void {
     const managed = this.ptys.get(sessionId);
     if (!managed) return;
+    managed.resizeGen++;
     managed.process.resize(cols, rows);
+  }
+
+  getSize(sessionId: string): { cols: number; rows: number } | null {
+    const managed = this.ptys.get(sessionId);
+    if (!managed) return null;
+    return { cols: managed.process.cols, rows: managed.process.rows };
+  }
+
+  /**
+   * Force the process to repaint its whole screen by delivering a SIGWINCH
+   * (grow one row, then restore). Needed after an incomplete scrollback replay:
+   * diff-painting TUIs (codex/ratatui) only redraw changed cells, so a viewer
+   * attaching mid-stream sees a mostly blank screen until a real size change.
+   * The restore is skipped when a client resize lands mid-wiggle — that resize
+   * is itself a size change, so it triggers the repaint AND sets the right size.
+   */
+  nudgeRepaint(sessionId: string): void {
+    const managed = this.ptys.get(sessionId);
+    if (!managed) return;
+    const { cols, rows } = managed.process;
+    const gen = managed.resizeGen;
+    try { managed.process.resize(cols, rows + 1); } catch { return; }
+    setTimeout(() => {
+      const still = this.ptys.get(sessionId);
+      if (still !== managed || managed.resizeGen !== gen) return;
+      try { managed.process.resize(cols, rows); } catch { /* process gone */ }
+    }, 150);
   }
 
   kill(sessionId: string): void {
@@ -79,6 +108,11 @@ export class PTYManager extends EventEmitter {
 
   getBuffer(sessionId: string, maxBytes?: number): string {
     return this.ptys.get(sessionId)?.buffer.getContents(maxBytes) ?? '';
+  }
+
+  /** Whether getBuffer(sessionId, maxBytes) covers the process's full output history. */
+  isReplayComplete(sessionId: string, maxBytes?: number): boolean {
+    return this.ptys.get(sessionId)?.buffer.isReplayComplete(maxBytes) ?? true;
   }
 
   getLastActivity(sessionId: string): Date | null {

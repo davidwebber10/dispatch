@@ -2,9 +2,12 @@ export class RingBuffer {
   private chunks: string[] = [];
   private totalSize = 0;
   private maxSize: number;
+  private dropped = false; // oldest data has been trimmed — contents no longer start at process spawn
   public lastWriteAt: Date | null = null;
 
-  constructor(maxBytes: number = 1_000_000) {
+  // 4MB ≈ hours of TUI diff-frames: codex's spinner floods the ring, and the
+  // scrolled-away transcript survives a reattach only if it's still in here.
+  constructor(maxBytes: number = 4_000_000) {
     this.maxSize = maxBytes;
   }
 
@@ -15,7 +18,19 @@ export class RingBuffer {
     while (this.totalSize > this.maxSize && this.chunks.length > 1) {
       const removed = this.chunks.shift()!;
       this.totalSize -= Buffer.byteLength(removed, 'utf8');
+      this.dropped = true;
     }
+  }
+
+  /**
+   * Whether getContents(maxBytes) would return everything the process has ever
+   * written. False once the ring has trimmed old data OR the caller's cap cuts
+   * the tail — either way a replay can't fully reconstruct a TUI's screen.
+   */
+  isReplayComplete(maxBytes?: number): boolean {
+    if (this.dropped) return false;
+    if (maxBytes && maxBytes > 0 && this.totalSize > maxBytes) return false;
+    return true;
   }
 
   getContents(maxBytes?: number): string {
@@ -50,5 +65,6 @@ export class RingBuffer {
     this.chunks = [];
     this.totalSize = 0;
     this.lastWriteAt = null;
+    this.dropped = false;
   }
 }

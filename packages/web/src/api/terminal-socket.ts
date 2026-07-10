@@ -24,7 +24,7 @@ function url(terminalId: string, replayBytes: number): string {
 }
 
 export function openTerminalSocket(opts: Opts) {
-  const replay = opts.replayBytes ?? 1_000_000;
+  const replay = opts.replayBytes ?? 4_000_000;
   const factory = opts.wsFactory ?? ((u) => new WebSocket(u) as unknown as TerminalWS);
 
   let ws: TerminalWS | null = null;
