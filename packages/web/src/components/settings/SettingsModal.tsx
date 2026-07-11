@@ -5,7 +5,7 @@ import { useSettings, ACCENTS } from '../../stores/settings';
 import { useServers, currentLabel } from '../../stores/servers';
 import { useSecrets } from '../../stores/secrets';
 import { useSetup } from '../../stores/setup';
-import { useUpdate } from '../../stores/update';
+import { UpdatesSection } from './UpdatesSection';
 import { IntegrationsSection } from './IntegrationsSection';
 import { ToolsSection } from './ToolsSection';
 import { TranscriptionSection } from './TranscriptionSection';
@@ -258,7 +258,6 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   }
   const servers = useServers((s) => s.servers);
   const openSetup = useSetup((s) => s.open);
-  const currentVersion = useUpdate((s) => s.currentVersion);
   const [tab, setTab] = useState<'general' | 'integrations' | 'secrets' | 'tools' | 'transcription'>('general');
   if (!open) return null;
 
@@ -369,7 +368,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
               <MultiPaneSetting />
               <Divider />
 
-              <div style={row}><span style={item}>Version</span><span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)' }}>{currentVersion ? `Dispatch Web v${currentVersion}` : 'Dispatch Web'}</span></div>
+              <UpdatesSection />
             </>
           )}
           {tab === 'integrations' && <IntegrationsSection />}

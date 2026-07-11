@@ -206,6 +206,7 @@ export const api = {
 
   // Auto-updater
   getUpdateState: () => req<UpdateState>('/api/state/update'),
+  checkUpdate: () => req<UpdateState>('/api/update/check', { method: 'POST' }),
   // Bespoke (not `req()`): a 409 preflight failure is a meaningful { ok: false, reason }
   // payload the banner needs to render, not an exception to throw away.
   applyUpdate: async () => {

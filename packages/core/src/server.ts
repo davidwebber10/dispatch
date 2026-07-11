@@ -185,7 +185,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   app.use('/api/integrations', createIntegrationsRouter(integrationsService));
   app.use('/api/push', createPushRouter(pushService));
   app.use('/api/tools', createToolsRouter({ base: toolsBase }));
-  app.use('/api/update', createUpdateRouter(broadcaster, resolveRepoRoot()));
+  app.use('/api/update', createUpdateRouter(broadcaster, resolveRepoRoot(), db));
 
   // Attach internals for server wiring
   (app as any)._ptyManager = ptyManager;
@@ -417,7 +417,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.use('/api/push', createPushRouter(pushService));
   app.use('/api/tools', createToolsRouter({ base: toolsBase }));
   const repoRoot = resolveRepoRoot();
-  app.use('/api/update', createUpdateRouter(broadcaster, repoRoot));
+  app.use('/api/update', createUpdateRouter(broadcaster, repoRoot, db));
 
   // Serve the built web client (single-origin) when a build is present.
   // SPA fallback returns index.html for any non-/api, non-WS GET.

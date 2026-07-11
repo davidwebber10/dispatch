@@ -1,13 +1,30 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { createUpdateRouter } from './update.js';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import type Database from 'better-sqlite3';
+import { createDatabase } from '../db/connection.js';
+import * as appState from '../db/app-state.js';
+import { createUpdateRouter, type CreateUpdateRouterOptions } from './update.js';
 import type { EventBroadcaster } from '../ws/events.js';
 import type { GitExec } from '../update/apply.js';
 
-function app(broadcaster: EventBroadcaster, gitExec: GitExec, applyFn: (repoDir: string) => void) {
+let dir: string;
+let db: Database.Database;
+beforeEach(() => {
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-update-route-'));
+  db = createDatabase(path.join(dir, 'test.db'));
+});
+afterEach(() => {
+  try { db.close(); } catch { /* */ }
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* */ }
+});
+
+function app(broadcaster: EventBroadcaster, gitExec: GitExec, applyFn: (repoDir: string) => void, opts?: Partial<CreateUpdateRouterOptions>) {
   const a = express();
-  a.use('/api/update', createUpdateRouter(broadcaster, '/repo', { gitExec, applyFn }));
+  a.use('/api/update', createUpdateRouter(broadcaster, '/repo', db, { gitExec, applyFn, ...opts }));
   return a;
 }
 
@@ -73,5 +90,33 @@ describe('POST /api/update/apply', () => {
     expect(res.status).toBe(409);
     expect(res.body.reason).toMatch(/diverged/i);
     expect(applyFn).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/update/check', () => {
+  it('runs the check and answers with the fresh update state', async () => {
+    const broadcaster: EventBroadcaster = { broadcast: () => {} };
+    // The injected check stands in for the GitHub poll: it stores a newer release.
+    const checkFn = vi.fn(async (d: Database.Database) => {
+      appState.set(d, 'latest_release_tag', 'v99.0.0');
+      appState.set(d, 'latest_release_url', 'https://example.com/v99');
+      appState.set(d, 'latest_release_published_at', '2026-07-10T00:00:00Z');
+    });
+
+    const res = await request(app(broadcaster, fakeGit(CLEAN_AND_FF_ABLE), vi.fn(), { checkFn })).post('/api/update/check');
+
+    expect(res.status).toBe(200);
+    expect(checkFn).toHaveBeenCalled();
+    expect(res.body.available).toBe(true);
+    expect(res.body.version).toBe('v99.0.0');
+    expect(typeof res.body.currentVersion).toBe('string');
+  });
+
+  it('reports up-to-date when the check stores nothing newer', async () => {
+    const broadcaster: EventBroadcaster = { broadcast: () => {} };
+    const res = await request(app(broadcaster, fakeGit(CLEAN_AND_FF_ABLE), vi.fn(), { checkFn: async () => {} })).post('/api/update/check');
+    expect(res.status).toBe(200);
+    expect(res.body.available).toBe(false);
+    expect(res.body.version).toBeNull();
   });
 });
