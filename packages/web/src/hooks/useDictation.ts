@@ -44,6 +44,14 @@ export function useDictation(onTranscript: (text: string) => void): Dictation {
 
   const start = useCallback(async () => {
     setError(null);
+    // Mic requires a secure context: on a plain-http origin (e.g. a Tailscale
+    // hostname without TLS) mediaDevices doesn't exist at all, and no amount of
+    // retrying can ever prompt — say so instead of a misleading "denied".
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError('Microphone needs a secure connection — open Dispatch from an https:// address.');
+      setState('error');
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
@@ -63,9 +71,21 @@ export function useDictation(onTranscript: (text: string) => void): Dictation {
       }
       rec.start();
       setState('recording');
-    } catch {
+    } catch (err) {
       teardown();
-      setError('Microphone permission denied.');
+      // Differentiate the failure: once iOS remembers a "deny" for an installed
+      // web app, getUserMedia rejects instantly and only the Settings app can
+      // re-allow it — Retry alone will never re-prompt. Tell the user the way out.
+      const name = err instanceof DOMException ? err.name : '';
+      if (name === 'NotAllowedError' || name === 'PermissionDeniedError' || name === 'SecurityError') {
+        setError('Microphone access is blocked. Allow it in Settings → Dispatch → Microphone, then retry.');
+      } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+        setError('No microphone was found on this device.');
+      } else if (name === 'NotReadableError') {
+        setError('The microphone is in use by another app.');
+      } else {
+        setError('Could not start the microphone.');
+      }
       setState('error');
     }
   }, [teardown]);
