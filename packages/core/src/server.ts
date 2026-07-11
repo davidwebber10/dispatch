@@ -49,6 +49,7 @@ import { startPtyTimingLoop } from './sessions/status.js';
 import { TerminalMonitor } from './terminal-monitor.js';
 import { startUpdateCheckLoop } from './update/checker.js';
 import { createUpdateRouter } from './routes/update.js';
+import { createAppearanceRouter, customIconHandler } from './routes/appearance.js';
 
 /** Repo root, derived the same way as the webDist fallback below (works from both src/ in dev and dist/ once built, since both sit at the same depth under packages/core). */
 function resolveRepoRoot(): string {
@@ -186,6 +187,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   app.use('/api/push', createPushRouter(pushService));
   app.use('/api/tools', createToolsRouter({ base: toolsBase }));
   app.use('/api/update', createUpdateRouter(broadcaster, resolveRepoRoot(), db));
+  app.use('/api/appearance', createAppearanceRouter(dispatchDir));
 
   // Attach internals for server wiring
   (app as any)._ptyManager = ptyManager;
@@ -198,6 +200,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const webDist = process.env.DISPATCH_WEB_DIST
     ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../web/dist');
   if (fs.existsSync(path.join(webDist, 'index.html'))) {
+    app.get('/icons/:name', customIconHandler(dispatchDir));
     app.use(express.static(webDist));
     app.get(/^\/(?!api\/).*/, (_req, res) => {
       res.sendFile(path.join(webDist, 'index.html'));
@@ -418,12 +421,14 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.use('/api/tools', createToolsRouter({ base: toolsBase }));
   const repoRoot = resolveRepoRoot();
   app.use('/api/update', createUpdateRouter(broadcaster, repoRoot, db));
+  app.use('/api/appearance', createAppearanceRouter(dataDir));
 
   // Serve the built web client (single-origin) when a build is present.
   // SPA fallback returns index.html for any non-/api, non-WS GET.
   const webDist = process.env.DISPATCH_WEB_DIST
     ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../web/dist');
   if (fs.existsSync(path.join(webDist, 'index.html'))) {
+    app.get('/icons/:name', customIconHandler(dataDir));
     app.use(express.static(webDist));
     app.get(/^\/(?!api\/).*/, (_req, res) => {
       res.sendFile(path.join(webDist, 'index.html'));

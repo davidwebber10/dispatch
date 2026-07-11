@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { syncAppIcons } from '../lib/appIcon';
 
 export const ACCENTS = [
   '#3ECF6A', // green
@@ -54,8 +55,19 @@ function applyAccent(c: string) {
   try { document.documentElement.style.setProperty('--color-accent', c); } catch { /* ssr/jsdom */ }
 }
 
+// Keep the PWA/browser icons in the accent color. Debounced: the custom color
+// picker fires a change per drag frame, and each sync renders + uploads 4 PNGs.
+let iconTimer: ReturnType<typeof setTimeout> | undefined;
+function scheduleIconSync(accent: string) {
+  clearTimeout(iconTimer);
+  iconTimer = setTimeout(() => void syncAppIcons(accent), 600);
+}
+
 const initialAccent = load('dispatch:accent', ACCENTS[0] as string);
 applyAccent(initialAccent);
+// A non-default accent may predate the daemon growing the icons endpoint (or
+// another device may have changed it since) — re-sync once per boot.
+if (initialAccent !== ACCENTS[0]) scheduleIconSync(initialAccent);
 
 export const useSettings = create<SettingsState>((set) => ({
   fontSize: load('dispatch:fontSize', 13),
@@ -78,7 +90,7 @@ export const useSettings = create<SettingsState>((set) => ({
   setDensity: (density) => { save('dispatch:density', density); set({ density }); },
   setCoordinatorName: (coordinatorName) => { save('dispatch:coordinatorName', coordinatorName); set({ coordinatorName }); },
   setMultiPane: (b) => { save('dispatch:multiPane', b); set({ multiPane: b }); },
-  setAccent: (accent) => { save('dispatch:accent', accent); applyAccent(accent); set({ accent }); },
+  setAccent: (accent) => { save('dispatch:accent', accent); applyAccent(accent); set({ accent }); scheduleIconSync(accent); },
   setSttProvider: (id) => { save('dispatch:sttProvider', id); set({ sttProvider: id }); },
   setSttModel: (id) => { save('dispatch:sttModel', id); set({ sttModel: id }); },
   setSttSecretName: (name) => { save('dispatch:sttSecretName', name); set({ sttSecretName: name }); },
