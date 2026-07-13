@@ -16,8 +16,10 @@ export const useHost = create<HostState>((set) => ({
       const h = await api.getHost();
       set({ platform: h.platform, canReveal: h.canReveal });
     } catch {
-      // Probe failed — stay incapable. Reveal simply won't appear in the menu, which is the
-      // correct degradation: never offer an action we can't confirm the daemon can perform.
+      // Probe failed — fail closed by explicit reset. Never offer an action we can't confirm
+      // the daemon can perform. This is deliberate: if we ever had a stale "capable" state,
+      // a failed probe must drive us back to incapable, not leave us in a broken state.
+      set({ platform: null, canReveal: false });
     }
   },
 }));

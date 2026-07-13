@@ -14,9 +14,11 @@ describe('useHost', () => {
     expect(useHost.getState()).toMatchObject({ platform: 'darwin', canReveal: true });
   });
 
-  it('stays incapable when the probe fails — Reveal just never offers itself', async () => {
+  it('resets to incapable when the probe fails — never offer what we cannot confirm', async () => {
+    useHost.setState({ platform: 'darwin', canReveal: true });
     vi.spyOn(api, 'getHost').mockRejectedValue(new Error('offline'));
     await useHost.getState().load();
     expect(useHost.getState().canReveal).toBe(false);
+    expect(useHost.getState().platform).toBeNull();
   });
 });
