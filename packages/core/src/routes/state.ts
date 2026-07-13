@@ -6,6 +6,7 @@ import type Database from 'better-sqlite3';
 import * as appState from '../db/app-state.js';
 import { sumTranscriptTokens } from '../sessions/cc-sessions.js';
 import { getRunningVersion, isNewerVersion } from '../update/version.js';
+import { canReveal } from '../files/reveal.js';
 
 export function createStateRouter(db: Database.Database): Router {
   const router = Router();
@@ -166,6 +167,16 @@ export function createStateRouter(db: Database.Database): Router {
     } catch {
       res.json({ ip: null, hostname: null, online: false });
     }
+  });
+
+  // GET /api/state/host — what can this daemon do for the browser asking?
+  // `canReveal` is true only on macOS AND when the request came over loopback (see
+  // files/reveal.ts). Purely a UI affordance: POST /files/reveal enforces it again.
+  router.get('/host', (req, res) => {
+    res.json({
+      platform: process.platform,
+      canReveal: canReveal(req.socket.remoteAddress),
+    });
   });
 
   return router;
