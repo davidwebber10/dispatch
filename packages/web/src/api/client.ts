@@ -109,6 +109,11 @@ export const api = {
   // Attachment URL for any file type (sandboxed to the session working dir). Sync URL builder;
   // the route streams raw bytes with Content-Disposition: attachment so the browser saves it.
   downloadUrl: (sessionId: string, p: string) => `/api/sessions/${sessionId}/files/download?path=${encodeURIComponent(p)}`,
+  // Which capabilities does the daemon we're talking to have? `canReveal` is true only when
+  // this browser is on the SAME machine as the daemon (see core files/reveal.ts).
+  getHost: () => req<{ platform: string; canReveal: boolean }>(`/api/state/host`),
+  revealFiles: (sessionId: string, paths: string[]) =>
+    req<{ ok: true }>(`/api/sessions/${sessionId}/files/reveal`, { method: 'POST', body: body({ paths }) }),
   writeFile: (sessionId: string, p: string, content: string) =>
     req<{ ok: true; path: string }>(`/api/sessions/${sessionId}/files/write?path=${encodeURIComponent(p)}`, { method: 'PUT', body: body({ content }) }),
   makeDirectory: (sessionId: string, p: string) =>
