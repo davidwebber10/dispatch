@@ -5,12 +5,14 @@ import { TerminalTab } from './TerminalTab';
 import { BrowserTab } from './BrowserTab';
 import { NotesTab } from './NotesTab';
 import { FileEditorTab } from './FileEditorTab';
+import { ImageFileTab } from './ImageFileTab';
 import { ConversationView } from './ConversationView';
 import { ChatView } from './chat/ChatView';
 import { useThreadMode } from '../../stores/threadMode';
 import { useTabs } from '../../stores/tabs';
 import { ModeToggle } from '../layout/ModeToggle';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { isImage } from '../../lib/fileType';
 
 /** True for stream-json ("structured") threads, which have no PTY and render as
  *  a chat (never a terminal). */
@@ -66,7 +68,11 @@ export function TabHost({ terminalId }: { terminalId: string }) {
   switch (tab.type) {
     case 'browser': return <BrowserTab terminal={tab} />;
     case 'notes': return <NotesTab terminal={tab} />;
-    case 'file': return <FileEditorTab terminal={tab} />;
+    case 'file': {
+      // Images can't go through the CodeMirror editor — /files/read is utf-8 JSON.
+      const p = (tab.config?.path as string) || tab.label;
+      return isImage(p) ? <ImageFileTab terminal={tab} /> : <FileEditorTab terminal={tab} />;
+    }
     case 'shell': return <TerminalTab terminalId={tab.id} />;
     default: return <AiThread tab={tab} />;
   }
