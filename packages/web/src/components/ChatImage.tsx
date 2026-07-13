@@ -22,6 +22,7 @@ const MIME_EXT: Record<string, string> = {
   'image/gif': 'gif',
   'image/webp': 'webp',
   'image/svg+xml': 'svg',
+  'image/avif': 'avif',
   'image/bmp': 'bmp',
 };
 

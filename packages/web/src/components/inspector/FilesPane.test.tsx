@@ -5,7 +5,7 @@ import { api } from '../../api/client';
 import { useHost } from '../../stores/host';
 import { useProjects } from '../../stores/projects';
 import { saveFilesAs } from '../../lib/saveFiles';
-import { copyImageToClipboard } from '../../lib/clipboard';
+import { clipboardImageSupported, copyImageToClipboard } from '../../lib/clipboard';
 
 // Keep the REAL saveFilesAs by default (the "Save As…" test below exercises the genuine
 // anchor-download fallback), but wrap it in a vi.fn so individual tests can assert on the
@@ -15,15 +15,23 @@ vi.mock('../../lib/saveFiles', async (importOriginal) => {
   return { ...actual, saveFilesAs: vi.fn(actual.saveFilesAs) };
 });
 
-vi.mock('../../lib/clipboard', () => ({
-  copyImageToClipboard: vi.fn(async () => {}),
-  clipboardImageSupported: () => true,
-}));
+// Keep the REAL copyText (the Copy Path assertions below exercise its genuine
+// navigator.clipboard branch), but stub the image copy and make the secure-context probe a
+// spy so a test can simulate plain http, where navigator.clipboard does not exist at all.
+vi.mock('../../lib/clipboard', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/clipboard')>();
+  return {
+    ...actual,
+    copyImageToClipboard: vi.fn(async () => {}),
+    clipboardImageSupported: vi.fn(() => true),
+  };
+});
 
 beforeEach(() => {
   // '.' includes the original README.md/src fixture (existing tests depend on those names)
   // plus three plain files (a.png, b.png, c.txt) so the multi-select range tests have
-  // contiguous, unambiguously-ordered file rows to span.
+  // contiguous, unambiguously-ordered file rows to span. 'src' holds one file, so the
+  // collapse-prunes-the-selection test has a descendant to lose sight of.
   vi.spyOn(api, 'listFiles').mockImplementation(async (_projectId: string, path = '.') => {
     if (path === '.') {
       return [
@@ -33,6 +41,9 @@ beforeEach(() => {
         { name: 'b.png', isDirectory: false, path: 'b.png' },
         { name: 'c.txt', isDirectory: false, path: 'c.txt' },
       ];
+    }
+    if (path === 'src') {
+      return [{ name: 'x.ts', isDirectory: false, path: 'src/x.ts' }];
     }
     return [];
   });
@@ -45,6 +56,8 @@ beforeEach(() => {
     workingDir: null, status: 'idle', createdAt: '', config: {}, archivedAt: null, sortOrder: 0,
   } as any);
   vi.spyOn(api, 'listTerminals').mockResolvedValue([]);
+  // Secure context by default (re-asserted per test, since afterEach restores mocks).
+  vi.mocked(clipboardImageSupported).mockReturnValue(true);
   // Fresh per test: fail closed on Reveal, and give project 'p1' a real workingDir so the
   // Copy Paths assertion has an absolute prefix to check.
   useHost.setState({ platform: 'darwin', canReveal: false });
@@ -319,4 +332,62 @@ it('copyPaths strips a trailing slash from workingDir before joining, avoiding a
   // assertion would fail.
   await waitFor(() => expect(writeText).toHaveBeenCalledWith('/work/a.png'));
   vi.unstubAllGlobals();
+});
+
+it('hides Copy Image when the browser clipboard cannot take an image (insecure context)', async () => {
+  // The README's recommended remote access is http://<mac>.ts.net:3456 — NOT a secure context,
+  // so navigator.clipboard is undefined and ClipboardItem does not exist. Offering "Copy Image"
+  // there just produces an alert saying the copy failed.
+  vi.mocked(clipboardImageSupported).mockReturnValue(false);
+  render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
+
+  fireEvent.contextMenu(await screen.findByText('a.png'));
+  expect(screen.queryByText('Copy Image')).toBeNull();
+  // The rest of the menu is unaffected — Copy Path still works over plain http.
+  expect(screen.getByText('Copy Path')).toBeInTheDocument();
+});
+
+it('shows Copy Image again once the clipboard can take an image', async () => {
+  vi.mocked(clipboardImageSupported).mockReturnValue(true);
+  render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
+
+  fireEvent.contextMenu(await screen.findByText('a.png'));
+  expect(screen.getByText('Copy Image')).toBeInTheDocument();
+});
+
+it('drops a collapsed directory\'s files from the selection', async () => {
+  // Repro of the destructive bug: expand src, cmd-click src/x.ts, collapse src, cmd-click a.png.
+  // Without the prune, src/x.ts stays selected but INVISIBLE — the menu says "Delete 2 items"
+  // and deleting removes a file the user cannot see. Finder prunes on collapse.
+  render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
+
+  fireEvent.click(await screen.findByText('src'));                    // expand
+  fireEvent.click(await screen.findByText('x.ts'), { metaKey: true }); // selection: {src/x.ts}
+  fireEvent.click(screen.getByText('src'));                            // collapse -> prune
+  expect(screen.queryByText('x.ts')).toBeNull();                       // it is now invisible
+
+  fireEvent.click(await screen.findByText('a.png'), { metaKey: true });
+  fireEvent.contextMenu(screen.getByText('a.png'));
+
+  expect(screen.getByText('Delete')).toBeInTheDocument();              // singular — only a.png
+  expect(screen.queryByText(/Delete \d+ items/)).toBeNull();
+});
+
+it('clears the anchor when the collapsed directory held it, so re-expanding cannot resurrect it', async () => {
+  // Collapsing drops the anchor along with the selection. Without that, the anchor lives on as a
+  // hidden row: re-expand the directory and the very next Shift-click silently ranges all the way
+  // back to a row the user last touched several interactions ago.
+  render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
+
+  fireEvent.click(await screen.findByText('src'));                     // expand
+  fireEvent.click(await screen.findByText('x.ts'), { metaKey: true }); // anchor: src/x.ts
+  fireEvent.click(screen.getByText('src'));                            // collapse -> anchor pruned
+  fireEvent.click(screen.getByText('src'));                            // re-expand: x.ts visible again
+
+  // With the anchor cleared, Shift-click has nothing to range from and behaves as a plain click.
+  fireEvent.click(await screen.findByText('c.txt'), { shiftKey: true });
+  fireEvent.contextMenu(screen.getByText('c.txt'));
+
+  expect(screen.getByText('Delete')).toBeInTheDocument();              // singular — only c.txt
+  expect(screen.queryByText(/Delete \d+ items/)).toBeNull();
 });

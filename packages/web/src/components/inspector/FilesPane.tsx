@@ -8,7 +8,7 @@ import { useSettings } from '../../stores/settings';
 import { useHost } from '../../stores/host';
 import { fileVisual } from '../common/typeIcons';
 import { saveFilesAs, type RemoteFile } from '../../lib/saveFiles';
-import { copyImageToClipboard } from '../../lib/clipboard';
+import { clipboardImageSupported, copyImageToClipboard, copyText } from '../../lib/clipboard';
 import { isImage } from '../../lib/fileType';
 
 const INDENT = 14;
@@ -128,10 +128,13 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
     catch { window.alert('Copy failed — the browser refused to put this image on the clipboard.'); }
   }
 
+  // copyText, not navigator.clipboard directly: the Clipboard API only exists in a SECURE
+  // context, and Dispatch's documented remote access (http://<host>.ts.net:3456) is not one.
+  // Text can still reach the clipboard there via the legacy path, so this stays offered.
   async function copyPaths(paths: string[]) {
     const wd = (project?.workingDir ?? '').replace(/\/+$/, '');
     const abs = paths.map((p) => (wd ? `${wd}/${p}` : p));
-    try { await navigator.clipboard.writeText(abs.join('\n')); }
+    try { await copyText(abs.join('\n')); }
     catch { window.alert('Copy failed — the clipboard is unavailable.'); }
   }
 
@@ -166,12 +169,26 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
   }
 
   function toggle(path: string) {
+    const collapsing = expanded.has(path);
     setExpanded((prev) => {
       const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else { next.add(path); if (!children[path]) void loadDir(path); }
+      if (collapsing) next.delete(path);
+      else next.add(path);
       return next;
     });
+
+    if (!collapsing) {
+      if (!children[path]) void loadDir(path);
+      return;
+    }
+
+    // Collapsing hides every descendant row, so drop them from the selection — Finder does the
+    // same. Leaving them in would mean a later "Delete 2 items" silently deletes a file the user
+    // can no longer SEE, which is destructive. The anchor goes too if it pointed at one of them,
+    // so a following Shift-click can't range from an invisible row.
+    const prefix = `${path}/`;
+    setSelected((prev) => new Set([...prev].filter((p) => !p.startsWith(prefix))));
+    setAnchor((prev) => (prev?.startsWith(prefix) ? null : prev));
   }
 
   async function openFile(e: FileEntry, background = false) {
@@ -267,8 +284,13 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
     ? (selected.has(menu.entry.path) ? [...selected] : [menu.entry.path])
     : [];
 
-  // The lone image case is the ONLY one the browser clipboard can serve as a real file.
-  const loneImage = targets.length === 1 && isImage(targets[0]) ? targets[0] : null;
+  // The lone image case is the ONLY one the browser clipboard can serve as a real file — and even
+  // then only in a SECURE context: over plain http (the README's http://<mac>.ts.net:3456)
+  // navigator.clipboard and ClipboardItem simply do not exist, so offering "Copy Image" there
+  // would just hand the user an alert saying it failed. Don't offer what cannot work.
+  const loneImage = targets.length === 1 && isImage(targets[0]) && clipboardImageSupported()
+    ? targets[0]
+    : null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>

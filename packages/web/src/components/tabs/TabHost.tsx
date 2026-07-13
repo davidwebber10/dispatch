@@ -12,7 +12,7 @@ import { useThreadMode } from '../../stores/threadMode';
 import { useTabs } from '../../stores/tabs';
 import { ModeToggle } from '../layout/ModeToggle';
 import { useIsMobile } from '../../hooks/useIsMobile';
-import { isImage } from '../../lib/fileType';
+import { isImage, isSvg } from '../../lib/fileType';
 
 /** True for stream-json ("structured") threads, which have no PTY and render as
  *  a chat (never a terminal). */
@@ -69,9 +69,12 @@ export function TabHost({ terminalId }: { terminalId: string }) {
     case 'browser': return <BrowserTab terminal={tab} />;
     case 'notes': return <NotesTab terminal={tab} />;
     case 'file': {
-      // Images can't go through the CodeMirror editor — /files/read is utf-8 JSON.
+      // Binary images can't go through the CodeMirror editor — /files/read is utf-8 JSON and
+      // would hand back mojibake. SVG is the exception: it is TEXT (the mojibake rationale does
+      // not apply, and languageFor() maps it to the html() mode), so it keeps opening in the
+      // editor where it can actually be read and edited.
       const p = (tab.config?.path as string) || tab.label;
-      return isImage(p) ? <ImageFileTab terminal={tab} /> : <FileEditorTab terminal={tab} />;
+      return isImage(p) && !isSvg(p) ? <ImageFileTab terminal={tab} /> : <FileEditorTab terminal={tab} />;
     }
     case 'shell': return <TerminalTab terminalId={tab.id} />;
     default: return <AiThread tab={tab} />;

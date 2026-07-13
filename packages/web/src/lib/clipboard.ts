@@ -57,3 +57,36 @@ export async function copyImageToClipboard(src: string): Promise<void> {
   const blob = await fetchAsPngBlob(src);
   await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
 }
+
+/**
+ * Copy plain text. Prefers the async Clipboard API, but falls back to the legacy
+ * execCommand path, because `navigator.clipboard` is undefined in an insecure context —
+ * and Dispatch's documented remote access (http://<host>.ts.net:3456) is exactly that.
+ *
+ * Unlike an image, text CAN still reach the clipboard over plain http, so the right move is to
+ * make Copy Path work rather than hide it. Throws if both paths fail, so callers can say so.
+ */
+export async function copyText(text: string): Promise<void> {
+  try {
+    if (typeof navigator !== 'undefined' && typeof navigator.clipboard?.writeText === 'function') {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+  } catch {
+    // Present but refused (permissions policy, not focused, ...) — try the legacy path anyway.
+  }
+
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  // Off-screen but still focusable/selectable: `display:none` or `hidden` would make select() a no-op.
+  ta.style.cssText = 'position:fixed;top:-1000px;left:-1000px;opacity:0;';
+  document.body.appendChild(ta);
+  try {
+    ta.focus();
+    ta.select();
+    if (!document.execCommand('copy')) throw new Error('the browser refused the copy');
+  } finally {
+    ta.remove();
+  }
+}
