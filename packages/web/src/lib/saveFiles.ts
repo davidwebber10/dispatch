@@ -61,12 +61,21 @@ export async function saveFilesAs(files: RemoteFile[]): Promise<void> {
       dir = null; // any other picker failure: fall through to plain downloads
     }
     if (dir) {
+      const failed: string[] = [];
       for (const f of files) {
-        const res = await fetch(f.url);
-        if (!res.ok) throw new Error(`download failed: ${res.status}`);
-        const handle = await dir.getFileHandle(f.name, { create: true });
-        const writable = await handle.createWritable();
-        await res.body!.pipeTo(writable);
+        try {
+          const res = await fetch(f.url);
+          if (!res.ok) throw new Error(`download failed: ${res.status}`);
+          const handle = await dir.getFileHandle(f.name, { create: true });
+          const writable = await handle.createWritable();
+          await res.body!.pipeTo(writable);
+        } catch {
+          failed.push(f.name);
+        }
+      }
+      if (failed.length > 0) {
+        const succeeded = files.length - failed.length;
+        throw new Error(`Saved ${succeeded} of ${files.length}. Failed: ${failed.join(', ')}`);
       }
       return;
     }
