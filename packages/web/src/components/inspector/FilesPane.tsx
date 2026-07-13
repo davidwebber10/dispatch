@@ -6,6 +6,7 @@ import { useTabs } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
 import { useSettings } from '../../stores/settings';
 import { fileVisual } from '../common/typeIcons';
+import { saveFileAs, saveFilesAs, type RemoteFile } from '../../lib/saveFiles';
 
 const INDENT = 14;
 
@@ -23,38 +24,6 @@ function parentDir(relPath: string): string {
 
 function homeAbbrev(p: string): string {
   return p.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
-}
-
-/**
- * Save a remote file to the user's device. Prefers the File System Access API — a true native
- * "Save As" location picker — on Chromium desktop; falls back to a normal anchor download
- * everywhere else (Safari PWA, Firefox, mobile), which lands in Downloads or prompts if the
- * browser is set to ask where to save each file. Exported for direct testing.
- */
-export async function saveFileAs(url: string, suggestedName: string): Promise<void> {
-  const picker = (window as unknown as { showSaveFilePicker?: (o: unknown) => Promise<any> }).showSaveFilePicker;
-  if (typeof picker === 'function') {
-    let handle: any = null;
-    try {
-      handle = await picker({ suggestedName });
-    } catch (err: any) {
-      if (err?.name === 'AbortError') return; // user cancelled the dialog — do nothing
-      handle = null; // any other picker failure: fall through to the anchor download
-    }
-    if (handle) {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`download failed: ${res.status}`);
-      const writable = await handle.createWritable();
-      await res.body!.pipeTo(writable);
-      return;
-    }
-  }
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = suggestedName;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
 }
 
 function Row({ children, style, onClick, onMiddle, onContext }: { children: React.ReactNode; style: React.CSSProperties; onClick: () => void; onMiddle?: () => void; onContext?: (e: React.MouseEvent) => void }) {
