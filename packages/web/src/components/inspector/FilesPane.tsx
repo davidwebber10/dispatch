@@ -129,7 +129,7 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
   }
 
   async function copyPaths(paths: string[]) {
-    const wd = project?.workingDir ?? '';
+    const wd = (project?.workingDir ?? '').replace(/\/+$/, '');
     const abs = paths.map((p) => (wd ? `${wd}/${p}` : p));
     try { await navigator.clipboard.writeText(abs.join('\n')); }
     catch { window.alert('Copy failed — the clipboard is unavailable.'); }

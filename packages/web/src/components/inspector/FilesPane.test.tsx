@@ -4,6 +4,21 @@ import { FilesPane } from './FilesPane';
 import { api } from '../../api/client';
 import { useHost } from '../../stores/host';
 import { useProjects } from '../../stores/projects';
+import { saveFilesAs } from '../../lib/saveFiles';
+import { copyImageToClipboard } from '../../lib/clipboard';
+
+// Keep the REAL saveFilesAs by default (the "Save As…" test below exercises the genuine
+// anchor-download fallback), but wrap it in a vi.fn so individual tests can assert on the
+// exact selection it was handed, or force a rejection to prove failures surface to the user.
+vi.mock('../../lib/saveFiles', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/saveFiles')>();
+  return { ...actual, saveFilesAs: vi.fn(actual.saveFilesAs) };
+});
+
+vi.mock('../../lib/clipboard', () => ({
+  copyImageToClipboard: vi.fn(async () => {}),
+  clipboardImageSupported: () => true,
+}));
 
 beforeEach(() => {
   // '.' includes the original README.md/src fixture (existing tests depend on those names)
@@ -233,4 +248,75 @@ it('deletes every selected file after one confirmation', async () => {
 
   await waitFor(() => expect(del).toHaveBeenCalledTimes(2));
   expect(window.confirm).toHaveBeenCalledTimes(1);      // one prompt, not two
+});
+
+it('Copy Image copies exactly the lone selected image, not some other file', async () => {
+  render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
+
+  fireEvent.contextMenu(await screen.findByText('a.png'));
+  fireEvent.click(await screen.findByText('Copy Image'));
+
+  // Assert the exact URL, not just "was called" — a regression that passed the wrong path
+  // (e.g. menu.entry.path instead of loneImage) or the wrong project id would still satisfy
+  // a bare toHaveBeenCalled() but would copy the wrong picture into the user's clipboard.
+  await waitFor(() =>
+    expect(copyImageToClipboard).toHaveBeenCalledWith(api.imageUrl('p1', 'a.png')),
+  );
+});
+
+it('Save As on a multi-selection hands saveFilesAs the whole selection with the right URLs and names', async () => {
+  vi.mocked(saveFilesAs).mockResolvedValueOnce(undefined); // skip the real download machinery
+  render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
+
+  fireEvent.click(await screen.findByText('a.png'));
+  fireEvent.click(await screen.findByText('b.png'), { metaKey: true });
+  fireEvent.contextMenu(await screen.findByText('b.png'));
+  fireEvent.click(screen.getByText('Save 2 Files As…'));
+
+  // A regression that dropped a file from the selection, swapped downloadUrl for some other
+  // URL builder, hardcoded the wrong project id, or used the full path instead of the bare
+  // name would all still call saveFilesAs "with something" — only an exact deep-equal on the
+  // array catches them.
+  await waitFor(() =>
+    expect(saveFilesAs).toHaveBeenCalledWith([
+      { url: api.downloadUrl('p1', 'a.png'), name: 'a.png' },
+      { url: api.downloadUrl('p1', 'b.png'), name: 'b.png' },
+    ]),
+  );
+});
+
+it('surfaces a partial Save As failure via alert instead of swallowing it', async () => {
+  vi.mocked(saveFilesAs).mockRejectedValueOnce(new Error('Saved 1 of 2. Failed: b.png'));
+  const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+  render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
+
+  fireEvent.click(await screen.findByText('a.png'));
+  fireEvent.click(await screen.findByText('b.png'), { metaKey: true });
+  fireEvent.contextMenu(await screen.findByText('b.png'));
+  fireEvent.click(screen.getByText('Save 2 Files As…'));
+
+  // If saveTargets's catch block were ever deleted (or its window.alert call dropped), the
+  // rejection would be swallowed silently and the user would be left with a half-populated
+  // folder and no idea a file was missing. This proves the message actually reaches them.
+  await waitFor(() =>
+    expect(alertSpy).toHaveBeenCalledWith(expect.stringContaining('Saved 1 of 2. Failed: b.png')),
+  );
+});
+
+it('copyPaths strips a trailing slash from workingDir before joining, avoiding a double slash', async () => {
+  const writeText = vi.fn(async () => {});
+  vi.stubGlobal('navigator', { clipboard: { writeText } });
+  useProjects.setState({
+    sessions: [{ id: 'p1', name: 'p1', workingDir: '/work/', status: 'working' } as any],
+    activeId: 'p1',
+  });
+  render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
+
+  fireEvent.contextMenu(await screen.findByText('a.png'));
+  fireEvent.click(screen.getByText('Copy Path'));
+
+  // Without the trailing-slash strip this would be '/work//a.png' — a double slash — and the
+  // assertion would fail.
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith('/work/a.png'));
+  vi.unstubAllGlobals();
 });
