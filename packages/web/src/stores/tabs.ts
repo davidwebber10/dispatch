@@ -15,6 +15,7 @@ interface TabsState {
   markLoading: (id: string) => void;
   loadTabs: (projectId: string) => Promise<void>;
   reorder: (projectId: string, orderedIds: string[]) => Promise<void>;
+  setPinned: (id: string, pinned: boolean) => Promise<void>;  // pin/unpin a thread (persisted in config.pinned)
   setActiveTab: (id: string) => void;                       // open + focus
   openTab: (id: string, background?: boolean) => void;       // open (optionally without switching)
   openDispatch: (sessionId: string) => void;                 // open + focus the project's virtual Dispatch tab
@@ -92,6 +93,19 @@ export const useTabs = create<TabsState>((set, get) => ({
     set({ byProject: { ...get().byProject, [projectId]: reordered } });
     try { await api.reorderTerminals(projectId, orderedIds); }
     catch (e) { console.error('useTabs.reorder: reorderTerminals failed, reverting', e); await get().loadTabs(projectId); }  // restore server truth on failure
+  },
+  setPinned: async (id, pinned) => {
+    const t = findTerminal(get().byProject, id);
+    if (!t) return;
+    // The server PATCH replaces config wholesale — send the merged blob. Drop the
+    // key entirely on unpin so configs don't accumulate `pinned: false` noise.
+    const config = { ...t.config } as Record<string, unknown>;
+    if (pinned) config.pinned = true; else delete config.pinned;
+    const byProject = { ...get().byProject };
+    byProject[t.sessionId] = (byProject[t.sessionId] ?? []).map((x) => (x.id === id ? { ...x, config } : x));
+    set({ byProject }); // optimistic — the row moves instantly
+    try { await api.updateTerminal(id, { config }); }
+    catch (e) { console.error('useTabs.setPinned: updateTerminal failed, reverting', e); await get().loadTabs(t.sessionId); }
   },
   openTab: (id, background = false) => {
     const { openTabIds, activeTabId, byProject } = get();

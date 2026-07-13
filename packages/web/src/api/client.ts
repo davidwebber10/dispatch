@@ -206,6 +206,10 @@ export const api = {
 
   // Auto-updater
   getUpdateState: () => req<UpdateState>('/api/state/update'),
+  checkUpdate: () => req<UpdateState>('/api/update/check', { method: 'POST' }),
+  // Accent-tinted PWA icons (rendered client-side, served by the daemon)
+  putAppearanceIcons: (icons: Record<string, string>) =>
+    req<{ ok: boolean; written: string[] }>('/api/appearance/icons', { method: 'PUT', body: body({ icons }) }),
   // Bespoke (not `req()`): a 409 preflight failure is a meaningful { ok: false, reason }
   // payload the banner needs to render, not an exception to throw away.
   applyUpdate: async () => {

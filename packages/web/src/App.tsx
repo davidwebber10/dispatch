@@ -12,7 +12,7 @@ import { DispatchWorkPane } from './components/overseer/components/DispatchWorkP
 import { AgentPane } from './components/agents/AgentPane';
 import { EditAgentModal } from './components/agents/EditAgentModal';
 import { AuthBanner } from './components/auth/AuthBanner';
-import { UpdateBanner } from './components/update/UpdateBanner';
+import { UpdateModal } from './components/update/UpdateModal';
 import { MobileApp } from './components/mobile/MobileApp';
 import { SetupWizard } from './components/setup/SetupWizard';
 import { useIsMobile } from './hooks/useIsMobile';
@@ -98,7 +98,7 @@ export default function App() {
   });
 
   if (isMobile) {
-    return (<><SetupWizard /><AuthBanner /><UpdateBanner /><MobileApp /></>);
+    return (<><SetupWizard /><AuthBanner /><UpdateModal /><MobileApp /></>);
   }
 
   const showAgent = agentFocused && !!agentSelected;
@@ -107,7 +107,7 @@ export default function App() {
     <>
       <SetupWizard />
       <AuthBanner />
-      <UpdateBanner />
+      <UpdateModal />
       <AppShell>
         <Workspace
           sidebar={

@@ -15,6 +15,8 @@ interface UpdateState {
   /** True once any client (this one or another) has triggered POST /api/update/apply. */
   inProgress: boolean;
   load: () => Promise<void>;
+  /** Ask the server to poll GitHub right now (Settings → Check for updates). */
+  check: () => Promise<void>;
   applyEvent: (e: ServerEvent) => void;
   dismiss: () => void;
 }
@@ -26,6 +28,13 @@ export const useUpdate = create<UpdateState>((set, get) => ({
   inProgress: false,
   load: async () => {
     const state = await api.getUpdateState();
+    set({
+      available: state.available ? { version: state.version!, url: state.url, publishedAt: state.publishedAt } : null,
+      currentVersion: state.currentVersion,
+    });
+  },
+  check: async () => {
+    const state = await api.checkUpdate();
     set({
       available: state.available ? { version: state.version!, url: state.url, publishedAt: state.publishedAt } : null,
       currentVersion: state.currentVersion,
