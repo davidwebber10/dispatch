@@ -7,12 +7,15 @@ import { execFile } from 'child_process';
  * Callers MUST pass `req.socket.remoteAddress`, never `req.ip`: Express derives `req.ip` from
  * `X-Forwarded-For` when `trust proxy` is enabled, so a remote client could simply claim to be
  * 127.0.0.1. The socket peer address is set by the kernel and cannot be forged.
+ *
+ * The IPv4 loopback check is anchored to match only well-formed dotted quads in 127.0.0.0/8,
+ * rejecting invalid addresses like "127.0.0.1.evil.com" or "127.1" (incomplete octet list).
  */
 export function isLoopbackAddress(addr: string | undefined): boolean {
   if (!addr) return false;
   // Node reports IPv4 peers on a dual-stack socket as "::ffff:127.0.0.1".
   const a = addr.startsWith('::ffff:') ? addr.slice(7) : addr;
-  return a === '::1' || /^127\./.test(a); // 127.0.0.0/8 is the whole loopback range
+  return a === '::1' || /^127(\.\d{1,3}){3}$/.test(a); // 127.0.0.0/8 is the whole loopback range
 }
 
 /**

@@ -19,6 +19,12 @@ describe('isLoopbackAddress', () => {
     ['100.83.12.4', false],   // Tailscale CGNAT — the Mac mini case
     ['::ffff:10.0.0.9', false],
     ['', false],
+    // Regression: reject malformed addresses with trailing garbage
+    ['127.0.0.1.evil.com', false],
+    ['127.0.0.1x', false],
+    // Regression: reject incomplete dotted quads and non-loopback 127.x ranges
+    ['0.0.0.0', false],
+    ['127.1', false],
   ])('%s -> %s', (addr, expected) => {
     expect(isLoopbackAddress(addr)).toBe(expected);
   });
@@ -50,9 +56,11 @@ describe('revealInFinder', () => {
 
   it('passes every path as a separate argv entry, never a shell string', async () => {
     await revealInFinder(['/w/a.png', '/w/b.png']);
-    const [cmd, args] = vi.mocked(execFile).mock.calls[0];
+    const [cmd, args, opts] = vi.mocked(execFile).mock.calls[0];
     expect(cmd).toBe('open');
     expect(args).toEqual(['-R', '/w/a.png', '/w/b.png']);
+    // Assert that shell is never enabled (hardened against injection if args parsing ever mutates)
+    expect((opts as any).shell).toBeFalsy();
   });
 
   it('does not interpolate a hostile filename', async () => {
