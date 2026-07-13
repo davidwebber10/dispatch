@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CaretRight, DownloadSimple, PencilSimple, TrashSimple } from '@phosphor-icons/react';
+import { CaretRight, Copy, DownloadSimple, FolderOpen, ImageSquare, PencilSimple, TrashSimple } from '@phosphor-icons/react';
 import { api } from '../../api/client';
 import type { FileEntry } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
 import { useSettings } from '../../stores/settings';
+import { useHost } from '../../stores/host';
 import { fileVisual } from '../common/typeIcons';
-import { saveFileAs, saveFilesAs, type RemoteFile } from '../../lib/saveFiles';
+import { saveFilesAs, type RemoteFile } from '../../lib/saveFiles';
+import { copyImageToClipboard } from '../../lib/clipboard';
+import { isImage } from '../../lib/fileType';
 
 const INDENT = 14;
 
@@ -76,6 +79,7 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
   const tabsForProj = useTabs((s) => (projectId ? s.byProject[projectId] : undefined)) ?? [];
   const selectedPath = tabsForProj.find((t) => t.id === activeTabId && t.type === 'file')?.config?.path as string | undefined;
   const fs = useSettings((s) => s.sidebarFontSize);
+  const canReveal = useHost((s) => s.canReveal);
 
   const loadDir = useCallback(async (path: string) => {
     if (!projectId) return;
@@ -105,10 +109,48 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
     return m;
   }, [children]);
 
-  async function saveAs(entry: FileEntry) {
+  function nameOf(p: string): string {
+    return entryByPath.get(p)?.name ?? p.split('/').pop() ?? p;
+  }
+
+  async function saveTargets(paths: string[]) {
     if (!projectId) return;
-    try { await saveFileAs(api.downloadUrl(projectId, entry.path), entry.name); }
-    catch { /* download/picker failed — nothing actionable to show in v1 */ }
+    const files: RemoteFile[] = paths.map((p) => ({ url: api.downloadUrl(projectId, p), name: nameOf(p) }));
+    try { await saveFilesAs(files); }
+    catch (err: any) { window.alert(`Save failed: ${err?.message ?? err}`); }
+  }
+
+  // Only ever offered for a LONE image: ClipboardItem accepts one item, and only an image
+  // MIME type actually pastes into an upload field. Multiple files is Reveal's job.
+  async function copyImage(p: string) {
+    if (!projectId) return;
+    try { await copyImageToClipboard(api.imageUrl(projectId, p)); }
+    catch { window.alert('Copy failed — the browser refused to put this image on the clipboard.'); }
+  }
+
+  async function copyPaths(paths: string[]) {
+    const wd = project?.workingDir ?? '';
+    const abs = paths.map((p) => (wd ? `${wd}/${p}` : p));
+    try { await navigator.clipboard.writeText(abs.join('\n')); }
+    catch { window.alert('Copy failed — the clipboard is unavailable.'); }
+  }
+
+  async function reveal(paths: string[]) {
+    if (!projectId) return;
+    try { await api.revealFiles(projectId, paths); }
+    catch (err: any) { window.alert(`Reveal failed: ${err?.message ?? err}`); }
+  }
+
+  async function deleteTargets(paths: string[]) {
+    if (!projectId) return;
+    const label = paths.length === 1 ? `"${nameOf(paths[0])}"` : `${paths.length} items`;
+    if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return;
+    const dirs = new Set(paths.map(parentDir));
+    try {
+      for (const p of paths) await api.deleteFile(projectId, p);
+      setSelected(new Set());
+      for (const d of dirs) await loadDir(d);
+    } catch (err: any) { window.alert(`Delete failed: ${err?.message ?? err}`); }
   }
 
   async function renameEntry(entry: FileEntry) {
@@ -121,15 +163,6 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
       await api.renameFile(projectId, entry.path, dir + next);
       await loadDir(parentDir(entry.path));
     } catch (err: any) { window.alert(`Rename failed: ${err?.message ?? err}`); }
-  }
-
-  async function deleteEntry(entry: FileEntry) {
-    if (!projectId) return;
-    if (!window.confirm(`Delete "${entry.name}"? This cannot be undone.`)) return;
-    try {
-      await api.deleteFile(projectId, entry.path);
-      await loadDir(parentDir(entry.path));
-    } catch (err: any) { window.alert(`Delete failed: ${err?.message ?? err}`); }
   }
 
   function toggle(path: string) {
@@ -234,6 +267,9 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
     ? (selected.has(menu.entry.path) ? [...selected] : [menu.entry.path])
     : [];
 
+  // The lone image case is the ONLY one the browser clipboard can serve as a real file.
+  const loneImage = targets.length === 1 && isImage(targets[0]) ? targets[0] : null;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ padding: '9px 12px', borderBottom: '1px solid #1d1d21', font: '400 11px var(--font-mono)', color: '#6a6a72', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
@@ -248,17 +284,35 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
         <>
           <div onMouseDown={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null); }}
             style={{ position: 'fixed', inset: 0, zIndex: 999 }} />
-          <div role="menu" style={{ position: 'fixed', left: menu.x, top: menu.y, zIndex: 1000, minWidth: 168, padding: 4, background: 'var(--color-elevated, #26262b)', border: '1px solid #37373d', borderRadius: 8, boxShadow: '0 10px 30px -10px rgba(0,0,0,.7)' }}>
-            <button type="button" onClick={() => { const entry = menu.entry; setMenu(null); void saveAs(entry); }}
+          <div role="menu" style={{ position: 'fixed', left: menu.x, top: menu.y, zIndex: 1000, minWidth: 190, padding: 4, background: 'var(--color-elevated, #26262b)', border: '1px solid #37373d', borderRadius: 8, boxShadow: '0 10px 30px -10px rgba(0,0,0,.7)' }}>
+            <button type="button" onClick={() => { const t = targets; setMenu(null); void saveTargets(t); }}
               style={{ ...MENU_ITEM, color: '#e9e9ec' }}>
-              <DownloadSimple size={15} /> Save As…
+              <DownloadSimple size={15} /> {targets.length > 1 ? `Save ${targets.length} Files As…` : 'Save As…'}
             </button>
-            <button type="button" onClick={() => { const entry = menu.entry; setMenu(null); void renameEntry(entry); }}
+            {loneImage && (
+              <button type="button" onClick={() => { const p = loneImage; setMenu(null); void copyImage(p); }}
+                style={{ ...MENU_ITEM, color: '#e9e9ec' }}>
+                <ImageSquare size={15} /> Copy Image
+              </button>
+            )}
+            <button type="button" onClick={() => { const t = targets; setMenu(null); void copyPaths(t); }}
               style={{ ...MENU_ITEM, color: '#e9e9ec' }}>
-              <PencilSimple size={15} /> Rename
+              <Copy size={15} /> {targets.length > 1 ? `Copy ${targets.length} Paths` : 'Copy Path'}
             </button>
+            {canReveal && (
+              <button type="button" onClick={() => { const t = targets; setMenu(null); void reveal(t); }}
+                style={{ ...MENU_ITEM, color: '#e9e9ec' }}>
+                <FolderOpen size={15} /> Reveal in Finder
+              </button>
+            )}
+            {targets.length === 1 && (
+              <button type="button" onClick={() => { const entry = menu.entry; setMenu(null); void renameEntry(entry); }}
+                style={{ ...MENU_ITEM, color: '#e9e9ec' }}>
+                <PencilSimple size={15} /> Rename
+              </button>
+            )}
             <div style={{ height: 1, background: '#37373d', margin: '4px 6px' }} />
-            <button type="button" onClick={() => { const entry = menu.entry; setMenu(null); void deleteEntry(entry); }}
+            <button type="button" onClick={() => { const t = targets; setMenu(null); void deleteTargets(t); }}
               style={{ ...MENU_ITEM, color: '#f87171' }}>
               <TrashSimple size={15} /> {targets.length > 1 ? `Delete ${targets.length} items` : 'Delete'}
             </button>

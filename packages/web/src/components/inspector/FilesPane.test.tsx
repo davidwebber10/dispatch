@@ -1,7 +1,9 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { vi, beforeEach, afterEach, test, expect } from 'vitest';
+import { vi, beforeEach, afterEach, test, it, expect } from 'vitest';
 import { FilesPane } from './FilesPane';
 import { api } from '../../api/client';
+import { useHost } from '../../stores/host';
+import { useProjects } from '../../stores/projects';
 
 beforeEach(() => {
   // '.' includes the original README.md/src fixture (existing tests depend on those names)
@@ -28,6 +30,13 @@ beforeEach(() => {
     workingDir: null, status: 'idle', createdAt: '', config: {}, archivedAt: null, sortOrder: 0,
   } as any);
   vi.spyOn(api, 'listTerminals').mockResolvedValue([]);
+  // Fresh per test: fail closed on Reveal, and give project 'p1' a real workingDir so the
+  // Copy Paths assertion has an absolute prefix to check.
+  useHost.setState({ platform: 'darwin', canReveal: false });
+  useProjects.setState({
+    sessions: [{ id: 'p1', name: 'p1', workingDir: '/work', status: 'working' } as any],
+    activeId: 'p1',
+  });
 });
 afterEach(() => {
   vi.restoreAllMocks();
@@ -149,4 +158,79 @@ test('right-clicking outside the selection collapses it to that row', async () =
 
   expect(screen.getByText('Delete')).toBeInTheDocument();       // singular — just a
   expect(screen.queryByText(/Delete \d+ items/)).toBeNull();
+});
+
+it('offers Copy Image for a lone image, and hides it for anything else', async () => {
+  render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
+  const a = await screen.findByText('a.png');
+  const c = await screen.findByText('c.txt');
+
+  fireEvent.contextMenu(a);
+  expect(screen.getByText('Copy Image')).toBeInTheDocument();
+  fireEvent.keyDown(window, { key: 'Escape' });
+
+  fireEvent.contextMenu(c);                                  // a .txt is not an image
+  expect(screen.queryByText('Copy Image')).toBeNull();
+  fireEvent.keyDown(window, { key: 'Escape' });
+
+  fireEvent.click(a);                                        // two images selected — still no
+  fireEvent.click(await screen.findByText('b.png'), { metaKey: true });
+  fireEvent.contextMenu(a);
+  expect(screen.queryByText('Copy Image')).toBeNull();       // ClipboardItem can't hold two
+});
+
+it('copies the absolute paths of the whole selection as text', async () => {
+  const writeText = vi.fn(async () => {});
+  vi.stubGlobal('navigator', { clipboard: { writeText } });
+  render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
+
+  fireEvent.click(await screen.findByText('a.png'));
+  fireEvent.click(await screen.findByText('c.txt'), { metaKey: true });
+  fireEvent.contextMenu(await screen.findByText('c.txt'));
+  fireEvent.click(screen.getByText('Copy 2 Paths'));
+
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith('/work/a.png\n/work/c.txt'));
+  vi.unstubAllGlobals();
+});
+
+it('hides Reveal in Finder when the daemon is remote', async () => {
+  useHost.setState({ platform: 'darwin', canReveal: false });
+  render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
+  fireEvent.contextMenu(await screen.findByText('a.png'));
+  expect(screen.queryByText('Reveal in Finder')).toBeNull();
+});
+
+it('reveals the whole selection when the daemon is local', async () => {
+  useHost.setState({ platform: 'darwin', canReveal: true });
+  const reveal = vi.spyOn(api, 'revealFiles').mockResolvedValue({ ok: true } as never);
+  render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
+
+  fireEvent.click(await screen.findByText('a.png'));
+  fireEvent.click(await screen.findByText('b.png'), { metaKey: true });
+  fireEvent.contextMenu(await screen.findByText('b.png'));
+  fireEvent.click(screen.getByText('Reveal in Finder'));
+
+  await waitFor(() => expect(reveal).toHaveBeenCalledWith('p1', ['a.png', 'b.png']));
+});
+
+it('hides Rename for a multi-selection', async () => {
+  render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
+  fireEvent.click(await screen.findByText('a.png'));
+  fireEvent.click(await screen.findByText('b.png'), { metaKey: true });
+  fireEvent.contextMenu(await screen.findByText('b.png'));
+  expect(screen.queryByText('Rename')).toBeNull();
+});
+
+it('deletes every selected file after one confirmation', async () => {
+  vi.spyOn(window, 'confirm').mockReturnValue(true);
+  const del = vi.spyOn(api, 'deleteFile').mockResolvedValue({ ok: true } as never);
+  render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
+
+  fireEvent.click(await screen.findByText('a.png'));
+  fireEvent.click(await screen.findByText('b.png'), { metaKey: true });
+  fireEvent.contextMenu(await screen.findByText('b.png'));
+  fireEvent.click(screen.getByText('Delete 2 items'));
+
+  await waitFor(() => expect(del).toHaveBeenCalledTimes(2));
+  expect(window.confirm).toHaveBeenCalledTimes(1);      // one prompt, not two
 });
