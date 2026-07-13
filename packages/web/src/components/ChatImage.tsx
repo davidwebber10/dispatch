@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type TouchEvent } from 'react';
 import { Check, Copy, DownloadSimple, X } from '@phosphor-icons/react';
+import { clipboardImageSupported, copyImageToClipboard } from '../lib/clipboard';
 
 /**
  * ChatImage — the shared, DUMB image renderer for BOTH chat surfaces: the agent
@@ -27,48 +28,8 @@ const MIME_EXT: Record<string, string> = {
 const MIN_SCALE = 1;
 const MAX_SCALE = 4;
 
-// Chrome/Firefox/Safari all accept a live ClipboardItem write, but only in a secure
-// context with the constructor present — feature-detect once rather than per click.
-const CLIPBOARD_IMAGE_SUPPORTED =
-  typeof navigator !== 'undefined' &&
-  !!navigator.clipboard &&
-  typeof navigator.clipboard.write === 'function' &&
-  typeof (globalThis as unknown as { ClipboardItem?: unknown }).ClipboardItem === 'function';
-
 function slugify(input: string): string {
   return input.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
-}
-
-/**
- * Fetch `src` (data: URI or same-origin byte route) as a Blob, converting to PNG if
- * it isn't already — clipboard paste targets (Slack, Docs, Photoshop, ...) reliably
- * accept PNG but are inconsistent with other formats. The conversion draws through a
- * blob: URL, which is always same-origin to this page, so it never taints the canvas
- * even though the original fetch of `src` could in principle be cross-origin.
- */
-async function fetchAsPngBlob(src: string): Promise<Blob> {
-  const res = await fetch(src);
-  const blob = await res.blob();
-  if (blob.type === 'image/png') return blob;
-  const objectUrl = URL.createObjectURL(blob);
-  try {
-    return await new Promise<Blob>((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) { reject(new Error('no 2d context')); return; }
-        ctx.drawImage(img, 0, 0);
-        canvas.toBlob((png) => (png ? resolve(png) : reject(new Error('canvas toBlob failed'))), 'image/png');
-      };
-      img.onerror = () => reject(new Error('image decode failed'));
-      img.src = objectUrl;
-    });
-  } finally {
-    URL.revokeObjectURL(objectUrl);
-  }
 }
 
 async function downloadImage(src: string, alt: string | undefined) {
@@ -127,7 +88,7 @@ function touchDist(touches: React.TouchList): number {
   return Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
 }
 
-export function ChatImage({ src, alt }: { src: string; alt?: string }) {
+export function ChatImage({ src, alt, maxHeight = 320 }: { src: string; alt?: string; maxHeight?: number | string }) {
   const [open, setOpen] = useState(false);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
   const [scale, setScale] = useState(1);
@@ -153,10 +114,9 @@ export function ChatImage({ src, alt }: { src: string; alt?: string }) {
   if (!src) return null;
 
   async function handleCopy() {
-    if (!CLIPBOARD_IMAGE_SUPPORTED) return;
+    if (!clipboardImageSupported()) return;
     try {
-      const blob = await fetchAsPngBlob(src);
-      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      await copyImageToClipboard(src);
       setCopyState('copied');
     } catch {
       setCopyState('error');
@@ -197,7 +157,7 @@ export function ChatImage({ src, alt }: { src: string; alt?: string }) {
     if (scale <= 1.02) { setScale(1); setPan({ x: 0, y: 0 }); }
   }
 
-  const copyTitle = !CLIPBOARD_IMAGE_SUPPORTED
+  const copyTitle = !clipboardImageSupported()
     ? 'Copy not supported in this browser'
     : copyState === 'copied' ? 'Copied!' : copyState === 'error' ? 'Copy failed — try again' : 'Copy image';
 
@@ -212,7 +172,7 @@ export function ChatImage({ src, alt }: { src: string; alt?: string }) {
         style={{
           display: 'block',
           maxWidth: '100%',
-          maxHeight: 320,
+          maxHeight,
           width: 'auto',
           height: 'auto',
           objectFit: 'contain',
@@ -243,10 +203,10 @@ export function ChatImage({ src, alt }: { src: string; alt?: string }) {
           >
             <button
               onClick={handleCopy}
-              disabled={!CLIPBOARD_IMAGE_SUPPORTED}
+              disabled={!clipboardImageSupported()}
               title={copyTitle}
               aria-label="Copy image"
-              style={toolbarButtonStyle(!CLIPBOARD_IMAGE_SUPPORTED)}
+              style={toolbarButtonStyle(!clipboardImageSupported())}
             >
               {copyState === 'copied'
                 ? <Check size={17} weight="bold" color="var(--color-accent)" />
