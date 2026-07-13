@@ -160,6 +160,8 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
         else next.add(entry.path);
         return next;
       });
+      // Anchor moves to the toggled row even when the toggle DESELECTED it, so a following
+      // Shift-click ranges from here — matches Finder and is intentional.
       setAnchor(entry.path);
       return;
     }
@@ -167,6 +169,9 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
       const flat = flattenFiles(children, expanded);
       const i = flat.indexOf(anchor);
       const j = flat.indexOf(entry.path);
+      // If the anchor's row isn't currently visible (e.g. its directory got collapsed),
+      // indexOf returns -1 and this guard deliberately falls through to plain-click
+      // semantics below, rather than ranging over rows the user can't see.
       if (i >= 0 && j >= 0) {
         const [lo, hi] = i <= j ? [i, j] : [j, i];
         setSelected(new Set(flat.slice(lo, hi + 1)));
@@ -233,7 +238,7 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ padding: '9px 12px', borderBottom: '1px solid #1d1d21', font: '400 11px var(--font-mono)', color: '#6a6a72', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project ? homeAbbrev(project.workingDir) : ''}</span>
-        <button title="Refresh" onClick={() => { setChildren({}); setExpanded(new Set()); void loadDir('.'); }} style={{ background: 'none', border: 'none', color: '#46464d', cursor: 'pointer', fontSize: 14, flexShrink: 0 }}>⟳</button>
+        <button title="Refresh" onClick={() => { setChildren({}); setExpanded(new Set()); setSelected(new Set()); setAnchor(null); void loadDir('.'); }} style={{ background: 'none', border: 'none', color: '#46464d', cursor: 'pointer', fontSize: 14, flexShrink: 0 }}>⟳</button>
       </div>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 6, font: `400 ${fs}px/1.4 var(--font-mono)` }}>
         {renderDir('.', 0)}

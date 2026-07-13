@@ -127,15 +127,26 @@ test('shift-click selects the range between the anchor and the clicked row', asy
 });
 
 test('right-clicking outside the selection collapses it to that row', async () => {
+  // `targets` already falls back to [menu.entry.path] whenever the right-clicked row isn't
+  // in `selected`, regardless of whether onRowContext ever mutated selection state. So a
+  // single right-click-and-assert can't distinguish "the collapse happened" from "the collapse
+  // branch doesn't exist at all". To actually observe the collapsed SELECTION STATE (not just
+  // the label on the same right-click), we collapse onto c, dismiss the menu, then right-click
+  // a — which was selected before the collapse. If selection is still {a, b} at that point (no
+  // collapse), the menu shows "Delete 2 items"; if it collapsed to {c}, a is no longer selected
+  // and the menu shows singular "Delete".
   render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
   const a = await screen.findByText('a.png');
   const b = await screen.findByText('b.png');
   const c = await screen.findByText('c.txt');
 
-  fireEvent.click(a);
-  fireEvent.click(b, { metaKey: true });
-  fireEvent.contextMenu(c);                            // c is NOT selected
+  fireEvent.click(a);                                  // selection: {a}
+  fireEvent.click(b, { metaKey: true });                // selection: {a, b}
+  fireEvent.contextMenu(c);                             // c is NOT selected -> collapse to {c}
+  fireEvent.keyDown(window, { key: 'Escape' });          // dismiss the menu
 
-  expect(screen.getByText('Delete')).toBeInTheDocument();       // singular — just c
+  fireEvent.contextMenu(a);                             // a was selected pre-collapse
+
+  expect(screen.getByText('Delete')).toBeInTheDocument();       // singular — just a
   expect(screen.queryByText(/Delete \d+ items/)).toBeNull();
 });
