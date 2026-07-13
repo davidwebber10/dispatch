@@ -14,7 +14,7 @@ describe('tool paths', () => {
   it('honors a base override (for tests)', () => {
     const p = toolPaths('/tmp/x');
     expect(p.dir).toBe('/tmp/x');
-    expect(p.bin).toBe('/tmp/x/bin');
+    expect(p.bin).toBe(path.join('/tmp/x', 'bin')); // path.join → OS separator (backslashes on Windows)
   });
   it('hostPlatformKey is a darwin key on this platform', () => {
     expect(['darwin-arm64', 'darwin-x64']).toContain(hostPlatformKey());

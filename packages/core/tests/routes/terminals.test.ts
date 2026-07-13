@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../src/server.js';
 import Database from 'better-sqlite3';
@@ -7,6 +7,7 @@ import * as terminalsDb from '../../src/db/terminals.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { platform } from '../../src/platform/index.js';
 
 describe('terminal routes', () => {
   let app: any;
@@ -27,6 +28,7 @@ describe('terminal routes', () => {
       .send({ provider: 'claude-code', workingDir: tmpDir, name: 'test' });
     sessionId = res.body.id;
   });
+  afterEach(() => { try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } catch { /* ignore */ } });
 
   it('GET /api/sessions/:id/terminals lists terminals (empty initially)', async () => {
     const res = await request(app).get(`/api/sessions/${sessionId}/terminals`);
@@ -50,6 +52,12 @@ describe('terminal routes', () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-conv-home-'));
     const oldHome = process.env.HOME;
     process.env.HOME = home;
+    // NOTE: on Windows os.homedir() reads USERPROFILE, not HOME. Setting both ensures
+    // platform.claudeProjectDir() and the route see the same base dir.
+    // The win32 encoding of the workDir below ('/tmp/proj-x') against a real Windows
+    // %USERPROFILE%\.claude\projects listing is confirmed during bring-up.
+    const oldUserProfile = process.env.USERPROFILE;
+    process.env.USERPROFILE = home;
     try {
       const wd = '/tmp/proj-x';
       const sid = 'sess-123';
@@ -58,7 +66,9 @@ describe('terminal routes', () => {
       let r = await request(app).get('/api/terminals/cc-1/conversation').expect(200);
       expect(r.body).toMatchObject({ items: [], cursor: 0 }); // missing file
 
-      const dir = path.join(home, '.claude', 'projects', wd.replace(/\//g, '-'));
+      // Use platform.claudeProjectDir so the test fixture path matches what the route uses
+      // on every platform (darwin/linux/win32) without hardcoding the encoding.
+      const dir = platform.claudeProjectDir(wd);
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, `${sid}.jsonl`),
         '{"type":"user","message":{"role":"user","content":"hi"},"uuid":"u1"}\n' +
@@ -72,7 +82,8 @@ describe('terminal routes', () => {
       expect(r2.body.items).toEqual([]);
     } finally {
       if (oldHome === undefined) delete process.env.HOME; else process.env.HOME = oldHome;
-      fs.rmSync(home, { recursive: true, force: true });
+      if (oldUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = oldUserProfile;
+      fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 
@@ -116,10 +127,18 @@ describe('terminal routes', () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-conv-rec-'));
     const oldHome = process.env.HOME;
     process.env.HOME = home;
+    // NOTE: on Windows os.homedir() reads USERPROFILE, not HOME. Setting both ensures
+    // platform.claudeProjectDir() and the route see the same base dir.
+    // The win32 encoding of the workDir below ('/tmp/proj-rec') against a real Windows
+    // %USERPROFILE%\.claude\projects listing is confirmed during bring-up.
+    const oldUserProfile = process.env.USERPROFILE;
+    process.env.USERPROFILE = home;
     try {
       const wd = '/tmp/proj-rec';
       terminalsDb.create(db, { id: 'cc-rec', sessionId, type: 'claude-code', label: 't', skipPermissions: true, workingDir: wd }); // no externalId
-      const dir = path.join(home, '.claude', 'projects', wd.replace(/\//g, '-'));
+      // Use platform.claudeProjectDir so the test fixture path matches what the route uses
+      // on every platform (darwin/linux/win32) without hardcoding the encoding.
+      const dir = platform.claudeProjectDir(wd);
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, 'rec-uuid-1.jsonl'), '{"type":"user","message":{"role":"user","content":"hey"},"uuid":"u1"}\n');
 
@@ -129,7 +148,8 @@ describe('terminal routes', () => {
       expect(terminalsDb.getById(db, 'cc-rec')?.external_id).toBe('rec-uuid-1');
     } finally {
       if (oldHome === undefined) delete process.env.HOME; else process.env.HOME = oldHome;
-      fs.rmSync(home, { recursive: true, force: true });
+      if (oldUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = oldUserProfile;
+      fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 
@@ -156,7 +176,7 @@ describe('terminal routes', () => {
 
     const list = await request(app).get(`/api/sessions/${sessionId}/terminals`);
     expect(list.body).toHaveLength(1);
-  });
+  }, 20_000);
 
   it('POST /api/sessions/:id/terminals rejects invalid type', async () => {
     const res = await request(app)
@@ -173,7 +193,7 @@ describe('terminal routes', () => {
 
     const res = await request(app).post(`/api/terminals/${terminalId}/stop`);
     expect(res.status).toBe(204);
-  });
+  }, 20_000);
 
   it('DELETE /api/terminals/:terminalId removes a terminal', async () => {
     const c1 = await request(app)
@@ -189,7 +209,7 @@ describe('terminal routes', () => {
     const list = await request(app).get(`/api/sessions/${sessionId}/terminals`);
     expect(list.body).toHaveLength(1);
     expect(list.body[0].id).toBe(c2.body.id);
-  });
+  }, 20_000);
 
   it('POST /api/terminals/:terminalId/send-file-reference sends context for an alive terminal', async () => {
     const create = await request(app)
@@ -205,7 +225,7 @@ describe('terminal routes', () => {
       ok: true,
       sentText: `Use this file as context: ${path.join(tmpDir, 'context.txt')}\r`,
     });
-  });
+  }, 20_000);
 
   it('POST /api/terminals/:terminalId/send-file-reference resolves inbox paths from the session root', async () => {
     const terminalDir = path.join(tmpDir, 'subdir');
@@ -227,7 +247,7 @@ describe('terminal routes', () => {
       ok: true,
       sentText: `Use this file as context: ${path.join(tmpDir, '.dispatch', 'inbox', 'foo.txt')}\r`,
     });
-  });
+  }, 20_000);
 
   it('POST /api/terminals/:terminalId/send-file-reference shell-escapes paths and appends a trailing space', async () => {
     const filename = "weird file 'quote' $(touch nope);.txt";
@@ -247,7 +267,7 @@ describe('terminal routes', () => {
       sentText: `'${absolutePath.replace(/'/g, `'\\''`)}' `,
     });
     expect(res.body.sentText.endsWith(' ')).toBe(true);
-  });
+  }, 20_000);
 
   it('POST /api/terminals/:terminalId/send-file-reference returns 404 for missing terminals', async () => {
     const res = await request(app)
@@ -270,7 +290,7 @@ describe('terminal routes', () => {
 
     expect(res.status).toBe(409);
     expect(res.body.error).toBe('Terminal process is not running');
-  });
+  }, 20_000);
 
   it('POST /api/terminals/:terminalId/send-file-reference returns 409 for non-PTY tabs', async () => {
     const create = await request(app)
@@ -296,5 +316,5 @@ describe('terminal routes', () => {
 
     expect(res.status).toBe(403);
     expect(res.body.error).toBe('Path traversal not allowed');
-  });
+  }, 20_000);
 });

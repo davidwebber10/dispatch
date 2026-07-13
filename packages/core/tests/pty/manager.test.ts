@@ -7,8 +7,11 @@ import { PTYManager } from '../../src/pty/manager.js';
  * exit wiring in PTYManager is exercised against the actual native addon.
  * This is the regression guard for the node-pty 0.10.x → 1.x migration
  * (the `.on('data')`/`.on('exit')` → `.onData`/`.onExit` API change).
+ *
+ * The real-PTY test spawns /bin/sh which does not exist on Windows.
+ * Windows PTY bring-up is confirmed separately via ConPTY during bring-up.
  */
-describe('PTYManager (real PTY)', () => {
+describe.skipIf(process.platform === 'win32')('PTYManager (real PTY)', () => {
   it('streams process output and reports the exit code', async () => {
     const manager = new PTYManager();
     const chunks: string[] = [];

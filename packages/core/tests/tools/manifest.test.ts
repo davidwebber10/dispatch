@@ -10,7 +10,7 @@ beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'tools-'));
   base = path.join(root, 'tools');
 });
-afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
 
 describe('manifest', () => {
   it('returns the default bundle when no user file', () => {

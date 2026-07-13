@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import Database from 'better-sqlite3';
 import fs from 'fs';
@@ -8,8 +8,9 @@ import { initSchema } from '../../src/db/schema.js';
 import { createApp } from '../../src/server.js';
 
 describe('push routes', () => {
-  let app: any;
-  beforeEach(() => { const db = new Database(':memory:'); initSchema(db); const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'push-rt-')); app = createApp({ db, skipPty: true, secretsDir: dir }); });
+  let app: any; let dir: string;
+  beforeEach(() => { const db = new Database(':memory:'); initSchema(db); dir = fs.mkdtempSync(path.join(os.tmpdir(), 'push-rt-')); app = createApp({ db, skipPty: true, secretsDir: dir }); });
+  afterEach(() => { try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } catch { /* ignore */ } });
   it('GET /key returns a public key', async () => {
     const res = await request(app).get('/api/push/key');
     expect(res.status).toBe(200);

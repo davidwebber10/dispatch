@@ -21,6 +21,8 @@ couch, or your phone — including as an installable PWA. Put it behind a
 
 ## Prerequisites
 
+### macOS
+
 - **macOS** (the daemon installs as a `launchd` agent).
 - **Node.js 18+** and **pnpm 9+** — `node -v`, `pnpm -v`. Install pnpm with `npm i -g pnpm` or `corepack enable`.
 - **git**.
@@ -32,9 +34,29 @@ couch, or your phone — including as an installable PWA. Put it behind a
   already be on your `PATH` and signed in. See **[docs/providers.md](docs/providers.md)** for
   install + authentication steps and how to verify them.
 
+### Windows
+
+- **Windows 11** (native — no WSL required).
+- **Node.js 18+** and **pnpm 9+** — `node -v`, `pnpm -v`. Install pnpm with `npm i -g pnpm` or `corepack enable`.
+- **PowerShell** (included with Windows 11; `pwsh` preferred, falls back to `powershell.exe`).
+- **git**.
+- **The agent CLIs you want to drive, installed and authenticated as the same user that runs the daemon:**
+  - **Claude Code** (`claude`) — runs natively on Windows.
+  - **Codex** (`codex`) — runs natively on Windows via Node.js (no WSL).
+
+  Dispatch does **not** manage their logins. See **[docs/providers.md](docs/providers.md)** for
+  install + authentication steps.
+
+**Known v1 gaps on Windows:**
+- The in-app browser/OAuth-capture relay is not wired; OAuth flows open in the system browser directly instead.
+- The Tailscale-status panel shows "unavailable" (Tailscale itself still works for network access).
+- **Agents must be installed *natively* on Windows.** Dispatch runs as a native Windows process and drives agents in the same environment, so `claude`/`codex` installed inside **WSL2** are not reachable — WSL2 is a separate Linux namespace (its own filesystem, `~/.claude`, PATH, and env), so command resolution, working-directory handoff, transcript reading, and secrets/MCP injection all assume the native-Windows side. For a WSL2-based setup, run **Dispatch itself inside WSL2** rather than the native Windows daemon.
+
 ---
 
 ## Quick start
+
+### macOS
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/davidwebber10/dispatch/main/scripts/install.sh | sh
@@ -60,6 +82,21 @@ ln -s "$PWD/bin/dispatch" /usr/local/bin/dispatch   # optional: dispatch on PATH
 </details>
 
 That's it — Dispatch is now running locally and will restart automatically on login.
+
+### Windows
+
+```powershell
+git clone https://github.com/davidwebber10/dispatch.git
+cd dispatch
+pnpm install
+pnpm -r run build
+dispatch install        # registers a Task Scheduler at-logon task and starts the daemon
+start http://localhost:3456
+```
+
+- Data directory: `%USERPROFILE%\.dispatch` (SQLite DB + runtime files).
+- Logs: `%LOCALAPPDATA%\dispatch\logs\`.
+- The daemon runs as a **Task Scheduler at-logon task** for your user account and restarts automatically on failure — mirroring the macOS `launchd` agent.
 
 ---
 

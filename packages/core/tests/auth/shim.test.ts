@@ -11,7 +11,9 @@ afterEach(() => {
   process.env.PATH = originalPath;
 });
 
-describe('installBrowserShim', () => {
+// The browser shim is a #!/bin/sh POSIX script — the whole suite is unix-only.
+// On Windows, platform.installBrowserShim is a no-op by design.
+describe.skipIf(process.platform === 'win32')('installBrowserShim', () => {
   it('creates an executable dispatch-open shim and returns browser env', () => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-shim-'));
     process.env.PATH = '/usr/local/bin:/usr/bin';
