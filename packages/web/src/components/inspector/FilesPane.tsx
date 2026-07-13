@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CaretRight, DownloadSimple, PencilSimple, TrashSimple } from '@phosphor-icons/react';
 import { api } from '../../api/client';
 import type { FileEntry } from '../../api/types';
@@ -26,7 +26,33 @@ function homeAbbrev(p: string): string {
   return p.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
 }
 
-function Row({ children, style, onClick, onMiddle, onContext }: { children: React.ReactNode; style: React.CSSProperties; onClick: () => void; onMiddle?: () => void; onContext?: (e: React.MouseEvent) => void }) {
+/** Directories first, then name — the single ordering both the tree and Shift-ranges use. */
+export function sortEntries(a: FileEntry, b: FileEntry): number {
+  return Number(b.isDirectory) - Number(a.isDirectory) || a.name.localeCompare(b.name);
+}
+
+/**
+ * The visible FILE rows in render order. This is the coordinate space a Shift-click range spans:
+ * it must walk the tree exactly as renderDir does (same sort, only into expanded directories),
+ * or "select everything between these two rows" would select rows the user can't see.
+ */
+export function flattenFiles(
+  children: Record<string, FileEntry[]>,
+  expanded: Set<string>,
+  path = '.',
+): string[] {
+  const out: string[] = [];
+  for (const e of (children[path] ?? []).slice().sort(sortEntries)) {
+    if (e.isDirectory) {
+      if (expanded.has(e.path)) out.push(...flattenFiles(children, expanded, e.path));
+    } else {
+      out.push(e.path);
+    }
+  }
+  return out;
+}
+
+function Row({ children, style, onClick, onMiddle, onContext }: { children: React.ReactNode; style: React.CSSProperties; onClick: (e: React.MouseEvent) => void; onMiddle?: () => void; onContext?: (e: React.MouseEvent) => void }) {
   const [hover, setHover] = useState(false);
   return (
     <div onClick={onClick}
@@ -43,6 +69,8 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
   const [children, setChildren] = useState<Record<string, FileEntry[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [menu, setMenu] = useState<{ x: number; y: number; entry: FileEntry } | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [anchor, setAnchor] = useState<string | null>(null);
   const project = useProjects((s) => s.sessions.find((x) => x.id === projectId));
   const activeTabId = useTabs((s) => s.activeTabId);
   const tabsForProj = useTabs((s) => (projectId ? s.byProject[projectId] : undefined)) ?? [];
@@ -58,7 +86,7 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
   }, [projectId]);
 
   useEffect(() => {
-    setChildren({}); setExpanded(new Set());
+    setChildren({}); setExpanded(new Set()); setSelected(new Set()); setAnchor(null);
     if (projectId) void loadDir('.');
   }, [projectId, loadDir]);
 
@@ -69,6 +97,13 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [menu]);
+
+  // Path → entry index, so the menu can show names rather than raw paths.
+  const entryByPath = useMemo(() => {
+    const m = new Map<string, FileEntry>();
+    for (const list of Object.values(children)) for (const e of list) m.set(e.path, e);
+    return m;
+  }, [children]);
 
   async function saveAs(entry: FileEntry) {
     if (!projectId) return;
@@ -116,10 +151,47 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
     else onOpenFile(t.id);
   }
 
+  /** Finder semantics: plain click opens; Cmd/Ctrl toggles; Shift ranges. Files only. */
+  function onRowClick(ev: React.MouseEvent, entry: FileEntry) {
+    if (ev.metaKey || ev.ctrlKey) {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        if (next.has(entry.path)) next.delete(entry.path);
+        else next.add(entry.path);
+        return next;
+      });
+      setAnchor(entry.path);
+      return;
+    }
+    if (ev.shiftKey && anchor) {
+      const flat = flattenFiles(children, expanded);
+      const i = flat.indexOf(anchor);
+      const j = flat.indexOf(entry.path);
+      if (i >= 0 && j >= 0) {
+        const [lo, hi] = i <= j ? [i, j] : [j, i];
+        setSelected(new Set(flat.slice(lo, hi + 1)));
+        return; // range-select does not open anything
+      }
+    }
+    setSelected(new Set([entry.path]));
+    setAnchor(entry.path);
+    void openFile(entry);
+  }
+
+  /** Right-clicking inside the selection acts on all of it; outside it, collapse to that row. */
+  function onRowContext(ev: React.MouseEvent, entry: FileEntry) {
+    ev.preventDefault();
+    if (!selected.has(entry.path)) {
+      setSelected(new Set([entry.path]));
+      setAnchor(entry.path);
+    }
+    setMenu({ x: ev.clientX, y: ev.clientY, entry });
+  }
+
   if (!projectId) return <div style={{ padding: 12, color: 'var(--color-text-tertiary)' }}>No project selected</div>;
 
   function renderDir(path: string, depth: number): React.ReactNode {
-    const entries = (children[path] ?? []).slice().sort((a, b) => Number(b.isDirectory) - Number(a.isDirectory) || a.name.localeCompare(b.name));
+    const entries = (children[path] ?? []).slice().sort(sortEntries);
     return entries.map((e) => {
       const pl = 8 + depth * INDENT;
       if (e.isDirectory) {
@@ -134,18 +206,28 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
           </div>
         );
       }
-      const selected = e.path === selectedPath;
+      const isSel = selected.has(e.path);
+      const isOpen = e.path === selectedPath;
       const { Icon: FIcon, color: fcolor } = fileVisual(e.name);
       return (
-        <Row key={e.path} onClick={() => void openFile(e)} onMiddle={() => void openFile(e, true)}
-          onContext={(ev) => { ev.preventDefault(); setMenu({ x: ev.clientX, y: ev.clientY, entry: e }); }}
-          style={{ display: 'flex', alignItems: 'center', gap: 7, padding: `6px 8px 6px ${pl}px`, borderRadius: 5, color: selected ? '#e9e9ec' : '#a8a8b0', background: selected ? '#26262b' : undefined, cursor: 'pointer' }}>
-          <FIcon size={15} weight="fill" color={selected ? '#e9e9ec' : fcolor} style={{ flexShrink: 0 }} />
+        <Row key={e.path}
+          onClick={(ev) => onRowClick(ev, e)}
+          onMiddle={() => void openFile(e, true)}
+          onContext={(ev) => onRowContext(ev, e)}
+          style={{ display: 'flex', alignItems: 'center', gap: 7, padding: `6px 8px 6px ${pl}px`, borderRadius: 5, color: isSel || isOpen ? '#e9e9ec' : '#a8a8b0', background: isSel ? '#33333c' : isOpen ? '#26262b' : undefined, cursor: 'pointer' }}>
+          <FIcon size={15} weight="fill" color={isSel || isOpen ? '#e9e9ec' : fcolor} style={{ flexShrink: 0 }} />
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
         </Row>
       );
     });
   }
+
+  // What the menu acts on: the whole selection if the right-clicked row is part of it,
+  // otherwise just that row (onRowContext has already collapsed the selection to it).
+  // Recomputed every render from current `selected`/`menu` state, so it can't go stale.
+  const targets: string[] = menu
+    ? (selected.has(menu.entry.path) ? [...selected] : [menu.entry.path])
+    : [];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -173,7 +255,7 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
             <div style={{ height: 1, background: '#37373d', margin: '4px 6px' }} />
             <button type="button" onClick={() => { const entry = menu.entry; setMenu(null); void deleteEntry(entry); }}
               style={{ ...MENU_ITEM, color: '#f87171' }}>
-              <TrashSimple size={15} /> Delete
+              <TrashSimple size={15} /> {targets.length > 1 ? `Delete ${targets.length} items` : 'Delete'}
             </button>
           </div>
         </>
