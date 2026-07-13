@@ -5,7 +5,11 @@ import multer from 'multer';
 import type Database from 'better-sqlite3';
 import * as sessionsDb from '../db/sessions.js';
 import { rowToSession } from '../types.js';
-import { canReveal, revealInFinder } from '../files/reveal.js';
+import { canReveal, revealClientFrom, revealInFinder } from '../files/reveal.js';
+
+/** Upper bound on a single reveal: Finder cannot usefully select more, and this is the only
+ *  route that shells out — an unbounded argv is not worth the risk. */
+const MAX_REVEAL_PATHS = 256;
 
 export function createFilesRouter(db: Database.Database): Router {
   const router = Router({ mergeParams: true });
@@ -175,20 +179,25 @@ export function createFilesRouter(db: Database.Database): Router {
   //
   // Only ever valid when the browser is on the SAME machine as the daemon: on the headless
   // mini this would pop Finder on a screen nobody is looking at. `canReveal` reads the
-  // unforgeable socket peer address (NOT req.ip, which trusts X-Forwarded-For). The client's
-  // menu already hides this item — this check is the one that actually enforces it.
+  // unforgeable socket peer address (NOT req.ip, which trusts X-Forwarded-For), plus the Host
+  // header and the proxy headers — because a same-host reverse proxy (cloudflared,
+  // `tailscale serve`) makes every remote visitor arrive over loopback. The client's menu
+  // already hides this item — this check is the one that actually enforces it.
   //
   // Revealing the whole selection at once is deliberate: Finder opens with all of them
   // selected, and Finder's Cmd-C *does* paste into a browser upload field — which a web
   // page's own clipboard can never do for arbitrary file types.
   router.post('/reveal', async (req, res) => {
-    if (!canReveal(req.socket.remoteAddress)) {
+    if (!canReveal(revealClientFrom(req))) {
       return res.status(403).json({ error: 'Reveal is only available on the machine running Dispatch' });
     }
     const session = (req as any).session;
     const paths = req.body?.paths;
     if (!Array.isArray(paths) || paths.length === 0) {
       return res.status(400).json({ error: 'Missing paths' });
+    }
+    if (paths.length > MAX_REVEAL_PATHS) {
+      return res.status(400).json({ error: `Too many paths (max ${MAX_REVEAL_PATHS})` });
     }
 
     const resolved: string[] = [];

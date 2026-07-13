@@ -6,7 +6,7 @@ import type Database from 'better-sqlite3';
 import * as appState from '../db/app-state.js';
 import { sumTranscriptTokens } from '../sessions/cc-sessions.js';
 import { getRunningVersion, isNewerVersion } from '../update/version.js';
-import { canReveal } from '../files/reveal.js';
+import { canReveal, revealClientFrom } from '../files/reveal.js';
 
 export function createStateRouter(db: Database.Database): Router {
   const router = Router();
@@ -170,12 +170,15 @@ export function createStateRouter(db: Database.Database): Router {
   });
 
   // GET /api/state/host — what can this daemon do for the browser asking?
-  // `canReveal` is true only on macOS AND when the request came over loopback (see
-  // files/reveal.ts). Purely a UI affordance: POST /files/reveal enforces it again.
+  // `canReveal` is true only on macOS AND when the browser is genuinely on this machine: a
+  // loopback SOCKET address (never req.ip), a loopback Host header, and no proxy headers —
+  // a same-host reverse proxy (cloudflared, `tailscale serve`) makes every remote visitor look
+  // like a loopback peer, so the socket alone proves nothing. See files/reveal.ts.
+  // Purely a UI affordance: POST /files/reveal enforces it again.
   router.get('/host', (req, res) => {
     res.json({
       platform: process.platform,
-      canReveal: canReveal(req.socket.remoteAddress),
+      canReveal: canReveal(revealClientFrom(req)),
     });
   });
 
