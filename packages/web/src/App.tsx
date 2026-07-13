@@ -24,6 +24,7 @@ import { useActivity } from './stores/activity';
 import { useThreadStatus } from './stores/threadStatus';
 import { useAuth } from './stores/auth';
 import { useUpdate } from './stores/update';
+import { useHost } from './stores/host';
 import { useAgents } from './stores/agents';
 import { useAgentUI } from './stores/agentUI';
 import { useReconnect } from './stores/reconnect';
@@ -62,6 +63,7 @@ export default function App() {
     void useTabs.getState().hydrate();
     void useAuth.getState().load();
     void useUpdate.getState().load();
+    void useHost.getState().load();
     void useAgents.getState().loadSchedules();
     const sock = createEventsSocket({
       onStatus: (s) => useConnection.getState().setStatus(s),

@@ -292,17 +292,18 @@ git commit -m "feat(core): GET /api/state/host reports reveal capability"
 
 - [ ] **Step 1: Write the failing test**
 
-At the TOP of `packages/core/tests/routes/files.test.ts`, above the existing imports, add the module mock (mock the reveal module by path — **not** `child_process`, which `createApp` needs):
+At the TOP of `packages/core/tests/routes/files.test.ts`, above the existing imports, add the module mock. Mock the reveal module **by path** — **not** `child_process`, which `createApp` itself needs at boot (`server.ts:223`). Mocking `canReveal` too is what lets the deny path be tested on **any** platform, rather than only on a non-macOS machine; the real `canReveal` logic is table-tested in Task 1.
 
 ```ts
 import { vi } from 'vitest';
 
-vi.mock('../../src/files/reveal.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../src/files/reveal.js')>();
-  return { ...actual, revealInFinder: vi.fn(async () => {}) };
-});
+vi.mock('../../src/files/reveal.js', () => ({
+  isLoopbackAddress: vi.fn(),
+  canReveal: vi.fn(() => true),
+  revealInFinder: vi.fn(async () => {}),
+}));
 
-import { revealInFinder, canReveal } from '../../src/files/reveal.js';
+import { canReveal, revealInFinder } from '../../src/files/reveal.js';
 ```
 
 Then append these tests inside the existing `describe('file routes', ...)` block:
@@ -323,13 +324,12 @@ Then append these tests inside the existing `describe('file routes', ...)` block
   });
 
   describe('POST /reveal', () => {
-    beforeEach(() => vi.mocked(revealInFinder).mockClear());
-
-    // supertest always connects over loopback, so on macOS the capability is genuinely present.
-    const capable = canReveal('127.0.0.1');
+    beforeEach(() => {
+      vi.mocked(revealInFinder).mockClear();
+      vi.mocked(canReveal).mockReturnValue(true); // capable by default; the deny test flips it
+    });
 
     it('reveals every requested path, resolved to absolute', async () => {
-      if (!capable) return; // non-macOS CI: the deny path is covered below
       fs.writeFileSync(path.join(tmpDir, 'b.png'), 'x');
       const res = await request(app)
         .post('/api/sessions/s1/files/reveal')
@@ -340,6 +340,22 @@ Then append these tests inside the existing `describe('file routes', ...)` block
         path.join(tmpDir, 'hello.txt'),
         path.join(tmpDir, 'b.png'),
       ]);
+    });
+
+    it('decides capability from the socket peer address, not req.ip', async () => {
+      await request(app).post('/api/sessions/s1/files/reveal').send({ paths: ['hello.txt'] });
+      // The route must hand canReveal the raw socket address. supertest connects over loopback.
+      const [addr] = vi.mocked(canReveal).mock.calls[0];
+      expect(addr).toMatch(/^(::1|::ffff:)?127\.|^::1$/);
+    });
+
+    it('never shells out when the caller is not capable', async () => {
+      vi.mocked(canReveal).mockReturnValue(false); // remote client, or a non-macOS daemon
+      const res = await request(app)
+        .post('/api/sessions/s1/files/reveal')
+        .send({ paths: ['hello.txt'] });
+      expect(res.status).toBe(403);
+      expect(vi.mocked(revealInFinder)).not.toHaveBeenCalled();
     });
 
     it('rejects path traversal', async () => {
@@ -353,15 +369,6 @@ Then append these tests inside the existing `describe('file routes', ...)` block
     it('rejects an empty selection', async () => {
       const res = await request(app).post('/api/sessions/s1/files/reveal').send({ paths: [] });
       expect(res.status).toBe(400);
-      expect(vi.mocked(revealInFinder)).not.toHaveBeenCalled();
-    });
-
-    it('never shells out when the caller is not capable', async () => {
-      if (capable) return; // this asserts the non-macOS / remote-client deny path
-      const res = await request(app)
-        .post('/api/sessions/s1/files/reveal')
-        .send({ paths: ['hello.txt'] });
-      expect(res.status).toBe(403);
       expect(vi.mocked(revealInFinder)).not.toHaveBeenCalled();
     });
   });
@@ -438,7 +445,7 @@ Add this route immediately after the `/download` handler:
 - [ ] **Step 4: Run tests**
 
 Run: `pnpm --filter dispatch-server test -- files`
-Expected: PASS (existing 12 + 6 new = 18)
+Expected: PASS (existing 12 + 7 new = 19)
 
 - [ ] **Step 5: Commit**
 

@@ -15,6 +15,16 @@ export function isImage(path: string): boolean {
   return /\.(png|jpe?g|gif|webp|svg|avif|bmp)$/i.test(path);
 }
 
+/**
+ * SVG is the odd one out: it IS an image (isImage includes it, and the Files pane happily
+ * rasterizes it to PNG through a canvas for Copy Image) but its bytes are TEXT — so it must open
+ * in the editor, not a read-only picture viewer. Callers that pick a RENDERER need `isImage(p) &&
+ * !isSvg(p)`; callers that pick an image OPERATION want plain `isImage(p)`.
+ */
+export function isSvg(path: string): boolean {
+  return /\.svg$/i.test(path);
+}
+
 export function languageFor(path: string): Extension[] {
   const p = path.toLowerCase();
   if (/\.tsx$/.test(p)) return [javascript({ typescript: true, jsx: true })];

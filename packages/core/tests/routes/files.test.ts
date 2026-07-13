@@ -1,5 +1,23 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import request from 'supertest';
+
+// Keep the REAL predicate helpers (canReveal / isLoopbackHost / revealClientFrom) so the route's
+// own plumbing is exercised, but wrap canReveal in a spy so tests can both inspect the client it
+// was handed and force the incapable case. revealInFinder is stubbed — nothing here shells out.
+// NOTE: this file must NEVER vi.mock('child_process') — createApp shells out at boot.
+vi.mock('../../src/files/reveal.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/files/reveal.js')>();
+  return {
+    ...actual,
+    canReveal: vi.fn(actual.canReveal),
+    revealInFinder: vi.fn(async () => {}),
+  };
+});
+
+import { canReveal, revealInFinder } from '../../src/files/reveal.js';
+// The unspied module, so the reveal route tests can run the GENUINE predicate — pinned to
+// 'darwin' so they assert macOS behavior no matter which platform the suite runs on.
+const realReveal = await vi.importActual<typeof import('../../src/files/reveal.js')>('../../src/files/reveal.js');
 import { createApp } from '../../src/server.js';
 import Database from 'better-sqlite3';
 import { initSchema } from '../../src/db/schema.js';
@@ -157,5 +175,121 @@ describe('file routes', () => {
     fs.mkdirSync(path.join(tmpDir, 'folder'));
     const res = await request(app).get('/api/sessions/s1/files/download?path=folder');
     expect(res.status).toBe(404);
+  });
+
+  it('serves an avif image rather than 415', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'shot.avif'), Buffer.from([0x00, 0x01, 0x02]));
+    const res = await request(app).get('/api/sessions/s1/files/image?path=shot.avif');
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('image/avif');
+  });
+
+  it('serves a bmp image rather than 415', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'shot.bmp'), Buffer.from([0x42, 0x4d]));
+    const res = await request(app).get('/api/sessions/s1/files/image?path=shot.bmp');
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('image/bmp');
+  });
+
+  describe('POST /reveal', () => {
+    beforeEach(() => {
+      // Block body, not a concise arrow: Vitest treats a value returned from beforeEach as a
+      // teardown hook and would invoke the returned mock.
+      vi.mocked(revealInFinder).mockClear();
+      vi.mocked(canReveal).mockReset();
+      vi.mocked(canReveal).mockImplementation((client) => realReveal.canReveal(client, 'darwin'));
+    });
+
+    it('reveals every requested path, resolved to absolute', async () => {
+      fs.writeFileSync(path.join(tmpDir, 'b.png'), 'x');
+      const res = await request(app)
+        .post('/api/sessions/s1/files/reveal')
+        .send({ paths: ['hello.txt', 'b.png'] });
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ ok: true });
+      expect(vi.mocked(revealInFinder)).toHaveBeenCalledWith([
+        path.join(tmpDir, 'hello.txt'),
+        path.join(tmpDir, 'b.png'),
+      ]);
+    });
+
+    it('decides capability from the socket peer address, not req.ip', async () => {
+      // With `trust proxy` on, Express derives req.ip from X-Forwarded-For — so req.ip is now
+      // '8.8.8.8' while the real socket peer stays loopback. THIS is what makes the assertion
+      // bite: an implementation that reached for req.ip would hand canReveal '8.8.8.8'.
+      app.set('trust proxy', true);
+      await request(app)
+        .post('/api/sessions/s1/files/reveal')
+        .set('X-Forwarded-For', '8.8.8.8')
+        .send({ paths: ['hello.txt'] });
+
+      const [client] = vi.mocked(canReveal).mock.calls[0];
+      expect(client.remoteAddress).toMatch(/^(::1|::ffff:127\.|127\.)/);
+      expect(client.remoteAddress).not.toBe('8.8.8.8');
+      expect(client.proxied).toBe(true);   // ...and the forwarding header itself is fatal
+    });
+
+    it('refuses a forwarded request outright, even over a loopback socket', async () => {
+      // A proxy in front means the browser is NOT on this Mac. The socket peer address alone
+      // cannot tell you that; the header can.
+      app.set('trust proxy', true);
+      const res = await request(app)
+        .post('/api/sessions/s1/files/reveal')
+        .set('X-Forwarded-For', '8.8.8.8')
+        .send({ paths: ['hello.txt'] });
+      expect(res.status).toBe(403);
+      expect(vi.mocked(revealInFinder)).not.toHaveBeenCalled();
+    });
+
+    it('THE TUNNEL CASE: refuses a loopback socket carrying a public Host header', async () => {
+      // cloudflared runs on this Mac and dials http://localhost:3456, so the daemon sees a real
+      // 127.0.0.1 peer for a browser anywhere in the world. Only the Host header gives it away.
+      const res = await request(app)
+        .post('/api/sessions/s1/files/reveal')
+        .set('Host', 'dispatch.example.com')
+        .send({ paths: ['hello.txt'] });
+      expect(res.status).toBe(403);
+      expect(vi.mocked(revealInFinder)).not.toHaveBeenCalled();
+    });
+
+    it('still reveals for a clean loopback request with a loopback Host', async () => {
+      // The legitimate local browser must keep working — supertest dials 127.0.0.1 and sends
+      // `Host: 127.0.0.1:<port>` with no forwarding headers.
+      const res = await request(app)
+        .post('/api/sessions/s1/files/reveal')
+        .send({ paths: ['hello.txt'] });
+      expect(res.status).toBe(200);
+      expect(vi.mocked(revealInFinder)).toHaveBeenCalledWith([path.join(tmpDir, 'hello.txt')]);
+    });
+
+    it('rejects a selection larger than the 256-path bound', async () => {
+      const paths = Array.from({ length: 257 }, (_, i) => `f${i}.txt`);
+      const res = await request(app).post('/api/sessions/s1/files/reveal').send({ paths });
+      expect(res.status).toBe(400);
+      expect(vi.mocked(revealInFinder)).not.toHaveBeenCalled();
+    });
+
+    it('never shells out when the caller is not capable', async () => {
+      vi.mocked(canReveal).mockReturnValue(false); // remote client, or a non-macOS daemon
+      const res = await request(app)
+        .post('/api/sessions/s1/files/reveal')
+        .send({ paths: ['hello.txt'] });
+      expect(res.status).toBe(403);
+      expect(vi.mocked(revealInFinder)).not.toHaveBeenCalled();
+    });
+
+    it('rejects path traversal', async () => {
+      const res = await request(app)
+        .post('/api/sessions/s1/files/reveal')
+        .send({ paths: ['../../etc/passwd'] });
+      expect(res.status).toBe(403);
+      expect(vi.mocked(revealInFinder)).not.toHaveBeenCalled();
+    });
+
+    it('rejects an empty selection', async () => {
+      const res = await request(app).post('/api/sessions/s1/files/reveal').send({ paths: [] });
+      expect(res.status).toBe(400);
+      expect(vi.mocked(revealInFinder)).not.toHaveBeenCalled();
+    });
   });
 });
