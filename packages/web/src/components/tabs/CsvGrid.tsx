@@ -2,7 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Plus, TrashSimple } from '@phosphor-icons/react';
 import { parseCsv, serializeCsv, editCell, insertRow, deleteRow, columnCount, type CsvDoc } from '../../lib/csv';
 
-export const ROW_H = 28;         // fixed row height — what makes windowing arithmetic possible
+const ROW_H = 28;                // fixed row height — what makes windowing arithmetic possible
 const OVERSCAN = 10;
 const VIEWPORT_GUESS = 600;      // used before the first scroll measurement
 
@@ -135,7 +135,15 @@ export function CsvGrid({ content, path, onChange }: { content: string; path: st
             </tr>
           </thead>
           <tbody>
-            {padTop > 0 && <tr style={{ height: padTop }} aria-hidden />}
+            {/* Spacers stand in for the rows that are NOT in the DOM, so the scrollbar reflects the
+                whole file. `height` on a bare <tr> is only a floor — an empty row can still collapse
+                and the file becomes unscrollable past the first window. The height has to hang off a
+                real <td> (gutter + data columns + the delete-button column). */}
+            {padTop > 0 && (
+              <tr aria-hidden>
+                <td colSpan={cols + 2} style={{ height: padTop, padding: 0, border: 0 }} />
+              </tr>
+            )}
             {Array.from({ length: last - first }, (_, k) => {
               const di = first + k;          // index among DATA rows
               const ri = di + 1;             // index in doc.rows (0 is the header)
@@ -161,7 +169,11 @@ export function CsvGrid({ content, path, onChange }: { content: string; path: st
                 </tr>
               );
             })}
-            {padBottom > 0 && <tr style={{ height: padBottom }} aria-hidden />}
+            {padBottom > 0 && (
+              <tr aria-hidden>
+                <td colSpan={cols + 2} style={{ height: padBottom, padding: 0, border: 0 }} />
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
