@@ -1,13 +1,18 @@
 /**
  * RFC 4180 CSV, with one addition that is the whole point of the file: every row keeps its
- * VERBATIM source text (`raw`). serializeCsv re-emits that text untouched for any row you did
- * not edit, so:
+ * VERBATIM source text (`raw`) AND its own line terminator (`eol`). serializeCsv re-emits both
+ * untouched for any row you did not edit, so:
  *
  *   serializeCsv(parseCsv(text)) === text        // byte-for-byte, always
  *   editing one cell changes exactly one line    // clean git diffs
  *
  * That matters because these files live in repos that coding agents diff and commit. A save that
  * renormalises quoting or line endings across the whole file would make every edit unreviewable.
+ *
+ * Terminators are per-ROW, not per-document: a file with mixed line endings (`a\r\n b\n`) is a real
+ * thing, and a document-wide `eol` would silently rewrite every line that disagreed with it. It is
+ * also why there is no `trailingNewline` flag — a file that does not end in a newline is simply one
+ * whose LAST row has `eol === ''`.
  *
  * Hand-rolled rather than a library because a library hands back cells and throws the original
  * bytes away — and the original bytes ARE the feature.
@@ -17,14 +22,16 @@ export interface CsvRow {
   cells: string[];
   /** This row's source text, excluding its line terminator. null for a row created in the grid. */
   raw: string | null;
+  /** This row's own terminator, verbatim: '\n' | '\r\n' | '\r' | '' (last row, no trailing newline). */
+  eol: string;
 }
 
 export interface CsvDoc {
   rows: CsvRow[];
   delimiter: string;
+  /** Terminator for NEWLY inserted rows — the first one seen in the file, else '\n'. */
   eol: string;
   bom: boolean;
-  trailingNewline: boolean;
 }
 
 const BOM = '﻿';
@@ -38,15 +45,31 @@ export function columnCount(doc: CsvDoc): number {
 /**
  * Count a candidate delimiter's occurrences OUTSIDE quoted fields. A naive count would pick ';'
  * for `a,b\n"x;y;z;w",2` — the semicolons are data, not structure.
+ *
+ * Quote handling must match parseCsv exactly: a quote only OPENS a quoted field when the field is
+ * still empty. A mid-field quote (`ab"cd`) is literal data, so treating it as a quote toggle here
+ * would skew the count against the parser's own view of the file.
  */
 function countOutsideQuotes(text: string, delim: string): number {
-  let n = 0, inQuotes = false;
+  let n = 0;
+  let inQuotes = false;
+  let fieldEmpty = true;   // mirrors the parser's `field === ''`
+
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
-    if (c === '"') {
-      if (inQuotes && text[i + 1] === '"') { i++; continue; }  // escaped quote
-      inQuotes = !inQuotes;
-    } else if (!inQuotes && c === delim) n++;
+
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { i++; fieldEmpty = false; continue; }   // "" is a literal quote
+        inQuotes = false;                                                 // closing quote adds nothing
+      } else fieldEmpty = false;
+      continue;
+    }
+
+    if (c === '"' && fieldEmpty) { inQuotes = true; continue; }
+    if (c === delim) { n++; fieldEmpty = true; continue; }
+    if (c === '\n' || c === '\r') { fieldEmpty = true; continue; }        // row break resets the field
+    fieldEmpty = false;
   }
   return n;
 }
@@ -65,18 +88,12 @@ function detectDelimiter(text: string, path?: string): string {
 /** Throws on malformed input (an unterminated quote) — never guess at a file we'll write back. */
 export function parseCsv(text: string, path?: string): CsvDoc {
   const bom = text.startsWith(BOM);
-  let body = bom ? text.slice(BOM.length) : text;
-
-  const eol = /\r\n/.test(body) ? '\r\n' : '\n';
-  const trailingNewline = body.endsWith(eol);
-  if (trailingNewline) body = body.slice(0, -eol.length);
+  const body = bom ? text.slice(BOM.length) : text;
 
   const delimiter = detectDelimiter(body, path);
 
   const rows: CsvRow[] = [];
-  if (body.length === 0 && !trailingNewline) {
-    return { rows, delimiter, eol, bom, trailingNewline };
-  }
+  let docEol: string | null = null;
 
   let cells: string[] = [];
   let field = '';
@@ -98,13 +115,19 @@ export function parseCsv(text: string, path?: string): CsvDoc {
 
     if (c === delimiter) { cells.push(field); field = ''; continue; }
 
-    // A row break — but only outside quotes; a newline inside quotes is data.
-    if (c === '\n' || (c === '\r' && body[i + 1] === '\n')) {
-      const end = i;
+    // A row break — but only outside quotes; a newline inside quotes is data. A bare '\r' with no
+    // '\n' after it is a classic-Mac terminator, NOT field data.
+    const term =
+      c === '\r' ? (body[i + 1] === '\n' ? '\r\n' : '\r')
+      : c === '\n' ? '\n'
+      : null;
+
+    if (term !== null) {
       cells.push(field);
-      rows.push({ cells, raw: body.slice(rowStart, end) });
+      rows.push({ cells, raw: body.slice(rowStart, i), eol: term });
+      if (docEol === null) docEol = term;
       cells = []; field = '';
-      i += c === '\r' ? 1 : 0;
+      i += term.length - 1;
       rowStart = i + 1;
       continue;
     }
@@ -114,10 +137,15 @@ export function parseCsv(text: string, path?: string): CsvDoc {
 
   if (inQuotes) throw new Error('Malformed CSV: unterminated quoted field');
 
-  cells.push(field);
-  rows.push({ cells, raw: body.slice(rowStart) });
+  // If the scanner finished exactly at the end of the body, the file ENDED with a terminator and
+  // every row has already been pushed — there is no phantom trailing row. Only a pending partial
+  // row (text after the last terminator) gets flushed, and it has no terminator of its own.
+  if (rowStart < body.length) {
+    cells.push(field);
+    rows.push({ cells, raw: body.slice(rowStart), eol: '' });
+  }
 
-  return { rows, delimiter, eol, bom, trailingNewline };
+  return { rows, delimiter, eol: docEol ?? '\n', bom };
 }
 
 /** Quote a field only when it must be quoted — matches what nearly every CSV writer emits. */
@@ -133,8 +161,8 @@ function serializeRow(row: CsvRow, delimiter: string): string {
 }
 
 export function serializeCsv(doc: CsvDoc): string {
-  const body = doc.rows.map((r) => serializeRow(r, doc.delimiter)).join(doc.eol);
-  return (doc.bom ? BOM : '') + body + (doc.trailingNewline && doc.rows.length ? doc.eol : '');
+  const body = doc.rows.map((r) => serializeRow(r, doc.delimiter) + r.eol).join('');
+  return (doc.bom ? BOM : '') + body;
 }
 
 /** Setting `raw` to null is what marks a row "rewrite me" — every other row stays byte-identical. */
@@ -145,19 +173,41 @@ export function editCell(doc: CsvDoc, row: number, col: number, value: string): 
   const cells = target.cells.slice();
   while (cells.length <= col) cells.push('');   // only widen the row you actually edited
   cells[col] = value;
-  rows[row] = { cells, raw: null };
+  rows[row] = { cells, raw: null, eol: target.eol };   // the row's terminator is not ours to change
   return { ...doc, rows };
 }
 
 export function insertRow(doc: CsvDoc, at: number): CsvDoc {
   const width = Math.max(1, columnCount(doc));
   const rows = doc.rows.slice();
-  rows.splice(at, 0, { cells: Array(width).fill(''), raw: null });
+
+  let eol = doc.eol;
+  const last = rows[rows.length - 1];
+  if (at === rows.length && last && last.eol === '') {
+    // Appending to a file that does not end in a newline: the old last row now needs a terminator,
+    // and the NEW last row inherits the missing one. Its `raw` is untouched — only the eol moves.
+    rows[rows.length - 1] = { ...last, eol: doc.eol };
+    eol = '';
+  }
+
+  rows.splice(at, 0, { cells: Array(width).fill(''), raw: null, eol });
   return { ...doc, rows };
 }
 
 export function deleteRow(doc: CsvDoc, at: number): CsvDoc {
   const rows = doc.rows.slice();
+  const removed = rows[at];
+  if (!removed) return doc;
+  const wasLast = at === rows.length - 1;
+
   rows.splice(at, 1);
+
+  // Deleting the final row of a file with no trailing newline: the row that becomes last inherits
+  // the missing terminator, so the file keeps its shape. Only its eol changes; `raw` survives.
+  const newLast = rows[rows.length - 1];
+  if (wasLast && removed.eol === '' && newLast) {
+    rows[rows.length - 1] = { ...newLast, eol: '' };
+  }
+
   return { ...doc, rows };
 }
