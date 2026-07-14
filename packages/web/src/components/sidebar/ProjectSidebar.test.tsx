@@ -156,3 +156,53 @@ describe('ProjectSidebar does not fight a user who scrolled away', () => {
     expect((revealed[revealed.length - 1] as HTMLElement).dataset.threadId).toBe('t1');
   });
 });
+
+describe('ProjectSidebar does not aim at a row inside a collapsed card', () => {
+  let revealed: Element[];
+
+  beforeEach(() => {
+    revealed = [];
+    vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (this: Element) {
+      revealed.push(this);
+    });
+    vi.spyOn(api, 'listTerminals').mockResolvedValue([]);
+    useProjects.setState({
+      sessions: [
+        { id: 's1', name: 'alpha', workingDir: '/a', status: 'idle' } as any,
+        { id: 's2', name: 'beta', workingDir: '/b', status: 'idle' } as any,
+      ],
+      activeId: 's1',
+    });
+    useTabs.setState({
+      byProject: {
+        s1: [{ id: 't1', sessionId: 's1', type: 'claude-code', label: 'alpha-thread', status: 'idle' } as any],
+        s2: [{ id: 't2', sessionId: 's2', type: 'claude-code', label: 'beta-thread', status: 'idle' } as any],
+      },
+      openTabIds: ['t1', 't2'],
+      activeTabId: 't1',
+      tabSession: { t1: 's1', t2: 's2' },
+    });
+  });
+
+  it('reveals the CARD first while beta is still collapsed, then the ROW once it expands', async () => {
+    // beta's rows are in the DOM from the start — the collapse is grid-template-rows: 0fr with
+    // overflow:hidden, NOT a conditional render. So querySelector finds a zero-height, invisible
+    // row, and scrolling to it lands nowhere useful. The row is only a valid target once its card
+    // is actually open.
+    render(<ProjectSidebar onSelectTab={() => {}} />);
+    await screen.findByText('beta');
+    revealed.length = 0;
+
+    act(() => { useTabs.getState().setActiveTab('t2'); });   // activates t2 AND makes s2 the project
+
+    await waitFor(() => expect(revealed.length).toBeGreaterThan(0));
+
+    // The FIRST thing revealed must be beta's card, not its still-collapsed row.
+    expect((revealed[0] as HTMLElement).dataset.projectId).toBe('s2');
+
+    // ...and once the auto-expand commits, we upgrade to the precise row.
+    await waitFor(() =>
+      expect(revealed.some((e) => (e as HTMLElement).dataset.threadId === 't2')).toBe(true),
+    );
+  });
+});

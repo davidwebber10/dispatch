@@ -11,6 +11,10 @@ type Sort = 'recent' | 'alpha' | 'custom';
 
 const SORTS: [Sort, string][] = [['recent', 'Most recent'], ['alpha', 'Alphabetical'], ['custom', 'Custom']];
 
+/* ProjectCard collapses its thread list with a 120ms grid-template-rows transition. A card that
+   just opened is still animating, so a row revealed immediately has not reached its final position. */
+const EXPAND_SETTLE_MS = 140;
+
 const icon: React.CSSProperties = { width: 32, height: 32, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: 'pointer' };
 
 export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispatch }: { onSelectTab: (terminalId: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void; onDispatch?: (projectId: string) => void }) {
@@ -49,8 +53,8 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispa
   const activeTabId = useTabs((s) => s.activeTabId);
   const byProject = useTabs((s) => s.byProject);
   // What we last revealed, and whether it was the PRECISE target (the thread row) or merely the
-  // project card. A card-only reveal is provisional: the row had not loaded yet, so we still want
-  // to upgrade to it when it lands. A precise reveal is final — after that, churn changes nothing.
+  // project card. A card-only reveal is provisional: the row was not a valid target yet, so we
+  // still want to upgrade to it. A precise reveal is final — after that, churn changes nothing.
   const shown = useRef<{ selection: string; precise: boolean } | null>(null);
   useEffect(() => {
     const c = scrollRef.current;
@@ -59,15 +63,30 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispa
     const last = shown.current;
     if (last?.selection === selection && last.precise) return;     // nothing better left to show
 
-    if (activeTabId && revealIn(c, `[data-thread-id="${activeTabId}"]`)) {
+    /* A COLLAPSED card still has all of its thread rows in the DOM — the collapse is
+       `grid-template-rows: 0fr` + overflow:hidden, not a conditional render. So querySelector will
+       happily find a row that is clipped to zero height and invisible, and scrolling to it lands
+       nowhere useful. The row is only a valid target once its card is actually open. Until then,
+       reveal the card; the auto-expand effect above will re-run us with `expanded` updated. */
+    const cardOpen = !!activeId && expanded.has(activeId);
+
+    if (cardOpen && activeTabId && revealIn(c, `[data-thread-id="${activeTabId}"]`)) {
       shown.current = { selection, precise: true };
-      return;
+      /* The card may have opened in THIS very commit, so its 120ms grid-template-rows transition is
+         still running and the row has not reached its final position. Reveal once more after it
+         settles: 'nearest' makes that a no-op whenever the first pass already landed correctly. */
+      const t = setTimeout(() => {
+        const el = scrollRef.current;
+        if (el) revealIn(el, `[data-thread-id="${activeTabId}"]`);
+      }, EXPAND_SETTLE_MS);
+      return () => clearTimeout(t);
     }
+
     if (last?.selection === selection) return;   // already showed the card for this selection
     if (activeId && revealIn(c, `[data-project-id="${activeId}"]`)) {
       shown.current = { selection, precise: false };
     }
-  }, [activeTabId, activeId, byProject]);
+  }, [activeTabId, activeId, byProject, expanded]);
 
   const filtered = sessions
     .filter((s) => s.name.toLowerCase().includes(query.toLowerCase()))
