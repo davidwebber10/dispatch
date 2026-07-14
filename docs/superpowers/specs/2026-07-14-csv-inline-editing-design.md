@@ -81,7 +81,10 @@ A dumb, props-only component: `({ doc, onChange }: { doc: CsvDoc; onChange: (nex
 
 - Sticky header (row 0), row-number gutter. Styled after `ResultTable` (`QueryView.tsx:34`) so it
   looks native: mono 11.5px, sticky `th`, `var(--color-border)`.
-- Click a cell to edit; **Enter/Tab commit and advance**, **Escape cancels**, arrows navigate.
+- **Double-click** a cell to edit it; **Enter/Tab commit and advance**, **Escape cancels**, arrows
+  navigate. (Double-click, not single-click: a single click is how you *select* a cell in every
+  spreadsheet the user has ever used, and turning a stray click on a 20k-row grid into an open
+  editor is a good way to commit an edit nobody meant to make.)
 - Add row / delete row.
 - **Windowing:** render only the visible rows (fixed row height, computed from `scrollTop`, with
   overscan). The codebase's usual answer to volume is a hard cap (`QueryView.tsx:5`,
@@ -143,8 +146,8 @@ This also repairs the bug for ordinary text files, which is a real defect presen
 - Delimiter detection: `,`, `;`, `\t`, `|`; and a comma-bearing quoted field does not fool it.
 - `insertRow` / `deleteRow` leave neighbouring rows byte-identical.
 
-**Grid:** click-to-edit; Enter/Tab commit and advance; Escape cancels (value unchanged); add/delete
-row; windowing renders only visible rows for a large document.
+**Grid:** double-click-to-edit; Enter/Tab commit and advance; Escape cancels (value unchanged);
+add/delete row; windowing renders only visible rows for a large document.
 
 **Host:** a `.csv` shows the Table|Raw toggle; a `.md` still shows View|Edit; a `.ts` shows neither.
 Switching Table→Raw mid-edit preserves the edit. Save writes the serialized string.
