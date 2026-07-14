@@ -88,6 +88,8 @@ export const api = {
   startTerminal: (id: string) => req<void>(`/api/terminals/${id}/start`, { method: 'POST' }),
   stopTerminal: (id: string) => req<void>(`/api/terminals/${id}/stop`, { method: 'POST' }),
   archiveTerminal: (id: string) => req<void>(`/api/terminals/${id}`, { method: 'DELETE' }),
+  setAutoArchive: (id: string, enabled: boolean, ms?: number) =>
+    req<Terminal>(`/api/terminals/${id}/auto-archive`, { method: 'PATCH', body: body({ enabled, ...(ms !== undefined ? { ms } : {}) }) }),
   reorderTerminals: (sessionId: string, order: string[]) =>
     req<void>(`/api/sessions/${sessionId}/terminals/reorder`, { method: 'POST', body: body({ order }) }),
   moveTerminal: (id: string, sessionId: string) =>

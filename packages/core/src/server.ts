@@ -46,6 +46,7 @@ import { handleTerminalConnection } from './ws/terminal.js';
 import { handleStructuredConnection } from './ws/structured.js';
 import { StructuredSessionManager } from './structured/manager.js';
 import { startPtyTimingLoop } from './sessions/status.js';
+import { startAutoArchiveLoop } from './sessions/auto-archive.js';
 import { TerminalMonitor } from './terminal-monitor.js';
 import { startUpdateCheckLoop } from './update/checker.js';
 import { createUpdateRouter } from './routes/update.js';
@@ -521,12 +522,18 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     }
   }, 30_000);
 
+  // Auto-archive sweep — prunes opted-in threads that have gone idle past their
+  // deadline. Cheap: a full scan of a small table (terminals) once a minute — no
+  // index backs this, but the table stays small enough that it doesn't matter.
+  const autoArchiveInterval = startAutoArchiveLoop(db, sessionService, broadcaster);
+
   // Graceful shutdown
   const cleanup = () => {
     console.log('Shutting down Dispatch server...');
     clearInterval(ptyTimingInterval);
     clearInterval(updateCheckInterval);
     clearInterval(agentSchedulerInterval);
+    clearInterval(autoArchiveInterval);
     clearInterval(heartbeat);
     ptyManager.killAll();
     structuredManager.killAll();

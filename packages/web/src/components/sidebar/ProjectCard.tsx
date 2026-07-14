@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SortableList } from '../common/SortableList';
 import { SwipeRow } from '../common/SwipeRow';
-import { FolderOpen, CaretRight, Network, TerminalWindow, ChatCircle, PushPin } from '@phosphor-icons/react';
+import { FolderOpen, CaretRight, Network, TerminalWindow, ChatCircle, PushPin, Timer } from '@phosphor-icons/react';
 import type { Session, Terminal, AgentSchedule } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
 import { projectIndicator } from '../../lib/status';
+import { getAutoArchiveMs, remainingMs, formatRemaining, toDuration, useMinuteTick } from '../../lib/autoArchive';
 import { useProjects } from '../../stores/projects';
 import { useAgents } from '../../stores/agents';
 import { useAgentUI } from '../../stores/agentUI';
@@ -17,10 +18,10 @@ import { useSettings, useDispatchName, type Density } from '../../stores/setting
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { timeAgo } from '../../lib/time';
 import { NewTabMenu } from './NewTabMenu';
-import { NewClaudeThreadModal } from './NewClaudeThreadModal';
-import { NewCodexThreadModal } from './NewCodexThreadModal';
+import { NewThreadModal, type NewThreadKind } from './NewThreadModal';
 import { RenameProjectModal } from './RenameProjectModal';
 import { RenameThreadModal } from './RenameThreadModal';
+import { AutoArchiveModal } from './AutoArchiveModal';
 import { api } from '../../api/client';
 
 function dotState(status: string): 'working' | 'idle' | 'needs_input' | 'error' {
@@ -70,6 +71,13 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
   const structuredClaude = tab.type === 'claude-code' && (tab.config as { transport?: string })?.transport === 'structured';
   const isTerminalThread = !structuredClaude && (tab.type === 'claude-code' || tab.type === 'codex' || tab.type === 'shell');
   const iconSlot = isMobile ? 18 : 15;
+  // Auto-archive threads trade their timeAgo for a countdown: both derive from
+  // lastActivityAt, and "how long until this disappears" is the more useful read.
+  // Only rows with a policy subscribe to the shared ticker — the vast majority of
+  // threads have none, and shouldn't re-render every minute just to sit idle.
+  const autoArchiveMs = getAutoArchiveMs(tab.config);
+  const now = useMinuteTick(autoArchiveMs !== null);
+  const left = autoArchiveMs === null ? null : remainingMs(tab.lastActivityAt ?? tab.createdAt, autoArchiveMs, now);
   // On mobile, the active row's highlight fades out a couple seconds after the
   // thread list (re)appears (fadeKey bumps), so the list reads as clean.
   const [dimmed, setDimmed] = useState(false);
@@ -127,6 +135,14 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
           <Spinner size={isMobile ? 13 : 11} />
         ) : needsAttn ? (
           <StatusDot state={dotState(tab.status)} size={isMobile ? 9 : 7} />
+        ) : left !== null && autoArchiveMs !== null ? (
+          <span
+            title={`Archives after ${toDuration(autoArchiveMs).value} ${toDuration(autoArchiveMs).unit} of inactivity`}
+            style={{ display: 'flex', alignItems: 'center', gap: 3, font: `400 ${isMobile ? 12 : 10.5}px var(--font-mono)`, color: showActive ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}
+          >
+            <Timer size={isMobile ? 12 : 10} weight="fill" />
+            {formatRemaining(left)}
+          </span>
         ) : (
           <span style={{ font: `400 ${isMobile ? 12 : 10.5}px var(--font-mono)`, color: showActive ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{timeAgo(tab.lastActivityAt ?? tab.createdAt)}</span>
         )}
@@ -199,13 +215,13 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   const [menu, setMenu] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<Terminal | null>(null);
   const [renameTarget, setRenameTarget] = useState<Terminal | null>(null);
+  const [autoArchiveTarget, setAutoArchiveTarget] = useState<Terminal | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ kind: 'thread'; thread: Terminal } | { kind: 'agent'; agent: AgentSchedule } | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ tab: Terminal; x: number; y: number } | null>(null);
   const [projMenu, setProjMenu] = useState<{ x: number; y: number } | null>(null);
   const [projArchive, setProjArchive] = useState(false);
   const [renameProj, setRenameProj] = useState(false);
-  const [newClaude, setNewClaude] = useState(false);
-  const [newCodex, setNewCodex] = useState(false);
+  const [newThread, setNewThread] = useState<NewThreadKind | null>(null);
   const [projTab, setProjTab] = useState<'threads' | 'agents'>('threads');
   const loadingMap = useTabs((s) => s.loading);
   const pfs = useSettings((s) => s.projectFontSize);
@@ -276,7 +292,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
                 else if (sec.add === 'browser') void addTab('browser', { url: 'about:blank' });
                 else if (sec.add === 'notes') void addTab('notes');
               }} style={plusStyle}>+</button>
-              {sec.add === 'menu' && menu && <NewTabMenu sessionId={session.id} onClose={() => setMenu(false)} onCreated={onSelectTab} />}
+              {sec.add === 'menu' && menu && <NewTabMenu onClose={() => setMenu(false)} onPick={(kind) => setNewThread(kind)} />}
             </span>
           )}
         </SectionHeader>
@@ -370,7 +386,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
             {projTab === 'threads' ? (
               <span style={{ alignSelf: 'center', position: 'relative', display: 'inline-flex' }}>
                 <button title="Add thread" onClick={(e) => { e.stopPropagation(); setMenu((o) => !o); }} style={plusStyle}>+</button>
-                {menu && <NewTabMenu sessionId={session.id} onClose={() => setMenu(false)} onCreated={onSelectTab} onPickClaude={() => { setMenu(false); setNewClaude(true); }} onPickCodex={() => { setMenu(false); setNewCodex(true); }} />}
+                {menu && <NewTabMenu onClose={() => setMenu(false)} onPick={(kind) => setNewThread(kind)} />}
               </span>
             ) : (
               <button title="Add automation" onClick={(e) => { e.stopPropagation(); onNewAgent?.(session.id); }} style={{ ...plusStyle, alignSelf: 'center' }}>+</button>
@@ -426,6 +442,12 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
             <button onClick={() => { setRenameTarget(ctxMenu.tab); setCtxMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>{ctxMenu.tab.type === 'file' ? 'Rename file' : 'Rename thread'}</button>
             {ctxMenu.tab.type === 'claude-code' && (
               <button onClick={() => { void branch(ctxMenu.tab); setCtxMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>Branch thread</button>
+            )}
+            {(ctxMenu.tab.type === 'claude-code' || ctxMenu.tab.type === 'codex' || ctxMenu.tab.type === 'shell') && (
+              <button onClick={() => { setAutoArchiveTarget(ctxMenu.tab); setCtxMenu(null); }}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>
+                Auto-archive…
+              </button>
             )}
             {/* "Unpin" on file rows means archive (below) — thread pinning is threads-only,
                 and mobile-only: the Pinned surface is the mobile bottom tab. */}
@@ -506,12 +528,17 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
         <RenameProjectModal sessionId={session.id} current={session.name} onClose={() => setRenameProj(false)} />
       )}
 
-      {newClaude && (
-        <NewClaudeThreadModal sessionId={session.id} onClose={() => setNewClaude(false)} onCreated={onSelectTab} />
+      {autoArchiveTarget && (
+        <AutoArchiveModal tab={autoArchiveTarget} onClose={() => setAutoArchiveTarget(null)} />
       )}
 
-      {newCodex && (
-        <NewCodexThreadModal sessionId={session.id} onClose={() => setNewCodex(false)} onCreated={onSelectTab} />
+      {newThread && (
+        <NewThreadModal
+          sessionId={session.id}
+          initialKind={newThread}
+          onClose={() => setNewThread(null)}
+          onCreated={(id) => onSelectTab(id)}
+        />
       )}
     </div>
   );
