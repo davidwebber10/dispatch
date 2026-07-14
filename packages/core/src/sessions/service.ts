@@ -20,6 +20,7 @@ import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript
 import { systemPromptFor, modelFor } from '../overseer/prompts.js';
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources } from './cc-sessions.js';
 import { TERMINAL_ID_ENV_VAR } from '../auth/shim.js';
+import { withAutoArchive, DEFAULT_AUTO_ARCHIVE_MS } from './auto-archive.js';
 
 interface StatusContext {
   serverUrl: string;
@@ -447,6 +448,20 @@ export class SessionService {
     if (fields.label) terminalsDb.updateLabel(this.db, tabId, fields.label);
     if (fields.config) terminalsDb.updateConfig(this.db, tabId, fields.config);
     return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, tabId)!);
+  }
+
+  /**
+   * Turn a thread's auto-archive policy on or off. Merges server-side: the
+   * generic PATCH /terminals/:id replaces the config blob wholesale (and must
+   * keep doing so — unpin relies on it), so a partial config from the client
+   * would silently drop `transport`, `role`, `agentType`, etc.
+   */
+  setAutoArchive(terminalId: string, enabled: boolean, ms: number = DEFAULT_AUTO_ARCHIVE_MS): terminalsDb.Terminal | null {
+    const row = terminalsDb.getById(this.db, terminalId);
+    if (!row) return null;
+    const current = terminalsDb.rowToTerminal(row).config;   // malformed blob parses to {}
+    terminalsDb.updateConfig(this.db, terminalId, withAutoArchive(current, enabled, ms));
+    return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
   }
 
   reorderTabs(sessionId: string, order: string[]): void {

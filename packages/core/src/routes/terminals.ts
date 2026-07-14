@@ -274,6 +274,21 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     res.json(terminal);
   });
 
+  // PATCH /api/terminals/:terminalId/auto-archive — merge the auto-archive policy
+  // server-side. Deliberately NOT the generic PATCH above: that one replaces the
+  // whole config blob (unpin depends on it), which would wipe transport/role/etc.
+  router.patch('/terminals/:terminalId/auto-archive', (req, res) => {
+    const { enabled, ms } = req.body;
+    if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be a boolean' });
+    if (ms !== undefined && (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0)) {
+      return res.status(400).json({ error: 'ms must be a positive number' });
+    }
+    const terminal = sessionService.setAutoArchive(req.params.terminalId, enabled, ms);
+    if (!terminal) return res.status(404).json({ error: 'Terminal not found' });
+    broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: terminal.sessionId });
+    res.json(terminal);
+  });
+
   // POST /api/sessions/:id/terminals/reorder — set tab order for a session
   router.post('/sessions/:id/terminals/reorder', (req, res) => {
     try {
