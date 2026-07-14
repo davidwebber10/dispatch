@@ -46,9 +46,16 @@ export function columnCount(doc: CsvDoc): number {
  * Count a candidate delimiter's occurrences OUTSIDE quoted fields. A naive count would pick ';'
  * for `a,b\n"x;y;z;w",2` — the semicolons are data, not structure.
  *
- * Quote handling must match parseCsv exactly: a quote only OPENS a quoted field when the field is
- * still empty. A mid-field quote (`ab"cd`) is literal data, so treating it as a quote toggle here
- * would skew the count against the parser's own view of the file.
+ * Quote handling mirrors parseCsv: a quote only OPENS a quoted field when the field is still empty.
+ * A mid-field quote (`ab"cd`) is literal data, so treating it as a quote toggle here would skew the
+ * count against the parser's own view of the file.
+ *
+ * The subtlety: while COUNTING we do not yet know which character is the real delimiter, so ANY
+ * candidate has to end a field. If only the candidate being counted reset `fieldEmpty`, then a
+ * quoted field that does not start in column 0 would be invisible while counting every OTHER
+ * candidate — the opening `"` would look like mid-field data, the field would never be entered, and
+ * the delimiters INSIDE it would be counted as structure. `id,note\n1,"a; b; c; d"` would then be
+ * detected as semicolon-delimited, and the first edit would rewrite the line into garbage.
  */
 function countOutsideQuotes(text: string, delim: string): number {
   let n = 0;
@@ -67,7 +74,8 @@ function countOutsideQuotes(text: string, delim: string): number {
     }
 
     if (c === '"' && fieldEmpty) { inQuotes = true; continue; }
-    if (c === delim) { n++; fieldEmpty = true; continue; }
+    // Any candidate ends a field — see the note above. Only `delim` is tallied.
+    if (CANDIDATES.includes(c)) { if (c === delim) n++; fieldEmpty = true; continue; }
     if (c === '\n' || c === '\r') { fieldEmpty = true; continue; }        // row break resets the field
     fieldEmpty = false;
   }

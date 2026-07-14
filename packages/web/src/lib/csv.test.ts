@@ -17,6 +17,7 @@ describe('round-trip fidelity', () => {
     ['ragged rows', 'a,b,c\n1,2\n3,4,5,6\n'],
     ['empty fields', 'a,b,c\n,,\n'],
     ['redundantly quoted fields', '"a","b"\n"1","2"\n'],
+    ['quoted field with semicolons, NOT in the first column', 'id,note\n1,"a; b; c; d"\n2,"e; f; g; h"\n'],
     ['semicolons', 'a;b;c\n1;2;3\n'],
     ['tabs', 'a\tb\tc\n1\t2\t3\n'],
     ['empty file', ''],
@@ -105,11 +106,25 @@ describe('parse', () => {
     expect(parseCsv('').rows).toEqual([]);
   });
 
-  it('is not fooled by a delimiter inside a quoted field', () => {
+  it('is not fooled by a delimiter inside a quoted field in the FIRST column', () => {
     // Four commas but only one real semicolon-free structure: comma must still win.
     const d = parseCsv('a,b\n"x;y;z;w",2\n');
     expect(d.delimiter).toBe(',');
     expect(d.rows[1].cells).toEqual(['x;y;z;w', '2']);
+  });
+
+  it('is not fooled by a delimiter inside a quoted field in a LATER column', () => {
+    // The first-column case above is the ONE position where a quoted field is trivially visible to
+    // the counter (the preceding newline left the field empty). A quoted notes column — a totally
+    // ordinary CSV — is the real test: while counting ';' the counter must still see the commas as
+    // field ends, or it never enters the quoted field, counts the semicolons inside it as
+    // structure, and picks ';'. An edit would then rewrite the line into garbage.
+    const text = 'id,note\n1,"a; b; c; d"\n2,"e; f; g; h"\n';
+    const d = parseCsv(text);
+    expect(d.delimiter).toBe(',');
+    expect(d.rows[1].cells).toEqual(['1', 'a; b; c; d']);
+    // ...and an edit rewrites only the edited cell, with the data intact.
+    expect(serializeCsv(editCell(d, 1, 0, 'X'))).toBe('id,note\nX,a; b; c; d\n2,"e; f; g; h"\n');
   });
 
   it('does not let a mid-field quote skew delimiter detection', () => {
