@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+
+vi.mock('codemirror', () => ({
+  EditorView: class { state = { doc: { toString: () => '' } }; destroy() {} static updateListener = { of: () => ({}) }; },
+  basicSetup: [],
+}));
+vi.mock('@codemirror/state', () => ({ EditorState: { create: () => ({}) } }));
+vi.mock('@codemirror/theme-one-dark', () => ({ oneDark: {} }));
+
 import { FileEditorTab } from './FileEditorTab';
 import { api } from '../../api/client';
 import type { Terminal } from '../../api/types';
@@ -12,6 +20,15 @@ describe('FileEditorTab', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.spyOn(api, 'writeFile').mockResolvedValue({ ok: true, path: 'x' } as never);
+  });
+
+  it('loads the file content and shows the path + save control', async () => {
+    vi.spyOn(api, 'readFile').mockResolvedValue({ content: 'hello', path: 'src/a.ts' });
+    render(<FileEditorTab terminal={tab('src/a.ts')} />);
+
+    await waitFor(() => expect(api.readFile).toHaveBeenCalledWith('s1', 'src/a.ts'));
+    expect(screen.getByText('src/a.ts')).toBeInTheDocument();
+    expect(screen.getByText('Save')).toBeInTheDocument();
   });
 
   it('shows a Table|Raw toggle and the grid for a .csv', async () => {
