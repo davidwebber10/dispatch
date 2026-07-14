@@ -24,7 +24,13 @@ const GUTTER: React.CSSProperties = {
   background: 'var(--color-pane)', position: 'sticky', left: 0, width: 52, maxWidth: 52,
 };
 
-export function CsvGrid({ content, onChange }: { content: string; onChange: (next: string) => void }) {
+/**
+ * `path` is not decoration: parseCsv reads the extension to force a tab delimiter for a `.tsv`.
+ * Without it a TSV whose cells contain commas (which is exactly WHY you'd pick TSV) is detected as
+ * comma-delimited, and the first edit rewrites the row on commas — losing the tabs and the data
+ * between them. Always pass the real file path.
+ */
+export function CsvGrid({ content, path, onChange }: { content: string; path: string; onChange: (next: string) => void }) {
   const [editing, setEditing] = useState<{ row: number; col: number } | null>(null);
   const [draft, setDraft] = useState('');
   const [scrollTop, setScrollTop] = useState(0);
@@ -46,17 +52,22 @@ export function CsvGrid({ content, onChange }: { content: string; onChange: (nex
   // Parse the incoming text — but reuse the doc we just produced ourselves rather than
   // re-parsing the whole file on every keystroke-commit. Only an EXTERNAL change (an edit made
   // in the Raw tab) actually re-parses.
-  const lastRef = useRef<{ text: string; doc: CsvDoc } | null>(null);
+  // The cache is keyed on the PATH as well as the text: the delimiter is a function of both, so a
+  // doc parsed for `a.csv` must never be served for `a.tsv` (the grid would be right but every
+  // subsequent edit would serialize on the wrong delimiter).
+  const lastRef = useRef<{ text: string; path: string; doc: CsvDoc } | null>(null);
   const parsed = useMemo(() => {
-    if (lastRef.current && lastRef.current.text === content) return { doc: lastRef.current.doc, error: null as string | null };
+    if (lastRef.current && lastRef.current.text === content && lastRef.current.path === path) {
+      return { doc: lastRef.current.doc, error: null as string | null };
+    }
     try {
-      const doc = parseCsv(content);
-      lastRef.current = { text: content, doc };
+      const doc = parseCsv(content, path);
+      lastRef.current = { text: content, path, doc };
       return { doc, error: null as string | null };
     } catch (err: any) {
       return { doc: null, error: String(err?.message ?? err) };
     }
-  }, [content]);
+  }, [content, path]);
 
   // Never render a grid over a file we failed to parse — an edit through a wrong parse
   // would silently corrupt the user's data. Raw mode is still right there.
@@ -72,7 +83,7 @@ export function CsvGrid({ content, onChange }: { content: string; onChange: (nex
 
   function commit(next: CsvDoc) {
     const text = serializeCsv(next);
-    lastRef.current = { text, doc: next };   // pre-seed so the memo above doesn't re-parse
+    lastRef.current = { text, path, doc: next };   // pre-seed so the memo above doesn't re-parse
     onChange(text);
   }
 

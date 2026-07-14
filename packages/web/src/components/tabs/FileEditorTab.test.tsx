@@ -92,6 +92,27 @@ describe('FileEditorTab', () => {
     );
   });
 
+  // END TO END: the .tsv branch in parseCsv is only reachable if FileEditorTab actually hands the
+  // grid the file's path. It used to render <CsvGrid content={content} /> and nothing else, so every
+  // .tsv was parsed with auto-detection — a TSV with commas in its cells (the reason you'd choose
+  // TSV) was read as comma-delimited, and the first edit rewrote the row on commas: tabs gone, data
+  // gone. Asserting on writeFile's payload is the point — it is the bytes that hit the disk.
+  it('parses a .tsv tab-delimited end to end and writes it back with its tabs intact', async () => {
+    vi.spyOn(api, 'readFile').mockResolvedValue({ content: 'id\tnotes\n1\tred, green, blue\n2\ta, b, c\n', path: 'd.tsv' });
+    render(<FileEditorTab terminal={tab('d.tsv')} />);
+
+    // Only a tab-delimited parse puts "red, green, blue" in ONE cell.
+    fireEvent.doubleClick(await screen.findByText('red, green, blue'));
+    const input = screen.getByRole('textbox');
+    fireEvent.change(input, { target: { value: 'X' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() =>
+      expect(api.writeFile).toHaveBeenCalledWith('s1', 'd.tsv', 'id\tnotes\n1\tX\n2\ta, b, c\n'),
+    );
+  });
+
   // Pins the Table<->Raw coherence guarantee: `content` is the single source of truth and
   // CsvGrid/CodeMirror are both projections of it, so an edit made in one view MUST be visible
   // when switching to the other — never stale, never lost.

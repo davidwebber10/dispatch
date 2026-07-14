@@ -137,7 +137,7 @@ export function FileEditorTab({ terminal }: { terminal: Terminal }) {
         <button onClick={() => void save()} disabled={!dirty} style={{ marginLeft: 'auto', height: 26, padding: '0 12px', background: dirty ? 'var(--color-accent)' : 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 7, color: dirty ? '#08240F' : 'var(--color-text-secondary)', fontWeight: 600, fontSize: 12 }}>Save</button>
       </div>
       {csv && mode === 'view'
-        ? <CsvGrid content={content} onChange={applyEdit} />
+        ? <CsvGrid content={content} path={path} onChange={applyEdit} />
         : md && mode === 'view'
           ? <div
               ref={mdView}
