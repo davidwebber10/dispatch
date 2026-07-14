@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react';
+
 /** Default inactivity deadline: 12 hours. Mirrors core's DEFAULT_AUTO_ARCHIVE_MS. */
 export const DEFAULT_AUTO_ARCHIVE_MS = 43_200_000;
 
@@ -46,4 +48,17 @@ export function formatRemaining(ms: number): string {
   if (ms >= UNIT_MS.hours) return `${Math.floor(ms / UNIT_MS.hours)}h`;
   if (ms >= UNIT_MS.minutes) return `${Math.floor(ms / UNIT_MS.minutes)}m`;
   return '<1m';
+}
+
+/**
+ * One shared 60-second tick for every countdown badge, so N rows don't each hold
+ * their own timer. Returns the current epoch ms.
+ */
+export function useMinuteTick(): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  return now;
 }

@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SortableList } from '../common/SortableList';
 import { SwipeRow } from '../common/SwipeRow';
-import { FolderOpen, CaretRight, Network, TerminalWindow, ChatCircle, PushPin } from '@phosphor-icons/react';
+import { FolderOpen, CaretRight, Network, TerminalWindow, ChatCircle, PushPin, Timer } from '@phosphor-icons/react';
 import type { Session, Terminal, AgentSchedule } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
 import { projectIndicator } from '../../lib/status';
+import { getAutoArchiveMs, remainingMs, formatRemaining, toDuration, useMinuteTick } from '../../lib/autoArchive';
 import { useProjects } from '../../stores/projects';
 import { useAgents } from '../../stores/agents';
 import { useAgentUI } from '../../stores/agentUI';
@@ -70,6 +71,11 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
   const structuredClaude = tab.type === 'claude-code' && (tab.config as { transport?: string })?.transport === 'structured';
   const isTerminalThread = !structuredClaude && (tab.type === 'claude-code' || tab.type === 'codex' || tab.type === 'shell');
   const iconSlot = isMobile ? 18 : 15;
+  // Auto-archive threads trade their timeAgo for a countdown: both derive from
+  // lastActivityAt, and "how long until this disappears" is the more useful read.
+  const now = useMinuteTick();
+  const autoArchiveMs = getAutoArchiveMs(tab.config);
+  const left = autoArchiveMs === null ? null : remainingMs(tab.lastActivityAt ?? tab.createdAt, autoArchiveMs, now);
   // On mobile, the active row's highlight fades out a couple seconds after the
   // thread list (re)appears (fadeKey bumps), so the list reads as clean.
   const [dimmed, setDimmed] = useState(false);
@@ -127,6 +133,14 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
           <Spinner size={isMobile ? 13 : 11} />
         ) : needsAttn ? (
           <StatusDot state={dotState(tab.status)} size={isMobile ? 9 : 7} />
+        ) : left !== null && autoArchiveMs !== null ? (
+          <span
+            title={`Archives after ${toDuration(autoArchiveMs).value} ${toDuration(autoArchiveMs).unit} of inactivity`}
+            style={{ display: 'flex', alignItems: 'center', gap: 3, font: `400 ${isMobile ? 12 : 10.5}px var(--font-mono)`, color: showActive ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}
+          >
+            <Timer size={isMobile ? 12 : 10} weight="fill" />
+            {formatRemaining(left)}
+          </span>
         ) : (
           <span style={{ font: `400 ${isMobile ? 12 : 10.5}px var(--font-mono)`, color: showActive ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{timeAgo(tab.lastActivityAt ?? tab.createdAt)}</span>
         )}
