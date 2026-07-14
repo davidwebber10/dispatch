@@ -16,6 +16,7 @@ import { UpdateModal } from './components/update/UpdateModal';
 import { MobileApp } from './components/mobile/MobileApp';
 import { SetupWizard } from './components/setup/SetupWizard';
 import { useIsMobile } from './hooks/useIsMobile';
+import { useTabCycleShortcut } from './hooks/useTabCycleShortcut';
 import { createEventsSocket } from './api/events-socket';
 import { useConnection } from './stores/connection';
 import { useProjects } from './stores/projects';
@@ -47,6 +48,7 @@ export default function App() {
   const dispatchProject = (projectId: string) => { useAgentUI.getState().blur(); useTabs.getState().openDispatch(projectId); };
   const activeId = useProjects((s) => s.activeId);
   const isMobile = useIsMobile();
+  useTabCycleShortcut(); // Ctrl+Tab / Ctrl+Shift+Tab cycle open tabs
   const agentFocused = useAgentUI((s) => s.focused);
   const agentSelected = useAgents((s) => s.selectedId);
   const editing = useAgentUI((s) => s.editing);
