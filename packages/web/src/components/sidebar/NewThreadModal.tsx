@@ -6,7 +6,7 @@ import { api } from '../../api/client';
 import { useTabs } from '../../stores/tabs';
 import { timeAgo } from '../../lib/time';
 import { DEFAULT_AUTO_ARCHIVE_MS } from '../../lib/autoArchive';
-import type { CcRecentSession } from '../../api/types';
+import type { CcRecentSession, CodexRecentSession } from '../../api/types';
 
 export type NewThreadKind = 'claude-code' | 'claude-structured' | 'codex' | 'shell';
 
@@ -29,19 +29,23 @@ export function NewThreadModal({ sessionId, initialKind, onClose, onCreated }: {
   const [busy, setBusy] = useState(false);
   const [autoArchive, setAutoArchive] = useState(false);
   const [autoArchiveMs, setAutoArchiveMs] = useState(DEFAULT_AUTO_ARCHIVE_MS);
-  const [recent, setRecent] = useState<CcRecentSession[] | null>(null);
+  const [recent, setRecent] = useState<CcRecentSession[] | CodexRecentSession[] | null>(null);
 
   const spec = KINDS.find((k) => k.kind === kind)!;
-  // Resuming an on-disk Claude Code session only makes sense for the PTY kind —
-  // that's the only one that takes an externalId today.
-  const canResume = kind === 'claude-code';
+  // Resuming an on-disk session only makes sense for the kinds that take an
+  // externalId today: the PTY Claude Code thread and Codex.
+  const canResume = kind === 'claude-code' || kind === 'codex';
 
   useEffect(() => {
-    if (!canResume) { setRecent(null); return; }
+    // Clear any stale list from the previously-selected kind right away, so a
+    // switch from e.g. codex -> claude-code never flashes the old entries.
+    setRecent(null);
+    if (!canResume) return;
     let on = true;
-    api.recentCcSessions(sessionId).then((r) => { if (on) setRecent(r); }).catch(() => { if (on) setRecent([]); });
+    const fetcher = kind === 'codex' ? api.recentCodexSessions : api.recentCcSessions;
+    fetcher(sessionId).then((r) => { if (on) setRecent(r); }).catch(() => { if (on) setRecent([]); });
     return () => { on = false; };
-  }, [sessionId, canResume]);
+  }, [sessionId, kind, canResume]);
 
   async function create(externalId?: string) {
     if (busy) return;
