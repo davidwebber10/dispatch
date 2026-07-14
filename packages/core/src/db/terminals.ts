@@ -157,6 +157,11 @@ export function updateSessionId(db: Database.Database, id: string, sessionId: st
   db.prepare('UPDATE terminals SET session_id = ? WHERE id = ?').run(sessionId, id);
 }
 
+export function touchActivity(db: Database.Database, id: string): void {
+  db.prepare('UPDATE terminals SET last_activity_at = ? WHERE id = ?')
+    .run(new Date().toISOString(), id);
+}
+
 export function archive(db: Database.Database, id: string): void {
   db.prepare('UPDATE terminals SET archived_at = ?, pid = NULL WHERE id = ?').run(new Date().toISOString(), id);
 }

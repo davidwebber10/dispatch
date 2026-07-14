@@ -34,6 +34,13 @@ describe('terminals db', () => {
     expect(terminal!.pid).toBeNull();
   });
 
+  it('touchActivity stamps last_activity_at', () => {
+    terminalsDb.create(db, { id: 't1', sessionId: 's1', type: 'claude-code', label: 'Claude Code' });
+    expect(terminalsDb.getById(db, 't1')!.last_activity_at).toBeNull();
+    terminalsDb.touchActivity(db, 't1');
+    expect(terminalsDb.getById(db, 't1')!.last_activity_at).toBeTruthy();
+  });
+
   it('lists terminals by session', () => {
     terminalsDb.create(db, { id: 't1', sessionId: 's1', type: 'claude-code', label: 'Claude Code' });
     terminalsDb.create(db, { id: 't2', sessionId: 's1', type: 'shell', label: 'Terminal' });

@@ -46,9 +46,12 @@ export function update(db: Database.Database, id: string, fields: { name?: strin
 }
 
 export function updateStatus(db: Database.Database, id: string, status: string): void {
-  const now = new Date().toISOString();
-  db.prepare('UPDATE sessions SET status = ?, last_activity_at = ?, updated_at = ? WHERE id = ?')
-    .run(status, now, now, id);
+  // Deliberately does NOT bump last_activity_at: status flips also fire on passive
+  // events (SessionStart on open/revive, PTY-exit rollups, stop()), which made
+  // "last active" mean "last opened". Real activity is stamped explicitly via
+  // touchActivity by the StatusService / TerminalMonitor.
+  db.prepare('UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?')
+    .run(status, new Date().toISOString(), id);
 }
 
 export function updatePid(db: Database.Database, id: string, pid: number | null): void {
