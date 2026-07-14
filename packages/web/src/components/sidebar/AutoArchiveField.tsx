@@ -43,6 +43,7 @@ export function AutoArchiveField({ enabled, ms, onChange }: AutoArchiveFieldProp
           <input
             type="number"
             min={1}
+            step={1}
             aria-label="Inactivity before archiving"
             value={value}
             onChange={(e) => {

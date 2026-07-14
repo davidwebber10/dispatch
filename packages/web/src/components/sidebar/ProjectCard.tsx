@@ -443,7 +443,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
             {ctxMenu.tab.type === 'claude-code' && (
               <button onClick={() => { void branch(ctxMenu.tab); setCtxMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>Branch thread</button>
             )}
-            {ctxMenu.tab.type !== 'file' && (
+            {(ctxMenu.tab.type === 'claude-code' || ctxMenu.tab.type === 'codex' || ctxMenu.tab.type === 'shell') && (
               <button onClick={() => { setAutoArchiveTarget(ctxMenu.tab); setCtxMenu(null); }}
                 style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>
                 Auto-archive…

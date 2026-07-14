@@ -145,6 +145,24 @@ describe('autoArchiveTick', () => {
     ]);
   });
 
+  it.each(['notes', 'browser'])(
+    'never sweeps a %s tab, even with an autoArchive policy and an ancient timestamp — it has no activity signal',
+    (type) => {
+      const ancient = new Date(Date.now() - 999 * 24 * 3600_000).toISOString();
+      terminalsDb.create(db, {
+        id: 't1',
+        sessionId: 's1',
+        type,
+        label: 't1',
+        config: { autoArchive: true, autoArchiveMs: 60_000 },
+      });
+      db.prepare('UPDATE terminals SET status = ?, created_at = ?, last_activity_at = ? WHERE id = ?')
+        .run('waiting', ancient, ancient, 't1');
+      expect(autoArchiveTick(db, svc, fakeBroadcaster)).toEqual([]);
+      expect(archived('t1')).toBe(false);
+    },
+  );
+
   it('keeps sweeping after one thread fails to archive', () => {
     seedThread('t1', { status: 'waiting', config: { autoArchive: true, autoArchiveMs: 60_000 }, idleMs: 120_000 });
     seedThread('t2', { status: 'waiting', config: { autoArchive: true, autoArchiveMs: 60_000 }, idleMs: 120_000 });

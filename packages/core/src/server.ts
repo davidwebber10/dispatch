@@ -523,7 +523,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   }, 30_000);
 
   // Auto-archive sweep — prunes opted-in threads that have gone idle past their
-  // deadline. Cheap: one indexed read of a small table per minute.
+  // deadline. Cheap: a full scan of a small table (terminals) once a minute — no
+  // index backs this, but the table stays small enough that it doesn't matter.
   const autoArchiveInterval = startAutoArchiveLoop(db, sessionService, broadcaster);
 
   // Graceful shutdown

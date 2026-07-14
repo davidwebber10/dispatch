@@ -77,14 +77,19 @@ export function autoArchiveTick(
   let rows: terminalsDb.TerminalRow[];
   try {
     rows = db.prepare('SELECT * FROM terminals WHERE archived_at IS NULL').all() as terminalsDb.TerminalRow[];
-  } catch {
-    return archived; // DB closed mid-shutdown — nothing to do
+  } catch (err) {
+    // Most likely the DB closing mid-shutdown, not a real failure — log it
+    // quietly so a genuinely broken query doesn't look identical to "nothing
+    // to archive", but don't make noise about it.
+    console.error('auto-archive: sweep query failed (DB may be closing)', err);
+    return archived;
   }
 
   for (const row of rows) {
     // One bad thread must never abort the sweep for the rest.
     try {
       const terminal = terminalsDb.rowToTerminal(row);   // malformed config parses to {}
+      if (!terminalsDb.isPtyType(terminal.type)) continue; // no activity signal → never sweep
       const deadlineMs = getAutoArchiveMs(terminal.config);
       if (deadlineMs === null) continue;                 // did not opt in
       if (!SWEEPABLE_STATUSES.includes(terminal.status)) continue;
