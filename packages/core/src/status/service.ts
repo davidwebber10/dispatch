@@ -97,6 +97,13 @@ export class StatusService {
     const prior = terminalsDb.getById(this.db, terminalId)?.status; // persisted enum before update
     const terminalStatus = TO_TERMINAL[status];
     try { terminalsDb.updateStatus(this.db, terminalId, terminalStatus); } catch { /* best effort */ }
+    // Activity means "the thread thought about something": a turn started/ended, it
+    // asked for input, went dormant, or errored. 'starting' (SessionStart) is an
+    // open/revive edge — attaching to a thread must not make it look recently active.
+    if (status !== 'starting') {
+      try { terminalsDb.touchActivity(this.db, terminalId); } catch { /* best effort */ }
+      try { sessionsDb.touchActivity(this.db, sessionId); } catch { /* best effort */ }
+    }
     this.broadcaster.broadcast({ type: 'terminal:status', terminalId, status: terminalStatus, threadStatus: status, activity: activity ?? null });
     if (prior === 'working' && (terminalStatus === 'waiting' || terminalStatus === 'needs_input')) {
       try { this.threadSettledHook?.({ terminalId, sessionId, threadStatus: status }); } catch { /* hook must never break status */ }

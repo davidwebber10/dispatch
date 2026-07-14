@@ -78,6 +78,43 @@ describe('StatusService', () => {
   });
 });
 
+describe('StatusService activity stamping', () => {
+  const OLD = '2020-01-01T00:00:00.000Z';
+  const seedOldActivity = () => {
+    db.prepare('UPDATE sessions SET last_activity_at = ?').run(OLD);
+    db.prepare('UPDATE terminals SET last_activity_at = ?').run(OLD);
+  };
+  const sessionActivity = () => (db.prepare("SELECT last_activity_at FROM sessions WHERE id = 'proj'").get() as any).last_activity_at;
+  const terminalActivity = () => (db.prepare("SELECT last_activity_at FROM terminals WHERE id = 'term'").get() as any).last_activity_at;
+
+  it('SessionStart (open/revive) does NOT stamp activity', () => {
+    seedOldActivity();
+    new StatusService(db, broadcaster).ingest('claude', 'term', { hook_event_name: 'SessionStart', session_id: 'sid-1' });
+    expect(sessionActivity()).toBe(OLD);
+    expect(terminalActivity()).toBe(OLD);
+  });
+
+  it('UserPromptSubmit (turn start) stamps activity on session and terminal', () => {
+    seedOldActivity();
+    new StatusService(db, broadcaster).ingest('claude', 'term', { hook_event_name: 'UserPromptSubmit', session_id: 'sid-1' });
+    expect(sessionActivity()).not.toBe(OLD);
+    expect(terminalActivity()).not.toBe(OLD);
+  });
+
+  it('Stop (turn completed) stamps activity', () => {
+    seedOldActivity();
+    new StatusService(db, broadcaster).ingest('claude', 'term', { hook_event_name: 'Stop', session_id: 'sid-1' });
+    expect(sessionActivity()).not.toBe(OLD);
+    expect(terminalActivity()).not.toBe(OLD);
+  });
+
+  it('markNeedsInput stamps activity', () => {
+    seedOldActivity();
+    new StatusService(db, broadcaster).markNeedsInput('term', 'Needs approval: Bash');
+    expect(sessionActivity()).not.toBe(OLD);
+  });
+});
+
 describe('StatusService thread-settled hook', () => {
   function setup() {
     const db2 = new Database(':memory:');
