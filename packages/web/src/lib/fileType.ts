@@ -25,6 +25,14 @@ export function isSvg(path: string): boolean {
   return /\.svg$/i.test(path);
 }
 
+/**
+ * Tabular text we can offer a grid for. `.tsv` rides along free — the parser detects the
+ * delimiter, so the only difference is the default.
+ */
+export function isCsv(path: string): boolean {
+  return /\.(csv|tsv)$/i.test(path);
+}
+
 export function languageFor(path: string): Extension[] {
   const p = path.toLowerCase();
   if (/\.tsx$/.test(p)) return [javascript({ typescript: true, jsx: true })];
@@ -56,6 +64,7 @@ export function fileMeta(name: string): IconMeta {
     yml: { glyph: 'Y', color: '#C792EA' }, yaml: { glyph: 'Y', color: '#C792EA' },
     png: { glyph: 'IMG', color: '#56B6C2' }, jpg: { glyph: 'IMG', color: '#56B6C2' }, jpeg: { glyph: 'IMG', color: '#56B6C2' }, gif: { glyph: 'IMG', color: '#56B6C2' }, webp: { glyph: 'IMG', color: '#56B6C2' },
     lock: { glyph: 'L', color: '#5A5A61' },
+    csv: { glyph: 'CSV', color: '#7FBE6E' }, tsv: { glyph: 'CSV', color: '#7FBE6E' },
   };
   return map[ext] ?? { glyph: '·', color: '#8E8E96' };
 }
