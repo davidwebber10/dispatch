@@ -297,4 +297,60 @@ describe('terminal routes', () => {
     expect(res.status).toBe(403);
     expect(res.body.error).toBe('Path traversal not allowed');
   });
+
+  describe('PATCH /api/terminals/:terminalId/auto-archive', () => {
+    it('enables auto-archive without clobbering the rest of the config', async () => {
+      const created = await request(app)
+        .post(`/api/sessions/${sessionId}/terminals`)
+        .send({ type: 'claude-code', label: 'quick q', config: { transport: 'structured', role: 'agent' } })
+        .expect(201);
+
+      const res = await request(app)
+        .patch(`/api/terminals/${created.body.id}/auto-archive`)
+        .send({ enabled: true, ms: 60_000 })
+        .expect(200);
+
+      expect(res.body.config).toEqual({
+        transport: 'structured',
+        role: 'agent',
+        autoArchive: true,
+        autoArchiveMs: 60_000,
+      });
+    });
+
+    it('defaults to 12 hours when no duration is given', async () => {
+      const created = await request(app)
+        .post(`/api/sessions/${sessionId}/terminals`)
+        .send({ type: 'shell', label: 'sh' })
+        .expect(201);
+
+      const res = await request(app)
+        .patch(`/api/terminals/${created.body.id}/auto-archive`)
+        .send({ enabled: true })
+        .expect(200);
+
+      expect(res.body.config.autoArchiveMs).toBe(43_200_000);
+    });
+
+    it('disabling strips both policy keys and keeps the rest', async () => {
+      const created = await request(app)
+        .post(`/api/sessions/${sessionId}/terminals`)
+        .send({ type: 'claude-code', config: { transport: 'structured', autoArchive: true, autoArchiveMs: 60_000 } })
+        .expect(201);
+
+      const res = await request(app)
+        .patch(`/api/terminals/${created.body.id}/auto-archive`)
+        .send({ enabled: false })
+        .expect(200);
+
+      expect(res.body.config).toEqual({ transport: 'structured' });
+    });
+
+    it('404s for an unknown terminal', async () => {
+      await request(app)
+        .patch('/api/terminals/nope/auto-archive')
+        .send({ enabled: true })
+        .expect(404);
+    });
+  });
 });

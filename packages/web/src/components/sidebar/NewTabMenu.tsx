@@ -1,52 +1,28 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { api } from '../../api/client';
-import { useTabs } from '../../stores/tabs';
+import type { NewThreadKind } from './NewThreadModal';
 
-const TYPES: { type: string; label: string; config?: Record<string, unknown> }[] = [
-  { type: 'claude-code', label: 'Claude Code' },
-  { type: 'claude-code', label: 'Claude (structured)', config: { transport: 'structured' } },
-  { type: 'codex', label: 'Codex' },
-  { type: 'shell', label: 'Terminal' },
+const KINDS: { kind: NewThreadKind; label: string }[] = [
+  { kind: 'claude-code', label: 'Claude Code' },
+  { kind: 'claude-structured', label: 'Claude (structured)' },
+  { kind: 'codex', label: 'Codex' },
+  { kind: 'shell', label: 'Terminal' },
 ];
 
-export function NewTabMenu({ sessionId, onClose, onCreated, onPickClaude, onPickCodex }: { sessionId: string; onClose: () => void; onCreated?: (terminalId: string) => void; onPickClaude?: () => void; onPickCodex?: () => void }) {
-  // Anchor fills the trigger button; the menu itself is portaled to <body> with
-  // fixed positioning so the card's overflow:hidden (used for the expand animation)
-  // can't clip it.
+/**
+ * The "+" menu. Every type now opens the unified New Thread modal (with that type
+ * preselected) rather than some creating instantly — that's what gives every type
+ * a place to set auto-archive at creation.
+ */
+export function NewTabMenu({ onClose, onPick }: { onClose: () => void; onPick: (kind: NewThreadKind) => void }) {
   const anchorRef = useRef<HTMLSpanElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const MENU_W = 184;
 
   useLayoutEffect(() => {
     const r = anchorRef.current?.getBoundingClientRect();
-    // Open left-aligned to the button's right edge so the menu stays within the
-    // sidebar instead of spilling across the sidebar/main boundary.
     if (r) setPos({ top: r.bottom + 6, left: Math.max(8, r.right - MENU_W) });
   }, []);
-
-  async function add(t: (typeof TYPES)[number]) {
-    onClose();
-    // Structured transport creates directly; PTY Claude Code opens the name/resume modal.
-    if (t.config?.transport === 'structured') {
-      try {
-        const term = await api.createTerminal(sessionId, { type: t.type, ...(t.config ? { config: t.config } : {}) });
-        await useTabs.getState().loadTabs(sessionId);
-        useTabs.getState().markLoading(term.id);
-        onCreated?.(term.id);
-      } catch { /* surfaced via connection state */ }
-      return;
-    }
-    // Claude Code (PTY) and Codex open the name/resume modal instead of creating instantly.
-    if (t.type === 'claude-code' && onPickClaude) { onPickClaude(); return; }
-    if (t.type === 'codex' && onPickCodex) { onPickCodex(); return; }
-    try {
-      const term = await api.createTerminal(sessionId, { type: t.type, ...(t.config ? { config: t.config } : {}) });
-      await useTabs.getState().loadTabs(sessionId);
-      useTabs.getState().markLoading(term.id);
-      onCreated?.(term.id);
-    } catch { /* surfaced via connection state */ }
-  }
 
   return (
     <span ref={anchorRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
@@ -55,8 +31,11 @@ export function NewTabMenu({ sessionId, onClose, onCreated, onPickClaude, onPick
           <div onClick={(e) => { e.stopPropagation(); onClose(); }} style={{ position: 'fixed', inset: 0, zIndex: 200 }} />
           <div onClick={(e) => e.stopPropagation()} style={{ position: 'fixed', top: pos?.top ?? -9999, left: pos?.left ?? -9999, visibility: pos ? 'visible' : 'hidden', zIndex: 201, width: MENU_W, background: '#1B1B1E', border: '1px solid #2C2C32', borderRadius: 9, padding: 4, boxShadow: '0 20px 50px -20px rgba(0,0,0,.8)' }}>
             <div style={{ font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)', padding: '4px 8px' }}>NEW THREAD</div>
-            {TYPES.map((t, i) => (
-              <button key={`${t.type}-${i}`} onClick={() => void add(t)} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13, whiteSpace: 'nowrap' }}>{t.label}</button>
+            {KINDS.map((k) => (
+              <button key={k.kind} onClick={() => { onClose(); onPick(k.kind); }}
+                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13, whiteSpace: 'nowrap' }}>
+                {k.label}
+              </button>
             ))}
           </div>
         </>,
