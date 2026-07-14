@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import type { Terminal } from '../api/types';
 import type { ServerEvent } from '../api/events-socket';
 import { useProjects } from './projects';
+import { clearDraft } from '../lib/fileDrafts';
 
 const STORAGE_KEY = 'dispatch:tabs';
 
@@ -142,6 +143,9 @@ export const useTabs = create<TabsState>((set, get) => ({
     if (!opts?.force && get().dirtyTabs[id]) {
       if (!window.confirm('This file has unsaved changes. Close the tab and discard them?')) return;
     }
+    // Past the guard the tab is really going away, so its unsaved draft goes too — reopening the
+    // file must show what is on disk, not resurrect edits the user just chose to discard.
+    clearDraft(id);
     const { openTabIds, activeTabId, tabSession } = get();
     const idx = openTabIds.indexOf(id);
     const next = openTabIds.filter((x) => x !== id);

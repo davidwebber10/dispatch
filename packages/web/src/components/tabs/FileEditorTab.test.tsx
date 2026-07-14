@@ -25,6 +25,8 @@ vi.mock('@codemirror/theme-one-dark', () => ({ oneDark: {} }));
 import { FileEditorTab } from './FileEditorTab';
 import { api } from '../../api/client';
 import type { Terminal } from '../../api/types';
+import { useTabs } from '../../stores/tabs';
+import { clearDraft, hasDraft } from '../../lib/fileDrafts';
 
 function tab(path: string): Terminal {
   return { id: 't1', sessionId: 's1', type: 'file', label: path, config: { path } } as unknown as Terminal;
@@ -36,6 +38,10 @@ describe('FileEditorTab', () => {
     vi.spyOn(api, 'writeFile').mockResolvedValue({ ok: true, path: 'x' } as never);
     codeMirrorState.capturedDoc = undefined;
     codeMirrorState.updateListener = undefined;
+    // The draft map and the tabs store are module-level (drafts must outlive the component —
+    // that is the point), so reset both or one test's unsaved edit leaks into the next.
+    clearDraft('t1');
+    useTabs.setState({ dirtyTabs: {} });
   });
 
   it('loads the file content and shows the path + save control', async () => {
@@ -125,5 +131,72 @@ describe('FileEditorTab', () => {
     fireEvent.click(screen.getByText('table'));
 
     expect(await screen.findByText('cherries')).toBeInTheDocument();
+  });
+
+  /* ── Unsaved edits must survive a tab switch ───────────────────────────────
+     TabHost UNMOUNTS an inactive tab. So "switch to another tab and come back" is, to this
+     component, a full unmount + remount — and before fileDrafts existed, that silently
+     destroyed the user's unsaved work twice over: the edit died with the component's state,
+     and the remount's fetch effect then refetched the server's copy over the top. */
+
+  async function editCsvCell(from: string, to: string) {
+    fireEvent.doubleClick(await screen.findByText(from));
+    const input = screen.getByRole('textbox');
+    fireEvent.change(input, { target: { value: to } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(await screen.findByText('● unsaved')).toBeInTheDocument();
+  }
+
+  it('keeps an unsaved edit when the tab is backgrounded and reopened (no refetch over the draft)', async () => {
+    vi.spyOn(api, 'readFile').mockResolvedValue({ content: 'name,qty\napples,3\n', path: 'd.csv' });
+    const { unmount } = render(<FileEditorTab terminal={tab('d.csv')} />);
+
+    await editCsvCell('apples', 'kiwis');
+    expect(api.readFile).toHaveBeenCalledTimes(1);
+
+    unmount();                                       // ← user clicks another tab: TabHost unmounts this one
+    render(<FileEditorTab terminal={tab('d.csv')} />); // ← and clicks back
+
+    // The edit is still there, still flagged unsaved...
+    expect(await screen.findByText('kiwis')).toBeInTheDocument();
+    expect(screen.getByText('● unsaved')).toBeInTheDocument();
+    expect(screen.queryByText('apples')).toBeNull();  // the stale on-disk value did NOT come back
+
+    // ...and the server was never asked again — a refetch here would clobber the draft.
+    await waitFor(() => expect(api.readFile).toHaveBeenCalledTimes(1));
+  });
+
+  it('leaves the tab marked dirty in the store after unmount (a backgrounded tab is still unsaved)', async () => {
+    vi.spyOn(api, 'readFile').mockResolvedValue({ content: 'name,qty\napples,3\n', path: 'd.csv' });
+    const { unmount } = render(<FileEditorTab terminal={tab('d.csv')} />);
+
+    await editCsvCell('apples', 'kiwis');
+    expect(useTabs.getState().dirtyTabs.t1).toBe(true);
+
+    unmount();
+
+    // The tab is merely in the BACKGROUND — it is still open, and still unsaved. If unmounting
+    // cleared this flag, clicking × on the background tab would close it with no prompt.
+    expect(useTabs.getState().dirtyTabs.t1).toBe(true);
+  });
+
+  it('drops the draft once saved, so a reopened tab is clean and reloads from disk', async () => {
+    vi.spyOn(api, 'readFile').mockResolvedValue({ content: 'name,qty\napples,3\n', path: 'd.csv' });
+    const { unmount } = render(<FileEditorTab terminal={tab('d.csv')} />);
+
+    await editCsvCell('apples', 'kiwis');
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(api.writeFile).toHaveBeenCalledWith('s1', 'd.csv', 'name,qty\nkiwis,3\n'));
+    await waitFor(() => expect(screen.queryByText('● unsaved')).toBeNull());
+    expect(hasDraft('t1')).toBe(false);
+    expect(useTabs.getState().dirtyTabs.t1).toBeUndefined();
+
+    unmount();
+    render(<FileEditorTab terminal={tab('d.csv')} />);
+
+    // Nothing to protect now, so the file is fetched fresh again and the tab comes back clean.
+    await waitFor(() => expect(api.readFile).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('apples')).toBeInTheDocument();
+    expect(screen.queryByText('● unsaved')).toBeNull();
   });
 });
