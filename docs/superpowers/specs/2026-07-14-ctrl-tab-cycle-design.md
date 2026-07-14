@@ -26,7 +26,8 @@ handlers today):
   stale/missing `activeTabId` still lands on a real tab; with zero tabs do nothing.
 - Cycle order is `openTabIds` (the order the classic tab strip renders). The
   Dispatch/Control-Plane virtual tab is included — it is an open tab.
-- Mounted once in the desktop `Workspace` shell (mobile has no tab bar).
+- Called once at the top of `App` (hooks can't sit behind the mobile early-return);
+  effectively desktop-only since phones send no Ctrl+Tab.
 
 ## Known limitation (accepted)
 
