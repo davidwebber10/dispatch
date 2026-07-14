@@ -64,7 +64,7 @@ export function fileMeta(name: string): IconMeta {
     yml: { glyph: 'Y', color: '#C792EA' }, yaml: { glyph: 'Y', color: '#C792EA' },
     png: { glyph: 'IMG', color: '#56B6C2' }, jpg: { glyph: 'IMG', color: '#56B6C2' }, jpeg: { glyph: 'IMG', color: '#56B6C2' }, gif: { glyph: 'IMG', color: '#56B6C2' }, webp: { glyph: 'IMG', color: '#56B6C2' },
     lock: { glyph: 'L', color: '#5A5A61' },
-    csv: { glyph: 'CSV', color: '#7FBE6E' }, tsv: { glyph: 'CSV', color: '#7FBE6E' },
+    csv: { glyph: 'CSV', color: '#D19A66' }, tsv: { glyph: 'CSV', color: '#D19A66' },
   };
   return map[ext] ?? { glyph: '·', color: '#8E8E96' };
 }
