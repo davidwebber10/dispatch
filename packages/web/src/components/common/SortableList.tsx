@@ -16,6 +16,20 @@ interface SortableListProps<T extends { id: string }> {
   disabled?: boolean;
 }
 
+// The stock KeyboardSensor lifts the row on Space/Enter from ANY descendant —
+// React synthetic events bubble through the component tree (portals included),
+// so a space typed into a rename modal's input, or Space on a focused child
+// button, reached the sensor, which preventDefault()ed (swallowing the
+// keystroke) and toggled drag pickup. Only treat the key as a drag intent when
+// the row wrapper itself is the focused element.
+class RowKeyboardSensor extends KeyboardSensor {
+  static activators: typeof KeyboardSensor.activators = [{
+    eventName: 'onKeyDown',
+    handler: (event, ...rest) =>
+      event.target === event.currentTarget && KeyboardSensor.activators[0].handler(event, ...rest),
+  }];
+}
+
 function SortableRow({ id, children }: { id: string; children: (dragging: boolean) => ReactNode }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
   return (
@@ -41,7 +55,7 @@ export function SortableList<T extends { id: string }>({ items, onReorder, rende
   const [activeId, setActiveId] = useState<string | null>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { delay: 180, tolerance: 8 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(RowKeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
   if (disabled) return <>{items.map((it) => <div key={it.id}>{renderItem(it, { dragging: false })}</div>)}</>;
