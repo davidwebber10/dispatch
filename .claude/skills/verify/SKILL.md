@@ -18,6 +18,11 @@ HOME=<scratch>/fake-home PORT=3999 node packages/core/dist/server.js > <scratch>
 Ready when the log prints `Dispatch server listening on port 3999`. No auth on the API.
 Teardown: `lsof -ti :3999 | xargs kill`.
 
+**Running from a git worktree:** the daemon can resolve its web bundle to the MAIN
+checkout's `packages/web/dist` (stale code, no error). Always pass
+`DISPATCH_WEB_DIST=<worktree>/packages/web/dist` and confirm the log's
+"Serving web client from" line points into the worktree.
+
 ## Drive the surface
 
 ```bash
