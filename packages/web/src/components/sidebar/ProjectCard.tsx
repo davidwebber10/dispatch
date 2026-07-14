@@ -73,8 +73,10 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
   const iconSlot = isMobile ? 18 : 15;
   // Auto-archive threads trade their timeAgo for a countdown: both derive from
   // lastActivityAt, and "how long until this disappears" is the more useful read.
-  const now = useMinuteTick();
+  // Only rows with a policy subscribe to the shared ticker — the vast majority of
+  // threads have none, and shouldn't re-render every minute just to sit idle.
   const autoArchiveMs = getAutoArchiveMs(tab.config);
+  const now = useMinuteTick(autoArchiveMs !== null);
   const left = autoArchiveMs === null ? null : remainingMs(tab.lastActivityAt ?? tab.createdAt, autoArchiveMs, now);
   // On mobile, the active row's highlight fades out a couple seconds after the
   // thread list (re)appears (fadeKey bumps), so the list reads as clean.

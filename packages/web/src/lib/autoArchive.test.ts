@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { renderHook, act } from '@testing-library/react';
 import {
-  DEFAULT_AUTO_ARCHIVE_MS, toDuration, fromDuration, getAutoArchiveMs, formatRemaining, remainingMs,
+  DEFAULT_AUTO_ARCHIVE_MS, toDuration, fromDuration, getAutoArchiveMs, formatRemaining, remainingMs, useMinuteTick,
 } from './autoArchive';
 
 describe('toDuration', () => {
@@ -60,5 +61,60 @@ describe('formatRemaining', () => {
   it('shows <1m rather than 0m on the last stretch', () => {
     expect(formatRemaining(30_000)).toBe('<1m');
     expect(formatRemaining(0)).toBe('<1m');
+  });
+});
+
+describe('useMinuteTick (shared ticker)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-14T12:00:00.000Z'));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('mounting several active subscribers creates only one interval', () => {
+    expect(vi.getTimerCount()).toBe(0);
+    const h1 = renderHook(() => useMinuteTick(true));
+    const h2 = renderHook(() => useMinuteTick(true));
+    const h3 = renderHook(() => useMinuteTick(true));
+    expect(vi.getTimerCount()).toBe(1); // one shared interval, not three
+    h1.unmount();
+    h2.unmount();
+    h3.unmount();
+  });
+
+  it('an inactive subscriber creates no interval and never re-renders on tick', () => {
+    const { result } = renderHook(() => useMinuteTick(false));
+    expect(vi.getTimerCount()).toBe(0);
+    const before = result.current;
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+    });
+    expect(result.current).toBe(before); // no re-render triggered
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('clears the shared interval only once the last subscriber unmounts', () => {
+    const h1 = renderHook(() => useMinuteTick(true));
+    const h2 = renderHook(() => useMinuteTick(true));
+    expect(vi.getTimerCount()).toBe(1);
+    h1.unmount();
+    expect(vi.getTimerCount()).toBe(1); // h2 is still mounted
+    h2.unmount();
+    expect(vi.getTimerCount()).toBe(0); // last subscriber gone → interval torn down
+  });
+
+  it('all active subscribers observe the advanced time after a 60s tick', () => {
+    const h1 = renderHook(() => useMinuteTick(true));
+    const h2 = renderHook(() => useMinuteTick(true));
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+    });
+    const expected = new Date('2026-07-14T12:01:00.000Z').getTime();
+    expect(h1.result.current).toBe(expected);
+    expect(h2.result.current).toBe(expected);
+    h1.unmount();
+    h2.unmount();
   });
 });

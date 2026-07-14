@@ -50,15 +50,41 @@ export function formatRemaining(ms: number): string {
   return '<1m';
 }
 
+// Module-level shared ticker backing useMinuteTick: ONE setInterval for the whole
+// module (not one per row), created lazily on the first active subscriber and torn
+// down when the last one unmounts. Every subscriber's callback fires off the same
+// tick, so N badges stay in lockstep instead of drifting on N separate timers.
+let sharedTickId: ReturnType<typeof setInterval> | null = null;
+const tickSubscribers = new Set<() => void>();
+
+function subscribeMinuteTick(onTick: () => void): () => void {
+  tickSubscribers.add(onTick);
+  if (sharedTickId === null) {
+    sharedTickId = setInterval(() => {
+      for (const fn of tickSubscribers) fn();
+    }, 60_000);
+  }
+  return () => {
+    tickSubscribers.delete(onTick);
+    if (tickSubscribers.size === 0 && sharedTickId !== null) {
+      clearInterval(sharedTickId);
+      sharedTickId = null;
+    }
+  };
+}
+
 /**
  * One shared 60-second tick for every countdown badge, so N rows don't each hold
- * their own timer. Returns the current epoch ms.
+ * their own timer. Pass `active=false` for rows with no badge to update (no
+ * auto-archive policy) — an inactive caller does not subscribe to the ticker and
+ * never re-renders from it. Returns the current epoch ms.
  */
-export function useMinuteTick(): number {
+export function useMinuteTick(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 60_000);
-    return () => clearInterval(id);
-  }, []);
+    if (!active) return undefined;
+    setNow(Date.now()); // catch up on whatever elapsed before this row went active
+    return subscribeMinuteTick(() => setNow(Date.now()));
+  }, [active]);
   return now;
 }
