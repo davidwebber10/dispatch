@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useProjects } from '../../stores/projects';
+import { useTabs } from '../../stores/tabs';
 import { ProjectCard } from './ProjectCard';
 import { NewProjectModal } from './NewProjectModal';
 import { SortableList } from '../common/SortableList';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { revealIn } from '../../lib/reveal';
 
 type Sort = 'recent' | 'alpha' | 'custom';
 
@@ -28,6 +30,26 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispa
   const toggleExpand = (id: string) => setExpanded((e) => { const n = new Set(e); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const isMobile = useIsMobile();
 
+  /* Keep the highlighted row visible.
+
+     Selecting a tab in the top strip moves this sidebar's highlight to that tab's project — but
+     with enough projects, the highlighted row sits outside the scroll and the left column looks
+     like it simply didn't react.
+
+     Aim at the thread row first: it is the precise thing that got highlighted, and revealing it
+     brings its project card along with it. Fall back to the card when the row isn't in the DOM —
+     a project fetches its threads asynchronously when it expands, so right after activation the
+     row genuinely may not exist yet. `byProject` is in the deps so we re-run once it lands. */
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const activeTabId = useTabs((s) => s.activeTabId);
+  const byProject = useTabs((s) => s.byProject);
+  useEffect(() => {
+    const c = scrollRef.current;
+    if (!c) return;
+    if (activeTabId && revealIn(c, `[data-thread-id="${activeTabId}"]`)) return;
+    if (activeId) revealIn(c, `[data-project-id="${activeId}"]`);
+  }, [activeTabId, activeId, byProject]);
+
   const filtered = sessions
     .filter((s) => s.name.toLowerCase().includes(query.toLowerCase()))
     .slice()
@@ -39,7 +61,7 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispa
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div className="sidebar-scroll" style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y' }}>
+      <div ref={scrollRef} className="sidebar-scroll" style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y' }}>
       <div style={{ position: 'sticky', top: 0, zIndex: 2, display: 'flex', gap: 6, alignItems: 'center', padding: '8px 8px 10px', background: 'rgba(22,22,26,0.62)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search projects"
           style={{ flex: 1, minWidth: 0, height: 32, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 7, color: 'var(--color-text-primary)', fontSize: 13 }} />

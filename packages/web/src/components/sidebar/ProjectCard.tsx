@@ -24,6 +24,10 @@ import { RenameThreadModal } from './RenameThreadModal';
 import { AutoArchiveModal } from './AutoArchiveModal';
 import { api } from '../../api/client';
 
+/* The sidebar's search header is sticky (~52px). A row revealed by scrollIntoView would sit
+   underneath it without this margin. */
+const SCROLL_MARGIN = 60;
+
 function dotState(status: string): 'working' | 'idle' | 'needs_input' | 'error' {
   if (status === 'working') return 'working';
   if (status === 'needs_input') return 'needs_input';
@@ -90,12 +94,16 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
   const showActive = active && !dimmed;
   return (
     <button
+      data-thread-id={tab.id}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       onClick={(e) => onClick(e)}
       onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onMiddle(); } }}
       onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContext(e.clientX, e.clientY); }}
       style={{
+        // Keep a revealed row clear of the sidebar's sticky search header — without this,
+        // scrollIntoView happily parks the row underneath it.
+        scrollMarginTop: SCROLL_MARGIN,
         display: 'flex', alignItems: 'center', gap: isMobile ? 12 : 9, width: '100%', padding: isMobile ? '15px 12px' : `${padY}px 9px`,
         // Selecting snaps instantly; the transition only applies while the mobile
         // fade-back dims the row (dimmed → true), so it eases out, not in.
@@ -315,9 +323,11 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
 
   return (
     <div
+      data-project-id={session.id}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
+        scrollMarginTop: SCROLL_MARGIN,
         // Clean 4-tier hierarchy (desktop): unselected → hover → open → selected.
         //  unselected: transparent, no border
         //  hover:      faint wash, no border (a quick affordance)

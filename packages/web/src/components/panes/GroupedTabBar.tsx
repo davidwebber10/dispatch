@@ -20,7 +20,7 @@
  * self-contained drop-in.  Wire it into App.tsx in place of <TabBar/>.
  */
 
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   DndContext,
@@ -46,6 +46,7 @@ import { useSettings, useDispatchName } from '../../stores/settings';
 import { useGroups } from './store';
 import { leafTabIds, leafCount, MAX_PANES } from './types';
 import { TabActivityIndicator, GroupActivityIndicator } from './TabActivityIndicator';
+import { revealIn, tabChipSelector } from '../../lib/reveal';
 
 /* ── Constants ───────────────────────────────────────────────────────── */
 const BAR_H      = 44;
@@ -122,10 +123,18 @@ function ClassicTabBar({ onSelect }: { onSelect?: () => void }) {
   const sessions    = useProjects((s) => s.sessions);
   const dispatchName = useDispatchName();
 
+  // Keep the active tab visible: activating a thread from the sidebar can focus a chip sitting
+  // outside this horizontally-scrolled strip, and the user would see nothing move. Hooks must sit
+  // above the early return below.
+  const barRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (activeTabId) revealIn(barRef.current, tabChipSelector(activeTabId));
+  }, [activeTabId]);
+
   if (!openTabIds.length) return null;
 
   return (
-    <div style={{
+    <div ref={barRef} style={{
       display: 'flex', height: BAR_H, flexShrink: 0,
       overflowX: 'auto',
       background: 'var(--color-pane)',
@@ -138,6 +147,7 @@ function ClassicTabBar({ onSelect }: { onSelect?: () => void }) {
         return (
           <div
             key={id}
+            data-tab-id={id}
             onClick={() => { onSelect?.(); useTabs.getState().setActiveTab(id); }}
             onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); useTabs.getState().closeTab(id); } }}
             style={{
@@ -186,6 +196,7 @@ function DispatchChip({ tabId, onSelect }: { tabId: string; onSelect?: () => voi
   const act  = tabId === activeTabId;
   return (
     <div
+      data-tab-id={tabId}
       onClick={() => { onSelect?.(); useTabs.getState().setActiveTab(tabId); }}
       onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); useTabs.getState().closeTab(tabId); } }}
       style={{
@@ -305,6 +316,7 @@ function SingleChip({ slot, index, onSelect }: { slot: SingleSlot; index: number
   return (
     <div
       ref={ref}
+      data-tab-id={slot.tabId}
       {...attributes}
       {...listeners}
       style={{
@@ -432,6 +444,7 @@ function GroupChip({ slot, index, onSelect }: { slot: GroupSlot; index: number; 
   return (
     <div
       ref={ref}
+      data-tab-ids={slot.tabIds.join(' ')}
       {...attributes}
       {...listeners}
       style={{
@@ -561,6 +574,18 @@ function GroupedTabBarInner({ onSelect }: { onSelect?: () => void }) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [, setOverId]           = useState<string | null>(null); // re-render on over change (isOver reads live)
 
+  // Keep the active tab visible — but NEVER mid-drag. This bar's entire drag design rests on
+  // "dropzones never move under the cursor" (see the header comment), and scrolling the strip moves
+  // every one of them. `activeId` above is the chip currently being dragged. The gate matters for a
+  // second reason too: a merge calls setActiveTab, so without it the strip would lurch the instant a
+  // drop landed.
+  const activeTabId = useTabs((s) => s.activeTabId);
+  const barRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (activeId || !activeTabId) return;
+    revealIn(barRef.current, tabChipSelector(activeTabId));
+  }, [activeTabId, activeId]);
+
   /* ── Build display slots ─────────────────────────────────────────── */
   const seenGroups = new Set<string>();
   const slots: TabSlot[] = [];
@@ -663,7 +688,7 @@ function GroupedTabBarInner({ onSelect }: { onSelect?: () => void }) {
   const dragging = dragIdx >= 0;
 
   return (
-    <div style={{
+    <div ref={barRef} style={{
       display: 'flex', height: BAR_H, flexShrink: 0,
       overflowX: 'auto',
       background: 'var(--color-pane)',

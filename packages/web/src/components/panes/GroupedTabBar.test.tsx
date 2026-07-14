@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
 import { GroupedTabBar } from './GroupedTabBar';
 import { useGroups } from './store';
@@ -75,5 +75,78 @@ describe('GroupedTabBar unsaved marker', () => {
     const marks = screen.getAllByTitle('Unsaved changes');
     expect(marks).toHaveLength(1);
     expect(marks[0].closest('div')).toHaveTextContent('data.csv');
+  });
+});
+
+/* Keeping the ACTIVE tab visible.
+
+   Picking a thread in the left sidebar activates its tab — but with many tabs open, that chip can
+   sit outside the horizontally-scrolled strip, so the user clicks a thread and sees nothing move.
+   The strip has to scroll to it. */
+
+describe('GroupedTabBar reveals the active tab', () => {
+  let revealed: Element[];
+
+  beforeEach(() => {
+    revealed = [];
+    vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (this: Element) {
+      revealed.push(this);
+    });
+    useGroups.setState({ groups: {}, tabGroup: {} });
+    useTabs.setState({
+      byProject: { s1: [term('t1', 'data.csv'), term('t2', 'notes.md'), term('t3', 'app.ts')] },
+      openTabIds: ['t1', 't2', 't3'],
+      activeTabId: 't1',
+      tabSession: { t1: 's1', t2: 's1', t3: 's1' },
+      dirtyTabs: {},
+    });
+    useSettings.setState({ multiPane: true });
+  });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('scrolls to a tab activated from elsewhere (e.g. the sidebar)', () => {
+    render(<GroupedTabBar />);
+    revealed.length = 0;                                    // ignore the initial mount reveal
+
+    act(() => { useTabs.getState().setActiveTab('t3'); });  // what a sidebar thread click does
+
+    expect(revealed).toHaveLength(1);
+    expect((revealed[0] as HTMLElement).dataset.tabId).toBe('t3');
+  });
+
+  it('reveals the restored active tab on mount', () => {
+    render(<GroupedTabBar />);
+    expect(revealed.map((e) => (e as HTMLElement).dataset.tabId)).toContain('t1');
+  });
+
+  it('reveals the GROUP chip when the activated tab lives inside a merged group', () => {
+    useGroups.getState().merge('s1', 't2', 't3');
+    render(<GroupedTabBar />);
+    revealed.length = 0;
+
+    act(() => { useTabs.getState().setActiveTab('t3'); });
+
+    expect(revealed).toHaveLength(1);
+    expect((revealed[0] as HTMLElement).dataset.tabIds).toContain('t3');
+  });
+
+  it('reveals the active tab in the classic (non-multiPane) bar too', () => {
+    useSettings.setState({ multiPane: false });
+    render(<GroupedTabBar />);
+    revealed.length = 0;
+
+    act(() => { useTabs.getState().setActiveTab('t3'); });
+
+    expect(revealed).toHaveLength(1);
+    expect((revealed[0] as HTMLElement).dataset.tabId).toBe('t3');
+  });
+
+  it('does not scroll when a BACKGROUND tab is opened (activeTabId unchanged)', () => {
+    render(<GroupedTabBar />);
+    revealed.length = 0;
+
+    act(() => { useTabs.getState().openTab('t3', true); });  // middle-click: opens, does not focus
+
+    expect(revealed).toHaveLength(0);
   });
 });
