@@ -20,6 +20,7 @@ import { NewTabMenu } from './NewTabMenu';
 import { NewThreadModal, type NewThreadKind } from './NewThreadModal';
 import { RenameProjectModal } from './RenameProjectModal';
 import { RenameThreadModal } from './RenameThreadModal';
+import { AutoArchiveModal } from './AutoArchiveModal';
 import { api } from '../../api/client';
 
 function dotState(status: string): 'working' | 'idle' | 'needs_input' | 'error' {
@@ -198,6 +199,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   const [menu, setMenu] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<Terminal | null>(null);
   const [renameTarget, setRenameTarget] = useState<Terminal | null>(null);
+  const [autoArchiveTarget, setAutoArchiveTarget] = useState<Terminal | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ kind: 'thread'; thread: Terminal } | { kind: 'agent'; agent: AgentSchedule } | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ tab: Terminal; x: number; y: number } | null>(null);
   const [projMenu, setProjMenu] = useState<{ x: number; y: number } | null>(null);
@@ -425,6 +427,12 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
             {ctxMenu.tab.type === 'claude-code' && (
               <button onClick={() => { void branch(ctxMenu.tab); setCtxMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>Branch thread</button>
             )}
+            {ctxMenu.tab.type !== 'file' && (
+              <button onClick={() => { setAutoArchiveTarget(ctxMenu.tab); setCtxMenu(null); }}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>
+                Auto-archive…
+              </button>
+            )}
             {/* "Unpin" on file rows means archive (below) — thread pinning is threads-only,
                 and mobile-only: the Pinned surface is the mobile bottom tab. */}
             {isMobile && ctxMenu.tab.type !== 'file' && (
@@ -502,6 +510,10 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
 
       {renameProj && (
         <RenameProjectModal sessionId={session.id} current={session.name} onClose={() => setRenameProj(false)} />
+      )}
+
+      {autoArchiveTarget && (
+        <AutoArchiveModal tab={autoArchiveTarget} onClose={() => setAutoArchiveTarget(null)} />
       )}
 
       {newThread && (
