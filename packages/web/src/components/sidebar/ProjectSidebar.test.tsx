@@ -87,3 +87,72 @@ describe('ProjectSidebar reveals the active row', () => {
     expect((revealed[revealed.length - 1] as HTMLElement).dataset.projectId).toBe('s2');
   });
 });
+
+describe('ProjectSidebar does not fight a user who scrolled away', () => {
+  let revealed: Element[];
+
+  beforeEach(() => {
+    revealed = [];
+    vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (this: Element) {
+      revealed.push(this);
+    });
+    useProjects.setState({
+      sessions: [{ id: 's1', name: 'alpha', workingDir: '/a', status: 'idle' } as any],
+      activeId: 's1',
+    });
+    useTabs.setState({
+      byProject: { s1: [{ id: 't1', sessionId: 's1', type: 'claude-code', label: 'alpha-thread', status: 'idle' } as any] },
+      openTabIds: ['t1'],
+      activeTabId: 't1',
+      tabSession: { t1: 's1' },
+    });
+  });
+
+  it('re-reveals ONLY when the selection changes — not on every terminal:status tick', async () => {
+    render(<ProjectSidebar onSelectTab={() => {}} />);
+    await screen.findByText('alpha');
+    revealed.length = 0;
+
+    // A status event replaces byProject with a NEW object. This happens constantly as agents flip
+    // working<->idle. If it re-revealed, it would yank the sidebar back every few seconds while the
+    // user is deliberately looking somewhere else.
+    act(() => {
+      useTabs.setState({
+        byProject: { s1: [{ id: 't1', sessionId: 's1', type: 'claude-code', label: 'alpha-thread', status: 'working' } as any] },
+      });
+    });
+    act(() => {
+      useTabs.setState({
+        byProject: { s1: [{ id: 't1', sessionId: 's1', type: 'claude-code', label: 'alpha-thread', status: 'idle' } as any] },
+      });
+    });
+
+    expect(revealed).toHaveLength(0);   // selection never changed — do not move the user's scroll
+  });
+
+  it('still reveals a thread row that arrives LATE (threads load async on expand)', async () => {
+    // The card auto-calls loadTabs() when it expands (ProjectCard). Return NOTHING from it, so the
+    // thread genuinely is not in the DOM at mount and the only reveal available is the coarse
+    // project card — the exact situation the precise/coarse distinction exists for.
+    vi.spyOn(api, 'listTerminals').mockResolvedValue([]);
+    useTabs.setState({ byProject: {}, activeTabId: 't1' });
+
+    render(<ProjectSidebar onSelectTab={() => {}} />);
+    await screen.findByText('alpha');
+
+    // Mount could only reveal the CARD — the row did not exist.
+    await waitFor(() => expect(revealed.length).toBeGreaterThan(0));
+    expect((revealed[revealed.length - 1] as HTMLElement).dataset.projectId).toBe('s1');
+    revealed.length = 0;
+
+    // Now the threads land. The provisional card reveal must UPGRADE to the precise row.
+    act(() => {
+      useTabs.setState({
+        byProject: { s1: [{ id: 't1', sessionId: 's1', type: 'claude-code', label: 'alpha-thread', status: 'idle' } as any] },
+      });
+    });
+
+    await waitFor(() => expect(revealed.length).toBeGreaterThan(0));
+    expect((revealed[revealed.length - 1] as HTMLElement).dataset.threadId).toBe('t1');
+  });
+});

@@ -39,15 +39,34 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispa
      Aim at the thread row first: it is the precise thing that got highlighted, and revealing it
      brings its project card along with it. Fall back to the card when the row isn't in the DOM —
      a project fetches its threads asynchronously when it expands, so right after activation the
-     row genuinely may not exist yet. `byProject` is in the deps so we re-run once it lands. */
+     row genuinely may not exist yet. `byProject` is in the deps so we re-run once it lands.
+
+     But reveal each selection exactly ONCE. `byProject` is replaced with a new object on every
+     terminal:status event, which fires constantly as agents flip working<->idle. Without the guard,
+     a user who deliberately scrolled the sidebar elsewhere would get yanked back to the active row
+     every few seconds. Scroll when the SELECTION moves; never merely because the store churned. */
   const scrollRef = useRef<HTMLDivElement>(null);
   const activeTabId = useTabs((s) => s.activeTabId);
   const byProject = useTabs((s) => s.byProject);
+  // What we last revealed, and whether it was the PRECISE target (the thread row) or merely the
+  // project card. A card-only reveal is provisional: the row had not loaded yet, so we still want
+  // to upgrade to it when it lands. A precise reveal is final — after that, churn changes nothing.
+  const shown = useRef<{ selection: string; precise: boolean } | null>(null);
   useEffect(() => {
     const c = scrollRef.current;
     if (!c) return;
-    if (activeTabId && revealIn(c, `[data-thread-id="${activeTabId}"]`)) return;
-    if (activeId) revealIn(c, `[data-project-id="${activeId}"]`);
+    const selection = `${activeId ?? ''}|${activeTabId ?? ''}`;
+    const last = shown.current;
+    if (last?.selection === selection && last.precise) return;     // nothing better left to show
+
+    if (activeTabId && revealIn(c, `[data-thread-id="${activeTabId}"]`)) {
+      shown.current = { selection, precise: true };
+      return;
+    }
+    if (last?.selection === selection) return;   // already showed the card for this selection
+    if (activeId && revealIn(c, `[data-project-id="${activeId}"]`)) {
+      shown.current = { selection, precise: false };
+    }
   }, [activeTabId, activeId, byProject]);
 
   const filtered = sessions
