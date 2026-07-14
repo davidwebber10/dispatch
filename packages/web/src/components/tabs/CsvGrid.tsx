@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Plus, TrashSimple } from '@phosphor-icons/react';
 import { parseCsv, serializeCsv, editCell, insertRow, deleteRow, columnCount, type CsvDoc } from '../../lib/csv';
 
@@ -29,6 +29,19 @@ export function CsvGrid({ content, onChange }: { content: string; onChange: (nex
   const [draft, setDraft] = useState('');
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(VIEWPORT_GUESS);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  // Measure the real viewport before first paint (no flash of a wrong window), and keep it
+  // correct as the pane is resized — VIEWPORT_GUESS is only ever the pre-measurement value.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setViewportH(el.clientHeight);
+    if (typeof ResizeObserver === 'undefined') return; // not available in some test environments (jsdom)
+    const ro = new ResizeObserver(() => setViewportH(el.clientHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // Parse the incoming text — but reuse the doc we just produced ourselves rather than
   // re-parsing the whole file on every keystroke-commit. Only an EXTERNAL change (an edit made
@@ -92,6 +105,7 @@ export function CsvGrid({ content, onChange }: { content: string; onChange: (nex
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       <div
+        ref={scrollRef}
         onScroll={(e) => { setScrollTop(e.currentTarget.scrollTop); setViewportH(e.currentTarget.clientHeight); }}
         style={{ flex: 1, minHeight: 0, overflow: 'auto' }}
       >
@@ -160,16 +174,24 @@ function CellInput({ draft, setDraft, onCommit, onCancel }: {
   onCommit: (advance: 'down' | 'right' | null) => void;
   onCancel: () => void;
 }) {
+  // Escape unmounts this input (the parent clears `editing`), and removing a focused element
+  // fires a native blur. Today React's synthetic event system happens not to forward that
+  // unmount-caused blur back into the tree, so onBlur's onCommit(null) never runs — but that's
+  // unwritten internal behavior, not a contract. Without this guard, a future React change could
+  // make Escape COMMIT the value the user just cancelled: silent data loss into a file on disk.
+  // Setting the flag before calling onCancel() makes the cancellation explicit instead of
+  // accidental, so onBlur is guaranteed to no-op no matter how the unmount-blur is delivered.
+  const cancelledRef = useRef(false);
   return (
     <input
       autoFocus
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
-      onBlur={() => onCommit(null)}
+      onBlur={() => { if (cancelledRef.current) return; onCommit(null); }}
       onKeyDown={(e) => {
         if (e.key === 'Enter') { e.preventDefault(); onCommit('down'); }
         else if (e.key === 'Tab') { e.preventDefault(); onCommit('right'); }
-        else if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+        else if (e.key === 'Escape') { e.preventDefault(); cancelledRef.current = true; onCancel(); }
       }}
       style={{ width: '100%', background: 'var(--color-terminal)', border: '1px solid var(--color-accent)', borderRadius: 3, color: 'var(--color-text-primary)', font: '400 11.5px var(--font-mono)', padding: '1px 3px', outline: 'none' }}
     />

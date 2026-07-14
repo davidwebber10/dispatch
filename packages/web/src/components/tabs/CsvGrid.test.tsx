@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { CsvGrid } from './CsvGrid';
 
 const CSV = 'name,qty\napples,3\npears,5\n';
@@ -47,6 +47,43 @@ describe('CsvGrid', () => {
     expect(screen.getByText('apples')).toBeInTheDocument();
   });
 
+  it('Escape guards against a same-tick blur re-committing the cancelled value', () => {
+    // Proves the cancelledRef guard in CellInput. In a real browser, removing a focused element
+    // fires a native blur BEFORE React has necessarily processed the resulting state update —
+    // i.e. the blur can still reach an input whose surrounding React state already says
+    // "cancelled". We reproduce that ordering by batching the Escape keydown and the blur into
+    // a single `act()`: React queues the setEditing(null) update from onCancel() but does not
+    // flush/unmount until the act() callback returns, so the blur below still reaches the *same*
+    // mounted <input> — with cancelledRef already set to true by the keydown handler that ran
+    // first. Without the guard this reproduces the exact failure Finding 2 describes: onBlur's
+    // onCommit(null) reads the stale (pre-unmount) `editing` state and commits the discarded
+    // draft. With the guard, onBlur must no-op and onChange must never fire.
+    const onChange = vi.fn();
+    render(<CsvGrid content={CSV} onChange={onChange} />);
+    fireEvent.doubleClick(screen.getByText('apples'));
+    const input = screen.getByRole('textbox') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'discard me' } });
+
+    act(() => {
+      fireEvent.keyDown(input, { key: 'Escape' });
+      fireEvent.blur(input);
+    });
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('edits a header cell (renaming a column) and only changes the header line', () => {
+    const onChange = vi.fn();
+    render(<CsvGrid content={CSV} onChange={onChange} />);
+    fireEvent.doubleClick(screen.getByText('name'));
+    const input = screen.getByRole('textbox') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'item' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    // Only the header line changes; both data rows stay byte-identical.
+    expect(onChange).toHaveBeenCalledWith('item,qty\napples,3\npears,5\n');
+  });
+
   it('adds a row', () => {
     const onChange = vi.fn();
     render(<CsvGrid content={CSV} onChange={onChange} />);
@@ -73,5 +110,23 @@ describe('CsvGrid', () => {
     render(<CsvGrid content={big} onChange={() => {}} />);
     // 20k data rows exist in the doc but nowhere near that many <tr> are in the DOM.
     expect(screen.getAllByRole('row').length).toBeLessThan(200);
+  });
+
+  it('measures the real scroll-container height on mount instead of trusting the hardcoded guess', () => {
+    // Simulate a tall viewport (well above VIEWPORT_GUESS's fallback of a near-zero jsdom
+    // clientHeight) by stubbing clientHeight before the component ever mounts. If viewportH is
+    // only ever set from onScroll (the bug), this measurement is never taken and the window
+    // stays sized off VIEWPORT_GUESS regardless of the real container height.
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight');
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, value: 2000 });
+    try {
+      const big = 'a,b\n' + Array.from({ length: 500 }, (_, i) => `${i},${i}`).join('\n') + '\n';
+      render(<CsvGrid content={big} onChange={() => {}} />);
+      // A 2000px-tall viewport measured up front on first paint (no scroll yet) must render
+      // far more rows than VIEWPORT_GUESS=600 would (~42 rows incl. header/gutter overhead).
+      expect(screen.getAllByRole('row').length).toBeGreaterThan(60);
+    } finally {
+      if (original) Object.defineProperty(HTMLElement.prototype, 'clientHeight', original);
+    }
   });
 });
