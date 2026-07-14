@@ -87,6 +87,13 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispa
          'nearest' makes this a no-op whenever the first pass already landed right. */
       if (settle.current) clearTimeout(settle.current);
       settle.current = setTimeout(() => {
+        /* A pending settle pass belongs to the selection that scheduled it. If the user has picked
+           something else since, it is stale — firing it would scroll them BACK to a row they just
+           navigated away from. (Measured in Chromium: activate A, activate B 50ms later, and A's
+           timer dragged the sidebar back to A at +158ms. B can land on the card-only path below,
+           which returns without ever reaching the clearTimeout above — so cancelling there is not
+           enough; the timer has to check for itself at fire time.) */
+        if (shown.current?.selection !== selection) return;
         const el = scrollRef.current;
         if (el) revealIn(el, `[data-thread-id="${activeTabId}"]`);
       }, EXPAND_SETTLE_MS);

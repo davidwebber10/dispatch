@@ -264,3 +264,55 @@ describe('ProjectSidebar settle pass survives the thread-list reload', () => {
     expect(afterSettle).toBeGreaterThan(afterFirst);   // the corrective pass MUST still have run
   });
 });
+
+describe('ProjectSidebar never yanks back to a superseded selection', () => {
+  let revealed: Element[];
+
+  beforeEach(() => {
+    revealed = [];
+    vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (this: Element) {
+      revealed.push(this);
+    });
+    // Per-session: alpha keeps its row (so activating it takes the PRECISE path and schedules a
+    // settle pass); beta never yields one (so activating it takes the CARD-ONLY path — the branch
+    // that failed to cancel the pending timer). A blanket mockResolvedValue([]) would wipe alpha's
+    // row too, since ProjectCard calls loadTabs() the moment it expands.
+    vi.spyOn(api, 'listTerminals').mockImplementation(async (id: string) =>
+      (id === 's1' ? [{ id: 't1', sessionId: 's1', type: 'claude-code', label: 'alpha-thread', status: 'idle' }] : []) as any,
+    );
+    useProjects.setState({
+      sessions: [
+        { id: 's1', name: 'alpha', workingDir: '/a', status: 'idle' } as any,
+        { id: 's2', name: 'beta', workingDir: '/b', status: 'idle' } as any,
+      ],
+      activeId: 's1',
+    });
+    useTabs.setState({
+      byProject: { s1: [{ id: 't1', sessionId: 's1', type: 'claude-code', label: 'alpha-thread', status: 'idle' } as any] },
+      openTabIds: ['t1', 't2'],
+      activeTabId: null,
+      tabSession: { t1: 's1', t2: 's2' },
+    });
+  });
+
+  it("a pending settle pass must not drag the user back after they pick something else", async () => {
+    render(<ProjectSidebar onSelectTab={() => {}} />);
+    await screen.findByText('beta');
+
+    // A: alpha's thread — has a row, so this takes the PRECISE path and schedules a settle pass.
+    act(() => { useTabs.setState({ activeTabId: 't1' }); useProjects.getState().setActive('s1'); });
+    await waitFor(() => expect(revealed.some((e) => (e as HTMLElement).dataset.threadId === 't1')).toBe(true));
+
+    // B, moments later: beta's thread. Its rows are not in the DOM, so this falls to the CARD-only
+    // path — which is precisely the branch that did NOT cancel A's pending timer.
+    revealed.length = 0;
+    act(() => { useTabs.setState({ activeTabId: 't2' }); useProjects.getState().setActive('s2'); });
+
+    // Let A's settle window elapse.
+    await new Promise((r) => setTimeout(r, 220));
+
+    // Nothing after the user moved to B may scroll them back to A's row.
+    const yankedBack = revealed.some((e) => (e as HTMLElement).dataset.threadId === 't1');
+    expect(yankedBack).toBe(false);
+  });
+});
