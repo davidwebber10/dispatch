@@ -123,8 +123,10 @@ describe('parse', () => {
     const d = parseCsv(text);
     expect(d.delimiter).toBe(',');
     expect(d.rows[1].cells).toEqual(['1', 'a; b; c; d']);
-    // ...and an edit rewrites only the edited cell, with the data intact.
-    expect(serializeCsv(editCell(d, 1, 0, 'X'))).toBe('id,note\nX,a; b; c; d\n2,"e; f; g; h"\n');
+    // ...and an edit rewrites only the edited cell, with the data intact. The rewritten note KEEPS
+    // its quotes even though it holds no comma: bare, its semicolons would become structure to the
+    // next detectDelimiter. See 'an edit never changes what the delimiter looks like' below.
+    expect(serializeCsv(editCell(d, 1, 0, 'X'))).toBe('id,note\nX,"a; b; c; d"\n2,"e; f; g; h"\n');
   });
 
   it('does not let a mid-field quote skew delimiter detection', () => {
@@ -174,6 +176,18 @@ describe('editCell', () => {
     expect(serializeCsv(editCell(d, 1, 0, 'has\nnewline'))).toBe('a,b\n"has\nnewline",2\n');
   });
 
+  it('quotes a value holding a RIVAL delimiter, not just the document one', () => {
+    // In a comma file, ';' '\t' and '|' are not structure — but they are all CANDIDATES, and
+    // detectDelimiter counts them on the next open. Emitted bare, they become structure.
+    const d = parseCsv('a,b\n1,2\n');
+    expect(serializeCsv(editCell(d, 1, 0, 'has;semi'))).toBe('a,b\n"has;semi",2\n');
+    expect(serializeCsv(editCell(d, 1, 0, 'has\ttab'))).toBe('a,b\n"has\ttab",2\n');
+    expect(serializeCsv(editCell(d, 1, 0, 'has|pipe'))).toBe('a,b\n"has|pipe",2\n');
+    // ...and symmetrically, a comma in a SEMICOLON file.
+    const s = parseCsv('a;b\n1;2\n');
+    expect(serializeCsv(editCell(s, 1, 0, 'has,comma'))).toBe('a;b\n"has,comma";2\n');
+  });
+
   it('pads a ragged row only when you edit past its end', () => {
     const d = parseCsv('a,b,c\n1,2\n');
     expect(serializeCsv(editCell(d, 1, 2, 'Z'))).toBe('a,b,c\n1,2,Z\n');
@@ -195,6 +209,95 @@ describe('editCell', () => {
     const d = parseCsv('a,b\n1,2');
     expect(serializeCsv(editCell(d, 1, 1, 'X'))).toBe('a,b\n1,X');
   });
+});
+
+/**
+ * The invariant that makes the feature safe: an edit must be a FIXED POINT of save/reopen.
+ *
+ *   parseCsv(serializeCsv(edit(d))).delimiter === d.delimiter
+ *
+ * parseCsv re-detects the delimiter from scratch every time, so a rewritten row that drops quotes
+ * around a value containing a rival delimiter changes what the FILE looks like to the detector. The
+ * save itself looks perfect (one-line diff, identical cells); the damage lands on the NEXT open,
+ * when the file is reinterpreted under a different delimiter — and the edit after that writes the
+ * garbage to disk. These tests open the file again, which is the only way to see it.
+ */
+describe('an edit never changes what the delimiter looks like', () => {
+  it('survives the semicolon-notes save/reopen cycle', () => {
+    // The exact corruption path. Serializing alone looks fine — you have to RE-PARSE to catch it.
+    const original = 'id,note\n1,"a; b; c; d"\n';
+    const doc = parseCsv(original);
+    expect(doc.delimiter).toBe(',');
+    expect(doc.rows[1].cells).toEqual(['1', 'a; b; c; d']);
+
+    const saved = serializeCsv(editCell(doc, 1, 0, 'X'));
+
+    // REOPEN what we just wrote — this is the step that used to reinterpret the whole file.
+    const reopened = parseCsv(saved);
+    expect(reopened.delimiter).toBe(',');                            // NOT ';'
+    expect(reopened.rows[0].cells).toEqual(['id', 'note']);          // NOT ['id,note']
+    expect(reopened.rows[1].cells).toEqual(['X', 'a; b; c; d']);     // the note is still ONE cell
+
+    // A second edit-and-save is therefore stable, rather than destroying the file.
+    const saved2 = serializeCsv(editCell(reopened, 1, 0, 'Y'));
+    expect(saved2).toBe('id,note\nY,"a; b; c; d"\n');
+    expect(parseCsv(saved2).delimiter).toBe(',');
+  });
+
+  const cases: [name: string, text: string, row: number, col: number, value: string][] = [
+    ['semicolons in a quoted note (comma file)', 'id,note\n1,"a; b; c; d"\n', 1, 0, 'X'],
+    ['tabs in a quoted value (comma file)', 'id,note\n1,"a\tb\tc\td"\n', 1, 0, 'X'],
+    ['pipes in a quoted value (comma file)', 'id,note\n1,"a|b|c|d"\n', 1, 0, 'X'],
+    ['commas in a quoted value (semicolon file)', 'id;note\n1;"a, b, c, d"\n', 1, 0, 'X'],
+    ['commas in a quoted value (tab file)', 'id\tnote\n1\t"a, b, c, d"\n', 1, 0, 'X'],
+    ['semicolons in a quoted value (pipe file)', 'id|note\n1|"a; b; c; d"\n', 1, 0, 'X'],
+    // Editing the cell that HOLDS the rival delimiters — the new value must be quoted too.
+    ['a rival delimiter typed INTO the edited cell', 'id,note\n1,ok\n', 1, 1, 'p; q; r; s'],
+    // ...and the ordinary case must not regress into over-quoting.
+    ['a plain edit stays plain', 'a,b,c\n1,2,3\n4,5,6\n', 1, 1, 'X'],
+    ['a plain edit in a CRLF file', 'a,b\r\n1,2\r\n', 1, 1, 'X'],
+  ];
+
+  it.each(cases)('%s', (_name, text, row, col, value) => {
+    const doc = parseCsv(text);
+    const edited = editCell(doc, row, col, value);
+    const reopened = parseCsv(serializeCsv(edited));
+
+    // 1. The file still describes itself the same way.
+    expect(reopened.delimiter).toBe(doc.delimiter);
+
+    // 2. Every row's cells survive the save/reopen unchanged — including the edited one, whose
+    //    cells are exactly the pre-serialization cells. Nothing was split, merged, or re-quoted
+    //    into a different meaning.
+    expect(reopened.rows.map((r) => r.cells)).toEqual(edited.rows.map((r) => r.cells));
+
+    // 3. Only the edited cell differs from the original document.
+    expect(reopened.rows.map((r) => r.cells)).toEqual(
+      doc.rows.map((r, i) =>
+        i === row ? r.cells.map((c, j) => (j === col ? value : c)) : r.cells,
+      ),
+    );
+  });
+
+  it('stays a fixed point under repeated edit/save/reopen rounds', () => {
+    // Corruption was progressive: save 1 looked clean, the reopen mis-parsed, save 2 wrote garbage.
+    // So iterate the whole cycle. Two rows on purpose — that is the ratio that actually flips the
+    // detector (2 commas vs 3 semicolons). Adding a third, still-quoted row would tie the counts at
+    // 3-3, and detectDelimiter's strict `>` would keep ',' by luck, masking the bug.
+    let text = 'id,note\n1,"a; b; c; d"\n';
+    for (let i = 0; i < 5; i++) {
+      const doc = parseCsv(text);
+      expect(doc.delimiter).toBe(',');
+      expect(doc.rows[1].cells).toEqual([String(i === 0 ? 1 : i - 1), 'a; b; c; d']);
+      text = serializeCsv(editCell(doc, 1, 0, String(i)));
+    }
+    expect(text).toBe('id,note\n4,"a; b; c; d"\n');
+    expect(parseCsv(text).rows.map((r) => r.cells)).toEqual([
+      ['id', 'note'],
+      ['4', 'a; b; c; d'],
+    ]);
+  });
+
 });
 
 describe('insertRow / deleteRow', () => {

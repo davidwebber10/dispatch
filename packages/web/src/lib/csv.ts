@@ -156,16 +156,41 @@ export function parseCsv(text: string, path?: string): CsvDoc {
   return { rows, delimiter, eol: docEol ?? '\n', bom };
 }
 
-/** Quote a field only when it must be quoted — matches what nearly every CSV writer emits. */
-function quoteField(value: string, delimiter: string): string {
-  const needs = value.includes(delimiter) || value.includes('"') || value.includes('\n') || value.includes('\r');
+/**
+ * Quote a field only when it must be quoted — but "must" includes every RIVAL delimiter, not just
+ * this document's. That is not cosmetic; it is what keeps a save/reopen cycle from destroying files.
+ *
+ * parseCsv re-detects the delimiter from scratch on every open, by counting candidates outside
+ * quotes. So the quoting of a rewritten row is not a private stylistic matter — it is an input to
+ * the next parse. Quote only on the document delimiter and you get this:
+ *
+ *   file:    id,note\n1,"a; b; c; d"\n     -> detects ',' (the semicolons are inside quotes)
+ *   edit id, rewrite the row minimally: 'a; b; c; d' holds no comma/quote/newline, so it is emitted
+ *   BARE, and the file becomes:
+ *   saved:   id,note\nX,a; b; c; d\n       -> semantically identical, a clean one-line diff...
+ *   reopen:  3 semicolons vs 2 commas OUTSIDE quotes -> detects ';' -- WRONG.
+ *            The grid now shows ['id,note'] / ['X,a',' b',' c',' d'], and the next edit writes the
+ *            line back with semicolons. The user's file is destroyed on the SECOND save.
+ *
+ * Keeping the quotes on means the rival delimiters stay invisible to the counter, the file stays
+ * self-describing, and detection is stable across save/reopen:
+ *
+ *   parseCsv(serializeCsv(edit(d))).delimiter === d.delimiter    // for any edit
+ *
+ * This only ever ADDS quotes to a row we were already rewriting; an untouched row is re-emitted from
+ * `raw` and never passes through here, so the byte-for-byte round-trip guarantee is untouched.
+ */
+function quoteField(value: string): string {
+  const needs =
+    CANDIDATES.some((c) => value.includes(c)) ||
+    value.includes('"') || value.includes('\n') || value.includes('\r');
   return needs ? `"${value.replace(/"/g, '""')}"` : value;
 }
 
 function serializeRow(row: CsvRow, delimiter: string): string {
   // The fidelity guarantee: an untouched row is re-emitted exactly as it arrived.
   if (row.raw !== null) return row.raw;
-  return row.cells.map((c) => quoteField(c, delimiter)).join(delimiter);
+  return row.cells.map(quoteField).join(delimiter);
 }
 
 export function serializeCsv(doc: CsvDoc): string {
