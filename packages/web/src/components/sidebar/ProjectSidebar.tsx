@@ -56,6 +56,16 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispa
   // project card. A card-only reveal is provisional: the row was not a valid target yet, so we
   // still want to upgrade to it. A precise reveal is final — after that, churn changes nothing.
   const shown = useRef<{ selection: string; precise: boolean } | null>(null);
+  /* The settle timer deliberately lives in a ref, NOT in the effect's cleanup.
+     Expanding a card makes ProjectCard call loadTabs(), which lands a new `byProject` object within
+     a few ms — well inside the settle window. `byProject` is in this effect's deps, so returning a
+     clearTimeout cleanup would have React cancel the timer on that re-run, and the `precise` guard
+     would then stop it being rescheduled. The corrective pass would silently never fire, leaving the
+     row wherever the mid-animation scroll dropped it. (Measured in Chromium: scheduled at +22ms,
+     cancelled at +28ms, row left 97px below the fold — permanently.) */
+  const settle = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (settle.current) clearTimeout(settle.current); }, []);   // unmount only
+
   useEffect(() => {
     const c = scrollRef.current;
     if (!c) return;
@@ -72,14 +82,15 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispa
 
     if (cardOpen && activeTabId && revealIn(c, `[data-thread-id="${activeTabId}"]`)) {
       shown.current = { selection, precise: true };
-      /* The card may have opened in THIS very commit, so its 120ms grid-template-rows transition is
-         still running and the row has not reached its final position. Reveal once more after it
-         settles: 'nearest' makes that a no-op whenever the first pass already landed correctly. */
-      const t = setTimeout(() => {
+      /* The card may have opened in THIS very commit, so its 120ms transition is still running and
+         the row has not reached its final position. Correct it once the animation settles;
+         'nearest' makes this a no-op whenever the first pass already landed right. */
+      if (settle.current) clearTimeout(settle.current);
+      settle.current = setTimeout(() => {
         const el = scrollRef.current;
         if (el) revealIn(el, `[data-thread-id="${activeTabId}"]`);
       }, EXPAND_SETTLE_MS);
-      return () => clearTimeout(t);
+      return;
     }
 
     if (last?.selection === selection) return;   // already showed the card for this selection

@@ -206,3 +206,61 @@ describe('ProjectSidebar does not aim at a row inside a collapsed card', () => {
     );
   });
 });
+
+describe('ProjectSidebar settle pass survives the thread-list reload', () => {
+  let revealed: Element[];
+
+  beforeEach(() => {
+    revealed = [];
+    vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (this: Element) {
+      revealed.push(this);
+    });
+    vi.spyOn(api, 'listTerminals').mockResolvedValue([]);
+    useProjects.setState({
+      sessions: [
+        { id: 's1', name: 'alpha', workingDir: '/a', status: 'idle' } as any,
+        { id: 's2', name: 'beta', workingDir: '/b', status: 'idle' } as any,
+      ],
+      activeId: 's1',
+    });
+    useTabs.setState({
+      byProject: {
+        s1: [{ id: 't1', sessionId: 's1', type: 'claude-code', label: 'alpha-thread', status: 'idle' } as any],
+        s2: [{ id: 't2', sessionId: 's2', type: 'claude-code', label: 'beta-thread', status: 'idle' } as any],
+      },
+      openTabIds: ['t1', 't2'],
+      activeTabId: 't1',
+      tabSession: { t1: 's1', t2: 's2' },
+    });
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('still fires after byProject changes mid-animation (ProjectCard reloads threads on expand)', async () => {
+    render(<ProjectSidebar onSelectTab={() => {}} />);
+    await screen.findByText('beta');
+    revealed.length = 0;
+
+    act(() => { useTabs.getState().setActiveTab('t2'); });
+    await waitFor(() => expect(revealed.some((e) => (e as HTMLElement).dataset.threadId === 't2')).toBe(true));
+    const afterFirst = revealed.filter((e) => (e as HTMLElement).dataset.threadId === 't2').length;
+
+    // Expanding the card makes ProjectCard call loadTabs(), which lands a NEW byProject object a few
+    // ms later — well inside the 140ms settle window. byProject is in the effect's deps, so the
+    // re-run tears down the effect. If the settle timer lives in that teardown, it dies here and the
+    // row is left wherever the mid-animation scroll dropped it.
+    act(() => {
+      useTabs.setState({
+        byProject: {
+          s1: [{ id: 't1', sessionId: 's1', type: 'claude-code', label: 'alpha-thread', status: 'idle' } as any],
+          s2: [{ id: 't2', sessionId: 's2', type: 'claude-code', label: 'beta-thread', status: 'working' } as any],
+        },
+      });
+    });
+
+    // Let the expand transition settle.
+    await new Promise((r) => setTimeout(r, 220));
+
+    const afterSettle = revealed.filter((e) => (e as HTMLElement).dataset.threadId === 't2').length;
+    expect(afterSettle).toBeGreaterThan(afterFirst);   // the corrective pass MUST still have run
+  });
+});
