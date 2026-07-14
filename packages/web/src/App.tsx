@@ -99,6 +99,17 @@ export default function App() {
     useReconnect.getState().bump();
   });
 
+  // Browser close / refresh with unsaved file edits — the tab-close guard can't see this one.
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (Object.keys(useTabs.getState().dirtyTabs).length === 0) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, []);
+
   if (isMobile) {
     return (<><SetupWizard /><AuthBanner /><UpdateModal /><MobileApp /></>);
   }

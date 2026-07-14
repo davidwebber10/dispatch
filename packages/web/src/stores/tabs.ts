@@ -12,6 +12,9 @@ interface TabsState {
   activeTabId: string | null;
   tabSession: Record<string, string>; // tabId -> sessionId, so open tabs survive a refresh
   loading: Record<string, boolean>;   // terminals that just started / reloaded (transient spinner)
+  /** Tabs with unsaved edits — closing one prompts first. */
+  dirtyTabs: Record<string, boolean>;
+  setTabDirty: (id: string, dirty: boolean) => void;
   markLoading: (id: string) => void;
   loadTabs: (projectId: string) => Promise<void>;
   reorder: (projectId: string, orderedIds: string[]) => Promise<void>;
@@ -19,7 +22,7 @@ interface TabsState {
   setActiveTab: (id: string) => void;                       // open + focus
   openTab: (id: string, background?: boolean) => void;       // open (optionally without switching)
   openDispatch: (sessionId: string) => void;                 // open + focus the project's virtual Dispatch tab
-  closeTab: (id: string) => void;
+  closeTab: (id: string, opts?: { force?: boolean }) => void;
   hydrate: () => Promise<void>;                              // restore open tabs after a page refresh
   applyEvent: (e: ServerEvent) => void;
 }
@@ -77,6 +80,12 @@ export const useTabs = create<TabsState>((set, get) => ({
   openTabIds: [],
   activeTabId: null,
   tabSession: {},
+  dirtyTabs: {},
+  setTabDirty: (id, dirty) => {
+    const next = { ...get().dirtyTabs };
+    if (dirty) next[id] = true; else delete next[id];
+    set({ dirtyTabs: next });
+  },
   loadTabs: async (projectId) => {
     const tabs = await api.listTerminals(projectId);
     const tabSession = { ...get().tabSession };
@@ -126,13 +135,20 @@ export const useTabs = create<TabsState>((set, get) => ({
     set({ tabSession: { ...get().tabSession, [id]: sessionId } });
     get().openTab(id, false);
   },
-  closeTab: (id) => {
+  closeTab: (id, opts) => {
+    // Single choke point for EVERY close path (tab bar, grouped tab bar, close-group), so a new
+    // call site can't accidentally bypass the guard. `force` is for the server-initiated
+    // terminal:removed event, where the file is already gone and prompting would be absurd.
+    if (!opts?.force && get().dirtyTabs[id]) {
+      if (!window.confirm('This file has unsaved changes. Close the tab and discard them?')) return;
+    }
     const { openTabIds, activeTabId, tabSession } = get();
     const idx = openTabIds.indexOf(id);
     const next = openTabIds.filter((x) => x !== id);
     const active = activeTabId === id ? (next[Math.min(idx, next.length - 1)] ?? null) : activeTabId;
     const ts = { ...tabSession }; delete ts[id];
-    set({ openTabIds: next, activeTabId: active, tabSession: ts });
+    const dirtyTabs = { ...get().dirtyTabs }; delete dirtyTabs[id];
+    set({ openTabIds: next, activeTabId: active, tabSession: ts, dirtyTabs });
     persist(get());
   },
   hydrate: async () => {
@@ -169,7 +185,7 @@ export const useTabs = create<TabsState>((set, get) => ({
       }
       set({ byProject });
     } else if (e.type === 'terminal:removed' && typeof e.terminalId === 'string') {
-      get().closeTab(e.terminalId);
+      get().closeTab(e.terminalId, { force: true });
       if (typeof e.sessionId === 'string') void get().loadTabs(e.sessionId);
     } else if (e.type === 'session:tabs-changed' && typeof e.sessionId === 'string') {
       void get().loadTabs(e.sessionId);
