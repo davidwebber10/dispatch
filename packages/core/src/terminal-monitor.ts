@@ -1,5 +1,7 @@
 import type { EventBroadcaster } from './ws/events.js';
 import type Database from 'better-sqlite3';
+import * as sessionsDb from './db/sessions.js';
+import * as terminalsDb from './db/terminals.js';
 
 interface TerminalStatus {
   terminalId: string;
@@ -123,24 +125,47 @@ export class TerminalMonitor {
     if (existing) clearTimeout(existing);
     this.idleTimers.set(terminalId, setTimeout(() => {
       if (status) {
+        const wasBusy = status.activity === 'busy';
         status.activity = 'idle';
         this.burstBytes.set(terminalId, 0);
         this.broadcast(terminalId, status);
-        // Bump last_activity_at only. The thread STATUS column is owned by the
-        // StatusService (Claude hooks / Codex notify) — writing 'waiting' here on
-        // every output pause is what made status flap mid-turn, so we don't.
-        if (this.db) {
-          const now = new Date().toISOString();
+        // Bump last_activity_at only when this burst was real work — it crossed the
+        // busy threshold outside the grace window. Attach/resize repaints end their
+        // burst still 'idle' (or grace-suppressed) and must NOT stamp: unconditional
+        // stamping here is what made "last active" mean "last opened". The thread
+        // STATUS column stays owned by the StatusService (Claude hooks / Codex
+        // notify) — writing 'waiting' here on every output pause is what made
+        // status flap mid-turn, so we don't.
+        if (wasBusy && this.db) {
           try {
             const row = this.db.prepare('SELECT session_id FROM terminals WHERE id = ?').get(terminalId) as any;
             if (row?.session_id) {
-              this.db.prepare('UPDATE sessions SET last_activity_at = ? WHERE id = ?').run(now, row.session_id);
-              this.db.prepare('UPDATE terminals SET last_activity_at = ? WHERE id = ?').run(now, terminalId);
+              terminalsDb.touchActivity(this.db, terminalId);
+              sessionsDb.touchActivity(this.db, row.session_id);
             }
           } catch {}
         }
       }
     }, this.idleThresholdMs));
+  }
+
+  /**
+   * Re-arm the connection grace window for a terminal — called when a client
+   * attaches or resizes. The SIGWINCH/fit repaint that follows is passive output
+   * (often well over busyThresholdBytes, so the byte filter alone can't catch it);
+   * suppressing busy transitions for the grace period keeps "opened a thread" from
+   * reading as "thread was active". A thread genuinely mid-turn keeps emitting past
+   * the window and still stamps.
+   */
+  suppress(terminalId: string) {
+    const now = Date.now();
+    const status = this.statuses.get(terminalId);
+    if (status) {
+      status.connectedAt = now;
+    } else {
+      this.statuses.set(terminalId, { terminalId, activity: 'idle', lastOutput: now, connectedAt: now });
+    }
+    this.burstBytes.set(terminalId, 0);
   }
 
   /** Get current status for a terminal */

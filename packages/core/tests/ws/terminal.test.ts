@@ -55,3 +55,25 @@ describe('handleTerminalConnection replay', () => {
     expect(pty.nudgeRepaint).toHaveBeenCalledWith('t1');
   });
 });
+
+describe('handleTerminalConnection activity suppression', () => {
+  it('suppresses the monitor on attach and on client resize', () => {
+    const pty = fakePtyManager();
+    const monitor = { suppress: vi.fn() };
+    const ws = fakeWs();
+    const req = { url: '/api/terminals/t1/ws' } as IncomingMessage;
+    handleTerminalConnection(ws as unknown as WebSocket, req, pty as unknown as PTYManager, sessionService, monitor as any);
+    expect(monitor.suppress).toHaveBeenCalledWith('t1');
+
+    const onMessage = ws.on.mock.calls.find((c) => c[0] === 'message')![1];
+    monitor.suppress.mockClear();
+    onMessage(JSON.stringify({ type: 'resize', cols: 80, rows: 24 }));
+    expect(monitor.suppress).toHaveBeenCalledWith('t1');
+    expect(pty.resize).toHaveBeenCalledWith('t1', 80, 24);
+  });
+
+  it('works without a monitor (backwards compatible)', () => {
+    const pty = fakePtyManager();
+    expect(() => connect(pty)).not.toThrow();
+  });
+});

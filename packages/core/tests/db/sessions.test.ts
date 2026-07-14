@@ -69,6 +69,15 @@ describe('sessions db', () => {
     expect(session!.last_activity_at).toBeDefined();
   });
 
+  it('updateStatus does not bump lastActivityAt (status flips fire on passive events too)', () => {
+    sessionsDb.create(db, { id: 's1', provider: 'claude-code', name: 'test', workingDir: '/tmp' });
+    db.prepare('UPDATE sessions SET last_activity_at = ? WHERE id = ?').run('2020-01-01T00:00:00.000Z', 's1');
+    sessionsDb.updateStatus(db, 's1', 'working');
+    const session = sessionsDb.getById(db, 's1');
+    expect(session!.status).toBe('working');
+    expect(session!.last_activity_at).toBe('2020-01-01T00:00:00.000Z');
+  });
+
   it('sets error on session', () => {
     sessionsDb.create(db, { id: 's1', provider: 'claude-code', name: 'test', workingDir: '/tmp' });
     sessionsDb.setError(db, 's1', 'spawn failed: command not found');

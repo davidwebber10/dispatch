@@ -2,6 +2,7 @@ import type { IncomingMessage } from 'http';
 import type { WebSocket } from 'ws';
 import type { PTYManager } from '../pty/manager.js';
 import type { SessionService } from '../sessions/service.js';
+import type { TerminalMonitor } from '../terminal-monitor.js';
 import { isPtyType } from '../db/terminals.js';
 
 function parseReplayBytes(url: string | undefined): number | undefined {
@@ -23,6 +24,7 @@ export function handleTerminalConnection(
   req: IncomingMessage,
   ptyManager: PTYManager,
   sessionService?: SessionService,
+  monitor?: TerminalMonitor,
 ): void {
   // Support both new URL pattern /api/terminals/:terminalId/ws
   // and legacy /api/sessions/:id/terminal
@@ -41,6 +43,11 @@ export function handleTerminalConnection(
   }
 
   if (!targetId) { ws.close(4000, 'Invalid URL'); return; }
+
+  // Attaching triggers a full-screen repaint (nudgeRepaint's SIGWINCH below, the
+  // client's initial fit resize, or a revive spawn). That's passive output — arm
+  // the monitor's grace window so it can't read as thread activity.
+  monitor?.suppress(targetId);
 
   // Revive dead PTYs: after a reboot/server restart, the DB still has terminal
   // rows but the processes are gone. If this is a PTY-type terminal and its
@@ -89,6 +96,7 @@ export function handleTerminalConnection(
       try {
         const parsed = JSON.parse(str);
         if (parsed.type === 'resize' && typeof parsed.cols === 'number' && typeof parsed.rows === 'number') {
+          monitor?.suppress(targetId!); // the repaint a resize causes is not activity
           ptyManager.resize(targetId!, parsed.cols, parsed.rows);
           return;
         }

@@ -45,6 +45,7 @@ import { useProjects } from '../../stores/projects';
 import { useSettings, useDispatchName } from '../../stores/settings';
 import { useGroups } from './store';
 import { leafTabIds, leafCount, MAX_PANES } from './types';
+import { TabActivityIndicator, GroupActivityIndicator } from './TabActivityIndicator';
 
 /* ── Constants ───────────────────────────────────────────────────────── */
 const BAR_H      = 44;
@@ -150,6 +151,7 @@ function ClassicTabBar({ onSelect }: { onSelect?: () => void }) {
             }}
           >
             {dispatch && <Network size={14} weight="fill" style={{ flexShrink: 0, color: 'var(--color-accent)' }} />}
+            {!dispatch && <TabActivityIndicator tabId={id} />}
             <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
               <span style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {dispatch ? dispatchName : tabLabel(id, byProject)}
@@ -323,6 +325,7 @@ function SingleChip({ slot, index, onSelect }: { slot: SingleSlot; index: number
     >
       {isOver && <MergeOverlay label="Merge" />}
 
+      <TabActivityIndicator tabId={slot.tabId} />
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
         <span style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {t?.label ?? 'tab'}
@@ -453,6 +456,7 @@ function GroupChip({ slot, index, onSelect }: { slot: GroupSlot; index: number; 
         size={14} weight="bold"
         style={{ flexShrink: 0, color: act ? 'var(--color-accent)' : 'var(--color-text-tertiary)' }}
       />
+      <GroupActivityIndicator tabIds={slot.tabIds} />
 
       {/* Label — double-click the title to rename the group */}
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>

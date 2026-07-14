@@ -446,7 +446,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       });
     } else if (url.match(/\/api\/terminals\/[^/]+\/ws/) || url.match(/\/api\/sessions\/[^/]+\/terminal/)) {
       terminalWss.handleUpgrade(request, socket, head, (ws) => {
-        handleTerminalConnection(ws, request, ptyManager, sessionService);
+        handleTerminalConnection(ws, request, ptyManager, sessionService, terminalMonitor);
       });
     } else if (url === '/api/events') {
       eventsWss.handleUpgrade(request, socket, head, (ws) => {
