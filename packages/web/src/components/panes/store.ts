@@ -109,13 +109,26 @@ export const useGroups = create<GroupsState>((set, get) => ({
     const g = get().groups[groupId];
     if (!g) return;
     const ids = leafTabIds(g.layout);
+
+    // closeTab is ABORTABLE — a tab with unsaved edits prompts, and the user can decline. So the
+    // group must NOT be torn down before we know the close is really happening; doing that first
+    // destroyed the layout on an action the user had just cancelled. Nor can we let each tab prompt
+    // in turn: declining the third of four would leave a half-emptied group behind. Ask ONCE for the
+    // whole group, then force-close, so the decision is all-or-nothing.
+    const dirty = ids.filter((id) => useTabs.getState().dirtyTabs[id]);
+    if (dirty.length) {
+      const what = dirty.length === 1 ? '1 file has' : `${dirty.length} files have`;
+      if (!window.confirm(`${what} unsaved changes. Close all panes in this group and discard them?`)) return;
+    }
+
+    for (const id of ids) useTabs.getState().closeTab(id, { force: true });
+
     const groups = { ...get().groups };
     delete groups[groupId];
     const tabGroup = { ...get().tabGroup };
     for (const id of ids) if (tabGroup[id] === groupId) delete tabGroup[id];
     set({ groups, tabGroup });
     persist(get());
-    for (const id of ids) useTabs.getState().closeTab(id);
   },
 
   removeFromGroup: (groupId, tabId) => {
