@@ -17,8 +17,7 @@ import { useSettings, useDispatchName, type Density } from '../../stores/setting
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { timeAgo } from '../../lib/time';
 import { NewTabMenu } from './NewTabMenu';
-import { NewClaudeThreadModal } from './NewClaudeThreadModal';
-import { NewCodexThreadModal } from './NewCodexThreadModal';
+import { NewThreadModal, type NewThreadKind } from './NewThreadModal';
 import { RenameProjectModal } from './RenameProjectModal';
 import { RenameThreadModal } from './RenameThreadModal';
 import { api } from '../../api/client';
@@ -204,8 +203,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   const [projMenu, setProjMenu] = useState<{ x: number; y: number } | null>(null);
   const [projArchive, setProjArchive] = useState(false);
   const [renameProj, setRenameProj] = useState(false);
-  const [newClaude, setNewClaude] = useState(false);
-  const [newCodex, setNewCodex] = useState(false);
+  const [newThread, setNewThread] = useState<NewThreadKind | null>(null);
   const [projTab, setProjTab] = useState<'threads' | 'agents'>('threads');
   const loadingMap = useTabs((s) => s.loading);
   const pfs = useSettings((s) => s.projectFontSize);
@@ -276,7 +274,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
                 else if (sec.add === 'browser') void addTab('browser', { url: 'about:blank' });
                 else if (sec.add === 'notes') void addTab('notes');
               }} style={plusStyle}>+</button>
-              {sec.add === 'menu' && menu && <NewTabMenu sessionId={session.id} onClose={() => setMenu(false)} onCreated={onSelectTab} />}
+              {sec.add === 'menu' && menu && <NewTabMenu onClose={() => setMenu(false)} onPick={(kind) => setNewThread(kind)} />}
             </span>
           )}
         </SectionHeader>
@@ -370,7 +368,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
             {projTab === 'threads' ? (
               <span style={{ alignSelf: 'center', position: 'relative', display: 'inline-flex' }}>
                 <button title="Add thread" onClick={(e) => { e.stopPropagation(); setMenu((o) => !o); }} style={plusStyle}>+</button>
-                {menu && <NewTabMenu sessionId={session.id} onClose={() => setMenu(false)} onCreated={onSelectTab} onPickClaude={() => { setMenu(false); setNewClaude(true); }} onPickCodex={() => { setMenu(false); setNewCodex(true); }} />}
+                {menu && <NewTabMenu onClose={() => setMenu(false)} onPick={(kind) => setNewThread(kind)} />}
               </span>
             ) : (
               <button title="Add automation" onClick={(e) => { e.stopPropagation(); onNewAgent?.(session.id); }} style={{ ...plusStyle, alignSelf: 'center' }}>+</button>
@@ -506,12 +504,13 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
         <RenameProjectModal sessionId={session.id} current={session.name} onClose={() => setRenameProj(false)} />
       )}
 
-      {newClaude && (
-        <NewClaudeThreadModal sessionId={session.id} onClose={() => setNewClaude(false)} onCreated={onSelectTab} />
-      )}
-
-      {newCodex && (
-        <NewCodexThreadModal sessionId={session.id} onClose={() => setNewCodex(false)} onCreated={onSelectTab} />
+      {newThread && (
+        <NewThreadModal
+          sessionId={session.id}
+          initialKind={newThread}
+          onClose={() => setNewThread(null)}
+          onCreated={(id) => onSelectTab(id)}
+        />
       )}
     </div>
   );
