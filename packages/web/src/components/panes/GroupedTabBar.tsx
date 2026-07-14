@@ -81,6 +81,27 @@ function persistTabs() {
   } catch { /* ignore */ }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+   Unsaved-changes marker.
+
+   The "● unsaved" badge lives in FileEditorTab, which only renders while its tab is ACTIVE — so a
+   BACKGROUNDED tab with unsaved edits used to show nothing at all, and the user's first hint was
+   the confirm dialog fired by clicking ×. Drafts survive backgrounding precisely so a tab can sit
+   there unsaved; the tab strip is the one surface that can say so.
+   ═══════════════════════════════════════════════════════════════════════ */
+function UnsavedDot({ title = 'Unsaved changes' }: { title?: string }) {
+  return (
+    <span
+      title={title}
+      aria-label={title}
+      style={{
+        flexShrink: 0, width: 7, height: 7, borderRadius: '50%',
+        background: 'var(--color-status-yellow)', display: 'inline-block',
+      }}
+    />
+  );
+}
+
 /* Pointer-precise collision: prefer the droppable under the pointer (a gap or a
    tab), falling back to nearest-center only when the pointer is in a dead zone. */
 const collisionDetection: CollisionDetection = (args) => {
@@ -96,6 +117,7 @@ function ClassicTabBar({ onSelect }: { onSelect?: () => void }) {
   const openTabIds  = useTabs((s) => s.openTabIds);
   const activeTabId = useTabs((s) => s.activeTabId);
   const byProject   = useTabs((s) => s.byProject);
+  const dirtyTabs   = useTabs((s) => s.dirtyTabs);
   const sessions    = useProjects((s) => s.sessions);
   const dispatchName = useDispatchName();
 
@@ -136,6 +158,7 @@ function ClassicTabBar({ onSelect }: { onSelect?: () => void }) {
                 {proj?.name ?? ''}
               </span>
             </div>
+            {dirtyTabs[id] && <UnsavedDot />}
             <button
               onClick={(e) => { e.stopPropagation(); useTabs.getState().closeTab(id); }}
               title="Close tab"
@@ -244,6 +267,7 @@ function DropGap({ index }: { index: number }) {
 function SingleChip({ slot, index, onSelect }: { slot: SingleSlot; index: number; onSelect?: () => void }) {
   const activeTabId = useTabs((s) => s.activeTabId);
   const byProject   = useTabs((s) => s.byProject);
+  const dirty       = useTabs((s) => !!s.dirtyTabs[slot.tabId]);
   const sessions    = useProjects((s) => s.sessions);
 
   const t    = findTerminal(byProject, slot.tabId);
@@ -308,6 +332,8 @@ function SingleChip({ slot, index, onSelect }: { slot: SingleSlot; index: number
         </span>
       </div>
 
+      {dirty && <UnsavedDot />}
+
       <button
         onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => { e.stopPropagation(); useTabs.getState().closeTab(slot.tabId); }}
@@ -357,6 +383,9 @@ function SingleTabGhost({ slot }: { slot: SingleSlot }) {
 function GroupChip({ slot, index, onSelect }: { slot: GroupSlot; index: number; onSelect?: () => void }) {
   const activeTabId = useTabs((s) => s.activeTabId);
   const byProject   = useTabs((s) => s.byProject);
+  // A group chip is the ONLY strip presence its member tabs have, so it has to speak for all of
+  // them: if any pane inside it is unsaved, the chip says so. (Its × closes the whole group.)
+  const dirtyCount  = useTabs((s) => slot.tabIds.filter((id) => s.dirtyTabs[id]).length);
   const name        = useGroups((s) => s.groups[slot.groupId]?.name);
 
   const act     = slot.tabIds.includes(activeTabId ?? '');
@@ -457,6 +486,10 @@ function GroupChip({ slot, index, onSelect }: { slot: GroupSlot; index: number; 
           </>
         )}
       </div>
+
+      {dirtyCount > 0 && (
+        <UnsavedDot title={dirtyCount === 1 ? 'Unsaved changes in 1 pane' : `Unsaved changes in ${dirtyCount} panes`} />
+      )}
 
       {/* Split — dissolve the group; tabs return to individual tabs with their original names */}
       <button
