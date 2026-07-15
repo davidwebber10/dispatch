@@ -1,10 +1,14 @@
 import os from 'os';
 import path from 'path';
-import { execFileSync } from 'child_process';
-import type { Platform } from './types.js';
+import { execFile, execFileSync } from 'child_process';
+import type { Platform, TailscaleStatus } from './types.js';
 import { encodeClaudeProjectDir } from './encode.js';
 import { installBrowserShim } from '../auth/shim.js';
 import { createDarwinDaemon } from './daemon-darwin.js';
+import { isLoopbackAddress, isLoopbackHost } from '../files/reveal.js';
+
+/** Absolute path to the Tailscale CLI bundled inside the macOS app. */
+const TAILSCALE_BIN = '/Applications/Tailscale.app/Contents/MacOS/Tailscale';
 
 export const darwin: Platform = {
   id: 'darwin',
@@ -45,4 +49,31 @@ export const darwin: Platform = {
     path.join(os.homedir(), '.claude', 'projects', encodeClaudeProjectDir(workDir, 'darwin')),
   installBrowserShim: (opts) => installBrowserShim(opts),
   daemon: createDarwinDaemon(),
+  flavor: 'macos',
+  fileManagerName: 'Finder',
+  // Argument array, never a shell string: a file named `$(rm -rf ~).png` is just a filename.
+  // Absolute binary path, never a PATH lookup: the daemon runs under launchd, whose environment
+  // is minimal and need not contain /usr/bin.
+  revealInFileManager: (absPaths) =>
+    new Promise((resolve, reject) =>
+      execFile('/usr/bin/open', ['-R', ...absPaths], { timeout: 3000 }, (err) => (err ? reject(err) : resolve()))),
+  isLocalClient: (c) => !c.proxied && isLoopbackAddress(c.remoteAddress) && isLoopbackHost(c.host),
+  toolPlatformKey: () => (process.arch === 'arm64' ? 'darwin-arm64' : 'darwin-x64'),
+  tailscaleStatus: () =>
+    new Promise<TailscaleStatus>((resolve) => {
+      execFile(TAILSCALE_BIN, ['status', '--json'], { timeout: 3000 }, (err, stdout) => {
+        if (err) return resolve({ ip: null, hostname: null, online: false });
+        try {
+          const status = JSON.parse(stdout);
+          const self = status.Self || {};
+          resolve({
+            ip: (self.TailscaleIPs || [])[0] || null,
+            hostname: self.HostName || null,
+            online: self.Online || false,
+          });
+        } catch {
+          resolve({ ip: null, hostname: null, online: false });
+        }
+      });
+    }),
 };

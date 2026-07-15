@@ -152,25 +152,7 @@ export function createStateRouter(db: Database.Database): Router {
 
   // GET /api/state/tailscale — return Tailscale status
   router.get('/tailscale', async (_req, res) => {
-    if (platform.id !== 'darwin') {
-      return res.json({ ip: null, hostname: null, online: false });
-    }
-    try {
-      const { execSync } = await import('child_process');
-      const output = execSync('/Applications/Tailscale.app/Contents/MacOS/Tailscale status --json', {
-        encoding: 'utf-8',
-        timeout: 5000,
-      });
-      const status = JSON.parse(output);
-      const self = status.Self || {};
-      res.json({
-        ip: (self.TailscaleIPs || [])[0] || null,
-        hostname: self.HostName || null,
-        online: self.Online || false,
-      });
-    } catch {
-      res.json({ ip: null, hostname: null, online: false });
-    }
+    res.json(await platform.tailscaleStatus());
   });
 
   // GET /api/state/host — what can this daemon do for the browser asking?

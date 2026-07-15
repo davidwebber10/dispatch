@@ -19,6 +19,12 @@ const linuxDaemonUnsupported: DaemonController = {
 export const linux: Platform = {
   ...darwin,
   id: 'linux',
+  flavor: 'linux',
+  fileManagerName: null,
+  // isLocalClient inherits darwin's loopback rule via the spread — correct for both.
+  revealInFileManager: async () => { throw new Error('Reveal is not supported on headless Linux.'); },
+  toolPlatformKey: () => (process.arch === 'arm64' ? 'linux-arm64' : 'linux-x64'),
+  tailscaleStatus: async () => ({ ip: null, hostname: null, online: false }),
   logDir: () => path.join(os.homedir(), '.dispatch', 'logs'),
   daemon: linuxDaemonUnsupported,
 };

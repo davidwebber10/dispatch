@@ -1,4 +1,5 @@
 import type { DaemonController } from './daemon.js';
+import type { RevealClient } from '../files/reveal.js';
 
 export interface ShellSpec {
   command: string;
@@ -10,8 +11,14 @@ export interface BrowserShimOptions {
   serverUrl: string;
 }
 
-// darwin returns BROWSER/GH_BROWSER/DISPATCH_SERVER_URL/PATH; win32 returns {}.
+// darwin returns BROWSER/GH_BROWSER/DISPATCH_SERVER_URL/PATH; linux returns {}.
 export type BrowserShimEnv = Record<string, string>;
+
+export interface TailscaleStatus {
+  ip: string | null;
+  hostname: string | null;
+  online: boolean;
+}
 
 export interface Platform {
   /** process.platform of the active implementation. */
@@ -34,4 +41,16 @@ export interface Platform {
   installBrowserShim(opts: BrowserShimOptions): BrowserShimEnv;
   /** Manages the background server daemon for this platform. */
   readonly daemon: DaemonController;
+  /** 'macos' | 'wsl' | 'linux' — the host-integration flavor (finer-grained than `id`). */
+  readonly flavor: 'macos' | 'wsl' | 'linux';
+  /** Name of the native file manager to reveal files in, or null when Reveal is never offered. */
+  readonly fileManagerName: string | null;
+  /** Opens the native file manager with the given absolute paths selected. */
+  revealInFileManager(absPaths: string[]): Promise<void>;
+  /** True when the request client is genuinely on this machine (not behind a same-host proxy). */
+  isLocalClient(client: RevealClient): boolean;
+  /** Platform key used to select prebuilt tool binaries, e.g. 'darwin-arm64' | 'linux-x64'. */
+  toolPlatformKey(): string;
+  /** Current Tailscale status, or the null shape when Tailscale is absent/unreachable. */
+  tailscaleStatus(): Promise<TailscaleStatus>;
 }
