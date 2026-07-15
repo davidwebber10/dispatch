@@ -43,4 +43,20 @@ describe('session routes', () => {
     const list = await request(app).get('/api/sessions');
     expect(list.body).toHaveLength(0);
   });
+
+  it('POST /api/sessions warns when workingDir is on /mnt (Windows filesystem, WSL2)', async () => {
+    const res = await request(app)
+      .post('/api/sessions')
+      .send({ provider: 'claude-code', workingDir: '/mnt/c/Users/x/proj', name: 'mnt-test' });
+    expect(res.status).toBe(201);
+    expect(res.body.warning).toMatch(/mnt.*slow/i);
+  });
+
+  it('POST /api/sessions has no warning for a workingDir in the Linux filesystem', async () => {
+    const res = await request(app)
+      .post('/api/sessions')
+      .send({ provider: 'claude-code', workingDir: '/home/user/proj', name: 'home-test' });
+    expect(res.status).toBe(201);
+    expect(res.body).not.toHaveProperty('warning');
+  });
 });

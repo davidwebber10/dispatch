@@ -20,7 +20,10 @@ export function createSessionsRouter(sessionService: SessionService, broadcaster
     try {
       const session = sessionService.create(req.body);
       broadcaster?.broadcast({ type: 'session:created', session });
-      res.status(201).json(session);
+      const warning = req.body.workingDir?.startsWith('/mnt/')
+        ? 'This project lives on the Windows filesystem (/mnt/*): expect slow file I/O and case-insensitive names. Prefer a path inside the Linux filesystem (~/…).'
+        : undefined;
+      res.status(201).json({ ...session, ...(warning ? { warning } : {}) });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }

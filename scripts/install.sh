@@ -13,7 +13,10 @@ red() { printf '\033[31m%s\033[0m\n' "$1" >&2; }
 green() { printf '\033[32m%s\033[0m\n' "$1"; }
 bold() { printf '\033[1m%s\033[0m\n' "$1"; }
 
-[ "$(uname)" = "Darwin" ] || { red "Dispatch's daemon is macOS-only (launchd)."; exit 1; }
+case "$(uname)" in
+  Darwin|Linux) ;;
+  *) red "Dispatch supports macOS and Linux/WSL2 (on Windows, run scripts/install-windows.ps1)."; exit 1 ;;
+esac
 command -v git >/dev/null 2>&1 || { red "git not found — install Xcode Command Line Tools: xcode-select --install"; exit 1; }
 command -v node >/dev/null 2>&1 || { red "Node.js 18+ not found — install from https://nodejs.org and retry."; exit 1; }
 if ! command -v pnpm >/dev/null 2>&1; then
