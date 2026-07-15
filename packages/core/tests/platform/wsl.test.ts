@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { detectWsl, createWslPlatform } from '../../src/platform/wsl.js';
+import { detectWsl, createWslPlatform, parseDefaultGateway } from '../../src/platform/wsl.js';
 
 describe('detectWsl', () => {
   test('true when WSL_DISTRO_NAME is set', () => {
@@ -23,3 +23,53 @@ describe('wsl platform', () => {
     expect(p.logDir()).toContain('.dispatch');
   });
 });
+
+const ROUTE = `Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT
+eth0\t00000000\t0120A8C0\t0003\t0\t0\t0\t00000000\t0\t0\t0
+eth0\t0020A8C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0`;
+
+test('parseDefaultGateway decodes little-endian hex', () => {
+  expect(parseDefaultGateway(ROUTE)).toBe('192.168.32.1');
+});
+test('parseDefaultGateway null when no default route', () => {
+  expect(parseDefaultGateway(ROUTE.split('\n').filter((l) => !l.includes('00000000\t0120A8C0')).join('\n'))).toBeNull();
+});
+
+function fakeWsl(calls: string[][], gw = ROUTE) {
+  return createWslPlatform({
+    execFile: async (cmd, args) => {
+      calls.push([cmd, ...args]);
+      if (cmd === 'wslpath') return { stdout: 'C:\\Users\\dw\\proj\\file.txt\n' };
+      return { stdout: '' };
+    },
+    readFileSync: (p) => (p === '/proc/net/route' ? gw : 'Linux version 5.15-microsoft'),
+    env: { WSL_DISTRO_NAME: 'Ubuntu' } as NodeJS.ProcessEnv,
+  });
+}
+
+test('reveal translates via wslpath and invokes explorer.exe /select', async () => {
+  const calls: string[][] = [];
+  await fakeWsl(calls).revealInFileManager(['/home/dw/proj/file.txt']);
+  expect(calls).toEqual([
+    ['wslpath', '-w', '/home/dw/proj/file.txt'],
+    ['explorer.exe', '/select,C:\\Users\\dw\\proj\\file.txt'],
+  ]);
+});
+test('explorer.exe nonzero exit is swallowed (it exits 1 on success)', async () => {
+  const p = createWslPlatform({
+    execFile: async (cmd, args) => {
+      if (cmd === 'explorer.exe') { const e: any = new Error('exit 1'); e.code = 1; throw e; }
+      return { stdout: 'C:\\x\n' };
+    },
+    readFileSync: () => ROUTE, env: {} as NodeJS.ProcessEnv,
+  });
+  await expect(p.revealInFileManager(['/x'])).resolves.toBeUndefined();
+});
+test('isLocalClient: NAT gateway peer with localhost Host accepted; portproxy LAN refused; tunnel refused', () => {
+  const p = fakeWsl([]);
+  expect(p.isLocalClient({ remoteAddress: '192.168.32.1', host: 'localhost:3456', proxied: false })).toBe(true);
+  expect(p.isLocalClient({ remoteAddress: '127.0.0.1', host: 'localhost:3456', proxied: false })).toBe(true);   // mirrored mode
+  expect(p.isLocalClient({ remoteAddress: '192.168.32.1', host: '192.168.1.5:3456', proxied: false })).toBe(false); // portproxy
+  expect(p.isLocalClient({ remoteAddress: '192.168.32.1', host: 'localhost:3456', proxied: true })).toBe(false);    // tunnel
+});
+test('fileManagerName is File Explorer', () => expect(fakeWsl([]).fileManagerName).toBe('File Explorer'));
