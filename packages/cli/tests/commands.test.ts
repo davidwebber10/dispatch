@@ -9,7 +9,7 @@ vi.mock('child_process', () => ({
 }));
 
 import { execFileSync, spawnSync } from 'child_process';
-import { runCommand, lastLines, probeHttp, cmdBuild, cmdRun } from '../src/index.js';
+import { runCommand, lastLines, probeHttp, cmdBuild, cmdRun, cmdUpdate } from '../src/index.js';
 
 // Give both mocks a harmless default implementation so tests that don't care about
 // child_process (routing, probe-via-injected-`probe`, etc.) keep behaving as if the
@@ -129,6 +129,44 @@ describe('cmdBuild', () => {
     expect(installCallArgs).toBeDefined();
     const installOpts = installCallArgs?.[2] as { env?: Record<string, string> } | undefined;
     expect(installOpts?.env?.CI).toBe('true');
+  });
+});
+
+describe('cmdUpdate', () => {
+  test('runs git pull, then build, then daemon.restart() — in that order', () => {
+    const calls: string[] = [];
+    vi.mocked(execFileSync).mockImplementation(((cmd: string, args: string[]) => {
+      calls.push(`${cmd} ${(args ?? []).join(' ')}`);
+      return Buffer.from('');
+    }) as any);
+    const daemon = {
+      install: vi.fn(), uninstall: vi.fn(), start: vi.fn(), stop: vi.fn(),
+      status: vi.fn(() => ({ loaded: true })),
+      restart: vi.fn(() => { calls.push('daemon.restart'); }),
+    };
+
+    cmdUpdate({ daemon } as any);
+
+    const pullIdx = calls.findIndex(c => c === 'git pull --ff-only');
+    const installIdx = calls.findIndex(c => c === 'pnpm install');
+    const buildIdx = calls.findIndex(c => c === 'pnpm -r run build');
+    const restartIdx = calls.findIndex(c => c === 'daemon.restart');
+
+    expect(pullIdx).toBeGreaterThanOrEqual(0);
+    expect(installIdx).toBeGreaterThan(pullIdx);
+    expect(buildIdx).toBeGreaterThan(installIdx);
+    expect(restartIdx).toBeGreaterThan(buildIdx);
+    expect(daemon.restart).toHaveBeenCalledOnce();
+  });
+
+  test('a restart() that throws (e.g. linux "not implemented") propagates rather than being swallowed', () => {
+    const daemon = {
+      install: vi.fn(), uninstall: vi.fn(), start: vi.fn(), stop: vi.fn(),
+      status: vi.fn(() => ({ loaded: true })),
+      restart: vi.fn(() => { throw new Error('restart: not implemented on linux'); }),
+    };
+
+    expect(() => cmdUpdate({ daemon } as any)).toThrow('restart: not implemented on linux');
   });
 });
 

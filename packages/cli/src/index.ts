@@ -154,7 +154,13 @@ function cmdTools(ctx: Ctx, args: string[]): void {
   spawnSync(node, [toolsCliPath(ctx), ...args], { stdio: 'inherit', ...shellOpt });
 }
 
-function cmdUpdate(ctx: Ctx): void {
+// Order is: git pull → build (pnpm install, since fresh dependencies may be needed
+// post-pull, then `pnpm -r run build`) → restart. Restart goes through the platform
+// daemon controller unconditionally — darwin wraps launchctl kickstart, wsl kills and
+// respawns the pidfile-tracked process, and linux throws "not implemented" (headless
+// linux runs foreground; an update that can't restart must surface that error, not
+// swallow it — so this deliberately does not wrap ctx.daemon.restart() in try/catch).
+export function cmdUpdate(ctx: Ctx): void {
   const shellOpt = ctx.platformId === 'win32' ? { shell: true } : {};
   execFileSync('git', ['pull', '--ff-only'], { stdio: 'inherit', ...shellOpt });
   cmdBuild(ctx);
