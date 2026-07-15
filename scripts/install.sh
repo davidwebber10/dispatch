@@ -12,9 +12,15 @@ CHECK_ONLY=false
 red() { printf '\033[31m%s\033[0m\n' "$1" >&2; }
 green() { printf '\033[32m%s\033[0m\n' "$1"; }
 bold() { printf '\033[1m%s\033[0m\n' "$1"; }
+yellow() { printf '\033[33m%s\033[0m\n' "$1"; }
 
 case "$(uname)" in
-  Darwin|Linux) ;;
+  Darwin) ;;
+  Linux)
+    if ! grep -qi microsoft /proc/version 2>/dev/null && [ -z "${WSL_DISTRO_NAME:-}" ]; then
+      yellow "Native Linux detected: 'dispatch run' (foreground) works, but daemon autostart ('dispatch install') is not supported yet — WSL2 is the supported Linux environment."
+    fi
+    ;;
   *) red "Dispatch supports macOS and Linux/WSL2 (on Windows, run scripts/install-windows.ps1)."; exit 1 ;;
 esac
 command -v git >/dev/null 2>&1 || { red "git not found — install Xcode Command Line Tools: xcode-select --install"; exit 1; }

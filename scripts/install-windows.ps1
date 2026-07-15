@@ -8,7 +8,7 @@ if (-not (Test-Wsl)) {
   wsl.exe --install -d $distro
   exit 0
 }
-$distros = (wsl.exe -l -q) -join "`n"
+$distros = ((wsl.exe -l -q) -join "`n") -replace "`0", ''
 if ($distros -notmatch [regex]::Escape($distro)) {
   wsl.exe --install -d $distro
   Write-Host "Ubuntu is installing. Complete its first-run user setup, then re-run this script."
