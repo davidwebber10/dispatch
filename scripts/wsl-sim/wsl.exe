@@ -1,0 +1,4 @@
+#!/bin/sh
+# scripts/wsl-sim/wsl.exe — log and succeed
+echo "wsl.exe $*" >> "$WSL_SIM_LOG"
+exit 0

@@ -1,0 +1,4 @@
+#!/bin/sh
+# scripts/wsl-sim/schtasks.exe — log and succeed
+echo "schtasks.exe $*" >> "$WSL_SIM_LOG"
+exit 0

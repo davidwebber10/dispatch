@@ -1,0 +1,4 @@
+#!/bin/sh
+# scripts/wsl-sim/explorer.exe — log and mimic explorer's exit-1-on-success quirk
+echo "explorer.exe $*" >> "$WSL_SIM_LOG"
+exit 1

@@ -1,0 +1,4 @@
+#!/bin/sh
+# scripts/wsl-sim/wslpath — log and fake-translate
+echo "wslpath $*" >> "$WSL_SIM_LOG"
+echo "C:\\wslsim$(echo "$2" | tr '/' '\\')"
