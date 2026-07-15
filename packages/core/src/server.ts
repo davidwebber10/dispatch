@@ -3,7 +3,6 @@ import path from 'path';
 import os from 'os';
 import http from 'http';
 import { fileURLToPath } from 'url';
-import { execFileSync, execSync } from 'child_process';
 import express from 'express';
 import { WebSocketServer } from 'ws';
 import type Database from 'better-sqlite3';
@@ -19,8 +18,6 @@ import { AgentService } from './agents/service.js';
 import { createAgentsRouter } from './routes/agents.js';
 import { aggregateSessionStatus } from './status/aggregate.js';
 import { AuthRequestService } from './auth/service.js';
-import { installBrowserShim } from './auth/shim.js';
-
 import { createAuthRouter } from './routes/auth.js';
 import { createProvidersRouter } from './routes/providers.js';
 import { createServersRouter } from './routes/servers.js';
@@ -48,6 +45,7 @@ import { StructuredSessionManager } from './structured/manager.js';
 import { startPtyTimingLoop } from './sessions/status.js';
 import { startAutoArchiveLoop } from './sessions/auto-archive.js';
 import { TerminalMonitor } from './terminal-monitor.js';
+import { platform } from './platform/index.js';
 import { startUpdateCheckLoop } from './update/checker.js';
 import { createUpdateRouter } from './routes/update.js';
 import { createAppearanceRouter, customIconHandler } from './routes/appearance.js';
@@ -145,7 +143,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const broadcaster: EventBroadcaster = createNoopBroadcaster();
   const authRequestService = new AuthRequestService(broadcaster);
 
-  const dispatchDir = options.secretsDir ?? path.join(os.homedir(), '.dispatch');
+  const dispatchDir = options.secretsDir ?? platform.dataDir();
   const toolsBase = options.toolsDir ?? path.join(dispatchDir, 'tools');
   const sessionService = new SessionService(db, ptyManager, path.join(dispatchDir, 'mcp.json'));
   const agentService = new AgentService(db, sessionService, broadcaster);
@@ -211,34 +209,11 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   return app;
 }
 
-/**
- * When launched from Finder/Login Items, macOS GUI apps inherit launchd's
- * minimal PATH (no ~/.local/bin, no nvm, no homebrew). Ask the user's login
- * shell for its PATH so spawned PTYs can find `claude`, `codex`, git, etc.
- */
-function resolveShellPath(): string | undefined {
-  try {
-    const shell = process.env.SHELL || '/bin/zsh';
-    // Wrap PATH in sentinels so we can extract it cleanly even if .zshrc prints noise
-    // (e.g. "Restored session:" lines, p10k hints, shell integration prints).
-    const out = execFileSync(
-      shell,
-      ['-ilc', 'echo -n "__DISPATCH_PATH_START__${PATH}__DISPATCH_PATH_END__"'],
-      { encoding: 'utf-8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] },
-    );
-    const match = String(out).match(/__DISPATCH_PATH_START__(.*?)__DISPATCH_PATH_END__/s);
-    const resolved = match?.[1]?.trim();
-    return resolved && resolved.length > 0 ? resolved : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 export async function startServer(options?: { port?: number; allowRandomPortFallback?: boolean }): Promise<{ port: number; cleanup: () => void }> {
   const preferredPort = options?.port ?? 3456;
 
   // Resolve the user's shell PATH so PTYs inherit it (fixes Finder/login-items launches)
-  const shellPath = resolveShellPath();
+  const shellPath = platform.resolveLoginPath();
   if (shellPath) {
     process.env.PATH = shellPath;
     console.log(`Resolved shell PATH (${shellPath.split(':').length} entries)`);
@@ -251,10 +226,10 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   } catch {}
 
   // Ensure data directory exists
-  const dataDir = path.join(os.homedir(), '.dispatch');
+  const dataDir = platform.dataDir();
   fs.mkdirSync(dataDir, { recursive: true });
 
-  const browserShimEnv = installBrowserShim({
+  const browserShimEnv = platform.installBrowserShim({
     dataDir,
     serverUrl: `http://127.0.0.1:${preferredPort}`,
   });
@@ -267,14 +242,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const ptyManager = new PTYManager(browserShimEnv);
 
   // Clean stale PIDs
-  const alivePids = new Set<number>();
-  try {
-    const procs = execSync('ps -eo pid', { encoding: 'utf-8' });
-    for (const line of procs.split('\n')) {
-      const pid = parseInt(line.trim(), 10);
-      if (!isNaN(pid)) alivePids.add(pid);
-    }
-  } catch {}
+  const alivePids = new Set<number>(platform.listProcessIds());
   sessionsDb.clearStalePids(db, alivePids);
 
   // Create Express app
@@ -481,7 +449,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   });
 
   if (port !== preferredPort) {
-    effectiveShimEnv = installBrowserShim({
+    effectiveShimEnv = platform.installBrowserShim({
       dataDir,
       serverUrl: `http://127.0.0.1:${port}`,
     });

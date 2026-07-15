@@ -4,6 +4,7 @@ import os from 'os';
 import { Router } from 'express';
 import type Database from 'better-sqlite3';
 import * as appState from '../db/app-state.js';
+import { platform } from '../platform/index.js';
 import { sumTranscriptTokens } from '../sessions/cc-sessions.js';
 import { getRunningVersion, isNewerVersion } from '../update/version.js';
 import { canReveal, revealClientFrom } from '../files/reveal.js';
@@ -151,6 +152,9 @@ export function createStateRouter(db: Database.Database): Router {
 
   // GET /api/state/tailscale — return Tailscale status
   router.get('/tailscale', async (_req, res) => {
+    if (platform.id !== 'darwin') {
+      return res.json({ ip: null, hostname: null, online: false });
+    }
     try {
       const { execSync } = await import('child_process');
       const output = execSync('/Applications/Tailscale.app/Contents/MacOS/Tailscale status --json', {
