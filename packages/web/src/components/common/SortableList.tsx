@@ -30,6 +30,21 @@ class RowKeyboardSensor extends KeyboardSensor {
   }];
 }
 
+// Same bubbling problem, pointer edition: modals a row's card renders (rename,
+// new-thread) are portaled to <body>, but their pointerdowns still bubble
+// through the React tree into the row's drag listeners — a press-hold on the
+// new-thread <select> lifted the project row (and the native picker swallows
+// the pointerup, so it stayed wiggling). Unlike the keyboard sensor, a drag
+// must start from child content, so gate on DOM containment rather than
+// target identity: only DOM descendants of the row are drag intents.
+class RowPointerSensor extends PointerSensor {
+  static activators: typeof PointerSensor.activators = [{
+    eventName: 'onPointerDown',
+    handler: (event, ...rest) =>
+      event.currentTarget.contains(event.target as Node) && PointerSensor.activators[0].handler(event, ...rest),
+  }];
+}
+
 function SortableRow({ id, children }: { id: string; children: (dragging: boolean) => ReactNode }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
   return (
@@ -54,7 +69,7 @@ function SortableRow({ id, children }: { id: string; children: (dragging: boolea
 export function SortableList<T extends { id: string }>({ items, onReorder, renderItem, renderOverlay, disabled }: SortableListProps<T>) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { delay: 180, tolerance: 8 } }),
+    useSensor(RowPointerSensor, { activationConstraint: { delay: 180, tolerance: 8 } }),
     useSensor(RowKeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 

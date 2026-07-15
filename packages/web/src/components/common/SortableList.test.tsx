@@ -1,5 +1,6 @@
-import { render, screen, fireEvent } from '@testing-library/react';
-import { test, expect } from 'vitest';
+import { render, screen, fireEvent, act } from '@testing-library/react';
+import { test, expect, vi, beforeAll } from 'vitest';
+import { createPortal } from 'react-dom';
 import { SortableList } from './SortableList';
 
 const items = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
@@ -57,4 +58,67 @@ test('space on the row itself still lifts it (keyboard reorder a11y preserved)',
   row.focus();
   const notPrevented = fireEvent.keyDown(row, { key: ' ', code: 'Space' });
   expect(notPrevented).toBe(false);
+});
+
+// jsdom has no PointerEvent; dnd-kit's pointer activator checks isPrimary /
+// button on the native event, so back it with a MouseEvent that carries them.
+beforeAll(() => {
+  if (!window.PointerEvent) {
+    class PointerEventShim extends MouseEvent {
+      isPrimary: boolean;
+      pointerId: number;
+      constructor(type: string, init: PointerEventInit = {}) {
+        super(type, init);
+        this.isPrimary = init.isPrimary ?? true;
+        this.pointerId = init.pointerId ?? 1;
+      }
+    }
+    (window as unknown as { PointerEvent: typeof PointerEventShim }).PointerEvent = PointerEventShim;
+  }
+});
+
+// The pointer sensor hears pointerdown via React-tree bubbling, which crosses
+// portals: modals rendered by a row's card (rename, new-thread) live under
+// document.body in the DOM but still bubble into the row's drag listeners.
+// A press-hold on the new-thread <select> (the native picker swallows the
+// pointerup) therefore lifted the project row and left it wiggling.
+function renderWithPortaledModal() {
+  return render(
+    <SortableList
+      items={items}
+      onReorder={() => {}}
+      renderItem={(it) => (
+        <div>
+          <span>body-{it.id}</span>
+          {createPortal(
+            <select aria-label={`kind-${it.id}`}><option>Claude Code</option></select>,
+            document.body,
+          )}
+        </div>
+      )}
+    />,
+  );
+}
+
+function holdPointer(el: Element) {
+  fireEvent.pointerDown(el, { isPrimary: true, button: 0, clientX: 10, clientY: 10 });
+  act(() => { vi.advanceTimersByTime(250); });
+}
+
+test('press-hold inside a portaled modal does not lift the row (new-thread select bug)', () => {
+  vi.useFakeTimers();
+  try {
+    const { getByLabelText } = renderWithPortaledModal();
+    holdPointer(getByLabelText('kind-a'));
+    expect(document.querySelector('.dispatch-wiggle')).toBeNull();
+  } finally { vi.useRealTimers(); }
+});
+
+test('press-hold on row content still lifts the row', () => {
+  vi.useFakeTimers();
+  try {
+    const { getByText } = renderWithPortaledModal();
+    holdPointer(getByText('body-a'));
+    expect(document.querySelector('.dispatch-wiggle')).not.toBeNull();
+  } finally { vi.useRealTimers(); }
 });
