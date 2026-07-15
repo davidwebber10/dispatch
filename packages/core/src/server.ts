@@ -229,6 +229,10 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const dataDir = platform.dataDir();
   fs.mkdirSync(dataDir, { recursive: true });
 
+  // Record our own pid so daemon controllers (e.g. WSL's restart()) can find and
+  // signal this process without depending on the OS service manager for tracking.
+  fs.writeFileSync(path.join(dataDir, 'daemon.pid'), String(process.pid));
+
   const browserShimEnv = platform.installBrowserShim({
     dataDir,
     serverUrl: `http://127.0.0.1:${preferredPort}`,
@@ -510,6 +514,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     structuredWss.close();
     server.close();
     db.close();
+    try { fs.unlinkSync(path.join(dataDir, 'daemon.pid')); } catch {}
   };
 
   process.on('SIGTERM', cleanup);

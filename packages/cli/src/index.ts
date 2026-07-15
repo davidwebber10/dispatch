@@ -68,6 +68,7 @@ export function runCommand(argv: string[], ctx: Ctx): void {
       cmdUpdate(ctx);
       return;
     case 'run':
+    case 'daemon-run':
       cmdRun(ctx);
       return;
     case 'logs':

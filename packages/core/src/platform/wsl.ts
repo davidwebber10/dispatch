@@ -2,6 +2,7 @@ import fs from 'fs';
 import { linux } from './linux.js';
 import type { Platform } from './types.js';
 import { isLoopbackAddress, isLoopbackHost } from '../files/reveal.js';
+import { createWslDaemon, defaultWslDaemonDeps } from './daemon-wsl.js';
 
 export interface WslDeps {
   execFile(cmd: string, args: string[]): Promise<{ stdout: string }>;
@@ -54,6 +55,7 @@ export function createWslPlatform(deps: WslDeps = defaultDeps): Platform {
     ...linux,
     flavor: 'wsl',
     fileManagerName: 'File Explorer',
+    daemon: createWslDaemon(defaultWslDaemonDeps),
     // explorer.exe /select, accepts ONE path (unlike `open -R`); reveal the first.
     // The macOS multi-select rationale (Finder Cmd-C into upload fields) has a native
     // Windows equivalent: dragging from Explorer into the browser works directly.
