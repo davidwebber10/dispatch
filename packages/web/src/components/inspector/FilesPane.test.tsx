@@ -60,7 +60,7 @@ beforeEach(() => {
   vi.mocked(clipboardImageSupported).mockReturnValue(true);
   // Fresh per test: fail closed on Reveal, and give project 'p1' a real workingDir so the
   // Copy Paths assertion has an absolute prefix to check.
-  useHost.setState({ platform: 'darwin', canReveal: false });
+  useHost.setState({ platform: 'darwin', canReveal: false, fileManagerName: null });
   useProjects.setState({
     sessions: [{ id: 'p1', name: 'p1', workingDir: '/work', status: 'working' } as any],
     activeId: 'p1',
@@ -222,7 +222,7 @@ it('copies the absolute paths of the whole selection as text', async () => {
 });
 
 it('hides Reveal in Finder when the daemon is remote', async () => {
-  useHost.setState({ platform: 'darwin', canReveal: false });
+  useHost.setState({ platform: 'darwin', canReveal: false, fileManagerName: null });
   render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
   fireEvent.contextMenu(await screen.findByText('a.png'));
   expect(screen.queryByText('Reveal in Finder')).toBeNull();
