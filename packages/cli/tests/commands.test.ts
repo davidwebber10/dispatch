@@ -1,5 +1,29 @@
-import { describe, expect, test, vi } from 'vitest';
-import { runCommand, lastLines, probeHttp } from '../src/index.js';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+
+// Mocked at the module level so no test ever shells out for real. index.ts imports
+// execFileSync/spawnSync via a plain ESM `import { ... } from 'child_process'`
+// (not Node's raw createRequire-based require), so vi.mock intercepts it cleanly.
+vi.mock('child_process', () => ({
+  execFileSync: vi.fn(),
+  spawnSync: vi.fn(),
+}));
+
+import { execFileSync, spawnSync } from 'child_process';
+import { runCommand, lastLines, probeHttp, cmdBuild, cmdRun } from '../src/index.js';
+
+// Give both mocks a harmless default implementation so tests that don't care about
+// child_process (routing, probe-via-injected-`probe`, etc.) keep behaving as if the
+// real commands had succeeded quietly — matching the pre-mock behavior where these
+// calls actually ran (and usually succeeded) against the real dev environment.
+function resetChildProcessMocks(): void {
+  vi.mocked(execFileSync).mockReset().mockImplementation((() => '') as any);
+  vi.mocked(spawnSync).mockReset().mockImplementation((() => ({ status: 0, stdout: '', stderr: '' })) as any);
+}
+resetChildProcessMocks();
+
+afterEach(() => {
+  resetChildProcessMocks();
+});
 
 describe('dispatch CLI routing', () => {
   test('install → daemon.install; status → daemon.status', () => {
@@ -79,5 +103,45 @@ describe('lastLines', () => {
   });
   test('n=0 returns empty string', () => {
     expect(lastLines('a\nb\nc', 0)).toBe('');
+  });
+});
+
+describe('cmdBuild', () => {
+  test('runs `pnpm install` (with CI=true) before `pnpm -r run build`', () => {
+    const calls: Array<{ cmd: string; args: string[] }> = [];
+    vi.mocked(execFileSync).mockImplementation(((cmd: string, args: string[]) => {
+      calls.push({ cmd, args });
+      return Buffer.from('');
+    }) as any);
+
+    cmdBuild({} as any);
+
+    // Both calls happened, in order: install, then build.
+    const pnpmCalls = calls.filter(c => c.cmd === 'pnpm');
+    expect(pnpmCalls.length).toBeGreaterThanOrEqual(2);
+    expect(pnpmCalls[0].args).toEqual(['install']);
+    expect(pnpmCalls[1].args).toEqual(['-r', 'run', 'build']);
+
+    // The install call carried CI=true in its env.
+    const installCallArgs = vi.mocked(execFileSync).mock.calls.find(
+      (c) => c[0] === 'pnpm' && Array.isArray(c[1]) && (c[1] as string[])[0] === 'install',
+    );
+    expect(installCallArgs).toBeDefined();
+    const installOpts = installCallArgs?.[2] as { env?: Record<string, string> } | undefined;
+    expect(installOpts?.env?.CI).toBe('true');
+  });
+});
+
+describe('cmdRun', () => {
+  test('propagates the child process exit status via process.exit', () => {
+    vi.mocked(spawnSync).mockReturnValue({ status: 3 } as any);
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((_code?: number) => {
+      throw new Error('process.exit called');
+    }) as any);
+
+    expect(() => cmdRun({ port: 3456, entry: '/fake/server.js' } as any)).toThrow('process.exit called');
+    expect(exitSpy).toHaveBeenCalledWith(3);
+
+    exitSpy.mockRestore();
   });
 });

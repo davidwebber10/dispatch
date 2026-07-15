@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { createRequire } from 'module';
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
+import { execFileSync, spawnSync } from 'child_process';
 import type { DaemonController, DaemonInstallOptions } from 'dispatch-server/platform';
 
 const require = createRequire(import.meta.url);
@@ -86,9 +86,6 @@ export function runCommand(argv: string[], ctx: Ctx): void {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { execFileSync, spawnSync } = require('child_process') as typeof import('child_process');
-
 /**
  * Probe whether the Dispatch HTTP server is reachable on the given port.
  * If `probe` is provided (e.g. in tests), it is called directly.
@@ -119,10 +116,17 @@ function toolsCliPath(ctx: Ctx): string {
   return path.join(repoRoot, 'packages', 'core', 'dist', 'tools', 'cli.js');
 }
 
-function cmdBuild(ctx: Ctx): void {
+export function cmdBuild(ctx: Ctx): void {
   // On win32 pnpm/git are .cmd shims that execFile cannot launch directly without
   // shell: true. On macOS/Linux the binaries are real executables — no shell needed.
   const shellOpt = ctx.platformId === 'win32' ? { shell: true } : {};
+  // Mirrors the old bash script's `CI=true pnpm install` — always install first so
+  // fresh clones (scripts/install.sh) and self-updates that bump dependencies work.
+  execFileSync('pnpm', ['install'], {
+    stdio: 'inherit',
+    env: { ...process.env, CI: 'true' },
+    ...shellOpt,
+  });
   execFileSync('pnpm', ['-r', 'run', 'build'], { stdio: 'inherit', ...shellOpt });
   // Best-effort: install the bundled CLI tools after a successful build. Mirrors the
   // old bash `node .../tools/cli.js install || warn` — never fail the build on this.
@@ -156,9 +160,10 @@ function cmdUpdate(ctx: Ctx): void {
   ctx.daemon.restart();
 }
 
-function cmdRun(ctx: Ctx): void {
+export function cmdRun(ctx: Ctx): void {
   const env = { ...process.env, PORT: String(ctx.port), ...(ctx.env ?? {}) };
-  spawnSync(ctx.nodePath ?? process.execPath, [ctx.entry ?? ''], { stdio: 'inherit', env });
+  const result = spawnSync(ctx.nodePath ?? process.execPath, [ctx.entry ?? ''], { stdio: 'inherit', env });
+  process.exit(result.status ?? 1);
 }
 
 /**
@@ -351,19 +356,19 @@ async function main(): Promise<void> {
   const logDir = platform.logDir();
   const port = Number(process.env.PORT ?? 3456);
 
-  // #1: Bake PATH into the plist env on darwin so spawned processes have a good
-  // PATH at process-creation time (belt-and-suspenders with resolveLoginPath()).
-  // Mirrors write_plist() in the old bash script:
-  //   path_val="$node_dir:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin"
-  // Do NOT set PATH on win32 — the logon task already inherits the registry PATH.
-  const darwinPathEnv: Record<string, string> = {};
-  if (platform.id === 'darwin') {
-    const nodeDir = path.dirname(process.execPath);
-    const home = os.homedir();
-    const curatedPath =
-      `${nodeDir}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${home}/.local/bin`;
-    darwinPathEnv.PATH = platform.resolveLoginPath() ?? curatedPath;
-  }
+  // #1: Bake PATH into the daemon env so spawned processes have a good PATH at
+  // process-creation time (belt-and-suspenders with resolveLoginPath()). Platform-
+  // specific PATH resolution (e.g. macOS GUI-launch login-shell PATH) lives in the
+  // platform module — the CLI just consumes resolveLoginPath() and falls back to
+  // the invoking shell's own PATH, which is a reasonable default since the CLI is
+  // itself invoked from a user shell. resolveLoginPath() returns undefined on
+  // platforms that don't need this (e.g. win32, where the logon task already
+  // inherits the registry PATH).
+  const nodeDir = path.dirname(process.execPath);
+  const inheritedPath = platform.resolveLoginPath() ?? process.env.PATH ?? '';
+  const pathEnv: Record<string, string> = {
+    PATH: `${nodeDir}${path.delimiter}${inheritedPath}`,
+  };
 
   // #2: Bake DISPATCH_WEB_DIST so the server always finds the built web assets
   // without relying on its own relative-path fallback.
@@ -380,7 +385,7 @@ async function main(): Promise<void> {
     env: {
       PORT: String(port),
       DISPATCH_WEB_DIST: webDist,
-      ...darwinPathEnv,
+      ...pathEnv,
       ...(process.env.DISPATCH_SERVERS ? { DISPATCH_SERVERS: process.env.DISPATCH_SERVERS } : {}),
     },
   };
