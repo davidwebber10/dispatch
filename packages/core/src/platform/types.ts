@@ -11,7 +11,7 @@ export interface BrowserShimOptions {
   serverUrl: string;
 }
 
-// darwin returns BROWSER/GH_BROWSER/DISPATCH_SERVER_URL/PATH; linux returns {}.
+// darwin and linux install the posix browser shim and return BROWSER/GH_BROWSER/DISPATCH_SERVER_URL/PATH.
 export type BrowserShimEnv = Record<string, string>;
 
 export interface TailscaleStatus {

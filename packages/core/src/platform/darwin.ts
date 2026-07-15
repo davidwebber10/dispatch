@@ -61,7 +61,7 @@ export const darwin: Platform = {
   toolPlatformKey: () => (process.arch === 'arm64' ? 'darwin-arm64' : 'darwin-x64'),
   tailscaleStatus: () =>
     new Promise<TailscaleStatus>((resolve) => {
-      execFile(TAILSCALE_BIN, ['status', '--json'], { timeout: 3000 }, (err, stdout) => {
+      execFile(TAILSCALE_BIN, ['status', '--json'], { timeout: 5000 }, (err, stdout) => {
         if (err) return resolve({ ip: null, hostname: null, online: false });
         try {
           const status = JSON.parse(stdout);
