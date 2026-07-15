@@ -1,23 +1,9 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import request from 'supertest';
 
-// Keep the REAL predicate helpers (canReveal / isLoopbackHost / revealClientFrom) so the route's
-// own plumbing is exercised, but wrap canReveal in a spy so tests can both inspect the client it
-// was handed and force the incapable case. revealInFinder is stubbed — nothing here shells out.
 // NOTE: this file must NEVER vi.mock('child_process') — createApp shells out at boot.
-vi.mock('../../src/files/reveal.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../src/files/reveal.js')>();
-  return {
-    ...actual,
-    canReveal: vi.fn(actual.canReveal),
-    revealInFinder: vi.fn(async () => {}),
-  };
-});
-
-import { canReveal, revealInFinder } from '../../src/files/reveal.js';
-// The unspied module, so the reveal route tests can run the GENUINE predicate — pinned to
-// 'darwin' so they assert macOS behavior no matter which platform the suite runs on.
-const realReveal = await vi.importActual<typeof import('../../src/files/reveal.js')>('../../src/files/reveal.js');
+import { isLoopbackAddress, isLoopbackHost, type RevealClient } from '../../src/files/reveal.js';
+import { platform } from '../../src/platform/index.js';
 import { createApp } from '../../src/server.js';
 import Database from 'better-sqlite3';
 import { initSchema } from '../../src/db/schema.js';
@@ -25,6 +11,13 @@ import * as sessionsDb from '../../src/db/sessions.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+
+/** Mirrors darwin/linux's real isLocalClient loopback rule, independent of which platform this
+ *  suite happens to run on — the route tests below assert route plumbing, not per-OS behavior
+ *  (that's the platform module's own conformance suite). */
+function isGenuinelyLocal(client: RevealClient): boolean {
+  return !client.proxied && isLoopbackAddress(client.remoteAddress) && isLoopbackHost(client.host);
+}
 
 describe('file routes', () => {
   let app: any;
@@ -192,12 +185,23 @@ describe('file routes', () => {
   });
 
   describe('POST /reveal', () => {
+    let originalFileManagerName: string | null;
+    let revealSpy: ReturnType<typeof vi.spyOn>;
+    let isLocalClientSpy: ReturnType<typeof vi.spyOn>;
+
     beforeEach(() => {
-      // Block body, not a concise arrow: Vitest treats a value returned from beforeEach as a
-      // teardown hook and would invoke the returned mock.
-      vi.mocked(revealInFinder).mockClear();
-      vi.mocked(canReveal).mockReset();
-      vi.mocked(canReveal).mockImplementation((client) => realReveal.canReveal(client, 'darwin'));
+      // Pin a capable platform (non-null file manager) regardless of which OS this suite runs on;
+      // isLocalClient wraps the REAL loopback predicate so the route's own plumbing — reading the
+      // socket peer, not req.ip — is genuinely exercised, not just stubbed away.
+      originalFileManagerName = platform.fileManagerName;
+      (platform as { fileManagerName: string | null }).fileManagerName = 'Finder';
+      isLocalClientSpy = vi.spyOn(platform, 'isLocalClient').mockImplementation(isGenuinelyLocal);
+      revealSpy = vi.spyOn(platform, 'revealInFileManager').mockResolvedValue(undefined);
+    });
+
+    afterEach(() => {
+      (platform as { fileManagerName: string | null }).fileManagerName = originalFileManagerName;
+      vi.restoreAllMocks();
     });
 
     it('reveals every requested path, resolved to absolute', async () => {
@@ -207,7 +211,7 @@ describe('file routes', () => {
         .send({ paths: ['hello.txt', 'b.png'] });
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ ok: true });
-      expect(vi.mocked(revealInFinder)).toHaveBeenCalledWith([
+      expect(revealSpy).toHaveBeenCalledWith([
         path.join(tmpDir, 'hello.txt'),
         path.join(tmpDir, 'b.png'),
       ]);
@@ -216,21 +220,21 @@ describe('file routes', () => {
     it('decides capability from the socket peer address, not req.ip', async () => {
       // With `trust proxy` on, Express derives req.ip from X-Forwarded-For — so req.ip is now
       // '8.8.8.8' while the real socket peer stays loopback. THIS is what makes the assertion
-      // bite: an implementation that reached for req.ip would hand canReveal '8.8.8.8'.
+      // bite: an implementation that reached for req.ip would hand isLocalClient '8.8.8.8'.
       app.set('trust proxy', true);
       await request(app)
         .post('/api/sessions/s1/files/reveal')
         .set('X-Forwarded-For', '8.8.8.8')
         .send({ paths: ['hello.txt'] });
 
-      const [client] = vi.mocked(canReveal).mock.calls[0];
+      const [client] = isLocalClientSpy.mock.calls[0];
       expect(client.remoteAddress).toMatch(/^(::1|::ffff:127\.|127\.)/);
       expect(client.remoteAddress).not.toBe('8.8.8.8');
       expect(client.proxied).toBe(true);   // ...and the forwarding header itself is fatal
     });
 
     it('refuses a forwarded request outright, even over a loopback socket', async () => {
-      // A proxy in front means the browser is NOT on this Mac. The socket peer address alone
+      // A proxy in front means the browser is NOT on this machine. The socket peer address alone
       // cannot tell you that; the header can.
       app.set('trust proxy', true);
       const res = await request(app)
@@ -238,18 +242,18 @@ describe('file routes', () => {
         .set('X-Forwarded-For', '8.8.8.8')
         .send({ paths: ['hello.txt'] });
       expect(res.status).toBe(403);
-      expect(vi.mocked(revealInFinder)).not.toHaveBeenCalled();
+      expect(revealSpy).not.toHaveBeenCalled();
     });
 
     it('THE TUNNEL CASE: refuses a loopback socket carrying a public Host header', async () => {
-      // cloudflared runs on this Mac and dials http://localhost:3456, so the daemon sees a real
-      // 127.0.0.1 peer for a browser anywhere in the world. Only the Host header gives it away.
+      // cloudflared runs on this machine and dials http://localhost:3456, so the daemon sees a
+      // real 127.0.0.1 peer for a browser anywhere in the world. Only the Host header gives it away.
       const res = await request(app)
         .post('/api/sessions/s1/files/reveal')
         .set('Host', 'dispatch.example.com')
         .send({ paths: ['hello.txt'] });
       expect(res.status).toBe(403);
-      expect(vi.mocked(revealInFinder)).not.toHaveBeenCalled();
+      expect(revealSpy).not.toHaveBeenCalled();
     });
 
     it('still reveals for a clean loopback request with a loopback Host', async () => {
@@ -259,23 +263,32 @@ describe('file routes', () => {
         .post('/api/sessions/s1/files/reveal')
         .send({ paths: ['hello.txt'] });
       expect(res.status).toBe(200);
-      expect(vi.mocked(revealInFinder)).toHaveBeenCalledWith([path.join(tmpDir, 'hello.txt')]);
+      expect(revealSpy).toHaveBeenCalledWith([path.join(tmpDir, 'hello.txt')]);
     });
 
     it('rejects a selection larger than the 256-path bound', async () => {
       const paths = Array.from({ length: 257 }, (_, i) => `f${i}.txt`);
       const res = await request(app).post('/api/sessions/s1/files/reveal').send({ paths });
       expect(res.status).toBe(400);
-      expect(vi.mocked(revealInFinder)).not.toHaveBeenCalled();
+      expect(revealSpy).not.toHaveBeenCalled();
     });
 
     it('never shells out when the caller is not capable', async () => {
-      vi.mocked(canReveal).mockReturnValue(false); // remote client, or a non-macOS daemon
+      isLocalClientSpy.mockReturnValue(false); // remote client
       const res = await request(app)
         .post('/api/sessions/s1/files/reveal')
         .send({ paths: ['hello.txt'] });
       expect(res.status).toBe(403);
-      expect(vi.mocked(revealInFinder)).not.toHaveBeenCalled();
+      expect(revealSpy).not.toHaveBeenCalled();
+    });
+
+    it('never shells out when the platform has no native file manager', async () => {
+      (platform as { fileManagerName: string | null }).fileManagerName = null; // headless Linux
+      const res = await request(app)
+        .post('/api/sessions/s1/files/reveal')
+        .send({ paths: ['hello.txt'] });
+      expect(res.status).toBe(403);
+      expect(revealSpy).not.toHaveBeenCalled();
     });
 
     it('rejects path traversal', async () => {
@@ -283,13 +296,13 @@ describe('file routes', () => {
         .post('/api/sessions/s1/files/reveal')
         .send({ paths: ['../../etc/passwd'] });
       expect(res.status).toBe(403);
-      expect(vi.mocked(revealInFinder)).not.toHaveBeenCalled();
+      expect(revealSpy).not.toHaveBeenCalled();
     });
 
     it('rejects an empty selection', async () => {
       const res = await request(app).post('/api/sessions/s1/files/reveal').send({ paths: [] });
       expect(res.status).toBe(400);
-      expect(vi.mocked(revealInFinder)).not.toHaveBeenCalled();
+      expect(revealSpy).not.toHaveBeenCalled();
     });
   });
 });

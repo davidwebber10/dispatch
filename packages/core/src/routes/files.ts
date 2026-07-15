@@ -5,10 +5,11 @@ import multer from 'multer';
 import type Database from 'better-sqlite3';
 import * as sessionsDb from '../db/sessions.js';
 import { rowToSession } from '../types.js';
-import { canReveal, revealClientFrom, revealInFinder } from '../files/reveal.js';
+import { revealClientFrom } from '../files/reveal.js';
+import { platform } from '../platform/index.js';
 
-/** Upper bound on a single reveal: Finder cannot usefully select more, and this is the only
- *  route that shells out — an unbounded argv is not worth the risk. */
+/** Upper bound on a single reveal: no native file manager can usefully select more, and this is
+ *  the only route that shells out — an unbounded argv is not worth the risk. */
 const MAX_REVEAL_PATHS = 256;
 
 export function createFilesRouter(db: Database.Database): Router {
@@ -175,20 +176,21 @@ export function createFilesRouter(db: Database.Database): Router {
     }
   });
 
-  // POST /api/sessions/:id/files/reveal — select the given paths in the macOS Finder.
+  // POST /api/sessions/:id/files/reveal — select the given paths in the host's native file
+  // manager (Finder on macOS, File Explorer under WSL; unsupported on headless Linux).
   //
-  // Only ever valid when the browser is on the SAME machine as the daemon: on the headless
-  // mini this would pop Finder on a screen nobody is looking at. `canReveal` reads the
+  // Only ever valid when the browser is on the SAME machine as the daemon: on a headless box
+  // this would pop a file manager on a screen nobody is looking at. The guard below reads the
   // unforgeable socket peer address (NOT req.ip, which trusts X-Forwarded-For), plus the Host
   // header and the proxy headers — because a same-host reverse proxy (cloudflared,
   // `tailscale serve`) makes every remote visitor arrive over loopback. The client's menu
   // already hides this item — this check is the one that actually enforces it.
   //
-  // Revealing the whole selection at once is deliberate: Finder opens with all of them
-  // selected, and Finder's Cmd-C *does* paste into a browser upload field — which a web
-  // page's own clipboard can never do for arbitrary file types.
+  // Revealing the whole selection at once is deliberate where the platform supports it: Finder
+  // opens with all of them selected, and Finder's Cmd-C *does* paste into a browser upload field
+  // — which a web page's own clipboard can never do for arbitrary file types.
   router.post('/reveal', async (req, res) => {
-    if (!canReveal(revealClientFrom(req))) {
+    if (!(platform.fileManagerName !== null && platform.isLocalClient(revealClientFrom(req)))) {
       return res.status(403).json({ error: 'Reveal is only available on the machine running Dispatch' });
     }
     const session = (req as any).session;
@@ -208,7 +210,7 @@ export function createFilesRouter(db: Database.Database): Router {
     }
 
     try {
-      await revealInFinder(resolved);
+      await platform.revealInFileManager(resolved);
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

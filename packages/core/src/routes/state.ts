@@ -7,7 +7,7 @@ import * as appState from '../db/app-state.js';
 import { platform } from '../platform/index.js';
 import { sumTranscriptTokens } from '../sessions/cc-sessions.js';
 import { getRunningVersion, isNewerVersion } from '../update/version.js';
-import { canReveal, revealClientFrom } from '../files/reveal.js';
+import { revealClientFrom } from '../files/reveal.js';
 
 export function createStateRouter(db: Database.Database): Router {
   const router = Router();
@@ -156,15 +156,21 @@ export function createStateRouter(db: Database.Database): Router {
   });
 
   // GET /api/state/host — what can this daemon do for the browser asking?
-  // `canReveal` is true only on macOS AND when the browser is genuinely on this machine: a
-  // loopback SOCKET address (never req.ip), a loopback Host header, and no proxy headers —
-  // a same-host reverse proxy (cloudflared, `tailscale serve`) makes every remote visitor look
-  // like a loopback peer, so the socket alone proves nothing. See files/reveal.ts.
+  // `canReveal` is true only when this platform has a native file manager AND the browser is
+  // genuinely on this machine: a loopback SOCKET address (never req.ip), a loopback Host header,
+  // and no proxy headers — a same-host reverse proxy (cloudflared, `tailscale serve`) makes every
+  // remote visitor look like a loopback peer, so the socket alone proves nothing. Both facts come
+  // from the platform module (see platform/types.ts, files/reveal.ts for the loopback helpers).
   // Purely a UI affordance: POST /files/reveal enforces it again.
   router.get('/host', (req, res) => {
+    const client = revealClientFrom(req);
     res.json({
+      // Sanctioned exception to the no-`process.platform`-reads rule: this reports a fact about
+      // the daemon's OS to the client, it does not branch behavior.
       platform: process.platform,
-      canReveal: canReveal(revealClientFrom(req)),
+      flavor: platform.flavor,
+      fileManagerName: platform.fileManagerName,
+      canReveal: platform.fileManagerName !== null && platform.isLocalClient(client),
     });
   });
 
