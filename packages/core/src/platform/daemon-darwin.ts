@@ -110,11 +110,15 @@ export function createDarwinDaemon(
       // process exits — mirroring the old bash `setsid / nohup` approach.
       const guiTarget = `gui/${uid}/${LABEL}`;
       const userTarget = `user/${uid}/${LABEL}`;
-      const kickCmd =
-        `launchctl kickstart -k ${guiTarget} 2>/dev/null || ` +
-        `launchctl kickstart -k ${userTarget} 2>/dev/null`;
       const child = spawn(
-        'sh', ['-c', `sleep 2; ${kickCmd}`],
+        'sh',
+        [
+          '-c',
+          'sleep 2; launchctl kickstart -k "$1" 2>/dev/null || launchctl kickstart -k "$2" 2>/dev/null',
+          'sh',
+          guiTarget,
+          userTarget,
+        ],
         { detached: true, stdio: 'ignore' },
       );
       child.unref();
