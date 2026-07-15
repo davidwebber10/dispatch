@@ -1,7 +1,7 @@
 // Overseer view — directive composer (spec §6 "Composer", §7, §9).
 //
 // Layout: outer container (flex:none, border-top) > input row ("+" | textarea | send)
-//         + hint row (right-aligned "⌘↵ send", desktop only).
+//         + hint row (right-aligned "⌘↵ send" / "Ctrl+↵ send" per host OS, desktop only).
 // Draft text: owned locally via useDraft(coordinatorProject) — NOT a store field, so
 //   each project's Dispatch tab keeps its own draft (mirrors the agent ChatView's
 //   per-terminal draft). Store: composerImages, sendDirective(text), openDelegate.
@@ -20,6 +20,7 @@ import { DictationControl } from '../../dictation/DictationControl';
 import { InputActionsMenu } from '../../dictation/InputActionsMenu';
 import { useSettings } from '../../../stores/settings';
 import { ContextIndicator } from '../../ContextIndicator';
+import { modLabel } from '../../../lib/hostkeys';
 
 // Anthropic-vision-supported image types (mirrors the agent ChatView). Only these
 // become a REAL base64 image block the coordinator SEES; anything else falls back to a
@@ -327,7 +328,7 @@ export function Composer() {
       </div>
 
       {/* status row (always rendered, both mobile + desktop): context indicator left,
-          "⌘↵ send" keyboard hint right (desktop only) */}
+          primary-modifier "↵ send" keyboard hint right (desktop only) */}
       <div
         style={{
           maxWidth: 1200,
@@ -352,7 +353,7 @@ export function Composer() {
               marginLeft: 'auto',
             }}
           >
-            ⌘↵ send
+            {modLabel('↵')} send
           </span>
         )}
       </div>

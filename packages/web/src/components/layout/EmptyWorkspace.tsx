@@ -2,6 +2,7 @@ import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
 import { useUI } from '../../stores/ui';
 import { api } from '../../api/client';
+import { modLabel } from '../../lib/hostkeys';
 
 function homeAbbrev(p: string): string {
   return (p || '').replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
@@ -48,11 +49,11 @@ export function EmptyWorkspace({ onSelectTab }: { onSelectTab: (id: string) => v
           </div>
         )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 18, marginTop: 6, font: '400 11px var(--font-mono)', color: '#46464d' }}>
-          <span><span style={{ color: '#6a6a72' }}>⌘N</span> new thread</span>
+          <span><span style={{ color: '#6a6a72' }}>{modLabel('N')}</span> new thread</span>
           <span style={{ color: '#2c2c32' }}>·</span>
-          <span><span style={{ color: '#6a6a72' }}>⌘P</span> quick open</span>
+          <span><span style={{ color: '#6a6a72' }}>{modLabel('P')}</span> quick open</span>
           <span style={{ color: '#2c2c32' }}>·</span>
-          <span><span style={{ color: '#6a6a72' }}>⌘K</span> commands</span>
+          <span><span style={{ color: '#6a6a72' }}>{modLabel('K')}</span> commands</span>
         </div>
       </div>
       {project && (
