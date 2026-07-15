@@ -229,7 +229,7 @@ it('hides Reveal in Finder when the daemon is remote', async () => {
 });
 
 it('reveals the whole selection when the daemon is local', async () => {
-  useHost.setState({ platform: 'darwin', canReveal: true });
+  useHost.setState({ platform: 'darwin', canReveal: true, fileManagerName: 'Finder' });
   const reveal = vi.spyOn(api, 'revealFiles').mockResolvedValue({ ok: true } as never);
   render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
 
@@ -239,6 +239,20 @@ it('reveals the whole selection when the daemon is local', async () => {
   fireEvent.click(screen.getByText('Reveal in Finder'));
 
   await waitFor(() => expect(reveal).toHaveBeenCalledWith('p1', ['a.png', 'b.png']));
+});
+
+it('labels the reveal control with the daemon-reported file manager name (Windows/WSL)', async () => {
+  useHost.setState({ platform: 'linux', canReveal: true, fileManagerName: 'File Explorer' });
+  render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
+  fireEvent.contextMenu(await screen.findByText('a.png'));
+  expect(screen.getByText('Reveal in File Explorer')).toBeInTheDocument();
+});
+
+it('labels the reveal control with the daemon-reported file manager name (macOS)', async () => {
+  useHost.setState({ platform: 'darwin', canReveal: true, fileManagerName: 'Finder' });
+  render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
+  fireEvent.contextMenu(await screen.findByText('a.png'));
+  expect(screen.getByText('Reveal in Finder')).toBeInTheDocument();
 });
 
 it('hides Rename for a multi-selection', async () => {

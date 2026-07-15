@@ -113,7 +113,10 @@ export const api = {
   downloadUrl: (sessionId: string, p: string) => `/api/sessions/${sessionId}/files/download?path=${encodeURIComponent(p)}`,
   // Which capabilities does the daemon we're talking to have? `canReveal` is true only when
   // this browser is on the SAME machine as the daemon (see core files/reveal.ts).
-  getHost: () => req<{ platform: string; canReveal: boolean }>(`/api/state/host`),
+  getHost: () =>
+    req<{ platform: string; flavor: 'macos' | 'wsl' | 'linux'; fileManagerName: string | null; canReveal: boolean }>(
+      `/api/state/host`,
+    ),
   revealFiles: (sessionId: string, paths: string[]) =>
     req<{ ok: true }>(`/api/sessions/${sessionId}/files/reveal`, { method: 'POST', body: body({ paths }) }),
   writeFile: (sessionId: string, p: string, content: string) =>

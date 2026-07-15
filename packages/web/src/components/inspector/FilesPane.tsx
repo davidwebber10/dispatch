@@ -80,6 +80,7 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
   const selectedPath = tabsForProj.find((t) => t.id === activeTabId && t.type === 'file')?.config?.path as string | undefined;
   const fs = useSettings((s) => s.sidebarFontSize);
   const canReveal = useHost((s) => s.canReveal);
+  const fileManagerName = useHost((s) => s.fileManagerName);
 
   const loadDir = useCallback(async (path: string) => {
     if (!projectId) return;
@@ -324,7 +325,7 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
             {canReveal && (
               <button type="button" onClick={() => { const t = targets; setMenu(null); void reveal(t); }}
                 style={{ ...MENU_ITEM, color: '#e9e9ec' }}>
-                <FolderOpen size={15} /> Reveal in Finder
+                <FolderOpen size={15} /> Reveal in {fileManagerName ?? 'Finder'}
               </button>
             )}
             {targets.length === 1 && (
