@@ -1,11 +1,13 @@
 import { darwin } from './darwin.js';
 import { linux } from './linux.js';
+import { detectWsl } from './wsl.js';
+import { wsl } from './wsl.js';
 import type { Platform } from './types.js';
 
 export function selectPlatform(plat: NodeJS.Platform = process.platform): Platform {
   switch (plat) {
     case 'darwin': return darwin;
-    case 'linux':  return linux;
+    case 'linux':  return detectWsl() ? wsl : linux;
     default:
       throw new Error(`Dispatch does not support platform "${plat}" (darwin/linux only; Windows runs Dispatch inside WSL2).`);
   }
