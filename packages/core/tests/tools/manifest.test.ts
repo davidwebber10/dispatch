@@ -46,4 +46,17 @@ describe('manifest', () => {
     expect(validateEntry({ name: 'x' })).toBe(false);
     expect(validateEntry(null)).toBe(false);
   });
+
+  it('every binary tool has linux-x64 and linux-arm64 assets with a 64-char sha256', () => {
+    const m = loadManifest(base);
+    const binaryEntries = m.filter((e) => e.kind === 'binary');
+    expect(binaryEntries.length).toBeGreaterThan(0);
+    for (const e of binaryEntries) {
+      for (const key of ['linux-x64', 'linux-arm64'] as const) {
+        const asset = e.binary?.[key];
+        expect(asset, `${e.name}: missing ${key} asset`).toBeTruthy();
+        expect(asset!.sha256, `${e.name}: missing ${key} sha256`).toMatch(/^[0-9a-f]{64}$/);
+      }
+    }
+  });
 });

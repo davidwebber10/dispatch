@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import os from 'node:os';
 import path from 'node:path';
 import { toolPaths, hostPlatformKey } from '../../src/tools/paths.js';
+import { platform } from '../../src/platform/index.js';
 
 describe('tool paths', () => {
   it('defaults under ~/.dispatch/tools', () => {
@@ -18,5 +19,8 @@ describe('tool paths', () => {
   });
   it('hostPlatformKey is a darwin key on this platform', () => {
     expect(['darwin-arm64', 'darwin-x64']).toContain(hostPlatformKey());
+  });
+  it('hostPlatformKey delegates to platform.toolPlatformKey()', () => {
+    expect(hostPlatformKey()).toBe(platform.toolPlatformKey());
   });
 });

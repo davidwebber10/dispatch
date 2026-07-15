@@ -1,5 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
+import { platform } from '../platform/index.js';
 
 export interface ToolPaths { dir: string; bin: string; cache: string; pkgs: string; installed: string; userManifest: string; }
 
@@ -16,5 +17,5 @@ export function toolPaths(base?: string): ToolPaths {
 }
 
 export function hostPlatformKey(): string {
-  return process.arch === 'arm64' ? 'darwin-arm64' : 'darwin-x64';
+  return platform.toolPlatformKey();
 }

@@ -7,7 +7,9 @@
       "bins": ["jq"],
       "binary": {
         "darwin-arm64": { "url": "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-macos-arm64", "archive": "none", "sha256": "0bbe619e663e0de2c550be2fe0d240d076799d6f8a652b70fa04aea8a8362e8a" },
-        "darwin-x64":   { "url": "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-macos-amd64", "archive": "none", "sha256": "4155822bbf5ea90f5c79cf254665975eb4274d426d0709770c21774de5407443" }
+        "darwin-x64":   { "url": "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-macos-amd64", "archive": "none", "sha256": "4155822bbf5ea90f5c79cf254665975eb4274d426d0709770c21774de5407443" },
+        "linux-x64":    { "url": "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64", "archive": "none", "sha256": "5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5" },
+        "linux-arm64":  { "url": "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-arm64", "archive": "none", "sha256": "4dd2d8a0661df0b22f1bb9a1f9830f06b6f3b8f7d91211a1ef5d7c4f06a8b4a5" }
       },
       "docs": "https://jqlang.github.io/jq/"
     },
@@ -18,7 +20,9 @@
       "bins": ["rg"],
       "binary": {
         "darwin-arm64": { "url": "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-aarch64-apple-darwin.tar.gz", "archive": "tar.gz", "binPath": "ripgrep-14.1.1-aarch64-apple-darwin/rg", "sha256": "24ad76777745fbff131c8fbc466742b011f925bfa4fffa2ded6def23b5b937be" },
-        "darwin-x64":   { "url": "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-apple-darwin.tar.gz", "archive": "tar.gz", "binPath": "ripgrep-14.1.1-x86_64-apple-darwin/rg", "sha256": "fc87e78f7cb3fea12d69072e7ef3b21509754717b746368fd40d88963630e2b3" }
+        "darwin-x64":   { "url": "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-apple-darwin.tar.gz", "archive": "tar.gz", "binPath": "ripgrep-14.1.1-x86_64-apple-darwin/rg", "sha256": "fc87e78f7cb3fea12d69072e7ef3b21509754717b746368fd40d88963630e2b3" },
+        "linux-x64":    { "url": "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz", "archive": "tar.gz", "binPath": "ripgrep-14.1.1-x86_64-unknown-linux-musl/rg", "sha256": "4cf9f2741e6c465ffdb7c26f38056a59e2a2544b51f7cc128ef28337eeae4d8e" },
+        "linux-arm64":  { "url": "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-aarch64-unknown-linux-gnu.tar.gz", "archive": "tar.gz", "binPath": "ripgrep-14.1.1-aarch64-unknown-linux-gnu/rg", "sha256": "c827481c4ff4ea10c9dc7a4022c8de5db34a5737cb74484d62eb94a95841ab2f" }
       },
       "docs": "https://github.com/BurntSushi/ripgrep"
     },
@@ -31,7 +35,9 @@
       "envAlias": { "GH_TOKEN": "GITHUB_TOKEN" },
       "binary": {
         "darwin-arm64": { "url": "https://github.com/cli/cli/releases/download/v2.95.0/gh_2.95.0_macOS_arm64.zip", "archive": "zip", "binPath": "gh_2.95.0_macOS_arm64/bin/gh", "sha256": "3677f9c27965825f9c7d50395473c134edaea4b484373ef6b25de653570a0489" },
-        "darwin-x64":   { "url": "https://github.com/cli/cli/releases/download/v2.95.0/gh_2.95.0_macOS_amd64.zip", "archive": "zip", "binPath": "gh_2.95.0_macOS_amd64/bin/gh", "sha256": "985707e9ac60c95ed51cddd808c338b481abe69fffa77e9d6547c3750045f77e" }
+        "darwin-x64":   { "url": "https://github.com/cli/cli/releases/download/v2.95.0/gh_2.95.0_macOS_amd64.zip", "archive": "zip", "binPath": "gh_2.95.0_macOS_amd64/bin/gh", "sha256": "985707e9ac60c95ed51cddd808c338b481abe69fffa77e9d6547c3750045f77e" },
+        "linux-x64":    { "url": "https://github.com/cli/cli/releases/download/v2.95.0/gh_2.95.0_linux_amd64.tar.gz", "archive": "tar.gz", "binPath": "gh_2.95.0_linux_amd64/bin/gh", "sha256": "25d1e4729e8808c9ed3d613e96ebd3f3e44446f2d368c89d878a71a36ddb3d8c" },
+        "linux-arm64":  { "url": "https://github.com/cli/cli/releases/download/v2.95.0/gh_2.95.0_linux_arm64.tar.gz", "archive": "tar.gz", "binPath": "gh_2.95.0_linux_arm64/bin/gh", "sha256": "d41e0b3b6218e5741c8bb4db39b16e53a59e0e06299a8489bd38f623ef7ebaae" }
       },
       "docs": "https://cli.github.com/"
     },
@@ -43,7 +49,9 @@
       "authEnv": ["DOPPLER_TOKEN"],
       "binary": {
         "darwin-arm64": { "url": "https://github.com/DopplerHQ/cli/releases/download/3.76.0/doppler_3.76.0_macOS_arm64.tar.gz", "archive": "tar.gz", "binPath": "doppler", "sha256": "f8a546d4b177255816f3b1262347bb643b0bcb8cf82d5859e5426c11f56636dc" },
-        "darwin-x64":   { "url": "https://github.com/DopplerHQ/cli/releases/download/3.76.0/doppler_3.76.0_macOS_amd64.tar.gz", "archive": "tar.gz", "binPath": "doppler", "sha256": "1a70842d5de95232c5bae732721058690c748db5e5c7510e828116392e9f0682" }
+        "darwin-x64":   { "url": "https://github.com/DopplerHQ/cli/releases/download/3.76.0/doppler_3.76.0_macOS_amd64.tar.gz", "archive": "tar.gz", "binPath": "doppler", "sha256": "1a70842d5de95232c5bae732721058690c748db5e5c7510e828116392e9f0682" },
+        "linux-x64":    { "url": "https://github.com/DopplerHQ/cli/releases/download/3.76.0/doppler_3.76.0_linux_amd64.tar.gz", "archive": "tar.gz", "binPath": "doppler", "sha256": "04f1ff30ed162d7af1dba7f11ad6a37ef35099de86a7ec6e261b64b1b337a3f3" },
+        "linux-arm64":  { "url": "https://github.com/DopplerHQ/cli/releases/download/3.76.0/doppler_3.76.0_linux_arm64.tar.gz", "archive": "tar.gz", "binPath": "doppler", "sha256": "ee57701385fc33fba550f913641812ed2ff020631e3ac8cc14616cbde2118884" }
       },
       "docs": "https://docs.doppler.com/docs/cli"
     },
@@ -55,7 +63,9 @@
       "authEnv": ["DATABRICKS_HOST", "DATABRICKS_TOKEN"],
       "binary": {
         "darwin-arm64": { "url": "https://github.com/databricks/cli/releases/download/v1.5.0/databricks_cli_1.5.0_darwin_arm64.tar.gz", "archive": "tar.gz", "binPath": "databricks", "sha256": "41ccc456d609f628413b231c467bb53fb066ecab2e96df492a4df98361e5f001" },
-        "darwin-x64":   { "url": "https://github.com/databricks/cli/releases/download/v1.5.0/databricks_cli_1.5.0_darwin_amd64.tar.gz", "archive": "tar.gz", "binPath": "databricks", "sha256": "f3ea3bf46303650722e0ee47caba03e786d41a2c8b9129d34e03c0272cda0fcc" }
+        "darwin-x64":   { "url": "https://github.com/databricks/cli/releases/download/v1.5.0/databricks_cli_1.5.0_darwin_amd64.tar.gz", "archive": "tar.gz", "binPath": "databricks", "sha256": "f3ea3bf46303650722e0ee47caba03e786d41a2c8b9129d34e03c0272cda0fcc" },
+        "linux-x64":    { "url": "https://github.com/databricks/cli/releases/download/v1.5.0/databricks_cli_1.5.0_linux_amd64.tar.gz", "archive": "tar.gz", "binPath": "databricks", "sha256": "1aa5ef1e326075e15b7820437be1261209c5961d2e520b1ce2aa51e82aef1f6e" },
+        "linux-arm64":  { "url": "https://github.com/databricks/cli/releases/download/v1.5.0/databricks_cli_1.5.0_linux_arm64.tar.gz", "archive": "tar.gz", "binPath": "databricks", "sha256": "4e44b079d866c60899f519587fb1b014e139302db073443a9642578080400cc5" }
       },
       "docs": "https://docs.databricks.com/dev-tools/cli/"
     },
