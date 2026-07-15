@@ -4,6 +4,16 @@
   "private": true,
   "type": "module",
   "main": "dist/server.js",
+  "exports": {
+    ".": {
+      "types": "./dist/server.d.ts",
+      "default": "./dist/server.js"
+    },
+    "./platform": {
+      "types": "./dist/platform/index.d.ts",
+      "default": "./dist/platform/index.js"
+    }
+  },
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc && mkdir -p dist/tools && cp src/tools/default-tools.json dist/tools/default-tools.json",
