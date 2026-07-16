@@ -52,7 +52,7 @@ export class ThreadAutoNamer {
   /** Call on every real-activity moment. Cheap; self-filters. */
   notifyActivity(terminalId: string): void {
     try {
-      if (this.timers.has(terminalId)) return; // already scheduled
+      if (this.timers.has(terminalId)) return; // already scheduled or attempt in flight
       if ((this.attempts.get(terminalId) ?? 0) >= this.maxAttempts) return; // gave up
 
       const row = terminalsDb.getById(this.db, terminalId);
@@ -80,7 +80,12 @@ export class ThreadAutoNamer {
   }
 
   private async attempt(terminalId: string): Promise<void> {
-    this.timers.delete(terminalId);
+    // The `timers` entry is deliberately NOT removed here: it doubles as an
+    // in-flight marker for the WHOLE async span of this attempt, not just the
+    // wait-for-the-debounce-timer span. notifyActivity's `timers.has` guard
+    // must keep blocking until this attempt fully settles (finally, below) —
+    // otherwise a notify arriving mid-await would schedule a second concurrent
+    // attempt for the same terminal.
     try {
       const row = terminalsDb.getById(this.db, terminalId);
       if (!row || row.label_source !== 'default') return; // renamed/relabeled since scheduling
@@ -96,20 +101,23 @@ export class ThreadAutoNamer {
       );
       if (!transcriptPath) {
         this.bumpAttempts(terminalId);
+        console.debug('[thread-auto-namer] giving up on terminal', terminalId, 'no transcript path found');
         return;
       }
 
       let text: string;
       try {
         text = await this.readFile(transcriptPath);
-      } catch {
+      } catch (err) {
         this.bumpAttempts(terminalId);
+        console.debug('[thread-auto-namer] giving up on terminal', terminalId, err);
         return;
       }
 
       const name = deriveThreadName(text, kind);
       if (!name) {
         this.bumpAttempts(terminalId);
+        console.debug('[thread-auto-namer] giving up on terminal', terminalId, 'no derivable name');
         return;
       }
 
@@ -120,6 +128,8 @@ export class ThreadAutoNamer {
     } catch (err) {
       this.bumpAttempts(terminalId);
       console.debug('[ThreadAutoNamer] attempt failed', terminalId, err);
+    } finally {
+      this.timers.delete(terminalId);
     }
   }
 }

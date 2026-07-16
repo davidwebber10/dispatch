@@ -99,6 +99,75 @@ describe('ThreadAutoNamer', () => {
     namer.dispose();
   });
 
+  it('serializes across the async span: notifies mid-attempt cannot start a concurrent second attempt', async () => {
+    terminalsDb.create(db, {
+      id: 't1', sessionId: 's1', type: 'claude-code', label: 'Claude Code',
+      externalId: 'ext-1', labelSource: 'default',
+    });
+    const { broadcaster, events } = fakeBroadcaster();
+
+    let signalStarted: () => void;
+    const startedPromise = new Promise<void>((resolve) => { signalStarted = resolve; });
+    let releaseRead: (value: string) => void;
+    const gate = new Promise<string>((resolve) => { releaseRead = resolve; });
+
+    const readFile = vi.fn().mockImplementation(async () => {
+      signalStarted();
+      return gate;
+    });
+    const namer = new ThreadAutoNamer(db, broadcaster, { readFile });
+
+    namer.notifyActivity('t1');
+    // Advance past the debounce delay; the timer fires and the attempt starts
+    // reading the transcript, but readFile's returned promise is still pending.
+    const advancePromise = vi.advanceTimersByTimeAsync(5000);
+    await startedPromise;
+
+    // While the attempt is mid-await, further notifies must be no-ops: the
+    // terminal is marked busy for the whole attempt, not just until the timer fires.
+    namer.notifyActivity('t1');
+    namer.notifyActivity('t1');
+    namer.notifyActivity('t1');
+    expect(vi.getTimerCount()).toBe(0);
+
+    releaseRead!(CC_TRANSCRIPT);
+    await advancePromise;
+
+    expect(readFile).toHaveBeenCalledTimes(1);
+    const row = terminalsDb.getById(db, 't1')!;
+    expect(row.label).toBe('fix the flaky login test please');
+    expect(row.label_source).toBe('auto');
+    expect(events).toHaveLength(1);
+
+    namer.dispose();
+  });
+
+  it('a rename injected mid-read still loses to the SQL guard — setAutoLabel returns false, no broadcast', async () => {
+    terminalsDb.create(db, {
+      id: 't1', sessionId: 's1', type: 'claude-code', label: 'Claude Code',
+      externalId: 'ext-1', labelSource: 'default',
+    });
+    const { broadcaster, events } = fakeBroadcaster();
+    const readFile = vi.fn().mockImplementation(async () => {
+      // Simulate a user rename landing while the attempt is reading the transcript,
+      // i.e. AFTER the row pre-check has already passed.
+      terminalsDb.updateLabel(db, 't1', 'sneaky rename');
+      return CC_TRANSCRIPT;
+    });
+    const namer = new ThreadAutoNamer(db, broadcaster, { readFile });
+
+    namer.notifyActivity('t1');
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(readFile).toHaveBeenCalledTimes(1);
+    const row = terminalsDb.getById(db, 't1')!;
+    expect(row.label).toBe('sneaky rename');
+    expect(row.label_source).toBe('user');
+    expect(events).toHaveLength(0);
+
+    namer.dispose();
+  });
+
   it('gives up silently after 3 null attempts; a 4th notify schedules nothing', async () => {
     terminalsDb.create(db, {
       id: 't1', sessionId: 's1', type: 'claude-code', label: 'Claude Code',
