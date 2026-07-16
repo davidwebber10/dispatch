@@ -61,6 +61,16 @@ describe('cleanName', () => {
     const cut = cleanName(long)!;
     expect(cut).toBe('a'.repeat(48));
   });
+  test('strips leading command punctuation', () => {
+    expect(cleanName('/review fix the tests')).toBe('review fix the tests');
+    expect(cleanName('!!!hello')).toBe('hello');
+  });
+  test('punctuation-only input → null', () => {
+    expect(cleanName('...!!! ,,, ---')).toBeNull();
+  });
+  test('interior punctuation is left untouched', () => {
+    expect(cleanName('fix the CI: step 2')).toBe('fix the CI: step 2');
+  });
 });
 
 describe('resolveTranscriptPath', () => {

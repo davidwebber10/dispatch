@@ -5,17 +5,28 @@ import { platform } from '../platform/index.js';
 
 const MAX_NAME_LEN = 48;
 
+// Matches leading run of characters that are neither letters nor digits (e.g. slash
+// commands' `/`, shell-bang `!!!`, stray punctuation/whitespace-adjacent symbols).
+// Unicode-aware so accented letters etc. aren't mistaken for punctuation.
+const LEADING_COMMAND_PUNCTUATION = /^[^\p{L}\p{N}]+/u;
+const HAS_ALPHANUMERIC = /[\p{L}\p{N}]/u;
+
 /**
  * Collapse a raw candidate name to a single-line, whitespace-normalized string of
  * at most MAX_NAME_LEN chars, cutting on a word boundary (never mid-word) unless the
- * very first word alone exceeds the limit, in which case it's hard-cut. Returns null
- * when nothing survives collapsing/trimming.
+ * very first word alone exceeds the limit, in which case it's hard-cut. Leading
+ * command punctuation (e.g. a slash-command's `/`, a shell-bang's `!!!`) is stripped
+ * from the front only — interior punctuation is left untouched. Returns null when
+ * nothing survives collapsing/trimming, or when the result has no letter or digit at
+ * all (punctuation-only input).
  */
 export function cleanName(raw: string): string | null {
   const collapsed = raw.replace(/\s+/g, ' ').trim();
   if (!collapsed) return null;
-  if (collapsed.length <= MAX_NAME_LEN) return collapsed;
-  const truncated = collapsed.slice(0, MAX_NAME_LEN);
+  const stripped = collapsed.replace(LEADING_COMMAND_PUNCTUATION, '').trim();
+  if (!stripped || !HAS_ALPHANUMERIC.test(stripped)) return null;
+  if (stripped.length <= MAX_NAME_LEN) return stripped;
+  const truncated = stripped.slice(0, MAX_NAME_LEN);
   const lastSpace = truncated.lastIndexOf(' ');
   return lastSpace === -1 ? truncated : truncated.slice(0, lastSpace);
 }

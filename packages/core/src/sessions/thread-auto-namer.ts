@@ -31,6 +31,9 @@ export interface ThreadAutoNamerOptions {
  * transcript, no derivable name) count against a small attempt cap so a thread that
  * can never be named doesn't get retried forever; success or a user-won race both stop
  * further scheduling naturally since the row is no longer `label_source: 'default'`.
+ * A still-missing `external_id` is NOT a failure — it's a precondition (codex only
+ * assigns one at agent-turn-complete, well after idle-bump activity signals can fire)
+ * — so it doesn't count against the attempt cap; a later notifyActivity reschedules.
  */
 export class ThreadAutoNamer {
   private readonly db: Database.Database;
@@ -91,6 +94,15 @@ export class ThreadAutoNamer {
       if (!row || row.label_source !== 'default') return; // renamed/relabeled since scheduling
       const kind = KIND_BY_TYPE[row.type];
       if (!kind) return;
+
+      if (!row.external_id) {
+        // Not a failed derivation — the id just hasn't been assigned yet (codex only
+        // assigns external_id at agent-turn-complete, while idle-bump activity signals
+        // can fire well before that). Don't burn the attempt cap on a precondition;
+        // just bail and let a later notifyActivity reschedule once the id shows up.
+        console.debug('[thread-auto-namer] skipping terminal', terminalId, 'no external_id yet');
+        return;
+      }
 
       const session = sessionsDb.getById(this.db, row.session_id);
       const sessionWorkingDir = session?.working_dir ?? row.working_dir ?? '';

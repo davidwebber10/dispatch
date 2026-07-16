@@ -201,6 +201,47 @@ describe('ThreadAutoNamer', () => {
     namer.dispose();
   });
 
+  it('missing external_id is a precondition, not a failed attempt: no cap burn, names once the id arrives', async () => {
+    // Mirrors codex reality: external_id isn't assigned until agent-turn-complete,
+    // while TerminalMonitor's idle-bump can call notifyActivity several times before
+    // that — those must not count against the (default 3) attempt cap.
+    terminalsDb.create(db, {
+      id: 't1', sessionId: 's1', type: 'claude-code', label: 'Claude Code',
+      labelSource: 'default', // no externalId — not assigned yet
+    });
+    const { broadcaster, events } = fakeBroadcaster();
+    const readFile = vi.fn();
+    const namer = new ThreadAutoNamer(db, broadcaster, { readFile });
+
+    // 4 notify/advance cycles — more than maxAttempts (3) — while external_id is null.
+    for (let i = 0; i < 4; i++) {
+      namer.notifyActivity('t1');
+      await vi.advanceTimersByTimeAsync(5000);
+    }
+
+    expect(readFile).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    let row = terminalsDb.getById(db, 't1')!;
+    expect(row.label_source).toBe('default');
+    expect(row.label).toBe('Claude Code');
+    expect(events).toHaveLength(0);
+
+    // The id finally shows up, and a real transcript is available.
+    terminalsDb.updateExternalId(db, 't1', 'ext-late');
+    readFile.mockResolvedValue(CC_TRANSCRIPT);
+
+    namer.notifyActivity('t1');
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(readFile).toHaveBeenCalledTimes(1);
+    row = terminalsDb.getById(db, 't1')!;
+    expect(row.label).toBe('fix the flaky login test please');
+    expect(row.label_source).toBe('auto');
+    expect(events).toEqual([{ type: 'session:tabs-changed', sessionId: 's1' }]);
+
+    namer.dispose();
+  });
+
   it('shell threads and non-default (auto/user) rows never schedule', async () => {
     terminalsDb.create(db, {
       id: 'shell1', sessionId: 's1', type: 'shell', label: 'Terminal',
