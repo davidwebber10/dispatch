@@ -83,6 +83,8 @@ function deriveClaudeRaw(text: string): string {
  * `{type:'response_item', payload:{type:'message', role, content}}` — and takes the
  * first `role: 'user'` message whose extracted text doesn't start with '<'.
  * `session_meta` and non-message response_item lines are skipped.
+ * Unlike codex-sessions.ts we skip its session_meta-first gate: this parses one
+ * already-resolved transcript, no cwd matching needed.
  */
 function deriveCodexRaw(text: string): string {
   for (const line of text.split('\n')) {
@@ -115,14 +117,13 @@ const CODEX_SESSIONS_ROOT = path.join(os.homedir(), '.codex', 'sessions');
  * Codex rollout files live at <root>/<Y>/<M>/<D>/rollout-<ts>-<uuid>.jsonl (see
  * codex-sessions.ts's listRecentCodexSessions doc comment) — the date/timestamp
  * segments aren't derivable from a session id alone, so finding a known id's
- * transcript means scanning the tree for a filename ending in `-<id>.jsonl`. Sync
- * (resolveTranscriptPath is synchronous) and directory-scoped — no file content is
- * read, only names, since the caller just needs a path. Returns null when the root
- * is missing or no rollout matches.
+ * transcript means scanning the tree for a filename ending in `-<id>.jsonl`.
+ * Directory-scoped — no file content is read, only names, since the caller just
+ * needs a path. Returns null when the root is missing or no rollout matches.
  */
-function findCodexRolloutPath(sessionId: string, root: string): string | null {
+async function findCodexRolloutPath(sessionId: string, root: string): Promise<string | null> {
   let entries: string[];
-  try { entries = fs.readdirSync(root, { recursive: true }) as string[]; }
+  try { entries = await fs.promises.readdir(root, { recursive: true }) as string[]; }
   catch { return null; }
   const suffix = `-${sessionId}.jsonl`;
   const match = entries.find((rel) => {
@@ -141,17 +142,17 @@ function findCodexRolloutPath(sessionId: string, root: string): string | null {
  * null without an externalId, for an unrecognized `type`, or when codex can't find a
  * match.
  */
-export function resolveTranscriptPath(
+export async function resolveTranscriptPath(
   t: { type: string; externalId: string | null; workingDir: string | null },
   sessionWorkingDir: string,
   codexSessionsRoot: string = CODEX_SESSIONS_ROOT,
-): string | null {
+): Promise<string | null> {
   if (!t.externalId) return null;
   if (t.type === 'claude-code') {
     return path.join(platform.claudeProjectDir(t.workingDir ?? sessionWorkingDir), `${t.externalId}.jsonl`);
   }
   if (t.type === 'codex') {
-    return findCodexRolloutPath(t.externalId, codexSessionsRoot);
+    return await findCodexRolloutPath(t.externalId, codexSessionsRoot);
   }
   return null;
 }

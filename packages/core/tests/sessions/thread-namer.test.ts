@@ -64,20 +64,20 @@ describe('cleanName', () => {
 });
 
 describe('resolveTranscriptPath', () => {
-  test('claude-code: joins the platform project dir + externalId.jsonl', () => {
-    const result = resolveTranscriptPath({ type: 'claude-code', externalId: 'sess-1', workingDir: '/work/proj' }, '/other/dir');
+  test('claude-code: joins the platform project dir + externalId.jsonl', async () => {
+    const result = await resolveTranscriptPath({ type: 'claude-code', externalId: 'sess-1', workingDir: '/work/proj' }, '/other/dir');
     expect(result).toBe(path.join(platform.claudeProjectDir('/work/proj'), 'sess-1.jsonl'));
   });
-  test('claude-code: falls back to sessionWorkingDir when workingDir is null', () => {
-    const result = resolveTranscriptPath({ type: 'claude-code', externalId: 'sess-1', workingDir: null }, '/other/dir');
+  test('claude-code: falls back to sessionWorkingDir when workingDir is null', async () => {
+    const result = await resolveTranscriptPath({ type: 'claude-code', externalId: 'sess-1', workingDir: null }, '/other/dir');
     expect(result).toBe(path.join(platform.claudeProjectDir('/other/dir'), 'sess-1.jsonl'));
   });
-  test('null externalId → null', () => {
-    expect(resolveTranscriptPath({ type: 'claude-code', externalId: null, workingDir: '/work/proj' }, '/other')).toBeNull();
-    expect(resolveTranscriptPath({ type: 'codex', externalId: null, workingDir: '/work/proj' }, '/other')).toBeNull();
+  test('null externalId → null', async () => {
+    expect(await resolveTranscriptPath({ type: 'claude-code', externalId: null, workingDir: '/work/proj' }, '/other')).toBeNull();
+    expect(await resolveTranscriptPath({ type: 'codex', externalId: null, workingDir: '/work/proj' }, '/other')).toBeNull();
   });
-  test('unknown type → null', () => {
-    expect(resolveTranscriptPath({ type: 'shell', externalId: 'sess-1', workingDir: '/work/proj' }, '/other')).toBeNull();
+  test('unknown type → null', async () => {
+    expect(await resolveTranscriptPath({ type: 'shell', externalId: 'sess-1', workingDir: '/work/proj' }, '/other')).toBeNull();
   });
 
   describe('codex', () => {
@@ -92,18 +92,18 @@ describe('resolveTranscriptPath', () => {
       return full;
     }
 
-    test('finds the rollout file ending in -<sessionId>.jsonl under the date tree', () => {
+    test('finds the rollout file ending in -<sessionId>.jsonl under the date tree', async () => {
       const full = writeRollout('2026/06/01/rollout-2026-06-01T12-00-00-sess-codex-1.jsonl');
-      const result = resolveTranscriptPath({ type: 'codex', externalId: 'sess-codex-1', workingDir: '/work/proj' }, '/other', root);
+      const result = await resolveTranscriptPath({ type: 'codex', externalId: 'sess-codex-1', workingDir: '/work/proj' }, '/other', root);
       expect(result).toBe(full);
     });
-    test('returns null when no matching rollout exists', () => {
+    test('returns null when no matching rollout exists', async () => {
       writeRollout('2026/06/01/rollout-2026-06-01T12-00-00-other-id.jsonl');
-      const result = resolveTranscriptPath({ type: 'codex', externalId: 'sess-codex-1', workingDir: '/work/proj' }, '/other', root);
+      const result = await resolveTranscriptPath({ type: 'codex', externalId: 'sess-codex-1', workingDir: '/work/proj' }, '/other', root);
       expect(result).toBeNull();
     });
-    test('returns null when the sessions root is missing', () => {
-      const result = resolveTranscriptPath({ type: 'codex', externalId: 'sess-codex-1', workingDir: '/work/proj' }, '/other', path.join(root, 'nope'));
+    test('returns null when the sessions root is missing', async () => {
+      const result = await resolveTranscriptPath({ type: 'codex', externalId: 'sess-codex-1', workingDir: '/work/proj' }, '/other', path.join(root, 'nope'));
       expect(result).toBeNull();
     });
   });
