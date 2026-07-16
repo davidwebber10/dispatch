@@ -61,7 +61,9 @@ some of this is genuinely unverified until someone runs it for real.
       `http://localhost:3456` loads, and/or `dispatch status` inside WSL shows a
       live pid. This is the Windows **scheduled task at logon**
       (`schtasks.exe /Create ... /SC ONLOGON`) re-launching
-      `wsl.exe -d Ubuntu --exec <repo>/bin/dispatch daemon-run`.
+      `wsl.exe -d Ubuntu --exec <node> <repo>/packages/cli/dist/index.js daemon-run`
+      (absolute node path, absolute CLI entry — not the `bin/dispatch` shim — so the
+      task doesn't depend on nvm-installed node being on the logon task's PATH).
 - [ ] Record observed behavior: how long after sign-in did the daemon become
       reachable? Any visible console window flash, or fully silent?
 
@@ -131,6 +133,20 @@ some of this is genuinely unverified until someone runs it for real.
       no-op) for this client.
 - [ ] Record observed behavior: exactly how does the UI communicate "no Reveal here"
       (action hidden entirely vs. disabled vs. some other treatment)?
+
+## Known deferrals
+
+- The `/mnt/*` working-dir warning (see the Tier-2 harness's `MNT_JSON` check) is
+  currently API-only: it comes back on the session-create response's `warning`
+  field, but nothing in the web UI surfaces it to the user yet. Until that's wired
+  up, expect to see it only by inspecting the raw API response (or the Tier-2
+  harness assertion), not in the app itself.
+- WSL Reveal always selects the **first file only**, even for a multi-file
+  selection — `explorer.exe /select,<path>` accepts exactly one path (unlike
+  macOS's `open -R`, which accepts several). This is intentional (see
+  `revealInFileManager` in `packages/core/src/platform/wsl.ts`), not a bug to
+  chase during bring-up. When exercising item 4 above with a multi-file selection,
+  expect single-select behavior on WSL — do not fail the checklist item over it.
 
 ## Sign-off
 

@@ -43,6 +43,20 @@ export function parseDefaultGateway(routeText: string): string | null {
   return null;
 }
 
+/**
+ * binfmt_misc/WSLInterop is how WSL runs .exe files — its presence IS interop
+ * availability, and reading it is a cheap sync stat/read with no exec. Falls back to
+ * WSL_INTEROP being set (older WSL versions that predate/relocate the binfmt path).
+ */
+function probeInterop(deps: WslDeps): boolean {
+  try {
+    deps.readFileSync('/proc/sys/fs/binfmt_misc/WSLInterop');
+    return true;
+  } catch {
+    return !!deps.env.WSL_INTEROP;
+  }
+}
+
 export function createWslPlatform(deps: WslDeps = defaultDeps): Platform {
   let gateway: string | null | undefined; // cached; undefined = unread
   const readGateway = () => {
@@ -51,10 +65,22 @@ export function createWslPlatform(deps: WslDeps = defaultDeps): Platform {
     }
     return gateway;
   };
+  let interopChecked = false;
+  let interopAvailable = false;
   return {
     ...linux,
     flavor: 'wsl',
-    fileManagerName: 'File Explorer',
+    // Readonly on the Platform interface, but implemented as a getter so it's probed
+    // lazily-once at first access rather than eagerly at construction — Object.keys
+    // still enumerates a `get` accessor defined via object-literal syntax, so the
+    // conformance suite's exhaustiveness check still sees this key.
+    get fileManagerName(): string | null {
+      if (!interopChecked) {
+        interopChecked = true;
+        interopAvailable = probeInterop(deps);
+      }
+      return interopAvailable ? 'File Explorer' : null;
+    },
     daemon: createWslDaemon(defaultWslDaemonDeps),
     // explorer.exe /select, accepts ONE path (unlike `open -R`); reveal the first.
     // The macOS multi-select rationale (Finder Cmd-C into upload fields) has a native

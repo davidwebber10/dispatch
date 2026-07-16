@@ -25,7 +25,14 @@ docker run --rm -i --name "$CONTAINER_NAME" \
   -e WSL_SIM_LOG=/tmp/simlog \
   -e PORT=3999 \
   -e DISPATCH_WEB_DIST=/work/packages/web/dist \
+  -e WSL_INTEROP=/run/WSL/fake \
   "$IMAGE" bash -s <<'INNER'
+# WSL_INTEROP above is load-bearing: this is a plain Debian container with no real
+# /proc/sys/fs/binfmt_misc/WSLInterop, so the wsl platform's interop probe (see
+# packages/core/src/platform/wsl.ts) would otherwise fall through to
+# fileManagerName === null and every reveal assertion below would fail. Setting
+# WSL_INTEROP is the documented fallback path for that same probe, so it keeps this
+# harness asserting the interop-present path it's actually meant to exercise.
 set -euo pipefail
 
 fail() { echo "WSL-SIM FAIL: $*" >&2; exit 1; }

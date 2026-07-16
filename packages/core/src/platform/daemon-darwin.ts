@@ -57,6 +57,46 @@ export function createDarwinDaemon(
     } catch { return false; }
   }
 
+  /**
+   * Bootout + bootstrap the plist already on disk at plistPath, with retry.
+   * Shared by install() (after writing a fresh plist) and by start()/restart()
+   * recovering a job that got unloaded (e.g. by a prior stop()'s bootout) —
+   * `launchctl kickstart` alone cannot load a job that isn't loaded at all.
+   */
+  function bootstrapAndVerify(): void {
+    // 1. Bootout first (idempotency) — ignore all errors (may not be loaded).
+    // quiet:true suppresses the expected "Boot-out failed: 3: No such process" stderr noise.
+    try { run('launchctl', ['bootout', `gui/${uid}/${LABEL}`], { quiet: true }); } catch { /* ignore */ }
+    try { run('launchctl', ['bootout', `user/${uid}/${LABEL}`], { quiet: true }); } catch { /* ignore */ }
+
+    // 2. Poll for teardown (up to ~5 × 500ms = 2.5s).
+    for (let i = 0; i < 5; i++) {
+      if (!isLoaded()) break;
+      sleep(500);
+    }
+
+    // 3. Bootstrap with retry — try gui/ first, fall back to user/, retry up to 3 total.
+    const domains = [`gui/${uid}`, `user/${uid}`];
+    let bootstrapped = false;
+    const maxAttempts = 3;
+    for (let attempt = 0; attempt < maxAttempts && !bootstrapped; attempt++) {
+      const domain = domains[attempt % domains.length] ?? domains[0];
+      try {
+        run('launchctl', ['bootstrap', domain!, plistPath]);
+        bootstrapped = true;
+      } catch {
+        if (attempt < maxAttempts - 1) sleep(300);
+      }
+    }
+
+    // 4. Verify loaded.
+    if (!isLoaded()) {
+      throw new Error(
+        'dispatch: failed to load launchd agent — run: launchctl list | grep com.dispatch.server',
+      );
+    }
+  }
+
   return {
     install(opts: DaemonInstallOptions) {
       // 1. Write plist and ensure directories.
@@ -64,46 +104,33 @@ export function createDarwinDaemon(
       fs.mkdirSync(opts.logDir, { recursive: true });
       fs.writeFileSync(plistPath, buildPlist(opts));
 
-      // 2. Bootout first (idempotency) — ignore all errors (may not be loaded).
-      // quiet:true suppresses the expected "Boot-out failed: 3: No such process" stderr noise.
-      try { run('launchctl', ['bootout', `gui/${uid}/${LABEL}`], { quiet: true }); } catch { /* ignore */ }
-      try { run('launchctl', ['bootout', `user/${uid}/${LABEL}`], { quiet: true }); } catch { /* ignore */ }
-
-      // 3. Poll for teardown (up to ~5 × 500ms = 2.5s).
-      for (let i = 0; i < 5; i++) {
-        if (!isLoaded()) break;
-        sleep(500);
-      }
-
-      // 4. Bootstrap with retry — try gui/ first, fall back to user/, retry up to 3 total.
-      const domains = [`gui/${uid}`, `user/${uid}`];
-      let bootstrapped = false;
-      const maxAttempts = 3;
-      for (let attempt = 0; attempt < maxAttempts && !bootstrapped; attempt++) {
-        const domain = domains[attempt % domains.length] ?? domains[0];
-        try {
-          run('launchctl', ['bootstrap', domain!, plistPath]);
-          bootstrapped = true;
-        } catch {
-          if (attempt < maxAttempts - 1) sleep(300);
-        }
-      }
-
-      // 5. Verify loaded.
-      if (!isLoaded()) {
-        throw new Error(
-          'dispatch: failed to load launchd agent after install — run: launchctl list | grep com.dispatch.server',
-        );
-      }
+      // 2-5. Bootout the old instance (if any) and bootstrap the new plist.
+      bootstrapAndVerify();
     },
     uninstall() {
       try { runWithDomainFallback(run, uid, ['bootout', `__DOMAIN__/${LABEL}`]); }
       catch { /* ignore — may already be unloaded */ }
       fs.rmSync(plistPath, { force: true });
     },
-    start() { runWithDomainFallback(run, uid, ['kickstart', `__DOMAIN__/${LABEL}`]); },
+    start() {
+      // `launchctl kickstart` only works on an already-loaded job; it fails outright
+      // (e.g. after stop()'s bootout unloaded it entirely). Fall back to the same
+      // bootstrap/load path install() uses so start() can recover an unloaded job.
+      try {
+        runWithDomainFallback(run, uid, ['kickstart', `__DOMAIN__/${LABEL}`]);
+      } catch {
+        bootstrapAndVerify();
+      }
+    },
     stop() { runWithDomainFallback(run, uid, ['bootout', `__DOMAIN__/${LABEL}`]); },
     restart() {
+      // If the job isn't loaded at all, a detached `kickstart -k` retry (below) is a
+      // silent no-op — kickstart cannot load an unloaded job. Recover it synchronously
+      // first (bounded: ~2.5s bootout poll + up to 2×300ms bootstrap retry) so the
+      // scheduled kickstart below has something loaded to restart.
+      if (!isLoaded()) {
+        bootstrapAndVerify();
+      }
       // Restart must survive being called from inside a Dispatch-spawned terminal:
       // a synchronous kickstart -k would kill this process's PTY tree mid-execution.
       // Instead, spawn the kickstart detached and unref'd so it runs after our

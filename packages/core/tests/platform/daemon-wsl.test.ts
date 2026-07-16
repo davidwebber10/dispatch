@@ -35,8 +35,29 @@ test('install registers an ONLOGON schtask running wsl.exe --exec and persists d
   expect(calls[0]).toContain('/SC');
   expect(calls[0]).toContain('ONLOGON');
   const tr = calls[0][calls[0].indexOf('/TR') + 1];
-  expect(tr).toContain('wsl.exe -d "Ubuntu" --exec "/repo/bin/dispatch" daemon-run');
+  // Absolute node + absolute CLI entry, no PATH dependency (nvm-installed node isn't on
+  // the ONLOGON task's non-login PATH, so the bin/dispatch sh shim's bare `exec node`
+  // fails silently at logon otherwise).
+  expect(tr).toContain('wsl.exe -d "Ubuntu" --exec "/usr/bin/node" "/repo/packages/cli/dist/index.js" daemon-run');
   expect(JSON.parse(files['/fake/.dispatch/daemon.json']).entry).toBe(OPTS.entry);
+});
+
+test('install throws an actionable error (with the exact manual schtasks.exe command) when /Create fails', () => {
+  const failing = createWslDaemon({
+    dataDir: () => '/fake/.dispatch',
+    execFileSync: (cmd, args) => {
+      if (cmd === 'schtasks.exe' && args[0] === '/Create') throw new Error('Access is denied.');
+      return '';
+    },
+    readFile: () => { throw new Error('ENOENT'); },
+    writeFile: () => {},
+    unlink: () => {},
+    spawnDetached: () => {},
+    kill: () => {},
+    env: { WSL_DISTRO_NAME: 'Ubuntu' } as NodeJS.ProcessEnv,
+  });
+  expect(() => failing.install(OPTS)).toThrow(/schtasks\.exe \/Create/);
+  expect(() => failing.install(OPTS)).toThrow(/dispatch run/);
 });
 
 test('uninstall deletes the task', () => {

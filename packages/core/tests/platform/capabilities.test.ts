@@ -27,4 +27,24 @@ describe('linux capabilities', () => {
     expect(linux.isLocalClient(lan)).toBe(false);
   });
   test('tool key is linux-*', () => expect(linux.toolPlatformKey()).toMatch(/^linux-(x64|arm64)$/));
+
+  test('defaultShell falls back to /bin/bash when SHELL is unset (no /bin/zsh on Ubuntu)', () => {
+    const saved = process.env.SHELL;
+    try {
+      delete process.env.SHELL;
+      expect(linux.defaultShell()).toEqual({ command: '/bin/bash', args: [] });
+    } finally {
+      if (saved === undefined) delete process.env.SHELL; else process.env.SHELL = saved;
+    }
+  });
+
+  test('defaultShell honors SHELL when set', () => {
+    const saved = process.env.SHELL;
+    try {
+      process.env.SHELL = '/usr/bin/fish';
+      expect(linux.defaultShell()).toEqual({ command: '/usr/bin/fish', args: [] });
+    } finally {
+      if (saved === undefined) delete process.env.SHELL; else process.env.SHELL = saved;
+    }
+  });
 });

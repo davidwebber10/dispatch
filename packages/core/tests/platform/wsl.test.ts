@@ -42,8 +42,14 @@ function fakeWsl(calls: string[][], gw = ROUTE) {
       if (cmd === 'wslpath') return { stdout: 'C:\\Users\\dw\\proj\\file.txt\n' };
       return { stdout: '' };
     },
-    readFileSync: (p) => (p === '/proc/net/route' ? gw : 'Linux version 5.15-microsoft'),
-    env: { WSL_DISTRO_NAME: 'Ubuntu' } as NodeJS.ProcessEnv,
+    // Throws for unknown paths (matches real fs.readFileSync ENOENT behavior); only
+    // /proc/net/route and the binfmt interop marker resolve.
+    readFileSync: (p) => {
+      if (p === '/proc/net/route') return gw;
+      if (p === '/proc/sys/fs/binfmt_misc/WSLInterop') return 'enabled\ninterpreter /init\n';
+      throw new Error('ENOENT');
+    },
+    env: { WSL_DISTRO_NAME: 'Ubuntu', WSL_INTEROP: '/run/WSL/1_interop' } as NodeJS.ProcessEnv,
   });
 }
 
@@ -73,3 +79,38 @@ test('isLocalClient: NAT gateway peer with localhost Host accepted; portproxy LA
   expect(p.isLocalClient({ remoteAddress: '192.168.32.1', host: 'localhost:3456', proxied: true })).toBe(false);    // tunnel
 });
 test('fileManagerName is File Explorer', () => expect(fakeWsl([]).fileManagerName).toBe('File Explorer'));
+
+describe('interop probe (fileManagerName)', () => {
+  test('no interop available (binfmt read throws, WSL_INTEROP unset) → fileManagerName is null', () => {
+    const p = createWslPlatform({
+      execFile: async () => ({ stdout: '' }),
+      readFileSync: () => { throw new Error('ENOENT'); },
+      env: { WSL_DISTRO_NAME: 'Ubuntu' } as NodeJS.ProcessEnv,
+    });
+    expect(p.fileManagerName).toBeNull();
+  });
+
+  test('WSL_INTEROP env fallback when binfmt read throws → File Explorer', () => {
+    const p = createWslPlatform({
+      execFile: async () => ({ stdout: '' }),
+      readFileSync: () => { throw new Error('ENOENT'); },
+      env: { WSL_DISTRO_NAME: 'Ubuntu', WSL_INTEROP: '/run/WSL/1_interop' } as NodeJS.ProcessEnv,
+    });
+    expect(p.fileManagerName).toBe('File Explorer');
+  });
+
+  test('probe is cached: readFileSync for the binfmt path is called once across two reads', () => {
+    let binfmtReads = 0;
+    const p = createWslPlatform({
+      execFile: async () => ({ stdout: '' }),
+      readFileSync: (path) => {
+        if (path === '/proc/sys/fs/binfmt_misc/WSLInterop') { binfmtReads++; return 'enabled\n'; }
+        throw new Error('ENOENT');
+      },
+      env: { WSL_DISTRO_NAME: 'Ubuntu' } as NodeJS.ProcessEnv,
+    });
+    expect(p.fileManagerName).toBe('File Explorer');
+    expect(p.fileManagerName).toBe('File Explorer');
+    expect(binfmtReads).toBe(1);
+  });
+});

@@ -63,8 +63,21 @@ export function createWslDaemon(d: WslDaemonDeps): DaemonController {
       d.writeFile(optsFile(), JSON.stringify(opts));
       const distro = d.env.WSL_DISTRO_NAME ?? 'Ubuntu';
       // The wsl.exe process anchors the distro VM's lifetime AND the daemon's interop context.
-      const tr = `wsl.exe -d "${distro}" --exec "${opts.repoRoot}/bin/dispatch" daemon-run`;
-      d.execFileSync('schtasks.exe', ['/Create', '/F', '/SC', 'ONLOGON', '/TN', TASK, '/TR', tr]);
+      // Absolute node + absolute CLI entry, no PATH dependency: the ONLOGON scheduled task
+      // runs on a bare, non-login PATH that doesn't include nvm-installed node, so the
+      // `bin/dispatch` sh shim's bare `exec node` would otherwise fail silently at logon.
+      const tr = `wsl.exe -d "${distro}" --exec "${opts.nodePath}" "${opts.repoRoot}/packages/cli/dist/index.js" daemon-run`;
+      try {
+        d.execFileSync('schtasks.exe', ['/Create', '/F', '/SC', 'ONLOGON', '/TN', TASK, '/TR', tr]);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `dispatch: failed to register the Windows logon task (${msg}).\n` +
+          `Run this manually in an elevated PowerShell:\n` +
+          `  schtasks.exe /Create /F /SC ONLOGON /TN Dispatch /TR '${tr}'\n` +
+          `In the meantime, 'dispatch run' works in the foreground.`,
+        );
+      }
       d.execFileSync('schtasks.exe', ['/Run', '/TN', TASK]);
     },
     uninstall() {

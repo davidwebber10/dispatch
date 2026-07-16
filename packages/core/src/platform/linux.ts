@@ -21,6 +21,10 @@ export const linux: Platform = {
   id: 'linux',
   flavor: 'linux',
   fileManagerName: null,
+  // Ubuntu (and WSL's Ubuntu) has no /bin/zsh; darwin's default falls back to that,
+  // which doesn't exist here. The logon-task/scheduled-task env also lacks SHELL,
+  // so the fallback matters in practice, not just in theory.
+  defaultShell: () => ({ command: process.env.SHELL || '/bin/bash', args: [] }),
   // isLocalClient inherits darwin's loopback rule via the spread — correct for both.
   revealInFileManager: async () => { throw new Error('Reveal is not supported on headless Linux.'); },
   toolPlatformKey: () => (process.arch === 'arm64' ? 'linux-arm64' : 'linux-x64'),

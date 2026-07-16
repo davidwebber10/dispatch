@@ -230,6 +230,76 @@ describe('createDarwinDaemon install()', () => {
     rmSpy.mockRestore();
   });
 
+});
+
+// ── start()/restart() recovery of an unloaded job ───────────────────────────
+//
+// child_process is mocked file-wide (spawn -> a no-op stub with .unref()) so that
+// restart()'s detached-kickstart spawn NEVER shells out for real in these tests —
+// LABEL is the same 'com.dispatch.server' launchd label the REAL installed daemon
+// on this machine uses, so an unmocked spawn here would eventually kickstart the
+// user's actual dispatch daemon. Every launchctl invocation in this block goes
+// through the injected `run`, never the real execFileSync.
+describe('createDarwinDaemon start()/restart() unloaded-job recovery', () => {
+  vi.mock('child_process', () => ({
+    execFileSync: vi.fn(),
+    spawn: vi.fn(() => ({ unref: vi.fn() })),
+  }));
+
+  test('start falls back to bootstrap when kickstart fails on an unloaded job', () => {
+    const calls: string[][] = [];
+    let listCallCount = 0;
+    const run = vi.fn((cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      if (args[0] === 'kickstart') throw new Error('No such process');
+      if (args[0] === 'list') {
+        listCallCount++;
+        // Unloaded during the bootout poll; loaded once bootstrap succeeds.
+        if (listCallCount <= 1) return 'PID\tStatus\tLabel\n';
+        return 'PID\tStatus\tLabel\n999\t0\tcom.dispatch.server\n';
+      }
+      return ''; // bootout, bootstrap succeed silently
+    });
+    const sleeper = vi.fn();
+    const d = createDarwinDaemon(run, sleeper, '/tmp/test.plist');
+    expect(() => d.start()).not.toThrow();
+    expect(calls.some(c => c[1] === 'bootstrap')).toBe(true);
+  });
+
+  test('restart checks loaded status BEFORE scheduling kickstart, and bootstraps when unloaded', () => {
+    const calls: string[][] = [];
+    let listCallCount = 0;
+    const run = vi.fn((cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      if (args[0] === 'list') {
+        listCallCount++;
+        // First status check (restart's pre-check) reports unloaded, which must
+        // trigger the bootstrap fallback; subsequent checks report loaded.
+        if (listCallCount <= 1) return 'PID\tStatus\tLabel\n';
+        return 'PID\tStatus\tLabel\n999\t0\tcom.dispatch.server\n';
+      }
+      return '';
+    });
+    const sleeper = vi.fn();
+    const d = createDarwinDaemon(run, sleeper, '/tmp/test.plist');
+    expect(() => d.restart()).not.toThrow();
+    expect(calls.some(c => c[1] === 'bootstrap')).toBe(true);
+  });
+
+  test('restart does not invoke bootstrap when the job is already loaded', () => {
+    const calls: string[][] = [];
+    const run = vi.fn((cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      if (args[0] === 'list') return 'PID\tStatus\tLabel\n123\t0\tcom.dispatch.server\n';
+      return '';
+    });
+    const d = createDarwinDaemon(run, vi.fn(), '/tmp/test.plist');
+    expect(() => d.restart()).not.toThrow();
+    expect(calls.some(c => c[1] === 'bootstrap')).toBe(false);
+  });
+});
+
+describe('createDarwinDaemon install() idempotency + uninstall plist cleanup — extra', () => {
   test('idempotency bootout calls pass { quiet: true }', () => {
     // Record the opts passed to each call so we can assert the two bootout
     // calls are issued with quiet:true (stderr suppressed).
