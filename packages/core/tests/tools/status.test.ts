@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { toolStatuses, getToolsSpawnEnv, awarenessNote } from '../../src/tools/status.js';
-import { toolPaths } from '../../src/tools/paths.js';
+import { toolPaths, hostOsFamily } from '../../src/tools/paths.js';
 
 let root: string;
 let base: string;
@@ -49,4 +49,18 @@ it('awarenessNote lists installed tools and flags unauthed', () => {
 
 it('awarenessNote is empty when nothing installed', () => {
   expect(awarenessNote([{ name: 'x', description: 'd', kind: 'binary', installed: false, authed: false }])).toBe('');
+});
+
+it('toolStatuses excludes entries gated to another platform family and includes entries gated to this one', () => {
+  const family = hostOsFamily();
+  const otherFamily = family === 'darwin' ? 'linux' : 'darwin';
+  fs.writeFileSync(path.join(root, 'tools.json'), JSON.stringify({ tools: [
+    { name: 'gh', description: 'GitHub CLI', kind: 'binary', bins: ['gh'], binary: { 'darwin-arm64': { url: 'https://x/gh', archive: 'none' }, 'darwin-x64': { url: 'https://x/gh', archive: 'none' } } },
+    { name: 'other-only', description: 'gated to the other family', kind: 'binary', bins: ['x'], platforms: [otherFamily], binary: { 'darwin-arm64': { url: 'https://x/x', archive: 'none' }, 'darwin-x64': { url: 'https://x/x', archive: 'none' } } },
+    { name: 'this-only', description: 'gated to this family', kind: 'binary', bins: ['y'], platforms: [family], binary: { 'darwin-arm64': { url: 'https://x/y', archive: 'none' }, 'darwin-x64': { url: 'https://x/y', archive: 'none' } } },
+  ] }));
+  const names = toolStatuses({ base, env: {} }).map((s) => s.name);
+  expect(names).not.toContain('other-only');
+  expect(names).toContain('this-only');
+  expect(names).toContain('gh'); // ungated entries are unaffected
 });

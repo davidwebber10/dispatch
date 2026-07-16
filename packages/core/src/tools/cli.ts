@@ -2,6 +2,7 @@
 import { loadManifest } from './manifest.js';
 import { installTool, uninstallTool } from './installer.js';
 import { toolStatuses } from './status.js';
+import { hostOsFamily } from './paths.js';
 
 export async function runToolsCli(argv: string[], opts?: { base?: string }): Promise<number> {
   const [cmd, name] = argv;
@@ -16,8 +17,15 @@ export async function runToolsCli(argv: string[], opts?: { base?: string }): Pro
     const manifest = loadManifest(base);
     const targets = name ? manifest.filter((e) => e.name === name) : manifest;
     if (name && !targets.length) { console.error(`no such tool: ${name}`); return 1; }
+    const family = hostOsFamily();
     let failed = 0;
     for (const e of targets) {
+      // Bulk install (no explicit name) silently skips platform-gated entries; a single named
+      // install still runs installTool() so its clear "not supported on <family>" throw surfaces.
+      if (!name && e.platforms && !e.platforms.includes(family)) {
+        console.log(`skipping ${e.name} (${e.platforms.join('/')}-only)`);
+        continue;
+      }
       try { console.log(`installing ${e.name}…`); await installTool(e, { base }); }
       catch (err) { failed++; console.error(`  ${e.name} failed: ${(err as Error).message}`); }
     }
