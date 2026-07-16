@@ -42,6 +42,16 @@ export const codexProvider: SessionProvider = {
     return { codexArgs: ['-c', `notify=${notify}`] };
   },
 
+  buildStructuredCommand({ secretsMcp }) {
+    // Codex "Pretty" speaks the app-server v2 JSON-RPC protocol over stdio (base `codex
+    // app-server`, NO subcommand — the spike-verified stdio channel). Unlike Claude, whose
+    // model/resume ride in argv, Codex pins its model + resumes out-of-band via JSON-RPC
+    // (thread/start model, thread/resume) — so `resumeSessionId`/`model` are NOT appended here;
+    // CodexStructuredSessionManager applies them (via StructuredSpawnOpts.resumeId/model). MCP
+    // `-c` overrides are global options and precede the subcommand, like the other codex builds.
+    return { command: 'codex', args: [...mcpArgs(secretsMcp), 'app-server'] };
+  },
+
   buildRunnerCommand({ prompt, secretsMcp }) {
     // `codex exec` runs non-interactively and EXITS when the task is complete
     // (the process-exit is our run-completion fallback).

@@ -96,18 +96,18 @@ describe('NewThreadModal', () => {
     expect(input.config).toBeUndefined();
   });
 
-  it('renders the Codex Pretty tile disabled (coming soon) and never sets transport for Codex', async () => {
+  it('offers Codex Pretty (Phase C enabled) and carries transport:structured when chosen', async () => {
     render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: 'Codex' }));
     const pretty = screen.getByRole('button', { name: 'Pretty mode' });
-    expect(pretty).toBeDisabled();
-    expect(screen.getByText('Coming soon')).toBeInTheDocument();
-    fireEvent.click(pretty); // no-op — disabled
+    expect(pretty).not.toBeDisabled();
+    expect(screen.queryByText('Coming soon')).not.toBeInTheDocument();
+    fireEvent.click(pretty);
     start();
     await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
     const input = lastInput();
     expect(input.type).toBe('codex');
-    expect(input.config?.transport).toBeUndefined();
+    expect(input.config.transport).toBe('structured');
   });
 
   it('offers RESUME RECENT for Claude Code, fetched from recentCcSessions', async () => {

@@ -42,6 +42,7 @@ import type { EventBroadcaster } from './ws/events.js';
 import { handleTerminalConnection } from './ws/terminal.js';
 import { handleStructuredConnection } from './ws/structured.js';
 import { ClaudeStructuredSessionManager, type IStructuredManager } from './structured/manager.js';
+import { CodexStructuredSessionManager } from './structured/codex-manager.js';
 import { startPtyTimingLoop } from './sessions/status.js';
 import { startAutoArchiveLoop } from './sessions/auto-archive.js';
 import { TerminalMonitor } from './terminal-monitor.js';
@@ -130,6 +131,28 @@ function wirePermissionMembrane(structuredManager: IStructuredManager, statusSer
   });
 }
 
+/**
+ * Codex "Pretty" (structured app-server transport). Enabled after the Phase B live E2E proved a
+ * real Codex-Pretty thread streams a turn + surfaces/answers an approval end-to-end (see the
+ * CodexStructuredSessionManager). Kill-switch: set DISPATCH_CODEX_PRETTY=0 to fall back to the
+ * PTY-only Codex transport (mirrors the web modal's CODEX_PRETTY_ENABLED flag).
+ */
+const CODEX_PRETTY_ENABLED = process.env.DISPATCH_CODEX_PRETTY !== '0';
+
+/**
+ * Wire the Codex app-server structured manager onto the service (so `structuredManagerFor('codex')`
+ * resolves it and the Codex Pretty transport comes alive), reusing the SAME permission membrane
+ * as Claude — both managers emit the identical Claude-shaped event contract. No-op (returns
+ * undefined) when Codex Pretty is disabled; Codex then keeps only its PTY transport.
+ */
+function wireCodexPretty(sessionService: SessionService, statusService: StatusService): IStructuredManager | undefined {
+  if (!CODEX_PRETTY_ENABLED) return undefined;
+  const codexManager = new CodexStructuredSessionManager();
+  sessionService.setCodexStructuredManager(codexManager);
+  wirePermissionMembrane(codexManager, statusService, sessionService);
+  return codexManager;
+}
+
 export function createApp(options: CreateAppOptions): import('express').Express {
   const { db, skipPty = false } = options;
 
@@ -157,6 +180,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   if (options.structuredCommand) sessionService.setStructuredCommandOverride(options.structuredCommand);
   const statusService = new StatusService(db, broadcaster);
   wirePermissionMembrane(structuredManager, statusService, sessionService);
+  wireCodexPretty(sessionService, statusService);
   const pushService = new PushService(db, { vapidDir: dispatchDir });
 
   statusService.setThreadSettledHook(({ terminalId, sessionId, threadStatus }) => {
@@ -282,6 +306,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const structuredManager = new ClaudeStructuredSessionManager();
   sessionService.setStructuredManager(structuredManager);
   wirePermissionMembrane(structuredManager, statusService, sessionService);
+  wireCodexPretty(sessionService, statusService);
   const pushService = new PushService(db, { vapidDir: dataDir });
 
   statusService.setThreadSettledHook(({ terminalId, sessionId, threadStatus }) => {
@@ -415,7 +440,12 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
     if (url.match(/\/api\/terminals\/[^/]+\/structured-ws/)) {
       structuredWss.handleUpgrade(request, socket, head, (ws) => {
-        handleStructuredConnection(ws, request, structuredManager, (id) => sessionService.ensureStructuredAlive(id));
+        // Pick the RIGHT manager for this terminal's harness (claude stream-json vs codex
+        // app-server) — both satisfy IStructuredManager, so the ws handler is transport-agnostic.
+        // Falls back to the Claude manager when the terminal/type can't be resolved yet.
+        const id = url.match(/\/api\/terminals\/([^/]+)\/structured-ws/)?.[1];
+        const manager = (id && sessionService.structuredManagerForTerminal(id)) || structuredManager;
+        handleStructuredConnection(ws, request, manager, (tid) => sessionService.ensureStructuredAlive(tid));
       });
     } else if (url.match(/\/api\/terminals\/[^/]+\/ws/) || url.match(/\/api\/sessions\/[^/]+\/terminal/)) {
       terminalWss.handleUpgrade(request, socket, head, (ws) => {
