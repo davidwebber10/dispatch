@@ -41,7 +41,7 @@ import { createEventsBroadcaster, createNoopBroadcaster } from './ws/events.js';
 import type { EventBroadcaster } from './ws/events.js';
 import { handleTerminalConnection } from './ws/terminal.js';
 import { handleStructuredConnection } from './ws/structured.js';
-import { StructuredSessionManager } from './structured/manager.js';
+import { ClaudeStructuredSessionManager, type IStructuredManager } from './structured/manager.js';
 import { startPtyTimingLoop } from './sessions/status.js';
 import { startAutoArchiveLoop } from './sessions/auto-archive.js';
 import { TerminalMonitor } from './terminal-monitor.js';
@@ -95,7 +95,7 @@ class NoopPTYManager extends PTYManager {
  * once answered, 'resolved' (→ working). Routing it through StatusService means it
  * broadcasts terminal:status + fires the same push/notify path the PTY/hook flow uses.
  */
-function wirePermissionMembrane(structuredManager: StructuredSessionManager, statusService: StatusService, sessionService: SessionService): void {
+function wirePermissionMembrane(structuredManager: IStructuredManager, statusService: StatusService, sessionService: SessionService): void {
   structuredManager.on('permission', (terminalId: string, pending: { toolName?: string; questions?: any[] }) => {
     // An agent's AskUserQuestion escalates UP to its project's coordinator (Dispatch), not to
     // the human. When that routing succeeds the agent stays "working" (it's waiting on the
@@ -152,7 +152,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
   sessionService.setIntegrationsSpecs(() => integrationsService.getServerSpecs());
   sessionService.setToolsAwareness(() => awarenessNote(toolStatuses({ base: toolsBase })));
-  const structuredManager = new StructuredSessionManager();
+  const structuredManager = new ClaudeStructuredSessionManager();
   sessionService.setStructuredManager(structuredManager);
   if (options.structuredCommand) sessionService.setStructuredCommandOverride(options.structuredCommand);
   const statusService = new StatusService(db, broadcaster);
@@ -279,7 +279,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const sessionService = new SessionService(db, ptyManager, path.join(dataDir, 'mcp.json'));
   const agentService = new AgentService(db, sessionService, broadcaster, path.join(dataDir, 'runs'));
   const statusService = new StatusService(db, broadcaster);
-  const structuredManager = new StructuredSessionManager();
+  const structuredManager = new ClaudeStructuredSessionManager();
   sessionService.setStructuredManager(structuredManager);
   wirePermissionMembrane(structuredManager, statusService, sessionService);
   const pushService = new PushService(db, { vapidDir: dataDir });

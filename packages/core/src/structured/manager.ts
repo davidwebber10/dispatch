@@ -57,6 +57,58 @@ interface Session {
   pendingSource?: MessageSource;
 }
 
+/** Options accepted by a structured manager's `spawn`. For the Claude manager
+ *  `command`/`args` are the `claude` stream-json invocation; for a future Codex
+ *  manager they identify how to reach its app-server — but the shape is shared so
+ *  `SessionService.spawnStructured` can drive either without branching. */
+export interface StructuredSpawnOpts {
+  command: string;
+  args: string[];
+  workDir: string;
+  env?: Record<string, string>;
+  escalate?: boolean;
+  seedEvents?: unknown[];
+}
+
+/** A permission decision written back to a blocked structured session. */
+export type PermissionDecision =
+  | { behavior: 'allow'; updatedInput?: unknown }
+  | { behavior: 'deny'; message?: string };
+
+/**
+ * The shared structured-transport contract. Both the Claude stream-json manager
+ * and (Phase B) the Codex app-server manager satisfy it, so `SessionService` and
+ * the structured ws consume EITHER through this one interface — the frontend sees
+ * the same Claude-shaped event stream regardless of which harness produced it.
+ *
+ * Emitted events (all Claude-shaped, `(terminalId, …)`):
+ *   'event'  (terminalId, event)      — a stream event for the View/chat
+ *   'session'(terminalId, sessionId)  — the external session/thread id to persist
+ *   'permission'(terminalId, pending) — a gated tool/question awaiting a decision
+ *   'idle'   (terminalId)             — a turn completed (thread is idle)
+ *   'scheduled'(terminalId, activity) — turn ended by a wake-scheduler tool
+ *   'busy'   (terminalId)             — a turn started
+ *   'resolved'(terminalId)            — a pending permission was answered
+ *   'exit'   (terminalId, code)       — the backing process/connection exited
+ *   'message-source'(terminalId, src) — a tagged turn's result landed (persist src)
+ */
+export interface IStructuredManager extends EventEmitter {
+  setDefaultEnv(env: Record<string, string>): void;
+  spawn(terminalId: string, opts: StructuredSpawnOpts): number;
+  sendMessage(terminalId: string, content: string | ContentBlock[], source?: MessageSource): void;
+  answerPermission(terminalId: string, requestId: string, decision: PermissionDecision): boolean;
+  setEscalate(terminalId: string, escalate: boolean): boolean;
+  interrupt(terminalId: string): boolean;
+  compact(terminalId: string): void;
+  getPending(terminalId: string): PendingPermission | null;
+  getSessionId(terminalId: string): string | undefined;
+  getEvents(terminalId: string): unknown[];
+  getEventsTail(terminalId: string, n: number): unknown[];
+  isAlive(terminalId: string): boolean;
+  kill(terminalId: string): void;
+  killAll(): void;
+}
+
 const MAX_EVENTS = 5000;
 
 /**
@@ -92,7 +144,7 @@ function wakeActivity(toolName: string, input: unknown): string {
  * its own consumers (the structured ws + the View adapter) — it does NOT feed the
  * xterm/runner data path. Permissions are auto-allowed (parity with today).
  */
-export class StructuredSessionManager extends EventEmitter {
+export class ClaudeStructuredSessionManager extends EventEmitter implements IStructuredManager {
   private sessions = new Map<string, Session>();
   private defaultEnv: Record<string, string> = {};
 
@@ -103,7 +155,7 @@ export class StructuredSessionManager extends EventEmitter {
 
   setDefaultEnv(env: Record<string, string>): void { this.defaultEnv = env; }
 
-  spawn(terminalId: string, opts: { command: string; args: string[]; workDir: string; env?: Record<string, string>; escalate?: boolean; seedEvents?: unknown[] }): number {
+  spawn(terminalId: string, opts: StructuredSpawnOpts): number {
     if (this.sessions.has(terminalId)) this.kill(terminalId);
     const child = spawn(opts.command, opts.args, {
       cwd: opts.workDir,
@@ -272,7 +324,7 @@ export class StructuredSessionManager extends EventEmitter {
   answerPermission(
     terminalId: string,
     requestId: string,
-    decision: { behavior: 'allow'; updatedInput?: unknown } | { behavior: 'deny'; message?: string },
+    decision: PermissionDecision,
   ): boolean {
     const s = this.sessions.get(terminalId);
     if (!s || !s.pending) return false;
@@ -358,3 +410,10 @@ export class StructuredSessionManager extends EventEmitter {
     return n >= events.length ? [...events] : events.slice(events.length - n);
   }
 }
+
+/**
+ * Back-compat alias: the class was renamed to `ClaudeStructuredSessionManager`
+ * when `IStructuredManager` was extracted (a second manager, `CodexStructured…`,
+ * satisfies the same interface). Existing importers of the old name keep working.
+ */
+export { ClaudeStructuredSessionManager as StructuredSessionManager };

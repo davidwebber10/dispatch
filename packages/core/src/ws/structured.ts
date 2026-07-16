@@ -1,12 +1,12 @@
 // packages/core/src/ws/structured.ts
 import type { WebSocket } from 'ws';
 import type { IncomingMessage } from 'node:http';
-import type { StructuredSessionManager } from '../structured/manager.js';
+import type { IStructuredManager } from '../structured/manager.js';
 
 export function handleStructuredConnection(
   ws: WebSocket,
   req: IncomingMessage,
-  manager: StructuredSessionManager,
+  manager: IStructuredManager,
   // Hook that lazily revives a thread that died on a daemon restart BEFORE we replay
   // its buffered events — so the resume's history backfill is already in the ring.
   // Returns whether a live process now backs the thread (true if already alive, or
