@@ -25,6 +25,11 @@ export const useUI = create<{
   pendingOpenTab: string | null;
   requestOpenTab: (id: string) => void;
   clearOpenTab: () => void;
+  // Cross-shell "open this thread (possibly in another project)" intent — set by
+  // the SW notification tap / deep-link boot, consumed by whichever shell is live.
+  pendingOpenThread: { sessionId: string; terminalId: string } | null;
+  requestOpenThread: (v: { sessionId: string; terminalId: string }) => void;
+  clearOpenThread: () => void;
 }>((set, get) => ({
   view: 'workspace',
   setView: (view) => set({ view }),
@@ -39,4 +44,7 @@ export const useUI = create<{
   pendingOpenTab: null,
   requestOpenTab: (id) => set({ pendingOpenTab: id }),
   clearOpenTab: () => set({ pendingOpenTab: null }),
+  pendingOpenThread: null,
+  requestOpenThread: (v) => set({ pendingOpenThread: v }),
+  clearOpenThread: () => set({ pendingOpenThread: null }),
 }));

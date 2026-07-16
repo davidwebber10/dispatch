@@ -2,7 +2,7 @@
 // Deliberately conservative because the origin sits behind Cloudflare Access:
 // API / WebSocket / Access / upload paths are never intercepted, and the HTML
 // shell is revalidated over the network so an expired session re-authenticates.
-const VERSION = 'dispatch-v3';
+const VERSION = 'dispatch-v4';
 const CACHE = `dispatch-${VERSION}`;
 
 self.addEventListener('install', () => self.skipWaiting());
@@ -67,16 +67,23 @@ self.addEventListener('push', (event) => {
     icon: '/icons/icon-192.png',
     badge: '/icons/icon-192.png',
     tag: d.terminalId || undefined,   // coalesce repeated pings per thread
-    data: { terminalId: d.terminalId || null },
+    data: { terminalId: d.terminalId || null, sessionId: d.sessionId || null },
   }));
 });
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
+  const { terminalId, sessionId } = event.notification.data || {};
   event.waitUntil((async () => {
     const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     const existing = all.find((c) => c.url.startsWith(self.location.origin));
-    if (existing) { await existing.focus(); return; }
-    await self.clients.openWindow('/');
+    if (existing) {
+      await existing.focus();
+      // Warm path: the running app navigates via the open-thread intent.
+      if (terminalId && sessionId) existing.postMessage({ type: 'open-thread', terminalId, sessionId });
+      return;
+    }
+    // Cold path: the mobile shell restores /p/<s>/t/<t> natively; desktop parses it at boot.
+    await self.clients.openWindow(terminalId && sessionId ? `/p/${sessionId}/t/${terminalId}` : '/');
   })());
 });

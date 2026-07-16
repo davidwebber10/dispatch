@@ -108,6 +108,16 @@ export function MobileApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingOpenTab]);
 
+  // SW notification tap while the app is running: jump straight to that thread,
+  // seeding the project first (openThreadFromList handles cross-project moves).
+  const pendingThread = useUI((s) => s.pendingOpenThread);
+  useEffect(() => {
+    if (!pendingThread) return;
+    useUI.getState().clearOpenThread();
+    openThreadFromList(pendingThread.sessionId, pendingThread.terminalId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingThread]);
+
   // Presence: the thread terminal is "being viewed" only on the level-2 tab leaf.
   useEffect(() => {
     useViewing.getState().set(level === 2 && leaf === 'tab' ? leafTabId : null);
