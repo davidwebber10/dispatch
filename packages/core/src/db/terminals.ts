@@ -26,6 +26,7 @@ export interface TerminalRow {
   config: string | null;
   archived_at: string | null;
   sort_order: number;
+  label_source: string;
 }
 
 export interface Terminal {
@@ -43,6 +44,7 @@ export interface Terminal {
   config: Record<string, any>;
   archivedAt: string | null;
   sortOrder: number;
+  labelSource: 'user' | 'default' | 'auto';
 }
 
 export function rowToTerminal(row: TerminalRow): Terminal {
@@ -63,6 +65,7 @@ export function rowToTerminal(row: TerminalRow): Terminal {
     config,
     archivedAt: row.archived_at,
     sortOrder: row.sort_order ?? 0,
+    labelSource: (row.label_source ?? 'user') as 'user' | 'default' | 'auto',
   };
 }
 
@@ -75,17 +78,19 @@ interface CreateInput {
   skipPermissions?: boolean;
   workingDir?: string;
   config?: Record<string, any>;
+  labelSource?: 'user' | 'default';
 }
 
 export function create(db: Database.Database, input: CreateInput): string {
   const now = new Date().toISOString();
   db.prepare(`
-    INSERT INTO terminals (id, session_id, type, label, external_id, skip_permissions, working_dir, config, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO terminals (id, session_id, type, label, external_id, skip_permissions, working_dir, config, created_at, label_source)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     input.id, input.sessionId, input.type, input.label,
     input.externalId ?? null, input.skipPermissions ? 1 : 0,
-    input.workingDir ?? null, JSON.stringify(input.config ?? {}), now
+    input.workingDir ?? null, JSON.stringify(input.config ?? {}), now,
+    input.labelSource ?? 'user'
   );
   return input.id;
 }
@@ -142,7 +147,13 @@ export function updateStatus(db: Database.Database, id: string, status: string):
 }
 
 export function updateLabel(db: Database.Database, id: string, label: string): void {
-  db.prepare('UPDATE terminals SET label = ? WHERE id = ?').run(label, id);
+  db.prepare("UPDATE terminals SET label = ?, label_source = 'user' WHERE id = ?").run(label, id);
+}
+
+/** One-shot auto-name. The label_source guard makes any concurrent user rename win. */
+export function setAutoLabel(db: Database.Database, id: string, label: string): boolean {
+  const r = db.prepare("UPDATE terminals SET label = ?, label_source = 'auto' WHERE id = ? AND label_source = 'default'").run(label, id);
+  return r.changes > 0;
 }
 
 export function updateConfig(db: Database.Database, id: string, config: Record<string, any>): void {

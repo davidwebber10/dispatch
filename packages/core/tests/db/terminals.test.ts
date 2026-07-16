@@ -109,4 +109,50 @@ describe('terminals db', () => {
     expect(terminal.externalId).toBeNull();
     expect(terminal.createdAt).toBeDefined();
   });
+
+  describe('label_source', () => {
+    it('create stamps the provided labelSource', () => {
+      terminalsDb.create(db, { id: 't1', sessionId: 's1', type: 'claude-code', label: 'My name', labelSource: 'user' });
+      expect(terminalsDb.getById(db, 't1')!.label_source).toBe('user');
+
+      terminalsDb.create(db, { id: 't2', sessionId: 's1', type: 'claude-code', label: 'Claude Code', labelSource: 'default' });
+      expect(terminalsDb.getById(db, 't2')!.label_source).toBe('default');
+    });
+
+    it('create defaults labelSource to user when omitted', () => {
+      terminalsDb.create(db, { id: 't1', sessionId: 's1', type: 'claude-code', label: 'Claude Code' });
+      expect(terminalsDb.getById(db, 't1')!.label_source).toBe('user');
+    });
+
+    it('rowToTerminal converts label_source to camelCase', () => {
+      terminalsDb.create(db, { id: 't1', sessionId: 's1', type: 'claude-code', label: 'Claude Code', labelSource: 'default' });
+      const terminal = terminalsDb.rowToTerminal(terminalsDb.getById(db, 't1')!);
+      expect(terminal.labelSource).toBe('default');
+    });
+
+    it('updateLabel stamps user', () => {
+      terminalsDb.create(db, { id: 't1', sessionId: 's1', type: 'claude-code', label: 'Claude Code', labelSource: 'default' });
+      terminalsDb.updateLabel(db, 't1', 'Renamed');
+      const terminal = terminalsDb.getById(db, 't1');
+      expect(terminal!.label).toBe('Renamed');
+      expect(terminal!.label_source).toBe('user');
+    });
+
+    it('setAutoLabel only fires on default rows', () => {
+      terminalsDb.create(db, { id: 'd1', sessionId: 's1', type: 'claude-code', label: 'Claude Code', labelSource: 'default' });
+      expect(terminalsDb.setAutoLabel(db, 'd1', 'Fix the login bug')).toBe(true);
+      let terminal = terminalsDb.getById(db, 'd1');
+      expect(terminal!.label).toBe('Fix the login bug');
+      expect(terminal!.label_source).toBe('auto');
+
+      // second auto attempt: frozen
+      expect(terminalsDb.setAutoLabel(db, 'd1', 'Other')).toBe(false);
+      expect(terminalsDb.getById(db, 'd1')!.label).toBe('Fix the login bug');
+
+      // user row: frozen
+      terminalsDb.create(db, { id: 'u1', sessionId: 's1', type: 'claude-code', label: 'Claude Code', labelSource: 'user' });
+      expect(terminalsDb.setAutoLabel(db, 'u1', 'Nope')).toBe(false);
+      expect(terminalsDb.getById(db, 'u1')!.label).toBe('Claude Code');
+    });
+  });
 });
