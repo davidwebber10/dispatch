@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SortableList } from '../common/SortableList';
 import { SwipeRow } from '../common/SwipeRow';
-import { FolderOpen, CaretRight, Network, TerminalWindow, ChatCircle, PushPin, Timer } from '@phosphor-icons/react';
+import { FolderOpen, CaretRight, Network, TerminalWindow, ChatCircle, PushPin, Timer, Bell } from '@phosphor-icons/react';
 import type { Session, Terminal, AgentSchedule } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
 import { projectIndicator } from '../../lib/status';
@@ -22,6 +22,7 @@ import { RenameProjectModal } from './RenameProjectModal';
 import { RenameThreadModal } from './RenameThreadModal';
 import { AutoArchiveModal } from './AutoArchiveModal';
 import { api } from '../../api/client';
+import { canReceiveAlerts, ensurePushEnrolled } from '../../lib/push';
 
 /* The sidebar's search header is sticky (~52px). A row revealed by scrollIntoView would sit
    underneath it without this margin. */
@@ -128,6 +129,9 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tab.label}</span>
       {isMobile && (tab.config as { pinned?: boolean })?.pinned && (
         <PushPin size={13} weight="fill" color="var(--color-text-tertiary)" style={{ flexShrink: 0, marginLeft: 4 }} />
+      )}
+      {(tab.type === 'claude-code' || tab.type === 'codex') && (tab.config as { alertsEnabled?: boolean })?.alertsEnabled && canReceiveAlerts() && (
+        <Bell size={13} weight="fill" color="var(--color-text-tertiary)" style={{ flexShrink: 0, marginLeft: 4 }} />
       )}
       <span style={{ flexShrink: 0, marginLeft: 8, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
         {isMobile && (
@@ -273,6 +277,12 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
       useTabs.getState().markLoading(t.id);
       onSelectTab(t.id);
     } catch { /* e.g. 422 if the thread hasn't started a session yet */ }
+  }
+
+  async function toggleAlerts(tab: Terminal) {
+    const on = !(tab.config as { alertsEnabled?: boolean })?.alertsEnabled;
+    if (on) { const err = await ensurePushEnrolled(); if (err) { window.alert(err); return; } }
+    void useTabs.getState().setAlertsEnabled(tab.id, on);
   }
 
   async function deleteAgent(a: AgentSchedule) {
@@ -457,6 +467,9 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
                 and mobile-only: the Pinned surface is the mobile bottom tab. */}
             {isMobile && ctxMenu.tab.type !== 'file' && (
               <button onClick={() => { void useTabs.getState().setPinned(ctxMenu.tab.id, !(ctxMenu.tab.config as { pinned?: boolean })?.pinned); setCtxMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>{(ctxMenu.tab.config as { pinned?: boolean })?.pinned ? 'Unpin thread' : 'Pin thread'}</button>
+            )}
+            {(ctxMenu.tab.type === 'claude-code' || ctxMenu.tab.type === 'codex') && canReceiveAlerts() && (
+              <button onClick={() => { const t = ctxMenu.tab; setCtxMenu(null); void toggleAlerts(t); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>{(ctxMenu.tab.config as { alertsEnabled?: boolean })?.alertsEnabled ? 'Disable alerts' : 'Enable alerts'}</button>
             )}
             {ctxMenu.tab.type === 'file' ? (
               <button onClick={() => { void archive(ctxMenu.tab); setCtxMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>Unpin</button>

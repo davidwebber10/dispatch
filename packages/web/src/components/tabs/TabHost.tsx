@@ -12,6 +12,7 @@ import { useThreadMode } from '../../stores/threadMode';
 import { useTabs } from '../../stores/tabs';
 import { ModeToggle } from '../layout/ModeToggle';
 import { TransportToggle } from '../layout/TransportToggle';
+import { AlertBell } from '../layout/AlertBell';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { isImage, isSvg } from '../../lib/fileType';
 
@@ -42,6 +43,7 @@ function AiThread({ tab }: { tab: Terminal }) {
           keeps the render switcher in the header). */}
       {!isMobile && (
         <div style={{ position: 'absolute', top: 4, right: 12, zIndex: 12, display: 'flex', gap: 6 }}>
+          <AlertBell terminalId={tab.id} floating />
           <TransportToggle terminalId={tab.id} floating />
           {!structured && <ModeToggle terminalId={tab.id} floating />}
         </div>

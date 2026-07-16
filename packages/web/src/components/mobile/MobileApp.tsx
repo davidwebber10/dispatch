@@ -3,6 +3,7 @@ import { Gear, CaretLeft, CaretRight, Plus, Folders, PushPin, Robot } from '@pho
 import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
 import { ModeToggle } from '../layout/ModeToggle';
+import { AlertBell } from '../layout/AlertBell';
 import { ProjectCard } from '../sidebar/ProjectCard';
 import { AllAgentsView } from '../agents/AllAgentsView';
 import { PinnedThreadsView } from './PinnedThreadsView';
@@ -159,6 +160,7 @@ export function MobileApp() {
           </button>
         )}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <AlertBell terminalId={level === 2 && leaf === 'tab' ? leafTabId : null} />
           <ModeToggle terminalId={level === 2 && leaf === 'tab' ? leafTabId : null} />
           <button title="Settings" onClick={() => setSettings(true)} style={{ width: 32, height: 32, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 12, background: 'var(--color-elevated)', border: '1px solid #2C2C32', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
             <Gear size={17} />
