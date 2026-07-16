@@ -47,6 +47,13 @@ describe('manifest', () => {
     expect(validateEntry(null)).toBe(false);
   });
 
+  it('aws is darwin-gated (its script recipe shells out to macOS-only pkgutil, no Linux variant yet)', () => {
+    const m = loadManifest(base);
+    const aws = m.find((e) => e.name === 'aws');
+    expect(aws).toBeTruthy();
+    expect(aws!.platforms).toEqual(['darwin']);
+  });
+
   it('every binary tool has linux-x64 and linux-arm64 assets with a 64-char sha256', () => {
     const m = loadManifest(base);
     const binaryEntries = m.filter((e) => e.kind === 'binary');

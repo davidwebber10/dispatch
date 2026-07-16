@@ -28,7 +28,7 @@ const OPTS = { port: 3456, nodePath: '/usr/bin/node', entry: '/repo/packages/cor
 const OWN_CMDLINE = '/usr/bin/node\0/repo/packages/core/dist/server.js\0';
 const OTHER_CMDLINE = 'nginx\0-g\0daemon off;\0';
 
-test('install registers an ONLOGON schtask running wsl.exe --exec and persists daemon.json', () => {
+test('install registers an ONLOGON schtask running wsl.exe --exec (UNQUOTED) and persists daemon.json', () => {
   const { daemon, calls, files } = harness();
   daemon.install(OPTS);
   expect(calls[0][0]).toBe('schtasks.exe');
@@ -37,9 +37,21 @@ test('install registers an ONLOGON schtask running wsl.exe --exec and persists d
   const tr = calls[0][calls[0].indexOf('/TR') + 1];
   // Absolute node + absolute CLI entry, no PATH dependency (nvm-installed node isn't on
   // the ONLOGON task's non-login PATH, so the bin/dispatch sh shim's bare `exec node`
-  // fails silently at logon otherwise).
-  expect(tr).toContain('wsl.exe -d "Ubuntu" --exec "/usr/bin/node" "/repo/packages/cli/dist/index.js" daemon-run');
+  // fails silently at logon otherwise). UNQUOTED: wsl.exe's --exec does naive whitespace
+  // splitting on the TR string and does not understand shell quoting, so a quoted
+  // "/usr/bin/node" is exec'd literally (quotes included) and fails with ENOENT — verified
+  // live on Tier-3 hardware (Last Result -1). The unquoted form was verified working live.
+  expect(tr).toContain('wsl.exe -d Ubuntu --exec /usr/bin/node /repo/packages/cli/dist/index.js daemon-run');
+  expect(tr).not.toContain('"');
   expect(JSON.parse(files['/fake/.dispatch/daemon.json']).entry).toBe(OPTS.entry);
+});
+
+test('install throws before creating anything when repoRoot contains a space (unquoted TR breaks on spaces)', () => {
+  const { daemon, calls, files } = harness();
+  const spacedOpts = { ...OPTS, repoRoot: '/repo with space' };
+  expect(() => daemon.install(spacedOpts)).toThrow(/space/i);
+  expect(calls).toHaveLength(0); // schtasks.exe never invoked
+  expect(files['/fake/.dispatch/daemon.json']).toBeUndefined(); // daemon.json never written
 });
 
 test('install throws an actionable error (with the exact manual schtasks.exe command) when /Create fails', () => {
@@ -118,13 +130,14 @@ test('restart does not kill an unverified (possibly recycled) pid, but still spa
   expect(spawned[0]).toEqual(['/usr/bin/node', '/repo/packages/core/dist/server.js']);
 });
 
-test('restart throws instead of spawning a second instance when a verified-ours pid refuses to die', () => {
+test('restart throws instead of spawning a second instance when a verified-ours pid refuses to die (even after the final re-check)', () => {
   const files: Record<string, string> = {
     '/fake/.dispatch/daemon.pid': '4242',
     '/fake/.dispatch/daemon.json': JSON.stringify(OPTS),
     '/proc/4242/cmdline': OWN_CMDLINE,
   };
   const spawned: string[][] = [];
+  const WAIT_ITERATIONS = 3; // keep real-time cost down (real Atomics.wait sleeps 100ms/iter)
   const daemon = createWslDaemon({
     dataDir: () => '/fake/.dispatch',
     execFileSync: () => '',
@@ -132,13 +145,49 @@ test('restart throws instead of spawning a second instance when a verified-ours 
     writeFile: (p, s) => { files[p] = s; },
     unlink: (p) => { delete files[p]; },
     spawnDetached: (cmd, args) => { spawned.push([cmd, ...args]); },
-    // Never throws on a liveness probe (sig 0) or a term signal: the pid looks alive forever.
+    // Never throws on a liveness probe (sig 0) or a term signal: the pid looks alive forever,
+    // including on the final post-loop re-check.
     kill: () => {},
+    waitIterations: WAIT_ITERATIONS,
     env: { WSL_DISTRO_NAME: 'Ubuntu' } as NodeJS.ProcessEnv,
   });
-  expect(() => daemon.restart()).toThrow(/previous daemon \(pid 4242\) did not exit within 5s/);
+  expect(() => daemon.restart()).toThrow(
+    new RegExp(`previous daemon \\(pid 4242\\) did not exit within ${WAIT_ITERATIONS / 10}s`),
+  );
   expect(spawned).toHaveLength(0);
-}, 7000);
+});
+
+test('restart proceeds to spawn (no throw) when the pid dies late — alive during the wait loop, dead on the final re-check', () => {
+  const files: Record<string, string> = {
+    '/fake/.dispatch/daemon.pid': '4242',
+    '/fake/.dispatch/daemon.json': JSON.stringify(OPTS),
+    '/proc/4242/cmdline': OWN_CMDLINE,
+  };
+  const spawned: string[][] = [];
+  const WAIT_ITERATIONS = 3;
+  let aliveChecks = 0;
+  const daemon = createWslDaemon({
+    dataDir: () => '/fake/.dispatch',
+    execFileSync: () => '',
+    readFile: (p) => { if (!(p in files)) throw new Error('ENOENT'); return files[p]; },
+    writeFile: (p, s) => { files[p] = s; },
+    unlink: (p) => { delete files[p]; },
+    spawnDetached: (cmd, args) => { spawned.push([cmd, ...args]); },
+    kill: (pid, sig) => {
+      if (sig !== 0) return; // SIGTERM: accept, no-op
+      aliveChecks++;
+      // Alive for every liveness probe during the wait loop (the first WAIT_ITERATIONS
+      // calls), but dead on the (WAIT_ITERATIONS + 1)th — the one final re-check performed
+      // after the loop exhausts its budget.
+      if (aliveChecks > WAIT_ITERATIONS) throw new Error('ESRCH');
+    },
+    waitIterations: WAIT_ITERATIONS,
+    env: { WSL_DISTRO_NAME: 'Ubuntu' } as NodeJS.ProcessEnv,
+  });
+  expect(() => daemon.restart()).not.toThrow();
+  expect(spawned[0]).toEqual(['/usr/bin/node', '/repo/packages/core/dist/server.js']);
+  expect(aliveChecks).toBe(WAIT_ITERATIONS + 1);
+});
 
 test('stop kills the recorded pid when its cmdline matches the daemon entry', () => {
   const { daemon, killed } = harness({

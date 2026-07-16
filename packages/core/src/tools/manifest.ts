@@ -12,6 +12,7 @@ export function validateEntry(e: unknown): e is ToolEntry {
   if (typeof t.name !== 'string' || typeof t.description !== 'string') return false;
   if (t.kind !== 'binary' && t.kind !== 'npm' && t.kind !== 'script') return false;
   if (!Array.isArray(t.bins) || !t.bins.every((b) => typeof b === 'string')) return false;
+  if (t.platforms !== undefined && (!Array.isArray(t.platforms) || !t.platforms.every((p) => typeof p === 'string'))) return false;
   return true;
 }
 

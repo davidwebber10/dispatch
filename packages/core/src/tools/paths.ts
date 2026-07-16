@@ -19,3 +19,9 @@ export function toolPaths(base?: string): ToolPaths {
 export function hostPlatformKey(): string {
   return platform.toolPlatformKey();
 }
+
+/** OS family portion of hostPlatformKey(), e.g. 'darwin' from 'darwin-arm64'. Used to gate
+ *  ToolEntry.platforms, which is coarser (OS-only) than the arch-specific binary asset keys. */
+export function hostOsFamily(): string {
+  return hostPlatformKey().split('-')[0];
+}

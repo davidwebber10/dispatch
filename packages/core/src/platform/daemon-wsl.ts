@@ -13,6 +13,10 @@ export interface WslDaemonDeps {
   spawnDetached(cmd: string, args: string[], opts?: { env?: NodeJS.ProcessEnv }): void;
   kill(pid: number, sig: number | NodeJS.Signals): void;
   env: NodeJS.ProcessEnv;
+  /** Number of 100ms polls `restart()` waits for the old daemon to exit before giving up.
+   *  Defaults to 300 (30s). Tests override with a small number to keep real-time cost down —
+   *  the wait uses a real Atomics.wait sleep. */
+  waitIterations?: number;
 }
 
 const TASK = 'Dispatch';
@@ -60,13 +64,31 @@ export function createWslDaemon(d: WslDaemonDeps): DaemonController {
 
   return {
     install(opts: DaemonInstallOptions) {
-      d.writeFile(optsFile(), JSON.stringify(opts));
       const distro = d.env.WSL_DISTRO_NAME ?? 'Ubuntu';
+      // wsl.exe's `--exec` does naive whitespace splitting on the TR string schtasks.exe
+      // invokes — it does NOT understand shell quoting, so a quoted `"/usr/bin/node"` is
+      // exec'd literally (quotes included) and fails with ENOENT (verified live: Last
+      // Result -1). The TR below is therefore built WITHOUT quotes. That means none of its
+      // components may contain a space, so refuse up front rather than register a task that
+      // will silently fail at next logon.
+      for (const [label, value] of [
+        ['node path', opts.nodePath],
+        ['repo root', opts.repoRoot],
+        ['WSL distro name', distro],
+      ] as const) {
+        if (/\s/.test(value)) {
+          throw new Error(
+            `dispatch: the ${label} ("${value}") contains a space — paths containing spaces ` +
+            `are not supported for the logon task; reinstall dispatch under a space-free path.`,
+          );
+        }
+      }
+      d.writeFile(optsFile(), JSON.stringify(opts));
       // The wsl.exe process anchors the distro VM's lifetime AND the daemon's interop context.
       // Absolute node + absolute CLI entry, no PATH dependency: the ONLOGON scheduled task
       // runs on a bare, non-login PATH that doesn't include nvm-installed node, so the
       // `bin/dispatch` sh shim's bare `exec node` would otherwise fail silently at logon.
-      const tr = `wsl.exe -d "${distro}" --exec "${opts.nodePath}" "${opts.repoRoot}/packages/cli/dist/index.js" daemon-run`;
+      const tr = `wsl.exe -d ${distro} --exec ${opts.nodePath} ${opts.repoRoot}/packages/cli/dist/index.js daemon-run`;
       try {
         d.execFileSync('schtasks.exe', ['/Create', '/F', '/SC', 'ONLOGON', '/TN', TASK, '/TR', tr]);
       } catch (err) {
@@ -97,16 +119,26 @@ export function createWslDaemon(d: WslDaemonDeps): DaemonController {
       const pid = readPid();
       if (pid && ownsPid(pid, entryBasename())) {
         d.kill(pid, 'SIGTERM');
-        const until = Date.now() + 5000;
+        // Default 300 * 100ms = 30s. Live Tier-3 hardware showed a SIGTERM'd daemon with
+        // active PTY sessions can take well over 5s to unwind, so the grace window has to
+        // be generous. Tests inject a small `waitIterations` to keep real-time cost down —
+        // this loop performs a real Atomics.wait sleep each iteration.
+        const waitIterations = d.waitIterations ?? 300;
+        const until = Date.now() + waitIterations * 100;
         // Bounded busy-loop rather than a single blocking wait: on the main thread
         // Atomics.wait is fine for a fixed sleep, but polling alive() in between lets
         // us stop as soon as the process actually exits instead of always waiting the
         // full interval.
-        for (let i = 0; i < 50 && alive(pid) && Date.now() < until; i++) {
+        for (let i = 0; i < waitIterations && alive(pid) && Date.now() < until; i++) {
           Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
         }
+        // One last alive() sample after the loop gives up its budget: the old daemon may
+        // have died in the gap right at the end of the window (observed live — the throw
+        // fired correctly, but the daemon then exited moments later, leaving nothing
+        // running after a self-update). Only throw for a pid still verifiably alive right
+        // now; a late death should proceed to spawn instead of leaving the system dead.
         if (alive(pid)) {
-          throw new Error(`previous daemon (pid ${pid}) did not exit within 5s; refusing to spawn a second instance`);
+          throw new Error(`previous daemon (pid ${pid}) did not exit within ${waitIterations / 10}s; refusing to spawn a second instance`);
         }
       }
       // If the recorded pid wasn't verifiably ours, we deliberately did not kill it above —

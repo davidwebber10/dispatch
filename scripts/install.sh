@@ -36,7 +36,7 @@ if ! command -v pnpm >/dev/null 2>&1; then
   if command -v corepack >/dev/null 2>&1; then corepack enable >/dev/null 2>&1 || true; fi
   if ! command -v pnpm >/dev/null 2>&1; then
     if $IS_LINUX; then
-      red "pnpm not found — run: corepack enable pnpm   (node ≥16 ships corepack; or: npm i -g pnpm)"
+      red "pnpm not found — run: npm i -g pnpm   (or: corepack enable pnpm — can throw ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING on current Ubuntu/WSL's Node 22 apt package)"
     else
       red "pnpm not found — run: npm i -g pnpm   (or: corepack enable)"
     fi

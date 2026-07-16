@@ -83,6 +83,7 @@
       "kind": "script",
       "bins": ["aws"],
       "authEnv": ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
+      "platforms": ["darwin"],
       "script": {
         "install": "set -e; tmp=$(mktemp -d); curl -fsSL \"https://awscli.amazonaws.com/AWSCLIV2.pkg\" -o \"$tmp/awscli.pkg\"; pkgutil --expand-full \"$tmp/awscli.pkg\" \"$tmp/x\"; PFX=$(find \"$tmp/x\" -type d -name 'aws-cli' | head -1); ln -sf \"$PFX/aws\" \"$TOOLS_BIN/aws\"; ln -sf \"$PFX/aws_completer\" \"$TOOLS_BIN/aws_completer\" 2>/dev/null || true"
       },

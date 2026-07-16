@@ -66,6 +66,26 @@ it('uninstallTool: removes the correct bin when tool name differs from binary na
   expect(fs.existsSync(path.join(p.bin, 'rg'))).toBe(false);
 });
 
+it('platforms gating: installTool throws without running the script when the current OS is not listed', async () => {
+  const otherFamily = plat.startsWith('darwin') ? 'linux' : 'darwin';
+  const entry: ToolEntry = {
+    name: 'demo', description: 'd', kind: 'script', bins: ['demo'], platforms: [otherFamily],
+    script: { install: `printf '#!/bin/sh\\n' > "$TOOLS_BIN/demo"; chmod +x "$TOOLS_BIN/demo"` },
+  };
+  await expect(installTool(entry, { base })).rejects.toThrow(new RegExp(`not supported on.*supports: ${otherFamily}`));
+  expect(fs.existsSync(path.join(toolPaths(base).bin, 'demo'))).toBe(false); // script never ran
+});
+
+it('platforms gating: installTool proceeds normally when the current OS is listed', async () => {
+  const family = plat.split('-')[0];
+  const entry: ToolEntry = {
+    name: 'demo', description: 'd', kind: 'script', bins: ['demo'], platforms: [family],
+    script: { install: `printf '#!/bin/sh\\n' > "$TOOLS_BIN/demo"; chmod +x "$TOOLS_BIN/demo"` },
+  };
+  await installTool(entry, { base });
+  expect(fs.existsSync(path.join(toolPaths(base).bin, 'demo'))).toBe(true);
+});
+
 it('script kind: idempotent — second call is a no-op when binary already present', async () => {
   const counter = path.join(base, 'runs');
   const installScript = [

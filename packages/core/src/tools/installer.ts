@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync, execSync } from 'node:child_process';
-import { toolPaths, hostPlatformKey, type ToolPaths } from './paths.js';
+import { toolPaths, hostPlatformKey, hostOsFamily, type ToolPaths } from './paths.js';
 import type { ToolEntry } from './types.js';
 import { loadManifest } from './manifest.js';
 
@@ -28,6 +28,9 @@ function writeInstalled(p: ToolPaths, data: Record<string, { version?: string; s
 function ensureDirs(p: ToolPaths): void { for (const d of [p.dir, p.bin, p.cache, p.pkgs]) fs.mkdirSync(d, { recursive: true }); }
 
 export async function installTool(entry: ToolEntry, opts: { base?: string; download?: Downloader; exec?: Exec }): Promise<void> {
+  if (entry.platforms && !entry.platforms.includes(hostOsFamily())) {
+    throw new Error(`${entry.name}: not supported on ${hostOsFamily()} (supports: ${entry.platforms.join(', ')})`);
+  }
   const p = toolPaths(opts.base);
   const download = opts.download ?? defaultDownload;
   const exec = opts.exec ?? defaultExec;
