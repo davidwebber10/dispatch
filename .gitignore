@@ -14,3 +14,6 @@ coverage/
 # Runtime data + tool scratch (never tracked)
 .dispatch/
 .playwright-mcp/
+
+# Generated codex app-server bindings (regenerated at build time; not committed)
+packages/core/.codex-appserver/
