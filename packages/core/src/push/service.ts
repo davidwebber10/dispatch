@@ -12,7 +12,7 @@ export class PushService {
   private db: Database.Database;
   private vapid: { publicKey: string; privateKey: string };
   private send: Sender;
-  private presence = new Map<string, { foreground: boolean; ts: number }>();
+  private presence = new Map<string, { foreground: boolean; activeTerminalId: string | null; ts: number }>();
 
   constructor(db: Database.Database, opts: { vapidDir?: string; send?: Sender } = {}) {
     this.db = db;
@@ -39,19 +39,22 @@ export class PushService {
   }
   unsubscribe(deviceId: string): void { pushDb.remove(this.db, deviceId); }
 
-  setPresence(deviceId: string, foreground: boolean): void { this.presence.set(deviceId, { foreground, ts: Date.now() }); }
-
-  private isAway(deviceId: string): boolean {
-    const p = this.presence.get(deviceId);
-    if (!p) return true;                       // never reported → assume away (notify)
-    if (Date.now() - p.ts > PRESENCE_TTL_MS) return true; // stale
-    return !p.foreground;
+  setPresence(deviceId: string, foreground: boolean, activeTerminalId: string | null = null): void {
+    this.presence.set(deviceId, { foreground, activeTerminalId, ts: Date.now() });
   }
 
-  async notifyThread(input: { terminalId: string; title: string; body: string }): Promise<void> {
-    const payload = JSON.stringify({ title: input.title, body: input.body, terminalId: input.terminalId });
+  /** "Notify unless viewing it": suppress only a fresh, foregrounded report of THIS thread. */
+  private isViewing(deviceId: string, terminalId: string): boolean {
+    const p = this.presence.get(deviceId);
+    if (!p) return false;
+    if (Date.now() - p.ts > PRESENCE_TTL_MS) return false;
+    return p.foreground && p.activeTerminalId === terminalId;
+  }
+
+  async notifyThread(input: { terminalId: string; sessionId: string; title: string; body: string }): Promise<void> {
+    const payload = JSON.stringify({ title: input.title, body: input.body, terminalId: input.terminalId, sessionId: input.sessionId });
     for (const sub of pushDb.list(this.db)) {
-      if (!this.isAway(sub.deviceId)) continue;
+      if (this.isViewing(sub.deviceId, input.terminalId)) continue;
       try { await this.send(sub, payload); }
       catch (e: any) {
         const code = e?.statusCode;

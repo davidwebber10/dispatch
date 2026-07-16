@@ -189,7 +189,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
     const title = sess?.name || 'Dispatch';
     const label = term?.label || 'Thread';
     const body = threadStatus === 'needs_input' ? `${label} needs your input` : `${label} finished`;
-    void pushService.notifyThread({ terminalId, title, body });
+    void pushService.notifyThread({ terminalId, sessionId, title, body });
   });
 
   // Mount routes
@@ -315,7 +315,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     const title = sess?.name || 'Dispatch';
     const label = term?.label || 'Thread';
     const body = threadStatus === 'needs_input' ? `${label} needs your input` : `${label} finished`;
-    void pushService.notifyThread({ terminalId, title, body });
+    void pushService.notifyThread({ terminalId, sessionId, title, body });
   });
 
   // Doppler secrets: token-backed connection + per-spawn injection (DOPPLER_* env +

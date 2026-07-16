@@ -43,35 +43,35 @@ describe('PushService', () => {
     const s2 = new PushService(d, { vapidDir, send: async () => {} });
     expect(s2.getPublicKey()).toBe(k1);
   });
-  it('notifyThread sends only to non-foregrounded devices', async () => {
+  it('notifyThread skips only a foreground device viewing this thread', async () => {
     const s = svc();
     s.subscribe('dev-fg', { endpoint: 'https://e/fg', keys: { p256dh: 'k', auth: 'a' } });
     s.subscribe('dev-bg', { endpoint: 'https://e/bg', keys: { p256dh: 'k', auth: 'a' } });
-    s.setPresence('dev-fg', true);   // foreground → suppressed
-    s.setPresence('dev-bg', false);  // away → notified
-    await s.notifyThread({ terminalId: 't1', title: 'Proj', body: 'Thread finished' });
+    s.setPresence('dev-fg', true, 't1'); // foreground + viewing this thread → suppressed
+    s.setPresence('dev-bg', false);      // away → notified
+    await s.notifyThread({ terminalId: 't1', sessionId: 's1', title: 'Proj', body: 'Thread finished' });
     expect(sent.map((x) => x.sub.endpoint)).toEqual(['https://e/bg']);
   });
   it('prunes a subscription whose send throws a 410', async () => {
     d = db(); vapidDir = fs.mkdtempSync(path.join(os.tmpdir(), 'push-'));
     const s = new PushService(d, { vapidDir, send: async () => { const e: any = new Error('gone'); e.statusCode = 410; throw e; } });
     s.subscribe('dev', { endpoint: 'https://e/x', keys: { p256dh: 'k', auth: 'a' } });
-    await s.notifyThread({ terminalId: 't1', title: 'P', body: 'done' });
+    await s.notifyThread({ terminalId: 't1', sessionId: 's1', title: 'P', body: 'done' });
     expect((await import('../../src/db/push.js')).list(d)).toEqual([]);
   });
   it('prunes a subscription whose send throws a 404', async () => {
     d = db(); vapidDir = fs.mkdtempSync(path.join(os.tmpdir(), 'push-'));
     const s = new PushService(d, { vapidDir, send: async () => { const e: any = new Error('not found'); e.statusCode = 404; throw e; } });
     s.subscribe('dev', { endpoint: 'https://e/y', keys: { p256dh: 'k', auth: 'a' } });
-    await s.notifyThread({ terminalId: 't1', title: 'P', body: 'done' });
+    await s.notifyThread({ terminalId: 't1', sessionId: 's1', title: 'P', body: 'done' });
     expect((await import('../../src/db/push.js')).list(d)).toEqual([]);
   });
-  it('notifies a device that has never reported presence (missing presence ⇒ away)', async () => {
-    // covers the "!p" branch in isAway(); stale-presence shares the same notify path
+  it('notifies a device that has never reported presence (missing presence ⇒ not viewing)', async () => {
+    // covers the "!p" branch in isViewing(); stale-presence shares the same notify path
     const s = svc();
     s.subscribe('dev-unknown', { endpoint: 'https://e/unknown', keys: { p256dh: 'k', auth: 'a' } });
-    // no setPresence call → treated as away → should be notified
-    await s.notifyThread({ terminalId: 't1', title: 'P', body: 'done' });
+    // no setPresence call → treated as not viewing → should be notified
+    await s.notifyThread({ terminalId: 't1', sessionId: 's1', title: 'P', body: 'done' });
     expect(sent.map((x) => x.sub.endpoint)).toContain('https://e/unknown');
   });
 });

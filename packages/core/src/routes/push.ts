@@ -18,9 +18,12 @@ export function createPushRouter(push: PushService): Router {
     res.json({ ok: true });
   });
   router.post('/presence', (req, res) => {
-    const { deviceId, foreground } = req.body ?? {};
+    const { deviceId, foreground, activeTerminalId } = req.body ?? {};
     if (typeof deviceId !== 'string' || typeof foreground !== 'boolean') return res.status(400).json({ error: 'deviceId + foreground required' });
-    push.setPresence(deviceId, foreground);
+    if (activeTerminalId !== undefined && activeTerminalId !== null && typeof activeTerminalId !== 'string') {
+      return res.status(400).json({ error: 'activeTerminalId must be a string or null' });
+    }
+    push.setPresence(deviceId, foreground, activeTerminalId ?? null);
     res.json({ ok: true });
   });
   return router;
