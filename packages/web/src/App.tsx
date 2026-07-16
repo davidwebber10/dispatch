@@ -33,14 +33,7 @@ import { useResume } from './hooks/useResume';
 import { useSettings } from './stores/settings';
 import { useServers } from './stores/servers';
 import { useGroups } from './components/panes/store';
-
-function maybeNotify(sessionId: string) {
-  const { notify, pushEnabled } = useSettings.getState();
-  if (pushEnabled) return; // server push handles it (this tab counts as away)
-  if (!notify || typeof Notification === 'undefined' || Notification.permission !== 'granted' || !document.hidden) return;
-  const proj = useProjects.getState().sessions.find((x) => x.id === sessionId);
-  try { new Notification('Dispatch — input needed', { body: proj?.name ?? 'A session needs your input', icon: '/icons/icon-192.png' }); } catch { /* ignore */ }
-}
+import { useViewing } from './stores/viewing';
 
 export default function App() {
   const activeTerminalId = useTabs((s) => s.activeTabId);
@@ -77,7 +70,6 @@ export default function App() {
         useAuth.getState().applyEvent(e);
         useUpdate.getState().applyEvent(e);
         useAgents.getState().applyEvent(e);
-        if (e.type === 'session:status' && e.status === 'needs_input' && typeof e.sessionId === 'string') maybeNotify(e.sessionId);
       },
     });
     sockRef.current = sock;
@@ -85,13 +77,25 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const report = () => { if (useSettings.getState().pushEnabled) void import('./lib/push').then((m) => m.reportPresence(document.visibilityState === 'visible' && document.hasFocus())).catch(() => {}); };
+    const report = () => {
+      if (!useSettings.getState().pushEnabled) return;
+      const fg = document.visibilityState === 'visible' && document.hasFocus();
+      void import('./lib/push').then((m) => m.reportPresence(fg, fg ? useViewing.getState().id : null)).catch(() => {});
+    };
     report();
+    const unsub = useViewing.subscribe(report); // re-report when the viewed thread changes
     document.addEventListener('visibilitychange', report);
     window.addEventListener('focus', report);
     window.addEventListener('blur', report);
-    return () => { document.removeEventListener('visibilitychange', report); window.removeEventListener('focus', report); window.removeEventListener('blur', report); };
+    return () => { unsub(); document.removeEventListener('visibilitychange', report); window.removeEventListener('focus', report); window.removeEventListener('blur', report); };
   }, []);
+
+  // Desktop: the active tab IS the viewed thread. Mobile: MobileApp owns this
+  // (its level-2 leaf state), so don't fight it from here.
+  useEffect(() => {
+    if (isMobile) return;
+    useViewing.getState().set(activeTerminalId && !isDispatchTab(activeTerminalId) ? activeTerminalId : null);
+  }, [activeTerminalId, isMobile]);
 
   // Returning from the background: re-establish the events socket and remount
   // every terminal (which iOS may have silently killed) so the UI is live

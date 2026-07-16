@@ -49,4 +49,30 @@ export async function disablePush(): Promise<void> {
   try { const reg = await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); await sub?.unsubscribe(); } catch { /* ignore */ }
   try { await api.pushUnsubscribe(deviceId()); } catch { /* ignore */ }
 }
-export function reportPresence(foreground: boolean): void { void api.pushPresence(deviceId(), foreground).catch(() => {}); }
+export function reportPresence(foreground: boolean, activeTerminalId: string | null = null): void {
+  void api.pushPresence(deviceId(), foreground, activeTerminalId).catch(() => {});
+}
+
+/** Can THIS context receive web push? Gates every piece of alert UI (design:
+ *  incapable contexts show no bell at all — e.g. iOS Safari in-browser, plain-http origins). */
+export function canReceiveAlerts(): boolean {
+  return pushSupported() && !iosNeedsInstall() && window.isSecureContext;
+}
+
+/** One place for enrollment-failure copy (shared by Settings and the bell toggles). */
+export function pushErrorMessage(code: string): string {
+  return code === 'ios-install' ? 'On iPhone/iPad, add Dispatch to your Home Screen first, then enable.'
+    : code === 'unsupported' ? 'Push notifications aren\'t supported in this browser.'
+    : code === 'denied' ? 'Notification permission was denied.'
+    : 'Couldn\'t enable push notifications — please try again.';
+}
+
+/** Enroll this device (permission prompt + subscription) if it isn't already.
+ *  Returns null on success, a user-facing message on failure. Must be called
+ *  from a user gesture (the permission prompt requires it). */
+export async function ensurePushEnrolled(): Promise<string | null> {
+  const { useSettings } = await import('../stores/settings'); // dynamic: settings.ts imports this module
+  if (useSettings.getState().pushEnabled) return null;
+  try { await useSettings.getState().setPushEnabled(true); return null; }
+  catch (e: any) { return pushErrorMessage(String(e?.message)); }
+}

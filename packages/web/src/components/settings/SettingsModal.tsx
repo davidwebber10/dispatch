@@ -242,18 +242,14 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   const accent = useSettings((s) => s.accent);
   const density = useSettings((s) => s.density);
   const coordinatorName = useSettings((s) => s.coordinatorName);
-  const notify = useSettings((s) => s.notify);
   const pushEnabled = useSettings((s) => s.pushEnabled);
   const [pushMsg, setPushMsg] = useState('');
   async function togglePush() {
     setPushMsg('');
     try { await useSettings.getState().setPushEnabled(!pushEnabled); }
     catch (e: any) {
-      const r = String(e?.message);
-      setPushMsg(r === 'ios-install' ? 'On iPhone/iPad, add Dispatch to your Home Screen first, then enable.'
-        : r === 'unsupported' ? 'Push notifications aren\'t supported in this browser.'
-        : r === 'denied' ? 'Notification permission was denied.'
-        : 'Couldn\'t enable push notifications — please try again.');
+      const { pushErrorMessage } = await import('../../lib/push');
+      setPushMsg(pushErrorMessage(String(e?.message)));
     }
   }
   const servers = useServers((s) => s.servers);
@@ -361,7 +357,8 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
               </div>
               <Divider />
 
-              <div style={row}><span style={item}>Notify when a thread finishes</span><Toggle on={pushEnabled} onClick={() => void togglePush()} /></div>
+              <div style={row}><span style={item}>Push notifications on this device</span><Toggle on={pushEnabled} onClick={() => void togglePush()} /></div>
+              <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>Alerts are armed per thread with the bell — this enables this device to receive them.</div>
               {pushMsg && <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>{pushMsg}</div>}
               <Divider />
 

@@ -25,7 +25,6 @@ interface SettingsState {
   density: Density;
   accent: string;
   coordinatorName: string;   // raw value; empty falls back to "Control Plane" at display (see useDispatchName)
-  notify: boolean;
   pushEnabled: boolean;
   multiPane: boolean;
   sttProvider: string;
@@ -38,7 +37,6 @@ interface SettingsState {
   setProjectFontSize: (n: number) => void;
   setDensity: (d: Density) => void;
   setAccent: (c: string) => void;
-  setNotify: (b: boolean) => Promise<void>;
   setPushEnabled: (b: boolean) => Promise<void>;
   setMultiPane: (b: boolean) => void;
   setSttProvider: (id: string) => void;
@@ -77,7 +75,6 @@ export const useSettings = create<SettingsState>((set) => ({
   density: load<Density>('dispatch:density', 'cozy'),
   accent: initialAccent,
   coordinatorName: load('dispatch:coordinatorName', 'Control Plane'),
-  notify: load('dispatch:notify', false),
   pushEnabled: load('dispatch:pushEnabled', false),
   multiPane: load('dispatch:multiPane', true),
   sttProvider: load('dispatch:sttProvider', 'groq'),
@@ -94,13 +91,6 @@ export const useSettings = create<SettingsState>((set) => ({
   setSttProvider: (id) => { save('dispatch:sttProvider', id); set({ sttProvider: id }); },
   setSttModel: (id) => { save('dispatch:sttModel', id); set({ sttModel: id }); },
   setSttSecretName: (name) => { save('dispatch:sttSecretName', name); set({ sttSecretName: name }); },
-  setNotify: async (b) => {
-    if (b && typeof Notification !== 'undefined' && Notification.permission === 'default') {
-      try { await Notification.requestPermission(); } catch { /* denied */ }
-    }
-    const notify = b && typeof Notification !== 'undefined' && Notification.permission === 'granted';
-    save('dispatch:notify', notify); set({ notify });
-  },
   setPushEnabled: async (b) => {
     if (b) {
       const r = await (await import('../lib/push')).enablePush();

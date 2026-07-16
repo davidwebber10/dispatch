@@ -17,6 +17,7 @@ import { useProjects } from '../../stores/projects';
 import { useAgentUI } from '../../stores/agentUI';
 import { useReconnect } from '../../stores/reconnect';
 import { useUI } from '../../stores/ui';
+import { useViewing } from '../../stores/viewing';
 import { Spinner } from '../common/Spinner';
 import { SortableList } from '../common/SortableList';
 import { timeAgo } from '../../lib/time';
@@ -105,6 +106,12 @@ export function MobileApp() {
     if (pendingOpenTab) { openThread(pendingOpenTab); useUI.getState().clearOpenTab(); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingOpenTab]);
+
+  // Presence: the thread terminal is "being viewed" only on the level-2 tab leaf.
+  useEffect(() => {
+    useViewing.getState().set(level === 2 && leaf === 'tab' ? leafTabId : null);
+    return () => useViewing.getState().set(null);
+  }, [level, leaf, leafTabId]);
 
   // On a deep-linked reload: restore the stores from the URL and rebuild the
   // history stack (base → project → leaf) so back/edge-swipe still walks up.
