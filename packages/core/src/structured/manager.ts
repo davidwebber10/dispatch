@@ -68,6 +68,14 @@ export interface StructuredSpawnOpts {
   env?: Record<string, string>;
   escalate?: boolean;
   seedEvents?: unknown[];
+  /**
+   * App-server-style managers (Codex) resume/model out-of-band over JSON-RPC rather than via
+   * `args`: `resumeId` is the external thread id to `thread/resume`, `model` the thread's
+   * model. The Claude manager encodes both in `command`/`args` (via buildStructuredCommand)
+   * and ignores these — they're shared on the interface so `spawnStructured` drives either.
+   */
+  resumeId?: string;
+  model?: string;
 }
 
 /** A permission decision written back to a blocked structured session. */

@@ -14,13 +14,13 @@ type Harness = 'claude' | 'codex' | 'terminal';
 type Mode = 'cli' | 'pretty';
 
 /**
- * Codex "Pretty" (structured transport) is not wired on the backend yet — the
- * daemon's structured session manager speaks Claude Code's stream-json control
- * protocol only (see sessions/service.ts). Until a Codex structured path lands
- * (Phase 2), the Codex Pretty tile renders disabled ("coming soon") so we never
- * spawn a half-working structured Codex thread. Flip to true when it's ready.
+ * Codex "Pretty" (structured transport) is now wired on the backend: the daemon runs a second
+ * structured manager (CodexStructuredSessionManager) speaking the `codex app-server` v2 JSON-RPC
+ * protocol, translated into the SAME Claude-shaped event stream the ChatView consumes. Enabled
+ * after the Phase B live E2E proved a real Codex-Pretty thread streams a turn + surfaces/answers
+ * an approval end-to-end. (Server kill-switch: DISPATCH_CODEX_PRETTY=0.)
  */
-const CODEX_PRETTY_ENABLED = false;
+const CODEX_PRETTY_ENABLED = true;
 
 const HARNESSES: { id: Harness; label: string; type: string }[] = [
   { id: 'claude', label: 'Claude Code', type: 'claude-code' },

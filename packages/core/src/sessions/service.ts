@@ -139,8 +139,9 @@ export class SessionService {
     return undefined;
   }
 
-  /** Resolve the structured manager for a terminal id (looks up its type first). */
-  private structuredManagerForTerminal(terminalId: string): import('../structured/manager.js').IStructuredManager | undefined {
+  /** Resolve the structured manager for a terminal id (looks up its type first). Public so the
+   *  structured-ws upgrade handler can pick the RIGHT manager (claude vs codex) per connection. */
+  structuredManagerForTerminal(terminalId: string): import('../structured/manager.js').IStructuredManager | undefined {
     const t = terminalsDb.getById(this.db, terminalId);
     return t ? this.structuredManagerFor(t.type) : undefined;
   }
@@ -1476,8 +1477,10 @@ export class SessionService {
       sc = built;
     }
 
-    // On resume, restore prior conversation from the claude transcript JSONL.
-    const rawSeedEvents = resumeSessionId ? readSessionBackfill(workDir, resumeSessionId) : undefined;
+    // On resume, restore prior conversation from the claude transcript JSONL. Claude-only:
+    // the Codex manager has no Claude transcript to read — it backfills its own history from
+    // `thread/resume`/`thread/read` (see CodexStructuredSessionManager.backfill).
+    const rawSeedEvents = resumeSessionId && terminal.type === 'claude-code' ? readSessionBackfill(workDir, resumeSessionId) : undefined;
     // Merge back any durably-stored `source` tags (see db/message-source.ts) — the
     // transcript itself carries none, so a revived thread would otherwise lose the "via
     // Dispatch" badge on every turn sent before the CLI process last exited.
@@ -1502,6 +1505,10 @@ export class SessionService {
       workDir,
       escalate,
       seedEvents,
+      // Codex resumes/pins-model out-of-band over JSON-RPC (Claude encodes both in `args` and
+      // ignores these); shared on the interface so this one call drives either manager.
+      resumeId: resumeSessionId,
+      model: resolvedModel,
       env: { [TERMINAL_ID_ENV_VAR]: terminal.id },
     });
     terminalsDb.updatePid(this.db, terminal.id, pid);
