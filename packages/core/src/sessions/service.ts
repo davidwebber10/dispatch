@@ -504,6 +504,20 @@ export class SessionService {
     return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
   }
 
+  /**
+   * Toggle per-thread push alerts (the bell). Merges server-side for the same
+   * reason as setAutoArchive: the generic PATCH replaces the config blob wholesale.
+   * Disable deletes the key so configs don't accumulate `alertsEnabled: false`.
+   */
+  setAlertsEnabled(terminalId: string, enabled: boolean): terminalsDb.Terminal | null {
+    const row = terminalsDb.getById(this.db, terminalId);
+    if (!row) return null;
+    const config = { ...terminalsDb.rowToTerminal(row).config } as Record<string, any>;
+    if (enabled) config.alertsEnabled = true; else delete config.alertsEnabled;
+    terminalsDb.updateConfig(this.db, terminalId, config);
+    return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
+  }
+
   reorderTabs(sessionId: string, order: string[]): void {
     for (let i = 0; i < order.length; i++) {
       terminalsDb.updateSortOrder(this.db, order[i], i);

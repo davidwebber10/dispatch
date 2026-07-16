@@ -308,6 +308,17 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     res.json(terminal);
   });
 
+  // PATCH /api/terminals/:terminalId/alerts — merge the per-thread alert flag
+  // server-side (same rationale as auto-archive: the generic PATCH clobbers config).
+  router.patch('/terminals/:terminalId/alerts', (req, res) => {
+    const { enabled } = req.body;
+    if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be a boolean' });
+    const terminal = sessionService.setAlertsEnabled(req.params.terminalId, enabled);
+    if (!terminal) return res.status(404).json({ error: 'Terminal not found' });
+    broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: terminal.sessionId });
+    res.json(terminal);
+  });
+
   // POST /api/sessions/:id/terminals/reorder — set tab order for a session
   router.post('/sessions/:id/terminals/reorder', (req, res) => {
     try {
