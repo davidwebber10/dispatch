@@ -68,6 +68,8 @@ export class TerminalMonitor {
   private broadcaster: EventBroadcaster;
   private db: Database.Database | null = null;
   private onActivity?: (terminalId: string, activity: 'busy' | 'idle') => void;
+  /** Optional real-activity signal (feeds ThreadAutoNamer.notifyActivity). Fires on the same edge as touchActivity, below — NOT on every busy/idle transition. */
+  private onThreadActivity?: (terminalId: string) => void;
   private idleThresholdMs = 3000;
   /** Grace period after first tracking a terminal — ignore busy transitions */
   private connectionGraceMs = 5000;
@@ -78,10 +80,12 @@ export class TerminalMonitor {
     broadcaster: EventBroadcaster,
     db?: Database.Database,
     onActivity?: (terminalId: string, activity: 'busy' | 'idle') => void,
+    onThreadActivity?: (terminalId: string) => void,
   ) {
     this.broadcaster = broadcaster;
     this.db = db || null;
     this.onActivity = onActivity;
+    this.onThreadActivity = onThreadActivity;
   }
 
   /** Call this every time PTY output arrives for a terminal */
@@ -142,6 +146,7 @@ export class TerminalMonitor {
             if (row?.session_id) {
               terminalsDb.touchActivity(this.db, terminalId);
               sessionsDb.touchActivity(this.db, row.session_id);
+              this.onThreadActivity?.(terminalId);
             }
           } catch {}
         }

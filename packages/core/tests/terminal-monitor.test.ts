@@ -60,3 +60,38 @@ describe('TerminalMonitor activity stamping', () => {
     expect(sessionActivity()).toBe(OLD);
   });
 });
+
+describe('TerminalMonitor onThreadActivity callback (feeds ThreadAutoNamer)', () => {
+  let db: Database.Database;
+  let onThreadActivity: ReturnType<typeof vi.fn>;
+  let monitor: TerminalMonitor;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    db = new Database(':memory:');
+    initSchema(db);
+    sessionsDb.create(db, { id: 's1', provider: 'claude-code', name: 'p', workingDir: '/tmp' });
+    terminalsDb.create(db, { id: 't1', sessionId: 's1', type: 'claude-code', label: 't' });
+    onThreadActivity = vi.fn();
+    monitor = new TerminalMonitor({ broadcast: vi.fn() } as any, db, undefined, onThreadActivity);
+  });
+
+  afterEach(() => vi.useRealTimers());
+
+  it('fires when a busy burst goes idle (crossed threshold outside the grace window)', () => {
+    monitor.onOutput('t1', 'boot');            // starts tracking; connection grace begins
+    vi.advanceTimersByTime(6000);              // grace (5s) expires
+    monitor.onOutput('t1', 'y'.repeat(600));   // real work burst (>500 bytes) -> busy
+    vi.advanceTimersByTime(4000);              // idle timer fires while busy
+    expect(onThreadActivity).toHaveBeenCalledWith('t1');
+  });
+
+  it('does NOT fire for a connection-grace repaint (suppress)', () => {
+    monitor.onOutput('t1', 'boot');
+    vi.advanceTimersByTime(6000);              // well past the spawn grace
+    monitor.suppress('t1');                    // client attaches -> nudgeRepaint/resize incoming
+    monitor.onOutput('t1', 'z'.repeat(2000));  // full-screen repaint, > busy threshold
+    vi.advanceTimersByTime(4000);
+    expect(onThreadActivity).not.toHaveBeenCalled();
+  });
+});

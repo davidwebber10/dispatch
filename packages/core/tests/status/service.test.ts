@@ -115,6 +115,20 @@ describe('StatusService activity stamping', () => {
   });
 });
 
+describe('StatusService onActivity callback (feeds ThreadAutoNamer)', () => {
+  it('UserPromptSubmit (turn start) fires the onActivity callback', () => {
+    const onActivity = vi.fn();
+    new StatusService(db, broadcaster, onActivity).ingest('claude', 'term', { hook_event_name: 'UserPromptSubmit', session_id: 'sid-1' });
+    expect(onActivity).toHaveBeenCalledWith('term');
+  });
+
+  it('SessionStart (open/revive) does NOT fire the onActivity callback', () => {
+    const onActivity = vi.fn();
+    new StatusService(db, broadcaster, onActivity).ingest('claude', 'term', { hook_event_name: 'SessionStart', session_id: 'sid-1' });
+    expect(onActivity).not.toHaveBeenCalled();
+  });
+});
+
 describe('StatusService thread-settled hook', () => {
   function setup() {
     const db2 = new Database(':memory:');

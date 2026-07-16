@@ -45,6 +45,7 @@ import { ClaudeStructuredSessionManager, type IStructuredManager } from './struc
 import { startPtyTimingLoop } from './sessions/status.js';
 import { startAutoArchiveLoop } from './sessions/auto-archive.js';
 import { TerminalMonitor } from './terminal-monitor.js';
+import { ThreadAutoNamer } from './sessions/thread-auto-namer.js';
 import { platform } from './platform/index.js';
 import { startUpdateCheckLoop } from './update/checker.js';
 import { createUpdateRouter } from './routes/update.js';
@@ -275,10 +276,16 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const broadcaster = createEventsBroadcaster(eventsWss);
   const authRequestService = new AuthRequestService(broadcaster);
 
+  // Debounced, best-effort thread auto-namer — fed by real-activity signals from
+  // StatusService (hook events) and TerminalMonitor (PTY busy/idle), below. Uses the
+  // real (websocket-wired) broadcaster so a successful rename's `session:tabs-changed`
+  // reaches connected clients the same way a user rename does today.
+  const threadAutoNamer = new ThreadAutoNamer(db, broadcaster);
+
   // Determine actual server URL after port is known
   const sessionService = new SessionService(db, ptyManager, path.join(dataDir, 'mcp.json'));
   const agentService = new AgentService(db, sessionService, broadcaster, path.join(dataDir, 'runs'));
-  const statusService = new StatusService(db, broadcaster);
+  const statusService = new StatusService(db, broadcaster, (id) => threadAutoNamer.notifyActivity(id));
   const structuredManager = new ClaudeStructuredSessionManager();
   sessionService.setStructuredManager(structuredManager);
   wirePermissionMembrane(structuredManager, statusService, sessionService);
@@ -313,7 +320,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Terminal activity monitor — parses status bar, detects busy/idle
   const terminalMonitor = new TerminalMonitor(broadcaster, db, (terminalId, activity) => {
     agentService.updateRunFromTerminalActivity(terminalId, activity);
-  });
+  }, (id) => threadAutoNamer.notifyActivity(id));
 
   // Wire PTY data through the monitor (busy/idle + status-bar HUD) and, for
   // autonomous agent-runner terminals, through the structured stream parser
@@ -507,6 +514,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     clearInterval(agentSchedulerInterval);
     clearInterval(autoArchiveInterval);
     clearInterval(heartbeat);
+    threadAutoNamer.dispose();
     ptyManager.killAll();
     structuredManager.killAll();
     eventsWss.close();
