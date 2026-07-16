@@ -60,6 +60,12 @@ fi
 bold "Bootstrapping dependencies + building…"
 ( cd "$TARGET" && CI=true pnpm install && pnpm -r run build ) || { red "Bootstrap build failed."; exit 1; }
 
+# Now that the CLI's dist exists, `dispatch build` is runnable — it re-checks the
+# build (fast, incremental) and, crucially, provisions the bundled CLI tools
+# (jq/rg/gh/…), which the raw pnpm bootstrap above does not do.
+bold "Provisioning bundled tools…"
+( cd "$TARGET" && ./bin/dispatch build ) || { red "Tool provisioning failed."; exit 1; }
+
 bold "Installing the daemon…"
 ( cd "$TARGET" && ./bin/dispatch install ) || { red "Install failed."; exit 1; }
 
