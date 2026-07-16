@@ -21,19 +21,26 @@ function systemPromptArgs(secretsMcp?: SecretsMcpInjection): string[] {
   return secretsMcp?.systemPrompt ? ['--append-system-prompt', secretsMcp.systemPrompt] : [];
 }
 
+// Pins the model tier for an interactive (PTY) thread. `--model` accepts an alias
+// ('fable', 'opus', 'sonnet', 'haiku') or a full model id; omitted → the CLI's
+// default model. Mirrors buildStructuredCommand's `--model` handling.
+function modelArgs(model?: string): string[] {
+  return model ? ['--model', model] : [];
+}
+
 export const claudeCodeProvider: SessionProvider = {
   name: 'claude-code',
   displayName: 'Claude Code',
   statusStrategy: 'hooks',
 
-  buildNewCommand({ prompt, secretsMcp, statusHooks }) {
-    const args: string[] = ['--dangerously-skip-permissions', ...mcpArgs(secretsMcp), ...systemPromptArgs(secretsMcp), ...hookArgs(statusHooks)];
+  buildNewCommand({ prompt, secretsMcp, statusHooks, model }) {
+    const args: string[] = ['--dangerously-skip-permissions', ...mcpArgs(secretsMcp), ...systemPromptArgs(secretsMcp), ...hookArgs(statusHooks), ...modelArgs(model)];
     if (prompt) args.push(prompt);
     return { command: 'claude', args };
   },
 
-  buildResumeCommand({ externalSessionId, secretsMcp, statusHooks }) {
-    return { command: 'claude', args: ['--dangerously-skip-permissions', ...mcpArgs(secretsMcp), ...systemPromptArgs(secretsMcp), ...hookArgs(statusHooks), '-r', externalSessionId] };
+  buildResumeCommand({ externalSessionId, secretsMcp, statusHooks, model }) {
+    return { command: 'claude', args: ['--dangerously-skip-permissions', ...mcpArgs(secretsMcp), ...systemPromptArgs(secretsMcp), ...hookArgs(statusHooks), ...modelArgs(model), '-r', externalSessionId] };
   },
 
   // Branch = resume the source session but fork it to a NEW session id (the

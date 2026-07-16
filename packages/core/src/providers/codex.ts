@@ -12,18 +12,25 @@ function hookArgs(statusHooks?: StatusHooksInjection): string[] {
   return statusHooks?.codexNotifyArgs ?? [];
 }
 
+// Pins the model for a codex thread. `--model <slug>` (e.g. 'gpt-5.6-sol') is a
+// global option → like the -c overrides it must precede any subcommand (`resume`).
+// Omitted → codex uses its configured default model.
+function modelArgs(model?: string): string[] {
+  return model ? ['--model', model] : [];
+}
+
 export const codexProvider: SessionProvider = {
   name: 'codex',
   displayName: 'Codex',
   statusStrategy: 'pty-timing',
-  buildNewCommand({ prompt, secretsMcp, statusHooks }) {
-    const args: string[] = [...mcpArgs(secretsMcp), ...hookArgs(statusHooks)];
+  buildNewCommand({ prompt, secretsMcp, statusHooks, model }) {
+    const args: string[] = [...mcpArgs(secretsMcp), ...hookArgs(statusHooks), ...modelArgs(model)];
     if (prompt) args.push(prompt);
     return { command: 'codex', args };
   },
 
-  buildResumeCommand({ externalSessionId, secretsMcp, statusHooks }) {
-    return { command: 'codex', args: [...mcpArgs(secretsMcp), ...hookArgs(statusHooks), 'resume', externalSessionId] };
+  buildResumeCommand({ externalSessionId, secretsMcp, statusHooks, model }) {
+    return { command: 'codex', args: [...mcpArgs(secretsMcp), ...hookArgs(statusHooks), ...modelArgs(model), 'resume', externalSessionId] };
   },
 
   buildStatusHooks({ serverUrl, terminalId, codexHelperPath }) {

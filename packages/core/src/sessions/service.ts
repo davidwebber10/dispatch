@@ -1216,11 +1216,15 @@ export class SessionService {
       } else {
         const statusHooks = this.buildStatusHooks(terminalId, terminal.type);
         const branchFrom: string | undefined = typeof config.branchFrom === 'string' ? config.branchFrom : undefined;
+        // Honor a per-thread model pick (config.model) for CLI (PTY) threads too, not
+        // just structured ones — the New Thread modal offers the picker in both modes.
+        // modelFor returns config.model for a plain user thread (no role/agentType).
+        const model = modelFor(config);
         cmd = terminal.external_id
-          ? provider.buildResumeCommand({ externalSessionId: terminal.external_id, workDir, secretsMcp, statusHooks })
+          ? provider.buildResumeCommand({ externalSessionId: terminal.external_id, workDir, secretsMcp, statusHooks, model })
           : (branchFrom && provider.buildBranchCommand)
             ? provider.buildBranchCommand({ sourceSessionId: branchFrom, workDir, secretsMcp, statusHooks })
-            : provider.buildNewCommand({ workDir, secretsMcp, statusHooks });
+            : provider.buildNewCommand({ workDir, secretsMcp, statusHooks, model });
       }
       command = cmd.command;
       args = cmd.args;

@@ -46,8 +46,8 @@ export interface SessionProvider {
   name: string;
   displayName: string;
   statusStrategy?: 'hooks' | 'pty-timing';
-  buildNewCommand(args: { workDir: string; prompt?: string; secretsMcp?: SecretsMcpInjection; statusHooks?: StatusHooksInjection }): { command: string; args: string[] };
-  buildResumeCommand(args: { externalSessionId: string; workDir: string; secretsMcp?: SecretsMcpInjection; statusHooks?: StatusHooksInjection }): { command: string; args: string[] };
+  buildNewCommand(args: { workDir: string; prompt?: string; secretsMcp?: SecretsMcpInjection; statusHooks?: StatusHooksInjection; model?: string }): { command: string; args: string[] };
+  buildResumeCommand(args: { externalSessionId: string; workDir: string; secretsMcp?: SecretsMcpInjection; statusHooks?: StatusHooksInjection; model?: string }): { command: string; args: string[] };
   /**
    * Build the command to BRANCH (fork) an existing conversation: resume the
    * source session but fork it into a NEW session id, leaving the original

@@ -22,6 +22,23 @@ describe('claude-code provider', () => {
     expect(cmd.args).toEqual(['--dangerously-skip-permissions', '-r', 'abc']);
   });
 
+  it('pins the model with --model when one is chosen (new + resume)', () => {
+    const neu = claudeCodeProvider.buildNewCommand({ workDir: '/tmp', model: 'opus' });
+    const i = neu.args.indexOf('--model');
+    expect(i).toBeGreaterThan(-1);
+    expect(neu.args[i + 1]).toBe('opus');
+
+    const res = claudeCodeProvider.buildResumeCommand({ externalSessionId: 'abc', workDir: '/tmp', model: 'fable' });
+    const j = res.args.indexOf('--model');
+    expect(j).toBeGreaterThan(-1);
+    expect(res.args[j + 1]).toBe('fable');
+  });
+
+  it('omits --model when no model is chosen', () => {
+    expect(claudeCodeProvider.buildNewCommand({ workDir: '/tmp' }).args).not.toContain('--model');
+    expect(claudeCodeProvider.buildResumeCommand({ externalSessionId: 'abc', workDir: '/tmp' }).args).not.toContain('--model');
+  });
+
   it('appends the secrets system prompt when one is injected (new + resume)', () => {
     const neu = claudeCodeProvider.buildNewCommand({ workDir: '/tmp', secretsMcp: { systemPrompt: 'Use Doppler for secrets' } });
     const i = neu.args.indexOf('--append-system-prompt');
@@ -75,6 +92,26 @@ describe('codex provider', () => {
     const cmd = codexProvider.buildResumeCommand({ externalSessionId: 'xyz', workDir: '/tmp' });
     expect(cmd.command).toBe('codex');
     expect(cmd.args).toEqual(['resume', 'xyz']);
+  });
+
+  it('pins the model with --model, before the resume subcommand', () => {
+    const neu = codexProvider.buildNewCommand({ workDir: '/tmp', model: 'gpt-5.6-sol' });
+    const i = neu.args.indexOf('--model');
+    expect(i).toBeGreaterThan(-1);
+    expect(neu.args[i + 1]).toBe('gpt-5.6-sol');
+
+    // The model flag is a global override → it must precede the `resume` subcommand.
+    const res = codexProvider.buildResumeCommand({ externalSessionId: 'xyz', workDir: '/tmp', model: 'gpt-5.6-luna' });
+    const j = res.args.indexOf('--model');
+    const r = res.args.indexOf('resume');
+    expect(j).toBeGreaterThan(-1);
+    expect(res.args[j + 1]).toBe('gpt-5.6-luna');
+    expect(j).toBeLessThan(r);
+  });
+
+  it('omits --model when no model is chosen', () => {
+    expect(codexProvider.buildNewCommand({ workDir: '/tmp' }).args).not.toContain('--model');
+    expect(codexProvider.buildResumeCommand({ externalSessionId: 'xyz', workDir: '/tmp' }).args).not.toContain('--model');
   });
 
   it('builds an autonomous runner command (codex exec with the prompt)', () => {
