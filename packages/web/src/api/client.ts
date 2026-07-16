@@ -209,7 +209,10 @@ export const api = {
   getPushKey: () => req<{ publicKey: string }>('/api/push/key'),
   pushSubscribe: (deviceId: string, subscription: unknown) => req<{ ok: true }>('/api/push/subscribe', { method: 'POST', body: body({ deviceId, subscription }) }),
   pushUnsubscribe: (deviceId: string) => req<{ ok: true }>('/api/push/unsubscribe', { method: 'POST', body: body({ deviceId }) }),
-  pushPresence: (deviceId: string, foreground: boolean) => req<{ ok: true }>('/api/push/presence', { method: 'POST', body: body({ deviceId, foreground }) }),
+  pushPresence: (deviceId: string, foreground: boolean, activeTerminalId: string | null = null) =>
+    req<{ ok: true }>('/api/push/presence', { method: 'POST', body: body({ deviceId, foreground, activeTerminalId }) }),
+  setTerminalAlerts: (id: string, enabled: boolean) =>
+    req<Terminal>(`/api/terminals/${id}/alerts`, { method: 'PATCH', body: body({ enabled }) }),
 
   // Browser auth relay
   listAuthRequests: () => req<AuthRequest[]>('/api/auth-requests'),

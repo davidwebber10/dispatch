@@ -20,6 +20,7 @@ interface TabsState {
   loadTabs: (projectId: string) => Promise<void>;
   reorder: (projectId: string, orderedIds: string[]) => Promise<void>;
   setPinned: (id: string, pinned: boolean) => Promise<void>;  // pin/unpin a thread (persisted in config.pinned)
+  setAlertsEnabled: (id: string, enabled: boolean) => Promise<void>; // per-thread push alerts (config.alertsEnabled)
   setActiveTab: (id: string) => void;                       // open + focus
   openTab: (id: string, background?: boolean) => void;       // open (optionally without switching)
   openDispatch: (sessionId: string) => void;                 // open + focus the project's virtual Dispatch tab
@@ -116,6 +117,19 @@ export const useTabs = create<TabsState>((set, get) => ({
     set({ byProject }); // optimistic — the row moves instantly
     try { await api.updateTerminal(id, { config }); }
     catch (e) { console.error('useTabs.setPinned: updateTerminal failed, reverting', e); await get().loadTabs(t.sessionId); }
+  },
+  setAlertsEnabled: async (id, enabled) => {
+    const t = findTerminal(get().byProject, id);
+    if (!t) return;
+    // Dedicated merge endpoint (NOT the generic PATCH — that clobbers config);
+    // optimistic local merge so the bell flips instantly.
+    const config = { ...t.config } as Record<string, unknown>;
+    if (enabled) config.alertsEnabled = true; else delete config.alertsEnabled;
+    const byProject = { ...get().byProject };
+    byProject[t.sessionId] = (byProject[t.sessionId] ?? []).map((x) => (x.id === id ? { ...x, config } : x));
+    set({ byProject });
+    try { await api.setTerminalAlerts(id, enabled); }
+    catch (e) { console.error('useTabs.setAlertsEnabled: failed, reverting', e); await get().loadTabs(t.sessionId); }
   },
   openTab: (id, background = false) => {
     const { openTabIds, activeTabId, byProject } = get();
