@@ -34,6 +34,13 @@ interface StatusContext {
 /** Grace period before the boot kickstart runs, so a save-burst on shutdown can coalesce. */
 const KICKSTART_SETTLE_MS = 4000;
 
+/** Build an Error carrying an HTTP `status` so a route can map it to a response code. */
+function transportError(status: number, message: string): Error & { status: number } {
+  const e = new Error(message) as Error & { status: number };
+  e.status = status;
+  return e;
+}
+
 /** The re-prompt delivered to a structured thread that the last daemon shutdown interrupted mid-turn. */
 const KICKSTART_CONTINUE_PROMPT =
   '⚙️ Dispatch restarted and interrupted you mid-task — re-read your last steps above and continue your ' +
@@ -49,7 +56,10 @@ export class SessionService {
   /** Supplies a tools-awareness note injected into the developer instructions; set by server wiring. */
   private toolsAwareness?: () => string | null;
   /** Drives structured (stream-json) sessions for claude-code threads; set by server wiring. */
-  private structuredManager?: import('../structured/manager.js').StructuredSessionManager;
+  private structuredManager?: import('../structured/manager.js').IStructuredManager;
+  /** Drives structured (app-server) sessions for codex threads; set by server wiring only
+   *  when CODEX_PRETTY_ENABLED. Undefined ⇒ codex has no structured transport (Phase A). */
+  private codexStructuredManager?: import('../structured/manager.js').IStructuredManager;
   /** Override for structured command (test seam: lets tests spawn fake-claude instead of real claude). */
   private structuredCommandOverride?: { command: string; args: string[] };
 
@@ -72,7 +82,7 @@ export class SessionService {
     this.toolsAwareness = fn;
   }
 
-  setStructuredManager(m: import('../structured/manager.js').StructuredSessionManager): void {
+  setStructuredManager(m: import('../structured/manager.js').IStructuredManager): void {
     this.structuredManager = m;
     // Persist the claude session_id (surfaced from the structured init event) onto the
     // terminal's external_id, mirroring how the PTY path captures session ids. This is
@@ -106,6 +116,34 @@ export class SessionService {
   }
 
   setStructuredCommandOverride(cmd: { command: string; args: string[] }): void { this.structuredCommandOverride = cmd; }
+
+  /**
+   * Wire the Codex structured (app-server) manager. Only called by server wiring when
+   * CODEX_PRETTY_ENABLED — until then `structuredManagerFor('codex')` is undefined and
+   * codex threads have only the PTY transport.
+   */
+  setCodexStructuredManager(m: import('../structured/manager.js').IStructuredManager): void {
+    this.codexStructuredManager = m;
+  }
+
+  /**
+   * The structured manager for a terminal type, or undefined when that type has no
+   * structured transport. Both managers satisfy IStructuredManager, so every structured
+   * operation routes through this one accessor:
+   *   claude-code → the Claude stream-json manager
+   *   codex       → the Codex app-server manager (only when CODEX_PRETTY_ENABLED)
+   */
+  structuredManagerFor(type: string): import('../structured/manager.js').IStructuredManager | undefined {
+    if (type === 'claude-code') return this.structuredManager;
+    if (type === 'codex') return this.codexStructuredManager;
+    return undefined;
+  }
+
+  /** Resolve the structured manager for a terminal id (looks up its type first). */
+  private structuredManagerForTerminal(terminalId: string): import('../structured/manager.js').IStructuredManager | undefined {
+    const t = terminalsDb.getById(this.db, terminalId);
+    return t ? this.structuredManagerFor(t.type) : undefined;
+  }
 
   setStatusContext(ctx: StatusContext): void {
     this.statusContext = ctx;
@@ -209,7 +247,7 @@ export class SessionService {
     const terminals = terminalsDb.listBySession(this.db, id);
     for (const terminal of terminals) {
       this.ptyManager.kill(terminal.id);
-      this.structuredManager?.kill(terminal.id);
+      this.structuredManagerFor(terminal.type)?.kill(terminal.id);
       terminalsDb.updatePid(this.db, terminal.id, null);
     }
 
@@ -224,7 +262,7 @@ export class SessionService {
     const terminals = terminalsDb.listBySession(this.db, id);
     for (const terminal of terminals) {
       if (this.ptyManager.isAlive(terminal.id)) this.ptyManager.kill(terminal.id);
-      this.structuredManager?.kill(terminal.id);
+      this.structuredManagerFor(terminal.type)?.kill(terminal.id);
     }
     // Drop the agent_runs → terminals FK references first; otherwise the hard
     // delete below trips a FOREIGN KEY constraint for any session that ever had
@@ -689,16 +727,17 @@ export class SessionService {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return;
     this.ptyManager.kill(terminalId);
-    this.structuredManager?.kill(terminalId);
+    this.structuredManagerFor(terminal.type)?.kill(terminalId);
     terminalsDb.updatePid(this.db, terminalId, null);
   }
 
   sendStructuredMessage(terminalId: string, content: string | import('../structured/manager.js').ContentBlock[], source?: import('../structured/manager.js').MessageSource): void {
     // Lazily resume a thread that died on a daemon restart (resumes the same claude
     // conversation when an external_id was captured) before delivering the message.
-    if (!this.structuredManager?.isAlive(terminalId)) this.ensureStructuredAlive(terminalId);
-    if (!this.structuredManager?.isAlive(terminalId)) throw new Error('no structured session for terminal');
-    this.structuredManager.sendMessage(terminalId, content, source);
+    const manager = this.structuredManagerForTerminal(terminalId);
+    if (!manager?.isAlive(terminalId)) this.ensureStructuredAlive(terminalId);
+    if (!manager?.isAlive(terminalId)) throw new Error('no structured session for terminal');
+    manager.sendMessage(terminalId, content, source);
   }
 
   /**
@@ -824,7 +863,7 @@ export class SessionService {
   /** The agent's most recent assistant text, pulled live from the structured event ring
    *  (no transcript-file latency), truncated for a nudge. '' when there's none yet. */
   private lastAssistantText(terminalId: string, max = 600): string {
-    const events = (this.structuredManager?.getEvents(terminalId) ?? []) as any[];
+    const events = (this.structuredManagerForTerminal(terminalId)?.getEvents(terminalId) ?? []) as any[];
     for (let i = events.length - 1; i >= 0; i--) {
       const e = events[i];
       if (e?.type === 'assistant' && Array.isArray(e.message?.content)) {
@@ -951,7 +990,7 @@ export class SessionService {
 
   /** The gated tool/question a structured AGENT thread is blocked on, or null. */
   getPendingPermission(terminalId: string): import('../structured/manager.js').PendingPermission | null {
-    return this.structuredManager?.getPending(terminalId) ?? null;
+    return this.structuredManagerForTerminal(terminalId)?.getPending(terminalId) ?? null;
   }
 
   /**
@@ -987,8 +1026,9 @@ export class SessionService {
     requestId: string,
     opts: { decision: 'allow' | 'deny'; answers?: Record<string, string>; message?: string },
   ): boolean {
-    if (!this.structuredManager) return false;
-    const pending = this.structuredManager.getPending(terminalId);
+    const manager = this.structuredManagerForTerminal(terminalId);
+    if (!manager) return false;
+    const pending = manager.getPending(terminalId);
     if (!pending) return false;
     if (opts.decision === 'allow') {
       const remappedAnswers = opts.answers ? this.remapAnswersToQuestionText(pending.questions, opts.answers) : undefined;
@@ -997,9 +1037,9 @@ export class SessionService {
         ...(pending.questions ? { questions: pending.questions } : {}),
         ...(remappedAnswers && Object.keys(remappedAnswers).length ? { answers: remappedAnswers } : {}),
       };
-      return this.structuredManager.answerPermission(terminalId, requestId || pending.requestId, { behavior: 'allow', updatedInput });
+      return manager.answerPermission(terminalId, requestId || pending.requestId, { behavior: 'allow', updatedInput });
     }
-    return this.structuredManager.answerPermission(terminalId, requestId || pending.requestId, { behavior: 'deny', message: opts.message || 'Denied' });
+    return manager.answerPermission(terminalId, requestId || pending.requestId, { behavior: 'deny', message: opts.message || 'Denied' });
   }
 
   /**
@@ -1016,20 +1056,150 @@ export class SessionService {
     try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
     config.autonomy = mode;
     terminalsDb.updateConfig(this.db, terminalId, config);
-    this.structuredManager?.setEscalate(terminalId, mode !== 'autonomous');
+    this.structuredManagerFor(terminal.type)?.setEscalate(terminalId, mode !== 'autonomous');
     return true;
   }
 
   /** Gracefully interrupt a structured thread's current turn (does NOT kill it). */
   interrupt(terminalId: string): boolean {
-    return this.structuredManager?.interrupt(terminalId) ?? false;
+    return this.structuredManagerForTerminal(terminalId)?.interrupt(terminalId) ?? false;
   }
 
   /** Trigger native Claude Code compaction on a structured thread's current turn. */
   compact(terminalId: string): boolean {
-    if (!this.structuredManager?.isAlive(terminalId)) return false;
-    this.structuredManager.compact(terminalId);
+    const manager = this.structuredManagerForTerminal(terminalId);
+    if (!manager?.isAlive(terminalId)) return false;
+    manager.compact(terminalId);
     return true;
+  }
+
+  /**
+   * Switch a running AI thread between the CLI (PTY) and Pretty (structured) transports
+   * WITHOUT losing its conversation: kill the current process/connection, flip
+   * `config.transport`, and re-spawn RESUMING the same `external_id` in the new transport
+   * (structured backfills history from the transcript/ring; PTY resumes via
+   * `claude --resume` / `codex resume`). The frontend swaps ChatView↔xterm off
+   * `config.transport` on the next tabs reload.
+   *
+   * Guards (each throws an Error carrying an HTTP `status` for the route):
+   *   - the thread must be a claude-code|codex thread (409);
+   *   - it must have an `external_id` — a brand-new thread has nothing to resume (409);
+   *   - Pretty must be available for the harness (codex has none until Phase B) (409);
+   *   - it must be idle: a busy structured thread is interrupted then switched at the
+   *     turn boundary (the preferred path); a busy PTY thread (no interruptible turn) is
+   *     rejected so an in-flight turn isn't lost (409).
+   * A no-op (returns the row unchanged) when the thread is already in the target transport.
+   */
+  async switchTransport(terminalId: string, target: 'structured' | 'pty'): Promise<terminalsDb.Terminal> {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) throw transportError(404, 'Terminal not found');
+    if (terminal.type !== 'claude-code' && terminal.type !== 'codex') {
+      throw transportError(409, 'Transport switching is only supported for Claude Code and Codex threads');
+    }
+    if (!terminal.external_id) {
+      throw transportError(409, 'This thread has no session yet — send a message first, then switch');
+    }
+    if (target === 'structured' && !this.structuredManagerFor(terminal.type)) {
+      throw transportError(409, 'Pretty transport is not available for this harness yet');
+    }
+
+    let config: Record<string, any> = {};
+    try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
+    const current: 'structured' | 'pty' = config.transport === 'structured' ? 'structured' : 'pty';
+    if (current === target) return terminalsDb.rowToTerminal(terminal); // already there — idempotent
+
+    // Idle guard. Interrupt-then-switch a busy structured turn (preferred); reject a busy
+    // PTY thread, whose in-flight turn we can't cleanly interrupt without losing work.
+    if (terminal.status === 'working') {
+      const live = this.structuredManagerForTerminal(terminalId);
+      if (live?.isAlive(terminalId)) {
+        await this.settleStructuredTurn(live, terminalId);
+      } else {
+        throw transportError(409, 'This thread is busy — wait for the current turn to finish, then switch');
+      }
+    }
+
+    // Fully tear down the OLD transport (awaiting its exit) BEFORE re-spawning, so its async
+    // exit handler can't null the pid / reset the status of the transport we're about to start.
+    await this.killCurrentTransport(terminal.type, terminalId, current);
+
+    // Merge `config.transport` via read-merge-write — NEVER clobber unrelated keys
+    // (model, role, pinned, autoArchive, …), exactly like setAutoArchive.
+    const fresh = terminalsDb.getById(this.db, terminalId);
+    let merged: Record<string, any> = {};
+    try { merged = JSON.parse(fresh?.config || '{}'); } catch { /* default {} */ }
+    if (target === 'structured') merged.transport = 'structured';
+    else delete merged.transport;
+    terminalsDb.updateConfig(this.db, terminalId, merged);
+    terminalsDb.updatePid(this.db, terminalId, null);
+
+    // Re-spawn: spawnTerminal reads the freshly-merged config and dispatches to the right
+    // transport, resuming `external_id` (structured `-r`/backfill or PTY resume) either way.
+    this.spawnTerminal(terminalId);
+
+    return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
+  }
+
+  /**
+   * Interrupt a live structured turn and wait for the turn boundary ('idle') or the
+   * process exit — bounded, so a wedged CLI can't hang the switch forever.
+   */
+  private async settleStructuredTurn(
+    manager: import('../structured/manager.js').IStructuredManager,
+    terminalId: string,
+    timeoutMs = 5000,
+  ): Promise<void> {
+    await new Promise<void>((resolve) => {
+      let done = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        if (timer) clearTimeout(timer);
+        manager.off('idle', onSettle);
+        manager.off('exit', onSettle);
+        resolve();
+      };
+      const onSettle = (id: string) => { if (id === terminalId) finish(); };
+      manager.on('idle', onSettle);
+      manager.on('exit', onSettle);
+      manager.interrupt(terminalId);
+      timer = setTimeout(finish, timeoutMs);
+    });
+  }
+
+  /**
+   * Kill whichever transport currently backs a thread and wait for it to fully exit
+   * (bounded), mirroring restartTerminal's await-exit-before-respawn discipline.
+   */
+  private async killCurrentTransport(type: string, terminalId: string, current: 'structured' | 'pty'): Promise<void> {
+    if (current === 'pty') {
+      if (!this.ptyManager.isAlive(terminalId)) { this.ptyManager.kill(terminalId); return; }
+      await this.awaitExit((cb) => this.ptyManager.on('exit', cb), (cb) => this.ptyManager.off('exit', cb), () => this.ptyManager.kill(terminalId), terminalId);
+    } else {
+      const manager = this.structuredManagerFor(type);
+      if (!manager?.isAlive(terminalId)) { manager?.kill(terminalId); return; }
+      await this.awaitExit((cb) => manager.on('exit', cb), (cb) => manager.off('exit', cb), () => manager.kill(terminalId), terminalId);
+    }
+  }
+
+  /** Shared kill-then-await-'exit'(terminalId) helper, bounded so a stuck process can't hang. */
+  private async awaitExit(
+    on: (cb: (id: string) => void) => void,
+    off: (cb: (id: string) => void) => void,
+    kill: () => void,
+    terminalId: string,
+    timeoutMs = 3000,
+  ): Promise<void> {
+    await new Promise<void>((resolve) => {
+      let done = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const finish = () => { if (done) return; done = true; if (timer) clearTimeout(timer); off(onExit); resolve(); };
+      const onExit = (id: string) => { if (id === terminalId) finish(); };
+      on(onExit);
+      kill();
+      timer = setTimeout(finish, timeoutMs);
+    });
   }
 
   /**
@@ -1142,7 +1312,7 @@ export class SessionService {
     // Only kill PTY for terminal types that have processes
     if (terminalsDb.isPtyType(terminal.type)) {
       if (this.ptyManager.isAlive(terminalId)) this.ptyManager.kill(terminalId);
-      this.structuredManager?.kill(terminalId);
+      this.structuredManagerFor(terminal.type)?.kill(terminalId);
     }
     // Soft-delete: archive instead of remove
     terminalsDb.archive(this.db, terminalId);
@@ -1202,10 +1372,11 @@ export class SessionService {
       specs.push(...intgSpecs);
       const developerNote = this.toolsAwareness?.() ?? null;
       const secretsMcp = composeInjection(specs, { configPath: this.mcpConfigPath, prompts, developerNote });
-      if (config.transport === 'structured' && terminal.type === 'claude-code' && this.structuredManager) {
+      if (config.transport === 'structured' && this.structuredManagerFor(terminal.type)) {
         // Spawn (or, when an external_id is already known, RESUME) the structured
-        // stream-json thread. spawnStructured re-applies the full role/escalate/MCP
-        // wiring and backfills prior history on resume.
+        // thread via the right manager for this harness (claude stream-json / codex
+        // app-server). spawnStructured re-applies the full role/escalate/MCP wiring
+        // and backfills prior history on resume.
         this.spawnStructured(terminal, config, workDir);
         return; // structured path complete — skip PTY spawn + session-id capture
       }
@@ -1252,8 +1423,9 @@ export class SessionService {
    * after a daemon restart. Idempotent: a no-op when the thread is already alive.
    */
   private spawnStructured(terminal: terminalsDb.TerminalRow, config: Record<string, any>, workDir: string): void {
-    if (!this.structuredManager) throw new Error('structured transport not supported for this provider');
-    if (this.structuredManager.isAlive(terminal.id)) return; // already running — don't double-spawn
+    const manager = this.structuredManagerFor(terminal.type);
+    if (!manager) throw new Error('structured transport not supported for this provider');
+    if (manager.isAlive(terminal.id)) return; // already running — don't double-spawn
 
     const provider = getProvider(terminal.type);
     // Same secrets/integrations/tools-awareness MCP wiring as a fresh PTY spawn.
@@ -1312,7 +1484,7 @@ export class SessionService {
     // resume after a daemon restart.
     const escalate = config.role === 'agent' && config.autonomy === 'supervised';
 
-    const pid = this.structuredManager.spawn(terminal.id, {
+    const pid = manager.spawn(terminal.id, {
       command: sc.command,
       args: sc.args,
       workDir,
@@ -1332,10 +1504,11 @@ export class SessionService {
    * threads. Never throws.
    */
   ensureStructuredAlive(terminalId: string): boolean {
-    if (!this.structuredManager) return false;
-    if (this.structuredManager.isAlive(terminalId)) return true;
     const terminal = terminalsDb.getById(this.db, terminalId);
-    if (!terminal || terminal.type !== 'claude-code' || terminal.archived_at) return false;
+    if (!terminal || terminal.archived_at) return false;
+    const manager = this.structuredManagerFor(terminal.type);
+    if (!manager) return false; // no structured transport for this harness (e.g. codex until Phase B)
+    if (manager.isAlive(terminalId)) return true;
     let config: Record<string, any> = {};
     try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
     if (config.transport !== 'structured') return false;
@@ -1352,7 +1525,7 @@ export class SessionService {
     const workDir = terminal.working_dir || session.working_dir;
     try {
       this.spawnStructured(terminal, config, workDir);
-      return this.structuredManager.isAlive(terminalId);
+      return manager.isAlive(terminalId);
     } catch {
       return false;
     }

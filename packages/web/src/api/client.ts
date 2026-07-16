@@ -72,6 +72,10 @@ export const api = {
   interrupt: (terminalId: string) => req<void>(`/api/terminals/${terminalId}/interrupt`, { method: 'POST' }),
   // Trigger native Claude Code compaction on the thread's current context.
   compactTerminal: (terminalId: string) => req<void>(`/api/terminals/${terminalId}/compact`, { method: 'POST' }),
+  // Live-switch a running claude/codex thread between CLI (pty) and Pretty (structured),
+  // resuming its conversation. Rejects (409) when the thread is busy or has no session yet.
+  switchTransport: (terminalId: string, transport: 'structured' | 'pty') =>
+    req<Terminal>(`/api/terminals/${terminalId}/transport`, { method: 'POST', body: body({ transport }) }),
   // Overseer: find-or-create this project's coordinator thread (idempotent) → { terminalId }.
   ensureOverseerCoordinator: (sessionId: string) =>
     req<{ terminalId: string }>(`/api/sessions/${sessionId}/overseer/coordinator`, { method: 'POST' }),

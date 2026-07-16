@@ -170,6 +170,25 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
   });
 
+  // POST /api/terminals/:terminalId/transport { transport: 'structured' | 'pty' } —
+  // live-switch a running claude/codex thread between the CLI (PTY) and Pretty
+  // (structured) transports, resuming its conversation. Guard failures (busy / no
+  // external_id / wrong type / harness lacks Pretty) surface as 409; the frontend
+  // swaps ChatView↔xterm off config.transport on the session:tabs-changed reload.
+  router.post('/terminals/:terminalId/transport', async (req, res) => {
+    const { transport } = req.body ?? {};
+    if (transport !== 'structured' && transport !== 'pty') {
+      return res.status(400).json({ error: "transport must be 'structured' or 'pty'" });
+    }
+    try {
+      const terminal = await sessionService.switchTransport(req.params.terminalId, transport);
+      broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: terminal.sessionId });
+      res.json(terminal);
+    } catch (e: any) {
+      res.status(typeof e?.status === 'number' ? e.status : 400).json({ error: e?.message ?? String(e) });
+    }
+  });
+
   // POST /api/terminals/:terminalId/input { data } — write raw bytes to the live PTY.
   router.post('/terminals/:terminalId/input', (req, res) => {
     const data = req.body?.data;

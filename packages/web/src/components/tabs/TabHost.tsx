@@ -11,6 +11,7 @@ import { ChatView } from './chat/ChatView';
 import { useThreadMode } from '../../stores/threadMode';
 import { useTabs } from '../../stores/tabs';
 import { ModeToggle } from '../layout/ModeToggle';
+import { TransportToggle } from '../layout/TransportToggle';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { isImage, isSvg } from '../../lib/fileType';
 
@@ -27,19 +28,22 @@ export function isStructured(tab: Pick<Terminal, 'config'>): boolean {
 function AiThread({ tab }: { tab: Terminal }) {
   const mode = useThreadMode((s) => s.modes[tab.id]) ?? 'expert';
   const isMobile = useIsMobile();
-
-  // Structured threads: chat-only. No xterm (it would crash on a missing PTY),
-  // no mode toggle.
-  if (isStructured(tab)) return <ChatView terminalId={tab.id} />;
+  const structured = isStructured(tab);
 
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
-      {mode === 'normal' ? <ConversationView terminalId={tab.id} /> : <TerminalTab terminalId={tab.id} />}
-      {/* Desktop: the View/Terminal switcher floats over the top-right of the
-          thread (mobile keeps it in the header). */}
+      {/* Structured threads are chat-only (no xterm — it would crash on a missing PTY);
+          CLI threads keep the View/Terminal render toggle. */}
+      {structured
+        ? <ChatView terminalId={tab.id} />
+        : (mode === 'normal' ? <ConversationView terminalId={tab.id} /> : <TerminalTab terminalId={tab.id} />)}
+      {/* Desktop: the CLI⇄Pretty transport switch (both transports) plus, for CLI
+          threads, the View/Terminal render switcher float over the top-right (mobile
+          keeps the render switcher in the header). */}
       {!isMobile && (
-        <div style={{ position: 'absolute', top: 4, right: 12, zIndex: 12 }}>
-          <ModeToggle terminalId={tab.id} floating />
+        <div style={{ position: 'absolute', top: 4, right: 12, zIndex: 12, display: 'flex', gap: 6 }}>
+          <TransportToggle terminalId={tab.id} floating />
+          {!structured && <ModeToggle terminalId={tab.id} floating />}
         </div>
       )}
     </div>
