@@ -289,6 +289,7 @@ export class SessionService {
     }
 
     const terminalId = uuid();
+    const labelSource: 'user' | 'default' = label ? 'user' : 'default';
     const displayLabel = label || this.defaultTerminalLabel(sessionId, type);
 
     terminalsDb.create(this.db, {
@@ -296,6 +297,7 @@ export class SessionService {
       sessionId,
       type,
       label: displayLabel,
+      labelSource,
       skipPermissions,
       workingDir: resolvedDir,
       externalId,
@@ -327,6 +329,7 @@ export class SessionService {
     if (!session) throw new Error('Session not found');
 
     const terminalId = uuid();
+    const labelSource: 'user' | 'default' = label ? 'user' : 'default';
     const displayLabel = label || this.defaultTerminalLabel(sessionId, type);
 
     terminalsDb.create(this.db, {
@@ -334,6 +337,7 @@ export class SessionService {
       sessionId,
       type,
       label: displayLabel,
+      labelSource,
       workingDir: session.working_dir,
       config: { ...(config ?? {}), queued: true, queuedTask: task },
     });
@@ -402,6 +406,7 @@ export class SessionService {
     }
 
     const terminalId = uuid();
+    const labelSource: 'user' | 'default' = label ? 'user' : 'default';
     const displayLabel = label || this.defaultTerminalLabel(sessionId, type);
 
     terminalsDb.create(this.db, {
@@ -409,6 +414,7 @@ export class SessionService {
       sessionId,
       type,
       label: displayLabel,
+      labelSource,
       skipPermissions: true,
       workingDir: resolvedDir,
       config: { runner: true, runnerPrompt: prompt },
@@ -451,6 +457,9 @@ export class SessionService {
       sessionId: source.session_id,
       type: source.type,
       label: `${source.label} (branch)`,
+      // Deliberate, derived-from-source name — not a placeholder — so it's frozen
+      // like a user-typed label rather than eligible for later auto-renaming.
+      labelSource: 'user',
       skipPermissions: true,
       workingDir: dir,
       config: { branchFrom: sourceSessionId },
@@ -465,16 +474,19 @@ export class SessionService {
   }
 
   // Create a non-PTY tab (browser, notes)
-  createTab(sessionId: string, type: string, label: string, config?: Record<string, any>): terminalsDb.Terminal {
+  createTab(sessionId: string, type: string, label?: string, config?: Record<string, any>): terminalsDb.Terminal {
     const session = sessionsDb.getById(this.db, sessionId);
     if (!session) throw new Error('Session not found');
 
     const tabId = uuid();
+    const labelSource: 'user' | 'default' = label ? 'user' : 'default';
+    const displayLabel = label || type;
     terminalsDb.create(this.db, {
       id: tabId,
       sessionId,
       type,
-      label,
+      label: displayLabel,
+      labelSource,
       config,
     });
     return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, tabId)!);

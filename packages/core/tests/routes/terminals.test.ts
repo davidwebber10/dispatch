@@ -158,6 +158,67 @@ describe('terminal routes', () => {
     expect(list.body).toHaveLength(1);
   });
 
+  it('POST /api/sessions/:id/terminals without a label stamps label_source=default', async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${sessionId}/terminals`)
+      .send({ type: 'shell', workingDir: '/tmp' });
+    expect(res.status).toBe(201);
+
+    const get = await request(app).get(`/api/terminals/${res.body.id}`);
+    expect(get.body.labelSource).toBe('default');
+  });
+
+  it('POST /api/sessions/:id/terminals with a label stamps label_source=user', async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${sessionId}/terminals`)
+      .send({ type: 'shell', label: 'Mine', workingDir: '/tmp' });
+    expect(res.status).toBe(201);
+
+    const get = await request(app).get(`/api/terminals/${res.body.id}`);
+    expect(get.body.labelSource).toBe('user');
+  });
+
+  it('POST /api/sessions/:id/terminals for a non-PTY tab without a label stamps label_source=default', async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${sessionId}/terminals`)
+      .send({ type: 'notes' });
+    expect(res.status).toBe(201);
+    expect(res.body.label).toBe('notes');
+
+    const get = await request(app).get(`/api/terminals/${res.body.id}`);
+    expect(get.body.labelSource).toBe('default');
+  });
+
+  it('POST /api/sessions/:id/terminals for a non-PTY tab with a label stamps label_source=user', async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${sessionId}/terminals`)
+      .send({ type: 'notes', label: 'My Notes' });
+    expect(res.status).toBe(201);
+
+    const get = await request(app).get(`/api/terminals/${res.body.id}`);
+    expect(get.body.labelSource).toBe('user');
+  });
+
+  it('POST /api/sessions/:id/terminals?queued without a label stamps label_source=default', async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${sessionId}/terminals`)
+      .send({ type: 'claude-code', queued: true, task: 'do it' });
+    expect(res.status).toBe(201);
+
+    const get = await request(app).get(`/api/terminals/${res.body.id}`);
+    expect(get.body.labelSource).toBe('default');
+  });
+
+  it('POST /api/sessions/:id/terminals?queued with a label stamps label_source=user', async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${sessionId}/terminals`)
+      .send({ type: 'claude-code', queued: true, task: 'do it', label: 'Queued One' });
+    expect(res.status).toBe(201);
+
+    const get = await request(app).get(`/api/terminals/${res.body.id}`);
+    expect(get.body.labelSource).toBe('user');
+  });
+
   it('POST /api/sessions/:id/terminals rejects invalid type', async () => {
     const res = await request(app)
       .post(`/api/sessions/${sessionId}/terminals`)

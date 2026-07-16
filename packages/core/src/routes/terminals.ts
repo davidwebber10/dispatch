@@ -41,7 +41,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
         broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: req.params.id });
         res.status(201).json(terminal);
       } else {
-        const tab = sessionService.createTab(req.params.id, type, label || type, config);
+        const tab = sessionService.createTab(req.params.id, type, label, config);
         broadcaster?.broadcast({ type: 'terminal:created', terminal: tab });
         broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: req.params.id });
         res.status(201).json(tab);
