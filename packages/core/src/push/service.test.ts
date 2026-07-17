@@ -76,4 +76,22 @@ describe('PushService presence rule — notify unless viewing it', () => {
     await notify();
     expect(pushDb.list(db).map((s) => s.deviceId)).toEqual(['desk']);
   });
+
+  it('prunes a subscription when the endpoint returns 404', async () => {
+    svc = new PushService(db, {
+      vapidDir: dir,
+      send: async (sub) => { if (sub.deviceId === 'phone') { const e: any = new Error('not found'); e.statusCode = 404; throw e; } },
+    });
+    await notify();
+    expect(pushDb.list(db).map((s) => s.deviceId)).toEqual(['desk']);
+  });
+});
+
+describe('PushService VAPID keys', () => {
+  it('generates once and persists — stable across instances sharing a vapidDir', () => {
+    const k1 = svc.getPublicKey();
+    expect(k1).toBeTruthy();
+    const again = new PushService(db, { vapidDir: dir, send: async () => {} });
+    expect(again.getPublicKey()).toBe(k1);
+  });
 });
