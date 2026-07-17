@@ -119,13 +119,18 @@ made server-side at the existing settled hook.
 
 ### Deep-link
 
-- **Service worker** (`public/sw.js:74-82`): on `notificationclick`, if a dispatch
-  window client exists → `focus()` + `postMessage({ type: 'open-thread',
-  terminalId })`; else `openWindow('/?thread=<terminalId>')`.
-- **App bootstrap** (`src/App.tsx` init effect): handle both the SW message and a
-  `?thread=` query param on startup — ensure the thread's project/terminals are
-  loaded, activate the tab via the tabs store, then strip the param with
-  `history.replaceState`. Unknown/archived thread id → open normally, no error UI.
+- **Push payload** carries `{ terminalId, sessionId }` (sessionId added for URL building).
+- **Service worker** (`public/sw.js`): on `notificationclick`, if a dispatch window
+  exists → `focus()` + `postMessage({ type: 'open-thread', terminalId, sessionId })`;
+  else `openWindow('/p/<sessionId>/t/<terminalId>')` — the mobile shell's existing
+  URL scheme, which it restores natively on cold start.
+- **Warm path**: the message becomes a `useUI.pendingOpenThread` intent; the live
+  shell consumes it (desktop: `loadTabs` + `setActiveTab`; mobile:
+  `openThreadFromList`, which seeds the project and builds the history stack).
+- **Desktop cold start**: `App` parses `/p/<sessionId>/t/<terminalId>`
+  (`lib/deepLink.ts`) after tab hydration (hydration would otherwise overwrite the
+  restored tab), converts it to the same intent, and cleans the URL with
+  `history.replaceState`. Unknown/archived thread → open normally, no error UI.
 
 ### Data flow
 
@@ -172,4 +177,4 @@ Claude/Codex hook or permission membrane
 - Per-device × per-thread alert preferences (rejected Approach 2).
 - Contextual/model-generated notification bodies.
 - Alert sounds, badges, or notification actions beyond tap-to-open.
-- Any URL routing framework — the `?thread=` param is a one-off bootstrap.
+- Any URL routing framework — deep links reuse the existing `/p/…/t/…` mobile scheme.
