@@ -100,7 +100,8 @@ export default function App() {
     document.addEventListener('visibilitychange', report);
     window.addEventListener('focus', report);
     window.addEventListener('blur', report);
-    return () => { unsub(); document.removeEventListener('visibilitychange', report); window.removeEventListener('focus', report); window.removeEventListener('blur', report); };
+    const t = setInterval(report, 60_000); // keep genuinely-present devices fresh past the server's 90s TTL
+    return () => { unsub(); document.removeEventListener('visibilitychange', report); window.removeEventListener('focus', report); window.removeEventListener('blur', report); clearInterval(t); };
   }, []);
 
   // Desktop: the active tab IS the viewed thread. Mobile: MobileApp owns this

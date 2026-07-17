@@ -1,4 +1,5 @@
 import { api } from '../api/client';
+import { useViewing } from '../stores/viewing';
 
 const DEVICE_KEY = 'dispatch:deviceId';
 export function deviceId(): string {
@@ -42,7 +43,7 @@ export async function enablePush(): Promise<'ok' | 'denied' | 'unsupported' | 'i
   const { publicKey } = await api.getPushKey();
   const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) });
   await api.pushSubscribe(deviceId(), sub.toJSON());
-  reportPresence(true);
+  reportPresence(true, useViewing.getState().id);
   return 'ok';
 }
 export async function disablePush(): Promise<void> {
