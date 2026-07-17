@@ -2,10 +2,11 @@
 //
 // Both the coordinator stream (OverseerMsg) and the agent chat (AssistantText) render the
 // SAME assistant prose, some of which embeds an "insight" block delimited by a star-headed
-// opener line and a closing rule of dashes:
-//   ★ Insight ─────────────────────────────────────
+// opener line and a closing rule of dashes. Claude often fences the delimiter lines as inline
+// code, so the opener/closer arrive wrapped in backticks:
+//   `★ Insight ─────────────────────────────────────`
 //   …content…
-//   ─────────────────────────────────────────────────
+//   `─────────────────────────────────────────────────`
 // Rendered verbatim those are just literal rows of dashes in the markdown. splitInsights()
 // walks the text into prose / insight segments (frontend-only — the upstream text is
 // untouched); each insight run becomes a tinted lightbulb callout while every non-insight
@@ -19,10 +20,11 @@
 import { Lightbulb } from '@phosphor-icons/react';
 import { Markdown } from './Markdown';
 
-// Opener: "★ Insight" followed by only whitespace / dashes (box-drawing, em/en dash, hyphen).
-const INSIGHT_OPEN = /^\s*★\s*Insight[\s─—–-]*$/;
-// A closing (or separating) rule: a line that is nothing but 3+ dashes.
-const RULE_LINE = /^\s*[─—–-]{3,}\s*$/;
+// Opener: "★ Insight" + trailing dashes (box-drawing, em/en dash, hyphen), optionally wrapped
+// in backticks (Claude fences the delimiter lines as inline code, e.g. `★ Insight ───`).
+const INSIGHT_OPEN = /^\s*`?\s*★\s*Insight[\s─—–-]*`?\s*$/;
+// A closing (or separating) rule: 3+ dashes, optionally backtick-wrapped.
+const RULE_LINE = /^\s*`?\s*[─—–-]{3,}\s*`?\s*$/;
 
 type InsightSeg = { type: 'md' | 'insight'; content: string };
 
