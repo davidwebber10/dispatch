@@ -20,7 +20,7 @@ import { useTabCycleShortcut } from './hooks/useTabCycleShortcut';
 import { createEventsSocket } from './api/events-socket';
 import { useConnection } from './stores/connection';
 import { useProjects } from './stores/projects';
-import { useTabs, isDispatchTab } from './stores/tabs';
+import { useTabs, isDispatchTab, findTerminal } from './stores/tabs';
 import { useActivity } from './stores/activity';
 import { useThreadStatus } from './stores/threadStatus';
 import { useAuth } from './stores/auth';
@@ -33,14 +33,9 @@ import { useResume } from './hooks/useResume';
 import { useSettings } from './stores/settings';
 import { useServers } from './stores/servers';
 import { useGroups } from './components/panes/store';
-
-function maybeNotify(sessionId: string) {
-  const { notify, pushEnabled } = useSettings.getState();
-  if (pushEnabled) return; // server push handles it (this tab counts as away)
-  if (!notify || typeof Notification === 'undefined' || Notification.permission !== 'granted' || !document.hidden) return;
-  const proj = useProjects.getState().sessions.find((x) => x.id === sessionId);
-  try { new Notification('Dispatch — input needed', { body: proj?.name ?? 'A session needs your input', icon: '/icons/icon-192.png' }); } catch { /* ignore */ }
-}
+import { useViewing } from './stores/viewing';
+import { useUI } from './stores/ui';
+import { parseThreadPath } from './lib/deepLink';
 
 export default function App() {
   const activeTerminalId = useTabs((s) => s.activeTabId);
@@ -62,11 +57,22 @@ export default function App() {
   useEffect(() => {
     void useProjects.getState().load();
     void useServers.getState().load();
-    void useTabs.getState().hydrate();
+    void useTabs.getState().hydrate().then(() => {
+      if (window.innerWidth <= 768) return; // MobileApp restores /p/… URLs natively
+      const deep = parseThreadPath(location.pathname);
+      if (deep) { history.replaceState({}, '', '/'); useUI.getState().requestOpenThread(deep); }
+    });
     void useAuth.getState().load();
     void useUpdate.getState().load();
     void useHost.getState().load();
     void useAgents.getState().loadSchedules();
+    const onSwMessage = (e: MessageEvent) => {
+      const d = e.data as { type?: string; sessionId?: string; terminalId?: string } | null;
+      if (d?.type === 'open-thread' && d.sessionId && d.terminalId) {
+        useUI.getState().requestOpenThread({ sessionId: d.sessionId, terminalId: d.terminalId });
+      }
+    };
+    navigator.serviceWorker?.addEventListener('message', onSwMessage);
     const sock = createEventsSocket({
       onStatus: (s) => useConnection.getState().setStatus(s),
       onEvent: (e) => {
@@ -77,21 +83,47 @@ export default function App() {
         useAuth.getState().applyEvent(e);
         useUpdate.getState().applyEvent(e);
         useAgents.getState().applyEvent(e);
-        if (e.type === 'session:status' && e.status === 'needs_input' && typeof e.sessionId === 'string') maybeNotify(e.sessionId);
       },
     });
     sockRef.current = sock;
-    return () => { sock.close(); sockRef.current = null; };
+    return () => { sock.close(); sockRef.current = null; navigator.serviceWorker?.removeEventListener('message', onSwMessage); };
   }, []);
 
   useEffect(() => {
-    const report = () => { if (useSettings.getState().pushEnabled) void import('./lib/push').then((m) => m.reportPresence(document.visibilityState === 'visible' && document.hasFocus())).catch(() => {}); };
+    const report = () => {
+      if (!useSettings.getState().pushEnabled) return;
+      const fg = document.visibilityState === 'visible' && document.hasFocus();
+      void import('./lib/push').then((m) => m.reportPresence(fg, fg ? useViewing.getState().id : null)).catch(() => {});
+    };
     report();
+    const unsub = useViewing.subscribe(report); // re-report when the viewed thread changes
     document.addEventListener('visibilitychange', report);
     window.addEventListener('focus', report);
     window.addEventListener('blur', report);
-    return () => { document.removeEventListener('visibilitychange', report); window.removeEventListener('focus', report); window.removeEventListener('blur', report); };
+    const t = setInterval(report, 60_000); // keep genuinely-present devices fresh past the server's 90s TTL
+    return () => { unsub(); document.removeEventListener('visibilitychange', report); window.removeEventListener('focus', report); window.removeEventListener('blur', report); clearInterval(t); };
   }, []);
+
+  // Desktop: the active tab IS the viewed thread. Mobile: MobileApp owns this
+  // (its level-2 leaf state), so don't fight it from here.
+  useEffect(() => {
+    if (isMobile) return;
+    useViewing.getState().set(activeTerminalId && !isDispatchTab(activeTerminalId) ? activeTerminalId : null);
+  }, [activeTerminalId, isMobile]);
+
+  // Desktop consumer of the open-thread intent (mobile's lives in MobileApp).
+  const pendingThread = useUI((s) => s.pendingOpenThread);
+  useEffect(() => {
+    if (!pendingThread || isMobile) return;
+    const { sessionId, terminalId } = pendingThread;
+    useUI.getState().clearOpenThread();
+    void (async () => {
+      try { await useTabs.getState().loadTabs(sessionId); } catch { return; } // project gone → open normally
+      if (!findTerminal(useTabs.getState().byProject, terminalId)) return;    // thread gone → open normally
+      useProjects.getState().setActive(sessionId);
+      useTabs.getState().setActiveTab(terminalId);
+    })();
+  }, [pendingThread, isMobile]);
 
   // Returning from the background: re-establish the events socket and remount
   // every terminal (which iOS may have silently killed) so the UI is live

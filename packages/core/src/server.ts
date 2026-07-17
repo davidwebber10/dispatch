@@ -35,6 +35,7 @@ import { IntegrationsService } from './integrations/service.js';
 import { createEventsRouter } from './routes/events.js';
 import { createIntegrationsRouter } from './routes/integrations.js';
 import { PushService } from './push/service.js';
+import { wireThreadSettledPush } from './push/notify.js';
 import { createPushRouter } from './routes/push.js';
 import { StatusService } from './status/service.js';
 import { createEventsBroadcaster, createNoopBroadcaster } from './ws/events.js';
@@ -184,14 +185,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   wireCodexPretty(sessionService, statusService);
   const pushService = new PushService(db, { vapidDir: dispatchDir });
 
-  statusService.setThreadSettledHook(({ terminalId, sessionId, threadStatus }) => {
-    const term = terminalsDb.getById(db, terminalId);
-    const sess = sessionsDb.getById(db, sessionId);
-    const title = sess?.name || 'Dispatch';
-    const label = term?.label || 'Thread';
-    const body = threadStatus === 'needs_input' ? `${label} needs your input` : `${label} finished`;
-    void pushService.notifyThread({ terminalId, title, body });
-  });
+  wireThreadSettledPush(db, statusService, pushService);
 
   // Mount routes
   app.use('/api/sessions', createSessionsRouter(sessionService, broadcaster));
@@ -316,14 +310,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   wireCodexPretty(sessionService, statusService);
   const pushService = new PushService(db, { vapidDir: dataDir });
 
-  statusService.setThreadSettledHook(({ terminalId, sessionId, threadStatus }) => {
-    const term = terminalsDb.getById(db, terminalId);
-    const sess = sessionsDb.getById(db, sessionId);
-    const title = sess?.name || 'Dispatch';
-    const label = term?.label || 'Thread';
-    const body = threadStatus === 'needs_input' ? `${label} needs your input` : `${label} finished`;
-    void pushService.notifyThread({ terminalId, title, body });
-  });
+  wireThreadSettledPush(db, statusService, pushService);
 
   // Doppler secrets: token-backed connection + per-spawn injection (DOPPLER_* env +
   // an MCP server) so Claude Code / Codex agents can add & retrieve secrets.

@@ -3,6 +3,7 @@ import { Gear, CaretLeft, CaretRight, Plus, Folders, PushPin, Robot } from '@pho
 import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
 import { ModeToggle } from '../layout/ModeToggle';
+import { AlertBell } from '../layout/AlertBell';
 import { ProjectCard } from '../sidebar/ProjectCard';
 import { AllAgentsView } from '../agents/AllAgentsView';
 import { PinnedThreadsView } from './PinnedThreadsView';
@@ -17,6 +18,7 @@ import { useProjects } from '../../stores/projects';
 import { useAgentUI } from '../../stores/agentUI';
 import { useReconnect } from '../../stores/reconnect';
 import { useUI } from '../../stores/ui';
+import { useViewing } from '../../stores/viewing';
 import { Spinner } from '../common/Spinner';
 import { SortableList } from '../common/SortableList';
 import { timeAgo } from '../../lib/time';
@@ -106,6 +108,22 @@ export function MobileApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingOpenTab]);
 
+  // SW notification tap while the app is running: jump straight to that thread,
+  // seeding the project first (openThreadFromList handles cross-project moves).
+  const pendingThread = useUI((s) => s.pendingOpenThread);
+  useEffect(() => {
+    if (!pendingThread) return;
+    useUI.getState().clearOpenThread();
+    openThreadFromList(pendingThread.sessionId, pendingThread.terminalId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingThread]);
+
+  // Presence: the thread terminal is "being viewed" only on the level-2 tab leaf.
+  useEffect(() => {
+    useViewing.getState().set(level === 2 && leaf === 'tab' ? leafTabId : null);
+    return () => useViewing.getState().set(null);
+  }, [level, leaf, leafTabId]);
+
   // On a deep-linked reload: restore the stores from the URL and rebuild the
   // history stack (base → project → leaf) so back/edge-swipe still walks up.
   useEffect(() => {
@@ -152,6 +170,7 @@ export function MobileApp() {
           </button>
         )}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <AlertBell terminalId={level === 2 && leaf === 'tab' ? leafTabId : null} />
           <ModeToggle terminalId={level === 2 && leaf === 'tab' ? leafTabId : null} />
           <button title="Settings" onClick={() => setSettings(true)} style={{ width: 32, height: 32, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 12, background: 'var(--color-elevated)', border: '1px solid #2C2C32', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
             <Gear size={17} />
