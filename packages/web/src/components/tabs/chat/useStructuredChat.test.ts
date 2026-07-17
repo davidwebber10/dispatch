@@ -153,6 +153,34 @@ test('maps an echoed user text block to a user bubble (P0a)', () => {
   expect(u?.text).toBe('hi claude');
 });
 
+// ---- Injected context (loaded Skill content / system reminders) -------------------------
+// When the model invokes a Skill, Claude Code injects the loaded SKILL.md into the
+// conversation as a user-role TEXT message. The live stream-json marks it `isSynthetic:true`
+// (the on-disk transcript marks the equivalent `isMeta` — see conversation/transcript.ts's
+// `if (o.isMeta) return []`). It is NOT the human's turn and must not render as a "You"
+// bubble. The daemon's own user-echo (manager.ts) carries neither flag, so real turns are
+// unaffected. (The Skill tool card + its real tool_result still render — see below.)
+
+test('skips an isSynthetic user text event (injected Skill content) — no user bubble', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'user', isSynthetic: true, message: { role: 'user', content: [{ type: 'text', text: 'Base directory for this skill: /x\n\n# Skill' }] } }));
+  expect(result.current.items.filter((i) => i.kind === 'user')).toHaveLength(0);
+});
+
+test('skips an isMeta user text event (transcript-shaped injected context) — no user bubble', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'user', isMeta: true, message: { role: 'user', content: [{ type: 'text', text: 'Base directory for this skill: /x\n\n# Skill' }] } }));
+  expect(result.current.items.filter((i) => i.kind === 'user')).toHaveLength(0);
+});
+
+test('a normal user text event (neither flag) still renders exactly one user bubble', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'a real human turn' }] } }));
+  const users = result.current.items.filter((i) => i.kind === 'user');
+  expect(users).toHaveLength(1);
+  expect(users[0].text).toBe('a real human turn');
+});
+
 test('tags an echoed user event with meta.source (coordinator vs explicit user vs untagged)', () => {
   const { result } = renderHook(() => useStructuredChat('t1'));
   act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'do the thing' }] }, meta: { source: 'coordinator' } }));

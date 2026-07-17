@@ -526,6 +526,12 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
         }
 
         if (type === 'user' && event.message) {
+          // Injected context (loaded Skill content, system reminders) arrives as a user-role text
+          // message the CLI synthesizes — NOT the human's turn. Skip it, mirroring the REST parser
+          // (conversation/transcript.ts skips the on-disk `isMeta` equivalent). Live stream marks it
+          // `isSynthetic`; also guard `isMeta` for any transcript-shaped event. The daemon's own
+          // user-echo (manager.ts) sets neither, so real turns are unaffected.
+          if (event.isSynthetic || event.isMeta) return;
           const content = event.message.content;
           // Who actually sent this turn — tagged by the backend on the echoed event (absent
           // on untagged/legacy sends, which render as a plain "You" bubble). See ConvItem.source.
