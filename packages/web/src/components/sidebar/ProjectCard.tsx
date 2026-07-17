@@ -23,6 +23,7 @@ import { RenameThreadModal } from './RenameThreadModal';
 import { AutoArchiveModal } from './AutoArchiveModal';
 import { api } from '../../api/client';
 import { canReceiveAlerts, ensurePushEnrolled } from '../../lib/push';
+import { useHint } from '../../stores/hint';
 
 /* The sidebar's search header is sticky (~52px). A row revealed by scrollIntoView would sit
    underneath it without this margin. */
@@ -281,7 +282,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
 
   async function toggleAlerts(tab: Terminal) {
     const on = !(tab.config as { alertsEnabled?: boolean })?.alertsEnabled;
-    if (on) { const err = await ensurePushEnrolled(); if (err) { window.alert(err); return; } }
+    if (on) { const err = await ensurePushEnrolled(); if (err) { useHint.getState().show(err); return; } }
     void useTabs.getState().setAlertsEnabled(tab.id, on);
   }
 
