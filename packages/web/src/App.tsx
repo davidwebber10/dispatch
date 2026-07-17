@@ -14,6 +14,7 @@ import { EditAgentModal } from './components/agents/EditAgentModal';
 import { AuthBanner } from './components/auth/AuthBanner';
 import { UpdateModal } from './components/update/UpdateModal';
 import { MobileApp } from './components/mobile/MobileApp';
+import { HintToast } from './components/common/HintToast';
 import { SetupWizard } from './components/setup/SetupWizard';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useTabCycleShortcut } from './hooks/useTabCycleShortcut';
@@ -106,6 +107,8 @@ export default function App() {
 
   // Desktop: the active tab IS the viewed thread. Mobile: MobileApp owns this
   // (its level-2 leaf state), so don't fight it from here.
+  // Deliberate limit (spec decision 3): in a multi-pane group only the ACTIVE
+  // tab counts as "viewed" — a thread visible in a background pane still alerts.
   useEffect(() => {
     if (isMobile) return;
     useViewing.getState().set(activeTerminalId && !isDispatchTab(activeTerminalId) ? activeTerminalId : null);
@@ -145,7 +148,7 @@ export default function App() {
   }, []);
 
   if (isMobile) {
-    return (<><SetupWizard /><AuthBanner /><UpdateModal /><MobileApp /></>);
+    return (<><SetupWizard /><AuthBanner /><UpdateModal /><MobileApp /><HintToast /></>);
   }
 
   const showAgent = agentFocused && !!agentSelected;
@@ -186,6 +189,7 @@ export default function App() {
         />
       </AppShell>
       {editing && <EditAgentModal scheduleId={editing.scheduleId} presetProjectId={editing.preset} onClose={() => useAgentUI.getState().closeEdit()} onSaved={(id) => useAgentUI.getState().selectAgent(id)} />}
+      <HintToast />
     </>
   );
 }

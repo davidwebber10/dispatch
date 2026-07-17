@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Bell } from '@phosphor-icons/react';
 import { useTabs, findTerminal } from '../../stores/tabs';
 import { canReceiveAlerts, ensurePushEnrolled } from '../../lib/push';
+import { useHint } from '../../stores/hint';
 
 /**
  * Per-thread alert (bell) toggle for an AI thread's header. Two looks, mirroring
@@ -20,7 +21,7 @@ export function AlertBell({ terminalId, floating = false }: { terminalId: string
     if (busy) return;
     setBusy(true);
     try {
-      if (!on) { const err = await ensurePushEnrolled(); if (err) { window.alert(err); return; } }
+      if (!on) { const err = await ensurePushEnrolled(); if (err) { useHint.getState().show(err); return; } }
       await useTabs.getState().setAlertsEnabled(terminalId, !on);
     } finally { setBusy(false); }
   };
