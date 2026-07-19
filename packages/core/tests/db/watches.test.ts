@@ -32,7 +32,7 @@ describe('watches db', () => {
     expect(byWatcher[0].target_terminal_id).toBe('b');
     expect(byWatcher[0].criteria).toBe('idle');
     expect(byWatcher[0].note).toBe('ping me');
-    expect(byWatcher[0].once).toBe(0);
+    expect(byWatcher[0].once).toBe(1);
     expect(byWatcher[0].fired_at).toBeNull();
     expect(byWatcher[0].created_at).toBeTruthy();
 
@@ -41,17 +41,25 @@ describe('watches db', () => {
     expect(byTarget[0].id).toBe(id);
   });
 
-  it('create defaults note to null and once to 0 when omitted', () => {
+  // One-shot is the default: a watch registered as "tell me when X finishes" must not
+  // re-fire on every subsequent idle of X. Repeating requires an explicit once: false.
+  it('create defaults note to null and once to 1 (one-shot) when omitted', () => {
     const id = watchesDb.create(db, { watcherTerminalId: 'a', targetTerminalId: 'b', criteria: 'any' });
     const row = watchesDb.listByWatcher(db, 'a').find(w => w.id === id)!;
     expect(row.note).toBeNull();
-    expect(row.once).toBe(0);
+    expect(row.once).toBe(1);
   });
 
-  it('create stores once = 1 when requested', () => {
+  it('create stores once = 1 when explicitly requested', () => {
     const id = watchesDb.create(db, { watcherTerminalId: 'a', targetTerminalId: 'b', criteria: 'error', once: true });
     const row = watchesDb.listByWatcher(db, 'a').find(w => w.id === id)!;
     expect(row.once).toBe(1);
+  });
+
+  it('create stores once = 0 only when repeating is explicitly requested', () => {
+    const id = watchesDb.create(db, { watcherTerminalId: 'a', targetTerminalId: 'b', criteria: 'error', once: false });
+    const row = watchesDb.listByWatcher(db, 'a').find(w => w.id === id)!;
+    expect(row.once).toBe(0);
   });
 
   it('listByWatcher/listByTarget only return rows for the given terminal', () => {

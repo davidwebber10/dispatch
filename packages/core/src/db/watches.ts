@@ -37,7 +37,9 @@ export function create(db: Database.Database, input: CreateInput): string {
     input.targetTerminalId,
     input.criteria,
     input.note ?? null,
-    input.once ? 1 : 0,
+    // One-shot is the DEFAULT (spec): "watch X until it finishes" must not re-fire on
+    // every later idle of X. Only an explicit `once: false` makes a watch repeating.
+    input.once === false ? 0 : 1,
     now,
   );
   return id;

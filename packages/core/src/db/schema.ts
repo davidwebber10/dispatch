@@ -135,7 +135,7 @@ export function initSchema(db: Database.Database): void {
       target_terminal_id  TEXT NOT NULL,
       criteria            TEXT NOT NULL,
       note                TEXT,
-      once                INTEGER NOT NULL DEFAULT 0,
+      once                INTEGER NOT NULL DEFAULT 1,
       created_at          TEXT NOT NULL,
       fired_at            TEXT
     );
