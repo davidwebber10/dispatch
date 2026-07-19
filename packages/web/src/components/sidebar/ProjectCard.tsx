@@ -21,6 +21,7 @@ import { NewThreadModal } from './NewThreadModal';
 import { RenameProjectModal } from './RenameProjectModal';
 import { RenameThreadModal } from './RenameThreadModal';
 import { AutoArchiveModal } from './AutoArchiveModal';
+import { ThreadLabel } from './ThreadLabel';
 import { api } from '../../api/client';
 import { canReceiveAlerts, ensurePushEnrolled } from '../../lib/push';
 import { useHint } from '../../stores/hint';
@@ -127,7 +128,7 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
               ? <TerminalWindow size={isMobile ? 17 : 14} weight="fill" color={color} />
               : <span style={{ width: dot, height: dot, borderRadius: '50%', background: color }} />}
       </span>
-      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tab.label}</span>
+      <ThreadLabel tab={tab} />
       {isMobile && (tab.config as { pinned?: boolean })?.pinned && (
         <PushPin size={13} weight="fill" color="var(--color-text-tertiary)" style={{ flexShrink: 0, marginLeft: 4 }} />
       )}

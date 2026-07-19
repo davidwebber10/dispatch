@@ -84,3 +84,21 @@ body { background: var(--color-canvas); color: var(--color-text-primary); font-f
 
 @keyframes dispatch-wiggle { 0%, 100% { rotate: -0.5deg } 50% { rotate: 0.5deg } }
 .dispatch-wiggle { animation: dispatch-wiggle .4s ease-in-out infinite; }
+
+/* Typewriter caret for auto-named thread labels (see ThreadLabel.tsx). */
+.dispatch-caret {
+  display: inline-block;
+  width: 0;
+  height: 1em;
+  vertical-align: text-bottom;
+  border-left: 1px solid currentColor;
+  animation: dispatch-caret-blink 530ms step-end infinite;
+}
+
+@keyframes dispatch-caret-blink {
+  50% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dispatch-caret { animation: none; }
+}
