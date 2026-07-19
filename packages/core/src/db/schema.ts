@@ -123,6 +123,25 @@ export function initSchema(db: Database.Database): void {
       created_at  TEXT NOT NULL,
       PRIMARY KEY (terminal_id, uuid)
     );
+
+    -- Push-subscription watch: a thread registers interest in a peer thread's
+    -- status; the watch dispatcher wakes the watcher once the peer's status
+    -- matches criteria ('idle' | 'needs_input' | 'error' | 'any'). once = 0
+    -- watches stay live (repeating) after firing; once = 1 watches are done
+    -- once fired_at is set.
+    CREATE TABLE IF NOT EXISTS thread_watches (
+      id                  TEXT PRIMARY KEY,
+      watcher_terminal_id TEXT NOT NULL,
+      target_terminal_id  TEXT NOT NULL,
+      criteria            TEXT NOT NULL,
+      note                TEXT,
+      once                INTEGER NOT NULL DEFAULT 0,
+      created_at          TEXT NOT NULL,
+      fired_at            TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_thread_watches_target ON thread_watches(target_terminal_id);
+    CREATE INDEX IF NOT EXISTS idx_thread_watches_watcher ON thread_watches(watcher_terminal_id);
   `);
 
   // Migrations: add columns that may not exist on older databases
