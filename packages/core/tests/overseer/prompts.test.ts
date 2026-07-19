@@ -1,5 +1,17 @@
 import { it, expect } from 'vitest';
-import { systemPromptFor, modelFor, MODEL_FOR_TYPE, COORDINATOR_PROMPT, AGENT_PROMPTS } from '../../src/overseer/prompts.js';
+import { systemPromptFor, modelFor, MODEL_FOR_TYPE, COORDINATOR_PROMPT, AGENT_PROMPTS, buildPeerPrompt } from '../../src/overseer/prompts.js';
+
+/** Counts non-overlapping occurrences of `needle` in `haystack`. */
+function countOccurrences(haystack: string, needle: string): number {
+  if (!needle) return 0;
+  let count = 0;
+  let idx = 0;
+  while ((idx = haystack.indexOf(needle, idx)) !== -1) {
+    count++;
+    idx += needle.length;
+  }
+  return count;
+}
 
 it('returns the coordinator prompt for role=coordinator', () => {
   expect(systemPromptFor({ role: 'coordinator' })).toBe(COORDINATOR_PROMPT);
@@ -55,4 +67,75 @@ it('modelFor honors an explicit config.model override, then falls through to und
   expect(modelFor({ mission: 'ship auth' })).toBeUndefined();
   expect(modelFor({ agentType: 'gardener' })).toBeUndefined();
   expect(modelFor({ role: 'agent', model: '   ' })).toBeUndefined(); // blank override ignored, role 'agent' has no tier
+});
+
+// --- buildPeerPrompt: the peer/watch context block injected into eligible threads ---
+
+const SAMPLE_CTX = {
+  projectName: 'checkout-revamp',
+  workingDir: '/work/checkout-revamp',
+  selfLabel: 'Overseer',
+  selfId: 't-overseer-1',
+  peers: [
+    { label: 'Fix login bug', type: 'claude-code', status: 'working' },
+    { label: 'Migrate schema', type: 'codex', status: 'idle' },
+  ],
+};
+
+it('buildPeerPrompt names the project, the thread\'s own identity, and every peer', () => {
+  const prompt = buildPeerPrompt(SAMPLE_CTX);
+  expect(prompt).toContain('checkout-revamp');
+  expect(prompt).toContain('/work/checkout-revamp');
+  expect(prompt).toContain('Overseer');
+  expect(prompt).toContain('t-overseer-1');
+  for (const peer of SAMPLE_CTX.peers) {
+    expect(prompt).toContain(peer.label);
+  }
+});
+
+it('buildPeerPrompt tells the thread the roster is a snapshot and list_threads is the live picture', () => {
+  const prompt = buildPeerPrompt(SAMPLE_CTX);
+  expect(prompt).toContain('list_threads');
+  expect(prompt.toLowerCase()).toContain('snapshot');
+});
+
+it('buildPeerPrompt tells the thread to prefer watch_thread over polling read_thread', () => {
+  const prompt = buildPeerPrompt(SAMPLE_CTX);
+  expect(prompt).toContain('watch_thread');
+  expect(prompt.toLowerCase()).toContain('polling');
+  // The actual guidance: prefer watching over polling, framed as a cost/benefit — not
+  // just a bare mention of both words in unrelated sentences.
+  expect(prompt.toLowerCase()).toMatch(/prefer[^.]*watch_thread[^.]*(over|instead of)[^.]*poll/);
+});
+
+it('buildPeerPrompt states etiquette/limits: no ping-pong (rate cap), spawn depth cap, archive needs force', () => {
+  const prompt = buildPeerPrompt(SAMPLE_CTX);
+  expect(prompt.toLowerCase()).toContain('ping-pong');
+  expect(prompt.toLowerCase()).toContain('rate');
+  expect(prompt.toLowerCase()).toContain('depth');
+  expect(prompt).toContain('force: true');
+});
+
+it('buildPeerPrompt renders a sensible "no peers yet" line for an empty roster, not a dangling header', () => {
+  const prompt = buildPeerPrompt({ ...SAMPLE_CTX, peers: [] });
+  // A real sentence acknowledging there are no peers right now…
+  expect(prompt.toLowerCase()).toMatch(/no other threads|no peers/);
+  // …not the non-empty roster's header left dangling with nothing under it.
+  expect(prompt).not.toMatch(/Other threads in this project[^\n]*:\s*\n\s*(Peer tools|$)/);
+  expect(prompt).not.toContain('- "');
+});
+
+it('buildPeerPrompt does not re-teach spawning — that is COORDINATOR_PROMPT\'s job', () => {
+  const prompt = buildPeerPrompt(SAMPLE_CTX);
+  expect(prompt).not.toContain('spawn_agent');
+  expect(prompt.toLowerCase()).not.toContain('typed agent');
+});
+
+it("a coordinator's combined prompt contains COORDINATOR_PROMPT and the peer block exactly once each", () => {
+  const peerBlock = buildPeerPrompt(SAMPLE_CTX);
+  // Mirrors how service.ts assembles it: the peer block rides in the `prompts` array fed
+  // to composeInjection (one --append-system-prompt), the persona rides in a separate one.
+  const combined = [peerBlock, COORDINATOR_PROMPT].join('\n\n');
+  expect(countOccurrences(combined, peerBlock)).toBe(1);
+  expect(countOccurrences(combined, COORDINATOR_PROMPT)).toBe(1);
 });

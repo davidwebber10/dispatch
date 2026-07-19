@@ -9,6 +9,7 @@ import { SessionService } from '../../src/sessions/service.js';
 import { PTYManager } from '../../src/pty/manager.js';
 import { StructuredSessionManager } from '../../src/structured/manager.js';
 import { CodexStructuredSessionManager } from '../../src/structured/codex-manager.js';
+import { COORDINATOR_PROMPT } from '../../src/overseer/prompts.js';
 
 // Captures the argv handed to the PTY; all other PTY ops are safe no-ops
 // (mirrors injection-wiring.test.ts's CapturingPty).
@@ -79,6 +80,35 @@ describe('agency MCP: caller identity + standard injection path', () => {
     expect(written.mcpServers.dispatch.command).toBe('node');
     expect(written.mcpServers.dispatch.env.DISPATCH_TERMINAL).toBe(terminal.id);
     expect(written.mcpServers.dispatch.env.DISPATCH_SESSION).toBe('s1');
+  });
+
+  it('a coordinator receives the peer context block, in its OWN --append-system-prompt, ahead of its persona', () => {
+    const configPath = path.join(tmpDir, 'mcp-claude-coord-peer.json');
+    const { svc } = makeService(configPath);
+    const manager = new CapturingClaudeManager();
+    svc.setStructuredManager(manager);
+
+    const terminal = svc.createTerminal('s1', 'claude-code', 'Overseer', false, undefined, undefined, {
+      transport: 'structured',
+      role: 'coordinator',
+    });
+
+    expect(manager.calls).toHaveLength(1);
+    const args = manager.calls[0].args;
+    const flagIdxs = args.reduce<number[]>((acc, a, i) => { if (a === '--append-system-prompt') acc.push(i); return acc; }, []);
+    // Two separate --append-system-prompt flags: the peer block (from the `prompts`
+    // array feeding composeInjection), then the coordinator persona.
+    expect(flagIdxs).toHaveLength(2);
+    const peerBlock = args[flagIdxs[0] + 1];
+    const persona = args[flagIdxs[1] + 1];
+    expect(peerBlock).toContain('project "t"'); // session name from makeService
+    expect(peerBlock).toContain(terminal.label);
+    expect(peerBlock).toContain(terminal.id);
+    expect(peerBlock).toContain('list_threads');
+    expect(persona).toBe(COORDINATOR_PROMPT);
+    // No peers exist yet at spawn time (this is the only terminal in the session) —
+    // the roster renders the "no peers" line, not a dangling header.
+    expect(peerBlock.toLowerCase()).toContain('no other threads');
   });
 
   it('a coordinator (codex, structured) rides the SAME standard path — codexArgs carry the dispatch server', () => {

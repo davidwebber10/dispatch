@@ -63,6 +63,56 @@ export const COORDINATOR_PROMPT =
   'decision genuinely needs it.\n' +
   '- You never write code or edit files yourself — always delegate to an implementer agent.';
 
+/**
+ * Peer/watch context injected into every eligible thread's system prompt (today:
+ * coordinators only — the same gate as agencyServerSpec in sessions/service.ts;
+ * Task 8 widens both together, in one flip, to every claude-code/codex thread).
+ *
+ * Deliberately does NOT re-teach spawn_agent/list_agents/mission grouping/etc —
+ * COORDINATOR_PROMPT already owns that. This block only adds what a coordinator
+ * (or, after Task 8, any thread) doesn't otherwise know: that it has PEERS at
+ * all, who they are right now, and the tools that work on any peer (not just a
+ * typed agent) — list_threads/read_thread/message_thread/watch_thread/
+ * unwatch_thread/list_watches — plus the etiquette that keeps full agency for N
+ * peers from going wrong (rate limits, spawn depth, archive protection).
+ */
+export function buildPeerPrompt(ctx: {
+  projectName: string;
+  workingDir: string;
+  selfLabel: string;
+  selfId: string;
+  peers: { label: string; type: string; status: string }[];
+}): string {
+  const roster = ctx.peers.length
+    ? 'Other threads in this project right now (a snapshot from when you started — threads come ' +
+      'and go, so call list_threads any time for the live picture):\n' +
+      ctx.peers.map((p) => `- "${p.label}" (${p.type}, ${p.status})`).join('\n')
+    : 'No other threads are running in this project right now — as far as this snapshot shows, ' +
+      'you are the only one. That can change any moment (threads come and go), so call list_threads ' +
+      'any time you want the live picture.';
+
+  return (
+    `PROJECT CONTEXT: you are thread "${ctx.selfLabel}" (${ctx.selfId}) in project "${ctx.projectName}" ` +
+    `(${ctx.workingDir}). Other threads in this same project are your PEERS — you can see, read, ` +
+    'message, and watch them.\n\n' +
+    `${roster}\n\n` +
+    'Peer tools (a "dispatch" MCP server):\n' +
+    '- list_threads() — the live roster: id, label, type, role, agentType, status, lastActivityAt; your own row is tagged isSelf.\n' +
+    '- read_thread({ id, tail? }) — read a peer\'s transcript and output.\n' +
+    '- message_thread({ id, text }) — send a peer a message.\n' +
+    '- watch_thread({ id, when, note?, once? }) — a PUSH subscription: register interest (when: ' +
+    '"idle" | "needs_input" | "error" | "any") and go idle at zero token cost — the daemon wakes you ' +
+    'with a message the instant that peer hits it. PREFER watch_thread over polling read_thread in a ' +
+    'loop: polling burns tokens for no benefit, while a watch costs nothing until it fires.\n' +
+    '- unwatch_thread({ watchId }) / list_watches() — cancel or inspect your own subscriptions.\n\n' +
+    'Etiquette and limits, so you fail informed rather than surprised:\n' +
+    '- Don\'t ping-pong messages with a peer — messaging a thread is rate-limited per pair, per hour.\n' +
+    '- If you create sub-threads of your own, that chain has a fixed depth cap.\n' +
+    '- A thread with no role is one the human created and may be actively typing in — archiving it ' +
+    'refuses unless you pass force: true.'
+  );
+}
+
 /** The typed worker personas the coordinator spawns. */
 export type AgentType = 'planner' | 'implementer' | 'researcher' | 'reviewer';
 

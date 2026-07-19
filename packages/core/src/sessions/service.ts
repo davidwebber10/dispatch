@@ -19,7 +19,7 @@ import type { StatusHooksInjection } from '../providers/types.js';
 import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
 import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript.js';
 import { platform } from '../platform/index.js';
-import { systemPromptFor, modelFor } from '../overseer/prompts.js';
+import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.js';
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources } from './cc-sessions.js';
 import { TERMINAL_ID_ENV_VAR } from '../auth/shim.js';
 import { withAutoArchive, DEFAULT_AUTO_ARCHIVE_MS } from './auto-archive.js';
@@ -1407,7 +1407,10 @@ export class SessionService {
       if (sec?.spec) { specs.push(sec.spec); if (sec.prompt) prompts.push(sec.prompt); }
       const intgSpecs = this.integrationsSpecs?.() ?? [];
       specs.push(...intgSpecs);
-      if (config.role === 'coordinator') specs.push(this.agencyServerSpec(terminalId, terminal.session_id, typeof config.spawnDepth === 'number' ? config.spawnDepth : 0));
+      if (config.role === 'coordinator') {
+        specs.push(this.agencyServerSpec(terminalId, terminal.session_id, typeof config.spawnDepth === 'number' ? config.spawnDepth : 0));
+        prompts.push(this.peerPromptFor(terminal));
+      }
       const developerNote = this.toolsAwareness?.() ?? null;
       const secretsMcp = composeInjection(specs, { configPath: this.perTerminalMcpConfigPath(terminalId), prompts, developerNote });
       if (config.transport === 'structured' && this.structuredManagerFor(terminal.type)) {
@@ -1473,7 +1476,10 @@ export class SessionService {
     if (sec?.spec) { specs.push(sec.spec); if (sec.prompt) prompts.push(sec.prompt); }
     const intgSpecs = this.integrationsSpecs?.() ?? [];
     specs.push(...intgSpecs);
-    if (config.role === 'coordinator') specs.push(this.agencyServerSpec(terminal.id, terminal.session_id, typeof config.spawnDepth === 'number' ? config.spawnDepth : 0));
+    if (config.role === 'coordinator') {
+      specs.push(this.agencyServerSpec(terminal.id, terminal.session_id, typeof config.spawnDepth === 'number' ? config.spawnDepth : 0));
+      prompts.push(this.peerPromptFor(terminal));
+    }
     const developerNote = this.toolsAwareness?.() ?? null;
     const structuredMcp = composeInjection(specs, { configPath: this.perTerminalMcpConfigPath(terminal.id), prompts, developerNote });
 
@@ -1683,6 +1689,30 @@ export class SessionService {
         DISPATCH_SPAWN_DEPTH: String(spawnDepth),
       },
     };
+  }
+
+  /**
+   * Build the peer-context system-prompt block for one thread: its project's name
+   * and working dir, its own label + id, and a roster snapshot of its live (non-
+   * archived) project peers — every OTHER terminal in the same session, self
+   * excluded. Callers push the result into the `prompts` array fed to
+   * composeInjection under the SAME gate as agencyServerSpec (today: coordinators
+   * only — see the call sites in spawnTerminal/spawnStructured; Task 8 widens both
+   * gates together, in one flip).
+   */
+  private peerPromptFor(terminal: terminalsDb.TerminalRow): string {
+    const session = sessionsDb.getById(this.db, terminal.session_id);
+    const workingDir = terminal.working_dir || session?.working_dir || '';
+    const peers = terminalsDb.listBySession(this.db, terminal.session_id)
+      .filter((t) => t.id !== terminal.id)
+      .map((t) => ({ label: t.label, type: t.type, status: t.status }));
+    return buildPeerPrompt({
+      projectName: session?.name || terminal.session_id,
+      workingDir,
+      selfLabel: terminal.label,
+      selfId: terminal.id,
+      peers,
+    });
   }
 
   private async captureExternalSessionId(terminalId: string, type: string, workDir: string): Promise<void> {
