@@ -52,7 +52,9 @@ export function UpdateModal() {
                 {failDirty && failDirty.length > 0 && (
                   <div style={{ marginTop: 8, maxHeight: 136, overflowY: 'auto', font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', background: 'rgba(0,0,0,.2)', border: '1px solid #2C2C32', borderRadius: 6, padding: '6px 8px' }}>
                     {failDirty.map((d, i) => (
-                      <div key={i}>{d.status} {d.path}</div>
+                      {/* `pre` on the code only: porcelain codes carry a meaningful leading
+                          space (' M' vs '??'), which HTML would collapse and misalign. */}
+                      <div key={i}><span style={{ whiteSpace: 'pre' }}>{d.status}</span> {d.path}</div>
                     ))}
                     {failDirtyOverflow > 0 && <div>+{failDirtyOverflow} more</div>}
                   </div>
