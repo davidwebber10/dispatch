@@ -52,6 +52,7 @@ import { platform } from './platform/index.js';
 import { startUpdateCheckLoop } from './update/checker.js';
 import { createUpdateRouter } from './routes/update.js';
 import { createAppearanceRouter, customIconHandler } from './routes/appearance.js';
+import { createWatchesRouter } from './routes/watches.js';
 
 /** Repo root, derived the same way as the webDist fallback below (works from both src/ in dev and dist/ once built, since both sit at the same depth under packages/core). */
 function resolveRepoRoot(): string {
@@ -206,6 +207,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   app.use('/api/tools', createToolsRouter({ base: toolsBase }));
   app.use('/api/update', createUpdateRouter(broadcaster, resolveRepoRoot(), db));
   app.use('/api/appearance', createAppearanceRouter(dispatchDir));
+  app.use('/api/watches', createWatchesRouter(db));
 
   // Attach internals for server wiring
   (app as any)._ptyManager = ptyManager;
@@ -414,6 +416,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const repoRoot = resolveRepoRoot();
   app.use('/api/update', createUpdateRouter(broadcaster, repoRoot, db));
   app.use('/api/appearance', createAppearanceRouter(dataDir));
+  app.use('/api/watches', createWatchesRouter(db));
 
   // Serve the built web client (single-origin) when a build is present.
   // SPA fallback returns index.html for any non-/api, non-WS GET.
