@@ -1407,7 +1407,7 @@ export class SessionService {
       if (sec?.spec) { specs.push(sec.spec); if (sec.prompt) prompts.push(sec.prompt); }
       const intgSpecs = this.integrationsSpecs?.() ?? [];
       specs.push(...intgSpecs);
-      if (config.role === 'coordinator') specs.push(this.agencyServerSpec(terminalId, terminal.session_id));
+      if (config.role === 'coordinator') specs.push(this.agencyServerSpec(terminalId, terminal.session_id, typeof config.spawnDepth === 'number' ? config.spawnDepth : 0));
       const developerNote = this.toolsAwareness?.() ?? null;
       const secretsMcp = composeInjection(specs, { configPath: this.perTerminalMcpConfigPath(terminalId), prompts, developerNote });
       if (config.transport === 'structured' && this.structuredManagerFor(terminal.type)) {
@@ -1473,7 +1473,7 @@ export class SessionService {
     if (sec?.spec) { specs.push(sec.spec); if (sec.prompt) prompts.push(sec.prompt); }
     const intgSpecs = this.integrationsSpecs?.() ?? [];
     specs.push(...intgSpecs);
-    if (config.role === 'coordinator') specs.push(this.agencyServerSpec(terminal.id, terminal.session_id));
+    if (config.role === 'coordinator') specs.push(this.agencyServerSpec(terminal.id, terminal.session_id, typeof config.spawnDepth === 'number' ? config.spawnDepth : 0));
     const developerNote = this.toolsAwareness?.() ?? null;
     const structuredMcp = composeInjection(specs, { configPath: this.perTerminalMcpConfigPath(terminal.id), prompts, developerNote });
 
@@ -1659,15 +1659,18 @@ export class SessionService {
    * The Dispatch "agency" MCP server spec for a coordinator thread: points at the
    * compiled agency-mcp.js and carries the caller's identity — DISPATCH_SESSION (this
    * project, so threads the coordinator spawns land in the same project) and
-   * DISPATCH_TERMINAL (which thread is calling — nothing consumes this yet, later
-   * peer-thread tools do). Pushed into the `specs` array handed to composeInjection
-   * ALONGSIDE the Doppler/integrations specs — no more bespoke config-file
-   * post-processing — so composeInjection's single spec list produces both the Claude
-   * --mcp-config JSON and codex's `-c mcp_servers.*` args, and codex coordinators get
-   * the server too, not just claude-code ones. The resulting config is written to a
-   * PER-TERMINAL path (see `perTerminalMcpConfigPath`), never the shared daemon-wide one.
+   * DISPATCH_TERMINAL (which thread is calling — consumed by the peer-thread tools
+   * for self-identification) and DISPATCH_SPAWN_DEPTH (this thread's own spawn-chain
+   * depth, so spawn_agent/queue_agent can enforce MAX_SPAWN_DEPTH and stamp the right
+   * depth on any child, without an extra round-trip to the daemon). Pushed into the
+   * `specs` array handed to composeInjection ALONGSIDE the Doppler/integrations specs
+   * — no more bespoke config-file post-processing — so composeInjection's single spec
+   * list produces both the Claude --mcp-config JSON and codex's `-c mcp_servers.*`
+   * args, and codex coordinators get the server too, not just claude-code ones. The
+   * resulting config is written to a PER-TERMINAL path (see `perTerminalMcpConfigPath`),
+   * never the shared daemon-wide one.
    */
-  private agencyServerSpec(terminalId: string, sessionId: string): McpServerSpec {
+  private agencyServerSpec(terminalId: string, sessionId: string, spawnDepth: number): McpServerSpec {
     const agencyPath = fileURLToPath(new URL('../overseer/agency-mcp.js', import.meta.url));
     return {
       name: 'dispatch',
@@ -1677,6 +1680,7 @@ export class SessionService {
         DISPATCH_SESSION: sessionId,
         DISPATCH_PORT: String(process.env.PORT || 3456),
         DISPATCH_TERMINAL: terminalId,
+        DISPATCH_SPAWN_DEPTH: String(spawnDepth),
       },
     };
   }

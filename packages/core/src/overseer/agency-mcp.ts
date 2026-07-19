@@ -25,6 +25,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
+import {
+  checkSpawnDepth,
+  PairRateLimiter,
+  checkSelfTarget,
+  checkArchiveAllowed,
+} from './guards.js';
 
 const PROTOCOL_VERSION = '2024-11-05';
 const SERVER_INFO = { name: 'dispatch-agency', version: '0.1.0' } as const;
@@ -42,6 +48,27 @@ function sessionId(): string {
 function selfTerminalId(): string {
   return process.env.DISPATCH_TERMINAL || '';
 }
+
+/**
+ * The calling thread's own spawn-chain depth (0 for a human-created/root thread).
+ * Stamped into env as DISPATCH_SPAWN_DEPTH at spawn time (mirroring how
+ * DISPATCH_TERMINAL carries identity down into the process) so spawn_agent/
+ * queue_agent can enforce MAX_SPAWN_DEPTH without an extra round-trip to the
+ * daemon, and can stamp the correct depth on any child they create.
+ */
+function selfSpawnDepth(): number {
+  const raw = process.env.DISPATCH_SPAWN_DEPTH;
+  const n = raw !== undefined ? parseInt(raw, 10) : 0;
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+/**
+ * Shared for the lifetime of this MCP server process (one process per calling
+ * thread) — the guard against two threads message-ping-ponging each other while
+ * the human is away. Applies across message_agent AND message_thread since both
+ * are just "send a message to a thread" under the same rate budget.
+ */
+const pairRateLimiter = new PairRateLimiter();
 
 /** The tools the coordinator can call. */
 export const TOOLS = [
@@ -208,11 +235,21 @@ export const TOOLS = [
   },
   {
     name: 'complete_agent',
-    description: 'Mark an agent done and archive its thread once its work is finished.',
+    description:
+      'Mark an agent done and archive its thread once its work is finished. Refuses on a PLAIN thread ' +
+      '(no role — one the human created directly, possibly the one they are typing in right now) unless ' +
+      'called with `force: true`. Typed agents (spawned via spawn_agent/queue_agent) archive as always, no ' +
+      'force needed.',
     inputSchema: {
       type: 'object',
       properties: {
         agentId: { type: 'string', description: 'The agent thread id to complete / archive.' },
+        force: {
+          type: 'boolean',
+          description:
+            'Required (true) to archive a PLAIN thread that has no role — confirms you mean to archive a ' +
+            "thread that might be the human's active one. Not needed for typed agents. Defaults to false.",
+        },
       },
       required: ['agentId'],
     },
@@ -345,15 +382,18 @@ async function httpJson(method: string, url: string, body?: unknown): Promise<an
 async function spawnAgent(args: { agentType: AgentType; name?: string; task: string; mission?: string; model?: string }): Promise<{ agentId: string; label: string; mission?: string }> {
   if (!args?.agentType) throw new Error('agentType is required');
   if (!args?.task) throw new Error('task is required');
+  const depthCheck = checkSpawnDepth(selfSpawnDepth());
+  if (!depthCheck.ok) throw new Error(depthCheck.reason);
   const label = args.name || `${args.agentType} agent`;
   const mission = typeof args.mission === 'string' ? args.mission.trim() : '';
   const model = typeof args.model === 'string' ? args.model.trim() : '';
+  const childDepth = selfSpawnDepth() + 1;
   const terminal = await httpJson('POST', `${apiBase()}/api/sessions/${sessionId()}/terminals`, {
     type: 'claude-code',
     label,
     config: {
       transport: 'structured', agentType: args.agentType, role: 'agent',
-      ...(mission ? { mission } : {}), ...(model ? { model } : {}),
+      ...(mission ? { mission } : {}), ...(model ? { model } : {}), spawnDepth: childDepth,
     },
   });
   const agentId: string | undefined = terminal?.id;
@@ -373,10 +413,13 @@ async function spawnAgent(args: { agentType: AgentType; name?: string; task: str
 async function queueAgent(args: { agentType: AgentType; name?: string; task: string; mission?: string; dependsOn?: string; model?: string }): Promise<{ agentId: string; label: string; mission?: string; queued: true }> {
   if (!args?.agentType) throw new Error('agentType is required');
   if (!args?.task) throw new Error('task is required');
+  const depthCheck = checkSpawnDepth(selfSpawnDepth());
+  if (!depthCheck.ok) throw new Error(depthCheck.reason);
   const label = args.name || `${args.agentType} agent`;
   const mission = typeof args.mission === 'string' ? args.mission.trim() : '';
   const dependsOn = typeof args.dependsOn === 'string' ? args.dependsOn.trim() : '';
   const model = typeof args.model === 'string' ? args.model.trim() : '';
+  const childDepth = selfSpawnDepth() + 1;
   const terminal = await httpJson('POST', `${apiBase()}/api/sessions/${sessionId()}/terminals`, {
     type: 'claude-code',
     label,
@@ -384,7 +427,7 @@ async function queueAgent(args: { agentType: AgentType; name?: string; task: str
     task: args.task,
     config: {
       transport: 'structured', agentType: args.agentType, role: 'agent',
-      ...(mission ? { mission } : {}), ...(dependsOn ? { dependsOn } : {}), ...(model ? { model } : {}),
+      ...(mission ? { mission } : {}), ...(dependsOn ? { dependsOn } : {}), ...(model ? { model } : {}), spawnDepth: childDepth,
     },
   });
   const agentId: string | undefined = terminal?.id;
@@ -435,12 +478,29 @@ async function listMissions(): Promise<Array<{ mission: string; live: number; to
 async function messageAgent(args: { agentId: string; text: string }): Promise<{ ok: true; agentId: string }> {
   if (!args?.agentId) throw new Error('agentId is required');
   if (!args?.text) throw new Error('text is required');
+  const self = selfTerminalId();
+  const selfCheck = checkSelfTarget(self, args.agentId, 'message');
+  if (!selfCheck.ok) throw new Error(selfCheck.reason);
+  const rateCheck = pairRateLimiter.check(self, args.agentId);
+  if (!rateCheck.ok) throw new Error(rateCheck.reason);
   await httpJson('POST', `${apiBase()}/api/terminals/${args.agentId}/message`, { text: args.text, source: 'coordinator' });
   return { ok: true, agentId: args.agentId };
 }
 
-async function completeAgent(args: { agentId: string }): Promise<{ ok: true; agentId: string }> {
+/**
+ * Archive an agent thread. Guarded by checkArchiveAllowed: a target with no `role`
+ * is a PLAIN thread (possibly the one the human is actively typing in), so it
+ * refuses unless `force: true` is passed. Typed agents (role set) archive exactly
+ * as they always have, no force needed.
+ */
+async function completeAgent(args: { agentId: string; force?: boolean }): Promise<{ ok: true; agentId: string }> {
   if (!args?.agentId) throw new Error('agentId is required');
+  const self = selfTerminalId();
+  const selfCheck = checkSelfTarget(self, args.agentId, 'complete');
+  if (!selfCheck.ok) throw new Error(selfCheck.reason);
+  const terminal = await httpJson('GET', `${apiBase()}/api/terminals/${args.agentId}`);
+  const archiveCheck = checkArchiveAllowed({ role: terminal?.config?.role ?? null }, !!args.force);
+  if (!archiveCheck.ok) throw new Error(archiveCheck.reason);
   await httpJson('DELETE', `${apiBase()}/api/terminals/${args.agentId}`);
   return { ok: true, agentId: args.agentId };
 }
@@ -561,6 +621,11 @@ async function readThread(args: { id: string; tail?: number }): Promise<{ id: st
 async function messageThread(args: { id: string; text: string }): Promise<{ ok: true; id: string }> {
   if (!args?.id) throw new Error('id is required');
   if (!args?.text) throw new Error('text is required');
+  const self = selfTerminalId();
+  const selfCheck = checkSelfTarget(self, args.id, 'message');
+  if (!selfCheck.ok) throw new Error(selfCheck.reason);
+  const rateCheck = pairRateLimiter.check(self, args.id);
+  if (!rateCheck.ok) throw new Error(rateCheck.reason);
   await assertInProject(args.id);
   await httpJson('POST', `${apiBase()}/api/terminals/${args.id}/message`, { text: args.text, source: 'coordinator' });
   return { ok: true, id: args.id };
@@ -595,6 +660,8 @@ async function watchThread(args: { id: string; when: string; note?: string; once
   if (!args?.id) throw new Error('id is required');
   if (!args?.when) throw new Error('when is required');
   const watcher = requireSelf('watch a thread');
+  const selfCheck = checkSelfTarget(watcher, args.id, 'watch');
+  if (!selfCheck.ok) throw new Error(selfCheck.reason);
   await assertInProject(args.id);
   const body: Record<string, unknown> = { watcherTerminalId: watcher, targetTerminalId: args.id, criteria: args.when };
   if (args.note !== undefined) body.note = args.note;

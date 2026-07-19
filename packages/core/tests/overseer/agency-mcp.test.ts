@@ -10,17 +10,20 @@ describe('agency-mcp', () => {
   const origApi = process.env.DISPATCH_API;
   const origSession = process.env.DISPATCH_SESSION;
   const origTerminal = process.env.DISPATCH_TERMINAL;
+  const origSpawnDepth = process.env.DISPATCH_SPAWN_DEPTH;
 
   beforeEach(() => {
     process.env.DISPATCH_API = 'http://localhost:9999';
     process.env.DISPATCH_SESSION = 'sess-1';
     delete process.env.DISPATCH_TERMINAL;
+    delete process.env.DISPATCH_SPAWN_DEPTH;
   });
   afterEach(() => {
     global.fetch = origFetch;
     if (origApi === undefined) delete process.env.DISPATCH_API; else process.env.DISPATCH_API = origApi;
     if (origSession === undefined) delete process.env.DISPATCH_SESSION; else process.env.DISPATCH_SESSION = origSession;
     if (origTerminal === undefined) delete process.env.DISPATCH_TERMINAL; else process.env.DISPATCH_TERMINAL = origTerminal;
+    if (origSpawnDepth === undefined) delete process.env.DISPATCH_SPAWN_DEPTH; else process.env.DISPATCH_SPAWN_DEPTH = origSpawnDepth;
     vi.restoreAllMocks();
   });
 
@@ -67,7 +70,7 @@ describe('agency-mcp', () => {
     expect(JSON.parse(createInit.body)).toEqual({
       type: 'claude-code',
       label: 'researcher agent',
-      config: { transport: 'structured', agentType: 'researcher', role: 'agent' },
+      config: { transport: 'structured', agentType: 'researcher', role: 'agent', spawnDepth: 1 },
     });
     // seed message
     const [msgUrl, msgInit] = fetchMock.mock.calls[1];
@@ -111,7 +114,7 @@ describe('agency-mcp', () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
       type: 'claude-code',
       label: 'implementer agent',
-      config: { transport: 'structured', agentType: 'implementer', role: 'agent', mission: 'Auth refactor' },
+      config: { transport: 'structured', agentType: 'implementer', role: 'agent', mission: 'Auth refactor', spawnDepth: 1 },
     });
   });
 
@@ -122,7 +125,7 @@ describe('agency-mcp', () => {
     global.fetch = fetchMock as any;
     await callTool('spawn_agent', { agentType: 'researcher', task: 'look' });
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
-      transport: 'structured', agentType: 'researcher', role: 'agent',
+      transport: 'structured', agentType: 'researcher', role: 'agent', spawnDepth: 1,
     });
   });
 
@@ -133,7 +136,7 @@ describe('agency-mcp', () => {
     global.fetch = fetchMock as any;
     await callTool('spawn_agent', { agentType: 'researcher', task: 'quick lookup', model: 'sonnet' });
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
-      transport: 'structured', agentType: 'researcher', role: 'agent', model: 'sonnet',
+      transport: 'structured', agentType: 'researcher', role: 'agent', model: 'sonnet', spawnDepth: 1,
     });
   });
 
@@ -144,7 +147,7 @@ describe('agency-mcp', () => {
     global.fetch = fetchMock as any;
     await callTool('spawn_agent', { agentType: 'researcher', task: 'look' });
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
-      transport: 'structured', agentType: 'researcher', role: 'agent',
+      transport: 'structured', agentType: 'researcher', role: 'agent', spawnDepth: 1,
     });
   });
 
@@ -240,13 +243,18 @@ describe('agency-mcp', () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ text: 'focus on auth', source: 'coordinator' });
   });
 
-  it('complete_agent archives the thread (DELETE)', async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
+  it('complete_agent archives a typed agent thread (DELETE) — role set, no force needed', async () => {
+    const fetchMock = vi.fn()
+      // 1) role lookup for the archive-protection guard
+      .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ id: 'a1', config: { role: 'agent' } }) })
+      // 2) DELETE archives it
+      .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
     global.fetch = fetchMock as any;
     const out = await callTool('complete_agent', { agentId: 'a1' });
     expect(out.isError).toBeUndefined();
     expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/terminals/a1');
-    expect(fetchMock.mock.calls[0][1].method).toBe('DELETE');
+    expect(fetchMock.mock.calls[1][0]).toBe('http://localhost:9999/api/terminals/a1');
+    expect(fetchMock.mock.calls[1][1].method).toBe('DELETE');
   });
 
   it('queue_agent parks the task in a single queued create (no seed message) and returns queued:true', async () => {
@@ -269,7 +277,7 @@ describe('agency-mcp', () => {
       label: 'researcher agent',
       queued: true,
       task: 'investigate X',
-      config: { transport: 'structured', agentType: 'researcher', role: 'agent' },
+      config: { transport: 'structured', agentType: 'researcher', role: 'agent', spawnDepth: 1 },
     });
   });
 
@@ -281,7 +289,7 @@ describe('agency-mcp', () => {
     expect(out.isError).toBeUndefined();
     expect(JSON.parse(out.content[0].text)).toEqual({ agentId: 'q2', label: 'implementer agent', mission: 'Auth refactor', queued: true });
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
-      transport: 'structured', agentType: 'implementer', role: 'agent', mission: 'Auth refactor',
+      transport: 'structured', agentType: 'implementer', role: 'agent', mission: 'Auth refactor', spawnDepth: 1,
     });
   });
 
@@ -293,7 +301,7 @@ describe('agency-mcp', () => {
     expect(out.isError).toBeUndefined();
     expect(JSON.parse(out.content[0].text)).toEqual({ agentId: 'q3', label: 'implementer agent', queued: true });
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
-      transport: 'structured', agentType: 'implementer', role: 'agent', dependsOn: 'agent-1',
+      transport: 'structured', agentType: 'implementer', role: 'agent', dependsOn: 'agent-1', spawnDepth: 1,
     });
   });
 
@@ -303,7 +311,7 @@ describe('agency-mcp', () => {
     global.fetch = fetchMock as any;
     await callTool('queue_agent', { agentType: 'researcher', task: 'look' });
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
-      transport: 'structured', agentType: 'researcher', role: 'agent',
+      transport: 'structured', agentType: 'researcher', role: 'agent', spawnDepth: 1,
     });
   });
 
@@ -313,7 +321,7 @@ describe('agency-mcp', () => {
     global.fetch = fetchMock as any;
     await callTool('queue_agent', { agentType: 'implementer', task: 'hard problem', model: 'opus' });
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
-      transport: 'structured', agentType: 'implementer', role: 'agent', model: 'opus',
+      transport: 'structured', agentType: 'implementer', role: 'agent', model: 'opus', spawnDepth: 1,
     });
   });
 
@@ -323,7 +331,7 @@ describe('agency-mcp', () => {
     global.fetch = fetchMock as any;
     await callTool('queue_agent', { agentType: 'implementer', task: 'do it' });
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
-      transport: 'structured', agentType: 'implementer', role: 'agent',
+      transport: 'structured', agentType: 'implementer', role: 'agent', spawnDepth: 1,
     });
   });
 
@@ -582,6 +590,161 @@ describe('agency-mcp', () => {
       expect(out.content[0].text).toContain('DISPATCH_TERMINAL');
       expect(fetchMock).not.toHaveBeenCalled();
     });
+  });
+
+  // --- Task 6 guards: spawn depth, pair rate limit, self-target, archive protection ---
+
+  describe('spawn depth guard (spawn_agent / queue_agent)', () => {
+    it('spawn_agent refuses at max depth and never calls the daemon', async () => {
+      process.env.DISPATCH_SPAWN_DEPTH = '3'; // exactly at MAX_SPAWN_DEPTH
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock as any;
+      const out = await callTool('spawn_agent', { agentType: 'researcher', task: 'go deeper' });
+      expect(out.isError).toBe(true);
+      expect(out.content[0].text.toLowerCase()).toContain('depth');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('spawn_agent allows one below the cap and stamps spawnDepth = parent + 1 on the child', async () => {
+      process.env.DISPATCH_SPAWN_DEPTH = '2'; // one below MAX_SPAWN_DEPTH (3)
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'deep-1', label: 'researcher agent' }) })
+        .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
+      global.fetch = fetchMock as any;
+      const out = await callTool('spawn_agent', { agentType: 'researcher', task: 'go deeper' });
+      expect(out.isError).toBeUndefined();
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body).config.spawnDepth).toBe(3);
+    });
+
+    it('queue_agent refuses at max depth and never calls the daemon', async () => {
+      process.env.DISPATCH_SPAWN_DEPTH = '3';
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock as any;
+      const out = await callTool('queue_agent', { agentType: 'researcher', task: 'go deeper' });
+      expect(out.isError).toBe(true);
+      expect(out.content[0].text.toLowerCase()).toContain('depth');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('a caller with no DISPATCH_SPAWN_DEPTH set is treated as depth 0 (root) and its child is stamped depth 1', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'root-child', label: 'researcher agent' }) })
+        .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
+      global.fetch = fetchMock as any;
+      await callTool('spawn_agent', { agentType: 'researcher', task: 'x' });
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body).config.spawnDepth).toBe(1);
+    });
+  });
+
+  describe('pair rate limit guard (message_agent / message_thread)', () => {
+    it('message_agent allows the 10th message to a target and refuses the 11th', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
+      global.fetch = fetchMock as any;
+      for (let i = 0; i < 10; i++) {
+        const out = await callTool('message_agent', { agentId: 'rl-target-agent', text: `msg ${i}` });
+        expect(out.isError).toBeUndefined();
+      }
+      const eleventh = await callTool('message_agent', { agentId: 'rl-target-agent', text: 'msg 11' });
+      expect(eleventh.isError).toBe(true);
+      expect(eleventh.content[0].text.toLowerCase()).toContain('rate limit');
+      expect(fetchMock).toHaveBeenCalledTimes(10); // the 11th never hit the network
+    });
+
+    it('message_thread shares the same limiter keyed on (sender, target) as message_agent', async () => {
+      process.env.DISPATCH_TERMINAL = 'self-shared';
+      const fetchMock = vi.fn()
+        // message_thread does an assertInProject GET before each message POST
+        .mockResolvedValue({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ id: 'rl-target-thread', sessionId: 'sess-1' }) });
+      global.fetch = fetchMock as any;
+      for (let i = 0; i < 10; i++) {
+        const out = await callTool('message_thread', { id: 'rl-target-thread', text: `msg ${i}` });
+        expect(out.isError).toBeUndefined();
+      }
+      const eleventh = await callTool('message_thread', { id: 'rl-target-thread', text: 'msg 11' });
+      expect(eleventh.isError).toBe(true);
+      expect(eleventh.content[0].text.toLowerCase()).toContain('rate limit');
+    });
+  });
+
+  describe('self-target guard (watch_thread / message_* / complete_agent)', () => {
+    it('message_agent refuses to message itself', async () => {
+      process.env.DISPATCH_TERMINAL = 'self-x';
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock as any;
+      const out = await callTool('message_agent', { agentId: 'self-x', text: 'hi' });
+      expect(out.isError).toBe(true);
+      expect(out.content[0].text.toLowerCase()).toContain('yourself');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('message_thread refuses to message itself', async () => {
+      process.env.DISPATCH_TERMINAL = 'self-x';
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock as any;
+      const out = await callTool('message_thread', { id: 'self-x', text: 'hi' });
+      expect(out.isError).toBe(true);
+      expect(out.content[0].text.toLowerCase()).toContain('yourself');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('watch_thread refuses to watch itself', async () => {
+      process.env.DISPATCH_TERMINAL = 'self-x';
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock as any;
+      const out = await callTool('watch_thread', { id: 'self-x', when: 'idle' });
+      expect(out.isError).toBe(true);
+      expect(out.content[0].text.toLowerCase()).toContain('yourself');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('complete_agent refuses to complete itself', async () => {
+      process.env.DISPATCH_TERMINAL = 'self-x';
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock as any;
+      const out = await callTool('complete_agent', { agentId: 'self-x' });
+      expect(out.isError).toBe(true);
+      expect(out.content[0].text.toLowerCase()).toContain('yourself');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('complete_agent archive protection', () => {
+    it('refuses to archive a plain (role-less) thread without force', async () => {
+      const fetchMock = vi.fn().mockResolvedValueOnce({
+        ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ id: 'p1', config: {} }),
+      });
+      global.fetch = fetchMock as any;
+      const out = await callTool('complete_agent', { agentId: 'p1' });
+      expect(out.isError).toBe(true);
+      expect(out.content[0].text.toLowerCase()).toContain('force');
+      expect(fetchMock).toHaveBeenCalledTimes(1); // role lookup only — no DELETE
+    });
+
+    it('archives a plain (role-less) thread when force:true is passed', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ id: 'p1', config: {} }) })
+        .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
+      global.fetch = fetchMock as any;
+      const out = await callTool('complete_agent', { agentId: 'p1', force: true });
+      expect(out.isError).toBeUndefined();
+      expect(fetchMock.mock.calls[1][1].method).toBe('DELETE');
+    });
+
+    it('archives a typed agent (role set) without force', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ id: 'a1', config: { role: 'coordinator' } }) })
+        .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
+      global.fetch = fetchMock as any;
+      const out = await callTool('complete_agent', { agentId: 'a1' });
+      expect(out.isError).toBeUndefined();
+      expect(fetchMock.mock.calls[1][1].method).toBe('DELETE');
+    });
+  });
+
+  it('complete_agent tool schema exposes a force flag defaulting to false-ish behavior', async () => {
+    const tool = TOOLS.find((t) => t.name === 'complete_agent') as any;
+    expect(tool.inputSchema.properties.force).toBeTruthy();
+    expect(tool.inputSchema.required).toEqual(['agentId']); // force is optional
   });
 });
 
