@@ -190,13 +190,29 @@ describe('WatchDispatcher', () => {
 });
 
 describe('composeWakeMessage', () => {
-  it('names the target label + id, the status, and echoes the note, and points at read_thread', () => {
+  it('names the target label + id, says what happened in plain language, echoes the note, and points at read_thread', () => {
     const text = composeWakeMessage({ id: 't_abc123', label: 'Fix login bug' }, 'idle', 'review its diff and report back');
     expect(text).toContain('Fix login bug');
     expect(text).toContain('t_abc123');
-    expect(text).toContain('idle');
+    expect(text).toContain('finished its turn');
     expect(text).toContain('review its diff and report back');
     expect(text).toContain('read_thread');
+  });
+
+  // The watcher ACTS on this text, so each status has to say what happened and what to
+  // do next — "just went needs_input" reads as machine noise, and "see what it did" is
+  // the wrong instruction when the peer is actually waiting on an answer.
+  it('phrases needs_input as a question to answer, not something to inspect', () => {
+    const text = composeWakeMessage({ id: 't_1', label: 'Migration' }, 'needs_input', null);
+    expect(text).toContain('waiting on a question');
+    expect(text).toMatch(/answer_agent|message_thread/);
+    expect(text).not.toContain('needs_input');
+  });
+
+  it('phrases error as a failure to diagnose', () => {
+    const text = composeWakeMessage({ id: 't_2', label: 'Build' }, 'error', null);
+    expect(text).toContain('hit an error');
+    expect(text).toContain('what went wrong');
   });
 
   it('omits the "You asked" clause when note is null', () => {

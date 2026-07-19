@@ -70,7 +70,21 @@ export class WatchDispatcher {
  * `read_thread`. Example: `Thread "Fix login bug" (t_abc123) just went idle. You asked to
  * watch it: "review its diff". Use read_thread to see what it did.`
  */
+/** What each watchable status means in plain language, and what the woken watcher
+ *  should do next. Raw status names ("just went needs_input") read as machine noise,
+ *  and "see what it did" is wrong when the peer is actually asking a question — the
+ *  watcher acts on this text, so it says what happened and what to do about it. */
+const STATUS_PHRASING: Record<string, { happened: string; next: string }> = {
+  idle: { happened: 'finished its turn', next: 'Use read_thread to see what it did.' },
+  needs_input: {
+    happened: 'is waiting on a question',
+    next: 'Use read_thread to see what it asked; answer_agent or message_thread can reply.',
+  },
+  error: { happened: 'hit an error', next: 'Use read_thread to see what went wrong.' },
+};
+
 export function composeWakeMessage(target: { id: string; label: string }, status: string, note: string | null): string {
+  const phrasing = STATUS_PHRASING[status] ?? { happened: `changed status to ${status}`, next: 'Use read_thread for detail.' };
   const askedClause = note ? ` You asked to watch it: "${note}".` : '';
-  return `Thread "${target.label}" (${target.id}) just went ${status}.${askedClause} Use read_thread to see what it did.`;
+  return `Thread "${target.label}" (${target.id}) ${phrasing.happened}.${askedClause} ${phrasing.next}`;
 }
