@@ -173,6 +173,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
         <MessageScroller.Root style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex' }}>
           <MessageScroller.Viewport preserveScrollOnPrepend onScroll={onViewportScroll} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
             <MessageScroller.Content style={{ maxWidth: 768, margin: '0 auto', padding: '24px 20px 8px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <LoadEarlierButton show={hasMore && !loadingOlder} onClick={loadOlder} />
               {items.length === 0 && !busy && <EmptyState model={model} />}
               {renderTimeline(items, openFileInViewer, pageBoundariesRef.current)}
               {pending?.questions && pending.questions.length > 0 && (
@@ -545,6 +546,38 @@ function StickToEndOnLoad({ terminalId, count }: { terminalId: string; count: nu
 function BootstrapOlderPages(props: { hasMore: boolean; loadingOlder: boolean; loadOlder: () => void }) {
   useBootstrapOlderPages(props);
   return null;
+}
+
+/**
+ * Explicit "Load earlier messages" control, rendered as the FIRST child of
+ * MessageScroller.Content (above the timeline). Paging older history otherwise depends
+ * entirely on the reader being able to SCROLL — onViewportScroll's near-top trigger, or
+ * useBootstrapOlderPages' overflow check — which strands history whenever the current
+ * window is short enough not to overflow (in the limit: nothing rendered at all, so there
+ * is nothing to scroll). A tappable control makes older history reachable unconditionally,
+ * on desktop and mobile alike. Hidden while a fetch is in flight — the floating
+ * <LoadingOlderPill/> owns that state.
+ */
+export function LoadEarlierButton({ show, onClick }: { show: boolean; onClick: () => void }) {
+  if (!show) return null;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        alignSelf: 'center',
+        font: '500 12px var(--font-sans)',
+        color: 'var(--color-text-secondary)',
+        background: 'var(--color-elevated)',
+        border: '1px solid var(--color-border)',
+        borderRadius: 8,
+        padding: '5px 12px',
+        cursor: 'pointer',
+      }}
+    >
+      Load earlier messages
+    </button>
+  );
 }
 
 /**

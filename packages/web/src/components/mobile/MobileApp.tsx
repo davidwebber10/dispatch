@@ -3,6 +3,7 @@ import { Gear, CaretLeft, CaretRight, Plus, Folders, PushPin, Robot } from '@pho
 import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
 import { ModeToggle } from '../layout/ModeToggle';
+import { TransportToggle } from '../layout/TransportToggle';
 import { AlertBell } from '../layout/AlertBell';
 import { ProjectCard } from '../sidebar/ProjectCard';
 import { AllAgentsView } from '../agents/AllAgentsView';
@@ -171,6 +172,12 @@ export function MobileApp() {
         )}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
           <AlertBell terminalId={level === 2 && leaf === 'tab' ? leafTabId : null} />
+          {/* CLI ⇄ Pretty transport switch — the mobile counterpart of TabHost's floating
+              desktop control, which mobile never rendered (so a Pretty thread was
+              unswitchable on a phone). Non-floating (compact) to match the header pills.
+              Self-gates to claude-code/codex threads; ModeToggle stays alongside it and
+              self-hides for structured threads. */}
+          <TransportToggle terminalId={level === 2 && leaf === 'tab' ? leafTabId : null} />
           <ModeToggle terminalId={level === 2 && leaf === 'tab' ? leafTabId : null} />
           <button title="Settings" onClick={() => setSettings(true)} style={{ width: 32, height: 32, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 12, background: 'var(--color-elevated)', border: '1px solid #2C2C32', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
             <Gear size={17} />
