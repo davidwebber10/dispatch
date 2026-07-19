@@ -17,7 +17,7 @@ export function UpdateModal() {
   const available = useUpdate((s) => s.available);
   const dismissedVersion = useUpdate((s) => s.dismissedVersion);
   const currentVersion = useUpdate((s) => s.currentVersion);
-  const { apply, applying, failReason, inProgress } = useApplyUpdate();
+  const { apply, applying, failReason, failDirty, failDirtyOverflow, canForce, inProgress } = useApplyUpdate();
 
   if (!inProgress && (!available || available.version === dismissedVersion)) return null;
 
@@ -49,6 +49,19 @@ export function UpdateModal() {
                 Couldn't update automatically: {failReason}
                 <br />
                 Run it manually instead: <code style={{ font: '400 11px var(--font-mono)' }}>dispatch update</code>
+                {failDirty && failDirty.length > 0 && (
+                  <div style={{ marginTop: 8, maxHeight: 136, overflowY: 'auto', font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', background: 'rgba(0,0,0,.2)', border: '1px solid #2C2C32', borderRadius: 6, padding: '6px 8px' }}>
+                    {failDirty.map((d, i) => (
+                      <div key={i}>{d.status} {d.path}</div>
+                    ))}
+                    {failDirtyOverflow > 0 && <div>+{failDirtyOverflow} more</div>}
+                  </div>
+                )}
+                {canForce && (
+                  <div style={{ marginTop: 10 }}>
+                    <button onClick={() => void apply(true)} disabled={applying} style={{ ...ghost, opacity: applying ? 0.7 : 1 }}>Update anyway</button>
+                  </div>
+                )}
               </div>
             )}
             <div style={{ marginTop: 18, display: 'flex', gap: 10, justifyContent: 'center' }}>
