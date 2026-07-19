@@ -267,7 +267,7 @@ function messageHasToolUse(message: unknown): boolean {
  * the last non-meta/non-sidechain user/assistant message. Returns null when the transcript
  * is missing/unreadable (e.g. a thread that never captured an external_id). Never throws.
  */
-function readLastTurn(workDir: string, sessionId: string): { mtimeMs: number; last: any } | null {
+function readLastTurn(workDir: string, sessionId: string): { mtimeMs: number; last: any; lastUsage: any } | null {
   try {
     const encoded = workDir.replace(/\//g, '-');
     const file = path.join(os.homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
@@ -280,6 +280,7 @@ function readLastTurn(workDir: string, sessionId: string): { mtimeMs: number; la
     const lines = buf.toString('utf-8').split('\n');
     if (start > 0) lines.shift(); // the first line is likely truncated mid-JSON
     let last: any = null;
+    let lastUsage: any = null;
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
@@ -288,8 +289,9 @@ function readLastTurn(workDir: string, sessionId: string): { mtimeMs: number; la
       if (!o || (o.type !== 'user' && o.type !== 'assistant')) continue;
       if (o.isMeta || o.isSidechain) continue;
       last = o;
+      if (o.type === 'assistant' && o.message?.usage) lastUsage = o.message.usage;
     }
-    return { mtimeMs: stat.mtimeMs, last };
+    return { mtimeMs: stat.mtimeMs, last, lastUsage };
   } catch {
     return null;
   }
@@ -393,4 +395,55 @@ export async function listRecentSessions(workDir: string, limit = 20): Promise<R
     } catch { /* skip unreadable file */ }
   }
   return out;
+}
+
+export interface ResumeAdvice {
+  /** Minutes since the transcript's last user/assistant turn. */
+  ageMinutes: number;
+  /** Context size as of the last assistant turn (input + cache_read + cache_creation). */
+  contextTokens: number;
+  /** The session is old AND large enough that resuming it whole is worth warning about. */
+  shouldPrompt: boolean;
+}
+
+// Claude Code's own defaults for its interactive resume dialog, read from the SAME env
+// vars so a user who has tuned them gets one consistent answer in Pretty and the CLI.
+const RESUME_AGE_MINUTES = 70;
+const RESUME_TOKEN_THRESHOLD = 100_000;
+
+function envNumber(name: string, fallback: number): number {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/**
+ * Should we offer to summarize before resuming this session?
+ *
+ * Claude Code asks the same question interactively ("This session is 3d 4h old and 134k
+ * tokens…"), but that dialog is an Ink component the interactive shell renders — a Pretty
+ * thread spawns with `-p` and never sees it, so it would silently resume full context and
+ * burn the user's limits. This reproduces the CLI's gate off the transcript on disk.
+ *
+ * Context size is the LAST assistant turn's usage, not a sum across turns: cumulative
+ * usage counts every cache read again on every turn and would wildly overstate what
+ * actually sits in the window. Same formula the live ContextIndicator uses.
+ *
+ * Returns null when the transcript is missing/unreadable (e.g. a thread that never
+ * captured an external_id) — the caller treats that as "nothing to advise". Never throws.
+ */
+export function resumeAdvice(workDir: string, sessionId: string, now = Date.now()): ResumeAdvice | null {
+  const r = readLastTurn(workDir, sessionId);
+  if (!r || !r.last) return null;
+  // Prefer the message's own timestamp; fall back to file mtime when it's absent/unparseable.
+  const stamped = Date.parse(r.last.timestamp ?? '');
+  const lastActivity = Number.isFinite(stamped) ? stamped : r.mtimeMs;
+  const ageMinutes = Math.max(0, (now - lastActivity) / 60000);
+  const u = r.lastUsage;
+  const contextTokens = u
+    ? (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0)
+    : 0;
+  const shouldPrompt =
+    ageMinutes >= envNumber('CLAUDE_CODE_RESUME_THRESHOLD_MINUTES', RESUME_AGE_MINUTES) &&
+    contextTokens >= envNumber('CLAUDE_CODE_RESUME_TOKEN_THRESHOLD', RESUME_TOKEN_THRESHOLD);
+  return { ageMinutes, contextTokens, shouldPrompt };
 }
