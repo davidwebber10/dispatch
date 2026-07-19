@@ -5,7 +5,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { CaretDoubleDown, CaretUp, CaretDown, CaretLeft, CaretRight, ArrowElbowDownLeft, MagnifyingGlass, X, type Icon } from '@phosphor-icons/react';
 import { Spinner } from '../common/Spinner';
 import '@xterm/xterm/css/xterm.css';
-import { openTerminalSocket } from '../../api/terminal-socket';
+import { openTerminalSocket, INITIAL_REPLAY_MOBILE, MAX_REPLAY, nextReplayStep } from '../../api/terminal-socket';
 import { api } from '../../api/client';
 import type { Terminal } from '../../api/types';
 import { useIsMobile } from '../../hooks/useIsMobile';
@@ -93,6 +93,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
   const [note, setNote] = useState('');
   const [atBottom, setAtBottom] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [mobileInput, setMobileInput, clearMobileInput] = useDraft(terminalId);
   const termFileInputRef = useRef<HTMLInputElement>(null);
   const sttConfigured = useSettings((s) => !!s.sttProvider && !!s.sttModel && !!s.sttSecretName);
@@ -117,14 +118,122 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     termRef.current = term;
     if (hostRef.current) { try { term.open(hostRef.current); } catch { /* jsdom */ } }
 
+    // --- Progressive scrollback (mobile) ---
+    // Desktop always requests MAX_REPLAY explicitly — same size, same call shape
+    // as before this feature existed, so its replay is never trimmed and none of
+    // the rebuild machinery below ever engages there.
+    const initialReplay = isMobile ? INITIAL_REPLAY_MOBILE : MAX_REPLAY;
+    let currentReplay = initialReplay;
+    let hasOlder = false;   // the ring holds more than we've currently loaded
+    let rebuilding = false; // guards re-entry: one rebuild at a time
+    let pendingLive: string[] = []; // live frames buffered while a rebuild is in flight
+    const openSockets = new Set<ReturnType<typeof socketFactory>>();
+    const resyncSize = () => { if (term.cols && term.rows) sockRef.current?.resize(term.cols, term.rows); };
+
     let gotData = false;
+    // The "just show it" path: used for every socket's data whenever that data is
+    // NOT part of an in-flight rebuild's buffered catch-up — i.e. the original
+    // connection's normal traffic, and any survivor-of-a-rebuild socket once it
+    // has become primary again.
+    const attachLive = (chunk: string) => {
+      term.write(chunk);
+      if (!gotData) {
+        gotData = true;
+        setLoading(false);
+        // The very first frame is the initial replay. Ask the server whether the
+        // ring actually holds more than we requested — if so, a scroll-to-top can
+        // later offer to rebuild for it. Deliberately best-effort: a failure here
+        // just means scrolling up won't offer more, not a broken attach.
+        void api.getScrollbackSize(terminalId).then((total) => {
+          if (disposed) return;
+          hasOlder = total > currentReplay;
+        }).catch(() => { /* best-effort */ });
+      }
+    };
+
+    function maybeStartRebuild() {
+      if (disposed || rebuilding || !hasOlder) return;
+      if (currentReplay >= MAX_REPLAY) return;
+      if (term.buffer.active.viewportY !== 0) return;
+      startRebuild();
+    }
+
+    // Rebuild ordering (load-bearing — see the design doc): open the NEW socket
+    // first; buffer any live frames arriving on EITHER socket while the rebuild
+    // is in flight; when the new socket's replay frame lands, capture the old
+    // length/viewportY BEFORE reset, reset, write the replay, then write the
+    // buffered live frames (in arrival order) AFTER it; restore the scroll
+    // anchor from the POST-write length (measured in the write callback — xterm's
+    // write() is async, so reading buffer.active.length synchronously after
+    // calling it would still see the pre-write value); close the OLD socket last.
+    function startRebuild() {
+      rebuilding = true;
+      setLoadingOlder(true);
+      pendingLive = [];
+      const nextSize = nextReplayStep(currentReplay);
+      const oldSock = sockRef.current!;
+      let gotReplay = false;
+      let oldLength = 0;
+      let oldViewportY = 0;
+
+      const drainPending = () => {
+        if (disposed) return;
+        if (pendingLive.length === 0) { finishRebuild(); return; }
+        const chunk = pendingLive.shift()!;
+        term.write(chunk, drainPending);
+      };
+
+      const finishRebuild = () => {
+        if (disposed) return;
+        const newLength = term.buffer.active.length;
+        term.scrollToLine(Math.max(0, oldViewportY + (newLength - oldLength)));
+        sockRef.current = newSock;
+        openSockets.delete(oldSock);
+        oldSock.close();
+        currentReplay = nextSize;
+        rebuilding = false;
+        setLoadingOlder(false);
+        void api.getScrollbackSize(terminalId).then((total) => {
+          if (disposed) return;
+          hasOlder = currentReplay < MAX_REPLAY && total > currentReplay;
+        }).catch(() => { hasOlder = false; });
+      };
+
+      const newSock = socketFactory({
+        terminalId,
+        replayBytes: nextSize,
+        onData: (chunk) => {
+          if (disposed) return;
+          if (!gotReplay) {
+            gotReplay = true;
+            // Capture the anchor BEFORE reset wipes it.
+            oldLength = term.buffer.active.length;
+            oldViewportY = term.buffer.active.viewportY;
+            term.reset();
+            term.write(chunk, drainPending);
+            return;
+          }
+          if (rebuilding) { pendingLive.push(chunk); return; }
+          attachLive(chunk);
+        },
+        onReset: () => { term.reset(); resyncSize(); },
+      });
+      openSockets.add(newSock);
+    }
+
     const sock = socketFactory({
       terminalId,
-      onData: (chunk) => { term.write(chunk); if (!gotData) { gotData = true; setLoading(false); } },
+      replayBytes: initialReplay,
+      onData: (chunk) => {
+        if (disposed) return;
+        if (rebuilding) { pendingLive.push(chunk); return; }
+        attachLive(chunk);
+      },
       // On reconnect the server replays the scrollback — clear first so it lands
       // clean, then re-sync the PTY size to this view.
-      onReset: () => { term.reset(); if (term.cols && term.rows) sockRef.current?.resize(term.cols, term.rows); },
+      onReset: () => { term.reset(); resyncSize(); },
     });
+    openSockets.add(sock);
     sockRef.current = sock;
     // Hide the loading indicator once content arrives (or after a short grace
     // period so a genuinely-quiet terminal doesn't spin forever).
@@ -309,7 +418,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
 
     const vp0 = viewportEl();
     vp0?.addEventListener('scroll', updateAtBottom, { passive: true });
-    const offScroll = term.onScroll(() => updateAtBottom());
+    const offScroll = term.onScroll(() => { updateAtBottom(); maybeStartRebuild(); });
     updateAtBottom();
     scrollToEndRef.current = () => { stopInertia(); stopSpring(); subPx = 0; overscroll = 0; applyTransform(); term.scrollToBottom(); updateAtBottom(); };
 
@@ -334,7 +443,10 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       offRender.dispose();
       ro?.disconnect();
       window.removeEventListener('resize', scheduleFit);
-      sock.close();
+      // Close whatever socket(s) are currently open — if a rebuild is mid-flight
+      // at unmount time, both the old and the new socket are in this set.
+      openSockets.forEach((s) => s.close());
+      openSockets.clear();
       term.dispose();
       sockRef.current = null;
       termRef.current = null;
@@ -423,6 +535,9 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
           >
             <CaretDoubleDown size={19} weight="bold" />
           </button>
+        )}
+        {loadingOlder && (
+          <div style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 6, background: 'rgba(10,10,12,.85)', color: 'var(--color-accent)', fontSize: 12, fontWeight: 500, padding: '5px 11px', borderRadius: 9, pointerEvents: 'none' }}>Loading earlier output…</div>
         )}
         {drop && (
           <div style={{ position: 'absolute', inset: 8, border: '2px dashed var(--color-accent)', borderRadius: 10, background: 'rgba(62,207,106,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', color: 'var(--color-accent)', fontSize: 14, fontWeight: 600 }}>Drop image to send to the agent</div>
