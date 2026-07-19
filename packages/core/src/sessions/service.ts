@@ -1414,7 +1414,7 @@ export class SessionService {
       if (sec?.spec) { specs.push(sec.spec); if (sec.prompt) prompts.push(sec.prompt); }
       const intgSpecs = this.integrationsSpecs?.() ?? [];
       specs.push(...intgSpecs);
-      if (config.role === 'coordinator') {
+      if (this.isPeerEligible(terminal.type)) {
         specs.push(this.agencyServerSpec(terminalId, terminal.session_id, typeof config.spawnDepth === 'number' ? config.spawnDepth : 0));
         prompts.push(this.peerPromptFor(terminal));
       }
@@ -1463,7 +1463,8 @@ export class SessionService {
    * Spawn — or, when a claude session id is already known, RESUME — a structured
    * stream-json thread, re-applying the SAME role / escalate / MCP wiring as the
    * original spawn:
-   *   - coordinators get the Dispatch agency MCP folded in (autonomous spawn/steer),
+   *   - every claude-code/codex thread gets the Dispatch agency MCP folded in
+   *     (peer tools, plus full spawn/steer agency — see isPeerEligible),
    *   - the Overseer persona is injected via --append-system-prompt,
    *   - only typed AGENT threads escalate gated tools (the membrane).
    * When `terminal.external_id` is set it appends `-r <id>` (resume the same claude
@@ -1483,7 +1484,7 @@ export class SessionService {
     if (sec?.spec) { specs.push(sec.spec); if (sec.prompt) prompts.push(sec.prompt); }
     const intgSpecs = this.integrationsSpecs?.() ?? [];
     specs.push(...intgSpecs);
-    if (config.role === 'coordinator') {
+    if (this.isPeerEligible(terminal.type)) {
       specs.push(this.agencyServerSpec(terminal.id, terminal.session_id, typeof config.spawnDepth === 'number' ? config.spawnDepth : 0));
       prompts.push(this.peerPromptFor(terminal));
     }
@@ -1669,19 +1670,35 @@ export class SessionService {
   }
 
   /**
-   * The Dispatch "agency" MCP server spec for a coordinator thread: points at the
-   * compiled agency-mcp.js and carries the caller's identity — DISPATCH_SESSION (this
-   * project, so threads the coordinator spawns land in the same project) and
-   * DISPATCH_TERMINAL (which thread is calling — consumed by the peer-thread tools
-   * for self-identification) and DISPATCH_SPAWN_DEPTH (this thread's own spawn-chain
-   * depth, so spawn_agent/queue_agent can enforce MAX_SPAWN_DEPTH and stamp the right
-   * depth on any child, without an extra round-trip to the daemon). Pushed into the
-   * `specs` array handed to composeInjection ALONGSIDE the Doppler/integrations specs
-   * — no more bespoke config-file post-processing — so composeInjection's single spec
-   * list produces both the Claude --mcp-config JSON and codex's `-c mcp_servers.*`
-   * args, and codex coordinators get the server too, not just claude-code ones. The
-   * resulting config is written to a PER-TERMINAL path (see `perTerminalMcpConfigPath`),
-   * never the shared daemon-wide one.
+   * Whether a thread receives the peer/agency machinery — the "dispatch" MCP server
+   * (agencyServerSpec) AND the peer system-prompt block (peerPromptFor). Both call
+   * sites (spawnTerminal, spawnStructured) gate on this SAME predicate so tools and
+   * prompt can never drift apart: a thread with one but not the other is a bug.
+   *
+   * Gated by TYPE, not role — every claude-code and codex thread qualifies (plain,
+   * agent, or coordinator alike; see the peer-threads design doc, decision 4:
+   * "automatic, not opt-in"). A shell thread has no agent process to inject an MCP
+   * server or system prompt into, so it's excluded.
+   */
+  private isPeerEligible(type: string): boolean {
+    return type === 'claude-code' || type === 'codex';
+  }
+
+  /**
+   * The Dispatch "agency" MCP server spec for a peer-eligible thread (see
+   * isPeerEligible): points at the compiled agency-mcp.js and carries the caller's
+   * identity — DISPATCH_SESSION (this project, so threads it spawns land in the same
+   * project) and DISPATCH_TERMINAL (which thread is calling — consumed by the
+   * peer-thread tools for self-identification) and DISPATCH_SPAWN_DEPTH (this
+   * thread's own spawn-chain depth, so spawn_agent/queue_agent can enforce
+   * MAX_SPAWN_DEPTH and stamp the right depth on any child, without an extra
+   * round-trip to the daemon). Pushed into the `specs` array handed to
+   * composeInjection ALONGSIDE the Doppler/integrations specs — no more bespoke
+   * config-file post-processing — so composeInjection's single spec list produces
+   * both the Claude --mcp-config JSON and codex's `-c mcp_servers.*` args, and codex
+   * threads get the server too, not just claude-code ones. The resulting config is
+   * written to a PER-TERMINAL path (see `perTerminalMcpConfigPath`), never the
+   * shared daemon-wide one.
    */
   private agencyServerSpec(terminalId: string, sessionId: string, spawnDepth: number): McpServerSpec {
     const agencyPath = fileURLToPath(new URL('../overseer/agency-mcp.js', import.meta.url));
@@ -1703,9 +1720,8 @@ export class SessionService {
    * and working dir, its own label + id, and a roster snapshot of its live (non-
    * archived) project peers — every OTHER terminal in the same session, self
    * excluded. Callers push the result into the `prompts` array fed to
-   * composeInjection under the SAME gate as agencyServerSpec (today: coordinators
-   * only — see the call sites in spawnTerminal/spawnStructured; Task 8 widens both
-   * gates together, in one flip).
+   * composeInjection under the SAME gate as agencyServerSpec (isPeerEligible — see
+   * the call sites in spawnTerminal/spawnStructured).
    */
   private peerPromptFor(terminal: terminalsDb.TerminalRow): string {
     const session = sessionsDb.getById(this.db, terminal.session_id);

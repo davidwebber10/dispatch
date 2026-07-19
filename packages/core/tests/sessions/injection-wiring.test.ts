@@ -61,9 +61,11 @@ describe('spawn-time MCP injection wiring', () => {
     const threadCfgPath = path.join(path.dirname(configPath), `thread-${terminal.id}.mcp.json`);
     expect(args[i + 1]).toBe(threadCfgPath);
     expect(args).toContain('--append-system-prompt');
-    // Both servers present in the written config file
+    // Both servers present in the written config file, PLUS the dispatch agency
+    // server: Task 8 ungated peer eligibility to TYPE (any claude-code/codex
+    // thread, not just role: 'coordinator'), so this plain thread gets it too.
     const written = JSON.parse(fs.readFileSync(threadCfgPath, 'utf8'));
-    expect(Object.keys(written.mcpServers).sort()).toEqual(['doppler', 'fs', 'linear']);
+    expect(Object.keys(written.mcpServers).sort()).toEqual(['dispatch', 'doppler', 'fs', 'linear']);
   });
 
   it('merges Doppler + catalog specs into the Codex argv (-c mcp_servers.* for all servers)', () => {

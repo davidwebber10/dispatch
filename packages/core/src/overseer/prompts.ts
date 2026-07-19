@@ -64,17 +64,17 @@ export const COORDINATOR_PROMPT =
   '- You never write code or edit files yourself — always delegate to an implementer agent.';
 
 /**
- * Peer/watch context injected into every eligible thread's system prompt (today:
- * coordinators only — the same gate as agencyServerSpec in sessions/service.ts;
- * Task 8 widens both together, in one flip, to every claude-code/codex thread).
+ * Peer/watch context injected into every eligible thread's system prompt — every
+ * claude-code/codex thread (plain, agent, or coordinator alike; see
+ * `isPeerEligible` in sessions/service.ts, the same gate as agencyServerSpec).
  *
  * Deliberately does NOT re-teach spawn_agent/list_agents/mission grouping/etc —
- * COORDINATOR_PROMPT already owns that. This block only adds what a coordinator
- * (or, after Task 8, any thread) doesn't otherwise know: that it has PEERS at
- * all, who they are right now, and the tools that work on any peer (not just a
- * typed agent) — list_threads/read_thread/message_thread/watch_thread/
- * unwatch_thread/list_watches — plus the etiquette that keeps full agency for N
- * peers from going wrong (rate limits, spawn depth, archive protection).
+ * COORDINATOR_PROMPT already owns that. This block only adds what a thread
+ * doesn't otherwise know: that it has PEERS at all, who they are right now, and
+ * the tools that work on any peer (not just a typed agent) —
+ * list_threads/read_thread/message_thread/watch_thread/unwatch_thread/
+ * list_watches — plus the etiquette that keeps full agency for N peers from
+ * going wrong (rate limits, spawn depth, archive protection).
  */
 export function buildPeerPrompt(ctx: {
   projectName: string;

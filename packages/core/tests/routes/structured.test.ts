@@ -535,20 +535,22 @@ it('a coordinator spawn folds the dispatch agency server into its --mcp-config, 
   fs.rmSync(cfgDir, { recursive: true, force: true });
 });
 
-it('a non-coordinator structured spawn writes no dispatch server', async () => {
+it('Task 8 ungate: a typed AGENT (non-coordinator role) structured spawn ALSO writes the dispatch server', async () => {
+  // Pre-Task-8 this asserted the dispatch server was ABSENT (the gate was
+  // config.role === 'coordinator'). Task 8 flips eligibility to TYPE — any
+  // claude-code/codex thread qualifies regardless of role — so a typed agent is
+  // exactly as eligible as a plain thread or a coordinator. See
+  // packages/core/tests/sessions/agency-mcp-injection.test.ts for the
+  // plain-thread and shell-exclusion cases.
   const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'noncoord-cfg-'));
   const a = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fake] } });
   const s = await request(a).post('/api/sessions').send({ provider: 'claude-code', workingDir: dir, name: 'n' });
   const t = await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'researcher', role: 'agent' } });
   expect(t.status).toBe(201);
-  // Unconditional: read the per-terminal config if the (harness-only, no doppler/
-  // integrations wired here) spawn happened to write one, else treat as {} — either
-  // way, the dispatch server must be absent. Previously this assertion was gated
-  // behind `if (fs.existsSync(...))`, so it could pass vacuously if nothing were ever
-  // written; asserting unconditionally makes it actually prove the gate holds.
   const cfgPath = path.join(cfgDir, `thread-${t.body.id}.mcp.json`);
-  const cfg = fs.existsSync(cfgPath) ? JSON.parse(fs.readFileSync(cfgPath, 'utf8')) : {};
-  expect(cfg.mcpServers?.dispatch).toBeUndefined();
+  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  expect(cfg.mcpServers.dispatch).toBeTruthy();
+  expect(cfg.mcpServers.dispatch.env.DISPATCH_TERMINAL).toBe(t.body.id);
   await request(a).post(`/api/terminals/${t.body.id}/stop`);
   fs.rmSync(cfgDir, { recursive: true, force: true });
 });

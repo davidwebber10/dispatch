@@ -127,24 +127,88 @@ describe('agency MCP: caller identity + standard injection path', () => {
     expect(args).toContain('mcp_servers.dispatch.command="node"');
   });
 
-  it('a non-coordinator (plain agent) thread gets NO dispatch server — the gate still holds', () => {
+  it('Task 8 ungate: a typed AGENT (role: agent, not coordinator) thread now ALSO gets the dispatch server', () => {
+    // Pre-Task-8 this asserted the OPPOSITE (agent-role threads got nothing — the
+    // gate was config.role === 'coordinator'). Task 8 flips eligibility to TYPE:
+    // any claude-code/codex thread qualifies regardless of role, so a typed agent
+    // is exactly as eligible as a plain thread or a coordinator.
     const configPath = path.join(tmpDir, 'mcp-non-coord.json');
     const { svc } = makeService(configPath);
     const manager = new CapturingClaudeManager();
     svc.setStructuredManager(manager);
 
-    svc.createTerminal('s1', 'claude-code', 'Implementer', false, undefined, undefined, {
+    const terminal = svc.createTerminal('s1', 'claude-code', 'Implementer', false, undefined, undefined, {
       transport: 'structured',
       role: 'agent',
     });
 
     expect(manager.calls).toHaveLength(1);
-    // No MCP specs at all are wired in this harness (no doppler/integrations), so with
-    // the gate holding, no config file should even be written.
-    if (fs.existsSync(configPath)) {
-      const written = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      expect(written.mcpServers?.dispatch).toBeUndefined();
-    }
+    const threadCfgPath = path.join(path.dirname(configPath), `thread-${terminal.id}.mcp.json`);
+    const written = JSON.parse(fs.readFileSync(threadCfgPath, 'utf8'));
+    expect(written.mcpServers.dispatch).toBeTruthy();
+    expect(written.mcpServers.dispatch.env.DISPATCH_TERMINAL).toBe(terminal.id);
+    expect(written.mcpServers.dispatch.env.DISPATCH_SESSION).toBe('s1');
+  });
+
+  it('Task 8 ungate: a PLAIN claude-code thread (no config.role at all) gets the dispatch server AND the peer prompt', () => {
+    const configPath = path.join(tmpDir, 'mcp-plain-claude.json');
+    const { svc } = makeService(configPath);
+    const manager = new CapturingClaudeManager();
+    svc.setStructuredManager(manager);
+
+    // No role, no agentType — exactly what "New Thread" creates today.
+    const terminal = svc.createTerminal('s1', 'claude-code', 'Scratch', false, undefined, undefined, {
+      transport: 'structured',
+    });
+
+    expect(manager.calls).toHaveLength(1);
+    const threadCfgPath = path.join(path.dirname(configPath), `thread-${terminal.id}.mcp.json`);
+    const written = JSON.parse(fs.readFileSync(threadCfgPath, 'utf8'));
+    expect(written.mcpServers.dispatch).toBeTruthy();
+    expect(written.mcpServers.dispatch.command).toBe('node');
+    expect(written.mcpServers.dispatch.env.DISPATCH_TERMINAL).toBe(terminal.id);
+    expect(written.mcpServers.dispatch.env.DISPATCH_SESSION).toBe('s1');
+
+    // The peer block rides --append-system-prompt. A plain thread has no persona
+    // (systemPromptFor returns undefined for role-less config), so there is
+    // exactly ONE --append-system-prompt flag: the peer block, not two.
+    const args = manager.calls[0].args;
+    const flagIdxs = args.reduce<number[]>((acc, a, i) => { if (a === '--append-system-prompt') acc.push(i); return acc; }, []);
+    expect(flagIdxs).toHaveLength(1);
+    const peerBlock = args[flagIdxs[0] + 1];
+    expect(peerBlock).toContain('project "t"');
+    expect(peerBlock).toContain(terminal.label);
+    expect(peerBlock).toContain(terminal.id);
+    expect(peerBlock).toContain('list_threads');
+  });
+
+  it('Task 8 ungate: a PLAIN codex thread (no config.role) gets the dispatch server via codexArgs', () => {
+    const configPath = path.join(tmpDir, 'mcp-plain-codex.json');
+    const { svc } = makeService(configPath);
+    const manager = new CapturingCodexManager();
+    svc.setCodexStructuredManager(manager);
+
+    svc.createTerminal('s1', 'codex', 'Scratch', false, undefined, undefined, {
+      transport: 'structured',
+    });
+
+    expect(manager.calls).toHaveLength(1);
+    const args = manager.calls[0].args;
+    expect(args).toContain('mcp_servers.dispatch.command="node"');
+  });
+
+  it('Task 8 ungate: a shell thread receives NO dispatch server and no peer prompt (nothing to inject into)', () => {
+    const configPath = path.join(tmpDir, 'mcp-shell.json');
+    const { svc, pty } = makeService(configPath);
+
+    const terminal = svc.createTerminal('s1', 'shell', 'Terminal');
+
+    expect(pty.calls).toHaveLength(1);
+    // Shell threads never reach the MCP-composing branch at all (see the
+    // `terminal.type === 'shell'` early branch in spawnTerminal) — no per-thread
+    // config file is written for them.
+    const threadCfgPath = path.join(path.dirname(configPath), `thread-${terminal.id}.mcp.json`);
+    expect(fs.existsSync(threadCfgPath)).toBe(false);
   });
 
   it('a coordinator on the PTY (non-structured) spawn path also gets caller identity', () => {
