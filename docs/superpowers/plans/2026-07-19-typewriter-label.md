@@ -467,12 +467,16 @@ test('exposes the true label to assistive tech while animating', () => {
   expect(screen.getByLabelText('Fix login bug')).toBeInTheDocument();
 });
 
-test('unmounting mid-animation clears its timer', () => {
+test('unmounting mid-animation clears its timer and stops rendering', () => {
   seed();
-  const { unmount } = render(<ThreadLabel tab={tab} />);
+  const clear = vi.spyOn(globalThis, 'clearTimeout');
+  const { unmount, container } = render(<ThreadLabel tab={tab} />);
   act(() => { vi.advanceTimersByTime(25 * 3); });
+  const calls = clear.mock.calls.length;
   unmount();
-  expect(() => act(() => { vi.advanceTimersByTime(5000); })).not.toThrow();
+  expect(clear.mock.calls.length).toBeGreaterThan(calls); // cleanup ran
+  act(() => { vi.advanceTimersByTime(5000); });
+  expect(container.querySelector('[data-testid="thread-label-text"]')).toBeNull();
 });
 ```
 
