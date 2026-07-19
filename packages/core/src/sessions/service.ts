@@ -275,6 +275,13 @@ export class SessionService {
     // delete below trips a FOREIGN KEY constraint for any session that ever had
     // a scheduled-agent run, and the whole archive fails.
     agentsDb.clearTerminalRefsBySession(this.db, id);
+    // thread_watches has no FK to terminals (rows outlive a deleted watcher/target by
+    // design — see db/watches.ts), so sweep every watch touching this session's terminals
+    // before the bulk hard-delete below, while they can still be enumerated. Mirrors
+    // removeTerminal's single-thread sweep (see watchesDb.removeForTerminal there).
+    for (const terminal of terminals) {
+      watchesDb.removeForTerminal(this.db, terminal.id);
+    }
     terminalsDb.removeBySession(this.db, id);
 
     if (this.ptyManager.isAlive(id)) this.ptyManager.kill(id);

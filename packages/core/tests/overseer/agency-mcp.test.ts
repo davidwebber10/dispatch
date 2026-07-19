@@ -651,18 +651,32 @@ describe('agency-mcp', () => {
     });
 
     it('message_thread shares the same limiter keyed on (sender, target) as message_agent', async () => {
-      process.env.DISPATCH_TERMINAL = 'self-shared';
+      // Genuinely cross-tool: same (sender, target) pair split across BOTH tools — 5 sent
+      // via message_agent, 5 via message_thread. If the limiter were per-tool (not shared),
+      // both would still be under their own 10-cap and the 11th (from either tool) would
+      // wrongly succeed. Asserting it's refused proves one shared counter, not two.
+      process.env.DISPATCH_TERMINAL = 'self-cross-tool';
       const fetchMock = vi.fn()
-        // message_thread does an assertInProject GET before each message POST
-        .mockResolvedValue({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ id: 'rl-target-thread', sessionId: 'sess-1' }) });
+        // message_thread does an assertInProject GET before each message POST; message_agent
+        // has no GET, so this generic 200 body (with a matching sessionId) is safe for both.
+        .mockResolvedValue({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ id: 'cross-target-shared', sessionId: 'sess-1' }) });
       global.fetch = fetchMock as any;
-      for (let i = 0; i < 10; i++) {
-        const out = await callTool('message_thread', { id: 'rl-target-thread', text: `msg ${i}` });
+      for (let i = 0; i < 5; i++) {
+        const out = await callTool('message_agent', { agentId: 'cross-target-shared', text: `msg ${i}` });
         expect(out.isError).toBeUndefined();
       }
-      const eleventh = await callTool('message_thread', { id: 'rl-target-thread', text: 'msg 11' });
+      for (let i = 5; i < 10; i++) {
+        const out = await callTool('message_thread', { id: 'cross-target-shared', text: `msg ${i}` });
+        expect(out.isError).toBeUndefined();
+      }
+      // The 11th overall, sent via message_thread, must be refused...
+      const eleventh = await callTool('message_thread', { id: 'cross-target-shared', text: 'msg 11' });
       expect(eleventh.isError).toBe(true);
       expect(eleventh.content[0].text.toLowerCase()).toContain('rate limit');
+      // ...and so must the next one via message_agent — same pair, same shared counter.
+      const twelfth = await callTool('message_agent', { agentId: 'cross-target-shared', text: 'msg 12' });
+      expect(twelfth.isError).toBe(true);
+      expect(twelfth.content[0].text.toLowerCase()).toContain('rate limit');
     });
   });
 
