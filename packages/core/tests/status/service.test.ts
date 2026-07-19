@@ -129,6 +129,27 @@ describe('StatusService onActivity callback (feeds ThreadAutoNamer)', () => {
   });
 });
 
+describe('StatusService onWatchStatus callback (feeds WatchDispatcher)', () => {
+  it('a status edge fires the onWatchStatus callback with the terminal id and normalized status', () => {
+    const onWatchStatus = vi.fn();
+    new StatusService(db, broadcaster, undefined, onWatchStatus).ingest('claude', 'term', { hook_event_name: 'Stop', session_id: 'sid-1' });
+    expect(onWatchStatus).toHaveBeenCalledWith('term', 'idle');
+  });
+
+  it('SessionStart (open/revive) does NOT fire the onWatchStatus callback', () => {
+    const onWatchStatus = vi.fn();
+    new StatusService(db, broadcaster, undefined, onWatchStatus).ingest('claude', 'term', { hook_event_name: 'SessionStart', session_id: 'sid-1' });
+    expect(onWatchStatus).not.toHaveBeenCalled();
+  });
+
+  it('a throwing onWatchStatus callback does not break status recording', () => {
+    const onWatchStatus = vi.fn(() => { throw new Error('boom'); });
+    const s = new StatusService(db, broadcaster, undefined, onWatchStatus);
+    expect(() => s.ingest('claude', 'term', { hook_event_name: 'Stop', session_id: 'sid-1' })).not.toThrow();
+    expect(terminalsDb.getById(db, 'term')?.status).toBe('waiting');
+  });
+});
+
 describe('StatusService thread-settled hook', () => {
   function setup() {
     const db2 = new Database(':memory:');

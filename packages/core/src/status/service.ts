@@ -33,6 +33,8 @@ export class StatusService {
     private broadcaster: EventBroadcaster,
     /** Optional real-activity signal (feeds ThreadAutoNamer.notifyActivity). Fires on the same edge as touchActivity, below. */
     private onActivity?: (terminalId: string) => void,
+    /** Optional watch-wake signal (feeds WatchDispatcher.onStatus). Fires on the same edge as onActivity, above. */
+    private onWatchStatus?: (terminalId: string, status: ThreadStatus) => void,
   ) {}
 
   setThreadSettledHook(fn: (info: { terminalId: string; sessionId: string; threadStatus: ThreadStatus }) => void): void {
@@ -109,6 +111,7 @@ export class StatusService {
       try { terminalsDb.touchActivity(this.db, terminalId); } catch { /* best effort */ }
       try { sessionsDb.touchActivity(this.db, sessionId); } catch { /* best effort */ }
       try { this.onActivity?.(terminalId); } catch { /* best effort */ }
+      try { this.onWatchStatus?.(terminalId, status); } catch { /* best effort */ }
     }
     this.broadcaster.broadcast({ type: 'terminal:status', terminalId, status: terminalStatus, threadStatus: status, activity: activity ?? null });
     if (prior === 'working' && (terminalStatus === 'waiting' || terminalStatus === 'needs_input')) {

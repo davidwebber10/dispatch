@@ -53,6 +53,7 @@ import { startUpdateCheckLoop } from './update/checker.js';
 import { createUpdateRouter } from './routes/update.js';
 import { createAppearanceRouter, customIconHandler } from './routes/appearance.js';
 import { createWatchesRouter } from './routes/watches.js';
+import { WatchDispatcher } from './sessions/watch-dispatcher.js';
 
 /** Repo root, derived the same way as the webDist fallback below (works from both src/ in dev and dist/ once built, since both sit at the same depth under packages/core). */
 function resolveRepoRoot(): string {
@@ -156,6 +157,27 @@ function wireCodexPretty(sessionService: SessionService, statusService: StatusSe
   return codexManager;
 }
 
+/**
+ * Builds the WatchDispatcher's `deliver` function: picks transport per target the SAME way
+ * spawnTerminal/ensureStructuredAlive already do — `config.transport === 'structured'` AND a
+ * structured manager exists for that harness. Structured threads get `ensureStructuredAlive`
+ * (lazily resumes a dead one) + `sendStructuredMessage`; everything else (PTY threads —
+ * claude-code/codex still on the CLI transport, or shell) gets a raw `writeToTerminal` line,
+ * exactly as a user's own typed input would arrive.
+ */
+function buildWatchDeliver(sessionService: SessionService): (terminalId: string, text: string) => void {
+  return (terminalId: string, text: string) => {
+    const terminal = sessionService.getTerminal(terminalId);
+    if (!terminal) return; // watcher vanished between lookup and delivery — nothing to do
+    if (terminal.config?.transport === 'structured' && sessionService.structuredManagerFor(terminal.type)) {
+      sessionService.ensureStructuredAlive(terminalId);
+      sessionService.sendStructuredMessage(terminalId, text);
+    } else {
+      sessionService.writeToTerminal(terminalId, text + '\n');
+    }
+  };
+}
+
 export function createApp(options: CreateAppOptions): import('express').Express {
   const { db, skipPty = false } = options;
 
@@ -181,7 +203,10 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const structuredManager = new ClaudeStructuredSessionManager();
   sessionService.setStructuredManager(structuredManager);
   if (options.structuredCommand) sessionService.setStructuredCommandOverride(options.structuredCommand);
-  const statusService = new StatusService(db, broadcaster);
+  // Wakes watchers on peer status edges (see sessions/watch-dispatcher.ts) — wired as an
+  // optional StatusService dependency, same shape as onActivity below.
+  const watchDispatcher = new WatchDispatcher(db, buildWatchDeliver(sessionService));
+  const statusService = new StatusService(db, broadcaster, undefined, (terminalId, status) => watchDispatcher.onStatus(terminalId, status));
   wirePermissionMembrane(structuredManager, statusService, sessionService);
   wireCodexPretty(sessionService, statusService);
   const pushService = new PushService(db, { vapidDir: dispatchDir });
@@ -305,7 +330,14 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Determine actual server URL after port is known
   const sessionService = new SessionService(db, ptyManager, path.join(dataDir, 'mcp.json'));
   const agentService = new AgentService(db, sessionService, broadcaster, path.join(dataDir, 'runs'));
-  const statusService = new StatusService(db, broadcaster, (id) => threadAutoNamer.notifyActivity(id));
+  // Wakes watchers on peer status edges (see sessions/watch-dispatcher.ts) — wired as an
+  // optional StatusService dependency, same shape as the threadAutoNamer activity callback.
+  const watchDispatcher = new WatchDispatcher(db, buildWatchDeliver(sessionService));
+  const statusService = new StatusService(
+    db, broadcaster,
+    (id) => threadAutoNamer.notifyActivity(id),
+    (terminalId, status) => watchDispatcher.onStatus(terminalId, status),
+  );
   const structuredManager = new ClaudeStructuredSessionManager();
   sessionService.setStructuredManager(structuredManager);
   wirePermissionMembrane(structuredManager, statusService, sessionService);

@@ -9,6 +9,7 @@ import * as terminalsDb from '../db/terminals.js';
 import * as agentsDb from '../db/agents.js';
 import * as appState from '../db/app-state.js';
 import * as messageSourceDb from '../db/message-source.js';
+import * as watchesDb from '../db/watches.js';
 import { getProvider } from '../providers/registry.js';
 import { PTYManager } from '../pty/manager.js';
 import type { Session, CreateSessionInput } from '../types.js';
@@ -1348,6 +1349,10 @@ export class SessionService {
     }
     // Soft-delete: archive instead of remove
     terminalsDb.archive(this.db, terminalId);
+    // thread_watches has no FK to terminals (rows outlive a deleted watcher/target by
+    // design — see db/watches.ts), so this is the daemon's one "a thread is gone" hook:
+    // sweep any watch where this terminal was either side, else rows accumulate forever.
+    watchesDb.removeForTerminal(this.db, terminalId);
   }
 
   // Restore an archived terminal
