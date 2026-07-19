@@ -62,6 +62,20 @@ export function createWatchesRouter(db: Database.Database): Router {
   });
 
   router.delete('/:id', (req, res) => {
+    const watcher = typeof req.query.watcher === 'string' ? req.query.watcher : undefined;
+    if (!watcher) {
+      res.status(400).json({ error: 'watcher is required' });
+      return;
+    }
+    // Ownership check: a watch may only be cancelled by its own watcher. A foreign watch
+    // and a missing one get the SAME 404 — confirming an id exists that isn't yours is
+    // exactly the leak this route must avoid (mirrors assertInProject's foreign-vs-missing
+    // indistinguishability in agency-mcp.ts).
+    const owned = watchesDb.listByWatcher(db, watcher).some((w) => w.id === req.params.id);
+    if (!owned) {
+      res.status(404).json({ error: 'watch not found' });
+      return;
+    }
     const ok = watchesDb.remove(db, req.params.id);
     if (!ok) {
       res.status(404).json({ error: 'watch not found' });

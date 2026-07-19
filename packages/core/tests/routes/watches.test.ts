@@ -130,19 +130,42 @@ describe('watch routes', () => {
   });
 
   describe('DELETE /api/watches/:id', () => {
-    it('deletes an existing watch', async () => {
+    it('deletes an existing watch when the caller is its watcher', async () => {
       const create = await request(app).post('/api/watches').send({ watcherTerminalId: 'watcher-1', targetTerminalId: 'target-1', criteria: 'idle' });
       const id = create.body.id;
 
-      const res = await request(app).delete(`/api/watches/${id}`);
+      const res = await request(app).delete(`/api/watches/${id}?watcher=watcher-1`);
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ ok: true });
       expect(watchesDb.listByWatcher(db, 'watcher-1')).toHaveLength(0);
     });
 
     it('returns 404 for a missing id', async () => {
-      const res = await request(app).delete('/api/watches/does-not-exist');
+      const res = await request(app).delete('/api/watches/does-not-exist?watcher=watcher-1');
       expect(res.status).toBe(404);
+    });
+
+    it('returns 400 when the watcher query param is missing', async () => {
+      const create = await request(app).post('/api/watches').send({ watcherTerminalId: 'watcher-1', targetTerminalId: 'target-1', criteria: 'idle' });
+      const id = create.body.id;
+
+      const res = await request(app).delete(`/api/watches/${id}`);
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('watcher is required');
+      // untouched
+      expect(watchesDb.listByWatcher(db, 'watcher-1')).toHaveLength(1);
+    });
+
+    it('returns 404 (not 403) when the caller is not the watch\'s watcher, and leaves the row intact', async () => {
+      terminalsDb.create(db, { id: 'watcher-2', sessionId: sessionA, type: 'claude-code', label: 'other watcher' });
+      const create = await request(app).post('/api/watches').send({ watcherTerminalId: 'watcher-1', targetTerminalId: 'target-1', criteria: 'idle' });
+      const id = create.body.id;
+
+      const res = await request(app).delete(`/api/watches/${id}?watcher=watcher-2`);
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe('watch not found');
+      expect(watchesDb.listByWatcher(db, 'watcher-1')).toHaveLength(1);
+      expect(watchesDb.listByWatcher(db, 'watcher-1')[0].id).toBe(id);
     });
   });
 });

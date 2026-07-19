@@ -519,22 +519,36 @@ describe('agency-mcp', () => {
   });
 
   describe('unwatch_thread', () => {
-    it('DELETEs the watch by id', async () => {
+    it('DELETEs the watch by id, scoped to the caller as watcher', async () => {
+      process.env.DISPATCH_TERMINAL = 'self-1';
       const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ ok: true }) });
       global.fetch = fetchMock as any;
       const out = await callTool('unwatch_thread', { watchId: 'watch-1' });
       expect(out.isError).toBeUndefined();
       expect(JSON.parse(out.content[0].text)).toEqual({ ok: true });
-      expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/watches/watch-1');
       expect(fetchMock.mock.calls[0][1].method).toBe('DELETE');
+      const url = new URL(fetchMock.mock.calls[0][0]);
+      expect(url.origin + url.pathname).toBe('http://localhost:9999/api/watches/watch-1');
+      expect(url.searchParams.get('watcher')).toBe('self-1');
     });
 
     it('surfaces a 404 as a clear error', async () => {
+      process.env.DISPATCH_TERMINAL = 'self-1';
       const fetchMock = vi.fn().mockResolvedValueOnce({ ok: false, status: 404, statusText: 'Not Found', text: async () => JSON.stringify({ error: 'watch not found' }) });
       global.fetch = fetchMock as any;
       const out = await callTool('unwatch_thread', { watchId: 'nope' });
       expect(out.isError).toBe(true);
       expect(out.content[0].text).toContain('watch not found');
+    });
+
+    it('fails clearly when DISPATCH_TERMINAL is unset, without calling the daemon', async () => {
+      // No DISPATCH_TERMINAL set (beforeEach deletes it) — an old-style injection.
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock as any;
+      const out = await callTool('unwatch_thread', { watchId: 'watch-1' });
+      expect(out.isError).toBe(true);
+      expect(out.content[0].text).toContain('DISPATCH_TERMINAL');
+      expect(fetchMock).not.toHaveBeenCalled();
     });
   });
 
@@ -557,6 +571,7 @@ describe('agency-mcp', () => {
       const url = new URL(fetchMock.mock.calls[0][0]);
       expect(url.origin + url.pathname).toBe('http://localhost:9999/api/watches');
       expect(url.searchParams.get('watcher')).toBe('self-1');
+      expect(url.searchParams.get('target')).toBe('self-1');
     });
 
     it('fails clearly when DISPATCH_TERMINAL is unset, without calling the daemon', async () => {

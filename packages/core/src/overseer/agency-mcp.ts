@@ -606,7 +606,8 @@ async function watchThread(args: { id: string; when: string; note?: string; once
 /** Cancel a watch subscription registered with watch_thread. */
 async function unwatchThread(args: { watchId: string }): Promise<{ ok: true }> {
   if (!args?.watchId) throw new Error('watchId is required');
-  await watchesRequest('DELETE', `${apiBase()}/api/watches/${args.watchId}`);
+  const watcher = requireSelf('unwatch a thread');
+  await watchesRequest('DELETE', `${apiBase()}/api/watches/${args.watchId}?watcher=${encodeURIComponent(watcher)}`);
   return { ok: true };
 }
 
