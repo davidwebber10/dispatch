@@ -20,6 +20,12 @@ type SoftKey = { label: string; seq: string; title?: string; Icon?: Icon };
 // in \r so they fire on tap; arg-commands leave a trailing space to type into.
 type SlashCmd = { cmd: string; seq: string; desc: string };
 
+// A rebuild's new socket can die, stall, or never deliver its replay frame at
+// all — on mobile, exactly where sockets drop. 10s is generous: a 4MB replay
+// over slow cellular is the case this whole feature exists to accommodate, so
+// this must not be tight enough to abort a merely-slow-but-alive rebuild.
+const REBUILD_TIMEOUT_MS = 10_000;
+
 const ENTER: SoftKey = { label: 'Enter', seq: '\r', title: 'Enter', Icon: ArrowElbowDownLeft };
 const UP_DOWN: SoftKey[] = [
   { label: 'Up', seq: '\x1b[A', title: 'Up', Icon: CaretUp },
@@ -127,8 +133,26 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     let hasOlder = false;   // the ring holds more than we've currently loaded
     let rebuilding = false; // guards re-entry: one rebuild at a time
     let pendingLive: string[] = []; // live frames buffered while a rebuild is in flight
+    // Aborts the in-flight rebuild, if any. Shared across the whole effect
+    // lifetime (not just one startRebuild call) so ANY socket's onReset —
+    // whichever one is currently authoritative — can abort a rebuild before
+    // doing its own reset, even a LATER rebuild than the one active when that
+    // socket was created.
+    let activeRebuildAbort: (() => void) | null = null;
     const openSockets = new Set<ReturnType<typeof socketFactory>>();
     const resyncSize = () => { if (term.cols && term.rows) sockRef.current?.resize(term.cols, term.rows); };
+
+    // Shared reconnect handling for whichever socket is CURRENTLY authoritative
+    // (the primary connection, or a rebuild's new socket once it has taken over
+    // as primary): abort any in-flight rebuild FIRST — its speculative replay
+    // write must never land on top of a screen that's about to be reset out
+    // from under it, which is exactly how "duplicated or interleaved content"
+    // happens — then do the normal reset + resize.
+    const handleConnectionReset = () => {
+      activeRebuildAbort?.();
+      term.reset();
+      resyncSize();
+    };
 
     let gotData = false;
     // The "just show it" path: used for every socket's data whenever that data is
@@ -175,16 +199,27 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       let gotReplay = false;
       let oldLength = 0;
       let oldViewportY = 0;
+      // True once THIS attempt has finished or aborted — guards re-entrant
+      // callbacks (our own newSock.close() below still fires the socket's
+      // onClose once more; a stale rebuildTimer could in principle still be
+      // pending) so an attempt can only ever be settled one way, once.
+      let settled = false;
+      let rebuildTimer: ReturnType<typeof setTimeout> | undefined;
+
+      const clearRebuildTimer = () => { if (rebuildTimer) { clearTimeout(rebuildTimer); rebuildTimer = undefined; } };
 
       const drainPending = () => {
-        if (disposed) return;
+        if (disposed || settled) return;
         if (pendingLive.length === 0) { finishRebuild(); return; }
         const chunk = pendingLive.shift()!;
         term.write(chunk, drainPending);
       };
 
       const finishRebuild = () => {
-        if (disposed) return;
+        if (disposed || settled) return;
+        settled = true;
+        clearRebuildTimer();
+        activeRebuildAbort = null;
         const newLength = term.buffer.active.length;
         term.scrollToLine(Math.max(0, oldViewportY + (newLength - oldLength)));
         sockRef.current = newSock;
@@ -199,13 +234,39 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
         }).catch(() => { hasOlder = false; });
       };
 
+      // Abort a rebuild that failed or stalled before delivering its replay:
+      // undo NOTHING that is already visible — the old socket and current
+      // terminal content are left exactly as they were — just discard the
+      // speculative new socket and any live frames buffered for it, and clear
+      // the guard so a later scroll-to-top can try again. This is the fix for
+      // the worst failure mode: a dead new socket must never leave "load
+      // older" permanently stuck for the rest of the session.
+      const abort = () => {
+        if (settled) return;
+        settled = true;
+        clearRebuildTimer();
+        activeRebuildAbort = null;
+        pendingLive = [];
+        rebuilding = false;
+        setLoadingOlder(false);
+        openSockets.delete(newSock);
+        newSock.close();
+      };
+      activeRebuildAbort = abort;
+
+      // Silent-hang guard: the new socket connects but the replay frame never
+      // arrives (e.g. server never responds). Cleared the instant the replay
+      // frame lands — see onData below.
+      rebuildTimer = setTimeout(abort, REBUILD_TIMEOUT_MS);
+
       const newSock = socketFactory({
         terminalId,
         replayBytes: nextSize,
         onData: (chunk) => {
-          if (disposed) return;
+          if (disposed || settled) return;
           if (!gotReplay) {
             gotReplay = true;
+            clearRebuildTimer();
             // Capture the anchor BEFORE reset wipes it.
             oldLength = term.buffer.active.length;
             oldViewportY = term.buffer.active.viewportY;
@@ -216,7 +277,18 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
           if (rebuilding) { pendingLive.push(chunk); return; }
           attachLive(chunk);
         },
-        onReset: () => { term.reset(); resyncSize(); },
+        // Before the replay lands, a reset here means THIS socket dropped and
+        // reconnected without ever completing the rebuild — abort exactly like
+        // an error/close/timeout (no term.reset(): the old view must survive).
+        // After it's settled (this socket has already become primary), it's an
+        // ordinary later reconnect — route through the shared handler.
+        onReset: () => { if (settled) { handleConnectionReset(); return; } abort(); },
+        // The new socket errors or closes before ever delivering a replay —
+        // same abort. (The socket abstraction has no separate error event: a
+        // WebSocket error always surfaces via close, so this one hook covers
+        // both triggers.) A close AFTER the replay already landed is ignored
+        // here — that socket's own reconnect/onReset path takes over instead.
+        onClose: () => { if (!gotReplay) abort(); },
       });
       openSockets.add(newSock);
     }
@@ -229,9 +301,12 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
         if (rebuilding) { pendingLive.push(chunk); return; }
         attachLive(chunk);
       },
-      // On reconnect the server replays the scrollback — clear first so it lands
-      // clean, then re-sync the PTY size to this view.
-      onReset: () => { term.reset(); resyncSize(); },
+      // On reconnect the server replays the scrollback — clear first so it
+      // lands clean, then re-sync the PTY size to this view. If a progressive-
+      // scrollback rebuild is in flight when this fires, abort it first (see
+      // handleConnectionReset) so its speculative write can't land on/after
+      // this reset and duplicate or interleave content.
+      onReset: handleConnectionReset,
     });
     openSockets.add(sock);
     sockRef.current = sock;

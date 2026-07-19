@@ -74,7 +74,7 @@ beforeEach(() => {
   vi.spyOn(api, 'getGitInfo').mockResolvedValue({ branch: 'main' });
   vi.spyOn(api, 'getScrollbackSize').mockResolvedValue(0);
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 test('mounts the terminal and wires the socket for replayed output', async () => {
   let onData!: (c: string) => void;
@@ -241,4 +241,169 @@ test('no rebuild when the delivered bytes already equal the reported total', asy
   act(() => { term.fireScroll(); });
   await tick();
   expect(created).toHaveLength(1);
+});
+
+// ---- rebuild failure handling: abortable, self-clearing, never stuck ----
+//
+// A rebuild's new socket can die (error or close) before ever delivering its
+// replay frame, or simply never deliver one (hang). All three must: clear the
+// `rebuilding` guard, discard any buffered live frames, close only the NEW
+// socket, and leave the OLD socket + current terminal content untouched — a
+// failed speculative rebuild must never cost the user their existing view, and
+// must never leave "load older" permanently dead for the rest of the session.
+
+test('new socket closing before its replay arrives aborts the rebuild and preserves the current view', async () => {
+  isMobileMock.mockReturnValue(true);
+  (api.getScrollbackSize as Mock).mockResolvedValue(2_000_000);
+  const { factory, created } = makeSocketFactory();
+
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(api.getScrollbackSize).toHaveBeenCalledWith('t1'));
+
+  const term = instances[0];
+  await waitFor(() => {
+    term.buffer.active.viewportY = 0;
+    act(() => { term.fireScroll(); });
+    expect(created).toHaveLength(2);
+  });
+
+  // The new socket's underlying connection closes (cleanly) before it ever
+  // delivers a replay frame.
+  act(() => { created[1].opts.onClose?.(); });
+
+  expect(created[1].close).toHaveBeenCalled();      // the failed socket is discarded
+  expect(created[0].close).not.toHaveBeenCalled();   // the old socket survives untouched
+  expect(term.written).toEqual(['INITIAL_REPLAY']);  // terminal content untouched — no reset, no partial write
+
+  // Anti-stuck-flag: scrolling to the top again must start a fresh rebuild —
+  // the `rebuilding` guard must have been cleared, not left permanently set.
+  term.buffer.active.viewportY = 0;
+  act(() => { term.fireScroll(); });
+  expect(created).toHaveLength(3);
+});
+
+test('new socket erroring before its replay arrives aborts the rebuild and preserves the current view', async () => {
+  // The socket abstraction (openTerminalSocket) has no separate "error" event —
+  // a WebSocket error always surfaces through its close event (per the WHATWG
+  // spec, a fatal error triggers the close algorithm), which is exactly what
+  // `onClose` here represents. So a connection-refused / TLS failure / abrupt
+  // network error on the new socket is exercised the same way as a graceful
+  // close: both must abort the rebuild identically.
+  isMobileMock.mockReturnValue(true);
+  (api.getScrollbackSize as Mock).mockResolvedValue(2_000_000);
+  const { factory, created } = makeSocketFactory();
+
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(api.getScrollbackSize).toHaveBeenCalledWith('t1'));
+
+  const term = instances[0];
+  await waitFor(() => {
+    term.buffer.active.viewportY = 0;
+    act(() => { term.fireScroll(); });
+    expect(created).toHaveLength(2);
+  });
+
+  // Simulate an immediate connection error on the new socket (e.g. cellular
+  // handoff killed it before the TCP/TLS handshake even completed) — surfaced
+  // as onClose, per the note above.
+  act(() => { created[1].opts.onClose?.(); });
+
+  expect(created[1].close).toHaveBeenCalled();
+  expect(created[0].close).not.toHaveBeenCalled();
+  expect(term.written).toEqual(['INITIAL_REPLAY']);
+
+  // Anti-stuck-flag.
+  term.buffer.active.viewportY = 0;
+  act(() => { term.fireScroll(); });
+  expect(created).toHaveLength(3);
+});
+
+test('a rebuild that never delivers a replay times out (10s), aborts, and a later scroll starts a fresh rebuild', async () => {
+  isMobileMock.mockReturnValue(true);
+  (api.getScrollbackSize as Mock).mockResolvedValue(2_000_000);
+  const { factory, created } = makeSocketFactory();
+
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(api.getScrollbackSize).toHaveBeenCalledWith('t1'));
+  await tick(); // let the getScrollbackSize().then callback flip hasOlder=true (still real timers)
+
+  const term = instances[0];
+  term.buffer.active.viewportY = 0;
+
+  // Only fake setTimeout/clearTimeout — leave Date, microtasks, and RAF alone so
+  // the rest of the harness (xterm's queueMicrotask-based write, testing-library)
+  // keeps working normally. Switched to fake BEFORE starting the rebuild so its
+  // internal setTimeout(abort, 10_000) is the one we control below.
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    act(() => { term.fireScroll(); }); // starts the rebuild synchronously
+    expect(created).toHaveLength(2);
+
+    // The new socket connects (already happened above) but never sends anything.
+    act(() => { vi.advanceTimersByTime(10_000); });
+
+    expect(created[1].close).toHaveBeenCalled();
+    expect(created[0].close).not.toHaveBeenCalled();
+    expect(term.written).toEqual(['INITIAL_REPLAY']);
+
+    // Anti-stuck-flag: the guard was cleared by the timeout, not left stuck.
+    term.buffer.active.viewportY = 0;
+    act(() => { term.fireScroll(); });
+    expect(created).toHaveLength(3);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test('onReset firing on the primary socket mid-rebuild aborts the rebuild (discarding buffered frames) before the normal reset proceeds', async () => {
+  isMobileMock.mockReturnValue(true);
+  (api.getScrollbackSize as Mock).mockResolvedValue(2_000_000);
+  const { factory, created } = makeSocketFactory();
+
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(api.getScrollbackSize).toHaveBeenCalledWith('t1'));
+
+  const term = instances[0];
+  await waitFor(() => {
+    term.buffer.active.viewportY = 0;
+    act(() => { term.fireScroll(); });
+    expect(created).toHaveLength(2);
+  });
+
+  // Some live output arrives on the (still-primary) old socket while the
+  // rebuild's new socket hasn't delivered its replay yet — this gets buffered
+  // for eventual replay-then-catch-up ordering.
+  act(() => { created[0].opts.onData('LIVE_BUFFERED'); });
+
+  // Now the PRIMARY connection itself drops and auto-reconnects (the socket
+  // module's own onReset, unrelated to the rebuild) WHILE the rebuild is still
+  // in flight. This must abort the rebuild (discarding the buffered frame —
+  // writing it after a reset would duplicate/interleave content) before doing
+  // the ordinary reset-on-reconnect.
+  act(() => { created[0].opts.onReset?.(); });
+
+  expect(created[1].close).toHaveBeenCalled();      // the in-flight rebuild's new socket is discarded
+
+  // Now that the primary has "reconnected" and reset, its next replay must land
+  // clean — NOT preceded or followed by the discarded 'LIVE_BUFFERED' frame,
+  // which would prove buffered content leaked across the reset.
+  act(() => { created[0].opts.onData('FRESH_REPLAY'); });
+  expect(term.written).toEqual(['INITIAL_REPLAY', 'FRESH_REPLAY']); // no 'LIVE_BUFFERED' anywhere
+
+  // Anti-stuck-flag: a later scroll-to-top still starts a fresh rebuild.
+  term.buffer.active.viewportY = 0;
+  act(() => { term.fireScroll(); });
+  expect(created).toHaveLength(3);
 });
