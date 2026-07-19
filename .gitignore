@@ -17,3 +17,6 @@ coverage/
 
 # Generated codex app-server bindings (regenerated at build time; not committed)
 packages/core/.codex-appserver/
+
+# Agent scratch: SDD ledgers and per-task reports (never ship to main)
+.superpowers/
