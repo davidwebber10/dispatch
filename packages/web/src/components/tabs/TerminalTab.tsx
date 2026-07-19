@@ -263,7 +263,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
         terminalId,
         replayBytes: nextSize,
         onData: (chunk) => {
-          if (disposed || settled) return;
+          if (disposed) return;
           if (!gotReplay) {
             gotReplay = true;
             clearRebuildTimer();
@@ -313,7 +313,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     // Hide the loading indicator once content arrives (or after a short grace
     // period so a genuinely-quiet terminal doesn't spin forever).
     const loadTimer = setTimeout(() => setLoading(false), 6000);
-    term.onData((d) => sock.send(d));
+    term.onData((d) => sockRef.current?.send(d));
 
     let lastW = -1, lastH = -1, lastCols = -1, lastRows = -1, pending = false;
     const scheduleFit = () => {
@@ -518,6 +518,9 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       offRender.dispose();
       ro?.disconnect();
       window.removeEventListener('resize', scheduleFit);
+      // If a rebuild is mid-flight at unmount time, abort it first so its 10s
+      // stall timer is cleared here rather than firing up to 10s after unmount.
+      activeRebuildAbort?.();
       // Close whatever socket(s) are currently open — if a rebuild is mid-flight
       // at unmount time, both the old and the new socket are in this set.
       openSockets.forEach((s) => s.close());

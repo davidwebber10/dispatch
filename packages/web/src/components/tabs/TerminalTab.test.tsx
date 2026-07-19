@@ -19,13 +19,16 @@ vi.mock('@xterm/xterm', () => {
     options: Record<string, unknown> = {};
     buffer = { active: { length: 0, viewportY: 0, baseY: 0 } };
     written: string[] = [];
+    dataHandler: ((d: string) => void) | null = null;
     private scrollHandlers: Array<() => void> = [];
     constructor() { instances.push(this); }
     loadAddon() {}
     open() {}
     focus() {}
     dispose() {}
-    onData() { return { dispose() {} }; }
+    // Captures the component's term.onData((d) => sock.send(d)) registration so
+    // tests can simulate a keystroke and see which socket it was routed to.
+    onData(cb: (d: string) => void) { this.dataHandler = cb; return { dispose: () => {} }; }
     onScroll(cb: () => void) { this.scrollHandlers.push(cb); return { dispose: () => {} }; }
     onRender() { return { dispose() {} }; }
     scrollLines() {}
@@ -406,4 +409,112 @@ test('onReset firing on the primary socket mid-rebuild aborts the rebuild (disca
   term.buffer.active.viewportY = 0;
   act(() => { term.fireScroll(); });
   expect(created).toHaveLength(3);
+});
+
+// ---- post-settle regressions: the promoted socket must stay ALIVE ----
+//
+// Every test above stops asserting at the moment the rebuild settles (old
+// socket closed). These three cover what happens AFTER that point, which is
+// exactly the gap that let two live defects ship: the promoted socket's
+// onData handler still guarded on `settled` (dropping all future live
+// frames forever), and the terminal's own onData kept sending typed input
+// to the original (now-closed) socket instead of sockRef.current.
+
+test('a live frame delivered to the promoted socket AFTER a rebuild settles is written to the terminal, not dropped', async () => {
+  isMobileMock.mockReturnValue(true);
+  (api.getScrollbackSize as Mock).mockResolvedValue(2_000_000);
+  const { factory, created } = makeSocketFactory();
+
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(api.getScrollbackSize).toHaveBeenCalledWith('t1'));
+
+  const term = instances[0];
+  await waitFor(() => {
+    term.buffer.active.viewportY = 0;
+    act(() => { term.fireScroll(); });
+    expect(created).toHaveLength(2);
+  });
+
+  // Deliver the new socket's replay frame and let the rebuild fully settle:
+  // the old socket gets closed once finishRebuild() has run and promoted the
+  // new socket to primary (sockRef.current = newSock).
+  act(() => { created[1].opts.onData('REPLAY2'); });
+  await waitFor(() => expect(created[0].close).toHaveBeenCalled());
+
+  // The rebuild is now fully settled. A further live frame arrives on that
+  // SAME (now-primary) socket — this must be written to the terminal like
+  // any other live output, not silently swallowed because a one-shot
+  // "settled" flag from the finished rebuild attempt is still gating it.
+  act(() => { created[1].opts.onData('LIVE_AFTER_SETTLE'); });
+  await tick();
+
+  expect(term.written).toContain('LIVE_AFTER_SETTLE');
+});
+
+test('after a rebuild settles, typed input goes through the CURRENT primary socket, not the closed original', async () => {
+  isMobileMock.mockReturnValue(true);
+  (api.getScrollbackSize as Mock).mockResolvedValue(2_000_000);
+  const { factory, created } = makeSocketFactory();
+
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(api.getScrollbackSize).toHaveBeenCalledWith('t1'));
+
+  const term = instances[0];
+  await waitFor(() => {
+    term.buffer.active.viewportY = 0;
+    act(() => { term.fireScroll(); });
+    expect(created).toHaveLength(2);
+  });
+
+  act(() => { created[1].opts.onData('REPLAY2'); });
+  await waitFor(() => expect(created[0].close).toHaveBeenCalled());
+
+  // Rebuild settled: created[1] is now primary, created[0] is closed.
+  // Simulate a keystroke typed directly into the terminal.
+  act(() => { term.dataHandler?.('x'); });
+
+  expect(created[1].send).toHaveBeenCalledWith('x');
+  expect(created[0].send).not.toHaveBeenCalledWith('x');
+});
+
+test('unmounting mid-rebuild clears the pending stall timer — no abort fires after unmount', async () => {
+  isMobileMock.mockReturnValue(true);
+  (api.getScrollbackSize as Mock).mockResolvedValue(2_000_000);
+  const { factory, created } = makeSocketFactory();
+
+  const { unmount } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(api.getScrollbackSize).toHaveBeenCalledWith('t1'));
+  await tick(); // let getScrollbackSize().then flip hasOlder=true (still real timers)
+
+  const term = instances[0];
+  term.buffer.active.viewportY = 0;
+
+  // Fake only setTimeout/clearTimeout, as the existing timeout test does, so
+  // the rest of the harness (queueMicrotask-based fake write, RTL) is unaffected.
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    act(() => { term.fireScroll(); }); // starts the rebuild; schedules the 10s stall timer
+    expect(created).toHaveLength(2);
+
+    act(() => { unmount(); }); // unmount mid-rebuild, before the replay ever lands
+    const closeCallsAtUnmount = created[1].close.mock.calls.length;
+    expect(closeCallsAtUnmount).toBeGreaterThanOrEqual(1); // cleanup closes the in-flight new socket
+
+    // Advancing past the 10s stall timeout after unmount must be a no-op: no
+    // throw, and no SECOND close from a stray abort() firing off a timer that
+    // outlived the effect (which would also call a dead setLoadingOlder setter).
+    expect(() => { act(() => { vi.advanceTimersByTime(10_000); }); }).not.toThrow();
+    expect(created[1].close.mock.calls.length).toBe(closeCallsAtUnmount);
+  } finally {
+    vi.useRealTimers();
+  }
 });
