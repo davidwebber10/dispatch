@@ -14,7 +14,7 @@ import { PTYManager } from '../pty/manager.js';
 import type { Session, CreateSessionInput } from '../types.js';
 import { rowToSession } from '../types.js';
 import type { TerminalType } from '../db/terminals.js';
-import type { StatusHooksInjection, SecretsMcpInjection } from '../providers/types.js';
+import type { StatusHooksInjection } from '../providers/types.js';
 import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
 import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript.js';
 import { platform } from '../platform/index.js';
@@ -1397,6 +1397,7 @@ export class SessionService {
       if (sec?.spec) { specs.push(sec.spec); if (sec.prompt) prompts.push(sec.prompt); }
       const intgSpecs = this.integrationsSpecs?.() ?? [];
       specs.push(...intgSpecs);
+      if (config.role === 'coordinator') specs.push(this.agencyServerSpec(terminalId, terminal.session_id));
       const developerNote = this.toolsAwareness?.() ?? null;
       const secretsMcp = composeInjection(specs, { configPath: this.mcpConfigPath, prompts, developerNote });
       if (config.transport === 'structured' && this.structuredManagerFor(terminal.type)) {
@@ -1462,11 +1463,9 @@ export class SessionService {
     if (sec?.spec) { specs.push(sec.spec); if (sec.prompt) prompts.push(sec.prompt); }
     const intgSpecs = this.integrationsSpecs?.() ?? [];
     specs.push(...intgSpecs);
+    if (config.role === 'coordinator') specs.push(this.agencyServerSpec(terminal.id, terminal.session_id));
     const developerNote = this.toolsAwareness?.() ?? null;
-    const secretsMcp = composeInjection(specs, { configPath: this.mcpConfigPath, prompts, developerNote });
-    const structuredMcp = config.role === 'coordinator'
-      ? this.withAgencyMcp(secretsMcp, terminal.id, terminal.session_id)
-      : secretsMcp;
+    const structuredMcp = composeInjection(specs, { configPath: this.mcpConfigPath, prompts, developerNote });
 
     const resumeSessionId = terminal.external_id || undefined;
 
@@ -1628,39 +1627,28 @@ export class SessionService {
   }
 
   /**
-   * Fold the Dispatch "agency" MCP server into a coordinator's --mcp-config so it
-   * can autonomously spawn + steer typed agents. Reads any existing combined config
-   * (Doppler / integrations), adds a `dispatch` server pointing at the compiled
-   * agency-mcp.js, and writes a coordinator-specific config file (never clobbering
-   * the shared mcp.json). DISPATCH_SESSION = this project's session, so the agent
-   * threads the coordinator spawns land in the same project. Best-effort: on any IO
-   * error, falls back to the un-augmented config so the coordinator still launches.
+   * The Dispatch "agency" MCP server spec for a coordinator thread: points at the
+   * compiled agency-mcp.js and carries the caller's identity — DISPATCH_SESSION (this
+   * project, so threads the coordinator spawns land in the same project) and
+   * DISPATCH_TERMINAL (which thread is calling — nothing consumes this yet, later
+   * peer-thread tools do). Pushed into the `specs` array handed to composeInjection
+   * ALONGSIDE the Doppler/integrations specs — no more bespoke config-file
+   * post-processing — so composeInjection's single spec list produces both the Claude
+   * --mcp-config JSON and codex's `-c mcp_servers.*` args, and codex coordinators get
+   * the server too, not just claude-code ones.
    */
-  private withAgencyMcp(secretsMcp: SecretsMcpInjection, terminalId: string, sessionId: string): SecretsMcpInjection {
-    try {
-      let mcpServers: Record<string, unknown> = {};
-      if (secretsMcp.claudeConfigPath) {
-        try {
-          const existing = JSON.parse(fs.readFileSync(secretsMcp.claudeConfigPath, 'utf8'));
-          if (existing && typeof existing.mcpServers === 'object' && existing.mcpServers) mcpServers = existing.mcpServers;
-        } catch { /* unreadable → start fresh */ }
-      }
-      const agencyPath = fileURLToPath(new URL('../overseer/agency-mcp.js', import.meta.url));
-      mcpServers.dispatch = {
-        command: 'node',
-        args: [agencyPath],
-        env: {
-          DISPATCH_SESSION: sessionId,
-          DISPATCH_PORT: String(process.env.PORT || 3456),
-        },
-      };
-      const coordPath = path.join(path.dirname(this.mcpConfigPath), `coordinator-${terminalId}.mcp.json`);
-      fs.mkdirSync(path.dirname(coordPath), { recursive: true });
-      fs.writeFileSync(coordPath, JSON.stringify({ mcpServers }, null, 2));
-      return { ...secretsMcp, claudeConfigPath: coordPath };
-    } catch {
-      return secretsMcp;
-    }
+  private agencyServerSpec(terminalId: string, sessionId: string): McpServerSpec {
+    const agencyPath = fileURLToPath(new URL('../overseer/agency-mcp.js', import.meta.url));
+    return {
+      name: 'dispatch',
+      command: 'node',
+      args: [agencyPath],
+      env: {
+        DISPATCH_SESSION: sessionId,
+        DISPATCH_PORT: String(process.env.PORT || 3456),
+        DISPATCH_TERMINAL: terminalId,
+      },
+    };
   }
 
   private async captureExternalSessionId(terminalId: string, type: string, workDir: string): Promise<void> {

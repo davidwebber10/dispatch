@@ -507,9 +507,10 @@ it('accepts a content-block ARRAY (image) payload → 204 and forwards it verbat
   await request(app).post(`/api/terminals/${id}/stop`);
 });
 
-it('a coordinator spawn folds the dispatch agency server into its --mcp-config', async () => {
+it('a coordinator spawn folds the dispatch agency server into its --mcp-config, carrying caller identity', async () => {
   // secretsDir controls where the SessionService writes mcp configs, so we can read
-  // the per-coordinator config file the structured spawn writes before launch.
+  // the shared mcp.json the structured spawn writes before launch — the agency spec now
+  // rides the standard composeInjection path (no more bespoke coordinator-<id>.mcp.json).
   const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coord-cfg-'));
   const coordApp = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fake] } });
   const s = await request(coordApp).post('/api/sessions').send({ provider: 'claude-code', workingDir: dir, name: 'c' });
@@ -520,24 +521,29 @@ it('a coordinator spawn folds the dispatch agency server into its --mcp-config',
     .send({ type: 'claude-code', config: { transport: 'structured', role: 'coordinator' } });
   expect(t.status).toBe(201);
 
-  const cfgPath = path.join(cfgDir, `coordinator-${t.body.id}.mcp.json`);
+  const cfgPath = path.join(cfgDir, 'mcp.json');
   const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
   expect(cfg.mcpServers.dispatch.command).toBe('node');
   expect(cfg.mcpServers.dispatch.args[0]).toMatch(/agency-mcp\.js$/);
   expect(cfg.mcpServers.dispatch.env.DISPATCH_SESSION).toBe(coordSession);
   expect(cfg.mcpServers.dispatch.env.DISPATCH_PORT).toBe(String(process.env.PORT || 3456));
+  expect(cfg.mcpServers.dispatch.env.DISPATCH_TERMINAL).toBe(t.body.id);
 
   await request(coordApp).post(`/api/terminals/${t.body.id}/stop`); // clean up the fake child
   fs.rmSync(cfgDir, { recursive: true, force: true });
 });
 
-it('a non-coordinator structured spawn writes no coordinator config', async () => {
+it('a non-coordinator structured spawn writes no dispatch server', async () => {
   const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'noncoord-cfg-'));
   const a = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fake] } });
   const s = await request(a).post('/api/sessions').send({ provider: 'claude-code', workingDir: dir, name: 'n' });
   const t = await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'researcher', role: 'agent' } });
   expect(t.status).toBe(201);
-  expect(fs.existsSync(path.join(cfgDir, `coordinator-${t.body.id}.mcp.json`))).toBe(false);
+  const cfgPath = path.join(cfgDir, 'mcp.json');
+  if (fs.existsSync(cfgPath)) {
+    const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+    expect(cfg.mcpServers?.dispatch).toBeUndefined();
+  }
   await request(a).post(`/api/terminals/${t.body.id}/stop`);
   fs.rmSync(cfgDir, { recursive: true, force: true });
 });
@@ -607,7 +613,7 @@ it('resuming a coordinator thread re-folds the dispatch agency MCP wiring', asyn
   const id = t.body.id;
   await pollExternalId(db, id, 'sess-fake');
 
-  const cfgPath = path.join(cfgDir, `coordinator-${id}.mcp.json`);
+  const cfgPath = path.join(cfgDir, 'mcp.json');
   expect(fs.existsSync(cfgPath)).toBe(true);
 
   // Restart + delete the generated config to prove resume regenerates it.

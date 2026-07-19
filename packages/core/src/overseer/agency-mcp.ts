@@ -37,6 +37,12 @@ function apiBase(): string {
 function sessionId(): string {
   return process.env.DISPATCH_SESSION || '';
 }
+/** The calling thread's own terminal id — how a tool knows "who am I" (e.g. to
+ *  exclude itself from a roster, or to watch/target itself as `self`). Nothing
+ *  consumes this yet; later peer-thread tools do. */
+function selfTerminalId(): string {
+  return process.env.DISPATCH_TERMINAL || '';
+}
 
 /** The tools the coordinator can call. */
 export const TOOLS = [
