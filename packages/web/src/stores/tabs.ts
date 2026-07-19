@@ -7,6 +7,11 @@ import { clearDraft } from '../lib/fileDrafts';
 
 const STORAGE_KEY = 'dispatch:tabs';
 
+export const AUTO_NAME_TTL_MS = 3000;
+
+/** A live default -> auto label transition, awaiting a mounted label to animate it. */
+export interface AutoNameEntry { from: string; to: string; at: number }
+
 interface TabsState {
   byProject: Record<string, Terminal[]>;
   openTabIds: string[];          // tabs open in the top tab bar, in order
@@ -15,9 +20,11 @@ interface TabsState {
   loading: Record<string, boolean>;   // terminals that just started / reloaded (transient spinner)
   /** Tabs with unsaved edits — closing one prompts first. */
   dirtyTabs: Record<string, boolean>;
+  autoNamed: Record<string, AutoNameEntry>;
   setTabDirty: (id: string, dirty: boolean) => void;
   markLoading: (id: string) => void;
   loadTabs: (projectId: string) => Promise<void>;
+  consumeAutoName: (id: string) => { from: string; to: string } | null;
   reorder: (projectId: string, orderedIds: string[]) => Promise<void>;
   setPinned: (id: string, pinned: boolean) => Promise<void>;  // pin/unpin a thread (persisted in config.pinned)
   setAlertsEnabled: (id: string, enabled: boolean) => Promise<void>; // per-thread push alerts (config.alertsEnabled)
@@ -61,6 +68,28 @@ export function tabProjectId(id: string, byProject: Record<string, Terminal[]>):
   return findTerminal(byProject, id)?.sessionId;
 }
 
+function pruneAutoNamed(entries: Record<string, AutoNameEntry>, now: number): Record<string, AutoNameEntry> {
+  const kept: Record<string, AutoNameEntry> = {};
+  for (const [id, e] of Object.entries(entries)) if (now - e.at <= AUTO_NAME_TTL_MS) kept[id] = e;
+  return kept;
+}
+
+/** A rename is animatable only when the daemon just switched this label from its default to a generated one. */
+function detectAutoNames(prev: Terminal[] | undefined, next: Terminal[], now: number): Record<string, AutoNameEntry> {
+  if (!prev) return {}; // first load for this project — nothing to diff, so a reload can never animate
+  const byId = new Map(prev.map((t) => [t.id, t]));
+  const found: Record<string, AutoNameEntry> = {};
+  for (const n of next) {
+    const p = byId.get(n.id);
+    if (!p) continue;
+    if ((p.labelSource ?? 'user') !== 'default') continue;
+    if (n.labelSource !== 'auto') continue;
+    if (p.label === n.label) continue;
+    found[n.id] = { from: p.label, to: n.label, at: now };
+  }
+  return found;
+}
+
 function persist(s: Pick<TabsState, 'openTabIds' | 'activeTabId' | 'tabSession'>) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ openTabIds: s.openTabIds, activeTabId: s.activeTabId, tabSession: s.tabSession }));
@@ -83,6 +112,7 @@ export const useTabs = create<TabsState>((set, get) => ({
   activeTabId: null,
   tabSession: {},
   dirtyTabs: {},
+  autoNamed: {},
   setTabDirty: (id, dirty) => {
     const next = { ...get().dirtyTabs };
     if (dirty) next[id] = true; else delete next[id];
@@ -90,10 +120,22 @@ export const useTabs = create<TabsState>((set, get) => ({
   },
   loadTabs: async (projectId) => {
     const tabs = await api.listTerminals(projectId);
+    const now = Date.now();
+    const prev = get().byProject[projectId];
     const tabSession = { ...get().tabSession };
     for (const t of tabs) tabSession[t.id] = t.sessionId;
-    set({ byProject: { ...get().byProject, [projectId]: tabs }, tabSession });
-    persist(get());
+    const autoNamed = { ...pruneAutoNamed(get().autoNamed, now), ...detectAutoNames(prev, tabs, now) };
+    set({ byProject: { ...get().byProject, [projectId]: tabs }, tabSession, autoNamed });
+    persist(get()); // note: persist() intentionally omits byProject and autoNamed
+  },
+  consumeAutoName: (id) => {
+    const entry = get().autoNamed[id];
+    if (!entry) return null;
+    const rest = { ...get().autoNamed };
+    delete rest[id];
+    set({ autoNamed: rest });
+    if (Date.now() - entry.at > AUTO_NAME_TTL_MS) return null;
+    return { from: entry.from, to: entry.to };
   },
   reorder: async (projectId, orderedIds) => {
     const current = get().byProject[projectId] ?? [];

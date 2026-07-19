@@ -22,6 +22,8 @@ export interface Terminal {
   sessionId: string;
   type: TerminalType;
   label: string;
+  /** Set by the daemon since v2.2.0. Absent on older daemons — treat as 'user'. */
+  labelSource?: 'user' | 'default' | 'auto';
   pid: number | null;
   externalId: string | null;
   workingDir: string | null;
