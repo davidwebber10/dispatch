@@ -90,6 +90,11 @@ function detectAutoNames(prev: Terminal[] | undefined, next: Terminal[], now: nu
   return found;
 }
 
+// module scope, transient (deliberately not store state — it must not persist or trigger renders):
+// tracks the most recent loadTabs() request per project so a superseded response can be
+// discarded instead of applied.
+const loadEpoch: Record<string, number> = {};
+
 function persist(s: Pick<TabsState, 'openTabIds' | 'activeTabId' | 'tabSession'>) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ openTabIds: s.openTabIds, activeTabId: s.activeTabId, tabSession: s.tabSession }));
@@ -119,7 +124,13 @@ export const useTabs = create<TabsState>((set, get) => ({
     set({ dirtyTabs: next });
   },
   loadTabs: async (projectId) => {
+    const epoch = (loadEpoch[projectId] = (loadEpoch[projectId] ?? 0) + 1);
     const tabs = await api.listTerminals(projectId);
+    // If a newer loadTabs('projectId') call started after this one, its response — not this
+    // one's — reflects reality. Applying a superseded response here would regress byProject to
+    // a stale label, which a later ordinary refresh would then misread as a fresh default->auto
+    // transition and replay an animation for a rename that already happened.
+    if (loadEpoch[projectId] !== epoch) return;
     const now = Date.now();
     const prev = get().byProject[projectId];
     const tabSession = { ...get().tabSession };

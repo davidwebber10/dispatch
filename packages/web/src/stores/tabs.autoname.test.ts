@@ -84,3 +84,36 @@ test('loadTabs prunes stale entries left behind by collapsed cards', async () =>
   expect(useTabs.getState().autoNamed['old']).toBeUndefined();
   expect(useTabs.getState().autoNamed['t1']).toBeDefined();
 });
+
+test('a stale response landing after a fresher one cannot resurrect a consumed rename for replay', async () => {
+  useTabs.setState({ byProject: { s1: [term({})] } } as any);
+
+  // Two overlapping loadTabs('s1') calls, resolving out of order: the older request (still
+  // showing the default label) is held open and lands LAST; the newer request (already
+  // showing the daemon's auto label) resolves FIRST.
+  let resolveStale!: (tabs: unknown) => void;
+  const stale = new Promise((resolve) => { resolveStale = resolve; });
+  const spy = vi.spyOn(api, 'listTerminals');
+  spy.mockImplementationOnce(() => stale as any);
+  spy.mockImplementationOnce(() => Promise.resolve([term({ label: 'Fix login bug', labelSource: 'auto' })]));
+
+  const staleCall = useTabs.getState().loadTabs('s1');  // older request, still in flight
+  const freshCall = useTabs.getState().loadTabs('s1');  // newer, overlapping request
+
+  await freshCall;
+  expect(useTabs.getState().autoNamed['t1']).toEqual({ from: 'Claude Code', to: 'Fix login bug', at: NOW });
+  // The label animates — consume the entry, same as the mounted label component does.
+  expect(useTabs.getState().consumeAutoName('t1')).toEqual({ from: 'Claude Code', to: 'Fix login bug' });
+  expect(useTabs.getState().autoNamed['t1']).toBeUndefined();
+
+  resolveStale([term({})]); // the stale, pre-rename response finally lands
+  await staleCall;
+
+  // The stale response must not clobber the fresher, already-animated label.
+  expect(useTabs.getState().byProject['s1'][0]).toMatchObject({ label: 'Fix login bug', labelSource: 'auto' });
+
+  // A later ordinary refresh must not re-detect a transition that already animated.
+  spy.mockResolvedValue([term({ label: 'Fix login bug', labelSource: 'auto' })]);
+  await useTabs.getState().loadTabs('s1');
+  expect(useTabs.getState().autoNamed['t1']).toBeUndefined();
+});
