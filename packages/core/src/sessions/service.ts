@@ -66,7 +66,12 @@ export class SessionService {
   constructor(
     private db: Database.Database,
     private ptyManager: PTYManager,
-    /** Path for the combined MCP config written at spawn time. Defaults to ~/.dispatch/mcp.json. */
+    /**
+     * Anchor path for per-spawn MCP configs — only its DIRECTORY is used (see
+     * `perTerminalMcpConfigPath`); the file at this exact path is never written
+     * directly, since every spawn gets its own `thread-<terminalId>.mcp.json`
+     * beside it. Defaults to ~/.dispatch/mcp.json.
+     */
     private readonly mcpConfigPath: string = path.join(os.homedir(), '.dispatch', 'mcp.json'),
   ) {}
 
@@ -1399,7 +1404,7 @@ export class SessionService {
       specs.push(...intgSpecs);
       if (config.role === 'coordinator') specs.push(this.agencyServerSpec(terminalId, terminal.session_id));
       const developerNote = this.toolsAwareness?.() ?? null;
-      const secretsMcp = composeInjection(specs, { configPath: this.mcpConfigPath, prompts, developerNote });
+      const secretsMcp = composeInjection(specs, { configPath: this.perTerminalMcpConfigPath(terminalId), prompts, developerNote });
       if (config.transport === 'structured' && this.structuredManagerFor(terminal.type)) {
         // Spawn (or, when an external_id is already known, RESUME) the structured
         // thread via the right manager for this harness (claude stream-json / codex
@@ -1465,7 +1470,7 @@ export class SessionService {
     specs.push(...intgSpecs);
     if (config.role === 'coordinator') specs.push(this.agencyServerSpec(terminal.id, terminal.session_id));
     const developerNote = this.toolsAwareness?.() ?? null;
-    const structuredMcp = composeInjection(specs, { configPath: this.mcpConfigPath, prompts, developerNote });
+    const structuredMcp = composeInjection(specs, { configPath: this.perTerminalMcpConfigPath(terminal.id), prompts, developerNote });
 
     const resumeSessionId = terminal.external_id || undefined;
 
@@ -1627,6 +1632,25 @@ export class SessionService {
   }
 
   /**
+   * Per-terminal MCP config path: `thread-<terminalId>.mcp.json`, sitting beside the
+   * (otherwise-unused-as-a-file) `this.mcpConfigPath` daemon dir. Every spawn — coordinator
+   * or not — gets its own file. This is NOT the old per-coordinator special case: it's
+   * uniform for all terminal types, because the same clobber risk exists for ANY per-thread
+   * content, not just the agency server.
+   *
+   * Why this exists: `composeInjection` writes synchronously at spawn time, but Claude
+   * only reads the file at ITS OWN process startup, well after `spawn()` returns. If every
+   * terminal shared one daemon-wide path, terminal B's spawn (in a different session,
+   * spawned moments later) would overwrite the exact file terminal A's not-yet-started
+   * child was about to read — handing A's child B's `DISPATCH_SESSION`/`DISPATCH_TERMINAL`
+   * (a project-scope violation) or silently dropping the `dispatch` server. A per-terminal
+   * path makes that race structurally impossible: no two terminals ever write the same file.
+   */
+  private perTerminalMcpConfigPath(terminalId: string): string {
+    return path.join(path.dirname(this.mcpConfigPath), `thread-${terminalId}.mcp.json`);
+  }
+
+  /**
    * The Dispatch "agency" MCP server spec for a coordinator thread: points at the
    * compiled agency-mcp.js and carries the caller's identity — DISPATCH_SESSION (this
    * project, so threads the coordinator spawns land in the same project) and
@@ -1635,7 +1659,8 @@ export class SessionService {
    * ALONGSIDE the Doppler/integrations specs — no more bespoke config-file
    * post-processing — so composeInjection's single spec list produces both the Claude
    * --mcp-config JSON and codex's `-c mcp_servers.*` args, and codex coordinators get
-   * the server too, not just claude-code ones.
+   * the server too, not just claude-code ones. The resulting config is written to a
+   * PER-TERMINAL path (see `perTerminalMcpConfigPath`), never the shared daemon-wide one.
    */
   private agencyServerSpec(terminalId: string, sessionId: string): McpServerSpec {
     const agencyPath = fileURLToPath(new URL('../overseer/agency-mcp.js', import.meta.url));

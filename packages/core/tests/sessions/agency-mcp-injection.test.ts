@@ -72,7 +72,9 @@ describe('agency MCP: caller identity + standard injection path', () => {
     });
 
     expect(manager.calls).toHaveLength(1);
-    const written = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    // Written to this terminal's OWN per-thread config, not the shared configPath.
+    const threadCfgPath = path.join(path.dirname(configPath), `thread-${terminal.id}.mcp.json`);
+    const written = JSON.parse(fs.readFileSync(threadCfgPath, 'utf8'));
     expect(written.mcpServers.dispatch).toBeTruthy();
     expect(written.mcpServers.dispatch.command).toBe('node');
     expect(written.mcpServers.dispatch.env.DISPATCH_TERMINAL).toBe(terminal.id);
@@ -125,7 +127,8 @@ describe('agency MCP: caller identity + standard injection path', () => {
     });
 
     expect(pty.calls.find((c) => c.command === 'claude')).toBeTruthy();
-    const written = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const threadCfgPath = path.join(path.dirname(configPath), `thread-${terminal.id}.mcp.json`);
+    const written = JSON.parse(fs.readFileSync(threadCfgPath, 'utf8'));
     expect(written.mcpServers.dispatch).toBeTruthy();
     expect(written.mcpServers.dispatch.env.DISPATCH_TERMINAL).toBe(terminal.id);
     expect(written.mcpServers.dispatch.env.DISPATCH_SESSION).toBe('s1');
@@ -144,5 +147,54 @@ describe('agency MCP: caller identity + standard injection path', () => {
 
     const stray = fs.readdirSync(tmpDir).filter((f) => f.startsWith('coordinator-'));
     expect(stray).toEqual([]);
+  });
+
+  // Regression for the CRITICAL finding: composeInjection used to be handed the single
+  // daemon-wide `this.mcpConfigPath` for EVERY spawn (coordinator or not), so terminal
+  // B's spawn overwrote the exact same file terminal A's spawn just wrote — and since
+  // the child process only reads that file at its own startup (after spawn() returns),
+  // a slow-to-start child could inherit ANOTHER project's DISPATCH_SESSION/DISPATCH_TERMINAL.
+  // Unlike every other test in this file (fresh SessionService + fresh configPath per
+  // case — which is exactly why this slipped through review), this test shares ONE
+  // SessionService (one shared mcpConfigPath, as production has) across TWO terminals
+  // in TWO DIFFERENT sessions, then asserts the second spawn did not clobber the first.
+  it('two terminals in DIFFERENT sessions sharing ONE SessionService do not clobber each other\'s dispatch identity', () => {
+    const configPath = path.join(tmpDir, 'mcp-shared-daemon-wide.json');
+    const db = new Database(':memory:');
+    initSchema(db);
+    sessionsDb.create(db, { id: 'sessA', provider: 'claude-code', name: 'projA', workingDir: tmpDir });
+    sessionsDb.create(db, { id: 'sessB', provider: 'claude-code', name: 'projB', workingDir: tmpDir });
+    const pty = new CapturingPty();
+    const svc = new SessionService(db, pty, configPath); // ONE service, ONE shared daemon-wide path
+
+    const managerA = new CapturingClaudeManager();
+    svc.setStructuredManager(managerA);
+    const termA = svc.createTerminal('sessA', 'claude-code', 'Overseer A', false, undefined, undefined, {
+      transport: 'structured',
+      role: 'coordinator',
+    });
+
+    // Same service, same shared configPath, a DIFFERENT session — this is the race:
+    // terminal B's spawn must not stomp on the config terminal A's child will read.
+    const termB = svc.createTerminal('sessB', 'claude-code', 'Overseer B', false, undefined, undefined, {
+      transport: 'structured',
+      role: 'coordinator',
+    });
+
+    // Each terminal must land in its OWN generated config file — not the shared
+    // daemon-wide path — so a later spawn can never overwrite an earlier one's identity.
+    const pathA = path.join(path.dirname(configPath), `thread-${termA.id}.mcp.json`);
+    const pathB = path.join(path.dirname(configPath), `thread-${termB.id}.mcp.json`);
+    expect(pathA).not.toBe(pathB);
+
+    expect(fs.existsSync(pathA)).toBe(true);
+    const cfgA = JSON.parse(fs.readFileSync(pathA, 'utf8'));
+    expect(cfgA.mcpServers.dispatch.env.DISPATCH_TERMINAL).toBe(termA.id);
+    expect(cfgA.mcpServers.dispatch.env.DISPATCH_SESSION).toBe('sessA');
+
+    expect(fs.existsSync(pathB)).toBe(true);
+    const cfgB = JSON.parse(fs.readFileSync(pathB, 'utf8'));
+    expect(cfgB.mcpServers.dispatch.env.DISPATCH_TERMINAL).toBe(termB.id);
+    expect(cfgB.mcpServers.dispatch.env.DISPATCH_SESSION).toBe('sessB');
   });
 });

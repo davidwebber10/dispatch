@@ -509,8 +509,10 @@ it('accepts a content-block ARRAY (image) payload → 204 and forwards it verbat
 
 it('a coordinator spawn folds the dispatch agency server into its --mcp-config, carrying caller identity', async () => {
   // secretsDir controls where the SessionService writes mcp configs, so we can read
-  // the shared mcp.json the structured spawn writes before launch — the agency spec now
-  // rides the standard composeInjection path (no more bespoke coordinator-<id>.mcp.json).
+  // the config the structured spawn writes before launch — the agency spec rides the
+  // standard composeInjection path, but to a PER-TERMINAL file (thread-<id>.mcp.json),
+  // not a shared mcp.json — see agency-mcp-injection.test.ts for why (a shared
+  // daemon-wide path races another terminal's spawn and can leak its identity).
   const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coord-cfg-'));
   const coordApp = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fake] } });
   const s = await request(coordApp).post('/api/sessions').send({ provider: 'claude-code', workingDir: dir, name: 'c' });
@@ -521,7 +523,7 @@ it('a coordinator spawn folds the dispatch agency server into its --mcp-config, 
     .send({ type: 'claude-code', config: { transport: 'structured', role: 'coordinator' } });
   expect(t.status).toBe(201);
 
-  const cfgPath = path.join(cfgDir, 'mcp.json');
+  const cfgPath = path.join(cfgDir, `thread-${t.body.id}.mcp.json`);
   const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
   expect(cfg.mcpServers.dispatch.command).toBe('node');
   expect(cfg.mcpServers.dispatch.args[0]).toMatch(/agency-mcp\.js$/);
@@ -539,11 +541,14 @@ it('a non-coordinator structured spawn writes no dispatch server', async () => {
   const s = await request(a).post('/api/sessions').send({ provider: 'claude-code', workingDir: dir, name: 'n' });
   const t = await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'researcher', role: 'agent' } });
   expect(t.status).toBe(201);
-  const cfgPath = path.join(cfgDir, 'mcp.json');
-  if (fs.existsSync(cfgPath)) {
-    const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-    expect(cfg.mcpServers?.dispatch).toBeUndefined();
-  }
+  // Unconditional: read the per-terminal config if the (harness-only, no doppler/
+  // integrations wired here) spawn happened to write one, else treat as {} — either
+  // way, the dispatch server must be absent. Previously this assertion was gated
+  // behind `if (fs.existsSync(...))`, so it could pass vacuously if nothing were ever
+  // written; asserting unconditionally makes it actually prove the gate holds.
+  const cfgPath = path.join(cfgDir, `thread-${t.body.id}.mcp.json`);
+  const cfg = fs.existsSync(cfgPath) ? JSON.parse(fs.readFileSync(cfgPath, 'utf8')) : {};
+  expect(cfg.mcpServers?.dispatch).toBeUndefined();
   await request(a).post(`/api/terminals/${t.body.id}/stop`);
   fs.rmSync(cfgDir, { recursive: true, force: true });
 });
@@ -613,7 +618,7 @@ it('resuming a coordinator thread re-folds the dispatch agency MCP wiring', asyn
   const id = t.body.id;
   await pollExternalId(db, id, 'sess-fake');
 
-  const cfgPath = path.join(cfgDir, 'mcp.json');
+  const cfgPath = path.join(cfgDir, `thread-${id}.mcp.json`);
   expect(fs.existsSync(cfgPath)).toBe(true);
 
   // Restart + delete the generated config to prove resume regenerates it.

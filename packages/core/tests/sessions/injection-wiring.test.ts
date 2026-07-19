@@ -49,16 +49,20 @@ describe('spawn-time MCP injection wiring', () => {
   it('merges Doppler + catalog specs into the Claude argv (--mcp-config)', () => {
     const { svc, pty } = makeService();
     // externalId -> resume path -> skips best-effort async session-id capture
-    svc.createTerminal('s1', 'claude-code', 'CC', true, undefined, 'ext-claude');
+    const terminal = svc.createTerminal('s1', 'claude-code', 'CC', true, undefined, 'ext-claude');
     const call = pty.calls.find(c => c.command === 'claude');
     expect(call).toBeTruthy();
     const args = call!.args;
     const i = args.indexOf('--mcp-config');
     expect(i).toBeGreaterThanOrEqual(0);
-    expect(args[i + 1]).toBe(configPath);
+    // Per-terminal config path (thread-<id>.mcp.json beside the shared configPath),
+    // not the shared daemon-wide path itself — see agency-mcp-injection.test.ts for
+    // the regression this guards (a shared path races per-terminal identity).
+    const threadCfgPath = path.join(path.dirname(configPath), `thread-${terminal.id}.mcp.json`);
+    expect(args[i + 1]).toBe(threadCfgPath);
     expect(args).toContain('--append-system-prompt');
     // Both servers present in the written config file
-    const written = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const written = JSON.parse(fs.readFileSync(threadCfgPath, 'utf8'));
     expect(Object.keys(written.mcpServers).sort()).toEqual(['doppler', 'fs', 'linear']);
   });
 
