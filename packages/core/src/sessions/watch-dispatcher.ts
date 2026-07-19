@@ -4,6 +4,11 @@ import * as terminalsDb from '../db/terminals.js';
 
 export type DeliverFn = (terminalId: string, text: string) => void;
 
+/** The only statuses a watch can react to: the peer finished, asked, or failed.
+ *  'working'/'scheduled'/'done' edges are not wake-worthy — waking on 'working'
+ *  would burn a one-shot watch at turn START, before there's anything to see. */
+export const WATCHABLE_STATUSES = ['idle', 'needs_input', 'error'] as const;
+
 /**
  * Fires `thread_watches` subscriptions off the status machine. Wired into StatusService as
  * an optional injected dependency (see status/service.ts's `onWatchStatus`, which mirrors the
@@ -27,6 +32,11 @@ export class WatchDispatcher {
    * status recording.
    */
   onStatus(targetTerminalId: string, status: string): void {
+    // Only notable statuses can wake a watch; non-notable edges (like 'working')
+    // are never wake-worthy and could never match any criteria anyway.
+    if (!WATCHABLE_STATUSES.includes(status as any)) {
+      return;
+    }
     const target = terminalsDb.getById(this.db, targetTerminalId);
     if (!target) return; // nothing to report on
     const matches = watchesDb.liveForTarget(this.db, targetTerminalId, status);

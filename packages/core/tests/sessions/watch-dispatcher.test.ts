@@ -69,7 +69,7 @@ describe('WatchDispatcher', () => {
     expect(deliver).toHaveBeenCalledTimes(2);
   });
 
-  it("criteria 'any' matches every status", () => {
+  it("criteria 'any' matches only notable statuses (idle, needs_input, error), not turn start", () => {
     const db = createTestDb();
     makeTerminal(db, 'watcher');
     makeTerminal(db, 'target');
@@ -82,6 +82,40 @@ describe('WatchDispatcher', () => {
     dispatcher.onStatus('target', 'needs_input');
 
     expect(deliver).toHaveBeenCalledTimes(3);
+  });
+
+  it("an 'any' watch does NOT fire on 'working' and stays live afterwards", () => {
+    const db = createTestDb();
+    makeTerminal(db, 'watcher');
+    makeTerminal(db, 'target');
+    const watchId = watchesDb.create(db, { watcherTerminalId: 'watcher', targetTerminalId: 'target', criteria: 'any' });
+    const deliver = vi.fn();
+    const dispatcher = new WatchDispatcher(db, deliver);
+
+    // First, call with 'working' — should NOT deliver
+    dispatcher.onStatus('target', 'working');
+    expect(deliver).not.toHaveBeenCalled();
+
+    // Watch should still be live
+    expect(watchesDb.liveForTarget(db, 'target', 'any')).toHaveLength(1);
+    expect(watchRow(db, watchId).fired_at).toBeFalsy();
+
+    // Then call with 'idle' — should deliver now
+    dispatcher.onStatus('target', 'idle');
+    expect(deliver).toHaveBeenCalledTimes(1);
+  });
+
+  it('a working status edge performs no delivery at all', () => {
+    const db = createTestDb();
+    makeTerminal(db, 'watcher');
+    makeTerminal(db, 'target');
+    watchesDb.create(db, { watcherTerminalId: 'watcher', targetTerminalId: 'target', criteria: 'any', once: false });
+    const deliver = vi.fn();
+    const dispatcher = new WatchDispatcher(db, deliver);
+
+    dispatcher.onStatus('target', 'working');
+
+    expect(deliver).not.toHaveBeenCalled();
   });
 
   it('a non-matching status delivers nothing', () => {
