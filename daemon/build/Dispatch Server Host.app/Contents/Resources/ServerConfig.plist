@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>nodePath</key>
+	<string>/Users/davidwebber/.nvm/versions/node/v23.11.0/bin/node</string>
+	<key>nodeSHA256</key>
+	<string>ead5889f15f4e17b37f941c7d9e92b624396786bd74d8155ef470f6381f032c5</string>
+	<key>serverDirectory</key>
+	<string>/Users/davidwebber/Sites/dispatch/packages/core/dist</string>
+	<key>serverDirectorySHA256</key>
+	<string>c6308fe7a4738c9f72aa87bee786c3545fb1dec491db18d73ff62c116169e642</string>
+	<key>serverPath</key>
+	<string>/Users/davidwebber/Sites/dispatch/packages/core/dist/server.js</string>
+	<key>serverSHA256</key>
+	<string>0d62b2a50e0c05dc5a7520cac7e0b9e29fd3650905c71f743547b6e0e9168f2b</string>
+	<key>workingDirectory</key>
+	<string>/Users/davidwebber/Sites/dispatch</string>
+</dict>
+</plist>
