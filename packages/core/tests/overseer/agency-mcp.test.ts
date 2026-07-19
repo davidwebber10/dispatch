@@ -9,15 +9,18 @@ describe('agency-mcp', () => {
   const origFetch = global.fetch;
   const origApi = process.env.DISPATCH_API;
   const origSession = process.env.DISPATCH_SESSION;
+  const origTerminal = process.env.DISPATCH_TERMINAL;
 
   beforeEach(() => {
     process.env.DISPATCH_API = 'http://localhost:9999';
     process.env.DISPATCH_SESSION = 'sess-1';
+    delete process.env.DISPATCH_TERMINAL;
   });
   afterEach(() => {
     global.fetch = origFetch;
     if (origApi === undefined) delete process.env.DISPATCH_API; else process.env.DISPATCH_API = origApi;
     if (origSession === undefined) delete process.env.DISPATCH_SESSION; else process.env.DISPATCH_SESSION = origSession;
+    if (origTerminal === undefined) delete process.env.DISPATCH_TERMINAL; else process.env.DISPATCH_TERMINAL = origTerminal;
     vi.restoreAllMocks();
   });
 
@@ -25,8 +28,12 @@ describe('agency-mcp', () => {
     const res = await handleRequest({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
     expect(res).not.toBeNull();
     const names = (res!.result as any).tools.map((t: any) => t.name).sort();
-    expect(names).toEqual(['answer_agent', 'complete_agent', 'list_agents', 'list_missions', 'message_agent', 'post_image', 'queue_agent', 'read_agent', 'spawn_agent', 'start_agent']);
-    expect(TOOLS).toHaveLength(10);
+    expect(names).toEqual([
+      'answer_agent', 'complete_agent', 'list_agents', 'list_missions', 'list_threads', 'list_watches',
+      'message_agent', 'message_thread', 'post_image', 'queue_agent', 'read_agent', 'read_thread',
+      'spawn_agent', 'start_agent', 'unwatch_thread', 'watch_thread',
+    ]);
+    expect(TOOLS).toHaveLength(16);
   });
 
   it('initialize returns protocolVersion + tools capability', async () => {
@@ -347,6 +354,219 @@ describe('agency-mcp', () => {
     const r = res!.result as any;
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain('Unknown tool');
+  });
+
+  // --- peer/thread tools: widen scope to every thread in the project, plus watch subs ---
+
+  describe('list_threads', () => {
+    it('includes plain (role-less) threads alongside typed agents and marks isSelf', async () => {
+      process.env.DISPATCH_TERMINAL = 'self-1';
+      const fetchMock = vi.fn().mockResolvedValueOnce({
+        ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify([
+          { id: 'self-1', label: 'My Thread', type: 'claude-code', status: 'working', lastActivityAt: 't1', config: {} },
+          { id: 'a1', label: 'researcher agent', type: 'claude-code', status: 'idle', lastActivityAt: 't2', config: { role: 'agent', agentType: 'researcher' } },
+          { id: 'c1', label: 'Overseer', type: 'claude-code', status: 'idle', lastActivityAt: 't3', config: { role: 'coordinator' } },
+        ]),
+      });
+      global.fetch = fetchMock as any;
+
+      const out = await callTool('list_threads', {});
+      expect(out.isError).toBeUndefined();
+      expect(JSON.parse(out.content[0].text)).toEqual([
+        { id: 'self-1', label: 'My Thread', type: 'claude-code', role: null, agentType: null, status: 'working', lastActivityAt: 't1', isSelf: true },
+        { id: 'a1', label: 'researcher agent', type: 'claude-code', role: 'agent', agentType: 'researcher', status: 'idle', lastActivityAt: 't2', isSelf: false },
+        { id: 'c1', label: 'Overseer', type: 'claude-code', role: 'coordinator', agentType: null, status: 'idle', lastActivityAt: 't3', isSelf: false },
+      ]);
+      expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/sessions/sess-1/terminals');
+    });
+
+    it('marks isSelf false for every row when DISPATCH_TERMINAL is unset (no crash)', async () => {
+      const fetchMock = vi.fn().mockResolvedValueOnce({
+        ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify([
+          { id: 'p1', label: 'Plain', type: 'claude-code', status: 'idle', lastActivityAt: 't1', config: {} },
+        ]),
+      });
+      global.fetch = fetchMock as any;
+      const out = await callTool('list_threads', {});
+      expect(JSON.parse(out.content[0].text)[0].isSelf).toBe(false);
+    });
+  });
+
+  describe('read_thread', () => {
+    it('returns the transcript tail for any thread after a project check', async () => {
+      const fetchMock = vi.fn()
+        // 1) assertInProject -> GET /api/terminals/:id
+        .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ id: 'p1', sessionId: 'sess-1', status: 'idle' }) })
+        // 2) GET conversation
+        .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ items: [
+          { kind: 'assistant', text: 'Did the thing' },
+          { kind: 'tool', toolName: 'Edit' },
+        ] }) });
+      global.fetch = fetchMock as any;
+
+      const out = await callTool('read_thread', { id: 'p1' });
+      expect(out.isError).toBeUndefined();
+      expect(JSON.parse(out.content[0].text)).toEqual({ id: 'p1', status: 'idle', output: 'Did the thing', tools: ['Edit'] });
+      expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/terminals/p1');
+      expect(fetchMock.mock.calls[1][0]).toBe('http://localhost:9999/api/terminals/p1/conversation?limit=500');
+    });
+
+    it('honors an explicit tail as the conversation limit', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ id: 'p1', sessionId: 'sess-1', status: 'idle' }) })
+        .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ items: [] }) });
+      global.fetch = fetchMock as any;
+      await callTool('read_thread', { id: 'p1', tail: 20 });
+      expect(fetchMock.mock.calls[1][0]).toBe('http://localhost:9999/api/terminals/p1/conversation?limit=20');
+    });
+
+    it('rejects a foreign-project id with the project error and leaks no data', async () => {
+      const fetchMock = vi.fn().mockResolvedValueOnce({
+        ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ id: 'foreign-1', sessionId: 'other-sess', status: 'idle', label: 'Secret Thread' }),
+      });
+      global.fetch = fetchMock as any;
+      const out = await callTool('read_thread', { id: 'foreign-1' });
+      expect(out.isError).toBe(true);
+      expect(out.content[0].text).toBe('Error: foreign-1 is not a thread in this project');
+      expect(out.content[0].text).not.toContain('Secret Thread');
+      expect(out.content[0].text).not.toContain('other-sess');
+      // Only the project check ran — no conversation fetch for a foreign thread.
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects an unknown id (404) the same way as a foreign id', async () => {
+      const fetchMock = vi.fn().mockResolvedValueOnce({ ok: false, status: 404, statusText: 'Not Found', text: async () => JSON.stringify({ error: 'Terminal not found' }) });
+      global.fetch = fetchMock as any;
+      const out = await callTool('read_thread', { id: 'nope' });
+      expect(out.isError).toBe(true);
+      expect(out.content[0].text).toBe('Error: nope is not a thread in this project');
+    });
+  });
+
+  describe('message_thread', () => {
+    it('POSTs the text to the thread after a project check', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ id: 'p1', sessionId: 'sess-1' }) })
+        .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
+      global.fetch = fetchMock as any;
+      const out = await callTool('message_thread', { id: 'p1', text: 'hey, status?' });
+      expect(out.isError).toBeUndefined();
+      expect(fetchMock.mock.calls[1][0]).toBe('http://localhost:9999/api/terminals/p1/message');
+      expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ text: 'hey, status?', source: 'coordinator' });
+    });
+
+    it('rejects a foreign-project id with the project error', async () => {
+      const fetchMock = vi.fn().mockResolvedValueOnce({
+        ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ id: 'foreign-1', sessionId: 'other-sess' }),
+      });
+      global.fetch = fetchMock as any;
+      const out = await callTool('message_thread', { id: 'foreign-1', text: 'hi' });
+      expect(out.isError).toBe(true);
+      expect(out.content[0].text).toBe('Error: foreign-1 is not a thread in this project');
+      expect(fetchMock).toHaveBeenCalledTimes(1); // no message POST for a foreign thread
+    });
+  });
+
+  describe('watch_thread', () => {
+    it('POSTs to /api/watches with the caller as watcherTerminalId after a project check', async () => {
+      process.env.DISPATCH_TERMINAL = 'self-1';
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ id: 'p1', sessionId: 'sess-1' }) })
+        .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'watch-1' }) });
+      global.fetch = fetchMock as any;
+
+      const out = await callTool('watch_thread', { id: 'p1', when: 'idle', note: 'review its diff' });
+      expect(out.isError).toBeUndefined();
+      expect(JSON.parse(out.content[0].text)).toEqual({ watchId: 'watch-1' });
+      expect(fetchMock.mock.calls[1][0]).toBe('http://localhost:9999/api/watches');
+      expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+        watcherTerminalId: 'self-1', targetTerminalId: 'p1', criteria: 'idle', note: 'review its diff',
+      });
+    });
+
+    it('rejects a foreign-project id with the project error before registering a watch', async () => {
+      process.env.DISPATCH_TERMINAL = 'self-1';
+      const fetchMock = vi.fn().mockResolvedValueOnce({
+        ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ id: 'foreign-1', sessionId: 'other-sess' }),
+      });
+      global.fetch = fetchMock as any;
+      const out = await callTool('watch_thread', { id: 'foreign-1', when: 'idle' });
+      expect(out.isError).toBe(true);
+      expect(out.content[0].text).toBe('Error: foreign-1 is not a thread in this project');
+      expect(fetchMock).toHaveBeenCalledTimes(1); // no POST /api/watches for a foreign thread
+    });
+
+    it('fails clearly when DISPATCH_TERMINAL is unset, without calling the daemon', async () => {
+      // No DISPATCH_TERMINAL set (beforeEach deletes it) — an old-style injection.
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock as any;
+      const out = await callTool('watch_thread', { id: 'p1', when: 'idle' });
+      expect(out.isError).toBe(true);
+      expect(out.content[0].text).toContain('DISPATCH_TERMINAL');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('surfaces a 429 from the endpoint as a clear watch-limit message', async () => {
+      process.env.DISPATCH_TERMINAL = 'self-1';
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ id: 'p1', sessionId: 'sess-1' }) })
+        .mockResolvedValueOnce({ ok: false, status: 429, statusText: 'Too Many Requests', text: async () => JSON.stringify({ error: 'watcher already has 20 live watches (max) — remove one before adding another' }) });
+      global.fetch = fetchMock as any;
+      const out = await callTool('watch_thread', { id: 'p1', when: 'idle' });
+      expect(out.isError).toBe(true);
+      expect(out.content[0].text.toLowerCase()).toContain('watch limit');
+    });
+  });
+
+  describe('unwatch_thread', () => {
+    it('DELETEs the watch by id', async () => {
+      const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ ok: true }) });
+      global.fetch = fetchMock as any;
+      const out = await callTool('unwatch_thread', { watchId: 'watch-1' });
+      expect(out.isError).toBeUndefined();
+      expect(JSON.parse(out.content[0].text)).toEqual({ ok: true });
+      expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/watches/watch-1');
+      expect(fetchMock.mock.calls[0][1].method).toBe('DELETE');
+    });
+
+    it('surfaces a 404 as a clear error', async () => {
+      const fetchMock = vi.fn().mockResolvedValueOnce({ ok: false, status: 404, statusText: 'Not Found', text: async () => JSON.stringify({ error: 'watch not found' }) });
+      global.fetch = fetchMock as any;
+      const out = await callTool('unwatch_thread', { watchId: 'nope' });
+      expect(out.isError).toBe(true);
+      expect(out.content[0].text).toContain('watch not found');
+    });
+  });
+
+  describe('list_watches', () => {
+    it('GETs /api/watches for the caller and returns watching + watchedBy', async () => {
+      process.env.DISPATCH_TERMINAL = 'self-1';
+      const fetchMock = vi.fn().mockResolvedValueOnce({
+        ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({
+          watching: [{ id: 'w1', target_terminal_id: 'p1' }],
+          watchedBy: [{ id: 'w2', watcher_terminal_id: 'p2' }],
+        }),
+      });
+      global.fetch = fetchMock as any;
+      const out = await callTool('list_watches', {});
+      expect(out.isError).toBeUndefined();
+      expect(JSON.parse(out.content[0].text)).toEqual({
+        watching: [{ id: 'w1', target_terminal_id: 'p1' }],
+        watchedBy: [{ id: 'w2', watcher_terminal_id: 'p2' }],
+      });
+      const url = new URL(fetchMock.mock.calls[0][0]);
+      expect(url.origin + url.pathname).toBe('http://localhost:9999/api/watches');
+      expect(url.searchParams.get('watcher')).toBe('self-1');
+    });
+
+    it('fails clearly when DISPATCH_TERMINAL is unset, without calling the daemon', async () => {
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock as any;
+      const out = await callTool('list_watches', {});
+      expect(out.isError).toBe(true);
+      expect(out.content[0].text).toContain('DISPATCH_TERMINAL');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
   });
 });
 

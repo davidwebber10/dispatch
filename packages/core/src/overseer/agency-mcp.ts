@@ -38,8 +38,7 @@ function sessionId(): string {
   return process.env.DISPATCH_SESSION || '';
 }
 /** The calling thread's own terminal id — how a tool knows "who am I" (e.g. to
- *  exclude itself from a roster, or to watch/target itself as `self`). Nothing
- *  consumes this yet; later peer-thread tools do. */
+ *  mark its own row in list_threads, or to register itself as a watcher). */
 function selfTerminalId(): string {
   return process.env.DISPATCH_TERMINAL || '';
 }
@@ -242,6 +241,85 @@ export const TOOLS = [
       required: ['path'],
     },
   },
+  // --- peer/thread tools: every non-archived thread in the project, not just typed agents ---
+  {
+    name: 'list_threads',
+    description:
+      'List every thread in this project — plain threads, typed agents, and the coordinator alike — ' +
+      'with id, label, type, role, agentType, status, and lastActivityAt. Unlike list_agents (typed ' +
+      'agents only), this is the full peer roster, including plain threads the user is working in ' +
+      'directly. Your own row is tagged isSelf so you can spot yourself in the list.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'read_thread',
+    description:
+      "Read any thread's transcript in this project — its assistant output and the tools it ran " +
+      '(generalizes read_agent beyond typed agents to every peer). Returns { id, status, output, tools }. ' +
+      'Pass `tail` to cap how many recent conversation items are pulled (default 500).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The thread id (from list_threads).' },
+        tail: { type: 'number', description: 'Optional cap on how many recent conversation items to read (default 500).' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'message_thread',
+    description:
+      'Send a message to any thread in this project — a peer, a typed agent, or a plain thread the ' +
+      'user is working in (generalizes message_agent beyond typed agents to every peer).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The thread id (from list_threads).' },
+        text: { type: 'string', description: 'The message to send.' },
+      },
+      required: ['id', 'text'],
+    },
+  },
+  {
+    name: 'watch_thread',
+    description:
+      'Register a push subscription on a peer thread instead of polling it: go idle now, at zero token ' +
+      "cost, and the daemon wakes you with a message when the target hits `when`. Prefer this whenever " +
+      'you are waiting on a peer. `note` is your own reminder of why you are watching — it is echoed ' +
+      'back in the wake message. One-shot by default (fires once, then stops).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The thread id to watch (from list_threads).' },
+        when: {
+          type: 'string',
+          enum: ['idle', 'needs_input', 'error', 'any'],
+          description:
+            "The status edge to wake on: 'idle' (it finished a turn), 'needs_input' (it asked a " +
+            "question), 'error', or 'any' (any of the above).",
+        },
+        note: { type: 'string', description: 'Optional reminder of why you are watching — echoed back verbatim in the wake message.' },
+        once: { type: 'boolean', description: 'Defaults to true (fires once then stops watching). Pass false for a repeating watch.' },
+      },
+      required: ['id', 'when'],
+    },
+  },
+  {
+    name: 'unwatch_thread',
+    description: 'Cancel a watch subscription previously registered with watch_thread.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        watchId: { type: 'string', description: 'The watch id (returned by watch_thread, or from list_watches).' },
+      },
+      required: ['watchId'],
+    },
+  },
+  {
+    name: 'list_watches',
+    description: 'See what this thread is currently watching, and who is watching this thread.',
+    inputSchema: { type: 'object', properties: {} },
+  },
 ] as const;
 
 // --- HTTP helper -----------------------------------------------------------
@@ -405,6 +483,140 @@ async function answerAgent(args: { agentId: string; answers?: Record<string, str
   return { ok: true, agentId: args.agentId };
 }
 
+// --- peer/thread tools: project-scoped view of every thread, not just typed agents ------
+
+/**
+ * The security property of this feature: never return data about, or act on, a thread
+ * outside the caller's own project. Fetches the terminal and rejects it — with a clean,
+ * data-free error — unless it exists AND shares this thread's DISPATCH_SESSION. Callers
+ * that also need the terminal's fields (e.g. read_thread's status) reuse the returned
+ * object instead of fetching it twice.
+ */
+async function assertInProject(id: string): Promise<any> {
+  let terminal: any = null;
+  try {
+    terminal = await httpJson('GET', `${apiBase()}/api/terminals/${id}`);
+  } catch {
+    terminal = null; // unknown id (404) is indistinguishable from foreign-project, by design
+  }
+  if (!terminal || terminal.sessionId !== sessionId()) {
+    throw new Error(`${id} is not a thread in this project`);
+  }
+  return terminal;
+}
+
+/**
+ * Defensive guard for the watch tools: a thread spawned before DISPATCH_TERMINAL existed
+ * (an old-style injection) would otherwise register a watch with an empty watcher id. Fail
+ * loudly instead — the thread needs to be restarted to pick up the current agency MCP config.
+ */
+function requireSelf(action: string): string {
+  const self = selfTerminalId();
+  if (!self) {
+    throw new Error(
+      `cannot ${action}: this thread has no caller identity (DISPATCH_TERMINAL is unset). ` +
+      'This looks like a stale injection from before peer tools existed — restart this thread to pick up the current agency MCP config.',
+    );
+  }
+  return self;
+}
+
+/**
+ * List every non-archived thread in the project (the daemon's terminals endpoint already
+ * excludes archived and runner tabs) — plain threads and typed agents alike, unlike
+ * list_agents which stays filtered to typed agents only.
+ */
+async function listThreads(): Promise<Array<{
+  id: string; label: string; type: string; role: string | null; agentType: string | null;
+  status: string; lastActivityAt: string; isSelf: boolean;
+}>> {
+  const terminals = await httpJson('GET', `${apiBase()}/api/sessions/${sessionId()}/terminals`);
+  const list = Array.isArray(terminals) ? terminals : [];
+  const self = selfTerminalId();
+  return list.map((t: any) => ({
+    id: t.id,
+    label: t.label,
+    type: t.type,
+    role: t?.config?.role ?? null,
+    agentType: t?.config?.agentType ?? null,
+    status: t.status,
+    lastActivityAt: t.lastActivityAt,
+    isSelf: !!self && t.id === self,
+  }));
+}
+
+/** Generalizes read_agent to any thread in the project (after a project-scope check). */
+async function readThread(args: { id: string; tail?: number }): Promise<{ id: string; status: string | null; output: string; tools: string[] }> {
+  if (!args?.id) throw new Error('id is required');
+  const terminal = await assertInProject(args.id);
+  const limit = typeof args.tail === 'number' && args.tail > 0 ? Math.floor(args.tail) : 500;
+  const conv = await httpJson('GET', `${apiBase()}/api/terminals/${args.id}/conversation?limit=${limit}`);
+  const items: any[] = Array.isArray(conv?.items) ? conv.items : [];
+  const output = items.filter((it) => it?.kind === 'assistant' && it.text).map((it) => it.text).join('\n\n').trim();
+  const tools = items.filter((it) => it?.kind === 'tool' && it.toolName).map((it) => it.toolName as string);
+  return { id: args.id, status: terminal?.status ?? null, output: output || '(no assistant output captured yet)', tools: tools.slice(-30) };
+}
+
+/** Generalizes message_agent to any thread in the project (after a project-scope check). */
+async function messageThread(args: { id: string; text: string }): Promise<{ ok: true; id: string }> {
+  if (!args?.id) throw new Error('id is required');
+  if (!args?.text) throw new Error('text is required');
+  await assertInProject(args.id);
+  await httpJson('POST', `${apiBase()}/api/terminals/${args.id}/message`, { text: args.text, source: 'coordinator' });
+  return { ok: true, id: args.id };
+}
+
+/**
+ * POST/DELETE/GET against /api/watches, surfacing the route's own `{error}` body as a clean
+ * tool-error message — never httpJson's generic "<method> <url> -> <status>: <raw body>",
+ * which would echo transport internals back at the model. A 429 (fan-out cap) is called out
+ * explicitly as a watch-limit message regardless of the route's exact wording.
+ */
+async function watchesRequest(method: string, url: string, body?: unknown): Promise<any> {
+  const res = await fetch(url, {
+    method,
+    headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text().catch(() => '');
+  let data: any = null;
+  if (text) { try { data = JSON.parse(text); } catch { data = null; } }
+  if (res.status === 429) {
+    throw new Error(`watch limit reached: ${data?.error || 'this watcher already has the maximum number of live watches'}`);
+  }
+  if (!res.ok) {
+    throw new Error(data?.error || `${method} ${url} -> ${res.status} ${res.statusText}`);
+  }
+  return data;
+}
+
+/** Register a push subscription: the daemon wakes this thread when the target hits `when`. */
+async function watchThread(args: { id: string; when: string; note?: string; once?: boolean }): Promise<{ watchId: string }> {
+  if (!args?.id) throw new Error('id is required');
+  if (!args?.when) throw new Error('when is required');
+  const watcher = requireSelf('watch a thread');
+  await assertInProject(args.id);
+  const body: Record<string, unknown> = { watcherTerminalId: watcher, targetTerminalId: args.id, criteria: args.when };
+  if (args.note !== undefined) body.note = args.note;
+  if (args.once !== undefined) body.once = args.once;
+  const data = await watchesRequest('POST', `${apiBase()}/api/watches`, body);
+  return { watchId: data?.id };
+}
+
+/** Cancel a watch subscription registered with watch_thread. */
+async function unwatchThread(args: { watchId: string }): Promise<{ ok: true }> {
+  if (!args?.watchId) throw new Error('watchId is required');
+  await watchesRequest('DELETE', `${apiBase()}/api/watches/${args.watchId}`);
+  return { ok: true };
+}
+
+/** What this thread is watching, and who is watching this thread. */
+async function listWatches(): Promise<{ watching: any[]; watchedBy: any[] }> {
+  const self = requireSelf('list watches');
+  const data = await watchesRequest('GET', `${apiBase()}/api/watches?watcher=${encodeURIComponent(self)}&target=${encodeURIComponent(self)}`);
+  return { watching: data?.watching ?? [], watchedBy: data?.watchedBy ?? [] };
+}
+
 // --- post_image (surface a picture inline in the coordinator thread) -------
 
 /** Extension → MIME for the images the byte route serves; the gate that keeps this read-image-only. */
@@ -473,6 +685,12 @@ export async function callTool(
       case 'answer_agent': result = await answerAgent(args ?? {}); break;
       case 'read_agent': result = await readAgent(args ?? {}); break;
       case 'complete_agent': result = await completeAgent(args ?? {}); break;
+      case 'list_threads': result = await listThreads(); break;
+      case 'read_thread': result = await readThread(args ?? {}); break;
+      case 'message_thread': result = await messageThread(args ?? {}); break;
+      case 'watch_thread': result = await watchThread(args ?? {}); break;
+      case 'unwatch_thread': result = await unwatchThread(args ?? {}); break;
+      case 'list_watches': result = await listWatches(); break;
       // post_image's result IS the content block (an image, not JSON text) — return it directly.
       case 'post_image': return { content: [await postImage(args ?? {})] };
       default: throw new Error(`Unknown tool: ${name}`);
