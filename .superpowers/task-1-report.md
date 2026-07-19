@@ -1,40 +1,23 @@
-# Task 1 Report — update-force
+# Task 1 report — server reports a terminal's scrollback size
 
-**Status:** DONE
+**Status:** Done. RED → GREEN → full suite GREEN → tsc clean → committed.
 
-**Commit:** 6256860 — feat(update): report dirty files and allow forced updates
+**Commit:** `a21b5aa` — `feat(api): report a terminal's scrollback size`
 
-**Tests:** RED confirmed first (9 new assertions failing: `parsePorcelain` undefined,
-`forceable`/`dirty` missing); implemented; `apply.test.ts` (11) + `update.test.ts` (8)
-GREEN; full core suite GREEN (787 tests, 96 files); `npx tsc -b` clean.
+**Files changed:**
+- `packages/core/src/pty/buffer.ts` — added `RingBuffer.size(): number`
+- `packages/core/src/pty/manager.ts` — added `PTYManager.getBufferSize(terminalId): number` (0 for unknown)
+- `packages/core/src/sessions/service.ts` — added `SessionService.getScrollbackSize(terminalId)` delegate (matches the existing `getPendingPermission`-style thin-delegate pattern; routes never touch `PTYManager` directly, only `SessionService`)
+- `packages/core/src/routes/terminals.ts` — `GET /api/terminals/:terminalId/scrollback` → `200 { totalBytes }`, `404 { error: 'Terminal not found' }` for an unknown terminal (same existence check as the neighbouring single-terminal GET: `sessionService.getTerminal(id)`)
+- `packages/core/src/server.ts` — `NoopPTYManager` (test double, `skipPty: true`) gets an explicit `getBufferSize() { return 0; }` override, for the same reason its `getBuffer`/`getLastActivity` siblings are explicit rather than relying on the inherited empty-map fallback
+- Tests (colocated in `tests/**`, matching how `pty` and `routes/terminals` tests are already organized — this repo's `src/**/*.test.ts` colocated convention exists elsewhere but not for these two areas): `packages/core/tests/pty/buffer.test.ts`, `packages/core/tests/pty/manager.test.ts`, `packages/core/tests/routes/terminals.test.ts`
 
-**Files:**
-- `packages/core/src/update/apply.ts` — `parsePorcelain` (exported, 50-cap + overflow
-  count), `PreflightResult` gains `dirty`/`dirtyOverflow`/`forceable`, `preflightUpdate`
-  takes `opts?: { force?: boolean }`. The dirty-tree early-return is the ONLY branch
-  gated on `!opts?.force`; fetch/branch-resolution/ancestor-check code is untouched and
-  unconditional below it.
-- `packages/core/src/routes/update.ts` — apply handler reads `force` from
-  `req.body?.force === true`, passes `{ force }` to `preflightUpdate`, and the
-  hand-picked 409 body gains `dirty`/`dirtyOverflow`/`forceable` alongside existing
-  `ok`/`reason`.
-- Tests extended in `packages/core/src/update/apply.test.ts` and
-  `packages/core/src/routes/update.test.ts` (note: these are the actual colocated test
-  files — the plan's `packages/core/tests/...` paths don't exist in this repo; also
-  added `express.json()` to the route test's `app()` helper so `.send({force:true})`
-  bodies parse).
+**Test summary:** full core suite `npx vitest run` (from `packages/core`) → 103 files, 918 tests, all passing. `npx tsc -b` (from `packages/core`) clean, no errors.
 
-**Concerns:** None. No stashing added anywhere. Wire compatibility preserved (existing
-success/409 fields unchanged; new fields additive and `undefined` when not applicable,
-which JSON-serializes to simply omitted).
+**Which buffer field gives the retained size:** `totalSize`. `RingBuffer.write()`'s trim loop already decrements `totalSize` as it evicts old chunks once the ring exceeds `maxSize`, so `totalSize` is already "what a full replay would return right now" (retained/capped), never the lifetime sum of everything written. `size()` just exposes it as-is — no new accounting needed. Verified with a dedicated test: writing 5+5+3 bytes into a 10-byte-cap ring yields `size() === 8` (retained, post-trim) while the lifetime total written is 13 — the test asserts the two numbers differ.
 
-**Self-review:**
-- Force-skips-ff-check path: does not exist. The `force` flag only appears in one
-  condition (`status.trim().length > 0 && !opts?.force`); fetch/rev-parse/merge-base
-  calls are unconditional past that point, same code as before. Verified via a test
-  where `force: true` + dirty tree + diverging merge-base still returns `ok:false,
-  forceable:falsy` and never reaches `applyFn`.
-- Untracked-only tree (`?? scratch.txt\n?? notes.md\n`) parses correctly — covered by
-  a dedicated test, passes.
+**Route test note:** core route tests run with `createApp({ skipPty: true })` (a `NoopPTYManager`, no real PTY), so the "route returns the manager's number" test spies on `app._ptyManager.getBufferSize` (mirrors the existing `_sessionService`/`_structuredManager` test-seam pattern already used in this test file) to assert the route delegates faithfully and returns whatever the manager reports, rather than asserting only the trivial always-0 case. Manager-level byte-count coverage (N bytes, and retained-vs-lifetime under wrap) is exercised directly against `RingBuffer`/`PTYManager` with a real spawned PTY.
 
-Report path: `/Users/davidwebber/Sites/dispatch/.claude/worktrees/update-force/.superpowers/task-1-report.md`
+**Concerns:** None blocking. Two judgment calls worth flagging: (1) the endpoint's 404 is keyed on DB terminal existence (`sessionService.getTerminal`), not PTY liveness — a known-but-not-currently-alive terminal (e.g. stopped) returns `200 { totalBytes: 0 }` rather than 404, consistent with the plan's "0 when unknown" wording for the manager method and the sibling routes' 404 style. (2) Added a `SessionService.getScrollbackSize` delegate rather than passing `PTYManager` into `createTerminalsRouter` directly, since every existing HTTP route goes through `SessionService` only (the raw `PTYManager` is currently wired only into the websocket handler) — this keeps the new route consistent with its neighbours.
+
+**Safety:** No dispatch lifecycle commands, no real daemon start, no attach to real terminals, `~/.dispatch` and port 3456 untouched. Only `npx vitest run` / `npx tsc -b` were executed.
