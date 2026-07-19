@@ -18,13 +18,31 @@ interface Opts {
   wsFactory?: (url: string) => TerminalWS;
 }
 
+// Progressive scrollback (mobile): attach small, then step up on demand as the
+// reader scrolls to the top. Desktop always passes MAX_REPLAY explicitly (or
+// omits replayBytes, which defaults to the same value) so its replay is never
+// trimmed and the rebuild path in TerminalTab never triggers there.
+export const INITIAL_REPLAY_MOBILE = 256_000;
+export const MAX_REPLAY = 4_000_000;
+
+const REPLAY_STEPS = [INITIAL_REPLAY_MOBILE, 1_000_000, MAX_REPLAY];
+
+/** Next replay size up from `current` (256K -> 1M -> 4M), saturating at MAX_REPLAY.
+ *  Never returns a value smaller than `current`. */
+export function nextReplayStep(current: number): number {
+  for (const step of REPLAY_STEPS) {
+    if (step > current) return step;
+  }
+  return Math.max(current, MAX_REPLAY);
+}
+
 function url(terminalId: string, replayBytes: number): string {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   return `${proto}://${location.host}/api/terminals/${terminalId}/ws?replayBytes=${replayBytes}`;
 }
 
 export function openTerminalSocket(opts: Opts) {
-  const replay = opts.replayBytes ?? 4_000_000;
+  const replay = opts.replayBytes ?? MAX_REPLAY;
   const factory = opts.wsFactory ?? ((u) => new WebSocket(u) as unknown as TerminalWS);
 
   let ws: TerminalWS | null = null;

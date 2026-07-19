@@ -54,6 +54,10 @@ export const api = {
   },
   searchConversation: (id: string, q: string) => req<{ matches: SearchMatch[] }>(`/api/terminals/${id}/conversation/search?q=${encodeURIComponent(q)}`),
   sendInput: (id: string, data: string) => req<void>(`/api/terminals/${id}/input`, { method: 'POST', body: body({ data }) }),
+  // Progressive scrollback: the ring's true byte count, so a client that attached with a
+  // trimmed replay (mobile) can tell whether older history exists and is worth rebuilding for.
+  getScrollbackSize: (id: string) =>
+    req<{ totalBytes: number }>(`/api/terminals/${id}/scrollback`).then((r) => r.totalBytes),
   // A plain string keeps the original `{ text }` wire (byte-identical); a block array
   // is sent as `{ content }` so an attached image travels as a real content block.
   // `source: 'user'` tags this as a direct human send (the single chokepoint every

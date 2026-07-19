@@ -62,3 +62,15 @@ test('sendFileReference defaults to agent-context mode', async () => {
     method: 'POST', body: JSON.stringify({ path: '.dispatch/inbox/x.png', mode: 'agent-context' }),
   }));
 });
+
+test('getScrollbackSize GETs the scrollback route and returns totalBytes', async () => {
+  mockJson({ totalBytes: 4_123_456 });
+  const size = await api.getScrollbackSize('t1');
+  expect(fetch).toHaveBeenCalledWith('/api/terminals/t1/scrollback', expect.objectContaining({ method: 'GET' }));
+  expect(size).toBe(4_123_456);
+});
+
+test('getScrollbackSize rejects on a 404 (unknown terminal), same as other terminal routes', async () => {
+  mockJson({ error: 'Terminal not found' }, 404);
+  await expect(api.getScrollbackSize('missing')).rejects.toThrow(/404/);
+});

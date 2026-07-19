@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { openTerminalSocket, type TerminalWS } from './terminal-socket';
+import { INITIAL_REPLAY_MOBILE, MAX_REPLAY, nextReplayStep, openTerminalSocket, type TerminalWS } from './terminal-socket';
 
 class FakeTermWS implements TerminalWS {
   onopen: (() => void) | null = null;
@@ -96,6 +96,60 @@ describe('auto-reconnect', () => {
 
     // reset must precede the replayed buffer so it lands on a clean screen
     expect(events).toEqual(['data:initial', 'reset', 'data:replayed-buffer']);
+
+    sock.close();
+  });
+});
+
+// ---- progressive scrollback: replay-size steps ----
+
+describe('nextReplayStep', () => {
+  test('steps 256K -> 1M -> 4M, saturating at MAX', () => {
+    expect(nextReplayStep(INITIAL_REPLAY_MOBILE)).toBe(1_000_000);
+    expect(nextReplayStep(1_000_000)).toBe(MAX_REPLAY);
+    expect(nextReplayStep(MAX_REPLAY)).toBe(MAX_REPLAY); // saturates, does not exceed
+  });
+
+  test('never returns less than its input', () => {
+    expect(nextReplayStep(0)).toBeGreaterThanOrEqual(0);
+    expect(nextReplayStep(500_000)).toBeGreaterThanOrEqual(500_000);
+    expect(nextReplayStep(MAX_REPLAY)).toBeGreaterThanOrEqual(MAX_REPLAY);
+    // even past MAX (shouldn't happen in practice) it must not shrink
+    expect(nextReplayStep(10_000_000)).toBeGreaterThanOrEqual(10_000_000);
+  });
+
+  test('constants match the design doc', () => {
+    expect(INITIAL_REPLAY_MOBILE).toBe(256_000);
+    expect(MAX_REPLAY).toBe(4_000_000);
+  });
+});
+
+describe('connect URL replay size', () => {
+  test('carries the requested replayBytes verbatim in the query string', () => {
+    let capturedUrl = '';
+    const sock = openTerminalSocket({
+      terminalId: 't1',
+      replayBytes: 999_000,
+      onData: () => {},
+      wsFactory: (u) => { capturedUrl = u; return new FakeTermWS(); },
+    });
+
+    // The server reads this exact param name (ws/terminal.ts) — a rename here
+    // would silently fall back to the full 4 MB replay.
+    expect(capturedUrl).toMatch(/[?&]replayBytes=999000(&|$)/);
+
+    sock.close();
+  });
+
+  test('defaults to MAX_REPLAY (4 MB) when no replayBytes is passed, unchanged for desktop', () => {
+    let capturedUrl = '';
+    const sock = openTerminalSocket({
+      terminalId: 't1',
+      onData: () => {},
+      wsFactory: (u) => { capturedUrl = u; return new FakeTermWS(); },
+    });
+
+    expect(capturedUrl).toMatch(new RegExp(`[?&]replayBytes=${MAX_REPLAY}(&|$)`));
 
     sock.close();
   });
