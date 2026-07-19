@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import type { Terminal } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
 import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion';
 
 const DELETE_MS = 25;
 const TYPE_MS = 35;
+
+type ConsumedEntry = { from: string; to: string } | null;
 
 /**
  * The thread-row label. Normally renders `tab.label` verbatim; when the tabs store
@@ -13,13 +15,47 @@ const TYPE_MS = 35;
  * only, so an unmount mid-animation simply leaves the final label behind.
  */
 export function ThreadLabel({ tab }: { tab: Terminal }) {
-  // null means "not animating — show tab.label"
-  const [typed, setTyped] = useState<string | null>(null);
+  // usePrefersReducedMotion resolves synchronously (its own lazy useState initializer),
+  // so it's safe to read `reduced` below in the same render for the `typed` initializer.
   const reduced = usePrefersReducedMotion();
 
-  useEffect(() => {
-    // getState() rather than a selector: consuming must not re-subscribe this component.
-    const entry = useTabs.getState().consumeAutoName(tab.id);
+  // null means "not animating — show tab.label". Seeded synchronously (peeking the
+  // store, not consuming it) rather than via an effect: a plain useState(null)
+  // paints tab.label — the FINAL name, since the store already applied the rename
+  // before this render — for one frame, then an effect flips it back to the old
+  // label to start the backspace. That reads as "correct name -> snaps backward ->
+  // retypes a name already seen." Computing the initial value here means the very
+  // first paint is already the old label, matching usePrefersReducedMotion's own
+  // lazy-initializer precedent (hooks/usePrefersReducedMotion.ts).
+  const [typed, setTyped] = useState<string | null>(() => {
+    const pending = useTabs.getState().autoNamed[tab.id];
+    return pending && !reduced ? pending.from : null;
+  });
+
+  // Remembers the entry this component instance has already consumed, keyed by the
+  // identity being animated (tab.id + tab.label). React 18 StrictMode double-invokes
+  // effects in development (mount -> cleanup -> mount) without re-running render or
+  // discarding refs, and consumeAutoName is consume-once: the first invoke would eat
+  // the entry and start the timer chain, the simulated cleanup cancels it, and the
+  // second (real) invoke would find nothing left and render with no animation at
+  // all. Replaying the remembered entry on a same-key re-invoke makes consumption
+  // idempotent for this instance without weakening the store's consume-once contract
+  // (which other code relies on to prevent replays).
+  const consumedRef = useRef<{ key: string; entry: ConsumedEntry } | null>(null);
+
+  useLayoutEffect(() => {
+    // useLayoutEffect (not useEffect) so the kickoff — and any correction it makes
+    // to `typed` — happens before the browser paints, never after.
+    const key = `${tab.id}:${tab.label}`;
+    let entry: ConsumedEntry;
+    if (consumedRef.current && consumedRef.current.key === key) {
+      entry = consumedRef.current.entry;
+    } else {
+      // getState() rather than a selector: consuming must not re-subscribe this component.
+      entry = useTabs.getState().consumeAutoName(tab.id);
+      consumedRef.current = { key, entry };
+    }
+
     if (!entry || reduced) {
       setTyped(null); // also cancels any in-flight animation when tab.label changes under us
       return;

@@ -1,5 +1,8 @@
+import React from 'react';
 import { expect, test, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
+import { createRoot } from 'react-dom/client';
+import { flushSync } from 'react-dom';
 import { ThreadLabel } from './ThreadLabel';
 import { useTabs } from '../../stores/tabs';
 
@@ -94,4 +97,74 @@ test('unmounting mid-animation clears its timer and stops rendering', () => {
   expect(clear.mock.calls.length).toBeGreaterThan(calls); // cleanup ran
   act(() => { vi.advanceTimersByTime(5000); });
   expect(container.querySelector('[data-testid="thread-label-text"]')).toBeNull();
+});
+
+// ── Finding 1 ────────────────────────────────────────────────────────────
+// The first painted frame of an animating label must already be the OLD
+// label. RTL's render() wraps everything in act(), which flushes effects
+// before ever handing control back to the test, so it cannot observe the
+// pre-effect commit. Use react-dom/client directly (mirroring the reviewer's
+// repro): flushSync forces the DOM commit (and any useLayoutEffect) to happen
+// synchronously while still leaving a deferred useEffect unflushed, which is
+// exactly the boundary this finding is about.
+test('Finding 1: the first painted frame is the OLD label — the final label never flashes first', async () => {
+  vi.useRealTimers(); // raw createRoot commit/effect timing must not be faked
+  // Seed with a real-clock timestamp (not the fixed fake-time NOW): consumeAutoName
+  // treats entries older than AUTO_NAME_TTL_MS as stale relative to Date.now(), which
+  // is real wall-clock time now that fake timers are off.
+  useTabs.setState({ autoNamed: { t1: { from: 'Claude Code', to: 'Fix login bug', at: Date.now() } } } as any);
+  const host = document.createElement('div');
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  const text = () => host.querySelector('[data-testid="thread-label-text"]')?.textContent;
+
+  flushSync(() => { root.render(<ThreadLabel tab={tab} />); });
+  // This is the very first browser-visible paint. If the bug is present, `typed`
+  // is still null at this point and the component renders tab.label — the FINAL
+  // name — because the store already applied the rename before this render.
+  expect(text()).toBe('Claude Code');
+  expect(text()).not.toBe('Fix login bug');
+
+  // Let any deferred (useEffect) work the browser would run after paint flush.
+  await new Promise((r) => setTimeout(r, 0));
+  // Must not have snapped forward to the final label as part of that flush —
+  // the buggy version paints the final label first, then reverts to this same
+  // old label only once the deferred effect runs, which reads as a flash.
+  expect(text()).not.toBe('Fix login bug');
+
+  // Let the whole backspace+type animation finish in real time and confirm it
+  // still settles correctly once the fix's synchronous kickoff has run.
+  await new Promise((r) => setTimeout(r, 900));
+  expect(text()).toBe('Fix login bug');
+
+  root.unmount();
+  document.body.removeChild(host);
+});
+
+// ── Finding 2 ────────────────────────────────────────────────────────────
+// React.StrictMode double-invokes effects in development (mount -> cleanup ->
+// mount) without re-running render or destroying refs/state. consumeAutoName
+// is consume-once, so the naive version has the first simulated mount eat the
+// entry and start timers, the simulated cleanup cancel them, and the second
+// (real) mount find nothing left — no animation ever plays under `pnpm dev`.
+test('Finding 2: survives React.StrictMode double-invoked effects — the animation still plays', () => {
+  seed();
+  const { container } = render(
+    <React.StrictMode>
+      <ThreadLabel tab={tab} />
+    </React.StrictMode>,
+  );
+  const text = () => container.querySelector('[data-testid="thread-label-text"]')!.textContent;
+
+  act(() => { vi.advanceTimersByTime(25 * 3); });
+  expect(text()).toBe('Claude C'); // backspacing must actually be in progress, not skipped
+
+  act(() => { vi.advanceTimersByTime(25 * 8); });
+  expect(text()).toBe('');
+
+  act(() => { vi.advanceTimersByTime(35 * 3); });
+  expect(text()).toBe('Fix');
+
+  act(() => { vi.advanceTimersByTime(35 * 40); });
+  expect(text()).toBe('Fix login bug');
 });
