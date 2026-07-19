@@ -14,14 +14,25 @@ export function useApplyUpdate() {
   const inProgress = useUpdate((s) => s.inProgress);
   const [applying, setApplying] = useState(false);
   const [failReason, setFailReason] = useState<string | null>(null);
+  const [failDirty, setFailDirty] = useState<{ status: string; path: string }[] | null>(null);
+  const [failDirtyOverflow, setFailDirtyOverflow] = useState(0);
+  const [canForce, setCanForce] = useState(false);
 
-  const apply = async () => {
+  const apply = async (force?: boolean) => {
     setApplying(true);
     setFailReason(null);
+    setFailDirty(null);
+    setFailDirtyOverflow(0);
+    setCanForce(false);
     try {
-      const res = await api.applyUpdate();
+      const res = await api.applyUpdate(force);
       if (res.ok) useUpdate.setState({ inProgress: true });
-      else setFailReason(res.reason ?? 'Update could not be applied automatically.');
+      else {
+        setFailReason(res.reason ?? 'Update could not be applied automatically.');
+        setFailDirty(res.dirty ?? null);
+        setFailDirtyOverflow(res.dirtyOverflow ?? 0);
+        setCanForce(res.forceable === true);
+      }
     } catch {
       setFailReason('Could not reach the server to apply the update.');
     } finally {
@@ -43,5 +54,5 @@ export function useApplyUpdate() {
     return () => clearInterval(timer);
   }, [inProgress]);
 
-  return { apply, applying, failReason, inProgress };
+  return { apply, applying, failReason, failDirty, failDirtyOverflow, canForce, inProgress };
 }

@@ -227,6 +227,12 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
   // so a later reconnect / duplicate signal doesn't re-fetch. Reset alongside the other
   // per-thread refs below.
   const inactiveHydratedRef = useRef(false);
+  // Latches once loadOlder() has performed an ANCHORLESS first fetch (the zero-items deadlock
+  // rescue — see loadOlder's guard). That page is the NEWEST window, i.e. the same turns a ws
+  // replay may still be about to append, so while it's latched the whole-event `user`/`assistant`
+  // append paths drop any item whose real uuid is already rendered. Scoped to this flag so the
+  // normal live/streaming path keeps its existing append-everything behavior untouched.
+  const anchorlessHydratedRef = useRef(false);
 
   // Session is read by the image parser (path refs → byte route) but must NOT key the
   // socket effect — it can resolve a render after terminalId, and we don't want that to
@@ -253,6 +259,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
       loadingOlderRef.current = false; setLoadingOlder(false);
       oldestLineRef.current = undefined; pageTokenRef.current += 1;
       inactiveHydratedRef.current = false;
+      anchorlessHydratedRef.current = false;
       return;
     }
     setItems([]); setBusy(false); setModel(undefined); setPending(null);
@@ -261,6 +268,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
     loadingOlderRef.current = false; setLoadingOlder(false);
     oldestLineRef.current = undefined; pageTokenRef.current += 1; // discard any in-flight fetch from the previous thread
     inactiveHydratedRef.current = false;
+    anchorlessHydratedRef.current = false;
     streamingRef.current = false; turnRef.current = 0; blockMapRef.current.clear();
     pendingRef.current.clear();
     if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
@@ -319,6 +327,21 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
       flush(true);
     };
 
+    // Append whole-event items, dropping any whose real Claude Code uuid is ALREADY rendered
+    // — but only after loadOlder() performed an anchorless newest-window hydration (see
+    // anchorlessHydratedRef). That page covers the same turns this replay is about to append,
+    // and the ws path has no dedup of its own, so without this the transcript would render
+    // twice. Outside that case this is a pass-through, leaving live behavior unchanged.
+    const appendItems = (add: ConvItem[]) => {
+      if (!add.length) return;
+      setItems((p) => {
+        if (!anchorlessHydratedRef.current) return [...p, ...add];
+        const seen = new Set(p.map((it) => it.uuid).filter((u): u is string => !!u));
+        const fresh = add.filter((it) => !(it.uuid && seen.has(it.uuid)));
+        return fresh.length ? [...p, ...fresh] : p;
+      });
+    };
+
     const sock = openStructuredSocket({
       terminalId,
       onReset: () => {
@@ -338,6 +361,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
         loadingOlderRef.current = false; setLoadingOlder(false);
         oldestLineRef.current = undefined; pageTokenRef.current += 1;
         inactiveHydratedRef.current = false;
+        anchorlessHydratedRef.current = false;
       },
       onClose: () => {
         // P0b safety net: if the ws drops we can't trust an in-flight turn to ever
@@ -521,7 +545,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
             else if (b.type === 'tool_use') add.push({ kind: 'tool', toolName: b.name, toolId: b.id, toolInput: safeJson(b.input), toolFile: b.input?.file_path ?? b.input?.path, ...(uuid ? { uuid } : {}) });
             else if (b.type === 'image') { const img = imageItemFromBlock(b, sessionIdRef.current); if (img) add.push(img); }
           }
-          if (add.length) setItems((p) => [...p, ...add]);
+          appendItems(add);
           return;
         }
 
@@ -571,7 +595,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
               }
             }
           }
-          if (add.length) setItems((p) => [...p, ...add]);
+          appendItems(add);
           return;
         }
 
@@ -663,13 +687,26 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
     const beforeUuid = firstCall
       ? itemsRef.current.find((it) => it.uuid && !it.uuid.startsWith('s-'))?.uuid
       : undefined;
-    // ANCHORLESS-FETCH GUARD: on the first call, if the ws replay hasn't settled a real-uuid
-    // item yet (items empty, or only synthetic streaming keys), do NOT fetch. An anchorless
-    // request makes getConversation return the NEWEST window — the whole transcript — which the
-    // ws onEvent handlers then re-append with no dedup, rendering the conversation twice. Bail
-    // and let BootstrapOlderPages / a near-top scroll retry once the replay settles an anchor.
-    // loadOlder serves strictly-older history; the newest window is owned by the ws replay.
-    if (firstCall && !beforeUuid) return;
+    // ANCHORLESS-FETCH GUARD (narrowed — see the deadlock note below): on the first call, if
+    // items EXIST but none carries a real uuid (only synthetic `s-<turn>-<idx>` streaming keys),
+    // do NOT fetch. An anchorless request makes getConversation return the NEWEST window — the
+    // whole transcript — which the ws onEvent handlers would re-append, rendering the
+    // conversation twice. Bail and let BootstrapOlderPages / a near-top scroll retry once the
+    // replay settles an anchor.
+    //
+    // DEADLOCK FIX: this guard used to also cover the ZERO-items case, which permanently
+    // stranded a thread whose replay ring holds only NON-RENDERING events (system/init,
+    // system/status, a stale result). Such a ring is non-empty, so ws/structured.ts never sends
+    // the `system/inactive` REST-hydration rescue — yet ChatView renders zero items, so there is
+    // nothing to scroll, onViewportScroll's near-top trigger never fires, and this guard bailed
+    // SYNCHRONOUSLY without touching `loadingOlder`, so useBootstrapOlderPages' effect (keyed on
+    // overflowing/hasMore/loadingOlder/loadOlder) never re-fired either. History was unreachable.
+    // With nothing rendered there is nothing to duplicate against, and this IS the initial
+    // hydration — exactly what the `system/inactive` path does — so the anchorless fetch is
+    // allowed. `anchorlessHydratedRef` below then arms uuid-dedup on the ws append paths so a
+    // replay that lands AFTER this page still can't double the transcript.
+    if (firstCall && !beforeUuid && itemsRef.current.length > 0) return;
+    if (firstCall && !beforeUuid) anchorlessHydratedRef.current = true;
     loadingOlderRef.current = true;
     setLoadingOlder(true);
     api.getConversation(terminalId, { before: oldestLineRef.current, ...(beforeUuid ? { beforeUuid } : {}), limit: OLDER_PAGE_LIMIT })

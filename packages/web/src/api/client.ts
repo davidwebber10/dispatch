@@ -229,8 +229,18 @@ export const api = {
     req<{ ok: boolean; written: string[] }>('/api/appearance/icons', { method: 'PUT', body: body({ icons }) }),
   // Bespoke (not `req()`): a 409 preflight failure is a meaningful { ok: false, reason }
   // payload the banner needs to render, not an exception to throw away.
-  applyUpdate: async () => {
-    const res = await fetch('/api/update/apply', { method: 'POST' });
-    return (await res.json()) as { ok: boolean; reason?: string };
+  applyUpdate: async (force?: boolean) => {
+    const res = await fetch('/api/update/apply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(force ? { force: true } : {}),
+    });
+    return (await res.json()) as {
+      ok: boolean;
+      reason?: string;
+      dirty?: { status: string; path: string }[];
+      dirtyOverflow?: number;
+      forceable?: boolean;
+    };
   },
 };

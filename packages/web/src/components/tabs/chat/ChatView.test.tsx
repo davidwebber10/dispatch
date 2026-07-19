@@ -1,8 +1,8 @@
 import { render, screen, fireEvent } from '@testing-library/react';
-import { test, expect, describe, it, beforeAll } from 'vitest';
+import { test, expect, describe, it, beforeAll, vi } from 'vitest';
 import { MessageScroller } from '@shadcn/react/message-scroller';
 import type { ConvItem } from '../../../api/types';
-import { UserBubble, renderTimeline } from './ChatView';
+import { UserBubble, renderTimeline, LoadEarlierButton } from './ChatView';
 
 test('a human-sent turn (untagged/legacy or explicit "user") renders as a plain bubble with no "via" label', () => {
   render(<UserBubble text="hi claude" />);
@@ -131,5 +131,26 @@ describe('renderTimeline — an expanded tool call survives a live streaming re-
     );
 
     expect(screen.getByText('Output')).toBeInTheDocument(); // still expanded, not auto-collapsed
+  });
+});
+
+// ---- "Load earlier messages" escape hatch -------------------------------------------
+// Paging older history used to depend ENTIRELY on the reader being able to scroll (the
+// near-top viewport trigger, or useBootstrapOlderPages' overflow check). A window short
+// enough not to overflow — in the limit, an empty one — left `hasMore: true` history with
+// no way to reach it. This control makes it reachable unconditionally.
+describe('LoadEarlierButton', () => {
+  it('renders when there is more history to load and calls loadOlder when clicked', () => {
+    const loadOlder = vi.fn();
+    render(<LoadEarlierButton show onClick={loadOlder} />);
+    const btn = screen.getByRole('button', { name: 'Load earlier messages' });
+    expect(btn).toBeInTheDocument();
+    fireEvent.click(btn);
+    expect(loadOlder).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders nothing while a fetch is in flight (the floating pill owns that state)', () => {
+    const { container } = render(<LoadEarlierButton show={false} onClick={() => {}} />);
+    expect(container).toBeEmptyDOMElement();
   });
 });

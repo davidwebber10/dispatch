@@ -722,23 +722,48 @@ test("loadOlder's first call anchors on the oldest rendered item's uuid (beforeU
 
 // ---- Transcript-duplication regression (anchorless loadOlder racing the ws replay) -------
 // BootstrapOlderPages fires loadOlder() on mount. If it fires before the ws replay has
-// settled a real transcript uuid onto `items`, the old code sent an ANCHORLESS fetch
+// settled a real transcript uuid onto `items`, loadOlder sends an ANCHORLESS fetch
 // (before/beforeUuid both undefined), which the server answers with the NEWEST window (the
-// whole transcript). The ws onEvent handlers then re-append the same turns with no dedup, so
-// the conversation rendered twice. The fix: loadOlder's first call must have a real-uuid
-// anchor or it doesn't fetch at all.
+// whole transcript). The ws onEvent handlers would then re-append the same turns, so the
+// conversation rendered twice. The guard below suppresses that fetch whenever items EXIST
+// but carry no real anchor; the zero-items case is instead made safe by uuid-dedup on the
+// ws append paths (see the deadlock tests further down).
 
-test('loadOlder suppresses its first fetch until a real-uuid anchor is rendered (anchorless newest-window fetch is the duplicate source)', async () => {
+// ---- Zero-items history DEADLOCK (the "reopening a Pretty thread shows no history" bug) --
+// A replay ring holding only NON-RENDERING events (system/init, system/status, a stale
+// result) is non-empty, so ws/structured.ts never sends the `system/inactive` REST-hydration
+// rescue — yet ChatView renders zero items. The old guard also bailed on zero items, and did
+// so SYNCHRONOUSLY without touching `loadingOlder`, so useBootstrapOlderPages' effect never
+// re-fired and there was nothing on screen to scroll. History was permanently unreachable.
+
+test('DEADLOCK FIX: with ZERO items rendered, loadOlder DOES issue the anchorless REST fetch (initial hydration)', async () => {
   const spy = vi.spyOn(api, 'getConversation').mockResolvedValue({
     items: [{ kind: 'user', text: 'q', uuid: 'u1', line: 0 }],
     cursor: 1, startLine: 0, hasMore: false,
   } as any);
   const { result } = renderHook(() => useStructuredChat('t1'));
-  // Fired on mount before any replay event has landed — items is empty, no anchor.
+  expect(result.current.items).toHaveLength(0); // nothing rendered — nothing to duplicate
   act(() => { result.current.loadOlder(); });
   await flushAsync();
-  expect(spy).not.toHaveBeenCalled();       // no anchorless newest-window fetch
-  expect(result.current.loadingOlder).toBe(false); // didn't even enter the loading state
+  expect(spy).toHaveBeenCalledWith('t1', { before: undefined, limit: 120 });
+  expect(result.current.items.map((i) => i.text)).toEqual(['q']); // history is now reachable
+});
+
+test('GUARD PRESERVED: with items rendered but no real uuid among them, loadOlder still bails (no anchorless fetch)', async () => {
+  const spy = vi.spyOn(api, 'getConversation').mockResolvedValue({ items: [], cursor: 0, startLine: 0, hasMore: false } as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  // An item exists, but its only identity is the synthetic streaming key — not resolvable
+  // on disk as a beforeUuid, so an anchorless newest-window fetch could double-render.
+  act(() => cbs.onEvent({ type: 'stream_event', event: { type: 'message_start' } }));
+  act(() => cbs.onEvent(start(0, { type: 'text' })));
+  act(() => cbs.onEvent(textDelta(0, 'partial')));
+  drainRaf();
+  expect(result.current.items).toHaveLength(1);
+  expect(result.current.items[0].uuid).toMatch(/^s-/);
+  act(() => { result.current.loadOlder(); });
+  await flushAsync();
+  expect(spy).not.toHaveBeenCalled();
+  expect(result.current.loadingOlder).toBe(false);
 });
 
 test('a synthetic streaming key does NOT count as an anchor (still no anchorless fetch mid-stream)', async () => {
@@ -757,9 +782,10 @@ test('a synthetic streaming key does NOT count as an anchor (still no anchorless
 });
 
 test('REGRESSION: a mount-time loadOlder racing the ws replay does not double the transcript', async () => {
-  // The anchorless newest-window page (what the old code fetched) resolves and would prepend
-  // the whole transcript; the ws replay then appends the same turns. With the anchor-guard the
-  // fetch is suppressed, so the replay is the single source of truth.
+  // With zero items the anchorless newest-window fetch is now ALLOWED (it's the deadlock
+  // rescue), so it resolves and prepends the whole transcript — and the ws replay then appends
+  // the very same turns. The uuid-dedup armed on the ws append paths after an anchorless
+  // hydration is what keeps this a single copy.
   vi.spyOn(api, 'getConversation').mockResolvedValue({
     items: [
       { kind: 'user', text: 'q', uuid: 'u1', line: 0 },

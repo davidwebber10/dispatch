@@ -8,6 +8,18 @@ import * as pushDb from '../db/push.js';
 export type Sender = (sub: pushDb.PushSub, payload: string) => Promise<void>;
 const PRESENCE_TTL_MS = 90_000;
 
+/**
+ * The VAPID `sub` claim identifying this push sender. Apple validates it and
+ * rejects a non-routable subject with 403 BadJwtToken — the previous
+ * 'mailto:dispatch@localhost' silently broke EVERY notification to an iPhone
+ * (403 is not 404/410, so the dead sends didn't even prune). Chrome/FCM accepts
+ * anything, which is how it shipped unnoticed. Operators running their own
+ * instance can point it at their own contact.
+ */
+export function vapidSubject(): string {
+  return process.env.DISPATCH_VAPID_SUBJECT?.trim() || 'https://github.com/davidwebber10/dispatch';
+}
+
 export class PushService {
   private db: Database.Database;
   private vapid: { publicKey: string; privateKey: string };
@@ -18,7 +30,7 @@ export class PushService {
     this.db = db;
     const dir = opts.vapidDir ?? path.join(os.homedir(), '.dispatch');
     this.vapid = this.loadOrCreateVapid(dir);
-    webpush.setVapidDetails('mailto:dispatch@localhost', this.vapid.publicKey, this.vapid.privateKey);
+    webpush.setVapidDetails(vapidSubject(), this.vapid.publicKey, this.vapid.privateKey);
     this.send = opts.send ?? (async (sub, payload) => {
       await webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload);
     });
@@ -59,7 +71,9 @@ export class PushService {
       catch (e: any) {
         const code = e?.statusCode;
         if (code === 404 || code === 410) pushDb.removeByEndpoint(this.db, sub.endpoint);
-        else console.error('PushService: send failed', code ?? e?.message);
+        // Keep the provider's reason (e.g. Apple's {"reason":"BadJwtToken"}) — a bare
+        // status code left a silent, undiagnosable failure for the whole 2.3.x line.
+        else console.error('PushService: send failed', code ?? e?.message, String(e?.body ?? '').slice(0, 200));
       }
     }
   }

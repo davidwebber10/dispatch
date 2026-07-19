@@ -40,10 +40,17 @@ export function createUpdateRouter(broadcaster: EventBroadcaster, repoDir: strin
   // POST /api/update/apply — preflight (clean tree + fast-forwardable), then spawn
   // `bin/dispatch update` detached and let the daemon's existing safe-restart path
   // (launchctl kickstart -k) take it from there.
-  router.post('/apply', (_req, res) => {
-    const result = preflightUpdate(repoDir, opts?.gitExec);
+  router.post('/apply', (req, res) => {
+    const force = req.body?.force === true;
+    const result = preflightUpdate(repoDir, opts?.gitExec, { force });
     if (!result.ok) {
-      res.status(409).json({ ok: false, reason: result.reason });
+      res.status(409).json({
+        ok: false,
+        reason: result.reason,
+        dirty: result.dirty,
+        dirtyOverflow: result.dirtyOverflow,
+        forceable: result.forceable,
+      });
       return;
     }
     broadcaster.broadcast({ type: 'update:in-progress' });

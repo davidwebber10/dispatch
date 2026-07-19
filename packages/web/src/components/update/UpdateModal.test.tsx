@@ -3,7 +3,7 @@ import { test, expect, beforeEach, vi } from 'vitest';
 
 const applyUpdate = vi.fn();
 const getUpdateState = vi.fn();
-vi.mock('../../api/client', () => ({ api: { applyUpdate: () => applyUpdate(), getUpdateState: () => getUpdateState() } }));
+vi.mock('../../api/client', () => ({ api: { applyUpdate: (force?: boolean) => applyUpdate(force), getUpdateState: () => getUpdateState() } }));
 
 import { UpdateModal } from './UpdateModal';
 import { useUpdate } from '../../stores/update';
@@ -68,4 +68,45 @@ test('renders the in-progress state once another client broadcasts update:in-pro
   useUpdate.setState({ available: { version: 'v1.2.0', url: null, publishedAt: null }, inProgress: true });
   render(<UpdateModal />);
   expect(screen.getByText(/Updating Dispatch/)).toBeInTheDocument();
+});
+
+test('a dirty-tree failure lists the dirty paths, an overflow line, and an Update anyway button', async () => {
+  applyUpdate.mockResolvedValue({
+    ok: false,
+    reason: 'Working tree has uncommitted changes.',
+    dirty: [{ status: ' M', path: 'a.ts' }, { status: '??', path: 'b.ts' }],
+    dirtyOverflow: 3,
+    forceable: true,
+  });
+  useUpdate.setState({ available: { version: 'v1.2.0', url: null, publishedAt: null } });
+  render(<UpdateModal />);
+  fireEvent.click(screen.getByText('Update'));
+  await waitFor(() => expect(screen.getByText(/a\.ts/)).toBeInTheDocument());
+  expect(screen.getByText(/b\.ts/)).toBeInTheDocument();
+  expect(screen.getByText('+3 more')).toBeInTheDocument();
+  expect(screen.getByText('Update anyway')).toBeInTheDocument();
+});
+
+test('clicking Update anyway re-applies with force=true', async () => {
+  applyUpdate.mockResolvedValue({
+    ok: false,
+    reason: 'Working tree has uncommitted changes.',
+    dirty: [{ status: ' M', path: 'a.ts' }],
+    forceable: true,
+  });
+  useUpdate.setState({ available: { version: 'v1.2.0', url: null, publishedAt: null } });
+  render(<UpdateModal />);
+  fireEvent.click(screen.getByText('Update'));
+  await waitFor(() => expect(screen.getByText('Update anyway')).toBeInTheDocument());
+  fireEvent.click(screen.getByText('Update anyway'));
+  await waitFor(() => expect(applyUpdate).toHaveBeenLastCalledWith(true));
+});
+
+test('no Update anyway button when the preflight failure is not forceable', async () => {
+  applyUpdate.mockResolvedValue({ ok: false, reason: 'git fetch failed: network unreachable.' });
+  useUpdate.setState({ available: { version: 'v1.2.0', url: null, publishedAt: null } });
+  render(<UpdateModal />);
+  fireEvent.click(screen.getByText('Update'));
+  await waitFor(() => expect(screen.getByText(/network unreachable/)).toBeInTheDocument());
+  expect(screen.queryByText('Update anyway')).not.toBeInTheDocument();
 });
