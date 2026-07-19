@@ -24,6 +24,7 @@ afterEach(() => {
 
 function app(broadcaster: EventBroadcaster, gitExec: GitExec, applyFn: (repoDir: string) => void, opts?: Partial<CreateUpdateRouterOptions>) {
   const a = express();
+  a.use(express.json());
   a.use('/api/update', createUpdateRouter(broadcaster, '/repo', db, { gitExec, applyFn, ...opts }));
   return a;
 }
@@ -71,6 +72,56 @@ describe('POST /api/update/apply', () => {
     expect(res.body.ok).toBe(false);
     expect(res.body.reason).toMatch(/uncommitted changes/i);
     expect(events).toEqual([]);
+    expect(applyFn).not.toHaveBeenCalled();
+  });
+
+  it('the 409 body carries the parsed dirty list and marks the failure forceable', async () => {
+    const broadcaster: EventBroadcaster = { broadcast: () => {} };
+    const applyFn = vi.fn();
+    const dirtyGit = fakeGit({ ...CLEAN_AND_FF_ABLE, 'status --porcelain': ' M a.ts\n' });
+
+    const res = await request(app(broadcaster, dirtyGit, applyFn)).post('/api/update/apply').send({});
+
+    expect(res.status).toBe(409);
+    expect(res.body.dirty).toEqual([{ status: ' M', path: 'a.ts' }]);
+    expect(res.body.forceable).toBe(true);
+    expect(res.body.dirtyOverflow).toBe(0);
+    expect(applyFn).not.toHaveBeenCalled();
+  });
+
+  it('force:true reaches apply on a dirty-but-otherwise-fast-forwardable tree', async () => {
+    const events: Record<string, unknown>[] = [];
+    const broadcaster: EventBroadcaster = { broadcast: (e) => { events.push(e); } };
+    const applyFn = vi.fn();
+    const dirtyButForceableGit = fakeGit({ ...CLEAN_AND_FF_ABLE, 'status --porcelain': ' M a.ts\n' });
+
+    const res = await request(app(broadcaster, dirtyButForceableGit, applyFn))
+      .post('/api/update/apply')
+      .send({ force: true });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+    expect(events).toEqual([{ type: 'update:in-progress' }]);
+    expect(applyFn).toHaveBeenCalledWith('/repo');
+  });
+
+  it('force:true does NOT skip the fast-forward check — a diverged branch still 409s and is never applied', async () => {
+    const broadcaster: EventBroadcaster = { broadcast: () => {} };
+    const applyFn = vi.fn();
+    const dirtyAndDivergedGit: GitExec = (args) => {
+      const key = args.join(' ');
+      if (key === 'status --porcelain') return ' M a.ts\n';
+      if (key === 'merge-base --is-ancestor abc123 def456') throw new Error('exit code 1');
+      return CLEAN_AND_FF_ABLE[key];
+    };
+
+    const res = await request(app(broadcaster, dirtyAndDivergedGit, applyFn))
+      .post('/api/update/apply')
+      .send({ force: true });
+
+    expect(res.status).toBe(409);
+    expect(res.body.reason).toMatch(/diverged/i);
+    expect(res.body.forceable).toBeFalsy();
     expect(applyFn).not.toHaveBeenCalled();
   });
 
