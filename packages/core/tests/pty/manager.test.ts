@@ -68,4 +68,29 @@ describe('PTYManager (real PTY)', () => {
     expect(manager.getSize('sess-r')).toEqual({ cols: 90, rows: 30 });
     manager.kill('sess-r');
   }, 10_000);
+
+  it('getBufferSize reports 0 for an unknown terminal id', () => {
+    const manager = new PTYManager();
+    expect(manager.getBufferSize('does-not-exist')).toBe(0);
+  });
+
+  it('getBufferSize reflects the live ring\'s retained byte count while the process is alive', async () => {
+    const manager = new PTYManager();
+    const gotData = new Promise<void>((resolve) => {
+      manager.on('data', () => resolve());
+    });
+
+    manager.spawn('sess-buf', '/bin/sh', ['-c', 'printf MARKER; while :; do sleep 0.05; done'], os.tmpdir());
+    await gotData;
+    await new Promise((r) => setTimeout(r, 50)); // let the write land in the buffer
+
+    const size = manager.getBufferSize('sess-buf');
+    expect(size).toBeGreaterThan(0);
+    expect(size).toBe(Buffer.byteLength(manager.getBuffer('sess-buf'), 'utf8'));
+
+    manager.kill('sess-buf');
+    // Reaped on kill/exit — back to the unknown-id default.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(manager.getBufferSize('sess-buf')).toBe(0);
+  }, 10_000);
 });

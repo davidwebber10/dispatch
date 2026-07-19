@@ -70,4 +70,30 @@ describe('RingBuffer', () => {
     buf.clear();
     expect(buf.isReplayComplete()).toBe(true);
   });
+
+  it('size() reports N for a ring fed N bytes (no wrap)', () => {
+    const buf = new RingBuffer(100);
+    buf.write('hello');
+    expect(buf.size()).toBe(Buffer.byteLength('hello', 'utf8'));
+  });
+
+  it('size() reports the retained (capped) size once wrapped, NOT the lifetime total written', () => {
+    const buf = new RingBuffer(10);
+    buf.write('12345'); // 5 bytes
+    buf.write('67890'); // +5 = 10 bytes
+    buf.write('abc');   // +3 = 13 -> trims oldest chunk ('12345', 5 bytes) -> retained 8
+    const lifetimeTotalWritten = 5 + 5 + 3; // 13 — what size() must NOT return
+    expect(buf.size()).toBe(8);
+    expect(buf.size()).toBeLessThan(lifetimeTotalWritten);
+    expect(buf.size()).toBe(Buffer.byteLength(buf.getContents(), 'utf8')); // matches what a full replay would return
+  });
+
+  it('size() is 0 for a fresh ring and resets to 0 after clear()', () => {
+    const buf = new RingBuffer(100);
+    expect(buf.size()).toBe(0);
+    buf.write('data');
+    expect(buf.size()).toBeGreaterThan(0);
+    buf.clear();
+    expect(buf.size()).toBe(0);
+  });
 });

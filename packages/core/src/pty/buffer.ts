@@ -33,6 +33,17 @@ export class RingBuffer {
     return true;
   }
 
+  /**
+   * The ring's current byte count. This is the RETAINED size — what getContents()
+   * would return with no cap — not the lifetime total of everything ever written:
+   * write()'s trim loop already decrements totalSize as it evicts old chunks, so
+   * once the ring has wrapped this is already "what a full replay would return",
+   * no separate accounting needed.
+   */
+  size(): number {
+    return this.totalSize;
+  }
+
   getContents(maxBytes?: number): string {
     if (!maxBytes || maxBytes <= 0 || this.totalSize <= maxBytes) {
       return this.chunks.join('');

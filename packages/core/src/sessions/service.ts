@@ -1033,6 +1033,11 @@ export class SessionService {
     return this.structuredManagerForTerminal(terminalId)?.getPending(terminalId) ?? null;
   }
 
+  /** The terminal's current PTY scrollback ring size in bytes (0 if not live). */
+  getScrollbackSize(terminalId: string): number {
+    return this.ptyManager.getBufferSize(terminalId);
+  }
+
   /**
    * The real `claude` CLI's AskUserQuestion tool result mapper looks up each answer by
    * the question's `question` TEXT (`answers[q.question]`), never its `header` — but

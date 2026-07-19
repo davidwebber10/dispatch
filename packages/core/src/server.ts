@@ -89,6 +89,7 @@ class NoopPTYManager extends PTYManager {
   override resize(): void {}
   override kill(sessionId: string): void { this.alive.delete(sessionId); }
   override getBuffer(): string { return ''; }
+  override getBufferSize(): number { return 0; }
   override getLastActivity(): Date | null { return null; }
   override isAlive(sessionId: string): boolean { return this.alive.has(sessionId); }
   override killAll(): void { this.alive.clear(); }

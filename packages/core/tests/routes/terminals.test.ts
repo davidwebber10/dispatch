@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../src/server.js';
 import Database from 'better-sqlite3';
@@ -137,6 +137,29 @@ describe('terminal routes', () => {
     terminalsDb.create(db, { id: 'sh-c', sessionId, type: 'shell', label: 's', skipPermissions: false });
     const r = await request(app).get('/api/terminals/sh-c/conversation').expect(200);
     expect(r.body.unsupported).toBe(true);
+  });
+
+  describe('GET /api/terminals/:terminalId/scrollback', () => {
+    it('returns the manager\'s byte count as { totalBytes }', async () => {
+      const create = await request(app)
+        .post(`/api/sessions/${sessionId}/terminals`)
+        .send({ type: 'shell', workingDir: '/tmp' });
+      const id = create.body.id;
+
+      const ptyManager = (app as any)._ptyManager;
+      const spy = vi.spyOn(ptyManager, 'getBufferSize').mockReturnValue(12345);
+
+      const res = await request(app).get(`/api/terminals/${id}/scrollback`);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ totalBytes: 12345 });
+      expect(spy).toHaveBeenCalledWith(id);
+    });
+
+    it('404s for an unknown terminal', async () => {
+      const res = await request(app).get('/api/terminals/does-not-exist/scrollback');
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe('Terminal not found');
+    });
   });
 
   it('POST /terminals/:id/input writes to the PTY (204) and validates data', async () => {

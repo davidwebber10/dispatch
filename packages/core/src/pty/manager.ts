@@ -115,6 +115,16 @@ export class PTYManager extends EventEmitter {
     return this.ptys.get(sessionId)?.buffer.isReplayComplete(maxBytes) ?? true;
   }
 
+  /**
+   * The terminal's current scrollback size in bytes — the ring's retained (capped)
+   * size, i.e. what a full (uncapped) getBuffer() replay would return right now, not
+   * the lifetime total of everything the process has ever written. 0 for an unknown
+   * (never spawned, or already exited/reaped) terminal id.
+   */
+  getBufferSize(sessionId: string): number {
+    return this.ptys.get(sessionId)?.buffer.size() ?? 0;
+  }
+
   getLastActivity(sessionId: string): Date | null {
     return this.ptys.get(sessionId)?.buffer.lastWriteAt ?? null;
   }

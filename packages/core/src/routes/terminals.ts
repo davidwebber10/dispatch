@@ -68,6 +68,16 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     res.json(terminal);
   });
 
+  // GET /api/terminals/:terminalId/scrollback — the ring's true byte count, so a client
+  // that requested a trimmed replay (mobile) can tell whether older history exists.
+  // Deliberately NOT sent over the terminal websocket — that stream carries raw PTY
+  // bytes, and injecting a JSON frame there would corrupt terminal output.
+  router.get('/terminals/:terminalId/scrollback', (req, res) => {
+    const terminal = sessionService.getTerminal(req.params.terminalId);
+    if (!terminal) return res.status(404).json({ error: 'Terminal not found' });
+    res.json({ totalBytes: sessionService.getScrollbackSize(req.params.terminalId) });
+  });
+
   // GET /api/terminals/:terminalId/conversation?since=N&before=M&beforeUuid=U&limit=L —
   // windowed transcript (View). Default: most recent `limit` lines; `since`: new lines
   // after N (poll); `before`: the `limit` lines before M (older history for infinite
