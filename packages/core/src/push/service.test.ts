@@ -5,7 +5,7 @@ import path from 'path';
 import type Database from 'better-sqlite3';
 import { createDatabase } from '../db/connection.js';
 import * as pushDb from '../db/push.js';
-import { PushService } from './service.js';
+import { PushService, vapidSubject } from './service.js';
 
 let dir: string;
 let db: Database.Database;
@@ -93,5 +93,29 @@ describe('PushService VAPID keys', () => {
     expect(k1).toBeTruthy();
     const again = new PushService(db, { vapidDir: dir, send: async () => {} });
     expect(again.getPublicKey()).toBe(k1);
+  });
+});
+
+// Regression: the subject shipped as 'mailto:dispatch@localhost', which Apple's
+// push service rejects with 403 BadJwtToken — every iOS notification failed
+// silently (403 is not 404/410, so the subscription was never even pruned).
+// Chrome/FCM accepts anything, which is why it went unnoticed.
+describe('vapidSubject', () => {
+  afterEach(() => { delete process.env.DISPATCH_VAPID_SUBJECT; });
+
+  it('defaults to a routable subject Apple accepts — never localhost', () => {
+    const s = vapidSubject();
+    expect(s).not.toMatch(/localhost/);
+    expect(s).toMatch(/^https:\/\/[^/\s]+\.[a-z]{2,}/i);
+  });
+
+  it('lets an operator point it at their own contact', () => {
+    process.env.DISPATCH_VAPID_SUBJECT = 'mailto:ops@example.com';
+    expect(vapidSubject()).toBe('mailto:ops@example.com');
+  });
+
+  it('falls back to the default when the override is blank', () => {
+    process.env.DISPATCH_VAPID_SUBJECT = '   ';
+    expect(vapidSubject()).toMatch(/^https:\/\//);
   });
 });
