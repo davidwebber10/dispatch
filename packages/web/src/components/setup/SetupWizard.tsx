@@ -3,7 +3,7 @@ import QRCode from 'qrcode';
 import type { SetupState, ProviderStatus, TailscaleStatus } from '../../api/types';
 import { api } from '../../api/client';
 import { useSetup } from '../../stores/setup';
-import { SecretsSection } from '../settings/SettingsModal';
+import { SecretsSection } from '../settings/SecretsSection';
 
 type Step = 'agents' | 'mobile' | 'secrets' | 'done';
 const ORDER: Step[] = ['agents', 'mobile', 'secrets', 'done'];
