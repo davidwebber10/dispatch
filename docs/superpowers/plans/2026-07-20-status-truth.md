@@ -50,6 +50,14 @@ the reconciliation harder later.
 
 ## Task 1: The question heuristic
 
+> **SHIPPED, and the code below is the STARTING point, not what landed.** Review found
+> three problems with this snippet: bare `confirm` false-positived on completion reports
+> ("Logs confirm the deploy succeeded"), the closing-thought isolation collapsed on
+> unpunctuated bullet lists, and the fence test was vacuous — deleting fence-stripping
+> left every test passing. Fixing the second introduced a further regression on
+> soft-wrapped asks. Read `packages/core/src/status/question.ts` for the real
+> implementation; 17 tests, every mechanism mutation-verified.
+
 **Files:**
 - Create: `packages/core/src/status/question.ts`
 - Test: `packages/core/src/status/question.test.ts`
@@ -288,7 +296,10 @@ Replace the `if (event?.type === 'result') { … }` block in `manager.ts` (aroun
         session.lastToolUse = undefined; // reset for the next turn
         session.declared = undefined;    // ditto — a declaration is per-turn
 
-        // Declaration wins over everything: the agent told us, so don't guess.
+        // A declared `needs_you` wins over everything — a question blocks the thread
+        // regardless of any pending timer. But a wake-scheduler beats any OTHER
+        // declaration: a pending timer is an observable fact and a declaration is a
+        // claim, and something that will wake up is not finished.
         // `blocked` deliberately falls through to 'idle' — a thread waiting on another
         // agent still proceeds without the human, so it isn't a needs-help state.
         if (declared?.state === 'needs_you') {
@@ -687,6 +698,23 @@ Beside the existing `structuredManager.on('idle', …)` block:
   });
 ```
 
+**Also required — `settleStructuredTurn` must learn about `needs-help`.** Found by the
+Task 2 review. `SessionService.settleStructuredTurn` (`service.ts` ~1206-1227) waits on
+`'idle'` or `'exit'` to confirm a transport switch has settled. A `needs-help` turn now
+satisfies neither, so it burns the full 5s timeout. The pre-existing `'scheduled'` branch
+has the same hole, but question-ending turns are far more common than wake-tool turns, so
+the blast radius is much larger. Add `needs-help` (and `scheduled` while you are there) to
+the settle listeners:
+
+```ts
+    manager.on('needs-help', onSettle);
+    manager.on('scheduled', onSettle);
+```
+
+Match however the existing `onSettle` handler is registered and torn down — read the
+function before editing and mirror its cleanup exactly, or you will leak listeners.
+```
+
 And extend the existing `idle` listener to record the outcome too:
 
 ```ts
@@ -795,6 +823,113 @@ git commit -m "feat(core): GET /api/state/status-quality — declared vs inferre
 
 The spec makes measuring this a precondition for Phase 2: the board's
 central column is only worth building if needs-help is trustworthy."
+```
+
+---
+
+## Task 7: Codex parity — the same turn-end truth for Codex threads
+
+**Files:**
+- Modify: `packages/core/src/structured/codex-translate.ts`
+- Modify: `packages/core/src/structured/codex-manager.ts`
+- Test: `packages/core/tests/structured/codex-translate.test.ts`
+
+**Interfaces:**
+- Consumes: `looksLikeQuestion(text)` (Task 1); `Session.declared` + `noteDeclaredStatus` (Task 2, already implemented on the Codex manager for interface parity); the `needs-help` event contract `(terminalId, { ask, summary, inferred })` (Task 2).
+- Produces: nothing new — Task 5's `needs-help` listener is shared by both transports and picks this up for free.
+
+**Why this task exists.** Task 2 wired the turn-end branching into the Claude manager only.
+Codex Pretty is **on by default** (`CODEX_PRETTY_ENABLED = process.env.DISPATCH_CODEX_PRETTY !== '0'`),
+so without this a Codex thread that ends its turn asking a question is still filed as
+finished — the exact bug this plan exists to fix, unfixed for every Codex user.
+
+**The trap — do NOT reuse `lastAssistantText()`.** The Claude helper scans the event ring
+for `{ type: 'assistant', message.content: [{ type: 'text' }] }`. A *live* Codex turn never
+produces one: agent prose arrives as `item/agentMessage/delta` → `stream_event` /
+`content_block_delta` frames, and `assistant` events in the Codex ring carry only
+`tool_use` blocks or zero-content usage payloads. Whole `assistant` text events appear
+only via `backfillItem` during a resume. So copying the helper would either always return
+`''` (heuristic never fires) or return **stale text from a previous session's backfill**
+(heuristic fires on the wrong turn) — worse than the bug being fixed.
+
+- [ ] **Step 1: Write the failing test**
+
+In `packages/core/tests/structured/codex-translate.test.ts`, following the file's existing
+`kinds(...)` assertion shape:
+
+```ts
+it('a turn whose last agent message asks a question ends in needs-help, not idle', () => {
+  const actions = [
+    ...translate({ method: 'item/completed', params: { item: { type: 'agentMessage', text: 'Rewired the rail. Does that look right to you?' } } }),
+    ...translate({ method: 'turn/completed', params: {} }),
+  ];
+  expect(kinds(actions)).toContain('needs-help');
+  expect(kinds(actions)).not.toContain('idle');
+});
+
+it('a turn whose last agent message reports completion ends idle', () => {
+  const actions = [
+    ...translate({ method: 'item/completed', params: { item: { type: 'agentMessage', text: 'Merged to main. 6 commits, all green.' } } }),
+    ...translate({ method: 'turn/completed', params: {} }),
+  ];
+  expect(kinds(actions)).toContain('idle');
+  expect(kinds(actions)).not.toContain('needs-help');
+});
+```
+
+Adapt the exact `translate` entry-point name and frame shapes to what the file already
+uses — read it first; do not invent an API.
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `pnpm -C packages/core test -- codex-translate`
+Expected: FAIL — every turn ends `idle`, `needs-help` is never produced.
+
+- [ ] **Step 3: Capture the agent message text**
+
+`itemCompleted()` in `codex-translate.ts` already receives the completed `agentMessage`
+item, and `backfillItem` proves the full prose lives at **`item.text`** — it is currently
+discarded. Stash it on the session so the turn boundary can read it. Add a session field
+mirroring how `codex-manager.ts` already stores per-session state, and set it when an
+`agentMessage` item completes. One field, written on every completed agent message, so it
+always holds the most recent prose of the CURRENT turn.
+
+- [ ] **Step 4: Branch at the Codex turn boundary**
+
+`turnCompleted()` (`codex-translate.ts`) returns `[{kind:'event', …}, {kind:'idle'}]`, and
+`applyActions` in `codex-manager.ts` turns `case 'idle'` into `this.emit('idle', …)`.
+Apply the same precedence chain Task 2 established, minus the wake branch — Codex has no
+`WAKE_TOOLS` / `lastToolUse` tracking at all, so that branch simply does not exist here:
+
+1. declared `needs_you` → emit `needs-help` with `inferred: false`
+2. any other declaration → `idle`
+3. no declaration + `looksLikeQuestion(session.lastAgentText)` → `needs-help`, `inferred: true`
+4. otherwise → `idle`
+
+Clear both the declaration and the stashed text at the boundary, exactly as the Claude
+handler clears `session.declared` — a value leaking into the next turn is a real bug.
+
+- [ ] **Step 5: Run tests**
+
+Run: `pnpm -C packages/core test`
+Expected: PASS, full suite.
+
+- [ ] **Step 6: Mutation-verify**
+
+Temporarily replace the stashed text with `''` at the read site and re-run: the
+question test MUST fail. Restore and confirm green. A heuristic reading an empty string
+silently never fires, which is exactly the failure this task exists to avoid.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add packages/core/src/structured/codex-translate.ts packages/core/src/structured/codex-manager.ts packages/core/tests/structured/codex-translate.test.ts
+git commit -m "feat(core): Codex turn-end status truth
+
+Codex Pretty is on by default, so without this a Codex thread ending its
+turn with a question was still filed as finished. Reads the agentMessage
+text stashed at item-completion rather than the Claude ring walk, which
+on Codex returns either nothing or stale backfill text."
 ```
 
 ---
