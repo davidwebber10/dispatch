@@ -70,8 +70,11 @@ export function stripLeadingCheckmark(summary: string): string {
 }
 
 // `-webkit-line-clamp` needs `display:-webkit-box` + `-webkit-box-orient:vertical` alongside it —
-// the exact trio the design canvas uses. Volumes differ only in how many lines survive: Needs
-// Help's question gets 2, Complete's outcome and Working's status line get 1.
+// the exact trio the design canvas uses. Volumes differ only in how many lines survive, and the
+// values come from the canvas itself: Needs Help's question and Complete's outcome both get 2,
+// Working's status line gets 1 (it is terse by construction — `Running · 2m`, `◌ queued`).
+// Real outcome summaries run long (see docs/design/board-redesign/before-real-board.png), so one
+// line truncates them mid-thought while two usually carries the whole result.
 function clampLines(lines: number): CSSProperties {
   return { display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: lines, overflow: 'hidden' };
 }
@@ -191,7 +194,7 @@ export function BoardCard({ card, onOpen, onAcknowledge, onDismissInferred }: Bo
             </div>
           )}
           {card.column === 'complete' && (
-            <div style={{ marginTop: 3, color: 'var(--color-text-secondary)', ...clampLines(1) }}>
+            <div style={{ marginTop: 3, color: 'var(--color-text-secondary)', ...clampLines(2) }}>
               <span style={{ color: '#5A8DD6', fontWeight: 700 }}>✓</span> {stripLeadingCheckmark(card.detail)}
             </div>
           )}
