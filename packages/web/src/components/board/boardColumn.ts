@@ -19,6 +19,12 @@ export interface BoardCardModel {
   detail: string;              // the line under the title
   inferred: boolean;           // an inferred ask renders dimmer with a ~ marker
   pending: boolean;            // Working sub-tier: queued/scheduled/blocked rather than live
+  // Only ever set (even to '') for a declared-blocked pending Working card; undefined for every
+  // other card, INCLUDING a queued/scheduled pending one — that's how BoardCard.tsx tells "this
+  // pending card is blocked on a dependency" apart from "this pending card is just queued".
+  // '' means blocked was declared but the agent supplied no blocker text (render the bare
+  // fallback); a non-empty string is the agent's own text (render `behind "<text>"`).
+  blocker?: string;
   overridden: boolean;
 }
 
@@ -45,6 +51,8 @@ export function readLastOutcome(t: Terminal): TerminalLastOutcome | null {
     summary: o.summary,
     needsHelp: o.needsHelp === true,
     inferred: o.inferred === true,
+    declaredState: o.declaredState === 'done' || o.declaredState === 'blocked' ? o.declaredState : undefined,
+    blocker: typeof o.blocker === 'string' ? o.blocker : undefined,
     at: typeof o.at === 'string' ? o.at : '',
   };
 }
@@ -78,9 +86,13 @@ export function readBoardState(t: Terminal): TerminalBoardState {
  *   3. Live status (WS-fresh, may be ahead of the persisted row) beats the persisted row:
  *      needs_input/error → Needs Help (stopped, and stopped BECAUSE it needs you); working,
  *      or the queued/scheduled waiting sub-tier → Working (proceeds without you either way).
- *   4. Otherwise nothing is currently in flight. Complete vs. Resting is decided purely by the
- *      last outcome + whether it's been acknowledged — never by recency. No outcome at all
- *      means no evidence the thread ever finished a turn, so it rests rather than completes.
+ *   4. Otherwise nothing is currently in flight. A declared `blocked` outcome is Working's
+ *      waiting tier, never Complete — it proceeds without you (waiting on another agent), which
+ *      is the definition of Working, not "finished". An absent `declaredState` (old rows, an
+ *      undeclared turn, or a needs-help outcome) is NOT blocked — the safe default. Otherwise
+ *      Complete vs. Resting is decided purely by the last outcome + whether it's been
+ *      acknowledged — never by recency. No outcome at all means no evidence the thread ever
+ *      finished a turn, so it rests rather than completes.
  */
 export function boardColumn(t: Terminal, s?: LiveStatus): BoardColumn {
   const board = readBoardState(t);
@@ -107,13 +119,21 @@ export function boardColumn(t: Terminal, s?: LiveStatus): BoardColumn {
   // Belt-and-suspenders: an outcome recorded as an ask always needs you, even if the persisted
   // status row lags behind it for a moment.
   if (outcome.needsHelp) return 'needs_help';
+  // A declared `blocked` outcome DOES proceed without the human — it's waiting on another
+  // agent, not finished — so it belongs in Working's waiting tier, never Complete. This is the
+  // fix: before core carried `declaredState`, a blocked turn was indistinguishable from a
+  // finished one (both "idle, inferred: false") and filed as Complete.
+  if (outcome.declaredState === 'blocked') return 'working';
   return board.acknowledgedAt ? 'resting' : 'complete';
 }
 
-/** True while a Working card is in the waiting sub-tier (queued/scheduled) rather than actually
- * live right now — dashed/dimmed treatment per the spec's "Waiting is a sub-type of Working". */
-function isPending(t: Terminal, s?: LiveStatus): boolean {
+/** True while a Working card is in the waiting sub-tier (queued/scheduled/blocked) rather than
+ * actually live right now — dashed/dimmed treatment per the spec's "Waiting is a sub-type of
+ * Working". A live thread status always wins first: if a new turn is already running, a stale
+ * `declaredState: 'blocked'` left over from the PREVIOUS turn must not still read as pending. */
+function isPending(t: Terminal, s: LiveStatus | undefined, outcome: TerminalLastOutcome | null): boolean {
   if (s?.threadStatus === 'working' || s?.threadStatus === 'starting') return false;
+  if (outcome?.declaredState === 'blocked') return true;
   const coarse = s?.status ?? t.status;
   return coarse === 'queued' || coarse === 'scheduled';
 }
@@ -132,6 +152,11 @@ function detailFor(column: BoardColumn, outcome: TerminalLastOutcome | null, s: 
     case 'complete':
       return outcome?.summary?.trim() || 'Finished';
     case 'working':
+      // A blocked card's line is the agent's own blocker text (or a bare fallback when it
+      // supplied none) — never the generic queued/live text. BoardCard.tsx composes the final
+      // `behind "…"` presentation off `card.blocker`; this is just the plain-text fallback for
+      // any other consumer of `detail`.
+      if (outcome?.declaredState === 'blocked') return outcome.blocker?.trim() || 'blocked';
       if (s?.activity?.trim()) return s.activity.trim();
       return pending ? 'Queued — resumes on its own' : 'Running';
     case 'resting':
@@ -144,12 +169,17 @@ export function toBoardCard(t: Terminal, projectId: string, projectName: string,
   const board = readBoardState(t);
   const outcome = readLastOutcome(t);
   const column = boardColumn(t, s);
-  const pending = column === 'working' && isPending(t, s);
+  const pending = column === 'working' && isPending(t, s, outcome);
   const overridden = board.override != null;
   // Only a genuine needs_help card whose outcome was RECORDED as inferred (the heuristic
   // guessed, nothing was declared) gets the dimmer "~" treatment — never an override (that's a
   // deliberate human judgement, not a guess).
   const inferred = column === 'needs_help' && !overridden && !!outcome?.needsHelp && !!outcome?.inferred;
+  // '' (not undefined) marks "blocked was declared but the agent supplied no text" — distinct
+  // from undefined, which means this pending card isn't a blocked one at all (queued/scheduled).
+  // Gated on `pending` too so a stray declaredState left over from a since-superseded turn (see
+  // isPending's live-status guard) can never leak the blocked presentation onto a live card.
+  const blocker = pending && outcome?.declaredState === 'blocked' ? (outcome.blocker?.trim() ?? '') : undefined;
   return {
     terminalId: t.id,
     projectId,
@@ -159,6 +189,7 @@ export function toBoardCard(t: Terminal, projectId: string, projectName: string,
     detail: detailFor(column, outcome, s, pending),
     inferred,
     pending,
+    blocker,
     overridden,
   };
 }

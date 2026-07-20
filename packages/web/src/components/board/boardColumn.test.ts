@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { boardColumn } from './boardColumn';
+import { boardColumn, toBoardCard } from './boardColumn';
 
 const t = (config: any = {}, status = 'waiting') => ({ id: 'x', status, config, archivedAt: null } as any);
 
@@ -19,6 +19,34 @@ describe('boardColumn', () => {
 
   it('a finished, unacknowledged turn is complete', () => {
     expect(boardColumn(t({ lastOutcome: { summary: 'merged', needsHelp: false, inferred: false } }, 'waiting'))).toBe('complete');
+  });
+
+  // The regression that motivated this whole fix: before core carried `declaredState`, a
+  // declared `blocked` outcome and a genuinely finished `done` outcome were BOTH just "idle,
+  // inferred: false" on the wire — indistinguishable — so a thread waiting on another agent
+  // filed as Complete, reading as finished work when it was actually queued behind something.
+  it('a declared blocked outcome is Working, pending — NOT Complete', () => {
+    const term = t(
+      { lastOutcome: { summary: 'x', needsHelp: false, inferred: false, declaredState: 'blocked', blocker: 'Sync SKU catalog' } },
+      'waiting'
+    );
+    expect(boardColumn(term)).toBe('working');
+    expect(boardColumn(term)).not.toBe('complete');
+    const card = toBoardCard(term, 'p1', 'proj');
+    expect(card.column).toBe('working');
+    expect(card.pending).toBe(true);
+  });
+
+  it('a declared done outcome still maps to complete', () => {
+    expect(
+      boardColumn(t({ lastOutcome: { summary: 'merged', needsHelp: false, inferred: false, declaredState: 'done' } }, 'waiting'))
+    ).toBe('complete');
+  });
+
+  it('an outcome with no declaredState (an old row) maps exactly as it did before — no behaviour change for existing data', () => {
+    const oldRow = t({ lastOutcome: { summary: 'merged', needsHelp: false, inferred: false } }, 'waiting');
+    expect(boardColumn(oldRow)).toBe('complete');
+    expect(toBoardCard(oldRow, 'p1', 'proj').pending).toBe(false);
   });
 
   it('acknowledging a finished turn moves it to resting', () => {

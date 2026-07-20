@@ -180,6 +180,34 @@ describe('BoardCard — working, pending', () => {
   });
 });
 
+// A blocked card is a Working pending card — same dashed/dimmed treatment as queued/scheduled —
+// but its line names what it's waiting on rather than the generic pending text. `card.blocker`
+// (not `card.detail`) is what drives this: undefined means "not a blocked card at all", '' means
+// "blocked but no text supplied" (see boardColumn.ts's toBoardCard).
+describe('BoardCard — working, blocked', () => {
+  it('renders behind "<blocker>" with the agent-supplied text', () => {
+    const card = makeCard({ column: 'working', pending: true, detail: 'blocked', blocker: 'Sync SKU catalog' });
+    render(<BoardCard card={card} {...makeCallbacks()} />);
+    expect(screen.getByText('◌ behind "Sync SKU catalog"')).toBeInTheDocument();
+  });
+
+  it('falls back to a bare "blocked" (not empty quotes) when no blocker text was supplied', () => {
+    const card = makeCard({ column: 'working', pending: true, detail: 'blocked', blocker: '' });
+    render(<BoardCard card={card} {...makeCallbacks()} />);
+    expect(screen.getByText('◌ blocked')).toBeInTheDocument();
+    expect(screen.queryByText(/behind/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/""/)).not.toBeInTheDocument();
+  });
+
+  it('uses the same dashed, dimmed treatment as a queued pending card', () => {
+    const card = makeCard({ column: 'working', pending: true, detail: 'blocked', blocker: 'Sync SKU catalog' });
+    render(<BoardCard card={card} {...makeCallbacks()} />);
+    const el = screen.getByTestId('board-card');
+    expect(el.style.borderStyle).toBe('dashed');
+    expect(el.style.opacity).toBe('0.62');
+  });
+});
+
 describe('BoardCard — resting', () => {
   it('renders the outcome line with a check when one exists', () => {
     const card = makeCard({ column: 'resting', detail: 'shipped v2.1.0 · 3d' });

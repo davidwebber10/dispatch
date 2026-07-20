@@ -47,11 +47,24 @@ export interface Terminal {
  * that absence is itself meaningful (no evidence of finishing), not a default to paper over.
  * Parse it through `readLastOutcome` (components/board/boardColumn.ts) rather than casting
  * `t.config.lastOutcome` inline.
+ *
+ * `declaredState`/`blocker` were added by core commits 61b7730/dee6a4a and are both optional so
+ * an old row (written before they existed) simply lacks them:
+ *   declaredState?: 'done' | 'blocked' — WHICH state the agent declared for a non-needs-help
+ *                              turn. Absent when undeclared (inferred: true) or when this was a
+ *                              needs-help outcome. An absent declaredState must be treated as
+ *                              "not blocked" — the safe default that covers every pre-existing
+ *                              row, not an error to paper over.
+ *   blocker?: string          — the agent's own text for what it's waiting on, present only
+ *                              alongside `declaredState === 'blocked'`, and only when the agent
+ *                              supplied text (an empty blocker omits the key entirely).
  */
 export interface TerminalLastOutcome {
   summary: string;
   needsHelp: boolean;
   inferred: boolean;
+  declaredState?: 'done' | 'blocked';
+  blocker?: string;
   at: string;
 }
 

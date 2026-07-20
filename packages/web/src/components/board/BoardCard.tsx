@@ -32,6 +32,16 @@ export interface BoardCardProps {
 // transport" gets "✓ shipped v2.1.0 · 3d", "Kanban board" gets a bare "new — no work yet").
 const RESTING_NEVER_STARTED = 'new — no work yet';
 
+// A blocked card's line, composed the same way needs_help wraps its question in quotes (below):
+// `card.blocker` is only ever set (even to '') for a declared-blocked pending Working card —
+// undefined means this pending card is queued/scheduled, not blocked, so it keeps the plain
+// `card.detail` line untouched. '' means blocked was declared with no text supplied, which gets
+// the bare fallback rather than empty quotes.
+function workingDetail(card: BoardCardModel): string {
+  if (card.blocker === undefined) return card.detail;
+  return card.blocker ? `behind "${card.blocker}"` : 'blocked';
+}
+
 function appearance(card: BoardCardModel): CSSProperties {
   switch (card.column) {
     case 'needs_help':
@@ -132,7 +142,7 @@ export function BoardCard({ card, onOpen, onAcknowledge, onDismissInferred }: Bo
         )}
         {card.column === 'working' && (
           <div style={{ marginTop: 3, color: card.pending ? undefined : 'var(--color-accent)' }}>
-            {card.pending ? '◌' : '●'} {card.detail}
+            {card.pending ? '◌' : '●'} {workingDetail(card)}
           </div>
         )}
         {card.column === 'resting' && (
