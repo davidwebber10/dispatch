@@ -1,7 +1,8 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, within, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
-import { BoardCard } from './BoardCard';
+import { BoardCard, stripLeadingCheckmark } from './BoardCard';
 import type { BoardCardModel } from './boardColumn';
+import { timeAgo } from '../../lib/time';
 
 function makeCard(overrides: Partial<BoardCardModel> = {}): BoardCardModel {
   return {
@@ -49,13 +50,48 @@ function rgbaChannels(css: string): number[] {
   return m[1].split(',').map((s) => parseFloat(s.trim()));
 }
 
+// Open #8A — the ✓✓ bug. Asserts the OUTPUT string the helper produces, never internals (no
+// regex/implementation reach-in), per the guard against over-specified unit tests.
+describe('stripLeadingCheckmark', () => {
+  it('strips a leading ✓ and its trailing space', () => {
+    expect(stripLeadingCheckmark('✓ shipped v2.6.0')).toBe('shipped v2.6.0');
+  });
+
+  it('strips a leading ✔ with no following space', () => {
+    expect(stripLeadingCheckmark('✔shipped v2.6.0')).toBe('shipped v2.6.0');
+  });
+
+  it('strips a leading ☑', () => {
+    expect(stripLeadingCheckmark('☑ shipped v2.6.0')).toBe('shipped v2.6.0');
+  });
+
+  it('strips a leading "done:" case-insensitively', () => {
+    expect(stripLeadingCheckmark('DONE: shipped v2.6.0')).toBe('shipped v2.6.0');
+    expect(stripLeadingCheckmark('Done: shipped v2.6.0')).toBe('shipped v2.6.0');
+  });
+
+  it('leaves text with no leading marker untouched', () => {
+    expect(stripLeadingCheckmark('shipped v2.6.0')).toBe('shipped v2.6.0');
+  });
+
+  it('handles an empty string', () => {
+    expect(stripLeadingCheckmark('')).toBe('');
+  });
+
+  it('never double-ticks: a doubled or nested leading marker strips down to the bare text', () => {
+    expect(stripLeadingCheckmark('✓ ✓ shipped v2.6.0')).toBe('shipped v2.6.0');
+    expect(stripLeadingCheckmark('✓ done: shipped v2.6.0')).toBe('shipped v2.6.0');
+    expect(stripLeadingCheckmark('done: ✔ shipped v2.6.0')).toBe('shipped v2.6.0');
+  });
+});
+
 describe('BoardCard — needs help, declared', () => {
-  it('renders the project tag, label, italic question, and an Answer action', () => {
+  it('renders the project tag, label, italic question clamped to 2 lines, and an Answer action', () => {
     render(<BoardCard card={makeCard()} {...makeCallbacks()} />);
     expect(screen.getByText('dispatch')).toBeInTheDocument();
     expect(screen.getByText('Thread Naming')).toBeInTheDocument();
     const question = screen.getByText('"Should renames apply retroactively?"');
-    expect(question).toHaveStyle({ fontStyle: 'italic' });
+    expect(question).toHaveStyle({ fontStyle: 'italic', WebkitLineClamp: 2 });
     expect(screen.getByRole('button', { name: 'Answer' })).toBeInTheDocument();
     expect(screen.queryByText('~')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Dismiss' })).not.toBeInTheDocument();
@@ -119,9 +155,11 @@ describe('BoardCard — complete', () => {
   const completeCard = () =>
     makeCard({ column: 'complete', detail: 'shipped v2.6.0 · 1 Critical fixed' });
 
-  it('renders the outcome line and a check-off control', () => {
+  it('renders exactly one card-owned ✓ plus the outcome line, and a check-off control', () => {
     render(<BoardCard card={completeCard()} {...makeCallbacks()} />);
-    expect(screen.getByText('✓ shipped v2.6.0 · 1 Critical fixed')).toBeInTheDocument();
+    const el = screen.getByTestId('board-card');
+    expect(within(el).getAllByText('✓')).toHaveLength(1);
+    expect(screen.getByText('shipped v2.6.0 · 1 Critical fixed')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Acknowledge' })).toBeInTheDocument();
   });
 
@@ -129,6 +167,17 @@ describe('BoardCard — complete', () => {
     render(<BoardCard card={completeCard()} {...makeCallbacks()} />);
     const el = screen.getByTestId('board-card');
     expect(rgbaChannels(el.style.borderColor)).toEqual([90, 141, 214, 0.5]);
+  });
+
+  // Open #8A — the ✓✓ bug. An agent-supplied leading tick in its own summary must never survive
+  // alongside the card's own — the column owns the tick, so exactly one renders either way.
+  it('strips an agent-supplied leading ✓ from the summary so exactly one tick renders', () => {
+    const card = makeCard({ column: 'complete', detail: '✓ shipped v2.6.0 already ticked' });
+    render(<BoardCard card={card} {...makeCallbacks()} />);
+    const el = screen.getByTestId('board-card');
+    expect(within(el).getAllByText('✓')).toHaveLength(1);
+    expect(screen.getByText('shipped v2.6.0 already ticked')).toBeInTheDocument();
+    expect(screen.queryByText('✓ shipped v2.6.0 already ticked')).not.toBeInTheDocument();
   });
 
   it('clicking the check-off fires onAcknowledge, and only onAcknowledge', () => {
@@ -209,18 +258,33 @@ describe('BoardCard — working, blocked', () => {
   });
 });
 
+// Resting — the quietest volume. The redesign's fix for a board where Resting (explicitly never
+// meant to be read) rendered as loudly as Needs Help: it collapses to ONE line, the thread label
+// plus a short age, with no detail paragraph — not even the agent's own outcome summary.
 describe('BoardCard — resting', () => {
-  it('renders the outcome line with a check when one exists', () => {
-    const card = makeCard({ column: 'resting', detail: 'shipped v2.1.0 · 3d' });
+  it('collapses to a single line — label plus a computed age — with no detail paragraph', () => {
+    const lastActivityAt = new Date(Date.now() - 21 * 24 * 60 * 60 * 1000).toISOString(); // ~3 weeks
+    const card = makeCard({
+      column: 'resting',
+      label: 'Overseer view design',
+      detail: 'shipped v2.1.0 · 3d', // a real outcome — must NOT be rendered on a resting card
+      lastActivityAt,
+    });
     render(<BoardCard card={card} {...makeCallbacks()} />);
-    expect(screen.getByText('✓ shipped v2.1.0 · 3d')).toBeInTheDocument();
+    expect(screen.getByText('Overseer view design')).toBeInTheDocument();
+    expect(screen.getByText(timeAgo(lastActivityAt))).toBeInTheDocument();
+    // No detail paragraph, no project tag — the "essentially ONE line" guarantee.
+    expect(screen.queryByText(/shipped v2\.1\.0/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^✓/)).not.toBeInTheDocument();
+    expect(screen.queryByText('dispatch')).not.toBeInTheDocument();
   });
 
-  it('renders the never-started fallback verbatim, with no check mark', () => {
-    const card = makeCard({ column: 'resting', detail: 'new — no work yet' });
+  it('reads "new" — not a computed age — for a thread that never ran a turn', () => {
+    const card = makeCard({ column: 'resting', label: 'Slice 1 review', detail: 'new — no work yet' });
     render(<BoardCard card={card} {...makeCallbacks()} />);
-    expect(screen.getByText('new — no work yet')).toBeInTheDocument();
-    expect(screen.queryByText(/^✓/)).not.toBeInTheDocument();
+    expect(screen.getByText('Slice 1 review')).toBeInTheDocument();
+    expect(screen.getByText('new')).toBeInTheDocument();
+    expect(screen.queryByText('new — no work yet')).not.toBeInTheDocument();
   });
 
   it('clicking the card (its only control) fires onOpen, and only onOpen', () => {
