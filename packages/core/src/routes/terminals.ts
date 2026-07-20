@@ -181,8 +181,15 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   });
 
   // POST /api/terminals/:terminalId/report-status — an agent's own account of how its
-  // turn ended. Stored on the live session, consulted at the turn boundary; never
-  // applied eagerly, since the `result` event lands afterwards and would overwrite it.
+  // turn ended. Never applied eagerly: the turn's own end event lands afterwards and would
+  // overwrite it, so the declaration is stored and read AT that boundary.
+  //
+  // Where it is stored depends on the transport, because the two have different boundaries:
+  //   structured (Pretty) — on the live session, read by the `result` handler
+  //   PTY / CLI           — on the terminal row, read by the `Stop` hook (which runs in a
+  //                         different process and cannot see an in-memory session)
+  // The tool is taught to every claude-code/codex thread by TYPE, so both paths must work
+  // or the threads on the unsupported one get a 409 on every single turn.
   router.post('/terminals/:terminalId/report-status', (req, res) => {
     const { state, summary, ask, blocker } = req.body ?? {};
     if (state !== 'done' && state !== 'needs_you' && state !== 'blocked') {
