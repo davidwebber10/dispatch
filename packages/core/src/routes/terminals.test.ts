@@ -56,3 +56,29 @@ describe('POST /api/terminals/:id/report-status', () => {
     expect(res.status).toBe(409);
   });
 });
+
+describe('POST /api/terminals/:id/board', () => {
+  it('acknowledges a thread', async () => {
+    const setBoardState = vi.fn().mockReturnValue(true);
+    const res = await request(app({ setBoardState })).post('/api/terminals/t1/board').send({ acknowledged: true });
+    expect(res.status).toBe(204);
+    expect(setBoardState).toHaveBeenCalledWith('t1', { acknowledged: true });
+  });
+
+  it('sets a manual override', async () => {
+    const setBoardState = vi.fn().mockReturnValue(true);
+    const res = await request(app({ setBoardState })).post('/api/terminals/t1/board').send({ override: 'complete' });
+    expect(res.status).toBe(204);
+    expect(setBoardState).toHaveBeenCalledWith('t1', { override: 'complete' });
+  });
+
+  it('rejects an override of "working" — that is an observed fact, not a judgement', async () => {
+    const res = await request(app({ setBoardState: vi.fn() })).post('/api/terminals/t1/board').send({ override: 'working' });
+    expect(res.status).toBe(400);
+  });
+
+  it('404s an unknown terminal', async () => {
+    const res = await request(app({ setBoardState: vi.fn().mockReturnValue(false) })).post('/api/terminals/t1/board').send({ acknowledged: true });
+    expect(res.status).toBe(404);
+  });
+});

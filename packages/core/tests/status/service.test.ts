@@ -218,6 +218,39 @@ describe('StatusService onWatchStatus callback (feeds WatchDispatcher)', () => {
   });
 });
 
+describe('StatusService manual-override clearing (board state)', () => {
+  it('clears a manual override when the thread shows real activity', () => {
+    terminalsDb.updateConfig(db, 'term', { boardState: { override: 'complete' } });
+    const s = new StatusService(db, broadcaster);
+    s.markWorking('term');
+    const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
+    expect(cfg.boardState?.override ?? null).toBeNull();
+  });
+
+  it('clears a manual override on the needs_input edge too', () => {
+    terminalsDb.updateConfig(db, 'term', { boardState: { override: 'resting' } });
+    const s = new StatusService(db, broadcaster);
+    s.markNeedsInput('term');
+    const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
+    expect(cfg.boardState?.override ?? null).toBeNull();
+  });
+
+  it('preserves acknowledgedAt while clearing the override', () => {
+    terminalsDb.updateConfig(db, 'term', { boardState: { acknowledgedAt: '2020-01-01T00:00:00.000Z', override: 'needs_help' } });
+    const s = new StatusService(db, broadcaster);
+    s.markWorking('term');
+    const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
+    expect(cfg.boardState).toMatchObject({ acknowledgedAt: '2020-01-01T00:00:00.000Z', override: null });
+  });
+
+  it('is a no-op when there is no override set', () => {
+    const s = new StatusService(db, broadcaster);
+    s.markWorking('term');
+    const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
+    expect(cfg.boardState).toBeUndefined();
+  });
+});
+
 describe('StatusService thread-settled hook', () => {
   function setup() {
     const db2 = new Database(':memory:');

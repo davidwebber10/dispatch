@@ -1050,6 +1050,30 @@ export class SessionService {
   }
 
   /**
+   * Board-only state: whether the human has acknowledged a finished thread, and any manual
+   * correction of its derived column. Both live on the terminal row because the board is a
+   * projection — the thread itself has no opinion about either.
+   *
+   * `override` deliberately cannot be 'working': the other three are judgements the human is
+   * entitled to make, but working is an OBSERVED FACT — asserting it would not start anything.
+   * Route-level validation enforces that; this method trusts its caller.
+   */
+  setBoardState(terminalId: string, patch: { acknowledged?: boolean; override?: string | null }): boolean {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) return false;
+    let cfg: Record<string, any> = {};
+    try { cfg = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
+    const board = { ...(cfg.boardState ?? {}) };
+    if (patch.acknowledged !== undefined) {
+      board.acknowledgedAt = patch.acknowledged ? new Date().toISOString() : undefined;
+    }
+    if (patch.override !== undefined) board.override = patch.override;
+    cfg.boardState = board;
+    try { terminalsDb.updateConfig(this.db, terminalId, cfg); } catch { return false; }
+    return true;
+  }
+
+  /**
    * Persist an agent terminal's cumulative token usage into `config.totalTokens`
    * (and its output-only count into `config.outputTokens`) when its turn settles —
    * computed ONCE here (from the transcript's summed `usage` fields, via

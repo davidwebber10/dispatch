@@ -208,6 +208,30 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
   });
 
+  // POST /api/terminals/:terminalId/board — board-only state: acknowledge a finished thread,
+  // or manually correct its derived column. 'working' is rejected: the other three are
+  // judgements the human may make, but working is an observed fact.
+  router.post('/terminals/:terminalId/board', (req, res) => {
+    const { acknowledged, override } = req.body ?? {};
+    const patch: { acknowledged?: boolean; override?: string | null } = {};
+    if (acknowledged !== undefined) {
+      if (typeof acknowledged !== 'boolean') return res.status(400).json({ error: 'acknowledged must be a boolean' });
+      patch.acknowledged = acknowledged;
+    }
+    if (override !== undefined) {
+      if (override !== null && override !== 'needs_help' && override !== 'complete' && override !== 'resting') {
+        return res.status(400).json({ error: "override must be null, 'needs_help', 'complete' or 'resting'" });
+      }
+      patch.override = override;
+    }
+    if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'nothing to set' });
+    try {
+      const ok = sessionService.setBoardState(req.params.terminalId, patch);
+      if (!ok) return res.status(404).json({ error: 'Terminal not found' });
+      res.status(204).end();
+    } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
+  });
+
   // GET /api/terminals/:terminalId/resume-advice — should the Pretty view offer to
   // summarize before resuming? Read-only; a thread with nothing to advise on (no
   // external_id, no transcript, not claude) answers a benign "no".

@@ -161,6 +161,18 @@ export class StatusService {
       try { this.onActivity?.(terminalId); } catch { /* best effort */ }
       try { this.onWatchStatus?.(terminalId, status); } catch { /* best effort */ }
     }
+    // A manual override is a correction to a stale derived status. Real activity supersedes
+    // it — otherwise a thread the human filed away could never tell them it came back to
+    // life, which is the same class of bug the board exists to remove.
+    if (status === 'working' || status === 'needs_input') {
+      try {
+        const cfg = JSON.parse(terminalsDb.getById(this.db, terminalId)?.config || '{}');
+        if (cfg.boardState?.override) {
+          cfg.boardState = { ...cfg.boardState, override: null };
+          terminalsDb.updateConfig(this.db, terminalId, cfg);
+        }
+      } catch { /* best effort — status must never fail on board bookkeeping */ }
+    }
     this.broadcaster.broadcast({ type: 'terminal:status', terminalId, status: terminalStatus, threadStatus: status, activity: activity ?? null });
     if (prior === 'working' && (terminalStatus === 'waiting' || terminalStatus === 'needs_input')) {
       try { this.threadSettledHook?.({ terminalId, sessionId, threadStatus: status }); } catch { /* hook must never break status */ }
