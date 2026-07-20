@@ -61,3 +61,28 @@ describe('looksLikeQuestion', () => {
     expect(looksLikeQuestion(text)).toBe(false);
   });
 });
+
+// Regression: line-splitting on every \n truncated a soft-wrapped ask to its last line,
+// so "…let me know if you want changes\nbefore I merge" read as just "before I merge"
+// and the ask was missed. Continuations are rejoined; list items still open a new thought.
+describe('soft-wrapped closings', () => {
+  it('catches an ask that wraps across a line break', () => {
+    expect(looksLikeQuestion('I finished the refactor and tests pass. Let me know if you want changes\nbefore I merge this to main.')).toBe(true);
+  });
+
+  it('catches an ask wrapped onto an indented continuation', () => {
+    expect(looksLikeQuestion("Let me know if you'd like this refactored differently\n    before I proceed further.")).toBe(true);
+  });
+
+  it('still does not let an earlier bullet leak into the closing thought', () => {
+    expect(looksLikeQuestion('Progress:\n- Let me know if refactor A is needed\n- Fixed refactor B\n- Fixed refactor C')).toBe(false);
+  });
+
+  it('treats a numbered item as its own thought, not a continuation', () => {
+    expect(looksLikeQuestion('Steps taken\n1. Let me know if this is wrong\n2. Rebuilt the bundle')).toBe(false);
+  });
+
+  it('does not join across a completed sentence', () => {
+    expect(looksLikeQuestion('Let me know if anything looks off.\nShipped v2.6.0.')).toBe(false);
+  });
+});

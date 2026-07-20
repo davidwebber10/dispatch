@@ -41,17 +41,42 @@ const ASK_PHRASES = [
   /\bwaiting (on|for) you\b/i,
 ];
 
+// A line that opens its own thought rather than continuing the previous one: a bullet,
+// a numbered item, or a heading.
+const LIST_MARKER = /^(?:[-*•]|\d+[.)]|#{1,6}\s)/;
+
+/**
+ * Rejoin lines that are soft-wrapped continuations of the line above.
+ *
+ * Splitting naively on every `\n` is wrong in both directions. Agent output is often a
+ * bullet list with no terminal punctuation, where the whole message would otherwise
+ * collapse into one "sentence" and let an early bullet's phrasing leak into the check.
+ * But prose also wraps mid-sentence, and treating that break as a boundary truncates the
+ * closing thought — "…let me know if you want changes\nbefore I merge" would be read as
+ * just "before I merge" and the ask would be missed.
+ *
+ * A line continues the previous one when the previous didn't end on terminal punctuation
+ * AND this one isn't a list marker or heading.
+ */
+function closingThoughtLines(prose: string): string[] {
+  const raw = prose.split('\n').map((l) => l.trim()).filter(Boolean);
+  const out: string[] = [];
+  for (const line of raw) {
+    const prev = out[out.length - 1];
+    const opensNewThought = !prev || /[.!?:]$/.test(prev) || LIST_MARKER.test(line);
+    if (opensNewThought) out.push(line);
+    else out[out.length - 1] = `${prev} ${line}`;
+  }
+  return out;
+}
+
 export function looksLikeQuestion(text: string): boolean {
   const prose = (text ?? '').replace(FENCE, ' ').trim();
   if (!prose) return false;
 
-  // Isolate the closing thought by LINE first, then by sentence within that line.
-  // Agent output is frequently a bullet list with no terminal punctuation at all, in
-  // which case sentence-splitting alone treats the whole message as one "sentence"
-  // and lets an early bullet's phrasing leak into the check. Line-splitting first
-  // finds the actual last line said; sentence-splitting within it then finds the
-  // actual last thought, for normal multi-sentence prose on that line.
-  const lines = prose.split('\n').map((l) => l.trim()).filter(Boolean);
+  // Isolate the closing thought: unwrap soft line breaks, take the last logical line,
+  // then the last sentence within it.
+  const lines = closingThoughtLines(prose);
   const lastLine = lines[lines.length - 1] ?? '';
 
   const sentences = lastLine.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
