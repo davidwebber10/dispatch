@@ -17,6 +17,7 @@ beforeEach(() => {
   useThreadStatus.setState({ byTerminal: {} });
   vi.restoreAllMocks();
   vi.spyOn(api, 'listTerminals').mockImplementation(neverSettles);
+  vi.spyOn(api, 'setBoardState').mockResolvedValue(undefined);
 });
 
 function terminal(id: string, label: string, status: string, config: Record<string, unknown> = {}) {
@@ -121,4 +122,86 @@ test('the Working column separates live cards from pending, with the divider bet
   expect(dividerIdx).toBeGreaterThan(liveTwoIdx);
   expect(pendingOneIdx).toBeGreaterThan(dividerIdx);
   expect(pendingTwoIdx).toBeGreaterThan(pendingOneIdx);
+});
+
+test('only the Complete column header renders a "Clear all" control', () => {
+  useProjects.setState({ sessions: [{ id: 'p1', name: 'Alpha' } as any] });
+  useTabs.setState({
+    byProject: {
+      p1: [
+        terminal('t1', 'Ask One', 'needs_input'),
+        terminal('t2', 'Done One', 'waiting', { lastOutcome: { summary: 'shipped', needsHelp: false, inferred: false, at: '' } }),
+        terminal('t3', 'Live One', 'working'),
+        terminal('t4', 'Rest One', 'waiting'),
+      ],
+    },
+  });
+
+  render(<BoardView />);
+
+  expect(within(screen.getByTestId('board-column-complete')).getByRole('button', { name: 'Clear all' })).toBeInTheDocument();
+  expect(within(screen.getByTestId('board-column-needs_help')).queryByRole('button', { name: 'Clear all' })).not.toBeInTheDocument();
+  expect(within(screen.getByTestId('board-column-working')).queryByRole('button', { name: 'Clear all' })).not.toBeInTheDocument();
+  expect(within(screen.getByTestId('board-column-resting')).queryByRole('button', { name: 'Clear all' })).not.toBeInTheDocument();
+});
+
+test('an empty Complete column renders no "Clear all" control', () => {
+  useProjects.setState({ sessions: [{ id: 'p1', name: 'Alpha' } as any] });
+  useTabs.setState({ byProject: { p1: [terminal('t1', 'Live One', 'working')] } });
+
+  render(<BoardView />);
+
+  expect(within(screen.getByTestId('board-column-complete')).queryByRole('button', { name: 'Clear all' })).not.toBeInTheDocument();
+});
+
+test('Clear all acknowledges every card in the Complete column — call count matches card count, not just "was called"', () => {
+  useProjects.setState({ sessions: [{ id: 'p1', name: 'Alpha' } as any] });
+  useTabs.setState({
+    byProject: {
+      p1: [
+        terminal('t1', 'Done One', 'waiting', { lastOutcome: { summary: 'shipped', needsHelp: false, inferred: false, at: '' } }),
+        terminal('t2', 'Done Two', 'waiting', { lastOutcome: { summary: 'merged', needsHelp: false, inferred: false, at: '' } }),
+        terminal('t3', 'Done Three', 'waiting', { lastOutcome: { summary: 'reconciled', needsHelp: false, inferred: false, at: '' } }),
+        // A non-Complete card in the mix — Clear all must not touch it.
+        terminal('t4', 'Still Working', 'working'),
+      ],
+    },
+  });
+
+  render(<BoardView />);
+
+  fireEvent.click(within(screen.getByTestId('board-column-complete')).getByRole('button', { name: 'Clear all' }));
+
+  expect(api.setBoardState).toHaveBeenCalledTimes(3);
+  expect(api.setBoardState).toHaveBeenCalledWith('t1', { acknowledged: true });
+  expect(api.setBoardState).toHaveBeenCalledWith('t2', { acknowledged: true });
+  expect(api.setBoardState).toHaveBeenCalledWith('t3', { acknowledged: true });
+  expect(api.setBoardState).not.toHaveBeenCalledWith('t4', { acknowledged: true });
+});
+
+test('each card renders a "Move to…" trigger that opens a menu offering the three override targets, never Working', () => {
+  useProjects.setState({ sessions: [{ id: 'p1', name: 'Alpha' } as any] });
+  useTabs.setState({ byProject: { p1: [terminal('t1', 'Ask One', 'needs_input')] } });
+
+  render(<BoardView />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Move to…' }));
+  const menu = screen.getByTestId('move-to-menu');
+  expect(within(menu).getByRole('button', { name: 'Needs help' })).toBeInTheDocument();
+  expect(within(menu).getByRole('button', { name: 'Complete' })).toBeInTheDocument();
+  expect(within(menu).getByRole('button', { name: 'Resting' })).toBeInTheDocument();
+  expect(within(menu).queryByText(/working/i)).not.toBeInTheDocument();
+});
+
+test('choosing a target from the card menu calls api.setBoardState with that override', () => {
+  useProjects.setState({ sessions: [{ id: 'p1', name: 'Alpha' } as any] });
+  useTabs.setState({ byProject: { p1: [terminal('t1', 'Stuck Working', 'working')] } });
+
+  render(<BoardView />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Move to…' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Complete' }));
+
+  expect(api.setBoardState).toHaveBeenCalledTimes(1);
+  expect(api.setBoardState).toHaveBeenCalledWith('t1', { override: 'complete' });
 });

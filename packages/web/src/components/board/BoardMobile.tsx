@@ -18,6 +18,7 @@
 
 import { useState } from 'react';
 import { BoardCard } from './BoardCard';
+import { MoveToMenu } from './MoveToMenu';
 import { useBoardData } from './useBoardData';
 import type { BoardColumn } from './boardColumn';
 import { api } from '../../api/client';
@@ -122,14 +123,15 @@ export function BoardMobile({ onOpenThread }: BoardMobileProps) {
             {isExpanded && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingBottom: 6 }}>
                 {cards.map((card) => (
-                  <BoardCard
-                    key={card.terminalId}
-                    card={card}
-                    onOpen={(terminalId) => onOpenThread(card.projectId, terminalId)}
-                    onAcknowledge={acknowledge}
-                    onDismissInferred={dismissInferred}
-                    onOverride={override}
-                  />
+                  <MoveToMenu key={card.terminalId} terminalId={card.terminalId} onOverride={override} trigger="longpress">
+                    <BoardCard
+                      card={card}
+                      onOpen={(terminalId) => onOpenThread(card.projectId, terminalId)}
+                      onAcknowledge={acknowledge}
+                      onDismissInferred={dismissInferred}
+                      onOverride={override}
+                    />
+                  </MoveToMenu>
                 ))}
               </div>
             )}

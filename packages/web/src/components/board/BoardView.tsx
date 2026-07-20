@@ -16,6 +16,7 @@ import type { CSSProperties } from 'react';
 import { useState } from 'react';
 import { useBoardData } from './useBoardData';
 import { BoardCard } from './BoardCard';
+import { MoveToMenu } from './MoveToMenu';
 import type { BoardCardModel, BoardColumn } from './boardColumn';
 import { api } from '../../api/client';
 import { useUI } from '../../stores/ui';
@@ -51,6 +52,21 @@ const COLUMN_FLEX: Record<BoardColumn, number> = {
 };
 
 
+// "Clear all" per the mockup: plain text, inheriting the Complete header's own colour/opacity
+// treatment — the mockup's row has no color of its own, just font-weight/opacity/size overrides
+// on top of the header's #5A8DD6.
+const clearAllButtonStyle: CSSProperties = {
+  background: 'none',
+  border: 'none',
+  color: 'inherit',
+  font: 'inherit',
+  cursor: 'pointer',
+  padding: 0,
+  fontWeight: 500,
+  opacity: 0.6,
+  fontSize: 9.5,
+};
+
 const chipStyle = (active: boolean): CSSProperties => ({
   padding: '4px 11px',
   borderRadius: 999,
@@ -74,38 +90,44 @@ function BoardColumnView({ column, cards, handlers }: { column: BoardColumn; car
   const live = cards.filter((c) => !c.pending);
   const pending = cards.filter((c) => c.pending);
 
+  // Acknowledges every card currently in this column — only ever wired for Complete (see
+  // render below). Per the spec: "opening a thread auto-acknowledges it" plus this explicit
+  // Clear all on the column header are the two ways a Complete card reaches Resting.
+  const clearAll = () => cards.forEach((c) => handlers.onAcknowledge(c.terminalId));
+
+  const renderCard = (card: BoardCardModel) => (
+    <MoveToMenu key={card.terminalId} terminalId={card.terminalId} onOverride={handlers.onOverride}>
+      <BoardCard
+        card={card}
+        onOpen={() => handlers.onOpen(card)}
+        onAcknowledge={handlers.onAcknowledge}
+        onDismissInferred={handlers.onDismissInferred}
+        onOverride={handlers.onOverride}
+      />
+    </MoveToMenu>
+  );
+
   return (
     <div data-testid={`board-column-${column}`} style={{ flex: COLUMN_FLEX[column], minWidth: 0 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', fontWeight: 700, fontSize: 10, letterSpacing: '.4px', ...COLUMN_HEADER_STYLE[column] }}>
-        <span>{COLUMN_TITLE[column].toUpperCase()}</span>
-        <span data-testid={`board-column-count-${column}`}>{cards.length}</span>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 8px', fontWeight: 700, fontSize: 10, letterSpacing: '.4px', ...COLUMN_HEADER_STYLE[column] }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span>{COLUMN_TITLE[column].toUpperCase()}</span>
+          <span data-testid={`board-column-count-${column}`}>{cards.length}</span>
+        </div>
+        {column === 'complete' && cards.length > 0 && (
+          <button type="button" onClick={clearAll} style={clearAllButtonStyle}>
+            Clear all
+          </button>
+        )}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {live.map((card) => (
-          <BoardCard
-            key={card.terminalId}
-            card={card}
-            onOpen={() => handlers.onOpen(card)}
-            onAcknowledge={handlers.onAcknowledge}
-            onDismissInferred={handlers.onDismissInferred}
-            onOverride={handlers.onOverride}
-          />
-        ))}
+        {live.map(renderCard)}
         {column === 'working' && pending.length > 0 && (
           <div style={{ fontSize: 9.5, letterSpacing: '.5px', opacity: 0.4, padding: '0 8px 5px' }}>
             WAITING — RESUMES ON ITS OWN
           </div>
         )}
-        {pending.map((card) => (
-          <BoardCard
-            key={card.terminalId}
-            card={card}
-            onOpen={() => handlers.onOpen(card)}
-            onAcknowledge={handlers.onAcknowledge}
-            onDismissInferred={handlers.onDismissInferred}
-            onOverride={handlers.onOverride}
-          />
-        ))}
+        {pending.map(renderCard)}
       </div>
     </div>
   );

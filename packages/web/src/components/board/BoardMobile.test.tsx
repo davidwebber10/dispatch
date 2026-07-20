@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { BoardMobile } from './BoardMobile';
 import { useProjects } from '../../stores/projects';
@@ -168,5 +168,35 @@ describe('BoardMobile — opening a card', () => {
     render(<BoardMobile onOpenThread={onOpenThread} />);
     fireEvent.click(screen.getByText('Thread Naming'));
     expect(onOpenThread).toHaveBeenCalledWith('p1', 'needs-help-1');
+  });
+});
+
+describe('BoardMobile — manual override via long-press', () => {
+  it('renders no visible ⋯ trigger on mobile — the override menu opens via long-press only', () => {
+    seedOneOfEach();
+    render(<BoardMobile onOpenThread={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: 'Move to…' })).not.toBeInTheDocument();
+  });
+
+  it('a long-press (contextmenu) on a card opens the override menu with the three targets', () => {
+    seedOneOfEach();
+    render(<BoardMobile onOpenThread={vi.fn()} />);
+    fireEvent.contextMenu(screen.getByText('Thread Naming'));
+    const menu = screen.getByTestId('move-to-menu');
+    expect(within(menu).getByRole('button', { name: 'Needs help' })).toBeInTheDocument();
+    expect(within(menu).getByRole('button', { name: 'Complete' })).toBeInTheDocument();
+    expect(within(menu).getByRole('button', { name: 'Resting' })).toBeInTheDocument();
+    expect(within(menu).queryByText(/working/i)).not.toBeInTheDocument();
+  });
+
+  it('choosing a target from a long-pressed card calls api.setBoardState with that override', () => {
+    seedOneOfEach();
+    render(<BoardMobile onOpenThread={vi.fn()} />);
+    // 'complete-1' (label "Pretty resume + rows") is in the Complete section, expanded by
+    // default — no need to toggle a collapsed section open first.
+    fireEvent.contextMenu(screen.getByText('Pretty resume + rows'));
+    fireEvent.click(screen.getByRole('button', { name: 'Needs help' }));
+    expect(api.setBoardState).toHaveBeenCalledTimes(1);
+    expect(api.setBoardState).toHaveBeenCalledWith('complete-1', { override: 'needs_help' });
   });
 });
