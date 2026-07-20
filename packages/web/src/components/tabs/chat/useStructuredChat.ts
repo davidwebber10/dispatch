@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ConvItem, PendingPermission } from '../../../api/types';
 import { openStructuredSocket } from '../../../api/structured-socket';
 import { api, type ContentBlock } from '../../../api/client';
+import { parseTaskNotification } from '../../../lib/taskNotification';
 
 /** Fallback context window (tokens) for when no model is known yet. Every model Dispatch
  *  actually runs (sonnet-5, opus-4.x) has a native 1M-token window; only Haiku is 200k. */
@@ -154,6 +155,25 @@ function imagesFromContent(content: unknown, sessionId?: string): ConvItem[] {
     if (img) out.push(img);
   }
   return out;
+}
+
+/**
+ * Build the timeline item for one `user`-role text body.
+ *
+ * Claude Code injects background-task completions as `role: 'user'` turns, so they arrive
+ * on the SAME event path as the human's own messages and would otherwise render as a
+ * right-aligned user bubble full of raw `<task-notification>` XML. Unlike the CLI's other
+ * injected context they carry no `isMeta`/`isSynthetic` flag for the guard above to catch,
+ * so they're identified by content shape and demoted to a muted 'notice' row instead.
+ *
+ * Demoted rather than dropped: the notification is what CAUSES the assistant's next action
+ * (it reads the finished task's output file), so deleting it outright leaves the reader
+ * looking at a tool call with no visible reason for it.
+ */
+function userOrNotice(text: string, source: ConvItem['source'], uuid?: string): ConvItem {
+  const note = parseTaskNotification(text);
+  if (note) return { kind: 'notice', text: note.summary, ...(uuid ? { uuid } : {}) };
+  return { kind: 'user', text, ...(source ? { source } : {}), ...(uuid ? { uuid } : {}) };
 }
 
 /** Tracks one in-progress streamed content block within the current turn.
@@ -572,7 +592,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
             // restart) stores `content` as a STRING, not an array. Handle it so the user's own
             // messages aren't dropped on reconnect — assistant turns are always array-shaped,
             // which is why only the user's bubbles went missing after a restart.
-            if (content.trim()) add.push({ kind: 'user', text: content, ...(source ? { source } : {}), ...(uuid ? { uuid } : {}) });
+            if (content.trim()) add.push(userOrNotice(content, source, uuid));
           } else if (Array.isArray(content)) {
             for (const b of content) {
               if (b.type === 'tool_result') {
@@ -585,7 +605,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
                 add.push(...imagesFromContent(b.content, sessionIdRef.current));
               } else if (b.type === 'text' && b.text) {
                 // P0a: the backend buffers/echoes the user's own turn as a text block.
-                add.push({ kind: 'user', text: b.text, ...(source ? { source } : {}), ...(uuid ? { uuid } : {}) });
+                add.push(userOrNotice(b.text, source, uuid));
               } else if (b.type === 'image') {
                 // A human-attached image on the user's own turn — tag it so surfaces can
                 // attribute it to "You" (vs. the tool_result images above, which stay

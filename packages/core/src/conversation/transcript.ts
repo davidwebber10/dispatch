@@ -6,8 +6,13 @@
  * entries (mode/permission-mode/attachment/file-history-snapshot, isMeta users).
  */
 
+import { taskNotificationSummary } from './task-notification';
+
 export interface ConvItem {
-  kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'tool-result';
+  /** 'notice' — a system-injected event Claude Code writes as a `user` line but which is not
+   *  the human speaking (today: background-task completions, see task-notification.ts). The
+   *  View renders it as a muted inline row, never a user bubble; `text` is the summary only. */
+  kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'tool-result' | 'notice';
   text?: string;
   toolName?: string;
   toolTitle?: string;
@@ -47,14 +52,14 @@ function parseEntry(o: any): ConvItem[] {
     if (o.isMeta) return []; // injected context / system reminders
     const c = msg.content;
     if (typeof c === 'string') {
-      return c.trim() ? [{ kind: 'user', text: c, ts, uuid }] : [];
+      return c.trim() ? [userOrNotice(c, ts, uuid)] : [];
     }
     if (Array.isArray(c)) {
       const out: ConvItem[] = [];
       for (const b of c) {
         if (!b || typeof b !== 'object') continue;
         if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
-          out.push({ kind: 'user', text: b.text, ts, uuid });
+          out.push(userOrNotice(b.text, ts, uuid));
         } else if (b.type === 'tool_result') {
           out.push({ kind: 'tool-result', text: stringifyContent(b.content), isError: b.is_error === true, ts, uuid });
         }
@@ -85,6 +90,21 @@ function parseEntry(o: any): ConvItem[] {
   }
 
   return [];
+}
+
+/**
+ * Classify one `user`-role text body. Claude Code injects background-task completions on
+ * the same line type as the human's own turns, with no `isMeta` flag for the guard above to
+ * catch — so they'd otherwise render as a user bubble full of raw `<task-notification>` XML.
+ * Demoted to a 'notice' rather than dropped: the notification is what CAUSES the assistant's
+ * next action (reading the finished task's output), so removing it entirely leaves a tool
+ * call with no visible reason for it.
+ */
+function userOrNotice(text: string, ts?: string, uuid?: string): ConvItem {
+  const summary = taskNotificationSummary(text);
+  return summary
+    ? { kind: 'notice', text: summary, ts, uuid }
+    : { kind: 'user', text, ts, uuid };
 }
 
 function toolTitle(name: string, input: any): string {

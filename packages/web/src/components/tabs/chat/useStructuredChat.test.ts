@@ -818,3 +818,44 @@ test('resolves a PATH-form image via the byte route ONLY when sessionId is wired
   ] } }));
   expect(noSession.result.current.items.filter((i) => i.kind === 'image')).toHaveLength(0);
 });
+
+// ---- Background-task notifications ----------------------------------------------------
+// Claude Code reports a finished background task by injecting a `role: 'user'` turn whose
+// body is a <task-notification> XML block. Unlike the injected context above it carries
+// NEITHER isSynthetic NOR isMeta — the only on-disk marker is `origin.kind`, which does not
+// survive into the stream envelope — so the flag guards can't catch it and it used to render
+// as the human's own green bubble full of raw XML. Classified by content shape instead.
+
+const TASK_NOTIFICATION = `<task-notification>
+<task-id>bdjq1tq9y</task-id>
+<tool-use-id>toolu_018vsfoaz</tool-use-id>
+<output-file>/private/tmp/claude-501/tasks/bdjq1tq9y.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for the deploy to finish" completed (exit code 0)</summary>
+</task-notification>`;
+
+test('demotes a task-notification text block to a notice, not a user bubble', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: TASK_NOTIFICATION }] } }));
+  expect(result.current.items.filter((i) => i.kind === 'user')).toHaveLength(0);
+  const notices = result.current.items.filter((i) => i.kind === 'notice');
+  expect(notices).toHaveLength(1);
+  // Only the readable summary survives — the bookkeeping XML is dropped.
+  expect(notices[0].text).toBe('Background command "Wait for the deploy to finish" completed (exit code 0)');
+});
+
+test('demotes the string-content form too (transcript backfill after a daemon restart)', () => {
+  // A turn rebuilt from the transcript stores `content` as a bare string, not an array —
+  // the resume path, which is how most of these actually reach the client.
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: TASK_NOTIFICATION } }));
+  expect(result.current.items.filter((i) => i.kind === 'user')).toHaveLength(0);
+  expect(result.current.items.filter((i) => i.kind === 'notice')).toHaveLength(1);
+});
+
+test('a human turn that merely mentions the tag keeps its bubble', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'why is <task-notification> showing as a user chat?' }] } }));
+  expect(result.current.items.filter((i) => i.kind === 'user')).toHaveLength(1);
+  expect(result.current.items.filter((i) => i.kind === 'notice')).toHaveLength(0);
+});

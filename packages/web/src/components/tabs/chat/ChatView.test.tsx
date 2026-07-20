@@ -453,3 +453,77 @@ describe('ChatView — resume-from-summary advice', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: /resume from summary/i })).toBeNull());
   });
 });
+
+// Regression coverage for the two reported Pretty-mode bugs, both visible in one screenshot:
+// a background-task notification rendered as a green user bubble full of raw XML, and the
+// tool call directly beneath it rendered wrong.
+describe('system-injected task notifications', () => {
+  const NOTICE: ConvItem = {
+    kind: 'notice',
+    uuid: 'n1',
+    text: 'Background command "Wait for the deploy to finish" completed (exit code 0)',
+  };
+
+  it('renders the summary as a muted notice, not a user bubble', () => {
+    // Claude Code writes these as `role: 'user'` lines with no isMeta flag, so before the
+    // fix they took the `kind: 'user'` path and got the human's right-aligned accent bubble.
+    renderTimelineItems([NOTICE]);
+    expect(screen.getByText(/Wait for the deploy to finish/)).toBeInTheDocument();
+    // The bookkeeping XML the bubble used to display verbatim is gone.
+    expect(screen.queryByText(/task-notification|tool-use-id|output-file/)).toBeNull();
+  });
+
+  it('does not break the assistant turn it interrupts', () => {
+    // A real `user` turn flushes the group so it can render its own bubble. A notice must
+    // NOT: the assistant acts on the notification in its very next block, and splitting the
+    // column there would present one continuous turn as two.
+    const before: ConvItem = { kind: 'assistant', uuid: 'a1', text: 'starting the deploy' };
+    const after: ConvItem = { kind: 'assistant', uuid: 'a2', text: 'deploy is done' };
+    const { container } = renderTimelineItems([before, NOTICE, after]);
+    // One assistant column, not two — MessageScroller.Item is the per-group wrapper.
+    expect(container.querySelectorAll('[data-message-id]').length).toBe(1);
+  });
+
+  it('still gives a genuine human turn its own bubble', () => {
+    const human: ConvItem = { kind: 'user', uuid: 'u1', text: 'ship it' };
+    const assistant: ConvItem = { kind: 'assistant', uuid: 'a1', text: 'on it' };
+    const { container } = renderTimelineItems([human, assistant]);
+    expect(container.querySelectorAll('[data-message-id]').length).toBe(2);
+  });
+});
+
+describe('tool rows with no tool ids (REST-paged history)', () => {
+  // conversation/transcript.ts emits no toolId on either side, so the tool pairs with its
+  // result by array adjacency. The `toolIds.has(...)` guard can only recognize an ID-based
+  // pairing, so the same output used to render twice: folded into the tool row's "N lines",
+  // then again as a stray "Output · N lines" row directly beneath it.
+  it('renders an adjacency-paired result once, not twice', () => {
+    const tool: ConvItem = { kind: 'tool', uuid: 't1', toolName: 'Bash', toolDetail: 'cat /tmp/out' };
+    const result: ConvItem = { kind: 'tool-result', uuid: 'r1', text: 'line one\nline two' };
+    renderTimelineItems([tool, result]);
+    expect(screen.getByText('Bash')).toBeInTheDocument();
+    expect(screen.getByText('2 lines')).toBeInTheDocument();
+    // The duplicate standalone row is gone.
+    expect(screen.queryByText(/^Output$/)).toBeNull();
+  });
+
+  it('still renders an ORPHAN result standalone', () => {
+    // No preceding tool to claim it — dropping it would lose output entirely.
+    const orphan: ConvItem = { kind: 'tool-result', uuid: 'r1', text: 'stray output' };
+    renderTimelineItems([orphan]);
+    expect(screen.getByText('Output')).toBeInTheDocument();
+  });
+
+  it('keeps the tool NAME intact when the detail is long', () => {
+    // The name span used to be `flex: 0 1 auto`; CSS apportions shrinkage by flex-basis, so
+    // a long command clipped "Bash" to "B…". It is now flexShrink: 0.
+    const tool: ConvItem = {
+      kind: 'tool', uuid: 't1', toolName: 'Bash',
+      toolDetail: 'cat /private/tmp/claude-501/-Users-davidwebber-Sites-explorer/7ff14008-0121-41f7-9dff-e6f82f1eace2/tasks/bdjq1tq9y.output',
+    };
+    renderTimelineItems([tool, { kind: 'tool-result', uuid: 'r1', text: 'ok' }]);
+    const name = screen.getByText('Bash');
+    expect(name).toBeInTheDocument();
+    expect(name.style.flexShrink).toBe('0');
+  });
+});

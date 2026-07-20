@@ -187,7 +187,11 @@ export interface RunStep {
 }
 
 export interface ConvItem {
-  kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'tool-result' | 'result' | 'system' | 'image';
+  // 'notice' — a system-injected event that is structurally a `user` turn but is not the
+  // human speaking (today: Claude Code's background-task completions, see
+  // lib/taskNotification.ts). Rendered as a muted inline row inside the assistant's column,
+  // never as a right-aligned user bubble. `text` holds the human-readable summary only.
+  kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'tool-result' | 'result' | 'system' | 'image' | 'notice';
   text?: string;
   // image (kind 'image') — a rendered picture in the timeline. `imageUrl` is either an
   // inline data-URI (base64 source) or an http(s)/byte-route URL (path/file source).

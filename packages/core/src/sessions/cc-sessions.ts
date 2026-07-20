@@ -1,6 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { isTaskNotificationEntry } from '../conversation/task-notification';
 
 export interface RecentCcSession {
   id: string;          // session UUID (jsonl filename)
@@ -131,6 +132,11 @@ export function findNewestUnresolvedUserUuid(workDir: string, sessionId: string,
       try { o = JSON.parse(trimmed); } catch { continue; } // partial/garbled line
       if (!o || o.type !== 'user' || o.isMeta || o.isSidechain || typeof o.uuid !== 'string') continue;
       if (excludeUuids.has(o.uuid)) continue;
+      // A background-task completion is written as a `user` line WITH real text and no
+      // isMeta flag (see conversation/task-notification.ts). If one lands after the turn
+      // that's being resolved, it would be picked as "the newest human turn" and the
+      // source tag would attach to the notification's uuid instead of the real message.
+      if (isTaskNotificationEntry(o)) continue;
       const content = o.message?.content;
       const hasRealText = typeof content === 'string' ? content.trim().length > 0
         : Array.isArray(content) ? content.some((b: any) => b?.type === 'text' && typeof b.text === 'string' && b.text.trim().length > 0)

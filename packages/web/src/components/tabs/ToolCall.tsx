@@ -43,7 +43,15 @@ export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?
       >
         <CaretRight size={11} weight="bold" style={{ flexShrink: 0, color: 'var(--color-text-tertiary)', visibility: expandable ? 'visible' : 'hidden', transition: 'transform .12s ease', transform: open ? 'rotate(90deg)' : 'none' }} />
         {headerIcon}
-        <span style={{ minWidth: 0, flex: '0 1 auto', fontSize: 12.5, color: 'var(--color-text-primary)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{headerName}</span>
+        {/* flexShrink 0, NOT the `0 1 auto` this used to be. CSS distributes shrinkage in
+            proportion to each item's flex-basis, so when the detail below is long (a Bash
+            command with a long path, say) the name absorbs its own proportional share of the
+            overflow — enough to clip "Bash" down to "B…" while the detail, being far wider,
+            still had room. The name is the single most identifying thing on the row and is
+            almost always short, so it never shrinks; the detail is the elastic half.
+            maxWidth caps the pathological case (a very long MCP tool name) so a huge name
+            still can't push the status column off the row. */}
+        <span style={{ minWidth: 0, maxWidth: '55%', flexShrink: 0, fontSize: 12.5, color: 'var(--color-text-primary)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{headerName}</span>
         {tool.toolDetail && (
           <span
             title={tool.toolDetail}

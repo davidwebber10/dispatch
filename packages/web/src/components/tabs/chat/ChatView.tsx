@@ -388,6 +388,9 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
   // was trimmed from the replay ring / arrived out of order) is still rendered
   // standalone instead of being silently dropped.
   const toolIds = new Set<string>();
+  // Results already folded into a tool row by ADJACENCY pairing (the id-less shape). Filled
+  // during the walk below — a result is always reached after the tool that claimed it.
+  const consumed = new Set<ConvItem>();
   for (const it of items) {
     if (it.kind === 'tool-result' && it.toolId) resultById.set(it.toolId, it);
     if (it.kind === 'tool' && it.toolId) toolIds.add(it.toolId);
@@ -488,6 +491,13 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
     else if (it.kind === 'thinking') node = <Thinking text={it.text ?? ''} />;
     else if (it.kind === 'tool') {
       const result = it.toolId ? resultById.get(it.toolId) : items[i + 1]?.kind === 'tool-result' ? items[i + 1] : undefined;
+      // A result paired by ADJACENCY (neither side has a toolId — the shape REST-paged
+      // history always has, since conversation/transcript.ts emits no ids at all) must be
+      // marked consumed here. The `toolIds.has(...)` guard on the 'tool-result' branch below
+      // can only recognize an id-based pairing, so without this the very same output rendered
+      // twice on every REST-paged tool call: once folded into the tool row's "N lines", then
+      // again as a stray "Output · N lines" row directly beneath it.
+      if (result && !it.toolId) consumed.add(result);
       if (it.toolName === 'AskUserQuestion') {
         // While still pending (no tool_result yet) the interactive <AskQuestionCard> below
         // (the live overlay) covers it — node stays null and this item renders nothing here,
@@ -505,8 +515,15 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
       }
     } else if (it.kind === 'tool-result') {
       if (it.toolId && toolIds.has(it.toolId)) continue; // already shown paired with its tool
+      if (consumed.has(it)) continue;                    // ...or paired by adjacency, above
       node = <ToolResult item={it} />;
     } else if (it.kind === 'result') node = <ResultFooter item={it} />;
+    // A system-injected event (background-task completion) that arrived as a `user`-role
+    // turn. Deliberately does NOT flushGroup() the way a real `user` turn does: it isn't a
+    // new speaker, it's an interruption inside the assistant's own turn — the assistant
+    // usually acts on it in the very next block, so breaking the column there would split
+    // one continuous turn into two.
+    else if (it.kind === 'notice') node = <TaskNotice text={it.text ?? ''} />;
     if (node == null) continue;
 
     if (!group) group = { key: id, nodes: [] };
@@ -522,6 +539,24 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
   }
   flushGroup();
   return rows;
+}
+
+/**
+ * A system-injected background-task completion (see lib/taskNotification.ts). Styled to
+ * read as machine bookkeeping, not speech: muted, small, flush-left, at the same indent as
+ * a tool row — which is what it is, structurally, the tail of a backgrounded tool call.
+ * Only the CLI's own <summary> line is shown; the surrounding XML (task-id, tool-use-id,
+ * output-file) is bookkeeping the reader has no use for.
+ */
+export function TaskNotice({ text }: { text: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '4px 6px', minWidth: 0 }}>
+      <CheckCircle size={13} weight="bold" color="var(--color-text-tertiary)" style={{ flexShrink: 0 }} />
+      <span style={{ minWidth: 0, fontSize: 11.5, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={text}>
+        {text}
+      </span>
+    </div>
+  );
 }
 
 /** One assistant turn: a flush-left flex-column holding all its blocks. */
