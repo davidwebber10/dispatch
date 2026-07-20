@@ -94,6 +94,11 @@ function detectAutoNames(prev: Terminal[] | undefined, next: Terminal[], now: nu
 // tracks the most recent loadTabs() request per project so a superseded response can be
 // discarded instead of applied.
 const loadEpoch: Record<string, number> = {};
+// The in-flight (or most recently settled) loadTabs() promise per project. A superseded call
+// awaits this instead of just returning, so "await loadTabs()" keeps meaning "state reflects at
+// least as fresh a response as the one I awaited" for every one of the ~20 call sites that rely
+// on it — see loadTabs() below for why this can never deadlock.
+const inflight: Record<string, Promise<void>> = {};
 
 function persist(s: Pick<TabsState, 'openTabIds' | 'activeTabId' | 'tabSession'>) {
   try {
@@ -123,21 +128,39 @@ export const useTabs = create<TabsState>((set, get) => ({
     if (dirty) next[id] = true; else delete next[id];
     set({ dirtyTabs: next });
   },
-  loadTabs: async (projectId) => {
+  loadTabs: (projectId) => {
+    // Bump the epoch and stake out inflight[projectId] SYNCHRONOUSLY, before the first await.
+    // Deadlock-freedom depends on this ordering: whichever call most recently executed these two
+    // lines owns the current loadEpoch[projectId] AND inflight[projectId] together, atomically —
+    // JS never interleaves another loadTabs() call in between. So when a call later wakes up and
+    // finds loadEpoch[projectId] has moved on, inflight[projectId] is GUARANTEED to already point
+    // at a strictly newer call's promise, never at its own or an older one. Awaiting it below can
+    // therefore never await-your-own-promise and never cycle — the chain of "superseded, so await
+    // the next one" hops strictly forward in epoch order and must terminate. Do not simplify this
+    // back into a bare `if (loadEpoch[projectId] !== epoch) return;` — that drops the "awaiting
+    // loadTabs() means state has been applied" guarantee ~20 call sites depend on.
     const epoch = (loadEpoch[projectId] = (loadEpoch[projectId] ?? 0) + 1);
-    const tabs = await api.listTerminals(projectId);
-    // If a newer loadTabs('projectId') call started after this one, its response — not this
-    // one's — reflects reality. Applying a superseded response here would regress byProject to
-    // a stale label, which a later ordinary refresh would then misread as a fresh default->auto
-    // transition and replay an animation for a rename that already happened.
-    if (loadEpoch[projectId] !== epoch) return;
-    const now = Date.now();
-    const prev = get().byProject[projectId];
-    const tabSession = { ...get().tabSession };
-    for (const t of tabs) tabSession[t.id] = t.sessionId;
-    const autoNamed = { ...pruneAutoNamed(get().autoNamed, now), ...detectAutoNames(prev, tabs, now) };
-    set({ byProject: { ...get().byProject, [projectId]: tabs }, tabSession, autoNamed });
-    persist(get()); // note: persist() intentionally omits byProject and autoNamed
+    const run = (async () => {
+      const tabs = await api.listTerminals(projectId);
+      if (loadEpoch[projectId] !== epoch) {
+        // Superseded — don't apply a stale response (it would regress byProject to an older
+        // label, which a later ordinary refresh could then misread as a fresh default->auto
+        // transition and replay an animation for a rename that already happened). Instead, wait
+        // on the call that IS current so our own promise still resolves only once real state has
+        // caught up to at least this request.
+        await inflight[projectId];
+        return;
+      }
+      const now = Date.now();
+      const prev = get().byProject[projectId];
+      const tabSession = { ...get().tabSession };
+      for (const t of tabs) tabSession[t.id] = t.sessionId;
+      const autoNamed = { ...pruneAutoNamed(get().autoNamed, now), ...detectAutoNames(prev, tabs, now) };
+      set({ byProject: { ...get().byProject, [projectId]: tabs }, tabSession, autoNamed });
+      persist(get()); // note: persist() intentionally omits byProject and autoNamed
+    })();
+    inflight[projectId] = run;
+    return run;
   },
   consumeAutoName: (id) => {
     const entry = get().autoNamed[id];
