@@ -20,3 +20,19 @@ test('renders a rich query table for a matched query tool (no generic tabs)', ()
   expect(container.textContent).toContain('SELECT id FROM t'); // syntax-highlighted across spans
   expect(screen.queryByText('Output')).not.toBeInTheDocument(); // rich body, not the generic tabs
 });
+
+test('shows the tool detail as a subject on the collapsed row', () => {
+  const tool = { kind: 'tool', toolId: 'x1', toolName: 'Bash', toolTitle: 'Bash', toolDetail: 'pnpm test', toolInput: 'pnpm test' } as any;
+  const result = { kind: 'tool-result', toolId: 'x1', text: 'ok\nok' } as any;
+  render(<ToolCall tool={tool} result={result} />);
+  expect(screen.getByText('pnpm test')).toBeTruthy();
+});
+
+test('renders the collapsed row without card chrome', () => {
+  const tool = { kind: 'tool', toolId: 'x1', toolName: 'Bash', toolTitle: 'Bash', toolDetail: 'pnpm test', toolInput: 'pnpm test' } as any;
+  const result = { kind: 'tool-result', toolId: 'x1', text: 'ok\nok' } as any;
+  const { container } = render(<ToolCall tool={tool} result={result} />);
+  const row = container.firstElementChild as HTMLElement;
+  expect(row.style.border).toBe('');
+  expect(row.style.background).toBe('');
+});

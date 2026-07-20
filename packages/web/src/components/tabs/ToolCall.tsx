@@ -29,20 +29,30 @@ export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?
   const content = effTab === 'input' ? input : out;
   const lang = effTab === 'input' ? (tool.toolName === 'Bash' ? 'bash' : 'json') : langFromPath(tool.toolFile);
   return (
-    <div style={{ border: '1px solid var(--color-border)', borderRadius: 9, background: 'var(--color-elevated)', overflow: 'hidden' }}>
+    <div style={{ borderRadius: 9, overflow: 'hidden' }}>
       <button
         onClick={() => expandable && setOpen((o) => !o)}
-        style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: expandable ? 'pointer' : 'default', padding: '8px 10px', display: 'flex', gap: 8, alignItems: 'center' }}
+        style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: expandable ? 'pointer' : 'default', padding: '4px 6px', borderRadius: 7, display: 'flex', gap: 7, alignItems: 'center' }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-hover)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
       >
         <CaretRight size={11} weight="bold" style={{ flexShrink: 0, color: 'var(--color-text-tertiary)', visibility: expandable ? 'visible' : 'hidden', transition: 'transform .12s ease', transform: open ? 'rotate(90deg)' : 'none' }} />
         {headerIcon}
-        <span style={{ minWidth: 0, flex: 1, fontSize: 12.5, color: 'var(--color-text-primary)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{headerName}</span>
+        <span style={{ minWidth: 0, flex: '0 1 auto', fontSize: 12.5, color: 'var(--color-text-primary)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{headerName}</span>
+        {tool.toolDetail && (
+          <span
+            title={tool.toolDetail}
+            style={{ minWidth: 0, flex: '1 1 auto', fontSize: 11.5, fontFamily: 'var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          >
+            {tool.toolDetail}
+          </span>
+        )}
         {result
           ? <span style={{ flexShrink: 0, fontSize: 11, color: err ? 'var(--color-status-red)' : 'var(--color-text-secondary)' }}>{err ? 'error' : `${lines} line${lines !== 1 ? 's' : ''}`}</span>
           : <span className="chat-shimmer" style={{ flexShrink: 0, fontSize: 11 }}>running…</span>}
       </button>
       {open && expandable && (
-        <div style={{ borderTop: '1px solid var(--color-border)' }}>
+        <div style={{ border: '1px solid var(--color-border)', borderRadius: 8, background: 'var(--color-elevated)', overflow: 'hidden', marginTop: 4 }}>
           {view ? view.expanded(tool, result) : (
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '6px 8px 0', background: 'var(--color-pane)' }}>
