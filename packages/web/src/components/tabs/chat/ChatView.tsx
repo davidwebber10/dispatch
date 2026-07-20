@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
-import { PaperPlaneTilt, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip, ArrowBendDownRight } from '@phosphor-icons/react';
+import { PaperPlaneTilt, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip, ArrowBendDownRight, Wrench } from '@phosphor-icons/react';
 import type { ConvItem, PermissionQuestion } from '../../../api/types';
 import { api, type ContentBlock } from '../../../api/client';
 import { useStructuredChat } from './useStructuredChat';
@@ -21,6 +21,7 @@ import { ChatImage } from '../../ChatImage';
 import { ContextIndicator } from '../../ContextIndicator';
 import { ToolCall, ToolResult } from '../ToolCall';
 import { useUI } from '../../../stores/ui';
+import { useToolExpanded } from '../../../hooks/useToolUIState';
 
 // Anthropic-vision-supported image types. Only these become a REAL base64 image block
 // the model SEES; anything else (incl. SVG, which the model can't read) falls back to
@@ -389,6 +390,33 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
       continue;
     }
 
+    // Look ahead for a run of consecutive same-tool calls (ignoring their interleaved
+    // results, which are rendered paired). A run of 2+ collapses into one ToolGroup.
+    // AskUserQuestion is excluded — it has live-overlay special-casing below.
+    if (it.kind === 'tool' && it.toolName !== 'AskUserQuestion') {
+      const run: ConvItem[] = [it];
+      let j = i + 1;
+      for (; j < items.length; j++) {
+        const nxt = items[j];
+        if (nxt.kind === 'tool-result') continue;              // paired result, not a break
+        if (pageBoundaries.has(nxt)) break;                    // a prepend must not merge in
+        if (nxt.kind !== 'tool' || nxt.toolName !== it.toolName) break;
+        if (nxt.toolName === 'AskUserQuestion') break;
+        run.push(nxt);
+      }
+      if (run.length > 1) {
+        const groupNode = <ToolGroup tools={run} resultById={resultById} onViewFile={onViewFile} />;
+        const lastId = stableId(run[run.length - 1]);
+        if (!group) group = { key: lastId, nodes: [] };
+        group.key = lastId;
+        group.nodes.push(<div key={lastId}>{groupNode}</div>);
+        // Skip past the run's members; their paired results are skipped by the
+        // existing `toolIds.has(...)` guard on the 'tool-result' branch.
+        i = items.indexOf(run[run.length - 1]);
+        continue;
+      }
+    }
+
     let node: React.ReactNode = null;
     if (it.kind === 'assistant') node = <AssistantText text={it.text ?? ''} />;
     else if (it.kind === 'image') node = <ChatImage src={it.imageUrl ?? ''} alt={it.imageAlt} />;
@@ -437,6 +465,62 @@ function AssistantTurn({ children }: { children: React.ReactNode }) {
     <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
       {children}
     </div>
+  );
+}
+
+/**
+ * A run of consecutive same-tool calls, collapsed to one row. Six Reads in a turn
+ * would otherwise be six separate rows that bury the assistant's prose.
+ *
+ * While any member is still running the group renders EXPANDED so live work stays
+ * visible, then collapses once the whole run settles. `useToolExpanded` persists a
+ * manual toggle per id, so once the reader opens or closes it their choice wins.
+ *
+ * Expansion state is keyed off the FIRST member's id, which is immutable as a run
+ * grows — the group's React key is anchored to its LAST item by renderTimeline, for
+ * the scroll-preservation reasons documented there.
+ */
+function ToolGroup({ tools, resultById, onViewFile }: { tools: ConvItem[]; resultById: Map<string, ConvItem>; onViewFile: (p: string) => void }) {
+  const firstId = tools[0].uuid ?? tools[0].toolId;
+  const running = tools.some((t) => !t.toolId || !resultById.has(t.toolId));
+  const [open, setOpen] = useToolExpanded(firstId ? `group:${firstId}` : undefined, false);
+  const expanded = open || running;
+  const label = `${tools[0].toolName} ${tools.length} ${tools.length === 1 ? 'call' : 'calls'}`;
+  // "Read 3 files" reads better than "Read 3 calls" for the file-shaped tools.
+  const fileish = tools[0].toolName === 'Read' || tools[0].toolName === 'Write' || tools[0].toolName === 'Edit';
+  const heading = fileish ? `${tools[0].toolName} ${tools.length} files` : label;
+  const lines = tools.reduce((n, t) => n + (t.toolId ? (resultById.get(t.toolId)?.text?.split('\n').length ?? 0) : 0), 0);
+
+  if (expanded) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <GroupHeader heading={heading} lines={lines} running={running} open onClick={() => setOpen(false)} />
+        <div style={{ paddingLeft: 14, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {tools.map((t) => (
+            <ToolCall key={t.uuid ?? t.toolId} tool={t} result={t.toolId ? resultById.get(t.toolId) : undefined} onViewFile={onViewFile} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+  return <GroupHeader heading={heading} lines={lines} running={false} open={false} onClick={() => setOpen(true)} />;
+}
+
+function GroupHeader({ heading, lines, running, open, onClick }: { heading: string; lines: number; running: boolean; open: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: 7, display: 'flex', gap: 7, alignItems: 'center' }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-hover)'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
+    >
+      <CaretRight size={11} weight="bold" style={{ flexShrink: 0, color: 'var(--color-text-tertiary)', transition: 'transform .12s ease', transform: open ? 'rotate(90deg)' : 'none' }} />
+      <Wrench size={13} color="#5A8DD6" style={{ flexShrink: 0 }} />
+      <span style={{ minWidth: 0, flex: 1, fontSize: 12.5, color: 'var(--color-text-primary)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{heading}</span>
+      {running
+        ? <span className="chat-shimmer" style={{ flexShrink: 0, fontSize: 11 }}>running…</span>
+        : <span style={{ flexShrink: 0, fontSize: 11, color: 'var(--color-text-secondary)' }}>{lines} line{lines !== 1 ? 's' : ''}</span>}
+    </button>
   );
 }
 

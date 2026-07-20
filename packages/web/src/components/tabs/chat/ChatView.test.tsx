@@ -40,13 +40,13 @@ beforeEach(() => {
   vi.spyOn(sock, 'openStructuredSocket').mockImplementation(() => ({ close: () => {} }) as any);
 });
 
-function renderTimelineItems(items: ConvItem[]) {
+function renderTimelineItems(items: ConvItem[], pageBoundaries: Set<ConvItem> = new Set()) {
   return render(
     <MessageScroller.Provider>
       <MessageScroller.Root>
         <MessageScroller.Viewport>
           <MessageScroller.Content>
-            {renderTimeline(items, () => {}, new Set())}
+            {renderTimeline(items, () => {}, pageBoundaries)}
           </MessageScroller.Content>
         </MessageScroller.Viewport>
       </MessageScroller.Root>
@@ -141,6 +141,57 @@ describe('renderTimeline — an expanded tool call survives a live streaming re-
     );
 
     expect(screen.getByText('Output')).toBeInTheDocument(); // still expanded, not auto-collapsed
+  });
+});
+
+// ---- Grouping a run of consecutive same-tool calls into one collapsible row ----------
+// Six Reads in a turn would otherwise be six separate rows that bury the assistant's
+// prose (see ChatView's ToolGroup doc comment). A run of 2+ same-tool calls collapses;
+// a lone call or a run broken by a different tool / a page boundary does not.
+describe('renderTimeline — groups a run of consecutive same-tool calls', () => {
+  const read = (id: string, file: string, lines: number) => [
+    { kind: 'tool', toolId: id, toolName: 'Read', toolTitle: `Read ${file}`, toolDetail: file, toolInput: '{}' },
+    { kind: 'tool-result', toolId: id, text: Array(lines).fill('x').join('\n') },
+  ] as ConvItem[];
+
+  it('collapses a run of same-tool calls into one row', () => {
+    const items = [...read('a', 'one.ts', 3), ...read('b', 'two.ts', 3), ...read('c', 'three.ts', 3)];
+    renderTimelineItems(items);
+    expect(screen.getByText('Read 3 files')).toBeTruthy();
+    expect(screen.queryByText('one.ts')).toBeNull();
+  });
+
+  it('expands the group to the individual calls', () => {
+    const items = [...read('a', 'one.ts', 3), ...read('b', 'two.ts', 3), ...read('c', 'three.ts', 3)];
+    renderTimelineItems(items);
+    fireEvent.click(screen.getByText('Read 3 files'));
+    expect(screen.getByText('one.ts')).toBeTruthy();
+    expect(screen.getByText('three.ts')).toBeTruthy();
+  });
+
+  it('does not group different tools', () => {
+    const items = [...read('a', 'one.ts', 3), { kind: 'tool', toolId: 'b', toolName: 'Bash', toolTitle: 'Bash', toolDetail: 'ls' } as ConvItem];
+    renderTimelineItems(items);
+    expect(screen.queryByText(/Read \d files/)).toBeNull();
+  });
+
+  it('does not group a lone tool call', () => {
+    renderTimelineItems(read('a', 'one.ts', 3));
+    expect(screen.queryByText(/Read \d files/)).toBeNull();
+    expect(screen.getByText('one.ts')).toBeTruthy();
+  });
+
+  it('breaks a group at a page boundary so prepends cannot merge into it', () => {
+    const items = [...read('a', 'one.ts', 3), ...read('b', 'two.ts', 3)];
+    renderTimelineItems(items, new Set([items[2]]));
+    expect(screen.queryByText(/Read \d files/)).toBeNull();
+  });
+
+  it('renders a group expanded while a member is still running', () => {
+    const items = [...read('a', 'one.ts', 3), { kind: 'tool', toolId: 'b', toolName: 'Read', toolTitle: 'Read two.ts', toolDetail: 'two.ts' } as ConvItem];
+    renderTimelineItems(items);
+    expect(screen.getByText('one.ts')).toBeTruthy();
+    expect(screen.getByText('two.ts')).toBeTruthy();
   });
 });
 
