@@ -28,15 +28,22 @@ export function useBoardData(projectFilter: string | null): BoardData {
   const byTerminal = useThreadStatus((s) => s.byTerminal);
   const [loading, setLoading] = useState(true);
 
+  // Keyed on the project IDS, not the `sessions` array — the store replaces that array on
+  // every unrelated update (rename, reorder, status), which would re-fetch every project's
+  // tabs each time.
+  const projectIds = sessions.map((p) => p.id).join(',');
+
   useEffect(() => {
     let alive = true;
-    Promise.all(sessions.map((p) => useTabs.getState().loadTabs(p.id).catch(() => { /* project gone */ })))
+    const ids = projectIds ? projectIds.split(',') : [];
+    Promise.all(ids.map((id) => useTabs.getState().loadTabs(id).catch(() => { /* project gone */ })))
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-    // Load once per mount, same as PinnedThreadsView — the tab lists refresh on their own via
-    // session:tabs-changed / terminal:status events after that.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    // NOT mount-only. `useProjects.load()` is async and fires from the app root, so a board
+    // that mounts at startup — which is exactly what happens on mobile when the saved view
+    // mode is already 'board' — runs this effect before any project exists and would sit
+    // permanently empty. Re-running when the project set arrives is what makes it fill in.
+  }, [projectIds]);
 
   const columns = useMemo(() => {
     const cols: Record<BoardColumn, BoardCardModel[]> = {
