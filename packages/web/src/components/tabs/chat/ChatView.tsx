@@ -395,24 +395,50 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
     // AskUserQuestion is excluded — it has live-overlay special-casing below.
     if (it.kind === 'tool' && it.toolName !== 'AskUserQuestion') {
       const run: ConvItem[] = [it];
-      let j = i + 1;
-      for (; j < items.length; j++) {
+      // Each run member's own index in `items`, tracked as we go (not re-derived via
+      // items.indexOf() below) so a toolId-less member's paired result can be resolved by
+      // array-adjacency, and so advancing `i` past the run afterward is an O(1) lookup —
+      // items.indexOf(run[run.length - 1]) would be an O(n) scan per group (O(n^2) per
+      // render), and if `items` ever held a duplicated object reference it could return an
+      // EARLIER index, moving `i` backwards into an infinite render loop.
+      const runIdx: number[] = [i];
+      let lastIdx = i;
+      for (let j = i + 1; j < items.length; j++) {
         const nxt = items[j];
-        if (nxt.kind === 'tool-result') continue;              // paired result, not a break
-        if (pageBoundaries.has(nxt)) break;                    // a prepend must not merge in
+        if (pageBoundaries.has(nxt)) break;                    // boundary wins over everything
+        if (nxt.kind === 'tool-result') {
+          // A paired result is transparent to the run. An ORPHAN result (its tool_use fell
+          // outside the replay window) renders standalone, so it must not be swallowed by
+          // the run's index jump below — end the run before it instead. A toolId-less
+          // result (older REST-paged history has no ids at all) has nothing to check
+          // against, so it stays transparent here and is paired by array-adjacency when
+          // the run's pairs are resolved below.
+          if (nxt.toolId && !toolIds.has(nxt.toolId)) break;
+          continue;
+        }
         if (nxt.kind !== 'tool' || nxt.toolName !== it.toolName) break;
-        if (nxt.toolName === 'AskUserQuestion') break;
         run.push(nxt);
+        runIdx.push(j);
+        lastIdx = j;
       }
       if (run.length > 1) {
-        const groupNode = <ToolGroup tools={run} resultById={resultById} onViewFile={onViewFile} />;
+        // Resolve each run member's result ONCE: by toolId via `resultById` when it has
+        // one, else by array-adjacency (the same rule the ungrouped single-tool branch
+        // below uses for a toolId-less tool — older REST-paged history has no ids at all)
+        // — so ToolGroup gets a plain, pre-resolved array instead of having to re-derive
+        // pairing itself.
+        const pairs = run.map((t, k) => ({
+          tool: t,
+          result: t.toolId ? resultById.get(t.toolId) : (items[runIdx[k] + 1]?.kind === 'tool-result' ? items[runIdx[k] + 1] : undefined),
+        }));
+        const groupNode = <ToolGroup pairs={pairs} onViewFile={onViewFile} />;
         const lastId = stableId(run[run.length - 1]);
         if (!group) group = { key: lastId, nodes: [] };
         group.key = lastId;
         group.nodes.push(<div key={lastId}>{groupNode}</div>);
         // Skip past the run's members; their paired results are skipped by the
         // existing `toolIds.has(...)` guard on the 'tool-result' branch.
-        i = items.indexOf(run[run.length - 1]);
+        i = lastIdx;
         continue;
       }
     }
@@ -468,6 +494,10 @@ function AssistantTurn({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** One run member paired with its already-resolved result (by toolId or by adjacency —
+ * see renderTimeline's `pairs` construction), so ToolGroup never has to re-derive pairing. */
+type ToolPair = { tool: ConvItem; result?: ConvItem };
+
 /**
  * A run of consecutive same-tool calls, collapsed to one row. Six Reads in a turn
  * would otherwise be six separate rows that bury the assistant's prose.
@@ -478,26 +508,31 @@ function AssistantTurn({ children }: { children: React.ReactNode }) {
  *
  * Expansion state is keyed off the FIRST member's id, which is immutable as a run
  * grows — the group's React key is anchored to its LAST item by renderTimeline, for
- * the scroll-preservation reasons documented there.
+ * the scroll-preservation reasons documented there. Uses `toolId ?? uuid` (not the
+ * reverse): `useStructuredChat` upgrades every content block of an assistant message to
+ * that message's single `uuid` once the whole-message event lands, so several distinct
+ * groups within one settled parallel-tool turn would otherwise collide on the same
+ * `group:<uuid>` key and share one expansion toggle. `toolId` is unique per tool_use.
  */
-function ToolGroup({ tools, resultById, onViewFile }: { tools: ConvItem[]; resultById: Map<string, ConvItem>; onViewFile: (p: string) => void }) {
-  const firstId = tools[0].uuid ?? tools[0].toolId;
-  const running = tools.some((t) => !t.toolId || !resultById.has(t.toolId));
+function ToolGroup({ pairs, onViewFile }: { pairs: ToolPair[]; onViewFile: (p: string) => void }) {
+  const firstId = pairs[0].tool.toolId ?? pairs[0].tool.uuid;
+  const running = pairs.some((p) => !p.result);
   const [open, setOpen] = useToolExpanded(firstId ? `group:${firstId}` : undefined, false);
   const expanded = open || running;
-  const label = `${tools[0].toolName} ${tools.length} ${tools.length === 1 ? 'call' : 'calls'}`;
+  const toolName = pairs[0].tool.toolName;
+  const label = `${toolName} ${pairs.length} calls`;
   // "Read 3 files" reads better than "Read 3 calls" for the file-shaped tools.
-  const fileish = tools[0].toolName === 'Read' || tools[0].toolName === 'Write' || tools[0].toolName === 'Edit';
-  const heading = fileish ? `${tools[0].toolName} ${tools.length} files` : label;
-  const lines = tools.reduce((n, t) => n + (t.toolId ? (resultById.get(t.toolId)?.text?.split('\n').length ?? 0) : 0), 0);
+  const fileish = toolName === 'Read' || toolName === 'Write' || toolName === 'Edit';
+  const heading = fileish ? `${toolName} ${pairs.length} files` : label;
+  const lines = pairs.reduce((n, p) => n + (p.result?.text?.split('\n').length ?? 0), 0);
 
   if (expanded) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
         <GroupHeader heading={heading} lines={lines} running={running} open onClick={() => setOpen(false)} />
         <div style={{ paddingLeft: 14, display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {tools.map((t) => (
-            <ToolCall key={t.uuid ?? t.toolId} tool={t} result={t.toolId ? resultById.get(t.toolId) : undefined} onViewFile={onViewFile} />
+          {pairs.map(({ tool: t, result }) => (
+            <ToolCall key={t.toolId ?? t.uuid} tool={t} result={result} onViewFile={onViewFile} />
           ))}
         </div>
       </div>
@@ -509,6 +544,8 @@ function ToolGroup({ tools, resultById, onViewFile }: { tools: ConvItem[]; resul
 function GroupHeader({ heading, lines, running, open, onClick }: { heading: string; lines: number; running: boolean; open: boolean; onClick: () => void }) {
   return (
     <button
+      type="button"
+      aria-expanded={open}
       onClick={onClick}
       style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: 7, display: 'flex', gap: 7, alignItems: 'center' }}
       onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-hover)'; }}

@@ -169,10 +169,17 @@ describe('renderTimeline — groups a run of consecutive same-tool calls', () =>
     expect(screen.getByText('three.ts')).toBeTruthy();
   });
 
-  it('does not group different tools', () => {
-    const items = [...read('a', 'one.ts', 3), { kind: 'tool', toolId: 'b', toolName: 'Bash', toolTitle: 'Bash', toolDetail: 'ls' } as ConvItem];
+  it('does not group different tools, and lets a later run of the original tool start fresh', () => {
+    // Read,Read,Bash,Read,Read — a different tool in the middle must both break the first
+    // run AND not prevent a second run from forming afterward.
+    const bash = [
+      { kind: 'tool', toolId: 'x', toolName: 'Bash', toolTitle: 'Bash', toolDetail: 'ls' },
+      { kind: 'tool-result', toolId: 'x', text: 'file1\nfile2' },
+    ] as ConvItem[];
+    const items = [...read('a', 'one.ts', 3), ...read('b', 'two.ts', 3), ...bash, ...read('c', 'three.ts', 3), ...read('d', 'four.ts', 3)];
     renderTimelineItems(items);
-    expect(screen.queryByText(/Read \d files/)).toBeNull();
+    expect(screen.getAllByText('Read 2 files')).toHaveLength(2); // two separate groups, not one run of 4
+    expect(screen.queryByText(/Bash \d (files|calls)/)).toBeNull(); // the lone Bash never groups
   });
 
   it('does not group a lone tool call', () => {
@@ -187,11 +194,94 @@ describe('renderTimeline — groups a run of consecutive same-tool calls', () =>
     expect(screen.queryByText(/Read \d files/)).toBeNull();
   });
 
+  // The case above lands the boundary on a `tool` item — the one case that cannot fail,
+  // since the look-ahead's tool-result handling only ever runs for a `tool-result` item.
+  // Pages are cut at arbitrary JSONL offsets, so the oldest rendered item is frequently an
+  // ORPHAN tool-result instead (its own tool_use fell outside the replay window) — that
+  // must break the run too, not be silently swallowed by the paired-result skip.
+  it('breaks a group at a page boundary that lands on a tool-result, not just a tool', () => {
+    const items = [...read('a', 'one.ts', 3), ...read('b', 'two.ts', 3)];
+    renderTimelineItems(items, new Set([items[1]])); // boundary is the tool-result of run 'a'
+    expect(screen.queryByText(/Read \d files/)).toBeNull();
+  });
+
   it('renders a group expanded while a member is still running', () => {
     const items = [...read('a', 'one.ts', 3), { kind: 'tool', toolId: 'b', toolName: 'Read', toolTitle: 'Read two.ts', toolDetail: 'two.ts' } as ConvItem];
     renderTimelineItems(items);
     expect(screen.getByText('one.ts')).toBeTruthy();
     expect(screen.getByText('two.ts')).toBeTruthy();
+  });
+
+  // Invariant 3: AskUserQuestion always has its own live-overlay special-casing and must
+  // never collapse into a group, even when several answered ones sit back to back.
+  it('never groups AskUserQuestion, even when several appear consecutively', () => {
+    const q = (id: string, question: string, answer: string) => [
+      { kind: 'tool', toolId: id, toolName: 'AskUserQuestion', toolInput: JSON.stringify({ questions: [{ question, options: ['Yes', 'No'] }] }) },
+      { kind: 'tool-result', toolId: id, text: `Your questions have been answered: "${question}"="${answer}". You can now continue with these answers in mind.` },
+    ] as ConvItem[];
+    const items = [...q('q1', 'Ship it?', 'Yes'), ...q('q2', 'Deploy now?', 'No')];
+    renderTimelineItems(items);
+    expect(screen.queryByText(/AskUserQuestion \d (files|calls)/)).toBeNull();
+    expect(screen.getByText(/Ship it\?/)).toBeInTheDocument();
+    expect(screen.getByText(/Deploy now\?/)).toBeInTheDocument();
+  });
+
+  // The toolId-less shape older REST-paged history produces (see the adjacency test in the
+  // AskUserQuestion describe block above) must ALSO group correctly: each run member is
+  // paired with its result by array-adjacency (there's no toolId to match by), so the group
+  // must settle (show a real line count) instead of rendering permanently "running…".
+  it('groups toolId-less tools, pairing each with its result by array-adjacency', () => {
+    const items: ConvItem[] = [
+      { kind: 'tool', toolName: 'Read', toolTitle: 'Read one.ts', toolDetail: 'one.ts' },
+      { kind: 'tool-result', text: 'x\nx\nx' },
+      { kind: 'tool', toolName: 'Read', toolTitle: 'Read two.ts', toolDetail: 'two.ts' },
+      { kind: 'tool-result', text: 'x\nx\nx' },
+    ];
+    renderTimelineItems(items);
+    expect(screen.getByText('Read 2 files')).toBeTruthy();
+    expect(screen.getByText('6 lines')).toBeTruthy(); // a real, adjacency-derived line count
+    expect(screen.queryByText('running…')).toBeNull(); // not permanently force-expanded
+  });
+
+  // THE key-stability test: grouping and scroll preservation are otherwise never exercised
+  // together. MessageScroller's preserveScrollOnPrepend tracks the reader's scroll anchor
+  // by DOM NODE IDENTITY, so a loadOlder() prepend must not unmount/remount an
+  // already-rendered group — it must land as a new SIBLING before it instead.
+  it('does not remount an already-expanded group when loadOlder() prepends an older page', () => {
+    // The "currently loaded" page: one run of two Reads.
+    const items = [...read('c', 'three.ts', 3), ...read('d', 'four.ts', 3)];
+    const { container, rerender } = renderTimelineItems(items);
+
+    fireEvent.click(screen.getByText('Read 2 files'));
+    expect(screen.getByText('three.ts')).toBeTruthy(); // expanded
+
+    const groupNodeBefore = container.querySelector('[data-message-id="d"]');
+    expect(groupNodeBefore).not.toBeNull();
+
+    // loadOlder() prepends an older page — its own run of two Reads — in front. ChatView's
+    // real pageBoundariesRef records the PREVIOUS first item (`items[0]`, the 'c' tool) as
+    // a permanent boundary at exactly this point.
+    const olderPage = [...read('a', 'one.ts', 3), ...read('b', 'two.ts', 3)];
+    const prepended = [...olderPage, ...items];
+    rerender(
+      <MessageScroller.Provider>
+        <MessageScroller.Root>
+          <MessageScroller.Viewport>
+            <MessageScroller.Content>
+              {renderTimeline(prepended, () => {}, new Set([items[0]]))}
+            </MessageScroller.Content>
+          </MessageScroller.Viewport>
+        </MessageScroller.Root>
+      </MessageScroller.Provider>,
+    );
+
+    expect(screen.getByText('three.ts')).toBeTruthy(); // still expanded
+    // Same DOM node — not unmounted/remounted. This is the actual scroll-preservation
+    // contract MessageScroller relies on; toBe (not toEqual) checks object identity.
+    expect(container.querySelector('[data-message-id="d"]')).toBe(groupNodeBefore);
+    // Two SEPARATE groups now render — the prepended page's own run, plus the pre-existing
+    // group — rather than one run of 4 merged across the boundary.
+    expect(screen.getAllByText('Read 2 files')).toHaveLength(2);
   });
 });
 
