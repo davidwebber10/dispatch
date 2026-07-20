@@ -57,7 +57,14 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   const [adviceError, setAdviceError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (resumeAdviceDismissed) { setAdvice(null); return; }
+    // Clear any stale advice/error from a PREVIOUS terminalId before anything else — PaneTree/
+    // PaneFrame render <TabHost terminalId={tabId}/> with no `key`, so switching a pane's tab
+    // in place updates terminalId on this SAME ChatView instance rather than remounting it.
+    // Without this, thread A's card (its age/token numbers) would keep rendering under thread
+    // B's identity until B's own advice happened to resolve with shouldPrompt: true.
+    setAdvice(null);
+    setAdviceError(null);
+    if (resumeAdviceDismissed) return;
     let cancelled = false;
     api.getResumeAdvice(terminalId)
       .then((a) => { if (!cancelled && a.shouldPrompt) setAdvice({ ageMinutes: a.ageMinutes, contextTokens: a.contextTokens }); })

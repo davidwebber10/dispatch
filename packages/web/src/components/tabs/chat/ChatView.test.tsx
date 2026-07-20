@@ -183,4 +183,39 @@ describe('ChatView — resume-from-summary advice', () => {
     render(<ChatView terminalId="t1" />);
     await waitFor(() => expect(screen.queryByRole('button', { name: /resume from summary/i })).toBeNull());
   });
+
+  // Regression guard: onSummarize must call api.compactTerminal DIRECTLY, not
+  // useStructuredChat's compact() (which is fire-and-forget — `.catch(() => {})` — and would
+  // silently swallow the 409 the endpoint returns when no live structured session backs the
+  // thread). On the RESOLVE path the two are indistinguishable, so this only has teeth on
+  // the reject path: a failed summarization must surface a visible error line, not look
+  // like it quietly succeeded.
+  it('surfaces a visible error when compactTerminal rejects (no live structured session)', async () => {
+    vi.spyOn(api, 'getResumeAdvice').mockResolvedValue({ shouldPrompt: true, ageMinutes: 4560, contextTokens: 134_000 });
+    vi.spyOn(api, 'compactTerminal').mockRejectedValue(new Error('No live structured session to compact'));
+    render(<ChatView terminalId="t1" />);
+    fireEvent.click(await screen.findByRole('button', { name: /resume from summary/i }));
+    expect(await screen.findByText(/No live structured session to compact/)).toBeInTheDocument();
+  });
+
+  // Regression guard: PaneTree/PaneFrame render <TabHost terminalId={tabId}/> with no `key`,
+  // so reassigning a pane's tab updates terminalId on the SAME ChatView instance rather than
+  // remounting it. The advice effect's `cancelled` closure flag correctly guards against an
+  // in-flight response from the OLD terminalId landing late, but it never cleared previously
+  // -resolved state — so switching in place from a thread that showed the card to one that
+  // shouldn't left the old thread's stale card (its age/token numbers) rendering under the
+  // new thread's identity. Uses `rerender` (not a fresh render) so the same component
+  // instance is reused, actually exercising the in-place-switch path.
+  it('clears a stale card from the previous thread when switching terminalId in place', async () => {
+    vi.spyOn(api, 'getResumeAdvice').mockImplementation(async (id: string) =>
+      id === 't1'
+        ? { shouldPrompt: true, ageMinutes: 4560, contextTokens: 134_000 }
+        : { shouldPrompt: false, ageMinutes: 0, contextTokens: 0 },
+    );
+    const { rerender } = render(<ChatView terminalId="t1" />);
+    expect(await screen.findByRole('button', { name: /resume from summary/i })).toBeInTheDocument();
+
+    rerender(<ChatView terminalId="t2" />);
+    await waitFor(() => expect(screen.queryByRole('button', { name: /resume from summary/i })).toBeNull());
+  });
 });
