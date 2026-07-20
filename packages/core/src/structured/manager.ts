@@ -110,12 +110,19 @@ export type PermissionDecision =
  *   'session'(terminalId, sessionId)  — the external session/thread id to persist
  *   'permission'(terminalId, pending) — a gated tool/question awaiting a decision
  *   'idle'   (terminalId, detail)     — a turn completed (thread is idle);
- *                                       detail: { declared: boolean } — whether the agent
- *                                       explicitly declared this outcome (report_status
- *                                       done/blocked) vs it being inferred (nothing declared,
- *                                       and the closing-text heuristic didn't read as a
- *                                       question). Codex has no declaration path yet, so its
- *                                       manager always emits { declared: false }.
+ *                                       detail: { declared: boolean; summary?: string } —
+ *                                       `declared` is whether the agent explicitly declared
+ *                                       this outcome (report_status done/blocked) vs it being
+ *                                       inferred (nothing declared, and the closing-text
+ *                                       heuristic didn't read as a question). `summary`, when
+ *                                       present, is the manager's OWN best text for the turn's
+ *                                       outcome — the Codex manager supplies the completed
+ *                                       agentMessage text it already has on hand (see
+ *                                       codex-manager.ts's settleTurn), since the generic
+ *                                       Claude-ring walk (SessionService.lastAssistantTextPublic)
+ *                                       returns nothing or stale backfilled text on Codex. The
+ *                                       Claude manager never sets it — the listener falls back
+ *                                       to that ring walk, which IS reliable for Claude.
  *   'scheduled'(terminalId, activity) — turn ended by a wake-scheduler tool
  *   'needs-help'(terminalId, detail)  — turn ended needing the human (declared or inferred);
  *                                       detail: { ask: string; summary: string; inferred: boolean }

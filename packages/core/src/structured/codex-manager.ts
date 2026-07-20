@@ -162,10 +162,10 @@ interface CodexSession {
   /** Resolves once thread/start|resume has assigned a threadId; sends chain on it. */
   ready: Promise<void>;
   /**
-   * The agent's own declaration for the CURRENT turn, set by report_status. Stored for
-   * interface parity with the Claude manager's Session.declared — see
-   * ClaudeStructuredSessionManager.noteDeclaredStatus / its `result` handler for how it's
-   * consumed there. Not yet consumed on the Codex turn-end path.
+   * The agent's own declaration for the CURRENT turn, set by report_status. Same lifecycle as
+   * the Claude manager's Session.declared: written mid-turn, read once at the turn boundary
+   * (settleTurn), then cleared. See ClaudeStructuredSessionManager's `result` handler for the
+   * precedence chain this mirrors (minus the wake branch — Codex has no WAKE_TOOLS tracking).
    */
   declared?: StatusDeclaration;
 }
@@ -354,14 +354,44 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
           this.emit('busy', session.terminalId);
           break;
         case 'idle':
-          // Codex has no report_status-style declaration path yet — every idle turn is
-          // undeclared/inferred, same shape as the Claude manager's heuristic-said-no branch.
-          this.emit('idle', session.terminalId, { declared: false });
+        case 'needs-help':
+          this.settleTurn(session, action);
           break;
         case 'approval':
           this.handleApproval(session, action);
           break;
       }
+    }
+  }
+
+  /**
+   * The Codex turn boundary. Applies the SAME declared-status precedence chain the Claude
+   * manager's `result` handler establishes (see manager.ts), minus the wake-scheduler branch —
+   * Codex has no WAKE_TOOLS/lastToolUse tracking at all, so that branch simply doesn't exist
+   * here:
+   *   1. declared `needs_you`      → 'needs-help', inferred: false
+   *   2. any OTHER declaration     → 'idle', declared: true (a declared `blocked` still settles
+   *      idle, same as Claude — a thread waiting on another agent isn't a needs-help state)
+   *   3. no declaration + the translator's own text-heuristic fired → 'needs-help', inferred: true
+   *   4. otherwise                 → 'idle', declared: false
+   * `action.summary` is the actual completed agentMessage text stashed by the translator
+   * (CodexTranslator.lastAgentText) — carried through regardless of branch so a Codex card
+   * persists a REAL outcome line instead of the Claude-ring walk (SessionService.lastAssistantTextPublic),
+   * which on Codex returns either nothing or stale text backfilled from a prior resume (see the
+   * translator's doc comment on `lastAgentText` for why).
+   */
+  private settleTurn(session: CodexSession, action: Extract<TranslatedAction, { kind: 'idle' | 'needs-help' }>): void {
+    const declared = session.declared;
+    session.declared = undefined; // a declaration is per-turn — must not leak into the next one
+    const summary = action.summary;
+    if (declared?.state === 'needs_you') {
+      this.emit('needs-help', session.terminalId, { ask: declared.ask ?? declared.summary, summary: declared.summary, inferred: false });
+    } else if (declared) {
+      this.emit('idle', session.terminalId, { declared: true, summary });
+    } else if (action.kind === 'needs-help') {
+      this.emit('needs-help', session.terminalId, { ask: action.ask, summary: action.summary, inferred: true });
+    } else {
+      this.emit('idle', session.terminalId, { declared: false, summary });
     }
   }
 

@@ -101,6 +101,33 @@ it('resume backfills prior history from thread/read before going live', async ()
   expect(events.some((e: any) => e.type === 'user' && e.message?.content === 'earlier question')).toBe(true);
 });
 
+// --- Task 7: turn-end status truth for Codex + the Task 5 review addition (a Codex idle turn
+// must persist its OWN completed agentMessage text as the outcome summary, never the generic
+// Claude-ring walk — which on Codex returns either nothing or STALE text backfilled from a
+// prior resume, since a live Codex turn never produces a whole `assistant` text event).
+
+it('idle carries the turn\'s own completed agentMessage text as `summary`', async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  const idle = waitForManagerEvent(m, 'idle', 't1');
+  m.sendMessage('t1', 'stream please');
+  const [detail] = await idle;
+  expect(detail).toMatchObject({ declared: false, summary: 'Hello world' });
+});
+
+it('idle summary reflects the CURRENT turn, not stale text backfilled from a resumed session', async () => {
+  spawnFake(m, 't1', { resumeId: 'thread-existing-9' });
+  // Backfill lands first — the ring now holds a whole `assistant` text event ('earlier
+  // answer') that the OLD Claude-ring-walk heuristic would latch onto forever, since a live
+  // Codex turn never produces another event of that exact shape.
+  await waitForEvent(m, 't1', (e) => e.type === 'assistant' && e.message?.content?.[0]?.text === 'earlier answer');
+  const idle = waitForManagerEvent(m, 'idle', 't1');
+  m.sendMessage('t1', 'stream please');
+  const [detail] = await idle;
+  expect(detail.summary).toBe('Hello world'); // this turn's own text
+  expect(detail.summary).not.toContain('earlier answer'); // NOT the stale backfilled text
+});
+
 it('interrupt asks the server to end the turn (settles idle)', async () => {
   spawnFake(m, 't1');
   await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');

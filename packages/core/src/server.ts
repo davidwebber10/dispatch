@@ -123,14 +123,25 @@ function wirePermissionMembrane(structuredManager: IStructuredManager, statusSer
   structuredManager.on('busy', (terminalId: string) => {
     statusService.markWorking(terminalId, 'Working…');
   });
-  structuredManager.on('idle', (terminalId: string, detail?: { declared: boolean }) => {
+  structuredManager.on('idle', (terminalId: string, detail?: { declared: boolean; summary?: string }) => {
     statusService.markIdle(terminalId);
     // `declared` distinguishes an explicit report_status outcome from the undeclared
     // fallback (nothing declared, heuristic said "not a question") — the latter is a GUESS,
     // not a fact, so it's persisted as `inferred: true`. This is what keeps the
     // declared-vs-inferred split (GET /api/state/status-quality) honest instead of ~100%
     // by construction (see the review finding this fixes).
-    sessionService.noteTurnOutcome(terminalId, { summary: sessionService.lastAssistantTextPublic(terminalId), needsHelp: false, inferred: !detail?.declared });
+    //
+    // `detail.summary`, when present, is the emitting manager's OWN text for this turn (the
+    // Codex manager supplies it from the agentMessage it just stashed — see codex-manager.ts's
+    // settleTurn). Prefer it over the generic ring walk: lastAssistantTextPublic scans for a
+    // WHOLE `{type:'assistant', message.content:[{type:'text'}]}` event, which a live Codex
+    // turn never produces (prose arrives as streaming deltas) — so on Codex that walk returns
+    // either '' or STALE text backfilled from a previously resumed session, and used to get
+    // persisted into config.lastOutcome on every single Codex turn (the Task 5 review finding
+    // this fixes). The Claude manager never sets `summary`, so this is a no-op change for it —
+    // the ring walk IS reliable there (real whole-text `assistant` events land in its ring).
+    const summary = detail?.summary && detail.summary.trim() ? detail.summary : sessionService.lastAssistantTextPublic(terminalId);
+    sessionService.noteTurnOutcome(terminalId, { summary, needsHelp: false, inferred: !detail?.declared });
     sessionService.noteAgentCompletion(terminalId);
   });
   // A turn that ended needing the human. Deliberately NOT routed through 'idle':

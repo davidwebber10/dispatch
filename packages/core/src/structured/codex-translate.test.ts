@@ -23,6 +23,43 @@ describe('CodexTranslator — server → Claude-shaped stream', () => {
     expect(events(done)[0]).toMatchObject({ type: 'result', subtype: 'codex_turn', is_error: false });
   });
 
+  // --- Task 7: turn-end status truth for Codex (parity with the Claude manager's `result`
+  // handler — see manager.ts). The translator has no report_status/declared awareness at
+  // all (that lives on CodexSession in codex-manager.ts); it ONLY runs the text heuristic
+  // against the last completed agentMessage's own prose, stashed at item/completed time.
+
+  it('a turn whose last agent message asks a question ends in needs-help, not idle', () => {
+    const t = new CodexTranslator();
+    const actions = [
+      ...t.translate({ method: 'item/completed', params: { item: { type: 'agentMessage', text: 'Rewired the rail. Does that look right to you?' } } }),
+      ...t.translate({ method: 'turn/completed', params: {} }),
+    ];
+    expect(kinds(actions)).toContain('needs-help');
+    expect(kinds(actions)).not.toContain('idle');
+  });
+
+  it('a turn whose last agent message reports completion ends idle', () => {
+    const t = new CodexTranslator();
+    const actions = [
+      ...t.translate({ method: 'item/completed', params: { item: { type: 'agentMessage', text: 'Merged to main. 6 commits, all green.' } } }),
+      ...t.translate({ method: 'turn/completed', params: {} }),
+    ];
+    expect(kinds(actions)).toContain('idle');
+    expect(kinds(actions)).not.toContain('needs-help');
+  });
+
+  it('the stashed agent text does not leak into the NEXT turn once consumed', () => {
+    const t = new CodexTranslator();
+    // First turn ends on a question.
+    t.translate({ method: 'item/completed', params: { item: { type: 'agentMessage', text: 'Does that look right to you?' } } });
+    t.translate({ method: 'turn/completed', params: {} });
+    // Second turn produces no agentMessage completion at all before its own boundary —
+    // if the stash weren't cleared, the first turn's question would wrongly fire again.
+    const actions = t.translate({ method: 'turn/completed', params: {} });
+    expect(kinds(actions)).toContain('idle');
+    expect(kinds(actions)).not.toContain('needs-help');
+  });
+
   it('agentMessage deltas → message_start then a text content block streamed by deltas', () => {
     const t = new CodexTranslator();
     t.translate(fx.turnStarted as any); // establishes the turn

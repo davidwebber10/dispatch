@@ -11,6 +11,7 @@ import { createApp } from '../../src/server.js';
 import * as terminalsDb from '../../src/db/terminals.js';
 
 const fake = path.join(path.dirname(fileURLToPath(import.meta.url)), '../structured/fake-claude.mjs');
+const fakeCodex = path.join(path.dirname(fileURLToPath(import.meta.url)), '../structured/fake-codex-app-server.mjs');
 let app: any; let db: Database.Database; let sessionId: string; let dir: string;
 // Secondary apps spawned by helpers below (e.g. spawnAgentUnderCoordinator) get their
 // structured managers killed + their secretsDir removed in the shared afterEach, mirroring
@@ -1013,4 +1014,54 @@ it('a DECLARED done turn persists `inferred: false` — distinguishable from the
   expect(cfg.lastOutcome?.needsHelp).toBe(false);
   expect(cfg.lastOutcome?.inferred).toBe(false);
   await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+// --- Task 7 (+ the Task 5 review addition): Codex turn-end status truth ----------
+
+it('a Codex idle turn persists ITS OWN completed agent message as the outcome summary — never stale text backfilled from an earlier resumed session', async () => {
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-outcome-'));
+  const a = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fakeCodex] } });
+  try {
+    const s = await request(a).post('/api/sessions').send({ provider: 'codex', workingDir: dir, name: 'codex-outcome' });
+    const t = await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'codex', config: { transport: 'structured' } });
+    const id = t.body.id;
+    // Pre-seed an external_id so the first spawn takes the RESUME path: the fake app-server's
+    // thread/resume handler backfills a prior turn ('earlier answer') into the ring before the
+    // live turn even starts — the exact trap scenario the brief describes (a whole `assistant`
+    // text event that only a live Claude turn, never a live Codex one, would otherwise produce).
+    terminalsDb.updateExternalId(db, id, 'thread-existing-9');
+    await request(a).post(`/api/terminals/${id}/message`).send({ text: 'stream please' });
+    await pollStatus(id, 'waiting');
+    const cfg = JSON.parse(terminalsDb.getById(db, id)?.config || '{}');
+    expect(cfg.lastOutcome?.summary).toBe('Hello world'); // this turn's OWN agentMessage text
+    expect(cfg.lastOutcome?.summary).not.toContain('earlier answer'); // NOT the stale backfill
+    expect(cfg.lastOutcome?.needsHelp).toBe(false);
+    expect(cfg.lastOutcome?.inferred).toBe(true);
+  } finally {
+    (a as any)._sessionService?.structuredManagerFor('codex')?.killAll();
+    fs.rmSync(cfgDir, { recursive: true, force: true });
+  }
+});
+
+it('a Codex turn whose closing agent message asks a question settles needs-help, not idle — the exact bug this task fixes', async () => {
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-needshelp-'));
+  const a = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fakeCodex] } });
+  try {
+    const s = await request(a).post('/api/sessions').send({ provider: 'codex', workingDir: dir, name: 'codex-needshelp' });
+    const t = await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'codex', config: { transport: 'structured' } });
+    const id = t.body.id;
+    // The fake app-server closes this turn on a question when the input says "needs a decision"
+    // (see fake-codex-app-server.mjs). Before this task, Codex Pretty had no turn-end branching
+    // at all — every Codex turn, question or not, settled 'idle'/'waiting' and was filed as
+    // finished. This is the end-to-end proof it no longer is.
+    await request(a).post(`/api/terminals/${id}/message`).send({ text: 'this needs a decision from you' });
+    await pollStatus(id, 'needs_input');
+    const cfg = JSON.parse(terminalsDb.getById(db, id)?.config || '{}');
+    expect(cfg.lastOutcome?.needsHelp).toBe(true);
+    expect(cfg.lastOutcome?.inferred).toBe(true);
+    expect(cfg.lastOutcome?.summary).toContain('Does that look right to you?');
+  } finally {
+    (a as any)._sessionService?.structuredManagerFor('codex')?.killAll();
+    fs.rmSync(cfgDir, { recursive: true, force: true });
+  }
 });

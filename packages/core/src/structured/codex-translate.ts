@@ -18,6 +18,7 @@
 // tool it never saw start), and each turn ends with a synthetic `result` footer + 'idle'.
 
 import type { PendingPermission, PermissionDecision } from './manager.js';
+import { looksLikeQuestion } from '../status/question.js';
 
 /** The four ServerRequest approval methods this layer understands (spec mapping table). */
 export type ApprovalMethod =
@@ -47,7 +48,19 @@ export type TranslatedAction =
   | { kind: 'event'; event: unknown } // push to the ring + emit 'event'
   | { kind: 'session'; sessionId: string } // emit 'session' (persist as terminal.external_id)
   | { kind: 'busy' } // emit 'busy' (a turn started)
-  | { kind: 'idle' } // emit 'idle' (turn boundary)
+  | { kind: 'idle'; summary?: string } // emit 'idle' (turn boundary). `summary`, when present, is
+  // the last completed agentMessage's own text — see CodexTranslator.lastAgentText — so the
+  // manager/server can persist a REAL outcome line instead of walking the Claude-shaped event
+  // ring (which on Codex holds either nothing or stale text backfilled from a prior resume).
+  | {
+      // Turn boundary: the closing agent prose reads as a question (see looksLikeQuestion).
+      // ALWAYS inferred at this layer — the translator has no report_status/declared awareness
+      // at all (that lives on CodexSession in codex-manager.ts); codex-manager applies the
+      // declared-status precedence chain against this before deciding the final emission.
+      kind: 'needs-help';
+      ask: string;
+      summary: string;
+    }
   | {
       // A gated approval ServerRequest. The manager applies the escalate/auto-allow membrane:
       // surface it (set pending + emit 'permission') when supervised or `alwaysSurface`, else
@@ -136,6 +149,17 @@ export class CodexTranslator {
    *  the command/diff) can still show what's being approved. Keyed by Codex itemId. */
   private itemDetails = new Map<string, any>();
   private lastUsage: any = null; // most recent thread/tokenUsage/updated → result footer
+  /**
+   * The full prose of the most recently COMPLETED agentMessage item this turn — the ONLY
+   * reliable source of "what did the agent just say" on Codex. A live turn's `assistant`
+   * ring events carry only streamed deltas (see item/agentMessage/delta) or tool_use blocks,
+   * never a whole text block the Claude-side `lastAssistantText` ring-walk would find; the
+   * one place the full text ever lands is here, at item/completed. Written on every completed
+   * agentMessage (so it always holds the CURRENT turn's latest, even across multiple agent
+   * messages in one turn) and consumed + cleared at the turn boundary (turnCompleted) so it
+   * can never leak into the next turn's heuristic.
+   */
+  private lastAgentText = '';
 
   /** Emit a Claude `system/init` carrying the model, so the chat header shows it (parity with
    *  Claude's system/init). Called by the manager once thread/start|resume resolves. */
@@ -190,7 +214,15 @@ export class CodexTranslator {
       duration_ms: typeof turn.durationMs === 'number' ? turn.durationMs : undefined,
       usage: usage ? { input_tokens: usage.inputTokens, output_tokens: usage.outputTokens } : undefined,
     };
-    return [{ kind: 'event', event: result }, { kind: 'idle' }];
+    // Read the closing text ONCE, then clear it — a value leaking into the next turn would
+    // let a stale question fire the heuristic again (or a stale non-question mask a real one).
+    // Mirrors the Claude manager's `result` handler clearing session.declared/lastToolUse.
+    const text = this.lastAgentText;
+    this.lastAgentText = '';
+    const boundary: TranslatedAction = looksLikeQuestion(text)
+      ? { kind: 'needs-help', ask: text, summary: text }
+      : { kind: 'idle', summary: text || undefined };
+    return [{ kind: 'event', event: result }, boundary];
   }
 
   /** Emit message_start once per turn (bumps the reducer's turn counter → fresh block keys). */
@@ -245,6 +277,9 @@ export class CodexTranslator {
   }
 
   private itemCompleted(item: any): TranslatedAction[] {
+    // Stash the closing prose BEFORE the id guard below — it's read at the turn boundary
+    // regardless of whether this item is otherwise well-formed enough to render.
+    if (item?.type === 'agentMessage' && typeof item.text === 'string') this.lastAgentText = item.text;
     if (!item || typeof item.id !== 'string') return [];
     if (item.type === 'agentMessage') {
       // Close the streamed text block (harmless if never opened). Text itself already rendered

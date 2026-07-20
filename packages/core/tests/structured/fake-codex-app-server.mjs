@@ -47,30 +47,40 @@ rl.on('line', (line) => {
   }
 
   if (msg.method === 'turn/start') {
+    // Echo back whichever threadId the client requested against (its OWN session.threadId,
+    // e.g. the resumeId after a thread/resume) rather than always the hardcoded THREAD
+    // constant — a resumed session's live-turn notifications must route back to it, exactly
+    // like the real app-server would.
+    const tid = msg.params?.threadId ?? THREAD;
     respond(msg.id, { turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'inProgress' } });
     const text = (msg.params?.input ?? []).filter((i) => i.type === 'text').map((i) => i.text).join(' ');
-    notify('turn/started', { threadId: THREAD, turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'inProgress' } });
-    // Stream an assistant message token-by-token.
-    notify('item/started', { threadId: THREAD, turnId: TURN, item: { type: 'agentMessage', id: 'msg-1', text: '', phase: 'commentary', memoryCitation: null }, startedAtMs: 1 });
-    notify('item/agentMessage/delta', { threadId: THREAD, turnId: TURN, itemId: 'msg-1', delta: 'Hello ' });
-    notify('item/agentMessage/delta', { threadId: THREAD, turnId: TURN, itemId: 'msg-1', delta: 'world' });
-    notify('item/completed', { threadId: THREAD, turnId: TURN, item: { type: 'agentMessage', id: 'msg-1', text: 'Hello world', phase: 'commentary', memoryCitation: null }, completedAtMs: 2 });
-    notify('thread/tokenUsage/updated', { threadId: THREAD, turnId: TURN, tokenUsage: { total: { totalTokens: 100, inputTokens: 80, cachedInputTokens: 20, outputTokens: 20, reasoningOutputTokens: 0 }, last: { totalTokens: 100, inputTokens: 80, cachedInputTokens: 20, outputTokens: 20, reasoningOutputTokens: 0 }, modelContextWindow: 258400 } });
+    notify('turn/started', { threadId: tid, turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'inProgress' } });
+    // Stream an assistant message token-by-token. Default closing text is 'Hello world' (not a
+    // question); a request containing "needs a decision" gets a closing question instead, so
+    // tests can exercise the needs-help turn-end path end-to-end without a dedicated frame shape.
+    const agentText = /needs a decision/i.test(text) ? 'Rewired the rail. Does that look right to you?' : 'Hello world';
+    const mid = Math.ceil(agentText.length / 2);
+    notify('item/started', { threadId: tid, turnId: TURN, item: { type: 'agentMessage', id: 'msg-1', text: '', phase: 'commentary', memoryCitation: null }, startedAtMs: 1 });
+    notify('item/agentMessage/delta', { threadId: tid, turnId: TURN, itemId: 'msg-1', delta: agentText.slice(0, mid) });
+    notify('item/agentMessage/delta', { threadId: tid, turnId: TURN, itemId: 'msg-1', delta: agentText.slice(mid) });
+    notify('item/completed', { threadId: tid, turnId: TURN, item: { type: 'agentMessage', id: 'msg-1', text: agentText, phase: 'commentary', memoryCitation: null }, completedAtMs: 2 });
+    notify('thread/tokenUsage/updated', { threadId: tid, turnId: TURN, tokenUsage: { total: { totalTokens: 100, inputTokens: 80, cachedInputTokens: 20, outputTokens: 20, reasoningOutputTokens: 0 }, last: { totalTokens: 100, inputTokens: 80, cachedInputTokens: 20, outputTokens: 20, reasoningOutputTokens: 0 }, modelContextWindow: 258400 } });
 
     if (/approve/i.test(text)) {
       // A file-change that requires approval: item/started carries the diff (approval params
       // omit it), then the ServerRequest fires and we WAIT for the client's decision.
-      notify('item/started', { threadId: THREAD, turnId: TURN, item: { type: 'fileChange', id: 'fc-1', changes: [{ path: '/tmp/hello.txt', kind: { type: 'add' }, diff: 'hi\n' }], status: 'inProgress' }, startedAtMs: 3 });
-      send({ jsonrpc: '2.0', id: serverReqId++, method: 'item/fileChange/requestApproval', params: { threadId: THREAD, turnId: TURN, itemId: 'fc-1', startedAtMs: 3, reason: null, grantRoot: null } });
+      notify('item/started', { threadId: tid, turnId: TURN, item: { type: 'fileChange', id: 'fc-1', changes: [{ path: '/tmp/hello.txt', kind: { type: 'add' }, diff: 'hi\n' }], status: 'inProgress' }, startedAtMs: 3 });
+      send({ jsonrpc: '2.0', id: serverReqId++, method: 'item/fileChange/requestApproval', params: { threadId: tid, turnId: TURN, itemId: 'fc-1', startedAtMs: 3, reason: null, grantRoot: null } });
     } else {
-      notify('turn/completed', { threadId: THREAD, turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'completed', durationMs: 42 } });
+      notify('turn/completed', { threadId: tid, turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'completed', durationMs: 42 } });
     }
     return;
   }
 
   if (msg.method === 'turn/interrupt') {
+    const tid = msg.params?.threadId ?? THREAD;
     respond(msg.id, {});
-    notify('turn/completed', { threadId: THREAD, turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'interrupted', durationMs: 5 } });
+    notify('turn/completed', { threadId: tid, turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'interrupted', durationMs: 5 } });
     return;
   }
 
