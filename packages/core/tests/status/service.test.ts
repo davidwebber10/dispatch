@@ -78,6 +78,74 @@ describe('StatusService', () => {
   });
 });
 
+// Task 8: a PTY/CLI thread has no live structured session, so report_status's declaration
+// (SessionService.reportStatus's fallback) is persisted onto terminal.config.pendingDeclaration
+// instead of an in-memory session. The `Stop` hook is that thread's only turn boundary — it
+// runs in a separate request from wherever the declaration was written, so THIS is where it
+// must be consulted and cleared, mirroring how the structured path reads+clears
+// `session.declared` at its `result` boundary (see structured/manager.ts).
+describe('StatusService Stop-hook pendingDeclaration fallback (PTY report_status)', () => {
+  const stop = { hook_event_name: 'Stop', session_id: 'sid-1' };
+
+  it("a Stop with pendingDeclaration.state==='needs_you' settles to needs_input, not waiting", () => {
+    terminalsDb.updateConfig(db, 'term', { pendingDeclaration: { state: 'needs_you', summary: 'blocked', ask: 'pick one' } });
+    new StatusService(db, broadcaster).ingest('claude', 'term', stop);
+    expect(terminalsDb.getById(db, 'term')?.status).toBe('needs_input');
+  });
+
+  it("a Stop with pendingDeclaration.state==='done' settles to waiting", () => {
+    terminalsDb.updateConfig(db, 'term', { pendingDeclaration: { state: 'done', summary: 'shipped it' } });
+    new StatusService(db, broadcaster).ingest('claude', 'term', stop);
+    expect(terminalsDb.getById(db, 'term')?.status).toBe('waiting');
+  });
+
+  it("a Stop with pendingDeclaration.state==='blocked' falls through to waiting — parity with the structured path", () => {
+    terminalsDb.updateConfig(db, 'term', { pendingDeclaration: { state: 'blocked', summary: 'waiting on another agent', blocker: 'agent X' } });
+    new StatusService(db, broadcaster).ingest('claude', 'term', stop);
+    expect(terminalsDb.getById(db, 'term')?.status).toBe('waiting');
+  });
+
+  it('a Stop with no pendingDeclaration behaves exactly as before (waiting) — no regression', () => {
+    new StatusService(db, broadcaster).ingest('claude', 'term', stop);
+    expect(terminalsDb.getById(db, 'term')?.status).toBe('waiting');
+  });
+
+  it('the declaration is CLEARED after the Stop: a second Stop with no new declaration settles to waiting (does not leak into the next turn)', () => {
+    terminalsDb.updateConfig(db, 'term', { pendingDeclaration: { state: 'needs_you', summary: 'blocked', ask: 'pick one' } });
+    const s = new StatusService(db, broadcaster);
+
+    s.ingest('claude', 'term', stop);
+    expect(terminalsDb.getById(db, 'term')?.status).toBe('needs_input');
+
+    s.ingest('claude', 'term', stop); // turn N+1: nothing new declared
+    expect(terminalsDb.getById(db, 'term')?.status).toBe('waiting');
+  });
+
+  it('persists config.lastOutcome the same shape the structured path writes (declared ⇒ inferred:false)', () => {
+    terminalsDb.updateConfig(db, 'term', { pendingDeclaration: { state: 'done', summary: 'shipped the thing' } });
+    new StatusService(db, broadcaster).ingest('claude', 'term', stop);
+    const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
+    expect(cfg.pendingDeclaration).toBeUndefined();
+    expect(cfg.lastOutcome).toMatchObject({ summary: 'shipped the thing', needsHelp: false, inferred: false });
+    expect(typeof cfg.lastOutcome.at).toBe('string');
+  });
+
+  it('lastOutcome.needsHelp is true for a needs_you declaration', () => {
+    terminalsDb.updateConfig(db, 'term', { pendingDeclaration: { state: 'needs_you', summary: 'need input', ask: 'which?' } });
+    new StatusService(db, broadcaster).ingest('claude', 'term', stop);
+    const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
+    expect(cfg.lastOutcome).toMatchObject({ needsHelp: true, inferred: false });
+  });
+
+  it('does not consult pendingDeclaration on a non-Stop event', () => {
+    terminalsDb.updateConfig(db, 'term', { pendingDeclaration: { state: 'needs_you', summary: 'x' } });
+    new StatusService(db, broadcaster).ingest('claude', 'term', { hook_event_name: 'PreToolUse', session_id: 'sid-1', tool_name: 'Bash' });
+    expect(terminalsDb.getById(db, 'term')?.status).toBe('working');
+    const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
+    expect(cfg.pendingDeclaration).toEqual({ state: 'needs_you', summary: 'x' }); // untouched, still pending for the eventual Stop
+  });
+});
+
 describe('StatusService activity stamping', () => {
   const OLD = '2020-01-01T00:00:00.000Z';
   const seedOldActivity = () => {

@@ -1180,14 +1180,27 @@ export class SessionService {
   }
 
   /**
-   * Record an agent's own account of how its turn ended. Stored on the live session and
-   * consulted at the `result` boundary — see StructuredSessionManager.noteDeclaredStatus.
-   * Returns false when no live structured session backs the thread.
+   * Record an agent's own account of how its turn ended. When a live structured session
+   * backs the thread, it's stored there and consulted at the `result` boundary — see
+   * StructuredSessionManager.noteDeclaredStatus. Otherwise (PTY/CLI threads — no in-process
+   * session for the hook process to write into) it falls back to persisting onto the
+   * terminal row: PTY/CLI threads' turn boundary is the `Stop` hook, which runs in a
+   * different process and can't see an in-memory session, so the declaration has to survive
+   * on the row until that hook fires — see StatusService.ingest's Stop-hook consult/clear.
+   * Returns false only when the terminal itself doesn't exist.
    */
   reportStatus(terminalId: string, decl: import('../structured/manager.js').StatusDeclaration): boolean {
     const manager = this.structuredManagerForTerminal(terminalId);
-    if (!manager || !manager.isAlive(terminalId)) return false;
-    manager.noteDeclaredStatus(terminalId, decl);
+    if (manager && manager.isAlive(terminalId)) {
+      manager.noteDeclaredStatus(terminalId, decl);
+      return true;
+    }
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) return false;
+    let cfg: Record<string, any> = {};
+    try { cfg = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
+    cfg.pendingDeclaration = decl;
+    try { terminalsDb.updateConfig(this.db, terminalId, cfg); } catch { return false; }
     return true;
   }
 

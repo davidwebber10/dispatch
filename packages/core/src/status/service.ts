@@ -52,7 +52,55 @@ export class StatusService {
     }
 
     if (!norm.status) return; // id-only event (no status change)
-    this.apply(terminal.session_id, terminalId, norm.status, norm.activity);
+
+    // PTY/CLI turn boundary: the `Stop` hook is a separate request from wherever a
+    // report_status declaration was written (SessionService.reportStatus's fallback, since
+    // a PTY thread has no live structured session for that route to store it on
+    // in-memory — see that method's doc comment). So THIS is where it must be consulted
+    // and cleared, mirroring how the structured path reads+clears `session.declared` at its
+    // `result` boundary. normalizeClaude stays pure (no DB access) — the read/clear lives
+    // here, in its caller, which already holds the db handle.
+    let status = norm.status;
+    let activity = norm.activity;
+    if ((payload as { hook_event_name?: unknown } | null)?.hook_event_name === 'Stop') {
+      const settled = this.consumePendingDeclaration(terminal, terminalId);
+      if (settled) { status = settled.status; activity = settled.activity; }
+    }
+
+    this.apply(terminal.session_id, terminalId, status, activity);
+  }
+
+  /**
+   * Reads terminal.config.pendingDeclaration (set by SessionService.reportStatus's PTY
+   * fallback) and, if present: maps it to a status — `needs_you` wins (needs_input);
+   * `done`/`blocked` both settle idle, parity with the structured `result` handler, which
+   * explicitly falls `blocked` through to idle (a thread waiting on another agent still
+   * proceeds without the human) — stamps `config.lastOutcome` the same shape
+   * SessionService.noteTurnOutcome writes for the structured path (a declared PTY turn is
+   * always `inferred: false`), and CLEARS the declaration so it cannot leak into the next
+   * turn. Returns null when there's nothing pending (the common case for most Stop events).
+   */
+  private consumePendingDeclaration(terminal: terminalsDb.TerminalRow, terminalId: string): { status: ThreadStatus; activity?: string } | null {
+    let cfg: Record<string, any> = {};
+    try { cfg = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
+    const decl = cfg.pendingDeclaration;
+    if (!decl || typeof decl !== 'object') return null;
+
+    delete cfg.pendingDeclaration; // per-turn — must not leak into the next Stop
+    const needsHelp = decl.state === 'needs_you';
+    cfg.lastOutcome = {
+      summary: String(decl.summary ?? '').slice(0, 400),
+      needsHelp,
+      inferred: false,
+      at: new Date().toISOString(),
+    };
+    try { terminalsDb.updateConfig(this.db, terminalId, cfg); } catch { /* best effort */ }
+
+    if (needsHelp) {
+      const ask = typeof decl.ask === 'string' && decl.ask ? decl.ask : decl.summary;
+      return { status: 'needs_input', activity: typeof ask === 'string' ? ask.slice(0, 120) : undefined };
+    }
+    return { status: 'idle' };
   }
 
   /** Input edge: when the user sends a message the thread is working. */
