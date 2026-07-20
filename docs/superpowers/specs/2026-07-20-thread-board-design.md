@@ -97,10 +97,44 @@ Cards are never dragged; they move when the thread's reality changes.
 | Resting | you send it a message | **Working** |
 | Working | turn ends, declared `done` / undeclared | **Complete** |
 | Working | turn ends asking, declared or inferred | **Needs Help** |
+| any | you **Move to** (override) | the chosen column, until real activity |
+| overridden | the thread emits any real activity | override cleared, derived status resumes |
 | any | you archive the thread | leaves the board entirely |
 
 Archived threads are not a column. They are already reachable through the existing
 archived-threads surface and would otherwise swamp Resting.
+
+### Manual override — the escape hatch
+
+Every card offers **Move to** (⋯ on desktop, long-press on mobile). This is not a
+convenience; it is the mitigation for this design's central risk. The status is derived,
+derivation can be wrong, and without an override a mis-derived thread is *stuck* — most
+acutely a thread left in **Working** by a daemon crash, which will never emit the
+turn-end event that would free it.
+
+**Only three targets are offered: Needs Help, Complete, Resting.**
+
+`Working` is deliberately absent. The other three are *judgements* the human is entitled
+to make — "this needs me", "this is done", "ignore this". Working is an **observed
+fact**: a thread is running or it is not, and asserting it does not start it. Offering it
+would let someone paint a dead thread green and then wonder why nothing happens. To
+actually make a thread work you send it a message or press **Start** — real actions with
+real effects.
+
+This is the difference between a status *field* and a *derived* status. In Jira the board
+is the truth and a card is wherever you put it. Here the board is a projection of what
+threads are actually doing, so an override is not setting a value — it is correcting a
+bad reading. That is also why free drag-and-drop stays out of scope: it would quietly
+turn the board back into a lie.
+
+**Real activity clears the override.** If a thread you marked Complete emits a turn an
+hour later, it returns to Working, because it demonstrably *is* working. The override
+corrected a stale signal; once a fresh signal exists the correction has done its job.
+
+The alternative — a sticky override — was rejected because it recreates the original bug:
+a thread that needs attention looking like it doesn't, with the human as the cause
+instead of the heuristic. Nothing on this board should be able to permanently silence
+itself.
 
 ### Complete is acknowledgement, not recency
 
@@ -263,8 +297,9 @@ The setting is mobile-only and persists like the other `useSettings` preferences
 
 ## Explicitly out of scope
 
-- Drag-and-drop between columns. Status is derived from what threads *are doing*, not a
-  field you set. Dragging a card to Working would be a lie.
+- Free drag-and-drop between columns. The **Move to** override (above) is the sanctioned
+  mechanism and is deliberately narrower — it offers three targets, not four, because
+  Working is an observed fact rather than a judgement.
 - Replacing the existing per-project Work rail. The board is additive; the rail stays.
 - Replacing the existing mobile Threads view. It remains the default mode.
 - A third *Inbox* mobile mode — Board with Working and Resting collapsed already is it.
