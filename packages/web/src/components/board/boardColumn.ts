@@ -26,6 +26,18 @@ export interface BoardCardModel {
   // fallback); a non-empty string is the agent's own text (render `behind "<text>"`).
   blocker?: string;
   overridden: boolean;
+  /** ISO timestamp, straight off the terminal row — the board sorts every column newest first. */
+  lastActivityAt: string;
+}
+
+/**
+ * A thread the Overseer owns rather than one the human started: the per-project coordinator,
+ * or an agent it spawned. The board shows the MAIN threads, matching what the project sidebar
+ * already hides via the same predicate (see ProjectCard's `isManaged`).
+ */
+export function isManaged(t: Terminal): boolean {
+  const c = t.config as { role?: string; agentType?: string } | undefined;
+  return c?.role === 'coordinator' || !!c?.agentType;
 }
 
 // 'working' is deliberately excluded: it is an observed fact, not a judgement the human can
@@ -187,6 +199,9 @@ export function toBoardCard(t: Terminal, projectId: string, projectName: string,
     label: t.label,
     column,
     detail: detailFor(column, outcome, s, pending),
+    // Optional on the row; fall back to creation so a thread that never ran still sorts
+    // sensibly rather than landing at the bottom under an empty string.
+    lastActivityAt: t.lastActivityAt ?? t.createdAt ?? '',
     inferred,
     pending,
     blocker,

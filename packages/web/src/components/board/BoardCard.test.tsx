@@ -11,6 +11,7 @@ function makeCard(overrides: Partial<BoardCardModel> = {}): BoardCardModel {
     label: 'Thread Naming',
     column: 'needs_help',
     detail: 'Should renames apply retroactively?',
+    lastActivityAt: '2026-07-20T00:00:00.000Z',
     inferred: false,
     pending: false,
     overridden: false,

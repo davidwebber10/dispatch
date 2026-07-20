@@ -10,7 +10,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
 import { useThreadStatus } from '../../stores/threadStatus';
-import { toBoardCard, type BoardCardModel, type BoardColumn } from './boardColumn';
+import { toBoardCard, type BoardCardModel, type BoardColumn, isManaged } from './boardColumn';
 
 export interface BoardData {
   columns: Record<BoardColumn, BoardCardModel[]>;
@@ -56,9 +56,15 @@ export function useBoardData(projectFilter: string | null): BoardData {
       if (projectFilter && project.id !== projectFilter) continue;
       const terminals = byProject[project.id] ?? [];
       for (const t of terminals) {
+        if (isManaged(t)) continue; // the board is the MAIN threads, not the Overseer's own
         const card = toBoardCard(t, project.id, project.name, byTerminal[t.id]);
         cols[card.column].push(card);
       }
+    }
+    // Newest first, everywhere. Most visible in Resting, which holds the large majority of
+    // threads — in DB order the one you touched a minute ago could sit hundreds of cards down.
+    for (const key of Object.keys(cols) as BoardColumn[]) {
+      cols[key].sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt));
     }
     return cols;
     // `sessions` drives which projects/names to fold in; it's stable outside a project

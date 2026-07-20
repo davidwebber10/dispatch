@@ -1,10 +1,10 @@
 // Overseer view — worker lightbox (spec product refinement, 2026-06-29).
 //
-// Clicking a managed thread (a thread chip, or a Need's "Open" action) opens this
-// modal, which renders that worker's structured chat View — the same surface the
-// Operator uses — so the user can monitor at the worker level and interject mid-work.
-// Reads workerLightboxId + closeWorkerLightbox from the store; titled from the
-// terminal's live label/type. Returns null when nothing is open.
+// Clicking a managed thread (a thread chip, a Need's "Open" action, or a board card) opens
+// this modal, which renders that thread on ITS OWN surface — structured threads as the chat
+// View, CLI threads as the transcript or the terminal — so the user can monitor at the
+// thread level and interject mid-work. Reads workerLightboxId + closeWorkerLightbox from the
+// store; titled from the terminal's live label/type. Returns null when nothing is open.
 //
 // Header is responsive: DESKTOP packs the detail block + per-agent controls + close into
 // one row. MOBILE stacks them — the detail block (name/summary/meta) gets a full-width row
@@ -12,6 +12,11 @@
 // compact row below.
 
 import { ChatView } from '../../tabs/chat/ChatView';
+import { ConversationView } from '../../tabs/ConversationView';
+import { TerminalTab } from '../../tabs/TerminalTab';
+import { isStructured } from '../../tabs/TabHost';
+import { useTabs, findTerminal } from '../../../stores/tabs';
+import { useThreadMode } from '../../../stores/threadMode';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { Icon } from '../atoms';
 import { AgentDetailHeader } from './AgentDetailHeader';
@@ -22,6 +27,10 @@ export function WorkerLightbox() {
   const workerLightboxId = useOverseer((s) => s.workerLightboxId);
   const close = useOverseer((s) => s.closeWorkerLightbox);
   const isMobile = useIsMobile();
+  // Which surface this thread actually renders as. Hooks must run unconditionally, so
+  // resolve before the early return below.
+  const tab = useTabs((s) => (workerLightboxId ? findTerminal(s.byProject, workerLightboxId) : undefined));
+  const renderMode = useThreadMode((s) => (workerLightboxId ? s.modes[workerLightboxId] : undefined)) ?? 'expert';
 
   if (!workerLightboxId) return null;
 
@@ -133,9 +142,16 @@ export function WorkerLightbox() {
           </div>
         )}
 
-        {/* The structured chat View — monitor + interject */}
+        {/* Render the thread on ITS OWN surface, mirroring TabHost. This lightbox was built
+            for Overseer agents, which are always structured — so it hard-rendered ChatView.
+            The board opens ANY thread through it, including PTY/CLI ones, and a PTY thread
+            has no structured session behind ChatView: it would open to an empty chat. */}
         <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
-          <ChatView terminalId={workerLightboxId} />
+          {!tab || isStructured(tab)
+            ? <ChatView terminalId={workerLightboxId} />
+            : (renderMode === 'normal'
+                ? <ConversationView terminalId={workerLightboxId} />
+                : <TerminalTab terminalId={workerLightboxId} />)}
         </div>
       </div>
     </div>
