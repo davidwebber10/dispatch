@@ -20,7 +20,7 @@ import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
 import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript.js';
 import { platform } from '../platform/index.js';
 import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.js';
-import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources } from './cc-sessions.js';
+import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
 import { TERMINAL_ID_ENV_VAR } from '../auth/shim.js';
 import { withAutoArchive, DEFAULT_AUTO_ARCHIVE_MS } from './auto-archive.js';
 
@@ -1026,6 +1026,20 @@ export class SessionService {
     cfg.totalTokens = stats.totalTokens;
     cfg.outputTokens = stats.outputTokens;
     terminalsDb.updateConfig(this.db, terminalId, cfg);
+  }
+
+  /**
+   * Should the Pretty view offer to summarize before resuming this thread?
+   * Claude-only and transcript-backed: a thread with no external_id has no
+   * conversation to resume, and Codex resumes out-of-band over JSON-RPC.
+   */
+  getResumeAdvice(terminalId: string): ResumeAdvice | null {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal?.external_id || terminal.type !== 'claude-code') return null;
+    const session = sessionsDb.getById(this.db, terminal.session_id);
+    const workDir = terminal.working_dir || session?.working_dir;
+    if (!workDir) return null;
+    return readResumeAdvice(workDir, terminal.external_id);
   }
 
   /** The gated tool/question a structured AGENT thread is blocked on, or null. */

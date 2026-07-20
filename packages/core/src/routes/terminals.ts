@@ -180,6 +180,16 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
   });
 
+  // GET /api/terminals/:terminalId/resume-advice — should the Pretty view offer to
+  // summarize before resuming? Read-only; a thread with nothing to advise on (no
+  // external_id, no transcript, not claude) answers a benign "no".
+  router.get('/terminals/:terminalId/resume-advice', (req, res) => {
+    try {
+      const advice = sessionService.getResumeAdvice(req.params.terminalId);
+      res.json(advice ?? { shouldPrompt: false, ageMinutes: 0, contextTokens: 0 });
+    } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
+  });
+
   // POST /api/terminals/:terminalId/transport { transport: 'structured' | 'pty' } —
   // live-switch a running claude/codex thread between the CLI (PTY) and Pretty
   // (structured) transports, resuming its conversation. Guard failures (busy / no
