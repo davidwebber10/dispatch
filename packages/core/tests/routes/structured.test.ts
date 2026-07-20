@@ -1025,10 +1025,14 @@ it('a Codex idle turn persists ITS OWN completed agent message as the outcome su
     const s = await request(a).post('/api/sessions').send({ provider: 'codex', workingDir: dir, name: 'codex-outcome' });
     const t = await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'codex', config: { transport: 'structured' } });
     const id = t.body.id;
-    // Pre-seed an external_id so the first spawn takes the RESUME path: the fake app-server's
-    // thread/resume handler backfills a prior turn ('earlier answer') into the ring before the
-    // live turn even starts — the exact trap scenario the brief describes (a whole `assistant`
-    // text event that only a live Claude turn, never a live Codex one, would otherwise produce).
+    // The initial POST /terminals spawn is FRESH (no external_id yet) — sendStructuredMessage
+    // only takes the resume path when the manager reports NOT alive (see
+    // SessionService.sendStructuredMessage). So kill the live session, THEN seed the
+    // external_id, so the next message lazily resumes and backfills 'earlier answer' into the
+    // ring BEFORE the live turn even starts — the exact trap scenario the brief describes (a
+    // whole `assistant` text event that only a live Claude turn, never a live Codex one, would
+    // otherwise produce).
+    (a as any)._sessionService?.structuredManagerFor('codex')?.kill(id);
     terminalsDb.updateExternalId(db, id, 'thread-existing-9');
     await request(a).post(`/api/terminals/${id}/message`).send({ text: 'stream please' });
     await pollStatus(id, 'waiting');
@@ -1050,6 +1054,15 @@ it('a Codex turn whose closing agent message asks a question settles needs-help,
     const s = await request(a).post('/api/sessions').send({ provider: 'codex', workingDir: dir, name: 'codex-needshelp' });
     const t = await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'codex', config: { transport: 'structured' } });
     const id = t.body.id;
+    // The initial POST /terminals spawn is FRESH (no external_id yet) — sendStructuredMessage
+    // only takes the resume path when the manager reports NOT alive. Kill the live session,
+    // THEN seed external_id, so this needs-help turn genuinely resumes+backfills 'earlier
+    // answer' before the live turn runs — proving the needs-help summary is this turn's OWN
+    // closing question, never the previous session's backfilled text (same trap as the idle
+    // case above), AND exercising the resumed-thread threadId routing for the needs-help path
+    // specifically (previously only covered for idle/empty-summary turns).
+    (a as any)._sessionService?.structuredManagerFor('codex')?.kill(id);
+    terminalsDb.updateExternalId(db, id, 'thread-existing-9');
     // The fake app-server closes this turn on a question when the input says "needs a decision"
     // (see fake-codex-app-server.mjs). Before this task, Codex Pretty had no turn-end branching
     // at all — every Codex turn, question or not, settled 'idle'/'waiting' and was filed as
@@ -1060,6 +1073,7 @@ it('a Codex turn whose closing agent message asks a question settles needs-help,
     expect(cfg.lastOutcome?.needsHelp).toBe(true);
     expect(cfg.lastOutcome?.inferred).toBe(true);
     expect(cfg.lastOutcome?.summary).toContain('Does that look right to you?');
+    expect(cfg.lastOutcome?.summary).not.toContain('earlier answer'); // NOT the stale backfill
   } finally {
     (a as any)._sessionService?.structuredManagerFor('codex')?.killAll();
     fs.rmSync(cfgDir, { recursive: true, force: true });
