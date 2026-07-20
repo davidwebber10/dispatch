@@ -24,6 +24,7 @@ import type {
   MessageSource,
   PendingPermission,
   PermissionDecision,
+  StatusDeclaration,
 } from './manager.js';
 import { CodexTranslator, buildApprovalResponse, type ApprovalMethod, type TranslatedAction } from './codex-translate.js';
 
@@ -160,6 +161,13 @@ interface CodexSession {
   resumeId?: string;
   /** Resolves once thread/start|resume has assigned a threadId; sends chain on it. */
   ready: Promise<void>;
+  /**
+   * The agent's own declaration for the CURRENT turn, set by report_status. Stored for
+   * interface parity with the Claude manager's Session.declared — see
+   * ClaudeStructuredSessionManager.noteDeclaredStatus / its `result` handler for how it's
+   * consumed there. Not yet consumed on the Codex turn-end path.
+   */
+  declared?: StatusDeclaration;
 }
 
 /** Approval policy + sandbox the manager starts every thread with. Defaults are permissive
@@ -439,6 +447,16 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     const session = this.sessions.get(terminalId);
     if (!session || !this.conn?.alive || !session.threadId) return;
     void this.conn.request('thread/compact/start', { threadId: session.threadId }).catch(() => {});
+  }
+
+  /**
+   * Record what the agent says about this turn. Stored, not applied — mirrors the Claude
+   * manager's noteDeclaredStatus (see manager.ts's Session.declared) so both transports
+   * satisfy IStructuredManager identically.
+   */
+  noteDeclaredStatus(terminalId: string, decl: StatusDeclaration): void {
+    const session = this.sessions.get(terminalId);
+    if (session) session.declared = decl;
   }
 
   getPending(terminalId: string): PendingPermission | null { return this.sessions.get(terminalId)?.pending ?? null; }

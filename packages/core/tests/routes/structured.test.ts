@@ -50,6 +50,18 @@ async function pollExternalId(database: Database.Database, id: string, expected:
   }
   throw new Error('timeout waiting for external_id to be captured');
 }
+/**
+ * Waits for a manager-level emit `(terminalId, ...rest)` — e.g. 'needs-help'/'idle'/'scheduled'
+ * — scoped to one terminal id. Mirrors waitForManagerEvent in tests/structured/manager.test.ts.
+ * These are NOT stream-json events (pollEvent's ring), so they can't be polled off getEvents.
+ */
+function pollManagerEvent(mgr: any, event: string, id: string, timeoutMs = 3000): Promise<any[]> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => { mgr.off(event, on); reject(new Error(`timeout waiting for manager '${event}'`)); }, timeoutMs);
+    const on = (eid: string, ...rest: any[]) => { if (eid === id) { clearTimeout(t); mgr.off(event, on); resolve(rest); } };
+    mgr.on(event, on);
+  });
+}
 
 it('a SUPERVISED agent thread escalates a gated tool: GET shows pending, POST allow resolves it', async () => {
   const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent', autonomy: 'supervised' } });
@@ -205,6 +217,56 @@ it('a structured turn flips status working → idle on the result event (no more
     await sleep(25);
   }
   expect(status).toBe('waiting');
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+// --- turn-end status truth: a declared/inferred needs-help vs a plain idle ---------------
+//
+// The 'needs-help' manager event lands on this exact HTTP round-trip (spawn → POST /message
+// → fake CLI → result), proving the wiring end-to-end. Routing 'needs-help' onto
+// terminals.status (=> 'needs_input') is a later task (StatusService wiring in server.ts) —
+// asserted here at the manager-event boundary Task 2 actually owns.
+
+it('a turn ending with a plain-text question (no report_status) emits needs-help, marked inferred', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured' } });
+  const id = t.body.id;
+  await pollExternalId(db, id, 'sess-fake');
+  const mgr = (app as any)._structuredManager;
+  const needsHelpP = pollManagerEvent(mgr, 'needs-help', id);
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'I rewired the rail. Does that look right to you?' });
+  const [detail] = await needsHelpP;
+  expect(detail.inferred).toBe(true);
+  expect(detail.ask).toContain('Does that look right to you?');
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+it('a turn ending with a completion report emits idle, never needs-help', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured' } });
+  const id = t.body.id;
+  await pollExternalId(db, id, 'sess-fake');
+  const mgr = (app as any)._structuredManager;
+  const idleP = pollManagerEvent(mgr, 'idle', id);
+  let sawNeedsHelp = false;
+  const onNeedsHelp = (eid: string) => { if (eid === id) sawNeedsHelp = true; };
+  mgr.on('needs-help', onNeedsHelp);
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'Merged to main. 6 commits, all green.' });
+  await idleP;
+  mgr.off('needs-help', onNeedsHelp);
+  expect(sawNeedsHelp).toBe(false);
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+it('a report_status-style declaration (noteDeclaredStatus) wins over the text heuristic at the result boundary', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured' } });
+  const id = t.body.id;
+  await pollExternalId(db, id, 'sess-fake');
+  const mgr = (app as any)._structuredManager;
+  mgr.noteDeclaredStatus(id, { state: 'needs_you', summary: 'need a decision', ask: 'Which provider?' });
+  const needsHelpP = pollManagerEvent(mgr, 'needs-help', id);
+  // Closing text alone reads as a plain completion report — the declaration must still win.
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'All finished here.' });
+  const [detail] = await needsHelpP;
+  expect(detail).toEqual({ ask: 'Which provider?', summary: 'need a decision', inferred: false });
   await request(app).post(`/api/terminals/${id}/stop`);
 });
 

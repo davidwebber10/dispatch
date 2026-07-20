@@ -343,6 +343,125 @@ it('resets the wake-tool memo after each turn: ScheduleWakeup then a plain turn 
   await idleP;
 });
 
+// --- declared status (report_status) + the undeclared question-heuristic backstop --------
+//
+// noteDeclaredStatus stores a per-turn declaration that is consumed ONCE at the `result`
+// boundary (same lifecycle as the wake-tool memo above); with nothing declared, the `result`
+// handler falls back to looksLikeQuestion on the closing assistant text.
+
+it("undeclared: a turn whose closing text reads as a question emits 'needs-help' (inferred), not 'idle'", async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  const needsHelpP = waitForManagerEvent(m, 'needs-help', 't1');
+  let sawIdle = false;
+  const onIdle = (eid: string) => { if (eid === 't1') sawIdle = true; };
+  m.on('idle', onIdle);
+  m.sendMessage('t1', 'I rewired the rail. Does that look right to you?');
+  const [detail] = await needsHelpP;
+  m.off('idle', onIdle);
+  expect(sawIdle).toBe(false);
+  expect(detail.inferred).toBe(true);
+  expect(detail.ask).toContain('Does that look right to you?'); // fake echoes 'echo:' + text
+  expect(detail.summary).toBe(detail.ask); // undeclared: ask and summary are the same closing text
+});
+
+it("undeclared: a turn whose closing text reads as a completion report emits 'idle', not 'needs-help'", async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  const idleP = waitForManagerEvent(m, 'idle', 't1');
+  let sawNeedsHelp = false;
+  const onNeedsHelp = (eid: string) => { if (eid === 't1') sawNeedsHelp = true; };
+  m.on('needs-help', onNeedsHelp);
+  m.sendMessage('t1', 'Merged to main. 6 commits, all green.');
+  await idleP;
+  m.off('needs-help', onNeedsHelp);
+  expect(sawNeedsHelp).toBe(false);
+});
+
+it("declared needs_you: noteDeclaredStatus wins over the text heuristic and emits 'needs-help' (not inferred)", async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  m.noteDeclaredStatus('t1', { state: 'needs_you', summary: 'blocked on a decision', ask: 'Which provider?' });
+  const needsHelpP = waitForManagerEvent(m, 'needs-help', 't1');
+  // Closing text reads as a plain completion report — the DECLARATION must still win.
+  m.sendMessage('t1', 'All done here.');
+  const [detail] = await needsHelpP;
+  expect(detail).toEqual({ ask: 'Which provider?', summary: 'blocked on a decision', inferred: false });
+});
+
+it('declared needs_you with no `ask` falls back to the summary', async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  m.noteDeclaredStatus('t1', { state: 'needs_you', summary: 'need a decision' });
+  const needsHelpP = waitForManagerEvent(m, 'needs-help', 't1');
+  m.sendMessage('t1', 'hello');
+  const [detail] = await needsHelpP;
+  expect(detail.ask).toBe('need a decision');
+  expect(detail.summary).toBe('need a decision');
+});
+
+it("declared done: noteDeclaredStatus wins over the text heuristic and emits 'idle', even when the closing text reads as a question", async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  m.noteDeclaredStatus('t1', { state: 'done', summary: 'shipped it' });
+  const idleP = waitForManagerEvent(m, 'idle', 't1');
+  let sawNeedsHelp = false;
+  const onNeedsHelp = (eid: string) => { if (eid === 't1') sawNeedsHelp = true; };
+  m.on('needs-help', onNeedsHelp);
+  m.sendMessage('t1', 'Does that look right to you?'); // would infer needs-help if undeclared
+  await idleP;
+  m.off('needs-help', onNeedsHelp);
+  expect(sawNeedsHelp).toBe(false);
+});
+
+it("declared blocked: falls through to 'idle', NOT 'needs-help' — a thread waiting on another agent still proceeds without the human", async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  m.noteDeclaredStatus('t1', { state: 'blocked', summary: 'waiting on Agent B', blocker: 'Agent B' });
+  const idleP = waitForManagerEvent(m, 'idle', 't1');
+  let sawNeedsHelp = false;
+  const onNeedsHelp = (eid: string) => { if (eid === 't1') sawNeedsHelp = true; };
+  m.on('needs-help', onNeedsHelp);
+  m.sendMessage('t1', 'hello');
+  await idleP;
+  m.off('needs-help', onNeedsHelp);
+  expect(sawNeedsHelp).toBe(false);
+});
+
+it('a declaration takes precedence over a wake-tool call in the SAME turn: emits idle, not scheduled', async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  m.noteDeclaredStatus('t1', { state: 'done', summary: 'done for now' });
+  const idleP = waitForManagerEvent(m, 'idle', 't1');
+  let sawScheduled = false;
+  const onScheduled = (eid: string) => { if (eid === 't1') sawScheduled = true; };
+  m.on('scheduled', onScheduled);
+  m.sendMessage('t1', 'TRIGGER_SCHEDULE'); // last tool call this turn is ScheduleWakeup
+  await idleP;
+  m.off('scheduled', onScheduled);
+  expect(sawScheduled).toBe(false);
+});
+
+it('a declaration is consumed ONCE: the turn after a declared one falls back to the heuristic again', async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  m.noteDeclaredStatus('t1', { state: 'done', summary: 'first turn done' });
+  const firstIdle = waitForManagerEvent(m, 'idle', 't1');
+  m.sendMessage('t1', 'Does this look right?'); // declared 'done' wins this turn
+  await firstIdle;
+
+  // Second turn: no fresh declaration — the stale one must NOT be reused. Closing text
+  // reads as a question, so this settles via the heuristic as needs-help.
+  const needsHelpP = waitForManagerEvent(m, 'needs-help', 't1');
+  m.sendMessage('t1', 'Should I proceed?');
+  const [detail] = await needsHelpP;
+  expect(detail.inferred).toBe(true);
+});
+
+it('noteDeclaredStatus on an unknown/dead terminal id is a silent no-op', () => {
+  expect(() => m.noteDeclaredStatus('does-not-exist', { state: 'done', summary: 'x' })).not.toThrow();
+});
+
 it('re-spawn: old child exit does not evict the replacement session (Fix 1 regression)', async () => {
   // First spawn — wait for init so the child is running
   spawnFake(m, 't1');

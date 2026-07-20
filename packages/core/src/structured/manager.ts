@@ -2,6 +2,7 @@
 import { EventEmitter } from 'events';
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import * as readline from 'readline';
+import { looksLikeQuestion } from '../status/question.js';
 
 /**
  * A gated tool/permission request the CLI is blocked on, awaiting a human call.
@@ -29,6 +30,14 @@ export type ContentBlock =
 /** Who actually sent a turn: the human directly, or the coordinator via its agency tools. */
 export type MessageSource = 'user' | 'coordinator';
 
+/** What an agent declared about how its turn ended, via the report_status tool. */
+export interface StatusDeclaration {
+  state: 'done' | 'needs_you' | 'blocked';
+  summary: string;
+  ask?: string;
+  blocker?: string;
+}
+
 interface Session {
   child: ChildProcessWithoutNullStreams;
   rl: readline.Interface;
@@ -55,6 +64,13 @@ interface Session {
    * against a stale value; consumed (cleared) at the next `result`.
    */
   pendingSource?: MessageSource;
+  /**
+   * The agent's own declaration for the CURRENT turn, set by report_status and consumed
+   * at the `result` boundary. Same lifecycle as lastToolUse: written mid-turn, read once
+   * at turn end, then cleared. It must NOT be applied when the tool fires — `result`
+   * lands afterwards and would overwrite it.
+   */
+  declared?: StatusDeclaration;
 }
 
 /** Options accepted by a structured manager's `spawn`. For the Claude manager
@@ -95,6 +111,8 @@ export type PermissionDecision =
  *   'permission'(terminalId, pending) — a gated tool/question awaiting a decision
  *   'idle'   (terminalId)             — a turn completed (thread is idle)
  *   'scheduled'(terminalId, activity) — turn ended by a wake-scheduler tool
+ *   'needs-help'(terminalId, detail)  — turn ended needing the human (declared or inferred);
+ *                                       detail: { ask: string; summary: string; inferred: boolean }
  *   'busy'   (terminalId)             — a turn started
  *   'resolved'(terminalId)            — a pending permission was answered
  *   'exit'   (terminalId, code)       — the backing process/connection exited
@@ -108,6 +126,7 @@ export interface IStructuredManager extends EventEmitter {
   setEscalate(terminalId: string, escalate: boolean): boolean;
   interrupt(terminalId: string): boolean;
   compact(terminalId: string): void;
+  noteDeclaredStatus(terminalId: string, decl: StatusDeclaration): void;
   getPending(terminalId: string): PendingPermission | null;
   getSessionId(terminalId: string): string | undefined;
   getEvents(terminalId: string): unknown[];
@@ -231,17 +250,43 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
           });
         }
       }
-      // Turn boundary: a `result` event ends the current turn. Normally that means the
-      // thread is idle — but if the LAST tool called this turn was a wake-scheduler (see
-      // WAKE_TOOLS), the agent deliberately ended its turn to sleep until a timer/event
-      // fires, not because it's done. Consumers use 'idle' to settle status and, for an
-      // agent, push a completion notice to its coordinator — 'scheduled' must NOT do either
-      // (the agent hasn't finished).
+      // Turn boundary: a `result` event ends the current turn. Three things can have
+      // happened: the agent DECLARED how it ended (via report_status — see
+      // noteDeclaredStatus/Session.declared), the LAST tool called this turn was a
+      // wake-scheduler (see WAKE_TOOLS, meaning the agent deliberately ended its turn to
+      // sleep until a timer/event fires, not because it's done), or neither — in which case
+      // a text heuristic on the closing assistant message is the only signal left.
+      // Consumers use 'idle' to settle status and, for an agent, push a completion notice to
+      // its coordinator — 'scheduled' and 'needs-help' must NOT do either (the agent hasn't
+      // finished, or is waiting on the human, not filed as done).
       if (event?.type === 'result') {
+        const declared = session.declared;
         const wake = session.lastToolUse && WAKE_TOOLS.has(session.lastToolUse.name) ? session.lastToolUse : undefined;
         session.lastToolUse = undefined; // reset for the next turn
-        if (wake) this.emit('scheduled', terminalId, wakeActivity(wake.name, wake.input));
-        else this.emit('idle', terminalId);
+        session.declared = undefined;    // ditto — a declaration is per-turn
+
+        // Declaration wins over everything: the agent told us, so don't guess.
+        // `blocked` deliberately falls through to 'idle' — a thread waiting on another
+        // agent still proceeds without the human, so it isn't a needs-help state.
+        if (declared?.state === 'needs_you') {
+          this.emit('needs-help', terminalId, { ask: declared.ask ?? declared.summary, summary: declared.summary, inferred: false });
+        } else if (declared) {
+          this.emit('idle', terminalId);
+        } else if (wake) {
+          this.emit('scheduled', terminalId, wakeActivity(wake.name, wake.input));
+        } else {
+          // Nothing declared. Read the closing text ONCE — this walks the event ring,
+          // so calling it in both the condition and the body would scan it twice.
+          const text = this.lastAssistantText(terminalId);
+          if (looksLikeQuestion(text)) {
+            // The case that used to be filed as finished. Marked inferred so it renders
+            // as a guess and so the false-positive rate stays measurable.
+            this.emit('needs-help', terminalId, { ask: text, summary: text, inferred: true });
+          } else {
+            this.emit('idle', terminalId);
+          }
+        }
+
         // The turn that just ended is now fully flushed to the transcript (result is always
         // the LAST thing the CLI writes for a turn) — so if it was sent with a source tag,
         // this is the earliest safe moment to resolve it to a real disk uuid (see
@@ -315,6 +360,15 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
    */
   compact(terminalId: string): void {
     this.write(terminalId, { type: 'user', message: { role: 'user', content: '/compact' } });
+  }
+
+  /**
+   * Record what the agent says about this turn. Stored, not applied — the `result`
+   * handler reads it at the turn boundary. See Session.declared.
+   */
+  noteDeclaredStatus(terminalId: string, decl: StatusDeclaration): void {
+    const s = this.sessions.get(terminalId);
+    if (s) s.declared = decl;
   }
 
   /** The in-flight permission/question awaiting a human decision, or null. */
@@ -409,6 +463,22 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
   getSessionId(terminalId: string): string | undefined { return this.sessions.get(terminalId)?.sessionId; }
 
   getEvents(terminalId: string): unknown[] { return [...(this.sessions.get(terminalId)?.events ?? [])]; } // Fix 4: return copy
+
+  /**
+   * The most recent assistant text in this session's event ring — what the turn ended
+   * on. Mirrors SessionService.lastAssistantText, which reads the same ring from outside.
+   */
+  private lastAssistantText(terminalId: string, max = 2000): string {
+    const events = this.sessions.get(terminalId)?.events ?? [];
+    for (let i = events.length - 1; i >= 0; i--) {
+      const e: any = events[i];
+      if (e?.type === 'assistant' && Array.isArray(e.message?.content)) {
+        const text = e.message.content.filter((b: any) => b?.type === 'text').map((b: any) => b.text ?? '').join('').trim();
+        if (text) return text.length > max ? text.slice(0, max) : text;
+      }
+    }
+    return '';
+  }
 
   /** Like getEvents, but only the most recent `n` (or all, if the ring has fewer).
    *  Used to bound ws-connect replay — folding the full ring into a non-virtualized

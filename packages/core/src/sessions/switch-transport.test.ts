@@ -34,6 +34,7 @@ class FakeStructured extends EventEmitter implements IStructuredManager {
   setEscalate() { return false; }
   interrupt(id: string) { this.interrupts.push(id); setImmediate(() => this.emit('idle', id)); return true; }
   compact() {}
+  noteDeclaredStatus() {}
   getPending() { return null; }
   getSessionId() { return undefined; }
   getEvents() { return []; }
