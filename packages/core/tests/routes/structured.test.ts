@@ -8,9 +8,14 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { initSchema } from '../../src/db/schema.js';
 import { createApp } from '../../src/server.js';
+import * as terminalsDb from '../../src/db/terminals.js';
 
 const fake = path.join(path.dirname(fileURLToPath(import.meta.url)), '../structured/fake-claude.mjs');
 let app: any; let db: Database.Database; let sessionId: string; let dir: string;
+// Secondary apps spawned by helpers below (e.g. spawnAgentUnderCoordinator) get their
+// structured managers killed + their secretsDir removed in the shared afterEach, mirroring
+// the explicit per-test `/stop` + `fs.rmSync(cfgDir, …)` cleanup used elsewhere in this file.
+let extraApps: { app: any; cfgDir: string }[] = [];
 beforeEach(async () => {
   db = new Database(':memory:'); initSchema(db);
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'struct-'));
@@ -19,7 +24,15 @@ beforeEach(async () => {
   const s = await request(app).post('/api/sessions').send({ provider: 'claude-code', workingDir: dir, name: 't' });
   sessionId = s.body.id;
 });
-afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+afterEach(() => {
+  fs.rmSync(dir, { recursive: true, force: true });
+  (app as any)?._structuredManager?.killAll?.();
+  for (const { app: a, cfgDir } of extraApps) {
+    try { (a as any)._structuredManager?.killAll?.(); } catch { /* best effort */ }
+    try { fs.rmSync(cfgDir, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+  extraApps = [];
+});
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function pollPermission(a: any, id: string, timeoutMs = 3000): Promise<any> {
@@ -61,6 +74,47 @@ function pollManagerEvent(mgr: any, event: string, id: string, timeoutMs = 3000)
     const on = (eid: string, ...rest: any[]) => { if (eid === id) { clearTimeout(t); mgr.off(event, on); resolve(rest); } };
     mgr.on(event, on);
   });
+}
+/** Polls `terminals.status` on the shared `db` until it reaches `status` (or times out). */
+async function pollStatus(id: string, status: string, timeoutMs = 3000): Promise<string> {
+  const start = Date.now();
+  let cur = '';
+  while (Date.now() - start < timeoutMs) {
+    const row = db.prepare('SELECT status FROM terminals WHERE id = ?').get(id) as { status: string } | undefined;
+    cur = row?.status ?? '';
+    if (cur === status) return cur;
+    await sleep(25);
+  }
+  throw new Error(`timeout waiting for status='${status}' (last seen '${cur}')`);
+}
+/** A plain (no-role) structured terminal on the shared `app`/`sessionId`, sent one message. */
+async function createStructuredTerminal(opts: { text: string }): Promise<string> {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured' } });
+  const id = t.body.id;
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: opts.text });
+  return id;
+}
+/**
+ * A coordinator + a typed AGENT under it (own app/secretsDir, mirroring the coordinator
+ * tests above), with the agent immediately sent one message. Registered in `extraApps` for
+ * afterEach cleanup — killed AFTER the test body runs, so `readEvents` below can still see
+ * whatever landed on the coordinator's ring during the test.
+ */
+async function spawnAgentUnderCoordinator(opts: { text: string }): Promise<{ agentId: string; coordinatorId: string }> {
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coord-outcome-'));
+  const a = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fake] } });
+  extraApps.push({ app: a, cfgDir });
+  const s = await request(a).post('/api/sessions').send({ provider: 'claude-code', workingDir: dir, name: 'outcome' });
+  const coordinatorId = (await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', role: 'coordinator' } })).body.id;
+  const agentId = (await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent', mission: 'Deploy' } })).body.id;
+  await pollExternalId(db, coordinatorId, 'sess-fake'); // coordinator is up before the agent's turn ends
+  await request(a).post(`/api/terminals/${agentId}/message`).send({ text: opts.text });
+  return { agentId, coordinatorId };
+}
+/** The event ring for a terminal spawned via spawnAgentUnderCoordinator's app. */
+async function readEvents(id: string): Promise<any[]> {
+  const { app: a } = extraApps[extraApps.length - 1];
+  return (a as any)._structuredManager.getEvents(id);
 }
 
 it('a SUPERVISED agent thread escalates a gated tool: GET shows pending, POST allow resolves it', async () => {
@@ -899,4 +953,21 @@ it('dependsOn already satisfied at queue time (dependency already finished) auto
 
   await request(app).post(`/api/terminals/${a.body.id}/stop`);
   await request(app).post(`/api/terminals/${bId}/stop`);
+});
+
+// --- Task 5: wire needs-help, persist the outcome -------------------------------
+
+it('an agent that ends by asking does NOT tell its coordinator it finished', async () => {
+  const { agentId, coordinatorId } = await spawnAgentUnderCoordinator({ text: 'Ready to deploy. Shall I proceed?' });
+  await pollStatus(agentId, 'needs_input');
+  const coordinatorEvents = await readEvents(coordinatorId);
+  expect(JSON.stringify(coordinatorEvents)).not.toContain('just finished a turn');
+});
+
+it('persists the turn outcome onto the terminal config', async () => {
+  const id = await createStructuredTerminal({ text: 'Merged to main. 6 commits, all green.' });
+  await pollStatus(id, 'waiting');
+  const cfg = JSON.parse(terminalsDb.getById(db, id)?.config || '{}');
+  expect(cfg.lastOutcome?.summary).toContain('Merged to main');
+  expect(cfg.lastOutcome?.needsHelp).toBe(false);
 });

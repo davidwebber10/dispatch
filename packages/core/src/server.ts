@@ -125,7 +125,16 @@ function wirePermissionMembrane(structuredManager: IStructuredManager, statusSer
   });
   structuredManager.on('idle', (terminalId: string) => {
     statusService.markIdle(terminalId);
+    sessionService.noteTurnOutcome(terminalId, { summary: sessionService.lastAssistantTextPublic(terminalId), needsHelp: false, inferred: false });
     sessionService.noteAgentCompletion(terminalId);
+  });
+  // A turn that ended needing the human. Deliberately NOT routed through 'idle':
+  // markIdle settles the thread to `waiting` and noteAgentCompletion tells the
+  // coordinator the agent "✅ just finished" — both wrong for a thread that stopped
+  // to ask a question.
+  structuredManager.on('needs-help', (terminalId: string, detail: { ask: string; summary: string; inferred: boolean }) => {
+    statusService.markNeedsInput(terminalId, detail.inferred ? 'Asked a question' : detail.ask.slice(0, 120));
+    sessionService.noteTurnOutcome(terminalId, { summary: detail.summary, needsHelp: true, inferred: detail.inferred });
   });
   // A wake-scheduler tool (ScheduleWakeup/CronCreate) ended the turn deliberately — the
   // thread is dormant, not finished. Deliberately does NOT call noteAgentCompletion: the

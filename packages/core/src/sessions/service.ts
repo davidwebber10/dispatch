@@ -914,6 +914,11 @@ export class SessionService {
     return '';
   }
 
+  /** Public wrapper — server.ts needs the same text for the outcome line. */
+  lastAssistantTextPublic(terminalId: string, max = 400): string {
+    return this.lastAssistantText(terminalId, max);
+  }
+
   /**
    * An agent's most recent assistant output. Tries the live structured event ring
    * first (lastAssistantText — no transcript-file latency); falls back to the
@@ -1000,6 +1005,25 @@ export class SessionService {
       `ingest the result, hand it to another agent, spawn a follow-up, or report back to the user. Keep this ` +
       `brief unless it needs action; the user's own messages are always your top priority.`;
     this.notifyCoordinatorOfAgent(agentTerminalId, note);
+  }
+
+  /**
+   * Persist how the last turn ended onto the terminal's config, so a card can show a real
+   * outcome line ("✓ merged, 6 commits") instead of a thread name, and so the
+   * declared-vs-inferred split is measurable off the DB.
+   */
+  noteTurnOutcome(terminalId: string, detail: { summary: string; needsHelp: boolean; inferred: boolean }): void {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) return;
+    let cfg: Record<string, any> = {};
+    try { cfg = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
+    cfg.lastOutcome = {
+      summary: detail.summary.slice(0, 400),
+      needsHelp: detail.needsHelp,
+      inferred: detail.inferred,
+      at: new Date().toISOString(),
+    };
+    try { terminalsDb.updateConfig(this.db, terminalId, cfg); } catch { /* best effort */ }
   }
 
   /**
@@ -1212,8 +1236,11 @@ export class SessionService {
   }
 
   /**
-   * Interrupt a live structured turn and wait for the turn boundary ('idle') or the
-   * process exit — bounded, so a wedged CLI can't hang the switch forever.
+   * Interrupt a live structured turn and wait for the turn boundary ('idle', 'needs-help',
+   * 'scheduled') or the process exit — bounded, so a wedged CLI can't hang the switch
+   * forever. A turn that ends by asking a question or ending on a wake-scheduler tool
+   * satisfies neither 'idle' nor 'exit', so without these two the switch burned the full
+   * timeout on every question-ending turn (found by the Task 2 review).
    */
   private async settleStructuredTurn(
     manager: import('../structured/manager.js').IStructuredManager,
@@ -1229,10 +1256,14 @@ export class SessionService {
         if (timer) clearTimeout(timer);
         manager.off('idle', onSettle);
         manager.off('exit', onSettle);
+        manager.off('needs-help', onSettle);
+        manager.off('scheduled', onSettle);
         resolve();
       };
       const onSettle = (id: string) => { if (id === terminalId) finish(); };
       manager.on('idle', onSettle);
+      manager.on('needs-help', onSettle);
+      manager.on('scheduled', onSettle);
       manager.on('exit', onSettle);
       manager.interrupt(terminalId);
       timer = setTimeout(finish, timeoutMs);
