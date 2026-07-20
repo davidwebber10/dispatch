@@ -1,6 +1,15 @@
 import { render, screen, within, fireEvent } from '@testing-library/react';
-import { describe, it, expect, vi } from 'vitest';
-import { MoveToMenu } from './MoveToMenu';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { MoveToMenu, decidePopoverDirection } from './MoveToMenu';
+import { api } from '../../api/client';
+
+vi.mock('../../api/client', () => ({
+  api: { archiveTerminal: vi.fn().mockResolvedValue(undefined) },
+}));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 function renderMenu(onOverride = vi.fn(), trigger: 'button' | 'longpress' = 'button') {
   render(
@@ -50,8 +59,11 @@ describe('MoveToMenu — offered targets', () => {
   it('offers exactly three targets, in order: Needs help, Complete, Resting', () => {
     renderMenu();
     open();
-    const menu = screen.getByTestId('move-to-menu');
-    const rows = within(menu).getAllByRole('button');
+    // Scoped to the move-to-targets group specifically (not the whole menu) so this stays exactly
+    // three even though Archive — a deliberately different kind of action, see below — also
+    // renders as a <button> inside the same panel.
+    const targets = screen.getByTestId('move-to-targets');
+    const rows = within(targets).getAllByRole('button');
     expect(rows.map((r) => r.textContent?.replace('◆', '').trim())).toEqual(['Needs help', 'Complete', 'Resting']);
   });
 
@@ -119,5 +131,82 @@ describe('MoveToMenu — closing', () => {
     open();
     fireEvent.mouseDown(screen.getByTestId('move-to-menu'));
     expect(screen.getByTestId('move-to-menu')).toBeInTheDocument();
+  });
+});
+
+// Archive is restored per the approved redesign (Open #3/#8B): below a divider, separate from
+// the three move targets, because archiving is a different KIND of act — not a fourth column.
+describe('MoveToMenu — Archive', () => {
+  it('is present in the menu', () => {
+    renderMenu();
+    open();
+    expect(screen.getByRole('button', { name: 'Archive' })).toBeInTheDocument();
+  });
+
+  it('is visually separated from the move targets by a divider, positioned after them', () => {
+    renderMenu();
+    open();
+    const menu = screen.getByTestId('move-to-menu');
+    const children = Array.from(menu.querySelectorAll('[data-testid="move-to-targets"], [data-testid="move-to-menu-divider"], button[aria-label="Archive"]'));
+    // The targets group comes first, then the divider, then Archive — never interleaved with
+    // the three judgement targets above it.
+    expect(children.map((el) => el.getAttribute('data-testid') || el.getAttribute('aria-label'))).toEqual([
+      'move-to-targets',
+      'move-to-menu-divider',
+      'Archive',
+    ]);
+  });
+
+  it('calls api.archiveTerminal with the terminal id, and only once', () => {
+    renderMenu();
+    open();
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+    expect(api.archiveTerminal).toHaveBeenCalledTimes(1);
+    expect(api.archiveTerminal).toHaveBeenCalledWith('t1');
+  });
+
+  it('does not call onOverride when Archive is chosen', () => {
+    const onOverride = renderMenu();
+    open();
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+    expect(onOverride).not.toHaveBeenCalled();
+  });
+
+  it('closes the menu after choosing Archive', () => {
+    renderMenu();
+    open();
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+    expect(screen.queryByTestId('move-to-menu')).not.toBeInTheDocument();
+  });
+});
+
+// The popover must open downward by default, anchored to its trigger, and auto-flip upward only
+// when it would overflow the viewport's bottom edge. jsdom has no layout engine — every rect it
+// hands back is zeroed — so the actual flip can only be exercised through the pure decision
+// function the component defers to, not through rendered measurements.
+describe('decidePopoverDirection', () => {
+  it('opens downward when the panel fits in the space below the anchor', () => {
+    // Anchor near the top of a tall viewport — plenty of room below.
+    expect(decidePopoverDirection({ top: 40, bottom: 60 }, 160, 900)).toBe('down');
+  });
+
+  it('flips upward when opening downward would overflow the viewport', () => {
+    // Anchor near the very bottom of the viewport — the panel does not fit below it.
+    expect(decidePopoverDirection({ top: 860, bottom: 880 }, 160, 900)).toBe('up');
+  });
+
+  it('is downward exactly at the fit boundary (space below == panel height + gap)', () => {
+    // viewportHeight - bottom - gap === panelHeight exactly: still fits, so still 'down'.
+    const gap = 6;
+    const panelHeight = 160;
+    const bottom = 900 - gap - panelHeight;
+    expect(decidePopoverDirection({ top: bottom - 20, bottom }, panelHeight, 900, gap)).toBe('down');
+  });
+
+  it('flips upward the moment it would overflow by even one pixel', () => {
+    const gap = 6;
+    const panelHeight = 160;
+    const bottom = 900 - gap - panelHeight + 1;
+    expect(decidePopoverDirection({ top: bottom - 20, bottom }, panelHeight, 900, gap)).toBe('up');
   });
 });
