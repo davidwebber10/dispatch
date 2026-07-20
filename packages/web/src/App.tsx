@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { AppShell } from './components/layout/AppShell';
 import { Workspace } from './components/layout/Workspace';
+import { BoardView } from './components/board/BoardView';
 import { GroupedTabBar } from './components/panes/GroupedTabBar';
 import { GroupedPaneView } from './components/panes/GroupedPaneView';
 import { ProjectSidebar } from './components/sidebar/ProjectSidebar';
@@ -44,6 +45,7 @@ export default function App() {
   const selectTab = (id: string) => { useAgentUI.getState().blur(); useTabs.getState().setActiveTab(id); };
   const dispatchProject = (projectId: string) => { useAgentUI.getState().blur(); useTabs.getState().openDispatch(projectId); };
   const activeId = useProjects((s) => s.activeId);
+  const view = useUI((s) => s.view);
   const isMobile = useIsMobile();
   useTabCycleShortcut(); // Ctrl+Tab / Ctrl+Shift+Tab cycle open tabs
   const agentFocused = useAgentUI((s) => s.focused);
@@ -173,34 +175,38 @@ export default function App() {
       <AuthBanner />
       <UpdateModal />
       <AppShell>
-        <Workspace
-          sidebar={
-            <ProjectSidebar
-              onSelectTab={selectTab}
-              onSelectAgent={(id) => useAgentUI.getState().selectAgent(id)}
-              onNewAgent={(pid) => useAgentUI.getState().openNew(pid)}
-              onDispatch={dispatchProject}
-            />}
-          main={
-            showAgent
-              ? <AgentPane />
-              : (
-                <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-                  <GroupedTabBar onSelect={() => useAgentUI.getState().blur()} />
-                  {activeTerminalId
-                    ? (isDispatchTab(activeTerminalId)
-                        // Dispatch coordinator opens as a tab — wrap it so its height:100%
-                        // root flexes within the space left below the tab strip.
-                        ? <div style={{ flex: 1, minHeight: 0, display: 'flex' }}><OverseerView key={activeTerminalId} /></div>
-                        : (multiPane && activeGroupId
-                            ? <GroupedPaneView key={`${activeGroupId}:${reconnectGen}`} groupId={activeGroupId} />
-                            : <TabHost key={`${activeTerminalId}:${reconnectGen}`} terminalId={activeTerminalId} />))
-                    : <EmptyWorkspace onSelectTab={selectTab} />}
-                </div>
-              )
-          }
-          inspector={<Inspector projectId={activeId} terminalId={activeTerminalId} onOpenFile={selectTab} detailsSlot={isDispatchTab(activeTerminalId) ? <DispatchWorkPane /> : undefined} />}
-        />
+        {view === 'board'
+          ? <BoardView />
+          : (
+            <Workspace
+              sidebar={
+                <ProjectSidebar
+                  onSelectTab={selectTab}
+                  onSelectAgent={(id) => useAgentUI.getState().selectAgent(id)}
+                  onNewAgent={(pid) => useAgentUI.getState().openNew(pid)}
+                  onDispatch={dispatchProject}
+                />}
+              main={
+                showAgent
+                  ? <AgentPane />
+                  : (
+                    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+                      <GroupedTabBar onSelect={() => useAgentUI.getState().blur()} />
+                      {activeTerminalId
+                        ? (isDispatchTab(activeTerminalId)
+                            // Dispatch coordinator opens as a tab — wrap it so its height:100%
+                            // root flexes within the space left below the tab strip.
+                            ? <div style={{ flex: 1, minHeight: 0, display: 'flex' }}><OverseerView key={activeTerminalId} /></div>
+                            : (multiPane && activeGroupId
+                                ? <GroupedPaneView key={`${activeGroupId}:${reconnectGen}`} groupId={activeGroupId} />
+                                : <TabHost key={`${activeTerminalId}:${reconnectGen}`} terminalId={activeTerminalId} />))
+                        : <EmptyWorkspace onSelectTab={selectTab} />}
+                    </div>
+                  )
+              }
+              inspector={<Inspector projectId={activeId} terminalId={activeTerminalId} onOpenFile={selectTab} detailsSlot={isDispatchTab(activeTerminalId) ? <DispatchWorkPane /> : undefined} />}
+            />
+          )}
       </AppShell>
       {editing && <EditAgentModal scheduleId={editing.scheduleId} presetProjectId={editing.preset} onClose={() => useAgentUI.getState().closeEdit()} onSaved={(id) => useAgentUI.getState().selectAgent(id)} />}
       <HintToast />
