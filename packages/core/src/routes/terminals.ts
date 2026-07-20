@@ -180,6 +180,27 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
   });
 
+  // POST /api/terminals/:terminalId/report-status — an agent's own account of how its
+  // turn ended. Stored on the live session, consulted at the turn boundary; never
+  // applied eagerly, since the `result` event lands afterwards and would overwrite it.
+  router.post('/terminals/:terminalId/report-status', (req, res) => {
+    const { state, summary, ask, blocker } = req.body ?? {};
+    if (state !== 'done' && state !== 'needs_you' && state !== 'blocked') {
+      return res.status(400).json({ error: "state must be 'done', 'needs_you' or 'blocked'" });
+    }
+    if (typeof summary !== 'string' || !summary.trim()) {
+      return res.status(400).json({ error: 'summary is required' });
+    }
+    try {
+      const decl: any = { state, summary };
+      if (typeof ask === 'string' && ask.trim()) decl.ask = ask;
+      if (typeof blocker === 'string' && blocker.trim()) decl.blocker = blocker;
+      const ok = sessionService.reportStatus(req.params.terminalId, decl);
+      if (!ok) return res.status(409).json({ error: 'No live structured session to report on' });
+      res.status(204).end();
+    } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
+  });
+
   // GET /api/terminals/:terminalId/resume-advice — should the Pretty view offer to
   // summarize before resuming? Read-only; a thread with nothing to advise on (no
   // external_id, no transcript, not claude) answers a benign "no".

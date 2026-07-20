@@ -1133,6 +1133,18 @@ export class SessionService {
   }
 
   /**
+   * Record an agent's own account of how its turn ended. Stored on the live session and
+   * consulted at the `result` boundary — see StructuredSessionManager.noteDeclaredStatus.
+   * Returns false when no live structured session backs the thread.
+   */
+  reportStatus(terminalId: string, decl: import('../structured/manager.js').StatusDeclaration): boolean {
+    const manager = this.structuredManagerForTerminal(terminalId);
+    if (!manager || !manager.isAlive(terminalId)) return false;
+    manager.noteDeclaredStatus(terminalId, decl);
+    return true;
+  }
+
+  /**
    * Switch a running AI thread between the CLI (PTY) and Pretty (structured) transports
    * WITHOUT losing its conversation: kill the current process/connection, flip
    * `config.transport`, and re-spawn RESUMING the same `external_id` in the new transport
