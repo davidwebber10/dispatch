@@ -8,6 +8,29 @@
 
 **Tech Stack:** React 18 + TypeScript, zustand (vanilla `create`, no middleware), vitest + jsdom + React Testing Library.
 
+> **AMENDED AFTER IMPLEMENTATION — read before trusting the code blocks below.**
+> Review found real defects in this plan's example code. The blocks in Tasks 2 and 3
+> are the *starting point that was implemented*, not the code that shipped:
+>
+> - **Task 2 Step 4(e)** shows `loadTabs` with no request sequencing. Two overlapping
+>   refreshes for one project could land out of order, regress `byProject` to a stale
+>   label, and make a later refresh re-detect an already-consumed transition (phantom
+>   replay). Shipped code adds a per-project epoch guard **and** an in-flight promise
+>   so a superseded call awaits the winner — an early `return` alone silently breaks
+>   `loadTabs`'s "state is applied when I resolve" contract, which `hydrate()` and
+>   ~20 other call sites depend on.
+> - **Task 3 Step 3** shows the animation kicked off from `useEffect`, which runs
+>   *after* paint: the row painted the final name for one frame, then reverted to the
+>   stale label before backspacing. Shipped code uses `useLayoutEffect` plus a lazy
+>   `useState` initializer that peeks the store without consuming it. It also adds a
+>   `consumedRef` so React StrictMode's dev-only double-invoke doesn't eat the
+>   consume-once entry and suppress the animation in local dev.
+> - The spec's "Timers via `setInterval`" is wrong for a two-phase variable-rate
+>   animation; the implementation uses a chained `setTimeout`.
+>
+> See `docs/superpowers/verification/2026-07-19-typewriter-label-runtime.md` for the
+> runtime evidence, and the git history for the actual shipped implementation.
+
 ## Global Constraints
 
 - **No server-side changes.** Nothing in `packages/core` may be modified. `labelSource` is already on the wire; only the web-side type declaration is missing.
