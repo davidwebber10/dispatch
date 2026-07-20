@@ -128,12 +128,14 @@ describe('BoardMobile — tapping a header toggles expansion', () => {
     expect(screen.getByText('Integrate wave 9')).toBeInTheDocument();
   });
 
-  it('tapping the collapsed Resting header expands it, revealing its card', () => {
+  it('tapping the collapsed Resting header expands it, revealing the grouped rollup (not its card)', () => {
     seedOneOfEach();
     render(<BoardMobile onOpenThread={vi.fn()} />);
     expect(screen.queryByText('Rail cleanup')).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId('board-section-toggle-resting'));
-    expect(screen.getByText('Rail cleanup')).toBeInTheDocument();
+    expect(screen.queryByText('Rail cleanup')).not.toBeInTheDocument();
+    const rollup = screen.getByTestId('board-resting-rollup');
+    expect(within(rollup).getByText('dispatch')).toBeInTheDocument();
   });
 
   it('tapping the expanded Needs Help header collapses it, hiding its card', () => {
@@ -198,5 +200,164 @@ describe('BoardMobile — manual override via long-press', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Needs help' }));
     expect(api.setBoardState).toHaveBeenCalledTimes(1);
     expect(api.setBoardState).toHaveBeenCalledWith('complete-1', { override: 'needs_help' });
+  });
+});
+
+describe('BoardMobile — persistent count bar', () => {
+  // The core requirement: the bar is a SECOND, always-rendered source for all four counts,
+  // independent of `expanded` — collapsing/expanding sections must never hide or blank a tile.
+  it('shows all four counts in the bar regardless of which sections are expanded or collapsed', () => {
+    seedOneOfEach();
+    render(<BoardMobile onOpenThread={vi.fn()} />);
+    // Flip every section's default state — collapse the two that start open, expand the two
+    // that start closed — so the bar is checked against the OPPOSITE of the default layout.
+    fireEvent.click(screen.getByTestId('board-section-toggle-needs_help'));
+    fireEvent.click(screen.getByTestId('board-section-toggle-complete'));
+    fireEvent.click(screen.getByTestId('board-section-toggle-working'));
+    fireEvent.click(screen.getByTestId('board-section-toggle-resting'));
+    expect(screen.getByTestId('board-count-needs_help')).toHaveTextContent('1');
+    expect(screen.getByTestId('board-count-complete')).toHaveTextContent('1');
+    expect(screen.getByTestId('board-count-working')).toHaveTextContent('1');
+    expect(screen.getByTestId('board-count-resting')).toHaveTextContent('1');
+  });
+
+  it('shows distinct per-column counts in the bar with no section expanded or collapsed touched', () => {
+    // Distinct numbers per column (rather than seedOneOfEach's uniform 1s) so a column-index
+    // mix-up in the bar's mapping couldn't hide behind coincidentally-equal counts.
+    useProjects.setState({ sessions: [{ id: 'p1', name: 'dispatch' } as any] });
+    useTabs.setState({
+      byProject: {
+        p1: [
+          terminal({ id: 'nh-1', label: 'a', status: 'needs_input' }),
+          terminal({ id: 'nh-2', label: 'b', status: 'needs_input' }),
+          terminal({
+            id: 'c-1',
+            label: 'c',
+            status: 'waiting',
+            config: { lastOutcome: { summary: 'done', needsHelp: false, inferred: false, at: '' } },
+          }),
+          terminal({ id: 'w-1', label: 'd', status: 'working' }),
+          terminal({ id: 'w-2', label: 'e', status: 'working' }),
+          terminal({ id: 'w-3', label: 'f', status: 'working' }),
+        ],
+      },
+    });
+    render(<BoardMobile onOpenThread={vi.fn()} />);
+    expect(screen.getByTestId('board-count-needs_help')).toHaveTextContent('2');
+    expect(screen.getByTestId('board-count-complete')).toHaveTextContent('1');
+    expect(screen.getByTestId('board-count-working')).toHaveTextContent('3');
+    expect(screen.getByTestId('board-count-resting')).toHaveTextContent('0');
+  });
+
+  it('shows zero counts in the bar for an empty board rather than omitting a tile', () => {
+    useProjects.setState({ sessions: [{ id: 'p1', name: 'dispatch' } as any] });
+    useTabs.setState({ byProject: { p1: [] } });
+    render(<BoardMobile onOpenThread={vi.fn()} />);
+    expect(screen.getByTestId('board-count-needs_help')).toHaveTextContent('0');
+    expect(screen.getByTestId('board-count-complete')).toHaveTextContent('0');
+    expect(screen.getByTestId('board-count-working')).toHaveTextContent('0');
+    expect(screen.getByTestId('board-count-resting')).toHaveTextContent('0');
+  });
+});
+
+describe('BoardMobile — Resting grouped rollup', () => {
+  it('expanding Resting shows one rollup row per project, not individual cards', () => {
+    seedOneOfEach();
+    render(<BoardMobile onOpenThread={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('board-section-toggle-resting'));
+    const rollup = screen.getByTestId('board-resting-rollup');
+    expect(within(rollup).getByText('dispatch')).toBeInTheDocument();
+    expect(within(rollup).getByText('1')).toBeInTheDocument();
+    // The individual card's own label never renders, and no board-card element exists inside
+    // the Resting section at all — the rollup fully replaces the per-card list.
+    expect(screen.queryByText('Rail cleanup')).not.toBeInTheDocument();
+    expect(within(screen.getByTestId('board-section-resting')).queryByTestId('board-card')).not.toBeInTheDocument();
+  });
+
+  it('groups resting threads from different projects into separate rollup rows with their own counts', () => {
+    const restingOutcome = { lastOutcome: { summary: 'done', needsHelp: false, inferred: false, at: '' }, boardState: { acknowledgedAt: '2026-01-01T00:00:00Z' } };
+    useProjects.setState({ sessions: [{ id: 'p1', name: 'Dispatch' } as any, { id: 'p2', name: 'OS' } as any] });
+    useTabs.setState({
+      byProject: {
+        p1: [
+          terminal({ id: 'r1', label: 'one', status: 'waiting', config: restingOutcome }),
+          terminal({ id: 'r2', label: 'two', status: 'waiting', config: restingOutcome }),
+        ],
+        p2: [
+          terminal({ id: 'r3', label: 'three', status: 'waiting', config: restingOutcome }),
+        ],
+      },
+    });
+    render(<BoardMobile onOpenThread={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('board-section-toggle-resting'));
+    const rollup = screen.getByTestId('board-resting-rollup');
+    expect(within(rollup).getByTestId('board-resting-rollup-row-Dispatch')).toHaveTextContent('2');
+    expect(within(rollup).getByTestId('board-resting-rollup-row-OS')).toHaveTextContent('1');
+  });
+});
+
+describe('BoardMobile — swipe-to-acknowledge on Complete only', () => {
+  it('swiping a Complete card left calls api.setBoardState with acknowledged: true', () => {
+    seedOneOfEach();
+    render(<BoardMobile onOpenThread={vi.fn()} />);
+    const card = within(screen.getByTestId('board-section-complete')).getByTestId('board-card');
+    fireEvent.touchStart(card, { touches: [{ clientX: 200, clientY: 10 }] });
+    fireEvent.touchMove(card, { touches: [{ clientX: 100, clientY: 10 }] });
+    fireEvent.touchEnd(card);
+    expect(api.setBoardState).toHaveBeenCalledWith('complete-1', { acknowledged: true });
+  });
+
+  it('a swipe on a Complete card does not fire onOpenThread even if a click follows it', () => {
+    seedOneOfEach();
+    const onOpenThread = vi.fn();
+    render(<BoardMobile onOpenThread={onOpenThread} />);
+    const card = within(screen.getByTestId('board-section-complete')).getByTestId('board-card');
+    fireEvent.touchStart(card, { touches: [{ clientX: 200, clientY: 10 }] });
+    fireEvent.touchMove(card, { touches: [{ clientX: 100, clientY: 10 }] });
+    fireEvent.touchEnd(card);
+    fireEvent.click(card);
+    expect(onOpenThread).not.toHaveBeenCalled();
+  });
+
+  it('a plain tap with no swipe still opens the Complete card (tap-to-open stays intact)', () => {
+    seedOneOfEach();
+    const onOpenThread = vi.fn();
+    render(<BoardMobile onOpenThread={onOpenThread} />);
+    fireEvent.click(screen.getByText('Pretty resume + rows'));
+    expect(onOpenThread).toHaveBeenCalledWith('p1', 'complete-1');
+  });
+
+  it('a swipe gesture on a Needs Help card neither acknowledges nor blocks tap-to-open', () => {
+    seedOneOfEach();
+    const onOpenThread = vi.fn();
+    render(<BoardMobile onOpenThread={onOpenThread} />);
+    const card = within(screen.getByTestId('board-section-needs_help')).getByTestId('board-card');
+    fireEvent.touchStart(card, { touches: [{ clientX: 200, clientY: 10 }] });
+    fireEvent.touchMove(card, { touches: [{ clientX: 100, clientY: 10 }] });
+    fireEvent.touchEnd(card);
+    fireEvent.click(card);
+    expect(api.setBoardState).not.toHaveBeenCalledWith('needs-help-1', { acknowledged: true });
+    expect(onOpenThread).toHaveBeenCalledWith('p1', 'needs-help-1');
+  });
+
+  it('a swipe gesture on a Working card neither acknowledges nor blocks tap-to-open', () => {
+    seedOneOfEach();
+    const onOpenThread = vi.fn();
+    render(<BoardMobile onOpenThread={onOpenThread} />);
+    fireEvent.click(screen.getByTestId('board-section-toggle-working'));
+    const card = within(screen.getByTestId('board-section-working')).getByTestId('board-card');
+    fireEvent.touchStart(card, { touches: [{ clientX: 200, clientY: 10 }] });
+    fireEvent.touchMove(card, { touches: [{ clientX: 100, clientY: 10 }] });
+    fireEvent.touchEnd(card);
+    fireEvent.click(card);
+    expect(api.setBoardState).not.toHaveBeenCalledWith('working-1', { acknowledged: true });
+    expect(onOpenThread).toHaveBeenCalledWith('p1', 'working-1');
+  });
+
+  it('Resting never renders an individual board-card to swipe at all — the rollup replaces it', () => {
+    seedOneOfEach();
+    render(<BoardMobile onOpenThread={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('board-section-toggle-resting'));
+    expect(within(screen.getByTestId('board-section-resting')).queryByTestId('board-card')).not.toBeInTheDocument();
   });
 });
