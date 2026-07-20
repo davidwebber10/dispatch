@@ -1,8 +1,10 @@
-import { render, screen, fireEvent } from '@testing-library/react';
-import { test, expect, describe, it, beforeAll, vi } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { test, expect, describe, it, beforeAll, beforeEach, vi } from 'vitest';
 import { MessageScroller } from '@shadcn/react/message-scroller';
 import type { ConvItem } from '../../../api/types';
-import { UserBubble, renderTimeline, LoadEarlierButton } from './ChatView';
+import { UserBubble, renderTimeline, LoadEarlierButton, ChatView } from './ChatView';
+import { api } from '../../../api/client';
+import * as sock from '../../../api/structured-socket';
 
 test('a human-sent turn (untagged/legacy or explicit "user") renders as a plain bubble with no "via" label', () => {
   render(<UserBubble text="hi claude" />);
@@ -28,6 +30,14 @@ beforeAll(() => {
   class Noop { observe() {} unobserve() {} disconnect() {} }
   (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = Noop;
   (globalThis as unknown as { IntersectionObserver: unknown }).IntersectionObserver = Noop;
+});
+
+// A full <ChatView> render (below) opens a live ws on mount via useStructuredChat — stub it
+// out (mirrors MobileApp.test.tsx's own ChatView-mounting setup) so tests don't depend on a
+// real socket. restoreAllMocks first so a spy from one test never leaks into the next.
+beforeEach(() => {
+  vi.restoreAllMocks();
+  vi.spyOn(sock, 'openStructuredSocket').mockImplementation(() => ({ close: () => {} }) as any);
 });
 
 function renderTimelineItems(items: ConvItem[]) {
@@ -152,5 +162,25 @@ describe('LoadEarlierButton', () => {
   it('renders nothing while a fetch is in flight (the floating pill owns that state)', () => {
     const { container } = render(<LoadEarlierButton show={false} onClick={() => {}} />);
     expect(container).toBeEmptyDOMElement();
+  });
+});
+
+// ---- Resume-from-summary advice (Pretty threads spawn with -p, so Claude Code's own
+// interactive "resume from summary?" dialog never renders — this is that choice's web
+// equivalent). ------------------------------------------------------------------------
+describe('ChatView — resume-from-summary advice', () => {
+  it('offers the resume choice for an old, large thread and compacts on accept', async () => {
+    vi.spyOn(api, 'getResumeAdvice').mockResolvedValue({ shouldPrompt: true, ageMinutes: 4560, contextTokens: 134_000 });
+    const compactTerminal = vi.spyOn(api, 'compactTerminal').mockResolvedValue(undefined as never);
+    render(<ChatView terminalId="t1" />);
+    fireEvent.click(await screen.findByRole('button', { name: /resume from summary/i }));
+    expect(compactTerminal).toHaveBeenCalledWith('t1');
+    await waitFor(() => expect(screen.queryByRole('button', { name: /resume from summary/i })).toBeNull());
+  });
+
+  it('does not offer the resume choice when the daemon says not to', async () => {
+    vi.spyOn(api, 'getResumeAdvice').mockResolvedValue({ shouldPrompt: false, ageMinutes: 0, contextTokens: 0 });
+    render(<ChatView terminalId="t1" />);
+    await waitFor(() => expect(screen.queryByRole('button', { name: /resume from summary/i })).toBeNull());
   });
 });

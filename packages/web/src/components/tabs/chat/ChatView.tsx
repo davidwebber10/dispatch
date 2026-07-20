@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
 import { PaperPlaneTilt, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip, ArrowBendDownRight } from '@phosphor-icons/react';
 import type { ConvItem, PermissionQuestion } from '../../../api/types';
@@ -14,6 +14,7 @@ import { useDictation } from '../../../hooks/useDictation';
 import { DictationControl } from '../../dictation/DictationControl';
 import { InputActionsMenu } from '../../dictation/InputActionsMenu';
 import { InsightText } from '../../InsightText';
+import { ResumeAdviceCard } from './ResumeAdviceCard';
 import { WorkingIndicator } from '../../WorkingIndicator';
 import { Spinner } from '../../common/Spinner';
 import { ChatImage } from '../../ChatImage';
@@ -47,6 +48,22 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   const tab = useTabs((s) => findTerminal(s.byProject, terminalId));
   const sessionId = tab?.sessionId;
   const { items, busy, model, send, pending, answer, contextTokens, compacting, compactResult, compact, hasMore, loadingOlder, loadOlder } = useStructuredChat(terminalId, sessionId);
+
+  const resumeAdviceDismissed = useSettings((s) => s.resumeAdviceDismissed);
+  const setResumeAdviceDismissed = useSettings((s) => s.setResumeAdviceDismissed);
+  // Advice is about THIS resume, so "not now" lives in component state rather than
+  // storage: a later resume of the same thread (older and larger still) should ask again.
+  const [advice, setAdvice] = useState<{ ageMinutes: number; contextTokens: number } | null>(null);
+  const [adviceError, setAdviceError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (resumeAdviceDismissed) { setAdvice(null); return; }
+    let cancelled = false;
+    api.getResumeAdvice(terminalId)
+      .then((a) => { if (!cancelled && a.shouldPrompt) setAdvice({ ageMinutes: a.ageMinutes, contextTokens: a.contextTokens }); })
+      .catch(() => { /* advisory only — never block the chat on it */ });
+    return () => { cancelled = true; };
+  }, [terminalId, resumeAdviceDismissed]);
 
   // Reverse-infinite-scroll: fetch the next older page once the reader nears the top.
   // Mirrors ConversationView's own `scrollTop < 120` threshold; MessageScroller.Viewport's
@@ -265,6 +282,28 @@ export function ChatView({ terminalId }: { terminalId: string }) {
             </>
           )}
         </div>
+
+        {adviceError && (
+          <div style={{ maxWidth: 768, margin: '0 auto 8px', font: '400 12px var(--font-sans)', color: 'var(--color-status-red)' }}>
+            Couldn't summarize: {adviceError}
+          </div>
+        )}
+        {advice && (
+          <ResumeAdviceCard
+            ageMinutes={advice.ageMinutes}
+            contextTokens={advice.contextTokens}
+            onSummarize={() => {
+              // Direct call, not useStructuredChat's fire-and-forget `compact()`: a thread
+              // whose structured session isn't live answers 409, and that must be visible
+              // rather than looking like a summarization that quietly did nothing.
+              setAdvice(null);
+              setAdviceError(null);
+              api.compactTerminal(terminalId).catch((e: any) => setAdviceError(e?.message ?? String(e)));
+            }}
+            onFull={() => setAdvice(null)}
+            onNever={() => { setResumeAdviceDismissed(true); setAdvice(null); }}
+          />
+        )}
 
         {/* thin status row: muted context-window fill indicator, tappable for detail */}
         <div style={{ maxWidth: 768, margin: '6px auto 0', display: 'flex', justifyContent: 'flex-end' }}>
