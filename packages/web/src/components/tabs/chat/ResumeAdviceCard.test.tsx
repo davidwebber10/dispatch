@@ -18,14 +18,20 @@ describe('ResumeAdviceCard', () => {
     expect(screen.getByText(/3d 4h old and 134,000 tokens/)).toBeTruthy();
   });
 
-  it('fires the matching callback for each action', () => {
-    const onSummarize = vi.fn(), onFull = vi.fn(), onNever = vi.fn();
-    render(<ResumeAdviceCard {...props} onSummarize={onSummarize} onFull={onFull} onNever={onNever} />);
-    fireEvent.click(screen.getByRole('button', { name: /resume from summary/i }));
-    fireEvent.click(screen.getByRole('button', { name: /resume full session/i }));
-    fireEvent.click(screen.getByRole('button', { name: /don't ask again/i }));
-    expect(onSummarize).toHaveBeenCalledOnce();
-    expect(onFull).toHaveBeenCalledOnce();
-    expect(onNever).toHaveBeenCalledOnce();
+  // Each button is checked in ISOLATION — clicking all three and then asserting each spy
+  // saw one call would pass even if two handlers were swapped, since the counts still add
+  // up. Rendering fresh per case is what actually pins button→callback wiring.
+  it.each([
+    ['resume from summary', 'onSummarize'],
+    ['resume full session', 'onFull'],
+    ["don't ask again", 'onNever'],
+  ] as const)('fires only %s\'s own callback', (label, expected) => {
+    const spies = { onSummarize: vi.fn(), onFull: vi.fn(), onNever: vi.fn() };
+    render(<ResumeAdviceCard {...props} {...spies} />);
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(label, 'i') }));
+    expect(spies[expected]).toHaveBeenCalledOnce();
+    for (const [name, spy] of Object.entries(spies)) {
+      if (name !== expected) expect(spy).not.toHaveBeenCalled();
+    }
   });
 });
