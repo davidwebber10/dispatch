@@ -8,6 +8,7 @@ import { AlertBell } from '../layout/AlertBell';
 import { ProjectCard } from '../sidebar/ProjectCard';
 import { AllAgentsView } from '../agents/AllAgentsView';
 import { PinnedThreadsView } from './PinnedThreadsView';
+import { BoardMobile } from '../board/BoardMobile';
 import { NewProjectModal } from '../sidebar/NewProjectModal';
 import { FilesPane } from '../inspector/FilesPane';
 import { TabHost } from '../tabs/TabHost';
@@ -21,6 +22,7 @@ import { useAgentUI } from '../../stores/agentUI';
 import { useReconnect } from '../../stores/reconnect';
 import { useUI } from '../../stores/ui';
 import { useViewing } from '../../stores/viewing';
+import { useSettings } from '../../stores/settings';
 import { Spinner } from '../common/Spinner';
 import { SortableList } from '../common/SortableList';
 import { timeAgo } from '../../lib/time';
@@ -44,6 +46,10 @@ export function MobileApp() {
   const byProject = useTabs((s) => s.byProject);
   const editing = useAgentUI((s) => s.editing);
   const reconnectGen = useReconnect((s) => s.gen);
+  // Mobile-only board mode (Settings → Appearance → Mobile view): the level-0 "Projects" tab
+  // shows the cross-project board instead of the projects list when set. No new bottom tab —
+  // the Settings mode picker is the sole entry point, so this is the only place it's read.
+  const mobileViewMode = useSettings((s) => s.mobileViewMode);
 
   // Initialise straight from the URL so a reload restores the page (no flash to
   // the index, and the rail renders at the right level without an entry slide).
@@ -212,6 +218,8 @@ export function MobileApp() {
               <AllAgentsView onOpenAgent={openAgentFromList} />
             ) : bottomTab === 'pinned' ? (
               <PinnedThreadsView onOpenThread={openThreadFromList} />
+            ) : mobileViewMode === 'board' ? (
+              <BoardMobile onOpenThread={openThreadFromList} />
             ) : (
             <>
             <div style={{ display: 'flex', gap: 8, padding: 10, flexShrink: 0 }}>

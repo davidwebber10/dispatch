@@ -2,6 +2,8 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { vi, beforeEach, afterEach, describe, it, expect } from 'vitest';
 import { MobileApp } from './MobileApp';
 import { useTabs } from '../../stores/tabs';
+import { useProjects } from '../../stores/projects';
+import { useSettings } from '../../stores/settings';
 import { api } from '../../api/client';
 import * as sock from '../../api/structured-socket';
 
@@ -114,5 +116,42 @@ describe('MobileApp — Settings as a bottom-rail destination', () => {
     // Drilling in pushes a history entry so back / edge-swipe walk out of it, and the
     // back button labels the screen it returns TO (iOS convention).
     expect(history.state).toMatchObject({ nav: 1, settingsSection: 'transcription' });
+  });
+});
+
+// The Board mode (Settings → Appearance → Mobile view) swaps the level-0 "Projects" tab's
+// content for BoardMobile — no new bottom tab, so this is the only switch to test.
+describe('MobileApp — mobile view mode (Threads vs Board)', () => {
+  afterEach(() => { useSettings.setState({ mobileViewMode: 'threads' }); });
+
+  it("threads mode (default): renders the projects list, not the board", () => {
+    useProjects.setState({ sessions: [] });
+    seedThreadAt('/', { type: 'shell', config: {} });
+    render(<MobileApp />);
+    expect(screen.getByPlaceholderText('Search projects')).toBeInTheDocument();
+    expect(screen.queryByTestId('board-section-needs_help')).not.toBeInTheDocument();
+  });
+
+  it('board mode: renders the board instead of the projects list', () => {
+    useSettings.setState({ mobileViewMode: 'board' });
+    useProjects.setState({ sessions: [] });
+    seedThreadAt('/', { type: 'shell', config: {} });
+    render(<MobileApp />);
+    expect(screen.getByTestId('board-section-needs_help')).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('Search projects')).not.toBeInTheDocument();
+  });
+
+  it('board mode still opens a thread via the existing nav-stack (History API)', () => {
+    useSettings.setState({ mobileViewMode: 'board' });
+    useProjects.setState({ sessions: [{ id: 's1', name: 'dispatch' } as any] });
+    seedThreadAt('/', { type: 'shell', config: {} });
+    useTabs.setState({
+      byProject: {
+        s1: [{ id: 't1', sessionId: 's1', type: 'shell', label: 'one', status: 'needs_input', config: {}, archivedAt: null } as any],
+      },
+    });
+    render(<MobileApp />);
+    fireEvent.click(screen.getByText('one'));
+    expect(history.state).toMatchObject({ nav: 2, projectId: 's1', leaf: 'tab', tabId: 't1' });
   });
 });
