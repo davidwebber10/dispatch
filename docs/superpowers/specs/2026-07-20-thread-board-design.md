@@ -104,6 +104,18 @@ Cards are never dragged; they move when the thread's reality changes.
 Archived threads are not a column. They are already reachable through the existing
 archived-threads surface and would otherwise swamp Resting.
 
+### Clicking a card opens the thread *over* the board
+
+The thread opens as a full-height panel on top of the board. Answer, close, next card —
+the board never goes away. Clearing three Needs Help cards is three actions, not three
+round-trips. The existing `WorkerLightbox` already does exactly this for agent threads
+and is the precedent to follow.
+
+Switching to Threads view on click was rejected: it would make the board a *launcher*
+rather than a workspace, losing your place on every card you act on. A mode that replaces
+the entire layout has to answer "how do I do the thing I came here for without leaving?"
+— a board you must exit to act on is a menu, not a board.
+
 ### Manual override — the escape hatch
 
 Every card offers **Move to** (⋯ on desktop, long-press on mobile). This is not a
