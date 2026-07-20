@@ -131,16 +131,21 @@ function wirePermissionMembrane(structuredManager: IStructuredManager, statusSer
     // declared-vs-inferred split (GET /api/state/status-quality) honest instead of ~100%
     // by construction (see the review finding this fixes).
     //
-    // `detail.summary`, when present, is the emitting manager's OWN text for this turn (the
+    // `detail.summary`, when PRESENT, is the emitting manager's OWN text for this turn (the
     // Codex manager supplies it from the agentMessage it just stashed — see codex-manager.ts's
-    // settleTurn). Prefer it over the generic ring walk: lastAssistantTextPublic scans for a
-    // WHOLE `{type:'assistant', message.content:[{type:'text'}]}` event, which a live Codex
-    // turn never produces (prose arrives as streaming deltas) — so on Codex that walk returns
-    // either '' or STALE text backfilled from a previously resumed session, and used to get
-    // persisted into config.lastOutcome on every single Codex turn (the Task 5 review finding
-    // this fixes). The Claude manager never sets `summary`, so this is a no-op change for it —
-    // the ring walk IS reliable there (real whole-text `assistant` events land in its ring).
-    const summary = detail?.summary && detail.summary.trim() ? detail.summary : sessionService.lastAssistantTextPublic(terminalId);
+    // settleTurn), and its presence — not its truthiness — is the authority signal: a Codex
+    // turn with no completed agentMessage (failed turn, interrupt before any prose, tool-only
+    // turn) still sets `summary: ''`, and '' must be persisted as-is, NOT papered over by the
+    // ring walk below (a truthiness check would fall through here and risk exactly the stale
+    // text this fix exists to avoid). Only a GENUINELY absent field — the Claude manager never
+    // sets `summary` at all — falls back to lastAssistantTextPublic: it scans for a WHOLE
+    // `{type:'assistant', message.content:[{type:'text'}]}` event, which a live Codex turn never
+    // produces (prose arrives as streaming deltas) — so on Codex that walk returns either '' or
+    // STALE text backfilled from a previously resumed session, and used to get persisted into
+    // config.lastOutcome on every single Codex turn (the Task 5 review finding this fixes). The
+    // Claude path is unchanged: the ring walk IS reliable there (real whole-text `assistant`
+    // events land in its ring).
+    const summary = detail && 'summary' in detail ? (detail.summary ?? '') : sessionService.lastAssistantTextPublic(terminalId);
     sessionService.noteTurnOutcome(terminalId, { summary, needsHelp: false, inferred: !detail?.declared });
     sessionService.noteAgentCompletion(terminalId);
   });

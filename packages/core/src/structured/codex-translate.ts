@@ -219,9 +219,14 @@ export class CodexTranslator {
     // Mirrors the Claude manager's `result` handler clearing session.declared/lastToolUse.
     const text = this.lastAgentText;
     this.lastAgentText = '';
+    // Always carry `summary`, even when text is '' (no completed agentMessage this turn — a
+    // failed turn, an interrupt before any prose, a tool-only turn): its PRESENCE, not its
+    // truthiness, is what tells server.ts's listener "Codex answered for this turn" (possibly
+    // with nothing) vs. "no summary at all" (the Claude path, which never sets this field).
+    // See the server.ts listener's comment for the fallback this distinction guards against.
     const boundary: TranslatedAction = looksLikeQuestion(text)
       ? { kind: 'needs-help', ask: text, summary: text }
-      : { kind: 'idle', summary: text || undefined };
+      : { kind: 'idle', summary: text };
     return [{ kind: 'event', event: result }, boundary];
   }
 

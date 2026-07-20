@@ -1065,3 +1065,35 @@ it('a Codex turn whose closing agent message asks a question settles needs-help,
     fs.rmSync(cfgDir, { recursive: true, force: true });
   }
 });
+
+it('a Codex turn that completes with NO agentMessage persists an EMPTY outcome summary — never falls through to stale backfilled text (Fix 2)', async () => {
+  // The residual stale-text door: a failed turn / an interrupt before any prose / a tool-only
+  // turn supplies no completed agentMessage, so the translator's `summary` is ''. Before the
+  // fix, server.ts's listener treated '' as "no summary" (a truthiness check) and fell back to
+  // the generic Claude-shaped ring walk — which on a RESUMED thread returns the PREVIOUS
+  // session's backfilled prose, persisted as this turn's outcome. This proves presence, not
+  // truthiness, is now the authority: the empty summary is persisted as-is.
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-empty-summary-'));
+  const a = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fakeCodex] } });
+  try {
+    const s = await request(a).post('/api/sessions').send({ provider: 'codex', workingDir: dir, name: 'codex-empty-summary' });
+    const t = await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'codex', config: { transport: 'structured' } });
+    const id = t.body.id;
+    // The initial POST /terminals spawn is FRESH (no external_id yet) — sendStructuredMessage
+    // only takes the resume path when the manager reports NOT alive (see
+    // SessionService.sendStructuredMessage). So kill the live session, THEN seed the
+    // external_id, so the next message lazily resumes and backfills 'earlier answer' into the
+    // ring BEFORE the live (agentMessage-less) turn runs — the exact trap this test guards against.
+    (a as any)._sessionService?.structuredManagerFor('codex')?.kill(id);
+    terminalsDb.updateExternalId(db, id, 'thread-existing-9');
+    await request(a).post(`/api/terminals/${id}/message`).send({ text: 'no agent message this time' });
+    await pollStatus(id, 'waiting');
+    const cfg = JSON.parse(terminalsDb.getById(db, id)?.config || '{}');
+    expect(cfg.lastOutcome?.summary).toBe(''); // empty, not undefined-and-backfilled
+    expect(cfg.lastOutcome?.summary).not.toContain('earlier answer'); // NOT the stale backfill
+    expect(cfg.lastOutcome?.needsHelp).toBe(false);
+  } finally {
+    (a as any)._sessionService?.structuredManagerFor('codex')?.killAll();
+    fs.rmSync(cfgDir, { recursive: true, force: true });
+  }
+});

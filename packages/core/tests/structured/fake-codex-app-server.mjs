@@ -12,6 +12,7 @@ const respond = (id, result) => send({ jsonrpc: '2.0', id, result });
 const THREAD = 'thread-fake-1';
 const TURN = 'turn-fake-1';
 let serverReqId = 100; // server→client request ids live in the server's own id space
+const pendingApprovalThreadIds = new Map(); // serverReqId → the threadId the approval request was sent against
 
 const rl = readline.createInterface({ input: process.stdin });
 rl.on('line', (line) => {
@@ -20,9 +21,15 @@ rl.on('line', (line) => {
 
   // A response to a ServerRequest WE sent (the approval decision) — echoes our id.
   if (msg.id !== undefined && msg.method === undefined && (msg.result !== undefined || msg.error !== undefined)) {
+    // Echo back whichever threadId the approval request was sent against (its OWN
+    // session.threadId, e.g. the resumeId after a thread/resume) rather than always the
+    // hardcoded THREAD constant — a resumed session's notifications must route back to it,
+    // same as every other notify() below.
+    const tid = pendingApprovalThreadIds.get(msg.id) ?? THREAD;
+    pendingApprovalThreadIds.delete(msg.id);
     // The file-change approval was answered → finish the tool + the turn.
-    notify('item/completed', { threadId: THREAD, turnId: TURN, item: { type: 'fileChange', id: 'fc-1', changes: [{ path: '/tmp/hello.txt', kind: { type: 'add' }, diff: 'hi\n' }], status: 'completed' }, completedAtMs: 4 });
-    notify('turn/completed', { threadId: THREAD, turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'completed', durationMs: 42 } });
+    notify('item/completed', { threadId: tid, turnId: TURN, item: { type: 'fileChange', id: 'fc-1', changes: [{ path: '/tmp/hello.txt', kind: { type: 'add' }, diff: 'hi\n' }], status: 'completed' }, completedAtMs: 4 });
+    notify('turn/completed', { threadId: tid, turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'completed', durationMs: 42 } });
     return;
   }
 
@@ -55,6 +62,15 @@ rl.on('line', (line) => {
     respond(msg.id, { turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'inProgress' } });
     const text = (msg.params?.input ?? []).filter((i) => i.type === 'text').map((i) => i.text).join(' ');
     notify('turn/started', { threadId: tid, turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'inProgress' } });
+    if (/no agent message/i.test(text)) {
+      // A turn that ends with NO completed agentMessage at all (a failed turn, an interrupt
+      // before any prose, a tool-only turn) — turn/completed still fires, but the translator
+      // never sees an item/completed to stash text from. Tests the presence-not-truthiness
+      // outcome-summary fix (Fix 2): the turn must persist an EMPTY summary, not fall back to
+      // stale text from an earlier backfilled session.
+      notify('turn/completed', { threadId: tid, turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'completed', durationMs: 3 } });
+      return;
+    }
     // Stream an assistant message token-by-token. Default closing text is 'Hello world' (not a
     // question); a request containing "needs a decision" gets a closing question instead, so
     // tests can exercise the needs-help turn-end path end-to-end without a dedicated frame shape.
@@ -70,7 +86,9 @@ rl.on('line', (line) => {
       // A file-change that requires approval: item/started carries the diff (approval params
       // omit it), then the ServerRequest fires and we WAIT for the client's decision.
       notify('item/started', { threadId: tid, turnId: TURN, item: { type: 'fileChange', id: 'fc-1', changes: [{ path: '/tmp/hello.txt', kind: { type: 'add' }, diff: 'hi\n' }], status: 'inProgress' }, startedAtMs: 3 });
-      send({ jsonrpc: '2.0', id: serverReqId++, method: 'item/fileChange/requestApproval', params: { threadId: tid, turnId: TURN, itemId: 'fc-1', startedAtMs: 3, reason: null, grantRoot: null } });
+      const reqId = serverReqId++;
+      pendingApprovalThreadIds.set(reqId, tid);
+      send({ jsonrpc: '2.0', id: reqId, method: 'item/fileChange/requestApproval', params: { threadId: tid, turnId: TURN, itemId: 'fc-1', startedAtMs: 3, reason: null, grantRoot: null } });
     } else {
       notify('turn/completed', { threadId: tid, turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'completed', durationMs: 42 } });
     }

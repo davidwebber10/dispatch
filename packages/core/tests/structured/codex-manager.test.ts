@@ -128,6 +128,54 @@ it('idle summary reflects the CURRENT turn, not stale text backfilled from a res
   expect(detail.summary).not.toContain('earlier answer'); // NOT the stale backfilled text
 });
 
+// --- declared status (report_status) precedence over the text heuristic -----------------
+//
+// Mirrors the Claude manager's declared-status tests in manager.test.ts. noteDeclaredStatus
+// stores a per-turn declaration consumed ONCE at the turn boundary (settleTurn); with nothing
+// declared, settleTurn falls back to the translator's looksLikeQuestion heuristic. Only the
+// heuristic half was covered before this; these exercise the two DECLARED branches, which are
+// reachable in production (report_status is taught to Codex threads too).
+
+it("declared needs_you: noteDeclaredStatus wins over the text heuristic and emits 'needs-help' (not inferred)", async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  m.noteDeclaredStatus('t1', { state: 'needs_you', summary: 'blocked on a decision', ask: 'Which provider?' });
+  const needsHelpP = waitForManagerEvent(m, 'needs-help', 't1');
+  // Default closing text ('Hello world') reads as a plain completion, not a question — the
+  // DECLARATION must still win.
+  m.sendMessage('t1', 'stream please');
+  const [detail] = await needsHelpP;
+  expect(detail).toEqual({ ask: 'Which provider?', summary: 'blocked on a decision', inferred: false });
+});
+
+it('declared needs_you with no `ask` falls back to the summary', async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  m.noteDeclaredStatus('t1', { state: 'needs_you', summary: 'need a decision' });
+  const needsHelpP = waitForManagerEvent(m, 'needs-help', 't1');
+  m.sendMessage('t1', 'stream please');
+  const [detail] = await needsHelpP;
+  expect(detail.ask).toBe('need a decision');
+  expect(detail.summary).toBe('need a decision');
+});
+
+it("declared done: noteDeclaredStatus wins over the text heuristic and emits 'idle', even when the closing text reads as a question", async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  m.noteDeclaredStatus('t1', { state: 'done', summary: 'shipped it' });
+  const idleP = waitForManagerEvent(m, 'idle', 't1');
+  let sawNeedsHelp = false;
+  const onNeedsHelp = (eid: string) => { if (eid === 't1') sawNeedsHelp = true; };
+  m.on('needs-help', onNeedsHelp);
+  // The fake's turn/start closes with a QUESTION when the input contains "needs a decision" —
+  // this is the ordering test: it must fail if the heuristic were checked before the declaration.
+  m.sendMessage('t1', 'this needs a decision from you');
+  const [detail] = await idleP;
+  m.off('needs-help', onNeedsHelp);
+  expect(sawNeedsHelp).toBe(false);
+  expect(detail).toEqual({ declared: true, summary: 'Rewired the rail. Does that look right to you?' });
+});
+
 it('interrupt asks the server to end the turn (settles idle)', async () => {
   spawnFake(m, 't1');
   await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
