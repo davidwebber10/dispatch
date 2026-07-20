@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/bold/style.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/fill/style.css">
+<style>
+  body{margin:0;background:#08080A;color:#EAEAEF;font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;-webkit-font-smoothing:antialiased;}
+  a{color:var(--color-accent,#3ECF6A);text-decoration:none;}
+  a:hover{text-decoration:underline;}
+  ::selection{background:rgba(62,207,106,.22);}
+  .ph, .ph-bold, .ph-fill{line-height:1;}
+</style>
+</helmet>
+<div ref="{{ rootRef }}" style="--color-canvas:#08080A;--color-base:#101014;--color-pane:#141419;--color-elevated:#1B1B22;--color-hover:#23232C;--color-border:#282830;--color-text-primary:#EAEAEF;--color-text-secondary:#9C9CA8;--color-text-tertiary:#5C5C68;--color-accent:#3ECF6A;--color-status-red:#E5484D;--color-status-yellow:#E8B04B;--col-complete:#5A8DD6;background:#08080A;padding:48px 56px 120px;font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:var(--color-text-primary);min-width:1520px;">
+
+  <!-- ============ TITLE ============ -->
+  <div style="max-width:1400px;margin-bottom:8px;">
+    <div style="display:flex;align-items:center;gap:10px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12px;color:var(--color-text-tertiary);letter-spacing:.04em;margin-bottom:14px;">
+      <span style="color:var(--color-accent,#3ECF6A);">&gt;_</span> DISPATCH · BOARD MODE · REDESIGN PROPOSAL
+    </div>
+    <h1 style="font-size:34px;font-weight:650;letter-spacing:-.02em;margin:0 0 12px;line-height:1.1;">Will this move without me?</h1>
+    <p style="font-size:15px;line-height:1.6;color:var(--color-text-secondary);max-width:760px;margin:0;text-wrap:pretty;">
+      The board's four columns stay — <b style="color:var(--color-text-primary);font-weight:600;">Needs Help</b>, <b style="color:var(--color-text-primary);font-weight:600;">Complete</b>, <b style="color:var(--color-text-primary);font-weight:600;">Working</b>, <b style="color:var(--color-text-primary);font-weight:600;">Resting</b>, in that order, with the one column that blocks on you first. Everything below is aimed at the two questions that change the board's <i>shape</i>: what to do with Resting at scale, and the vertical void the current column layout leaves. Numbered pins map to the reasoning cards further down.
+    </p>
+  </div>
+
+  <sc-if value="{{ showAnn }}" hint-placeholder-val="{{ true }}">
+    <div style="display:inline-flex;align-items:center;gap:8px;margin:20px 0 26px;padding:7px 12px;border:1px solid var(--color-border);border-radius:99px;background:var(--color-pane);font-size:12px;color:var(--color-text-secondary);">
+      <span style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:var(--color-accent,#3ECF6A);color:#062611;font-size:10px;font-weight:800;font-family:ui-monospace,monospace;">n</span>
+      Annotation pins are on — toggle in Tweaks. Accent shown here is the default; the whole board is accent-agnostic.
+    </div>
+  </sc-if>
+
+  <!-- ============ DESKTOP HERO BOARD ============ -->
+  <div style="border:1px solid var(--color-border);border-radius:14px;overflow:hidden;background:var(--color-canvas);width:1400px;box-shadow:0 40px 120px rgba(0,0,0,.5);">
+
+    <!-- top bar -->
+    <div style="display:flex;align-items:center;gap:16px;height:44px;padding:0 16px;border-bottom:1px solid var(--color-border);background:var(--color-base);">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <i class="ph ph-sidebar-simple" style="font-size:16px;color:var(--color-text-tertiary);"></i>
+        <span style="font-family:ui-monospace,'SF Mono',monospace;font-size:13px;font-weight:600;color:var(--color-accent,#3ECF6A);">&gt;_</span>
+        <span style="font-weight:600;font-size:14px;">Dispatch</span>
+        <span style="font-family:ui-monospace,monospace;font-size:11px;color:var(--color-text-tertiary);">v2.8.0</span>
+        <span style="font-size:12px;color:var(--color-text-secondary);display:flex;align-items:center;gap:3px;">Local <i class="ph ph-caret-down" style="font-size:10px;"></i></span>
+      </div>
+      <div style="display:flex;background:var(--color-elevated);border:1px solid var(--color-border);border-radius:8px;padding:2px;font-size:12px;font-weight:600;">
+        <span style="padding:4px 12px;border-radius:6px;color:var(--color-text-secondary);">Threads</span>
+        <span style="padding:4px 12px;border-radius:6px;background:var(--color-accent,#3ECF6A);color:#062611;">Board</span>
+      </div>
+      <div style="flex:1;"></div>
+      <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--color-accent,#3ECF6A);"><span style="width:7px;height:7px;border-radius:50%;background:var(--color-accent,#3ECF6A);"></span>Connected</span>
+      <i class="ph ph-gear-six" style="font-size:16px;color:var(--color-text-tertiary);"></i>
+      <i class="ph ph-sidebar" style="font-size:16px;color:var(--color-text-tertiary);"></i>
+    </div>
+
+    <!-- filter row (Open #6) -->
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--color-border);background:var(--color-canvas);position:relative;">
+      <button style="display:flex;align-items:center;gap:7px;height:30px;padding:0 12px;border:1px solid var(--color-border);border-radius:8px;background:var(--color-elevated);color:var(--color-text-primary);font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;flex-shrink:0;">
+        <i class="ph ph-squares-four" style="font-size:14px;"></i> All projects <span style="color:var(--color-text-tertiary);font-family:ui-monospace,monospace;">20</span> <i class="ph ph-caret-down" style="font-size:10px;color:var(--color-text-tertiary);"></i>
+      </button>
+      <div style="width:1px;height:20px;background:var(--color-border);flex-shrink:0;"></div>
+      <div style="display:flex;align-items:center;gap:7px;overflow:hidden;flex:1;-webkit-mask-image:linear-gradient(90deg,#000 92%,transparent);mask-image:linear-gradient(90deg,#000 92%,transparent);">
+        <span style="display:flex;align-items:center;gap:6px;height:28px;padding:0 11px;border:1px solid var(--color-border);border-radius:99px;background:var(--color-pane);font-size:12px;color:var(--color-text-secondary);white-space:nowrap;flex-shrink:0;"><span style="width:6px;height:6px;border-radius:50%;background:var(--color-status-yellow);"></span>OS <span style="font-family:ui-monospace,monospace;color:var(--color-text-tertiary);">3</span></span>
+        <span style="display:flex;align-items:center;gap:6px;height:28px;padding:0 11px;border:1px solid var(--color-border);border-radius:99px;background:var(--color-pane);font-size:12px;color:var(--color-text-secondary);white-space:nowrap;flex-shrink:0;"><span style="width:6px;height:6px;border-radius:50%;background:var(--color-status-yellow);"></span>Databricks <span style="font-family:ui-monospace,monospace;color:var(--color-text-tertiary);">1</span></span>
+        <span style="display:flex;align-items:center;gap:6px;height:28px;padding:0 11px;border:1px solid var(--color-border);border-radius:99px;background:var(--color-pane);font-size:12px;color:var(--color-text-secondary);white-space:nowrap;flex-shrink:0;"><span style="width:6px;height:6px;border-radius:50%;background:var(--col-complete);"></span>AI Procurement <span style="font-family:ui-monospace,monospace;color:var(--color-text-tertiary);">1</span></span>
+        <span style="display:flex;align-items:center;gap:6px;height:28px;padding:0 11px;border:1px solid var(--color-border);border-radius:99px;background:var(--color-pane);font-size:12px;color:var(--color-text-secondary);white-space:nowrap;flex-shrink:0;"><span style="width:6px;height:6px;border-radius:50%;background:var(--color-accent,#3ECF6A);"></span>Catalogs <span style="font-family:ui-monospace,monospace;color:var(--color-text-tertiary);">1</span></span>
+      </div>
+      <sc-if value="{{ showAnn }}" hint-placeholder-val="{{ true }}">
+        <span style="position:absolute;right:-10px;top:-11px;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--color-accent,#3ECF6A);color:#062611;font-size:12px;font-weight:800;font-family:ui-monospace,monospace;border:3px solid var(--color-canvas);z-index:5;">6</span>
+      </sc-if>
+    </div>
+
+    <!-- BOARD BODY -->
+    <div style="display:flex;align-items:flex-start;gap:20px;padding:20px 16px 26px;min-height:560px;">
+
+      <!-- ======= NEEDS HELP ======= -->
+      <div style="flex:1.35;display:flex;flex-direction:column;gap:12px;min-width:0;position:relative;">
+        <div style="display:flex;align-items:center;gap:8px;padding:0 2px 2px;">
+          <span style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;font-weight:700;color:var(--color-status-yellow);">Needs Help</span>
+          <span style="font-family:ui-monospace,monospace;font-size:12px;font-weight:700;color:#062611;background:var(--color-status-yellow);border-radius:99px;padding:1px 8px;">3</span>
+        </div>
+
+        <!-- declared ask -->
+        <div style="border:1px solid var(--color-status-yellow);background:rgba(232,176,75,.07);border-radius:10px;padding:13px 14px;">
+          <div style="font-size:10px;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">OS</div>
+          <div style="font-size:14px;font-weight:600;margin-bottom:8px;">Ask Projects</div>
+          <div style="font-size:13.5px;font-style:italic;line-height:1.5;color:var(--color-text-primary);margin-bottom:12px;">"Connections multi-instance build is COMPLETE — 8/8 tasks, PR #200 open against main. Want me to merge, or hold for review?"</div>
+          <button style="height:30px;padding:0 16px;border:1px solid var(--color-status-yellow);border-radius:7px;background:transparent;color:var(--color-status-yellow);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">Answer</button>
+        </div>
+
+        <!-- declared ask -->
+        <div style="border:1px solid var(--color-status-yellow);background:rgba(232,176,75,.07);border-radius:10px;padding:13px 14px;">
+          <div style="font-size:10px;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Databricks</div>
+          <div style="font-size:14px;font-weight:600;margin-bottom:8px;">Gold layer additions</div>
+          <div style="font-size:13.5px;font-style:italic;line-height:1.5;color:var(--color-text-primary);margin-bottom:12px;">"PRs #53/#54 are merged and dev is validated. The prod pipeline is deployed but not run — should I trigger it now?"</div>
+          <button style="height:30px;padding:0 16px;border:1px solid var(--color-status-yellow);border-radius:7px;background:transparent;color:var(--color-status-yellow);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">Answer</button>
+        </div>
+
+        <!-- inferred ask (subordinate) -->
+        <div style="border:1px dashed rgba(232,176,75,.4);background:rgba(232,176,75,.03);border-radius:10px;padding:12px 14px;opacity:.82;position:relative;">
+          <sc-if value="{{ showAnn }}" hint-placeholder-val="{{ true }}">
+            <span style="position:absolute;right:-11px;top:14px;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--color-accent,#3ECF6A);color:#062611;font-size:12px;font-weight:800;font-family:ui-monospace,monospace;border:3px solid var(--color-canvas);z-index:5;">4</span>
+          </sc-if>
+          <div style="font-size:10px;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">OS</div>
+          <div style="font-size:13.5px;font-weight:600;margin-bottom:6px;color:var(--color-text-secondary);">Explorer status check <span style="color:var(--color-status-yellow);font-family:ui-monospace,monospace;font-weight:400;" title="inferred from closing sentence">~</span></div>
+          <div style="font-size:12.5px;line-height:1.5;color:var(--color-text-secondary);margin-bottom:11px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">Last line read as a question — the 19:35Z deploy failed on <span style="font-family:ui-monospace,monospace;">CDK AlreadyExists</span>, may want a look.</div>
+          <div style="display:flex;gap:8px;">
+            <button style="height:28px;padding:0 12px;border:1px solid var(--color-border);border-radius:7px;background:transparent;color:var(--color-text-secondary);font-size:12.5px;cursor:pointer;font-family:inherit;">Open</button>
+            <button style="height:28px;width:28px;border:1px solid var(--color-border);border-radius:7px;background:transparent;color:var(--color-text-tertiary);font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;" title="Not really an ask — dismiss"><i class="ph ph-x"></i></button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ======= COMPLETE ======= -->
+      <div style="flex:1;display:flex;flex-direction:column;gap:12px;min-width:0;">
+        <div style="display:flex;align-items:center;gap:8px;padding:0 2px 2px;">
+          <span style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;font-weight:700;color:var(--col-complete);">Complete</span>
+          <span style="font-family:ui-monospace,monospace;font-size:12px;font-weight:700;color:#fff;background:var(--col-complete);border-radius:99px;padding:1px 8px;">1</span>
+          <div style="flex:1;"></div>
+          <a href="#" style="font-size:12px;color:var(--color-text-tertiary);">Clear all</a>
+        </div>
+
+        <!-- complete card WITH move-to popover open (Open #3, #8B) -->
+        <div style="border:1px solid rgba(90,141,214,.45);background:rgba(90,141,214,.07);border-radius:10px;padding:13px 14px;position:relative;">
+          <!-- top-right control cluster: checkbox + hover ⋯ -->
+          <div style="position:absolute;top:11px;right:11px;display:flex;align-items:center;gap:8px;">
+            <button onClick="{{ toggleMove }}" style="width:22px;height:22px;border:none;background:var(--color-elevated);border-radius:6px;color:var(--color-text-secondary);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;" title="More"><i class="ph ph-dots-three"></i></button>
+            <button style="width:22px;height:22px;border:1.5px solid var(--col-complete);background:transparent;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--col-complete);font-size:13px;" title="Check off"><i class="ph ph-check" style="opacity:0;"></i></button>
+          </div>
+          <div style="font-size:10px;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">OS</div>
+          <div style="font-size:14px;font-weight:600;margin-bottom:8px;padding-right:60px;">AI Procurement</div>
+          <div style="font-size:13px;line-height:1.5;color:var(--color-text-secondary);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;"><span style="color:var(--col-complete);font-weight:700;">✓</span> Shipped to prod. PR #195 merged (f43b4f7), rollout 2/2 complete. PO inbox live end-to-end.</div>
+
+          <!-- MOVE-TO POPOVER: anchored to ⋯, opens downward -->
+          <sc-if value="{{ moveOpen }}" hint-placeholder-val="{{ true }}">
+            <div style="position:absolute;top:40px;right:11px;width:210px;background:var(--color-elevated);border:1px solid var(--color-border);border-radius:10px;box-shadow:0 20px 50px rgba(0,0,0,.6);padding:6px;z-index:20;">
+              <div style="font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-text-tertiary);padding:6px 8px 4px;">Move to</div>
+              <button style="display:flex;align-items:center;gap:10px;width:100%;height:34px;padding:0 8px;border:none;background:transparent;border-radius:7px;color:var(--color-text-primary);font-size:13px;cursor:pointer;font-family:inherit;text-align:left;" style-hover="background:var(--color-hover)"><span style="width:8px;height:8px;border-radius:50%;background:var(--color-status-yellow);"></span>Needs Help</button>
+              <button style="display:flex;align-items:center;gap:10px;width:100%;height:34px;padding:0 8px;border:none;background:transparent;border-radius:7px;color:var(--color-text-primary);font-size:13px;cursor:pointer;font-family:inherit;text-align:left;" style-hover="background:var(--color-hover)"><span style="width:8px;height:8px;border-radius:50%;background:var(--col-complete);"></span>Complete</button>
+              <button style="display:flex;align-items:center;gap:10px;width:100%;height:34px;padding:0 8px;border:none;background:transparent;border-radius:7px;color:var(--color-text-primary);font-size:13px;cursor:pointer;font-family:inherit;text-align:left;" style-hover="background:var(--color-hover)"><span style="width:8px;height:8px;border-radius:50%;background:var(--color-text-tertiary);"></span>Resting</button>
+              <div style="height:1px;background:var(--color-border);margin:5px 4px;"></div>
+              <button style="display:flex;align-items:center;gap:10px;width:100%;height:34px;padding:0 8px;border:none;background:transparent;border-radius:7px;color:var(--color-text-secondary);font-size:13px;cursor:pointer;font-family:inherit;text-align:left;" style-hover="background:var(--color-hover)"><i class="ph ph-archive-box" style="font-size:15px;width:8px;"></i>Archive</button>
+            </div>
+          </sc-if>
+        </div>
+
+        <sc-if value="{{ showAnn }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;align-items:flex-start;gap:8px;margin-top:2px;">
+            <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;flex-shrink:0;border-radius:50%;background:var(--color-accent,#3ECF6A);color:#062611;font-size:12px;font-weight:800;font-family:ui-monospace,monospace;">3</span>
+            <span style="font-size:11.5px;line-height:1.45;color:var(--color-text-tertiary);">⋯ appears on hover at the card's inner edge and never collides with the persistent ☐. Popover anchors to it, opens <i>down</i>. Archive restored below the divider; Working is not offered.</span>
+          </div>
+        </sc-if>
+      </div>
+
+      <!-- ======= WORKING ======= -->
+      <div style="flex:1;display:flex;flex-direction:column;gap:12px;min-width:0;">
+        <div style="display:flex;align-items:center;gap:8px;padding:0 2px 2px;">
+          <span style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;font-weight:700;color:var(--color-text-secondary);">Working</span>
+          <span style="font-family:ui-monospace,monospace;font-size:12px;font-weight:700;color:var(--color-text-secondary);border:1px solid var(--color-border);border-radius:99px;padding:1px 8px;">4</span>
+        </div>
+
+        <!-- live -->
+        <div style="border:1px solid var(--color-border);background:var(--color-pane);border-radius:10px;padding:13px 14px;">
+          <div style="font-size:10px;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">OS</div>
+          <div style="font-size:14px;font-weight:600;margin-bottom:8px;">Catalogs</div>
+          <div style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--color-accent,#3ECF6A);"><span style="width:7px;height:7px;border-radius:50%;background:var(--color-accent,#3ECF6A);box-shadow:0 0 0 3px rgba(62,207,106,.18);"></span>Running · 2m</div>
+        </div>
+
+        <!-- WAITING divider -->
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 2px;">
+          <span style="font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-text-tertiary);white-space:nowrap;">Waiting · resumes on its own</span>
+          <div style="flex:1;height:1px;background:var(--color-border);"></div>
+        </div>
+
+        <!-- pending, dashed dimmed -->
+        <div style="border:1px dashed var(--color-border);border-radius:10px;padding:11px 14px;opacity:.6;">
+          <div style="font-size:10px;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">Salsify Catalogs</div>
+          <div style="font-size:13.5px;font-weight:600;margin-bottom:6px;">SKU normaliser</div>
+          <div style="font-size:12px;color:var(--color-text-tertiary);">◌ queued</div>
+        </div>
+        <div style="border:1px dashed var(--color-border);border-radius:10px;padding:11px 14px;opacity:.6;">
+          <div style="font-size:10px;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">Weekly Email Drafter</div>
+          <div style="font-size:13.5px;font-weight:600;margin-bottom:6px;">Monday send</div>
+          <div style="font-size:12px;color:var(--color-text-tertiary);">◌ wakes in 20m</div>
+        </div>
+        <div style="border:1px dashed var(--color-border);border-radius:10px;padding:11px 14px;opacity:.6;">
+          <div style="font-size:10px;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">Demand Planning</div>
+          <div style="font-size:13.5px;font-weight:600;margin-bottom:6px;">Forecast rebuild</div>
+          <div style="font-size:12px;color:var(--color-text-tertiary);overflow:hidden;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;">◌ behind "Sync SKU catalog"</div>
+        </div>
+      </div>
+
+      <!-- ======= RESTING (collapsed rail, Open #1) ======= -->
+      <div style="width:250px;flex-shrink:0;display:flex;flex-direction:column;gap:10px;position:relative;">
+        <sc-if value="{{ showAnn }}" hint-placeholder-val="{{ true }}">
+          <span style="position:absolute;left:-11px;top:-4px;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--color-accent,#3ECF6A);color:#062611;font-size:12px;font-weight:800;font-family:ui-monospace,monospace;border:3px solid var(--color-canvas);z-index:5;">1</span>
+        </sc-if>
+        <button onClick="{{ toggleResting }}" style="display:flex;align-items:center;gap:8px;padding:0 2px 2px;background:none;border:none;cursor:pointer;font-family:inherit;width:100%;">
+          <span style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;font-weight:700;color:var(--color-text-tertiary);">Resting</span>
+          <span style="font-family:ui-monospace,monospace;font-size:12px;font-weight:700;color:var(--color-text-tertiary);">233</span>
+          <div style="flex:1;"></div>
+          <i class="ph ph-caret-down" style="font-size:12px;color:var(--color-text-tertiary);transform:{{ restingOpen ? 'rotate(180deg)' : 'none' }};"></i>
+        </button>
+
+        <!-- COLLAPSED: grouped rollup -->
+        <sc-if value="{{ restingClosed }}" hint-placeholder-val="{{ true }}">
+          <div style="border:1px solid var(--color-border);border-radius:10px;background:var(--color-canvas);padding:6px;opacity:.85;">
+            <sc-if value="{{ groupedRollup }}" hint-placeholder-val="{{ true }}">
+              <div>
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 9px;border-radius:7px;font-size:12.5px;color:var(--color-text-secondary);"><span>Dispatch</span><span style="font-family:ui-monospace,monospace;color:var(--color-text-tertiary);">176</span></div>
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 9px;border-radius:7px;font-size:12.5px;color:var(--color-text-secondary);"><span>OS</span><span style="font-family:ui-monospace,monospace;color:var(--color-text-tertiary);">21</span></div>
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 9px;border-radius:7px;font-size:12.5px;color:var(--color-text-secondary);"><span>Salsify Catalogs</span><span style="font-family:ui-monospace,monospace;color:var(--color-text-tertiary);">14</span></div>
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 9px;border-radius:7px;font-size:12.5px;color:var(--color-text-secondary);"><span>Europe 2026</span><span style="font-family:ui-monospace,monospace;color:var(--color-text-tertiary);">9</span></div>
+                <div style="padding:7px 9px;font-size:12px;color:var(--color-text-tertiary);">+ 5 more projects</div>
+              </div>
+            </sc-if>
+            <sc-if value="{{ countOnly }}" hint-placeholder-val="{{ true }}">
+              <div style="padding:16px 10px;text-align:center;">
+                <div style="font-family:ui-monospace,monospace;font-size:26px;font-weight:600;color:var(--color-text-secondary);">233</div>
+                <div style="font-size:12px;color:var(--color-text-tertiary);margin-top:2px;">threads at rest</div>
+              </div>
+            </sc-if>
+            <button onClick="{{ toggleResting }}" style="width:100%;height:32px;margin-top:2px;border:none;border-top:1px solid var(--color-border);background:transparent;color:var(--color-text-secondary);font-size:12px;cursor:pointer;font-family:inherit;">Show all →</button>
+          </div>
+        </sc-if>
+
+        <!-- EXPANDED: grouped, newest first, capped -->
+        <sc-if value="{{ restingOpen }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:6px;max-height:470px;overflow:auto;">
+            <div style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--color-text-tertiary);padding:4px 2px 2px;">Dispatch · 176</div>
+            <div style="border:1px solid var(--color-border);border-radius:8px;padding:8px 11px;opacity:.55;font-size:12.5px;">Overseer view design <span style="color:var(--color-text-tertiary);float:right;">3w</span></div>
+            <div style="border:1px solid var(--color-border);border-radius:8px;padding:8px 11px;opacity:.55;font-size:12.5px;">Slice 1 review <span style="color:var(--color-text-tertiary);float:right;">new</span></div>
+            <div style="border:1px solid var(--color-border);border-radius:8px;padding:8px 11px;opacity:.55;font-size:12.5px;">Coordinator overhaul <span style="color:var(--color-text-tertiary);float:right;">new</span></div>
+            <button style="height:28px;border:none;background:transparent;color:var(--color-text-tertiary);font-size:11.5px;cursor:pointer;font-family:inherit;text-align:left;padding:0 2px;">173 more in Dispatch ↓</button>
+            <div style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--color-text-tertiary);padding:8px 2px 2px;">OS · 21</div>
+            <div style="border:1px solid var(--color-border);border-radius:8px;padding:8px 11px;opacity:.55;font-size:12.5px;">Overseer <span style="color:var(--color-text-tertiary);float:right;">new</span></div>
+            <div style="border:1px solid var(--color-border);border-radius:8px;padding:8px 11px;opacity:.55;font-size:12.5px;">Foundation — image layer <span style="color:var(--color-text-tertiary);float:right;">new</span></div>
+            <button style="height:28px;border:none;background:transparent;color:var(--color-text-tertiary);font-size:11.5px;cursor:pointer;font-family:inherit;text-align:left;padding:0 2px;">19 more in OS ↓</button>
+          </div>
+        </sc-if>
+      </div>
+
+      <!-- pin 2 for the void -->
+      <sc-if value="{{ showAnn }}" hint-placeholder-val="{{ true }}">
+        <span style="position:absolute;left:40%;bottom:26px;display:inline-flex;align-items:center;gap:8px;color:var(--color-text-tertiary);font-size:11.5px;">
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--color-accent,#3ECF6A);color:#062611;font-size:12px;font-weight:800;font-family:ui-monospace,monospace;">2</span>
+          Calm negative space, not a ragged void — the tall column that caused it is gone.
+        </span>
+      </sc-if>
+    </div>
+  </div>
+
+  <!-- ============ REASONING LEGEND ============ -->
+  <sc-if value="{{ showAnn }}" hint-placeholder-val="{{ true }}">
+  <div style="max-width:1400px;margin-top:44px;">
+    <div style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--color-text-tertiary);margin-bottom:18px;">The reasoning — arguments strong enough to touch the Settled list</div>
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:16px;">
+
+      <div style="border:1px solid var(--color-border);border-radius:12px;background:var(--color-pane);padding:18px 20px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;"><span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--color-accent,#3ECF6A);color:#062611;font-size:13px;font-weight:800;font-family:ui-monospace,monospace;">1</span><span style="font-weight:650;font-size:15px;">Resting collapses to a rollup</span><span style="margin-left:auto;font-size:10.5px;font-family:ui-monospace,monospace;color:var(--color-text-tertiary);">OPEN 1</span></div>
+        <p style="font-size:13px;line-height:1.6;color:var(--color-text-secondary);margin:0;text-wrap:pretty;">Settled says Resting is <i>never meant to be read</i>. So its default state should cost one line per project, not a 233-card scroll. Collapsing it doesn't fight "quietest, narrowest column" — it <b style="color:var(--color-text-primary);font-weight:600;">delivers</b> it. Grouped by project because that's the only axis you'd ever search a resting thread on; "Show all" expands to newest-first, capped groups. Try the <span style="font-family:ui-monospace,monospace;">Resting</span> header — it toggles.</p>
+      </div>
+
+      <div style="border:1px solid var(--color-border);border-radius:12px;background:var(--color-pane);padding:18px 20px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;"><span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--color-accent,#3ECF6A);color:#062611;font-size:13px;font-weight:800;font-family:ui-monospace,monospace;">2</span><span style="font-weight:650;font-size:15px;">The void was a side-effect, not the shape</span><span style="margin-left:auto;font-size:10.5px;font-family:ui-monospace,monospace;color:var(--color-text-tertiary);">OPEN 2</span></div>
+        <p style="font-size:13px;line-height:1.6;color:var(--color-text-secondary);margin:0;text-wrap:pretty;">Three short columns looked broken only because a 233-tall column stretched the board beside them. Remove that column (via #1), top-align the rest, and the empties collapse to one calm band. Columns are kept — the alternative (rows) breaks "one glance tells me what needs me." Space below the band is the correct resting state of a tool whose best day is <i>nothing needs me</i>.</p>
+      </div>
+
+      <div style="border:1px solid var(--color-border);border-radius:12px;background:var(--color-pane);padding:18px 20px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;"><span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--color-accent,#3ECF6A);color:#062611;font-size:13px;font-weight:800;font-family:ui-monospace,monospace;">3</span><span style="font-weight:650;font-size:15px;">Move-to anchors down, ⋯ on hover, Archive back</span><span style="margin-left:auto;font-size:10.5px;font-family:ui-monospace,monospace;color:var(--color-text-tertiary);">OPEN 3 · 8B</span></div>
+        <p style="font-size:13px;line-height:1.6;color:var(--color-text-secondary);margin:0;text-wrap:pretty;">The trigger dodged corner controls only because it was persistent. Make it hover-revealed and it has no permanent footprint — so it can sit in the one place that reads as "more," inner-top-right, and the popover anchors to it and opens <i>downward</i> (auto-flips near the viewport edge), never over the header. Three targets + divider + <b style="color:var(--color-text-primary);font-weight:600;">Archive</b> restored. Working stays out: it's an observed fact, not a judgement.</p>
+      </div>
+
+      <div style="border:1px solid var(--color-border);border-radius:12px;background:var(--color-pane);padding:18px 20px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;"><span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--color-accent,#3ECF6A);color:#062611;font-size:13px;font-weight:800;font-family:ui-monospace,monospace;">4</span><span style="font-weight:650;font-size:15px;">One card, treatment driven per column</span><span style="margin-left:auto;font-size:10.5px;font-family:ui-monospace,monospace;color:var(--color-text-tertiary);">OPEN 4</span></div>
+        <p style="font-size:13px;line-height:1.6;color:var(--color-text-secondary);margin:0;text-wrap:pretty;">Keep a single card component; let per-column tokens decide how loud it is. Needs Help maxes the question — 14px, italic, full contrast, amber frame — and the inferred variant subordinates it (dashed, dimmed, <span style="font-family:ui-monospace,monospace;">~</span> marker, dismiss). Resting drops to one 55%-opacity line. Same anatomy, opposite volume: honest about what the board knows.</p>
+      </div>
+
+      <div style="border:1px solid var(--color-border);border-radius:12px;background:var(--color-pane);padding:18px 20px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;"><span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--color-accent,#3ECF6A);color:#062611;font-size:13px;font-weight:800;font-family:ui-monospace,monospace;">6</span><span style="font-weight:650;font-size:15px;">Filter chips: one row + dropdown</span><span style="margin-left:auto;font-size:10.5px;font-family:ui-monospace,monospace;color:var(--color-text-tertiary);">OPEN 6</span></div>
+        <p style="font-size:13px;line-height:1.6;color:var(--color-text-secondary);margin:0;text-wrap:pretty;">Only projects with <b style="color:var(--color-text-primary);font-weight:600;">non-resting</b> activity earn a chip; the rest live behind "All projects ▾". A chip is a filter, and filtering to an all-resting project yields an empty board — so it earns no space above the fold. The strip stays one row, scrolls horizontally with an edge fade. Twenty projects never becomes two rows.</p>
+      </div>
+
+      <div style="border:1px solid var(--color-border);border-radius:12px;background:var(--color-pane);padding:18px 20px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;"><span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--color-accent,#3ECF6A);color:#062611;font-size:13px;font-weight:800;font-family:ui-monospace,monospace;">8</span><span style="font-weight:650;font-size:15px;">The ✓✓ bug, designed out</span><span style="margin-left:auto;font-size:10.5px;font-family:ui-monospace,monospace;color:var(--color-text-tertiary);">OPEN 8A</span></div>
+        <p style="font-size:13px;line-height:1.6;color:var(--color-text-secondary);margin:0;text-wrap:pretty;">The column owns the ✓. Before rendering, strip any leading check glyph (<span style="font-family:ui-monospace,monospace;">✓ ✔ ☑ done:</span>) from the agent's own summary, then prepend exactly one. The tick becomes a status affordance the card controls, not text the agent can duplicate.</p>
+      </div>
+
+    </div>
+  </div>
+  </sc-if>
+
+  <!-- ============ CARD ANATOMY + BUG DETAIL ============ -->
+  <div style="max-width:1400px;margin-top:52px;">
+    <div style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--color-text-tertiary);margin-bottom:18px;">Card anatomy — one component, four volumes</div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;">
+      <div style="width:260px;">
+        <div style="font-size:11px;color:var(--color-status-yellow);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;font-weight:700;">Needs Help — loudest</div>
+        <div style="border:1px solid var(--color-status-yellow);background:rgba(232,176,75,.07);border-radius:10px;padding:13px 14px;">
+          <div style="font-size:10px;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Project</div>
+          <div style="font-size:14px;font-weight:600;margin-bottom:8px;">Thread label</div>
+          <div style="font-size:13.5px;font-style:italic;line-height:1.5;margin-bottom:12px;">"The question, verbatim — the loudest line on the board."</div>
+          <button style="height:30px;padding:0 16px;border:1px solid var(--color-status-yellow);border-radius:7px;background:transparent;color:var(--color-status-yellow);font-size:13px;font-weight:600;font-family:inherit;">Answer</button>
+        </div>
+      </div>
+      <div style="width:260px;">
+        <div style="font-size:11px;color:var(--col-complete);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;font-weight:700;">Complete — acknowledgement</div>
+        <div style="border:1px solid rgba(90,141,214,.45);background:rgba(90,141,214,.07);border-radius:10px;padding:13px 14px;">
+          <div style="font-size:10px;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Project</div>
+          <div style="font-size:14px;font-weight:600;margin-bottom:8px;">Thread label</div>
+          <div style="font-size:13px;line-height:1.5;color:var(--color-text-secondary);"><span style="color:var(--col-complete);font-weight:700;">✓</span> Outcome line — shipped v2.7.0, 14 commits.</div>
+        </div>
+      </div>
+      <div style="width:260px;">
+        <div style="font-size:11px;color:var(--color-accent,#3ECF6A);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;font-weight:700;">Working — live</div>
+        <div style="border:1px solid var(--color-border);background:var(--color-pane);border-radius:10px;padding:13px 14px;">
+          <div style="font-size:10px;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Project</div>
+          <div style="font-size:14px;font-weight:600;margin-bottom:8px;">Thread label</div>
+          <div style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--color-accent,#3ECF6A);"><span style="width:7px;height:7px;border-radius:50%;background:var(--color-accent,#3ECF6A);box-shadow:0 0 0 3px rgba(62,207,106,.18);"></span>Running · 2m</div>
+        </div>
+      </div>
+      <div style="width:260px;">
+        <div style="font-size:11px;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;font-weight:700;">Resting — quietest</div>
+        <div style="border:1px solid var(--color-border);border-radius:10px;padding:8px 11px;opacity:.55;font-size:12.5px;">Thread label <span style="color:var(--color-text-tertiary);float:right;">new</span></div>
+      </div>
+
+      <!-- ✓✓ before/after -->
+      <div style="width:280px;">
+        <div style="font-size:11px;color:var(--color-status-red);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;font-weight:700;">Bug 8A · ✓✓</div>
+        <div style="border:1px solid var(--color-border);border-radius:10px;padding:11px 13px;margin-bottom:8px;background:var(--color-canvas);">
+          <div style="font-size:10px;color:var(--color-status-red);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Before</div>
+          <div style="font-size:12.5px;color:var(--color-text-secondary);"><span style="color:var(--col-complete);">✓</span> <span style="text-decoration:line-through;text-decoration-color:var(--color-status-red);">✓</span> shipped v2.7.0</div>
+        </div>
+        <div style="border:1px solid var(--color-border);border-radius:10px;padding:11px 13px;background:var(--color-canvas);">
+          <div style="font-size:10px;color:var(--color-accent,#3ECF6A);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">After — leading tick stripped</div>
+          <div style="font-size:12.5px;color:var(--color-text-secondary);"><span style="color:var(--col-complete);">✓</span> shipped v2.7.0</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ EMPTY / IDLE STATES (Open #5) ============ -->
+  <div style="max-width:1400px;margin-top:52px;">
+    <div style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--color-text-tertiary);margin-bottom:18px;">Open 5 — empty states that feel like a win, not a gap</div>
+    <div style="display:flex;gap:20px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:340px;border:1px solid var(--color-border);border-radius:12px;background:var(--color-canvas);padding:20px;">
+        <div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;font-weight:700;color:var(--color-status-yellow);margin-bottom:20px;">Needs Help <span style="font-family:ui-monospace,monospace;color:#062611;background:var(--color-status-yellow);border-radius:99px;padding:1px 8px;">0</span></div>
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:36px 20px;">
+          <i class="ph-fill ph-check-circle" style="font-size:38px;color:var(--color-accent,#3ECF6A);margin-bottom:14px;"></i>
+          <div style="font-size:16px;font-weight:600;margin-bottom:6px;">Nobody's waiting on you</div>
+          <div style="font-size:13px;color:var(--color-text-secondary);max-width:260px;line-height:1.5;">Every agent is either moving or done. This is the goal state — the to-do list is empty.</div>
+        </div>
+      </div>
+      <div style="flex:1;min-width:340px;border:1px solid var(--color-border);border-radius:12px;background:var(--color-canvas);padding:20px;">
+        <div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;font-weight:700;color:var(--color-text-tertiary);margin-bottom:20px;">Whole board idle</div>
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:36px 20px;">
+          <i class="ph ph-moon-stars" style="font-size:34px;color:var(--color-text-tertiary);margin-bottom:14px;"></i>
+          <div style="font-size:16px;font-weight:600;margin-bottom:6px;">Nothing running</div>
+          <div style="font-size:13px;color:var(--color-text-secondary);max-width:280px;line-height:1.5;">All 240 threads are resting. Start one from Threads, or wake a resting thread to put it back to work.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ MOBILE (Open #7) ============ -->
+  <div style="max-width:1400px;margin-top:52px;">
+    <div style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--color-text-tertiary);margin-bottom:18px;">Open 7 — mobile: stacked sections, every count visible with no gesture</div>
+    <div style="display:flex;gap:40px;align-items:flex-start;flex-wrap:wrap;">
+
+      <!-- phone 1: main -->
+      <div style="width:340px;flex-shrink:0;">
+        <div style="border:10px solid #1a1a1f;border-radius:44px;overflow:hidden;background:var(--color-canvas);box-shadow:0 30px 80px rgba(0,0,0,.5);">
+          <!-- status bar -->
+          <div style="height:34px;display:flex;align-items:center;justify-content:space-between;padding:0 22px;font-size:12px;font-family:ui-monospace,monospace;color:var(--color-text-secondary);"><span>9:41</span><span style="display:flex;gap:5px;"><i class="ph-fill ph-cell-signal-full"></i><i class="ph-fill ph-battery-full"></i></span></div>
+          <!-- header + switch -->
+          <div style="padding:6px 16px 10px;">
+            <div style="display:flex;background:var(--color-elevated);border:1px solid var(--color-border);border-radius:9px;padding:3px;font-size:13px;font-weight:600;margin-bottom:12px;">
+              <span style="flex:1;text-align:center;padding:6px;border-radius:6px;color:var(--color-text-secondary);">Threads</span>
+              <span style="flex:1;text-align:center;padding:6px;border-radius:6px;background:var(--color-accent,#3ECF6A);color:#062611;">Board</span>
+            </div>
+            <!-- persistent 4-count bar -->
+            <div style="display:flex;gap:6px;position:relative;">
+              <sc-if value="{{ showAnn }}" hint-placeholder-val="{{ true }}">
+                <span style="position:absolute;right:-13px;top:-13px;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--color-accent,#3ECF6A);color:#062611;font-size:12px;font-weight:800;font-family:ui-monospace,monospace;border:3px solid var(--color-canvas);z-index:5;">7</span>
+              </sc-if>
+              <div style="flex:1;text-align:center;padding:8px 2px;border:1px solid var(--color-status-yellow);background:rgba(232,176,75,.08);border-radius:9px;"><div style="font-family:ui-monospace,monospace;font-size:17px;font-weight:700;color:var(--color-status-yellow);">3</div><div style="font-size:9px;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.04em;margin-top:1px;">Help</div></div>
+              <div style="flex:1;text-align:center;padding:8px 2px;border:1px solid var(--color-border);border-radius:9px;"><div style="font-family:ui-monospace,monospace;font-size:17px;font-weight:700;color:var(--col-complete);">1</div><div style="font-size:9px;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.04em;margin-top:1px;">Done</div></div>
+              <div style="flex:1;text-align:center;padding:8px 2px;border:1px solid var(--color-border);border-radius:9px;"><div style="font-family:ui-monospace,monospace;font-size:17px;font-weight:700;color:var(--color-accent,#3ECF6A);">4</div><div style="font-size:9px;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.04em;margin-top:1px;">Working</div></div>
+              <div style="flex:1;text-align:center;padding:8px 2px;border:1px solid var(--color-border);border-radius:9px;"><div style="font-family:ui-monospace,monospace;font-size:17px;font-weight:700;color:var(--color-text-tertiary);">233</div><div style="font-size:9px;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.04em;margin-top:1px;">Rest</div></div>
+            </div>
+          </div>
+          <!-- sections -->
+          <div style="padding:0 16px 20px;display:flex;flex-direction:column;gap:10px;">
+            <!-- needs help open -->
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 2px;"><i class="ph ph-caret-down" style="font-size:12px;color:var(--color-status-yellow);"></i><span style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;font-weight:700;color:var(--color-status-yellow);">Needs Help</span><span style="font-family:ui-monospace,monospace;font-size:11px;color:#062611;background:var(--color-status-yellow);border-radius:99px;padding:0 7px;">3</span></div>
+            <div style="border:1px solid var(--color-status-yellow);background:rgba(232,176,75,.07);border-radius:10px;padding:12px 13px;">
+              <div style="font-size:9.5px;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">OS</div>
+              <div style="font-size:13.5px;font-weight:600;margin-bottom:7px;">Ask Projects</div>
+              <div style="font-size:12.5px;font-style:italic;line-height:1.45;margin-bottom:11px;">"Build complete, PR #200 open — merge or hold for review?"</div>
+              <button style="height:30px;width:100%;border:1px solid var(--color-status-yellow);border-radius:7px;background:transparent;color:var(--color-status-yellow);font-size:13px;font-weight:600;font-family:inherit;">Answer</button>
+            </div>
+            <!-- complete: swipe-to-ack -->
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 2px;"><i class="ph ph-caret-down" style="font-size:12px;color:var(--col-complete);"></i><span style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;font-weight:700;color:var(--col-complete);">Complete</span><span style="font-family:ui-monospace,monospace;font-size:11px;color:#fff;background:var(--col-complete);border-radius:99px;padding:0 7px;">1</span></div>
+            <div style="position:relative;border-radius:10px;overflow:hidden;">
+              <div style="position:absolute;inset:0;background:var(--color-accent,#3ECF6A);display:flex;align-items:center;justify-content:flex-end;padding-right:18px;color:#062611;font-size:13px;font-weight:700;gap:6px;"><i class="ph-bold ph-check"></i> Acknowledge</div>
+              <div style="position:relative;transform:translateX(-64px);border:1px solid rgba(90,141,214,.45);background:var(--color-base);border-radius:10px;padding:12px 13px;">
+                <div style="font-size:9.5px;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">OS</div>
+                <div style="font-size:13.5px;font-weight:600;margin-bottom:6px;">AI Procurement</div>
+                <div style="font-size:12.5px;color:var(--color-text-secondary);line-height:1.45;"><span style="color:var(--col-complete);font-weight:700;">✓</span> Shipped to prod, PR #195 merged.</div>
+              </div>
+            </div>
+            <!-- working collapsed head -->
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 2px;"><i class="ph ph-caret-down" style="font-size:12px;color:var(--color-accent,#3ECF6A);"></i><span style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;font-weight:700;color:var(--color-text-secondary);">Working</span><span style="font-family:ui-monospace,monospace;font-size:11px;color:var(--color-text-secondary);border:1px solid var(--color-border);border-radius:99px;padding:0 7px;">4</span></div>
+            <div style="border:1px solid var(--color-border);background:var(--color-pane);border-radius:10px;padding:11px 13px;"><div style="font-size:13px;font-weight:600;margin-bottom:5px;">Catalogs</div><div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--color-accent,#3ECF6A);"><span style="width:6px;height:6px;border-radius:50%;background:var(--color-accent,#3ECF6A);"></span>Running · 2m</div></div>
+            <!-- resting collapsed -->
+            <button style="display:flex;align-items:center;gap:8px;padding:6px 2px;background:none;border:none;font-family:inherit;cursor:pointer;"><i class="ph ph-caret-right" style="font-size:12px;color:var(--color-text-tertiary);"></i><span style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;font-weight:700;color:var(--color-text-tertiary);">Resting</span><span style="font-family:ui-monospace,monospace;font-size:11px;color:var(--color-text-tertiary);">233</span></button>
+          </div>
+        </div>
+        <div style="text-align:center;font-size:11.5px;color:var(--color-text-tertiary);margin-top:12px;">Default — Resting collapsed, Complete mid swipe-to-ack</div>
+      </div>
+
+      <!-- mobile reasoning -->
+      <div style="flex:1;min-width:320px;max-width:520px;display:flex;flex-direction:column;gap:16px;padding-top:8px;">
+        <div style="border:1px solid var(--color-border);border-radius:12px;background:var(--color-pane);padding:16px 18px;">
+          <div style="font-weight:650;font-size:14px;margin-bottom:8px;display:flex;align-items:center;gap:8px;"><span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--color-accent,#3ECF6A);color:#062611;font-size:12px;font-weight:800;font-family:ui-monospace,monospace;">7</span>Counts live above the sections</div>
+          <p style="font-size:13px;line-height:1.6;color:var(--color-text-secondary);margin:0;text-wrap:pretty;">Section headers can be collapsed, so counts can't only live there — the whole point (see that two threads need you without a gesture) would break. A persistent four-count strip sits above the stack; the header counts are a repeat for the sections you've scrolled to. Swipe is a shortcut on Complete only, never the way to <i>discover</i> what needs you.</p>
+        </div>
+        <div style="border:1px solid var(--color-border);border-radius:12px;background:var(--color-pane);padding:16px 18px;">
+          <div style="font-weight:650;font-size:14px;margin-bottom:8px;">Swipe = acknowledge, on Complete only</div>
+          <p style="font-size:13px;line-height:1.6;color:var(--color-text-secondary);margin:0;text-wrap:pretty;">Acknowledgement is the one safe destructive-feeling action (it's reversible, and real activity un-clears it). Swipe-right reveals the ✓. Needs Help keeps its explicit Answer button — you never want to clear an unanswered ask by accident.</p>
+        </div>
+        <div style="border:1px solid var(--color-border);border-radius:12px;background:var(--color-pane);padding:16px 18px;">
+          <div style="font-weight:650;font-size:14px;margin-bottom:8px;">Resting grows the same way it does on desktop</div>
+          <p style="font-size:13px;line-height:1.6;color:var(--color-text-secondary);margin:0;text-wrap:pretty;">Collapsed by default to its count; tapping expands to the grouped rollup. It never contributes to the scroll you do to reach Working.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1520,&quot;height&quot;:1400},&quot;showAnnotations&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Review&quot;},&quot;accentColor&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#3ECF6A&quot;,&quot;options&quot;:[&quot;#3ECF6A&quot;,&quot;#C8F31D&quot;,&quot;#6E9BFF&quot;,&quot;#E5844B&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Theme&quot;},&quot;restingStyle&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;Grouped rollup&quot;,&quot;options&quot;:[&quot;Grouped rollup&quot;,&quot;Count only&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Resting (Open 1)&quot;}}">
+class Component extends DCLogic {
+  state = { restingOpen: false, moveOpen: true };
+  componentDidMount(){ this.applyAccent(); }
+  componentDidUpdate(){ this.applyAccent(); }
+  applyAccent(){
+    if(this._root){ this._root.style.setProperty('--color-accent', this.props.accentColor || '#3ECF6A'); }
+  }
+  renderVals(){
+    const restingStyle = this.props.restingStyle || 'Grouped rollup';
+    return {
+      rootRef: (el)=>{ this._root = el; },
+      showAnn: this.props.showAnnotations ?? true,
+      groupedRollup: restingStyle === 'Grouped rollup',
+      countOnly: restingStyle === 'Count only',
+      restingOpen: this.state.restingOpen,
+      restingClosed: !this.state.restingOpen,
+      toggleResting: () => this.setState(s => ({ restingOpen: !s.restingOpen })),
+      moveOpen: this.state.moveOpen,
+      toggleMove: () => this.setState(s => ({ moveOpen: !s.moveOpen })),
+    };
+  }
+}
+</script>
+</body>
+</html>
