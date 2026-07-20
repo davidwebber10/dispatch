@@ -265,15 +265,21 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
         session.lastToolUse = undefined; // reset for the next turn
         session.declared = undefined;    // ditto — a declaration is per-turn
 
-        // Declaration wins over everything: the agent told us, so don't guess.
-        // `blocked` deliberately falls through to 'idle' — a thread waiting on another
-        // agent still proceeds without the human, so it isn't a needs-help state.
+        // needs_you wins over everything — a question blocks the thread regardless of a
+        // pending timer, so it's checked first even ahead of a wake-scheduler call.
         if (declared?.state === 'needs_you') {
           this.emit('needs-help', terminalId, { ask: declared.ask ?? declared.summary, summary: declared.summary, inferred: false });
-        } else if (declared) {
-          this.emit('idle', terminalId);
         } else if (wake) {
+          // A pending timer is an observable FACT; any other declaration (done/blocked) is
+          // only a CLAIM, and it can contradict the fact — e.g. the agent calls
+          // ScheduleWakeup and also declares 'done' in the same turn. When they disagree,
+          // the fact wins: the thread isn't finished, it has a wake pending and will run
+          // again, so this must not settle (or notify a coordinator) as idle.
           this.emit('scheduled', terminalId, wakeActivity(wake.name, wake.input));
+        } else if (declared) {
+          // `blocked` deliberately falls through to 'idle' — a thread waiting on another
+          // agent still proceeds without the human, so it isn't a needs-help state.
+          this.emit('idle', terminalId);
         } else {
           // Nothing declared. Read the closing text ONCE — this walks the event ring,
           // so calling it in both the condition and the body would scan it twice.

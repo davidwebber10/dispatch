@@ -79,6 +79,17 @@ it("emits 'message-source' with the tagged source once the turn's result lands (
   expect(source).toBe('coordinator');
 });
 
+it("emits 'message-source' for a tagged send even when the turn ends via the needs-help path, not just idle", async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  const sourceP = waitForManagerEvent(m, 'message-source', 't1');
+  const needsHelpP = waitForManagerEvent(m, 'needs-help', 't1');
+  m.sendMessage('t1', 'I rewired the rail. Does that look right to you?', 'coordinator');
+  const [source] = await sourceP;
+  expect(source).toBe('coordinator');
+  await needsHelpP; // confirms this turn actually took the needs-help branch, not idle
+});
+
 it("does NOT emit 'message-source' for an untagged send", async () => {
   spawnFake(m, 't1');
   await waitForEvent(m, 't1', (e) => e.type === 'system');
@@ -428,18 +439,38 @@ it("declared blocked: falls through to 'idle', NOT 'needs-help' — a thread wai
   expect(sawNeedsHelp).toBe(false);
 });
 
-it('a declaration takes precedence over a wake-tool call in the SAME turn: emits idle, not scheduled', async () => {
+it('a wake-tool call takes precedence over a non-needs_you declaration in the SAME turn: emits scheduled, not idle', async () => {
+  // A pending timer is an observable fact; a 'done'/'blocked' declaration is only a claim
+  // that can contradict it (e.g. the agent calls ScheduleWakeup AND declares done in the
+  // same turn) — the fact must win, since the thread isn't actually finished.
   spawnFake(m, 't1');
   await waitForEvent(m, 't1', (e) => e.type === 'system');
   m.noteDeclaredStatus('t1', { state: 'done', summary: 'done for now' });
-  const idleP = waitForManagerEvent(m, 'idle', 't1');
+  const scheduledP = waitForManagerEvent(m, 'scheduled', 't1');
+  let sawIdle = false;
+  const onIdle = (eid: string) => { if (eid === 't1') sawIdle = true; };
+  m.on('idle', onIdle);
+  m.sendMessage('t1', 'TRIGGER_SCHEDULE'); // last tool call this turn is ScheduleWakeup
+  await scheduledP;
+  m.off('idle', onIdle);
+  expect(sawIdle).toBe(false);
+});
+
+it('declared needs_you still wins over a wake-tool call in the SAME turn: emits needs-help, not scheduled', async () => {
+  // The one case where a declaration still beats the wake-scheduler fact: a question
+  // blocks the thread on the human regardless of any pending timer.
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  m.noteDeclaredStatus('t1', { state: 'needs_you', summary: 'need a decision', ask: 'Which one?' });
+  const needsHelpP = waitForManagerEvent(m, 'needs-help', 't1');
   let sawScheduled = false;
   const onScheduled = (eid: string) => { if (eid === 't1') sawScheduled = true; };
   m.on('scheduled', onScheduled);
   m.sendMessage('t1', 'TRIGGER_SCHEDULE'); // last tool call this turn is ScheduleWakeup
-  await idleP;
+  const [detail] = await needsHelpP;
   m.off('scheduled', onScheduled);
   expect(sawScheduled).toBe(false);
+  expect(detail).toEqual({ ask: 'Which one?', summary: 'need a decision', inferred: false });
 });
 
 it('a declaration is consumed ONCE: the turn after a declared one falls back to the heuristic again', async () => {
