@@ -370,8 +370,11 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
    * Codex has no WAKE_TOOLS/lastToolUse tracking at all, so that branch simply doesn't exist
    * here:
    *   1. declared `needs_you`      → 'needs-help', inferred: false
-   *   2. any OTHER declaration     → 'idle', declared: true (a declared `blocked` still settles
-   *      idle, same as Claude — a thread waiting on another agent isn't a needs-help state)
+   *   2. any OTHER declaration     → 'idle', declared: true, state: 'done' | 'blocked' (a declared
+   *      `blocked` still settles idle, same as Claude — a thread waiting on another agent isn't a
+   *      needs-help state — but `state` carries WHICH one was declared, and `blocker` the blocker
+   *      text when 'blocked' supplied one, so noteTurnOutcome can persist the distinction instead
+   *      of losing it at this event boundary; see manager.ts's IStructuredManager doc comment)
    *   3. no declaration + the translator's own text-heuristic fired → 'needs-help', inferred: true
    *   4. otherwise                 → 'idle', declared: false
    * `action.summary` is the actual completed agentMessage text stashed by the translator
@@ -387,7 +390,10 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     if (declared?.state === 'needs_you') {
       this.emit('needs-help', session.terminalId, { ask: declared.ask ?? declared.summary, summary: declared.summary, inferred: false });
     } else if (declared) {
-      this.emit('idle', session.terminalId, { declared: true, summary });
+      const detail: { declared: true; state: 'done' | 'blocked'; blocker?: string; summary?: string } =
+        { declared: true, state: declared.state as 'done' | 'blocked', summary };
+      if (declared.state === 'blocked' && declared.blocker) detail.blocker = declared.blocker;
+      this.emit('idle', session.terminalId, detail);
     } else if (action.kind === 'needs-help') {
       this.emit('needs-help', session.terminalId, { ask: action.ask, summary: action.summary, inferred: true });
     } else {

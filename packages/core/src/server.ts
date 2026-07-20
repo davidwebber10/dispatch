@@ -123,13 +123,19 @@ function wirePermissionMembrane(structuredManager: IStructuredManager, statusSer
   structuredManager.on('busy', (terminalId: string) => {
     statusService.markWorking(terminalId, 'Working…');
   });
-  structuredManager.on('idle', (terminalId: string, detail?: { declared: boolean; summary?: string }) => {
+  structuredManager.on('idle', (terminalId: string, detail?: { declared: boolean; state?: 'done' | 'blocked'; blocker?: string; summary?: string }) => {
     statusService.markIdle(terminalId);
     // `declared` distinguishes an explicit report_status outcome from the undeclared
     // fallback (nothing declared, heuristic said "not a question") — the latter is a GUESS,
     // not a fact, so it's persisted as `inferred: true`. This is what keeps the
     // declared-vs-inferred split (GET /api/state/status-quality) honest instead of ~100%
     // by construction (see the review finding this fixes).
+    //
+    // `detail.state`/`detail.blocker`, when present, carry WHICH outcome the agent declared
+    // (see the IStructuredManager doc comment in structured/manager.ts) — passed straight
+    // through to noteTurnOutcome so `config.lastOutcome` can tell a `blocked` thread (still
+    // proceeds without the human, queued behind something) apart from a genuinely finished
+    // one, instead of both collapsing into the same "idle, not inferred" fact.
     //
     // `detail.summary`, when PRESENT, is the emitting manager's OWN text for this turn (the
     // Codex manager supplies it from the agentMessage it just stashed — see codex-manager.ts's
@@ -146,7 +152,7 @@ function wirePermissionMembrane(structuredManager: IStructuredManager, statusSer
     // Claude path is unchanged: the ring walk IS reliable there (real whole-text `assistant`
     // events land in its ring).
     const summary = detail && 'summary' in detail ? (detail.summary ?? '') : sessionService.lastAssistantTextPublic(terminalId);
-    sessionService.noteTurnOutcome(terminalId, { summary, needsHelp: false, inferred: !detail?.declared });
+    sessionService.noteTurnOutcome(terminalId, { summary, needsHelp: false, inferred: !detail?.declared, state: detail?.state, blocker: detail?.blocker });
     sessionService.noteAgentCompletion(terminalId);
   });
   // A turn that ended needing the human. Deliberately NOT routed through 'idle':

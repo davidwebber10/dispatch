@@ -443,9 +443,23 @@ it("declared blocked: falls through to 'idle', NOT 'needs-help' — a thread wai
   const onNeedsHelp = (eid: string) => { if (eid === 't1') sawNeedsHelp = true; };
   m.on('needs-help', onNeedsHelp);
   m.sendMessage('t1', 'hello');
-  await idleP;
+  const [detail] = await idleP;
   m.off('needs-help', onNeedsHelp);
   expect(sawNeedsHelp).toBe(false);
+  // The information that used to be destroyed at this exact event boundary: `idle` alone
+  // can't tell a blocked thread apart from a finished one, so `state`/`blocker` carry it
+  // through for noteTurnOutcome to persist (see manager.ts's IStructuredManager doc comment).
+  expect(detail).toEqual({ declared: true, state: 'blocked', blocker: 'Agent B' });
+});
+
+it("declared blocked with no `blocker` text omits the key entirely, rather than persisting an empty one", async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  m.noteDeclaredStatus('t1', { state: 'blocked', summary: 'waiting on something' });
+  const idleP = waitForManagerEvent(m, 'idle', 't1');
+  m.sendMessage('t1', 'hello');
+  const [detail] = await idleP;
+  expect(detail).toEqual({ declared: true, state: 'blocked' });
 });
 
 it("declared idle (done or blocked) carries detail.declared === true — distinguishable from the undeclared branch's { declared: false }", async () => {
@@ -455,7 +469,9 @@ it("declared idle (done or blocked) carries detail.declared === true — disting
   const idleP = waitForManagerEvent(m, 'idle', 't1');
   m.sendMessage('t1', 'All done here.');
   const [detail] = await idleP;
-  expect(detail).toEqual({ declared: true });
+  // `state: 'done'` distinguishes this from the 'blocked' case above — both settle idle with
+  // declared: true, but only 'blocked' means the thread is queued behind something.
+  expect(detail).toEqual({ declared: true, state: 'done' });
 });
 
 it('a wake-tool call takes precedence over a non-needs_you declaration in the SAME turn: emits scheduled, not idle', async () => {

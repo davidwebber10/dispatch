@@ -110,11 +110,22 @@ export type PermissionDecision =
  *   'session'(terminalId, sessionId)  — the external session/thread id to persist
  *   'permission'(terminalId, pending) — a gated tool/question awaiting a decision
  *   'idle'   (terminalId, detail)     — a turn completed (thread is idle);
- *                                       detail: { declared: boolean; summary?: string } —
+ *                                       detail: { declared: boolean; state?: 'done' | 'blocked';
+ *                                       blocker?: string; summary?: string } —
  *                                       `declared` is whether the agent explicitly declared
  *                                       this outcome (report_status done/blocked) vs it being
  *                                       inferred (nothing declared, and the closing-text
- *                                       heuristic didn't read as a question). `summary`, when
+ *                                       heuristic didn't read as a question). When `declared` is
+ *                                       true, `state` carries WHICH outcome was declared — 'done'
+ *                                       or 'blocked' (a declared 'needs_you' never reaches 'idle',
+ *                                       see the needs-help branch below) — and, only for 'blocked',
+ *                                       `blocker` carries the agent's own text for what it's
+ *                                       waiting on, when supplied. Both are absent when `declared`
+ *                                       is false. This is what lets a later consumer (see
+ *                                       SessionService.noteTurnOutcome) tell a finished thread
+ *                                       apart from one merely queued behind another agent — both
+ *                                       settle 'idle' (neither needs the human) but they are NOT
+ *                                       the same fact. `summary`, when
  *                                       present, is the manager's OWN best text for the turn's
  *                                       outcome — the Codex manager supplies the completed
  *                                       agentMessage text it already has on hand (see
@@ -291,8 +302,15 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
           this.emit('scheduled', terminalId, wakeActivity(wake.name, wake.input));
         } else if (declared) {
           // `blocked` deliberately falls through to 'idle' — a thread waiting on another
-          // agent still proceeds without the human, so it isn't a needs-help state.
-          this.emit('idle', terminalId, { declared: true });
+          // agent still proceeds without the human, so it isn't a needs-help state. `state`
+          // carries WHICH declaration this was (see the IStructuredManager doc comment above)
+          // so a later consumer can still tell "finished" apart from "queued behind something" —
+          // without it, both would collapse into the same bare `{ declared: true }` and the
+          // information would be lost at this exact event boundary.
+          const detail: { declared: true; state: 'done' | 'blocked'; blocker?: string } =
+            { declared: true, state: declared.state as 'done' | 'blocked' };
+          if (declared.state === 'blocked' && declared.blocker) detail.blocker = declared.blocker;
+          this.emit('idle', terminalId, detail);
         } else {
           // Nothing declared. Read the closing text ONCE — this walks the event ring,
           // so calling it in both the condition and the body would scan it twice.

@@ -1034,8 +1034,34 @@ export class SessionService {
    * Persist how the last turn ended onto the terminal's config, so a card can show a real
    * outcome line ("✓ merged, 6 commits") instead of a thread name, and so the
    * declared-vs-inferred split is measurable off the DB.
+   *
+   * Persisted shape (`terminal.config.lastOutcome`) — the existing four keys are UNCHANGED,
+   * both in name and meaning (GET /api/state/status-quality reads `inferred`; the board reads
+   * `summary`/`needsHelp`/`inferred`):
+   *   summary: string          — the turn's outcome text, truncated to 400 chars
+   *   needsHelp: boolean       — this turn ended needing the human (declared `needs_you`, or
+   *                              the undeclared question-heuristic)
+   *   inferred: boolean        — true when nothing was declared (report_status never called
+   *                              this turn) — a GUESS, not a fact
+   *   at: string               — ISO timestamp of this write
+   * Two more are added by this fix, both optional, so an old row (written before they existed)
+   * simply lacks them:
+   *   declaredState?: 'done' | 'blocked' — WHICH state the agent declared for a non-needs-help
+   *                              turn (report_status done/blocked). Absent when undeclared
+   *                              (inferred: true) or when this was a needs-help outcome. This is
+   *                              the piece that used to be destroyed at the turn-end event
+   *                              boundary: without it, a declared `blocked` turn and a genuinely
+   *                              finished `done` turn were BOTH just "idle, inferred: false" —
+   *                              indistinguishable, so a thread waiting on another agent read as
+   *                              Complete. A row with no `declaredState` (written before this
+   *                              field existed, or a needs-help/undeclared outcome) must be
+   *                              treated as "not blocked" — same as an explicit `declaredState
+   *                              !== 'blocked'`.
+   *   blocker?: string         — the agent's own text for what it's waiting on, from a declared
+   *                              `blocked` outcome, when it supplied one. Present only alongside
+   *                              `declaredState === 'blocked'`.
    */
-  noteTurnOutcome(terminalId: string, detail: { summary: string; needsHelp: boolean; inferred: boolean }): void {
+  noteTurnOutcome(terminalId: string, detail: { summary: string; needsHelp: boolean; inferred: boolean; state?: 'done' | 'blocked'; blocker?: string }): void {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return;
     let cfg: Record<string, any> = {};
@@ -1044,6 +1070,8 @@ export class SessionService {
       summary: detail.summary.slice(0, 400),
       needsHelp: detail.needsHelp,
       inferred: detail.inferred,
+      ...(detail.state ? { declaredState: detail.state } : {}),
+      ...(detail.state === 'blocked' && detail.blocker ? { blocker: detail.blocker } : {}),
       at: new Date().toISOString(),
     };
     try { terminalsDb.updateConfig(this.db, terminalId, cfg); } catch { /* best effort */ }

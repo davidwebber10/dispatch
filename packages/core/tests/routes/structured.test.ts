@@ -1000,6 +1000,8 @@ it('persists the turn outcome onto the terminal config, marked `inferred: true` 
   expect(cfg.lastOutcome?.summary).toContain('Merged to main');
   expect(cfg.lastOutcome?.needsHelp).toBe(false);
   expect(cfg.lastOutcome?.inferred).toBe(true);
+  // An undeclared turn must not read as blocked — there was no declaration at all to read.
+  expect(cfg.lastOutcome?.declaredState).toBeUndefined();
 });
 
 it('a DECLARED done turn persists `inferred: false` — distinguishable from the undeclared case above', async () => {
@@ -1013,6 +1015,41 @@ it('a DECLARED done turn persists `inferred: false` — distinguishable from the
   const cfg = JSON.parse(terminalsDb.getById(db, id)?.config || '{}');
   expect(cfg.lastOutcome?.needsHelp).toBe(false);
   expect(cfg.lastOutcome?.inferred).toBe(false);
+  // Declared `done` must record its OWN state and must NOT read as blocked — this is the
+  // distinction a declared `blocked` turn (see the test below) needs to be told apart from.
+  expect(cfg.lastOutcome?.declaredState).toBe('done');
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+it('a DECLARED blocked turn persists `declaredState: "blocked"` plus the blocker text — the exact spec violation this task fixes: a thread waiting on another agent must NOT read as Complete', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured' } });
+  const id = t.body.id;
+  await pollExternalId(db, id, 'sess-fake');
+  const mgr = (app as any)._structuredManager;
+  mgr.noteDeclaredStatus(id, { state: 'blocked', summary: 'waiting on Agent B to land its change', blocker: 'Agent B' });
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'Handed off, waiting now.' });
+  await pollStatus(id, 'waiting'); // `blocked` still settles idle — the thread proceeds without the human
+  const cfg = JSON.parse(terminalsDb.getById(db, id)?.config || '{}');
+  expect(cfg.lastOutcome?.needsHelp).toBe(false);
+  expect(cfg.lastOutcome?.inferred).toBe(false);
+  expect(cfg.lastOutcome?.declaredState).toBe('blocked');
+  expect(cfg.lastOutcome?.blocker).toBe('Agent B');
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+it('a DECLARED needs_you turn is unaffected by this fix — it takes the needs-help path, not idle, so it carries no `declaredState`', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured' } });
+  const id = t.body.id;
+  await pollExternalId(db, id, 'sess-fake');
+  const mgr = (app as any)._structuredManager;
+  mgr.noteDeclaredStatus(id, { state: 'needs_you', summary: 'need a decision', ask: 'Which provider?' });
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'All done here.' });
+  await pollStatus(id, 'needs_input');
+  const cfg = JSON.parse(terminalsDb.getById(db, id)?.config || '{}');
+  expect(cfg.lastOutcome?.needsHelp).toBe(true);
+  expect(cfg.lastOutcome?.inferred).toBe(false);
+  expect(cfg.lastOutcome?.declaredState).toBeUndefined();
+  expect(cfg.lastOutcome?.blocker).toBeUndefined();
   await request(app).post(`/api/terminals/${id}/stop`);
 });
 

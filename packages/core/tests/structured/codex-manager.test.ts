@@ -173,7 +173,24 @@ it("declared done: noteDeclaredStatus wins over the text heuristic and emits 'id
   const [detail] = await idleP;
   m.off('needs-help', onNeedsHelp);
   expect(sawNeedsHelp).toBe(false);
-  expect(detail).toEqual({ declared: true, summary: 'Rewired the rail. Does that look right to you?' });
+  // `state: 'done'` — same new field the Claude manager's result handler carries; the two
+  // shapes must stay identical or server.ts's shared 'idle' listener writes inconsistent data.
+  expect(detail).toEqual({ declared: true, state: 'done', summary: 'Rewired the rail. Does that look right to you?' });
+});
+
+it("declared blocked: falls through to 'idle' carrying state + blocker, same shape the Claude manager emits", async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  m.noteDeclaredStatus('t1', { state: 'blocked', summary: 'waiting on Agent B', blocker: 'Agent B' });
+  const idleP = waitForManagerEvent(m, 'idle', 't1');
+  let sawNeedsHelp = false;
+  const onNeedsHelp = (eid: string) => { if (eid === 't1') sawNeedsHelp = true; };
+  m.on('needs-help', onNeedsHelp);
+  m.sendMessage('t1', 'stream please');
+  const [detail] = await idleP;
+  m.off('needs-help', onNeedsHelp);
+  expect(sawNeedsHelp).toBe(false);
+  expect(detail).toEqual({ declared: true, state: 'blocked', blocker: 'Agent B', summary: 'Hello world' });
 });
 
 it('interrupt asks the server to end the turn (settles idle)', async () => {
