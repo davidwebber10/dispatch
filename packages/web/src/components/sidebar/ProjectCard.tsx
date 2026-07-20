@@ -22,6 +22,9 @@ import { RenameProjectModal } from './RenameProjectModal';
 import { RenameThreadModal } from './RenameThreadModal';
 import { AutoArchiveModal } from './AutoArchiveModal';
 import { ThreadLabel } from './ThreadLabel';
+import { SortMenu } from './SortMenu';
+import { useListSort } from '../../stores/listSort';
+import { sortThreads, sortAgents, THREAD_SORTS, AGENT_SORTS } from '../../lib/listSort';
 import { api } from '../../api/client';
 import { canReceiveAlerts, ensurePushEnrolled } from '../../lib/push';
 import { useHint } from '../../stores/hint';
@@ -215,7 +218,9 @@ function SectionHeader({ label, count, prominent, children }: { label: string; c
 export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSelectAgent, onNewAgent, onBrowseFiles, onDispatch, fadeActiveKey, highlightTabId, showManaged = false }: { session: Session; active: boolean; open?: boolean; onToggle?: () => void; onSelectTab: (id: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void; onBrowseFiles?: (projectId: string) => void; onDispatch?: (projectId: string) => void; fadeActiveKey?: number; highlightTabId?: string | null; showManaged?: boolean }) {
   const allAgents = useAgents((s) => s.schedules);
   const dispatchName = useDispatchName();
-  const agents = allAgents.filter((a) => a.projectId === session.id);
+  const threadSort = useListSort((s) => s.threadSort(session.id));
+  const agentSort = useListSort((s) => s.agentSort(session.id));
+  const agents = sortAgents(allAgents.filter((a) => a.projectId === session.id), agentSort);
   const agentSel = useAgents((s) => s.selectedId);
   const agentFocused = useAgentUI((s) => s.focused);
   const tabs = useTabs((s) => s.byProject[session.id]) ?? [];
@@ -257,7 +262,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   const showRow = (t: Terminal) => (showManaged ? isEphemeralAgent(t) : !isManaged(t));
   const visibleTabs = tabs.filter(showRow);
   const indicator = projectIndicator(session.status, visibleTabs.map((t) => t.status), visibleTabs.some((t) => loadingMap[t.id]));
-  const threadItems = visibleTabs.filter((t) => SECTIONS[0].types.includes(t.type));
+  const threadItems = sortThreads(visibleTabs.filter((t) => SECTIONS[0].types.includes(t.type)), threadSort);
   useEffect(() => { if (isOpen) void useTabs.getState().loadTabs(session.id); }, [isOpen, session.id]);
 
   async function addTab(type: string, config?: Record<string, unknown>) {
@@ -403,6 +408,17 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
             <TabPill label="Automations" count={agents.length} active={projTab === 'agents'} mobile={isMobile} onClick={() => setProjTab('agents')} />
             <span style={{ flex: 1 }} />
             {projTab === 'threads' ? (
+              threadItems.length >= 2 && (
+                <SortMenu value={threadSort} options={THREAD_SORTS} isMobile={isMobile} buttonStyle={plusStyle}
+                  onChange={(v) => useListSort.getState().setThreadSort(session.id, v as typeof threadSort)} />
+              )
+            ) : (
+              agents.length >= 2 && (
+                <SortMenu value={agentSort} options={AGENT_SORTS} isMobile={isMobile} buttonStyle={plusStyle}
+                  onChange={(v) => useListSort.getState().setAgentSort(session.id, v as typeof agentSort)} />
+              )
+            )}
+            {projTab === 'threads' ? (
               <button title="Add thread" onClick={(e) => { e.stopPropagation(); setNewThread(true); }} style={{ ...plusStyle, alignSelf: 'center' }}>+</button>
             ) : (
               <button title="Add automation" onClick={(e) => { e.stopPropagation(); onNewAgent?.(session.id); }} style={{ ...plusStyle, alignSelf: 'center' }}>+</button>
@@ -413,7 +429,12 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
               <SortableList
                 items={threadItems}
                 disabled={false}
-                onReorder={(orderedIds) => void useTabs.getState().reorder(session.id, orderedIds)}
+                onReorder={(orderedIds) => {
+                  // The dropped arrangement IS the user's custom order now; persisting it
+                  // under any other mode would save an order they'd never see again.
+                  useListSort.getState().setThreadSort(session.id, 'custom');
+                  void useTabs.getState().reorder(session.id, orderedIds);
+                }}
                 renderItem={(t) => (
                   <SwipeRow key={t.id} disabled={!isMobile}
                     actionLabel={t.type === 'file' ? 'Unpin' : 'Delete'}
