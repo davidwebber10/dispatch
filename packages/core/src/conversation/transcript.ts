@@ -6,7 +6,7 @@
  * entries (mode/permission-mode/attachment/file-history-snapshot, isMeta users).
  */
 
-import { taskNotificationSummary } from './task-notification';
+import { taskNotificationSummary } from './task-notification.js';
 
 export interface ConvItem {
   /** 'notice' — a system-injected event Claude Code writes as a `user` line but which is not

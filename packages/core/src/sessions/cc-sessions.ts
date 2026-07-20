@@ -1,7 +1,9 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { isTaskNotificationEntry } from '../conversation/task-notification';
+import { isTaskNotificationEntry } from '../conversation/task-notification.js';
+import { resolveTranscriptPath, claudeProjectsRoot } from './transcript-path.js';
+import { encodeClaudeProjectDir } from '../platform/encode.js';
 
 export interface RecentCcSession {
   id: string;          // session UUID (jsonl filename)
@@ -97,8 +99,8 @@ export function backfillEventsFromTranscript(text: string, limit = 2000): unknow
  */
 export function readSessionBackfill(workDir: string, sessionId: string, limit = 2000): unknown[] {
   try {
-    const encoded = workDir.replace(/\//g, '-');
-    const file = path.join(os.homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
+    const file = resolveTranscriptPath(workDir, sessionId);
+    if (!file) return [];
     const stat = fs.statSync(file);
     if (stat.size > MAX_BACKFILL_BYTES) return []; // too large — skip backfill
     const text = fs.readFileSync(file, 'utf-8');
@@ -121,8 +123,8 @@ export function readSessionBackfill(workDir: string, sessionId: string, limit = 
  */
 export function findNewestUnresolvedUserUuid(workDir: string, sessionId: string, excludeUuids: Set<string>): string | undefined {
   try {
-    const encoded = workDir.replace(/\//g, '-');
-    const file = path.join(os.homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
+    const file = resolveTranscriptPath(workDir, sessionId);
+    if (!file) return undefined;
     const text = fs.readFileSync(file, 'utf-8');
     let found: string | undefined;
     for (const line of text.split('\n')) {
@@ -238,8 +240,8 @@ export function sumTranscriptTokens(raw: string): TranscriptTokenStats {
  */
 export function readTerminalTokenUsage(workDir: string, sessionId: string): TranscriptTokenStats | null {
   try {
-    const encoded = workDir.replace(/\//g, '-');
-    const file = path.join(os.homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
+    const file = resolveTranscriptPath(workDir, sessionId);
+    if (!file) return null;
     return sumTranscriptTokens(fs.readFileSync(file, 'utf-8'));
   } catch {
     return null;
@@ -275,8 +277,8 @@ function messageHasToolUse(message: unknown): boolean {
  */
 function readLastTurn(workDir: string, sessionId: string): { mtimeMs: number; last: any; lastUsage: any } | null {
   try {
-    const encoded = workDir.replace(/\//g, '-');
-    const file = path.join(os.homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
+    const file = resolveTranscriptPath(workDir, sessionId);
+    if (!file) return null;
     const stat = fs.statSync(file);
     const start = Math.max(0, stat.size - TAIL_BYTES);
     const len = stat.size - start;
@@ -354,8 +356,9 @@ export function transcriptTailScheduled(workDir: string, sessionId: string): boo
  * Never throws — returns [] when the project dir doesn't exist.
  */
 export async function listRecentSessions(workDir: string, limit = 20): Promise<RecentCcSession[]> {
-  const encoded = workDir.replace(/\//g, '-');
-  const dir = path.join(os.homedir(), '.claude', 'projects', encoded);
+  // Lists a whole project dir rather than one session, so there's no id to search by —
+  // the corrected encoding is the whole fix here.
+  const dir = path.join(claudeProjectsRoot(), encodeClaudeProjectDir(workDir, 'darwin'));
 
   let names: string[];
   try { names = (await fs.promises.readdir(dir)).filter((f) => f.endsWith('.jsonl')); }

@@ -21,6 +21,7 @@ import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript
 import { platform } from '../platform/index.js';
 import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.js';
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
+import { resolveTranscriptPath } from './transcript-path.js';
 import { TERMINAL_ID_ENV_VAR } from '../auth/shim.js';
 import { withAutoArchive, DEFAULT_AUTO_ARCHIVE_MS } from './auto-archive.js';
 
@@ -607,8 +608,14 @@ export class SessionService {
     const sessionId = terminal.external_id || this.recoverSessionId(terminalId, dir);
     if (!sessionId) return empty;
 
+    // Resolve rather than assume: a session that changed cwd (EnterWorktree) keeps its id
+    // but relocates under a different project dir, and `workDir` here is whatever the thread
+    // spawned with. Reading the computed path directly is what made those chats render
+    // empty — see sessions/transcript-path.ts.
+    const file = resolveTranscriptPath(workDir, sessionId);
+    if (!file) return empty;
     let raw: string;
-    try { raw = fs.readFileSync(path.join(dir, `${sessionId}.jsonl`), 'utf8'); } catch { return empty; }
+    try { raw = fs.readFileSync(file, 'utf8'); } catch { return empty; }
 
     // Consume only complete lines (the trailing element is an empty string after a
     // final newline, or a half-written entry) so we never parse a partial record.
