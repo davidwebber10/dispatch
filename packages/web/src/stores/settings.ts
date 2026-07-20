@@ -27,6 +27,7 @@ interface SettingsState {
   coordinatorName: string;   // raw value; empty falls back to "Control Plane" at display (see useDispatchName)
   pushEnabled: boolean;
   multiPane: boolean;
+  resumeAdviceDismissed: boolean;
   sttProvider: string;
   sttModel: string;
   sttSecretName: string;
@@ -39,6 +40,7 @@ interface SettingsState {
   setAccent: (c: string) => void;
   setPushEnabled: (b: boolean) => Promise<void>;
   setMultiPane: (b: boolean) => void;
+  setResumeAdviceDismissed: (b: boolean) => void;
   setSttProvider: (id: string) => void;
   setSttModel: (id: string) => void;
   setSttSecretName: (name: string) => void;
@@ -77,6 +79,7 @@ export const useSettings = create<SettingsState>((set) => ({
   coordinatorName: load('dispatch:coordinatorName', 'Control Plane'),
   pushEnabled: load('dispatch:pushEnabled', false),
   multiPane: load('dispatch:multiPane', true),
+  resumeAdviceDismissed: load('dispatch:resumeAdviceDismissed', false),
   sttProvider: load('dispatch:sttProvider', 'groq'),
   sttModel: load('dispatch:sttModel', 'whisper-large-v3-turbo'),
   sttSecretName: load('dispatch:sttSecretName', ''),
@@ -87,6 +90,7 @@ export const useSettings = create<SettingsState>((set) => ({
   setDensity: (density) => { save('dispatch:density', density); set({ density }); },
   setCoordinatorName: (coordinatorName) => { save('dispatch:coordinatorName', coordinatorName); set({ coordinatorName }); },
   setMultiPane: (b) => { save('dispatch:multiPane', b); set({ multiPane: b }); },
+  setResumeAdviceDismissed: (b) => { save('dispatch:resumeAdviceDismissed', b); set({ resumeAdviceDismissed: b }); },
   setAccent: (accent) => { save('dispatch:accent', accent); applyAccent(accent); set({ accent }); scheduleIconSync(accent); },
   setSttProvider: (id) => { save('dispatch:sttProvider', id); set({ sttProvider: id }); },
   setSttModel: (id) => { save('dispatch:sttModel', id); set({ sttModel: id }); },

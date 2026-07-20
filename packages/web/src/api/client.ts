@@ -9,6 +9,12 @@ export type ContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
 
+export interface ResumeAdvice {
+  ageMinutes: number;
+  contextTokens: number;
+  shouldPrompt: boolean;
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     method: init?.method ?? 'GET',
@@ -76,6 +82,8 @@ export const api = {
   interrupt: (terminalId: string) => req<void>(`/api/terminals/${terminalId}/interrupt`, { method: 'POST' }),
   // Trigger native Claude Code compaction on the thread's current context.
   compactTerminal: (terminalId: string) => req<void>(`/api/terminals/${terminalId}/compact`, { method: 'POST' }),
+  // Should the Pretty view offer to summarize before resuming this thread?
+  getResumeAdvice: (terminalId: string) => req<ResumeAdvice>(`/api/terminals/${terminalId}/resume-advice`),
   // Live-switch a running claude/codex thread between CLI (pty) and Pretty (structured),
   // resuming its conversation. Rejects (409) when the thread is busy or has no session yet.
   switchTransport: (terminalId: string, transport: 'structured' | 'pty') =>
