@@ -83,6 +83,29 @@ t=4462  "My own name"    caret OFF
 Instant swap, no intermediate character states, no caret — only `default → auto`
 animates.
 
+## Re-verification after the final-review fix (port 3998, fresh daemon)
+
+The final whole-branch review found that the epoch guard added mid-branch had broken
+`loadTabs`'s promise contract: a superseded call resolved having applied nothing, so
+`hydrate()` filtered the restored tab list against an empty `byProject` and persisted
+an **empty** `openTabIds` to localStorage — losing the user's open tabs on boot,
+permanently. Fixed by having a superseded call await the winning in-flight promise
+instead of returning early.
+
+Because that restructured `loadTabs`, all runtime checks were re-run against a
+rebuilt bundle on a clean daemon:
+
+- **Animation still fires:** 27 distinct states, first caret-bearing state still reads
+  `"Claude Code"`, `sawFinalBeforeAnimating: false`. Backspace → type → caret retires,
+  identical shape to the original run.
+- **C1 regression is gone:** opened a thread (localStorage `dispatch:tabs` →
+  `openTabIds: ["401c617c…"]`, `activeTabId` set, `tabSession` mapping present), then
+  reloaded. After boot: `openTabIds` still holds the tab, `activeTabId` restored,
+  `tabSession` intact. Before the fix this reload produced `openTabIds: []`.
+- **Reload still does not replay:** label read `"Fix login bug"` with no caret.
+
+Note the localStorage key is `dispatch:tabs` (colon), not `dispatch.tabs`.
+
 ## Not covered here
 
 React StrictMode's double-invoke is development-only, so this production-bundle run
