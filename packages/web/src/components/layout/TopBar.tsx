@@ -10,12 +10,24 @@ const iconBtn: React.CSSProperties = {
   borderRadius: 7, background: 'var(--color-elevated)', border: '1px solid #2C2C32', cursor: 'pointer',
 };
 
+// The Threads ⇄ Board mode switch. It lives here rather than inside the board because it
+// has to work in BOTH directions: a switch that only renders once you are already in board
+// mode can get you out but never in, which would leave the board unreachable.
+const segBtn = (on: boolean): React.CSSProperties => ({
+  padding: '3px 10px', borderRadius: 5, border: 'none', cursor: 'pointer',
+  font: `${on ? 600 : 400} 12px var(--font-sans)`,
+  background: on ? 'var(--color-accent)' : 'transparent',
+  color: on ? '#08240F' : 'var(--color-text-secondary)',
+});
+
 export function TopBar() {
   const [settings, setSettings] = useState(false);
   const leftCollapsed = useUI((s) => s.leftCollapsed);
   const rightCollapsed = useUI((s) => s.rightCollapsed);
   const toggleLeft = useUI((s) => s.toggleLeft);
   const toggleRight = useUI((s) => s.toggleRight);
+  const view = useUI((s) => s.view);
+  const setView = useUI((s) => s.setView);
 
   return (
     <header style={{
@@ -27,6 +39,14 @@ export function TopBar() {
         <Sidebar size={16} weight={leftCollapsed ? 'regular' : 'fill'} />
       </button>
       <BrandSwitcher />
+      <div style={{ display: 'inline-flex', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 7, padding: 2, gap: 2 }}>
+        <button type="button" aria-pressed={view === 'workspace'} onClick={() => setView('workspace')} style={segBtn(view === 'workspace')}>
+          Threads
+        </button>
+        <button type="button" aria-pressed={view === 'board'} onClick={() => setView('board')} style={segBtn(view === 'board')}>
+          Board
+        </button>
+      </div>
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
         <ConnectionStatus />
         <button title="Settings" onClick={() => setSettings(true)} style={{ ...iconBtn, color: 'var(--color-text-secondary)' }}>

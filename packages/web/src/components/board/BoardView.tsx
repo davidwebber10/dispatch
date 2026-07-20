@@ -1,8 +1,9 @@
 // The desktop thread board — full-bleed, replaces Workspace entirely (see App.tsx's `view`
 // branch and docs/superpowers/specs/2026-07-20-thread-board-design.md's "Placement" section).
 // Four columns, fixed order (Needs Help · Complete · Working · Resting — the two you can clear
-// on the left, the two you can ignore on the right), plus a header carrying the mode switch
-// (back to Threads) and project filter chips (`All projects` default). Layout, proportions and
+// on the left, the two you can ignore on the right), plus a header carrying the project filter
+// chips (`All projects` default). The Threads ⇄ Board mode switch lives in TopBar rather than
+// here — a switch rendered only inside the board could get you out but never in. Layout, proportions and
 // the WAITING divider match `.superpowers/brainstorm/65628-1784514698/content/columns-v7.html`
 // literally — do not improvise a different treatment.
 //
@@ -49,18 +50,6 @@ const COLUMN_FLEX: Record<BoardColumn, number> = {
   resting: 0.85,
 };
 
-const segBtnStyle = (active: boolean): CSSProperties => ({
-  padding: '5px 12px',
-  borderRadius: 7,
-  fontSize: 12,
-  fontWeight: 600,
-  cursor: 'pointer',
-  color: active ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
-  background: active ? 'var(--color-elevated)' : 'transparent',
-  borderWidth: 1,
-  borderStyle: 'solid',
-  borderColor: active ? 'var(--color-accent)' : 'var(--color-border)',
-});
 
 const chipStyle = (active: boolean): CSSProperties => ({
   padding: '4px 11px',
@@ -146,14 +135,9 @@ export function BoardView() {
   return (
     <div data-testid="board-view" style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--color-base)' }}>
       <header style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '9px 14px', borderBottom: '1px solid var(--color-border)', flexShrink: 0, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', gap: 4 }}>
-          <button type="button" onClick={() => useUI.getState().setView('workspace')} style={segBtnStyle(false)}>
-            Threads
-          </button>
-          <button type="button" aria-pressed onClick={() => useUI.getState().setView('board')} style={segBtnStyle(true)}>
-            Board
-          </button>
-        </div>
+        {/* The Threads ⇄ Board switch lives in TopBar, not here: a switch rendered only
+            inside the board can get you out but never in, leaving the board unreachable.
+            TopBar sits directly above this header, so it reads the same either way. */}
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <button type="button" aria-pressed={projectFilter === null} onClick={() => setProjectFilter(null)} style={chipStyle(projectFilter === null)}>
             All projects
