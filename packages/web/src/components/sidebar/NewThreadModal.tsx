@@ -5,6 +5,7 @@ import { AutoArchiveField } from './AutoArchiveField';
 import { api } from '../../api/client';
 import { useTabs } from '../../stores/tabs';
 import { timeAgo } from '../../lib/time';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import { DEFAULT_AUTO_ARCHIVE_MS } from '../../lib/autoArchive';
 import type { CcRecentSession, CodexRecentSession } from '../../api/types';
 
@@ -106,6 +107,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
   onClose: () => void;
   onCreated: (id: string) => void;
 }) {
+  const isMobile = useIsMobile();
   const [harness, setHarness] = useState<Harness>('claude');
   const [mode, setMode] = useState<Mode>('cli');
   const [model, setModel] = useState<string | null>(null);
@@ -263,7 +265,9 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
       {/* NAME */}
       <div style={sectionStyle}>
         <label style={labelStyle} htmlFor="new-thread-name">Name</label>
-        <input id="new-thread-name" autoFocus style={input} placeholder="Optional" aria-label="Thread name" value={name}
+        {/* Desktop only: on a phone, autofocus raises the keyboard the instant the
+            modal opens, covering the form and fighting the scroll. */}
+        <input id="new-thread-name" autoFocus={!isMobile} style={input} placeholder="Optional" aria-label="Thread name" value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') void create(); }} />
       </div>

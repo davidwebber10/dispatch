@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { vi, beforeEach, afterEach, describe, it, expect } from 'vitest';
 import { MobileApp } from './MobileApp';
 import { useTabs } from '../../stores/tabs';
@@ -81,5 +81,38 @@ describe('MobileApp header — CLI ⇄ Pretty transport switch', () => {
     seedThreadAt('/', { type: 'claude-code', externalId: 'e1', config: { transport: 'structured' } });
     render(<MobileApp />);
     expect(screen.queryByRole('group', { name: 'Transport' })).not.toBeInTheDocument();
+  });
+});
+
+// Settings moved off the header gear (a modal, which on a phone left the sections
+// cramped inside a 520px box) and onto the bottom rail as a real destination, so it
+// drills down like every other mobile screen.
+describe('MobileApp — Settings as a bottom-rail destination', () => {
+  it('offers Settings as a bottom tab', () => {
+    seedThreadAt('/', { type: 'shell', config: {} });
+    render(<MobileApp />);
+    expect(screen.getByText('Settings')).toBeInTheDocument();
+  });
+
+  it('no longer renders the header gear button', () => {
+    seedThreadAt('/', { type: 'shell', config: {} });
+    render(<MobileApp />);
+    // The old control was a 32px icon button carrying title="Settings"; the bottom
+    // tab is a labelled button, so the title lookup is what distinguishes them.
+    expect(screen.queryByTitle('Settings')).not.toBeInTheDocument();
+  });
+
+  it('shows the section list on the Settings tab, and drills into a section', () => {
+    seedThreadAt('/', { type: 'shell', config: {} });
+    render(<MobileApp />);
+    fireEvent.click(screen.getByText('Settings'));
+    // The list is the level-0 screen: every section is offered.
+    expect(screen.getByText('Transcription')).toBeInTheDocument();
+    expect(screen.getByText('Secrets')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Transcription'));
+    // Drilling in pushes a history entry so back / edge-swipe walk out of it, and the
+    // back button labels the screen it returns TO (iOS convention).
+    expect(history.state).toMatchObject({ nav: 1, settingsSection: 'transcription' });
   });
 });

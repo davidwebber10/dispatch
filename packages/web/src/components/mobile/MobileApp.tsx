@@ -13,7 +13,8 @@ import { FilesPane } from '../inspector/FilesPane';
 import { TabHost } from '../tabs/TabHost';
 import { AgentPane } from '../agents/AgentPane';
 import { EditAgentModal } from '../agents/EditAgentModal';
-import { SettingsModal } from '../settings/SettingsModal';
+import { MobileSettingsList, MobileSettingsSection } from '../settings/MobileSettings';
+import { settingsSection, type SettingsSectionKey } from '../settings/sections';
 import { useTabs } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
 import { useAgentUI } from '../../stores/agentUI';
@@ -52,7 +53,10 @@ export function MobileApp() {
   // The thread shown at level 2 is tracked locally (from the URL) rather than via
   // the global activeTab store, which App's hydrate() can reset to null on reload.
   const [leafTabId, setLeafTabId] = useState<string | null>(() => parsePath(location.pathname).tabId ?? null);
-  const [settings, setSettings] = useState(false);
+  // Settings is a bottom-tab destination, not an overlay: the list sits at level 0
+  // and drilling into a section pushes it onto level 1 (where a project's threads
+  // would otherwise be), so back / edge-swipe walk out of it like any other screen.
+  const [settingsKey, setSettingsKey] = useState<SettingsSectionKey | null>(null);
   const [listFadeKey, setListFadeKey] = useState(0); // bumps when the thread list reappears → re-fades the active row
   useEffect(() => { if (level === 1) setListFadeKey((k) => k + 1); }, [level]);
   // The thread list highlights a row ONLY for the thread you last opened (set in
@@ -62,7 +66,7 @@ export function MobileApp() {
   const [newProject, setNewProject] = useState(false);
   const [browseFiles, setBrowseFiles] = useState(false);
   const [query, setQuery] = useState('');
-  const [bottomTab, setBottomTab] = useState<'projects' | 'pinned' | 'agents'>('projects');
+  const [bottomTab, setBottomTab] = useState<'projects' | 'pinned' | 'agents' | 'settings'>('projects');
   // Dispatch mode (mobile): the coordinator view opens as a full-screen overlay
   // over the active project (mirrors browseFiles). Closing returns to the project.
   const [dispatchOpen, setDispatchOpen] = useState(false);
@@ -99,6 +103,12 @@ export function MobileApp() {
     useAgentUI.getState().blur(); useTabs.getState().setActiveTab(tabId); setLeafTabId(tabId); setLeaf('tab'); setLevel(2);
     setHighlightThreadId(tabId);
     history.pushState({ nav: 2, projectId: pid, leaf: 'tab', tabId }, '', `/p/${pid}/t/${tabId}`);
+  };
+  // Settings sections reuse level 1. No URL change: settings isn't deep-linkable,
+  // so the entry only carries enough state for back/popstate to restore it.
+  const openSettingsSection = (key: SettingsSectionKey) => {
+    setSettingsKey(key); setLevel(1);
+    history.pushState({ nav: 1, settingsSection: key }, '', location.pathname);
   };
   const back = () => history.back();
 
@@ -139,7 +149,10 @@ export function MobileApp() {
       history.pushState({ nav: 2, projectId: init.projectId, leaf: init.leaf, tabId: init.tabId, agentId: init.agentId }, '', url);
     }
     const onPop = (e: PopStateEvent) => {
-      const s = (e.state || { nav: 0 }) as { nav?: number; projectId?: string; leaf?: 'tab' | 'agent'; tabId?: string; agentId?: string };
+      const s = (e.state || { nav: 0 }) as { nav?: number; projectId?: string; leaf?: 'tab' | 'agent'; tabId?: string; agentId?: string; settingsSection?: SettingsSectionKey };
+      // Returning to a settings section (edge-swipe forward, or back into one)
+      // re-selects the tab too, so the level-1 slot renders the right screen.
+      if (s.settingsSection) { setSettingsKey(s.settingsSection); setBottomTab('settings'); }
       if (s.projectId) { setProjectId(s.projectId); useProjects.getState().setActive(s.projectId); }
       if (s.leaf) setLeaf(s.leaf);
       if (s.tabId) { useAgentUI.getState().blur(); setLeafTabId(s.tabId); useTabs.getState().setActiveTab(s.tabId); }
@@ -154,7 +167,9 @@ export function MobileApp() {
   // The back button labels the screen it returns TO (iOS convention): the
   // project detail goes back to "Projects"; a thread/agent goes back to its
   // project.
-  const headerTitle = level === 1 ? 'Projects' : level === 2 ? (project?.name ?? 'Back') : '';
+  const inSettings = bottomTab === 'settings';
+  const activeSettings = settingsKey ? settingsSection(settingsKey) : undefined;
+  const headerTitle = level === 1 ? (inSettings ? 'Settings' : 'Projects') : level === 2 ? (project?.name ?? 'Back') : '';
 
   const slot: React.CSSProperties = { flex: '0 0 100%', height: '100%', minWidth: 0 };
   const scrollSlot: React.CSSProperties = { ...slot, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y' };
@@ -179,18 +194,21 @@ export function MobileApp() {
               self-hides for structured threads. */}
           <TransportToggle terminalId={level === 2 && leaf === 'tab' ? leafTabId : null} />
           <ModeToggle terminalId={level === 2 && leaf === 'tab' ? leafTabId : null} />
-          <button title="Settings" onClick={() => setSettings(true)} style={{ width: 32, height: 32, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 12, background: 'var(--color-elevated)', border: '1px solid #2C2C32', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
-            <Gear size={17} />
-          </button>
         </div>
+        {/* Centred section title, iOS-style, while drilled into a settings section
+            (the back button on the left already reads "‹ Settings"). */}
+        {level === 1 && inSettings && activeSettings && (
+          <span style={{ position: 'absolute', top: 'env(safe-area-inset-top)', left: 0, right: 0, height: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', fontSize: 16, fontWeight: 600, color: 'var(--color-text-primary)' }}>{activeSettings.label}</span>
+        )}
       </header>
-      <SettingsModal open={settings} onClose={() => setSettings(false)} />
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', position: 'relative' }}>
         <div style={{ display: 'flex', width: '100%', height: '100%', transform: `translateX(-${level * 100}%)`, transition: 'transform .28s cubic-bezier(.4,0,.2,1)' }}>
           {/* Level 0 — projects / agents, switched by the bottom tab bar */}
           <div style={{ ...slot, display: 'flex', flexDirection: 'column' }}>
-            {bottomTab === 'agents' ? (
+            {bottomTab === 'settings' ? (
+              <MobileSettingsList onOpen={openSettingsSection} />
+            ) : bottomTab === 'agents' ? (
               <AllAgentsView onOpenAgent={openAgentFromList} />
             ) : bottomTab === 'pinned' ? (
               <PinnedThreadsView onOpenThread={openThreadFromList} />
@@ -235,7 +253,9 @@ export function MobileApp() {
           {/* Level 1 — the project's threads + agents, with a Dispatch button at the
               top of the card (opens the coordinator as a full-screen overlay). */}
           <div style={scrollSlot}>
-            {project ? (
+            {inSettings ? (
+              settingsKey ? <MobileSettingsSection sectionKey={settingsKey} /> : null
+            ) : project ? (
               <div style={{ padding: '8px 4px' }}>
                 <ProjectCard session={project} active fadeActiveKey={listFadeKey} highlightTabId={highlightThreadId} onSelectTab={openThread} onSelectAgent={openAgent} onNewAgent={(pid) => useAgentUI.getState().openNew(pid)} onBrowseFiles={() => setBrowseFiles(true)} onDispatch={() => setDispatchOpen(true)} />
               </div>
@@ -261,7 +281,7 @@ export function MobileApp() {
           reclaims the space. Tapping a tab from a project pops back to the root. */}
       {level < 2 && (
         <div style={{ flexShrink: 0, display: 'flex', borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
-          {([['projects', 'Projects', Folders], ['pinned', 'Pinned', PushPin], ['agents', 'Automations', Robot]] as const).map(([key, label, Icon]) => {
+          {([['projects', 'Projects', Folders], ['pinned', 'Pinned', PushPin], ['agents', 'Automations', Robot], ['settings', 'Settings', Gear]] as const).map(([key, label, Icon]) => {
             const on = bottomTab === key;
             return (
               <button key={key} onClick={() => { setBottomTab(key); if (level > 0) history.back(); }}
