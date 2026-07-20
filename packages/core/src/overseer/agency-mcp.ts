@@ -357,6 +357,27 @@ export const TOOLS = [
     description: 'See what this thread is currently watching, and who is watching this thread.',
     inputSchema: { type: 'object', properties: {} },
   },
+  {
+    name: 'report_status',
+    description:
+      'Declare how YOUR OWN turn is ending. Call this as the last thing you do, every turn. ' +
+      'It is how the human sees whether you finished, need them, or are blocked — without it ' +
+      'a turn that ends by asking a question looks identical to one that finished the work.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        state: {
+          type: 'string',
+          enum: ['done', 'needs_you', 'blocked'],
+          description: "'done' = the work is finished. 'needs_you' = you cannot proceed until the human answers. 'blocked' = waiting on another agent or a timer, no human needed.",
+        },
+        summary: { type: 'string', description: 'One line: what happened this turn.' },
+        ask: { type: 'string', description: 'The actual question, when state is needs_you.' },
+        blocker: { type: 'string', description: 'What you are waiting on, when state is blocked.' },
+      },
+      required: ['state', 'summary'],
+    },
+  },
 ] as const;
 
 // --- HTTP helper -----------------------------------------------------------
@@ -685,6 +706,24 @@ async function listWatches(): Promise<{ watching: any[]; watchedBy: any[] }> {
   return { watching: data?.watching ?? [], watchedBy: data?.watchedBy ?? [] };
 }
 
+/**
+ * Declare how the CALLING thread's turn is ending (done / needs_you / blocked), so the human
+ * can tell a turn that ended by asking a question apart from one that finished the work. The
+ * target is always the caller's OWN terminal via requireSelf — never a routable argument — so
+ * a thread can only ever report on itself, and a missing DISPATCH_TERMINAL fails loudly rather
+ * than silently no-op-ing.
+ */
+async function reportStatus(args: { state: string; summary: string; ask?: string; blocker?: string }): Promise<{ ok: true }> {
+  if (!args?.state) throw new Error('state is required');
+  if (!args?.summary) throw new Error('summary is required');
+  const self = requireSelf('report status');
+  const body: Record<string, string> = { state: args.state, summary: args.summary };
+  if (args.ask) body.ask = args.ask;
+  if (args.blocker) body.blocker = args.blocker;
+  await httpJson('POST', `${apiBase()}/api/terminals/${self}/report-status`, body);
+  return { ok: true };
+}
+
 // --- post_image (surface a picture inline in the coordinator thread) -------
 
 /** Extension → MIME for the images the byte route serves; the gate that keeps this read-image-only. */
@@ -759,6 +798,7 @@ export async function callTool(
       case 'watch_thread': result = await watchThread(args ?? {}); break;
       case 'unwatch_thread': result = await unwatchThread(args ?? {}); break;
       case 'list_watches': result = await listWatches(); break;
+      case 'report_status': result = await reportStatus(args ?? {}); break;
       // post_image's result IS the content block (an image, not JSON text) — return it directly.
       case 'post_image': return { content: [await postImage(args ?? {})] };
       default: throw new Error(`Unknown tool: ${name}`);

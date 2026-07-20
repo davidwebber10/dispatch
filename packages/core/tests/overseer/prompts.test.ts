@@ -139,3 +139,9 @@ it("a coordinator's combined prompt contains COORDINATOR_PROMPT and the peer blo
   expect(countOccurrences(combined, peerBlock)).toBe(1);
   expect(countOccurrences(combined, COORDINATOR_PROMPT)).toBe(1);
 });
+
+it('teaches report_status to every peer-eligible thread', () => {
+  const prompt = buildPeerPrompt({ label: 'x', terminalId: 't1', sessionId: 's1', peers: [] } as any);
+  expect(prompt).toContain('report_status');
+  expect(prompt).toContain('end of every turn');
+});

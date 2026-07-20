@@ -104,7 +104,12 @@ export function buildPeerPrompt(ctx: {
     '"idle" | "needs_input" | "error" | "any") and go idle at zero token cost — the daemon wakes you ' +
     'with a message the instant that peer hits it. PREFER watch_thread over polling read_thread in a ' +
     'loop: polling burns tokens for no benefit, while a watch costs nothing until it fires.\n' +
-    '- unwatch_thread({ watchId }) / list_watches() — cancel or inspect your own subscriptions.\n\n' +
+    '- unwatch_thread({ watchId }) / list_watches() — cancel or inspect your own subscriptions.\n' +
+    '- report_status({ state, summary, ask?, blocker? }) — declare how your turn is ending. ' +
+    'Call this at the end of every turn, as the LAST thing you do. `done` when the work is finished, ' +
+    '`needs_you` when you cannot proceed without the human (put the question in `ask`), `blocked` ' +
+    'when you are waiting on another agent or a timer. Without it, a turn you ended by asking a ' +
+    'question is indistinguishable from one where you finished — and the human will never see it.\n\n' +
     'Etiquette and limits, so you fail informed rather than surprised:\n' +
     '- Don\'t ping-pong messages with a peer — messaging a thread is rate-limited per pair, per hour.\n' +
     '- If you create sub-threads of your own, that chain has a fixed depth cap.\n' +

@@ -34,9 +34,9 @@ describe('agency-mcp', () => {
     expect(names).toEqual([
       'answer_agent', 'complete_agent', 'list_agents', 'list_missions', 'list_threads', 'list_watches',
       'message_agent', 'message_thread', 'post_image', 'queue_agent', 'read_agent', 'read_thread',
-      'spawn_agent', 'start_agent', 'unwatch_thread', 'watch_thread',
+      'report_status', 'spawn_agent', 'start_agent', 'unwatch_thread', 'watch_thread',
     ]);
-    expect(TOOLS).toHaveLength(16);
+    expect(TOOLS).toHaveLength(17);
   });
 
   it('initialize returns protocolVersion + tools capability', async () => {
@@ -362,6 +362,29 @@ describe('agency-mcp', () => {
     const r = res!.result as any;
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain('Unknown tool');
+  });
+
+  describe('report_status', () => {
+    it('report_status posts the declaration for the CALLING thread', async () => {
+      process.env.DISPATCH_TERMINAL = 'self-1';
+      const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true, status: 204, text: async () => '' });
+      global.fetch = fetchMock as any;
+
+      const out = await callTool('report_status', { state: 'needs_you', summary: 'need a decision', ask: 'Which provider?' });
+
+      expect(out.isError).toBeFalsy();
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toContain('/api/terminals/self-1/report-status');
+      expect(init.method).toBe('POST');
+      expect(JSON.parse(init.body)).toEqual({ state: 'needs_you', summary: 'need a decision', ask: 'Which provider?' });
+    });
+
+    it('report_status refuses to report on another thread', async () => {
+      process.env.DISPATCH_TERMINAL = 'self-1';
+      const out = await callTool('report_status', { state: 'done', summary: 'x', id: 'other-thread' } as any);
+      // `id` is not in the schema and must be ignored — the URL is always the caller's own.
+      expect(String(out.content[0].text)).not.toContain('other-thread');
+    });
   });
 
   // --- peer/thread tools: widen scope to every thread in the project, plus watch subs ---
