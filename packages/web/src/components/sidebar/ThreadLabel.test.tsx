@@ -14,7 +14,15 @@ beforeEach(() => {
   vi.setSystemTime(NOW);
   useTabs.setState({ autoNamed: {} } as any);
 });
-afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); delete (window as any).matchMedia; });
+afterEach(() => {
+  // restoreAllMocks() BEFORE useRealTimers(): a spy installed on setTimeout/clearTimeout while
+  // fake timers are active (see the unmount test) captures the FAKE implementation as "original".
+  // Restoring mocks after switching back to real timers would re-install that fake implementation
+  // over the freshly-restored real one, breaking every later real-timer test in this file.
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+  delete (window as any).matchMedia;
+});
 
 function seed() {
   useTabs.setState({ autoNamed: { t1: { from: 'Claude Code', to: 'Fix login bug', at: NOW } } } as any);
@@ -72,6 +80,52 @@ test('reduced motion consumes the entry but swaps instantly', () => {
   expect(useTabs.getState().autoNamed['t1']).toBeUndefined();
 });
 
+// ── Finding 2 ────────────────────────────────────────────────────────────
+// consumedRef was keyed on `${tab.id}:${tab.label}` only. Reduced motion consumes the entry
+// instantly (no timers) rather than animating it. Toggling the OS reduced-motion preference
+// OFF afterward re-runs the layout effect with a tab.id/tab.label that hasn't changed, so the
+// old key still matched and handed back the already-consumed entry — except this time
+// `reduced` is false, so the `!entry || reduced` guard no longer short-circuits it, and the
+// finished rename replays as a full typewriter animation. Keying on `reduced` too fixes it:
+// the second run looks like a fresh identity, falls through to consumeAutoName() again, and
+// gets null (already consumed) instead of a replay.
+test('Finding 2: toggling reduced-motion off after a reduced-motion swap has finished does not replay the animation', () => {
+  // A faithful MediaQueryList fake: usePrefersReducedMotion reads `.matches` and subscribes via
+  // addEventListener('change', ...) — capture that handler so the test can fire a REAL toggle,
+  // the same way the hook would see the OS preference change mid-session.
+  let matches = true;
+  let onChange: (() => void) | null = null;
+  const mq = {
+    get matches() { return matches; },
+    addEventListener: (_event: string, cb: () => void) => { onChange = cb; },
+    removeEventListener: vi.fn(),
+  };
+  (window as any).matchMedia = vi.fn(() => mq);
+
+  seed();
+  const { container } = render(<ThreadLabel tab={tab} />);
+  const text = () => container.querySelector('[data-testid="thread-label-text"]')!.textContent;
+
+  // Reduced motion: instant swap, entry consumed, no caret, no pending timers.
+  expect(text()).toBe('Fix login bug');
+  expect(container.querySelector('.dispatch-caret')).toBeNull();
+  expect(useTabs.getState().autoNamed['t1']).toBeUndefined();
+
+  // OS preference flips off mid-session — usePrefersReducedMotion's own change listener fires,
+  // flipping `reduced` to false and re-rendering ThreadLabel with the SAME tab.id/tab.label.
+  matches = false;
+  act(() => { onChange!(); });
+
+  // Must still show the plain, settled label — not restart backspacing it.
+  expect(text()).toBe('Fix login bug');
+  expect(container.querySelector('.dispatch-caret')).toBeNull();
+
+  // And no del/type timers were armed as a result of the toggle.
+  act(() => { vi.advanceTimersByTime(25 * 12 + 35 * 40); });
+  expect(text()).toBe('Fix login bug');
+  expect(container.querySelector('.dispatch-caret')).toBeNull();
+});
+
 test('a user rename mid-animation cancels it and shows the new truth', () => {
   seed();
   const { rerender, container } = render(<ThreadLabel tab={tab} />);
@@ -87,16 +141,32 @@ test('exposes the true label to assistive tech while animating', () => {
   expect(screen.getByLabelText('Fix login bug')).toBeInTheDocument();
 });
 
-test('unmounting mid-animation clears its timer and stops rendering', () => {
+test('unmounting mid-animation clears the exact pending timer, and no further del/type step is ever scheduled', () => {
+  // Finding 4: `expect(clear.mock.calls.length).toBeGreaterThan(calls)` passes on ANY clearTimeout
+  // call anywhere (e.g. an unrelated cleanup elsewhere in the tree), not specifically on this
+  // animation's own pending timer. Assert the exact handle instead, and that the del/type chain
+  // truly stops (no more of its 25ms/35ms timeouts get scheduled) rather than just "some timer".
   seed();
-  const clear = vi.spyOn(globalThis, 'clearTimeout');
-  const { unmount, container } = render(<ThreadLabel tab={tab} />);
+  const setSpy = vi.spyOn(globalThis, 'setTimeout');
+  const clearSpy = vi.spyOn(globalThis, 'clearTimeout');
+  const { unmount } = render(<ThreadLabel tab={tab} />);
   act(() => { vi.advanceTimersByTime(25 * 3); });
-  const calls = clear.mock.calls.length;
+
+  // Find this animation's most recently scheduled timer (its delay is always 25 or 35ms) — that's
+  // the one still outstanding when we unmount.
+  let lastOursIdx = -1;
+  setSpy.mock.calls.forEach((args, i) => { if (args[1] === 25 || args[1] === 35) lastOursIdx = i; });
+  expect(lastOursIdx).toBeGreaterThanOrEqual(0);
+  const pendingHandle = setSpy.mock.results[lastOursIdx]!.value;
+
   unmount();
-  expect(clear.mock.calls.length).toBeGreaterThan(calls); // cleanup ran
+
+  expect(clearSpy).toHaveBeenCalledWith(pendingHandle); // the SPECIFIC pending timer was cleared
+
+  const scheduledAtUnmount = setSpy.mock.calls.length;
   act(() => { vi.advanceTimersByTime(5000); });
-  expect(container.querySelector('[data-testid="thread-label-text"]')).toBeNull();
+  const scheduledAfter = setSpy.mock.calls.slice(scheduledAtUnmount).filter(([, ms]) => ms === 25 || ms === 35);
+  expect(scheduledAfter).toHaveLength(0); // the chain never re-arms after unmount
 });
 
 // ── Finding 1 ────────────────────────────────────────────────────────────

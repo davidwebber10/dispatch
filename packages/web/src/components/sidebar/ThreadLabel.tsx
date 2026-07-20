@@ -46,7 +46,15 @@ export function ThreadLabel({ tab }: { tab: Terminal }) {
   useLayoutEffect(() => {
     // useLayoutEffect (not useEffect) so the kickoff — and any correction it makes
     // to `typed` — happens before the browser paints, never after.
-    const key = `${tab.id}:${tab.label}`;
+    // `reduced` is part of the key (not just tab.id + tab.label): without it, flipping the OS
+    // reduced-motion preference from on -> off after a reduced-motion "animation" (an instant
+    // swap, no timers) has already consumed its entry re-runs this effect with a key that still
+    // matches, so the StrictMode-replay branch below hands back the same already-consumed entry
+    // — except this time `reduced` is false, so the `|| reduced` guard no longer short-circuits
+    // it, and the finished rename plays out as a full typewriter animation a second time. Keying
+    // on `reduced` too makes that second run look like a fresh identity, so it falls through to
+    // consumeAutoName() again, which correctly returns null (already consumed).
+    const key = `${tab.id}:${tab.label}:${reduced}`;
     let entry: ConsumedEntry;
     if (consumedRef.current && consumedRef.current.key === key) {
       entry = consumedRef.current.entry;
