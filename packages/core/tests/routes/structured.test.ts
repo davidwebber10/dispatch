@@ -957,17 +957,60 @@ it('dependsOn already satisfied at queue time (dependency already finished) auto
 
 // --- Task 5: wire needs-help, persist the outcome -------------------------------
 
-it('an agent that ends by asking does NOT tell its coordinator it finished', async () => {
+it('an agent that ends by asking does NOT tell its coordinator it finished, but DOES get its own BLOCKED/waiting notice', async () => {
   const { agentId, coordinatorId } = await spawnAgentUnderCoordinator({ text: 'Ready to deploy. Shall I proceed?' });
   await pollStatus(agentId, 'needs_input');
   const coordinatorEvents = await readEvents(coordinatorId);
-  expect(JSON.stringify(coordinatorEvents)).not.toContain('just finished a turn');
+  const joined = JSON.stringify(coordinatorEvents);
+  expect(joined).not.toContain('just finished a turn');
+  // Finding 2: a prose question must still escalate to the coordinator — just framed as
+  // blocked/waiting, not as a (false) completion. Without this, the agent's question reaches
+  // nobody and can stall the whole mission silently.
+  expect(joined).toContain('BLOCKED');
+  expect(joined).toContain('waiting on you');
+  expect(joined).toContain('Ready to deploy. Shall I proceed?'); // the actual question, included verbatim
 });
 
-it('persists the turn outcome onto the terminal config', async () => {
+it('a needs-help turn on a non-agent (plain) thread notifies no coordinator at all', async () => {
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coord-noagent-'));
+  const a = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fake] } });
+  const s = await request(a).post('/api/sessions').send({ provider: 'claude-code', workingDir: dir, name: 'noagent' });
+  const coordId = (await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', role: 'coordinator' } })).body.id;
+  // No `role` at all — a plain thread, not a typed agent.
+  const plainId = (await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'claude-code', config: { transport: 'structured' } })).body.id;
+  await pollExternalId(db, coordId, 'sess-fake');
+
+  await request(a).post(`/api/terminals/${plainId}/message`).send({ text: 'Ready to deploy. Shall I proceed?' });
+  await sleep(300); // give a (would-be-incorrect) notify a chance to land before asserting its absence
+
+  const mgr = (a as any)._structuredManager;
+  const coordEvents = mgr.getEvents(coordId) as any[];
+  expect(coordEvents.some((e) => e?.type === 'user' && JSON.stringify(e).includes('BLOCKED'))).toBe(false);
+
+  await request(a).post(`/api/terminals/${plainId}/stop`);
+  await request(a).post(`/api/terminals/${coordId}/stop`);
+  fs.rmSync(cfgDir, { recursive: true, force: true });
+});
+
+it('persists the turn outcome onto the terminal config, marked `inferred: true` — an undeclared completion turn is a GUESS, not a fact', async () => {
   const id = await createStructuredTerminal({ text: 'Merged to main. 6 commits, all green.' });
   await pollStatus(id, 'waiting');
   const cfg = JSON.parse(terminalsDb.getById(db, id)?.config || '{}');
   expect(cfg.lastOutcome?.summary).toContain('Merged to main');
   expect(cfg.lastOutcome?.needsHelp).toBe(false);
+  expect(cfg.lastOutcome?.inferred).toBe(true);
+});
+
+it('a DECLARED done turn persists `inferred: false` — distinguishable from the undeclared case above', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured' } });
+  const id = t.body.id;
+  await pollExternalId(db, id, 'sess-fake');
+  const mgr = (app as any)._structuredManager;
+  mgr.noteDeclaredStatus(id, { state: 'done', summary: 'shipped it' });
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'All done here.' });
+  await pollStatus(id, 'waiting');
+  const cfg = JSON.parse(terminalsDb.getById(db, id)?.config || '{}');
+  expect(cfg.lastOutcome?.needsHelp).toBe(false);
+  expect(cfg.lastOutcome?.inferred).toBe(false);
+  await request(app).post(`/api/terminals/${id}/stop`);
 });

@@ -354,7 +354,9 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
           this.emit('busy', session.terminalId);
           break;
         case 'idle':
-          this.emit('idle', session.terminalId);
+          // Codex has no report_status-style declaration path yet — every idle turn is
+          // undeclared/inferred, same shape as the Claude manager's heuristic-said-no branch.
+          this.emit('idle', session.terminalId, { declared: false });
           break;
         case 'approval':
           this.handleApproval(session, action);

@@ -389,6 +389,15 @@ it("undeclared: a turn whose closing text reads as a completion report emits 'id
   expect(sawNeedsHelp).toBe(false);
 });
 
+it("undeclared idle carries detail.declared === false — the heuristic-said-no branch never claims a declaration", async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  const idleP = waitForManagerEvent(m, 'idle', 't1');
+  m.sendMessage('t1', 'Merged to main. 6 commits, all green.');
+  const [detail] = await idleP;
+  expect(detail).toEqual({ declared: false });
+});
+
 it("declared needs_you: noteDeclaredStatus wins over the text heuristic and emits 'needs-help' (not inferred)", async () => {
   spawnFake(m, 't1');
   await waitForEvent(m, 't1', (e) => e.type === 'system');
@@ -437,6 +446,16 @@ it("declared blocked: falls through to 'idle', NOT 'needs-help' — a thread wai
   await idleP;
   m.off('needs-help', onNeedsHelp);
   expect(sawNeedsHelp).toBe(false);
+});
+
+it("declared idle (done or blocked) carries detail.declared === true — distinguishable from the undeclared branch's { declared: false }", async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  m.noteDeclaredStatus('t1', { state: 'done', summary: 'shipped it' });
+  const idleP = waitForManagerEvent(m, 'idle', 't1');
+  m.sendMessage('t1', 'All done here.');
+  const [detail] = await idleP;
+  expect(detail).toEqual({ declared: true });
 });
 
 it('a wake-tool call takes precedence over a non-needs_you declaration in the SAME turn: emits scheduled, not idle', async () => {

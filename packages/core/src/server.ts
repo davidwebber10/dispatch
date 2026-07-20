@@ -123,18 +123,26 @@ function wirePermissionMembrane(structuredManager: IStructuredManager, statusSer
   structuredManager.on('busy', (terminalId: string) => {
     statusService.markWorking(terminalId, 'Working…');
   });
-  structuredManager.on('idle', (terminalId: string) => {
+  structuredManager.on('idle', (terminalId: string, detail?: { declared: boolean }) => {
     statusService.markIdle(terminalId);
-    sessionService.noteTurnOutcome(terminalId, { summary: sessionService.lastAssistantTextPublic(terminalId), needsHelp: false, inferred: false });
+    // `declared` distinguishes an explicit report_status outcome from the undeclared
+    // fallback (nothing declared, heuristic said "not a question") — the latter is a GUESS,
+    // not a fact, so it's persisted as `inferred: true`. This is what keeps the
+    // declared-vs-inferred split (GET /api/state/status-quality) honest instead of ~100%
+    // by construction (see the review finding this fixes).
+    sessionService.noteTurnOutcome(terminalId, { summary: sessionService.lastAssistantTextPublic(terminalId), needsHelp: false, inferred: !detail?.declared });
     sessionService.noteAgentCompletion(terminalId);
   });
   // A turn that ended needing the human. Deliberately NOT routed through 'idle':
   // markIdle settles the thread to `waiting` and noteAgentCompletion tells the
   // coordinator the agent "✅ just finished" — both wrong for a thread that stopped
-  // to ask a question.
+  // to ask a question. It still needs its OWN escalation though — an agent's question
+  // must reach its coordinator (same principle as the `permission` listener above),
+  // just with correct "blocked, waiting" framing instead of a false completion note.
   structuredManager.on('needs-help', (terminalId: string, detail: { ask: string; summary: string; inferred: boolean }) => {
     statusService.markNeedsInput(terminalId, detail.inferred ? 'Asked a question' : detail.ask.slice(0, 120));
     sessionService.noteTurnOutcome(terminalId, { summary: detail.summary, needsHelp: true, inferred: detail.inferred });
+    sessionService.noteAgentNeedsHelp(terminalId, detail.ask);
   });
   // A wake-scheduler tool (ScheduleWakeup/CronCreate) ended the turn deliberately — the
   // thread is dormant, not finished. Deliberately does NOT call noteAgentCompletion: the

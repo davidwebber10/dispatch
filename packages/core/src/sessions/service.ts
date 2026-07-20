@@ -1008,6 +1008,29 @@ export class SessionService {
   }
 
   /**
+   * An agent's turn ended with a question — it stopped to ask (declared `needs_you`, or the
+   * undeclared text-heuristic backstop) rather than finishing. Push its own coordinator notice,
+   * distinct from noteAgentCompletion's: this must read as BLOCKED/waiting, never as done — the
+   * old shared path used to say "✅ … just finished a turn" here too, which was simply false for
+   * a thread stalled on a question, and left nobody able to answer it. No-op for a non-agent
+   * thread (or one with no coordinator), exactly like noteAgentCompletion.
+   */
+  noteAgentNeedsHelp(agentTerminalId: string, ask: string): void {
+    const agent = terminalsDb.getById(this.db, agentTerminalId);
+    if (!agent) return;
+    let cfg: Record<string, any> = {};
+    try { cfg = JSON.parse(agent.config || '{}'); } catch { /* default {} */ }
+    if (cfg.role !== 'agent') return;
+    const mission = typeof cfg.mission === 'string' && cfg.mission.trim() ? cfg.mission.trim() : null;
+    const note =
+      `⏸️ Your agent "${agent.label || 'agent'}"${mission ? ` (mission "${mission}")` : ''} ` +
+      `[agentId ${agentTerminalId}] is BLOCKED, waiting on you — it stopped its turn to ask:\n"${ask}"\n\n` +
+      `It cannot proceed until you reply. Read the full context with read_agent({ agentId: "${agentTerminalId}" }), ` +
+      `then answer via message_agent({ agentId: "${agentTerminalId}", text: "..." }).`;
+    this.notifyCoordinatorOfAgent(agentTerminalId, note);
+  }
+
+  /**
    * Persist how the last turn ended onto the terminal's config, so a card can show a real
    * outcome line ("✓ merged, 6 commits") instead of a thread name, and so the
    * declared-vs-inferred split is measurable off the DB.

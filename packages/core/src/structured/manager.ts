@@ -109,7 +109,13 @@ export type PermissionDecision =
  *   'event'  (terminalId, event)      — a stream event for the View/chat
  *   'session'(terminalId, sessionId)  — the external session/thread id to persist
  *   'permission'(terminalId, pending) — a gated tool/question awaiting a decision
- *   'idle'   (terminalId)             — a turn completed (thread is idle)
+ *   'idle'   (terminalId, detail)     — a turn completed (thread is idle);
+ *                                       detail: { declared: boolean } — whether the agent
+ *                                       explicitly declared this outcome (report_status
+ *                                       done/blocked) vs it being inferred (nothing declared,
+ *                                       and the closing-text heuristic didn't read as a
+ *                                       question). Codex has no declaration path yet, so its
+ *                                       manager always emits { declared: false }.
  *   'scheduled'(terminalId, activity) — turn ended by a wake-scheduler tool
  *   'needs-help'(terminalId, detail)  — turn ended needing the human (declared or inferred);
  *                                       detail: { ask: string; summary: string; inferred: boolean }
@@ -279,7 +285,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
         } else if (declared) {
           // `blocked` deliberately falls through to 'idle' — a thread waiting on another
           // agent still proceeds without the human, so it isn't a needs-help state.
-          this.emit('idle', terminalId);
+          this.emit('idle', terminalId, { declared: true });
         } else {
           // Nothing declared. Read the closing text ONCE — this walks the event ring,
           // so calling it in both the condition and the body would scan it twice.
@@ -289,7 +295,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
             // as a guess and so the false-positive rate stays measurable.
             this.emit('needs-help', terminalId, { ask: text, summary: text, inferred: true });
           } else {
-            this.emit('idle', terminalId);
+            this.emit('idle', terminalId, { declared: false });
           }
         }
 
