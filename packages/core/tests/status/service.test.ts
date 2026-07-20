@@ -235,6 +235,18 @@ describe('StatusService manual-override clearing (board state)', () => {
     expect(cfg.boardState?.override ?? null).toBeNull();
   });
 
+  // Finding 1 (Critical): the old condition only cleared the override on working/needs_input
+  // (resume/escalate) and missed the settle edge (markIdle) — a thread that finished a turn
+  // normally kept a stale override forever, frozen on the board despite a fresh lastOutcome.
+  // `apply()` clears on every call now; this proves the settle edge specifically.
+  it('clears a manual override on the settle edge too (markIdle) — a thread that finishes normally must not stay frozen', () => {
+    terminalsDb.updateConfig(db, 'term', { boardState: { override: 'complete' } });
+    const s = new StatusService(db, broadcaster);
+    s.markIdle('term');
+    const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
+    expect(cfg.boardState?.override ?? null).toBeNull();
+  });
+
   it('preserves acknowledgedAt while clearing the override', () => {
     terminalsDb.updateConfig(db, 'term', { boardState: { acknowledgedAt: '2020-01-01T00:00:00.000Z', override: 'needs_help' } });
     const s = new StatusService(db, broadcaster);
