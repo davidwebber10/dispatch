@@ -58,20 +58,23 @@ test('name sorts case-insensitively and treats digits numerically', () => {
   expect(ids(sortThreads(items, 'name'))).toEqual(['A', 'i2', 'i10']);
 });
 
-test('custom uses sortOrder', () => {
+test('custom preserves incoming array order even when sortOrder disagrees', () => {
+  // "Custom" means the arrangement already in the array — the daemon returns
+  // ORDER BY sort_order ASC, created_at ASC, and useTabs.reorder() maintains
+  // array order optimistically on drop without rewriting the sortOrder field.
+  // Re-deriving order from that field would ignore the optimistic update and
+  // snap a just-dropped row back until the next refetch (the Finding 1 bug).
   const items = [th({ id: 'c', sortOrder: 2 }), th({ id: 'a', sortOrder: 0 }), th({ id: 'b', sortOrder: 1 })];
-  expect(ids(sortThreads(items, 'custom'))).toEqual(['a', 'b', 'c']);
+  expect(ids(sortThreads(items, 'custom'))).toEqual(['c', 'a', 'b']);
 });
 
-test('custom falls back to createdAt when every sortOrder ties at 0', () => {
-  // sort_order is INTEGER DEFAULT 0 and the INSERT never sets it, so an
-  // untouched project has every row at 0 — this must still be deterministic.
+test('custom preserves array order regardless of createdAt', () => {
   const items = [
     th({ id: 'third', sortOrder: 0, createdAt: '2026-03-01T00:00:00.000Z' }),
     th({ id: 'first', sortOrder: 0, createdAt: '2026-01-01T00:00:00.000Z' }),
     th({ id: 'second', sortOrder: 0, createdAt: '2026-02-01T00:00:00.000Z' }),
   ];
-  expect(ids(sortThreads(items, 'custom'))).toEqual(['first', 'second', 'third']);
+  expect(ids(sortThreads(items, 'custom'))).toEqual(['third', 'first', 'second']);
 });
 
 test('unparseable and missing dates do not produce NaN comparisons', () => {

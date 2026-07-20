@@ -63,9 +63,12 @@ export function sortThreads(items: Terminal[], mode: ThreadSort): Terminal[] {
       return out.sort((a, b) => collator.compare(a.label, b.label) || byId(a, b));
     case 'custom':
     default:
-      // sort_order is DEFAULT 0 and never set on insert, so an untouched project ties
-      // every row at 0; createdAt is the tiebreak the server itself uses.
-      return out.sort((a, b) => a.sortOrder - b.sortOrder || ms(a.createdAt, Infinity) - ms(b.createdAt, Infinity) || byId(a, b));
+      // "Custom" means the arrangement already in the array: the daemon returns
+      // ORDER BY sort_order ASC, created_at ASC, and useTabs.reorder() maintains
+      // array order optimistically on drop. Re-deriving from the sortOrder FIELD
+      // here would ignore that optimistic update — reorder() never rewrites the
+      // field — and snap a just-dropped row back until the next refetch.
+      return out;
   }
 }
 

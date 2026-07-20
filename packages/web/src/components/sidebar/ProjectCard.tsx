@@ -432,8 +432,13 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
                 onReorder={(orderedIds) => {
                   // The dropped arrangement IS the user's custom order now; persisting it
                   // under any other mode would save an order they'd never see again.
+                  const prev = useListSort.getState().threadSort(session.id);
                   useListSort.getState().setThreadSort(session.id, 'custom');
-                  void useTabs.getState().reorder(session.id, orderedIds);
+                  void useTabs.getState().reorder(session.id, orderedIds).then((ok) => {
+                    // The server rejected the new order and reorder() restored server truth,
+                    // so the mode flip no longer corresponds to anything the user can see.
+                    if (!ok) useListSort.getState().setThreadSort(session.id, prev);
+                  });
                 }}
                 renderItem={(t) => (
                   <SwipeRow key={t.id} disabled={!isMobile}

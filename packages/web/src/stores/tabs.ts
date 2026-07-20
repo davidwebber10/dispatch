@@ -25,7 +25,7 @@ interface TabsState {
   markLoading: (id: string) => void;
   loadTabs: (projectId: string) => Promise<void>;
   consumeAutoName: (id: string) => { from: string; to: string } | null;
-  reorder: (projectId: string, orderedIds: string[]) => Promise<void>;
+  reorder: (projectId: string, orderedIds: string[]) => Promise<boolean>;
   setPinned: (id: string, pinned: boolean) => Promise<void>;  // pin/unpin a thread (persisted in config.pinned)
   setAlertsEnabled: (id: string, enabled: boolean) => Promise<void>; // per-thread push alerts (config.alertsEnabled)
   setActiveTab: (id: string) => void;                       // open + focus
@@ -178,8 +178,12 @@ export const useTabs = create<TabsState>((set, get) => ({
     // keep any rows not present in orderedIds (defensive) appended in their old order
     for (const t of current) if (!orderedIds.includes(t.id)) reordered.push(t);
     set({ byProject: { ...get().byProject, [projectId]: reordered } });
-    try { await api.reorderTerminals(projectId, orderedIds); }
-    catch (e) { console.error('useTabs.reorder: reorderTerminals failed, reverting', e); await get().loadTabs(projectId); }  // restore server truth on failure
+    try { await api.reorderTerminals(projectId, orderedIds); return true; }
+    catch (e) {
+      console.error('useTabs.reorder: reorderTerminals failed, reverting', e);
+      await get().loadTabs(projectId);  // restore server truth on failure
+      return false;
+    }
   },
   setPinned: async (id, pinned) => {
     const t = findTerminal(get().byProject, id);
