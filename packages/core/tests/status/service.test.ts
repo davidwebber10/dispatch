@@ -137,6 +137,51 @@ describe('StatusService Stop-hook pendingDeclaration fallback (PTY report_status
     expect(cfg.lastOutcome).toMatchObject({ needsHelp: true, inferred: false });
   });
 
+  // Parity with SessionService.noteTurnOutcome (structured path): a declared blocked/done PTY
+  // turn must persist the same `declaredState`/`blocker` keys, with the same semantics, so a
+  // board reading `declaredState` off `lastOutcome` doesn't have to care which transport wrote
+  // the row.
+  it("a declared 'blocked' outcome persists declaredState:'blocked' and the blocker text", () => {
+    terminalsDb.updateConfig(db, 'term', { pendingDeclaration: { state: 'blocked', summary: 'waiting on another agent', blocker: 'agent X' } });
+    new StatusService(db, broadcaster).ingest('claude', 'term', stop);
+    const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
+    expect(cfg.lastOutcome).toMatchObject({ declaredState: 'blocked', blocker: 'agent X', inferred: false });
+  });
+
+  it("a declared 'done' outcome persists declaredState:'done' and no blocker key", () => {
+    terminalsDb.updateConfig(db, 'term', { pendingDeclaration: { state: 'done', summary: 'shipped it' } });
+    new StatusService(db, broadcaster).ingest('claude', 'term', stop);
+    const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
+    expect(cfg.lastOutcome).toMatchObject({ declaredState: 'done', inferred: false });
+    expect(cfg.lastOutcome.blocker).toBeUndefined();
+  });
+
+  it("a declared 'needs_you' outcome persists NO declaredState (still settles needs_input, unchanged)", () => {
+    terminalsDb.updateConfig(db, 'term', { pendingDeclaration: { state: 'needs_you', summary: 'need input', ask: 'which?' } });
+    new StatusService(db, broadcaster).ingest('claude', 'term', stop);
+    expect(terminalsDb.getById(db, 'term')?.status).toBe('needs_input');
+    const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
+    expect(cfg.lastOutcome.declaredState).toBeUndefined();
+  });
+
+  it('a Stop with no pendingDeclaration at all persists no declaredState (undeclared/inferred outcome unaffected)', () => {
+    new StatusService(db, broadcaster).ingest('claude', 'term', stop);
+    expect(terminalsDb.getById(db, 'term')?.status).toBe('waiting');
+    // No pendingDeclaration means consumePendingDeclaration returns null and lastOutcome is
+    // never written from this path at all — nothing here regresses the pre-existing behaviour.
+    const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
+    expect(cfg.lastOutcome).toBeUndefined();
+  });
+
+  it("an empty or whitespace-only blocker string omits the key rather than persisting ''", () => {
+    terminalsDb.updateConfig(db, 'term', { pendingDeclaration: { state: 'blocked', summary: 'waiting', blocker: '   ' } });
+    new StatusService(db, broadcaster).ingest('claude', 'term', stop);
+    const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
+    expect(cfg.lastOutcome.declaredState).toBe('blocked');
+    expect(cfg.lastOutcome.blocker).toBeUndefined();
+    expect('blocker' in cfg.lastOutcome).toBe(false);
+  });
+
   it('does not consult pendingDeclaration on a non-Stop event', () => {
     terminalsDb.updateConfig(db, 'term', { pendingDeclaration: { state: 'needs_you', summary: 'x' } });
     new StatusService(db, broadcaster).ingest('claude', 'term', { hook_event_name: 'PreToolUse', session_id: 'sid-1', tool_name: 'Bash' });

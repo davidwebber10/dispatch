@@ -75,10 +75,20 @@ export class StatusService {
    * fallback) and, if present: maps it to a status — `needs_you` wins (needs_input);
    * `done`/`blocked` both settle idle, parity with the structured `result` handler, which
    * explicitly falls `blocked` through to idle (a thread waiting on another agent still
-   * proceeds without the human) — stamps `config.lastOutcome` the same shape
+   * proceeds without the human) — stamps `config.lastOutcome` the SAME shape
    * SessionService.noteTurnOutcome writes for the structured path (a declared PTY turn is
-   * always `inferred: false`), and CLEARS the declaration so it cannot leak into the next
-   * turn. Returns null when there's nothing pending (the common case for most Stop events).
+   * always `inferred: false`), including its two optional keys:
+   *   declaredState?: 'done' | 'blocked' — set only when `decl.state` is 'done' or 'blocked';
+   *                              absent for a 'needs_you' declaration (which settles
+   *                              needs_input below and never reaches an idle outcome), matching
+   *                              the structured path where a declared needs_you never reaches
+   *                              this code either.
+   *   blocker?: string         — the agent's own text for what it's waiting on, present only
+   *                              alongside `declaredState === 'blocked'`, and only when
+   *                              `decl.blocker` is non-empty after trimming (an empty or
+   *                              whitespace-only string omits the key, never persists '').
+   * and CLEARS the declaration so it cannot leak into the next turn. Returns null when
+   * there's nothing pending (the common case for most Stop events).
    */
   private consumePendingDeclaration(terminal: terminalsDb.TerminalRow, terminalId: string): { status: ThreadStatus; activity?: string } | null {
     let cfg: Record<string, any> = {};
@@ -88,10 +98,14 @@ export class StatusService {
 
     delete cfg.pendingDeclaration; // per-turn — must not leak into the next Stop
     const needsHelp = decl.state === 'needs_you';
+    const declaredState = decl.state === 'done' || decl.state === 'blocked' ? decl.state : undefined;
+    const blocker = declaredState === 'blocked' && typeof decl.blocker === 'string' && decl.blocker.trim() ? decl.blocker : undefined;
     cfg.lastOutcome = {
       summary: String(decl.summary ?? '').slice(0, 400),
       needsHelp,
       inferred: false,
+      ...(declaredState ? { declaredState } : {}),
+      ...(blocker ? { blocker } : {}),
       at: new Date().toISOString(),
     };
     try { terminalsDb.updateConfig(this.db, terminalId, cfg); } catch { /* best effort */ }
