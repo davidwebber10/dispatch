@@ -45,7 +45,7 @@ describe('wireThreadSettledPush — per-thread gate + template copy', () => {
     seedThread('t2', { alertsEnabled: true });
     statusService.markIdle('t2');
     expect(notifyThread).toHaveBeenCalledWith({
-      terminalId: 't2', sessionId: 's1', title: 'Claude Code t2', body: 'Completed its task',
+      terminalId: 't2', sessionId: 's1', title: 'proj · Claude Code t2', body: 'Completed its task',
     });
   });
 
@@ -53,7 +53,16 @@ describe('wireThreadSettledPush — per-thread gate + template copy', () => {
     seedThread('t3', { alertsEnabled: true });
     statusService.markNeedsInput('t3');
     expect(notifyThread).toHaveBeenCalledWith({
-      terminalId: 't3', sessionId: 's1', title: 'Claude Code t3', body: 'Is asking a question',
+      terminalId: 't3', sessionId: 's1', title: 'proj · Claude Code t3', body: 'Is asking a question',
+    });
+  });
+
+  it('falls back to just the thread label when the project has no name', () => {
+    seedThread('t6', { alertsEnabled: true });
+    db.prepare('UPDATE sessions SET name = ? WHERE id = ?').run('', 's1');
+    statusService.markIdle('t6');
+    expect(notifyThread).toHaveBeenCalledWith({
+      terminalId: 't6', sessionId: 's1', title: 'Claude Code t6', body: 'Completed its task',
     });
   });
 
