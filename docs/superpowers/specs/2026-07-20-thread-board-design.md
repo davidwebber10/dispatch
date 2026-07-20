@@ -181,6 +181,13 @@ Each declared state maps to exactly one column:
 `blocked` belongs in Working, not a column of its own: something waiting on another
 agent *will* proceed without you, which is the definition of Working.
 
+**Wiring constraint — the declaration cannot set the status directly.** The tool fires
+*during* a turn; the turn then ends and `manager.ts`'s `result` handler emits `idle`,
+which would immediately overwrite anything the agent declared. So the declaration is
+stored on the live session exactly as `session.lastToolUse` already is, and the turn-end
+handler *consults* it before deciding which event to emit — same lifecycle, reset per
+turn. Applying it eagerly would be a race the agent always loses.
+
 This is load-bearing for two reasons beyond accuracy:
 
 - **Complete cannot be populated without it.** The daemon cannot distinguish "I finished
@@ -232,11 +239,23 @@ a fourth.
 
 ## Phase 2 — the board
 
-### Data
+### Data — all projects, filterable
 
-New cross-project aggregation. Nothing today spans projects — `useRenderVals()` is
-scoped to `activeId` and coordinator fields are project-gated. This is a new data path,
-not a new view over an existing one.
+The board spans **every project**, with header chips to scope it down (`All projects`
+default). Nothing today aggregates this way — `useRenderVals()` is hard-scoped to
+`activeId` and coordinator fields are project-gated — so this is a genuinely new data
+path, not a new view over existing state. It also means live status subscriptions across
+every project rather than only the open one.
+
+The scale objection does not apply to this column set: **only Resting grows with project
+count, and Resting is defined as the column that never needs reading.** Needs Help,
+Complete and Working are bounded by what is actually happening, so they stay small no
+matter how many projects exist. Three Needs Help across everything is still three.
+
+The asymmetry settles it: a global board with a filter gives you project-level for free,
+while a project board cannot be made global without building this path anyway. The
+honest cost is that the sidebar's existing per-project status dot (`projectIndicator`)
+already provides global awareness in two steps; this buys removing the second step.
 
 ### Desktop
 
@@ -267,14 +286,15 @@ interaction, which is the one thing that matters when you pull out your phone to
 
 ### Placement, and the view-mode setting
 
-The two surfaces differ because only one of them is forced to choose.
+The board is a **top-level mode on both surfaces**, not a pane. Two modes, one mental
+model, everywhere: **Threads** (the current project/thread layout) or **Board**.
 
-**Desktop — no switch.** There is room for everything, so the board is simply another
-pane you can open alongside a chat, rather than a mode that replaces your threads. It
-opens in the `main` slot the same way any tab does, and can sit beside a running thread
-in a split. Nothing about the existing desktop layout changes.
+**Desktop — Board replaces the sidebar and the main column.** Full bleed: no project
+tree, no tab bar. Projects do not disappear as a concept — they become **filter chips**
+in the board header (`All projects` by default). You still have projects; there is just
+one board.
 
-**Mobile — a two-mode picker**, in Settings → Appearance:
+**Mobile — the same two modes**, selected in Settings → Appearance:
 
 | Mode | What it is |
 | --- | --- |
@@ -301,9 +321,8 @@ The setting is mobile-only and persists like the other `useSettings` preferences
   mechanism and is deliberately narrower — it offers three targets, not four, because
   Working is an observed fact rather than a judgement.
 - Replacing the existing per-project Work rail. The board is additive; the rail stays.
-- Replacing the existing mobile Threads view. It remains the default mode.
+- Replacing the existing Threads view on either surface. It remains the default mode.
 - A third *Inbox* mobile mode — Board with Working and Resting collapsed already is it.
-- A desktop view-mode setting. Desktop opens the board as a pane; it never replaces.
 - Any WIP limits, swimlanes, or sprint concepts. This is a status view, not a planning tool.
 
 ---
