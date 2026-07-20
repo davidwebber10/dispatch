@@ -17,6 +17,15 @@ export const ACCENTS = [
 
 export type Density = 'compact' | 'cozy' | 'roomy';
 
+/**
+ * How mobile renders the thread list: `'threads'` is the existing projects → threads
+ * drill-down (default); `'board'` is the cross-project board bucketed by what needs you.
+ * Mobile-only, per-device (localStorage, no server sync) — see
+ * docs/superpowers/specs/2026-07-20-thread-board-design.md "Placement, and the view-mode
+ * setting".
+ */
+export type MobileViewMode = 'threads' | 'board';
+
 interface SettingsState {
   fontSize: number;
   scrollback: number;
@@ -31,6 +40,7 @@ interface SettingsState {
   sttProvider: string;
   sttModel: string;
   sttSecretName: string;
+  mobileViewMode: MobileViewMode;
   setCoordinatorName: (name: string) => void;
   setFontSize: (n: number) => void;
   setScrollback: (n: number) => void;
@@ -44,6 +54,7 @@ interface SettingsState {
   setSttProvider: (id: string) => void;
   setSttModel: (id: string) => void;
   setSttSecretName: (name: string) => void;
+  setMobileViewMode: (m: MobileViewMode) => void;
 }
 
 function load<T>(key: string, fallback: T): T {
@@ -83,6 +94,7 @@ export const useSettings = create<SettingsState>((set) => ({
   sttProvider: load('dispatch:sttProvider', 'groq'),
   sttModel: load('dispatch:sttModel', 'whisper-large-v3-turbo'),
   sttSecretName: load('dispatch:sttSecretName', ''),
+  mobileViewMode: load<MobileViewMode>('dispatch:mobileViewMode', 'threads'),
   setFontSize: (n) => { const fontSize = Math.max(9, Math.min(22, Math.round(n))); save('dispatch:fontSize', fontSize); set({ fontSize }); },
   setScrollback: (n) => { const scrollback = Math.max(1000, Math.min(100000, Math.round(n))); save('dispatch:scrollback', scrollback); set({ scrollback }); },
   setSidebarFontSize: (n) => { const sidebarFontSize = Math.max(10, Math.min(18, Math.round(n))); save('dispatch:sidebarFontSize', sidebarFontSize); set({ sidebarFontSize }); },
@@ -95,6 +107,7 @@ export const useSettings = create<SettingsState>((set) => ({
   setSttProvider: (id) => { save('dispatch:sttProvider', id); set({ sttProvider: id }); },
   setSttModel: (id) => { save('dispatch:sttModel', id); set({ sttModel: id }); },
   setSttSecretName: (name) => { save('dispatch:sttSecretName', name); set({ sttSecretName: name }); },
+  setMobileViewMode: (m) => { save('dispatch:mobileViewMode', m); set({ mobileViewMode: m }); },
   setPushEnabled: async (b) => {
     if (b) {
       const r = await (await import('../lib/push')).enablePush();
