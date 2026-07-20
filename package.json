@@ -1,6 +1,6 @@
 {
   "name": "dispatch",
-  "version": "2.5.3",
+  "version": "2.5.4",
   "private": true,
   "description": "Control your coding agents (Claude Code, Codex) and terminals from any browser or phone.",
   "type": "module",
