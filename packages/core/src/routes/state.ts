@@ -155,6 +155,38 @@ export function createStateRouter(db: Database.Database): Router {
     res.json(await platform.tailscaleStatus());
   });
 
+  // GET /api/state/status-quality — how often agents declare their end state (report_status)
+  // versus how often the turn-end heuristic had to guess. `config.lastOutcome.inferred` means
+  // exactly "the agent did NOT declare" (set in sessions/service.ts#noteTurnOutcome) — it is
+  // orthogonal to `needsHelp`, which is which end state it was. So `declared`/`inferred` here
+  // IS the declaration-compliance rate, and `needsHelp*` is the heuristic's exposure specifically
+  // on the needs-help path (its false-positive surface), a different question. Phase 2 (the
+  // board) leans on needs-help being trustworthy; this is how we find out before building on it.
+  // Reads every terminal's config rather than pre-filtering with SQL `LIKE` (which would also
+  // match a config that merely mentions the string "lastOutcome" in unrelated text) — a row only
+  // counts when `lastOutcome` parses out as a genuine object. Malformed config JSON is skipped,
+  // never thrown. Terminals that never ran a turn (no `lastOutcome` at all) count in neither
+  // bucket — they aren't evidence about compliance.
+  router.get('/status-quality', (_req, res) => {
+    const rows = db.prepare('SELECT config FROM terminals').all() as { config: string | null }[];
+    let declared = 0, inferred = 0, needsHelpDeclared = 0, needsHelpInferred = 0;
+    for (const r of rows) {
+      if (!r.config) continue;
+      let cfg: any;
+      try { cfg = JSON.parse(r.config); } catch { continue; }
+      const outcome = cfg?.lastOutcome;
+      if (!outcome || typeof outcome !== 'object') continue;
+      if (outcome.inferred) {
+        inferred++;
+        if (outcome.needsHelp) needsHelpInferred++;
+      } else {
+        declared++;
+        if (outcome.needsHelp) needsHelpDeclared++;
+      }
+    }
+    res.json({ declared, inferred, total: declared + inferred, needsHelpDeclared, needsHelpInferred });
+  });
+
   // GET /api/state/host — what can this daemon do for the browser asking?
   // `canReveal` is true only when this platform has a native file manager AND the browser is
   // genuinely on this machine: a loopback SOCKET address (never req.ip), a loopback Host header,
