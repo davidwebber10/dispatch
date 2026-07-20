@@ -37,6 +37,7 @@ import { useGroups } from './components/panes/store';
 import { useViewing } from './stores/viewing';
 import { useUI } from './stores/ui';
 import { parseThreadPath } from './lib/deepLink';
+import { readPendingIntent } from './lib/pendingIntent';
 
 export default function App() {
   const activeTerminalId = useTabs((s) => s.activeTabId);
@@ -67,10 +68,23 @@ export default function App() {
     void useUpdate.getState().load();
     void useHost.getState().load();
     void useAgents.getState().loadSchedules();
+    // A notification tap parks its target in the SW; drain it here. This is the
+    // path that actually carries the tap on iOS, where the frozen page misses the
+    // postMessage entirely. Draining on every foreground (not useResume, whose 8s
+    // threshold would swallow a tap made right after backgrounding) catches the
+    // resume case; the call below catches a cold launch.
+    const drainIntent = () => {
+      void readPendingIntent().then((i) => { if (i) useUI.getState().requestOpenThread(i); });
+    };
+    drainIntent();
+    const onVisible = () => { if (!document.hidden) drainIntent(); };
+    document.addEventListener('visibilitychange', onVisible);
+
     const onSwMessage = (e: MessageEvent) => {
       const d = e.data as { type?: string; sessionId?: string; terminalId?: string } | null;
       if (d?.type === 'open-thread' && d.sessionId && d.terminalId) {
         useUI.getState().requestOpenThread({ sessionId: d.sessionId, terminalId: d.terminalId });
+        void readPendingIntent(); // consume the parked copy so it can't fire twice
       }
     };
     navigator.serviceWorker?.addEventListener('message', onSwMessage);
@@ -87,7 +101,7 @@ export default function App() {
       },
     });
     sockRef.current = sock;
-    return () => { sock.close(); sockRef.current = null; navigator.serviceWorker?.removeEventListener('message', onSwMessage); };
+    return () => { sock.close(); sockRef.current = null; document.removeEventListener('visibilitychange', onVisible); navigator.serviceWorker?.removeEventListener('message', onSwMessage); };
   }, []);
 
   useEffect(() => {

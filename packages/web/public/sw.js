@@ -2,15 +2,20 @@
 // Deliberately conservative because the origin sits behind Cloudflare Access:
 // API / WebSocket / Access / upload paths are never intercepted, and the HTML
 // shell is revalidated over the network so an expired session re-authenticates.
-const VERSION = 'dispatch-v4';
+const VERSION = 'dispatch-v5';
 const CACHE = `dispatch-${VERSION}`;
+// Durable hand-off for a notification tap. Kept OUT of the versioned shell cache
+// so an activate sweep can't discard a tap that landed mid-update.
+// Mirrored by src/lib/pendingIntent.ts — change both together.
+const INTENT_CACHE = 'dispatch-intent';
+const INTENT_URL = '/__pending-thread';
 
 self.addEventListener('install', () => self.skipWaiting());
 
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)));
+    await Promise.all(keys.filter((k) => k !== CACHE && k !== INTENT_CACHE).map((k) => caches.delete(k)));
     await self.clients.claim();
   })());
 });
@@ -75,11 +80,22 @@ self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const { terminalId, sessionId } = event.notification.data || {};
   event.waitUntil((async () => {
+    // Park the target BEFORE touching any client. postMessage is fire-and-forget:
+    // if the page isn't listening at this instant the intent is discarded, not
+    // queued — and on iOS a backgrounded PWA is frozen, so that is the norm rather
+    // than a rare race. The app drains this on mount and on every foreground.
+    if (terminalId && sessionId) {
+      try {
+        const cache = await caches.open(INTENT_CACHE);
+        await cache.put(INTENT_URL, new Response(JSON.stringify({ terminalId, sessionId, ts: Date.now() })));
+      } catch { /* the message / deep-link paths below still cover a live client */ }
+    }
     const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     const existing = all.find((c) => c.url.startsWith(self.location.origin));
     if (existing) {
       await existing.focus();
-      // Warm path: the running app navigates via the open-thread intent.
+      // Fast path for a client that IS awake and listening — it navigates without
+      // waiting for the visibilitychange drain. Harmless if it lands nowhere.
       if (terminalId && sessionId) existing.postMessage({ type: 'open-thread', terminalId, sessionId });
       return;
     }
