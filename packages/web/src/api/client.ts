@@ -110,6 +110,11 @@ export const api = {
     req<void>(`/api/sessions/${sessionId}/terminals/reorder`, { method: 'POST', body: body({ order }) }),
   moveTerminal: (id: string, sessionId: string) =>
     req<Terminal>(`/api/terminals/${id}/move`, { method: 'POST', body: body({ sessionId }) }),
+  // Board-only state: acknowledge a finished thread, or manually correct its derived column.
+  // 'working' is not an offerable override target — the daemon rejects it (400): the other
+  // three are judgements the human may make, but working is an observed fact.
+  setBoardState: (terminalId: string, patch: { acknowledged?: boolean; override?: 'needs_help' | 'complete' | 'resting' | null }) =>
+    req<void>(`/api/terminals/${terminalId}/board`, { method: 'POST', body: body(patch) }),
 
   listProviders: () => req<Provider[]>('/api/providers'),
   getGitInfo: (sessionId: string) => req<{ branch: string | null }>(`/api/sessions/${sessionId}/git`),

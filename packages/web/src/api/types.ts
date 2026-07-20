@@ -1,6 +1,10 @@
 export type TerminalType = 'claude-code' | 'codex' | 'shell' | 'browser' | 'notes' | 'file';
 export type SessionStatus = 'working' | 'waiting' | 'needs_input' | 'done';
-export type TerminalStatus = 'working' | 'waiting' | 'needs_input' | 'error';
+// The backend genuinely persists AND broadcasts 'scheduled' (a wake-scheduler tool ended the
+// turn — see structured/manager.ts's WAKE_TOOLS) and 'queued' (accepted but not yet launched —
+// createQueuedTerminal) alongside the original four. `terminals.status` is a free-form TEXT
+// column with no CHECK constraint, so these round-trip fine; this type just used to lag reality.
+export type TerminalStatus = 'working' | 'waiting' | 'needs_input' | 'error' | 'scheduled' | 'queued';
 
 export interface Session {
   id: string;
@@ -33,6 +37,38 @@ export interface Terminal {
   config: Record<string, unknown>;
   archivedAt: string | null;
   sortOrder: number;
+}
+
+/**
+ * How the last turn ended, stamped by the daemon on turn-end — declared via the
+ * `report_status` tool, or inferred by the turn-end question heuristic when nothing was
+ * declared (see docs/superpowers/specs/2026-07-20-thread-board-design.md, Phase 1). Rides in
+ * `Terminal.config.lastOutcome`; absent entirely on a terminal that has never finished a turn —
+ * that absence is itself meaningful (no evidence of finishing), not a default to paper over.
+ * Parse it through `readLastOutcome` (components/board/boardColumn.ts) rather than casting
+ * `t.config.lastOutcome` inline.
+ */
+export interface TerminalLastOutcome {
+  summary: string;
+  needsHelp: boolean;
+  inferred: boolean;
+  at: string;
+}
+
+/**
+ * Board-only state: whether the human has acknowledged a finished thread, and any manual
+ * correction of its derived column. Rides in `Terminal.config.boardState`; absent on every
+ * terminal the board hasn't touched yet (or that predates it), which must behave as "not
+ * acknowledged, no override" — never as an error. `override` deliberately excludes 'working':
+ * the other three are judgements the human may make, but working is an observed fact (see the
+ * spec's "Manual override" section). Real activity clears an active override server-side
+ * (status/service.ts's `apply`), so the client only ever needs to honour whatever is on the row.
+ * Parse it through `readBoardState` (components/board/boardColumn.ts) rather than casting
+ * `t.config.boardState` inline.
+ */
+export interface TerminalBoardState {
+  acknowledgedAt?: string;
+  override?: 'needs_help' | 'complete' | 'resting' | null;
 }
 
 export interface Provider { name: string; displayName: string; }
