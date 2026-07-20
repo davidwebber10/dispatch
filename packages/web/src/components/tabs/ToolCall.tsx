@@ -47,9 +47,13 @@ export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?
             {tool.toolDetail}
           </span>
         )}
+        {/* marginLeft:auto, not a flex-grow sibling — only the toolDetail span grows, and plenty
+            of tools (Glob, TodoWrite, most MCP calls) populate no detail at all. Without this the
+            status would sit flush against the name on those rows while right-aligning on others,
+            so the column would visibly wander down a list of mixed tools. */}
         {result
-          ? <span style={{ flexShrink: 0, fontSize: 11, color: err ? 'var(--color-status-red)' : 'var(--color-text-secondary)' }}>{err ? 'error' : `${lines} line${lines !== 1 ? 's' : ''}`}</span>
-          : <span className="chat-shimmer" style={{ flexShrink: 0, fontSize: 11 }}>running…</span>}
+          ? <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 11, color: err ? 'var(--color-status-red)' : 'var(--color-text-secondary)' }}>{err ? 'error' : `${lines} line${lines !== 1 ? 's' : ''}`}</span>
+          : <span className="chat-shimmer" style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 11 }}>running…</span>}
       </button>
       {open && expandable && (
         <div style={{ border: '1px solid var(--color-border)', borderRadius: 8, background: 'var(--color-elevated)', overflow: 'hidden', marginTop: 4 }}>

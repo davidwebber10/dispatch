@@ -36,3 +36,22 @@ test('renders the collapsed row without card chrome', () => {
   expect(row.style.border).toBe('');
   expect(row.style.background).toBe('');
 });
+
+// Only the toolDetail span flex-grows, but plenty of tools populate no detail — so the status
+// has to right-align on its own margin or the column wanders down a list of mixed tools. jsdom
+// computes no layout, so this pins the mechanism rather than the rendered geometry.
+test.each([
+  ['with a toolDetail', 'pnpm test'],
+  ['without a toolDetail', undefined],
+])('right-aligns the status %s', (_label, toolDetail) => {
+  const tool = { kind: 'tool', toolId: 'x1', toolName: 'Bash', toolTitle: 'Bash', toolDetail, toolInput: 'x' } as any;
+  const result = { kind: 'tool-result', toolId: 'x1', text: 'ok\nok' } as any;
+  render(<ToolCall tool={tool} result={result} />);
+  expect((screen.getByText('2 lines') as HTMLElement).style.marginLeft).toBe('auto');
+});
+
+test('right-aligns the running indicator too (no result yet)', () => {
+  const tool = { kind: 'tool', toolId: 'x1', toolName: 'Bash', toolTitle: 'Bash', toolInput: 'x' } as any;
+  render(<ToolCall tool={tool} />);
+  expect((screen.getByText('running…') as HTMLElement).style.marginLeft).toBe('auto');
+});
