@@ -29,3 +29,13 @@ function createPersistedState<T>() {
 export const useToolExpanded = createPersistedState<boolean>();
 /** Which tab (Input/Output) a tool call's generic shelf has selected, keyed by tool id. */
 export const useToolTab = createPersistedState<'input' | 'output'>();
+/**
+ * Tri-state expansion for a ToolGroup (a run of consecutive same-tool calls), keyed by
+ * group id. `undefined` = auto (expanded while any member is running, collapsed once the
+ * run settles) — the untouched default. `true`/`false` = the reader has explicitly
+ * toggled the group, and that choice wins permanently thereafter, even across the
+ * running→settled transition. A plain boolean (as `useToolExpanded` stores) can't
+ * represent "untouched," which is why this is a separate persisted map rather than
+ * reusing that one.
+ */
+export const useToolGroupExpanded = createPersistedState<boolean | undefined>();

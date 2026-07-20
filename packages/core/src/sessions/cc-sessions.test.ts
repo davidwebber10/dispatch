@@ -73,4 +73,52 @@ describe('resumeAdvice', () => {
   it('returns null when the transcript is missing', () => {
     expect(resumeAdvice(workDir, 'nope', NOW)).toBeNull();
   });
+
+  // Boundary precision: the gate is `>=` on both dimensions, not `>`. Every other test in
+  // this file sits far from the boundary (3h/BIG vs. 10m/SMALL), so accidentally flipping
+  // either `>=` to `>` would still leave them all green.
+  describe('boundary precision (the gate is >=, not >)', () => {
+    it('prompts when age is EXACTLY 70 minutes and tokens EXACTLY 100,000', () => {
+      const t = NOW - 70 * 60_000;
+      writeTranscript('boundary-both', [assistant(new Date(t).toISOString(), { input_tokens: 100_000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 })]);
+      expect(resumeAdvice(workDir, 'boundary-both', NOW)!.shouldPrompt).toBe(true);
+    });
+
+    it('does not prompt when age is a hair under 70 minutes (tokens still at the threshold)', () => {
+      const t = NOW - (70 * 60_000 - 1);
+      writeTranscript('boundary-age-under', [assistant(new Date(t).toISOString(), { input_tokens: 100_000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 })]);
+      expect(resumeAdvice(workDir, 'boundary-age-under', NOW)!.shouldPrompt).toBe(false);
+    });
+
+    it('does not prompt when tokens are a hair under 100,000 (age still at the threshold)', () => {
+      const t = NOW - 70 * 60_000;
+      writeTranscript('boundary-tok-under', [assistant(new Date(t).toISOString(), { input_tokens: 99_999, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 })]);
+      expect(resumeAdvice(workDir, 'boundary-tok-under', NOW)!.shouldPrompt).toBe(false);
+    });
+  });
+
+  // The two threshold env vars must be read INDEPENDENTLY. The existing "honors the CLI
+  // threshold env vars" test above sets BOTH at once, so a bug that read the SAME var for
+  // both thresholds would still pass it.
+  describe('threshold env vars are read independently', () => {
+    it('honors the age threshold env var alone — the token threshold still uses its 100k default', () => {
+      // Aged past a tiny custom age threshold, but nowhere near the real 100k token default.
+      writeTranscript('s6', [assistant(TEN_MINUTES_AGO, SMALL)]);
+      process.env.CLAUDE_CODE_RESUME_THRESHOLD_MINUTES = '5';
+      // CLAUDE_CODE_RESUME_TOKEN_THRESHOLD deliberately left unset.
+      // A bug that reused this var for the token threshold too (5) would flip this to true,
+      // since SMALL's 1,500 tokens clears 5 easily.
+      expect(resumeAdvice(workDir, 's6', NOW)!.shouldPrompt).toBe(false);
+    });
+
+    it('honors the token threshold env var alone — the age threshold still uses its 70m default', () => {
+      // Well past the tiny custom token threshold, but nowhere near the real 70m age default.
+      writeTranscript('s7', [assistant(TEN_MINUTES_AGO, BIG)]);
+      process.env.CLAUDE_CODE_RESUME_TOKEN_THRESHOLD = '5';
+      // CLAUDE_CODE_RESUME_THRESHOLD_MINUTES deliberately left unset.
+      // A bug that reused this var for the age threshold too (5) would flip this to true,
+      // since 10 minutes clears an age threshold of 5 easily.
+      expect(resumeAdvice(workDir, 's7', NOW)!.shouldPrompt).toBe(false);
+    });
+  });
 });

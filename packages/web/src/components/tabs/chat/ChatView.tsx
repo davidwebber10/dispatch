@@ -21,7 +21,7 @@ import { ChatImage } from '../../ChatImage';
 import { ContextIndicator } from '../../ContextIndicator';
 import { ToolCall, ToolResult } from '../ToolCall';
 import { useUI } from '../../../stores/ui';
-import { useToolExpanded } from '../../../hooks/useToolUIState';
+import { useToolGroupExpanded } from '../../../hooks/useToolUIState';
 
 // Anthropic-vision-supported image types. Only these become a REAL base64 image block
 // the model SEES; anything else (incl. SVG, which the model can't read) falls back to
@@ -56,6 +56,17 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   // storage: a later resume of the same thread (older and larger still) should ask again.
   const [advice, setAdvice] = useState<{ ageMinutes: number; contextTokens: number } | null>(null);
   const [adviceError, setAdviceError] = useState<string | null>(null);
+  // Per-thread "Resume full session" dismissals. Also NOT persisted (same reasoning as
+  // `advice` above), but keyed by terminal id so it survives an in-place terminalId switch:
+  // PaneTree/PaneFrame render <TabHost terminalId={tabId}/> with no `key`, so dismissing on
+  // thread A, switching to B, and switching back to A reuses this SAME ChatView instance —
+  // without remembering A's dismissal here, the effect below would just re-fetch and show
+  // the card again.
+  const [dismissedFullIds, setDismissedFullIds] = useState<Set<string>>(new Set());
+  // Always-current terminalId, for the compact staleness guard in onSummarize below — that
+  // callback can fire (a rejection) long after a later render has replaced the closure that
+  // registered it, once the reader has already switched to a different thread.
+  const terminalIdRef = useRef(terminalId); terminalIdRef.current = terminalId;
 
   useEffect(() => {
     // Clear any stale advice/error from a PREVIOUS terminalId before anything else — PaneTree/
@@ -65,13 +76,13 @@ export function ChatView({ terminalId }: { terminalId: string }) {
     // B's identity until B's own advice happened to resolve with shouldPrompt: true.
     setAdvice(null);
     setAdviceError(null);
-    if (resumeAdviceDismissed) return;
+    if (resumeAdviceDismissed || dismissedFullIds.has(terminalId)) return;
     let cancelled = false;
     api.getResumeAdvice(terminalId)
       .then((a) => { if (!cancelled && a.shouldPrompt) setAdvice({ ageMinutes: a.ageMinutes, contextTokens: a.contextTokens }); })
       .catch(() => { /* advisory only — never block the chat on it */ });
     return () => { cancelled = true; };
-  }, [terminalId, resumeAdviceDismissed]);
+  }, [terminalId, resumeAdviceDismissed, dismissedFullIds]);
 
   // Reverse-infinite-scroll: fetch the next older page once the reader nears the top.
   // Mirrors ConversationView's own `scrollTop < 120` threshold; MessageScroller.Viewport's
@@ -226,6 +237,49 @@ export function ChatView({ terminalId }: { terminalId: string }) {
         </MessageScroller.Root>
       </MessageScroller.Provider>
 
+      {/* Dismissible "resume from summary?" card, above the composer (not inside it — see
+          ResumeAdviceCard's doc comment for why this exists at all). */}
+      {(adviceError || advice) && (
+        <div style={{ flexShrink: 0, padding: '10px 14px 0' }}>
+          {adviceError && (
+            <div style={{ maxWidth: 768, margin: '0 auto 8px', font: '400 12px var(--font-sans)', color: 'var(--color-status-red)' }}>
+              Couldn't summarize: {adviceError}
+            </div>
+          )}
+          {advice && (
+            <ResumeAdviceCard
+              ageMinutes={advice.ageMinutes}
+              contextTokens={advice.contextTokens}
+              onSummarize={() => {
+                // Direct call, not useStructuredChat's fire-and-forget `compact()`: a thread
+                // whose structured session isn't live answers 409, and that must be visible
+                // rather than looking like a summarization that quietly did nothing.
+                setAdvice(null);
+                setAdviceError(null);
+                // Staleness guard: capture the terminal this request is FOR, and compare
+                // against the always-current terminalIdRef when the response lands — the
+                // daemon can answer (e.g. a 409) well after the reader has switched to a
+                // different thread, and that error must not render under the new thread's
+                // identity.
+                const requestedTerminalId = terminalId;
+                api.compactTerminal(terminalId).catch((e: any) => {
+                  if (terminalIdRef.current !== requestedTerminalId) return;
+                  setAdviceError(e?.message ?? String(e));
+                });
+              }}
+              onFull={() => {
+                setAdvice(null);
+                // Remember per-thread, so switching away and back (in place — see the
+                // dismissedFullIds doc comment above) doesn't bring the card back for THIS
+                // resume. Not persisted: a later resume of the same thread should ask again.
+                setDismissedFullIds((prev) => (prev.has(terminalId) ? prev : new Set(prev).add(terminalId)));
+              }}
+              onNever={() => { setResumeAdviceDismissed(true); setAdvice(null); }}
+            />
+          )}
+        </div>
+      )}
+
       {/* Composer (drop a file anywhere on it, or paste — routes through attachFiles) */}
       <div
         onDragOver={onDragOver}
@@ -290,28 +344,6 @@ export function ChatView({ terminalId }: { terminalId: string }) {
             </>
           )}
         </div>
-
-        {adviceError && (
-          <div style={{ maxWidth: 768, margin: '0 auto 8px', font: '400 12px var(--font-sans)', color: 'var(--color-status-red)' }}>
-            Couldn't summarize: {adviceError}
-          </div>
-        )}
-        {advice && (
-          <ResumeAdviceCard
-            ageMinutes={advice.ageMinutes}
-            contextTokens={advice.contextTokens}
-            onSummarize={() => {
-              // Direct call, not useStructuredChat's fire-and-forget `compact()`: a thread
-              // whose structured session isn't live answers 409, and that must be visible
-              // rather than looking like a summarization that quietly did nothing.
-              setAdvice(null);
-              setAdviceError(null);
-              api.compactTerminal(terminalId).catch((e: any) => setAdviceError(e?.message ?? String(e)));
-            }}
-            onFull={() => setAdvice(null)}
-            onNever={() => { setResumeAdviceDismissed(true); setAdvice(null); }}
-          />
-        )}
 
         {/* thin status row: muted context-window fill indicator, tappable for detail */}
         <div style={{ maxWidth: 768, margin: '6px auto 0', display: 'flex', justifyContent: 'flex-end' }}>
@@ -395,13 +427,13 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
     // AskUserQuestion is excluded — it has live-overlay special-casing below.
     if (it.kind === 'tool' && it.toolName !== 'AskUserQuestion') {
       const run: ConvItem[] = [it];
-      // Each run member's own index in `items`, tracked as we go (not re-derived via
-      // items.indexOf() below) so a toolId-less member's paired result can be resolved by
-      // array-adjacency, and so advancing `i` past the run afterward is an O(1) lookup —
-      // items.indexOf(run[run.length - 1]) would be an O(n) scan per group (O(n^2) per
-      // render), and if `items` ever held a duplicated object reference it could return an
-      // EARLIER index, moving `i` backwards into an infinite render loop.
-      const runIdx: number[] = [i];
+      // Tool-result items encountered while scanning the run, IN ENCOUNTER ORDER — used
+      // below for en-bloc pairing of toolId-less members (see the `pairs` comment). Not
+      // re-derived via items.indexOf() below, so advancing `i` past the run afterward is
+      // an O(1) lookup — items.indexOf(run[run.length - 1]) would be an O(n) scan per
+      // group (O(n^2) per render), and if `items` ever held a duplicated object reference
+      // it could return an EARLIER index, moving `i` backwards into an infinite render loop.
+      const runResults: ConvItem[] = [];
       let lastIdx = i;
       for (let j = i + 1; j < items.length; j++) {
         const nxt = items[j];
@@ -411,25 +443,32 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
           // outside the replay window) renders standalone, so it must not be swallowed by
           // the run's index jump below — end the run before it instead. A toolId-less
           // result (older REST-paged history has no ids at all) has nothing to check
-          // against, so it stays transparent here and is paired by array-adjacency when
-          // the run's pairs are resolved below.
+          // against, so it stays transparent here and is paired en bloc (below) when the
+          // run's pairs are resolved.
           if (nxt.toolId && !toolIds.has(nxt.toolId)) break;
+          runResults.push(nxt);
+          lastIdx = j;
           continue;
         }
         if (nxt.kind !== 'tool' || nxt.toolName !== it.toolName) break;
         run.push(nxt);
-        runIdx.push(j);
         lastIdx = j;
       }
       if (run.length > 1) {
         // Resolve each run member's result ONCE: by toolId via `resultById` when it has
-        // one, else by array-adjacency (the same rule the ungrouped single-tool branch
-        // below uses for a toolId-less tool — older REST-paged history has no ids at all)
-        // — so ToolGroup gets a plain, pre-resolved array instead of having to re-derive
-        // pairing itself.
-        const pairs = run.map((t, k) => ({
+        // one (position-independent — correct for both the sequential [T,R,T,R] shape AND
+        // the batched [T,T,R,R] shape Claude Code actually emits for parallel same-tool
+        // calls: every tool_use block lands in ONE assistant message, all tool_results in
+        // the NEXT user message). A toolId-less member (older REST-paged history has no
+        // ids at all) has nothing to match by id, so it's paired EN BLOC instead: the k-th
+        // toolId-less run member gets the k-th toolId-less result encountered during the
+        // scan above — plain items[idx+1] adjacency would wrongly leave every result
+        // orphaned except the run's last (all the results trail after both tool_uses in
+        // the batched shape), permanently stuck on "running…" with a dead collapse button.
+        let toolIdLessSeen = 0;
+        const pairs = run.map((t) => ({
           tool: t,
-          result: t.toolId ? resultById.get(t.toolId) : (items[runIdx[k] + 1]?.kind === 'tool-result' ? items[runIdx[k] + 1] : undefined),
+          result: t.toolId ? resultById.get(t.toolId) : runResults[toolIdLessSeen++],
         }));
         const groupNode = <ToolGroup pairs={pairs} onViewFile={onViewFile} />;
         const lastId = stableId(run[run.length - 1]);
@@ -494,17 +533,23 @@ function AssistantTurn({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** One run member paired with its already-resolved result (by toolId or by adjacency —
- * see renderTimeline's `pairs` construction), so ToolGroup never has to re-derive pairing. */
+/** One run member paired with its already-resolved result (by toolId, or en bloc by
+ * position — see renderTimeline's `pairs` construction), so ToolGroup never has to
+ * re-derive pairing. */
 type ToolPair = { tool: ConvItem; result?: ConvItem };
 
 /**
  * A run of consecutive same-tool calls, collapsed to one row. Six Reads in a turn
  * would otherwise be six separate rows that bury the assistant's prose.
  *
- * While any member is still running the group renders EXPANDED so live work stays
- * visible, then collapses once the whole run settles. `useToolExpanded` persists a
- * manual toggle per id, so once the reader opens or closes it their choice wins.
+ * Expansion is TRI-STATE via `useToolGroupExpanded` — `undefined` (untouched) means
+ * "auto": expanded while any member is running, collapsed once the whole run settles.
+ * The instant the reader manually toggles it (`true`/`false`), that choice wins
+ * permanently thereafter, including across the running→settled transition — a manual
+ * COLLAPSE while a member is still running must stick, not get forced back open by
+ * `running`, and a manual EXPAND must survive the run settling. A plain boolean (as
+ * `open || running` used to compute it) can't represent "the reader hasn't touched
+ * this yet" as distinct from "the reader chose collapsed."
  *
  * Expansion state is keyed off the FIRST member's id, which is immutable as a run
  * grows — the group's React key is anchored to its LAST item by renderTimeline, for
@@ -517,8 +562,8 @@ type ToolPair = { tool: ConvItem; result?: ConvItem };
 function ToolGroup({ pairs, onViewFile }: { pairs: ToolPair[]; onViewFile: (p: string) => void }) {
   const firstId = pairs[0].tool.toolId ?? pairs[0].tool.uuid;
   const running = pairs.some((p) => !p.result);
-  const [open, setOpen] = useToolExpanded(firstId ? `group:${firstId}` : undefined, false);
-  const expanded = open || running;
+  const [manualOpen, setManualOpen] = useToolGroupExpanded(firstId ? `group:${firstId}` : undefined, undefined);
+  const expanded = manualOpen === undefined ? running : manualOpen;
   const toolName = pairs[0].tool.toolName;
   const label = `${toolName} ${pairs.length} calls`;
   // "Read 3 files" reads better than "Read 3 calls" for the file-shaped tools.
@@ -529,16 +574,16 @@ function ToolGroup({ pairs, onViewFile }: { pairs: ToolPair[]; onViewFile: (p: s
   if (expanded) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <GroupHeader heading={heading} lines={lines} running={running} open onClick={() => setOpen(false)} />
+        <GroupHeader heading={heading} lines={lines} running={running} open onClick={() => setManualOpen(false)} />
         <div style={{ paddingLeft: 14, display: 'flex', flexDirection: 'column', gap: 2 }}>
           {pairs.map(({ tool: t, result }) => (
-            <ToolCall key={t.toolId ?? t.uuid} tool={t} result={result} onViewFile={onViewFile} />
+            <ToolCall key={stableId(t)} tool={t} result={result} onViewFile={onViewFile} />
           ))}
         </div>
       </div>
     );
   }
-  return <GroupHeader heading={heading} lines={lines} running={false} open={false} onClick={() => setOpen(true)} />;
+  return <GroupHeader heading={heading} lines={lines} running={running} open={false} onClick={() => setManualOpen(true)} />;
 }
 
 function GroupHeader({ heading, lines, running, open, onClick }: { heading: string; lines: number; running: boolean; open: boolean; onClick: () => void }) {

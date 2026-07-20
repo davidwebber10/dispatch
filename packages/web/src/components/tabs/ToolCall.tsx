@@ -11,7 +11,12 @@ import { useToolExpanded, useToolTab } from '../../hooks/useToolUIState';
 export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?: ConvItem; onViewFile?: (path: string) => void }) {
   // Keyed by the tool's OWN stable id (never the paired result's) — see useToolUIState's
   // doc comment for why this must survive a remount instead of living in plain useState.
-  const id = tool.uuid ?? tool.toolId;
+  // `toolId ?? uuid` (not the reverse): useStructuredChat upgrades EVERY content block of
+  // an assistant message to that message's single `uuid` once the whole-message event
+  // lands, so in a settled message with parallel tool calls every ToolCall would otherwise
+  // share one expansion key — expanding one expands all of them, including members of
+  // sibling ToolGroups (which key off `toolId ?? uuid` for the same reason).
+  const id = tool.toolId ?? tool.uuid;
   const [open, setOpen] = useToolExpanded(id, false);
   const [tab, setTab] = useToolTab(id, 'output');
   const name = tool.toolTitle ?? tool.toolName ?? 'Tool';

@@ -285,6 +285,99 @@ describe('renderTimeline — groups a run of consecutive same-tool calls', () =>
   });
 });
 
+// ---- ToolGroup tri-state expansion + the batched (parallel tool-call) pairing shape ---
+// Pre-merge review fixes: (1) expansion must be TRI-STATE — `undefined` (untouched) is the
+// only state that follows the running/settled auto rule; once the reader manually toggles
+// it, that choice wins permanently, including across a running→settled transition. The old
+// `open || running` logic instead forced the group back open on every re-render while any
+// member was running, making a manual collapse a no-op. (2) Claude Code emits parallel
+// same-tool calls as tool_use blocks in ONE assistant message with ALL their tool_results in
+// the NEXT user message — items flatten to [T,T,R,R], NOT the interleaved [T,R,T,R] shape
+// every toolId-less test above covers. Plain `items[idx+1]` adjacency mispairs that shape
+// (the first tool's "result" is the SECOND TOOL, i.e. none at all), which combined with (1)
+// left the group stuck expanded forever with a dead collapse button.
+describe('renderTimeline — ToolGroup tri-state expansion', () => {
+  // THE IMPORTANT ONE.
+  it('settles (a real line count, not stuck "running…") and can be expanded/collapsed for the BATCHED [T,T,R,R] shape, with no toolIds', () => {
+    const items: ConvItem[] = [
+      { kind: 'tool', toolName: 'Read', toolTitle: 'Read one.ts', toolDetail: 'one.ts' },
+      { kind: 'tool', toolName: 'Read', toolTitle: 'Read two.ts', toolDetail: 'two.ts' },
+      { kind: 'tool-result', text: 'x\nx\nx' },
+      { kind: 'tool-result', text: 'x\nx\nx' },
+    ];
+    renderTimelineItems(items);
+    expect(screen.getByText('6 lines')).toBeTruthy(); // en-bloc pairing: 3 + 3, not stuck on one orphaned member
+    expect(screen.queryByText('running…')).toBeNull();
+
+    const header = screen.getByRole('button', { name: /Read 2 files/ });
+    expect(header).toHaveAttribute('aria-expanded', 'false'); // untouched + settled -> auto-collapsed
+
+    fireEvent.click(header); // manual expand
+    expect(screen.getByText('one.ts')).toBeTruthy();
+    expect(screen.getByText('two.ts')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /Read 2 files/ })); // manual collapse
+    expect(screen.queryByText('one.ts')).toBeNull();
+    expect(screen.queryByText('two.ts')).toBeNull();
+    expect(screen.getByRole('button', { name: /Read 2 files/ })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('a manual collapse survives a member still running', () => {
+    const items: ConvItem[] = [
+      { kind: 'tool', toolId: 'grp-b1', toolName: 'Read', toolTitle: 'Read one.ts', toolDetail: 'one.ts' },
+      { kind: 'tool-result', toolId: 'grp-b1', text: 'x\nx\nx' },
+      { kind: 'tool', toolId: 'grp-b2', toolName: 'Read', toolTitle: 'Read two.ts', toolDetail: 'two.ts' }, // still running — no result at all
+    ];
+    renderTimelineItems(items);
+    expect(screen.getByText('one.ts')).toBeTruthy(); // untouched + a member running -> auto-expanded
+
+    fireEvent.click(screen.getByRole('button', { name: /Read 2 (files|calls)/ }));
+
+    // Still running (no rerender) — the OLD `open || running` logic would force this back
+    // open, making the collapse click a no-op. The manual collapse must stick regardless.
+    expect(screen.getByText('running…')).toBeTruthy(); // genuinely still running
+    expect(screen.queryByText('one.ts')).toBeNull();
+    expect(screen.getByRole('button', { name: /Read 2 (files|calls)/ })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('a manual expand survives the run settling', () => {
+    const running: ConvItem[] = [
+      { kind: 'tool', toolId: 'grp-c1', toolName: 'Read', toolTitle: 'Read one.ts', toolDetail: 'one.ts' },
+      { kind: 'tool-result', toolId: 'grp-c1', text: 'x\nx\nx' },
+      { kind: 'tool', toolId: 'grp-c2', toolName: 'Read', toolTitle: 'Read two.ts', toolDetail: 'two.ts' }, // still running
+    ];
+    const { rerender } = renderTimelineItems(running);
+    expect(screen.getByText('one.ts')).toBeTruthy(); // auto-expanded while running
+
+    // Collapse, then explicitly re-expand — an unambiguous MANUAL `true`, not merely the
+    // still-running auto default.
+    fireEvent.click(screen.getByRole('button', { name: /Read 2 (files|calls)/ }));
+    expect(screen.queryByText('one.ts')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Read 2 (files|calls)/ }));
+    expect(screen.getByText('one.ts')).toBeTruthy();
+
+    // The run settles — 'grp-c2' now has its result too.
+    const settled: ConvItem[] = [running[0], running[1], running[2], { kind: 'tool-result', toolId: 'grp-c2', text: 'x\nx\nx' }];
+    rerender(
+      <MessageScroller.Provider>
+        <MessageScroller.Root>
+          <MessageScroller.Viewport>
+            <MessageScroller.Content>
+              {renderTimeline(settled, () => {}, new Set())}
+            </MessageScroller.Content>
+          </MessageScroller.Viewport>
+        </MessageScroller.Root>
+      </MessageScroller.Provider>,
+    );
+
+    // Still expanded — the manual choice wins over the now-settled auto-collapse rule.
+    expect(screen.getByText('one.ts')).toBeTruthy();
+    expect(screen.getByText('two.ts')).toBeTruthy();
+    expect(screen.queryByText('running…')).toBeNull(); // genuinely settled now
+    expect(screen.getByRole('button', { name: /Read 2 files/ })).toHaveAttribute('aria-expanded', 'true');
+  });
+});
+
 // ---- "Load earlier messages" escape hatch -------------------------------------------
 // Paging older history used to depend ENTIRELY on the reader being able to scroll (the
 // near-top viewport trigger, or useBootstrapOlderPages' overflow check). A window short
