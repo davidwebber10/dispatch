@@ -3,6 +3,7 @@ import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
 import { ProjectCard } from './ProjectCard';
 import { NewProjectModal } from './NewProjectModal';
+import { SORT_GLYPH, SORT_GLYPH_FONT } from './SortMenu';
 import { SortableList } from '../common/SortableList';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { revealIn } from '../../lib/reveal';
@@ -122,7 +123,7 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispa
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search projects"
           style={{ flex: 1, minWidth: 0, height: 32, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 7, color: 'var(--color-text-primary)', fontSize: 13 }} />
         <div style={{ position: 'relative' }}>
-          <button title="Sort" onClick={() => setSortOpen((o) => !o)} style={{ ...icon, background: 'var(--color-elevated)', border: '1px solid #2C2C32', color: 'var(--color-text-secondary)', fontSize: 14 }}>⇅</button>
+          <button title="Sort" aria-label="Sort projects" onClick={() => setSortOpen((o) => !o)} style={{ ...icon, background: 'var(--color-elevated)', border: '1px solid #2C2C32', color: 'var(--color-text-secondary)', font: SORT_GLYPH_FONT }}>{SORT_GLYPH}</button>
           {sortOpen && (
             <>
               <div onClick={() => setSortOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 90 }} />

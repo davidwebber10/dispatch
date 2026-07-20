@@ -1,6 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+/**
+ * The sort glyph and the font that draws it, shared with the projects sorter in
+ * ProjectSidebar so the two controls are literally the same icon.
+ *
+ * They always agreed on the codepoint; they disagreed on the font, which is what
+ * made them look like two different icons. The sidebar's button never set a
+ * family, so it kept the UA default (Arial 400) — buttons don't inherit
+ * font-family from body. This one spreads the `+` button's style, and that style
+ * sets the `font` *shorthand*, which resets family and weight together: IBM Plex
+ * Sans at 600, a visibly heavier and differently-shaped U+21C5. Naming one stack
+ * in one place is what keeps them from drifting apart again.
+ */
+export const SORT_GLYPH = '⇅';
+export const SORT_GLYPH_FONT = '400 14px/1 Arial, Helvetica, sans-serif';
+
 interface SortMenuProps {
   value: string;
   options: readonly (readonly [string, string])[];
@@ -41,7 +56,12 @@ export function SortMenu({ value, options, onChange, isMobile, buttonStyle }: So
 
   return (
     <>
-      <button ref={btnRef} title="Sort" aria-label="Sort" onClick={toggle} style={{ ...buttonStyle, alignSelf: 'center' }}>⇅</button>
+      {/* `font` comes after the spread on purpose: buttonStyle is the `+` button's
+          style, whose own `font` shorthand would otherwise pick the family, weight
+          and size for us. The box still comes from buttonStyle, so the control stays
+          the same size and touch target as the `+` it sits beside. */}
+      <button ref={btnRef} title="Sort" aria-label="Sort" onClick={toggle}
+        style={{ ...buttonStyle, alignSelf: 'center', font: SORT_GLYPH_FONT }}>{SORT_GLYPH}</button>
       {open && createPortal(
         <>
           <div data-testid="sort-menu-backdrop" onClick={(e) => { e.stopPropagation(); setOpen(false); }} style={{ position: 'fixed', inset: 0, zIndex: 300 }} />
