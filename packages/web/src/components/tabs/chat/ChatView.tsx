@@ -15,7 +15,7 @@ import { DictationControl } from '../../dictation/DictationControl';
 import { InputActionsMenu } from '../../dictation/InputActionsMenu';
 import { InsightText } from '../../InsightText';
 import { ResumeAdviceCard } from './ResumeAdviceCard';
-import { WorkingIndicator } from '../../WorkingIndicator';
+import { WorkingIndicator, CompactingIndicator } from '../../WorkingIndicator';
 import { Spinner } from '../../common/Spinner';
 import { ChatImage } from '../../ChatImage';
 import { ContextIndicator } from '../../ContextIndicator';
@@ -210,7 +210,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
           <MessageScroller.Viewport preserveScrollOnPrepend onScroll={onViewportScroll} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
             <MessageScroller.Content style={{ maxWidth: 768, margin: '0 auto', padding: '24px 20px 8px', display: 'flex', flexDirection: 'column', gap: 16 }}>
               <LoadEarlierButton show={hasMore && !loadingOlder} onClick={loadOlder} />
-              {items.length === 0 && !busy && <EmptyState model={model} />}
+              {items.length === 0 && !busy && !compacting && <EmptyState model={model} />}
               {renderTimeline(items, openFileInViewer, pageBoundariesRef.current)}
               {pending?.questions && pending.questions.length > 0 && (
                 <MessageScroller.Item messageId="__ask" style={{ display: 'flex' }}>
@@ -221,9 +221,11 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                   </div>
                 </MessageScroller.Item>
               )}
-              {busy && (
+              {(busy || compacting) && (
                 <MessageScroller.Item messageId="__working" style={{ display: 'flex' }}>
-                  <WorkingIndicator />
+                  {/* Compaction wins the slot: it can coincide with busy (a message sent
+                      mid-compaction sets busy too) but must never read as "Working…". */}
+                  {compacting ? <CompactingIndicator /> : <WorkingIndicator />}
                 </MessageScroller.Item>
               )}
             </MessageScroller.Content>
