@@ -72,7 +72,6 @@ function InsightCallout({ content, tokens }: { content: string; tokens: Tokens }
       style={{
         borderRadius: 9,
         border: `1px solid ${tokens.line}`,
-        borderLeft: `2px solid ${tokens.accent}`,
         background: tokens.dim,
         padding: '8px 13px 9px',
         display: 'flex',
