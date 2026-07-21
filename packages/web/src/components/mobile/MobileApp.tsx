@@ -5,6 +5,7 @@ import { BrandSwitcher } from '../layout/BrandSwitcher';
 import { TransportToggle } from '../layout/TransportToggle';
 import { AlertBell } from '../layout/AlertBell';
 import { ProjectCard } from '../sidebar/ProjectCard';
+import { SortMenu } from '../sidebar/SortMenu';
 import { AllAgentsView } from '../agents/AllAgentsView';
 import { PinnedThreadsView } from './PinnedThreadsView';
 import { BoardMobile } from '../board/BoardMobile';
@@ -29,6 +30,19 @@ import { OverseerView } from '../overseer/OverseerView';
 
 function homePath(p: string): string {
   return (p || '').replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
+}
+
+// Projects sort — mirrors ProjectSidebar (desktop) and shares its persisted `dispatch:sort`
+// key, so the preference carries across surfaces. Mobile only ever renders MobileApp (never
+// ProjectSidebar), so the mobile projects list had no sort control at all until now.
+type ProjectSort = 'recent' | 'alpha' | 'custom';
+const PROJECT_SORTS: [ProjectSort, string][] = [['recent', 'Most recent'], ['alpha', 'Alphabetical'], ['custom', 'Custom']];
+function sortProjects<T extends { name: string; lastActivityAt?: string; updatedAt?: string }>(list: T[], sort: ProjectSort): T[] {
+  return list.slice().sort((a, b) => {
+    if (sort === 'custom') return 0; // preserve the server's stored (drag) order
+    if (sort === 'alpha') return a.name.localeCompare(b.name);
+    return (Date.parse(b.lastActivityAt || b.updatedAt || '') || 0) - (Date.parse(a.lastActivityAt || a.updatedAt || '') || 0);
+  });
 }
 
 type NavInit = { level: 0 | 1 | 2; projectId?: string; leaf?: 'tab' | 'agent'; tabId?: string; agentId?: string };
@@ -71,6 +85,8 @@ export function MobileApp() {
   const [newProject, setNewProject] = useState(false);
   const [browseFiles, setBrowseFiles] = useState(false);
   const [query, setQuery] = useState('');
+  const [projectSort, setProjectSort] = useState<ProjectSort>(() => (localStorage.getItem('dispatch:sort') as ProjectSort) || 'recent');
+  useEffect(() => { try { localStorage.setItem('dispatch:sort', projectSort); } catch { /* ignore */ } }, [projectSort]);
   const [bottomTab, setBottomTab] = useState<'projects' | 'pinned' | 'agents' | 'settings'>('projects');
   // Dispatch mode (mobile): the coordinator view opens as a full-screen overlay
   // over the active project (mirrors browseFiles). Closing returns to the project.
@@ -169,6 +185,7 @@ export function MobileApp() {
   }, []);
 
   const filtered = projects.filter((p) => p.name.toLowerCase().includes(query.toLowerCase()));
+  const sortedProjects = sortProjects(filtered, projectSort);
   // The back button labels the screen it returns TO (iOS convention): the
   // project detail goes back to "Projects"; a thread/agent goes back to its
   // project.
@@ -223,15 +240,22 @@ export function MobileApp() {
             <div style={{ display: 'flex', gap: 8, padding: 10, flexShrink: 0 }}>
               <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search projects"
                 style={{ flex: 1, minWidth: 0, height: 40, padding: '0 13px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 12, color: 'var(--color-text-primary)', fontSize: 16 }} />
+              <SortMenu
+                value={projectSort}
+                options={PROJECT_SORTS}
+                onChange={(v) => setProjectSort(v as ProjectSort)}
+                isMobile
+                buttonStyle={{ width: 40, height: 40, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 12, color: 'var(--color-text-secondary)', cursor: 'pointer' }}
+              />
               <button onClick={() => setNewProject(true)} title="New project" style={{ width: 40, height: 40, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', border: 'none', borderRadius: 12, color: '#06140B', cursor: 'pointer' }}>
                 <Plus size={20} weight="bold" />
               </button>
             </div>
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y', padding: '0 4px 12px' }}>
               <SortableList
-                items={filtered}
+                items={sortedProjects}
                 disabled={!!query}
-                onReorder={(orderedIds) => void useProjects.getState().reorder(orderedIds)}
+                onReorder={(orderedIds) => { if (projectSort !== 'custom') setProjectSort('custom'); void useProjects.getState().reorder(orderedIds); }}
                 renderItem={(p) => {
                   const tabs = byProject[p.id] ?? [];
                   const working = p.status === 'working' || tabs.some((t) => t.status === 'working');

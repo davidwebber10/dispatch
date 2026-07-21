@@ -2,16 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 /**
- * The sort glyph and the font that draws it, shared with the projects sorter in
- * ProjectSidebar so the two controls are literally the same icon.
+ * The sort glyph, and the font ProjectSidebar's (desktop-only) projects sorter draws it in.
  *
- * They always agreed on the codepoint; they disagreed on the font, which is what
- * made them look like two different icons. The sidebar's button never set a
- * family, so it kept the UA default (Arial 400) — buttons don't inherit
- * font-family from body. This one spreads the `+` button's style, and that style
- * sets the `font` *shorthand*, which resets family and weight together: IBM Plex
- * Sans at 600, a visibly heavier and differently-shaped U+21C5. Naming one stack
- * in one place is what keeps them from drifting apart again.
+ * The glyph is Arial's U+21C5 — IBM Plex's is heavier and oddly-proportioned. SortMenu (used
+ * on the project card, including the mobile header) does NOT use SORT_GLYPH_FONT: it derives a
+ * responsive font (see `glyphFont` below) that matches the neighbouring `+` button's WEIGHT
+ * and SIZE at each breakpoint, since a fixed 400/14px looked both thinner and (on mobile,
+ * beside a 26px `+`) much smaller than the `+`.
  */
 export const SORT_GLYPH = '⇅';
 export const SORT_GLYPH_FONT = '400 14px/1 Arial, Helvetica, sans-serif';
@@ -54,14 +51,19 @@ export function SortMenu({ value, options, onChange, isMobile, buttonStyle }: So
     setOpen((o) => !o);
   }
 
+  // Match the neighbouring `+` button's weight AND size so the two read as one icon set, but
+  // keep Arial's cleaner U+21C5 shape. The `+` is `600 14px` on desktop and `500 26px` on
+  // mobile (ProjectCard's plusBtn/plusStyle); the ⇅'s arrows run the full em-height, so mobile
+  // sits a touch under 26px to line up visually rather than overshoot the box.
+  const glyphFont = isMobile ? '500 22px/1 Arial, Helvetica, sans-serif' : '600 14px/1 Arial, Helvetica, sans-serif';
+
   return (
     <>
-      {/* `font` comes after the spread on purpose: buttonStyle is the `+` button's
-          style, whose own `font` shorthand would otherwise pick the family, weight
-          and size for us. The box still comes from buttonStyle, so the control stays
-          the same size and touch target as the `+` it sits beside. */}
+      {/* `font` comes after the spread on purpose: buttonStyle is the `+` button's style, whose
+          own `font` shorthand would otherwise pick the family/weight/size. The box still comes
+          from buttonStyle, so the control keeps the same size + touch target as the `+`. */}
       <button ref={btnRef} title="Sort" aria-label="Sort" onClick={toggle}
-        style={{ ...buttonStyle, alignSelf: 'center', font: SORT_GLYPH_FONT }}>{SORT_GLYPH}</button>
+        style={{ ...buttonStyle, alignSelf: 'center', font: glyphFont }}>{SORT_GLYPH}</button>
       {open && createPortal(
         <>
           <div data-testid="sort-menu-backdrop" onClick={(e) => { e.stopPropagation(); setOpen(false); }} style={{ position: 'fixed', inset: 0, zIndex: 300 }} />
