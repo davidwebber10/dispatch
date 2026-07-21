@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SortableList } from '../common/SortableList';
 import { SwipeRow } from '../common/SwipeRow';
-import { FolderOpen, CaretRight, Network, TerminalWindow, ChatCircle, PushPin, Timer, Bell } from '@phosphor-icons/react';
+import { FolderOpen, CaretRight, Network, TerminalWindow, ChatCircle, PushPin, Timer, Bell, Plus } from '@phosphor-icons/react';
 import type { Session, Terminal, AgentSchedule } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
 import { projectIndicator } from '../../lib/status';
@@ -247,7 +247,10 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   // Expansion is decoupled from the active highlight on desktop; on mobile the
   // project screen is always expanded (open defaults to active when not provided).
   const isOpen = open ?? active;
-  const plusStyle: React.CSSProperties = isMobile ? { ...plusBtn, width: 34, height: 34, font: '500 26px/1 var(--font-sans)', borderRadius: 12 } : plusBtn;
+  const plusStyle: React.CSSProperties = isMobile ? { ...plusBtn, width: 34, height: 34, borderRadius: 12 } : plusBtn;
+  // Shared icon px for the add (+) buttons AND the sort control in this card's header, so the
+  // two are stylistically identical (both Phosphor icons at the same size/weight).
+  const plusIcon = isMobile ? 18 : 13;
   // Roll the project's threads up to one header indicator (needs_input > working
   // > error > idle), combining the backend's session.status with live tab state.
   // Dispatch-managed threads (the coordinator + typed agents) are owned by the
@@ -314,7 +317,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
                 if (sec.add === 'menu') setNewThread(true);
                 else if (sec.add === 'browser') void addTab('browser', { url: 'about:blank' });
                 else if (sec.add === 'notes') void addTab('notes');
-              }} style={plusStyle}>+</button>
+              }} style={plusStyle}><Plus size={plusIcon} weight="bold" /></button>
             </span>
           )}
         </SectionHeader>
@@ -409,19 +412,19 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
             <span style={{ flex: 1 }} />
             {projTab === 'threads' ? (
               threadItems.length >= 2 && (
-                <SortMenu value={threadSort} options={THREAD_SORTS} isMobile={isMobile} buttonStyle={plusStyle}
+                <SortMenu value={threadSort} options={THREAD_SORTS} isMobile={isMobile} buttonStyle={plusStyle} iconSize={plusIcon}
                   onChange={(v) => useListSort.getState().setThreadSort(session.id, v as typeof threadSort)} />
               )
             ) : (
               agents.length >= 2 && (
-                <SortMenu value={agentSort} options={AGENT_SORTS} isMobile={isMobile} buttonStyle={plusStyle}
+                <SortMenu value={agentSort} options={AGENT_SORTS} isMobile={isMobile} buttonStyle={plusStyle} iconSize={plusIcon}
                   onChange={(v) => useListSort.getState().setAgentSort(session.id, v as typeof agentSort)} />
               )
             )}
             {projTab === 'threads' ? (
-              <button title="Add thread" onClick={(e) => { e.stopPropagation(); setNewThread(true); }} style={{ ...plusStyle, alignSelf: 'center' }}>+</button>
+              <button title="Add thread" onClick={(e) => { e.stopPropagation(); setNewThread(true); }} style={{ ...plusStyle, alignSelf: 'center' }}><Plus size={plusIcon} weight="bold" /></button>
             ) : (
-              <button title="Add automation" onClick={(e) => { e.stopPropagation(); onNewAgent?.(session.id); }} style={{ ...plusStyle, alignSelf: 'center' }}>+</button>
+              <button title="Add automation" onClick={(e) => { e.stopPropagation(); onNewAgent?.(session.id); }} style={{ ...plusStyle, alignSelf: 'center' }}><Plus size={plusIcon} weight="bold" /></button>
             )}
           </div>
           {projTab === 'threads' ? (

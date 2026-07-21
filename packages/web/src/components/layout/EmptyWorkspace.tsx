@@ -1,3 +1,4 @@
+import { Plus } from '@phosphor-icons/react';
 import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
 import { useUI } from '../../stores/ui';
@@ -42,7 +43,7 @@ export function EmptyWorkspace({ onSelectTab }: { onSelectTab: (id: string) => v
         {project && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <button onClick={() => void newThread()} style={{ height: 36, padding: '0 16px', background: 'var(--color-accent)', border: 'none', borderRadius: 9, display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-              <span style={{ font: '600 15px var(--font-mono)', color: '#08240F', lineHeight: 1 }}>+</span>
+              <Plus size={15} weight="bold" color="#08240F" />
               <span style={{ fontSize: 13, fontWeight: 600, color: '#08240F' }}>New Thread</span>
             </button>
             <button onClick={() => useUI.getState().setInspectorTab('files')} style={{ height: 36, padding: '0 16px', background: 'var(--color-elevated)', border: '1px solid #2c2c32', borderRadius: 9, color: 'var(--color-text-primary)', fontSize: 13, cursor: 'pointer' }}>Open a File</button>

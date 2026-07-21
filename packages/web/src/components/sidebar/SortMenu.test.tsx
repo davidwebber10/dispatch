@@ -1,6 +1,6 @@
 import { expect, test, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
-import { SortMenu, SORT_GLYPH } from './SortMenu';
+import { SortMenu } from './SortMenu';
 
 const OPTIONS = [['newest', 'Newest'], ['oldest', 'Oldest'], ['name', 'Name (A–Z)']] as const;
 afterEach(() => cleanup());
@@ -10,30 +10,22 @@ function renderMenu(onChange = vi.fn()) {
   return onChange;
 }
 
-test('mobile: glyph matches the + button\'s weight, controls its size, keeps Arial\'s shape', () => {
-  // The fix: match the neighbouring + button's WEIGHT (thickness) — the old fixed 400 read
-  // thinner — and set a controlled size that lines up with the 26px + rather than inheriting
-  // the host font wholesale (which was thin AND, on mobile, tiny at 14px). Family stays Arial
-  // for its cleaner U+21C5 shape, NOT the host's var(--font-sans).
+test('renders the ArrowsDownUp Phosphor icon (same family as the + Plus), sized to match', () => {
+  // Consolidated with the `+` button onto one icon family: the sort control is now a Phosphor
+  // icon, not a text glyph, so it and the `+` (Plus) are stylistically identical. The host
+  // passes iconSize matching its own `+` icon; the box still comes from buttonStyle.
   render(<SortMenu value="newest" options={OPTIONS} onChange={vi.fn()} isMobile
-    buttonStyle={{ width: 34, height: 34, font: '500 26px/1 var(--font-sans)' }} />);
+    buttonStyle={{ width: 34, height: 34 }} iconSize={18} />);
   const btn = screen.getByLabelText('Sort');
-  expect(btn.textContent).toBe(SORT_GLYPH);
-  expect(btn.style.fontFamily.toLowerCase()).toContain('arial'); // Arial shape, not var(--font-sans)
-  expect(btn.style.fontFamily).not.toContain('font-sans');
-  expect(btn.style.fontWeight).toBe('500');      // matches the +'s weight — same thickness
-  expect(btn.style.fontSize).toBe('22px');       // controlled — not the host's 26px, not the old 14px
-  // ...while the box, and so the touch target, still comes from the host.
-  expect(btn.style.width).toBe('34px');
+  const svg = btn.querySelector('svg');
+  expect(svg).not.toBeNull();                 // an icon, not a text glyph
+  expect(svg?.getAttribute('width')).toBe('18'); // matches the host's + icon size
+  expect(btn.style.width).toBe('34px');       // box + touch target still from the host
 });
 
-test('desktop: glyph matches the desktop +\'s 600/14px', () => {
-  render(<SortMenu value="newest" options={OPTIONS} onChange={vi.fn()} isMobile={false}
-    buttonStyle={{ width: 16, height: 16, font: '600 14px/1 var(--font-sans)' }} />);
-  const btn = screen.getByLabelText('Sort');
-  expect(btn.style.fontWeight).toBe('600');
-  expect(btn.style.fontSize).toBe('14px');
-  expect(btn.style.fontFamily.toLowerCase()).toContain('arial');
+test('falls back to a per-breakpoint icon size when the host passes none', () => {
+  render(<SortMenu value="newest" options={OPTIONS} onChange={vi.fn()} isMobile={false} buttonStyle={{ width: 16 }} />);
+  expect(screen.getByLabelText('Sort').querySelector('svg')?.getAttribute('width')).toBe('14');
 });
 
 test('renders only the trigger until it is clicked', () => {

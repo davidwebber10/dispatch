@@ -245,6 +245,7 @@ export function MobileApp() {
                 options={PROJECT_SORTS}
                 onChange={(v) => setProjectSort(v as ProjectSort)}
                 isMobile
+                iconSize={20}
                 buttonStyle={{ width: 40, height: 40, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 12, color: 'var(--color-text-secondary)', cursor: 'pointer' }}
               />
               <button onClick={() => setNewProject(true)} title="New project" style={{ width: 40, height: 40, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', border: 'none', borderRadius: 12, color: '#06140B', cursor: 'pointer' }}>
