@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
-import { PaperPlaneTilt, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip, ArrowBendDownRight, Wrench } from '@phosphor-icons/react';
+import { PaperPlaneTilt, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip, ArrowBendDownRight, Wrench, X } from '@phosphor-icons/react';
 import type { ConvItem, PermissionQuestion } from '../../../api/types';
 import { api, type ContentBlock } from '../../../api/client';
 import { useStructuredChat } from './useStructuredChat';
@@ -115,6 +115,11 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   const draftRef = useRef(draft); draftRef.current = draft;
   const [uploadNote, setUploadNote] = useState('');
   const [dragActive, setDragActive] = useState(false); // drives the drop-target visual cue
+  // Images picked / dropped / PASTED are STAGED here as real base64 content blocks and ride
+  // out with the next doSend() as ONE turn — instead of each firing its own message the moment
+  // it's attached (which is what made a pasted screenshot jump straight into the chat before you
+  // could add a caption). Mirrors the coordinator Composer's composerImages buffer.
+  const [stagedImages, setStagedImages] = useState<ContentBlock[]>([]);
 
   // Mobile voice dictation. The composer's left control becomes a + flyout (Add file /
   // Dictate); choosing Dictate swaps the textarea for the recording UI, and the confirmed
@@ -129,16 +134,25 @@ export function ChatView({ terminalId }: { terminalId: string }) {
 
   function doSend() {
     const v = draft.trim();
-    if (!v) return;
-    send(v);
+    if (!v && stagedImages.length === 0) return;
+    // Text + any staged images go out as ONE turn: a leading text block (when there's a
+    // caption) followed by the image blocks. Falls back to a plain string turn when nothing
+    // is staged, matching the previous behavior for text-only sends.
+    if (stagedImages.length) {
+      send(v ? [{ type: 'text', text: v }, ...stagedImages] : [...stagedImages]);
+      setStagedImages([]);
+    } else {
+      send(v);
+    }
     clearDraft();
     requestAnimationFrame(() => { if (taRef.current) taRef.current.style.height = 'auto'; });
   }
 
-  // Upload each picked file to the project inbox. An IMAGE is then sent as a REAL base64
-  // content block (its own turn) so the model SEES it — and it echoes back + renders
-  // inline via the foundation's parser. A non-image keeps the path-reference line in the
-  // draft so the user sends the path alongside their message (the agent can Read it).
+  // Upload each picked file to the project inbox. An IMAGE is then STAGED as a REAL base64
+  // content block (see stagedImages) so it rides out with the user's next message as one
+  // turn — and it echoes back + renders inline via the foundation's parser. A non-image keeps
+  // the path-reference line in the draft so the user sends the path alongside their message
+  // (the agent can Read it).
   async function attachFiles(files: FileList | null) {
     if (!files || !files.length || !sessionId) return;
     for (const f of Array.from(files)) {
@@ -148,8 +162,8 @@ export function ChatView({ terminalId }: { terminalId: string }) {
         if (MODEL_IMAGE_MIME.has(f.type)) {
           const data = await fileToBase64(f);
           const block: ContentBlock = { type: 'image', source: { type: 'base64', media_type: f.type, data } };
-          send([block]);
-          setUploadNote(`Sent ${f.name}`);
+          setStagedImages((prev) => [...prev, block]);
+          setUploadNote(`Attached ${f.name}`);
         } else {
           const cur = draftRef.current;
           const next = cur + (cur ? '\n' : '') + 'Attached file: ' + res.path;
@@ -200,6 +214,10 @@ export function ChatView({ terminalId }: { terminalId: string }) {
     st.openTab(id);
     useUI.getState().requestOpenTab(id);
   }
+
+  // Send is enabled by EITHER a non-empty draft OR at least one staged image (a screenshot
+  // with no caption is a valid turn on its own).
+  const canSend = draft.trim().length > 0 || stagedImages.length > 0;
 
   return (
     <div className="chat-scope" style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, background: 'var(--color-base)' }}>
@@ -292,6 +310,21 @@ export function ChatView({ terminalId }: { terminalId: string }) {
             {dragActive ? 'Drop image to attach' : uploadNote}
           </div>
         )}
+        {/* Staged image thumbnails — each removable via its ×; they send with the next message.
+            Hidden behind the drag cue so the two don't fight for the same strip. */}
+        {!dragActive && stagedImages.length > 0 && (
+          <div style={{ maxWidth: 768, margin: '0 auto 8px', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {stagedImages.map((block, i) =>
+              block.type === 'image' ? (
+                <StagedThumbnail
+                  key={i}
+                  src={`data:${block.source.media_type};base64,${block.source.data}`}
+                  onRemove={() => setStagedImages((prev) => prev.filter((_, j) => j !== i))}
+                />
+              ) : null,
+            )}
+          </div>
+        )}
         <div style={{ maxWidth: 768, margin: '0 auto', display: 'flex', alignItems: 'flex-end', gap: 8, background: dragActive ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-elevated))' : 'var(--color-elevated)', border: dragActive ? '1px solid var(--color-accent)' : '1px solid var(--color-border)', borderRadius: 12, padding: '8px 8px 8px 8px', transition: 'border-color .12s, background .12s' }}>
           {isMobile ? (
             <InputActionsMenu
@@ -334,9 +367,9 @@ export function ChatView({ terminalId }: { terminalId: string }) {
           />
           <button
             onClick={doSend}
-            disabled={!draft.trim()}
+            disabled={!canSend}
             title="Send"
-            style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 9, border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: draft.trim() ? 'pointer' : 'default', background: draft.trim() ? 'var(--color-accent)' : 'var(--color-hover)', color: draft.trim() ? '#06140B' : 'var(--color-text-tertiary)', transition: 'background .15s' }}
+            style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 9, border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: canSend ? 'pointer' : 'default', background: canSend ? 'var(--color-accent)' : 'var(--color-hover)', color: canSend ? '#06140B' : 'var(--color-text-tertiary)', transition: 'background .15s' }}
           >
             <PaperPlaneTilt size={17} weight="fill" />
           </button>
@@ -370,6 +403,24 @@ function stableId(it: ConvItem): string {
   let id = fallbackIds.get(it);
   if (!id) { id = `fallback-${++fallbackIdCounter}`; fallbackIds.set(it, id); }
   return id;
+}
+
+/** A staged (pre-send) image preview with an × to drop it before sending. Mirrors the
+ *  coordinator Composer's StagedThumbnail (packages/web/src/components/overseer/components/Composer.tsx). */
+function StagedThumbnail({ src, onRemove }: { src: string; onRemove: () => void }) {
+  return (
+    <div style={{ position: 'relative', width: 48, height: 48, flex: 'none' }}>
+      <img src={src} alt="attachment" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 8, border: '1px solid var(--color-border)', display: 'block' }} />
+      <button
+        type="button"
+        onClick={onRemove}
+        title="Remove image"
+        style={{ position: 'absolute', top: -6, right: -6, width: 18, height: 18, padding: 0, borderRadius: '50%', background: 'var(--color-base)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}
+      >
+        <X size={11} weight="bold" />
+      </button>
+    </div>
+  );
 }
 
 /**
