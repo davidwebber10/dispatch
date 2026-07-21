@@ -9,10 +9,11 @@ import { api } from '../../api/client';
  * thread's actual backend transport — killing the current process and re-spawning it RESUMING
  * its conversation in the other transport (`config.transport` structured ↔ absent).
  *
- * Disabled (with a tooltip) in two cases: until the thread has captured an `external_id`
+ * Disabled (dimmed, with a tooltip) in two cases: until the thread has captured an `external_id`
  * (a brand-new thread has no session to resume yet), and WHILE A TURN IS IN FLIGHT — switching
  * mid-turn kills the process out from under a streaming/compacting response and strands it, so
- * you can only switch between turns. Renders nothing for non-AI tabs.
+ * you can only switch between turns. The whole control greys out when it can't switch, so its
+ * unavailability reads at a glance rather than only on hover. Renders nothing for non-AI tabs.
  */
 export function TransportToggle({ terminalId, floating = false }: { terminalId: string | null | undefined; floating?: boolean }) {
   const tab = useTabs((s) => (terminalId ? findTerminal(s.byProject, terminalId) : undefined));
@@ -59,7 +60,11 @@ export function TransportToggle({ terminalId, floating = false }: { terminalId: 
         borderRadius: floating ? 11 : 8,
         background: floating ? 'rgba(22,22,26,0.55)' : 'var(--color-elevated)',
         border: floating ? '1px solid rgba(255,255,255,0.10)' : '1px solid #2C2C32',
-        opacity: busy ? 0.6 : 1,
+        // Grey the whole control whenever switching is unavailable (mid-turn, or no session
+        // yet) — not just during the brief in-flight switch — so "you can't switch right now"
+        // is obvious without hovering for the tooltip.
+        opacity: busy || !canSwitch ? 0.45 : 1,
+        transition: 'opacity .12s ease',
         ...(floating ? { backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', boxShadow: '0 6px 18px -8px rgba(0,0,0,.6)' } : {}),
       }}
     >

@@ -38,11 +38,20 @@ describe('TransportToggle', () => {
     await waitFor(() => expect(spy).toHaveBeenCalledWith('t1', 'structured'));
   });
 
-  it('disables switching while a turn is in flight (only switch between turns)', () => {
+  it('disables AND greys the whole control while a turn is in flight (only switch between turns)', () => {
     seedTab({ type: 'claude-code', externalId: 'e1', config: {} });
     useThreadStatus.setState({ byTerminal: { t1: { threadStatus: 'working' } } });
     render(<TransportToggle terminalId="t1" />);
     expect(screen.getByRole('button', { name: /pretty/i })).toBeDisabled();
+    // The whole group dims so its unavailability reads at a glance, not only on hover.
+    expect(Number(screen.getByRole('group', { name: 'Transport' }).style.opacity)).toBeLessThan(1);
+  });
+
+  it('is at full opacity when a switch IS available (between turns)', () => {
+    seedTab({ type: 'claude-code', externalId: 'e1', config: {} });
+    useThreadStatus.setState({ byTerminal: { t1: { threadStatus: 'idle' } } });
+    render(<TransportToggle terminalId="t1" />);
+    expect(screen.getByRole('group', { name: 'Transport' }).style.opacity).toBe('1');
   });
 
   it('switches a Pretty thread back to CLI', async () => {
