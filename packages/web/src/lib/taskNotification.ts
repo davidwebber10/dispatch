@@ -47,3 +47,40 @@ function tag(body: string, name: string): string | undefined {
   const m = new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(body);
   return m ? m[1].trim() || undefined : undefined;
 }
+
+/**
+ * Running a slash command (/compact, /clear, a custom command) makes Claude Code write a
+ * `role: 'user'` turn whose whole body is command bookkeeping — the invocation wrapper
+ * (<command-name>/<command-message>/<command-args>/<command-contents>) and/or the captured
+ * output (<local-command-stdout>/<local-command-stderr>). Like a task-notification it is NOT
+ * the human speaking and carries no isMeta flag, so it otherwise renders as a user bubble full
+ * of raw XML (e.g. `<local-command-stdout>Compacted</local-command-stdout>`). Mirror of the
+ * core twin (packages/core/src/conversation/task-notification.ts).
+ */
+const CMD_TAGS = ['command-name', 'command-message', 'command-args', 'command-contents', 'local-command-stdout', 'local-command-stderr'] as const;
+const CMD_BLOCK_G = new RegExp(`<(${CMD_TAGS.join('|')})>[\\s\\S]*?</\\1>`, 'g');
+const HAS_CMD_TAG = new RegExp(`<(${CMD_TAGS.join('|')})>`);
+
+/** The short label for a slash-command echo (`text` may be `''` → render nothing), or null
+ *  for an ordinary turn. Prefers captured output, else the invocation name/args. Anchored to
+ *  the WHOLE message, so a human quoting one of the tags mid-prose keeps their bubble. */
+export function parseCommandEcho(text: string): { text: string } | null {
+  if (!HAS_CMD_TAG.test(text)) return null;
+  if (text.replace(CMD_BLOCK_G, '').trim() !== '') return null; // real prose alongside → human turn
+  const summary = (tag(text, 'local-command-stdout') || tag(text, 'local-command-stderr')
+    || [tag(text, 'command-name'), tag(text, 'command-args')].filter(Boolean).join(' ') || '')
+    .replace(/\s+/g, ' ').trim();
+  return { text: summary };
+}
+
+/** Classify one `user`-role text body for the chat renderer: an ordinary turn, an injected
+ *  event to show as a muted 'notice' (task-notification summary or command-echo label), or a
+ *  'drop' (injected bookkeeping with no readable text). */
+export type UserTextClass = { kind: 'user' } | { kind: 'notice'; text: string } | { kind: 'drop' };
+export function classifyUserText(text: string): UserTextClass {
+  const note = parseTaskNotification(text);
+  if (note) return { kind: 'notice', text: note.summary };
+  const echo = parseCommandEcho(text);
+  if (echo) return echo.text ? { kind: 'notice', text: echo.text } : { kind: 'drop' };
+  return { kind: 'user' };
+}

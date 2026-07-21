@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { isTaskNotification, isTaskNotificationEntry, taskNotificationSummary } from './task-notification';
+import {
+  isTaskNotification, isTaskNotificationEntry, taskNotificationSummary,
+  commandEchoSummary, isCommandEcho, classifyUserText, isInjectedUserEntry,
+} from './task-notification';
 
 // Captured verbatim from a real transcript line (origin.kind: 'task-notification').
 const BODY = `<task-notification>
@@ -54,5 +57,59 @@ describe('isTaskNotificationEntry', () => {
     // No text blocks at all — `every` on an empty list is vacuously true, so this
     // guards the explicit length check that makes tool_result-only turns fall through.
     expect(isTaskNotificationEntry({ message: { content: [{ type: 'tool_result', content: 'out' }] } })).toBe(false);
+  });
+});
+
+describe('commandEchoSummary', () => {
+  it('pulls stdout out of a local-command echo (the exact bubble the bug showed)', () => {
+    expect(commandEchoSummary('<local-command-stdout>Compacted </local-command-stdout>')).toBe('Compacted');
+  });
+
+  it('labels a bare invocation with the command name (+args)', () => {
+    expect(commandEchoSummary('<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args></command-args>')).toBe('/compact');
+  });
+
+  it('prefers captured output over the invocation name when both are present', () => {
+    expect(commandEchoSummary('<command-name>/compact</command-name><local-command-stdout>Compacted</local-command-stdout>')).toBe('Compacted');
+  });
+
+  it('returns "" (an echo with no readable text → drop) for an empty stdout', () => {
+    expect(commandEchoSummary('<local-command-stdout></local-command-stdout>')).toBe('');
+    expect(isCommandEcho('<local-command-stdout></local-command-stdout>')).toBe(true);
+  });
+
+  it('returns null for an ordinary human turn', () => {
+    expect(commandEchoSummary('please run /compact when you get a chance')).toBeNull();
+    expect(isCommandEcho('please run /compact when you get a chance')).toBe(false);
+  });
+
+  it('does not swallow a human turn that merely quotes a command tag mid-prose', () => {
+    expect(commandEchoSummary('why does <local-command-stdout>x</local-command-stdout> show as my message?')).toBeNull();
+  });
+});
+
+describe('classifyUserText', () => {
+  it('demotes a task notification to a notice', () => {
+    expect(classifyUserText(BODY)).toEqual({ kind: 'notice', text: SUMMARY });
+  });
+  it('demotes a command echo with output to a notice', () => {
+    expect(classifyUserText('<local-command-stdout>Compacted</local-command-stdout>')).toEqual({ kind: 'notice', text: 'Compacted' });
+  });
+  it('drops a contentless command echo', () => {
+    expect(classifyUserText('<command-args></command-args>')).toEqual({ kind: 'drop' });
+  });
+  it('leaves an ordinary turn as a user bubble', () => {
+    expect(classifyUserText('ship it')).toEqual({ kind: 'user' });
+  });
+});
+
+describe('isInjectedUserEntry', () => {
+  it('covers task notifications and command echoes in both content forms', () => {
+    expect(isInjectedUserEntry({ message: { content: BODY } })).toBe(true);
+    expect(isInjectedUserEntry({ message: { content: '<local-command-stdout>Compacted</local-command-stdout>' } })).toBe(true);
+    expect(isInjectedUserEntry({ message: { content: [{ type: 'text', text: '<command-name>/compact</command-name>' }] } })).toBe(true);
+  });
+  it('leaves a real human turn alone', () => {
+    expect(isInjectedUserEntry({ message: { content: 'ship it' } })).toBe(false);
   });
 });
