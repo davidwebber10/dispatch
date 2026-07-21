@@ -39,6 +39,8 @@ import { useViewing } from './stores/viewing';
 import { useUI } from './stores/ui';
 import { parseThreadPath } from './lib/deepLink';
 import { readPendingIntent } from './lib/pendingIntent';
+import { resyncAfterReconnect } from './lib/resync';
+import { clearBadge } from './lib/badge';
 
 export default function App() {
   const activeTerminalId = useTabs((s) => s.activeTabId);
@@ -79,7 +81,10 @@ export default function App() {
       void readPendingIntent().then((i) => { if (i) useUI.getState().requestOpenThread(i); });
     };
     drainIntent();
-    const onVisible = () => { if (!document.hidden) drainIntent(); };
+    // Opening / foregrounding the app acknowledges any pending thread alerts: clear the
+    // app-icon badge the SW painted while we were away, exactly like a native app.
+    void clearBadge();
+    const onVisible = () => { if (!document.hidden) { drainIntent(); void clearBadge(); } };
     document.addEventListener('visibilitychange', onVisible);
 
     const onSwMessage = (e: MessageEvent) => {
@@ -90,8 +95,17 @@ export default function App() {
       }
     };
     navigator.serviceWorker?.addEventListener('message', onSwMessage);
+    // Detect a *re*connect (an 'open' that follows a 'closed'), not the first connect.
+    // On reconnect we resync: while the socket was down we missed every terminal:status
+    // broadcast, so a finished thread can be pinned at a stale 'working' in the live
+    // overlay. resyncAfterReconnect drops the overlay and re-pulls the rows.
+    let socketWasClosed = false;
     const sock = createEventsSocket({
-      onStatus: (s) => useConnection.getState().setStatus(s),
+      onStatus: (s) => {
+        useConnection.getState().setStatus(s);
+        if (s === 'closed') socketWasClosed = true;
+        else if (s === 'open' && socketWasClosed) { socketWasClosed = false; void resyncAfterReconnect(); }
+      },
       onEvent: (e) => {
         useProjects.getState().applyEvent(e);
         useTabs.getState().applyEvent(e);

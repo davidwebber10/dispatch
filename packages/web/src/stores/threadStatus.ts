@@ -21,10 +21,16 @@ export interface ThreadStatus {
 interface ThreadStatusState {
   byTerminal: Record<string, ThreadStatus>;
   applyEvent: (e: ServerEvent) => void;
+  /** Drop the whole live overlay. Called on socket reconnect: while we were
+   *  disconnected we missed every `terminal:status` broadcast, so an entry can be
+   *  frozen at a stale `working` that outlived the real settle. Clearing lets the
+   *  board fall back to the authoritative persisted rows until fresh events arrive. */
+  reset: () => void;
 }
 
 export const useThreadStatus = create<ThreadStatusState>((set, get) => ({
   byTerminal: {},
+  reset: () => set({ byTerminal: {} }),
   applyEvent: (e) => {
     if (e.type === 'terminal:status' && typeof e.terminalId === 'string') {
       const prev = get().byTerminal[e.terminalId] ?? {};

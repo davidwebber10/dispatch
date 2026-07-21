@@ -2,20 +2,42 @@
 // Deliberately conservative because the origin sits behind Cloudflare Access:
 // API / WebSocket / Access / upload paths are never intercepted, and the HTML
 // shell is revalidated over the network so an expired session re-authenticates.
-const VERSION = 'dispatch-v5';
+const VERSION = 'dispatch-v6';
 const CACHE = `dispatch-${VERSION}`;
 // Durable hand-off for a notification tap. Kept OUT of the versioned shell cache
 // so an activate sweep can't discard a tap that landed mid-update.
 // Mirrored by src/lib/pendingIntent.ts — change both together.
 const INTENT_CACHE = 'dispatch-intent';
 const INTENT_URL = '/__pending-thread';
+// Durable unread-alert count painted on the app icon. The SW is killed between
+// pushes, so an in-memory counter would reset to 1 every alert — it lives in the
+// Cache instead, likewise exempt from the activate sweep. Mirrored by
+// src/lib/badge.ts (the app clears it on foreground) — change both together.
+const BADGE_CACHE = 'dispatch-badge';
+const BADGE_URL = '/__badge-count';
+
+// Increment the unread-alert count and paint it on the app icon (iOS 16.4+ PWA).
+async function bumpBadge() {
+  if (typeof caches === 'undefined') return;
+  let count = 0;
+  try {
+    const cache = await caches.open(BADGE_CACHE);
+    const hit = await cache.match(BADGE_URL);
+    if (hit) { const n = Number(await hit.text()); if (Number.isFinite(n) && n > 0) count = n; }
+    count += 1;
+    await cache.put(BADGE_URL, new Response(String(count)));
+  } catch { count = count || 1; }
+  try {
+    if (self.navigator && 'setAppBadge' in self.navigator) await self.navigator.setAppBadge(count);
+  } catch { /* Badging API unsupported — the count is still tracked */ }
+}
 
 self.addEventListener('install', () => self.skipWaiting());
 
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.filter((k) => k !== CACHE && k !== INTENT_CACHE).map((k) => caches.delete(k)));
+    await Promise.all(keys.filter((k) => k !== CACHE && k !== INTENT_CACHE && k !== BADGE_CACHE).map((k) => caches.delete(k)));
     await self.clients.claim();
   })());
 });
@@ -67,13 +89,17 @@ self.addEventListener('push', (event) => {
   let d = {};
   try { d = event.data ? event.data.json() : {}; } catch { d = {}; }
   const title = d.title || 'Dispatch';
-  event.waitUntil(self.registration.showNotification(title, {
-    body: d.body || '',
-    icon: '/icons/icon-192.png',
-    badge: '/icons/icon-192.png',
-    tag: d.terminalId || undefined,   // coalesce repeated pings per thread
-    data: { terminalId: d.terminalId || null, sessionId: d.sessionId || null },
-  }));
+  event.waitUntil((async () => {
+    await self.registration.showNotification(title, {
+      body: d.body || '',
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      tag: d.terminalId || undefined,   // coalesce repeated pings per thread
+      data: { terminalId: d.terminalId || null, sessionId: d.sessionId || null },
+    });
+    // Bump the app-icon count too, so the home screen shows how many alerts are waiting.
+    await bumpBadge();
+  })());
 });
 
 self.addEventListener('notificationclick', (event) => {
