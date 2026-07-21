@@ -11,22 +11,26 @@ describe('formatAge', () => {
 });
 
 describe('ResumeAdviceCard', () => {
-  const props = { ageMinutes: 4560, contextTokens: 134_000, onSummarize: vi.fn(), onFull: vi.fn(), onNever: vi.fn() };
+  const props = { ageMinutes: 4560, contextTokens: 134_000, onSummarize: vi.fn(), onFull: vi.fn() };
 
   it('states the session age and size', () => {
     render(<ResumeAdviceCard {...props} />);
     expect(screen.getByText(/3d 4h old and 134,000 tokens/)).toBeTruthy();
   });
 
-  // Each button is checked in ISOLATION — clicking all three and then asserting each spy
-  // saw one call would pass even if two handlers were swapped, since the counts still add
-  // up. Rendering fresh per case is what actually pins button→callback wiring.
+  it('offers no "don\'t ask again" escape hatch', () => {
+    render(<ResumeAdviceCard {...props} />);
+    expect(screen.queryByRole('button', { name: /don.t ask again/i })).toBeNull();
+  });
+
+  // Each button is checked in ISOLATION — clicking both and then asserting each spy saw one
+  // call would pass even if the two handlers were swapped, since the counts still add up.
+  // Rendering fresh per case is what actually pins button→callback wiring.
   it.each([
     ['resume from summary', 'onSummarize'],
     ['resume full session', 'onFull'],
-    ["don't ask again", 'onNever'],
   ] as const)('fires only %s\'s own callback', (label, expected) => {
-    const spies = { onSummarize: vi.fn(), onFull: vi.fn(), onNever: vi.fn() };
+    const spies = { onSummarize: vi.fn(), onFull: vi.fn() };
     render(<ResumeAdviceCard {...props} {...spies} />);
     fireEvent.click(screen.getByRole('button', { name: new RegExp(label, 'i') }));
     expect(spies[expected]).toHaveBeenCalledOnce();

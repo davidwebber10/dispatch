@@ -50,8 +50,6 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   const sessionId = tab?.sessionId;
   const { items, busy, model, send, pending, answer, contextTokens, compacting, compactResult, compact, hasMore, loadingOlder, loadOlder } = useStructuredChat(terminalId, sessionId);
 
-  const resumeAdviceDismissed = useSettings((s) => s.resumeAdviceDismissed);
-  const setResumeAdviceDismissed = useSettings((s) => s.setResumeAdviceDismissed);
   // Advice is about THIS resume, so "not now" lives in component state rather than
   // storage: a later resume of the same thread (older and larger still) should ask again.
   const [advice, setAdvice] = useState<{ ageMinutes: number; contextTokens: number } | null>(null);
@@ -76,13 +74,13 @@ export function ChatView({ terminalId }: { terminalId: string }) {
     // B's identity until B's own advice happened to resolve with shouldPrompt: true.
     setAdvice(null);
     setAdviceError(null);
-    if (resumeAdviceDismissed || dismissedFullIds.has(terminalId)) return;
+    if (dismissedFullIds.has(terminalId)) return;
     let cancelled = false;
     api.getResumeAdvice(terminalId)
       .then((a) => { if (!cancelled && a.shouldPrompt) setAdvice({ ageMinutes: a.ageMinutes, contextTokens: a.contextTokens }); })
       .catch(() => { /* advisory only — never block the chat on it */ });
     return () => { cancelled = true; };
-  }, [terminalId, resumeAdviceDismissed, dismissedFullIds]);
+  }, [terminalId, dismissedFullIds]);
 
   // Reverse-infinite-scroll: fetch the next older page once the reader nears the top.
   // Mirrors ConversationView's own `scrollTop < 120` threshold; MessageScroller.Viewport's
@@ -276,7 +274,6 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                 // resume. Not persisted: a later resume of the same thread should ask again.
                 setDismissedFullIds((prev) => (prev.has(terminalId) ? prev : new Set(prev).add(terminalId)));
               }}
-              onNever={() => { setResumeAdviceDismissed(true); setAdvice(null); }}
             />
           )}
         </div>

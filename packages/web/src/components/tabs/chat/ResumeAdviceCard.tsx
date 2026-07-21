@@ -18,7 +18,6 @@ interface Props {
   contextTokens: number;
   onSummarize: () => void;
   onFull: () => void;
-  onNever: () => void;
 }
 
 /**
@@ -27,14 +26,13 @@ interface Props {
  * the full session resumes silently and eats the user's limits. Deliberately a
  * dismissible card rather than a modal: nothing here needs to block the composer.
  */
-export function ResumeAdviceCard({ ageMinutes, contextTokens, onSummarize, onFull, onNever }: Props) {
+export function ResumeAdviceCard({ ageMinutes, contextTokens, onSummarize, onFull }: Props) {
   return (
     <div
       style={{
         maxWidth: 768,
         margin: '0 auto 8px',
         border: '1px solid var(--color-border)',
-        borderLeft: '2px solid var(--color-accent)',
         borderRadius: 10,
         background: 'var(--color-elevated)',
         padding: '11px 14px',
@@ -65,12 +63,6 @@ export function ResumeAdviceCard({ ageMinutes, contextTokens, onSummarize, onFul
           style={{ border: '1px solid var(--color-border)', borderRadius: 7, padding: '6px 13px', cursor: 'pointer', background: 'transparent', color: 'var(--color-text-secondary)', font: '500 12.5px var(--font-sans)' }}
         >
           Resume full session
-        </button>
-        <button
-          onClick={onNever}
-          style={{ marginLeft: 'auto', border: 'none', background: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', font: '400 11.5px var(--font-sans)' }}
-        >
-          Don't ask again
         </button>
       </div>
     </div>
