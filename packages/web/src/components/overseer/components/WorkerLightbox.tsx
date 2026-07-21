@@ -12,11 +12,9 @@
 // compact row below.
 
 import { ChatView } from '../../tabs/chat/ChatView';
-import { ConversationView } from '../../tabs/ConversationView';
 import { TerminalTab } from '../../tabs/TerminalTab';
 import { isStructured } from '../../tabs/TabHost';
 import { useTabs, findTerminal } from '../../../stores/tabs';
-import { useThreadMode } from '../../../stores/threadMode';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { Icon } from '../atoms';
 import { AgentDetailHeader } from './AgentDetailHeader';
@@ -30,7 +28,6 @@ export function WorkerLightbox() {
   // Which surface this thread actually renders as. Hooks must run unconditionally, so
   // resolve before the early return below.
   const tab = useTabs((s) => (workerLightboxId ? findTerminal(s.byProject, workerLightboxId) : undefined));
-  const renderMode = useThreadMode((s) => (workerLightboxId ? s.modes[workerLightboxId] : undefined)) ?? 'expert';
 
   if (!workerLightboxId) return null;
 
@@ -144,14 +141,13 @@ export function WorkerLightbox() {
 
         {/* Render the thread on ITS OWN surface, mirroring TabHost. This lightbox was built
             for Overseer agents, which are always structured — so it hard-rendered ChatView.
-            The board opens ANY thread through it, including PTY/CLI ones, and a PTY thread
-            has no structured session behind ChatView: it would open to an empty chat. */}
+            The board opens ANY thread through it, including PTY/CLI ones, which render as the
+            real terminal (a PTY thread has no structured session behind ChatView — it would
+            open to an empty chat). Switch to Pretty for a rendered chat. */}
         <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
           {!tab || isStructured(tab)
             ? <ChatView terminalId={workerLightboxId} />
-            : (renderMode === 'normal'
-                ? <ConversationView terminalId={workerLightboxId} />
-                : <TerminalTab terminalId={workerLightboxId} />)}
+            : <TerminalTab terminalId={workerLightboxId} />}
         </div>
       </div>
     </div>

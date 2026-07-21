@@ -6,11 +6,8 @@ import { BrowserTab } from './BrowserTab';
 import { NotesTab } from './NotesTab';
 import { FileEditorTab } from './FileEditorTab';
 import { ImageFileTab } from './ImageFileTab';
-import { ConversationView } from './ConversationView';
 import { ChatView } from './chat/ChatView';
-import { useThreadMode } from '../../stores/threadMode';
 import { useTabs } from '../../stores/tabs';
-import { ModeToggle } from '../layout/ModeToggle';
 import { TransportToggle } from '../layout/TransportToggle';
 import { AlertBell } from '../layout/AlertBell';
 import { useIsMobile } from '../../hooks/useIsMobile';
@@ -22,30 +19,25 @@ export function isStructured(tab: Pick<Terminal, 'config'>): boolean {
   return (tab.config as { transport?: string } | undefined)?.transport === 'structured';
 }
 
-/** AI thread (claude-code/codex). Structured (stream-json) threads have no PTY,
- *  so they render as a pure chat (ChatView) with no Terminal mode. Other AI
- *  threads keep the View (read-only) / Terminal (interactive) toggle, defaulting
- *  to Terminal so a new thread opens where you can type. */
+/** AI thread (claude-code/codex). Structured (stream-json) threads render as a pure chat
+ *  (ChatView); CLI threads render the real terminal. The old frontend-only "View" render of
+ *  a PTY thread (ConversationView, behind a View/Terminal toggle) was removed — switch the
+ *  thread to Pretty (real stream-json) via the TransportToggle for a rendered chat. */
 function AiThread({ tab }: { tab: Terminal }) {
-  const mode = useThreadMode((s) => s.modes[tab.id]) ?? 'expert';
   const isMobile = useIsMobile();
   const structured = isStructured(tab);
 
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
       {/* Structured threads are chat-only (no xterm — it would crash on a missing PTY);
-          CLI threads keep the View/Terminal render toggle. */}
-      {structured
-        ? <ChatView terminalId={tab.id} />
-        : (mode === 'normal' ? <ConversationView terminalId={tab.id} /> : <TerminalTab terminalId={tab.id} />)}
-      {/* Desktop: the CLI⇄Pretty transport switch (both transports) plus, for CLI
-          threads, the View/Terminal render switcher float over the top-right (mobile
-          keeps the render switcher in the header). */}
+          CLI threads render the terminal. */}
+      {structured ? <ChatView terminalId={tab.id} /> : <TerminalTab terminalId={tab.id} />}
+      {/* Desktop: the CLI⇄Pretty transport switch floats over the top-right (the only render
+          switch now; mobile keeps the same control in its header). */}
       {!isMobile && (
         <div style={{ position: 'absolute', top: 4, right: 12, zIndex: 12, display: 'flex', gap: 6 }}>
           <AlertBell terminalId={tab.id} floating />
           <TransportToggle terminalId={tab.id} floating />
-          {!structured && <ModeToggle terminalId={tab.id} floating />}
         </div>
       )}
     </div>

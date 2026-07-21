@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { Gear, CaretLeft, CaretRight, Plus, Folders, PushPin, Robot } from '@phosphor-icons/react';
 import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
-import { ModeToggle } from '../layout/ModeToggle';
 import { TransportToggle } from '../layout/TransportToggle';
 import { AlertBell } from '../layout/AlertBell';
 import { ProjectCard } from '../sidebar/ProjectCard';
@@ -196,10 +195,9 @@ export function MobileApp() {
           {/* CLI ⇄ Pretty transport switch — the mobile counterpart of TabHost's floating
               desktop control, which mobile never rendered (so a Pretty thread was
               unswitchable on a phone). Non-floating (compact) to match the header pills.
-              Self-gates to claude-code/codex threads; ModeToggle stays alongside it and
-              self-hides for structured threads. */}
+              Self-gates to claude-code/codex threads. This is the only render switch now
+              (the old View/Terminal ModeToggle was removed). */}
           <TransportToggle terminalId={level === 2 && leaf === 'tab' ? leafTabId : null} />
-          <ModeToggle terminalId={level === 2 && leaf === 'tab' ? leafTabId : null} />
         </div>
         {/* Centred section title, iOS-style, while drilled into a settings section
             (the back button on the left already reads "‹ Settings"). */}

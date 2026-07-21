@@ -11,7 +11,6 @@ vi.mock('./ImageFileTab', () => ({ ImageFileTab: () => <div data-testid="image-v
 vi.mock('./TerminalTab', () => ({ TerminalTab: () => <div data-testid="terminal" /> }));
 vi.mock('./BrowserTab', () => ({ BrowserTab: () => <div data-testid="browser" /> }));
 vi.mock('./NotesTab', () => ({ NotesTab: () => <div data-testid="notes" /> }));
-vi.mock('./ConversationView', () => ({ ConversationView: () => <div data-testid="conversation" /> }));
 vi.mock('./chat/ChatView', () => ({ ChatView: () => <div data-testid="chat" /> }));
 
 function fileTab(path: string): Terminal {
