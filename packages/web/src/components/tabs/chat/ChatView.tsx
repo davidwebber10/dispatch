@@ -475,6 +475,22 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
       continue;
     }
 
+    // A user-attached image (imageFromUser) belongs with the human's turn: render it RIGHT-
+    // aligned on its own row, like a UserBubble — not folded into the flush-left assistant
+    // group the way a tool_result screenshot (imageFromUser falsy) is. Its caption, if any, is
+    // a separate 'user' text item just above it.
+    if (it.kind === 'image' && it.imageFromUser) {
+      flushGroup();
+      rows.push(
+        <MessageScroller.Item key={id} messageId={id} style={{ display: 'flex', flexDirection: 'column' }}>
+          <div style={{ alignSelf: 'flex-end', maxWidth: '85%' }}>
+            <ChatImage src={it.imageUrl ?? ''} alt={it.imageAlt} />
+          </div>
+        </MessageScroller.Item>,
+      );
+      continue;
+    }
+
     // Look ahead for a run of consecutive same-tool calls (ignoring their interleaved
     // results, which are rendered paired). A run of 2+ collapses into one ToolGroup.
     // AskUserQuestion is excluded — it has live-overlay special-casing below.
