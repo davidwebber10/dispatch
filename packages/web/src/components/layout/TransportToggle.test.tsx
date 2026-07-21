@@ -2,6 +2,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi, beforeEach, afterEach, describe, it, expect } from 'vitest';
 import { TransportToggle } from './TransportToggle';
 import { useTabs } from '../../stores/tabs';
+import { useThreadStatus } from '../../stores/threadStatus';
 import { api } from '../../api/client';
 
 function seedTab(tab: Record<string, unknown>) {
@@ -10,6 +11,7 @@ function seedTab(tab: Record<string, unknown>) {
 
 beforeEach(() => {
   useTabs.setState({ byProject: {}, openTabIds: [], activeTabId: null, tabSession: {} });
+  useThreadStatus.setState({ byTerminal: {} });
   vi.restoreAllMocks();
 });
 afterEach(() => vi.restoreAllMocks());
@@ -34,6 +36,13 @@ describe('TransportToggle', () => {
     render(<TransportToggle terminalId="t1" />);
     fireEvent.click(screen.getByRole('button', { name: /pretty/i }));
     await waitFor(() => expect(spy).toHaveBeenCalledWith('t1', 'structured'));
+  });
+
+  it('disables switching while a turn is in flight (only switch between turns)', () => {
+    seedTab({ type: 'claude-code', externalId: 'e1', config: {} });
+    useThreadStatus.setState({ byTerminal: { t1: { threadStatus: 'working' } } });
+    render(<TransportToggle terminalId="t1" />);
+    expect(screen.getByRole('button', { name: /pretty/i })).toBeDisabled();
   });
 
   it('switches a Pretty thread back to CLI', async () => {

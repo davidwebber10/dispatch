@@ -1,24 +1,32 @@
 import { useState } from 'react';
 import { useTabs, findTerminal } from '../../stores/tabs';
+import { useThreadStatus } from '../../stores/threadStatus';
 import { api } from '../../api/client';
 
 /**
- * CLI ⇄ Pretty transport switch for a running claude-code/codex thread. Distinct from
- * the View/Terminal `ModeToggle` (a frontend-only PTY render preference): this changes
- * the thread's actual backend transport — killing the current process and re-spawning it
- * RESUMING its conversation in the other transport (`config.transport` structured ↔ absent).
+ * CLI ⇄ Pretty transport switch for a running claude-code/codex thread. This is the ONLY
+ * render switch (the frontend-only View/Terminal `ModeToggle` was removed): it changes the
+ * thread's actual backend transport — killing the current process and re-spawning it RESUMING
+ * its conversation in the other transport (`config.transport` structured ↔ absent).
  *
- * Disabled (with a tooltip) until the thread has captured an `external_id`, since a
- * brand-new thread has no session to resume yet. Renders nothing for non-AI tabs.
+ * Disabled (with a tooltip) in two cases: until the thread has captured an `external_id`
+ * (a brand-new thread has no session to resume yet), and WHILE A TURN IS IN FLIGHT — switching
+ * mid-turn kills the process out from under a streaming/compacting response and strands it, so
+ * you can only switch between turns. Renders nothing for non-AI tabs.
  */
 export function TransportToggle({ terminalId, floating = false }: { terminalId: string | null | undefined; floating?: boolean }) {
   const tab = useTabs((s) => (terminalId ? findTerminal(s.byProject, terminalId) : undefined));
+  const threadStatus = useThreadStatus((s) => (terminalId ? s.byTerminal[terminalId]?.threadStatus : undefined));
   const [busy, setBusy] = useState(false);
 
   if (!terminalId || !tab || (tab.type !== 'claude-code' && tab.type !== 'codex')) return null;
 
   const current: 'cli' | 'pretty' = (tab.config as { transport?: string } | undefined)?.transport === 'structured' ? 'pretty' : 'cli';
-  const canSwitch = !!tab.externalId;
+  // A turn is in flight when the CLI is starting or actively working (this also covers a native
+  // compaction, which the StatusService reports as working) — the window where a resume-respawn
+  // would drop live output.
+  const midTurn = threadStatus === 'working' || threadStatus === 'starting';
+  const canSwitch = !!tab.externalId && !midTurn;
 
   async function switchTo(target: 'cli' | 'pretty') {
     if (busy || !tab || target === current || !canSwitch) return;
@@ -35,7 +43,11 @@ export function TransportToggle({ terminalId, floating = false }: { terminalId: 
 
   const dim = floating ? { w: 46, h: 32, radius: 9, pad: 3, font: 11 } : { w: 40, h: 24, radius: 6, pad: 2, font: 10.5 };
   const opts: ['cli' | 'pretty', string][] = [['cli', 'CLI'], ['pretty', 'Pretty']];
-  const tip = canSwitch ? undefined : 'Send a message first to enable switching';
+  const tip = !tab.externalId
+    ? 'Send a message first to enable switching'
+    : midTurn
+      ? 'Wait for the current turn to finish'
+      : undefined;
 
   return (
     <div
