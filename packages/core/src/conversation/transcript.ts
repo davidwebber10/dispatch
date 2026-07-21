@@ -3,7 +3,9 @@
  * (~/.claude/projects/<enc-cwd>/<sessionId>.jsonl) into a flat conversation for
  * Normal Mode. Each line is an independent JSON entry; we keep the human prompts,
  * assistant text/thinking, tool calls and tool results, and skip the bookkeeping
- * entries (mode/permission-mode/attachment/file-history-snapshot, isMeta users).
+ * entries (mode/permission-mode/file-history-snapshot, isMeta users, and most attachments —
+ * EXCEPT `queued_command` attachments, which are the human's own MID-TURN posts and must
+ * render as user turns; see the queued_command branch in parseEntry).
  */
 
 import { classifyUserText } from './task-notification.js';
@@ -12,7 +14,7 @@ export interface ConvItem {
   /** 'notice' — a system-injected event Claude Code writes as a `user` line but which is not
    *  the human speaking (today: background-task completions, see task-notification.ts). The
    *  View renders it as a muted inline row, never a user bubble; `text` is the summary only. */
-  kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'tool-result' | 'notice';
+  kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'tool-result' | 'notice' | 'image';
   text?: string;
   toolName?: string;
   toolTitle?: string;
@@ -28,6 +30,12 @@ export interface ConvItem {
    *  field (see db/message-source.ts). Undefined for untagged/legacy turns — renders as a
    *  plain "You" bubble, same as today. */
   source?: 'user' | 'coordinator';
+  /** image (kind 'image') — a pasted picture recovered from a mid-turn `queued_command`
+   *  attachment. `imageUrl` is a data: URI (inline base64) or a remote URL. `imageFromUser`
+   *  right-aligns it with the human's turn (matches the web ConvItem twin in api/types.ts). */
+  imageUrl?: string;
+  imageMime?: string;
+  imageFromUser?: boolean;
 }
 
 export function parseClaudeTranscript(text: string): ConvItem[] {
@@ -92,7 +100,55 @@ function parseEntry(o: any): ConvItem[] {
     return out;
   }
 
+  // Mid-turn user posts: a message sent while the assistant was working is persisted NOT as a
+  // `user` turn but as a `queued_command` attachment (its text + any pasted images in
+  // attachment.prompt — verified against real transcripts). Skipping it, as the generic
+  // bookkeeping-attachment case does, is exactly why mid-turn posts vanish when the view
+  // rebuilds from disk even though the live view showed them (the daemon echoes each send).
+  // `commandMode: 'prompt'` scopes this to real typed prompts, not queued slash-commands.
+  if (o.type === 'attachment' && o.attachment?.type === 'queued_command' && o.attachment.commandMode === 'prompt') {
+    const p = o.attachment.prompt;
+    if (typeof p === 'string') {
+      if (!p.trim()) return [];
+      const it = userOrNotice(p, ts, uuid);
+      return it ? [it] : [];
+    }
+    if (Array.isArray(p)) {
+      const out: ConvItem[] = [];
+      for (const b of p) {
+        if (!b || typeof b !== 'object') continue;
+        if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
+          const it = userOrNotice(b.text, ts, uuid);
+          if (it) out.push(it);
+        } else if (b.type === 'image') {
+          const img = imageItem(b);
+          if (img) out.push({ ...img, ts, uuid });
+        }
+      }
+      return out;
+    }
+    return [];
+  }
+
   return [];
+}
+
+/**
+ * A pasted image block from a queued_command's prompt → a user-attached 'image' ConvItem.
+ * Inline base64 becomes a data: URI; a remote URL is used verbatim. A local path ref is
+ * skipped — the REST parser has no session to build the sandboxed byte route (the live ws
+ * path resolves those), matching this parser's existing no-images-for-paths stance.
+ */
+function imageItem(b: any): ConvItem | undefined {
+  const src = b?.source ?? {};
+  if (src.type === 'base64' && src.data) {
+    const mime = str(src.media_type) || 'image/png';
+    return { kind: 'image', imageUrl: `data:${mime};base64,${src.data}`, imageMime: mime, imageFromUser: true };
+  }
+  if ((src.type === 'url' || src.type === 'uri') && (src.url || src.uri)) {
+    return { kind: 'image', imageUrl: str(src.url) ?? str(src.uri), imageFromUser: true };
+  }
+  return undefined;
 }
 
 /**

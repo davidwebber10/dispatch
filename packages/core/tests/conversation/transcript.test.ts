@@ -57,3 +57,32 @@ describe('parseClaudeTranscript', () => {
     expect(tool).toMatchObject({ kind: 'tool', toolName: 'Bash', toolDetail: 'npm test' });
   });
 });
+
+// A message sent WHILE the assistant is mid-turn is persisted NOT as a `user` turn but as a
+// `queued_command` attachment (verified against real transcripts — its text/images live in
+// attachment.prompt). Without rendering these, every mid-turn post vanishes when the view
+// rebuilds from disk, even though the live view showed it via the daemon's send-echo.
+describe('mid-turn posts (queued_command attachments)', () => {
+  it('renders a mid-turn text post as the user turn it is', () => {
+    const line = '{"type":"attachment","attachment":{"type":"queued_command","commandMode":"prompt","prompt":"fix the sort icon"},"timestamp":"2026-07-20T00:00:00Z","uuid":"q1"}';
+    expect(parseClaudeTranscript(line)).toEqual([
+      { kind: 'user', text: 'fix the sort icon', ts: '2026-07-20T00:00:00Z', uuid: 'q1' },
+    ]);
+  });
+
+  it('renders a mid-turn post with a pasted screenshot as user text + a user-attached image', () => {
+    const prompt = JSON.stringify([
+      { type: 'text', text: 'like this' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+    ]);
+    const items = parseClaudeTranscript(`{"type":"attachment","attachment":{"type":"queued_command","commandMode":"prompt","prompt":${prompt}},"uuid":"q2"}`);
+    expect(items.map((i) => i.kind)).toEqual(['user', 'image']);
+    expect(items[0]).toMatchObject({ kind: 'user', text: 'like this', uuid: 'q2' });
+    expect(items[1]).toMatchObject({ kind: 'image', imageUrl: 'data:image/png;base64,AAAA', imageFromUser: true, uuid: 'q2' });
+  });
+
+  it('ignores every other attachment kind (hook output, task reminders, listings, …)', () => {
+    expect(parseClaudeTranscript('{"type":"attachment","attachment":{"type":"hook_success","content":"x"}}')).toEqual([]);
+    expect(parseClaudeTranscript('{"type":"attachment","attachment":{"type":"task_reminder","content":"x"}}')).toEqual([]);
+  });
+});

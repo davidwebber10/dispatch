@@ -95,7 +95,10 @@ function safeJson(v: unknown): string {
  * (rare) would collide — accepted as the fallback of last resort, not the primary check.
  */
 function convItemFingerprint(it: ConvItem): string {
-  return [it.kind, it.toolId ?? '', it.toolName ?? '', it.text ?? '', it.toolInput ?? ''].join(' ');
+  // imageUrl is included so distinct images (which otherwise share an empty text/tool
+  // fingerprint) don't collapse to one — matters now that REST pages can carry user-attached
+  // images (recovered from mid-turn queued_command posts, see conversation/transcript.ts).
+  return [it.kind, it.toolId ?? '', it.toolName ?? '', it.text ?? '', it.toolInput ?? '', it.imageUrl ?? ''].join(' ');
 }
 
 /** tool_result.content is frequently an array of blocks ([{type:'text',text}]) —
