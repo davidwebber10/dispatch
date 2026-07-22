@@ -55,7 +55,13 @@ const SECTIONS: { key: string; label: string; types: Terminal['type'][]; add: 'm
   { key: 'files', label: 'FILES', types: ['file'], add: null },
 ];
 
-const plusBtn: React.CSSProperties = { width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', font: '600 14px/1 var(--font-sans)', borderRadius: 4 };
+// padding:0 is load-bearing, not cosmetic. A <button> carries a UA-default ~6px
+// horizontal padding; with the app's global `* { box-sizing: border-box }` and this
+// fixed width:16, that padding eats INTO the width, leaving a 4px content box. A text
+// glyph overflowed it invisibly, but a Phosphor <svg> is a flex item that shrinks to
+// the 4px box → a 4px-wide sliver (the "+"/sort icons "not displaying" on desktop).
+// Zeroing the padding gives the 13px icon its full 16px box back.
+const plusBtn: React.CSSProperties = { width: 16, height: 16, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', font: '600 14px/1 var(--font-sans)', borderRadius: 4 };
 
 function homePath(p: string): string {
   return (p || '').replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
