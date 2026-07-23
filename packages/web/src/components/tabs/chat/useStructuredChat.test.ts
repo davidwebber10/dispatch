@@ -801,20 +801,22 @@ test("loadOlder's first call anchors on the oldest rendered item's uuid (beforeU
 });
 
 // ---- Transcript-duplication regression (anchorless loadOlder racing the ws replay) -------
-// BootstrapOlderPages fires loadOlder() on mount. If it fires before the ws replay has
-// settled a real transcript uuid onto `items`, loadOlder sends an ANCHORLESS fetch
-// (before/beforeUuid both undefined), which the server answers with the NEWEST window (the
-// whole transcript). The ws onEvent handlers would then re-append the same turns, so the
-// conversation rendered twice. The guard below suppresses that fetch whenever items EXIST
-// but carry no real anchor; the zero-items case is instead made safe by uuid-dedup on the
-// ws append paths (see the deadlock tests further down).
+// BootstrapOlderPages fires loadOlder() on mount. If it fired before the ws replay had
+// settled a real transcript uuid onto `items`, an ANCHORLESS fetch (before/beforeUuid both
+// undefined) returned the NEWEST window — the whole transcript — which the ws replay then
+// re-appended (the streaming rebuild path has no dedup), rendering the conversation twice
+// and out of order. The guard suppresses that fetch under EVERY anchorless state: items
+// with only synthetic keys AND zero items. loadOlder serves strictly-older history; the
+// newest window is owned by the ws replay.
 
 // ---- Zero-items history DEADLOCK (the "reopening a Pretty thread shows no history" bug) --
 // A replay ring holding only NON-RENDERING events (system/init, system/status, a stale
-// result) is non-empty, so ws/structured.ts never sends the `system/inactive` REST-hydration
-// rescue — yet ChatView renders zero items. The old guard also bailed on zero items, and did
-// so SYNCHRONOUSLY without touching `loadingOlder`, so useBootstrapOlderPages' effect never
-// re-fired and there was nothing on screen to scroll. History was permanently unreachable.
+// result) paints nothing, and with the guard also bailing on zero items — SYNCHRONOUSLY,
+// without touching `loadingOlder` — nothing ever re-triggered paging: history was
+// unreachable. The rescue now lives at the SERVER: ws/structured.ts sends the
+// `system/inactive` REST-hydration sentinel whenever the ring has no RENDERABLE events
+// (hasRenderableEvents), and the client's inactive handler hydrates even past a stale
+// replayed result footer. loadOlder itself never fetches anchorless.
 
 test('with ZERO items rendered, loadOlder does NOT fetch — the newest window is owned by the ws replay / server inactive rescue', async () => {
   const spy = vi.spyOn(api, 'getConversation').mockResolvedValue({ items: [], cursor: 0, startLine: 0, hasMore: false } as any);

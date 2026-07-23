@@ -552,7 +552,9 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
                 // items sharing one identity, i.e. the same turn rendered twice. With the
                 // anchorless fetch gone this cannot occur today; it exists so a future overlap
                 // regression duplicates nothing. (Burst items still carry synthetic `s-` keys
-                // here, so `it.uuid === uuid` can only match an outside copy.)
+                // here, so `it.uuid === uuid` matches an outside copy — or an already-upgraded
+                // item from an earlier reconcile of this SAME message, in which case the filter
+                // removes nothing and this is a harmless no-op.)
                 if (uuid && p.some((it) => it.uuid === uuid)) {
                   return p.filter((it) => !(it.uuid && blockKeys.has(it.uuid)));
                 }
