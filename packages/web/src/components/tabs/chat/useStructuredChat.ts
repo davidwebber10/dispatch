@@ -416,9 +416,19 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
           api.getConversation(terminalId, { limit: OLDER_PAGE_LIMIT })
             .then((conv) => {
               if (tok !== pageTokenRef.current) return; // thread switched / ws reset mid-flight
+              // Apply only while nothing CONVERSATIONAL is rendered. A ring that earned this
+              // rescue replays no conversation items, but can still deposit a stale `result`
+              // FOOTER (the result handler appends one for any non-backfill result) — a footer
+              // alone doesn't own the view: hydrate and keep it BELOW the history, where the
+              // newest turn's footer belongs. A real conversation item (a live turn that
+              // started mid-flight) means the stream owns the view — discard the page AND
+              // leave the paging anchor unset: anchoring at this page's startLine while
+              // dropping its content would leave a gap later loadOlder() pages right past.
+              const conversational = (it: ConvItem) => it.kind !== 'result';
+              if (itemsRef.current.some(conversational)) return;
               oldestLineRef.current = conv.startLine;
               hasMoreRef.current = conv.hasMore; setHasMore(conv.hasMore);
-              if (conv.items.length) setItems((prev) => (prev.length ? prev : conv.items));
+              if (conv.items.length) setItems((prev) => (prev.some(conversational) ? prev : [...conv.items, ...prev]));
             })
             .catch(() => { /* transient — the next near-top scroll retries via loadOlder */ })
             .finally(() => {

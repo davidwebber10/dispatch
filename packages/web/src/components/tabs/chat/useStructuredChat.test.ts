@@ -644,6 +644,41 @@ test('the inactive hydration does not clobber items a live event already populat
   expect(result.current.items.map((i) => i.text)).toEqual(['live wins']);
 });
 
+test('the inactive hydration still applies when only a stale result FOOTER rendered (deadlock ring), keeping the footer below the history', async () => {
+  vi.spyOn(api, 'getConversation').mockResolvedValue({
+    items: [
+      { kind: 'user', text: 'from disk', uuid: 'u1', line: 10 },
+      { kind: 'assistant', text: 'reply', uuid: 'u2', line: 11 },
+    ],
+    cursor: 50, startLine: 10, hasMore: false,
+  } as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'inactive' }));
+  // The deadlock ring replays a stale (non-backfill) result AFTER the sentinel — the
+  // footer item this appends must not defeat the hydration.
+  act(() => cbs.onEvent({ type: 'result', is_error: false, duration_ms: 5 }));
+  await flushAsync();
+  expect(result.current.items.map((i) => i.kind)).toEqual(['user', 'assistant', 'result']);
+  expect(result.current.items.map((i) => i.text ?? '')).toEqual(['from disk', 'reply', '']);
+});
+
+test('a discarded inactive page leaves the paging anchor UNSET so later paging cannot skip its window', async () => {
+  const spy = vi.spyOn(api, 'getConversation')
+    .mockResolvedValueOnce({ items: [{ kind: 'user', text: 'newest disk window', uuid: 'w1', line: 30 }], cursor: 50, startLine: 30, hasMore: true } as any)
+    .mockResolvedValueOnce({ items: [], cursor: 0, startLine: 0, hasMore: false } as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'inactive' }));
+  // A live turn lands before the rescue fetch resolves — the page is discarded.
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'live1', message: { content: [{ type: 'text', text: 'live wins' }] } }));
+  await flushAsync();
+  expect(result.current.items.map((i) => i.text)).toEqual(['live wins']);
+  // The next loadOlder must anchor on the live item's uuid — NOT on the discarded page's
+  // startLine, which would silently skip everything in that dropped window.
+  act(() => { result.current.loadOlder(); });
+  await flushAsync();
+  expect(spy).toHaveBeenLastCalledWith('t1', { before: undefined, beforeUuid: 'live1', limit: 120 });
+});
+
 // ---- BUG 2 (tool rows render above the prompt that kicked off the agent) ----------------
 // Root fix: the ws fold and the REST/transcript parser now share Claude Code's own
 // per-message-block `uuid` (threaded onto ConvItems in the 'assistant'/'user' handlers
