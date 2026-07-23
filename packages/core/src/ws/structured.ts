@@ -3,6 +3,37 @@ import type { WebSocket } from 'ws';
 import type { IncomingMessage } from 'node:http';
 import type { IStructuredManager } from '../structured/manager.js';
 
+/**
+ * True iff at least one ring event would fold into a VISIBLE conversation item in the
+ * client (useStructuredChat's onEvent): a non-synthetic user turn (string or
+ * text/tool_result/image blocks), an assistant turn with text/thinking/tool_use/image
+ * blocks, or a streamed content_block_start. system/*, result footers, control frames
+ * and delta-only stream noise render nothing on their own. Drives the `system/inactive`
+ * REST-hydration sentinel below: a ring with no renderable events replays "something"
+ * but paints nothing, which used to strand the view (the 0b8e106 deadlock).
+ */
+export function hasRenderableEvents(events: unknown[]): boolean {
+  return events.some((e: any) => {
+    if (!e || typeof e !== 'object') return false;
+    if (e.type === 'assistant') {
+      const c = e.message?.content;
+      if (!Array.isArray(c)) return false;
+      return c.some((b: any) => b && (b.type === 'tool_use' || b.type === 'thinking' || b.type === 'image'
+        || (b.type === 'text' && typeof b.text === 'string' && b.text.trim().length > 0)));
+    }
+    if (e.type === 'user') {
+      if (e.isSynthetic || e.isMeta || !e.message) return false;
+      const c = e.message.content;
+      if (typeof c === 'string') return c.trim().length > 0;
+      if (!Array.isArray(c)) return false;
+      return c.some((b: any) => b && (b.type === 'tool_result' || b.type === 'image'
+        || (b.type === 'text' && typeof b.text === 'string' && b.text.trim().length > 0)));
+    }
+    if (e.type === 'stream_event') return e.event?.type === 'content_block_start';
+    return false;
+  });
+}
+
 export function handleStructuredConnection(
   ws: WebSocket,
   req: IncomingMessage,
@@ -28,14 +59,17 @@ export function handleStructuredConnection(
   // itself is resumed independently and sees its full transcript regardless of what we replay.
   const tailParam = Number(new URL(req.url ?? '', 'http://internal').searchParams.get('tail'));
   const events = Number.isFinite(tailParam) && tailParam > 0 ? manager.getEventsTail(id, tailParam) : manager.getEvents(id);
-  // Nothing buffered to replay ⇒ the client would sit on an empty view: the live channel only
-  // carries FUTURE turns, and any history not in the ring never reaches it this way. Tell the
-  // client to hydrate its initial view from the REST transcript instead. Covers a dead/archived/
-  // queued thread (ring empty, nothing coming) AND an ALIVE thread whose ring is empty after a
-  // daemon restart (the CLI is resumed with its session, but its history was never backfilled
-  // into the ring). Sent BEFORE replay; harmless when replay is non-empty since the client only
-  // hydrates if `items` is still empty (see useStructuredChat's 'system'/'inactive' handler).
-  if (events.length === 0 && ws.readyState === 1) ws.send(JSON.stringify({ type: 'system', subtype: 'inactive' }));
+  // Nothing RENDERABLE to replay ⇒ the client would sit on an empty view: the live channel
+  // only carries FUTURE turns, and any history not in the ring never reaches it this way.
+  // Tell the client to hydrate its initial view from the REST transcript instead. Covers a
+  // dead/archived/queued thread (ring empty), an ALIVE thread whose ring is empty after a
+  // daemon restart, AND a ring holding only non-rendering events (system/init, a stale
+  // result) — that last case previously replayed "something", earned no sentinel, and
+  // painted nothing, the deadlock 0b8e106 worked around client-side with an anchorless
+  // newest-window fetch (since removed: it raced the replay and doubled transcripts). Sent
+  // BEFORE replay; harmless alongside one, since the client only hydrates while nothing
+  // conversational is rendered (see useStructuredChat's 'system'/'inactive' handler).
+  if (!hasRenderableEvents(events) && ws.readyState === 1) ws.send(JSON.stringify({ type: 'system', subtype: 'inactive' }));
   for (const e of events) { if (ws.readyState === 1) ws.send(JSON.stringify(e)); }
   const onEvent = (eid: string, event: unknown) => { if (eid === id && ws.readyState === 1) ws.send(JSON.stringify(event)); };
   // P0b: the CLI never emits a `result` when its process exits/crashes mid-turn,
