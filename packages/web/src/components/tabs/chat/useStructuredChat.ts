@@ -424,11 +424,20 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
               // started mid-flight) means the stream owns the view — discard the page AND
               // leave the paging anchor unset: anchoring at this page's startLine while
               // dropping its content would leave a gap later loadOlder() pages right past.
+              // The anchor writes live INSIDE the updater: itemsRef syncs via a passive effect
+              // and can lag a just-committed live event, so an outside check could anchor (or
+              // latch hasMore=false, permanently killing loadOlder) on a page the updater is
+              // about to discard. The updater's `prev` is the authoritative fresh state; the
+              // itemsRef check outside is a fast-path only. The ref/setHasMore writes in here
+              // are idempotent, so a double-invoked (StrictMode) updater is harmless.
               const conversational = (it: ConvItem) => it.kind !== 'result';
-              if (itemsRef.current.some(conversational)) return;
-              oldestLineRef.current = conv.startLine;
-              hasMoreRef.current = conv.hasMore; setHasMore(conv.hasMore);
-              if (conv.items.length) setItems((prev) => (prev.some(conversational) ? prev : [...conv.items, ...prev]));
+              if (itemsRef.current.some(conversational)) return; // fast path only
+              setItems((prev) => {
+                if (prev.some(conversational)) return prev; // authoritative — skips the anchor too
+                oldestLineRef.current = conv.startLine;
+                hasMoreRef.current = conv.hasMore; setHasMore(conv.hasMore);
+                return conv.items.length ? [...conv.items, ...prev] : prev;
+              });
             })
             .catch(() => { /* transient — the next near-top scroll retries via loadOlder */ })
             .finally(() => {

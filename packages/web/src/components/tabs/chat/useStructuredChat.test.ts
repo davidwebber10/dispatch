@@ -679,6 +679,34 @@ test('a discarded inactive page leaves the paging anchor UNSET so later paging c
   expect(spy).toHaveBeenLastCalledWith('t1', { before: undefined, beforeUuid: 'live1', limit: 120 });
 });
 
+test('RACE: a live conversational event lands in the SAME microtask window as the rescue fetch resolving (itemsRef not yet re-synced) — hasMore is not latched false by the discarded page, and the anchor stays unset', async () => {
+  let resolveFetch!: (v: unknown) => void;
+  const spy = vi.spyOn(api, 'getConversation').mockReturnValue(new Promise((r) => { resolveFetch = r; }) as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'inactive' }));
+  // Both the live event AND the fetch resolution happen inside ONE act(async...) callback,
+  // with no intervening `await act(...)` boundary — the narrowest window we can force in a
+  // test environment for the itemsRef passive-effect sync to lag behind. The rescue page
+  // below carries hasMore:false and a startLine far from the live item, so either bug
+  // symptom (a latched-false hasMore, or an anchor pointing at the discarded page) would be
+  // caught by the assertions after.
+  await act(async () => {
+    cbs.onEvent({ type: 'assistant', uuid: 'live1', message: { content: [{ type: 'text', text: 'live wins' }] } });
+    resolveFetch({ items: [{ kind: 'user', text: 'stale disk read', uuid: 'w1', line: 30 }], cursor: 50, startLine: 30, hasMore: false });
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  // The live item is the only thing rendered — the rescue page must have been discarded.
+  expect(result.current.items.map((i) => i.text)).toEqual(['live wins']);
+  // Must NOT be latched false by the discarded page's hasMore:false (the bug this guards).
+  expect(result.current.hasMore).toBe(true);
+  // The next loadOlder must anchor on the live item's uuid — NOT `before: 30` (the
+  // discarded page's startLine), which would silently skip everything in that window.
+  act(() => { result.current.loadOlder(); });
+  await flushAsync();
+  expect(spy).toHaveBeenLastCalledWith('t1', { before: undefined, beforeUuid: 'live1', limit: 120 });
+});
+
 // ---- BUG 2 (tool rows render above the prompt that kicked off the agent) ----------------
 // Root fix: the ws fold and the REST/transcript parser now share Claude Code's own
 // per-message-block `uuid` (threaded onto ConvItems in the 'assistant'/'user' handlers
