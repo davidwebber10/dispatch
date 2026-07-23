@@ -774,6 +774,23 @@ test('streaming mode: a reconciled tool item gets its synthetic key upgraded to 
   expect(result.current.items.filter((i) => i.kind === 'tool')).toHaveLength(1); // no duplicate appended
 });
 
+test('DEFENSE: a streamed rebuild whose reconciled uuid is ALREADY rendered is dropped, not duplicated', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  // A copy of this message is already rendered (e.g. a REST-hydrated page).
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'U', message: { content: [{ type: 'text', text: 'answer' }] } }));
+  expect(result.current.items.map((i) => i.text)).toEqual(['answer']);
+  // A replayed stream burst rebuilds the SAME message: message_start → block → delta →
+  // whole-assistant reconcile carrying the same transcript uuid.
+  act(() => cbs.onEvent({ type: 'stream_event', event: { type: 'message_start' } }));
+  act(() => cbs.onEvent(start(0, { type: 'text' })));
+  act(() => cbs.onEvent(textDelta(0, 'answer')));
+  drainRaf();
+  expect(result.current.items).toHaveLength(2); // burst item visible mid-stream (pre-reconcile)
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'U', message: { content: [{ type: 'text', text: 'answer' }] } }));
+  expect(result.current.items.filter((i) => i.text === 'answer')).toHaveLength(1); // dropped, not upgraded
+  expect(result.current.items.filter((i) => i.uuid === 'U')).toHaveLength(1);
+});
+
 test("loadOlder's first call anchors on the oldest rendered item's uuid (beforeUuid), not just before:undefined", async () => {
   const spy = vi.spyOn(api, 'getConversation').mockResolvedValue({ items: [], cursor: 0, startLine: 0, hasMore: false } as any);
   const { result } = renderHook(() => useStructuredChat('t1'));

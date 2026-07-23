@@ -546,6 +546,16 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
             const tools = event.message.content.filter((b: any) => b.type === 'tool_use');
             if (tools.length || (uuid && blockKeys.size)) {
               setItems((p) => {
+                // DEFENSE-IN-DEPTH (replay/REST overlap): if this message's real uuid is already
+                // rendered by an item OUTSIDE this stream burst (a REST-hydrated copy), drop the
+                // burst's rebuilt items instead of upgrading them — upgrading would leave two
+                // items sharing one identity, i.e. the same turn rendered twice. With the
+                // anchorless fetch gone this cannot occur today; it exists so a future overlap
+                // regression duplicates nothing. (Burst items still carry synthetic `s-` keys
+                // here, so `it.uuid === uuid` can only match an outside copy.)
+                if (uuid && p.some((it) => it.uuid === uuid)) {
+                  return p.filter((it) => !(it.uuid && blockKeys.has(it.uuid)));
+                }
                 const haveIds = new Set(p.filter((i) => i.kind === 'tool' && i.toolId).map((i) => i.toolId));
                 const next = p.map((it) => {
                   const patch: Partial<ConvItem> = {};
