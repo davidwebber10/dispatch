@@ -799,17 +799,14 @@ test("loadOlder's first call anchors on the oldest rendered item's uuid (beforeU
 // so SYNCHRONOUSLY without touching `loadingOlder`, so useBootstrapOlderPages' effect never
 // re-fired and there was nothing on screen to scroll. History was permanently unreachable.
 
-test('DEADLOCK FIX: with ZERO items rendered, loadOlder DOES issue the anchorless REST fetch (initial hydration)', async () => {
-  const spy = vi.spyOn(api, 'getConversation').mockResolvedValue({
-    items: [{ kind: 'user', text: 'q', uuid: 'u1', line: 0 }],
-    cursor: 1, startLine: 0, hasMore: false,
-  } as any);
+test('with ZERO items rendered, loadOlder does NOT fetch — the newest window is owned by the ws replay / server inactive rescue', async () => {
+  const spy = vi.spyOn(api, 'getConversation').mockResolvedValue({ items: [], cursor: 0, startLine: 0, hasMore: false } as any);
   const { result } = renderHook(() => useStructuredChat('t1'));
-  expect(result.current.items).toHaveLength(0); // nothing rendered — nothing to duplicate
+  expect(result.current.items).toHaveLength(0);
   act(() => { result.current.loadOlder(); });
   await flushAsync();
-  expect(spy).toHaveBeenCalledWith('t1', { before: undefined, limit: 120 });
-  expect(result.current.items.map((i) => i.text)).toEqual(['q']); // history is now reachable
+  expect(spy).not.toHaveBeenCalled(); // an anchorless fetch returns the NEWEST window and races the replay
+  expect(result.current.loadingOlder).toBe(false);
 });
 
 test('GUARD PRESERVED: with items rendered but no real uuid among them, loadOlder still bails (no anchorless fetch)', async () => {
@@ -844,12 +841,8 @@ test('a synthetic streaming key does NOT count as an anchor (still no anchorless
   expect(spy).not.toHaveBeenCalled();
 });
 
-test('REGRESSION: a mount-time loadOlder racing the ws replay does not double the transcript', async () => {
-  // With zero items the anchorless newest-window fetch is now ALLOWED (it's the deadlock
-  // rescue), so it resolves and prepends the whole transcript — and the ws replay then appends
-  // the very same turns. The uuid-dedup armed on the ws append paths after an anchorless
-  // hydration is what keeps this a single copy.
-  vi.spyOn(api, 'getConversation').mockResolvedValue({
+test('REGRESSION: a mount-time loadOlder racing the ws replay does not double the transcript (no anchorless fetch is ever issued)', async () => {
+  const spy = vi.spyOn(api, 'getConversation').mockResolvedValue({
     items: [
       { kind: 'user', text: 'q', uuid: 'u1', line: 0 },
       { kind: 'assistant', text: 'a', uuid: 'u2', line: 1 },
@@ -859,10 +852,11 @@ test('REGRESSION: a mount-time loadOlder racing the ws replay does not double th
   const { result } = renderHook(() => useStructuredChat('t1'));
   act(() => { result.current.loadOlder(); }); // bootstrap fires on mount, items still empty
   await flushAsync();
-  // ws replay lands the two turns (real uuids).
+  expect(spy).not.toHaveBeenCalled(); // the newest-window fetch that caused the doubling never happens
+  // The ws replay lands the turns exactly once, in order.
   act(() => cbs.onEvent({ type: 'user', uuid: 'u1', message: { role: 'user', content: [{ type: 'text', text: 'q' }] } }));
   act(() => cbs.onEvent({ type: 'assistant', uuid: 'u2', message: { content: [{ type: 'text', text: 'a' }] } }));
-  expect(result.current.items.map((i) => i.text)).toEqual(['q', 'a']); // single copy, not doubled
+  expect(result.current.items.map((i) => i.text)).toEqual(['q', 'a']);
 });
 
 test('resolves a PATH-form image via the byte route ONLY when sessionId is wired (BUG 2)', () => {
