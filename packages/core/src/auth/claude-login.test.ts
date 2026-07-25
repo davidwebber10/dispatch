@@ -84,7 +84,7 @@ describe('ClaudeLoginService', () => {
     const s = await done;
 
     expect(s.status).toBe('complete');
-    expect(f.written).toEqual(['my-code\r']);          // trimmed, with a carriage return
+    expect(f.written).toEqual(['my-code', '\r']);       // trimmed; Enter sent separately
     expect(svc.getToken()).toBe('sk-ant-oat01-TOKENVALUE_123');
     expect(svc.getSpawnEnv()).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-TOKENVALUE_123' });
     expect(fs.statSync(path.join(dir, 'claude-oauth-token')).mode & 0o777).toBe(0o600);
@@ -211,5 +211,27 @@ describe('a rejected code is recoverable, not terminal', () => {
   test('the masked echo of the pasted code is not mistaken for an error', () => {
     // The CLI masks the code as asterisks; that row is never the reason for failure.
     expect(lastMeaningfulLine('****************************\r\nOAuth error: nope')).toBe('OAuth error: nope')
+  })
+})
+
+describe('submission is a paste THEN a keypress', () => {
+  test('the code and the Enter are written separately', async () => {
+    // Claude Code's Ink TUI does bracketed-paste detection: a '\r' arriving in the
+    // same burst as a long code is absorbed as literal content, so the field fills
+    // and never submits — the CLI then prints neither error nor token and the
+    // exchange times out. Verified against the real CLI in os-prod: combined write
+    // produced no response; separate writes produced an immediate answer.
+    const f = fakePty()
+    const svc = new ClaudeLoginService(dir, f.spawn as any)
+    const p = svc.start()
+    setTimeout(() => f.emit('https://claude.com/cai/oauth/x\r\n'), 20)
+    await p
+
+    const long = 'g'.repeat(60) + '#' + 's'.repeat(40)
+    const done = svc.submitCode(long)
+    setTimeout(() => f.emit('\r\nsk-ant-oat01-TOKENAAA\r\n'), 400)
+    await done
+
+    expect(f.written).toEqual([long, '\r'])   // two writes, never one
   })
 })

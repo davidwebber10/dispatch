@@ -42,6 +42,8 @@ const TOKEN_RE = /\b(sk-ant-oat[0-9]{2}-[A-Za-z0-9_-]+)\b/;
 const URL_RE = /https:\/\/claude\.com\/[^\s"'\x07\x1b]+/;
 const START_TIMEOUT_MS = 45_000;
 const EXCHANGE_TIMEOUT_MS = 45_000;
+/** Gap between typing the code and pressing Enter, so the two aren't one paste burst. */
+const SUBMIT_KEYPRESS_DELAY_MS = 250;
 
 /** Strip ANSI/OSC so regexes see plain text — setup-token emits hyperlink escapes. */
 export function stripAnsi(s: string): string {
@@ -242,7 +244,21 @@ export class ClaudeLoginService {
     // Mark where the transcript is now, so the token regex can't match anything
     // echoed before this point (the pasted code itself is echoed back).
     const from = live.buf.length;
-    live.proc.write(trimmed + '\r');
+
+    // Send the code and the Enter SEPARATELY.
+    //
+    // Claude Code's TUI is Ink-based and does bracketed-paste detection: a fast
+    // burst of characters is treated as a paste, and a '\r' arriving inside that
+    // same burst is absorbed as literal content rather than an Enter keypress. A
+    // combined `code + '\r'` therefore fills the field and never submits — the CLI
+    // sits at its prompt printing neither an error nor a token, which is precisely
+    // how this failed: masked asterisks, no output, a full 45-second timeout.
+    //
+    // A short code doesn't trip paste detection, which is why a probe with a small
+    // value appeared to work and a real ~100-character code did not.
+    live.proc.write(trimmed);
+    await sleep(SUBMIT_KEYPRESS_DELAY_MS);
+    live.proc.write('\r');
 
     const deadline = Date.now() + EXCHANGE_TIMEOUT_MS;
     while (Date.now() < deadline) {
@@ -272,7 +288,12 @@ export class ClaudeLoginService {
     }
     // A bare "timed out" tells the user nothing they can act on. Show what the CLI
     // last said — an invalid or already-used code says so explicitly.
-    const detail = lastMeaningfulLine(live.buf.slice(from));
+    const tail = live.buf.slice(from);
+    const detail = lastMeaningfulLine(tail);
+    // Log the raw tail: when the CLI prints neither a token nor an error, the only
+    // way to tell what it was waiting for is to see exactly what it emitted.
+    console.warn('claude setup-token exchange timed out. Output tail:',
+      JSON.stringify(stripAnsi(tail).slice(-600)));
     this.fail(live, detail ? `Claude said: ${detail}` : 'timed out exchanging the code for a token');
     return { ...live.session };
   }
