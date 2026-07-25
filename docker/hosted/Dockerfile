@@ -82,13 +82,17 @@ RUN NODE_ENV=development pnpm install --frozen-lockfile \
 # world-executable: shared, immutable, versioned with the image.
 RUN HOME=/opt/agents bash -c 'mkdir -p /opt/agents && curl -fsSL https://claude.ai/install.sh | bash' \
     && chmod -R a+rX /opt/agents
-RUN npm install -g @openai/codex
+# codex, plus mcp-remote: IntegrationsService spawns REMOTE MCP servers as
+# `npx -y mcp-remote <url>`, which on a box means an npm fetch on every single spawn.
+# Baking it in makes spawns faster and removes a network dependency from the path
+# that attaches a user's tools.
+RUN npm install -g @openai/codex mcp-remote
 
 # Verify both CLIs resolve on the runtime PATH at BUILD time. Phase 0 shipped an
 # image where they silently vanished under the EFS mount and the failure only
 # surfaced in a container log line; a build-time assertion catches the class of
 # mistake where an install lands somewhere PATH won't reach.
-RUN command -v claude && command -v codex && claude --version
+RUN command -v claude && command -v codex && command -v mcp-remote && claude --version
 
 RUN chown -R dispatch:dispatch /app
 COPY --chown=dispatch:dispatch docker/hosted/entrypoint.sh /usr/local/bin/entrypoint.sh
