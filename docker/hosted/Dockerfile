@@ -48,9 +48,20 @@ RUN groupmod -n dispatch node \
 # login entirely — the same failure class as forceLoginOrgUUID. Add it once verified.
 RUN mkdir -p /etc/claude-code && printf '%s\n' '{}' > /etc/claude-code/managed-settings.json
 
+# AGENT_HOME is where the agent CLI *binaries* live. It must be OUTSIDE $HOME:
+# in production /home/dispatch is an EFS mount, and mounting it shadows anything
+# the image installed under it (observed in Phase 0 as `claude=MISSING`). The split
+# is deliberate and correct — binaries are fleet-wide and versioned with the image;
+# only per-user state (~/.claude credentials, ~/.codex, repos) belongs on EFS.
+#
+# DISABLE_AUTOUPDATER follows from that: AGENT_HOME is root-owned, so the runtime
+# user can't self-update anyway, and a fleet should move versions by redeploying a
+# known image rather than 52 boxes drifting independently.
 ENV SHELL=/bin/bash \
     PNPM_HOME=/usr/local/pnpm \
-    PATH=/usr/local/pnpm:/home/dispatch/.local/bin:$PATH \
+    AGENT_HOME=/opt/agents \
+    PATH=/usr/local/pnpm:/opt/agents/.local/bin:/usr/local/bin:$PATH \
+    DISABLE_AUTOUPDATER=1 \
     NODE_ENV=production
 
 RUN corepack enable && corepack prepare pnpm@11.5.2 --activate
@@ -65,13 +76,20 @@ RUN NODE_ENV=development pnpm install --frozen-lockfile \
     && NODE_ENV=development pnpm -r run build
 
 # --- Agent CLIs ------------------------------------------------------------
-# Installed as the `dispatch` user so they land in that user's $HOME and are owned
-# by the account that will actually run them.
-USER dispatch
-RUN curl -fsSL https://claude.ai/install.sh | bash
-RUN npm config set prefix /home/dispatch/.local && npm install -g @openai/codex
+# Installed into AGENT_HOME (/opt/agents), NOT the runtime user's $HOME, because
+# $HOME is an EFS mount in production and would shadow them. The installer honours
+# $HOME, so override it for the install step only. Binaries stay root-owned and
+# world-executable: shared, immutable, versioned with the image.
+RUN HOME=/opt/agents bash -c 'mkdir -p /opt/agents && curl -fsSL https://claude.ai/install.sh | bash' \
+    && chmod -R a+rX /opt/agents
+RUN npm install -g @openai/codex
 
-USER root
+# Verify both CLIs resolve on the runtime PATH at BUILD time. Phase 0 shipped an
+# image where they silently vanished under the EFS mount and the failure only
+# surfaced in a container log line; a build-time assertion catches the class of
+# mistake where an install lands somewhere PATH won't reach.
+RUN command -v claude && command -v codex && claude --version
+
 RUN chown -R dispatch:dispatch /app
 COPY --chown=dispatch:dispatch docker/hosted/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
