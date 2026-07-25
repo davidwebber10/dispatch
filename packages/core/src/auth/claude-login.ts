@@ -129,10 +129,18 @@ export class ClaudeLoginService {
 
   /**
    * Start `claude setup-token` and resolve once it has printed an OAuth URL.
-   * Any previous in-flight attempt is discarded — a user who reloads the page
-   * mid-login should get a fresh, working URL rather than a stale one.
+   *
+   * IDEMPOTENT. An attempt already waiting for a code is returned as-is rather
+   * than destroyed. This flow necessarily involves the user LEAVING the page —
+   * they open the URL, authorise, copy a code, come back — so a double-click, a
+   * remount or a refresh in that window used to kill the in-flight login and
+   * leave them submitting a code against a session that no longer existed.
    */
   async start(): Promise<LoginSession> {
+    const pending = this.live;
+    if (pending && pending.session.status === 'awaiting_code' && pending.session.url) {
+      return { ...pending.session };
+    }
     this.cancel();
     const session: LoginSession = {
       id: uuid(), status: 'starting', url: null, error: null,
@@ -178,7 +186,9 @@ export class ClaudeLoginService {
    */
   async submitCode(code: string): Promise<LoginSession> {
     const live = this.live;
-    if (!live) throw new Error('no login in progress');
+    // Structured so the UI can offer "start again" instead of surfacing a raw 400.
+    // Reachable whenever the daemon restarted while the user was away authorising.
+    if (!live) throw Object.assign(new Error('no login in progress'), { code: 'no_session' });
     if (live.session.status !== 'awaiting_code') {
       throw new Error(`login is ${live.session.status}, not awaiting a code`);
     }

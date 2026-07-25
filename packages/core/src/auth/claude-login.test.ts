@@ -135,3 +135,27 @@ describe('ClaudeLoginService', () => {
     expect(svc.getSpawnEnv()).toEqual({});
   });
 });
+
+describe('start() idempotency — the flow requires leaving the page', () => {
+  test('a second start() returns the SAME pending session rather than killing it', async () => {
+    // The user opens the URL, authorises, copies a code, comes back. A double-click,
+    // a remount or a refresh in that window used to destroy the in-flight login and
+    // leave them submitting a code against a session that no longer existed.
+    const f = fakePty();
+    const svc = new ClaudeLoginService(dir, f.spawn as any);
+    const p = svc.start();
+    setTimeout(() => f.emit('https://claude.com/cai/oauth/authorize?x=1\r\n'), 20);
+    const first = await p;
+
+    const second = await svc.start();
+    expect(second.id).toBe(first.id);
+    expect(second.url).toBe(first.url);
+    expect(f.killed).toBe(false);   // the in-flight attempt survived
+  });
+
+  test('submitCode without a session reports a machine-readable code', async () => {
+    // So the UI can offer "start again" instead of surfacing a raw 400.
+    const svc = new ClaudeLoginService(dir, (() => fakePty().spawn()) as any);
+    await expect(svc.submitCode('x')).rejects.toMatchObject({ code: 'no_session' });
+  });
+})

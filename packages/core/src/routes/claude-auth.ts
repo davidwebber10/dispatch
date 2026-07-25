@@ -34,7 +34,12 @@ export function createClaudeAuthRouter(service: ClaudeLoginService): Router {
       }
       res.json(session);
     } catch (err: any) {
-      res.status(400).json({ error: err?.message || 'failed to submit code' });
+      res.status(400).json({
+        error: err?.message || 'failed to submit code',
+        // 'no_session' tells the client the attempt is gone (daemon restarted, or
+        // it was never started here) and it should simply begin again.
+        code: err?.code,
+      });
     }
   });
 
