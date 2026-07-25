@@ -23,6 +23,7 @@ import { ClaudeLoginService } from './auth/claude-login.js';
 import { requireBoxToken, upgradeAllowed } from './auth/box-token.js';
 import { OsConnectionsProvider } from './integrations/os-provider.js';
 import { HeartbeatService } from './platform/heartbeat.js';
+import { UsageRecorder } from './usage/recorder.js';
 import { createClaudeAuthRouter } from './routes/claude-auth.js';
 import { createProvidersRouter } from './routes/providers.js';
 import { createServersRouter } from './routes/servers.js';
@@ -449,8 +450,15 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const structuredManager = new ClaudeStructuredSessionManager();
   sessionService.setStructuredManager(structuredManager);
   wirePermissionMembrane(structuredManager, statusService, sessionService);
-  wireCodexPretty(sessionService, statusService);
+  const codexManager = wireCodexPretty(sessionService, statusService);
   const pushService = new PushService(db, { vapidDir: dataDir });
+
+  // Token usage for INTERACTIVE threads. Scheduled runs already record theirs on
+  // agent_runs; interactive threads discarded it, which left no way to answer the
+  // question a hosted fleet needs: who is close to their weekly rate limit.
+  const usage = new UsageRecorder(db);
+  structuredManager.on('event', (_id: string, event: unknown) => usage.observe(event));
+  codexManager?.on('event', (_id: string, event: unknown) => usage.observe(event));
 
   wireThreadSettledPush(db, statusService, pushService);
 
@@ -692,6 +700,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const boxHeartbeat = new HeartbeatService(db, () => ({
     authenticated: claudeLogin.isAuthenticated(),
     toolsReachable: osConnections.snapshot().reachable,
+    usage7d: usage.total(7),
+    usageByModel7d: usage.byModel(7),
   }));
   boxHeartbeat.start();
 

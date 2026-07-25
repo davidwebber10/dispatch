@@ -33,6 +33,16 @@ export interface BoxHeartbeat {
   lastActivityAt: string | null;
   /** Whether OS-brokered tools resolved on the last attempt (design §4.2.1). */
   toolsReachable: boolean;
+  /**
+   * Trailing-7-day token usage, split by model.
+   *
+   * The fleet's binding constraint is weekly RATE LIMITS, not spend — subscriptions
+   * are flat-fee, and an exhausted weekly cap also costs the user Claude in the chat
+   * app. Split by model because a Sonnet token and an Opus token consume very
+   * different fractions of that cap.
+   */
+  usage7d?: { inputTokens: number; outputTokens: number; turns: number };
+  usageByModel7d?: Array<{ model: string; inputTokens: number; outputTokens: number; turns: number }>;
 }
 
 export interface HeartbeatOptions {
@@ -94,7 +104,12 @@ export class HeartbeatService {
 
   constructor(
     private readonly db: Database.Database,
-    private readonly probe: () => { authenticated: boolean; toolsReachable: boolean },
+    private readonly probe: () => {
+      authenticated: boolean;
+      toolsReachable: boolean;
+      usage7d?: BoxHeartbeat['usage7d'];
+      usageByModel7d?: BoxHeartbeat['usageByModel7d'];
+    },
     opts: HeartbeatOptions = {},
   ) {
     this.baseUrl = (opts.baseUrl ?? process.env.OS_BASE_URL)?.replace(/\/+$/, '') || undefined;
@@ -109,11 +124,17 @@ export class HeartbeatService {
   get enabled(): boolean { return Boolean(this.baseUrl && this.boxToken); }
 
   current(): BoxHeartbeat {
-    const { authenticated, toolsReachable } = this.probe();
-    return collectHeartbeat(this.db, {
-      authenticated, toolsReachable,
-      ownerEmail: this.ownerEmail, boxId: this.boxId,
-    });
+    const probe = this.probe();
+    return {
+      ...collectHeartbeat(this.db, {
+        authenticated: probe.authenticated,
+        toolsReachable: probe.toolsReachable,
+        ownerEmail: this.ownerEmail,
+        boxId: this.boxId,
+      }),
+      usage7d: probe.usage7d,
+      usageByModel7d: probe.usageByModel7d,
+    };
   }
 
   /** Send one beat. Resolves false on any failure — a missed beat is not an error. */
