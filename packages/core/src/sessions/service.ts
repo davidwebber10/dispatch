@@ -189,12 +189,28 @@ export class SessionService {
   create(input: CreateSessionInput): Session {
     const id = uuid();
     const name = input.name || 'New Project';
+    const workingDir = input.workingDir || '~';
+
+    // Ensure the project directory exists. A session row alone is not enough: the
+    // first thread spawns a PTY with cwd=workingDir and dies with ENOENT if the
+    // path isn't there. Locally you pick an existing directory so this is a no-op;
+    // on a hosted box the user just NAMES a project and the directory has to be
+    // created for them. recursive:true makes it idempotent, and a failure is
+    // non-fatal — the session is still recorded, and the spawn error is clearer
+    // than refusing to create the project at all.
+    if (workingDir !== '~' && !workingDir.startsWith('~')) {
+      try {
+        fs.mkdirSync(workingDir, { recursive: true });
+      } catch (err) {
+        console.warn(`could not create project directory ${workingDir}:`, err);
+      }
+    }
 
     sessionsDb.create(this.db, {
       id,
       provider: input.provider || 'claude-code',
       name,
-      workingDir: input.workingDir || '~',
+      workingDir,
     });
 
     return rowToSession(sessionsDb.getById(this.db, id)!);
