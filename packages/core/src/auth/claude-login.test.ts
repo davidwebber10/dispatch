@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { ClaudeLoginService, extractUrl, extractToken, stripAnsi } from './claude-login.js';
+import { ClaudeLoginService, extractUrl, extractToken, lastMeaningfulLine, stripAnsi } from './claude-login.js';
 
 /** Minimal node-pty stand-in: lets a test script the CLI's output. */
 function fakePty() {
@@ -158,4 +158,26 @@ describe('start() idempotency — the flow requires leaving the page', () => {
     const svc = new ClaudeLoginService(dir, (() => fakePty().spawn()) as any);
     await expect(svc.submitCode('x')).rejects.toMatchObject({ code: 'no_session' });
   });
+})
+
+describe('token extraction survives the terminal', () => {
+  test('recovers a token that the PTY hard-wrapped mid-string', () => {
+    // The exact failure seen in os-prod: a 120-column PTY wraps a ~100-char token,
+    // so the pattern matched only the fragment before the break and the exchange
+    // "timed out" while the token was sitting right there.
+    const token = 'sk-ant-oat01-' + 'A1b2C3d4E5f6G7h8'.repeat(6)
+    const wrapped = token.slice(0, 60) + '\r\n' + token.slice(60)
+    expect(extractToken(`Success!\r\n${wrapped}\r\n`)).toBe(token)
+  })
+
+  test('still finds an unwrapped token', () => {
+    const token = 'sk-ant-oat01-' + 'Zz9'.repeat(30)
+    expect(extractToken(`\r\n${token}\r\n`)).toBe(token)
+  })
+
+  test('lastMeaningfulLine surfaces what the CLI actually said', () => {
+    // So a bad or already-used code reports the reason instead of "timed out".
+    const out = 'Paste code here\r\n\r\n────────\r\nInvalid authorization code.\r\n'
+    expect(lastMeaningfulLine(out)).toBe('Invalid authorization code.')
+  })
 })

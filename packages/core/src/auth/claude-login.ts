@@ -68,9 +68,32 @@ export function extractUrl(raw: string): string | null {
   return matches.reduce((longest, m) => (m.length > longest.length ? m : longest));
 }
 
-/** Pull the minted OAuth token out of raw terminal output, or null. */
+/**
+ * Pull the minted OAuth token out of raw terminal output, or null.
+ *
+ * Defensively de-wraps first: even with a wide PTY, any line break the terminal
+ * inserts inside the token would otherwise leave us matching a fragment. Tokens
+ * contain no whitespace, so joining hard-wrapped lines cannot merge a token with
+ * anything that legitimately follows it.
+ */
 export function extractToken(raw: string): string | null {
-  return stripAnsi(raw).match(TOKEN_RE)?.[1] ?? null;
+  const clean = stripAnsi(raw);
+  const direct = clean.match(TOKEN_RE)?.[1] ?? null;
+  const dewrapped = clean.replace(/\r?\n/g, '').match(TOKEN_RE)?.[1] ?? null;
+  // Take the LONGER match, never the first: a wrapped token still yields a valid-
+  // looking fragment from the un-joined text, and a length threshold would happily
+  // accept it. (It did, on the first attempt at this fix.)
+  if (direct && dewrapped) return dewrapped.length >= direct.length ? dewrapped : direct;
+  return dewrapped ?? direct;
+}
+
+/** Last non-empty line of CLI output — the real reason when something fails. */
+export function lastMeaningfulLine(raw: string): string | null {
+  const lines = stripAnsi(raw)
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l && !/^[\s\u2500-\u257F\u2800-\u28FF*·]+$/.test(l));
+  return lines.length ? lines[lines.length - 1].slice(0, 200) : null;
 }
 
 interface Live {
@@ -147,7 +170,12 @@ export class ClaudeLoginService {
       createdAt: new Date().toISOString(),
     };
     const proc = this.spawnPty('claude', ['setup-token'], {
-      name: 'xterm-256color', cols: 120, rows: 40,
+      // Deliberately very wide. The minted token is ~100+ characters and a normal
+      // 120-column terminal WRAPS it, inserting a newline mid-token — which is
+      // exactly how the exchange silently "timed out": the token was printed, and
+      // the pattern only ever matched the fragment before the wrap. Same class of
+      // bug as the OAuth URL being truncated to the terminal width.
+      name: 'xterm-256color', cols: 4000, rows: 40,
       cwd: this.dataDir,
       // Deliberately NOT inheriting an existing CLAUDE_CODE_OAUTH_TOKEN: re-authenticating
       // while a stale token is present makes the CLI skip the flow we're trying to run.
@@ -216,7 +244,10 @@ export class ClaudeLoginService {
       if ((live.session.status as LoginStatus) === 'error') return { ...live.session };
       await sleep(250);
     }
-    this.fail(live, 'timed out exchanging the code for a token');
+    // A bare "timed out" tells the user nothing they can act on. Show what the CLI
+    // last said — an invalid or already-used code says so explicitly.
+    const detail = lastMeaningfulLine(live.buf.slice(from));
+    this.fail(live, detail ? `Claude said: ${detail}` : 'timed out exchanging the code for a token');
     return { ...live.session };
   }
 
