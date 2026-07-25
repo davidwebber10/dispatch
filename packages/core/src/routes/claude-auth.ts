@@ -29,6 +29,9 @@ export function createClaudeAuthRouter(service: ClaudeLoginService): Router {
     const code = typeof req.body?.code === 'string' ? req.body.code : '';
     try {
       const session = await service.submitCode(code);
+      // A REJECTED code leaves the attempt alive at its prompt (status stays
+      // awaiting_code with an error set) so the user can correct and retry inline;
+      // only a genuinely dead attempt is a 400.
       if (session.status === 'error') {
         return res.status(400).json({ error: session.error, session });
       }

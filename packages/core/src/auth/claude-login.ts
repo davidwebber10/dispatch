@@ -87,12 +87,27 @@ export function extractToken(raw: string): string | null {
   return dewrapped ?? direct;
 }
 
+/**
+ * The CLI's own error for a rejected code, if it has printed one.
+ *
+ * `setup-token` answers a bad code within a second or two and then offers a retry,
+ * so waiting out the full exchange timeout turns an instant, actionable message
+ * ("Invalid code. Please make sure the full code was copied") into a useless
+ * 45-second "timed out".
+ */
+export function extractCliError(raw: string): string | null {
+  const m = stripAnsi(raw).match(/^\s*(OAuth error:.*|Error:.*)$/m);
+  return m ? m[1].trim().slice(0, 200) : null;
+}
+
 /** Last non-empty line of CLI output — the real reason when something fails. */
 export function lastMeaningfulLine(raw: string): string | null {
   const lines = stripAnsi(raw)
     .split(/\r?\n/)
     .map((l) => l.trim())
-    .filter((l) => l && !/^[\s\u2500-\u257F\u2800-\u28FF*·]+$/.test(l));
+    // Drop pure decoration AND the masked echo of the code the user just pasted,
+    // which is a long run of asterisks and is never the reason for a failure.
+    .filter((l) => l && !/^[\s\u2500-\u257F\u2800-\u28FF*·✢✻✽]+$/.test(l) && !/^\**$/.test(l.replace(/[^\x20-\x7e]/g, '')));
   return lines.length ? lines[lines.length - 1].slice(0, 200) : null;
 }
 
@@ -170,12 +185,12 @@ export class ClaudeLoginService {
       createdAt: new Date().toISOString(),
     };
     const proc = this.spawnPty('claude', ['setup-token'], {
-      // Deliberately very wide. The minted token is ~100+ characters and a normal
-      // 120-column terminal WRAPS it, inserting a newline mid-token — which is
-      // exactly how the exchange silently "timed out": the token was printed, and
-      // the pattern only ever matched the fragment before the wrap. Same class of
-      // bug as the OAuth URL being truncated to the terminal width.
-      name: 'xterm-256color', cols: 4000, rows: 40,
+      // Wide enough that a ~100-character token never wraps (a 120-column terminal
+      // broke it mid-string, which is how the exchange silently "timed out"), but
+      // NOT enormous: at 4000 the CLI renders its masked input field to the full
+      // width, producing a 4000-character row of asterisks that swamps the output.
+      // extractToken() de-wraps defensively regardless.
+      name: 'xterm-256color', cols: 220, rows: 40,
       cwd: this.dataDir,
       // Deliberately NOT inheriting an existing CLAUDE_CODE_OAUTH_TOKEN: re-authenticating
       // while a stale token is present makes the CLI skip the flow we're trying to run.
@@ -231,6 +246,17 @@ export class ClaudeLoginService {
 
     const deadline = Date.now() + EXCHANGE_TIMEOUT_MS;
     while (Date.now() < deadline) {
+      // Check for a rejection first — the CLI answers a bad code almost immediately,
+      // and reporting that beats making the user wait out the timeout.
+      const cliError = extractCliError(live.buf.slice(from));
+      if (cliError) {
+        // The CLI stays at its prompt ("Press Enter to retry"), so the session is
+        // still usable: report the error but leave the attempt alive so the user can
+        // paste a corrected code without starting over.
+        live.session.status = 'awaiting_code';
+        live.session.error = cliError;
+        return { ...live.session };
+      }
       const token = extractToken(live.buf.slice(from));
       if (token) {
         this.saveToken(token);

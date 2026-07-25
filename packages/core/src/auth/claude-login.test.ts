@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { ClaudeLoginService, extractUrl, extractToken, lastMeaningfulLine, stripAnsi } from './claude-login.js';
+import { ClaudeLoginService, extractCliError, extractUrl, extractToken, lastMeaningfulLine, stripAnsi } from './claude-login.js';
 
 /** Minimal node-pty stand-in: lets a test script the CLI's output. */
 function fakePty() {
@@ -179,5 +179,37 @@ describe('token extraction survives the terminal', () => {
     // So a bad or already-used code reports the reason instead of "timed out".
     const out = 'Paste code here\r\n\r\n────────\r\nInvalid authorization code.\r\n'
     expect(lastMeaningfulLine(out)).toBe('Invalid authorization code.')
+  })
+})
+
+describe('a rejected code is recoverable, not terminal', () => {
+  test('extractCliError picks up the CLI rejection', () => {
+    // Captured verbatim from a real setup-token run against a bad code.
+    const out = 'Paste code here if prompted >\r\nOAuth error: Invalid code. Please make sure the full code was copied\r\rPress Enter to retry.'
+    expect(extractCliError(out)).toMatch(/Invalid code/)
+  })
+
+  test('submitCode reports the rejection immediately and keeps the attempt alive', async () => {
+    // Waiting out the 45s timeout turned an instant, actionable message into a
+    // useless "timed out", and killing the session forced a full restart.
+    const f = fakePty()
+    const svc = new ClaudeLoginService(dir, f.spawn as any)
+    const p = svc.start()
+    setTimeout(() => f.emit('https://claude.com/cai/oauth/authorize?x=1\r\n'), 20)
+    await p
+
+    const done = svc.submitCode('too-short')
+    setTimeout(() => f.emit('\r\nOAuth error: Invalid code. Please make sure the full code was copied\r\n'), 20)
+    const s = await done
+
+    expect(s.status).toBe('awaiting_code')      // still usable
+    expect(s.error).toMatch(/Invalid code/)
+    expect(f.killed).toBe(false)
+    expect(svc.isAuthenticated()).toBe(false)
+  })
+
+  test('the masked echo of the pasted code is not mistaken for an error', () => {
+    // The CLI masks the code as asterisks; that row is never the reason for failure.
+    expect(lastMeaningfulLine('****************************\r\nOAuth error: nope')).toBe('OAuth error: nope')
   })
 })
