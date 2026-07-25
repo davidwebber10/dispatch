@@ -1,0 +1,29 @@
+# Keep host build artifacts out of image builds.
+#
+# node_modules is the critical one: it contains macOS-native .node binaries for
+# node-pty and better-sqlite3. Copying those into a Linux image produces a daemon
+# that fails at runtime with an exec-format error rather than at build time, which
+# is a confusing way to lose an afternoon. The image runs its own pnpm install.
+node_modules
+**/node_modules
+
+# Built output — the image builds these itself.
+dist
+**/dist
+*.tsbuildinfo
+
+.git
+.github
+.worktrees
+.claude
+.dispatch
+.superpowers
+.playwright-mcp
+
+# macOS / editor noise
+.DS_Store
+**/.DS_Store
+
+# Local daemon runtime + logs
+daemon/build
+*.log

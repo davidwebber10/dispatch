@@ -396,7 +396,14 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   sessionService.setToolsAwareness(() => awarenessNote(toolStatuses({ base: toolsBase })));
   let effectiveShimEnv = browserShimEnv;
   const refreshPtyEnv = () => {
-    const spawnEnv = { ...effectiveShimEnv, ...secretsService.getSpawnEnv(), ...getToolsSpawnEnv({ base: toolsBase }) };
+    // getToolsSpawnEnv prepends the bundled-tools bin to a BASE PATH. That base must be
+    // the shim env's PATH (which itself prepends ~/.dispatch/bin), not process.env.PATH —
+    // otherwise this spread, being last, silently drops the browser shim from PATH and
+    // BROWSER=dispatch-open resolves to nothing. Locally that's invisible (macOS Claude
+    // Code opens the browser itself and the loopback callback still lands), but on a
+    // headless/remote box the shim is the ONLY way an OAuth URL reaches the operator.
+    const toolsEnv = getToolsSpawnEnv({ base: toolsBase, env: { ...process.env, ...effectiveShimEnv } });
+    const spawnEnv = { ...effectiveShimEnv, ...secretsService.getSpawnEnv(), ...toolsEnv };
     ptyManager.setDefaultEnv(spawnEnv);
     structuredManager.setDefaultEnv(spawnEnv);
   };
