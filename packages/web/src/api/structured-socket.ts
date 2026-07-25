@@ -1,3 +1,4 @@
+import { wsUrl } from '../lib/basePath';
 export interface TerminalWS {
   onopen: (() => void) | null;
   onclose: (() => void) | null;
@@ -23,8 +24,7 @@ interface Opts {
 const REPLAY_TAIL = 200;
 
 function url(terminalId: string): string {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${proto}://${location.host}/api/terminals/${terminalId}/structured-ws?tail=${REPLAY_TAIL}`;
+  return wsUrl(`/api/terminals/${terminalId}/structured-ws?tail=${REPLAY_TAIL}`);
 }
 
 export function openStructuredSocket(opts: Opts) {

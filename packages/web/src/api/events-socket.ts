@@ -1,3 +1,4 @@
+import { wsUrl } from '../lib/basePath';
 export type ServerEvent = { type: string; [k: string]: unknown };
 
 export interface WebSocketLike {
@@ -14,8 +15,7 @@ interface Opts {
 }
 
 function defaultUrl(): string {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${proto}://${location.host}/api/events`;
+  return wsUrl('/api/events');
 }
 
 export function createEventsSocket(opts: Opts): { close(): void; reconnect(): void } {

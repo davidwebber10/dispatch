@@ -1,3 +1,4 @@
+import { wsUrl } from '../lib/basePath';
 export interface TerminalWS {
   onopen: (() => void) | null;
   onclose: (() => void) | null;
@@ -37,8 +38,7 @@ export function nextReplayStep(current: number): number {
 }
 
 function url(terminalId: string, replayBytes: number): string {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${proto}://${location.host}/api/terminals/${terminalId}/ws?replayBytes=${replayBytes}`;
+  return wsUrl(`/api/terminals/${terminalId}/ws?replayBytes=${replayBytes}`);
 }
 
 export function openTerminalSocket(opts: Opts) {

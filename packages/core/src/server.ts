@@ -60,6 +60,60 @@ function resolveRepoRoot(): string {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 }
 
+/**
+ * Mount prefix for the whole app (API + WebSockets + web bundle). '' for a local
+ * daemon at the origin root; '/u/<slug>/dispatch' for a hosted box, so the whole
+ * fleet lives behind ONE origin and one Cloudflare Access application.
+ * Normalized to a leading slash and no trailing slash, or '' when unset.
+ */
+export function normalizeBasePath(raw: string | undefined): string {
+  const v = (raw ?? '').trim();
+  if (!v || v === '/') return '';
+  return ('/' + v.replace(/^\/+/, '').replace(/\/+$/, ''));
+}
+
+const BASE_PATH = normalizeBasePath(process.env.DISPATCH_BASE_PATH);
+
+/**
+ * Serve index.html with `<base href>` rewritten to the mount prefix. That one tag is
+ * the single source of truth: Vite builds assets with `base: './'` so they resolve
+ * against it, and the client reads `document.baseURI` for its API/WebSocket prefix
+ * (web/src/lib/basePath.ts). Rewriting at SERVE time — not build time — is what lets
+ * one image serve every user's prefix.
+ */
+export function indexHtmlWithBase(html: string, basePath: string): string {
+  return html.replace(/<base href="[^"]*"\s*\/?>/, `<base href="${basePath || ''}/">`);
+}
+
+/**
+ * Remove the mount prefix from a URL path, or null when it doesn't carry the prefix.
+ * Exact prefix (`/u/x/dispatch`) maps to '/'. A path that merely *starts with* the
+ * same characters (`/u/x/dispatchfoo`) is NOT a match — it must be followed by '/'
+ * or end there.
+ */
+export function stripPrefix(url: string, basePath: string): string | null {
+  if (!basePath) return url;
+  if (url === basePath) return '/';
+  if (url.startsWith(basePath + '/') || url.startsWith(basePath + '?')) {
+    const rest = url.slice(basePath.length);
+    return rest.startsWith('/') ? rest : '/' + rest;
+  }
+  return null;
+}
+
+/** Express middleware form of stripPrefix; 404s anything outside the mount point. */
+function stripBasePath(basePath: string): express.RequestHandler {
+  return (req, res, next) => {
+    const stripped = stripPrefix(req.url, basePath);
+    if (stripped === null) {
+      res.status(404).end();
+      return;
+    }
+    req.url = stripped;
+    next();
+  };
+}
+
 interface CreateAppOptions {
   db: Database.Database;
   skipPty?: boolean;
@@ -337,6 +391,10 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   // Create Express app
   const app = express();
+  // Strip the mount prefix ONCE, before anything routes. Everything downstream —
+  // all 18 route mounts, the static handler, the SPA fallback — keeps its existing
+  // root-relative paths and is unaware the app is served under a prefix.
+  if (BASE_PATH) app.use(stripBasePath(BASE_PATH));
   app.use(express.json({ limit: '50mb' })); // large enough for Claude PostToolUse hook payloads (full file reads)
 
   // Create HTTP server
@@ -502,17 +560,33 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const webDist = process.env.DISPATCH_WEB_DIST
     ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../web/dist');
   if (fs.existsSync(path.join(webDist, 'index.html'))) {
+    // index.html is transformed (not sent as a file) so <base href> matches the mount
+    // prefix. Read once at boot: the bundle is immutable for the life of the process.
+    const indexHtml = indexHtmlWithBase(
+      fs.readFileSync(path.join(webDist, 'index.html'), 'utf8'),
+      BASE_PATH,
+    );
+    const sendIndex = (_req: express.Request, res: express.Response) => {
+      res.type('html').send(indexHtml);
+    };
     app.get('/icons/:name', customIconHandler(dataDir));
-    app.use(express.static(webDist));
-    app.get(/^\/(?!api\/).*/, (_req, res) => {
-      res.sendFile(path.join(webDist, 'index.html'));
-    });
-    console.log(`Serving web client from ${webDist}`);
+    app.use(express.static(webDist, { index: false }));
+    app.get(/^\/(?!api\/).*/, sendIndex);
+    console.log(`Serving web client from ${webDist}${BASE_PATH ? ` under ${BASE_PATH}` : ''}`);
   }
 
   // Handle HTTP upgrade for WebSocket connections
   server.on('upgrade', (request, socket, head) => {
-    const url = request.url || '';
+    // The WS handler needs the same prefix strip as the HTTP side. Easy to overlook:
+    // the two terminal regexes are unanchored so they'd still match a prefixed URL,
+    // but the `url === '/api/events'` equality below would silently stop matching and
+    // the events socket would just never connect.
+    const stripped = stripPrefix(request.url || '', BASE_PATH);
+    if (stripped === null) {
+      socket.destroy();
+      return;
+    }
+    const url = stripped;
 
     if (url.match(/\/api\/terminals\/[^/]+\/structured-ws/)) {
       structuredWss.handleUpgrade(request, socket, head, (ws) => {

@@ -38,6 +38,7 @@ import { useGroups } from './components/panes/store';
 import { useViewing } from './stores/viewing';
 import { useUI } from './stores/ui';
 import { parseThreadPath } from './lib/deepLink';
+import { appPath, href } from './lib/basePath';
 import { readPendingIntent } from './lib/pendingIntent';
 import { resyncAfterReconnect } from './lib/resync';
 import { clearBadge } from './lib/badge';
@@ -65,8 +66,8 @@ export default function App() {
     void useServers.getState().load();
     void useTabs.getState().hydrate().then(() => {
       if (window.innerWidth <= 768) return; // MobileApp restores /p/… URLs natively
-      const deep = parseThreadPath(location.pathname);
-      if (deep) { history.replaceState({}, '', '/'); useUI.getState().requestOpenThread(deep); }
+      const deep = parseThreadPath(appPath());
+      if (deep) { history.replaceState({}, '', href('/')); useUI.getState().requestOpenThread(deep); }
     });
     void useAuth.getState().load();
     void useUpdate.getState().load();

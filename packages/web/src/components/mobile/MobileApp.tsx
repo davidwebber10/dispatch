@@ -1,3 +1,4 @@
+import { appPath, href } from '../../lib/basePath';
 import { useState, useEffect } from 'react';
 import { Gear, CaretLeft, CaretRight, Plus, Folders, PushPin, Robot } from '@phosphor-icons/react';
 import { ConnectionStatus } from '../layout/ConnectionStatus';
@@ -66,12 +67,12 @@ export function MobileApp() {
 
   // Initialise straight from the URL so a reload restores the page (no flash to
   // the index, and the rail renders at the right level without an entry slide).
-  const [level, setLevel] = useState<0 | 1 | 2>(() => parsePath(location.pathname).level);
-  const [projectId, setProjectId] = useState<string | null>(() => parsePath(location.pathname).projectId ?? null);
-  const [leaf, setLeaf] = useState<'tab' | 'agent'>(() => parsePath(location.pathname).leaf ?? 'tab');
+  const [level, setLevel] = useState<0 | 1 | 2>(() => parsePath(appPath()).level);
+  const [projectId, setProjectId] = useState<string | null>(() => parsePath(appPath()).projectId ?? null);
+  const [leaf, setLeaf] = useState<'tab' | 'agent'>(() => parsePath(appPath()).leaf ?? 'tab');
   // The thread shown at level 2 is tracked locally (from the URL) rather than via
   // the global activeTab store, which App's hydrate() can reset to null on reload.
-  const [leafTabId, setLeafTabId] = useState<string | null>(() => parsePath(location.pathname).tabId ?? null);
+  const [leafTabId, setLeafTabId] = useState<string | null>(() => parsePath(appPath()).tabId ?? null);
   // Settings is a bottom-tab destination, not an overlay: the list sits at level 0
   // and drilling into a section pushes it onto level 1 (where a project's threads
   // would otherwise be), so back / edge-swipe walk out of it like any other screen.
@@ -99,23 +100,23 @@ export function MobileApp() {
   const openProject = (id: string) => {
     useProjects.getState().setActive(id); setProjectId(id); setLevel(1);
     setHighlightThreadId(null); // opened fresh → no thread highlighted
-    history.pushState({ nav: 1, projectId: id }, '', `/p/${id}`);
+    history.pushState({ nav: 1, projectId: id }, '', href(`/p/${id}`));
   };
   const openThread = (tabId: string) => {
     useAgentUI.getState().blur(); useTabs.getState().setActiveTab(tabId); setLeafTabId(tabId); setLeaf('tab'); setLevel(2);
     setHighlightThreadId(tabId); // so backing out of THIS thread highlights its row (then fades)
-    history.pushState({ nav: 2, projectId, leaf: 'tab', tabId }, '', `/p/${projectId}/t/${tabId}`);
+    history.pushState({ nav: 2, projectId, leaf: 'tab', tabId }, '', href(`/p/${projectId}/t/${tabId}`));
   };
   const openAgent = (id: string) => {
     useAgentUI.getState().selectAgent(id); setLeaf('agent'); setLevel(2);
-    history.pushState({ nav: 2, projectId, leaf: 'agent', agentId: id }, '', `/p/${projectId}/a/${id}`);
+    history.pushState({ nav: 2, projectId, leaf: 'agent', agentId: id }, '', href(`/p/${projectId}/a/${id}`));
   };
   // Opening an agent from the cross-project Agents tab: seed the project context
   // first (openAgent derives its URL from it), then jump straight to the agent.
   const openAgentFromList = (pid: string, scheduleId: string) => {
     useProjects.getState().setActive(pid); setProjectId(pid);
     useAgentUI.getState().selectAgent(scheduleId); setLeaf('agent'); setLevel(2);
-    history.pushState({ nav: 2, projectId: pid, leaf: 'agent', agentId: scheduleId }, '', `/p/${pid}/a/${scheduleId}`);
+    history.pushState({ nav: 2, projectId: pid, leaf: 'agent', agentId: scheduleId }, '', href(`/p/${pid}/a/${scheduleId}`));
   };
   // Same pattern from the cross-project Pinned tab: seed the project, then jump
   // straight to the thread (back returns to the root, still on the Pinned tab).
@@ -123,7 +124,7 @@ export function MobileApp() {
     useProjects.getState().setActive(pid); setProjectId(pid);
     useAgentUI.getState().blur(); useTabs.getState().setActiveTab(tabId); setLeafTabId(tabId); setLeaf('tab'); setLevel(2);
     setHighlightThreadId(tabId);
-    history.pushState({ nav: 2, projectId: pid, leaf: 'tab', tabId }, '', `/p/${pid}/t/${tabId}`);
+    history.pushState({ nav: 2, projectId: pid, leaf: 'tab', tabId }, '', href(`/p/${pid}/t/${tabId}`));
   };
   // Settings sections reuse level 1. No URL change: settings isn't deep-linkable,
   // so the entry only carries enough state for back/popstate to restore it.
@@ -159,15 +160,15 @@ export function MobileApp() {
   // On a deep-linked reload: restore the stores from the URL and rebuild the
   // history stack (base → project → leaf) so back/edge-swipe still walks up.
   useEffect(() => {
-    const init = parsePath(location.pathname);
+    const init = parsePath(appPath());
     if (init.projectId) { useProjects.getState().setActive(init.projectId); void useTabs.getState().loadTabs(init.projectId); }
     if (init.leaf === 'tab' && init.tabId) { useAgentUI.getState().blur(); setLeafTabId(init.tabId); useTabs.getState().setActiveTab(init.tabId); }
     if (init.leaf === 'agent' && init.agentId) useAgentUI.getState().selectAgent(init.agentId);
-    history.replaceState({ nav: 0 }, '', '/');
-    if (init.level >= 1 && init.projectId) history.pushState({ nav: 1, projectId: init.projectId }, '', `/p/${init.projectId}`);
+    history.replaceState({ nav: 0 }, '', href('/'));
+    if (init.level >= 1 && init.projectId) history.pushState({ nav: 1, projectId: init.projectId }, '', href(`/p/${init.projectId}`));
     if (init.level === 2 && init.projectId) {
       const url = init.leaf === 'agent' ? `/p/${init.projectId}/a/${init.agentId}` : `/p/${init.projectId}/t/${init.tabId}`;
-      history.pushState({ nav: 2, projectId: init.projectId, leaf: init.leaf, tabId: init.tabId, agentId: init.agentId }, '', url);
+      history.pushState({ nav: 2, projectId: init.projectId, leaf: init.leaf, tabId: init.tabId, agentId: init.agentId }, '', href(url));
     }
     const onPop = (e: PopStateEvent) => {
       const s = (e.state || { nav: 0 }) as { nav?: number; projectId?: string; leaf?: 'tab' | 'agent'; tabId?: string; agentId?: string; settingsSection?: SettingsSectionKey };

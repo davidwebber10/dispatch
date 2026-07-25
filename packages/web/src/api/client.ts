@@ -1,3 +1,4 @@
+import { apiPath } from '../lib/basePath';
 import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus, PendingPermission, UpdateState } from './types';
 
 /**
@@ -16,7 +17,7 @@ export interface ResumeAdvice {
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
+  const res = await fetch(apiPath(path), {
     method: init?.method ?? 'GET',
     headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,
     body: init?.body,
@@ -151,7 +152,7 @@ export const api = {
   uploadInbox: async (sessionId: string, file: File): Promise<InboxUpload> => {
     const fd = new FormData();
     fd.append('file', file);
-    const res = await fetch(`/api/sessions/${sessionId}/files/inbox`, { method: 'POST', body: fd });
+    const res = await fetch(apiPath(`/api/sessions/${sessionId}/files/inbox`), { method: 'POST', body: fd });
     if (!res.ok) throw new Error(`upload failed: ${res.status}`);
     return (await res.json()) as InboxUpload;
   },
@@ -168,7 +169,7 @@ export const api = {
     fd.append('secretName', opts.secretName);
     fd.append('mimeType', opts.mimeType);
     if (opts.language) fd.append('language', opts.language);
-    const res = await fetch('/api/transcribe', { method: 'POST', body: fd });
+    const res = await fetch(apiPath('/api/transcribe'), { method: 'POST', body: fd });
     if (!res.ok) {
       const e = await res.json().catch(() => ({ error: res.statusText }));
       throw new Error(e.error || `transcribe failed: ${res.status}`);
@@ -247,7 +248,7 @@ export const api = {
   // Bespoke (not `req()`): a 409 preflight failure is a meaningful { ok: false, reason }
   // payload the banner needs to render, not an exception to throw away.
   applyUpdate: async (force?: boolean) => {
-    const res = await fetch('/api/update/apply', {
+    const res = await fetch(apiPath('/api/update/apply'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(force ? { force: true } : {}),
