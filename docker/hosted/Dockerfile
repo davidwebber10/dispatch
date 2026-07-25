@@ -43,10 +43,21 @@ RUN groupmod -n dispatch node \
     && usermod -l dispatch -d /home/dispatch -m -s /bin/bash node
 
 # --- Claude Code managed settings (highest-precedence scope) ---------------
-# forceLoginMethod is intentionally omitted until the accepted value string is
-# confirmed against the CLI (Phase 0 item). Writing a wrong value here would block
-# login entirely — the same failure class as forceLoginOrgUUID. Add it once verified.
-RUN mkdir -p /etc/claude-code && printf '%s\n' '{}' > /etc/claude-code/managed-settings.json
+# forceLoginMethod=claudeai (accepted values verified against the binary:
+# claudeai | console | gateway). Two jobs:
+#   1. It pins auth to the claude.ai subscription path, blocking Console logins and
+#      ANTHROPIC_API_KEY / apiKeyHelper credentials — a second guard against the
+#      stray-API-key failure the entrypoint also checks for.
+#   2. It makes `claude setup-token` skip the login-method chooser, which is what
+#      lets the terminal-free login (auth/claude-login.ts) reach the OAuth URL with
+#      ZERO keystrokes instead of puppeting a TUI.
+#
+# forceLoginOrgUUID is deliberately NOT set: the estate mixes Team seats with
+# individual Max subscriptions, and Claude Code EXITS AT STARTUP when the active
+# credential belongs to a different org — which would lock every Max user out of a
+# box that otherwise looks healthy.
+RUN mkdir -p /etc/claude-code \
+    && printf '%s\n' '{"forceLoginMethod":"claudeai"}' > /etc/claude-code/managed-settings.json
 
 # AGENT_HOME is where the agent CLI *binaries* live. It must be OUTSIDE $HOME:
 # in production /home/dispatch is an EFS mount, and mounting it shadows anything
@@ -81,18 +92,23 @@ RUN NODE_ENV=development pnpm install --frozen-lockfile \
 # $HOME, so override it for the install step only. Binaries stay root-owned and
 # world-executable: shared, immutable, versioned with the image.
 RUN HOME=/opt/agents bash -c 'mkdir -p /opt/agents && curl -fsSL https://claude.ai/install.sh | bash' \
-    && chmod -R a+rX /opt/agents
+    && chmod -R a+rX /opt/agents \
+    && ln -sf /opt/agents/.local/bin/claude /usr/local/bin/claude \
+    && printf '%s\n' 'export PATH="/opt/agents/.local/bin:$PATH"' > /etc/profile.d/agent-clis.sh
 # codex, plus mcp-remote: IntegrationsService spawns REMOTE MCP servers as
 # `npx -y mcp-remote <url>`, which on a box means an npm fetch on every single spawn.
 # Baking it in makes spawns faster and removes a network dependency from the path
 # that attaches a user's tools.
 RUN npm install -g @openai/codex mcp-remote
 
-# Verify both CLIs resolve on the runtime PATH at BUILD time. Phase 0 shipped an
-# image where they silently vanished under the EFS mount and the failure only
-# surfaced in a container log line; a build-time assertion catches the class of
-# mistake where an install lands somewhere PATH won't reach.
-RUN command -v claude && command -v codex && command -v mcp-remote && claude --version
+# Verify the CLIs resolve **on a LOGIN shell's PATH**, not just this build shell.
+# That distinction is the whole point: startServer() replaces process.env.PATH with
+# platform.resolveLoginPath() (a macOS launchd fix), so anything reachable only via
+# a Docker ENV PATH disappears for the daemon and everything it spawns. /opt/agents
+# is exactly that case, which is why the symlink into /usr/local/bin above exists.
+# Asserting with `bash -lc` is what makes this class of bug fail the build instead
+# of surfacing as "command not found" inside a user's first thread.
+RUN bash -lc 'command -v claude && command -v codex && command -v mcp-remote && claude --version'
 
 RUN chown -R dispatch:dispatch /app
 COPY --chown=dispatch:dispatch docker/hosted/entrypoint.sh /usr/local/bin/entrypoint.sh

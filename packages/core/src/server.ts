@@ -19,6 +19,8 @@ import { createAgentsRouter } from './routes/agents.js';
 import { aggregateSessionStatus } from './status/aggregate.js';
 import { AuthRequestService } from './auth/service.js';
 import { createAuthRouter } from './routes/auth.js';
+import { ClaudeLoginService } from './auth/claude-login.js';
+import { createClaudeAuthRouter } from './routes/claude-auth.js';
 import { createProvidersRouter } from './routes/providers.js';
 import { createServersRouter } from './routes/servers.js';
 import { createFilesRouter } from './routes/files.js';
@@ -320,6 +322,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   app.use('/api/sessions/:id/files', createFilesRouter(db));
   app.use('/api/sessions/:id/git', createGitRouter(db));
   app.use('/api/auth-requests', createAuthRouter(authRequestService));
+  app.use('/api/claude-auth', createClaudeAuthRouter(new ClaudeLoginService(dispatchDir)));
   app.use('/api/state', createStateRouter(db));
   app.use('/api/integrations', createIntegrationsRouter(integrationsService));
   app.use('/api/push', createPushRouter(pushService));
@@ -448,6 +451,10 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // an MCP server) so Claude Code / Codex agents can add & retrieve secrets.
   const secretsService = new SecretsService(dataDir);
   const integrationsService = new IntegrationsService(db);
+  // Terminal-free Claude login (design doc §11.2). Its token is injected below in
+  // refreshPtyEnv, so a box authenticated mid-session takes effect on the next spawn
+  // without a daemon restart.
+  const claudeLogin = new ClaudeLoginService(dataDir);
   const toolsBase = path.join(dataDir, 'tools');
   sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
   sessionService.setIntegrationsSpecs(() => integrationsService.getServerSpecs());
@@ -461,11 +468,12 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     // Code opens the browser itself and the loopback callback still lands), but on a
     // headless/remote box the shim is the ONLY way an OAuth URL reaches the operator.
     const toolsEnv = getToolsSpawnEnv({ base: toolsBase, env: { ...process.env, ...effectiveShimEnv } });
-    const spawnEnv = { ...effectiveShimEnv, ...secretsService.getSpawnEnv(), ...toolsEnv };
+    const spawnEnv = { ...effectiveShimEnv, ...claudeLogin.getSpawnEnv(), ...secretsService.getSpawnEnv(), ...toolsEnv };
     ptyManager.setDefaultEnv(spawnEnv);
     structuredManager.setDefaultEnv(spawnEnv);
   };
   secretsService.onChange(refreshPtyEnv);
+  claudeLogin.onChange(refreshPtyEnv);
   refreshPtyEnv();
 
   // Terminal activity monitor — parses status bar, detects busy/idle
@@ -545,6 +553,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.use('/api/sessions/:id/files', createFilesRouter(db));
   app.use('/api/sessions/:id/git', createGitRouter(db));
   app.use('/api/auth-requests', createAuthRouter(authRequestService));
+  app.use('/api/claude-auth', createClaudeAuthRouter(claudeLogin));
 
   app.use('/api/state', createStateRouter(db));
   app.use('/api/integrations', createIntegrationsRouter(integrationsService));
