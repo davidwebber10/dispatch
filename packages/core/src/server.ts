@@ -20,6 +20,9 @@ import { aggregateSessionStatus } from './status/aggregate.js';
 import { AuthRequestService } from './auth/service.js';
 import { createAuthRouter } from './routes/auth.js';
 import { ClaudeLoginService } from './auth/claude-login.js';
+import { requireBoxToken, upgradeAllowed } from './auth/box-token.js';
+import { OsConnectionsProvider } from './integrations/os-provider.js';
+import { HeartbeatService } from './platform/heartbeat.js';
 import { createClaudeAuthRouter } from './routes/claude-auth.js';
 import { createProvidersRouter } from './routes/providers.js';
 import { createServersRouter } from './routes/servers.js';
@@ -75,6 +78,8 @@ export function normalizeBasePath(raw: string | undefined): string {
 }
 
 const BASE_PATH = normalizeBasePath(process.env.DISPATCH_BASE_PATH);
+/** Shared secret the router injects on every request to a hosted box. Unset ⇒ open (local). */
+const BOX_TOKEN = process.env.DISPATCH_BOX_TOKEN?.trim() || undefined;
 
 /**
  * Serve index.html with `<base href>` rewritten to the mount prefix. That one tag is
@@ -398,6 +403,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // all 18 route mounts, the static handler, the SPA fallback — keeps its existing
   // root-relative paths and is unaware the app is served under a prefix.
   if (BASE_PATH) app.use(stripBasePath(BASE_PATH));
+  const boxGate = requireBoxToken(BOX_TOKEN);
+  if (boxGate) app.use(boxGate);
   app.use(express.json({ limit: '50mb' })); // large enough for Claude PostToolUse hook payloads (full file reads)
 
   // Create HTTP server
@@ -455,9 +462,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // refreshPtyEnv, so a box authenticated mid-session takes effect on the next spawn
   // without a daemon restart.
   const claudeLogin = new ClaudeLoginService(dataDir);
+  // Tools brokered by OS, resolved per spawn (design §4.2.1).
+  const osConnections = new OsConnectionsProvider();
   const toolsBase = path.join(dataDir, 'tools');
   sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
-  sessionService.setIntegrationsSpecs(() => integrationsService.getServerSpecs());
+  sessionService.setIntegrationsSpecs(() => [...integrationsService.getServerSpecs(), ...osConnections.getServerSpecs()]);
   sessionService.setToolsAwareness(() => awarenessNote(toolStatuses({ base: toolsBase })));
   let effectiveShimEnv = browserShimEnv;
   const refreshPtyEnv = () => {
@@ -468,7 +477,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     // Code opens the browser itself and the loopback callback still lands), but on a
     // headless/remote box the shim is the ONLY way an OAuth URL reaches the operator.
     const toolsEnv = getToolsSpawnEnv({ base: toolsBase, env: { ...process.env, ...effectiveShimEnv } });
-    const spawnEnv = { ...effectiveShimEnv, ...claudeLogin.getSpawnEnv(), ...secretsService.getSpawnEnv(), ...toolsEnv };
+    const spawnEnv = { ...effectiveShimEnv, ...claudeLogin.getSpawnEnv(), ...osConnections.getSpawnEnv(), ...secretsService.getSpawnEnv(), ...toolsEnv };
     ptyManager.setDefaultEnv(spawnEnv);
     structuredManager.setDefaultEnv(spawnEnv);
   };
@@ -595,6 +604,13 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       socket.destroy();
       return;
     }
+    // Express middleware never runs for an upgrade, so the box-token check has to be
+    // repeated here. Protecting only the HTTP routes would leave every terminal and
+    // structured socket — full interactive access to the box — wide open.
+    if (!upgradeAllowed(BOX_TOKEN, request)) {
+      socket.destroy();
+      return;
+    }
     const url = stripped;
 
     if (url.match(/\/api\/terminals\/[^/]+\/structured-ws/)) {
@@ -662,6 +678,23 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   console.log(`Dispatch server listening on port ${port}`);
 
+  // Prime the brokered-tool cache so the FIRST spawn after boot already has tools
+  // (getServerSpecs is sync, so it can only ever serve a cached answer).
+  void osConnections.refresh().then((s) => {
+    if (osConnections.enabled) {
+      console.log(`OS tools: ${s.servers.length} server(s), reachable=${s.reachable}`);
+    }
+  });
+
+  // Per-box state projection for the OS control plane (design §4.4.5). Deliberately
+  // not load-bearing for lifecycle — boxes are always-on, so a bad reading here
+  // cannot stop a box mid-run.
+  const boxHeartbeat = new HeartbeatService(db, () => ({
+    authenticated: claudeLogin.isAuthenticated(),
+    toolsReachable: osConnections.snapshot().reachable,
+  }));
+  boxHeartbeat.start();
+
   // Boot recovery: auto-resume overseer threads (coordinator + typed agents) that
   // the previous shutdown interrupted mid-turn. Fire-and-forget — it waits a short
   // settle delay before reading status, so it must not block startup.
@@ -696,6 +729,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     clearInterval(agentSchedulerInterval);
     clearInterval(autoArchiveInterval);
     clearInterval(heartbeat);
+    boxHeartbeat.stop();
     threadAutoNamer.dispose();
     ptyManager.killAll();
     structuredManager.killAll();
