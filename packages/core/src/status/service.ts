@@ -4,6 +4,7 @@ import * as sessionsDb from '../db/sessions.js';
 import type { EventBroadcaster } from '../ws/events.js';
 import { normalizeClaude, normalizeCodex, type ThreadStatus } from './events.js';
 import { aggregateSessionStatus } from './aggregate.js';
+import { resolveTranscriptPath } from '../sessions/transcript-path.js';
 
 // Normalized thread status -> the persisted terminal-status enum. `terminals.status` is a
 // free-form TEXT column (no CHECK constraint) — 'scheduled' rides the same convention as
@@ -46,9 +47,20 @@ export class StatusService {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return;
 
-    // Capture the session/thread id at the source — no more filesystem polling.
-    if (norm.sessionId && !terminal.external_id) {
-      try { terminalsDb.updateExternalId(this.db, terminalId, norm.sessionId); } catch { /* best effort */ }
+    // Capture the session/thread id at the source — no more filesystem polling. First-write
+    // for a healthy identity; a stored id with NO transcript anywhere (a ghost from a boot
+    // that never ran a turn) is healed to the live process's self-reported id — see the
+    // structured twin in sessions/service.ts setStructuredManager.
+    if (norm.sessionId && terminal.external_id !== norm.sessionId) {
+      let healthy = false;
+      if (terminal.external_id) {
+        const session = sessionsDb.getById(this.db, terminal.session_id);
+        const workDir = terminal.working_dir || session?.working_dir || '';
+        healthy = !!resolveTranscriptPath(workDir, terminal.external_id);
+      }
+      if (!healthy) {
+        try { terminalsDb.updateExternalId(this.db, terminalId, norm.sessionId); } catch { /* best effort */ }
+      }
     }
 
     if (!norm.status) return; // id-only event (no status change)

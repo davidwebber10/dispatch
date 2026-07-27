@@ -28,6 +28,24 @@ function modelArgs(model?: string): string[] {
   return model ? ['--model', model] : [];
 }
 
+/**
+ * The watcher's adoption decision, pure for testability. Exactly one transcript born in
+ * the window is attributable to our spawn; two or more means another session (usually the
+ * user's own `claude` in the same project dir) started concurrently and "newest" proves
+ * nothing — adopting it cross-wired a Dispatch thread onto the user's conversation. On
+ * 'ambiguous' the caller stops polling entirely (more polling can't disambiguate) and
+ * leaves capture to the status-hook path, which reports the id from inside the session.
+ */
+export function pickBornSession(
+  candidates: { name: string; birth: number }[],
+  minBirth: number,
+): { id: string } | 'ambiguous' | null {
+  const born = candidates.filter((c) => c.birth >= minBirth);
+  if (born.length === 0) return null;
+  if (born.length > 1) return 'ambiguous';
+  return { id: born[0].name.replace(/\.jsonl$/, '') };
+}
+
 export const claudeCodeProvider: SessionProvider = {
   name: 'claude-code',
   displayName: 'Claude Code',
@@ -138,10 +156,9 @@ export const claudeCodeProvider: SessionProvider = {
             return { name, birth: s.birthtimeMs || s.ctimeMs };
           }),
         );
-        const newest = stats
-          .filter((s) => s.birth >= minBirth)
-          .sort((a, b) => b.birth - a.birth)[0];
-        if (newest) return newest.name.replace(/\.jsonl$/, '');
+        const pick = pickBornSession(stats, minBirth);
+        if (pick === 'ambiguous') return null; // a concurrent session appeared — hooks own capture now
+        if (pick) return pick.id;
       } catch {
         // Swallow and retry
       }
