@@ -9,6 +9,7 @@ import { openTerminalSocket, INITIAL_REPLAY_MOBILE, MAX_REPLAY, nextReplayStep }
 import { api } from '../../api/client';
 import type { Terminal } from '../../api/types';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { ThreadAskBanner } from './ThreadAskBanner';
 import { useDraft } from '../../hooks/useDraft';
 import { useSettings } from '../../stores/settings';
 import { useDictation } from '../../hooks/useDictation';
@@ -585,6 +586,10 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       onPaste={(e) => { const f = Array.from(e.clipboardData?.files ?? []); if (f.length) { e.preventDefault(); f.forEach((x) => void uploadImage(x)); } }}
       style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', background: isMobile ? 'var(--color-pane)' : 'var(--color-terminal)', position: 'relative' }}
     >
+      {/* Safety net: a needs_you question a CLI thread declared via report_status lands only on
+          the status channel — surface it as a top strip so it isn't invisible in the terminal. */}
+      <ThreadAskBanner terminalId={terminalId} onAnswer={() => { try { termRef.current?.focus(); } catch { /* jsdom */ } }} />
+
       {/* The xterm host is absolutely positioned so the terminal's own size never
           drives the flex layout width (which previously blew the column out).
           On mobile the terminal is a rounded card with a thin frame (the pane bg

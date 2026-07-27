@@ -7,6 +7,7 @@ import { useStructuredChat } from './useStructuredChat';
 import { useBootstrapOlderPages } from '../../../hooks/useBootstrapOlderPages';
 import { AskQuestionCard, AnsweredQuestionCard } from './AskQuestionCard';
 import { useTabs, findTerminal } from '../../../stores/tabs';
+import { ThreadAskBanner } from '../ThreadAskBanner';
 import { useDraft } from '../../../hooks/useDraft';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { useSettings, useDispatchName } from '../../../stores/settings';
@@ -296,6 +297,11 @@ export function ChatView({ terminalId }: { terminalId: string }) {
           )}
         </div>
       )}
+
+      {/* Safety net: if this thread declared a needs_you question via report_status (which only
+          lands on the status/board channel, never in the transcript), surface it right above the
+          composer so it isn't invisible in thread mode. */}
+      <ThreadAskBanner terminalId={terminalId} onAnswer={() => taRef.current?.focus()} />
 
       {/* Composer (drop a file anywhere on it, or paste — routes through attachFiles) */}
       <div
