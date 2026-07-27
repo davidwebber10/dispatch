@@ -16,6 +16,7 @@ const CLEAN_AND_FF_ABLE = {
   'status --porcelain': '',
   'fetch origin': '',
   'rev-parse --abbrev-ref HEAD': 'main\n',
+  'rev-parse --abbrev-ref @{u}': 'origin/main\n',
   'rev-parse HEAD': 'abc123\n',
   'rev-parse origin/main': 'def456\n',
   'merge-base --is-ancestor abc123 def456': '',
@@ -103,6 +104,41 @@ describe('preflightUpdate', () => {
     expect(result.ok).toBe(false);
     expect(result.forceable).toBeFalsy();
     expect(result.reason).toMatch(/diverged/i);
+  });
+
+  it('fails with an actionable message when the branch has no upstream (local-only feature branch)', () => {
+    // The bug this fixes: a checkout on a never-pushed feature branch used to fail on the
+    // cryptic `could not resolve origin/<branch>`, and the suggested `dispatch update` fallback
+    // (git pull --ff-only) would fail too. Now it names the branch and says what to do.
+    const git = fakeGit({
+      'status --porcelain': '',
+      'fetch origin': '',
+      'rev-parse --abbrev-ref HEAD': 'feat/hosted-box-image\n',
+      'rev-parse --abbrev-ref @{u}': new Error("fatal: no upstream configured for branch 'feat/hosted-box-image'"),
+    });
+    const result = preflightUpdate('/repo', git);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/no upstream/i);
+    expect(result.reason).toContain('feat/hosted-box-image');
+    expect(result.reason).toMatch(/git checkout main/);
+    expect(result.reason).not.toMatch(/could not resolve origin\//); // the old cryptic phrasing is gone
+    expect(result.forceable).toBeFalsy();
+  });
+
+  it("resolves the branch's actual upstream via @{u}, not origin/<branch>", () => {
+    // A branch named "stable" that tracks origin/main: the old code looked for origin/stable
+    // (which wouldn't exist). fakeGit throws on any unexpected invocation, so this passing proves
+    // the fast-forward check ran against origin/main — the resolved upstream — not origin/stable.
+    const git = fakeGit({
+      'status --porcelain': '',
+      'fetch origin': '',
+      'rev-parse --abbrev-ref HEAD': 'stable\n',
+      'rev-parse --abbrev-ref @{u}': 'origin/main\n',
+      'rev-parse HEAD': 'abc123\n',
+      'rev-parse origin/main': 'def456\n',
+      'merge-base --is-ancestor abc123 def456': '',
+    });
+    expect(preflightUpdate('/repo', git)).toEqual({ ok: true });
   });
 
   it('an untracked-only tree parses correctly', () => {

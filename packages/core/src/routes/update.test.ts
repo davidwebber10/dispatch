@@ -33,6 +33,7 @@ const CLEAN_AND_FF_ABLE: Record<string, string> = {
   'status --porcelain': '',
   'fetch origin': '',
   'rev-parse --abbrev-ref HEAD': 'main\n',
+  'rev-parse --abbrev-ref @{u}': 'origin/main\n',
   'rev-parse HEAD': 'abc123\n',
   'rev-parse origin/main': 'def456\n',
   'merge-base --is-ancestor abc123 def456': '',
