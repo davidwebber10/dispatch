@@ -48,6 +48,23 @@ const KICKSTART_CONTINUE_PROMPT =
   '⚙️ Dispatch restarted and interrupted you mid-task — re-read your last steps above and continue your ' +
   'mission from where you left off. If you had already finished, briefly say so instead of redoing work.';
 
+/**
+ * The one-file recovery decision, pure for testability: adopt the project dir's single
+ * transcript ONLY when it could plausibly belong to this terminal — i.e. it was born at or
+ * after the terminal's creation (60s slack for clock skew). A transcript that predates the
+ * terminal is someone else's session that happens to share the project dir (the user's own
+ * `claude` runs) — adopting it made a coordinator resume the USER'S conversation (Control
+ * Plane rendered their terminal history; their terminal resume showed coordinator turns).
+ * 0 files = nothing to recover; 2+ = ambiguous (unchanged rule, see recoverSessionId).
+ */
+export function pickRecoverableSession(
+  files: { id: string; birth: number }[],
+  terminalCreatedAtMs: number,
+): string | null {
+  if (files.length !== 1) return null;
+  return files[0].birth >= terminalCreatedAtMs - 60_000 ? files[0].id : null;
+}
+
 export class SessionService {
   /** Supplies the Doppler MCP spec for spawned CLIs; set by the server wiring. */
   private secretsServerSpec: (() => { spec: McpServerSpec | null; prompt: string | null }) | null = null;
@@ -715,18 +732,25 @@ export class SessionService {
    * ran captured its external_id at the structured `init` event (first-write-wins, see
    * setStructuredManager), so it never depends on this fallback; a never-run coordinator
    * correctly falls back to the empty greeting instead of an arbitrary transcript.
+   * Even a single file is adopted only if it was born after this terminal was created (see pickRecoverableSession) — the sole transcript in a quiet dir is usually the USER'S own session, not this terminal's.
    */
   private recoverSessionId(terminalId: string, dir: string): string | null {
-    let files: { id: string; m: number }[];
+    let files: { id: string; birth: number }[];
     try {
       files = fs.readdirSync(dir)
         .filter((f) => f.endsWith('.jsonl'))
-        .map((f) => ({ id: f.replace(/\.jsonl$/, ''), m: fs.statSync(path.join(dir, f)).mtimeMs }))
-        .sort((a, b) => b.m - a.m);
+        .map((f) => {
+          const s = fs.statSync(path.join(dir, f));
+          return { id: f.replace(/\.jsonl$/, ''), birth: s.birthtimeMs || s.ctimeMs };
+        });
     } catch { return null; }
-    if (files.length !== 1) return null; // 0 = nothing to recover; 2+ = ambiguous, don't guess
-    try { terminalsDb.updateExternalId(this.db, terminalId, files[0].id); } catch { /* best effort */ }
-    return files[0].id;
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    const createdAtMs = terminal ? Date.parse(terminal.created_at) : NaN;
+    if (!Number.isFinite(createdAtMs)) return null; // no terminal row → nothing to attribute to
+    const id = pickRecoverableSession(files, createdAtMs);
+    if (!id) return null;
+    try { terminalsDb.updateExternalId(this.db, terminalId, id); } catch { /* best effort */ }
+    return id;
   }
 
   relaunchTerminal(terminalId: string): terminalsDb.Terminal | null {
