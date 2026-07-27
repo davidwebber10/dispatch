@@ -419,7 +419,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   function rollupSession(sessionId: string) {
     const status = aggregateSessionStatus(terminalsDb.listBySession(db, sessionId).map((t) => t.status || 'waiting'));
     sessionsDb.updateStatus(db, sessionId, status);
-    broadcaster.broadcast({ type: 'session:status', sessionId, status });
+    broadcaster.broadcast({ type: 'session:status', sessionId, status, lastActivityAt: sessionsDb.getLastActivity(db, sessionId) });
   }
 
   // When a PTY exits, clean up monitor and update status
@@ -441,7 +441,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       // Legacy: id is a session ID
       sessionsDb.updateStatus(db, id, 'waiting');
       sessionsDb.updatePid(db, id, null);
-      broadcaster.broadcast({ type: 'session:status', sessionId: id, status: 'waiting' });
+      broadcaster.broadcast({ type: 'session:status', sessionId: id, status: 'waiting', lastActivityAt: sessionsDb.getLastActivity(db, id) });
     }
 
     // If this terminal was backing an autonomous agent run, finalize the run:

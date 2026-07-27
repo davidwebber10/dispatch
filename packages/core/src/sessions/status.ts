@@ -72,7 +72,7 @@ export function ptyStatusTick(
       const session = sessionsDb.getById(db, sessionId);
       if (session && session.status !== 'done' && session.status !== sessionStatus) {
         sessionsDb.updateStatus(db, sessionId, sessionStatus);
-        broadcaster.broadcast({ type: 'session:status', sessionId, status: sessionStatus });
+        broadcaster.broadcast({ type: 'session:status', sessionId, status: sessionStatus, lastActivityAt: session.last_activity_at });
       }
     }
   }

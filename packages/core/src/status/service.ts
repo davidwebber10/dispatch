@@ -198,6 +198,9 @@ export class StatusService {
   private aggregateSession(sessionId: string): void {
     const status = aggregateSessionStatus(terminalsDb.listBySession(this.db, sessionId).map((t) => t.status || 'waiting'));
     try { sessionsDb.updateStatus(this.db, sessionId, status); } catch { /* best effort */ }
-    this.broadcaster.broadcast({ type: 'session:status', sessionId, status });
+    // Carry the freshly-bumped activity stamp (apply() calls touchActivity before this) so the
+    // project card's timestamp + "most recent" sort update live, not just on a full reload.
+    const lastActivityAt = sessionsDb.getLastActivity(this.db, sessionId);
+    this.broadcaster.broadcast({ type: 'session:status', sessionId, status, lastActivityAt });
   }
 }
