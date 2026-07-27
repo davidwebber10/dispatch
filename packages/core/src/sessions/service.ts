@@ -111,11 +111,21 @@ export class SessionService {
     // Persist the claude session_id (surfaced from the structured init event) onto the
     // terminal's external_id, mirroring how the PTY path captures session ids. This is
     // what lets us resume the SAME conversation after a daemon restart. First-write-wins
-    // (a `-r` resume keeps the same id, so we never need to overwrite).
+    // for a HEALTHY identity — but a stored id whose transcript exists NOWHERE (captured
+    // from a boot that never ran a turn) is a ghost: it can never be resumed or read, and
+    // leaving it locked the terminal onto an empty history forever (the Dispatch
+    // coordinator served 0 items and every resume referenced a nonexistent session). The
+    // live process's self-reported id is authoritative over a ghost.
     m.on('session', (terminalId: string, sessionId: string) => {
       try {
         const t = terminalsDb.getById(this.db, terminalId);
-        if (t && !t.external_id && sessionId) terminalsDb.updateExternalId(this.db, terminalId, sessionId);
+        if (!t || !sessionId || t.external_id === sessionId) return;
+        if (t.external_id) {
+          const session = sessionsDb.getById(this.db, t.session_id);
+          const workDir = t.working_dir || session?.working_dir || '';
+          if (resolveTranscriptPath(workDir, t.external_id)) return; // healthy — never clobber
+        }
+        terminalsDb.updateExternalId(this.db, terminalId, sessionId);
       } catch { /* best effort */ }
     });
     // Durable source persistence: the manager emits this once a tagged turn's `result`

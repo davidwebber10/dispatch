@@ -5,6 +5,15 @@ import * as sessionsDb from '../../src/db/sessions.js';
 import * as terminalsDb from '../../src/db/terminals.js';
 import { StatusService } from '../../src/status/service.js';
 
+// Ghost heal: the live process's self-reported session id is authoritative when the STORED
+// id has no transcript anywhere (a captured id from a boot that never ran a turn — the
+// Dispatch coordinator was locked onto such a ghost and Control Plane served 0 items
+// forever). A stored id whose transcript EXISTS is still never overwritten.
+vi.mock('../../src/sessions/transcript-path.js', () => ({
+  resolveTranscriptPath: vi.fn((workDir: string, sessionId: string) =>
+    sessionId.startsWith('ghost') ? undefined : `/fake/${sessionId}.jsonl`),
+}));
+
 let db: Database.Database;
 let broadcaster: { broadcast: ReturnType<typeof vi.fn> };
 
@@ -24,10 +33,22 @@ describe('StatusService', () => {
     expect(terminalsDb.getById(db, 'term')?.external_id).toBe('sid-1');
   });
 
-  it('does not clobber an existing external_id', () => {
+  it('does not clobber an existing external_id whose transcript exists', () => {
     terminalsDb.create(db, { id: 't2', sessionId: 'proj', type: 'claude-code', label: 't2', skipPermissions: true, externalId: 'orig' });
     new StatusService(db, broadcaster).ingest('claude', 't2', { hook_event_name: 'SessionStart', session_id: 'new' });
     expect(terminalsDb.getById(db, 't2')?.external_id).toBe('orig');
+  });
+
+  it('HEALS a ghost external_id (stored id has no transcript anywhere)', () => {
+    terminalsDb.create(db, { id: 't3', sessionId: 'proj', type: 'claude-code', label: 't3', skipPermissions: true, externalId: 'ghost-1' });
+    new StatusService(db, broadcaster).ingest('claude', 't3', { hook_event_name: 'SessionStart', session_id: 'real-1' });
+    expect(terminalsDb.getById(db, 't3')?.external_id).toBe('real-1');
+  });
+
+  it('a ghost stored id is left alone when the reported id is the SAME id (no pointless write)', () => {
+    terminalsDb.create(db, { id: 't4', sessionId: 'proj', type: 'claude-code', label: 't4', skipPermissions: true, externalId: 'ghost-2' });
+    new StatusService(db, broadcaster).ingest('claude', 't4', { hook_event_name: 'SessionStart', session_id: 'ghost-2' });
+    expect(terminalsDb.getById(db, 't4')?.external_id).toBe('ghost-2');
   });
 
   it('maps events to terminal status + broadcasts rich threadStatus + activity', () => {
