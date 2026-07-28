@@ -6,6 +6,8 @@ import { api, type ContentBlock } from '../../../api/client';
 import { useStructuredChat } from './useStructuredChat';
 import { useBootstrapOlderPages } from '../../../hooks/useBootstrapOlderPages';
 import { AskQuestionCard, AnsweredQuestionCard } from './AskQuestionCard';
+import { StatusNotice } from './StatusNotice';
+import { isReportStatusTool, parseReportStatus } from './reportStatus';
 import { useTabs, findTerminal } from '../../../stores/tabs';
 import { ThreadAskBanner } from '../ThreadAskBanner';
 import { useDraft } from '../../../hooks/useDraft';
@@ -500,7 +502,7 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
     // Look ahead for a run of consecutive same-tool calls (ignoring their interleaved
     // results, which are rendered paired). A run of 2+ collapses into one ToolGroup.
     // AskUserQuestion is excluded — it has live-overlay special-casing below.
-    if (it.kind === 'tool' && it.toolName !== 'AskUserQuestion') {
+    if (it.kind === 'tool' && it.toolName !== 'AskUserQuestion' && !isReportStatusTool(it.toolName)) {
       const run: ConvItem[] = [it];
       // Tool-result items encountered while scanning the run, IN ENCOUNTER ORDER — used
       // below for en-bloc pairing of toolId-less members (see the `pairs` comment). Not
@@ -582,6 +584,13 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
           try { questions = JSON.parse(it.toolInput ?? '{}')?.questions ?? []; } catch { /* malformed */ }
           if (questions.length) node = <AnsweredQuestionCard questions={questions} resultText={result.text ?? ''} />;
         }
+      } else if (isReportStatusTool(it.toolName) && parseReportStatus(it.toolInput)) {
+        // Surface the buried status inline instead of the collapsed tool row: the model's
+        // findings/question (report_status summary/ask/blocker) become visible in thread view.
+        // The `{ ok: true }` result is already consumed by the pairing logic above, so it won't
+        // render a stray row beneath. Falls back to the generic ToolCall when there's no usable
+        // content to show.
+        node = <StatusNotice input={it.toolInput} />;
       } else {
         node = <ToolCall tool={it} result={result} onViewFile={onViewFile} />;
       }
