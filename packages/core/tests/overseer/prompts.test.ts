@@ -151,11 +151,14 @@ it('frames report_status as a status signal, not the channel that delivers a que
   // see it") read as "ask IS how the human sees the question", so models routed the real
   // question into the tool and left the thread transcript empty — invisible in thread mode.
   const prompt = buildPeerPrompt({ label: 'x', terminalId: 't1', sessionId: 's1', peers: [] } as any);
-  // It must tell the thread to state the question in its normal reply…
-  expect(prompt).toMatch(/say your actual question.*in your normal reply/is);
-  expect(prompt).toContain('what the human reads when they open the thread');
+  // It must tell the thread to put its content in its normal reply…
+  expect(prompt).toMatch(/findings, answer, and any question ALWAYS go in your normal reply/i);
+  expect(prompt).toMatch(/that is what the human reads/i);
+  // …explain WHY (tool-call args are collapsed out of sight — the PTY Ctrl+O burial)…
+  expect(prompt).toMatch(/collapsed out of sight/i);
+  expect(prompt).toContain('Ctrl+O');
   // …and that summary/ask is a copy, never a substitute for saying it.
-  expect(prompt).toMatch(/never a substitute/i);
+  expect(prompt).toMatch(/short COPY for the board/i);
   // The misleading old framing must be gone.
   expect(prompt).not.toContain('the human will never see it');
   expect(prompt).not.toContain('put the question in `ask`');
