@@ -21,7 +21,7 @@ import { api, type ContentBlock } from '../../api/client';
 import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
 import { useThreadStatus } from '../../stores/threadStatus';
-import { useStructuredChat, type CompactResult } from '../tabs/chat/useStructuredChat';
+import { useStructuredChat, type ApiRetry, type CompactResult } from '../tabs/chat/useStructuredChat';
 import { clearStoredDraft } from '../../hooks/useDraft';
 import type { PendingPermission, Terminal } from '../../api/types';
 import { CANNED, m } from './data';
@@ -96,6 +96,7 @@ interface OverseerState {
   coordinatorContextTokens?: number; // context fill for the ContextIndicator; pushed in by useCoordinatorSync()
   coordinatorCompacting: boolean; // a native /compact is in progress on the coordinator thread
   coordinatorCompactResult: CompactResult | null; // outcome of the coordinator's last compaction attempt
+  coordinatorApiRetry: ApiRetry | null; // a model-call retry in flight on the coordinator (e.g. a 529 outage); pushed in by useCoordinatorSync()
   coordinatorModel?: string; // resolved model name for the coordinator thread
   // Older-history pagination for the coordinator's own ConversationStream, mirroring the
   // agent ChatView's use of useStructuredChat's loadOlder/hasMore/loadingOlder. `loadOlder`
@@ -147,7 +148,7 @@ interface OverseerState {
   setCoordinatorStream: (stream: StreamMessage[]) => void;
   setCoordinatorBusy: (busy: boolean) => void;
   /** Pushed in by useCoordinatorSync() from the same useStructuredChat() call as the stream/busy above. */
-  setCoordinatorContextInfo: (info: { contextTokens?: number; compacting: boolean; compactResult: CompactResult | null; model?: string }) => void;
+  setCoordinatorContextInfo: (info: { contextTokens?: number; compacting: boolean; compactResult: CompactResult | null; model?: string; apiRetry: ApiRetry | null }) => void;
   /** Trigger native compaction on the coordinator thread (mirrors useStructuredChat's own `compact`). */
   compactCoordinator: () => void;
   /** Pushed in by useCoordinatorSync() from the same useStructuredChat() call's hasMore/loadingOlder/loadOlder. */
@@ -178,6 +179,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   coordinatorContextTokens: undefined,
   coordinatorCompacting: false,
   coordinatorCompactResult: null,
+  coordinatorApiRetry: null,
   coordinatorModel: undefined,
   coordinatorHasMore: true,
   coordinatorLoadingOlder: false,
@@ -325,6 +327,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       coordinatorContextTokens: undefined,
       coordinatorCompacting: false,
       coordinatorCompactResult: null,
+  coordinatorApiRetry: null,
       coordinatorModel: undefined,
       coordinatorHasMore: true,
       coordinatorLoadingOlder: false,
@@ -359,6 +362,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       coordinatorCompacting: info.compacting,
       coordinatorCompactResult: info.compactResult,
       coordinatorModel: info.model,
+      coordinatorApiRetry: info.apiRetry,
     }),
 
   compactCoordinator: () => {
@@ -394,6 +398,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       coordinatorContextTokens: undefined,
       coordinatorCompacting: false,
       coordinatorCompactResult: null,
+  coordinatorApiRetry: null,
       coordinatorModel: undefined,
       coordinatorHasMore: true,
       coordinatorLoadingOlder: false,
@@ -522,7 +527,7 @@ export function useCoordinatorSync(): void {
   // — without it, imageItemFromBlock returns null for path refs and images vanish after a
   // daemon-restart/transcript-resume. (The hook reads sessionId via a ref, so this does
   // NOT re-key the socket effect.)
-  const { items, busy, model, contextTokens, compacting, compactResult, pending, answer, hasMore, loadingOlder, loadOlder } = useStructuredChat(coordinatorId ?? '', coordinatorProject ?? undefined);
+  const { items, busy, model, contextTokens, compacting, compactResult, apiRetry, pending, answer, hasMore, loadingOlder, loadOlder } = useStructuredChat(coordinatorId ?? '', coordinatorProject ?? undefined);
   const stream = useMemo(() => convItemsToStream(items), [items]);
   useEffect(() => {
     setCoordinatorStream(stream);
@@ -531,8 +536,8 @@ export function useCoordinatorSync(): void {
     setCoordinatorBusy(busy);
   }, [busy, setCoordinatorBusy]);
   useEffect(() => {
-    setCoordinatorContextInfo({ contextTokens, compacting, compactResult, model });
-  }, [contextTokens, compacting, compactResult, model, setCoordinatorContextInfo]);
+    setCoordinatorContextInfo({ contextTokens, compacting, compactResult, model, apiRetry });
+  }, [contextTokens, compacting, compactResult, model, apiRetry, setCoordinatorContextInfo]);
   useEffect(() => {
     setCoordinatorPaging({ hasMore, loadingOlder, loadOlder });
   }, [hasMore, loadingOlder, loadOlder, setCoordinatorPaging]);

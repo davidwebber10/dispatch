@@ -1,4 +1,4 @@
-import { Sparkle } from '@phosphor-icons/react';
+import { CloudWarning, Sparkle } from '@phosphor-icons/react';
 import { Spinner } from './common/Spinner';
 
 /**
@@ -34,6 +34,26 @@ export function CompactingIndicator() {
         <Spinner size={13} />
       </div>
       <span className="chat-shimmer" style={{ font: '500 13.5px var(--font-sans)' }}>Compacting context…</span>
+    </div>
+  );
+}
+
+/**
+ * Sibling of WorkingIndicator for a MODEL-CALL RETRY in flight (the CLI's
+ * `system/api_retry` events — e.g. a 529 "Overloaded" outage). Retries can run for
+ * minutes, and behind a bare "Working…" spinner that reads as a dead session — the
+ * user prompts, sees nothing, and gives up before the eventual error result lands.
+ * Naming the retry (status + attempt count) makes an outage look like an outage.
+ */
+export function ApiRetryIndicator({ retry }: { retry: { attempt: number; maxRetries: number; errorStatus?: number } }) {
+  const what = retry.errorStatus === 529 ? 'API overloaded' : retry.errorStatus ? `API error ${retry.errorStatus}` : 'API error';
+  const attempts = retry.maxRetries > 0 ? ` (${retry.attempt}/${retry.maxRetries})` : '';
+  return (
+    <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+      <div style={{ flexShrink: 0, width: 24, height: 24, borderRadius: 7, background: 'var(--color-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <CloudWarning size={14} weight="fill" color="var(--color-warning, #d9a03f)" />
+      </div>
+      <span className="chat-shimmer" style={{ font: '500 13.5px var(--font-sans)' }}>{what} — retrying{attempts}…</span>
     </div>
   );
 }

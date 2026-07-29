@@ -18,7 +18,7 @@ import { DictationControl } from '../../dictation/DictationControl';
 import { InputActionsMenu } from '../../dictation/InputActionsMenu';
 import { InsightText } from '../../InsightText';
 import { ResumeAdviceCard } from './ResumeAdviceCard';
-import { WorkingIndicator, CompactingIndicator } from '../../WorkingIndicator';
+import { WorkingIndicator, CompactingIndicator, ApiRetryIndicator } from '../../WorkingIndicator';
 import { Spinner } from '../../common/Spinner';
 import { ChatImage } from '../../ChatImage';
 import { ContextIndicator } from '../../ContextIndicator';
@@ -51,7 +51,7 @@ async function fileToBase64(file: File): Promise<string> {
 export function ChatView({ terminalId }: { terminalId: string }) {
   const tab = useTabs((s) => findTerminal(s.byProject, terminalId));
   const sessionId = tab?.sessionId;
-  const { items, busy, model, send, pending, answer, contextTokens, compacting, compactResult, compact, hasMore, loadingOlder, loadOlder } = useStructuredChat(terminalId, sessionId);
+  const { items, busy, model, send, pending, answer, contextTokens, compacting, compactResult, apiRetry, compact, hasMore, loadingOlder, loadOlder } = useStructuredChat(terminalId, sessionId);
 
   // Advice is about THIS resume, so "not now" lives in component state rather than
   // storage: a later resume of the same thread (older and larger still) should ask again.
@@ -244,7 +244,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                 <MessageScroller.Item messageId="__working" style={{ display: 'flex' }}>
                   {/* Compaction wins the slot: it can coincide with busy (a message sent
                       mid-compaction sets busy too) but must never read as "Working…". */}
-                  {compacting ? <CompactingIndicator /> : <WorkingIndicator />}
+                  {apiRetry ? <ApiRetryIndicator retry={apiRetry} /> : compacting ? <CompactingIndicator /> : <WorkingIndicator />}
                 </MessageScroller.Item>
               )}
             </MessageScroller.Content>

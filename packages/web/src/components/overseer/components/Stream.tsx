@@ -28,7 +28,7 @@ import { Icon } from '../atoms';
 import { AgentCard } from './AgentCard';
 import { ChatImage } from '../../ChatImage';
 import { InsightText } from '../../InsightText';
-import { WorkingIndicator } from '../../WorkingIndicator';
+import { ApiRetryIndicator, WorkingIndicator } from '../../WorkingIndicator';
 import { Spinner } from '../../common/Spinner';
 import { AskQuestionCard, AnsweredQuestionCard } from '../../tabs/chat/AskQuestionCard';
 import { LoadEarlierButton } from '../../tabs/chat/ChatView';
@@ -541,6 +541,7 @@ export function ConversationStream() {
   const coordinatorHasMore = useOverseer((s) => s.coordinatorHasMore);
   const coordinatorLoadingOlder = useOverseer((s) => s.coordinatorLoadingOlder);
   const coordinatorLoadOlder = useOverseer((s) => s.coordinatorLoadOlder);
+  const coordinatorApiRetry = useOverseer((s) => s.coordinatorApiRetry);
 
   // Reverse-infinite-scroll trigger, mirroring the agent ChatView's own onScroll threshold
   // (packages/web/src/components/tabs/chat/ChatView.tsx). preserveScrollOnPrepend on the
@@ -600,7 +601,11 @@ export function ConversationStream() {
               {/* single indeterminate spinner while the coordinator works */}
               {busy && (
                 <MessageScroller.Item messageId="__working" style={{ display: 'flex' }}>
-                  <WorkingIndicator />
+                  {/* Name a model-call retry instead of a bare spinner — during an outage the
+                      CLI retries for minutes and "Working…" reads as a dead session. Gated on
+                      projectMatches like every coordinator read (busy already is, via
+                      useRenderVals; the direct store read here needs its own gate). */}
+                  {projectMatches && coordinatorApiRetry ? <ApiRetryIndicator retry={coordinatorApiRetry} /> : <WorkingIndicator />}
                 </MessageScroller.Item>
               )}
             </MessageScroller.Content>
