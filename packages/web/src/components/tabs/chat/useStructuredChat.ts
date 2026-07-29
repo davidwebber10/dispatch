@@ -20,6 +20,13 @@ export function contextWindowFor(model?: string): number {
   return model?.includes('haiku') ? 200_000 : 1_000_000;
 }
 
+/** A model-call retry in flight (from the CLI's `system/api_retry` events). */
+export interface ApiRetry {
+  attempt: number;
+  maxRetries: number;
+  errorStatus?: number;
+}
+
 /** The outcome of the most recent native compaction, or null before any has run. */
 export interface CompactResult {
   success: boolean;
@@ -38,6 +45,11 @@ export interface StructuredChat {
   compacting: boolean;
   /** Outcome of the most recently finished compaction (transient — for a toast/indicator). */
   compactResult: CompactResult | null;
+  /** Live API-retry state (the CLI's system/api_retry events): the model call is failing
+   *  and being retried — e.g. a 529 outage — which can run for MINUTES behind an otherwise
+   *  bare "Working…" spinner. Null when no retry is in flight; cleared the moment the turn
+   *  progresses (stream/assistant) or ends (result). */
+  apiRetry: ApiRetry | null;
   // Accepts plain text OR a content-block array (e.g. a real image block the model SEES).
   send: (content: string | ContentBlock[]) => void;
   /** The AskUserQuestion / gated tool this thread is blocked on, or null. */
@@ -226,6 +238,11 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
   const [contextTokens, setContextTokens] = useState<number | undefined>();
   const [compacting, setCompacting] = useState(false);
   const [compactResult, setCompactResult] = useState<CompactResult | null>(null);
+  // API-retry visibility: set by system/api_retry, cleared by any sign the turn progressed
+  // (stream_event / assistant / result) — functional clears bail out when already null so
+  // per-delta stream events don't churn renders.
+  const [apiRetry, setApiRetry] = useState<ApiRetry | null>(null);
+  const clearApiRetry = () => setApiRetry((p) => (p ? null : p));
   // The AskUserQuestion the CLI is blocked on (mirrored in a ref so the `answer`
   // callback and the tool_result handler read the latest value without re-subscribing).
   const [pending, setPendingState] = useState<PendingPermission | null>(null);
@@ -272,7 +289,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
   useEffect(() => {
     if (!terminalId) {
       setItems([]); setBusy(false); setModel(undefined); setPending(null);
-      setContextTokens(undefined); setCompacting(false); setCompactResult(null);
+      setContextTokens(undefined); setCompacting(false); setCompactResult(null); setApiRetry(null);
       hasMoreRef.current = true; setHasMore(true);
       loadingOlderRef.current = false; setLoadingOlder(false);
       oldestLineRef.current = undefined; pageTokenRef.current += 1;
@@ -280,7 +297,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
       return;
     }
     setItems([]); setBusy(false); setModel(undefined); setPending(null);
-    setContextTokens(undefined); setCompacting(false); setCompactResult(null);
+    setContextTokens(undefined); setCompacting(false); setCompactResult(null); setApiRetry(null);
     hasMoreRef.current = true; setHasMore(true);
     loadingOlderRef.current = false; setLoadingOlder(false);
     oldestLineRef.current = undefined; pageTokenRef.current += 1; // discard any in-flight fetch from the previous thread
@@ -361,7 +378,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
         pendingRef.current.clear();
         setItems([]); setBusy(false);
         setPending(null); // the server re-sends a still-pending permission after replay
-        setContextTokens(undefined); setCompacting(false); setCompactResult(null); // replay rebuilds these
+        setContextTokens(undefined); setCompacting(false); setCompactResult(null); setApiRetry(null); // replay rebuilds these
         blockMapRef.current.clear();
         // Re-arm pagination too: `items` above is being fully rebuilt from a fresh replay,
         // so a stale REST anchor from before the reconnect could otherwise skip a gap of
@@ -430,6 +447,18 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
           return;
         }
 
+        // A model-call retry (529 overload, 5xx): surface it so the busy slot can say what's
+        // actually happening — during an outage the CLI retries for minutes and a bare
+        // "Working…" spinner reads as a dead session. Cleared on any turn progress below.
+        if (type === 'system' && event.subtype === 'api_retry') {
+          setApiRetry({
+            attempt: typeof event.attempt === 'number' ? event.attempt : 0,
+            maxRetries: typeof event.max_retries === 'number' ? event.max_retries : 0,
+            errorStatus: typeof event.error_status === 'number' ? event.error_status : undefined,
+          });
+          return;
+        }
+
         // Native compaction lifecycle: `status:"compacting"` while it runs, then a
         // follow-up status (status:null) carrying compact_result — a fresh system/init
         // for the post-compaction context follows separately and lands in the branch above.
@@ -459,6 +488,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
         if (type === 'stream_event' && event.event) {
           streamingRef.current = true;
           setBusy(true);
+          clearApiRetry(); // the call went through — retries are over
           const se = event.event;
 
           if (se.type === 'message_start') {
@@ -514,6 +544,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
 
         if (type === 'assistant' && Array.isArray(event.message?.content)) {
           setBusy(true);
+          clearApiRetry(); // the call went through — retries are over
           // Context fill: the LATEST assistant call's usage (not a running sum — result.usage
           // sums every API round-trip in a multi-tool turn, badly over-counting). Recomputed
           // on every assistant event so it always reflects the most recent call.
@@ -642,6 +673,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
         if (type === 'result') {
           flushNow(); // land any buffered trailing tokens before the footer
           setBusy(false);
+          clearApiRetry(); // turn over — either recovered or gave up with an error result
           // Synthetic result from backfillEventsFromTranscript (see cc-sessions.ts): Claude
           // Code transcripts never write a real trailing `result` line, so a revived
           // completed thread's replay would otherwise end on `assistant` with nothing to
@@ -772,5 +804,5 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
       });
   }, [terminalId]);
 
-  return { items, busy, model, contextTokens, compacting, compactResult, send, pending, answer, compact, hasMore, loadingOlder, loadOlder };
+  return { items, busy, model, contextTokens, compacting, compactResult, apiRetry, send, pending, answer, compact, hasMore, loadingOlder, loadOlder };
 }

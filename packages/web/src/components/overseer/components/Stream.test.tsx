@@ -197,3 +197,38 @@ describe('ConversationStream — Load earlier messages button', () => {
     expect(screen.queryByText('Load earlier messages')).not.toBeInTheDocument();
   });
 });
+
+// API-retry visibility: during an outage the CLI retries 529s for minutes while the busy
+// slot showed only "Working…" — reading as a dead session. The slot now names the retry.
+describe('ConversationStream — API retry indicator', () => {
+  it('replaces "Working…" with the retry status while a model call is being retried', () => {
+    useOverseer.setState({
+      coordinatorStream: [m('overseer', 'Control Plane', 'a turn', '9:02', 1)],
+      coordinatorBusy: true,
+      coordinatorApiRetry: { attempt: 3, maxRetries: 10, errorStatus: 529 },
+    });
+    render(<ConversationStream />);
+    expect(screen.getByText(/API overloaded — retrying \(3\/10\)/)).toBeInTheDocument();
+    expect(screen.queryByText('Working…')).not.toBeInTheDocument();
+  });
+
+  it('shows the plain Working indicator when no retry is in flight', () => {
+    useOverseer.setState({
+      coordinatorStream: [m('overseer', 'Control Plane', 'a turn', '9:02', 1)],
+      coordinatorBusy: true,
+      coordinatorApiRetry: null,
+    });
+    render(<ConversationStream />);
+    expect(screen.getByText('Working…')).toBeInTheDocument();
+  });
+
+  it('names a non-529 status generically', () => {
+    useOverseer.setState({
+      coordinatorStream: [m('overseer', 'Control Plane', 'a turn', '9:02', 1)],
+      coordinatorBusy: true,
+      coordinatorApiRetry: { attempt: 1, maxRetries: 10, errorStatus: 500 },
+    });
+    render(<ConversationStream />);
+    expect(screen.getByText(/API error 500 — retrying \(1\/10\)/)).toBeInTheDocument();
+  });
+});

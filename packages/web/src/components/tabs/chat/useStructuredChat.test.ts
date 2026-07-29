@@ -935,3 +935,46 @@ test('a human turn that merely mentions the tag keeps its bubble', () => {
   expect(result.current.items.filter((i) => i.kind === 'user')).toHaveLength(1);
   expect(result.current.items.filter((i) => i.kind === 'notice')).toHaveLength(0);
 });
+
+// ---- API-retry visibility (the "dead Control Plane" outage illusion) -------------------
+// During an Anthropic outage the CLI retries 529s for MINUTES, emitting system/api_retry
+// events the UI silently dropped — the user watched a bare "Working…" spinner, concluded
+// the session was dead, and the eventual error landed long after they'd left. The hook now
+// surfaces the retry state so both chat surfaces can say what's actually happening.
+test('a system/api_retry event surfaces apiRetry (attempt/max/status)', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  expect(result.current.apiRetry).toBeNull();
+  act(() => cbs.onEvent({ type: 'system', subtype: 'api_retry', attempt: 3, max_retries: 10, retry_delay_ms: 500, error_status: 529, error: 'overloaded' }));
+  expect(result.current.apiRetry).toEqual({ attempt: 3, maxRetries: 10, errorStatus: 529 });
+});
+
+test('a later retry attempt replaces the earlier one', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 10, error_status: 529 }));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'api_retry', attempt: 4, max_retries: 10, error_status: 529 }));
+  expect(result.current.apiRetry).toEqual({ attempt: 4, maxRetries: 10, errorStatus: 529 });
+});
+
+test('apiRetry clears when the turn PROGRESSES (an assistant event lands)', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'api_retry', attempt: 2, max_retries: 10, error_status: 529 }));
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'u1', message: { content: [{ type: 'text', text: 'recovered' }] } }));
+  expect(result.current.apiRetry).toBeNull();
+});
+
+test('apiRetry clears when the turn ENDS (result — including the give-up error result)', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'api_retry', attempt: 10, max_retries: 10, error_status: 529 }));
+  act(() => cbs.onEvent({ type: 'result', is_error: true, result: 'API Error: 529 Overloaded' }));
+  expect(result.current.apiRetry).toBeNull();
+});
+
+test('apiRetry clears on streaming progress and resets on terminal switch', () => {
+  const { result, rerender } = renderHook(({ id }) => useStructuredChat(id), { initialProps: { id: 't1' } });
+  act(() => cbs.onEvent({ type: 'system', subtype: 'api_retry', attempt: 2, max_retries: 10, error_status: 529 }));
+  act(() => cbs.onEvent({ type: 'stream_event', event: { type: 'message_start' } }));
+  expect(result.current.apiRetry).toBeNull();
+  act(() => cbs.onEvent({ type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 10, error_status: 500 }));
+  rerender({ id: 't2' });
+  expect(result.current.apiRetry).toBeNull();
+});
