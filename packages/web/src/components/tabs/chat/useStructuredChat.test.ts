@@ -573,6 +573,33 @@ test('loadOlder dedups a page whose boundary item overlaps content already rende
   expect(result.current.items.map((i) => i.text)).toEqual(['genuinely older', 'recent turn']);
 });
 
+test('loadOlder KEEPS older items whose content repeats but whose uuid is different (the 27-30% history loss)', async () => {
+  // Regression for the dominant "history skips lines" bug. The dedup used to build its
+  // fingerprint set from EVERY rendered item and apply it even to items carrying a brand-new
+  // uuid — so a genuinely distinct older message was deleted just for looking like one already
+  // on screen. Repetition is routine in a coding session (the same Edit result, a re-run
+  // command, two empty tool outputs), which is why this silently ate a quarter of paged history.
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'u9', message: { content: [{ type: 'text', text: 'The file App.tsx has been updated.' }] } }));
+  expect(result.current.items).toHaveLength(1);
+
+  vi.spyOn(api, 'getConversation').mockResolvedValue({
+    items: [
+      // Identical rendered content, DIFFERENT uuids — three separate real messages.
+      { kind: 'tool-result', text: '', uuid: 'a1', ts: 't', line: 1 },
+      { kind: 'tool-result', text: '', uuid: 'a2', ts: 't', line: 2 },
+      { kind: 'assistant', text: 'The file App.tsx has been updated.', uuid: 'a3', ts: 't', line: 3 },
+    ],
+    cursor: 50, startLine: 1, hasMore: true,
+  } as any);
+  act(() => { result.current.loadOlder(); });
+  await flushAsync();
+
+  // All three older messages survive alongside the one already rendered.
+  expect(result.current.items).toHaveLength(4);
+  expect(result.current.items.map((i) => i.uuid)).toEqual(['a1', 'a2', 'a3', 'u9']);
+});
+
 test('loadOlder still advances the anchor/hasMore when an ENTIRE page duplicates existing items (no stall)', async () => {
   const { result } = renderHook(() => useStructuredChat('t1'));
   act(() => cbs.onEvent({ type: 'assistant', uuid: 'u1', message: { content: [{ type: 'text', text: 'dup' }] } }));

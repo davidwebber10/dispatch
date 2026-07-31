@@ -106,6 +106,16 @@ function safeJson(v: unknown): string {
  * heuristic, not an identity: two genuinely distinct turns with identical rendered content
  * (rare) would collide — accepted as the fallback of last resort, not the primary check.
  */
+/**
+ * True when this item carries a REAL Claude Code transcript uuid — a durable per-message
+ * identity — as opposed to no uuid at all (the client's own optimistic echo) or the synthetic
+ * `s-<turn>-<idx>` key a still-streaming block carries until the whole-assistant reconcile
+ * upgrades it. Only a real uuid is trustworthy enough to decide "same message" on its own.
+ */
+function hasRealUuid(it: ConvItem): boolean {
+  return !!it.uuid && !it.uuid.startsWith('s-');
+}
+
 function convItemFingerprint(it: ConvItem): string {
   // imageUrl is included so distinct images (which otherwise share an empty text/tool
   // fingerprint) don't collapse to one — matters now that REST pages can carry user-attached
@@ -788,12 +798,27 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
           // either side that predate this identity (the client's own optimistic echo, an
           // image, which the REST parser never emits anyway).
           setItems((prev) => {
-            const seenUuids = new Set(prev.map((it) => it.uuid).filter((u): u is string => !!u));
-            const seenFingerprints = new Set(prev.map(convItemFingerprint));
-            const fresh = conv.items.filter((it) => {
-              if (it.uuid && seenUuids.has(it.uuid)) return false;
-              return !seenFingerprints.has(convItemFingerprint(it));
-            });
+            const seenUuids = new Set(prev.filter(hasRealUuid).map((it) => it.uuid as string));
+            // The fingerprint set is built ONLY from already-rendered items that have no real
+            // identity — that is what makes it the FALLBACK this comment always described.
+            // Building it from every `prev` item (the old behaviour) meant a genuinely new
+            // message was deleted merely because its rendered text matched something already on
+            // screen, which is routine in a coding session: the same `Edit` result, the same
+            // command re-run, two empty tool outputs, a repeated short user turn. Measured on
+            // real transcripts that silently discarded 27-30% of paged history — the "history
+            // skips lines" bug. `prev` also grows with every page, so it got worse the further
+            // back you scrolled.
+            const anonymousFingerprints = new Set(
+              prev.filter((it) => !hasRealUuid(it)).map(convItemFingerprint),
+            );
+            const fresh = conv.items.filter((it) =>
+              // A real uuid IS the identity — trust it alone. Anything else falls back to
+              // content, which still catches the case the fallback exists for (the client's
+              // own optimistic echo / a mid-stream synthetic block).
+              hasRealUuid(it)
+                ? !seenUuids.has(it.uuid as string)
+                : !anonymousFingerprints.has(convItemFingerprint(it)),
+            );
             return fresh.length ? [...fresh, ...prev] : prev;
           });
         }
