@@ -93,4 +93,32 @@ describe('PTYManager (real PTY)', () => {
     await new Promise((r) => setTimeout(r, 50));
     expect(manager.getBufferSize('sess-buf')).toBe(0);
   }, 10_000);
+
+  it('getBufferSlice / getBufferOffsets are safe defaults for an unknown terminal id', () => {
+    const manager = new PTYManager();
+    expect(manager.getBufferSlice('does-not-exist')).toEqual({ data: '', startOffset: 0 });
+    expect(manager.getBufferOffsets('does-not-exist')).toEqual({ startOffset: 0, totalWritten: 0 });
+  });
+
+  it('getBufferSlice / getBufferOffsets expose the live ring\'s offsets', async () => {
+    const manager = new PTYManager();
+    const gotData = new Promise<void>((resolve) => {
+      manager.on('data', () => resolve());
+    });
+
+    manager.spawn('sess-off', '/bin/sh', ['-c', 'printf MARKER; while :; do sleep 0.05; done'], os.tmpdir());
+    await gotData;
+    await new Promise((r) => setTimeout(r, 50));
+
+    const offsets = manager.getBufferOffsets('sess-off');
+    expect(offsets.startOffset).toBe(0); // nothing evicted from a fresh 4MB ring
+    expect(offsets.totalWritten).toBe(manager.getBufferSize('sess-off'));
+
+    // A complete replay from 0 is byte-identical to getBuffer(): no preamble.
+    const slice = manager.getBufferSlice('sess-off');
+    expect(slice.startOffset).toBe(0);
+    expect(slice.data).toBe(manager.getBuffer('sess-off'));
+
+    manager.kill('sess-off');
+  }, 10_000);
 });

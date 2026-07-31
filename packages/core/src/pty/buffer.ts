@@ -1,8 +1,90 @@
+/**
+ * Escape state a mid-stream replay window cannot inherit: leave the alt screen,
+ * reset SGR, reset the scroll region, home the cursor. A window that starts in
+ * the middle of the lifetime stream never saw the sequences that set those modes,
+ * so a stray `\x1b[?1049l` inside it can blank the whole screen. Prefixed ONLY
+ * when the slice starts after byte 0 — a complete-from-zero replay stays
+ * byte-identical to what the daemon has always sent.
+ */
+export const REPLAY_STATE_PREAMBLE = '\x1b[?1049l\x1b[0m\x1b[r\x1b[H';
+
+const LF = 0x0a;
+const ESC = 0x1b;
+const CSI_INTRO = 0x5b; // '['
+const OSC_INTRO = 0x5d; // ']'
+const BEL = 0x07;
+const ST_FINAL = 0x5c; // '\' of the ESC \ string terminator
+
+/** How far back a slice looks for an unterminated escape sequence. */
+const ESCAPE_LOOKBEHIND = 256;
+
+/**
+ * Index just past the final byte of the escape sequence that starts at `esc`,
+ * or -1 when the sequence never terminates inside `buf`.
+ */
+function sequenceEnd(buf: Buffer, esc: number): number {
+  const intro = buf[esc + 1];
+  if (intro === undefined) return -1;
+  if (intro === CSI_INTRO) {
+    for (let i = esc + 2; i < buf.length; i++) {
+      if (buf[i] >= 0x40 && buf[i] <= 0x7e) return i + 1;
+    }
+    return -1;
+  }
+  if (intro === OSC_INTRO) {
+    for (let i = esc + 2; i < buf.length; i++) {
+      if (buf[i] === BEL) return i + 1;
+      if (buf[i] === ESC && buf[i + 1] === ST_FINAL) return i + 2;
+    }
+    return -1;
+  }
+  if (intro >= 0x20 && intro <= 0x2f) {
+    // ESC ( B and friends: intermediate bytes, then a final byte.
+    for (let i = esc + 2; i < buf.length; i++) {
+      if (buf[i] >= 0x30 && buf[i] <= 0x7e) return i + 1;
+    }
+    return -1;
+  }
+  return esc + 2; // plain two-byte escape (ESC M, ESC 7, …)
+}
+
+/**
+ * Move `cut` forward until it is not inside an escape sequence. The bytes before
+ * the cut are still available (they are the part of the ring the slice drops), so
+ * a bounded backward scan can tell whether a sequence is still open there.
+ */
+function skipPartialEscape(buf: Buffer, cut: number): number {
+  const from = Math.max(0, cut - ESCAPE_LOOKBEHIND);
+  let esc = -1;
+  for (let i = cut - 1; i >= from; i--) {
+    if (buf[i] === ESC) { esc = i; break; }
+  }
+  if (esc === -1) return cut;
+  const end = sequenceEnd(buf, esc);
+  if (end !== -1 && end <= cut) return cut; // that sequence closed before the cut
+  if (end === -1) return buf.length; // open to the very end — nothing safe to emit
+  return end;
+}
+
+/**
+ * The first byte a slice may start on, at or after `cut`.
+ * 1. Advance forward past the next `\n`, so a replay never opens with a partial line.
+ * 2. If there is no `\n` ahead, at least never start inside an escape sequence.
+ * Both rules only ever return LESS data, which is always safe.
+ */
+function alignStart(buf: Buffer, cut: number): number {
+  if (cut > 0 && buf[cut - 1] === LF) return cut; // already on a line start
+  const nl = buf.indexOf(LF, cut);
+  if (nl !== -1) return nl + 1;
+  return skipPartialEscape(buf, cut);
+}
+
 export class RingBuffer {
   private chunks: string[] = [];
   private totalSize = 0;
   private maxSize: number;
   private dropped = false; // oldest data has been trimmed — contents no longer start at process spawn
+  private evictedBytes = 0; // monotonic count of bytes trimmed from the head
   public lastWriteAt: Date | null = null;
 
   // 4MB ≈ hours of TUI diff-frames: codex's spinner floods the ring, and the
@@ -17,7 +99,9 @@ export class RingBuffer {
     this.lastWriteAt = new Date();
     while (this.totalSize > this.maxSize && this.chunks.length > 1) {
       const removed = this.chunks.shift()!;
-      this.totalSize -= Buffer.byteLength(removed, 'utf8');
+      const removedBytes = Buffer.byteLength(removed, 'utf8');
+      this.totalSize -= removedBytes;
+      this.evictedBytes += removedBytes;
       this.dropped = true;
     }
   }
@@ -42,6 +126,20 @@ export class RingBuffer {
    */
   size(): number {
     return this.totalSize;
+  }
+
+  /**
+   * Total bytes the process has ever written, evicted ones included. Monotonic
+   * for the life of the ring (only clear() resets it), so a client can compare
+   * two replays and tell which one is older.
+   */
+  totalWritten(): number {
+    return this.evictedBytes + this.totalSize;
+  }
+
+  /** Absolute position, in the lifetime stream, of the ring's first retained byte. */
+  startOffset(): number {
+    return this.evictedBytes;
   }
 
   getContents(maxBytes?: number): string {
@@ -72,10 +170,37 @@ export class RingBuffer {
     return tail.join('');
   }
 
+  /**
+   * getContents() plus the absolute position the returned bytes start at, so a
+   * client can tell whether a replay is older, newer or disjoint from what it
+   * already shows.
+   *
+   * `startOffset` is the position of the first REAL byte of `data` — the state
+   * preamble that a mid-stream slice carries is not counted. When the slice does
+   * not start at byte 0 the head is aligned forward (never a partial line, never
+   * inside an escape sequence) and REPLAY_STATE_PREAMBLE is prefixed. A slice
+   * that starts at 0 is returned exactly as getContents() would return it.
+   */
+  getSlice(maxBytes?: number): { data: string; startOffset: number } {
+    const capped = !!maxBytes && maxBytes > 0 && this.totalSize > maxBytes;
+    if (!capped && this.evictedBytes === 0) {
+      return { data: this.chunks.join(''), startOffset: 0 };
+    }
+
+    const buf = Buffer.from(this.chunks.join(''), 'utf8');
+    const cut = capped ? Math.max(0, buf.length - maxBytes!) : 0;
+    const start = alignStart(buf, cut);
+    return {
+      data: REPLAY_STATE_PREAMBLE + buf.subarray(start).toString('utf8'),
+      startOffset: this.evictedBytes + start,
+    };
+  }
+
   clear(): void {
     this.chunks = [];
     this.totalSize = 0;
     this.lastWriteAt = null;
     this.dropped = false;
+    this.evictedBytes = 0;
   }
 }

@@ -125,6 +125,27 @@ export class PTYManager extends EventEmitter {
     return this.ptys.get(sessionId)?.buffer.size() ?? 0;
   }
 
+  /**
+   * getBuffer() plus the absolute position of the replay's first real byte, for
+   * clients that speak the scrollback-offset protocol (`meta=1`). A slice that
+   * does not start at byte 0 is line/escape-aligned and carries a state preamble;
+   * a slice that starts at 0 is exactly what getBuffer() returns.
+   */
+  getBufferSlice(sessionId: string, maxBytes?: number): { data: string; startOffset: number } {
+    return this.ptys.get(sessionId)?.buffer.getSlice(maxBytes) ?? { data: '', startOffset: 0 };
+  }
+
+  /**
+   * Where the terminal's retained scrollback sits in the process's lifetime output:
+   * `startOffset` is the absolute position of the ring's first retained byte,
+   * `totalWritten` is every byte the process has ever written (monotonic). Zeros
+   * for an unknown (never spawned, or already exited/reaped) terminal id.
+   */
+  getBufferOffsets(sessionId: string): { startOffset: number; totalWritten: number } {
+    const buffer = this.ptys.get(sessionId)?.buffer;
+    return { startOffset: buffer?.startOffset() ?? 0, totalWritten: buffer?.totalWritten() ?? 0 };
+  }
+
   getLastActivity(sessionId: string): Date | null {
     return this.ptys.get(sessionId)?.buffer.lastWriteAt ?? null;
   }

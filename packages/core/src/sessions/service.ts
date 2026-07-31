@@ -1245,6 +1245,16 @@ export class SessionService {
   }
 
   /**
+   * The scrollback ring's retained size PLUS where it sits in the process's
+   * lifetime output: `startOffset` is the absolute position of the first retained
+   * byte, `totalWritten` counts every byte ever written (evicted ones included).
+   */
+  getScrollbackInfo(terminalId: string): { totalBytes: number; startOffset: number; totalWritten: number } {
+    const { startOffset, totalWritten } = this.ptyManager.getBufferOffsets(terminalId);
+    return { totalBytes: this.ptyManager.getBufferSize(terminalId), startOffset, totalWritten };
+  }
+
+  /**
    * The real `claude` CLI's AskUserQuestion tool result mapper looks up each answer by
    * the question's `question` TEXT (`answers[q.question]`), never its `header` — but
    * formatAgentQuestion / answer_agent's coordinator-facing contract documents answering
