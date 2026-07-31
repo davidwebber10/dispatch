@@ -272,7 +272,30 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
   // uuid (for the first call's precise `beforeUuid` anchor) without depending on `items`
   // in its own closure — same rationale as the hasMore/loadingOlder refs above.
   const itemsRef = useRef<ConvItem[]>([]);
-  useEffect(() => { itemsRef.current = items; }, [items]);
+  // ANCHORLESS-BAIL RE-ARM. loadOlder's first call refuses to fetch while no rendered item
+  // carries a real uuid (see its ANCHORLESS-FETCH GUARD — an anchorless fetch returns the
+  // NEWEST window and double-renders the thread). That bail is correct, but it touched NO
+  // state, and the only things that re-fire paging are useBootstrapOlderPages' effect
+  // (deps: overflowing/hasMore/loadingOlder/loadOlder), a near-top scroll, and the
+  // Load-earlier button — none of which change when an anchor finally arrives. So the FIRST
+  // bail was permanent: the button stayed visible and inert forever, and the bootstrap loop
+  // never ran again. That is routine on a streaming thread, because the bounded ws replay
+  // (last 200 ring events, every stdout line included) can leave every rendered item on a
+  // synthetic `s-<turn>-<idx>` key.
+  // The fix: remember that a call bailed for want of an anchor, and bump `anchorRetry` the
+  // moment a real uuid actually lands. `anchorRetry` is a loadOlder dependency, so its
+  // identity changes — exactly the dependency the bootstrap effect re-runs on — and a scroll
+  // or a button click after that point proceeds normally too. The nonce is bumped ONLY when
+  // a real anchor exists (never on the bail itself), so it cannot spin.
+  const anchorBlockedRef = useRef(false);
+  const [anchorRetry, setAnchorRetry] = useState(0);
+  useEffect(() => {
+    itemsRef.current = items;
+    if (anchorBlockedRef.current && items.some(hasRealUuid)) {
+      anchorBlockedRef.current = false;
+      setAnchorRetry((n) => n + 1);
+    }
+  }, [items]);
   // Bug 1 (archived agent shows an empty chat): latches once we've hydrated from the REST
   // transcript after a `system/inactive` signal (no live process ⇒ nothing to ws-replay),
   // so a later reconnect / duplicate signal doesn't re-fetch. Reset alongside the other
@@ -303,7 +326,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
       hasMoreRef.current = true; setHasMore(true);
       loadingOlderRef.current = false; setLoadingOlder(false);
       oldestLineRef.current = undefined; pageTokenRef.current += 1;
-      inactiveHydratedRef.current = false;
+      inactiveHydratedRef.current = false; anchorBlockedRef.current = false;
       return;
     }
     setItems([]); setBusy(false); setModel(undefined); setPending(null);
@@ -311,7 +334,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
     hasMoreRef.current = true; setHasMore(true);
     loadingOlderRef.current = false; setLoadingOlder(false);
     oldestLineRef.current = undefined; pageTokenRef.current += 1; // discard any in-flight fetch from the previous thread
-    inactiveHydratedRef.current = false;
+    inactiveHydratedRef.current = false; anchorBlockedRef.current = false;
     streamingRef.current = false; turnRef.current = 0; blockMapRef.current.clear();
     pendingRef.current.clear();
     if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
@@ -396,7 +419,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
         hasMoreRef.current = true; setHasMore(true);
         loadingOlderRef.current = false; setLoadingOlder(false);
         oldestLineRef.current = undefined; pageTokenRef.current += 1;
-        inactiveHydratedRef.current = false;
+        inactiveHydratedRef.current = false; anchorBlockedRef.current = false;
       },
       onClose: () => {
         // P0b safety net: if the ws drops we can't trust an in-flight turn to ever
@@ -570,10 +593,11 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
           // stable identity. Threaded onto every item below so loadOlder's dedup/anchor can
           // use real identity instead of a lossy content fingerprint.
           const uuid = typeof event.uuid === 'string' ? event.uuid : undefined;
-          // Streaming mode: text/thinking already rendered from deltas — ignore them
-          // to avoid duplication. Reconcile each tool_use's parsed input from the
-          // authoritative whole event (and append any tool we never saw start, e.g.
-          // if its content_block_start was trimmed out of the replay ring).
+          // Streaming mode: text/thinking ALREADY rendered from deltas — ignore those to
+          // avoid duplication. Reconcile each tool_use's parsed input from the authoritative
+          // whole event, and append any block we never saw start (a tool, or — see
+          // REPLAY-CUT RECOVERY below — text/thinking), e.g. because its content_block_start
+          // was trimmed out of the replay ring.
           if (streamingRef.current) {
             // Land any buffered deltas first so trailing text/thinking isn't lost and
             // no later frame overwrites the authoritative tool input reconciled below.
@@ -585,7 +609,24 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
             // loadOlder() page recognize (and correctly dedup) this same item from disk.
             const blockKeys = new Set(Array.from(blockMapRef.current.values(), (r) => r.key));
             const tools = event.message.content.filter((b: any) => b.type === 'tool_use');
-            if (tools.length || (uuid && blockKeys.size)) {
+            // REPLAY-CUT RECOVERY. The ws replay is bounded to the last 200 ring events, so it
+            // can start PAST a message's content_block_start. Those orphaned deltas are dropped
+            // (no BlockRec to land in — see content_block_delta above), and `streamingRef` is
+            // sticky, so this reconcile's "text/thinking already rendered from deltas" rule
+            // used to lose that message's prose from BOTH sources — permanently. Any block this
+            // whole event reports whose stream index never opened a BlockRec was rendered by
+            // nothing, so it is appended here from the authoritative whole event — the SAME
+            // rule already applied to "any tool we never saw start", now covering text/thinking
+            // too, and in content order so a recovered block keeps its place relative to the
+            // rest of the message. `index` is a position in this message's content array, which
+            // is exactly what a stream_event's `index` addresses. The check is presence-only
+            // (not the rec's kind): if an index ever failed to line up, skipping is the safe
+            // direction — a miss, never a duplicated bubble.
+            const appendable: { b: any; index: number }[] = event.message.content
+              .map((b: any, index: number) => ({ b, index }))
+              .filter(({ b, index }: { b: any; index: number }) => b.type === 'tool_use'
+                || ((b.type === 'text' || b.type === 'thinking') && !blockMapRef.current.has(index)));
+            if (appendable.length || (uuid && blockKeys.size)) {
               setItems((p) => {
                 // DEFENSE-IN-DEPTH (replay/REST overlap): if this message's real uuid is already
                 // rendered by an item OUTSIDE this stream burst (a REST-hydrated copy), drop the
@@ -609,8 +650,15 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
                   }
                   return Object.keys(patch).length ? { ...it, ...patch } : it;
                 });
-                for (const b of tools) {
-                  if (!haveIds.has(b.id)) next.push({ kind: 'tool', toolName: b.name, toolId: b.id, toolInput: safeJson(b.input), toolFile: b.input?.file_path ?? b.input?.path, ...(uuid ? { uuid } : {}) });
+                for (const { b } of appendable) {
+                  if (b.type === 'tool_use') {
+                    if (!haveIds.has(b.id)) next.push({ kind: 'tool', toolName: b.name, toolId: b.id, toolInput: safeJson(b.input), toolFile: b.input?.file_path ?? b.input?.path, ...(uuid ? { uuid } : {}) });
+                    continue;
+                  }
+                  // text / thinking whose content_block_start the replay cut (see appendable).
+                  const text = b.type === 'thinking' ? (b.thinking ?? b.text ?? '') : (b.text ?? '');
+                  if (!text) continue; // an empty block would render as a blank bubble
+                  next.push({ kind: b.type === 'thinking' ? 'thinking' : 'assistant', text, ...(uuid ? { uuid } : {}) });
                 }
                 return next;
               });
@@ -779,7 +827,10 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
     // instead (ws/structured.ts hasRenderableEvents + the 'inactive' handler above). Bail and
     // let BootstrapOlderPages / a near-top scroll / the Load-earlier button retry once the
     // replay settles an anchor.
-    if (firstCall && !beforeUuid) return;
+    // The bail RE-ARMS instead of dead-ending: it changes no other state, so without the flag
+    // below nothing would ever re-fire paging and the Load-earlier button would stay visible
+    // and inert forever (see anchorBlockedRef / anchorRetry above).
+    if (firstCall && !beforeUuid) { anchorBlockedRef.current = true; return; }
     loadingOlderRef.current = true;
     setLoadingOlder(true);
     api.getConversation(terminalId, { before: oldestLineRef.current, ...(beforeUuid ? { beforeUuid } : {}), limit: OLDER_PAGE_LIMIT })
@@ -827,7 +878,10 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
       .finally(() => {
         if (tok === pageTokenRef.current) { loadingOlderRef.current = false; setLoadingOlder(false); }
       });
-  }, [terminalId]);
+    // `anchorRetry` is a dependency ON PURPOSE: bumping it re-creates this callback, which is
+    // what re-fires useBootstrapOlderPages' effect after an anchorless bail (see above). The
+    // body reads nothing from it.
+  }, [terminalId, anchorRetry]);
 
   return { items, busy, model, contextTokens, compacting, compactResult, apiRetry, send, pending, answer, compact, hasMore, loadingOlder, loadOlder };
 }

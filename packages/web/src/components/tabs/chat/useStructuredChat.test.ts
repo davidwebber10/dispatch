@@ -4,6 +4,12 @@ import { test, expect, vi, beforeEach } from 'vitest';
 import { useStructuredChat, contextWindowFor } from './useStructuredChat';
 import * as sock from '../../../api/structured-socket';
 import { api, type ContentBlock } from '../../../api/client';
+// Used by the anchorless-bail RE-ARM test below, which drives the REAL bootstrap loop (the
+// only caller that can re-fire paging on its own) instead of asserting on internals. The
+// scroller reports "not overflowing" — jsdom measures every element as 0-sized, so the
+// library's own geometry is unusable here (same mock as useBootstrapOlderPages.test.ts).
+vi.mock('@shadcn/react/message-scroller', () => ({ useMessageScrollerScrollable: () => ({ start: false, end: false }) }));
+import { useBootstrapOlderPages } from '../../../hooks/useBootstrapOlderPages';
 
 // Captures the socket callbacks so a test can drive events directly.
 interface Cbs { onEvent: (e: any) => void; onReset?: () => void; onClose?: () => void }
@@ -994,6 +1000,126 @@ test('apiRetry clears when the turn ENDS (result — including the give-up error
   act(() => cbs.onEvent({ type: 'system', subtype: 'api_retry', attempt: 10, max_retries: 10, error_status: 529 }));
   act(() => cbs.onEvent({ type: 'result', is_error: true, result: 'API Error: 529 Overloaded' }));
   expect(result.current.apiRetry).toBeNull();
+});
+
+// ---- Anchorless-bail DEAD END ("Load earlier" goes permanently inert) -------------------
+// loadOlder's first call refuses to fetch while no rendered item carries a real uuid (the
+// ANCHORLESS-FETCH GUARD — an anchorless fetch returns the NEWEST window and double-renders
+// the thread, so the guard itself is correct and stays). But that bail changed NO state, and
+// nothing else re-fires paging: useBootstrapOlderPages' effect depends on
+// [overflowing, hasMore, loadingOlder, loadOlder], none of which move when an anchor finally
+// arrives. So the first bail was permanent — the Load-earlier button stayed visible and did
+// nothing, forever. It is the NORMAL state on a streaming thread: the replay is bounded to
+// the last 200 ring events (every stdout line, stream_event deltas included), so every
+// rendered item can still carry a synthetic `s-<turn>-<idx>` key with no real uuid anywhere.
+
+/** useStructuredChat wired to the REAL bootstrap loop, exactly as ChatView/Stream mount it. */
+function useChatWithBootstrap(id: string) {
+  const chat = useStructuredChat(id);
+  useBootstrapOlderPages({ hasMore: chat.hasMore, loadingOlder: chat.loadingOlder, loadOlder: chat.loadOlder });
+  return chat;
+}
+
+test('RE-ARM: a first loadOlder that bails for want of an anchor resumes paging once the replay settles a real uuid (no permanent dead end)', async () => {
+  const spy = vi.spyOn(api, 'getConversation').mockResolvedValue({
+    items: [{ kind: 'user', text: 'older history', uuid: 'o1', line: 1 }],
+    cursor: 9, startLine: 1, hasMore: false, // exhausted in one page → the loop settles here
+  } as any);
+  const { result } = renderHook(() => useChatWithBootstrap('t1'));
+  // Mount: the bootstrap loop fires loadOlder with nothing rendered → the guard bails.
+  await flushAsync();
+  expect(spy).not.toHaveBeenCalled();
+
+  // The bounded replay paints a streaming message: its block carries only a synthetic key,
+  // so there is still no anchor and still no fetch — and the bail must NOT re-arm on its own
+  // (that would spin the bootstrap loop), so the callback identity has to hold steady here.
+  act(() => cbs.onEvent({ type: 'stream_event', event: { type: 'message_start' } }));
+  act(() => cbs.onEvent(start(0, { type: 'text' })));
+  act(() => cbs.onEvent(textDelta(0, 'streamed answer')));
+  drainRaf();
+  await flushAsync();
+  expect(result.current.items[0].uuid).toMatch(/^s-/);
+  expect(spy).not.toHaveBeenCalled();
+  const blocked = result.current.loadOlder;
+
+  // The whole-assistant reconcile upgrades that item to its real transcript uuid — an anchor
+  // now exists, so paging must resume BY ITSELF (this is the fix: before it, nothing ever
+  // re-fired the bootstrap effect and the button below stayed inert forever).
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'real-1', message: { content: [{ type: 'text', text: 'streamed answer' }] } }));
+  await flushAsync();
+  expect(spy).toHaveBeenCalledWith('t1', { before: undefined, beforeUuid: 'real-1', limit: 120 });
+  expect(result.current.items.map((i) => i.text)).toEqual(['older history', 'streamed answer']);
+  expect(result.current.loadOlder).not.toBe(blocked); // the mechanism: a new identity is what re-fires the effect
+});
+
+// ---- Replay cut MID-MESSAGE loses that message's prose -----------------------------------
+// The 200-event replay window can start PAST a message's content_block_start. Its deltas then
+// hit `blockMapRef.get(index)` with no rec and are dropped, and `streamingRef` is sticky true,
+// so the whole-`assistant` reconcile also skipped the text/thinking blocks ("already rendered
+// from deltas") — the message's prose came from neither source and was lost permanently. The
+// reconcile now appends any text/thinking block whose stream index never opened a BlockRec,
+// mirroring the "append any tool we never saw start" rule.
+
+test('REPLAY CUT: a message whose content_block_start was trimmed still renders its prose from the whole-assistant reconcile', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  // Replay begins mid-message: no message_start, no content_block_start — just the tail of
+  // the deltas, which have no BlockRec to land in and are dropped (nothing rendered).
+  act(() => cbs.onEvent(textDelta(0, 'tail of the sentence.')));
+  drainRaf();
+  expect(result.current.items).toHaveLength(0);
+  expect(result.current.busy).toBe(true); // streamingRef is now sticky true
+
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'real-1', message: { content: [{ type: 'text', text: 'The whole answer, tail of the sentence.' }] } }));
+  const txt = result.current.items.filter((i) => i.kind === 'assistant');
+  expect(txt).toHaveLength(1);
+  expect(txt[0].text).toBe('The whole answer, tail of the sentence.'); // the AUTHORITATIVE text, not the delta tail
+  expect(txt[0].uuid).toBe('real-1'); // real identity → loadOlder can dedup/anchor on it
+});
+
+test('REPLAY CUT: a cut thinking block is recovered too', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent(thinkDelta(0, 'in progress')));
+  drainRaf();
+  expect(result.current.items).toHaveLength(0);
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'real-1', message: { content: [{ type: 'thinking', thinking: 'the full reasoning' }] } }));
+  const think = result.current.items.filter((i) => i.kind === 'thinking');
+  expect(think).toHaveLength(1);
+  expect(think[0].text).toBe('the full reasoning');
+});
+
+test('REPLAY CUT: recovers only the blocks that were cut — a block that DID stream is not duplicated', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  // The cut lands between block 0 (text — start and deltas gone) and block 1 (tool_use,
+  // whose content_block_start survived and streamed normally).
+  act(() => cbs.onEvent(start(1, { type: 'tool_use', name: 'Read', id: 'tu-1' })));
+  act(() => cbs.onEvent(jsonDelta(1, '{"file_path":"/a.ts"}')));
+  flushRaf();
+  expect(result.current.items.map((i) => i.kind)).toEqual(['tool']);
+
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'real-1', message: { content: [
+    { type: 'text', text: 'Reading the file.' },
+    { type: 'tool_use', name: 'Read', id: 'tu-1', input: { file_path: '/a.ts' } },
+  ] } }));
+  // The lost text is recovered exactly once; the streamed tool is reconciled in place, not
+  // appended a second time.
+  expect(result.current.items.filter((i) => i.kind === 'assistant').map((i) => i.text)).toEqual(['Reading the file.']);
+  expect(result.current.items.filter((i) => i.kind === 'tool')).toHaveLength(1);
+  expect(result.current.items.find((i) => i.kind === 'tool')?.toolInput).toContain('/a.ts');
+  // ACCEPTED TRADEOFF, pinned here on purpose: a recovered block is APPENDED at reconcile
+  // time, so it lands after the blocks of the same message that did stream, not back at its
+  // original content position. Content is complete and correctly identified; only the
+  // intra-message order of the cut-off head is approximate — the same caveat the pre-existing
+  // "append any tool we never saw start" rule already carries, and it only ever affects the
+  // single oldest message the replay window bisects.
+  expect(result.current.items.map((i) => i.kind)).toEqual(['tool', 'assistant']);
+});
+
+test('REPLAY CUT: an empty text block in the whole event does not append a blank bubble', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent(textDelta(0, 'x')));
+  drainRaf();
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'real-1', message: { content: [{ type: 'text', text: '' }] } }));
+  expect(result.current.items).toHaveLength(0);
 });
 
 test('apiRetry clears on streaming progress and resets on terminal switch', () => {
