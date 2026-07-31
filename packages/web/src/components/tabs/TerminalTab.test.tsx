@@ -19,6 +19,7 @@ vi.mock('@xterm/xterm', () => {
     options: Record<string, unknown> = {};
     buffer = { active: { length: 0, viewportY: 0, baseY: 0 } };
     written: string[] = [];
+    scrolledToBottom = 0;
     dataHandler: ((d: string) => void) | null = null;
     private scrollHandlers: Array<() => void> = [];
     constructor() { instances.push(this); }
@@ -32,7 +33,7 @@ vi.mock('@xterm/xterm', () => {
     onScroll(cb: () => void) { this.scrollHandlers.push(cb); return { dispose: () => {} }; }
     onRender() { return { dispose() {} }; }
     scrollLines() {}
-    scrollToBottom() {}
+    scrollToBottom() { this.scrolledToBottom++; }
     scrollToLine(line: number) { this.buffer.active.viewportY = line; }
     reset() { this.buffer.active.length = 0; this.buffer.active.viewportY = 0; this.buffer.active.baseY = 0; }
     write(data: string, cb?: () => void) {
@@ -741,4 +742,54 @@ test('unmounting mid-rebuild clears the pending stall timer — no abort fires a
   } finally {
     vi.useRealTimers();
   }
+});
+
+// ---- opening a CLI thread lands on the NEWEST output, not the top ----
+
+test('the initial replay pins the view to the bottom (a CLI thread opens at its newest output)', async () => {
+  // Pretty threads have always done this (MessageScroller defaultScrollPosition="end" plus its
+  // post-mount pin); a PTY thread did nothing, so it opened wherever xterm's viewport landed
+  // after a big replay — usually the top, leaving the reader to scroll down. Codex threads hit
+  // this every time because they are always PTY.
+  const { factory, created } = makeSocketFactory();
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+  const term = instances[0];
+  expect(term.scrolledToBottom).toBe(0);
+
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(term.scrolledToBottom).toBeGreaterThan(0));
+});
+
+test('ordinary live frames do NOT yank the viewport back down', async () => {
+  // Only the replay pins. Otherwise a reader scrolled up reading history would be dragged to
+  // the bottom by every frame the agent emits.
+  const { factory, created } = makeSocketFactory();
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+  const term = instances[0];
+
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(term.scrolledToBottom).toBeGreaterThan(0));
+  const afterReplay = term.scrolledToBottom;
+
+  act(() => { created[0].opts.onData('later output'); created[0].opts.onData('more output'); });
+  await tick();
+  expect(term.scrolledToBottom).toBe(afterReplay);
+});
+
+test('a reconnect re-pins: the replayed scrollback lands at the bottom again', async () => {
+  const { factory, created } = makeSocketFactory();
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+  const term = instances[0];
+
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(term.scrolledToBottom).toBeGreaterThan(0));
+  const afterFirst = term.scrolledToBottom;
+
+  // Reconnect: the socket resets the view, then the server replays everything.
+  act(() => { created[0].opts.onReset?.(); });
+  act(() => { created[0].opts.onData('FULL_REPLAY_AGAIN'); });
+  await waitFor(() => expect(term.scrolledToBottom).toBeGreaterThan(afterFirst));
 });

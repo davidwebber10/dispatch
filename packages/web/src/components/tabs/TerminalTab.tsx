@@ -184,15 +184,38 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       activeRebuildAbort?.();
       term.reset();
       resyncSize();
+      // The server replays the whole scrollback next — land at the newest output, not at
+      // whatever line the pre-reset viewport happened to sit on (see pinNextReplay).
+      pinNextReplay = true;
     };
 
     let gotData = false;
+    // A CLI thread must open showing its NEWEST output, the same way a Pretty thread does
+    // (ChatView pins to the bottom via MessageScroller's defaultScrollPosition="end" plus its
+    // post-mount backfill pin). Nothing did that here, so a PTY thread opened wherever xterm's
+    // viewport happened to land after a large replay was written — usually the top, leaving the
+    // reader to scroll down to catch up. Codex threads show this every time because they are
+    // always PTY; Claude threads mostly hid it by running on the Pretty transport.
+    //
+    // Armed for the FIRST frame of the connection and re-armed on a reconnect (whose reset is
+    // followed by a fresh full replay). Deliberately NOT set for ordinary live frames — that
+    // would yank the viewport back down while the reader is deliberately scrolled up reading
+    // history. The rebuild path owns its own anchor restore (finishRebuild) and never routes
+    // through here, so the two can't fight.
+    let pinNextReplay = true;
     // The "just show it" path: used for every socket's data whenever that data is
     // NOT part of an in-flight rebuild's buffered catch-up — i.e. the original
     // connection's normal traffic, and any survivor-of-a-rebuild socket once it
     // has become primary again.
     const attachLive = (chunk: string) => {
-      term.write(chunk);
+      if (pinNextReplay) {
+        pinNextReplay = false;
+        // In the write CALLBACK: xterm parses asynchronously, so scrolling synchronously after
+        // write() would target the PRE-write buffer and land short of the end.
+        term.write(chunk, () => { if (!disposed) scrollToEndRef.current(); });
+      } else {
+        term.write(chunk);
+      }
       if (!gotData) {
         gotData = true;
         setLoading(false);
