@@ -307,7 +307,9 @@ export const TOOLS = [
     name: 'message_thread',
     description:
       'Send a message to any thread in this project — a peer, a typed agent, or a plain thread the ' +
-      'user is working in (generalizes message_agent beyond typed agents to every peer).',
+      'user is working in (generalizes message_agent beyond typed agents to every peer). Works on ' +
+      'either transport: a Pretty thread receives it on its structured channel, a CLI/PTY thread ' +
+      'has it typed into its terminal. The target must be running.',
     inputSchema: {
       type: 'object',
       properties: {

@@ -113,8 +113,14 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     const ok = typeof payload === 'string' ? payload.length > 0 : Array.isArray(payload) && payload.length > 0;
     if (!ok) return res.status(400).json({ error: 'text (string) or content (string | block[]) is required' });
     try {
-      sessionService.sendStructuredMessage(req.params.terminalId, payload, source);
+      // Transport-agnostic: a Pretty thread takes it over its structured channel, a CLI/PTY
+      // thread gets it typed into its TUI. Before this, a PTY target threw "no structured
+      // session for terminal" — which is why one thread could only message a Pretty peer.
+      const sent = sessionService.sendThreadMessage(req.params.terminalId, payload, source);
       if (source === 'user') sessionService.noteUserMessageToAgent(req.params.terminalId, payload); // tell the coordinator
+      // A structured send flips to working off its own stream events; a PTY write has no such
+      // signal, so mark it here exactly like the /input route does for a submitted line.
+      if (sent.transport === 'pty') statusService?.markWorking(req.params.terminalId, 'Thinking…');
       res.status(204).end();
     } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
   });

@@ -24,6 +24,7 @@ import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, find
 import { resolveTranscriptPath } from './transcript-path.js';
 import { TERMINAL_ID_ENV_VAR } from '../auth/shim.js';
 import { withAutoArchive, DEFAULT_AUTO_ARCHIVE_MS } from './auto-archive.js';
+import { ptyMessagePayload, flattenForPty } from './pty-message.js';
 
 interface StatusContext {
   serverUrl: string;
@@ -819,6 +820,57 @@ export class SessionService {
     if (!manager?.isAlive(terminalId)) this.ensureStructuredAlive(terminalId);
     if (!manager?.isAlive(terminalId)) throw new Error('no structured session for terminal');
     manager.sendMessage(terminalId, content, source);
+  }
+
+  /**
+   * True when this terminal actually runs the structured (Pretty) transport — BOTH the config
+   * flag and a registered manager for its type, the same pair spawnTerminal/ensureStructuredAlive
+   * gate on (a `transport: 'structured'` codex row is still a PTY when Codex-Pretty is disabled).
+   */
+  private isStructuredTerminal(terminal: terminalsDb.TerminalRow): boolean {
+    let config: Record<string, unknown> = {};
+    try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
+    return config.transport === 'structured' && !!this.structuredManagerFor(terminal.type);
+  }
+
+  /**
+   * Deliver a message to a thread on EITHER transport — the transport-agnostic entry point
+   * behind POST /terminals/:id/message (and so behind the dispatch MCP's message_thread).
+   *
+   * Previously that route called sendStructuredMessage directly, which throws
+   * "no structured session for terminal" for a PTY thread — so one thread could only ever
+   * message a peer that happened to be in Pretty mode. A PTY thread has no message channel,
+   * but it does have a TUI we can type into (exactly what sendFileReference already does), so
+   * route it there instead of failing. Returns which transport delivered it, plus whether any
+   * non-text blocks had to be dropped, so the caller can be honest with the sender.
+   */
+  sendThreadMessage(
+    terminalId: string,
+    content: string | import('../structured/manager.js').ContentBlock[],
+    source?: import('../structured/manager.js').MessageSource,
+  ): { transport: 'structured' | 'pty'; droppedNonText: boolean } {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) throw new Error('Thread not found');
+
+    if (this.isStructuredTerminal(terminal)) {
+      this.sendStructuredMessage(terminalId, content, source);
+      return { transport: 'structured', droppedNonText: false };
+    }
+
+    // PTY: type the message into the CLI's own input box and submit it.
+    const { text, droppedNonText } = flattenForPty(content as string | { type?: string; text?: string }[]);
+    if (!text) {
+      throw new Error(
+        droppedNonText
+          ? 'cannot deliver this message to a CLI thread: it has no text (images can only be sent to a Pretty thread)'
+          : 'text is required',
+      );
+    }
+    // Deliberately NOT auto-relaunched the way a structured thread is: restarting a PTY would
+    // discard the live terminal the human may be reading. Fail loudly instead.
+    if (!this.ptyManager.isAlive(terminalId)) throw new Error('thread process is not running');
+    this.ptyManager.write(terminalId, ptyMessagePayload(text));
+    return { transport: 'pty', droppedNonText };
   }
 
   /**
