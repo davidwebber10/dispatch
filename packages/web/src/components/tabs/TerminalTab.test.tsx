@@ -162,6 +162,14 @@ test('live frames arriving mid-rebuild are written after the replay, in arrival 
   // The new socket's FIRST message is the replay frame. Before its write callback
   // fires, simulate live output arriving on BOTH the old (still open) socket and
   // the new one — this must all be buffered, not written immediately.
+  //
+  // NOTE the distinct labels are a TEST FICTION. In production both sockets are subscribed to
+  // the SAME pty (ws/terminal.ts adds one 'data' listener per connection), so these two frames
+  // are byte-identical: 'LIVE_OLD' and 'LIVE_NEW' are the same chunk arriving twice. Writing
+  // both — which this test used to assert — duplicated every mid-rebuild chunk, and a doubled
+  // cursor/scroll-region escape moves the cursor twice as far, overwriting lines that should
+  // have survived. Only the NEW socket's copy is written: it is the one contiguous with the
+  // fresh replay snapshot this rebuild just reset to.
   act(() => {
     created[1].opts.onData('REPLAY2');
     created[0].opts.onData('LIVE_OLD');
@@ -171,7 +179,45 @@ test('live frames arriving mid-rebuild are written after the replay, in arrival 
   // Rebuild completes (old socket closed) once everything has drained.
   await waitFor(() => expect(created[0].close).toHaveBeenCalled());
 
-  expect(term.written).toEqual(['INITIAL_REPLAY', 'REPLAY2', 'LIVE_OLD', 'LIVE_NEW']);
+  expect(term.written).toEqual(['INITIAL_REPLAY', 'REPLAY2', 'LIVE_NEW']);
+});
+
+test('a rebuild that stalls out replays the frames withheld from the OLD socket (no lost output)', async () => {
+  // The data-loss bug: while a rebuild is in flight the primary socket's frames are withheld
+  // from the terminal. Abort used to drop them, and since the old view is never reset nothing
+  // ever replayed them — up to 10s of PTY output silently gone.
+  isMobileMock.mockReturnValue(true);
+  (api.getScrollbackSize as Mock).mockResolvedValue(2_000_000);
+  const { factory, created } = makeSocketFactory();
+
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(api.getScrollbackSize).toHaveBeenCalledWith('t1'));
+  await tick();
+
+  const term = instances[0];
+  term.buffer.active.viewportY = 0;
+
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    act(() => { term.fireScroll(); });   // starts the rebuild
+    expect(created).toHaveLength(2);
+
+    // Live output lands on the PRIMARY socket while the rebuild is pending — buffered, not shown.
+    act(() => { created[0].opts.onData('WITHHELD_1'); created[0].opts.onData('WITHHELD_2'); });
+    expect(term.written).toEqual(['INITIAL_REPLAY']);
+
+    // The new socket never delivers its replay, so the stall guard aborts.
+    act(() => { vi.advanceTimersByTime(10_000); });
+
+    // Both withheld frames are recovered, in arrival order, onto the still-intact old view.
+    expect(term.written).toEqual(['INITIAL_REPLAY', 'WITHHELD_1', 'WITHHELD_2']);
+    expect(created[0].close).not.toHaveBeenCalled();  // the old socket stayed primary
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 // ---- anchor restore uses the POST-write length (computed in the write callback) ----

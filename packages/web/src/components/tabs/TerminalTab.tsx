@@ -133,13 +133,24 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     let currentReplay = initialReplay;
     let hasOlder = false;   // the ring holds more than we've currently loaded
     let rebuilding = false; // guards re-entry: one rebuild at a time
-    let pendingLive: string[] = []; // live frames buffered while a rebuild is in flight
+    // Live frames buffered while a rebuild is in flight, kept PER SOCKET. Both sockets are
+    // subscribed to the same PTY during a rebuild (ws/terminal.ts registers one 'data' listener
+    // per connection), so each chunk arrives TWICE — once on each. One shared buffer therefore
+    // wrote every mid-rebuild chunk twice on success (doubled cursor/scroll-region escapes move
+    // the cursor twice as far, so later output overwrites lines that should have survived —
+    // "lines disappear"), and threw them ALL away on abort even though the old socket's view was
+    // never reset, permanently losing up to REBUILD_TIMEOUT_MS of output. Splitting them lets
+    // each outcome drain exactly the buffer that is contiguous with the view it keeps:
+    //   success → drain pendingNew (continues the new socket's fresh replay snapshot)
+    //   abort   → drain pendingOld (continues the old socket's still-intact view)
+    let pendingOld: string[] = []; // frames from the CURRENT (primary) socket
+    let pendingNew: string[] = []; // frames from the speculative rebuild socket
     // Aborts the in-flight rebuild, if any. Shared across the whole effect
     // lifetime (not just one startRebuild call) so ANY socket's onReset —
     // whichever one is currently authoritative — can abort a rebuild before
     // doing its own reset, even a LATER rebuild than the one active when that
     // socket was created.
-    let activeRebuildAbort: (() => void) | null = null;
+    let activeRebuildAbort: ((opts?: { recoverBuffered?: boolean }) => void) | null = null;
     const openSockets = new Set<ReturnType<typeof socketFactory>>();
     const resyncSize = () => { if (term.cols && term.rows) sockRef.current?.resize(term.cols, term.rows); };
 
@@ -194,7 +205,8 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     function startRebuild() {
       rebuilding = true;
       setLoadingOlder(true);
-      pendingLive = [];
+      pendingOld = [];
+      pendingNew = [];
       const nextSize = nextReplayStep(currentReplay);
       const oldSock = sockRef.current!;
       let gotReplay = false;
@@ -211,8 +223,8 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
 
       const drainPending = () => {
         if (disposed || settled) return;
-        if (pendingLive.length === 0) { finishRebuild(); return; }
-        const chunk = pendingLive.shift()!;
+        if (pendingNew.length === 0) { finishRebuild(); return; }
+        const chunk = pendingNew.shift()!;
         term.write(chunk, drainPending);
       };
 
@@ -221,6 +233,10 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
         settled = true;
         clearRebuildTimer();
         activeRebuildAbort = null;
+        // The old socket's buffered frames are deliberately dropped on SUCCESS: its view is
+        // being replaced wholesale, and the same bytes already reached us on the new socket
+        // (both were subscribed to the one PTY) — writing them too is what doubled them.
+        pendingOld = [];
         const newLength = term.buffer.active.length;
         term.scrollToLine(Math.max(0, oldViewportY + (newLength - oldLength)));
         sockRef.current = newSock;
@@ -238,16 +254,29 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       // Abort a rebuild that failed or stalled before delivering its replay:
       // undo NOTHING that is already visible — the old socket and current
       // terminal content are left exactly as they were — just discard the
-      // speculative new socket and any live frames buffered for it, and clear
-      // the guard so a later scroll-to-top can try again. This is the fix for
-      // the worst failure mode: a dead new socket must never leave "load
-      // older" permanently stuck for the rest of the session.
-      const abort = () => {
+      // speculative new socket, and clear the guard so a later scroll-to-top can
+      // try again. This is the fix for the worst failure mode: a dead new socket
+      // must never leave "load older" permanently stuck for the rest of the session.
+      //
+      // The old socket's frames withheld during the attempt MUST still be written: its view
+      // was never reset, so they are the missing continuation of what the reader is looking
+      // at. Discarding them (the previous behaviour) silently lost every byte the PTY emitted
+      // during the attempt — up to REBUILD_TIMEOUT_MS (10s) on a stall, and unrecoverable
+      // because nothing replays afterwards. The speculative socket's own buffer IS dropped:
+      // it belongs to a snapshot that is being thrown away.
+      const abort = (opts?: { recoverBuffered?: boolean }) => {
         if (settled) return;
         settled = true;
         clearRebuildTimer();
         activeRebuildAbort = null;
-        pendingLive = [];
+        // Only when the OLD view survives and simply continues. The reset-driven and unmount
+        // callers pass nothing: a full replay is already inbound (and will contain these bytes),
+        // or the terminal is going away — replaying here would duplicate or waste.
+        // Written before `rebuilding` clears, so xterm's ordered write queue keeps these
+        // ahead of any frame that lands immediately after.
+        if (opts?.recoverBuffered) for (const chunk of pendingOld) term.write(chunk);
+        pendingOld = [];
+        pendingNew = [];
         rebuilding = false;
         setLoadingOlder(false);
         openSockets.delete(newSock);
@@ -258,7 +287,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       // Silent-hang guard: the new socket connects but the replay frame never
       // arrives (e.g. server never responds). Cleared the instant the replay
       // frame lands — see onData below.
-      rebuildTimer = setTimeout(abort, REBUILD_TIMEOUT_MS);
+      rebuildTimer = setTimeout(() => abort({ recoverBuffered: true }), REBUILD_TIMEOUT_MS);
 
       const newSock = socketFactory({
         terminalId,
@@ -275,7 +304,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
             term.write(chunk, drainPending);
             return;
           }
-          if (rebuilding) { pendingLive.push(chunk); return; }
+          if (rebuilding) { pendingNew.push(chunk); return; }
           attachLive(chunk);
         },
         // Before the replay lands, a reset here means THIS socket dropped and
@@ -283,13 +312,13 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
         // an error/close/timeout (no term.reset(): the old view must survive).
         // After it's settled (this socket has already become primary), it's an
         // ordinary later reconnect — route through the shared handler.
-        onReset: () => { if (settled) { handleConnectionReset(); return; } abort(); },
+        onReset: () => { if (settled) { handleConnectionReset(); return; } abort({ recoverBuffered: true }); },
         // The new socket errors or closes before ever delivering a replay —
         // same abort. (The socket abstraction has no separate error event: a
         // WebSocket error always surfaces via close, so this one hook covers
         // both triggers.) A close AFTER the replay already landed is ignored
         // here — that socket's own reconnect/onReset path takes over instead.
-        onClose: () => { if (!gotReplay) abort(); },
+        onClose: () => { if (!gotReplay) abort({ recoverBuffered: true }); },
       });
       openSockets.add(newSock);
     }
@@ -299,7 +328,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       replayBytes: initialReplay,
       onData: (chunk) => {
         if (disposed) return;
-        if (rebuilding) { pendingLive.push(chunk); return; }
+        if (rebuilding) { pendingOld.push(chunk); return; }
         attachLive(chunk);
       },
       // On reconnect the server replays the scrollback — clear first so it
