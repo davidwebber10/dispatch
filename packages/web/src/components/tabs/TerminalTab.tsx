@@ -27,6 +27,14 @@ type SlashCmd = { cmd: string; seq: string; desc: string };
 // this must not be tight enough to abort a merely-slow-but-alive rebuild.
 const REBUILD_TIMEOUT_MS = 10_000;
 
+// xterm keeps at most `options.scrollback` lines and trims the HEAD to stay under
+// it. Once the buffer sits at that ceiling a larger replay adds no visible history
+// at all — it still resets the screen, and the anchor delta (newLength - oldLength)
+// collapses to ~0, so the viewport is yanked to scrollToLine(0). A rebuild there is
+// pure loss, so we refuse it. The fraction leaves a small margin: the last couple of
+// percent of the buffer is not worth a full reset either.
+const SCROLLBACK_CAP_FRACTION = 0.98;
+
 const ENTER: SoftKey = { label: 'Enter', seq: '\r', title: 'Enter', Icon: ArrowElbowDownLeft };
 const UP_DOWN: SoftKey[] = [
   { label: 'Up', seq: '\x1b[A', title: 'Up', Icon: CaretUp },
@@ -133,6 +141,18 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     let currentReplay = initialReplay;
     let hasOlder = false;   // the ring holds more than we've currently loaded
     let rebuilding = false; // guards re-entry: one rebuild at a time
+    // Absolute byte position, in the PTY's lifetime output, where the replay that
+    // is CURRENTLY on screen begins (from the `dispatch:replay-meta` frame of
+    // whichever socket owns the view). Infinity means "not known": a daemon older
+    // than the meta protocol never sends the frame, and every comparison below must
+    // then fall back to the pre-protocol behaviour instead of blocking rebuilds.
+    let displayedStartOffset = Number.POSITIVE_INFINITY;
+    // Set once the daemon has PROVEN nothing older exists (a rebuild's replay began
+    // at the same offset as, or later than, what is already displayed). A ring only
+    // ever loses history, so this can never become false again — and it has to
+    // survive the getScrollbackSize() writers below, which compare RETAINED bytes
+    // and would otherwise keep re-offering a rebuild that can only abort again.
+    let noOlderProven = false;
     // Live frames buffered while a rebuild is in flight, kept PER SOCKET. Both sockets are
     // subscribed to the same PTY during a rebuild (ws/terminal.ts registers one 'data' listener
     // per connection), so each chunk arrives TWICE — once on each. One shared buffer therefore
@@ -182,15 +202,27 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
         // just means scrolling up won't offer more, not a broken attach.
         void api.getScrollbackSize(terminalId).then((total) => {
           if (disposed) return;
-          hasOlder = total > currentReplay;
+          hasOlder = !noOlderProven && total > currentReplay;
         }).catch(() => { /* best-effort */ });
       }
+    };
+
+    // True when xterm's line buffer is at (or within a hair of) its configured
+    // ceiling — see SCROLLBACK_CAP_FRACTION. `options.scrollback` is undefined only
+    // before the terminal is configured, in which case there is nothing to compare.
+    const atScrollbackCap = () => {
+      const cap = term.options.scrollback;
+      if (typeof cap !== 'number' || cap <= 0) return false;
+      return term.buffer.active.length >= cap * SCROLLBACK_CAP_FRACTION;
     };
 
     function maybeStartRebuild() {
       if (disposed || rebuilding || !hasOlder) return;
       if (currentReplay >= MAX_REPLAY) return;
       if (term.buffer.active.viewportY !== 0) return;
+      // A bigger replay cannot show more than xterm is willing to keep. Stop
+      // offering it rather than paying a reset + viewport jump for zero new lines.
+      if (atScrollbackCap()) { hasOlder = false; return; }
       startRebuild();
     }
 
@@ -212,6 +244,14 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       let gotReplay = false;
       let oldLength = 0;
       let oldViewportY = 0;
+      // Where the new socket's replay begins, from its meta frame. Undefined when
+      // the daemon does not speak the meta protocol — then the offset check is
+      // skipped entirely and the rebuild behaves exactly as it did before.
+      let newStartOffset: number | undefined;
+      // Set by abort(): the discarded socket may still deliver frames the server had
+      // already queued before our close() took effect. They belong to a snapshot we
+      // threw away — resetting the screen for them would destroy the surviving view.
+      let aborted = false;
       // True once THIS attempt has finished or aborted — guards re-entrant
       // callbacks (our own newSock.close() below still fires the socket's
       // onClose once more; a stale rebuildTimer could in principle still be
@@ -243,11 +283,18 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
         openSockets.delete(oldSock);
         oldSock.close();
         currentReplay = nextSize;
+        // The new socket's window is now the one on screen.
+        if (newStartOffset !== undefined) displayedStartOffset = newStartOffset;
+        // Keep the surviving socket's RECONNECT size in step with what we display.
+        // It was opened at nextSize, so this is belt-and-braces — but the whole
+        // reconnect-shrinks-history bug came from a replay size drifting out of
+        // sync with the view, so state it explicitly instead of relying on that.
+        newSock.setReplayBytes?.(nextSize);
         rebuilding = false;
         setLoadingOlder(false);
         void api.getScrollbackSize(terminalId).then((total) => {
           if (disposed) return;
-          hasOlder = currentReplay < MAX_REPLAY && total > currentReplay;
+          hasOlder = !noOlderProven && currentReplay < MAX_REPLAY && total > currentReplay;
         }).catch(() => { hasOlder = false; });
       };
 
@@ -267,6 +314,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       const abort = (opts?: { recoverBuffered?: boolean }) => {
         if (settled) return;
         settled = true;
+        aborted = true;
         clearRebuildTimer();
         activeRebuildAbort = null;
         // Only when the OLD view survives and simply continues. The reset-driven and unmount
@@ -292,8 +340,27 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       const newSock = socketFactory({
         terminalId,
         replayBytes: nextSize,
+        // Arrives BEFORE the replay bytes, which is the whole point: it lets us
+        // decide whether this window is worth showing before anything is destroyed.
+        onMeta: (m) => {
+          if (disposed || aborted) return;
+          // Already promoted to primary — this is a later reconnect's replay, which
+          // replaces the view wholesale, so its offset is what's now on screen.
+          if (settled) { displayedStartOffset = m.startOffset; return; }
+          // A window that starts at or after what we already show contains nothing
+          // older. Rebuilding would reset the screen and jump the viewport to buy
+          // the reader exactly zero extra history, so keep the current view and
+          // stop offering more. Only a STRICTLY lower offset may replace it.
+          if (m.startOffset >= displayedStartOffset) {
+            noOlderProven = true;
+            hasOlder = false;
+            abort({ recoverBuffered: true });
+            return;
+          }
+          newStartOffset = m.startOffset;
+        },
         onData: (chunk) => {
-          if (disposed) return;
+          if (disposed || aborted) return;
           if (!gotReplay) {
             gotReplay = true;
             clearRebuildTimer();
@@ -326,6 +393,9 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     const sock = socketFactory({
       terminalId,
       replayBytes: initialReplay,
+      // This socket owns the view, so its replay window IS what the reader sees —
+      // on the first connect and again after every reconnect-driven replay.
+      onMeta: (m) => { if (!disposed) displayedStartOffset = m.startOffset; },
       onData: (chunk) => {
         if (disposed) return;
         if (rebuilding) { pendingOld.push(chunk); return; }

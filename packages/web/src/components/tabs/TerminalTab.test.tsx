@@ -56,17 +56,21 @@ import { TerminalTab } from './TerminalTab';
 import { api } from '../../api/client';
 import { INITIAL_REPLAY_MOBILE, MAX_REPLAY, nextReplayStep } from '../../api/terminal-socket';
 
-type FakeOpts = { terminalId: string; replayBytes?: number; onData: (c: string) => void; onReset?: () => void; onClose?: () => void };
+type FakeMeta = { startOffset: number; totalWritten: number; complete: boolean };
+type FakeOpts = { terminalId: string; replayBytes?: number; onData: (c: string) => void; onMeta?: (m: FakeMeta) => void; onReset?: () => void; onClose?: () => void };
 
 function makeSocketFactory() {
-  const created: { opts: FakeOpts; close: Mock; send: Mock; resize: Mock }[] = [];
+  const created: { opts: FakeOpts; close: Mock; send: Mock; resize: Mock; setReplayBytes: Mock }[] = [];
   const factory = (opts: FakeOpts) => {
-    const entry = { opts, close: vi.fn(), send: vi.fn(), resize: vi.fn() };
+    const entry = { opts, close: vi.fn(), send: vi.fn(), resize: vi.fn(), setReplayBytes: vi.fn() };
     created.push(entry);
-    return { send: entry.send, resize: entry.resize, close: entry.close };
+    return { send: entry.send, resize: entry.resize, close: entry.close, setReplayBytes: entry.setReplayBytes };
   };
   return { factory, created };
 }
+
+const meta = (startOffset: number, over: Partial<FakeMeta> = {}): FakeMeta =>
+  ({ startOffset, totalWritten: 10_000_000, complete: false, ...over });
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
@@ -527,6 +531,180 @@ test('after a rebuild settles, typed input goes through the CURRENT primary sock
 
   expect(created[1].send).toHaveBeenCalledWith('x');
   expect(created[0].send).not.toHaveBeenCalledWith('x');
+});
+
+// ---- scrollback-offset protocol: only a STRICTLY older window may replace the view ----
+//
+// Without the offset there is no way to tell whether a freshly replayed window is
+// older, newer, or the very same bytes — yet the rebuild always reset the screen
+// before writing it. The `dispatch:replay-meta` frame arrives BEFORE the replay
+// bytes, so a worthless rebuild can be refused before anything is destroyed.
+
+test('a rebuild whose replay is not older than the view aborts: no reset, no write, withheld output recovered', async () => {
+  isMobileMock.mockReturnValue(true);
+  (api.getScrollbackSize as Mock).mockResolvedValue(2_000_000);
+  const { factory, created } = makeSocketFactory();
+
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  // What is on screen begins 5000 bytes into the PTY's lifetime output.
+  act(() => { created[0].opts.onMeta?.(meta(5000)); });
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(api.getScrollbackSize).toHaveBeenCalledWith('t1'));
+
+  const term = instances[0];
+  const resetSpy = vi.spyOn(term, 'reset');
+  await waitFor(() => {
+    term.buffer.active.viewportY = 0;
+    act(() => { term.fireScroll(); });
+    expect(created).toHaveLength(2);
+  });
+
+  // Live output on the primary socket is withheld while the rebuild is in flight.
+  act(() => { created[0].opts.onData('WITHHELD'); });
+
+  // The larger request comes back starting at the SAME offset — the ring's head is
+  // already on screen, so this window holds nothing older.
+  act(() => { created[1].opts.onMeta?.(meta(5000, { complete: true })); });
+
+  expect(created[1].close).toHaveBeenCalled();       // the pointless rebuild is discarded
+  expect(created[0].close).not.toHaveBeenCalled();   // the old socket stays primary
+  expect(resetSpy).not.toHaveBeenCalled();           // the view was never cleared
+  // The old view survives and simply continues: its withheld frame is recovered.
+  expect(term.written).toEqual(['INITIAL_REPLAY', 'WITHHELD']);
+
+  // A replay frame the server had already queued before our close() landed must not
+  // resurrect the aborted rebuild and blow away the view we just kept.
+  act(() => { created[1].opts.onData('LATE_REPLAY'); });
+  expect(resetSpy).not.toHaveBeenCalled();
+  expect(term.written).toEqual(['INITIAL_REPLAY', 'WITHHELD']);
+
+  // Nothing older exists, so scrolling to the top must stop offering it.
+  term.buffer.active.viewportY = 0;
+  act(() => { term.fireScroll(); });
+  await tick();
+  expect(created).toHaveLength(2);
+});
+
+test('a strictly older replay replaces the view, and its offset becomes the new floor', async () => {
+  isMobileMock.mockReturnValue(true);
+  (api.getScrollbackSize as Mock).mockResolvedValue(2_000_000);
+  const { factory, created } = makeSocketFactory();
+
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  act(() => { created[0].opts.onMeta?.(meta(5000)); });
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(api.getScrollbackSize).toHaveBeenCalledWith('t1'));
+
+  const term = instances[0];
+  await waitFor(() => {
+    term.buffer.active.viewportY = 0;
+    act(() => { term.fireScroll(); });
+    expect(created).toHaveLength(2);
+  });
+
+  // 1000 < 5000: genuinely older history, so the rebuild proceeds as normal.
+  act(() => { created[1].opts.onMeta?.(meta(1000)); });
+  act(() => { created[1].opts.onData('OLDER_REPLAY'); });
+  await waitFor(() => expect(created[0].close).toHaveBeenCalled());
+  expect(term.written).toEqual(['INITIAL_REPLAY', 'OLDER_REPLAY']);
+
+  // A later rebuild is compared against 1000 — the offset now on screen — not the
+  // stale 5000. Same offset means nothing older, so it must abort.
+  await waitFor(() => {
+    term.buffer.active.viewportY = 0;
+    act(() => { term.fireScroll(); });
+    expect(created).toHaveLength(3);
+  });
+  act(() => { created[2].opts.onMeta?.(meta(1000)); });
+
+  expect(created[2].close).toHaveBeenCalled();
+  expect(created[1].close).not.toHaveBeenCalled(); // the promoted socket survives
+  expect(term.written).toEqual(['INITIAL_REPLAY', 'OLDER_REPLAY']);
+});
+
+test('a successful rebuild tells the surviving socket to reconnect at the LARGER replay size', async () => {
+  // Otherwise the next network blip reconnects at the original window and silently
+  // throws away every line the reader just paged back to.
+  isMobileMock.mockReturnValue(true);
+  (api.getScrollbackSize as Mock).mockResolvedValue(2_000_000);
+  const { factory, created } = makeSocketFactory();
+
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(api.getScrollbackSize).toHaveBeenCalledWith('t1'));
+
+  const term = instances[0];
+  await waitFor(() => {
+    term.buffer.active.viewportY = 0;
+    act(() => { term.fireScroll(); });
+    expect(created).toHaveLength(2);
+  });
+
+  act(() => { created[1].opts.onData('REPLAY2'); });
+  await waitFor(() => expect(created[0].close).toHaveBeenCalled());
+
+  expect(created[1].setReplayBytes).toHaveBeenCalledWith(nextReplayStep(INITIAL_REPLAY_MOBILE));
+});
+
+// ---- xterm's own ceiling ----
+
+test('no rebuild once xterm is at its scrollback cap — a bigger replay cannot show more', async () => {
+  // xterm keeps at most `options.scrollback` lines and trims the head. At the cap a
+  // bigger replay adds no visible history, but still resets the screen and (because
+  // newLength - oldLength collapses to ~0) yanks the viewport to the top.
+  isMobileMock.mockReturnValue(true);
+  (api.getScrollbackSize as Mock).mockResolvedValue(2_000_000);
+  const { factory, created } = makeSocketFactory();
+
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(api.getScrollbackSize).toHaveBeenCalledWith('t1'));
+  await tick(); // let getScrollbackSize().then flip hasOlder=true
+
+  const term = instances[0];
+  const resetSpy = vi.spyOn(term, 'reset');
+  // Saturated: the line buffer is sitting on the configured ceiling.
+  term.options.scrollback = 100;
+  term.buffer.active.length = 100;
+  term.buffer.active.viewportY = 0;
+
+  act(() => { term.fireScroll(); });
+  await tick();
+
+  // Identical to the "triggers exactly one rebuild" test above except for the cap,
+  // which is the only reason no second socket exists here.
+  expect(created).toHaveLength(1);
+  expect(resetSpy).not.toHaveBeenCalled();
+  expect(term.written).toEqual(['INITIAL_REPLAY']);
+});
+
+test('a rebuild still runs while the buffer is well under the scrollback cap', async () => {
+  isMobileMock.mockReturnValue(true);
+  (api.getScrollbackSize as Mock).mockResolvedValue(2_000_000);
+  const { factory, created } = makeSocketFactory();
+
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(api.getScrollbackSize).toHaveBeenCalledWith('t1'));
+  await tick();
+
+  const term = instances[0];
+  term.options.scrollback = 100;
+  term.buffer.active.length = 40; // plenty of room left
+  term.buffer.active.viewportY = 0;
+
+  act(() => { term.fireScroll(); });
+  expect(created).toHaveLength(2);
 });
 
 test('unmounting mid-rebuild clears the pending stall timer — no abort fires after unmount', async () => {
