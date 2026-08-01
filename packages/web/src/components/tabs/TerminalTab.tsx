@@ -791,7 +791,11 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
                 value={mobileInput}
                 onChange={(e) => setMobileInput(e.target.value)}
                 placeholder="Type a message or command…"
-                autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck={false}
+                /* Prose, not a shell prompt — most of what gets typed here is an English
+                   message to the agent, so spell check and autocorrect stay ON.
+                   autoCapitalize stays OFF so `git`, `rg` and paths aren't capitalised,
+                   and autoComplete stays OFF so browser form-autofill never offers a value. */
+                autoCapitalize="off" autoCorrect="on" autoComplete="off" spellCheck
                 enterKeyHint="send"
                 /* 16px font avoids iOS auto-zoom on focus */
                 style={{ flex: 1, minWidth: 0, height: 40, padding: '0 13px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 12, color: 'var(--color-text-primary)', fontSize: 16 }}

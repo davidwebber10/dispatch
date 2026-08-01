@@ -116,6 +116,23 @@ test('desktop mount requests MAX_REPLAY (4_000_000) — byte-identical to today'
   expect(created[0].opts.replayBytes).toBe(MAX_REPLAY);
 });
 
+// ---- mobile composer: spell check on, capitalisation off ----
+
+test('the mobile composer spell-checks and autocorrects, but never auto-capitalises', async () => {
+  isMobileMock.mockReturnValue(true);
+  const { factory } = makeSocketFactory();
+
+  const { getByPlaceholderText } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(api.getTerminal).toHaveBeenCalledWith('t1'));
+
+  const input = getByPlaceholderText('Type a message or command…');
+  // Prose typed to the agent gets the keyboard's spelling help...
+  expect(input.getAttribute('spellcheck')).toBe('true');
+  expect(input.getAttribute('autocorrect')).toBe('on');
+  // ...but `git`, `rg` and paths must survive untouched at the start of a line.
+  expect(input.getAttribute('autocapitalize')).toBe('off');
+});
+
 // ---- scroll-to-top rebuild: triggers once, at the next step ----
 
 test('scroll-to-top with more history triggers exactly one rebuild, at the next step', async () => {
