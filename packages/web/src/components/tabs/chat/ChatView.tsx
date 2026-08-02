@@ -370,7 +370,10 @@ export function ChatView({ terminalId }: { terminalId: string }) {
             onPaste={onPaste}
             placeholder="Message…"
             rows={1}
-            autoCapitalize="off" autoCorrect="off" spellCheck={false}
+            /* Prose only — the Pretty composer never carries shell input, so spelling
+               help is always on here and gets no toggle. autoCapitalize stays off so a
+               path or a command name pasted mid-message is not altered. */
+            autoCapitalize="off" autoCorrect="on" spellCheck
             style={{ flex: 1, resize: 'none', border: 'none', outline: 'none', background: 'transparent', color: 'var(--color-text-primary)', font: '400 15px var(--font-sans)', lineHeight: 1.5, maxHeight: 180, overflowY: 'auto' }}
           />
           <button

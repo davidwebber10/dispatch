@@ -41,6 +41,13 @@ interface SettingsState {
   sttModel: string;
   sttSecretName: string;
   mobileViewMode: MobileViewMode;
+  /**
+   * Spelling help in the mobile CLI/PTY composer. On by default — most of what is
+   * typed there is prose aimed at the agent. Toggled from the soft-key row above the
+   * input, because a run of shell commands is exactly when you want it off. The
+   * Pretty composer is always on and has no toggle: it takes prose only.
+   */
+  ptyAutocorrect: boolean;
   setCoordinatorName: (name: string) => void;
   setFontSize: (n: number) => void;
   setScrollback: (n: number) => void;
@@ -55,6 +62,7 @@ interface SettingsState {
   setSttModel: (id: string) => void;
   setSttSecretName: (name: string) => void;
   setMobileViewMode: (m: MobileViewMode) => void;
+  setPtyAutocorrect: (b: boolean) => void;
 }
 
 function load<T>(key: string, fallback: T): T {
@@ -95,6 +103,7 @@ export const useSettings = create<SettingsState>((set) => ({
   sttModel: load('dispatch:sttModel', 'whisper-large-v3-turbo'),
   sttSecretName: load('dispatch:sttSecretName', ''),
   mobileViewMode: load<MobileViewMode>('dispatch:mobileViewMode', 'threads'),
+  ptyAutocorrect: load<boolean>('dispatch:ptyAutocorrect', true),
   setFontSize: (n) => { const fontSize = Math.max(9, Math.min(22, Math.round(n))); save('dispatch:fontSize', fontSize); set({ fontSize }); },
   setScrollback: (n) => { const scrollback = Math.max(1000, Math.min(100000, Math.round(n))); save('dispatch:scrollback', scrollback); set({ scrollback }); },
   setSidebarFontSize: (n) => { const sidebarFontSize = Math.max(10, Math.min(18, Math.round(n))); save('dispatch:sidebarFontSize', sidebarFontSize); set({ sidebarFontSize }); },
@@ -108,6 +117,7 @@ export const useSettings = create<SettingsState>((set) => ({
   setSttModel: (id) => { save('dispatch:sttModel', id); set({ sttModel: id }); },
   setSttSecretName: (name) => { save('dispatch:sttSecretName', name); set({ sttSecretName: name }); },
   setMobileViewMode: (m) => { save('dispatch:mobileViewMode', m); set({ mobileViewMode: m }); },
+  setPtyAutocorrect: (b) => { save('dispatch:ptyAutocorrect', b); set({ ptyAutocorrect: b }); },
   setPushEnabled: async (b) => {
     if (b) {
       const r = await (await import('../lib/push')).enablePush();

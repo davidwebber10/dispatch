@@ -1,4 +1,4 @@
-import { render, waitFor, act } from '@testing-library/react';
+import { render, waitFor, act, fireEvent } from '@testing-library/react';
 import { vi, test, expect, beforeEach, afterEach, type Mock } from 'vitest';
 
 // A minimal fake xterm Terminal that models just enough async behaviour to make
@@ -55,6 +55,7 @@ vi.mock('../../hooks/useIsMobile', () => ({ useIsMobile: isMobileMock }));
 
 import { TerminalTab } from './TerminalTab';
 import { api } from '../../api/client';
+import { useSettings } from '../../stores/settings';
 import { INITIAL_REPLAY_MOBILE, MAX_REPLAY, nextReplayStep } from '../../api/terminal-socket';
 
 type FakeMeta = { startOffset: number; totalWritten: number; complete: boolean };
@@ -78,6 +79,9 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 beforeEach(() => {
   instances.length = 0;
   isMobileMock.mockReturnValue(false);
+  // The settings store is module-level, so a test that flips the toggle would leak
+  // into every test after it.
+  useSettings.setState({ ptyAutocorrect: true });
   vi.spyOn(api, 'getTerminal').mockResolvedValue({ id: 't1', sessionId: 's1', workingDir: '/p/x', pid: 4242, status: 'working' } as any);
   vi.spyOn(api, 'getGitInfo').mockResolvedValue({ branch: 'main' });
   vi.spyOn(api, 'getScrollbackSize').mockResolvedValue(0);
@@ -116,10 +120,11 @@ test('desktop mount requests MAX_REPLAY (4_000_000) — byte-identical to today'
   expect(created[0].opts.replayBytes).toBe(MAX_REPLAY);
 });
 
-// ---- mobile composer: spell check on, capitalisation off ----
+// ---- mobile composer: spell check on by default, toggleable, capitalisation never ----
 
-test('the mobile composer spell-checks and autocorrects, but never auto-capitalises', async () => {
+test('the mobile composer spell-checks and autocorrects by default, but never auto-capitalises', async () => {
   isMobileMock.mockReturnValue(true);
+  useSettings.setState({ ptyAutocorrect: true });
   const { factory } = makeSocketFactory();
 
   const { getByPlaceholderText } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
@@ -131,6 +136,43 @@ test('the mobile composer spell-checks and autocorrects, but never auto-capitali
   expect(input.getAttribute('autocorrect')).toBe('on');
   // ...but `git`, `rg` and paths must survive untouched at the start of a line.
   expect(input.getAttribute('autocapitalize')).toBe('off');
+});
+
+test('the "Aa" key turns the composer\'s spelling help off, and leaves capitalisation off', async () => {
+  isMobileMock.mockReturnValue(true);
+  useSettings.setState({ ptyAutocorrect: true });
+  const { factory } = makeSocketFactory();
+
+  const { getByPlaceholderText, getByLabelText } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(api.getTerminal).toHaveBeenCalledWith('t1'));
+
+  const toggle = getByLabelText('Autocorrect');
+  expect(toggle.getAttribute('aria-pressed')).toBe('true');
+
+  act(() => { fireEvent.click(toggle); });
+
+  const input = getByPlaceholderText('Type a message or command…');
+  expect(input.getAttribute('spellcheck')).toBe('false');
+  expect(input.getAttribute('autocorrect')).toBe('off');
+  expect(input.getAttribute('autocapitalize')).toBe('off');
+  expect(getByLabelText('Autocorrect').getAttribute('aria-pressed')).toBe('false');
+  // The choice is remembered, not per-render.
+  expect(useSettings.getState().ptyAutocorrect).toBe(false);
+});
+
+test('the soft-key row scrolls horizontally instead of squeezing its keys', async () => {
+  isMobileMock.mockReturnValue(true);
+  const { factory } = makeSocketFactory();
+
+  const { getByLabelText } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(api.getTerminal).toHaveBeenCalledWith('t1'));
+
+  const row = getByLabelText('Autocorrect').parentElement!;
+  expect(row.style.overflowX).toBe('auto');
+  expect(row.style.flexWrap).toBe('nowrap');
+  // Each key holds its own width — `flex: 1 1 0` would divide the row evenly and
+  // shrink every key below a hittable size once the count grows.
+  expect(getByLabelText('Autocorrect').style.flex).toBe('0 0 auto');
 });
 
 // ---- scroll-to-top rebuild: triggers once, at the next step ----

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -34,6 +34,18 @@ const REBUILD_TIMEOUT_MS = 10_000;
 // pure loss, so we refuse it. The fraction leaves a small margin: the last couple of
 // percent of the buffer is not worth a full reset either.
 const SCROLLBACK_CAP_FRACTION = 0.98;
+
+// Shared look for every key in the row above the mobile composer. `flex: 0 0 auto` is
+// the important part: the row scrolls, so a key keeps its natural width instead of
+// dividing the row evenly and shrinking below a hittable size as the count grows.
+// The explicit padding overrides the UA button padding — without it a fixed-width
+// icon button collapses its SVG to a sliver under the global `border-box`.
+const SOFT_KEY: CSSProperties = {
+  flex: '0 0 auto', minWidth: 46, height: 36, padding: '0 10px',
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  background: 'var(--color-elevated)', border: '1px solid var(--color-border)',
+  borderRadius: 12, cursor: 'pointer',
+};
 
 const ENTER: SoftKey = { label: 'Enter', seq: '\r', title: 'Enter', Icon: ArrowElbowDownLeft };
 const UP_DOWN: SoftKey[] = [
@@ -120,6 +132,8 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
   const isMobile = useIsMobile();
   const termFontSize = useSettings((s) => s.fontSize);
   const termScrollback = useSettings((s) => s.scrollback);
+  const ptyAutocorrect = useSettings((s) => s.ptyAutocorrect);
+  const setPtyAutocorrect = useSettings((s) => s.setPtyAutocorrect);
   const forceFitRef = useRef<() => void>(() => {});
   const scrollToEndRef = useRef<() => void>(() => {});
   const rowMeasureRef = useRef<() => void>(() => {});
@@ -753,14 +767,17 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       </div>
       {isMobile && (
         <>
-          {/* One fixed-width row of action keys plus a "/" that opens the
-              searchable slash-command sheet — no horizontal scrolling. */}
-          <div style={{ display: 'flex', gap: 6, padding: '6px 8px', background: 'var(--color-pane)', flexShrink: 0 }}>
+          {/* A row of action keys, a "/" that opens the searchable slash-command sheet,
+              and the autocorrect toggle. The row scrolls left/right rather than dividing
+              the width evenly: the key count varies by agent type, and squeezing eight
+              keys onto a phone leaves each one too narrow to hit. Every key keeps its
+              own width and overflow scrolls. */}
+          <div style={{ display: 'flex', gap: 6, padding: '6px 8px', background: 'var(--color-pane)', flexShrink: 0, overflowX: 'auto', overflowY: 'hidden', flexWrap: 'nowrap', WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none' }}>
             {softActions.map((k) => (
               <button key={k.label} title={k.title}
                 onMouseDown={(e) => e.preventDefault() /* don't steal focus / dismiss the keyboard */}
                 onClick={() => sockRef.current?.send(k.seq) /* fire on tap, not on press */}
-                style={{ flex: '1 1 0', minWidth: 0, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 12, color: 'var(--color-text-primary)', font: '500 14px var(--font-mono)', cursor: 'pointer' }}>
+                style={{ ...SOFT_KEY, color: 'var(--color-text-primary)', font: '500 14px var(--font-mono)' }}>
                 {k.Icon ? <k.Icon size={18} weight="bold" /> : k.label}
               </button>
             ))}
@@ -768,10 +785,21 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
               <button title="Slash commands"
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => { setSlashQuery(''); setSlashOpen(true); }}
-                style={{ flex: '1 1 0', minWidth: 0, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 12, color: 'var(--color-accent)', font: '600 17px var(--font-mono)', cursor: 'pointer' }}>
+                style={{ ...SOFT_KEY, color: 'var(--color-accent)', font: '600 17px var(--font-mono)' }}>
                 /
               </button>
             )}
+            {/* Autocorrect toggle. Accent when on, muted when off — the same on/off
+                language the rest of the app uses, and it reads at a glance mid-typing. */}
+            <button
+              title={ptyAutocorrect ? 'Autocorrect on — tap to turn off' : 'Autocorrect off — tap to turn on'}
+              aria-label="Autocorrect"
+              aria-pressed={ptyAutocorrect}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setPtyAutocorrect(!ptyAutocorrect)}
+              style={{ ...SOFT_KEY, color: ptyAutocorrect ? 'var(--color-accent)' : 'var(--color-text-tertiary)', font: '600 14px var(--font-mono)', textDecoration: ptyAutocorrect ? 'none' : 'line-through' }}>
+              Aa
+            </button>
           </div>
           <form
             onSubmit={(e) => { e.preventDefault(); sendMobileInput(); }}
@@ -792,10 +820,14 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
                 onChange={(e) => setMobileInput(e.target.value)}
                 placeholder="Type a message or command…"
                 /* Prose, not a shell prompt — most of what gets typed here is an English
-                   message to the agent, so spell check and autocorrect stay ON.
-                   autoCapitalize stays OFF so `git`, `rg` and paths aren't capitalised,
-                   and autoComplete stays OFF so browser form-autofill never offers a value. */
-                autoCapitalize="off" autoCorrect="on" autoComplete="off" spellCheck
+                   message to the agent, so spelling help is ON by default. It is a
+                   toggle rather than a constant because a run of shell commands is
+                   exactly when it gets in the way; the "Aa" key in the row above flips it.
+                   autoCapitalize stays OFF either way so `git`, `rg` and paths aren't
+                   capitalised, and autoComplete stays OFF so browser form-autofill
+                   never offers a value. */
+                autoCapitalize="off" autoComplete="off"
+                autoCorrect={ptyAutocorrect ? 'on' : 'off'} spellCheck={ptyAutocorrect}
                 enterKeyHint="send"
                 /* 16px font avoids iOS auto-zoom on focus */
                 style={{ flex: 1, minWidth: 0, height: 40, padding: '0 13px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 12, color: 'var(--color-text-primary)', fontSize: 16 }}

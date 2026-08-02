@@ -527,3 +527,15 @@ describe('tool rows with no tool ids (REST-paged history)', () => {
     expect(name.style.flexShrink).toBe('0');
   });
 });
+
+// The Pretty composer takes prose only — no shell input ever reaches it, so spelling help
+// is unconditional here and has no toggle (unlike the CLI/PTY composer, whose "Aa" key
+// turns it off for a run of shell commands). autoCapitalize stays off in both, so a path
+// or command name pasted mid-message is not altered.
+test('the Pretty composer always spell-checks and autocorrects, and never auto-capitalises', async () => {
+  render(<ChatView terminalId="t1" />);
+  const ta = await screen.findByPlaceholderText('Message…');
+  expect(ta.getAttribute('spellcheck')).toBe('true');
+  expect(ta.getAttribute('autocorrect')).toBe('on');
+  expect(ta.getAttribute('autocapitalize')).toBe('off');
+});
