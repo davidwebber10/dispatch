@@ -18,6 +18,8 @@ import type { TerminalType } from '../db/terminals.js';
 import type { StatusHooksInjection } from '../providers/types.js';
 import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
 import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript.js';
+import { parseCodexRollout } from '../conversation/codex-transcript.js';
+import { findCodexRolloutPath } from './codex-sessions.js';
 import { platform } from '../platform/index.js';
 import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.js';
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
@@ -624,26 +626,45 @@ export class SessionService {
     const empty = { items: [] as ConvItem[], cursor: 0, startLine: 0, hasMore: false };
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return empty;
-    if (terminal.type !== 'claude-code') return { ...empty, unsupported: true };
+    // Both agent types keep a durable transcript on disk, in their own format and their own
+    // place. Anything else (a plain shell) has none, and says so rather than looking empty.
+    if (terminal.type !== 'claude-code' && terminal.type !== 'codex') return { ...empty, unsupported: true };
 
-    const session = sessionsDb.getById(this.db, terminal.session_id);
-    const workDir = terminal.working_dir || session?.working_dir;
-    if (!workDir) return empty;
-
-    const dir = platform.claudeProjectDir(workDir);
-    // external_id is normally captured at spawn; when it wasn't, recover it from the
-    // project's transcript files so the thread still renders in View.
-    const sessionId = terminal.external_id || this.recoverSessionId(terminalId, dir);
-    if (!sessionId) return empty;
-
-    // Resolve rather than assume: a session that changed cwd (EnterWorktree) keeps its id
-    // but relocates under a different project dir, and `workDir` here is whatever the thread
-    // spawned with. Reading the computed path directly is what made those chats render
-    // empty — see sessions/transcript-path.ts.
-    const file = resolveTranscriptPath(workDir, sessionId);
-    if (!file) return empty;
     let raw: string;
-    try { raw = fs.readFileSync(file, 'utf8'); } catch { return empty; }
+    // Per-line parser for whichever transcript format this thread writes. Both take one
+    // line and return the items it contains, so the windowing below is format-agnostic.
+    let parseLine: (line: string) => ConvItem[];
+
+    if (terminal.type === 'codex') {
+      // Codex has no Claude project dir. It files rollouts by date under ~/.codex/sessions,
+      // keyed by the session id we captured at spawn — there is no equivalent of
+      // recoverSessionId, so a thread that never recorded one has no history to serve.
+      const sessionId = terminal.external_id;
+      if (!sessionId) return empty;
+      const file = findCodexRolloutPath(sessionId);
+      if (!file) return empty;
+      try { raw = fs.readFileSync(file, 'utf8'); } catch { return empty; }
+      parseLine = parseCodexRollout;
+    } else {
+      const session = sessionsDb.getById(this.db, terminal.session_id);
+      const workDir = terminal.working_dir || session?.working_dir;
+      if (!workDir) return empty;
+
+      const dir = platform.claudeProjectDir(workDir);
+      // external_id is normally captured at spawn; when it wasn't, recover it from the
+      // project's transcript files so the thread still renders in View.
+      const sessionId = terminal.external_id || this.recoverSessionId(terminalId, dir);
+      if (!sessionId) return empty;
+
+      // Resolve rather than assume: a session that changed cwd (EnterWorktree) keeps its id
+      // but relocates under a different project dir, and `workDir` here is whatever the thread
+      // spawned with. Reading the computed path directly is what made those chats render
+      // empty — see sessions/transcript-path.ts.
+      const file = resolveTranscriptPath(workDir, sessionId);
+      if (!file) return empty;
+      try { raw = fs.readFileSync(file, 'utf8'); } catch { return empty; }
+      parseLine = parseClaudeTranscript;
+    }
 
     // Consume only complete lines (the trailing element is an empty string after a
     // final newline, or a half-written entry) so we never parse a partial record.
@@ -679,7 +700,7 @@ export class SessionService {
     // Parse per line so each item carries its source line index (enables jump-to).
     const items: ConvItem[] = [];
     for (let i = start; i < end; i++) {
-      for (const it of parseClaudeTranscript(usable[i])) items.push({ ...it, line: i });
+      for (const it of parseLine(usable[i])) items.push({ ...it, line: i });
     }
     // Merge durably-stored `source` tags onto user turns (see db/message-source.ts) — the
     // REST transcript parser (conversation/transcript.ts) never sets this itself, matching
