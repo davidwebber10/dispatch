@@ -619,6 +619,19 @@ export class SessionService {
    * polling), `startLine` (top edge of the returned window), and `hasMore`
    * (whether older lines exist above the window). Claude Code only for now.
    */
+  /**
+   * True when this thread's history should come from its REST transcript rather than from a
+   * ws replay of the ring. Only Codex qualifies, and the reason is identity, not format:
+   * a Codex item carries no per-message uuid, so a REST page overlapping the ring replay
+   * cannot be dedup'd (the client falls back to a content fingerprint, which the two
+   * translators do not agree on for tool calls). Claude Code keeps replaying its ring —
+   * its uuids make the overlap safe, and that path is the fast, well-covered one.
+   * See ws/structured.ts's `restOwnsHistory` and getConversation's codex branch.
+   */
+  historyOwnedByRest(terminalId: string): boolean {
+    return terminalsDb.getById(this.db, terminalId)?.type === 'codex';
+  }
+
   getConversation(
     terminalId: string,
     opts: { since?: number; before?: number; beforeUuid?: string; limit?: number } = {},

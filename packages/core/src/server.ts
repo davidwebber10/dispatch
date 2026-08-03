@@ -514,7 +514,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
         // Falls back to the Claude manager when the terminal/type can't be resolved yet.
         const id = url.match(/\/api\/terminals\/([^/]+)\/structured-ws/)?.[1];
         const manager = (id && sessionService.structuredManagerForTerminal(id)) || structuredManager;
-        handleStructuredConnection(ws, request, manager, (tid) => sessionService.ensureStructuredAlive(tid));
+        handleStructuredConnection(
+          ws, request, manager,
+          (tid) => sessionService.ensureStructuredAlive(tid),
+          (tid) => sessionService.historyOwnedByRest(tid),
+        );
       });
     } else if (url.match(/\/api\/terminals\/[^/]+\/ws/) || url.match(/\/api\/sessions\/[^/]+\/terminal/)) {
       terminalWss.handleUpgrade(request, socket, head, (ws) => {

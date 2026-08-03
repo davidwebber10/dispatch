@@ -161,3 +161,22 @@ describe('getConversation still refuses a thread with no transcript', () => {
     expect(svc.getConversation('sh', { limit: 10 })).toMatchObject({ items: [], unsupported: true });
   });
 });
+
+describe('historyOwnedByRest', () => {
+  it('is true for Codex, whose items carry no uuid to dedup a ring replay against', () => {
+    const { svc, terminalId } = codexThread();
+    expect(svc.historyOwnedByRest(terminalId)).toBe(true);
+  });
+
+  it('is false for Claude Code, whose uuids make the ring replay safe to overlap', () => {
+    sessionsDb.create(db, { id: 's3', provider: 'claude-code', name: 'acme', workingDir: WORKDIR });
+    terminalsDb.create(db, { id: 'cc', sessionId: 's3', type: 'claude-code', label: 'Claude' });
+    const svc = new SessionService(db, fakePty, path.join(tmp, 'mcp.json'));
+    expect(svc.historyOwnedByRest('cc')).toBe(false);
+  });
+
+  it('is false for a thread that does not exist', () => {
+    const svc = new SessionService(db, fakePty, path.join(tmp, 'mcp.json'));
+    expect(svc.historyOwnedByRest('nope')).toBe(false);
+  });
+});

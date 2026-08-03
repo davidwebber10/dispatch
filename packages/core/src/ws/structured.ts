@@ -44,6 +44,16 @@ export function handleStructuredConnection(
   // successfully revived); false for e.g. an archived thread, which is deliberately
   // never revived (see service.ts's ensureStructuredAlive).
   onConnect?: (terminalId: string) => boolean | void,
+  /**
+   * True when this thread's history lives in a durable transcript the client can page over
+   * REST, so the ring holds only a COPY of it (Codex backfills one on every resume).
+   * Replaying that copy renders every turn twice for a harness whose items carry no
+   * per-message uuid to dedup on — the client's fallback is a content fingerprint, and the
+   * ws and REST translators do not produce matching ones for tool calls. Such a thread gets
+   * NO replay: the `system/inactive` sentinel below hands the whole view to REST, which is
+   * the same path an archived thread already takes.
+   */
+  restOwnsHistory?: (terminalId: string) => boolean,
 ): void {
   const m = req.url?.match(/\/api\/terminals\/([^/]+)\/structured-ws/);
   const id = m?.[1];
@@ -58,7 +68,12 @@ export function handleStructuredConnection(
   // every one into a non-virtualized list is what makes chat-open take ~10s; the CLI session
   // itself is resumed independently and sees its full transcript regardless of what we replay.
   const tailParam = Number(new URL(req.url ?? '', 'http://internal').searchParams.get('tail'));
-  const events = Number.isFinite(tailParam) && tailParam > 0 ? manager.getEventsTail(id, tailParam) : manager.getEvents(id);
+  // A predicate that throws must never silently drop a thread's history — replay by default.
+  let restOwned = false;
+  try { restOwned = restOwnsHistory?.(id) === true; } catch { restOwned = false; }
+  const events = restOwned
+    ? []
+    : (Number.isFinite(tailParam) && tailParam > 0 ? manager.getEventsTail(id, tailParam) : manager.getEvents(id));
   // Nothing RENDERABLE to replay ⇒ the client would sit on an empty view: the live channel
   // only carries FUTURE turns, and any history not in the ring never reaches it this way.
   // Tell the client to hydrate its initial view from the REST transcript instead. Covers a

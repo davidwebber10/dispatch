@@ -71,3 +71,61 @@ describe('hasRenderableEvents', () => {
     expect(hasRenderableEvents([null, 42, 'nope'])).toBe(false);
   });
 });
+
+// ---- REST-owned history (Codex) ----
+//
+// A Codex thread's history lives in its rollout transcript, which the client can page over
+// REST. Its ring ALSO holds a copy, backfilled on resume. Replaying that copy would render
+// the same turns twice, and unlike Claude there is no per-message uuid to dedup on — a
+// Codex item carries none, so the client's dedup would fall back to a content fingerprint
+// that does not match across the two translators for tool calls. So: replay nothing, and
+// let the `system/inactive` sentinel hand the whole view to REST.
+
+import { handleStructuredConnection } from './structured.js';
+
+function fakeWs() {
+  const sent: any[] = [];
+  return {
+    ws: { readyState: 1, send: (s: string) => sent.push(JSON.parse(s)), close: () => {}, on: () => {} } as any,
+    sent,
+  };
+}
+const ringManager = (events: unknown[]) => ({
+  getEvents: () => events,
+  getEventsTail: (_id: string, n: number) => events.slice(-n),
+  getPending: () => null,
+  on: () => {}, off: () => {},
+}) as any;
+
+const REAL_TURN = { type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } };
+const REQ = { url: '/api/terminals/t1/structured-ws?tail=200' } as any;
+
+describe('replay when REST owns the thread history', () => {
+  it('replays no ring events and sends the inactive sentinel instead', () => {
+    const { ws, sent } = fakeWs();
+    handleStructuredConnection(ws, REQ, ringManager([REAL_TURN]), undefined, () => true);
+
+    expect(sent).toEqual([{ type: 'system', subtype: 'inactive' }]);
+  });
+
+  it('still replays the ring for a thread REST does not own', () => {
+    const { ws, sent } = fakeWs();
+    handleStructuredConnection(ws, REQ, ringManager([REAL_TURN]), undefined, () => false);
+
+    expect(sent).toEqual([REAL_TURN]);
+  });
+
+  it('replays the ring when no predicate is supplied at all (unchanged default)', () => {
+    const { ws, sent } = fakeWs();
+    handleStructuredConnection(ws, REQ, ringManager([REAL_TURN]));
+
+    expect(sent).toEqual([REAL_TURN]);
+  });
+
+  it('treats a throwing predicate as "not REST-owned" rather than dropping the history', () => {
+    const { ws, sent } = fakeWs();
+    handleStructuredConnection(ws, REQ, ringManager([REAL_TURN]), undefined, () => { throw new Error('db gone'); });
+
+    expect(sent).toEqual([REAL_TURN]);
+  });
+});
