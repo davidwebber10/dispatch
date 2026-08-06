@@ -333,8 +333,10 @@ export function Composer() {
           <Icon name="ph-paper-plane-right" weight="fill" size={16} />
         </button>
         {/* session menu (⋯) — Restart / New session / Previous sessions. Opens upward:
-            the composer sits at the bottom of the pane. */}
-        {showSessionMenu && (
+            the composer sits at the bottom of the pane. Desktop only — on mobile,
+            OverseerMobile.tsx already mounts the menu in its header, so mounting it
+            here too would show it twice. */}
+        {showSessionMenu && !isMobile && (
           <CoordinatorMenu terminalId={coordinatorId} sessionId={coordinatorProject} scheme="scoped" direction="up" />
         )}
       </div>
