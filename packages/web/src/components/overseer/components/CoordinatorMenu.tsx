@@ -176,14 +176,20 @@ export function CoordinatorMenu({ terminalId, sessionId, scheme = 'scoped', dire
             ) : previous.length === 0 ? (
               <span style={{ padding: '7px 9px', fontSize: 11.5, color: t.dim }}>No previous sessions.</span>
             ) : (
-              previous.map((p) => (
-                <button key={p.id} type="button" onClick={() => void run(() => resumeCoordinatorSession(sessionId, terminalId, p.id))}
-                  disabled={busy} title="Resume this session (the current one is archived, not lost)"
-                  style={itemStyle(t, t.dim)}>
-                  <Icon name="ph-clock-counter-clockwise" size={13} color={t.dim} />
-                  {`Archived ${p.archivedAt ? new Date(p.archivedAt).toLocaleString() : 'earlier'}`}
-                </button>
-              ))
+              /* Every "New session" adds one archived row, so this list grows without bound
+                 over a project's life. The app shell is fixed-height (the page never scrolls),
+                 so an uncapped popover would clip off-viewport and the clipped rows would be
+                 unreachable — scroll the list region instead, keeping the actions above visible. */
+              <div style={{ maxHeight: 'min(40vh, 320px)', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {previous.map((p) => (
+                  <button key={p.id} type="button" onClick={() => void run(() => resumeCoordinatorSession(sessionId, terminalId, p.id))}
+                    disabled={busy} title="Resume this session (the current one is archived, not lost)"
+                    style={itemStyle(t, t.dim)}>
+                    <Icon name="ph-clock-counter-clockwise" size={13} color={t.dim} />
+                    {`Archived ${p.archivedAt ? new Date(p.archivedAt).toLocaleString() : 'earlier'}`}
+                  </button>
+                ))}
+              </div>
             )}
           </div>
         </>

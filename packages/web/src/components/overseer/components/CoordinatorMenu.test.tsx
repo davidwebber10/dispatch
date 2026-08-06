@@ -95,6 +95,24 @@ describe('CoordinatorMenu — Previous sessions', () => {
     expect(await screen.findByText('No previous sessions.')).toBeInTheDocument();
   });
 
+  it('many archived sessions render inside a scrollable region (the popover must not outgrow the fixed-height shell)', async () => {
+    vi.spyOn(api, 'listArchivedTerminals').mockResolvedValue(
+      Array.from({ length: 12 }, (_, i) => ({
+        id: `old-${i}`,
+        type: 'claude-code',
+        config: { role: 'coordinator' },
+        archivedAt: `2026-07-${String(i + 1).padStart(2, '0')}T10:00:00Z`,
+      })) as never,
+    );
+    mount();
+    openMenu();
+    fireEvent.click(screen.getByText('Previous sessions…'));
+    const rows = await screen.findAllByText(/Archived /);
+    expect(rows).toHaveLength(12); // every row is present — the cap is visual, not a truncation
+    const list = rows[0].closest('button')!.parentElement!;
+    expect(list.style.overflowY).toBe('auto'); // rows past the cap scroll instead of clipping unreachably
+  });
+
   it('a fetch error does NOT show the misleading empty state — the button stays so the user can retry', async () => {
     vi.spyOn(api, 'listArchivedTerminals').mockRejectedValue(new Error('network down'));
     mount();
