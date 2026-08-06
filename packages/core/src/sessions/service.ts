@@ -824,18 +824,13 @@ export class SessionService {
     if (!terminal) return null;
     if (!terminalsDb.isPtyType(terminal.type)) return terminalsDb.rowToTerminal(terminal);
 
-    if (this.ptyManager.isAlive(terminalId)) {
-      // Wait for the old process to fully exit before respawning, so its async
-      // exit handler can't delete the fresh PTY out from under us.
-      await new Promise<void>((resolve) => {
-        let done = false;
-        const finish = () => { if (!done) { done = true; this.ptyManager.off('exit', onExit); resolve(); } };
-        const onExit = (id: string) => { if (id === terminalId) finish(); };
-        this.ptyManager.on('exit', onExit);
-        this.ptyManager.kill(terminalId);
-        setTimeout(finish, 3000);
-      });
-    }
+    // Kill whichever transport actually backs the thread. A structured thread lives in
+    // its manager, not the PTY table — killing only via ptyManager left it alive, and
+    // spawnStructured bails while the manager still reports alive, making relaunch a
+    // silent no-op. The respawn is what re-reads the MCP config (tools load at spawn),
+    // so the coordinator's "Restart session" action depends on this kill landing.
+    const current = this.isStructuredTerminal(terminal) ? ('structured' as const) : ('pty' as const);
+    await this.killCurrentTransport(terminal.type, terminalId, current);
     return this.relaunchTerminal(terminalId);
   }
 
