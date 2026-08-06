@@ -11,7 +11,8 @@
 import { useCallback, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import { Paperclip } from '@phosphor-icons/react';
 import { Icon } from '../atoms';
-import { useOverseer, useComposerImages } from '../store';
+import { useOverseer, useComposerImages, coordinatorMatchesView } from '../store';
+import { useProjects } from '../../../stores/projects';
 import { useDraft } from '../../../hooks/useDraft';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { api } from '../../../api/client';
@@ -21,6 +22,7 @@ import { InputActionsMenu } from '../../dictation/InputActionsMenu';
 import { useSettings } from '../../../stores/settings';
 import { ContextIndicator } from '../../ContextIndicator';
 import { modLabel } from '../../../lib/hostkeys';
+import { CoordinatorMenu } from './CoordinatorMenu';
 
 // Anthropic-vision-supported image types (mirrors the agent ChatView). Only these
 // become a REAL base64 image block the coordinator SEES; anything else falls back to a
@@ -87,6 +89,11 @@ export function Composer() {
   const addComposerImage = useOverseer((s) => s.addComposerImage);
   const removeComposerImage = useOverseer((s) => s.removeComposerImage);
   const coordinatorProject = useOverseer((s) => s.coordinatorProject);
+  const coordinatorId = useOverseer((s) => s.coordinatorId);
+  const activeId = useProjects((s) => s.activeId);
+  // Same cross-tab gate as every coordinator read: never show (or act on) a coordinator
+  // that belongs to another project while an ensureForProject swap is in flight.
+  const showSessionMenu = !!coordinatorId && !!coordinatorProject && coordinatorMatchesView(coordinatorProject, activeId);
   const composerImages = useComposerImages();
   const coordinatorContextTokens = useOverseer((s) => s.coordinatorContextTokens);
   const coordinatorCompacting = useOverseer((s) => s.coordinatorCompacting);
@@ -325,6 +332,13 @@ export function Composer() {
         >
           <Icon name="ph-paper-plane-right" weight="fill" size={16} />
         </button>
+        {/* session menu (⋯) — Restart / New session / Previous sessions. Opens upward:
+            the composer sits at the bottom of the pane. Desktop only — on mobile,
+            OverseerMobile.tsx already mounts the menu in its header, so mounting it
+            here too would show it twice. */}
+        {showSessionMenu && !isMobile && (
+          <CoordinatorMenu terminalId={coordinatorId} sessionId={coordinatorProject} scheme="scoped" direction="up" />
+        )}
       </div>
 
       {/* status row (always rendered, both mobile + desktop): context indicator left,
