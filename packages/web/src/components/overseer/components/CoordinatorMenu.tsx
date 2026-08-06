@@ -56,7 +56,15 @@ export function CoordinatorMenu({ terminalId, sessionId, scheme = 'scoped', dire
   const run = async (fn: () => Promise<unknown>) => {
     if (busy) return;
     setBusy(true);
-    try { await fn(); close(); }
+    try {
+      const result = await fn();
+      // newCoordinatorSession/resumeCoordinatorSession resolve an explicit `false` when
+      // nothing changed (the initial archive failed) — treat that the same as a thrown
+      // error: keep the menu open so the failure is visible, instead of silently closing.
+      // api.relaunchTerminal resolves a Terminal object, so it never hits this branch.
+      if (result === false) { setBusy(false); return; }
+      close();
+    }
     catch { setBusy(false); } // keep the menu open so the failure is visible
   };
 
@@ -65,7 +73,12 @@ export function CoordinatorMenu({ terminalId, sessionId, scheme = 'scoped', dire
     try {
       const all = await api.listArchivedTerminals(sessionId);
       setPrevious(all.filter((x) => x.type === 'claude-code' && x.config?.role === 'coordinator'));
-    } catch { setPrevious([]); }
+    } catch {
+      // Leave `previous` at null (list closed) rather than [] — an [] renders the
+      // misleading "No previous sessions." empty state on a FETCH failure, when previous
+      // sessions may well exist. Keeping it null keeps the "Previous sessions…" button
+      // so the user can retry.
+    }
   };
 
   return (

@@ -145,11 +145,17 @@ interface OverseerState {
   // ---- new actions ----
   closeWorkerLightbox: () => void;
   ensureForProject: (sessionId: string | null) => void;
-  /** "New session": archive the current coordinator, then find-or-create a fresh one now. */
-  newCoordinatorSession: (sessionId: string, currentTerminalId: string) => Promise<void>;
+  /** "New session": archive the current coordinator, then find-or-create a fresh one now.
+   *  Resolves `false` only when the initial archive fails (nothing changed — the menu
+   *  should stay open); `true` on every path where the session actually changed, including
+   *  the mid-flight project-switch early return (the view moved on, so closing is correct). */
+  newCoordinatorSession: (sessionId: string, currentTerminalId: string) => Promise<boolean>;
   /** "Previous sessions" swap: archive the current coordinator FIRST, then restore the chosen
-   *  archived one (preserves the one-active-coordinator-per-project invariant). */
-  resumeCoordinatorSession: (sessionId: string, currentTerminalId: string, archivedTerminalId: string) => Promise<void>;
+   *  archived one (preserves the one-active-coordinator-per-project invariant). Resolves
+   *  `false` only when the initial archive fails; `true` on every path where the session
+   *  actually changed (including the restore-failure → fresh-coordinator fallback, and the
+   *  mid-flight project-switch early return). */
+  resumeCoordinatorSession: (sessionId: string, currentTerminalId: string, archivedTerminalId: string) => Promise<boolean>;
   setCoordinatorStream: (stream: StreamMessage[]) => void;
   setCoordinatorBusy: (busy: boolean) => void;
   /** Pushed in by useCoordinatorSync() from the same useStructuredChat() call as the stream/busy above. */
@@ -359,28 +365,32 @@ export const useOverseer = create<OverseerState>((set, get) => ({
 
   newCoordinatorSession: async (sessionId, currentTerminalId) => {
     // Archive first; a failure here means the current session is fully intact — abort.
-    try { await api.archiveTerminal(currentTerminalId); } catch { return; }
-    if (get().coordinatorProject !== sessionId) return; // view moved on mid-flight
+    // This is the ONLY path that resolves false: nothing changed, so the caller (the
+    // CoordinatorMenu) should keep the menu open rather than silently closing on a no-op.
+    try { await api.archiveTerminal(currentTerminalId); } catch { return false; }
+    if (get().coordinatorProject !== sessionId) return true; // view moved on mid-flight — closing is still correct
     // Clear the guard fields so ensureForProject actually runs (it bails while a
     // coordinatorId is loaded) — it then resets the view + find-or-creates fresh.
     set({ coordinatorId: null, ensuring: false });
     get().ensureForProject(sessionId);
+    return true;
   },
 
   resumeCoordinatorSession: async (sessionId, currentTerminalId, archivedTerminalId) => {
     // Order matters: archive the current coordinator BEFORE restoring, or the project
     // briefly holds two active coordinators and ensureCoordinator's find-first pick
     // becomes order-dependent.
-    try { await api.archiveTerminal(currentTerminalId); } catch { return; }
+    try { await api.archiveTerminal(currentTerminalId); } catch { return false; } // nothing changed
     let restored = true;
     try { await api.restoreTerminal(archivedTerminalId); } catch { restored = false; }
-    if (get().coordinatorProject !== sessionId) return; // view moved on mid-flight
+    if (get().coordinatorProject !== sessionId) return true; // view moved on mid-flight — closing is still correct
     if (!restored) {
       // The archived row wouldn't come back (e.g. daemon hiccup) — never leave the
-      // project with ZERO active coordinators; fall back to a fresh one.
+      // project with ZERO active coordinators; fall back to a fresh one. The current
+      // coordinator is already archived at this point, so the session DID change.
       set({ coordinatorId: null, ensuring: false });
       get().ensureForProject(sessionId);
-      return;
+      return true;
     }
     // Point the view at the restored thread; reset the same derived fields
     // ensureForProject resets so the stream remounts cleanly on the new id.
@@ -402,6 +412,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       ensuring: false,
     });
     void useTabs.getState().loadTabs(sessionId).catch(() => {});
+    return true;
   },
 
   setCoordinatorStream: (stream) => set({ coordinatorStream: stream }),

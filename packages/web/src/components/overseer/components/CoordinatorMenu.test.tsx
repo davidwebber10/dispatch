@@ -8,8 +8,8 @@ import { api } from '../../../api/client';
 import { useOverseer } from '../store';
 import { CoordinatorMenu } from './CoordinatorMenu';
 
-const newSession = vi.fn().mockResolvedValue(undefined);
-const resumeSession = vi.fn().mockResolvedValue(undefined);
+const newSession = vi.fn().mockResolvedValue(true);
+const resumeSession = vi.fn().mockResolvedValue(true);
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -57,6 +57,19 @@ describe('CoordinatorMenu — New session (two-step confirm)', () => {
     fireEvent.click(screen.getByText('Confirm'));
     await vi.waitFor(() => expect(newSession).toHaveBeenCalledWith('proj-1', 'coord-1'));
   });
+
+  it('a `false` result (the archive failed — nothing changed) keeps the confirm UI open instead of closing the menu', async () => {
+    newSession.mockResolvedValueOnce(false);
+    mount();
+    openMenu();
+    fireEvent.click(screen.getByText('New session…'));
+    fireEvent.click(screen.getByText('Confirm'));
+    await vi.waitFor(() => expect(newSession).toHaveBeenCalledWith('proj-1', 'coord-1'));
+    // The menu (and its confirm step) is still open/rendered — a false result must NOT
+    // silently close it the way a resolved `true`/undefined success path does.
+    expect(screen.getByText(/End this session\?/)).toBeInTheDocument();
+    expect(screen.getByText('Confirm')).toBeInTheDocument();
+  });
 });
 
 describe('CoordinatorMenu — Previous sessions', () => {
@@ -80,5 +93,15 @@ describe('CoordinatorMenu — Previous sessions', () => {
     openMenu();
     fireEvent.click(screen.getByText('Previous sessions…'));
     expect(await screen.findByText('No previous sessions.')).toBeInTheDocument();
+  });
+
+  it('a fetch error does NOT show the misleading empty state — the button stays so the user can retry', async () => {
+    vi.spyOn(api, 'listArchivedTerminals').mockRejectedValue(new Error('network down'));
+    mount();
+    openMenu();
+    fireEvent.click(screen.getByText('Previous sessions…'));
+    await vi.waitFor(() => expect(api.listArchivedTerminals).toHaveBeenCalled());
+    expect(screen.queryByText('No previous sessions.')).not.toBeInTheDocument();
+    expect(screen.getByText('Previous sessions…')).toBeInTheDocument();
   });
 });

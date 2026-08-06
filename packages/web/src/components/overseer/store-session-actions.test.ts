@@ -18,30 +18,33 @@ describe('newCoordinatorSession — archive current, then find-or-create fresh',
     const archive = vi.spyOn(api, 'archiveTerminal').mockResolvedValue(undefined as unknown as void);
     const ensure = vi.spyOn(api, 'ensureOverseerCoordinator').mockResolvedValue({ terminalId: 'fresh-1' });
 
-    await useOverseer.getState().newCoordinatorSession('proj-1', 'coord-1');
+    const result = await useOverseer.getState().newCoordinatorSession('proj-1', 'coord-1');
 
+    expect(result).toBe(true);
     expect(archive).toHaveBeenCalledWith('coord-1');
     await vi.waitFor(() => expect(useOverseer.getState().coordinatorId).toBe('fresh-1'));
     expect(ensure).toHaveBeenCalledWith('proj-1');
   });
 
-  it('a failed archive aborts — the current session stays intact', async () => {
+  it('a failed archive aborts — the current session stays intact, and resolves false so the caller keeps the menu open', async () => {
     vi.spyOn(api, 'archiveTerminal').mockRejectedValue(new Error('boom'));
     const ensure = vi.spyOn(api, 'ensureOverseerCoordinator');
 
-    await useOverseer.getState().newCoordinatorSession('proj-1', 'coord-1');
+    const result = await useOverseer.getState().newCoordinatorSession('proj-1', 'coord-1');
 
+    expect(result).toBe(false);
     expect(ensure).not.toHaveBeenCalled();
     expect(useOverseer.getState().coordinatorId).toBe('coord-1');
   });
 
-  it('does not touch the store when the view moved to ANOTHER project mid-flight', async () => {
+  it('does not touch the store when the view moved to ANOTHER project mid-flight, but resolves true (the view DID move on)', async () => {
     vi.spyOn(api, 'archiveTerminal').mockResolvedValue(undefined as unknown as void);
     const ensure = vi.spyOn(api, 'ensureOverseerCoordinator');
     useOverseer.setState({ coordinatorProject: 'proj-2', coordinatorId: 'coord-2' } as never);
 
-    await useOverseer.getState().newCoordinatorSession('proj-1', 'coord-1');
+    const result = await useOverseer.getState().newCoordinatorSession('proj-1', 'coord-1');
 
+    expect(result).toBe(true);
     expect(ensure).not.toHaveBeenCalled();
     expect(useOverseer.getState().coordinatorId).toBe('coord-2'); // untouched
   });
@@ -52,8 +55,9 @@ describe('resumeCoordinatorSession — swap an archived coordinator back in', ()
     const archive = vi.spyOn(api, 'archiveTerminal').mockResolvedValue(undefined as unknown as void);
     const restore = vi.spyOn(api, 'restoreTerminal').mockResolvedValue({ id: 'old-1' } as never);
 
-    await useOverseer.getState().resumeCoordinatorSession('proj-1', 'coord-1', 'old-1');
+    const result = await useOverseer.getState().resumeCoordinatorSession('proj-1', 'coord-1', 'old-1');
 
+    expect(result).toBe(true);
     expect(archive).toHaveBeenCalledWith('coord-1');
     expect(restore).toHaveBeenCalledWith('old-1');
     // Order: archive strictly before restore (one active coordinator per project).
@@ -62,23 +66,25 @@ describe('resumeCoordinatorSession — swap an archived coordinator back in', ()
     expect(useOverseer.getState().coordinatorStream).toEqual([]); // view reset for the swap
   });
 
-  it('falls back to a FRESH coordinator when the restore fails (never zero coordinators)', async () => {
+  it('falls back to a FRESH coordinator when the restore fails (never zero coordinators), and resolves true (the session DID change)', async () => {
     vi.spyOn(api, 'archiveTerminal').mockResolvedValue(undefined as unknown as void);
     vi.spyOn(api, 'restoreTerminal').mockRejectedValue(new Error('gone'));
     const ensure = vi.spyOn(api, 'ensureOverseerCoordinator').mockResolvedValue({ terminalId: 'fresh-2' });
 
-    await useOverseer.getState().resumeCoordinatorSession('proj-1', 'coord-1', 'old-1');
+    const result = await useOverseer.getState().resumeCoordinatorSession('proj-1', 'coord-1', 'old-1');
 
+    expect(result).toBe(true);
     await vi.waitFor(() => expect(useOverseer.getState().coordinatorId).toBe('fresh-2'));
     expect(ensure).toHaveBeenCalledWith('proj-1');
   });
 
-  it('a failed archive aborts the swap entirely', async () => {
+  it('a failed archive aborts the swap entirely and resolves false so the caller keeps the menu open', async () => {
     vi.spyOn(api, 'archiveTerminal').mockRejectedValue(new Error('boom'));
     const restore = vi.spyOn(api, 'restoreTerminal');
 
-    await useOverseer.getState().resumeCoordinatorSession('proj-1', 'coord-1', 'old-1');
+    const result = await useOverseer.getState().resumeCoordinatorSession('proj-1', 'coord-1', 'old-1');
 
+    expect(result).toBe(false);
     expect(restore).not.toHaveBeenCalled();
     expect(useOverseer.getState().coordinatorId).toBe('coord-1');
   });
