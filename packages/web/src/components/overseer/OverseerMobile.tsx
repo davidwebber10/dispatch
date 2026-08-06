@@ -8,11 +8,13 @@
 // useIsMobile — see CONTRACT.md). All data flows through the store / useRenderVals().
 
 import { Icon, StatusDot, overseerRootStyle } from './atoms';
-import { useOverseer, useRenderVals } from './store';
+import { useOverseer, useRenderVals, coordinatorMatchesView } from './store';
+import { useProjects } from '../../stores/projects';
 import { useDispatchName } from '../../stores/settings';
 import './tokens.css';
 
 import { NeedsAlert } from './components/NeedsAlert';
+import { CoordinatorMenu } from './components/CoordinatorMenu';
 import { ConversationStream } from './components/Stream';
 import { Composer } from './components/Composer';
 import { OngoingWorkOverview } from './components/WorkRail';
@@ -69,6 +71,10 @@ export function OverseerMobile({ onBack }: { onBack?: () => void }) {
   const name = useDispatchName();
   const mobileTab = useOverseer((s) => s.mobileTab);
   const setMobileTab = useOverseer((s) => s.setMobileTab);
+  const coordinatorId = useOverseer((s) => s.coordinatorId);
+  const coordinatorProject = useOverseer((s) => s.coordinatorProject);
+  const activeId = useProjects((s) => s.activeId);
+  const showSessionMenu = !!coordinatorId && !!coordinatorProject && coordinatorMatchesView(coordinatorProject, activeId);
   // "Needs you" is no longer a tab — it moved to the header alert dropdown. The store still
   // defaults mobileTab to 'needs' (and goNeeds can set it), so fold that onto Stream here
   // rather than editing the shared store.
@@ -114,6 +120,11 @@ export function OverseerMobile({ onBack }: { onBack?: () => void }) {
         )}
         <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--tp)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
         <span style={{ flex: 1 }} />
+        {/* session menu (⋯) — Restart / New session / Previous sessions. Opens downward:
+            the header is at the top of the pane. */}
+        {showSessionMenu && (
+          <CoordinatorMenu terminalId={coordinatorId} sessionId={coordinatorProject} scheme="scoped" direction="down" />
+        )}
         {/* "Needs you" alert — ⚠ + count; opens the held-items popover (replaces the old
             Needs tab). Kept as the last (rightmost) header item so its popover right-anchors
             cleanly under the ⚠ on mobile. */}

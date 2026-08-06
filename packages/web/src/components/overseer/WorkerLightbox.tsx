@@ -14,6 +14,7 @@ import { useThreadStatus, type ThreadStatus } from '../../stores/threadStatus';
 import { AGENT_TYPE, type AgentType } from './types';
 import { Icon } from './atoms';
 import { AutonomyToggle, InterruptButton } from './components/AutonomyControls';
+import { CoordinatorMenu } from './components/CoordinatorMenu';
 
 // Map the live thread status to a dot color + label + whether it should pulse.
 function statusVisual(ts: ThreadStatus | undefined, fallback?: string): { color: string; label: string; pulse: boolean } {
@@ -129,6 +130,12 @@ export function WorkerLightbox({ terminalId, onClose }: { terminalId: string; on
             <AutonomyToggle terminalId={terminalId} autonomy={cfg.autonomy} scheme="global" />
           )}
           <InterruptButton terminalId={terminalId} scheme="global" />
+
+          {/* coordinator-only session menu — workers get Stop/Archive in the overseer
+              lightbox instead; the coordinator's swap semantics live in this menu. */}
+          {isCoordinator && terminal && (
+            <CoordinatorMenu terminalId={terminalId} sessionId={terminal.sessionId} scheme="global" direction="down" />
+          )}
 
           {/* close */}
           <button
