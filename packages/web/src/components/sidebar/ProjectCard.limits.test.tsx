@@ -27,6 +27,7 @@ function term(id: string, label: string, type = 'claude-code') {
 
 // Ids sort naturally: t01…t12. Default thread sort is 'custom' = array order.
 const threads = (n: number) => Array.from({ length: n }, (_, i) => term(`t${String(i + 1).padStart(2, '0')}`, `thread ${i + 1}`));
+const files = (n: number) => Array.from({ length: n }, (_, i) => term(`f${String(i + 1).padStart(2, '0')}`, `file-${i + 1}.md`, 'file'));
 
 const rowIds = () => screen.getAllByRole('button').filter((b) => b.hasAttribute('data-thread-id')).map((b) => b.getAttribute('data-thread-id'));
 
@@ -95,4 +96,50 @@ test('a drop on the truncated list keeps the hidden tail in the server order', a
   expect(sent).toHaveLength(12); // full order, not just the visible slice
   expect(sent.slice(0, 10)).toEqual(['t10', 't09', 't08', 't07', 't06', 't05', 't04', 't03', 't02', 't01']);
   expect(sent.slice(10)).toEqual(['t11', 't12']); // hidden tail preserved, in order
+});
+
+test('caps the FILES section at its own limit with its own expander', () => {
+  useTabs.setState({ byProject: { [SID]: [...threads(2), ...files(12)] }, loading: {} } as any);
+  renderCard();
+  expect(rowIds().filter((id) => id!.startsWith('f'))).toHaveLength(10);
+  expect(rowIds().filter((id) => id!.startsWith('t'))).toHaveLength(2); // threads untouched
+  expect(screen.getByText('Show 2 more')).toBeInTheDocument();
+});
+
+test('expanding FILES reveals every file', () => {
+  useTabs.setState({ byProject: { [SID]: files(12) }, loading: {} } as any);
+  renderCard();
+  fireEvent.click(screen.getByText('Show 2 more'));
+  expect(rowIds()).toHaveLength(12);
+  expect(screen.queryByText(/Show \d+ more/)).not.toBeInTheDocument();
+});
+
+test('a files limit of All (0) disables the FILES cap', () => {
+  useSettings.setState({ sidebarMaxFiles: 0 });
+  useTabs.setState({ byProject: { [SID]: files(12) }, loading: {} } as any);
+  renderCard();
+  expect(rowIds()).toHaveLength(12);
+});
+
+test('the thread and file limits are independent', () => {
+  useSettings.setState({ sidebarMaxThreads: 3, sidebarMaxFiles: 0 });
+  useTabs.setState({ byProject: { [SID]: [...threads(5), ...files(12)] }, loading: {} } as any);
+  renderCard();
+  expect(rowIds().filter((id) => id!.startsWith('t'))).toHaveLength(3);
+  expect(rowIds().filter((id) => id!.startsWith('f'))).toHaveLength(12);
+  expect(screen.getByText('Show 2 more')).toBeInTheDocument(); // the thread expander (5 − 3)
+});
+
+test('WEB and NOTES sections are never capped', () => {
+  const web = Array.from({ length: 12 }, (_, i) => term(`w${String(i + 1).padStart(2, '0')}`, `tab ${i + 1}`, 'browser'));
+  useTabs.setState({ byProject: { [SID]: web }, loading: {} } as any);
+  renderCard();
+  expect(rowIds()).toHaveLength(12);
+  expect(screen.queryByText(/Show \d+ more/)).not.toBeInTheDocument();
+});
+
+test('an active file past the cut lifts the FILES cap', () => {
+  useTabs.setState({ byProject: { [SID]: files(12) }, loading: {}, activeTabId: 'f12' } as any);
+  renderCard();
+  expect(rowIds()).toHaveLength(12);
 });

@@ -322,11 +322,16 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   }
 
   const renderSection = (sec: (typeof SECTIONS)[number]) => {
-    const items = tabs.filter((t) => sec.types.includes(t.type) && showRow(t));
-    if (sec.key !== 'threads' && !items.length) return null;
+    const all = tabs.filter((t) => sec.types.includes(t.type) && showRow(t));
+    if (sec.key !== 'threads' && !all.length) return null;
+    // Only FILES is capped (WEB/NOTES stay full — they're usually short). Same
+    // active-row escape hatch as the thread list above.
+    const activeFileHidden = maxFiles > 0 && all.findIndex((t) => t.id === highlightId) >= maxFiles;
+    const capped = sec.key === 'files' && maxFiles > 0 && !showAllFiles && !activeFileHidden && all.length > maxFiles;
+    const items = capped ? all.slice(0, maxFiles) : all;
     return (
       <div key={sec.key} style={{ marginTop: sec.prominent ? DENSITY[density].sectionMt : Math.round(DENSITY[density].sectionMt * 0.7) }}>
-        <SectionHeader label={sec.label} count={items.length} prominent={sec.prominent}>
+        <SectionHeader label={sec.label} count={all.length} prominent={sec.prominent}>
           {sec.add && (
             <span style={{ position: 'relative', display: 'inline-flex' }}>
               <button title={`Add ${sec.label.toLowerCase()}`} onClick={(e) => {
@@ -350,6 +355,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
               onContext={(x, y) => setCtxMenu({ tab: t, x, y })} />
           </SwipeRow>
         ))}
+        {capped && <ShowMoreRow count={all.length - items.length} onClick={() => setShowAllFiles(true)} />}
         {sec.key === 'threads' && !items.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No threads yet</div>}
       </div>
     );
