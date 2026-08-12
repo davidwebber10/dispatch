@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SortableList } from '../common/SortableList';
 import { SwipeRow } from '../common/SwipeRow';
-import { FolderOpen, CaretRight, Network, TerminalWindow, ChatCircle, PushPin, Timer, Bell, Plus } from '@phosphor-icons/react';
+import { FolderOpen, CaretRight, CaretDown, Network, TerminalWindow, ChatCircle, PushPin, Timer, Bell, Plus } from '@phosphor-icons/react';
 import type { Session, Terminal, AgentSchedule } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
 import { projectIndicator } from '../../lib/status';
@@ -249,6 +249,12 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   const loadingMap = useTabs((s) => s.loading);
   const pfs = useSettings((s) => s.projectFontSize);
   const density = useSettings((s) => s.density);
+  const maxThreads = useSettings((s) => s.sidebarMaxThreads);
+  const maxFiles = useSettings((s) => s.sidebarMaxFiles);
+  // Per-card, per-session expansion: "Show N more" reveals the rest until the
+  // card unmounts. Deliberately not persisted — the cap is the steady state.
+  const [showAllThreads, setShowAllThreads] = useState(false);
+  const [showAllFiles, setShowAllFiles] = useState(false);
   const isMobile = useIsMobile();
   // Expansion is decoupled from the active highlight on desktop; on mobile the
   // project screen is always expanded (open defaults to active when not provided).
@@ -272,6 +278,11 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   const visibleTabs = tabs.filter(showRow);
   const indicator = projectIndicator(session.status, visibleTabs.map((t) => t.status), visibleTabs.some((t) => loadingMap[t.id]));
   const threadItems = sortThreads(visibleTabs.filter((t) => SECTIONS[0].types.includes(t.type)), threadSort);
+  // Cap the list at the configured limit (0 = All). The active thread must never
+  // be hidden by the cap — if it falls past the cut, the cap lifts while it's active.
+  const activeThreadHidden = maxThreads > 0 && threadItems.findIndex((t) => t.id === highlightId) >= maxThreads;
+  const threadsCapped = maxThreads > 0 && !showAllThreads && !activeThreadHidden && threadItems.length > maxThreads;
+  const visibleThreads = threadsCapped ? threadItems.slice(0, maxThreads) : threadItems;
   useEffect(() => { if (isOpen) void useTabs.getState().loadTabs(session.id); }, [isOpen, session.id]);
 
   async function addTab(type: string, config?: Record<string, unknown>) {
@@ -311,11 +322,16 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   }
 
   const renderSection = (sec: (typeof SECTIONS)[number]) => {
-    const items = tabs.filter((t) => sec.types.includes(t.type) && showRow(t));
-    if (sec.key !== 'threads' && !items.length) return null;
+    const all = tabs.filter((t) => sec.types.includes(t.type) && showRow(t));
+    if (sec.key !== 'threads' && !all.length) return null;
+    // Only FILES is capped (WEB/NOTES stay full — they're usually short). Same
+    // active-row escape hatch as the thread list above.
+    const activeFileHidden = maxFiles > 0 && all.findIndex((t) => t.id === highlightId) >= maxFiles;
+    const capped = sec.key === 'files' && maxFiles > 0 && !showAllFiles && !activeFileHidden && all.length > maxFiles;
+    const items = capped ? all.slice(0, maxFiles) : all;
     return (
       <div key={sec.key} style={{ marginTop: sec.prominent ? DENSITY[density].sectionMt : Math.round(DENSITY[density].sectionMt * 0.7) }}>
-        <SectionHeader label={sec.label} count={items.length} prominent={sec.prominent}>
+        <SectionHeader label={sec.label} count={all.length} prominent={sec.prominent}>
           {sec.add && (
             <span style={{ position: 'relative', display: 'inline-flex' }}>
               <button title={`Add ${sec.label.toLowerCase()}`} onClick={(e) => {
@@ -339,6 +355,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
               onContext={(x, y) => setCtxMenu({ tab: t, x, y })} />
           </SwipeRow>
         ))}
+        {capped && <ShowMoreRow count={all.length - items.length} onClick={() => setShowAllFiles(true)} />}
         {sec.key === 'threads' && !items.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No threads yet</div>}
       </div>
     );
@@ -436,14 +453,18 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
           {projTab === 'threads' ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: isMobile ? 0 : DENSITY[density].rowGap }}>
               <SortableList
-                items={threadItems}
+                items={visibleThreads}
                 disabled={false}
                 onReorder={(orderedIds) => {
+                  // A truncated drag hands back only the visible ids. The server rewrites
+                  // sortOrder for exactly the ids it receives, so append the hidden tail
+                  // or its rows would interleave unpredictably.
+                  const fullOrder = [...orderedIds, ...threadItems.filter((t) => !orderedIds.includes(t.id)).map((t) => t.id)];
                   // The dropped arrangement IS the user's custom order now; persisting it
                   // under any other mode would save an order they'd never see again.
                   const prev = useListSort.getState().threadSort(session.id);
                   useListSort.getState().setThreadSort(session.id, 'custom');
-                  void useTabs.getState().reorder(session.id, orderedIds).then((ok) => {
+                  void useTabs.getState().reorder(session.id, fullOrder).then((ok) => {
                     // The server rejected the new order and reorder() restored server truth,
                     // so the mode flip no longer corresponds to anything the user can see.
                     if (!ok) useListSort.getState().setThreadSort(session.id, prev);
@@ -462,6 +483,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
                   </SwipeRow>
                 )}
               />
+              {threadsCapped && <ShowMoreRow count={threadItems.length - visibleThreads.length} onClick={() => setShowAllThreads(true)} />}
               {!threadItems.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No threads yet</div>}
             </div>
           ) : (
@@ -594,6 +616,28 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
         />
       )}
     </div>
+  );
+}
+
+function ShowMoreRow({ count, onClick }: { count: number; onClick: () => void }) {
+  const [hover, setHover] = useState(false);
+  const isMobile = useIsMobile();
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 6, width: '100%',
+        padding: isMobile ? '12px' : '4px 9px', background: hover ? 'rgba(255,255,255,0.05)' : 'transparent',
+        border: 'none', borderRadius: isMobile ? 0 : 5, textAlign: 'left', cursor: 'pointer',
+        color: hover ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)',
+        fontSize: isMobile ? 14 : 11.5,
+      }}
+    >
+      <CaretDown size={isMobile ? 13 : 11} style={{ flexShrink: 0 }} />
+      Show {count} more
+    </button>
   );
 }
 

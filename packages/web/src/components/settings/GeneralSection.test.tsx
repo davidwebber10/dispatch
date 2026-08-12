@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { GeneralSection } from './GeneralSection';
 import { useSettings } from '../../stores/settings';
@@ -44,5 +44,48 @@ describe('GeneralSection — mobile view mode picker', () => {
     fireEvent.click(screen.getByTitle('Board'));
     expect(useSettings.getState().mobileViewMode).not.toBe('threads');
     expect(useSettings.getState().mobileViewMode).toBe('board');
+  });
+});
+
+// The Stepper renders bare −/+ buttons with no accessible names, so target the row by its
+// label text: the row div is the label's parent, and its two buttons are [dec, inc].
+function limitRow(label: string) {
+  const row = screen.getByText(label).parentElement!;
+  const [dec, inc] = within(row).getAllByRole('button');
+  return { row, dec, inc };
+}
+
+describe('GeneralSection — sidebar list limits', () => {
+  beforeEach(() => {
+    useSettings.setState({ sidebarMaxThreads: 10, sidebarMaxFiles: 10 });
+  });
+
+  it('shows both limits at their default of 10', () => {
+    render(<GeneralSection />);
+    expect(within(limitRow('Threads shown').row).getByText('10')).toBeInTheDocument();
+    expect(within(limitRow('Files shown').row).getByText('10')).toBeInTheDocument();
+  });
+
+  it('stepping the thread limit up past 50 lands on All and persists 0', () => {
+    useSettings.setState({ sidebarMaxThreads: 50 });
+    render(<GeneralSection />);
+    fireEvent.click(limitRow('Threads shown').inc);
+    expect(useSettings.getState().sidebarMaxThreads).toBe(0);
+    expect(JSON.parse(localStorage.getItem('dispatch:sidebarMaxThreads')!)).toBe(0);
+    expect(within(limitRow('Threads shown').row).getByText('All')).toBeInTheDocument();
+  });
+
+  it('stepping the file limit down from All lands on 50', () => {
+    useSettings.setState({ sidebarMaxFiles: 0 });
+    render(<GeneralSection />);
+    fireEvent.click(limitRow('Files shown').dec);
+    expect(useSettings.getState().sidebarMaxFiles).toBe(50);
+  });
+
+  it('the two limits are independent — stepping threads never touches files', () => {
+    render(<GeneralSection />);
+    fireEvent.click(limitRow('Threads shown').inc);
+    expect(useSettings.getState().sidebarMaxThreads).toBe(11);
+    expect(useSettings.getState().sidebarMaxFiles).toBe(10);
   });
 });
