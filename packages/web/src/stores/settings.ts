@@ -26,11 +26,37 @@ export type Density = 'compact' | 'cozy' | 'roomy';
  */
 export type MobileViewMode = 'threads' | 'board';
 
+/**
+ * Sidebar list caps (THREADS / FILES sections). 0 is the "All" sentinel — no cap.
+ * The stepper walks 3…50, then one more step up lands on All; step logic lives here
+ * (not in the component) so both settings shells share it and it is unit-testable.
+ */
+export const SIDEBAR_LIMIT_MIN = 3;
+export const SIDEBAR_LIMIT_MAX = 50;
+
+export function stepSidebarLimit(current: number, delta: 1 | -1): number {
+  if (current === 0) return delta === 1 ? 0 : SIDEBAR_LIMIT_MAX;
+  const next = current + delta;
+  if (next > SIDEBAR_LIMIT_MAX) return 0;
+  return Math.max(SIDEBAR_LIMIT_MIN, next);
+}
+
+export function formatSidebarLimit(n: number): string {
+  return n === 0 ? 'All' : String(n);
+}
+
+function clampSidebarLimit(n: number): number {
+  if (!Number.isFinite(n) || n === 0) return Number.isFinite(n) ? 0 : 10;
+  return Math.max(SIDEBAR_LIMIT_MIN, Math.min(SIDEBAR_LIMIT_MAX, Math.round(n)));
+}
+
 interface SettingsState {
   fontSize: number;
   scrollback: number;
   sidebarFontSize: number;
   projectFontSize: number;
+  sidebarMaxThreads: number;  // 0 = All (no cap)
+  sidebarMaxFiles: number;    // 0 = All (no cap)
   density: Density;
   accent: string;
   coordinatorName: string;   // raw value; empty falls back to "Control Plane" at display (see useDispatchName)
@@ -53,6 +79,8 @@ interface SettingsState {
   setScrollback: (n: number) => void;
   setSidebarFontSize: (n: number) => void;
   setProjectFontSize: (n: number) => void;
+  setSidebarMaxThreads: (n: number) => void;
+  setSidebarMaxFiles: (n: number) => void;
   setDensity: (d: Density) => void;
   setAccent: (c: string) => void;
   setPushEnabled: (b: boolean) => Promise<void>;
@@ -93,6 +121,8 @@ export const useSettings = create<SettingsState>((set) => ({
   scrollback: load('dispatch:scrollback', 20000),
   sidebarFontSize: load('dispatch:sidebarFontSize', 13),
   projectFontSize: load('dispatch:projectFontSize', 15),
+  sidebarMaxThreads: load('dispatch:sidebarMaxThreads', 10),
+  sidebarMaxFiles: load('dispatch:sidebarMaxFiles', 10),
   density: load<Density>('dispatch:density', 'cozy'),
   accent: initialAccent,
   coordinatorName: load('dispatch:coordinatorName', 'Control Plane'),
@@ -108,6 +138,8 @@ export const useSettings = create<SettingsState>((set) => ({
   setScrollback: (n) => { const scrollback = Math.max(1000, Math.min(100000, Math.round(n))); save('dispatch:scrollback', scrollback); set({ scrollback }); },
   setSidebarFontSize: (n) => { const sidebarFontSize = Math.max(10, Math.min(18, Math.round(n))); save('dispatch:sidebarFontSize', sidebarFontSize); set({ sidebarFontSize }); },
   setProjectFontSize: (n) => { const projectFontSize = Math.max(11, Math.min(22, Math.round(n))); save('dispatch:projectFontSize', projectFontSize); set({ projectFontSize }); },
+  setSidebarMaxThreads: (n) => { const sidebarMaxThreads = clampSidebarLimit(n); save('dispatch:sidebarMaxThreads', sidebarMaxThreads); set({ sidebarMaxThreads }); },
+  setSidebarMaxFiles: (n) => { const sidebarMaxFiles = clampSidebarLimit(n); save('dispatch:sidebarMaxFiles', sidebarMaxFiles); set({ sidebarMaxFiles }); },
   setDensity: (density) => { save('dispatch:density', density); set({ density }); },
   setCoordinatorName: (coordinatorName) => { save('dispatch:coordinatorName', coordinatorName); set({ coordinatorName }); },
   setMultiPane: (b) => { save('dispatch:multiPane', b); set({ multiPane: b }); },
