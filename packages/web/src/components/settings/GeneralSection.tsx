@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useConnection } from '../../stores/connection';
-import { useSettings, ACCENTS, type MobileViewMode } from '../../stores/settings';
+import { useSettings, ACCENTS, formatSidebarLimit, stepSidebarLimit, type MobileViewMode } from '../../stores/settings';
 import { useServers, currentLabel } from '../../stores/servers';
 import { useSetup } from '../../stores/setup';
 import { UpdatesSection } from './UpdatesSection';
@@ -68,6 +68,8 @@ export function GeneralSection({ onDone }: { onDone?: () => void }) {
   const accent = useSettings((s) => s.accent);
   const density = useSettings((s) => s.density);
   const mobileViewMode = useSettings((s) => s.mobileViewMode);
+  const sidebarMaxThreads = useSettings((s) => s.sidebarMaxThreads);
+  const sidebarMaxFiles = useSettings((s) => s.sidebarMaxFiles);
   const coordinatorName = useSettings((s) => s.coordinatorName);
   const pushEnabled = useSettings((s) => s.pushEnabled);
   const [pushMsg, setPushMsg] = useState('');
@@ -142,6 +144,9 @@ export function GeneralSection({ onDone }: { onDone?: () => void }) {
             ))}
           </div>
         </div>
+        <div style={row}><span style={item}>Threads shown</span><Stepper value={formatSidebarLimit(sidebarMaxThreads)} onDec={() => useSettings.getState().setSidebarMaxThreads(stepSidebarLimit(sidebarMaxThreads, -1))} onInc={() => useSettings.getState().setSidebarMaxThreads(stepSidebarLimit(sidebarMaxThreads, 1))} /></div>
+        <div style={row}><span style={item}>Files shown</span><Stepper value={formatSidebarLimit(sidebarMaxFiles)} onDec={() => useSettings.getState().setSidebarMaxFiles(stepSidebarLimit(sidebarMaxFiles, -1))} onInc={() => useSettings.getState().setSidebarMaxFiles(stepSidebarLimit(sidebarMaxFiles, 1))} /></div>
+        <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>Longer lists collapse behind a “Show more” row. Step past 50 for All.</div>
       </div>
       <Divider />
 
