@@ -9,6 +9,8 @@ import { TabHost } from './components/tabs/TabHost';
 import { OverseerView } from './components/overseer/OverseerView';
 import { EmptyWorkspace } from './components/layout/EmptyWorkspace';
 import { Inspector } from './components/inspector/Inspector';
+import { SettingsView } from './components/settings/SettingsView';
+import { PanelToggle } from './components/layout/PanelToggle';
 import { DispatchWorkPane } from './components/overseer/components/DispatchWorkPane';
 import { AgentPane } from './components/agents/AgentPane';
 import { EditAgentModal } from './components/agents/EditAgentModal';
@@ -202,7 +204,9 @@ export default function App() {
       <AuthBanner />
       <UpdateModal />
       <AppShell>
-        {view === 'analytics'
+        {view === 'settings'
+          ? <SettingsView />
+          : view === 'analytics'
           ? <Suspense fallback={analyticsFallback}><AnalyticsView /></Suspense>
           : view === 'board'
           ? <BoardView />
@@ -220,7 +224,17 @@ export default function App() {
                   ? <AgentPane />
                   : (
                     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-                      <GroupedTabBar onSelect={() => useAgentUI.getState().blur()} />
+                      {/* The panel toggles flank the tab strip — the old TopBar's
+                          top-left / top-right positions, one row down. */}
+                      <div style={{ display: 'flex', flexShrink: 0 }}>
+                        <PanelToggle side="left" />
+                        {/* Own bar styling too: GroupedTabBar returns null with no tabs,
+                            and the strip must stay a continuous 44px bar even then. */}
+                        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: 'var(--color-pane)', borderBottom: '1px solid var(--color-border)' }}>
+                          <GroupedTabBar onSelect={() => useAgentUI.getState().blur()} />
+                        </div>
+                        <PanelToggle side="right" />
+                      </div>
                       {activeTerminalId
                         ? (isDispatchTab(activeTerminalId)
                             // Dispatch coordinator opens as a tab — wrap it so its height:100%

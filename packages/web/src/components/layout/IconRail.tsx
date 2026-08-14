@@ -1,8 +1,7 @@
-import { useState } from 'react';
-import { ChartBar, Gear, Kanban, Rows, Sidebar } from '@phosphor-icons/react';
+import { useEffect, useState } from 'react';
+import { ChartBar, Gear, Kanban, Rows } from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
 import { BrandSwitcher } from './BrandSwitcher';
-import { SettingsModal } from '../settings/SettingsModal';
 import { useConnection } from '../../stores/connection';
 import { useServers, currentLabel } from '../../stores/servers';
 import { useUI, type View } from '../../stores/ui';
@@ -38,24 +37,6 @@ function RailItem({ icon: I, label, active, onClick, title }: {
   );
 }
 
-function SmallBtn({ title, onClick, active, children }: {
-  title: string; onClick: () => void; active?: boolean; children: React.ReactNode;
-}) {
-  const [hover, setHover] = useState(false);
-  return (
-    <button type="button" title={title} onClick={onClick}
-      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
-      style={{
-        width: 26, height: 26, flexShrink: 0, borderRadius: 7, border: 'none', cursor: 'pointer', padding: 0,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: hover ? 'var(--color-elevated)' : 'transparent',
-        color: active ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
-      }}>
-      {children}
-    </button>
-  );
-}
-
 const NAV: { view: View; label: string; icon: Icon }[] = [
   { view: 'workspace', label: 'Threads', icon: Rows },
   { view: 'board', label: 'Board', icon: Kanban },
@@ -68,15 +49,24 @@ const NAV: { view: View; label: string; icon: Icon }[] = [
  * switcher, connection status, panel toggles, and settings all live here now.
  */
 export function IconRail() {
-  const [settings, setSettings] = useState(false);
   const view = useUI((s) => s.view);
   const setView = useUI((s) => s.setView);
-  const leftCollapsed = useUI((s) => s.leftCollapsed);
-  const rightCollapsed = useUI((s) => s.rightCollapsed);
   const status = useConnection((s) => s.status);
   const servers = useServers((s) => s.servers);
   const conn = CONN[status];
   const serverLabel = currentLabel(servers, window.location.origin);
+
+  // ⌘, — the platform-standard preferences shortcut, now that Settings is a page.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === ',') {
+        e.preventDefault();
+        useUI.getState().setView('settings');
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   return (
     <nav aria-label="Primary" style={{
@@ -89,16 +79,6 @@ export function IconRail() {
           active={view === n.view} onClick={() => setView(n.view)} />
       ))}
       <div style={{ flex: 1 }} />
-      <div style={{ display: 'flex', gap: 4 }}>
-        <SmallBtn title={leftCollapsed ? 'Show projects panel' : 'Hide projects panel'}
-          active={!leftCollapsed} onClick={() => useUI.getState().toggleLeft()}>
-          <Sidebar size={15} weight={leftCollapsed ? 'regular' : 'fill'} />
-        </SmallBtn>
-        <SmallBtn title={rightCollapsed ? 'Show details panel' : 'Hide details panel'}
-          active={!rightCollapsed} onClick={() => useUI.getState().toggleRight()}>
-          <Sidebar size={15} weight={rightCollapsed ? 'regular' : 'fill'} style={{ transform: 'scaleX(-1)' }} />
-        </SmallBtn>
-      </div>
       <div title={conn.label} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '6px 0 2px' }}>
         <span style={{
           width: 6, height: 6, borderRadius: '50%', background: conn.color,
@@ -109,10 +89,8 @@ export function IconRail() {
           {serverLabel}
         </span>
       </div>
-      <SmallBtn title="Settings" onClick={() => setSettings(true)}>
-        <Gear size={16} />
-      </SmallBtn>
-      <SettingsModal open={settings} onClose={() => setSettings(false)} />
+      <RailItem icon={Gear} label="Settings" title="Settings (⌘,)"
+        active={view === 'settings'} onClick={() => setView('settings')} />
     </nav>
   );
 }

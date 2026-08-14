@@ -9,7 +9,7 @@ import { TranscriptionSection } from './TranscriptionSection';
 
 /**
  * The settings sections, declared once and rendered by both shells:
- *   - desktop  → SettingsModal, as a horizontal tab strip
+ *   - desktop  → SettingsView, a full page with a vertical section nav
  *   - mobile   → MobileSettings, as a drill-down list (Settings ▸ section)
  *
  * Adding a section here surfaces it in both places. `blurb` is mobile-only — the
