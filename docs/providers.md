@@ -159,15 +159,24 @@ These are deliberate gaps, not oversights:
 
 ### How Grok is injected
 
-Grok reads Claude Code plugin layouts, so Dispatch writes **one directory per spawn** and
-passes it with `--plugin-dir` — documented as the highest-priority, always-trusted scope
-"used by the Agent SDKs to inject per-connection plugins", so a spawned agent never stalls on
-a trust prompt and the user's own config is untouched.
+Grok reads Claude Code plugin layouts, so Dispatch writes a plugin holding both injections.
+It reaches the CLI through a **per-thread `GROK_HOME`**, not a flag.
+
+> `--plugin-dir` looks like the obvious answer and is a trap: it exists only on the `grok
+> agent` **subcommand**. Passing it to the top-level `grok` the PTY runs is a hard startup
+> error — `error: unexpected argument '--plugin-dir' found` — and every thread fails to
+> launch. That shipped once; the provider test now asserts every flag it emits is one the
+> top-level command accepts.
+
+Everything in the per-thread home except `plugins` is symlinked back to the real `~/.grok`,
+so the thread keeps the user's credentials, their `config.toml`, and one shared session
+store. Only `plugins` is per-thread — sharing it would make every thread load every other
+thread's hooks and report status for the wrong terminal.
 
 | Injection | Claude Code | Codex | Grok |
 | --- | --- | --- | --- |
-| MCP servers | `--mcp-config <file>` | `-c mcp_servers.*` | `.mcp.json` in the plugin dir |
-| Status hooks | `--settings <file>` | `-c notify=[...]` | `hooks/hooks.json` in the plugin dir |
+| MCP servers | `--mcp-config <file>` | `-c mcp_servers.*` | `.mcp.json` in `$GROK_HOME/plugins/dispatch/` |
+| Status hooks | `--settings <file>` | `-c notify=[...]` | `hooks/hooks.json` in the same plugin |
 | System prompt | `--append-system-prompt` | `-c developer_instructions` | `--rules` |
 | Session id | discovered after spawn | discovered after spawn | assigned with `--session-id` |
 
@@ -179,4 +188,6 @@ payloads already match.
 
 > The plugin mechanism is documented in the README the installer writes to
 > `~/.grok/README.md`, **not** in `grok --help`. An earlier version of this page claimed Grok
-> had no hooks and no MCP injection because it was written from `--help` alone.
+> had no hooks and no MCP injection because it was written from `--help` alone — and the
+> first fix then used a flag read from the wrong subcommand's help. Check which command a
+> flag belongs to, and verify by launching the thing.

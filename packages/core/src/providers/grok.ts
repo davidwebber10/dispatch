@@ -1,4 +1,4 @@
-import type { SessionProvider, SecretsMcpInjection, StatusHooksInjection } from './types.js';
+import type { SessionProvider, SecretsMcpInjection } from './types.js';
 
 /**
  * Run Grok fully autonomously. This is Grok's analogue of Claude's
@@ -24,15 +24,6 @@ function modelArgs(model?: string): string[] {
 }
 
 /**
- * The generated plugin directory carrying this thread's hooks and MCP servers. Grok
- * documents `--plugin-dir` as the highest-priority, always-trusted scope, so nothing stalls
- * on a trust prompt and the user's own config is left alone.
- */
-function pluginArgs(statusHooks?: StatusHooksInjection): string[] {
-  return statusHooks?.grokPluginDir ? ['--plugin-dir', statusHooks.grokPluginDir] : [];
-}
-
-/**
  * The standing instructions that ride with the injected servers — "use Doppler for
  * secrets", the peer-tools prompt, the tools-awareness note.
  *
@@ -49,11 +40,11 @@ function rulesArgs(secretsMcp?: SecretsMcpInjection): string[] {
  *
  * Driven the same way as Claude Code and Codex, through the same four injections:
  *
- * - **MCP servers** (Doppler secrets, integrations, the agency peer server) — written to
- *   `.mcp.json` in a generated plugin dir, passed with `--plugin-dir`.
- * - **Status hooks** — `hooks/hooks.json` in that same dir. Grok carries Claude Code's whole
- *   hook vocabulary (`Stop`, `PreToolUse`, `PostToolUse`, `SubagentStop`, `Idle`,
- *   `SessionStart`, `SessionEnd`, `Notification`, `UserPromptSubmit`, `PreCompact`).
+ * - **MCP servers** (Doppler secrets, integrations, the agency peer server) and
+ *   **status hooks** — both written into a plugin under a per-thread `GROK_HOME`, NOT argv.
+ *   Grok carries Claude Code's whole hook vocabulary (`Stop`, `PreToolUse`, `PostToolUse`,
+ *   `SubagentStop`, `Idle`, `SessionStart`, `SessionEnd`, `Notification`,
+ *   `UserPromptSubmit`, `PreCompact`). See providers/grok-home.ts.
  * - **The system prompt** — `--rules`, Grok's `--append-system-prompt`.
  * - **The session id** — assigned up front with `--session-id` rather than discovered.
  *
@@ -64,9 +55,11 @@ function rulesArgs(secretsMcp?: SecretsMcpInjection): string[] {
  * app-server protocol. Until then Grok threads are CLI (PTY) only, and the New Thread modal
  * renders Pretty disabled for Grok.
  *
- * An earlier version of this comment claimed Grok had no hooks and no MCP injection. Both
- * were wrong: they were read off the top-level `--help`, which documents neither. The
- * plugin-dir mechanism is in the README the installer writes to `~/.grok/README.md`.
+ * Two corrections worth keeping, both from reading the wrong help text:
+ *   - An earlier version claimed Grok had no hooks and no MCP injection. Wrong: they are in
+ *     the README the installer writes to `~/.grok/README.md`, not in `--help`.
+ *   - They were then injected with `--plugin-dir`, which exists only on the `grok agent`
+ *     SUBCOMMAND. On the top-level command it is a hard startup error. Hence GROK_HOME.
  */
 export const grokProvider: SessionProvider = {
   name: 'grok',
@@ -80,24 +73,27 @@ export const grokProvider: SessionProvider = {
   buildStatusHooks({ serverUrl, terminalId, grokHelperPath }) {
     // Grok carries Claude Code's whole hook vocabulary — Stop, PreToolUse, PostToolUse,
     // SubagentStop, Idle, SessionStart, SessionEnd, Notification, UserPromptSubmit,
-    // PreCompact — so the same lifecycle reporting works, delivered through a plugin dir.
+    // PreCompact — so the same lifecycle reporting works, delivered via GROK_HOME.
     if (!grokHelperPath) return undefined;
     return { grokHooks: { eventsUrl: `${serverUrl}/api/events/grok/${terminalId}`, helperPath: grokHelperPath } };
   },
 
-  buildNewCommand({ prompt, model, sessionId, statusHooks, secretsMcp }) {
-    const args = [...FULL_PERMISSIONS, ...pluginArgs(statusHooks), ...rulesArgs(secretsMcp), ...modelArgs(model)];
+  buildNewCommand({ prompt, model, sessionId, secretsMcp }) {
+    // NOTE: hooks and MCP servers do NOT ride in argv. `--plugin-dir` exists only on the
+    // `grok agent` subcommand; passing it to the top-level command is a startup error. They
+    // are injected through a per-thread GROK_HOME instead — see providers/grok-home.ts.
+    const args = [...FULL_PERMISSIONS, ...rulesArgs(secretsMcp), ...modelArgs(model)];
     if (sessionId) args.push('--session-id', sessionId);
     // The initial prompt is positional: `grok "fix the bug"`, so it goes last.
     if (prompt) args.push(prompt);
     return { command: 'grok', args };
   },
 
-  buildResumeCommand({ externalSessionId, model, statusHooks, secretsMcp }) {
+  buildResumeCommand({ externalSessionId, model, secretsMcp }) {
     // `-r/--resume <SESSION_ID_OR_TITLE>` resumes in place. A resumed thread must run as
     // autonomously as a fresh one, so it carries the same permission mode — and the same
     // hooks and MCP servers, or it would come back mute.
-    return { command: 'grok', args: [...FULL_PERMISSIONS, ...pluginArgs(statusHooks), ...rulesArgs(secretsMcp), ...modelArgs(model), '--resume', externalSessionId] };
+    return { command: 'grok', args: [...FULL_PERMISSIONS, ...rulesArgs(secretsMcp), ...modelArgs(model), '--resume', externalSessionId] };
   },
 
   buildRunnerCommand({ prompt, secretsMcp }) {

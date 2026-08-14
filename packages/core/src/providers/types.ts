@@ -48,8 +48,8 @@ export interface StatusHooksInjection {
   claudeSettingsPath?: string;
   /** Extra `-c notify=[...]` args spliced before the codex subcommand. */
   codexNotifyArgs?: string[];
-  /** Directory passed to `grok --plugin-dir <path>`, holding its hooks AND MCP servers. */
-  grokPluginDir?: string;
+  /** Per-thread GROK_HOME, exported into the spawn env. Holds this thread's plugin. */
+  grokHomeDir?: string;
 }
 
 export interface SessionProvider {

@@ -135,23 +135,37 @@ describe('grok reports status through hooks', () => {
     expect(plan).toBeUndefined();
   });
 
-  it('loads the plugin dir on a new thread', () => {
-    const cmd = grokProvider.buildNewCommand({ workDir: '/tmp', statusHooks: { grokPluginDir: '/data/plugins/t1' } });
-    const i = cmd.args.indexOf('--plugin-dir');
-    expect(i).toBeGreaterThan(-1);
-    expect(cmd.args[i + 1]).toBe('/data/plugins/t1');
+  it('NEVER passes --plugin-dir, which the top-level command rejects outright', () => {
+    // The regression: --plugin-dir exists only on the `grok agent` subcommand. On the
+    // top-level command it is a hard startup error —
+    //   error: unexpected argument '--plugin-dir' found
+    // — so every Grok thread failed to launch. Hooks and MCP go through GROK_HOME instead.
+    const cmds = [
+      grokProvider.buildNewCommand({ workDir: '/tmp', statusHooks: { grokHomeDir: '/data/homes/t1' } }),
+      grokProvider.buildResumeCommand({ externalSessionId: 'abc', workDir: '/tmp', statusHooks: { grokHomeDir: '/data/homes/t1' } }),
+      grokProvider.buildRunnerCommand({ workDir: '/tmp', prompt: 'go' }),
+    ];
+    for (const c of cmds) expect(c.args).not.toContain('--plugin-dir');
   });
 
-  it('loads it on a resume too, or the thread comes back mute', () => {
-    const cmd = grokProvider.buildResumeCommand({
-      externalSessionId: 'abc', workDir: '/tmp', statusHooks: { grokPluginDir: '/data/plugins/t1' },
-    });
-    expect(cmd.args).toContain('--plugin-dir');
-    expect(cmd.args.indexOf('--plugin-dir')).toBeLessThan(cmd.args.indexOf('--resume'));
-  });
-
-  it('omits --plugin-dir when there is nothing to inject', () => {
-    expect(grokProvider.buildNewCommand({ workDir: '/tmp' }).args).not.toContain('--plugin-dir');
+  it('passes only flags the top-level command actually accepts', () => {
+    // Every flag Grok 1.0.3's `grok --help` lists. A flag that is real on a SUBCOMMAND but
+    // not here is a startup error, which is exactly how --plugin-dir got shipped.
+    const TOP_LEVEL = new Set([
+      '--permission-mode', '--model', '-m', '--rules', '--session-id', '-s', '--resume', '-r',
+      '--single', '-p', '--always-approve', '--continue', '-c', '--cwd', '--output-format',
+      '--fork-session', '--no-plan', '--max-turns', '--reasoning-effort', '--worktree', '-w',
+    ]);
+    const cmds = [
+      grokProvider.buildNewCommand({ workDir: '/tmp', sessionId: 'x', model: 'grok-4.5', secretsMcp: { systemPrompt: 'p' }, statusHooks: { grokHomeDir: '/h' } }),
+      grokProvider.buildResumeCommand({ externalSessionId: 'abc', workDir: '/tmp', model: 'grok-4.5', secretsMcp: { systemPrompt: 'p' }, statusHooks: { grokHomeDir: '/h' } }),
+      grokProvider.buildRunnerCommand({ workDir: '/tmp', prompt: 'go' }),
+    ];
+    for (const c of cmds) {
+      for (const a of c.args) {
+        if (a.startsWith('-')) expect(TOP_LEVEL.has(a), `"${a}" is not a top-level grok flag`).toBe(true);
+      }
+    }
   });
 });
 

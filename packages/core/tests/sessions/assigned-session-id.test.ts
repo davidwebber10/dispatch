@@ -11,12 +11,12 @@ import { PTYManager } from '../../src/pty/manager.js';
 
 /** Records the argv each spawn was given, and can refuse to start like a real failure. */
 class CapturingPty extends PTYManager {
-  calls: { id: string; command: string; args: string[] }[] = [];
+  calls: { id: string; command: string; args: string[]; env?: Record<string, string> }[] = [];
   failNext = false;
   private pid = 1;
-  override spawn(id: string, command: string, args: string[]): number {
+  override spawn(id: string, command: string, args: string[], _workDir: string, env?: Record<string, string>): number {
     if (this.failNext) throw new Error('spawn failed');
-    this.calls.push({ id, command, args });
+    this.calls.push({ id, command, args, env });
     return this.pid++;
   }
   override write(): void {}
@@ -138,7 +138,7 @@ describe('a grok thread is wired like the others', () => {
     const { svc } = withStatus();
     const terminal = svc.createTerminal('s1', 'grok', 'Grok');
     const mcp = JSON.parse(
-      fs.readFileSync(path.join(tmpDir, 'hooks', 'grok-plugins', terminal.id, '.mcp.json'), 'utf-8'),
+      fs.readFileSync(path.join(tmpDir, 'hooks', 'grok-homes', terminal.id, 'plugins', 'dispatch', '.mcp.json'), 'utf-8'),
     ) as { mcpServers: Record<string, unknown> };
     expect(Object.keys(mcp.mcpServers)).toContain('dispatch');
   });
@@ -147,7 +147,10 @@ describe('a grok thread is wired like the others', () => {
     const { svc, pty } = withStatus();
     const terminal = svc.createTerminal('s1', 'grok', 'Grok');
     const spawned = pty.calls.find((c) => c.id === terminal.id)!;
-    expect(spawned.args).toContain('--plugin-dir');
+    // Hooks and MCP arrive via GROK_HOME, never argv — --plugin-dir is a startup error on
+    // the top-level command.
+    expect(spawned.args).not.toContain('--plugin-dir');
+    expect(spawned.env?.GROK_HOME).toBeTruthy();
     expect(spawned.args).toContain('--rules');
   });
 
@@ -155,7 +158,7 @@ describe('a grok thread is wired like the others', () => {
     const { svc } = withStatus();
     const terminal = svc.createTerminal('s1', 'grok', 'Grok');
     const hooks = JSON.parse(
-      fs.readFileSync(path.join(tmpDir, 'hooks', 'grok-plugins', terminal.id, 'hooks', 'hooks.json'), 'utf-8'),
+      fs.readFileSync(path.join(tmpDir, 'hooks', 'grok-homes', terminal.id, 'plugins', 'dispatch', 'hooks', 'hooks.json'), 'utf-8'),
     ) as { hooks: Record<string, unknown> };
     expect(hooks.hooks.Stop).toBeTruthy();
   });

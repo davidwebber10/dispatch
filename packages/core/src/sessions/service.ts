@@ -26,7 +26,7 @@ import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, find
 import { resolveTranscriptPath } from './transcript-path.js';
 import { randomUUID } from 'crypto';
 import { isAgentType } from '../providers/agent-types.js';
-import { writeGrokPlugin, type McpServerEntry } from '../providers/grok-plugin.js';
+import { writeGrokHome, type McpServerEntry } from '../providers/grok-home.js';
 import { TERMINAL_ID_ENV_VAR } from '../auth/shim.js';
 import { LOGIN_ARGV, isProviderName } from '../setup/install.js';
 import { withAutoArchive, DEFAULT_AUTO_ARCHIVE_MS } from './auto-archive.js';
@@ -220,13 +220,14 @@ export class SessionService {
         for (const spec of mcpSpecs) {
           mcpServers[spec.name] = { command: spec.command, args: spec.args, ...(spec.env ? { env: spec.env } : {}) };
         }
-        const dir = writeGrokPlugin({
-          dir: path.join(ctx.hooksDir, 'grok-plugins', terminalId),
+        const dir = writeGrokHome({
+          dir: path.join(ctx.hooksDir, 'grok-homes', terminalId),
+          realHome: path.join(os.homedir(), '.grok'),
           mcpServers,
           eventsUrl: plan.grokHooks.eventsUrl,
           hookHelperPath: plan.grokHooks.helperPath,
         });
-        return dir ? { grokPluginDir: dir } : undefined;
+        return dir ? { grokHomeDir: dir } : undefined;
       } catch {
         return undefined; // hooks are best-effort; never block a spawn
       }
@@ -1714,6 +1715,8 @@ export class SessionService {
     let args: string[];
     /** Set when this provider names its own session — persisted only after a live pid. */
     let assignedSessionId: string | undefined;
+    /** Set for Grok: the per-thread config home carrying its hooks and MCP servers. */
+    let grokHomeDir: string | undefined;
 
     if (terminal.type === 'shell') {
       // A "Sign in — X" thread runs that CLI's login command DIRECTLY rather than a shell
@@ -1756,6 +1759,7 @@ export class SessionService {
         cmd = provider.buildRunnerCommand({ workDir, prompt: runnerPrompt, secretsMcp });
       } else {
         const statusHooks = this.buildStatusHooks(terminalId, terminal.type, specs);
+        grokHomeDir = statusHooks?.grokHomeDir;
         const branchFrom: string | undefined = typeof config.branchFrom === 'string' ? config.branchFrom : undefined;
         // Honor a per-thread model pick (config.model) for CLI (PTY) threads too, not
         // just structured ones — the New Thread modal offers the picker in both modes.
@@ -1775,7 +1779,11 @@ export class SessionService {
       args = cmd.args;
     }
 
-    const pid = this.ptyManager.spawn(terminalId, command, args, workDir, { [TERMINAL_ID_ENV_VAR]: terminalId });
+    // GROK_HOME is how Grok's hooks and MCP servers reach the thread — argv cannot carry
+    // them for the top-level command. Everything but `plugins` links back to the real home.
+    const spawnEnv: Record<string, string> = { [TERMINAL_ID_ENV_VAR]: terminalId };
+    if (grokHomeDir) spawnEnv.GROK_HOME = grokHomeDir;
+    const pid = this.ptyManager.spawn(terminalId, command, args, workDir, spawnEnv);
     terminalsDb.updatePid(this.db, terminalId, pid);
     // AFTER the spawn, never before: a stored id for a process that failed to start would
     // send the next relaunch chasing a conversation that never existed.
