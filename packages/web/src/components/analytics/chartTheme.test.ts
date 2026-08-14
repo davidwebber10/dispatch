@@ -6,15 +6,23 @@ describe('chart palette', () => {
     expect(SERIES).toEqual(['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181']);
   });
 
-  // The property the old rank-based implementation silently failed: hiding a series
-  // that sorts EARLIER must not shift the colour of the ones that remain.
-  it('keeps a key on its colour when an earlier-sorting key is filtered out', () => {
-    const scale = makeSeriesScale(['opus', 'sonnet', 'haiku']);
-    expect(scale('opus')).toBe('#d95926');
-    // The visible set shrinks, but the scale is unchanged — that is the whole point.
-    expect(scale('opus')).toBe('#d95926');
-    // Rebuilding from the same full domain is stable across reloads.
+  it('assigns deterministically regardless of the order the domain arrives in', () => {
+    expect(makeSeriesScale(['opus', 'sonnet', 'haiku'])('opus')).toBe('#d95926');
     expect(makeSeriesScale(['haiku', 'sonnet', 'opus'])('opus')).toBe('#d95926');
+  });
+
+  // The hazard this API exists to prevent, stated as a test so it cannot be
+  // forgotten: colour is assigned from the DOMAIN a scale was built with. Build
+  // the scale once from every key in the dataset and reuse it while filtering what
+  // you plot. Rebuilding it from the currently-visible subset repaints the
+  // survivors — which is exactly the bug the old seriesColor(keys, key) shipped.
+  it('assigns from the domain it was built with, so the scale must be built from ALL keys', () => {
+    const fullDomain = makeSeriesScale(['opus', 'sonnet', 'haiku']);
+    const wrongWay = makeSeriesScale(['opus', 'sonnet']); // haiku filtered out — do not do this
+
+    expect(fullDomain('opus')).toBe('#d95926');
+    expect(wrongWay('opus')).toBe('#3987e5');
+    expect(fullDomain('opus')).not.toBe(wrongWay('opus'));
   });
 
   it('folds a sixth key into Other rather than inventing a hue', () => {

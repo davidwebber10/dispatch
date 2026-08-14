@@ -16,14 +16,14 @@ export const SERIES = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181'] as
 export const OTHER = '#6b6b73';
 
 /**
- * Build a stable key→colour lookup from the FULL domain of keys — every key that
- * exists in the dataset, not the subset currently visible.
+ * Build the scale once from every key in the dataset, then reuse it — never rebuild
+ * it from the keys currently visible.
  *
- * The scale is built once and reused for every render. That is what makes colour
- * follow the entity rather than its rank: hiding a series changes which colours
- * appear on screen, never which colour a surviving series wears. An earlier version
- * took the visible keys and indexed into them, which repainted the survivors
- * whenever a key that sorted earlier was filtered out.
+ * The returned function assigns colours by sorted key from the domain it was built with.
+ * That is what makes colour follow the entity rather than its rank: hiding a series
+ * changes which colours appear on screen, never which colour a surviving series wears.
+ * An earlier version took the visible keys and indexed into them, which repainted the
+ * survivors whenever a key that sorted earlier was filtered out.
  *
  * Keys are sorted so the assignment is deterministic across reloads. A key beyond
  * the fifth, or one absent from the domain, gets OTHER — never a generated hue,
