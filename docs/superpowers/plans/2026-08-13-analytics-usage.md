@@ -15,7 +15,7 @@
 - **Worktree.** All work happens in `.claude/worktrees/analytics-usage` on branch `worktree-analytics-usage`. Never `cd` to the main checkout.
 - **Never use bare `git stash` / `git stash pop`.** The stash stack is shared with other worktrees and other sessions. Use a temporary WIP commit instead. If you must stash, use `git stash push -u -m "<unique-tag>"`, capture the SHA with `git stash list --format='%H %gs'`, and restore with `git stash apply <sha>`.
 - **ESM imports in `packages/core` need explicit `.js` extensions.** `import * as usageDb from '../db/usage.js'`. The build and the tests pass without them, but the daemon will not start.
-- **One writer.** Only the recorder adds tokens to `usage_turns`. `persistAgentTokenUsage` keeps writing `config.totalTokens` for the Done cards and must not be changed.
+- **One writer per row class.** The recorder is the only thing that writes live turn rows (`backfilled = 0`). The importer writes only `backfilled = 1` rows, and only for turns older than the tracking cutoff. Nothing else writes `usage_turns` at all. `persistAgentTokenUsage` keeps writing `config.totalTokens` for the Done cards and must not be changed.
 - **Analytics must never break a turn.** Every recorder entry point is wrapped in `try { … } catch { /* best effort */ }`.
 - **Cost is notional.** Any dollar figure is labelled "equivalent API value", never "cost" or "spend".
 - **Categorical palette, fixed order, never cycled:** `#3987e5`, `#d95926`, `#199e70`, `#c98500`, `#d55181`. A sixth series folds into "Other" (`#6b6b73`).
@@ -69,7 +69,7 @@
   - `findOpenTurn(db, terminalId: string): TurnRow | null`
   - `addUsage(db, turnId: string, delta: UsageDelta): void`
   - `closeTurn(db, turnId: string, at: string, outcome: string): void`
-  - `closeAllOpen(db, at: string, outcome: string): number`
+  - `setModelIfEmpty(db, turnId: string, model: string): void`
   - `insertClosed(db, row: ClosedTurnInput): void`
   - `deleteBackfilled(db): number`
 
@@ -120,13 +120,12 @@ describe('usage_turns db', () => {
     expect(usageDb.findOpenTurn(d, 'term1')).toBeNull();
   });
 
-  it('closeAllOpen closes every open row and reports the count', () => {
-    usageDb.openTurn(d, OPEN);
-    usageDb.openTurn(d, { ...OPEN, id: 't2', terminalId: 'term2' });
-    const n = usageDb.closeAllOpen(d, '2026-08-13T11:00:00.000Z', 'interrupted');
-    expect(n).toBe(2);
-    expect(usageDb.findOpenTurn(d, 'term1')).toBeNull();
-    expect(usageDb.findOpenTurn(d, 'term2')).toBeNull();
+  it('setModelIfEmpty fills a blank model but never overwrites one', () => {
+    usageDb.openTurn(d, { ...OPEN, model: '' });
+    usageDb.setModelIfEmpty(d, 't1', 'claude-sonnet-5');
+    expect(usageDb.findOpenTurn(d, 'term1')!.model).toBe('claude-sonnet-5');
+    usageDb.setModelIfEmpty(d, 't1', 'claude-haiku-4-5');
+    expect(usageDb.findOpenTurn(d, 'term1')!.model).toBe('claude-sonnet-5');
   });
 
   it('deleteBackfilled removes only imported rows', () => {
@@ -276,17 +275,6 @@ export function setModelIfEmpty(db: Database.Database, turnId: string, model: st
 export function closeTurn(db: Database.Database, turnId: string, at: string, outcome: string): void {
   db.prepare(`UPDATE usage_turns SET ended_at = ?, outcome = ? WHERE id = ? AND ended_at IS NULL`)
     .run(at, outcome, turnId);
-}
-
-/**
- * Close every row left open — called once on daemon start. A turn whose daemon
- * died never emits its settle event, so without this it would read as a turn of
- * unbounded length and poison every duration statistic.
- */
-export function closeAllOpen(db: Database.Database, at: string, outcome: string): number {
-  const res = db.prepare(`UPDATE usage_turns SET ended_at = ?, outcome = ? WHERE ended_at IS NULL`)
-    .run(at, outcome);
-  return res.changes;
 }
 
 export function insertClosed(db: Database.Database, r: ClosedTurnInput): void {
@@ -1013,6 +1001,11 @@ git commit -m "feat(core): one shared model price table, refreshed"
 Create `packages/core/src/analytics/queries.test.ts`:
 
 ```ts
+// Day buckets are local time, so the assertions below only hold in a known zone.
+// Set it before anything reads the clock; a test that passes only in one timezone
+// is a defect, not a quirk.
+process.env.TZ = 'UTC';
+
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema.js';
@@ -1293,7 +1286,7 @@ export function records(db: Database.Database): Records {
 Run: `pnpm --filter dispatch-server exec vitest run src/analytics/queries.test.ts`
 Expected: PASS, 7 tests.
 
-If the day-bucket tests fail because the machine's timezone shifts the ISO timestamps into another local day, that is the test being timezone-dependent, not the code. Fix it by setting `process.env.TZ = 'UTC'` at the top of the test file, before the imports run.
+If vitest hoists the imports above the `process.env.TZ` assignment and the day-bucket assertions fail, move the assignment into a `setupFiles` entry in `packages/core/vitest.config.ts` instead. Do not weaken the assertions to make them timezone-agnostic — the local-time bucket is the behaviour under test.
 
 - [ ] **Step 5: Commit**
 
@@ -2368,6 +2361,11 @@ Expected: it starts with no `ERR_MODULE_NOT_FOUND`.
 
 - [ ] **Step 3: Confirm the table exists and starts empty**
 
+The `sqlite3` CLI may not be installed. If `command -v sqlite3` is empty, run the
+same query through the dependency the project already has:
+`node -e "const D=require('better-sqlite3');console.table(new D(process.env.DB).prepare('<SQL>').all())"`
+with `DB="$FAKE_HOME/.dispatch/dispatch.db"`.
+
 ```bash
 sqlite3 "$FAKE_HOME/.dispatch/dispatch.db" "SELECT COUNT(*) FROM usage_turns;"
 ```
@@ -2380,6 +2378,11 @@ Create a project and a Claude Code thread through the API on port 3999, send it 
 
 - [ ] **Step 5: Confirm one row was recorded**
 
+The `sqlite3` CLI may not be installed. If `command -v sqlite3` is empty, run the
+same query through the dependency the project already has:
+`node -e "const D=require('better-sqlite3');console.table(new D(process.env.DB).prepare('<SQL>').all())"`
+with `DB="$FAKE_HOME/.dispatch/dispatch.db"`.
+
 ```bash
 sqlite3 "$FAKE_HOME/.dispatch/dispatch.db" \
   "SELECT provider, model, outcome, input_tokens, output_tokens, messages, tool_calls FROM usage_turns;"
@@ -2390,6 +2393,11 @@ Expected: exactly one row, with a non-zero `output_tokens`, `outcome = 'idle'`, 
 - [ ] **Step 6: Confirm the restart path**
 
 Kill the daemon mid-turn, restart it, then run:
+
+The `sqlite3` CLI may not be installed. If `command -v sqlite3` is empty, run the
+same query through the dependency the project already has:
+`node -e "const D=require('better-sqlite3');console.table(new D(process.env.DB).prepare('<SQL>').all())"`
+with `DB="$FAKE_HOME/.dispatch/dispatch.db"`.
 
 ```bash
 sqlite3 "$FAKE_HOME/.dispatch/dispatch.db" \
