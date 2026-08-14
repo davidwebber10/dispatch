@@ -85,6 +85,34 @@ function bootAnalytics(db: Database.Database): void {
   trackingStartedAt(db);
 }
 
+/**
+ * Subscribe PTY usage capture to the turn-settled edge.
+ *
+ * `isStructured` is the double-count gate and the reason this is a function rather
+ * than an inline literal. It must go through `SessionService.isStructuredTerminal`,
+ * which checks BOTH `config.transport === 'structured'` AND a registered manager for
+ * the type — a `transport: 'structured'` Codex row is still a PTY thread when
+ * Codex-Pretty is off. Re-implementing it as a config read in one builder and not
+ * the other would silently roughly double that builder's numbers.
+ *
+ * createApp and startServer both call this, so the two app builders cannot drift.
+ */
+function wirePtyUsageCapture(
+  db: Database.Database,
+  statusService: StatusService,
+  sessionService: SessionService,
+  broadcaster: EventBroadcaster,
+): void {
+  statusService.addThreadSettledListener(attachPtyCapture({
+    db,
+    isStructured: (terminalId) => {
+      const t = terminalsDb.getById(db, terminalId);
+      return !!t && sessionService.isStructuredTerminal(t);
+    },
+    onTurnClosed: () => broadcaster.broadcast({ type: 'analytics-dirty' }),
+  }));
+}
+
 /** Repo root, derived the same way as the webDist fallback below (works from both src/ in dev and dist/ once built, since both sit at the same depth under packages/core). */
 function resolveRepoRoot(): string {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -289,14 +317,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const pushService = new PushService(db, { vapidDir: dispatchDir });
 
   wireThreadSettledPush(db, statusService, pushService);
-  statusService.addThreadSettledListener(attachPtyCapture({
-    db,
-    isStructured: (terminalId) => {
-      const t = terminalsDb.getById(db, terminalId);
-      return !!t && sessionService.isStructuredTerminal(t);
-    },
-    onTurnClosed: () => broadcaster.broadcast({ type: 'analytics-dirty' }),
-  }));
+  wirePtyUsageCapture(db, statusService, sessionService, broadcaster);
 
   bootAnalytics(db);
 
@@ -433,14 +454,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const pushService = new PushService(db, { vapidDir: dataDir });
 
   wireThreadSettledPush(db, statusService, pushService);
-  statusService.addThreadSettledListener(attachPtyCapture({
-    db,
-    isStructured: (terminalId) => {
-      const t = terminalsDb.getById(db, terminalId);
-      return !!t && sessionService.isStructuredTerminal(t);
-    },
-    onTurnClosed: () => broadcaster.broadcast({ type: 'analytics-dirty' }),
-  }));
+  wirePtyUsageCapture(db, statusService, sessionService, broadcaster);
 
   // Doppler secrets: token-backed connection + per-spawn injection (DOPPLER_* env +
   // an MCP server) so Claude Code / Codex agents can add & retrieve secrets.
