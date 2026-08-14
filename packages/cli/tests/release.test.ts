@@ -77,6 +77,12 @@ describe('dispatch release — release-note guard', () => {
     expect(gh.args).not.toContain('--generate-notes');
   });
 
+  test('names the release after the tag — --notes-file sets no title on its own', () => {
+    cmdRelease({ repoRoot } as any, ['2.11.0']);
+    const gh = ghReleaseCall()!;
+    expect(gh.args[gh.args.indexOf('--title') + 1]).toBe('v2.11.0');
+  });
+
   test('tags and pushes before creating the release', () => {
     cmdRelease({ repoRoot } as any, ['2.11.0']);
     expect(calls.map((c) => `${c.cmd} ${c.args.slice(0, 2).join(' ')}`)).toEqual(

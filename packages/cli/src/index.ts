@@ -291,7 +291,9 @@ export function cmdRelease(ctx: Ctx, args: string[]): void {
     { stdio: 'inherit', cwd: repoRoot, ...shellOpt });
   execFileSync('git', ['push', 'origin', version],
     { stdio: 'inherit', cwd: repoRoot, ...shellOpt });
-  execFileSync('gh', ['release', 'create', version, '--repo', 'davidwebber10/dispatch', '--notes-file', notesPath],
+  // `--title` is explicit: --generate-notes used to name the release for us, --notes-file
+  // does not, and a release with no title renders as a blank heading on GitHub.
+  execFileSync('gh', ['release', 'create', version, '--repo', 'davidwebber10/dispatch', '--title', version, '--notes-file', notesPath],
     { stdio: 'inherit', cwd: repoRoot, ...shellOpt });
   console.log(`Released ${version}.`);
 }
