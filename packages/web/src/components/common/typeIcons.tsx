@@ -9,6 +9,7 @@ export function providerColor(type: TerminalType): string {
   switch (type) {
     case 'claude-code': return '#0091FF'; // Claude → blue
     case 'codex': return '#30D158';        // Codex → green
+    case 'grok': return '#E9E9EC';          // Grok → xAI white
     case 'shell': return '#8E8E96';         // Terminal → neutral
     case 'browser': return '#56B6C2';
     case 'notes': return '#C792EA';

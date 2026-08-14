@@ -1,3 +1,5 @@
+import { AGENT_TYPES, THREAD_TYPES } from './ProjectCard';
+import { providerColor } from '../common/typeIcons';
 // Finding 3: reverting ProjectCard's `<ThreadLabel tab={tab} />` (ProjectCard.tsx ~line 131,
 // inside ThreadRow) back to the original `<span>{tab.label}</span>` passes the ENTIRE web
 // suite — ThreadLabel.test.tsx exercises the component directly, and ThreadRow.autoArchive
@@ -47,4 +49,20 @@ test('a thread with a live default->auto transition renders through ThreadLabel 
   expect(document.querySelector('.dispatch-caret')).not.toBeNull();
   // The true label is still exposed to assistive tech while the animation plays.
   expect(screen.getByLabelText('Fix login bug')).toBeInTheDocument();
+});
+
+describe('a Grok thread belongs in the sidebar', () => {
+  it('lists grok alongside claude-code, codex and shell in the THREADS section', () => {
+    // The regression: adding Grok as a provider missed this allow-list, so Grok threads
+    // ran but never appeared. Assert the constant, not the rendering, so the guarantee
+    // survives any layout change.
+    expect(AGENT_TYPES).toContain('grok');
+    expect(THREAD_TYPES).toContain('grok');
+    expect(THREAD_TYPES).toEqual(expect.arrayContaining(['claude-code', 'codex', 'grok', 'shell']));
+  });
+
+  it('gives Grok its own provider dot rather than the neutral fallback', () => {
+    expect(providerColor('grok')).not.toBe(providerColor('shell'));
+    expect(providerColor('grok')).not.toBe(providerColor('claude-code'));
+  });
 });

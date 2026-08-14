@@ -48,8 +48,18 @@ const DENSITY: Record<Density, { rowY: number; sectionMt: number; rowGap: number
   roomy: { rowY: 10, sectionMt: 12, rowGap: 5 },
 };
 
+/**
+ * Every agent CLI a thread can run, and every type the THREADS section owns.
+ *
+ * These exist as shared constants because they were four separate inline literals, and
+ * adding Grok as a provider missed one of them — Grok threads ran fine and were filtered
+ * out of the sidebar entirely. A new provider now needs one edit here, not four.
+ */
+export const AGENT_TYPES: Terminal['type'][] = ['claude-code', 'codex', 'grok'];
+export const THREAD_TYPES: Terminal['type'][] = [...AGENT_TYPES, 'shell'];
+
 const SECTIONS: { key: string; label: string; types: Terminal['type'][]; add: 'menu' | 'browser' | 'notes' | null; prominent?: boolean }[] = [
-  { key: 'threads', label: 'THREADS', types: ['claude-code', 'codex', 'shell'], add: 'menu', prominent: true },
+  { key: 'threads', label: 'THREADS', types: THREAD_TYPES, add: 'menu', prominent: true },
   { key: 'web', label: 'WEB', types: ['browser'], add: 'browser' },
   { key: 'notes', label: 'NOTES', types: ['notes'], add: 'notes' },
   { key: 'files', label: 'FILES', types: ['file'], add: null },
@@ -84,7 +94,7 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
   // glance; browser/notes keep a dot. Every leading glyph sits in a fixed-width slot
   // (iconSlot) so labels line up no matter which glyph — or dot — a row shows.
   const structuredClaude = tab.type === 'claude-code' && (tab.config as { transport?: string })?.transport === 'structured';
-  const isTerminalThread = !structuredClaude && (tab.type === 'claude-code' || tab.type === 'codex' || tab.type === 'shell');
+  const isTerminalThread = !structuredClaude && THREAD_TYPES.includes(tab.type);
   const iconSlot = isMobile ? 18 : 15;
   // Auto-archive threads trade their timeAgo for a countdown: both derive from
   // lastActivityAt, and "how long until this disappears" is the more useful read.
@@ -141,7 +151,7 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
       {isMobile && (tab.config as { pinned?: boolean })?.pinned && (
         <PushPin size={13} weight="fill" color="var(--color-text-tertiary)" style={{ flexShrink: 0, marginLeft: 4 }} />
       )}
-      {(tab.type === 'claude-code' || tab.type === 'codex') && (tab.config as { alertsEnabled?: boolean })?.alertsEnabled && canReceiveAlerts() && (
+      {AGENT_TYPES.includes(tab.type) && (tab.config as { alertsEnabled?: boolean })?.alertsEnabled && canReceiveAlerts() && (
         <Bell size={13} weight="fill" color="var(--color-text-tertiary)" style={{ flexShrink: 0, marginLeft: 4 }} />
       )}
       <span style={{ flexShrink: 0, marginLeft: 8, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
@@ -516,7 +526,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
             {ctxMenu.tab.type === 'claude-code' && (
               <button onClick={() => { void branch(ctxMenu.tab); setCtxMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>Branch thread</button>
             )}
-            {(ctxMenu.tab.type === 'claude-code' || ctxMenu.tab.type === 'codex' || ctxMenu.tab.type === 'shell') && (
+            {THREAD_TYPES.includes(ctxMenu.tab.type) && (
               <button onClick={() => { setAutoArchiveTarget(ctxMenu.tab); setCtxMenu(null); }}
                 style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>
                 Auto-archive…
