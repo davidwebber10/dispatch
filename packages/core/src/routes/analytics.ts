@@ -44,6 +44,11 @@ export function createAnalyticsRouter(db: Database.Database): Router {
     from: typeof q.from === 'string' ? q.from : undefined,
     to: typeof q.to === 'string' ? q.to : undefined,
     projectId: typeof q.projectId === 'string' ? q.projectId : undefined,
+    // No allow-list here: unlike metric/groupBy/dimension, provider is never
+    // interpolated into SQL — it only ever reaches queries.ts as a bound `?`
+    // parameter (see where() in analytics/queries.ts), so there is nothing for
+    // an allow-list to protect against.
+    provider: typeof q.provider === 'string' ? q.provider : undefined,
   });
 
   router.get('/summary', (req, res) => {

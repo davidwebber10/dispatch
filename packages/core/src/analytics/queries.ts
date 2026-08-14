@@ -5,7 +5,7 @@ export type Metric = 'tokens' | 'outputTokens' | 'turns' | 'duration';
 export type GroupBy = 'model' | 'provider' | 'project' | 'outcome' | 'none';
 export type Dimension = 'project' | 'thread' | 'model';
 
-export interface Range { from?: string; to?: string; projectId?: string }
+export interface Range { from?: string; to?: string; projectId?: string; provider?: string }
 
 export interface Summary {
   turns: number;
@@ -58,6 +58,7 @@ function where(r: Range, alias?: string): { sql: string; params: unknown[] } {
   if (r.from) { parts.push(`${col('started_at')} >= ?`); params.push(r.from); }
   if (r.to) { parts.push(`${col('started_at')} < ?`); params.push(r.to); }
   if (r.projectId) { parts.push(`${col('project_id')} = ?`); params.push(r.projectId); }
+  if (r.provider) { parts.push(`${col('provider')} = ?`); params.push(r.provider); }
   return { sql: parts.join(' AND '), params };
 }
 

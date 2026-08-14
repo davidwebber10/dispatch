@@ -42,6 +42,35 @@ describe('analytics routes', () => {
     expect(bad.status).toBe(400);
   });
 
+  it('GET /summary?provider filters to that provider only', async () => {
+    usageDb.insertClosed(d, {
+      id: 'b', terminalId: 'term2', projectId: 'proj1', provider: 'codex',
+      model: 'gpt-5-codex', role: 'agent',
+      startedAt: '2026-08-10T11:00:00.000Z', endedAt: '2026-08-10T11:00:20.000Z', outcome: 'idle',
+      input: 20, output: 10, cacheRead: 0, cacheCreate: 0, messages: 1, toolCalls: 0, backfilled: false,
+    });
+    const all = await request(app(d)).get('/api/analytics/summary');
+    expect(all.body.turns).toBe(2);
+
+    const res = await request(app(d)).get('/api/analytics/summary?provider=codex');
+    expect(res.status).toBe(200);
+    expect(res.body.turns).toBe(1);
+    expect(res.body.totalTokens).toBe(30);
+  });
+
+  it('GET /series?provider narrows the series to that provider', async () => {
+    usageDb.insertClosed(d, {
+      id: 'b', terminalId: 'term2', projectId: 'proj1', provider: 'codex',
+      model: 'gpt-5-codex', role: 'agent',
+      startedAt: '2026-08-10T11:00:00.000Z', endedAt: '2026-08-10T11:00:20.000Z', outcome: 'idle',
+      input: 20, output: 10, cacheRead: 0, cacheCreate: 0, messages: 1, toolCalls: 0, backfilled: false,
+    });
+    const res = await request(app(d)).get('/api/analytics/series?metric=tokens&groupBy=none&provider=codex');
+    expect(res.status).toBe(200);
+    expect(res.body.length).toBe(1);
+    expect(res.body[0].value).toBe(30);
+  });
+
   it('GET /records returns all-time facts', async () => {
     const res = await request(app(d)).get('/api/analytics/records');
     expect(res.status).toBe(200);

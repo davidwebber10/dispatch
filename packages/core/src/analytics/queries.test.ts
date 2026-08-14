@@ -107,6 +107,74 @@ describe('analytics queries', () => {
     expect(s.notionalUsd).toBeCloseTo(pricedOnly.notionalUsd, 10);
   });
 
+  it('summary filtered by provider returns only that provider\'s turns', () => {
+    turn(d, {
+      id: 'codex1', startedAt: '2026-08-11T10:00:00.000Z', endedAt: '2026-08-11T10:00:20.000Z',
+      provider: 'codex', model: 'gpt-5-codex', input: 20, output: 10,
+    });
+    const s = summary(d, { provider: 'codex' });
+    expect(s.turns).toBe(1);
+    expect(s.inputTokens).toBe(20);
+    expect(s.outputTokens).toBe(10);
+  });
+
+  it('series filtered by provider only aggregates that provider\'s turns', () => {
+    turn(d, {
+      id: 'codex1', startedAt: '2026-08-11T10:00:00.000Z', endedAt: '2026-08-11T10:00:20.000Z',
+      provider: 'codex', model: 'gpt-5-codex', input: 20, output: 10,
+    });
+    const pts = series(d, { provider: 'codex', metric: 'tokens', groupBy: 'none' });
+    expect(pts.length).toBe(1);
+    expect(pts[0].day).toBe('2026-08-11');
+    expect(pts[0].value).toBe(30);
+  });
+
+  it('combines provider with project and date range, narrowing rather than overriding', () => {
+    turn(d, {
+      id: 'codex-proj1', startedAt: '2026-08-11T10:00:00.000Z', endedAt: '2026-08-11T10:00:20.000Z',
+      provider: 'codex', projectId: 'proj1', input: 20, output: 10,
+    });
+    // Same provider, different project: must be excluded by the projectId filter.
+    turn(d, {
+      id: 'codex-proj2', startedAt: '2026-08-11T11:00:00.000Z', endedAt: '2026-08-11T11:00:20.000Z',
+      provider: 'codex', projectId: 'proj2', input: 5, output: 5,
+    });
+    // Same provider and project, but outside the date range: must be excluded by the range filter.
+    turn(d, {
+      id: 'codex-proj1-late', startedAt: '2026-08-13T10:00:00.000Z', endedAt: '2026-08-13T10:00:20.000Z',
+      provider: 'codex', projectId: 'proj1', input: 999, output: 999,
+    });
+    const s = summary(d, {
+      provider: 'codex', projectId: 'proj1',
+      from: '2026-08-11T00:00:00.000Z', to: '2026-08-12T00:00:00.000Z',
+    });
+    expect(s.turns).toBe(1);
+    expect(s.inputTokens).toBe(20);
+    expect(s.outputTokens).toBe(10);
+  });
+
+  // Filtering to a provider whose turns never carried a usage frame (a PTY thread,
+  // for instance) must surface those turns as unreported, not silently as a
+  // measured zero.
+  it('reports unreportedTurns when filtered to a provider whose usage was never reported', () => {
+    turn(d, {
+      id: 'pty1', startedAt: '2026-08-11T12:00:00.000Z', endedAt: '2026-08-11T12:00:05.000Z',
+      provider: 'pty', model: '', messages: 0,
+    });
+    const s = summary(d, { provider: 'pty' });
+    expect(s.turns).toBe(1);
+    expect(s.unreportedTurns).toBe(1);
+    expect(s.totalTokens).toBe(0);
+  });
+
+  it('returns zeroes for an unknown provider rather than throwing', () => {
+    expect(() => summary(d, { provider: 'nonexistent-provider' })).not.toThrow();
+    const s = summary(d, { provider: 'nonexistent-provider' });
+    expect(s.turns).toBe(0);
+    expect(s.totalTokens).toBe(0);
+    expect(s.unreportedTurns).toBe(0);
+  });
+
   it('reports all-time records', () => {
     const r = records(d);
     expect(r.totalTokens).toBe(168);
