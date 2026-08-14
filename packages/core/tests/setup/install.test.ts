@@ -110,3 +110,20 @@ describe('installProvider', () => {
     expect(result.output.startsWith('…')).toBe(true);
   });
 });
+
+describe('signed-in detection', () => {
+  it('a fresh Grok install reads as signed OUT, not unknown', async () => {
+    // The Grok installer creates ~/.grok itself, so the directory proves nothing and only
+    // auth.json does. Reporting 'unknown' here would hide the sign-in hint in the UI.
+    const run = vi.fn(async () => { fakeInstall('.grok/bin/grok'); return { ok: true, output: '' }; });
+    const result = await installProvider('grok', run);
+    expect(result.status.signedIn).toBe(false);
+  });
+
+  it('a Claude dir with no credential file stays "unknown" — the token may be elsewhere', async () => {
+    fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+    const run = vi.fn(async () => { fakeInstall('.local/bin/claude'); return { ok: true, output: '' }; });
+    const result = await installProvider('claude', run);
+    expect(result.status.signedIn).toBe('unknown');
+  });
+});

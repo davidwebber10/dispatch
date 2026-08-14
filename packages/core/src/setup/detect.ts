@@ -27,11 +27,19 @@ const FALLBACK_BINS: Record<ProviderName, string[]> = {
   grok: ['.grok/bin/grok', '.local/bin/grok'],
 };
 
-/** Where each CLI stores the credentials its interactive login writes. */
-const AUTH_FILES: Record<ProviderName, { dir: string; files: string[] }> = {
-  claude: { dir: '.claude', files: ['.credentials.json', 'credentials.json'] },
-  codex: { dir: '.codex', files: ['auth.json'] },
-  grok: { dir: '.grok', files: ['auth.json'] },
+/**
+ * Where each CLI stores the credentials its interactive login writes.
+ *
+ * `definitive` says whether a missing credential file PROVES signed-out. It does for Grok:
+ * the installer itself creates `~/.grok`, so the directory tells you nothing and only
+ * `auth.json` does. For Claude and Codex the directory may exist for unrelated reasons and
+ * the credential may live outside these files (a keychain, an env var), so a miss there is
+ * honestly 'unknown' rather than false.
+ */
+const AUTH_FILES: Record<ProviderName, { dir: string; files: string[]; definitive: boolean }> = {
+  claude: { dir: '.claude', files: ['.credentials.json', 'credentials.json'], definitive: false },
+  codex: { dir: '.codex', files: ['auth.json'], definitive: false },
+  grok: { dir: '.grok', files: ['auth.json'], definitive: true },
 };
 
 async function which(bin: string): Promise<string | null> {
@@ -58,7 +66,7 @@ function detectSignedIn(name: ProviderName): boolean | 'unknown' {
     const dir = path.join(home, spec.dir);
     if (!existsSync(dir)) return false;
     if (spec.files.some((f) => existsSync(path.join(dir, f)))) return true;
-    return 'unknown';
+    return spec.definitive ? false : 'unknown';
   } catch { return 'unknown'; }
 }
 
