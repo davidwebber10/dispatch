@@ -154,13 +154,29 @@ These are deliberate gaps, not oversights:
   `--session-id`, so a Grok thread relaunches into the same conversation after a daemon
   restart. What is missing is *browsing* prior sessions in the New Thread modal:
   `grok sessions list` could back that, but it prints human text with no JSON output flag.
-- ~~No Doppler secrets MCP~~ and ~~no status hooks~~ — **both wrong, and both now shipped.**
-  Grok reads Claude Code plugin layouts, and `--plugin-dir` is documented as the
-  highest-priority, always-trusted scope "used by the Agent SDKs to inject per-connection
-  plugins". Dispatch writes one directory per spawn holding `.mcp.json` (the same servers
-  Claude gets) and `hooks/hooks.json`. Grok's binary carries Claude's full hook vocabulary —
-  `Stop`, `PreToolUse`, `PostToolUse`, `SubagentStop`, `Idle`, `SessionStart`, `SessionEnd`,
-  `Notification`, `UserPromptSubmit`, `PreCompact` — so status is reported the same way, and
-  `statusStrategy` is `hooks`, not `pty-timing`.
 - **Not offered for scheduled agent runs.** `--single` works, but its `streaming-json` emits
   ACP updates that `RunStreamParser` cannot read yet.
+
+### How Grok is injected
+
+Grok reads Claude Code plugin layouts, so Dispatch writes **one directory per spawn** and
+passes it with `--plugin-dir` — documented as the highest-priority, always-trusted scope
+"used by the Agent SDKs to inject per-connection plugins", so a spawned agent never stalls on
+a trust prompt and the user's own config is untouched.
+
+| Injection | Claude Code | Codex | Grok |
+| --- | --- | --- | --- |
+| MCP servers | `--mcp-config <file>` | `-c mcp_servers.*` | `.mcp.json` in the plugin dir |
+| Status hooks | `--settings <file>` | `-c notify=[...]` | `hooks/hooks.json` in the plugin dir |
+| System prompt | `--append-system-prompt` | `-c developer_instructions` | `--rules` |
+| Session id | discovered after spawn | discovered after spawn | assigned with `--session-id` |
+
+Grok's binary carries Claude's full hook vocabulary — `Stop`, `PreToolUse`, `PostToolUse`,
+`SubagentStop`, `Idle`, `SessionStart`, `SessionEnd`, `Notification`, `UserPromptSubmit`,
+`PreCompact` — so `statusStrategy` is `hooks`, and the events route needs no special case:
+`ingest()` sends anything that is not `codex` through `normalizeClaude`, which Grok's
+payloads already match.
+
+> The plugin mechanism is documented in the README the installer writes to
+> `~/.grok/README.md`, **not** in `grok --help`. An earlier version of this page claimed Grok
+> had no hooks and no MCP injection because it was written from `--help` alone.
