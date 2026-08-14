@@ -30,7 +30,10 @@ test('offers the notes for the version you already run when nothing is pending',
   useUpdate.setState({ currentNotes: '# Dispatch v2.10.0 — sidebar limits\n\nWhat shipped.' });
   render(<UpdatesSection />);
   fireEvent.click(screen.getByText("What's new in v2.10.0"));
+  // One line of what changed; the body only if you ask for it.
   expect(screen.getByText('sidebar limits')).toBeInTheDocument();
+  expect(screen.queryByText('What shipped.')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByText('Full notes'));
   expect(screen.getByText('What shipped.')).toBeInTheDocument();
 });
 
@@ -42,8 +45,8 @@ test('shows the pending update\'s notes instead, once one is available', () => {
   });
   render(<UpdatesSection />);
   fireEvent.click(screen.getByText('Release notes'));
-  expect(screen.getByText('New body.')).toBeInTheDocument();
-  expect(screen.queryByText('Old body.')).not.toBeInTheDocument();
+  expect(screen.getByText('new')).toBeInTheDocument();
+  expect(screen.queryByText('old')).not.toBeInTheDocument();
 });
 
 test('shows no notes row at all when the daemon reported none', () => {

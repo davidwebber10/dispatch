@@ -120,8 +120,9 @@ test('offers a collapsed Release notes row, and expands it in place', () => {
   render(<UpdateModal />);
   expect(screen.queryByText('What changed.')).not.toBeInTheDocument();
   fireEvent.click(screen.getByText('Release notes'));
+  // A single line of what changed, not the whole note.
   expect(screen.getByText('the headline')).toBeInTheDocument();
-  expect(screen.getByText('What changed.')).toBeInTheDocument();
+  expect(screen.queryByText('What changed.')).not.toBeInTheDocument();
   // The Update action stays reachable with the notes open.
   expect(screen.getByText('Update')).toBeInTheDocument();
 });

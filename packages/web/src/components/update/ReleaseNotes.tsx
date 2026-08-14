@@ -34,6 +34,48 @@ function formatDate(iso: string | null | undefined): string | null {
 }
 
 /**
+ * One release: version and date as the title, a single line of what changed, and the full
+ * note only if you ask for it.
+ *
+ * The panel used to render every note in full, which meant scrolling an essay — headings,
+ * code blocks, several paragraphs — to answer "what is in this update". Worse, a note's own
+ * `## What was wrong` heading rendered at almost the same weight as the release headline
+ * above it, so there was no hierarchy to scan. Every note already opens with a one-line
+ * summary in its H1; that line IS the answer, so it is all that shows by default.
+ */
+function ReleaseEntry({ entry, first }: { entry: ReleaseNote; first: boolean }) {
+  const [showAll, setShowAll] = useState(false);
+  const { headline, body } = splitNoteHeadline(entry.notes);
+  const date = formatDate(entry.publishedAt);
+
+  return (
+    <section style={{ marginTop: first ? 0 : 14, paddingTop: first ? 0 : 12, borderTop: first ? 'none' : '1px solid #2C2C32' }}>
+      {/* Title row: the version leads, the date is metadata beside it. */}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ font: '600 13px var(--font-mono)', color: 'var(--color-accent)', letterSpacing: '-.01em' }}>{entry.version}</span>
+        {date && <span style={{ font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{date}</span>}
+      </div>
+
+      {/* The one line that answers "what changed". */}
+      {headline
+        ? <div style={{ marginTop: 3, fontSize: 13, lineHeight: 1.45, color: 'var(--color-text-secondary)' }}>{headline}</div>
+        : !body && <div style={{ marginTop: 3, fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No notes for this release.</div>}
+
+      {body && (
+        <>
+          <button type="button" onClick={() => setShowAll((v) => !v)} aria-expanded={showAll}
+            style={{ ...toggle, marginTop: 4, padding: '3px 0', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>
+            <CaretRight size={10} weight="bold" style={{ transform: showAll ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }} />
+            {showAll ? 'Hide detail' : 'Full notes'}
+          </button>
+          {showAll && <div style={{ marginTop: 2 }}><Markdown source={body} /></div>}
+        </>
+      )}
+    </section>
+  );
+}
+
+/**
  * The expandable "Release notes" disclosure, shared by the update modal and
  * Settings → UPDATES so both read from one implementation.
  *
@@ -70,26 +112,9 @@ export function ReleaseNotes({ notes, currentNote, currentVersion, onToggle }: P
       </button>
       {open && (
         <div style={panel}>
-          {entries.map((entry, i) => {
-            const { headline, body } = splitNoteHeadline(entry.notes);
-            const date = formatDate(entry.publishedAt);
-            return (
-              <section key={entry.version || i} style={{ marginTop: i === 0 ? 0 : 18, paddingTop: i === 0 ? 0 : 14, borderTop: i === 0 ? 'none' : '1px solid #2C2C32' }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-                  <span style={{ font: '600 12px var(--font-mono)', color: 'var(--color-accent)' }}>{entry.version}</span>
-                  {date && <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{date}</span>}
-                </div>
-                {headline && (
-                  <div style={{ marginTop: 2, fontSize: 12.5, fontWeight: 600, color: 'var(--color-text-primary)' }}>{headline}</div>
-                )}
-                {/* `.md-view > :first-child` has no top margin, so the gap under the
-                    version/headline rows belongs here rather than on the markdown. */}
-                {body
-                  ? <div style={{ marginTop: 7 }}><Markdown source={body} /></div>
-                  : !headline && <div style={{ marginTop: 4, fontSize: 12, color: 'var(--color-text-tertiary)' }}>No notes for this release.</div>}
-              </section>
-            );
-          })}
+          {entries.map((entry, i) => (
+            <ReleaseEntry key={entry.version || i} entry={entry} first={i === 0} />
+          ))}
         </div>
       )}
     </div>
