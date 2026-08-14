@@ -338,7 +338,7 @@ describe('StatusService thread-settled hook', () => {
     const broadcaster2 = { broadcast: () => {} } as any;
     const fired: any[] = [];
     const svc = new StatusService(db2, broadcaster2);
-    svc.setThreadSettledHook((info) => fired.push(info));
+    svc.addThreadSettledListener((info) => fired.push(info));
     return { db: db2, svc, fired };
   }
 

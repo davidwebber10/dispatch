@@ -856,7 +856,7 @@ export class SessionService {
    * flag and a registered manager for its type, the same pair spawnTerminal/ensureStructuredAlive
    * gate on (a `transport: 'structured'` codex row is still a PTY when Codex-Pretty is disabled).
    */
-  private isStructuredTerminal(terminal: terminalsDb.TerminalRow): boolean {
+  isStructuredTerminal(terminal: terminalsDb.TerminalRow): boolean {
     let config: Record<string, unknown> = {};
     try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
     return config.transport === 'structured' && !!this.structuredManagerFor(terminal.type);

@@ -14,7 +14,7 @@ export function wireThreadSettledPush(
   statusService: StatusService,
   pushService: Pick<PushService, 'notifyThread'>,
 ): void {
-  statusService.setThreadSettledHook(({ terminalId, sessionId, threadStatus }) => {
+  statusService.addThreadSettledListener(({ terminalId, sessionId, threadStatus }) => {
     const row = terminalsDb.getById(db, terminalId);
     if (!row) return;
     let config: Record<string, any> = {};

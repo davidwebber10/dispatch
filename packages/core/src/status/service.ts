@@ -20,6 +20,8 @@ const TO_TERMINAL: Record<ThreadStatus, string> = {
   scheduled: 'scheduled',
 };
 
+export type SettledListener = (info: { terminalId: string; sessionId: string; threadStatus: ThreadStatus }) => void;
+
 /**
  * Ingests provider lifecycle events (Claude hooks, Codex notify), normalizes them
  * to one status model, persists the terminal/session status, captures the provider
@@ -27,7 +29,7 @@ const TO_TERMINAL: Record<ThreadStatus, string> = {
  * broadcasts `terminal:status` (with the rich threadStatus + activity) + session status.
  */
 export class StatusService {
-  private threadSettledHook: ((info: { terminalId: string; sessionId: string; threadStatus: ThreadStatus }) => void) | null = null;
+  private settledListeners: SettledListener[] = [];
 
   constructor(
     private db: Database.Database,
@@ -38,8 +40,13 @@ export class StatusService {
     private onWatchStatus?: (terminalId: string, status: ThreadStatus) => void,
   ) {}
 
-  setThreadSettledHook(fn: (info: { terminalId: string; sessionId: string; threadStatus: ThreadStatus }) => void): void {
-    this.threadSettledHook = fn;
+  /**
+   * Subscribe to the turn-settled edge. A LIST, not a single hook: push notifications
+   * and analytics capture both consume this, and a setter would have let whichever
+   * wired second silently disable the first.
+   */
+  addThreadSettledListener(fn: SettledListener): void {
+    this.settledListeners.push(fn);
   }
 
   ingest(provider: string, terminalId: string, payload: unknown): void {
@@ -202,7 +209,9 @@ export class StatusService {
     } catch { /* best effort — status must never fail on board bookkeeping */ }
     this.broadcaster.broadcast({ type: 'terminal:status', terminalId, status: terminalStatus, threadStatus: status, activity: activity ?? null });
     if (prior === 'working' && (terminalStatus === 'waiting' || terminalStatus === 'needs_input')) {
-      try { this.threadSettledHook?.({ terminalId, sessionId, threadStatus: status }); } catch { /* hook must never break status */ }
+      for (const fn of this.settledListeners) {
+        try { fn({ terminalId, sessionId, threadStatus: status }); } catch { /* a listener must never break status */ }
+      }
     }
     this.aggregateSession(sessionId);
   }
