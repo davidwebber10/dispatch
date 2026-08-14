@@ -15,10 +15,25 @@
 export const SERIES = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181'] as const;
 export const OTHER = '#6b6b73';
 
-export function seriesColor(keys: string[], key: string): string {
-  const i = [...keys].sort().indexOf(key);
-  if (i < 0) return OTHER;
-  return i < SERIES.length ? SERIES[i] : OTHER;
+/**
+ * Build a stable key→colour lookup from the FULL domain of keys — every key that
+ * exists in the dataset, not the subset currently visible.
+ *
+ * The scale is built once and reused for every render. That is what makes colour
+ * follow the entity rather than its rank: hiding a series changes which colours
+ * appear on screen, never which colour a surviving series wears. An earlier version
+ * took the visible keys and indexed into them, which repainted the survivors
+ * whenever a key that sorted earlier was filtered out.
+ *
+ * Keys are sorted so the assignment is deterministic across reloads. A key beyond
+ * the fifth, or one absent from the domain, gets OTHER — never a generated hue,
+ * which would be unvalidated against the surface and against the other five.
+ */
+export function makeSeriesScale(allKeys: string[]): (key: string) => string {
+  const order = [...new Set(allKeys)].sort();
+  const byKey = new Map<string, string>();
+  order.forEach((k, i) => { if (i < SERIES.length) byKey.set(k, SERIES[i]); });
+  return (key: string) => byKey.get(key) ?? OTHER;
 }
 
 /** Outcomes are states, not identities, so they wear the reserved status colors. */
@@ -31,7 +46,7 @@ export const OUTCOME_COLOR: Record<string, string> = {
 };
 
 /**
- * Recharts needs literal colors — it cannot take `var(--color-text-tertiary)`.
+ * Recharts needs literal colors — it cannot take `var(--color-text-primary)`.
  * Read the computed custom properties once, so theme.css stays the single source
  * of truth for everything except the categorical hues above.
  */
