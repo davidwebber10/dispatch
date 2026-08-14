@@ -1,0 +1,58 @@
+import { describe, it, expect, beforeEach } from 'vitest';
+import express from 'express';
+import request from 'supertest';
+import Database from 'better-sqlite3';
+import { initSchema } from '../db/schema.js';
+import * as usageDb from '../db/usage.js';
+import { createAnalyticsRouter } from './analytics.js';
+
+function app(d: Database.Database) {
+  const a = express();
+  a.use(express.json());
+  a.use('/api/analytics', createAnalyticsRouter(d));
+  return a;
+}
+
+describe('analytics routes', () => {
+  let d: Database.Database;
+  beforeEach(() => {
+    d = new Database(':memory:');
+    initSchema(d);
+    usageDb.insertClosed(d, {
+      id: 'a', terminalId: 'term1', projectId: 'proj1', provider: 'claude-code',
+      model: 'claude-opus-5', role: 'agent',
+      startedAt: '2026-08-10T10:00:00.000Z', endedAt: '2026-08-10T10:00:30.000Z', outcome: 'idle',
+      input: 100, output: 50, cacheRead: 0, cacheCreate: 0, messages: 1, toolCalls: 0, backfilled: false,
+    });
+  });
+
+  it('GET /summary returns totals', async () => {
+    const res = await request(app(d)).get('/api/analytics/summary');
+    expect(res.status).toBe(200);
+    expect(res.body.turns).toBe(1);
+    expect(res.body.totalTokens).toBe(150);
+  });
+
+  it('GET /series validates metric and groupBy', async () => {
+    const ok = await request(app(d)).get('/api/analytics/series?metric=tokens&groupBy=model');
+    expect(ok.status).toBe(200);
+    expect(ok.body[0].key).toBe('claude-opus-5');
+
+    const bad = await request(app(d)).get('/api/analytics/series?metric=DROP&groupBy=model');
+    expect(bad.status).toBe(400);
+  });
+
+  it('GET /records returns all-time facts', async () => {
+    const res = await request(app(d)).get('/api/analytics/records');
+    expect(res.status).toBe(200);
+    expect(res.body.totalTurns).toBe(1);
+  });
+
+  it('GET /backfill reports the tracking start, stamping it on first read', async () => {
+    const res = await request(app(d)).get('/api/analytics/backfill');
+    expect(res.status).toBe(200);
+    expect(typeof res.body.trackingStartedAt).toBe('string');
+    const again = await request(app(d)).get('/api/analytics/backfill');
+    expect(again.body.trackingStartedAt).toBe(res.body.trackingStartedAt);
+  });
+});
