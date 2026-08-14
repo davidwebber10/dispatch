@@ -1,0 +1,107 @@
+import type Database from 'better-sqlite3';
+
+export interface TurnRow {
+  id: string;
+  terminal_id: string;
+  project_id: string;
+  provider: string;
+  model: string;
+  role: string;
+  started_at: string;
+  ended_at: string | null;
+  outcome: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_create_tokens: number;
+  messages: number;
+  tool_calls: number;
+  backfilled: number;
+}
+
+export interface OpenTurnInput {
+  id: string;
+  terminalId: string;
+  projectId: string;
+  provider: string;
+  model: string;
+  role: string;
+  startedAt: string;
+}
+
+export interface UsageDelta {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheCreate: number;
+  messages: number;
+  toolCalls: number;
+}
+
+export interface ClosedTurnInput extends OpenTurnInput, UsageDelta {
+  endedAt: string;
+  outcome: string;
+  backfilled: boolean;
+}
+
+export function openTurn(db: Database.Database, input: OpenTurnInput): void {
+  db.prepare(`
+    INSERT INTO usage_turns (id, terminal_id, project_id, provider, model, role, started_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(input.id, input.terminalId, input.projectId, input.provider, input.model, input.role, input.startedAt);
+}
+
+/** The newest still-open turn for a terminal, or null. */
+export function findOpenTurn(db: Database.Database, terminalId: string): TurnRow | null {
+  const result = db.prepare(`
+    SELECT * FROM usage_turns
+    WHERE terminal_id = ? AND ended_at IS NULL
+    ORDER BY started_at DESC LIMIT 1
+  `).get(terminalId) as TurnRow | undefined;
+  return result ?? null;
+}
+
+/**
+ * Add a frame's usage to an open turn. Deliberately additive SQL rather than a
+ * read-modify-write in JS: the recorder writes through on every frame, so a
+ * daemon restart mid-turn loses nothing, and there is no in-memory counter that
+ * could drift from the row.
+ */
+export function addUsage(db: Database.Database, turnId: string, d: UsageDelta): void {
+  db.prepare(`
+    UPDATE usage_turns SET
+      input_tokens        = input_tokens        + ?,
+      output_tokens       = output_tokens       + ?,
+      cache_read_tokens   = cache_read_tokens   + ?,
+      cache_create_tokens = cache_create_tokens + ?,
+      messages            = messages            + ?,
+      tool_calls          = tool_calls          + ?
+    WHERE id = ?
+  `).run(d.input, d.output, d.cacheRead, d.cacheCreate, d.messages, d.toolCalls, turnId);
+}
+
+/** Set the model on a turn that opened without one (the frame names it, the terminal row may not). */
+export function setModelIfEmpty(db: Database.Database, turnId: string, model: string): void {
+  db.prepare(`UPDATE usage_turns SET model = ? WHERE id = ? AND model = ''`).run(model, turnId);
+}
+
+export function closeTurn(db: Database.Database, turnId: string, at: string, outcome: string): void {
+  db.prepare(`UPDATE usage_turns SET ended_at = ?, outcome = ? WHERE id = ? AND ended_at IS NULL`)
+    .run(at, outcome, turnId);
+}
+
+export function insertClosed(db: Database.Database, r: ClosedTurnInput): void {
+  db.prepare(`
+    INSERT INTO usage_turns (
+      id, terminal_id, project_id, provider, model, role, started_at, ended_at, outcome,
+      input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, messages, tool_calls, backfilled
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    r.id, r.terminalId, r.projectId, r.provider, r.model, r.role, r.startedAt, r.endedAt, r.outcome,
+    r.input, r.output, r.cacheRead, r.cacheCreate, r.messages, r.toolCalls, r.backfilled ? 1 : 0,
+  );
+}
+
+export function deleteBackfilled(db: Database.Database): number {
+  return db.prepare(`DELETE FROM usage_turns WHERE backfilled = 1`).run().changes;
+}

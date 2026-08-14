@@ -142,6 +142,36 @@ export function initSchema(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_thread_watches_target ON thread_watches(target_terminal_id);
     CREATE INDEX IF NOT EXISTS idx_thread_watches_watcher ON thread_watches(watcher_terminal_id);
+
+    -- One row per structured turn, written live by analytics/recorder.ts as the
+    -- turn's own events arrive. This is the ONLY table analytics reads; no query
+    -- ever touches a transcript. backfilled marks a row imported by the manual
+    -- history importer, which only ever writes turns older than
+    -- app_state's analytics_tracking_started_at — so imported and measured
+    -- rows can never describe the same turn.
+    CREATE TABLE IF NOT EXISTS usage_turns (
+      id                  TEXT PRIMARY KEY,
+      terminal_id         TEXT NOT NULL,
+      project_id          TEXT NOT NULL,
+      provider            TEXT NOT NULL,
+      model               TEXT NOT NULL DEFAULT '',
+      role                TEXT NOT NULL DEFAULT '',
+      started_at          TEXT NOT NULL,
+      ended_at            TEXT,
+      outcome             TEXT,
+      input_tokens        INTEGER NOT NULL DEFAULT 0,
+      output_tokens       INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens   INTEGER NOT NULL DEFAULT 0,
+      cache_create_tokens INTEGER NOT NULL DEFAULT 0,
+      messages            INTEGER NOT NULL DEFAULT 0,
+      tool_calls          INTEGER NOT NULL DEFAULT 0,
+      backfilled          INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_usage_turns_started  ON usage_turns(started_at);
+    CREATE INDEX IF NOT EXISTS idx_usage_turns_terminal ON usage_turns(terminal_id);
+    CREATE INDEX IF NOT EXISTS idx_usage_turns_project  ON usage_turns(project_id, started_at);
+    CREATE INDEX IF NOT EXISTS idx_usage_turns_open     ON usage_turns(terminal_id) WHERE ended_at IS NULL;
   `);
 
   // Migrations: add columns that may not exist on older databases
