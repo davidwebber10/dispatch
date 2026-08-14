@@ -78,6 +78,16 @@ body { background: var(--color-canvas); color: var(--color-text-primary); font-f
 .md-view tbody tr:nth-child(even) { background: rgba(255,255,255,.025); }
 .md-view img { max-width: 100%; border-radius: 6px; }
 
+/* Release notes reuse the shared markdown surface inside a small scrolling panel
+   (update modal + Settings → UPDATES). Tighten the scale so a full note fits. */
+.release-notes .md-view { font-size: 12.5px; line-height: 1.55; color: var(--color-text-secondary); }
+.release-notes .md-view h1, .release-notes .md-view h2, .release-notes .md-view h3, .release-notes .md-view h4 {
+  font-size: 1.05em; margin: .95em 0 .3em; color: var(--color-text-primary);
+}
+.release-notes .md-view > :first-child { margin-top: 0; }
+.release-notes .md-view > :last-child { margin-bottom: 0; }
+.release-notes .md-view ul, .release-notes .md-view ol { padding-left: 1.2em; }
+
 /* Force monochrome text presentation for symbol glyphs Claude prints (⏺ ◐ ◉ …),
    which iOS otherwise renders as color emoji in the terminal (DOM renderer). */
 .xterm, .xterm-rows { font-variant-emoji: text; }

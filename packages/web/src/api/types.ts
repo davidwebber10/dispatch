@@ -100,12 +100,26 @@ export interface AuthRequest {
   updatedAt: string;
 }
 
+/** One release's human-readable notes, as written in docs/releases/vX.Y.Z.md. */
+export interface ReleaseNote {
+  /** The git tag, e.g. `v2.11.0`. */
+  version: string;
+  url: string;
+  publishedAt: string;
+  /** Markdown. */
+  notes: string;
+}
+
 export interface UpdateState {
   available: boolean;
   version: string | null;
   url: string | null;
   publishedAt: string | null;
   currentVersion: string;
+  /** Notes for every version between the running one and the newest, newest first. */
+  notes?: ReleaseNote[];
+  /** The note for the version running right now, for "what's new" in Settings. */
+  currentNotes?: string | null;
 }
 
 export interface SessionStats {
