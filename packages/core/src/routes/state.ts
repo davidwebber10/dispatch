@@ -98,14 +98,18 @@ export function createStateRouter(db: Database.Database): Router {
       const content = fs.readFileSync(jsonlPath, 'utf-8');
       const stats = sumTranscriptTokens(content);
 
-      // Notional: list-price arithmetic, not a bill. Null when the model is unpriced.
+      // Notional: list-price arithmetic, not a bill.
       const totalCost = notionalValueUsd({
         model: stats.model,
         input: stats.inputTokens,
         output: stats.outputTokens,
         cacheRead: stats.cacheReadTokens,
         cacheCreate: stats.cacheCreationTokens,
-      }) ?? 0;
+      });
+      // null (not 0) when the model has no price entry: "we do not know this model's
+      // price" and "this cost nothing" are different facts, and a caller must be able
+      // to tell them apart.
+      const estimatedCostUSD = totalCost === null ? null : Math.round(totalCost * 100) / 100;
 
       res.json({
         found: true,
@@ -115,7 +119,7 @@ export function createStateRouter(db: Database.Database): Router {
         cacheReadTokens: stats.cacheReadTokens,
         cacheCreationTokens: stats.cacheCreationTokens,
         totalTokens: stats.totalTokens,
-        estimatedCostUSD: Math.round(totalCost * 100) / 100,
+        estimatedCostUSD,
         messageCount: stats.messageCount,
       });
     } catch (err: any) {

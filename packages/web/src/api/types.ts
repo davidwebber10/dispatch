@@ -126,7 +126,7 @@ export interface SessionStats {
   found: boolean;
   model?: string;
   totalTokens?: number;
-  estimatedCostUSD?: number;
+  estimatedCostUSD?: number | null;
   messageCount?: number;
 }
 

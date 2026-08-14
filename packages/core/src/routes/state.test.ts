@@ -99,3 +99,47 @@ describe('GET /api/state/update', () => {
     expect(res.body.currentNotes).toContain('Dispatch');
   });
 });
+
+// session-stats reads ~/.claude/projects/<any-dir>/<sessionId>.jsonl, so we point
+// HOME at a temp dir for these tests (same pattern as tests/sessions/kickstart.test.ts).
+describe('GET /api/state/session-stats/:sessionId', () => {
+  const realHome = process.env.HOME;
+  let home: string;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-state-home-'));
+    process.env.HOME = home;
+  });
+  afterEach(() => {
+    if (realHome === undefined) delete process.env.HOME;
+    else process.env.HOME = realHome;
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  function writeTranscript(sessionId: string, model: string): void {
+    const projDir = path.join(home, '.claude', 'projects', 'test-project');
+    fs.mkdirSync(projDir, { recursive: true });
+    const line = JSON.stringify({
+      type: 'assistant',
+      message: {
+        id: 'msg_1',
+        model,
+        usage: { input_tokens: 999, output_tokens: 999, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      },
+    });
+    fs.writeFileSync(path.join(projDir, `${sessionId}.jsonl`), line);
+  }
+
+  // Regression: notionalValueUsd() returning null for an unpriced model must not be
+  // coerced to 0 at this route boundary — that would silently claim the session cost
+  // nothing when the truth is we simply don't know its price.
+  it('reports estimatedCostUSD as null, not 0, for a model with no price entry', async () => {
+    writeTranscript('unpriced-session', 'some-future-model');
+
+    const res = await request(app()).get('/api/state/session-stats/unpriced-session');
+
+    expect(res.status).toBe(200);
+    expect(res.body.found).toBe(true);
+    expect(res.body.estimatedCostUSD).toBeNull();
+  });
+});
