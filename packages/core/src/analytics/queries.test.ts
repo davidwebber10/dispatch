@@ -28,6 +28,33 @@ describe('analytics queries', () => {
     turn(d, { id: 'c', startedAt: '2026-08-12T09:00:00.000Z', endedAt: '2026-08-12T09:01:00.000Z', input: 1, output: 2, projectId: 'proj2', terminalId: 'term2' });
   });
 
+  /*
+   * The importer writes one row per assistant MESSAGE, not one per turn — a
+   * transcript records no turn boundaries. So after an import the TURNS figure
+   * mixes two units, and the reader has to be told. The tokens stay in the totals
+   * either way; only the COUNT is a different unit.
+   */
+  it('counts imported rows separately, with the same filters as everything else', () => {
+    turn(d, {
+      id: 'imported', startedAt: '2026-08-01T09:00:00.000Z', endedAt: '2026-08-01T09:00:00.000Z',
+      input: 1000, output: 500, backfilled: true,
+    });
+
+    const s = summary(d, {});
+    expect(s.turns).toBe(4);
+    expect(s.backfilledTurns).toBe(1);
+    // Imported tokens are real and stay in the totals.
+    expect(s.inputTokens).toBe(1111);
+
+    // Same filters as every other figure in the summary.
+    expect(summary(d, { from: '2026-08-05T00:00:00.000Z' }).backfilledTurns).toBe(0);
+    expect(summary(d, { projectId: 'proj2' }).backfilledTurns).toBe(0);
+  });
+
+  it('reports zero imported rows when nothing was imported', () => {
+    expect(summary(d, {}).backfilledTurns).toBe(0);
+  });
+
   it('summarises tokens, turns and threads', () => {
     const s = summary(d, {});
     expect(s.turns).toBe(3);

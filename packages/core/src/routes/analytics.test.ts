@@ -77,11 +77,48 @@ describe('analytics routes', () => {
     expect(res.body.totalTurns).toBe(1);
   });
 
-  it('GET /backfill reports the tracking start, stamping it on first read', async () => {
+  it('GET /backfill reports a stable tracking start', async () => {
     const res = await request(app(d)).get('/api/analytics/backfill');
     expect(res.status).toBe(200);
     expect(typeof res.body.trackingStartedAt).toBe('string');
     const again = await request(app(d)).get('/api/analytics/backfill');
     expect(again.body.trackingStartedAt).toBe(res.body.trackingStartedAt);
+  });
+
+  /*
+   * The remove control is shown from this count, so it is deliberately ALL-TIME:
+   * a reader looking at the last 7 days must still be able to undo an import of
+   * much older history.
+   */
+  it('GET /backfill counts imported rows over all time', async () => {
+    const before = await request(app(d)).get('/api/analytics/backfill');
+    expect(before.body.backfilledTurns).toBe(0);
+
+    usageDb.insertClosed(d, {
+      id: 'old', terminalId: 'term1', projectId: 'proj1', provider: 'claude-code',
+      model: 'claude-opus-5', role: 'agent',
+      startedAt: '2020-01-01T00:00:00.000Z', endedAt: '2020-01-01T00:00:00.000Z', outcome: 'idle',
+      input: 5, output: 5, cacheRead: 0, cacheCreate: 0, messages: 1, toolCalls: 0, backfilled: true,
+    });
+
+    const after = await request(app(d)).get('/api/analytics/backfill');
+    expect(after.body.backfilledTurns).toBe(1);
+  });
+
+  it('DELETE /backfill removes imported rows and leaves measured ones', async () => {
+    usageDb.insertClosed(d, {
+      id: 'old', terminalId: 'term1', projectId: 'proj1', provider: 'claude-code',
+      model: 'claude-opus-5', role: 'agent',
+      startedAt: '2020-01-01T00:00:00.000Z', endedAt: '2020-01-01T00:00:00.000Z', outcome: 'idle',
+      input: 5, output: 5, cacheRead: 0, cacheCreate: 0, messages: 1, toolCalls: 0, backfilled: true,
+    });
+
+    const res = await request(app(d)).delete('/api/analytics/backfill');
+    expect(res.status).toBe(200);
+    expect(res.body.removed).toBe(1);
+
+    const summary = await request(app(d)).get('/api/analytics/summary');
+    expect(summary.body.turns).toBe(1);
+    expect(summary.body.backfilledTurns).toBe(0);
   });
 });

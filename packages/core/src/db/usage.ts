@@ -115,6 +115,18 @@ export function insertClosed(db: Database.Database, r: ClosedTurnInput): void {
   );
 }
 
+/**
+ * How many imported rows exist, over all time and every project.
+ *
+ * The history panel needs this rather than the range-filtered figure from
+ * summary(): the "Remove imported history" control acts on the whole table, so
+ * hiding it because the reader happens to be looking at the last 7 days would
+ * strand a user who imported older history.
+ */
+export function countBackfilled(db: Database.Database): number {
+  return (db.prepare(`SELECT COUNT(*) AS n FROM usage_turns WHERE backfilled = 1`).get() as { n: number }).n;
+}
+
 export function deleteBackfilled(db: Database.Database): number {
   return db.prepare(`DELETE FROM usage_turns WHERE backfilled = 1`).run().changes;
 }

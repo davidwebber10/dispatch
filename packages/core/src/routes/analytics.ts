@@ -74,7 +74,14 @@ export function createAnalyticsRouter(db: Database.Database): Router {
   });
 
   router.get('/backfill', (_req, res) => {
-    res.json({ trackingStartedAt: trackingStartedAt(db), ...readBackfillState(db) });
+    // `backfilledTurns` is the ALL-TIME count, deliberately unfiltered: the panel's
+    // remove control acts on the whole table, and the summary's range-scoped count
+    // would hide it from a reader whose current range holds no imported rows.
+    res.json({
+      trackingStartedAt: trackingStartedAt(db),
+      ...readBackfillState(db),
+      backfilledTurns: usageDb.countBackfilled(db),
+    });
   });
 
   // Manual, human-triggered import. Runs synchronously: a few hundred transcripts

@@ -376,6 +376,15 @@ export interface AnalyticsSummary {
    * reported no usage".
    */
   unreportedTurns: number;
+  /**
+   * How many of `turns` came from the history importer, under the same filters.
+   *
+   * Imported rows are one per assistant MESSAGE, not one per turn — a transcript
+   * records no turn boundaries — so a non-zero value here means `turns` mixes two
+   * units. Their tokens are real and stay in every token total; only the count
+   * differs. The TURNS tile must say so rather than let the reader assume.
+   */
+  backfilledTurns: number;
 }
 
 export interface AnalyticsPoint { day: string; key: string; value: number }
@@ -398,4 +407,7 @@ export interface AnalyticsBackfillState {
   total: number;
   lastFinishedAt: string | null;
   error?: string;
+  /** Imported rows in the table, over ALL time — unaffected by the view's filters,
+   * so the remove control stays reachable whatever range the reader is looking at. */
+  backfilledTurns: number;
 }

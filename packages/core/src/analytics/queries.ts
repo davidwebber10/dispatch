@@ -28,6 +28,16 @@ export interface Summary {
    * so the UI reports this number separately as "turns that reported no usage".
    */
   unreportedTurns: number;
+  /**
+   * How many of `turns` came from the history importer.
+   *
+   * These rows are NOT the same unit as a measured turn. A transcript records no
+   * turn boundaries, so importer.ts writes one row per assistant MESSAGE. Their
+   * tokens are real and belong in every token total, but counting them as turns
+   * silently mixes a message count into a turn count — so the UI labels the TURNS
+   * tile whenever this is non-zero rather than letting the reader assume.
+   */
+  backfilledTurns: number;
 }
 
 export interface SeriesPoint { day: string; key: string; value: number }
@@ -67,6 +77,7 @@ export function summary(db: Database.Database, r: Range): Summary {
   const agg = db.prepare(`
     SELECT COUNT(*) AS turns, COUNT(DISTINCT terminal_id) AS threads,
            COALESCE(SUM(CASE WHEN messages = 0 THEN 1 ELSE 0 END), 0) AS unreported_turns,
+           COALESCE(SUM(backfilled), 0)          AS backfilled_turns,
            COALESCE(SUM(input_tokens), 0)        AS input_tokens,
            COALESCE(SUM(output_tokens), 0)       AS output_tokens,
            COALESCE(SUM(cache_read_tokens), 0)   AS cache_read_tokens,
@@ -103,6 +114,7 @@ export function summary(db: Database.Database, r: Range): Summary {
     notionalUsd,
     unpricedTokens,
     unreportedTurns: agg.unreported_turns,
+    backfilledTurns: agg.backfilled_turns,
   };
 }
 

@@ -239,6 +239,8 @@ export function AnalyticsView() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const [reload, setReload] = useState(0);
   // The daemon bumps this through the single events socket every time a turn
   // closes, so an open page follows the work. No timer, no polling.
@@ -333,6 +335,18 @@ export function AnalyticsView() {
   }, []);
 
   /*
+   * Undo an import. It deletes ONLY rows with backfilled = 1; a measured turn is
+   * never touched. Destructive, so it is never a single click — `confirmRemove`
+   * gates it behind a second, explicit press.
+   */
+  const removeImport = useCallback(async () => {
+    setRemoving(true);
+    try { await api.analyticsClearBackfill(); setConfirmRemove(false); setReload((n) => n + 1); }
+    catch (e: unknown) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setRemoving(false); }
+  }, []);
+
+  /*
    * ONE scale per dimension, built from the UNFILTERED domain — every key the
    * table has ever held — and then reused by every block and every filtered view.
    *
@@ -410,6 +424,7 @@ export function AnalyticsView() {
   const isEmpty = summary.turns === 0;
 
   const unreported = Number(summary.unreportedTurns ?? 0);
+  const imported = Number(summary.backfilledTurns ?? 0);
   /*
    * Every turn in this range closed without a usage frame. The token totals are
    * then not a measurement of zero — they are the absence of one, and a "0" would
@@ -418,6 +433,29 @@ export function AnalyticsView() {
    */
   const nothingReported = summary.turns > 0 && unreported >= summary.turns;
   const noUsageTitle = 'No usage was ever reported for these turns, so there is nothing to count. This is not a measured zero.';
+
+  /*
+   * Undoing an import. The count is the ALL-TIME one from /backfill, not the
+   * range-scoped figure, so a reader looking at the last 7 days can still remove
+   * an import of much older history.
+   *
+   * Two presses, always: an import changes what TURNS counts, and a control that
+   * destroys rows on one click is a trap. The confirm step names the number.
+   */
+  const importedAllTime = Number(backfill.backfilledTurns ?? 0);
+  const removeControl = importedAllTime > 0 && (
+    confirmRemove ? (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span style={muted}>Remove {importedAllTime.toLocaleString()} imported {importedAllTime === 1 ? 'row' : 'rows'}? Measured turns are kept.</span>
+        <button onClick={() => void removeImport()} disabled={removing} style={{ ...ghost, color: 'var(--color-status-red)' }}>
+          {removing ? 'Removing…' : 'Remove'}
+        </button>
+        <button onClick={() => setConfirmRemove(false)} disabled={removing} style={ghost}>Cancel</button>
+      </div>
+    ) : (
+      <button onClick={() => setConfirmRemove(true)} style={ghost}>Remove imported history</button>
+    )
+  );
 
   const chartH = isMobile ? 200 : 240;
   const axisTick = { fill: theme.muted, fontSize: 11 };
@@ -464,9 +502,12 @@ export function AnalyticsView() {
             Dispatch records one row per turn as you work. Everything before that date is missing
             until you import it.
           </div>
-          <button onClick={() => void runImport()} disabled={importing} style={{ ...ghost, marginTop: 16 }}>
-            {importing ? 'Importing history…' : 'Import history'}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 16 }}>
+            <button onClick={() => void runImport()} disabled={importing} style={ghost}>
+              {importing ? 'Importing history…' : 'Import history'}
+            </button>
+            {removeControl}
+          </div>
         </div>
       ) : (
         <>
@@ -474,7 +515,15 @@ export function AnalyticsView() {
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(5, 1fr)', gap: 12 }}>
             <Kpi label="TOTAL TOKENS" value={nothingReported ? '—' : fmtTokens(summary.totalTokens)} title={nothingReported ? noUsageTitle : undefined} />
             <Kpi label="OUTPUT TOKENS" value={nothingReported ? '—' : fmtTokens(summary.outputTokens)} title={nothingReported ? noUsageTitle : undefined} />
-            <Kpi label="TURNS" value={summary.turns.toLocaleString()} />
+            {/* An imported row is one assistant MESSAGE, not one turn — the transcript
+                records no turn boundaries. So once history is imported this count mixes
+                two units, and the badge says so instead of letting the reader assume. */}
+            <Kpi
+              label="TURNS"
+              value={summary.turns.toLocaleString()}
+              badge={imported > 0 ? `includes ${imported.toLocaleString()} imported` : undefined}
+              badgeTitle="Imported history has no turn boundaries, so each imported row is one assistant message, not one turn. Their tokens are counted normally."
+            />
             <Kpi label="THREADS" value={summary.threads.toLocaleString()} />
             <Kpi
               label="EQUIVALENT API VALUE"
@@ -649,9 +698,12 @@ export function AnalyticsView() {
                 {backfill.state === 'done' && backfill.lastFinishedAt && ` Last imported ${new Date(backfill.lastFinishedAt).toLocaleString()}.`}
               </div>
             </div>
-            <button onClick={() => void runImport()} disabled={importing || backfill.state === 'running'} style={ghost}>
-              {importing ? 'Importing history…' : 'Import history'}
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <button onClick={() => void runImport()} disabled={importing || backfill.state === 'running'} style={ghost}>
+                {importing ? 'Importing history…' : 'Import history'}
+              </button>
+              {removeControl}
+            </div>
           </div>
         </>
       )}

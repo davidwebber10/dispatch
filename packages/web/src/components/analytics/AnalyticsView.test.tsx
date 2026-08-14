@@ -7,9 +7,10 @@ import { useAnalyticsFeed } from '../../stores/analytics';
 const EMPTY = {
   turns: 0, threads: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0,
   cacheCreateTokens: 0, totalTokens: 0, notionalUsd: 0, unpricedTokens: 0,
+  unreportedTurns: 0, backfilledTurns: 0,
 };
 
-function stub(summary = EMPTY, points: any[] = []) {
+function stub(summary = EMPTY, points: any[] = [], backfilled = 0) {
   vi.spyOn(api, 'analyticsSummary').mockResolvedValue(summary as any);
   vi.spyOn(api, 'analyticsSeries').mockResolvedValue(points as any);
   vi.spyOn(api, 'analyticsTop').mockResolvedValue([] as any);
@@ -19,6 +20,7 @@ function stub(summary = EMPTY, points: any[] = []) {
   } as any);
   vi.spyOn(api, 'analyticsBackfillState').mockResolvedValue({
     trackingStartedAt: '2026-08-13T00:00:00.000Z', state: 'idle', done: 0, total: 0, lastFinishedAt: null,
+    backfilledTurns: backfilled,
   } as any);
 }
 
@@ -34,7 +36,7 @@ function localDay(offsetDays = 0): string {
  * The real `api` client over a fake `fetch`, so a test can read the URL the view
  * actually requested. Returns the list of requested URLs, in order.
  */
-function mockFetch(overrides: { summary?: Record<string, unknown>; providers?: string[] } = {}): string[] {
+function mockFetch(overrides: { summary?: Record<string, unknown>; providers?: string[]; backfilledTurns?: number } = {}): string[] {
   const calls: string[] = [];
   const json = (data: unknown) => Promise.resolve({ ok: true, status: 200, json: async () => data } as unknown as Response);
   vi.stubGlobal('fetch', vi.fn((input: unknown) => {
@@ -55,7 +57,7 @@ function mockFetch(overrides: { summary?: Record<string, unknown>; providers?: s
       });
     }
     if (path === '/api/analytics/backfill') {
-      return json({ trackingStartedAt: '2026-08-13T00:00:00.000Z', state: 'idle', done: 0, total: 0, lastFinishedAt: null });
+      return json({ trackingStartedAt: '2026-08-13T00:00:00.000Z', state: 'idle', done: 0, total: 0, lastFinishedAt: null, backfilledTurns: overrides.backfilledTurns ?? 0 });
     }
     return json({});
   }));
@@ -246,6 +248,65 @@ describe('AnalyticsView', () => {
     await waitFor(() => expect(screen.getByText(/No turns recorded yet/i)).toBeTruthy());
     expect(screen.getByText(/PERSONAL RECORDS/i)).toBeTruthy();
     expect(screen.getByText('900 turns')).toBeTruthy();
+  });
+
+  /*
+   * The importer writes one row per assistant MESSAGE, because a transcript has no
+   * turn boundaries. So after an import the TURNS tile mixes message counts with
+   * turn counts, and nothing on screen used to say so.
+   */
+  it('labels the TURNS tile when some of the count came from an import', async () => {
+    stub({ ...EMPTY, turns: 120, backfilledTurns: 90, totalTokens: 900 });
+    render(<AnalyticsView />);
+    await waitFor(() => expect(screen.getByText('120')).toBeTruthy());
+    const badge = screen.getByText(/includes 90 imported/i);
+    expect(badge.getAttribute('title') ?? '').toMatch(/one assistant message, not one turn/i);
+  });
+
+  it('leaves the TURNS tile unlabelled when nothing was imported', async () => {
+    stub({ ...EMPTY, turns: 120, backfilledTurns: 0, totalTokens: 900 });
+    render(<AnalyticsView />);
+    await waitFor(() => expect(screen.getByText('120')).toBeTruthy());
+    expect(screen.queryByText(/imported/i)).toBeNull();
+  });
+
+  /*
+   * An import the reader cannot undo is a trap, especially now that it changes
+   * what TURNS counts. The control appears only when imported rows exist, and it
+   * never destroys anything on a single click.
+   */
+  it('offers no remove control until imported rows exist', async () => {
+    stub({ ...EMPTY, turns: 3, totalTokens: 10 }, [], 0);
+    render(<AnalyticsView />);
+    await waitFor(() => expect(screen.getByText(/HISTORY/)).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /Remove imported history/i })).toBeNull();
+  });
+
+  it('confirms before removing imported history, and does not delete on the first click', async () => {
+    stub({ ...EMPTY, turns: 3, totalTokens: 10 }, [], 42);
+    const clear = vi.spyOn(api, 'analyticsClearBackfill').mockResolvedValue({ removed: 42 } as any);
+    render(<AnalyticsView />);
+
+    const open = await screen.findByRole('button', { name: /Remove imported history/i });
+    fireEvent.click(open);
+    // First click only asks — nothing has been destroyed.
+    expect(clear).not.toHaveBeenCalled();
+    expect(screen.getByText(/Remove 42 imported rows\?/i)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Remove$/i }));
+    await waitFor(() => expect(clear).toHaveBeenCalledTimes(1));
+  });
+
+  it('cancels the removal without calling the daemon', async () => {
+    stub({ ...EMPTY, turns: 3, totalTokens: 10 }, [], 7);
+    const clear = vi.spyOn(api, 'analyticsClearBackfill').mockResolvedValue({ removed: 0 } as any);
+    render(<AnalyticsView />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Remove imported history/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Cancel/i }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /Remove imported history/i })).toBeTruthy());
+    expect(clear).not.toHaveBeenCalled();
   });
 
   it('charts turn duration as its own chart, in seconds', async () => {
