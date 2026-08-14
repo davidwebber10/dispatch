@@ -10,6 +10,7 @@ import * as ptyDb from '../db/usage-pty.js';
 import { clearTranscriptPathCache } from '../sessions/transcript-path.js';
 import { encodeClaudeProjectDir } from '../platform/encode.js';
 import { attachPtyCapture, type PtyCaptureDeps } from './pty-capture.js';
+import { series, records } from './queries.js';
 
 function claudeLine(model: string, output: number) {
   return JSON.stringify({
@@ -215,7 +216,9 @@ describe('attachPtyCapture', () => {
     expect(all[0].cache_read_tokens).toBe(5);
     expect(all[0].cache_create_tokens).toBe(1);
     expect(all[0].model).toBe('claude-opus-5');
-    expect(all[0].started_at).toBe('2026-08-14T10:00:00.000Z');
+    // started_at == ended_at: a PTY row carries no duration. See the "contributes
+    // no duration" test below for why the previous settle's timestamp is wrong.
+    expect(all[0].started_at).toBe('2026-08-14T10:05:00.000Z');
     expect(all[0].ended_at).toBe('2026-08-14T10:05:00.000Z');
     expect(all[0].outcome).toBe('idle');
     expect(all[0].provider).toBe('claude-code');
@@ -295,6 +298,43 @@ describe('attachPtyCapture', () => {
     expect(state.last_total_input).toBe(140);
     expect(state.last_total_cached).toBe(25);
     expect(state.last_total_output).toBe(70);
+  });
+
+  // A PTY row has no honest start time. The only timestamp capture owns is the
+  // settle it is handling; the previous settle is when the LAST turn ended, so the
+  // gap between them is mostly the user thinking, not the model working. A thread
+  // left open overnight would otherwise write a multi-hour "turn" that lands in
+  // AVG(duration) and in the headline longestTurnSeconds. So a PTY row must sit
+  // out of every duration query, exactly as an imported row does.
+  it('contributes no duration: started_at equals ended_at, for both providers', () => {
+    const workDir = path.join(home, 'proj-dur');
+    const claudeExt = 'sess-dur';
+    const claudeFile = writeClaudeTranscript(workDir, claudeExt, claudeLine('claude-opus-5', 20) + '\n');
+    const claudeTerm = makeTerminal('claude-code', claudeExt, workDir);
+
+    const codexExt = 'codex-dur';
+    const codexFile = writeCodexTranscript(codexExt, codexTurnContext('gpt-5.6-sol') + '\n' + codexTokenCount(100, 10, 50) + '\n');
+    const codexTerm = makeTerminal('codex', codexExt);
+
+    const listener = attachPtyCapture(deps());
+    listener({ terminalId: claudeTerm, sessionId, threadStatus: 'idle' }); // bootstrap
+    listener({ terminalId: codexTerm, sessionId, threadStatus: 'idle' });  // bootstrap
+
+    // Two hours of the user being away, then one short turn on each thread.
+    fs.appendFileSync(claudeFile, claudeLine('claude-opus-5', 7) + '\n');
+    fs.appendFileSync(codexFile, codexTokenCount(140, 25, 70) + '\n');
+    clock = '2026-08-14T12:00:00.000Z';
+    listener({ terminalId: claudeTerm, sessionId, threadStatus: 'idle' });
+    listener({ terminalId: codexTerm, sessionId, threadStatus: 'idle' });
+
+    const all = rows();
+    expect(all.length).toBe(2);
+    for (const row of all) expect(row.started_at).toBe(row.ended_at);
+
+    // The rows are the ONLY rows in this database, so a duration query over them
+    // must report nothing at all rather than a fabricated two hours.
+    expect(series(db, { metric: 'duration', groupBy: 'none' })).toEqual([]);
+    expect(records(db).longestTurnSeconds).toBe(0);
   });
 
   it('records zero and resets when a codex total goes backwards', () => {

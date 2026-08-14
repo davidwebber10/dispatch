@@ -36,6 +36,18 @@ export interface PtyCaptureDeps {
  * Returns the listener rather than subscribing itself — server.ts decides
  * where (and whether) to attach it, and a test can drive it directly.
  *
+ * NO DURATION. Every row this writes sets `started_at` equal to `ended_at`, so it
+ * contributes no duration at all. Capture only ever runs on the settled edge, so
+ * the one timestamp it owns is the END of a turn. The previous settle — the only
+ * other timestamp available — is when the LAST turn ended, so the span between
+ * them is mostly the user reading and typing, not the model working. Using it
+ * would give a thread left open overnight a multi-hour "turn" that lands in
+ * AVG(duration) and reads out as the headline longestTurnSeconds. The live
+ * recorder has a genuine start (the manager's `busy` event); a PTY reader does
+ * not, and honest absence beats a plausible wrong number. This is the same answer
+ * importer.ts gives for a backfilled row, and queries.ts already excludes
+ * `ended_at == started_at` from every duration query for exactly this reason.
+ *
  * Every branch lives inside one try/catch: analytics must never break a turn.
  */
 export function attachPtyCapture(deps: PtyCaptureDeps): SettledListener {
@@ -151,7 +163,7 @@ export function attachPtyCapture(deps: PtyCaptureDeps): SettledListener {
           provider,
           model: tail.model,
           role,
-          startedAt: priorState.updated_at,
+          startedAt: nowStr, // == endedAt: no duration. See NO DURATION below.
           endedAt: nowStr,
           outcome,
           input: tail.input,
@@ -241,7 +253,7 @@ export function attachPtyCapture(deps: PtyCaptureDeps): SettledListener {
         provider,
         model: tail.model,
         role,
-        startedAt: priorState.updated_at,
+        startedAt: nowStr, // == endedAt: no duration. See NO DURATION below.
         endedAt: nowStr,
         outcome,
         input: reset ? 0 : Math.max(0, dInput - dCached),
