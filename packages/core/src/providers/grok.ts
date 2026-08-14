@@ -1,4 +1,4 @@
-import type { SessionProvider } from './types.js';
+import type { SessionProvider, StatusHooksInjection } from './types.js';
 
 /**
  * Run Grok fully autonomously. This is Grok's analogue of Claude's
@@ -21,6 +21,15 @@ const FULL_PERMISSIONS = ['--permission-mode', 'bypassPermissions'];
  */
 function modelArgs(model?: string): string[] {
   return model ? ['--model', model] : [];
+}
+
+/**
+ * The generated plugin directory carrying this thread's hooks and MCP servers. Grok
+ * documents `--plugin-dir` as the highest-priority, always-trusted scope, so nothing stalls
+ * on a trust prompt and the user's own config is left alone.
+ */
+function pluginArgs(statusHooks?: StatusHooksInjection): string[] {
+  return statusHooks?.grokPluginDir ? ['--plugin-dir', statusHooks.grokPluginDir] : [];
 }
 
 /**
@@ -47,24 +56,33 @@ function modelArgs(model?: string): string[] {
 export const grokProvider: SessionProvider = {
   name: 'grok',
   displayName: 'Grok',
-  statusStrategy: 'pty-timing',
+  statusStrategy: 'hooks',
   // `-s/--session-id <UUID>` names a NEW conversation, so Dispatch can assign the id up
   // front instead of hunting for it afterwards. Grok requires a valid UUID that does not
   // already exist under the session directory — a fresh v4 satisfies both.
   assignsSessionId: true,
 
-  buildNewCommand({ prompt, model, sessionId }) {
-    const args = [...FULL_PERMISSIONS, ...modelArgs(model)];
+  buildStatusHooks({ serverUrl, terminalId, grokHelperPath }) {
+    // Grok carries Claude Code's whole hook vocabulary — Stop, PreToolUse, PostToolUse,
+    // SubagentStop, Idle, SessionStart, SessionEnd, Notification, UserPromptSubmit,
+    // PreCompact — so the same lifecycle reporting works, delivered through a plugin dir.
+    if (!grokHelperPath) return undefined;
+    return { grokHooks: { eventsUrl: `${serverUrl}/api/events/grok/${terminalId}`, helperPath: grokHelperPath } };
+  },
+
+  buildNewCommand({ prompt, model, sessionId, statusHooks }) {
+    const args = [...FULL_PERMISSIONS, ...pluginArgs(statusHooks), ...modelArgs(model)];
     if (sessionId) args.push('--session-id', sessionId);
     // The initial prompt is positional: `grok "fix the bug"`, so it goes last.
     if (prompt) args.push(prompt);
     return { command: 'grok', args };
   },
 
-  buildResumeCommand({ externalSessionId, model }) {
+  buildResumeCommand({ externalSessionId, model, statusHooks }) {
     // `-r/--resume <SESSION_ID_OR_TITLE>` resumes in place. A resumed thread must run as
-    // autonomously as a fresh one, so it carries the same permission mode.
-    return { command: 'grok', args: [...FULL_PERMISSIONS, ...modelArgs(model), '--resume', externalSessionId] };
+    // autonomously as a fresh one, so it carries the same permission mode — and the same
+    // hooks and MCP servers, or it would come back mute.
+    return { command: 'grok', args: [...FULL_PERMISSIONS, ...pluginArgs(statusHooks), ...modelArgs(model), '--resume', externalSessionId] };
   },
 
   buildRunnerCommand({ prompt }) {

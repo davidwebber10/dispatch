@@ -25,6 +25,7 @@ import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
 import { resolveTranscriptPath } from './transcript-path.js';
 import { randomUUID } from 'crypto';
+import { writeGrokPlugin, type McpServerEntry } from '../providers/grok-plugin.js';
 import { TERMINAL_ID_ENV_VAR } from '../auth/shim.js';
 import { LOGIN_ARGV, isProviderName } from '../setup/install.js';
 import { withAutoArchive, DEFAULT_AUTO_ARCHIVE_MS } from './auto-archive.js';
@@ -36,6 +37,8 @@ interface StatusContext {
   hooksDir: string;
   /** Absolute path to the Codex notify helper script. */
   codexHelperPath: string;
+  /** Absolute path to the Grok hook helper script. */
+  grokHelperPath?: string;
 }
 
 /** Grace period before the boot kickstart runs, so a save-burst on shutdown can coalesce. */
@@ -194,7 +197,12 @@ export class SessionService {
    * the plan, then do the IO (write the Claude settings file) so the build*
    * commands receive ready-to-use args. No-op until the server sets the context.
    */
-  private buildStatusHooks(terminalId: string, type: string): StatusHooksInjection | undefined {
+  /**
+   * `mcpSpecs` is only consulted by providers whose hooks and MCP servers share one
+   * artifact — Grok, whose plugin directory carries both. Claude writes a settings file and
+   * Codex passes argv, so for them the specs are already handled by composeInjection.
+   */
+  private buildStatusHooks(terminalId: string, type: string, mcpSpecs: McpServerSpec[] = []): StatusHooksInjection | undefined {
     const ctx = this.statusContext;
     if (!ctx) return undefined;
     const provider = getProvider(type);
@@ -202,8 +210,26 @@ export class SessionService {
       serverUrl: ctx.serverUrl,
       terminalId,
       codexHelperPath: ctx.codexHelperPath,
+      grokHelperPath: ctx.grokHelperPath,
     });
     if (!plan) return undefined;
+    if (plan.grokHooks) {
+      try {
+        const mcpServers: Record<string, McpServerEntry> = {};
+        for (const spec of mcpSpecs) {
+          mcpServers[spec.name] = { command: spec.command, args: spec.args, ...(spec.env ? { env: spec.env } : {}) };
+        }
+        const dir = writeGrokPlugin({
+          dir: path.join(ctx.hooksDir, 'grok-plugins', terminalId),
+          mcpServers,
+          eventsUrl: plan.grokHooks.eventsUrl,
+          hookHelperPath: plan.grokHooks.helperPath,
+        });
+        return dir ? { grokPluginDir: dir } : undefined;
+      } catch {
+        return undefined; // hooks are best-effort; never block a spawn
+      }
+    }
     if (plan.claudeSettings) {
       try {
         fs.mkdirSync(ctx.hooksDir, { recursive: true });
@@ -1728,7 +1754,7 @@ export class SessionService {
         // Runner launches emit their own structured stream-json; no hooks needed.
         cmd = provider.buildRunnerCommand({ workDir, prompt: runnerPrompt, secretsMcp });
       } else {
-        const statusHooks = this.buildStatusHooks(terminalId, terminal.type);
+        const statusHooks = this.buildStatusHooks(terminalId, terminal.type, specs);
         const branchFrom: string | undefined = typeof config.branchFrom === 'string' ? config.branchFrom : undefined;
         // Honor a per-thread model pick (config.model) for CLI (PTY) threads too, not
         // just structured ones — the New Thread modal offers the picker in both modes.

@@ -154,9 +154,13 @@ These are deliberate gaps, not oversights:
   `--session-id`, so a Grok thread relaunches into the same conversation after a daemon
   restart. What is missing is *browsing* prior sessions in the New Thread modal:
   `grok sessions list` could back that, but it prints human text with no JSON output flag.
-- **No Doppler secrets MCP.** Grok configures MCP through `grok mcp`, not through argv, so
-  there is no per-spawn injection point of the shape the other two providers use.
-- **No status hooks.** Grok has no `notify`-style completion hook, so thread status falls back
-  to `pty-timing`.
+- ~~No Doppler secrets MCP~~ and ~~no status hooks~~ — **both wrong, and both now shipped.**
+  Grok reads Claude Code plugin layouts, and `--plugin-dir` is documented as the
+  highest-priority, always-trusted scope "used by the Agent SDKs to inject per-connection
+  plugins". Dispatch writes one directory per spawn holding `.mcp.json` (the same servers
+  Claude gets) and `hooks/hooks.json`. Grok's binary carries Claude's full hook vocabulary —
+  `Stop`, `PreToolUse`, `PostToolUse`, `SubagentStop`, `Idle`, `SessionStart`, `SessionEnd`,
+  `Notification`, `UserPromptSubmit`, `PreCompact` — so status is reported the same way, and
+  `statusStrategy` is `hooks`, not `pty-timing`.
 - **Not offered for scheduled agent runs.** `--single` works, but its `streaming-json` emits
   ACP updates that `RunStreamParser` cannot read yet.

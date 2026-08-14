@@ -60,11 +60,6 @@ describe('grok provider', () => {
     expect(grokProvider.buildStructuredCommand).toBeUndefined();
   });
 
-  it('falls back to pty timing for status, having no notify-style hook', () => {
-    expect(grokProvider.statusStrategy).toBe('pty-timing');
-    expect(grokProvider.buildStatusHooks).toBeUndefined();
-  });
-
   it('is reachable from the registry under the name the wire type uses', () => {
     expect(getProvider('grok')).toBe(grokProvider);
     expect(listProviders().map((p) => p.name)).toContain('grok');
@@ -112,5 +107,50 @@ describe('grok assigns its own session id', () => {
     expect(claudeCodeProvider.assignsSessionId).toBeFalsy();
     expect(codexProvider.assignsSessionId).toBeFalsy();
     expect(typeof claudeCodeProvider.captureSessionId).toBe('function');
+  });
+});
+
+describe('grok reports status through hooks', () => {
+  it('uses the hooks strategy, not pty timing', () => {
+    // Grok's binary carries Claude Code's whole hook vocabulary (Stop, PreToolUse,
+    // PostToolUse, SubagentStop, Idle, SessionStart, SessionEnd, Notification,
+    // UserPromptSubmit, PreCompact) — so it can report turn-complete properly.
+    expect(grokProvider.statusStrategy).toBe('hooks');
+    expect(typeof grokProvider.buildStatusHooks).toBe('function');
+  });
+
+  it('points its hooks at the grok events route', () => {
+    const plan = grokProvider.buildStatusHooks!({
+      serverUrl: 'http://127.0.0.1:3456', terminalId: 't1',
+      codexHelperPath: '/opt/codex.mjs', grokHelperPath: '/opt/grok.mjs',
+    });
+    expect(plan?.grokHooks?.eventsUrl).toBe('http://127.0.0.1:3456/api/events/grok/t1');
+    expect(plan?.grokHooks?.helperPath).toBe('/opt/grok.mjs');
+  });
+
+  it('opts out when no helper script was supplied, rather than emitting a broken hook', () => {
+    const plan = grokProvider.buildStatusHooks!({
+      serverUrl: 'http://127.0.0.1:3456', terminalId: 't1', codexHelperPath: '/opt/codex.mjs',
+    });
+    expect(plan).toBeUndefined();
+  });
+
+  it('loads the plugin dir on a new thread', () => {
+    const cmd = grokProvider.buildNewCommand({ workDir: '/tmp', statusHooks: { grokPluginDir: '/data/plugins/t1' } });
+    const i = cmd.args.indexOf('--plugin-dir');
+    expect(i).toBeGreaterThan(-1);
+    expect(cmd.args[i + 1]).toBe('/data/plugins/t1');
+  });
+
+  it('loads it on a resume too, or the thread comes back mute', () => {
+    const cmd = grokProvider.buildResumeCommand({
+      externalSessionId: 'abc', workDir: '/tmp', statusHooks: { grokPluginDir: '/data/plugins/t1' },
+    });
+    expect(cmd.args).toContain('--plugin-dir');
+    expect(cmd.args.indexOf('--plugin-dir')).toBeLessThan(cmd.args.indexOf('--resume'));
+  });
+
+  it('omits --plugin-dir when there is nothing to inject', () => {
+    expect(grokProvider.buildNewCommand({ workDir: '/tmp' }).args).not.toContain('--plugin-dir');
   });
 });

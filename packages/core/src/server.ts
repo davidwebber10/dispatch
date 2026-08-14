@@ -594,6 +594,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     serverUrl: `http://127.0.0.1:${port}`,
     hooksDir: path.join(dataDir, 'hooks'),
     codexHelperPath: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../scripts/codex-notify.mjs'),
+    grokHelperPath: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../scripts/grok-hook.mjs'),
   });
 
   console.log(`Dispatch server listening on port ${port}`);

@@ -22,6 +22,8 @@ export interface StatusHooksContext {
   terminalId: string;
   /** Absolute path to the Codex notify helper script (POSTs the notify payload). */
   codexHelperPath: string;
+  /** Absolute path to the Grok hook helper script (POSTs the hook payload from stdin). */
+  grokHelperPath?: string;
 }
 
 /**
@@ -32,6 +34,12 @@ export interface StatusHooksContext {
 export interface StatusHooksPlan {
   claudeSettings?: Record<string, unknown>;
   codexArgs?: string[];
+  /**
+   * Grok reads hooks from a plugin directory rather than a settings file or argv, and the
+   * SAME directory also carries its MCP servers — so the plan hands back the hooks JSON and
+   * the caller merges it into the one plugin dir it writes for the spawn.
+   */
+  grokHooks?: { eventsUrl: string; helperPath: string };
 }
 
 /** Resolved injection passed into the build* commands (after IO is done). */
@@ -40,6 +48,8 @@ export interface StatusHooksInjection {
   claudeSettingsPath?: string;
   /** Extra `-c notify=[...]` args spliced before the codex subcommand. */
   codexNotifyArgs?: string[];
+  /** Directory passed to `grok --plugin-dir <path>`, holding its hooks AND MCP servers. */
+  grokPluginDir?: string;
 }
 
 export interface SessionProvider {
