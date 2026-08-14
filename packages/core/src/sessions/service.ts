@@ -2009,7 +2009,7 @@ export class SessionService {
    * server or system prompt into, so it's excluded.
    */
   private isPeerEligible(type: string): boolean {
-    return type === 'claude-code' || type === 'codex';
+    return type === 'claude-code' || type === 'codex' || type === 'grok';
   }
 
   /**

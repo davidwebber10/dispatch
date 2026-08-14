@@ -154,3 +154,36 @@ describe('grok reports status through hooks', () => {
     expect(grokProvider.buildNewCommand({ workDir: '/tmp' }).args).not.toContain('--plugin-dir');
   });
 });
+
+describe('grok is told about its tools, not just given them', () => {
+  const prompt = 'Use Doppler for secrets. You have peer tools.';
+
+  it('appends the system prompt with --rules on a new thread', () => {
+    // Registering an MCP server hands the agent the tools; the system prompt is how it
+    // learns to reach for them. Claude uses --append-system-prompt, Codex a developer
+    // instruction; Grok documents --rules as "extra rules to append to the system prompt".
+    const cmd = grokProvider.buildNewCommand({ workDir: '/tmp', secretsMcp: { systemPrompt: prompt } });
+    const i = cmd.args.indexOf('--rules');
+    expect(i).toBeGreaterThan(-1);
+    expect(cmd.args[i + 1]).toBe(prompt);
+  });
+
+  it('appends it on a resume too — a resumed thread must know the same things', () => {
+    const cmd = grokProvider.buildResumeCommand({
+      externalSessionId: 'abc', workDir: '/tmp', secretsMcp: { systemPrompt: prompt },
+    });
+    expect(cmd.args).toContain('--rules');
+    expect(cmd.args.indexOf('--rules')).toBeLessThan(cmd.args.indexOf('--resume'));
+  });
+
+  it('omits --rules when there is nothing to say', () => {
+    expect(grokProvider.buildNewCommand({ workDir: '/tmp' }).args).not.toContain('--rules');
+    expect(grokProvider.buildNewCommand({ workDir: '/tmp', secretsMcp: {} }).args).not.toContain('--rules');
+  });
+
+  it('keeps the prompt ahead of the positional prompt argument', () => {
+    const cmd = grokProvider.buildNewCommand({ workDir: '/tmp', secretsMcp: { systemPrompt: prompt }, prompt: 'do it' });
+    expect(cmd.args[cmd.args.length - 1]).toBe('do it');
+    expect(cmd.args.indexOf('--rules')).toBeLessThan(cmd.args.length - 1);
+  });
+});

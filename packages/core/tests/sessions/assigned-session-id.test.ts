@@ -116,3 +116,47 @@ describe('a provider that assigns its own session id', () => {
     expect(spawned.args).not.toContain('--session-id');
   });
 });
+
+/**
+ * Every harness should be driven the same way. Grok was silently excluded from the peer
+ * tools, so a Grok thread could not spawn agents, message threads, or report_status — which
+ * would have undercut the status hooks it just gained.
+ */
+describe('a grok thread is wired like the others', () => {
+  function withStatus() {
+    const made = makeService();
+    made.svc.setStatusContext({
+      serverUrl: 'http://127.0.0.1:3456',
+      hooksDir: path.join(tmpDir, 'hooks'),
+      codexHelperPath: '/opt/codex-notify.mjs',
+      grokHelperPath: '/opt/grok-hook.mjs',
+    });
+    return made;
+  }
+
+  it('gets the agency peer server, like claude-code and codex do', () => {
+    const { svc } = withStatus();
+    const terminal = svc.createTerminal('s1', 'grok', 'Grok');
+    const mcp = JSON.parse(
+      fs.readFileSync(path.join(tmpDir, 'hooks', 'grok-plugins', terminal.id, '.mcp.json'), 'utf-8'),
+    ) as { mcpServers: Record<string, unknown> };
+    expect(Object.keys(mcp.mcpServers)).toContain('dispatch');
+  });
+
+  it('is told about them — the plugin dir registers the tools, --rules explains them', () => {
+    const { svc, pty } = withStatus();
+    const terminal = svc.createTerminal('s1', 'grok', 'Grok');
+    const spawned = pty.calls.find((c) => c.id === terminal.id)!;
+    expect(spawned.args).toContain('--plugin-dir');
+    expect(spawned.args).toContain('--rules');
+  });
+
+  it('gets its status hooks written alongside them', () => {
+    const { svc } = withStatus();
+    const terminal = svc.createTerminal('s1', 'grok', 'Grok');
+    const hooks = JSON.parse(
+      fs.readFileSync(path.join(tmpDir, 'hooks', 'grok-plugins', terminal.id, 'hooks', 'hooks.json'), 'utf-8'),
+    ) as { hooks: Record<string, unknown> };
+    expect(hooks.hooks.Stop).toBeTruthy();
+  });
+});

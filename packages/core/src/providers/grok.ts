@@ -1,4 +1,4 @@
-import type { SessionProvider, StatusHooksInjection } from './types.js';
+import type { SessionProvider, SecretsMcpInjection, StatusHooksInjection } from './types.js';
 
 /**
  * Run Grok fully autonomously. This is Grok's analogue of Claude's
@@ -33,25 +33,40 @@ function pluginArgs(statusHooks?: StatusHooksInjection): string[] {
 }
 
 /**
+ * The standing instructions that ride with the injected servers — "use Doppler for
+ * secrets", the peer-tools prompt, the tools-awareness note.
+ *
+ * Registering an MCP server hands the agent the tools; this is how it learns to reach for
+ * them. Claude uses `--append-system-prompt` and Codex a developer instruction; Grok
+ * documents `--rules` as "extra rules to append to the system prompt".
+ */
+function rulesArgs(secretsMcp?: SecretsMcpInjection): string[] {
+  return secretsMcp?.systemPrompt ? ['--rules', secretsMcp.systemPrompt] : [];
+}
+
+/**
  * xAI's Grok Build CLI (`grok`), installed by `curl -fsSL https://x.ai/cli/install.sh | bash`.
  *
- * Two capabilities the other providers have are deliberately absent here, rather than
- * guessed at:
+ * Driven the same way as Claude Code and Codex, through the same four injections:
  *
- * - **No `buildStructuredCommand`.** Grok does have a bidirectional stdio channel
- *   (`grok agent stdio`, speaking ACP), so a "Pretty" transport is possible in principle —
- *   but it needs its own manager translating ACP into the Claude-shaped event stream the
- *   ChatView consumes, exactly as CodexStructuredSessionManager does for the app-server
- *   protocol. That is its own project. Until then Grok threads are CLI (PTY) only, and the
- *   New Thread modal renders Pretty disabled for Grok.
- * - **No `buildStatusHooks` / `captureSessionId`.** Grok exposes no `notify`-style
- *   completion hook, so status falls back to `pty-timing`. Nothing captures an external
- *   session id either, so resume-by-id is not offered for Grok yet — `grok sessions list`
- *   could back that later, but it prints human text with no JSON output flag.
+ * - **MCP servers** (Doppler secrets, integrations, the agency peer server) — written to
+ *   `.mcp.json` in a generated plugin dir, passed with `--plugin-dir`.
+ * - **Status hooks** — `hooks/hooks.json` in that same dir. Grok carries Claude Code's whole
+ *   hook vocabulary (`Stop`, `PreToolUse`, `PostToolUse`, `SubagentStop`, `Idle`,
+ *   `SessionStart`, `SessionEnd`, `Notification`, `UserPromptSubmit`, `PreCompact`).
+ * - **The system prompt** — `--rules`, Grok's `--append-system-prompt`.
+ * - **The session id** — assigned up front with `--session-id` rather than discovered.
  *
- * Doppler's secrets MCP is not injected: Grok configures MCP through `grok mcp`, not
- * through argv, so there is no per-spawn injection point of the shape SecretsMcpInjection
- * describes.
+ * ONE capability is genuinely absent: **`buildStructuredCommand`**. Grok has a bidirectional
+ * stdio channel (`grok agent stdio`, speaking ACP), so a "Pretty" transport is possible in
+ * principle, but it needs its own manager translating ACP into the Claude-shaped event
+ * stream the ChatView consumes — exactly what CodexStructuredSessionManager does for the
+ * app-server protocol. Until then Grok threads are CLI (PTY) only, and the New Thread modal
+ * renders Pretty disabled for Grok.
+ *
+ * An earlier version of this comment claimed Grok had no hooks and no MCP injection. Both
+ * were wrong: they were read off the top-level `--help`, which documents neither. The
+ * plugin-dir mechanism is in the README the installer writes to `~/.grok/README.md`.
  */
 export const grokProvider: SessionProvider = {
   name: 'grok',
@@ -70,28 +85,28 @@ export const grokProvider: SessionProvider = {
     return { grokHooks: { eventsUrl: `${serverUrl}/api/events/grok/${terminalId}`, helperPath: grokHelperPath } };
   },
 
-  buildNewCommand({ prompt, model, sessionId, statusHooks }) {
-    const args = [...FULL_PERMISSIONS, ...pluginArgs(statusHooks), ...modelArgs(model)];
+  buildNewCommand({ prompt, model, sessionId, statusHooks, secretsMcp }) {
+    const args = [...FULL_PERMISSIONS, ...pluginArgs(statusHooks), ...rulesArgs(secretsMcp), ...modelArgs(model)];
     if (sessionId) args.push('--session-id', sessionId);
     // The initial prompt is positional: `grok "fix the bug"`, so it goes last.
     if (prompt) args.push(prompt);
     return { command: 'grok', args };
   },
 
-  buildResumeCommand({ externalSessionId, model, statusHooks }) {
+  buildResumeCommand({ externalSessionId, model, statusHooks, secretsMcp }) {
     // `-r/--resume <SESSION_ID_OR_TITLE>` resumes in place. A resumed thread must run as
     // autonomously as a fresh one, so it carries the same permission mode — and the same
     // hooks and MCP servers, or it would come back mute.
-    return { command: 'grok', args: [...FULL_PERMISSIONS, ...pluginArgs(statusHooks), ...modelArgs(model), '--resume', externalSessionId] };
+    return { command: 'grok', args: [...FULL_PERMISSIONS, ...pluginArgs(statusHooks), ...rulesArgs(secretsMcp), ...modelArgs(model), '--resume', externalSessionId] };
   },
 
-  buildRunnerCommand({ prompt }) {
+  buildRunnerCommand({ prompt, secretsMcp }) {
     // `-p/--single <PROMPT>` runs one turn, prints to stdout and EXITS — the process exit
     // is the run-completion signal, mirroring `codex exec`.
     //
     // Output stays `plain` on purpose. Grok's `streaming-json` emits ACP session updates,
     // which RunStreamParser cannot parse (it knows Claude's stream-json and Codex's event
     // JSON). A plain transcript is honest; live step parsing waits for a parser.
-    return { command: 'grok', args: [...FULL_PERMISSIONS, '--single', prompt] };
+    return { command: 'grok', args: [...FULL_PERMISSIONS, ...rulesArgs(secretsMcp), '--single', prompt] };
   },
 };
