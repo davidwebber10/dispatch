@@ -342,3 +342,60 @@ export type AddIntegrationInput =
   | { type: 'remote'; name: string; url: string; headers?: Record<string, string>; env?: Record<string, string> }
   | { type: 'stdio'; name: string; command: string; args?: string[]; env?: Record<string, string> };
 export interface IntegrationsExport { version: 1; integrations: Omit<Integration, 'id' | 'createdAt' | 'updatedAt'>[] }
+
+// Analytics (usage, throughput, personal stats) — mirrors core packages/core/src/analytics/queries.ts
+// and packages/core/src/routes/analytics.ts.
+export interface AnalyticsRange { from?: string; to?: string; projectId?: string }
+export type AnalyticsMetric = 'tokens' | 'outputTokens' | 'turns' | 'duration';
+export type AnalyticsGroupBy = 'model' | 'provider' | 'project' | 'outcome' | 'none';
+export type AnalyticsDimension = 'project' | 'thread' | 'model';
+
+export interface AnalyticsSummary {
+  turns: number;
+  threads: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreateTokens: number;
+  totalTokens: number;
+  /** Notional list-price value of the tokens above. Not a bill — Dispatch runs on a
+   * subscription, so no dollars actually changed hands. This is what the same tokens
+   * would have cost at API list prices. */
+  notionalUsd: number;
+  /** Tokens summed from models with no price entry, and therefore excluded from
+   * `notionalUsd`. Lets the UI mark the notional value as partial rather than implying
+   * it covers every token. */
+  unpricedTokens: number;
+  /**
+   * Turns that closed without a single usage-bearing frame ever being seen.
+   *
+   * This is NOT the same as a turn that used zero tokens. A Codex turn can settle
+   * through its error path without ever emitting a usage frame, and a PTY thread emits
+   * no frames at all. Those turns really did consume tokens; we simply never got a
+   * count. Never render this as a measured zero — show it separately, e.g. "N turns
+   * reported no usage".
+   */
+  unreportedTurns: number;
+}
+
+export interface AnalyticsPoint { day: string; key: string; value: number }
+export interface AnalyticsTopRow { key: string; label: string; value: number }
+
+export interface AnalyticsRecords {
+  totalTokens: number;
+  totalTurns: number;
+  busiestDay: string | null;
+  busiestDayTokens: number;
+  topModel: string | null;
+  activeDays: number;
+  longestTurnSeconds: number;
+}
+
+export interface AnalyticsBackfillState {
+  trackingStartedAt: string;
+  state: 'idle' | 'running' | 'done' | 'error';
+  done: number;
+  total: number;
+  lastFinishedAt: string | null;
+  error?: string;
+}

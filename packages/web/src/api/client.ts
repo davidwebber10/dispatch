@@ -1,4 +1,4 @@
-import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus, PendingPermission, UpdateState, ProviderName, InstallResult } from './types';
+import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsBackfillState } from './types';
 
 /**
  * A content block for a structured `user` turn (mirrors the daemon's wire shape). A
@@ -27,6 +27,14 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 const body = (data: unknown) => JSON.stringify(data);
+
+/** Build a query string from defined values only — an absent filter must not become "undefined". */
+const qs = (o: object): string => {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(o)) if (v !== undefined && v !== null && v !== '') p.set(k, String(v));
+  const s = p.toString();
+  return s ? `?${s}` : '';
+};
 
 export const api = {
   listServers: () => req<{ label: string; origin: string }[]>('/api/servers'),
@@ -262,4 +270,15 @@ export const api = {
       forceable?: boolean;
     };
   },
+
+  // Analytics (usage, throughput, personal stats)
+  analyticsSummary: (r: AnalyticsRange) => req<AnalyticsSummary>(`/api/analytics/summary${qs(r)}`),
+  analyticsSeries: (o: AnalyticsRange & { metric: AnalyticsMetric; groupBy: AnalyticsGroupBy }) =>
+    req<AnalyticsPoint[]>(`/api/analytics/series${qs(o)}`),
+  analyticsTop: (o: AnalyticsRange & { dimension: AnalyticsDimension }) =>
+    req<AnalyticsTopRow[]>(`/api/analytics/top${qs(o)}`),
+  analyticsRecords: () => req<AnalyticsRecords>('/api/analytics/records'),
+  analyticsBackfillState: () => req<AnalyticsBackfillState>('/api/analytics/backfill'),
+  analyticsRunBackfill: () => req<{ imported: number; skipped: number; threads: number }>('/api/analytics/backfill', { method: 'POST' }),
+  analyticsClearBackfill: () => req<{ removed: number }>('/api/analytics/backfill', { method: 'DELETE' }),
 };
