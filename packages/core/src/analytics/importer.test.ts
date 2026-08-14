@@ -4,7 +4,8 @@ import os from 'os';
 import path from 'path';
 import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema.js';
-import { importHistory } from './importer.js';
+import { importHistory, clearStaleImportState } from './importer.js';
+import { readBackfillState, writeBackfillState } from './backfill-state.js';
 
 const CUTOFF = '2026-08-13T00:00:00.000Z';
 
@@ -72,5 +73,58 @@ describe('history importer', () => {
     const res = importHistory(d, { cutoff: CUTOFF, threads: [{ terminalId: 'term1', projectId: 'proj1', provider: 'grok', role: '', transcriptPath: path.join(dir, 'nope.jsonl') }] });
     expect(res.imported).toBe(0);
     expect(res.threads).toBe(0);
+  });
+
+  it('tolerates a blank line, malformed JSON, and a usage line with no timestamp — only the good line imports', () => {
+    const noTimestamp = JSON.stringify({
+      type: 'assistant',
+      message: { model: 'claude-opus-5', content: [{ type: 'text', text: 'x' }],
+        usage: { input_tokens: 5, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } },
+    });
+    const file = writeTranscript('s5', [
+      '',
+      'not json at all {{{',
+      noTimestamp,
+      line('2026-08-10T10:00:00.000Z', 20),
+    ]);
+    const res = importHistory(d, { cutoff: CUTOFF, threads: [{ terminalId: 'term1', projectId: 'proj1', provider: 'claude-code', role: '', transcriptPath: file }] });
+    expect(res.imported).toBe(1);
+    // The blank line and the malformed-JSON line are silently ignored (never
+    // counted, in either direction); only the usage-bearing line missing a
+    // timestamp is counted as skipped.
+    expect(res.skipped).toBe(1);
+    const rows = d.prepare('SELECT * FROM usage_turns').all() as any[];
+    expect(rows.length).toBe(1);
+    expect(rows[0].output_tokens).toBe(20);
+  });
+});
+
+describe('clearStaleImportState', () => {
+  let d: Database.Database;
+
+  beforeEach(() => {
+    d = new Database(':memory:');
+    initSchema(d);
+  });
+
+  it('turns a persisted running state into error', () => {
+    writeBackfillState(d, { state: 'running', done: 3, total: 10, lastFinishedAt: null });
+    const changed = clearStaleImportState(d);
+    expect(changed).toBe(true);
+    const state = readBackfillState(d);
+    expect(state.state).toBe('error');
+    expect(state.error).toBe('interrupted by a restart');
+  });
+
+  it('leaves an idle or done state untouched, and returns false', () => {
+    writeBackfillState(d, { state: 'idle', done: 0, total: 0, lastFinishedAt: null });
+    expect(clearStaleImportState(d)).toBe(false);
+    expect(readBackfillState(d).state).toBe('idle');
+
+    writeBackfillState(d, { state: 'done', done: 5, total: 5, lastFinishedAt: '2026-08-14T00:00:00.000Z' });
+    expect(clearStaleImportState(d)).toBe(false);
+    const done = readBackfillState(d);
+    expect(done.state).toBe('done');
+    expect(done.lastFinishedAt).toBe('2026-08-14T00:00:00.000Z');
   });
 });

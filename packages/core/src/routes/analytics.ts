@@ -8,6 +8,14 @@ import * as sessionsDb from '../db/sessions.js';
 import { importHistory } from '../analytics/importer.js';
 import { resolveTranscriptPath } from '../sessions/cc-sessions.js';
 import * as usageDb from '../db/usage.js';
+import { readBackfillState, writeBackfillState } from '../analytics/backfill-state.js';
+import type { BackfillState } from '../analytics/backfill-state.js';
+
+// Re-exported for anything still importing these from routes/analytics.js — the
+// state itself moved to analytics/backfill-state.ts so analytics/importer.ts can
+// read/clear it without an import cycle through this router.
+export type { BackfillState };
+export { readBackfillState, writeBackfillState };
 
 const METRICS: ReadonlySet<string> = new Set(['tokens', 'outputTokens', 'turns', 'duration']);
 const GROUPS: ReadonlySet<string> = new Set(['model', 'provider', 'project', 'outcome', 'none']);
@@ -111,25 +119,4 @@ export function createAnalyticsRouter(db: Database.Database): Router {
   });
 
   return router;
-}
-
-export interface BackfillState {
-  state: 'idle' | 'running' | 'done' | 'error';
-  done: number;
-  total: number;
-  lastFinishedAt: string | null;
-  error?: string;
-}
-
-const BACKFILL_KEY = 'analytics_backfill_state';
-
-export function readBackfillState(db: Database.Database): BackfillState {
-  const raw = appState.get(db, BACKFILL_KEY);
-  if (!raw) return { state: 'idle', done: 0, total: 0, lastFinishedAt: null };
-  try { return JSON.parse(raw) as BackfillState; }
-  catch { return { state: 'idle', done: 0, total: 0, lastFinishedAt: null }; }
-}
-
-export function writeBackfillState(db: Database.Database, s: BackfillState): void {
-  appState.set(db, BACKFILL_KEY, JSON.stringify(s));
 }

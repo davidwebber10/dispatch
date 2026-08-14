@@ -24,6 +24,7 @@ import { createServersRouter } from './routes/servers.js';
 import { createFilesRouter } from './routes/files.js';
 import { createStateRouter } from './routes/state.js';
 import { attachUsageRecorder, closeInterruptedTurns } from './analytics/recorder.js';
+import { clearStaleImportState } from './analytics/importer.js';
 import { createGitRouter } from './routes/git.js';
 import { createSecretsRouter } from './routes/secrets.js';
 import { createTranscribeRouter } from './routes/transcribe.js';
@@ -479,6 +480,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   // A daemon that died mid-turn left rows open; close them before anything reads them.
   closeInterruptedTurns(db);
+
+  // A daemon that died mid-import left the backfill state stuck at 'running',
+  // which would 409 the Import button forever. Clear it — the import is
+  // synchronous and in-process, so a restart makes any 'running' state stale.
+  clearStaleImportState(db);
 
   // Mount routes
   app.use('/api/sessions', createSessionsRouter(sessionService, broadcaster));

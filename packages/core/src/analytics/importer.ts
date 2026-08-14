@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import type Database from 'better-sqlite3';
 import * as usageDb from '../db/usage.js';
 import { usageFromFrame, toolCallsInFrame } from './frames.js';
+import { readBackfillState, writeBackfillState } from './backfill-state.js';
 
 export interface ImportThread {
   terminalId: string;
@@ -92,4 +93,25 @@ export function importHistory(
   }
 
   return { imported, skipped, threads };
+}
+
+/**
+ * Clear a persisted `running` import state left behind by a daemon that died
+ * mid-import. The import is synchronous and in-process, so a `running` state that
+ * survives a restart describes a process that no longer exists — it can only ever
+ * be stale. Without this, the POST guard's 409 would block the import button
+ * forever, and the only escape would be a DELETE the UI has no reason to offer.
+ *
+ * Mirrors closeInterruptedTurns: a restart makes the leftover state a lie, so the
+ * boot path corrects it rather than leaving a user stuck.
+ */
+export function clearStaleImportState(db: Database.Database): boolean {
+  try {
+    const state = readBackfillState(db);
+    if (state.state !== 'running') return false;
+    writeBackfillState(db, { state: 'error', done: state.done, total: state.total, lastFinishedAt: null, error: 'interrupted by a restart' });
+    return true;
+  } catch {
+    return false;
+  }
 }
