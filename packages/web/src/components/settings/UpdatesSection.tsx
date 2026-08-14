@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useUpdate } from '../../stores/update';
 import { useApplyUpdate } from '../update/useApplyUpdate';
+import { ReleaseNotes } from '../update/ReleaseNotes';
 
 const sectionLabel: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
 const row: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 };
@@ -15,6 +16,8 @@ const ghostBtn: React.CSSProperties = { height: 30, padding: '0 14px', backgroun
 export function UpdatesSection() {
   const available = useUpdate((s) => s.available);
   const currentVersion = useUpdate((s) => s.currentVersion);
+  const notes = useUpdate((s) => s.notes);
+  const currentNotes = useUpdate((s) => s.currentNotes);
   const { apply, applying, failReason, inProgress } = useApplyUpdate();
   const [checking, setChecking] = useState(false);
   const [checked, setChecked] = useState(false);
@@ -55,6 +58,8 @@ export function UpdatesSection() {
           Couldn't update automatically: {failReason} Run <code style={{ font: '400 11px var(--font-mono)' }}>dispatch update</code> manually instead.
         </div>
       )}
+      {/* Pending update → what it contains. Up to date → what the running version brought. */}
+      <ReleaseNotes notes={notes} currentNote={currentNotes} currentVersion={currentVersion} />
     </div>
   );
 }

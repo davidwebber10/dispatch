@@ -9,7 +9,7 @@ import { UpdateModal } from './UpdateModal';
 import { useUpdate } from '../../stores/update';
 
 beforeEach(() => {
-  useUpdate.setState({ available: null, currentVersion: null, dismissedVersion: null, inProgress: false });
+  useUpdate.setState({ available: null, currentVersion: null, dismissedVersion: null, inProgress: false, notes: [], currentNotes: null });
   applyUpdate.mockReset();
   getUpdateState.mockReset();
   getUpdateState.mockResolvedValue({ available: false, version: null, url: null, publishedAt: null, currentVersion: '1.0.0' });
@@ -109,4 +109,35 @@ test('no Update anyway button when the preflight failure is not forceable', asyn
   fireEvent.click(screen.getByText('Update'));
   await waitFor(() => expect(screen.getByText(/network unreachable/)).toBeInTheDocument());
   expect(screen.queryByText('Update anyway')).not.toBeInTheDocument();
+});
+
+test('offers a collapsed Release notes row, and expands it in place', () => {
+  useUpdate.setState({
+    available: { version: 'v1.2.0', url: null, publishedAt: null },
+    currentVersion: '1.1.0',
+    notes: [{ version: 'v1.2.0', url: 'u', publishedAt: '2026-08-01T00:00:00Z', notes: '# Dispatch v1.2.0 — the headline\n\nWhat changed.' }],
+  });
+  render(<UpdateModal />);
+  expect(screen.queryByText('What changed.')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByText('Release notes'));
+  expect(screen.getByText('the headline')).toBeInTheDocument();
+  expect(screen.getByText('What changed.')).toBeInTheDocument();
+  // The Update action stays reachable with the notes open.
+  expect(screen.getByText('Update')).toBeInTheDocument();
+});
+
+test('shows no Release notes row when the server sent none', () => {
+  useUpdate.setState({ available: { version: 'v1.2.0', url: null, publishedAt: null }, notes: [] });
+  render(<UpdateModal />);
+  expect(screen.queryByText('Release notes')).not.toBeInTheDocument();
+});
+
+test('expanding the notes does not dismiss the modal', () => {
+  useUpdate.setState({
+    available: { version: 'v1.2.0', url: null, publishedAt: null },
+    notes: [{ version: 'v1.2.0', url: 'u', publishedAt: null as unknown as string, notes: 'Body.' }],
+  });
+  render(<UpdateModal />);
+  fireEvent.click(screen.getByText('Release notes'));
+  expect(screen.getByText('Update available')).toBeInTheDocument();
 });

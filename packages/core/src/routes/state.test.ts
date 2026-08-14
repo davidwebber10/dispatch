@@ -9,6 +9,7 @@ import { createDatabase } from '../db/connection.js';
 import * as appState from '../db/app-state.js';
 import { createStateRouter } from './state.js';
 import { getRunningVersion } from '../update/version.js';
+import { readLocalReleaseNote } from '../update/notes.js';
 
 let dir: string;
 let db: Database.Database;
@@ -38,6 +39,8 @@ describe('GET /api/state/update', () => {
       url: null,
       publishedAt: null,
       currentVersion: getRunningVersion(),
+      notes: [],
+      currentNotes: readLocalReleaseNote(getRunningVersion()),
     });
   });
 
@@ -47,7 +50,7 @@ describe('GET /api/state/update', () => {
     appState.set(db, 'latest_release_published_at', '2026-01-01T00:00:00Z');
 
     const res = await request(app()).get('/api/state/update');
-    expect(res.body).toEqual({
+    expect(res.body).toMatchObject({
       available: true,
       version: 'v999.0.0',
       url: 'https://example.com/v999.0.0',
@@ -64,5 +67,35 @@ describe('GET /api/state/update', () => {
     const res = await request(app()).get('/api/state/update');
     expect(res.body.available).toBe(false);
     expect(res.body.version).toBeNull();
+  });
+
+  it('returns the release notes for every version between the running one and the newest', async () => {
+    appState.set(db, 'latest_release_tag', 'v999.1.0');
+    appState.set(db, 'latest_release_notes', JSON.stringify([
+      { version: 'v999.1.0', url: 'u', publishedAt: 'p', notes: '# 999.1.0\n\nSecond.' },
+      { version: 'v999.0.0', url: 'u', publishedAt: 'p', notes: '# 999.0.0\n\nFirst.' },
+    ]));
+
+    const res = await request(app()).get('/api/state/update');
+    expect(res.body.notes.map((n: { version: string }) => n.version)).toEqual(['v999.1.0', 'v999.0.0']);
+    expect(res.body.notes[0].notes).toContain('Second.');
+  });
+
+  it('withholds notes for a version this daemon already runs', async () => {
+    // The same stale-state case as above: the cache is never a trusted flag.
+    appState.set(db, 'latest_release_tag', getRunningVersion());
+    appState.set(db, 'latest_release_notes', JSON.stringify([
+      { version: getRunningVersion(), url: 'u', publishedAt: 'p', notes: 'already installed' },
+    ]));
+
+    const res = await request(app()).get('/api/state/update');
+    expect(res.body.notes).toEqual([]);
+  });
+
+  it('returns the note for the running version so Settings can show "what is new"', async () => {
+    const res = await request(app()).get('/api/state/update');
+    // This checkout ships docs/releases/v<current>.md, so the note resolves from disk.
+    expect(res.body.currentNotes).toBe(readLocalReleaseNote(getRunningVersion()));
+    expect(res.body.currentNotes).toContain('Dispatch');
   });
 });
