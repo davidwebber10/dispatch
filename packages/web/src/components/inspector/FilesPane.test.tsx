@@ -447,6 +447,20 @@ test('dotfiles are hidden by default and appear after the ·* toggle', async () 
   expect(await screen.findByText('.env')).toBeInTheDocument();
 });
 
+test('search omits hidden paths until the ·* toggle is on', async () => {
+  render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
+  await screen.findByText('a.png');
+
+  fireEvent.change(screen.getByPlaceholderText(/Filter files/), { target: { value: 'env' } });
+  await waitFor(() => expect(api.listFilesFlat).toHaveBeenCalledWith('p1'));
+  await waitFor(() => expect(document.body.textContent).toMatch(/0 MATCHES/));
+  expect(document.body.textContent).not.toContain('.env');
+
+  fireEvent.click(screen.getByTitle('Show dotfiles'));
+  await waitFor(() => expect(document.body.textContent).toContain('.env'));
+  expect(document.body.textContent).toMatch(/1 MATCHES/);
+});
+
 test('Changed mode lists the uncommitted files with their status letter', async () => {
   render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
   await screen.findByText('a.png');

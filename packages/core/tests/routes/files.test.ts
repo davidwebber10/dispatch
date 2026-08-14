@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import request from 'supertest';
+import { execFileSync } from 'child_process';
 
 // NOTE: this file must NEVER vi.mock('child_process') — createApp shells out at boot.
 import { isLoopbackAddress, isLoopbackHost, type RevealClient } from '../../src/files/reveal.js';
@@ -42,6 +43,43 @@ describe('file routes', () => {
     const res = await request(app).get('/api/sessions/s1/files?path=.');
     expect(res.status).toBe(200);
     expect(res.body.some((f: any) => f.name === 'hello.txt')).toBe(true);
+  });
+
+  describe('GET /files/flat', () => {
+    it('includes gitignored hidden files the tree can show, but not node_modules or nested checkouts', async () => {
+      // The Files tree is a raw readdir (so ·* reveals .env / .dispatch). Search used to
+      // be `git ls-files --exclude-standard`, which drops those same paths — the toggle
+      // then had nothing to reveal. A nested worktree under a hidden folder, and
+      // node_modules/.bin, must stay out or they swamp the 20k cap.
+      fs.writeFileSync(path.join(tmpDir, '.gitignore'), [
+        '.env',
+        '.dispatch/',
+        'node_modules/',
+        '.claude/worktrees/',
+        '',
+      ].join('\n'));
+      fs.mkdirSync(path.join(tmpDir, '.github'), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, '.github', 'ci.yml'), 'on: push\n');
+      fs.writeFileSync(path.join(tmpDir, '.env'), 'SECRET=1\n');
+      fs.mkdirSync(path.join(tmpDir, '.dispatch', 'inbox'), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, '.dispatch', 'inbox', 'secret.txt'), 'inbox\n');
+      fs.mkdirSync(path.join(tmpDir, 'node_modules', '.bin'), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, 'node_modules', '.bin', 'cli'), '#!/bin/sh\n');
+      fs.mkdirSync(path.join(tmpDir, '.claude', 'worktrees', 'x'), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, '.claude', 'worktrees', 'x', '.git'), 'gitdir: /tmp/fake\n');
+      fs.writeFileSync(path.join(tmpDir, '.claude', 'worktrees', 'x', 'clone.ts'), 'export {}\n');
+      execFileSync('git', ['init', '-b', 'main'], { cwd: tmpDir });
+
+      const res = await request(app).get('/api/sessions/s1/files/flat');
+      expect(res.status).toBe(200);
+      const files: string[] = res.body.files;
+      expect(files).toContain('hello.txt');
+      expect(files).toContain('.github/ci.yml');
+      expect(files).toContain('.env');
+      expect(files).toContain('.dispatch/inbox/secret.txt');
+      expect(files).not.toContain('node_modules/.bin/cli');
+      expect(files).not.toContain('.claude/worktrees/x/clone.ts');
+    });
   });
 
   it('reads a file', async () => {

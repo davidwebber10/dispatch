@@ -142,7 +142,7 @@ export const api = {
 
   // Files (sandboxed to the session working dir)
   listFiles: (sessionId: string, p = '.') => req<FileEntry[]>(`/api/sessions/${sessionId}/files?path=${encodeURIComponent(p)}`),
-  // Every file path under the working dir (git ls-files, .gitignore-aware) — feeds the Files search.
+  // Every file path under the working dir (git-visible + gitignored hidden paths) — feeds Files search.
   listFilesFlat: (sessionId: string) => req<{ files: string[]; truncated: boolean }>(`/api/sessions/${sessionId}/files/flat`),
   readFile: (sessionId: string, p: string) => req<{ content: string; path: string }>(`/api/sessions/${sessionId}/files/read?path=${encodeURIComponent(p)}`),
   // Byte-route URL for an image file (sandboxed to the session working dir). Sync URL

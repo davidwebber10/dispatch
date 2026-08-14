@@ -13,6 +13,45 @@ import { platform } from '../platform/index.js';
  *  the only route that shells out — an unbounded argv is not worth the risk. */
 const MAX_REVEAL_PATHS = 256;
 
+const FLAT_CAP = 20000;
+const FLAT_SKIP = new Set(['.git', 'node_modules', 'dist', 'build', '.next', '__pycache__']);
+
+function isHiddenRelPath(p: string): boolean {
+  return p.split(/[\\/]/).some((seg) => seg.startsWith('.') && seg !== '.' && seg !== '..');
+}
+
+function hasSkippedSegment(p: string): boolean {
+  return p.split(/[\\/]/).some((seg) => FLAT_SKIP.has(seg));
+}
+
+/** True when some parent of `relPath` is a nested git checkout / worktree (has its own `.git`). */
+function underNestedGit(workingDir: string, relPath: string, cache: Map<string, boolean>): boolean {
+  const parts = relPath.split(/[\\/]/);
+  let acc = workingDir;
+  for (const part of parts.slice(0, -1)) {
+    acc = path.join(acc, part);
+    if (part === '.git') return true;
+    let hit = cache.get(acc);
+    if (hit === undefined) {
+      hit = fs.existsSync(path.join(acc, '.git'));
+      cache.set(acc, hit);
+    }
+    if (hit) return true;
+  }
+  return false;
+}
+
+function gitLsFiles(workingDir: string, extraArgs: string[]): Promise<string[] | null> {
+  return new Promise((resolve) => {
+    execFile(
+      'git',
+      ['-C', workingDir, 'ls-files', ...extraArgs, '-z'],
+      { timeout: 10_000, maxBuffer: 32 * 1024 * 1024 },
+      (err, stdout) => resolve(err ? null : stdout.split('\0').filter(Boolean)),
+    );
+  });
+}
+
 export function createFilesRouter(db: Database.Database): Router {
   const router = Router({ mergeParams: true });
   const upload = multer({ dest: '/tmp/commandcenter-uploads' });
@@ -90,36 +129,37 @@ export function createFilesRouter(db: Database.Database): Router {
   });
 
   // GET /api/sessions/:id/files/flat — every file path under the working dir, for search.
-  // Inside a git repo this is `git ls-files` (tracked + untracked-but-not-ignored), which
-  // respects .gitignore and is fast even on big repos. Outside git it falls back to a
-  // bounded fs walk that skips the classic bulk directories.
+  // Inside a git repo the base set is `git ls-files` (tracked + untracked-but-not-ignored).
+  // Hidden paths the Files tree can show (`.env`, `.dispatch/…`) are often gitignored, so
+  // we merge those back in — still skipping node_modules / nested worktrees so they cannot
+  // blow the cap. Outside git it falls back to a bounded fs walk.
   router.get('/flat', async (req, res) => {
     const session = (req as any).session;
-    const CAP = 20000;
     try {
-      const files = await new Promise<string[] | null>((resolve) => {
-        execFile(
-          'git',
-          ['-C', session.workingDir, 'ls-files', '--cached', '--others', '--exclude-standard', '-z'],
-          { timeout: 10_000, maxBuffer: 32 * 1024 * 1024 },
-          (err, stdout) => resolve(err ? null : stdout.split('\0').filter(Boolean)),
-        );
-      });
+      const files = await gitLsFiles(session.workingDir, ['--cached', '--others', '--exclude-standard']);
       if (files) {
-        return res.json({ files: files.slice(0, CAP), truncated: files.length > CAP });
+        const ignored = await gitLsFiles(session.workingDir, ['--others', '--ignored', '--exclude-standard']) ?? [];
+        const seen = new Set(files);
+        const gitCache = new Map<string, boolean>();
+        for (const p of ignored) {
+          if (seen.has(p) || !isHiddenRelPath(p) || hasSkippedSegment(p)) continue;
+          if (underNestedGit(session.workingDir, p, gitCache)) continue;
+          files.push(p);
+          seen.add(p);
+        }
+        return res.json({ files: files.slice(0, FLAT_CAP), truncated: files.length > FLAT_CAP });
       }
       // Non-git fallback: breadth-limited walk.
-      const SKIP = new Set(['.git', 'node_modules', 'dist', 'build', '.next', '__pycache__']);
       const out: string[] = [];
       let truncated = false;
       const walk = (dir: string) => {
-        if (out.length >= CAP) { truncated = true; return; }
+        if (out.length >= FLAT_CAP) { truncated = true; return; }
         let entries: fs.Dirent[];
         try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
         for (const e of entries) {
-          if (out.length >= CAP) { truncated = true; return; }
+          if (out.length >= FLAT_CAP) { truncated = true; return; }
           const abs = path.join(dir, e.name);
-          if (e.isDirectory()) { if (!SKIP.has(e.name)) walk(abs); }
+          if (e.isDirectory()) { if (!FLAT_SKIP.has(e.name)) walk(abs); }
           else if (e.isFile()) out.push(path.relative(session.workingDir, abs));
         }
       };
