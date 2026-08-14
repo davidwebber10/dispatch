@@ -99,6 +99,131 @@ describe('history importer', () => {
   });
 });
 
+describe('history importer — Codex', () => {
+  let dir: string;
+  let d: Database.Database;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-import-codex-'));
+    d = new Database(':memory:');
+    initSchema(d);
+  });
+  afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  function writeTranscript(name: string, lines: string[]) {
+    const file = path.join(dir, `${name}.jsonl`);
+    fs.writeFileSync(file, lines.join('\n') + '\n');
+    return file;
+  }
+
+  function tokenCount(at: string, input: number, cached: number, output: number) {
+    return JSON.stringify({
+      timestamp: at,
+      type: 'event_msg',
+      payload: {
+        type: 'token_count',
+        info: {
+          total_token_usage: {
+            input_tokens: input, cached_input_tokens: cached,
+            output_tokens: output, reasoning_output_tokens: 0, total_tokens: input + output,
+          },
+          // Deliberately absurd: proves the importer never reads this field.
+          last_token_usage: { input_tokens: 999999, cached_input_tokens: 0, output_tokens: 999999, reasoning_output_tokens: 0, total_tokens: 1999998 },
+        },
+      },
+    });
+  }
+
+  function turnContext(at: string, model: string) {
+    return JSON.stringify({ timestamp: at, type: 'turn_context', payload: { model } });
+  }
+
+  it('imports Codex history by diffing the running total against a zero baseline', () => {
+    const file = writeTranscript('cx1', [
+      turnContext('2026-08-10T09:00:00.000Z', 'gpt-5.6-sol'),
+      tokenCount('2026-08-10T09:00:01.000Z', 100, 20, 30),
+    ]);
+    const res = importHistory(d, { cutoff: CUTOFF, threads: [{ terminalId: 'term1', projectId: 'proj1', provider: 'codex', role: 'agent', transcriptPath: file }] });
+    expect(res.imported).toBe(1);
+    const row = d.prepare('SELECT * FROM usage_turns').get() as any;
+    expect(row.model).toBe('gpt-5.6-sol');
+    expect(row.provider).toBe('codex');
+    expect(row.cache_read_tokens).toBe(20);
+    expect(row.input_tokens).toBe(80); // input_tokens(100) - cached_input_tokens(20)
+    expect(row.output_tokens).toBe(30);
+    expect(row.cache_create_tokens).toBe(0);
+    expect(row.backfilled).toBe(1);
+  });
+
+  it('walks token_count events forward, diffing consecutive totals and attributing each diff to the most recent preceding turn_context', () => {
+    const file = writeTranscript('cx2', [
+      turnContext('2026-08-10T09:00:00.000Z', 'gpt-5.6-sol'),
+      tokenCount('2026-08-10T09:00:01.000Z', 100, 20, 30),
+      turnContext('2026-08-10T09:00:02.000Z', 'gpt-5.6-terra'), // mid-session /model switch
+      tokenCount('2026-08-10T09:00:03.000Z', 250, 60, 70),
+    ]);
+    const res = importHistory(d, { cutoff: CUTOFF, threads: [{ terminalId: 'term1', projectId: 'proj1', provider: 'codex', role: '', transcriptPath: file }] });
+    expect(res.imported).toBe(2);
+    const rows = d.prepare('SELECT * FROM usage_turns ORDER BY started_at').all() as any[];
+    expect(rows[0].model).toBe('gpt-5.6-sol');
+    expect(rows[0].input_tokens).toBe(80);
+    expect(rows[0].cache_read_tokens).toBe(20);
+    expect(rows[0].output_tokens).toBe(30);
+
+    // Second step diffs against the FIRST total, not zero: input 150, cached 40, output 40.
+    expect(rows[1].model).toBe('gpt-5.6-terra');
+    expect(rows[1].input_tokens).toBe(110); // 150 - 40
+    expect(rows[1].cache_read_tokens).toBe(40);
+    expect(rows[1].output_tokens).toBe(40);
+  });
+
+  it('refuses a Codex token_count at or after the cutoff', () => {
+    const file = writeTranscript('cx3', [
+      tokenCount('2026-08-10T09:00:00.000Z', 100, 20, 30),
+      tokenCount(CUTOFF, 200, 20, 30),
+    ]);
+    const res = importHistory(d, { cutoff: CUTOFF, threads: [{ terminalId: 'term1', projectId: 'proj1', provider: 'codex', role: '', transcriptPath: file }] });
+    expect(res.imported).toBe(1);
+    expect(res.skipped).toBe(1);
+  });
+
+  it('guards a negative diff by skipping that step, without corrupting the diff of the step after it', () => {
+    const file = writeTranscript('cx4', [
+      tokenCount('2026-08-10T09:00:00.000Z', 100, 20, 30),
+      tokenCount('2026-08-10T09:00:01.000Z', 50, 10, 10), // total moved backwards — never observed for real, guarded defensively
+      tokenCount('2026-08-10T09:00:02.000Z', 150, 30, 50),
+    ]);
+    const res = importHistory(d, { cutoff: CUTOFF, threads: [{ terminalId: 'term1', projectId: 'proj1', provider: 'codex', role: '', transcriptPath: file }] });
+    expect(res.imported).toBe(2);
+    expect(res.skipped).toBe(1);
+    const rows = d.prepare('SELECT * FROM usage_turns ORDER BY started_at').all() as any[];
+    expect(rows.length).toBe(2);
+    // The skipped step still advances the baseline to (50,10,10), so the third
+    // step's diff is against THAT, not against the pre-reset (100,20,30).
+    expect(rows[1].input_tokens).toBe(80); // (150-50) - (30-10)
+    expect(rows[1].cache_read_tokens).toBe(20);
+    expect(rows[1].output_tokens).toBe(40);
+  });
+
+  it('skips a Codex token_count with no timestamp, but still advances the baseline past it', () => {
+    const noTimestamp = JSON.stringify({
+      type: 'event_msg',
+      payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 100, cached_input_tokens: 20, output_tokens: 30, reasoning_output_tokens: 0, total_tokens: 130 } } },
+    });
+    const file = writeTranscript('cx5', [
+      noTimestamp,
+      tokenCount('2026-08-10T09:00:00.000Z', 150, 30, 50),
+    ]);
+    const res = importHistory(d, { cutoff: CUTOFF, threads: [{ terminalId: 'term1', projectId: 'proj1', provider: 'codex', role: '', transcriptPath: file }] });
+    expect(res.imported).toBe(1);
+    expect(res.skipped).toBe(1);
+    const row = d.prepare('SELECT * FROM usage_turns').get() as any;
+    expect(row.input_tokens).toBe(40); // (150-100) - (30-20)
+    expect(row.cache_read_tokens).toBe(10);
+    expect(row.output_tokens).toBe(20);
+  });
+});
+
 describe('clearStaleImportState', () => {
   let d: Database.Database;
 

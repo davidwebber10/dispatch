@@ -19,6 +19,146 @@ export interface ImportResult {
   threads: number;
 }
 
+const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+
+interface LineResult { imported: number; skipped: number }
+
+/**
+ * Claude's shape: every assistant message carries its OWN usage block, so one
+ * line maps to (at most) one row with no state carried between lines.
+ */
+function importClaudeLines(db: Database.Database, t: ImportThread, raw: string, cutoff: string): LineResult {
+  let imported = 0;
+  let skipped = 0;
+
+  for (const ln of raw.split('\n')) {
+    if (!ln.trim()) continue;
+    let ev: any;
+    try { ev = JSON.parse(ln); } catch { continue; }
+
+    const usage = usageFromFrame(ev);
+    if (!usage) continue;
+
+    const at = typeof ev.timestamp === 'string' ? ev.timestamp : null;
+    if (!at) { skipped += 1; continue; }
+    if (at >= cutoff) { skipped += 1; continue; }
+
+    usageDb.insertClosed(db, {
+      id: randomUUID(),
+      terminalId: t.terminalId,
+      projectId: t.projectId,
+      provider: t.provider,
+      model: usage.model,
+      role: t.role,
+      startedAt: at,
+      endedAt: at,
+      outcome: 'idle',
+      input: usage.input,
+      output: usage.output,
+      cacheRead: usage.cacheRead,
+      cacheCreate: usage.cacheCreate,
+      messages: 1,
+      toolCalls: toolCallsInFrame(ev),
+      backfilled: true,
+    });
+    imported += 1;
+  }
+
+  return { imported, skipped };
+}
+
+/**
+ * Codex's shape: no per-message usage exists. `token_count` events carry a
+ * RUNNING TOTAL that grows through the file, so a per-turn figure only exists
+ * as the diff between one `token_count` and the previous one — the same
+ * arithmetic pty-capture.ts's live path performs at a single point, walked
+ * here across the whole transcript.
+ *
+ * Deliberately reads `total_token_usage` and never `last_token_usage`: the
+ * latter looks like a ready-made per-turn delta and is not — it breaks the
+ * delta invariant in 9 of 648 real transitions and overcounts a real file by
+ * 0.96% (see codex-frames.ts). `total_token_usage` is monotonic non-decreasing
+ * across those same 648 transitions and survives `/compact`.
+ *
+ * Each diff is attributed to the model named by the most recent PRECEDING
+ * `turn_context` — never one model for the whole file — because a mid-session
+ * `/model` switch is real and was observed in a live transcript.
+ *
+ * The baseline starts at zero, so the very first `token_count` in the file
+ * produces a real row (the session's opening usage), exactly as if a
+ * zero-total `token_count` had preceded it.
+ */
+function importCodexLines(db: Database.Database, t: ImportThread, raw: string, cutoff: string): LineResult {
+  let imported = 0;
+  let skipped = 0;
+  let model = '';
+  let prevInput = 0;
+  let prevCached = 0;
+  let prevOutput = 0;
+
+  for (const ln of raw.split('\n')) {
+    if (!ln.trim()) continue;
+    let ev: any;
+    try { ev = JSON.parse(ln); } catch { continue; }
+    if (!ev || typeof ev !== 'object') continue;
+
+    if (ev.type === 'turn_context' && typeof ev.payload?.model === 'string') {
+      model = ev.payload.model;
+      continue;
+    }
+
+    if (ev.type !== 'event_msg' || ev.payload?.type !== 'token_count') continue;
+    const total = ev.payload?.info?.total_token_usage;
+    if (!total || typeof total !== 'object') continue;
+
+    const curInput = num(total.input_tokens);
+    const curCached = num(total.cached_input_tokens);
+    const curOutput = num(total.output_tokens);
+
+    const dInput = curInput - prevInput;
+    const dCached = curCached - prevCached;
+    const dOutput = curOutput - prevOutput;
+
+    // The baseline always advances to what was actually observed, whether or
+    // not this step produces a row — otherwise a skipped step's tokens would
+    // bleed into the diff of whichever step comes next.
+    prevInput = curInput;
+    prevCached = curCached;
+    prevOutput = curOutput;
+
+    // Guard: a negative diff means the total moved backwards in a way nobody
+    // has observed (total_token_usage is monotonic in every real file measured).
+    // Never write a negative row — skip this step rather than guess.
+    if (dInput < 0 || dCached < 0 || dOutput < 0) { skipped += 1; continue; }
+
+    const at = typeof ev.timestamp === 'string' ? ev.timestamp : null;
+    if (!at) { skipped += 1; continue; }
+    if (at >= cutoff) { skipped += 1; continue; }
+
+    usageDb.insertClosed(db, {
+      id: randomUUID(),
+      terminalId: t.terminalId,
+      projectId: t.projectId,
+      provider: t.provider,
+      model,
+      role: t.role,
+      startedAt: at,
+      endedAt: at,
+      outcome: 'idle',
+      input: Math.max(0, dInput - dCached),
+      output: dOutput,
+      cacheRead: dCached,
+      cacheCreate: 0,
+      messages: 1,
+      toolCalls: 0,
+      backfilled: true,
+    });
+    imported += 1;
+  }
+
+  return { imported, skipped };
+}
+
 /**
  * The manual, one-off history import. It runs ONLY when the human presses the
  * button — never on daemon start, and never on a timer.
@@ -31,10 +171,10 @@ export interface ImportResult {
  *      first. A live row is never touched, so a failed import cannot damage a
  *      real measurement.
  *
- * One imported assistant message becomes one turn row. A transcript records no
- * turn boundaries, so `ended_at` equals `started_at` and the row contributes no
- * duration — the duration queries exclude `ended_at == started_at` for exactly
- * this reason.
+ * One imported assistant message (Claude) or one `token_count` diff (Codex)
+ * becomes one turn row. A transcript records no turn boundaries, so `ended_at`
+ * equals `started_at` and the row contributes no duration — the duration
+ * queries exclude `ended_at == started_at` for exactly this reason.
  */
 export function importHistory(
   db: Database.Database,
@@ -55,41 +195,13 @@ export function importHistory(
     try { raw = fs.readFileSync(t.transcriptPath, 'utf-8'); }
     catch { continue; } // a missing transcript is normal: PTY threads have none
 
-    let wroteForThread = false;
-    for (const ln of raw.split('\n')) {
-      if (!ln.trim()) continue;
-      let ev: any;
-      try { ev = JSON.parse(ln); } catch { continue; }
+    const result = t.provider === 'codex'
+      ? importCodexLines(db, t, raw, opts.cutoff)
+      : importClaudeLines(db, t, raw, opts.cutoff);
 
-      const usage = usageFromFrame(ev);
-      if (!usage) continue;
-
-      const at = typeof ev.timestamp === 'string' ? ev.timestamp : null;
-      if (!at) { skipped += 1; continue; }
-      if (at >= opts.cutoff) { skipped += 1; continue; }
-
-      usageDb.insertClosed(db, {
-        id: randomUUID(),
-        terminalId: t.terminalId,
-        projectId: t.projectId,
-        provider: t.provider,
-        model: usage.model,
-        role: t.role,
-        startedAt: at,
-        endedAt: at,
-        outcome: 'idle',
-        input: usage.input,
-        output: usage.output,
-        cacheRead: usage.cacheRead,
-        cacheCreate: usage.cacheCreate,
-        messages: 1,
-        toolCalls: toolCallsInFrame(ev),
-        backfilled: true,
-      });
-      imported += 1;
-      wroteForThread = true;
-    }
-    if (wroteForThread) threads += 1;
+    imported += result.imported;
+    skipped += result.skipped;
+    if (result.imported > 0) threads += 1;
   }
 
   return { imported, skipped, threads };

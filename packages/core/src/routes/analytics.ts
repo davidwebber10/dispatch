@@ -6,7 +6,8 @@ import type { Metric, GroupBy, Dimension } from '../analytics/queries.js';
 import * as terminalsDb from '../db/terminals.js';
 import * as sessionsDb from '../db/sessions.js';
 import { importHistory } from '../analytics/importer.js';
-import { resolveTranscriptPath } from '../sessions/cc-sessions.js';
+import { resolveTranscriptPath } from '../sessions/transcript-path.js';
+import { locateCodexTranscript } from '../analytics/codex-locate.js';
 import * as usageDb from '../db/usage.js';
 import { readBackfillState, writeBackfillState } from '../analytics/backfill-state.js';
 
@@ -96,9 +97,19 @@ export function createAnalyticsRouter(db: Database.Database): Router {
     for (const session of sessionsDb.list(db)) {
       for (const terminal of terminalsDb.listBySession(db, session.id)) {
         if (!terminal.external_id) continue;
-        const workDir = terminal.working_dir || session.working_dir;
-        if (!workDir) continue;
-        const transcriptPath = resolveTranscriptPath(workDir, terminal.external_id);
+
+        // Route by provider: Codex never writes under ~/.claude/projects, so
+        // the Claude-only resolveTranscriptPath always returned undefined for
+        // it and every Codex thread silently imported zero rows. Codex needs
+        // no working dir — locateCodexTranscript searches ~/.codex/sessions
+        // (and its archive) by the thread's external_id alone.
+        let transcriptPath: string | undefined;
+        if (terminal.type === 'codex') {
+          transcriptPath = locateCodexTranscript(terminal.external_id);
+        } else {
+          const workDir = terminal.working_dir || session.working_dir;
+          if (workDir) transcriptPath = resolveTranscriptPath(workDir, terminal.external_id);
+        }
         if (!transcriptPath) continue;
         let cfg: Record<string, any> = {};
         try { cfg = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
