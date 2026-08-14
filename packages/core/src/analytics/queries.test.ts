@@ -144,6 +144,15 @@ describe('analytics queries', () => {
       id: 'codex-proj1-late', startedAt: '2026-08-13T10:00:00.000Z', endedAt: '2026-08-13T10:00:20.000Z',
       provider: 'codex', projectId: 'proj1', input: 999, output: 999,
     });
+    // Same project and inside the same date window, but a DIFFERENT provider: this row
+    // is invisible to the projectId and date predicates, so only the provider predicate
+    // can exclude it. Without this row the test would pass even if provider filtering
+    // were deleted entirely, because projectId + date range alone already isolate the
+    // 'codex-proj1' turn.
+    turn(d, {
+      id: 'claude-proj1-same-window', startedAt: '2026-08-11T12:00:00.000Z', endedAt: '2026-08-11T12:00:20.000Z',
+      provider: 'claude-code', projectId: 'proj1', input: 500, output: 500,
+    });
     const s = summary(d, {
       provider: 'codex', projectId: 'proj1',
       from: '2026-08-11T00:00:00.000Z', to: '2026-08-12T00:00:00.000Z',
