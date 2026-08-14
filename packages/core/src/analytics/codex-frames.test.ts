@@ -78,4 +78,35 @@ describe('readCodexTail', () => {
     expect(r.totals).toEqual({ input: 7, cached: 1, output: 3 });
     expect(r.model).toBe('gpt-5.6-sol');   // '' before the fix
   });
+
+  // The widen runs inside StatusService.apply(), on every Codex PTY turn end. On
+  // this machine 61% of real transcripts hold no turn_context in a 256 KiB tail,
+  // and the largest is 152 MB — an unbounded widen measured 316 ms of synchronous
+  // block and ~512 MB of RSS. The cap trades an occasionally unattributed model
+  // for that: the TOTAL drives correctness and is almost always in the tail.
+  it('stops widening at the cap and accepts an empty model', () => {
+    const filler = 'x'.repeat(8192);
+    fs.writeFileSync(file, [
+      turnContext('gpt-5.6-sol'),                                  // only model, at offset 0
+      JSON.stringify({ type: 'response_item', payload: { filler } }),
+      tokenCount(7, 1, 3),
+    ].join('\n') + '\n');
+    expect(fs.statSync(file).size).toBeGreaterThan(2048);
+
+    // Cap of 2048 bytes: the turn_context at offset 0 sits far outside it.
+    const r = readCodexTail(file, 512, 2048)!;
+    expect(r.totals).toEqual({ input: 7, cached: 1, output: 3 }); // the tail's total still wins
+    expect(r.model).toBe('');                                     // 'gpt-5.6-sol' before the fix
+  });
+
+  // The same bound, at the real default cap, with no injected value — so a change
+  // to MAX_WIDEN_BYTES that removed the bound in production fails here too.
+  it('respects the 16 MB default cap on a file larger than it', () => {
+    const filler = 'x'.repeat(17 * 1024 * 1024); // one line, larger than the cap
+    fs.writeFileSync(file, [turnContext('gpt-5.6-sol'), filler, tokenCount(9, 2, 4)].join('\n') + '\n');
+
+    const r = readCodexTail(file)!;
+    expect(r.totals).toEqual({ input: 9, cached: 2, output: 4 });
+    expect(r.model).toBe(''); // 'gpt-5.6-sol' before the fix — the whole file was read
+  });
 });

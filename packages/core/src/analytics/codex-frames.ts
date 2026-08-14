@@ -5,6 +5,14 @@ export interface CodexTail { totals: CodexTotals | null; model: string }
 
 const DEFAULT_TAIL_BYTES = 256 * 1024;
 
+/**
+ * The hard ceiling on how far back the widen may reach. Same value as
+ * `MAX_BACKFILL_BYTES` in sessions/cc-sessions.ts, which draws the same line for
+ * the same reason: a transcript can be arbitrarily large, and a synchronous read
+ * of one must not be allowed to grow with it.
+ */
+const MAX_WIDEN_BYTES = 16 * 1024 * 1024;
+
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 
 /**
@@ -17,11 +25,25 @@ const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v)
  * /compact, so a diff of totals is the honest per-turn figure.
  *
  * Only the NEWEST of each matters, so a bounded tail read suffices. The window widens
- * to the whole file if the tail is missing EITHER field — token_count lines are far
+ * in doubling steps if the tail is missing EITHER field — token_count lines are far
  * denser than turn_context lines in real transcripts, so a tail can easily hold a
- * total with no turn_context in it at all. When it widens, the tail's values win
- * wherever it found any (they're newer than anything the full scan can offer);
- * the full scan only fills in what the tail was missing.
+ * total with no turn_context in it at all. A wider scan's values only fill in what a
+ * narrower one was missing; wherever both found something the narrower (newer) one
+ * wins.
+ *
+ * The widen STOPS at MAX_WIDEN_BYTES, and that bound is the point. This runs inside
+ * StatusService.apply(), on every Codex PTY turn end. Measured against this machine's
+ * real ~/.codex/sessions: 269 of 441 transcripts (61%) hold no turn_context within a
+ * 256 KiB tail, 146 of those exceed 5 MB, and the largest is 152 MB — inside which
+ * 78% of token_count positions have no turn_context in a 256 KiB tail. Reading one
+ * whole measured 316 ms of synchronous block and pushed RSS to about 512 MB, on the
+ * status path.
+ *
+ * So the cap trades model attribution for latency, deliberately. The TOTAL is what
+ * drives correctness and it is almost always in the tail; only the model is at stake
+ * beyond the cap. A row that reports `model: ''` occasionally is a far better outcome
+ * than a third of a second of block and half a gigabyte of allocation on every turn
+ * end of a long thread.
  *
  * Envelope shapes, verified against real files under ~/.codex/sessions/:
  *   { type: 'turn_context', payload: { model, ...lots more } }
@@ -30,7 +52,11 @@ const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v)
  *                                     output_tokens, reasoning_output_tokens, total_tokens },
  *                last_token_usage: {...}, model_context_window }, rate_limits } }
  */
-export function readCodexTail(file: string, tailBytes: number = DEFAULT_TAIL_BYTES): CodexTail | null {
+export function readCodexTail(
+  file: string,
+  tailBytes: number = DEFAULT_TAIL_BYTES,
+  maxBytes: number = MAX_WIDEN_BYTES,
+): CodexTail | null {
   let size: number;
   try { size = fs.statSync(file).size; } catch { return null; }
 
@@ -74,18 +100,20 @@ export function readCodexTail(file: string, tailBytes: number = DEFAULT_TAIL_BYT
     return out;
   };
 
-  const from = size > tailBytes ? size - tailBytes : 0;
-  const first = scan(from);
-  if ((first.totals && first.model) || from === 0) return first;
+  let window = tailBytes;
+  let from = size > window ? size - window : 0;
+  let out = scan(from);
 
-  // The tail held one but not the other — commonly a total without a turn_context,
-  // because token_count lines are far denser than turn_context lines. Re-scan the
-  // whole file and fill in only what the tail was missing, so a tail hit is never
-  // thrown away. The tail's values are the newer ones wherever both scans found
-  // something, so the tail wins.
-  const full = scan(0);
-  return {
-    totals: first.totals ?? full.totals,
-    model: first.model || full.model,
-  };
+  // Widen by doubling while something is still missing, we have not reached the
+  // start of the file, and we are still under the cap. Each step fills in only what
+  // the narrower (newer) scans did not find, so a tail hit is never thrown away.
+  // Reaching the cap without a turn_context is an accepted outcome, not a failure:
+  // the totals stand and the model stays ''.
+  while (!(out.totals && out.model) && from > 0 && window < maxBytes) {
+    window = Math.min(window * 2, maxBytes);
+    from = size > window ? size - window : 0;
+    const wider = scan(from);
+    out = { totals: out.totals ?? wider.totals, model: out.model || wider.model };
+  }
+  return out;
 }
