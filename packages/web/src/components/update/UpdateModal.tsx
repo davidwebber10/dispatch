@@ -4,6 +4,7 @@ import { Spinner } from '../common/Spinner';
 import { useUpdate } from '../../stores/update';
 import { useApplyUpdate } from './useApplyUpdate';
 import { ReleaseNotes } from './ReleaseNotes';
+import { TerminalRain } from './TerminalRain';
 
 const primary: React.CSSProperties = { height: 38, padding: '0 18px', background: 'var(--color-accent)', border: 'none', borderRadius: 10, color: '#08240F', fontWeight: 600, fontSize: 13.5, cursor: 'pointer' };
 const ghost: React.CSSProperties = { height: 38, padding: '0 16px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 10, color: 'var(--color-text-secondary)', fontSize: 13.5, cursor: 'pointer' };
@@ -31,9 +32,19 @@ export function UpdateModal() {
   return (
     <div
       onClick={inProgress ? undefined : dismiss}
-      style={{ position: 'fixed', inset: 0, zIndex: 280, background: 'rgba(0,0,0,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom))' }}
+      style={{ position: 'fixed', inset: 0, zIndex: 280, background: inProgress ? 'transparent' : 'rgba(0,0,0,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom))' }}
     >
-      <div onClick={(e) => e.stopPropagation()} style={{ width: notesOpen && !inProgress ? 460 : 340, maxWidth: '100%', transition: 'width .18s ease', background: '#1B1B1E', border: '1px solid #2C3A4A', borderRadius: 16, padding: '22px 20px', boxShadow: '0 30px 80px -20px rgba(0,0,0,.85)', textAlign: 'center' }}>
+      {/* While the update runs, the backdrop becomes three layers: the rain, then the same
+          scrim the backdrop used to be, then the card. Keeping the scrim ON TOP of the rain
+          means the card's contrast is exactly what it has always been — the rain is dimmed
+          by it rather than competing with the text. */}
+      {inProgress && (
+        <>
+          <TerminalRain />
+          <div aria-hidden="true" style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.55)' }} />
+        </>
+      )}
+      <div onClick={(e) => e.stopPropagation()} style={{ position: 'relative', width: notesOpen && !inProgress ? 460 : 340, maxWidth: '100%', transition: 'width .18s ease', background: '#1B1B1E', border: '1px solid #2C3A4A', borderRadius: 16, padding: '22px 20px', boxShadow: '0 30px 80px -20px rgba(0,0,0,.85)', textAlign: 'center' }}>
         {inProgress ? (
           <>
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}><Spinner size={26} /></div>
