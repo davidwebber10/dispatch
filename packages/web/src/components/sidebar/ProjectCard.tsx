@@ -28,6 +28,7 @@ import { sortThreads, sortAgents, THREAD_SORTS, AGENT_SORTS } from '../../lib/li
 import { api } from '../../api/client';
 import { canReceiveAlerts, ensurePushEnrolled } from '../../lib/push';
 import { useHint } from '../../stores/hint';
+import { AGENT_TYPES, THREAD_TYPES } from '../../lib/harnesses';
 
 /* The sidebar's search header is sticky (~52px). A row revealed by scrollIntoView would sit
    underneath it without this margin. */
@@ -47,16 +48,6 @@ const DENSITY: Record<Density, { rowY: number; sectionMt: number; rowGap: number
   cozy: { rowY: 6, sectionMt: 7, rowGap: 3 },
   roomy: { rowY: 10, sectionMt: 12, rowGap: 5 },
 };
-
-/**
- * Every agent CLI a thread can run, and every type the THREADS section owns.
- *
- * These exist as shared constants because they were four separate inline literals, and
- * adding Grok as a provider missed one of them — Grok threads ran fine and were filtered
- * out of the sidebar entirely. A new provider now needs one edit here, not four.
- */
-export const AGENT_TYPES: Terminal['type'][] = ['claude-code', 'codex', 'grok'];
-export const THREAD_TYPES: Terminal['type'][] = [...AGENT_TYPES, 'shell'];
 
 const SECTIONS: { key: string; label: string; types: Terminal['type'][]; add: 'menu' | 'browser' | 'notes' | null; prominent?: boolean }[] = [
   { key: 'threads', label: 'THREADS', types: THREAD_TYPES, add: 'menu', prominent: true },

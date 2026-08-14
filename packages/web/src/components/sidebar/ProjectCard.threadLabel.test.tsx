@@ -1,4 +1,4 @@
-import { AGENT_TYPES, THREAD_TYPES } from './ProjectCard';
+import { AGENT_TYPES, HARNESSES, THREAD_TYPES } from '../../lib/harnesses';
 import { providerColor } from '../common/typeIcons';
 // Finding 3: reverting ProjectCard's `<ThreadLabel tab={tab} />` (ProjectCard.tsx ~line 131,
 // inside ThreadRow) back to the original `<span>{tab.label}</span>` passes the ENTIRE web
@@ -61,8 +61,38 @@ describe('a Grok thread belongs in the sidebar', () => {
     expect(THREAD_TYPES).toEqual(expect.arrayContaining(['claude-code', 'codex', 'grok', 'shell']));
   });
 
+  it('derives both lists from HARNESSES, so one entry adds a harness everywhere', () => {
+    // This is the guard: a harness added to HARNESSES cannot be missing from the sidebar,
+    // because the sidebar's list IS HARNESSES.
+    expect(THREAD_TYPES).toEqual(HARNESSES.map((h) => h.type));
+    expect(AGENT_TYPES).toEqual(HARNESSES.filter((h) => h.provider !== null).map((h) => h.type));
+  });
+
+  it('gives every agent harness a provider and every harness a wire type', () => {
+    for (const h of HARNESSES) {
+      expect(h.type, `${h.label} has no wire type`).toBeTruthy();
+      if (h.id !== 'terminal') expect(h.provider, `${h.label} has no CLI`).toBeTruthy();
+    }
+  });
+
   it('gives Grok its own provider dot rather than the neutral fallback', () => {
     expect(providerColor('grok')).not.toBe(providerColor('shell'));
     expect(providerColor('grok')).not.toBe(providerColor('claude-code'));
+  });
+});
+
+describe('every harness is visually distinguishable', () => {
+  it('gives each agent harness its own provider dot', () => {
+    // A harness with no colour of its own falls through to the neutral grey used for a
+    // plain shell, so it looks like a terminal in the sidebar.
+    const shell = providerColor('shell');
+    const seen = new Map<string, string>();
+    for (const h of HARNESSES) {
+      if (h.provider === null) continue;
+      const c = providerColor(h.type);
+      expect(c, `${h.label} has no colour of its own`).not.toBe(shell);
+      expect(seen.has(c), `${h.label} shares a colour with ${seen.get(c)}`).toBe(false);
+      seen.set(c, h.label);
+    }
   });
 });

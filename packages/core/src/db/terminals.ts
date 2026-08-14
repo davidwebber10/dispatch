@@ -1,11 +1,13 @@
 import type Database from 'better-sqlite3';
 
-// Terminal types that have PTY processes
-export type TerminalType = 'claude-code' | 'codex' | 'grok' | 'shell';
+import { THREAD_TYPES, type TerminalType as HarnessTerminalType } from '../providers/agent-types.js';
+
+// Terminal types that have PTY processes — every harness plus the plain shell.
+export type TerminalType = HarnessTerminalType;
 // All tab types (terminals + non-PTY tabs)
 export type TabType = TerminalType | 'browser' | 'notes';
 
-export const PTY_TYPES: readonly string[] = ['claude-code', 'codex', 'grok', 'shell'];
+export const PTY_TYPES: readonly string[] = THREAD_TYPES;
 
 export function isPtyType(type: string): type is TerminalType {
   return PTY_TYPES.includes(type);

@@ -25,6 +25,7 @@ import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
 import { resolveTranscriptPath } from './transcript-path.js';
 import { randomUUID } from 'crypto';
+import { isAgentType } from '../providers/agent-types.js';
 import { writeGrokPlugin, type McpServerEntry } from '../providers/grok-plugin.js';
 import { TERMINAL_ID_ENV_VAR } from '../auth/shim.js';
 import { LOGIN_ARGV, isProviderName } from '../setup/install.js';
@@ -2009,7 +2010,7 @@ export class SessionService {
    * server or system prompt into, so it's excluded.
    */
   private isPeerEligible(type: string): boolean {
-    return type === 'claude-code' || type === 'codex' || type === 'grok';
+    return isAgentType(type);
   }
 
   /**

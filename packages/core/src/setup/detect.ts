@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { AGENT_CLI, AGENT_TYPES, type AgentType } from '../providers/agent-types.js';
 import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
 import * as os from 'node:os';
@@ -6,9 +7,12 @@ import * as path from 'node:path';
 
 const exec = promisify(execFile);
 
-/** The agent CLIs Dispatch can drive. Keep in sync with PROVIDER_NAMES below. */
-export type ProviderName = 'claude' | 'codex' | 'grok';
-export const PROVIDER_NAMES: readonly ProviderName[] = ['claude', 'codex', 'grok'];
+/**
+ * The agent CLIs Dispatch can drive, derived from the one harness list so a new provider
+ * cannot be detected-but-not-spawnable (or the reverse).
+ */
+export type ProviderName = (typeof AGENT_CLI)[AgentType];
+export const PROVIDER_NAMES: readonly ProviderName[] = AGENT_TYPES.map((t) => AGENT_CLI[t]);
 
 export interface ProviderStatus { name: ProviderName; installed: boolean; version?: string; signedIn: boolean | 'unknown'; }
 export interface TailscaleStatus { installed: boolean; running: boolean; dnsName?: string; url?: string; }

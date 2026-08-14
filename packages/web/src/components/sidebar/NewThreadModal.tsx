@@ -9,89 +9,15 @@ import { timeAgo } from '../../lib/time';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { DEFAULT_AUTO_ARCHIVE_MS } from '../../lib/autoArchive';
 import type { CcRecentSession, CodexRecentSession, ProviderName, ProviderStatus } from '../../api/types';
+import { HARNESSES, INSTALL_COMMAND, LOGIN_COMMAND, type Harness as Harnesses } from '../../lib/harnesses';
 
 /** The harness (agent/shell) a new thread runs. Maps to the wire `type`. */
-type Harness = 'claude' | 'codex' | 'grok' | 'terminal';
+type Harness = Harnesses['id'];
 /** CLI = raw terminal TUI (PTY). Pretty = the structured (stream-json) chat UI. */
 type Mode = 'cli' | 'pretty';
 
-interface HarnessSpec {
-  id: Harness;
-  label: string;
-  /** The wire `type` sent to POST /terminals. */
-  type: string;
-  /** Which detected CLI backs it, or null for the plain shell (always available). */
-  provider: ProviderName | null;
-  /**
-   * Whether this harness can run the structured "Pretty" transport.
-   *
-   * Grok is false: `grok agent stdio` speaks ACP, and nothing translates that into the
-   * Claude-shaped event stream ChatView consumes — so Pretty would spawn and hang. This
-   * is the same gate Codex sat behind until its app-server manager landed.
-   */
-  pretty: boolean;
-}
-
-const HARNESSES: HarnessSpec[] = [
-  { id: 'claude', label: 'Claude Code', type: 'claude-code', provider: 'claude', pretty: true },
-  { id: 'codex', label: 'Codex', type: 'codex', provider: 'codex', pretty: true },
-  { id: 'grok', label: 'Grok', type: 'grok', provider: 'grok', pretty: false },
-  { id: 'terminal', label: 'Terminal', type: 'shell', provider: null, pretty: false },
-];
-
-/**
- * Harness-aware model lists. "Default" (model:null) omits the flag and lets the
- * CLI pick. Claude values are `--model` aliases; Codex values are the real
- * `--model` slugs (confirmed from `~/.codex/models_cache.json`); Grok's is the id
- * `grok models` reports.
- */
-const MODELS: Record<Harness, { label: string; model: string | null }[]> = {
-  claude: [
-    { label: 'Default', model: null },
-    { label: 'Fable', model: 'fable' },
-    { label: 'Opus', model: 'opus' },
-    { label: 'Sonnet', model: 'sonnet' },
-    { label: 'Haiku', model: 'haiku' },
-  ],
-  codex: [
-    { label: 'Default', model: null },
-    { label: '5.6 Sol', model: 'gpt-5.6-sol' },
-    { label: '5.6 Terra', model: 'gpt-5.6-terra' },
-    { label: '5.6 Luna', model: 'gpt-5.6-luna' },
-  ],
-  grok: [
-    { label: 'Default', model: null },
-    { label: 'Grok 4.5', model: 'grok-4.5' },
-  ],
-  terminal: [],
-};
-
 const ACCENT = 'var(--color-accent)';
 const GLOW = '0 0 6px 1px rgba(62,207,106,.55)';
-
-/**
- * The command the daemon runs for each CLI, shown next to the Install button. Mirrors
- * core's INSTALL_COMMANDS — displayed, never executed here, so a user who would rather run
- * it themselves can copy it.
- */
-const INSTALL_COMMAND: Record<ProviderName, string> = {
-  claude: 'npm install -g @anthropic-ai/claude-code',
-  codex: 'npm install -g @openai/codex',
-  grok: 'curl -fsSL https://x.ai/cli/install.sh | bash',
-};
-
-/**
- * The PLAIN login command per CLI — mirrors core's LOGIN_COMMANDS.
- *
- * Not the bare TUI: `claude` and `grok` on their own open a full-screen UI that renders the
- * sign-in link as an unclickable region and never prints it, which is a dead end on a phone.
- * These three print the URL.
- */
-const LOGIN_COMMAND: Record<ProviderName, string> = {
-  claude: 'claude auth login',
-  codex: 'codex login',
-  grok: 'grok login',
-};
 
 function ClaudeMark() {
   return (
@@ -168,7 +94,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
   );
   /** The plain shell always works. An agent harness needs its CLI present. */
   const isAvailable = useCallback(
-    (h: HarnessSpec) => (h.provider === null ? true : statusFor(h.provider)?.installed !== false),
+    (h: Harnesses) => (h.provider === null ? true : statusFor(h.provider)?.installed !== false),
     [statusFor],
   );
 
@@ -184,7 +110,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
   // plain shell has no sessions.
   const canResume = harness === 'claude' || harness === 'codex';
   const showMode = harness !== 'terminal';
-  const models = MODELS[harness];
+  const models = spec.models;
   const prettyDisabled = !spec.pretty;
 
   const loadProviders = useCallback(async () => {
@@ -193,7 +119,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
 
   useEffect(() => { void loadProviders(); }, [loadProviders]);
 
-  function selectHarness(h: HarnessSpec) {
+  function selectHarness(h: Harnesses) {
     // Every card selects, including one whose CLI is missing — selecting it is how you
     // reach its install prompt.
     setHarness(h.id);

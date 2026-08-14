@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import type { SessionService } from '../sessions/service.js';
 import { isPtyType } from '../db/terminals.js';
+import { TAB_ONLY_TYPES, THREAD_TYPES } from '../providers/agent-types.js';
 import type { EventBroadcaster } from '../ws/events.js';
 import type { StatusService } from '../status/service.js';
 
-const VALID_TYPES = ['claude-code', 'codex', 'grok', 'shell', 'browser', 'notes', 'file'];
+const VALID_TYPES: readonly string[] = [...THREAD_TYPES, ...TAB_ONLY_TYPES];
 
 export function createTerminalsRouter(sessionService: SessionService, broadcaster?: EventBroadcaster, statusService?: StatusService): Router {
   const router = Router();
