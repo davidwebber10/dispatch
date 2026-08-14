@@ -22,6 +22,12 @@ export function createAuthRouter(service: AuthRequestService): Router {
     }
   });
 
+  // POST /api/auth-requests/complete-all — one dismissal clears the whole burst.
+  // Declared BEFORE '/:id/...' so 'complete-all' is never read as an id.
+  router.post('/complete-all', (_req, res) => {
+    res.json({ completed: service.completeAll().length });
+  });
+
   router.post('/:id/opened', (req, res) => {
     const record = service.markOpened(req.params.id);
     if (!record) return res.status(404).json({ error: 'Auth request not found' });

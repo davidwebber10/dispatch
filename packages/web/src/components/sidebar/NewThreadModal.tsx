@@ -80,6 +80,19 @@ const INSTALL_COMMAND: Record<ProviderName, string> = {
   grok: 'curl -fsSL https://x.ai/cli/install.sh | bash',
 };
 
+/**
+ * The PLAIN login command per CLI — mirrors core's LOGIN_COMMANDS.
+ *
+ * Not the bare TUI: `claude` and `grok` on their own open a full-screen UI that renders the
+ * sign-in link as an unclickable region and never prints it, which is a dead end on a phone.
+ * These three print the URL.
+ */
+const LOGIN_COMMAND: Record<ProviderName, string> = {
+  claude: 'claude auth login',
+  codex: 'codex login',
+  grok: 'grok login',
+};
+
 function ClaudeMark() {
   return (
     <svg aria-hidden="true" width={20} height={20} viewBox="0 0 512 512" fill="#D97757" style={{ display: 'block' }}>
@@ -146,6 +159,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
   const [providers, setProviders] = useState<ProviderStatus[] | null>(null);
   const [installing, setInstalling] = useState<ProviderName | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
+  const [signingIn, setSigningIn] = useState(false);
 
   const spec = HARNESSES.find((h) => h.id === harness)!;
   const statusFor = useCallback(
@@ -186,6 +200,27 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
     setInstallError(null);
     setModel(null); // model lists are harness-specific — reset to Default
     if (!h.pretty) setMode('cli'); // don't carry a Pretty pick into a harness without it
+  }
+
+  /**
+   * Open a thread that runs this CLI's login command. The thread is tagged `config.signIn`,
+   * which is both what makes the daemon spawn the login command directly (rather than a
+   * shell) and the only place Dispatch reads output for a sign-in URL.
+   */
+  async function signIn(name: ProviderName) {
+    if (signingIn) return;
+    setSigningIn(true);
+    try {
+      const t = await api.createTerminal(sessionId, {
+        type: 'shell',
+        label: `Sign in — ${spec.label}`,
+        config: { signIn: name },
+      });
+      await useTabs.getState().loadTabs(sessionId);
+      useTabs.getState().markLoading(t.id);
+      onCreated(t.id);
+      onClose();
+    } catch { setSigningIn(false); }
   }
 
   async function install(name: ProviderName) {
@@ -295,24 +330,32 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
           })}
         </div>
 
-        {needsLogin && (
-          <div style={{ marginTop: 10, display: 'flex', gap: 7, alignItems: 'flex-start', fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
-            <SignIn size={14} weight="bold" color="var(--color-status-yellow)" style={{ flex: 'none', marginTop: 1 }} />
-            <span>
-              {spec.label} is installed but signed out. Run{' '}
-              <code style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-primary)' }}>
-                {spec.provider === 'claude' ? 'claude' : `${spec.provider} login`}
-              </code>{' '}
-              once — a CLI thread will also prompt you inline.
-            </span>
-          </div>
-        )}
       </div>
 
       {/* The selected harness has no CLI: everything below the picker is replaced by the
           one action that matters. No point offering a model, a mode, or a Start button for
           something that cannot run. */}
-      {!selectedAvailable ? (
+      {selectedAvailable && needsLogin ? (
+        <div style={{ padding: '14px 14px 13px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <SignIn size={16} weight="bold" color="var(--color-status-yellow)" style={{ flex: 'none' }} />
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>
+              {spec.label} isn't signed in
+            </span>
+          </div>
+          <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
+            Dispatch can run the sign-in for you and hand you the link. A thread that starts
+            without this just stops at a login screen you can't finish from a phone.
+          </div>
+          <div style={{ marginTop: 9, font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)', background: 'rgba(0,0,0,.22)', border: '1px solid #2C2C32', borderRadius: 7, padding: '7px 9px', overflowX: 'auto', whiteSpace: 'nowrap' }}>
+            {LOGIN_COMMAND[spec.provider!]}
+          </div>
+          <button type="button" disabled={signingIn} onClick={() => void signIn(spec.provider!)}
+            style={{ marginTop: 12, height: 38, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: ACCENT, border: 'none', borderRadius: 10, color: '#08240F', fontWeight: 600, fontSize: 13.5, cursor: signingIn ? 'default' : 'pointer', opacity: signingIn ? 0.7 : 1, boxShadow: GLOW }}>
+            {signingIn ? (<><Spinner size={13} /> Opening…</>) : (<><SignIn size={15} weight="bold" /> Sign in to {spec.label}</>)}
+          </button>
+        </div>
+      ) : !selectedAvailable ? (
         <div style={{ padding: '14px 14px 13px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 10 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <WarningCircle size={16} weight="fill" color="var(--color-status-yellow)" style={{ flex: 'none' }} />

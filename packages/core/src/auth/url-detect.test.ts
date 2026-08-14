@@ -184,3 +184,22 @@ describe('regressions found by running it against a real PTY', () => {
     expect(out).toEqual(['https://accounts.x.ai/sign-in?code=abc123']);
   });
 });
+
+describe('the false-positive burst that this caused in the field', () => {
+  it('never absorbs box-drawing or arrows printed next to a URL', () => {
+    // Both observed for real: a URL inside a box-drawn TUI panel, and one followed by "←"
+    // in prose. Each produced a percent-encoded, unusable URL in the banner.
+    expect(extractAuthUrls('https://id.example.com/oauth2/device?user_cod──────')).toEqual([
+      'https://id.example.com/oauth2/device?user_cod',
+    ]);
+    expect(extractAuthUrls('https://id.example.com/cai/oauth/auth← truncated')).toEqual([
+      'https://id.example.com/cai/oauth/auth',
+    ]);
+  });
+
+  it('keeps ordinary ASCII URLs intact', () => {
+    expect(extractAuthUrls('https://accounts.example.com/oauth2/device?user_code=AB-CD\n')).toEqual([
+      'https://accounts.example.com/oauth2/device?user_code=AB-CD',
+    ]);
+  });
+});

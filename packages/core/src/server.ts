@@ -413,10 +413,21 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const terminalMonitor = new TerminalMonitor(broadcaster, db, (terminalId, activity) => {
     agentService.updateRunFromTerminalActivity(terminalId, activity);
   }, (id) => threadAutoNamer.notifyActivity(id), (terminalId, url) => {
-    // A CLI printed a sign-in URL instead of opening one. Raise the same auth request the
+    // A CLI printed a sign-in URL instead of opening one — raise the same auth request the
     // $BROWSER shim raises, so it reaches the operator's banner (and their phone).
-    try { authRequestService.create({ url, source: 'terminal-output', terminalId }); }
-    catch { /* a malformed URL is not worth failing the output path over */ }
+    //
+    // ONLY for a thread Dispatch itself started to sign in (config.signIn). Scanning every
+    // thread's output was far too loose: an agent that merely PRINTS an auth-shaped URL —
+    // including one writing about OAuth, or a coding agent quoting a login link — raised a
+    // banner. In practice the agent's own prose triggered a stream of them. A URL in a
+    // sign-in thread is unambiguous; a URL anywhere else is just text. Every other thread
+    // still relies on the shim, where an actual exec proves intent.
+    try {
+      const t = terminalsDb.getById(db, terminalId);
+      const cfg = t ? (JSON.parse(t.config || '{}') as { signIn?: unknown }) : {};
+      if (typeof cfg.signIn !== 'string') return;
+      authRequestService.create({ url, source: 'terminal-output', terminalId });
+    } catch { /* a malformed URL or config is not worth failing the output path over */ }
   });
 
   // Wire PTY data through the monitor (busy/idle + status-bar HUD) and, for

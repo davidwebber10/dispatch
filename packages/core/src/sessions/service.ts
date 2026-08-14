@@ -25,6 +25,7 @@ import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
 import { resolveTranscriptPath } from './transcript-path.js';
 import { TERMINAL_ID_ENV_VAR } from '../auth/shim.js';
+import { LOGIN_ARGV, isProviderName } from '../setup/install.js';
 import { withAutoArchive, DEFAULT_AUTO_ARCHIVE_MS } from './auto-archive.js';
 import { ptyMessagePayload, flattenForPty } from './pty-message.js';
 
@@ -1685,9 +1686,18 @@ export class SessionService {
     let args: string[];
 
     if (terminal.type === 'shell') {
-      const shell = platform.defaultShell();
-      command = shell.command;
-      args = shell.args;
+      // A "Sign in — X" thread runs that CLI's login command DIRECTLY rather than a shell
+      // we then type into: no racing a shell prompt, and the process is exactly the command
+      // whose output Dispatch is watching for a sign-in URL.
+      const signIn = typeof config.signIn === 'string' && isProviderName(config.signIn) ? LOGIN_ARGV[config.signIn] : null;
+      if (signIn) {
+        command = signIn.command;
+        args = signIn.args;
+      } else {
+        const shell = platform.defaultShell();
+        command = shell.command;
+        args = shell.args;
+      }
     } else {
       const provider = getProvider(terminal.type);
       const specs: McpServerSpec[] = [];

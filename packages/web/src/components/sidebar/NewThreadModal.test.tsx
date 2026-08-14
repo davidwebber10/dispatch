@@ -326,12 +326,10 @@ describe('NewThreadModal — uninstalled CLIs', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Grok Install' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Install Grok' }));
     await waitFor(() => expect(api.installProvider).toHaveBeenCalledWith('grok'));
-    // The prompt gives way to the real options, on the harness you already picked.
-    await waitFor(() => expect(screen.getByRole('button', { name: /start new thread/i })).toBeInTheDocument());
+    // Installing never signs you in, so the install step hands straight over to sign-in
+    // rather than to options for a thread that would stop at a login screen.
+    await waitFor(() => expect(screen.getByText(/Grok isn't signed in/)).toBeInTheDocument());
     expect(screen.queryByText(/isn't installed/)).not.toBeInTheDocument();
-    start();
-    await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
-    expect(lastInput().type).toBe('grok');
   });
 
   it('surfaces an install failure instead of silently doing nothing', async () => {
@@ -354,7 +352,7 @@ describe('NewThreadModal — uninstalled CLIs', () => {
     expect(screen.getByText(/Grok isn't installed/)).toBeInTheDocument();
   });
 
-  it('tells you to sign in when the CLI is installed but signed out', async () => {
+  it('offers to sign you in when the CLI is installed but signed out', async () => {
     (api.recheckProviders as any).mockResolvedValue([
       { name: 'claude', installed: true, signedIn: true },
       { name: 'codex', installed: true, signedIn: true },
@@ -363,11 +361,44 @@ describe('NewThreadModal — uninstalled CLIs', () => {
     render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Grok' }));
-    expect(await screen.findByText(/installed but signed out/)).toBeInTheDocument();
+    expect(await screen.findByText(/Grok isn't signed in/)).toBeInTheDocument();
+    // The plain login command, not the bare TUI that dead-ends on a phone.
     expect(screen.getByText('grok login')).toBeInTheDocument();
-    // Still startable — a CLI thread prompts for login inline.
-    start();
+    expect(screen.queryByRole('button', { name: /start new thread/i })).not.toBeInTheDocument();
+  });
+
+  it('opens a sign-in thread that runs the login command', async () => {
+    (api.recheckProviders as any).mockResolvedValue([
+      { name: 'claude', installed: true, signedIn: true },
+      { name: 'codex', installed: true, signedIn: true },
+      { name: 'grok', installed: true, signedIn: false },
+    ]);
+    const onCreated = vi.fn();
+    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={onCreated} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Grok' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign in to Grok' }));
+
     await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
-    expect(lastInput().type).toBe('grok');
+    const input = lastInput();
+    expect(input.type).toBe('shell');
+    expect(input.label).toBe('Sign in — Grok');
+    // config.signIn both makes the daemon run `grok login` directly and marks the one
+    // thread whose output Dispatch reads for a sign-in URL.
+    expect(input.config).toEqual({ signIn: 'grok' });
+    expect(onCreated).toHaveBeenCalled();
+  });
+
+  it('treats an unknown sign-in state as fine, not as signed out', async () => {
+    // 'unknown' means the credential may live somewhere we cannot see. Blocking on it would
+    // wrongly stop Claude and Codex threads from starting at all.
+    (api.recheckProviders as any).mockResolvedValue([
+      { name: 'claude', installed: true, signedIn: 'unknown' },
+      { name: 'codex', installed: true, signedIn: true },
+      { name: 'grok', installed: true, signedIn: true },
+    ]);
+    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /start new thread/i })).toBeInTheDocument());
+    expect(screen.queryByText(/isn't signed in/)).not.toBeInTheDocument();
   });
 });

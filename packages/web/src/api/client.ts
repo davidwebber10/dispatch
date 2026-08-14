@@ -237,6 +237,7 @@ export const api = {
   listAuthRequests: () => req<AuthRequest[]>('/api/auth-requests'),
   markAuthOpened: (id: string) => req<AuthRequest>(`/api/auth-requests/${id}/opened`, { method: 'POST' }),
   completeAuth: (id: string) => req<AuthRequest>(`/api/auth-requests/${id}/complete`, { method: 'POST' }),
+  dismissAllAuth: () => req<{ completed: number }>(`/api/auth-requests/complete-all`, { method: 'POST' }),
   forwardAuthCallback: (id: string, url: string) =>
     req<AuthRequest>(`/api/auth-requests/${id}/callback`, { method: 'POST', body: body({ url }) }),
 

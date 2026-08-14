@@ -14,8 +14,13 @@
 /** Escape codes the PTY interleaves with the text. Mirrors terminal-monitor.ts. */
 const ANSI = /\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b\([A-Za-z]/g;
 
-/** Characters allowed to continue a URL. Stops at whitespace, quotes and brackets. */
-const URL_RE = /https?:\/\/[^\s"'`<>()\[\]{}\\^|]+/g;
+/**
+ * Characters allowed to continue a URL: printable ASCII only, minus whitespace, quotes and
+ * brackets. Restricting to ASCII matters — a URL rendered inside a box-drawn TUI panel, or
+ * followed by an arrow in prose, otherwise swallows those glyphs and percent-encodes them
+ * into the captured URL (observed: `…/oauth2/device?user_cod%E2%94%80%E2%94%` from `──`).
+ */
+const URL_RE = /https?:\/\/[^\s"'`<>()\[\]{}\\^|\x7f-\uffff]+/g;
 
 /**
  * Substrings that mark a URL as a sign-in URL rather than a link the agent happened to
