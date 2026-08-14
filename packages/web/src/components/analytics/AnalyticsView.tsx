@@ -98,17 +98,17 @@ const HEAT = ['#1B1B1E', '#1E3D28', '#256B3C', '#2E9C52', '#3ECF6A'];
 interface Loaded {
   summary: AnalyticsSummary;
   tokensByModel: AnalyticsPoint[];
-  tokensByProvider: AnalyticsPoint[];
+  /** Fetched WITHOUT the provider filter, so the select can always offer every
+   * provider in the range — a filtered list would strand the reader on one. */
+  providerOptions: AnalyticsPoint[];
   outputTotal: AnalyticsPoint[];
   turnsByOutcome: AnalyticsPoint[];
+  duration: AnalyticsPoint[];
   calendar: AnalyticsPoint[];
   topModels: AnalyticsTopRow[];
   topProjects: AnalyticsTopRow[];
   records: AnalyticsRecords;
   backfill: AnalyticsBackfillState;
-  /** Only fetched while a provider filter is on. */
-  outputByProvider: AnalyticsPoint[];
-  turnsByProvider: AnalyticsPoint[];
 }
 
 /**
@@ -128,10 +128,6 @@ function pivot(points: AnalyticsPoint[], keyOf: (p: AnalyticsPoint) => string): 
   }
   const rows = [...byDay.values()].sort((a, b) => String(a.day).localeCompare(String(b.day)));
   return { rows, keys: [...keys].sort() };
-}
-
-function sumFor(points: AnalyticsPoint[], key: string): number {
-  return points.reduce((n, p) => (normKey(p.key) === key ? n + p.value : n), 0);
 }
 
 /**
@@ -209,37 +205,34 @@ export function AnalyticsView() {
 
   useEffect(() => {
     let cancelled = false;
-    const range = { ...(from ? { from } : {}), ...(projectId ? { projectId } : {}) };
-    const calendarRange = { from: calendarStart().toISOString(), ...(projectId ? { projectId } : {}) };
+    // Every filter is a server-side filter: the daemon binds `provider` as a SQL
+    // parameter on summary, series and top alike, so no block derives a filtered
+    // number for itself.
+    const scope = { ...(from ? { from } : {}), ...(projectId ? { projectId } : {}) };
+    const range = { ...scope, ...(provider ? { provider } : {}) };
+    const calendarRange = { from: calendarStart().toISOString(), ...(projectId ? { projectId } : {}), ...(provider ? { provider } : {}) };
     (async () => {
       try {
         const [
-          summary, tokensByModel, tokensByProvider, outputTotal, turnsByOutcome,
-          calendar, topModels, topProjects, records, backfill,
+          summary, tokensByModel, providerOptions, outputTotal, turnsByOutcome,
+          duration, calendar, topModels, topProjects, records, backfill,
         ] = await Promise.all([
           api.analyticsSummary(range),
           api.analyticsSeries({ ...range, metric: 'tokens', groupBy: 'model' }),
-          api.analyticsSeries({ ...range, metric: 'tokens', groupBy: 'provider' }),
+          api.analyticsSeries({ ...scope, metric: 'tokens', groupBy: 'provider' }),
           api.analyticsSeries({ ...range, metric: 'outputTokens', groupBy: 'none' }),
           api.analyticsSeries({ ...range, metric: 'turns', groupBy: 'outcome' }),
+          api.analyticsSeries({ ...range, metric: 'duration', groupBy: 'none' }),
           api.analyticsSeries({ ...calendarRange, metric: 'tokens', groupBy: 'none' }),
           api.analyticsTop({ ...range, dimension: 'model' }),
           api.analyticsTop({ ...range, dimension: 'project' }),
           api.analyticsRecords(),
           api.analyticsBackfillState(),
         ]);
-        // The daemon filters by project and date only, so a provider scope is
-        // served by asking for the provider-keyed series instead.
-        const [outputByProvider, turnsByProvider] = provider
-          ? await Promise.all([
-            api.analyticsSeries({ ...range, metric: 'outputTokens', groupBy: 'provider' }),
-            api.analyticsSeries({ ...range, metric: 'turns', groupBy: 'provider' }),
-          ])
-          : [[], []];
         if (cancelled) return;
         setData({
-          summary, tokensByModel, tokensByProvider, outputTotal, turnsByOutcome,
-          calendar, topModels, topProjects, records, backfill, outputByProvider, turnsByProvider,
+          summary, tokensByModel, providerOptions, outputTotal, turnsByOutcome,
+          duration, calendar, topModels, topProjects, records, backfill,
         });
         setError(null);
       } catch (e: unknown) {
@@ -272,10 +265,9 @@ export function AnalyticsView() {
   const modelScale = useMemo(() => makeSeriesScale(modelDomain), [modelDomain]);
 
   const providerDomain = useMemo(
-    () => [...new Set((data?.tokensByProvider ?? []).map((p) => normKey(p.key)))].sort(),
-    [data?.tokensByProvider],
+    () => [...new Set((data?.providerOptions ?? []).map((p) => normKey(p.key)))].sort(),
+    [data?.providerOptions],
   );
-  const providerScale = useMemo(() => makeSeriesScale(providerDomain), [providerDomain]);
 
   const projectDomain = useMemo(
     () => [...new Set((data?.topProjects ?? []).map((r) => r.key))],
@@ -283,22 +275,23 @@ export function AnalyticsView() {
   );
   const projectScale = useMemo(() => makeSeriesScale(projectDomain), [projectDomain]);
 
-  const tokensChart = useMemo(() => {
-    if (!data) return { rows: [], keys: [] };
-    return provider
-      ? pivot(data.tokensByProvider.filter((p) => normKey(p.key) === provider), (p) => normKey(p.key))
-      : pivot(data.tokensByModel, (p) => normKey(p.key));
-  }, [data, provider]);
+  const tokensChart = useMemo(
+    () => (data ? pivot(data.tokensByModel, (p) => normKey(p.key)) : { rows: [], keys: [] }),
+    [data],
+  );
 
-  const outputChart = useMemo(() => {
-    if (!data) return { rows: [], keys: [] };
-    return provider
-      ? pivot(data.outputByProvider.filter((p) => normKey(p.key) === provider), () => 'output')
-      : pivot(data.outputTotal, () => 'output');
-  }, [data, provider]);
+  const outputChart = useMemo(
+    () => (data ? pivot(data.outputTotal, () => 'output') : { rows: [], keys: [] }),
+    [data],
+  );
 
   const outcomeChart = useMemo(
     () => (data ? pivot(data.turnsByOutcome, (p) => normKey(p.key)) : { rows: [], keys: [] }),
+    [data],
+  );
+
+  const durationChart = useMemo(
+    () => (data ? pivot(data.duration, () => 'seconds') : { rows: [], keys: [] }),
     [data],
   );
 
@@ -336,22 +329,15 @@ export function AnalyticsView() {
   const filtered = Boolean(projectId) || Boolean(provider) || rangeId !== '30';
   const isEmpty = summary.turns === 0;
 
-  // Under a provider filter the totals come from the provider-keyed series, which
-  // is the only per-provider cut the daemon serves. Threads and the notional
-  // value have no per-provider form, so they read '—' rather than a wrong number.
-  const scoped = {
-    totalTokens: provider ? sumFor(data.tokensByProvider, provider) : summary.totalTokens,
-    outputTokens: provider ? sumFor(data.outputByProvider, provider) : summary.outputTokens,
-    turns: provider ? sumFor(data.turnsByProvider, provider) : summary.turns,
-    threads: provider ? null : summary.threads,
-    notionalUsd: provider ? null : summary.notionalUsd,
-  };
-  const notPerProvider = provider ? 'The daemon filters by project and date only, so this number has no per-provider form.' : undefined;
   const unreported = Number(summary.unreportedTurns ?? 0);
-
-  // Whichever dimension the token chart plots, its colours come from that
-  // dimension's ONE scale — never from a scale rebuilt on the visible keys.
-  const tokensColor = provider ? providerScale : modelScale;
+  /*
+   * Every turn in this range closed without a usage frame. The token totals are
+   * then not a measurement of zero — they are the absence of one, and a "0" would
+   * claim work that used nothing. Show '—' and let the sentence below explain.
+   * This is the shape a PTY-ish provider takes once the filter reaches the daemon.
+   */
+  const nothingReported = summary.turns > 0 && unreported >= summary.turns;
+  const noUsageTitle = 'No usage was ever reported for these turns, so there is nothing to count. This is not a measured zero.';
 
   const chartH = isMobile ? 200 : 240;
   const axisTick = { fill: theme.muted, fontSize: 11 };
@@ -414,15 +400,15 @@ export function AnalyticsView() {
         <>
           {/* 2. Headline totals */}
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(5, 1fr)', gap: 12 }}>
-            <Kpi label="TOTAL TOKENS" value={fmtTokens(scoped.totalTokens)} />
-            <Kpi label="OUTPUT TOKENS" value={fmtTokens(scoped.outputTokens)} />
-            <Kpi label="TURNS" value={scoped.turns.toLocaleString()} />
-            <Kpi label="THREADS" value={scoped.threads == null ? '—' : scoped.threads.toLocaleString()} title={notPerProvider} />
+            <Kpi label="TOTAL TOKENS" value={nothingReported ? '—' : fmtTokens(summary.totalTokens)} title={nothingReported ? noUsageTitle : undefined} />
+            <Kpi label="OUTPUT TOKENS" value={nothingReported ? '—' : fmtTokens(summary.outputTokens)} title={nothingReported ? noUsageTitle : undefined} />
+            <Kpi label="TURNS" value={summary.turns.toLocaleString()} />
+            <Kpi label="THREADS" value={summary.threads.toLocaleString()} />
             <Kpi
               label="EQUIVALENT API VALUE"
-              value={fmtNotional(scoped.notionalUsd)}
-              title={notPerProvider ?? 'What these tokens would be worth at API list prices. Dispatch runs on a subscription, so this is a notional figure, not a bill.'}
-              badge={scoped.notionalUsd != null && summary.unpricedTokens > 0 ? 'partial' : undefined}
+              value={nothingReported ? '—' : fmtNotional(summary.notionalUsd)}
+              title={nothingReported ? noUsageTitle : 'What these tokens would be worth at API list prices. Dispatch runs on a subscription, so this is a notional figure, not a bill.'}
+              badge={!nothingReported && summary.unpricedTokens > 0 ? 'partial' : undefined}
               badgeTitle={`${fmtTokens(summary.unpricedTokens)} tokens came from a model with no price entry, so they are counted in the token totals but not in this value.`}
             />
           </div>
@@ -433,21 +419,14 @@ export function AnalyticsView() {
               <span style={{ color: 'var(--color-text-secondary)' }}>{unreported} {unreported === 1 ? 'turn' : 'turns'} reported no usage</span>
               <span>
                 — no usage frame ever arrived for them, so their tokens are missing from the totals
-                above. They are not turns that used nothing.{provider ? ' Counted across all providers.' : ''}
+                above. They are not turns that used nothing.
               </span>
-            </div>
-          )}
-
-          {provider && (
-            <div style={{ ...muted, marginTop: 10 }}>
-              The provider filter applies to the totals and to the two token charts. Outcomes,
-              rankings, the calendar and the records below cover every provider.
             </div>
           )}
 
           {/* 3. Tokens over time */}
           <div style={{ marginTop: 16 }}>
-            <Block title={provider ? `TOKENS OVER TIME · ${provider.toUpperCase()}` : 'TOKENS OVER TIME · BY MODEL'}>
+            <Block title="TOKENS OVER TIME · BY MODEL">
               {tokensChart.rows.length === 0 ? <NoData height={chartH} /> : (
                 <ResponsiveContainer width="100%" height={chartH} minHeight={chartH}>
                   <BarChart data={tokensChart.rows} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
@@ -458,7 +437,7 @@ export function AnalyticsView() {
                     {tokensChart.keys.length > 1 && legend}
                     {tokensChart.keys.map((k) => (
                       <Bar
-                        key={k} dataKey={k} stackId="tokens" fill={tokensColor(k)}
+                        key={k} dataKey={k} stackId="tokens" fill={modelScale(k)}
                         stroke={theme.surface} strokeWidth={2} radius={[4, 4, 0, 0]}
                       />
                     ))}
@@ -469,7 +448,8 @@ export function AnalyticsView() {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12, marginTop: 12 }}>
-            {/* 4. Output tokens over time — its own chart, never a second axis on the one above. */}
+            {/* 4. Output tokens over time — its own chart, never a second axis on the one above.
+                The single-series charts share one accent hue; their titles name the measure. */}
             <Block title="OUTPUT TOKENS OVER TIME">
               {outputChart.rows.length === 0 ? <NoData height={chartH} /> : (
                 <ResponsiveContainer width="100%" height={chartH} minHeight={chartH}>
@@ -512,8 +492,37 @@ export function AnalyticsView() {
             </Block>
           </div>
 
+          {/*
+            * 6. Turn duration. Seconds share no scale with tokens or with turn
+            * counts, so this is a chart of its own and never a second axis on one
+            * of the charts above. The query layer already drops zero-length rows,
+            * so a restart-interrupted turn cannot pull the mean toward zero.
+            */}
+          <div style={{ marginTop: 12 }}>
+            <Block title="AVG TURN DURATION · SECONDS" note="mean per day, interrupted turns excluded">
+              {durationChart.rows.length === 0 ? <NoData height={chartH} /> : (
+                <ResponsiveContainer width="100%" height={chartH} minHeight={chartH}>
+                  <BarChart data={durationChart.rows} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                    <CartesianGrid stroke={theme.grid} vertical={false} />
+                    <XAxis dataKey="day" tickFormatter={fmtDay} tick={axisTick} tickLine={false} axisLine={{ stroke: theme.grid }} />
+                    <YAxis tickFormatter={(v: number) => `${v}s`} tick={axisTick} tickLine={false} axisLine={false} width={48} />
+                    <Tooltip
+                      cursor={{ fill: 'rgba(255,255,255,0.04)' }}
+                      contentStyle={{ background: theme.surface, border: `1px solid ${theme.grid}`, borderRadius: 8, fontSize: 12 }}
+                      labelStyle={{ color: theme.muted }}
+                      itemStyle={{ color: theme.text }}
+                      formatter={(v: unknown) => [fmtSeconds(Number(v)), 'avg turn'] as [string, string]}
+                    />
+                    {/* One series, so the title names it and no legend is needed. */}
+                    <Bar dataKey="seconds" name="avg turn duration" fill={SERIES[0]} radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </Block>
+          </div>
+
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12, marginTop: 12 }}>
-            {/* 6. Ranked bars — length, not angle. Never a pie. */}
+            {/* 7. Ranked bars — length, not angle. Never a pie. */}
             <Block title="MODEL MIX · TOKENS">
               <RankedBars
                 rows={data.topModels.map((r) => ({ ...r, key: normKey(r.key), label: normKey(r.label) }))}
@@ -525,7 +534,7 @@ export function AnalyticsView() {
             </Block>
           </div>
 
-          {/* 7. Activity calendar */}
+          {/* 8. Activity calendar */}
           <div style={{ marginTop: 12 }}>
             <Block title={`ACTIVITY · LAST ${CALENDAR_WEEKS} WEEKS`} note="tokens per day">
               <div style={{ overflowX: 'auto', paddingBottom: 4 }}>
@@ -554,7 +563,7 @@ export function AnalyticsView() {
             </Block>
           </div>
 
-          {/* 8. Personal records — facts, not trends */}
+          {/* 9. Personal records — facts, not trends */}
           <div style={{ marginTop: 12 }}>
             <Block title="PERSONAL RECORDS · ALL TIME" note="every project, every provider — the filters above do not apply">
               <div style={{
@@ -571,7 +580,7 @@ export function AnalyticsView() {
             </Block>
           </div>
 
-          {/* 9. History import */}
+          {/* 10. History import */}
           <div style={{ ...panel, marginTop: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <div style={{ flex: 1, minWidth: 220 }}>
               <div style={labelStyle}>HISTORY</div>

@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { AnalyticsView } from './AnalyticsView';
 import { api } from '../../api/client';
 
@@ -29,8 +29,41 @@ function localDay(offsetDays = 0): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
+/**
+ * The real `api` client over a fake `fetch`, so a test can read the URL the view
+ * actually requested. Returns the list of requested URLs, in order.
+ */
+function mockFetch(overrides: { summary?: Record<string, unknown>; providers?: string[] } = {}): string[] {
+  const calls: string[] = [];
+  const json = (data: unknown) => Promise.resolve({ ok: true, status: 200, json: async () => data } as unknown as Response);
+  vi.stubGlobal('fetch', vi.fn((input: unknown) => {
+    const url = String(input);
+    calls.push(url);
+    const path = url.split('?')[0];
+    if (path === '/api/analytics/summary') return json({ ...EMPTY, turns: 2, threads: 1, totalTokens: 500, ...overrides.summary });
+    if (path === '/api/analytics/series') {
+      return json(url.includes('groupBy=provider')
+        ? (overrides.providers ?? ['codex']).map((key) => ({ day: localDay(), key, value: 500 }))
+        : []);
+    }
+    if (path === '/api/analytics/top') return json([]);
+    if (path === '/api/analytics/records') {
+      return json({
+        totalTokens: 500, totalTurns: 2, busiestDay: null, busiestDayTokens: 0,
+        topModel: null, activeDays: 1, longestTurnSeconds: 9,
+      });
+    }
+    if (path === '/api/analytics/backfill') {
+      return json({ trackingStartedAt: '2026-08-13T00:00:00.000Z', state: 'idle', done: 0, total: 0, lastFinishedAt: null });
+    }
+    return json({});
+  }));
+  return calls;
+}
+
 describe('AnalyticsView', () => {
   beforeEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => { vi.unstubAllGlobals(); });
 
   it('explains an empty table instead of showing zeroes as if they were measured', async () => {
     stub();
@@ -128,5 +161,48 @@ describe('AnalyticsView', () => {
     render(<AnalyticsView />);
     const select = await screen.findByLabelText(/provider/i);
     await waitFor(() => expect(select.textContent).toMatch(/claude-code/));
+  });
+
+  // The daemon filters by provider itself (routes/analytics.ts reads `provider`
+  // and binds it as a SQL parameter), so the filter must reach the wire. A view
+  // that filtered client-side would leave the URL unchanged.
+  it('sends the provider filter to the daemon on every filtered route', async () => {
+    const calls = mockFetch({ providers: ['codex'] });
+    render(<AnalyticsView />);
+
+    const select = await screen.findByLabelText(/provider/i);
+    await waitFor(() => expect(select.textContent).toMatch(/codex/));
+    // Nothing is filtered until the reader asks for it.
+    expect(calls.some((u) => u.includes('provider='))).toBe(false);
+
+    fireEvent.change(select, { target: { value: 'codex' } });
+
+    await waitFor(() => {
+      const filtered = calls.filter((u) => u.includes('provider=codex'));
+      expect(filtered.some((u) => u.startsWith('/api/analytics/summary'))).toBe(true);
+      expect(filtered.some((u) => u.startsWith('/api/analytics/series'))).toBe(true);
+      expect(filtered.some((u) => u.startsWith('/api/analytics/top'))).toBe(true);
+    });
+    // The option list stays unfiltered, or picking one provider would strand the
+    // reader with no way back to another.
+    expect(calls.some((u) => u.includes('groupBy=provider') && !u.includes('provider=codex'))).toBe(true);
+  });
+
+  // A provider whose turns never report usage (a PTY provider such as Grok) must
+  // not read as a measured zero once the filter reaches the daemon.
+  it('reads as "reported no usage", not zero, when every turn in scope reported nothing', async () => {
+    mockFetch({ summary: { turns: 4, threads: 1, totalTokens: 0, outputTokens: 0, unreportedTurns: 4 }, providers: ['grok'] });
+    render(<AnalyticsView />);
+
+    await waitFor(() => expect(screen.getByText(/4 turns reported no usage/i)).toBeTruthy());
+    const tile = screen.getByText('TOTAL TOKENS').parentElement!;
+    expect(tile.textContent).toContain('—');
+    expect(tile.textContent).not.toContain('0');
+  });
+
+  it('charts turn duration as its own chart, in seconds', async () => {
+    stub({ ...EMPTY, turns: 3, totalTokens: 400 }, [{ day: localDay(), key: '', value: 42 }]);
+    render(<AnalyticsView />);
+    await waitFor(() => expect(screen.getByText(/AVG TURN DURATION · SECONDS/i)).toBeTruthy());
   });
 });

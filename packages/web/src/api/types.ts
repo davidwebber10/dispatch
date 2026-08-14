@@ -345,7 +345,7 @@ export interface IntegrationsExport { version: 1; integrations: Omit<Integration
 
 // Analytics (usage, throughput, personal stats) — mirrors core packages/core/src/analytics/queries.ts
 // and packages/core/src/routes/analytics.ts.
-export interface AnalyticsRange { from?: string; to?: string; projectId?: string }
+export interface AnalyticsRange { from?: string; to?: string; projectId?: string; provider?: string }
 export type AnalyticsMetric = 'tokens' | 'outputTokens' | 'turns' | 'duration';
 export type AnalyticsGroupBy = 'model' | 'provider' | 'project' | 'outcome' | 'none';
 export type AnalyticsDimension = 'project' | 'thread' | 'model';
