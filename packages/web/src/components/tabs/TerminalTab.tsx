@@ -15,6 +15,7 @@ import { useSettings } from '../../stores/settings';
 import { useDictation } from '../../hooks/useDictation';
 import { DictationControl } from '../dictation/DictationControl';
 import { InputActionsMenu } from '../dictation/InputActionsMenu';
+import { consumeWheelTicks, isAltBuffer } from '../../lib/ptyWheel';
 
 type SoftKey = { label: string; seq: string; title?: string; Icon?: Icon };
 // Slash commands live in a searchable sheet behind the "/" key. Run-commands end
@@ -57,6 +58,14 @@ const CLAUDE_ACTIONS: SoftKey[] = [
   { label: 'esc', seq: '\x1b', title: 'Escape' }, ENTER, ...UP_DOWN,
   { label: '⌃O', seq: '\x0f', title: 'Ctrl-O' },
   { label: '⌃E', seq: '\x05', title: 'Ctrl-E' },
+];
+// Grok's fullscreen TUI owns its own scrollback (alt screen). Page Up/Down
+// work even while the prompt is focused — the swipe path sends mouse-wheel
+// ticks; these keys are the tap fallback.
+const GROK_ACTIONS: SoftKey[] = [
+  { label: 'esc', seq: '\x1b', title: 'Escape' }, ENTER, ...UP_DOWN,
+  { label: 'PgUp', seq: '\x1b[5~', title: 'Page up' },
+  { label: 'PgDn', seq: '\x1b[6~', title: 'Page down' },
 ];
 const CODEX_ACTIONS: SoftKey[] = [
   { label: 'esc', seq: '\x1b', title: 'Escape' }, ENTER, ...UP_DOWN,
@@ -106,6 +115,7 @@ const CODEX_SLASH: SlashCmd[] = [
 ];
 function keysFor(type?: string): { actions: SoftKey[]; slash: SlashCmd[] } {
   if (type === 'codex') return { actions: CODEX_ACTIONS, slash: CODEX_SLASH };
+  if (type === 'grok') return { actions: GROK_ACTIONS, slash: [] };
   if (type === 'shell') return { actions: SHELL_ACTIONS, slash: [] };
   return { actions: CLAUDE_ACTIONS, slash: CLAUDE_SLASH };
 }
@@ -527,6 +537,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
 
     let subPx = 0;       // sub-row remainder, applied as a screen translate
     let overscroll = 0;  // signed px pulled past an end (>0 past bottom) — the rubber-band
+    let tuiAcc = 0;      // leftover px toward the next mouse-wheel tick (alt-screen TUIs)
     const applyTransform = () => { const s = screenEl(); if (!s) return; const ty = -subPx - overscroll; s.style.transform = ty ? `translate3d(0,${ty}px,0)` : ''; };
     const offRender = term.onRender(() => applyTransform()); // keep the offset locked to each repaint
 
@@ -557,6 +568,15 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     };
     const scrollByPx = (px: number) => {
       const h = rowHeight || 17;
+      // Alternate buffer: the app (Grok fullscreen, Claude/Codex CLI) owns
+      // scrolling. xterm has no history there — send SGR wheel ticks instead.
+      // Normal buffer keeps the existing sub-pixel xterm path (shell, --minimal).
+      if (isAltBuffer(term.buffer.active.type)) {
+        const next = consumeWheelTicks(tuiAcc, px, h);
+        tuiAcc = next.accPx;
+        if (next.seq) sockRef.current?.send(next.seq);
+        return;
+      }
       // Already rubber-banded: deeper pull resists (×0.45), pulling back releases
       // it 1:1; snap to 0 when it crosses neutral. Never touches content here.
       if (overscroll !== 0) {
@@ -740,7 +760,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
         {/* Stable transparent touch surface (mobile): the gesture lands here, never
             on the xterm spans that get destroyed on every repaint. Sits above the
             terminal but below the jump-to-latest button. */}
-        {isMobile && <div ref={scrollOverlayRef} style={{ position: 'absolute', inset: 0, zIndex: 3, touchAction: 'none' }} />}
+        {isMobile && <div ref={scrollOverlayRef} data-testid="term-scroll-overlay" style={{ position: 'absolute', inset: 0, zIndex: 3, touchAction: 'none' }} />}
         {loading && (
           <div style={{ position: 'absolute', inset: 0, zIndex: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-terminal)', pointerEvents: 'none' }}>
             <Spinner size={26} />

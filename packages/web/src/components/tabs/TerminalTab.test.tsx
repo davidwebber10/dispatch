@@ -17,9 +17,10 @@ vi.mock('@xterm/xterm', () => {
     cols = 80;
     rows = 24;
     options: Record<string, unknown> = {};
-    buffer = { active: { length: 0, viewportY: 0, baseY: 0 } };
+    buffer = { active: { length: 0, viewportY: 0, baseY: 0, type: 'normal' as 'normal' | 'alternate' } };
     written: string[] = [];
     scrolledToBottom = 0;
+    scrolledLines = 0;
     dataHandler: ((d: string) => void) | null = null;
     private scrollHandlers: Array<() => void> = [];
     constructor() { instances.push(this); }
@@ -32,7 +33,7 @@ vi.mock('@xterm/xterm', () => {
     onData(cb: (d: string) => void) { this.dataHandler = cb; return { dispose: () => {} }; }
     onScroll(cb: () => void) { this.scrollHandlers.push(cb); return { dispose: () => {} }; }
     onRender() { return { dispose() {} }; }
-    scrollLines() {}
+    scrollLines(n = 0) { this.scrolledLines += n; }
     scrollToBottom() { this.scrolledToBottom++; }
     scrollToLine(line: number) { this.buffer.active.viewportY = line; }
     reset() { this.buffer.active.length = 0; this.buffer.active.viewportY = 0; this.buffer.active.baseY = 0; }
@@ -57,6 +58,7 @@ import { TerminalTab } from './TerminalTab';
 import { api } from '../../api/client';
 import { useSettings } from '../../stores/settings';
 import { INITIAL_REPLAY_MOBILE, MAX_REPLAY, nextReplayStep } from '../../api/terminal-socket';
+import { WHEEL_UP } from '../../lib/ptyWheel';
 
 type FakeMeta = { startOffset: number; totalWritten: number; complete: boolean };
 type FakeOpts = { terminalId: string; replayBytes?: number; onData: (c: string) => void; onMeta?: (m: FakeMeta) => void; onReset?: () => void; onClose?: () => void };
@@ -851,4 +853,57 @@ test('a reconnect re-pins: the replayed scrollback lands at the bottom again', a
   act(() => { created[0].opts.onReset?.(); });
   act(() => { created[0].opts.onData('FULL_REPLAY_AGAIN'); });
   await waitFor(() => expect(term.scrolledToBottom).toBeGreaterThan(afterFirst));
+});
+
+// ---- mobile swipe: alt-screen TUI (Grok) vs normal xterm scrollback ----
+
+function swipe(el: Element, fromY: number, toY: number) {
+  fireEvent.touchStart(el, { touches: [{ clientX: 10, clientY: fromY }] });
+  fireEvent.touchMove(el, { touches: [{ clientX: 10, clientY: toY }] });
+  fireEvent.touchEnd(el);
+}
+
+test('on an alt-screen TUI, a mobile swipe sends mouse-wheel ticks to the PTY instead of scrolling xterm', async () => {
+  // Grok (and Claude/Codex CLI) run in the alternate buffer. xterm has no
+  // scrollback there — the overlay used to rubber-band and swallow the gesture.
+  isMobileMock.mockReturnValue(true);
+  const { factory, created } = makeSocketFactory();
+  const { getByTestId } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  const term = instances[0];
+  term.buffer.active.type = 'alternate';
+  const overlay = getByTestId('term-scroll-overlay');
+  act(() => { swipe(overlay, 200, 260); }); // finger down → see older
+
+  expect(created[0].send).toHaveBeenCalled();
+  const bytes = created[0].send.mock.calls.map((c) => c[0]).join('');
+  expect(bytes).toContain(WHEEL_UP);
+  expect(term.scrolledLines).toBe(0);
+});
+
+test('on the normal buffer, a mobile swipe still scrolls xterm and does not write wheel CSI', async () => {
+  isMobileMock.mockReturnValue(true);
+  const { factory, created } = makeSocketFactory();
+  const { getByTestId } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  instances[0].buffer.active.type = 'normal';
+  // Give xterm somewhere to scroll so the gesture is not just a rubber-band.
+  instances[0].buffer.active.baseY = 40;
+  instances[0].buffer.active.viewportY = 20;
+  act(() => { swipe(getByTestId('term-scroll-overlay'), 200, 260); });
+
+  expect(instances[0].scrolledLines).not.toBe(0);
+  const bytes = created[0].send.mock.calls.map((c) => c[0]).join('');
+  expect(bytes).not.toContain(WHEEL_UP);
+});
+
+test('a Grok thread offers Page Up / Page Down on the mobile key row', async () => {
+  isMobileMock.mockReturnValue(true);
+  vi.spyOn(api, 'getTerminal').mockResolvedValue({ id: 't1', sessionId: 's1', type: 'grok', workingDir: '/p/x', pid: 1, status: 'working' } as any);
+  const { factory } = makeSocketFactory();
+  const { findByTitle } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  expect(await findByTitle('Page up')).toBeTruthy();
+  expect(await findByTitle('Page down')).toBeTruthy();
 });
