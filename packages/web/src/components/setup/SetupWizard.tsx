@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import QRCode from 'qrcode';
-import type { SetupState, ProviderStatus, TailscaleStatus } from '../../api/types';
+import type { SetupState, ProviderStatus, ProviderName, TailscaleStatus } from '../../api/types';
 import { api } from '../../api/client';
 import { useSetup } from '../../stores/setup';
 import { SecretsSection } from '../settings/SecretsSection';
@@ -8,9 +8,10 @@ import { SecretsSection } from '../settings/SecretsSection';
 type Step = 'agents' | 'mobile' | 'secrets' | 'done';
 const ORDER: Step[] = ['agents', 'mobile', 'secrets', 'done'];
 
-const INSTALL: Record<'claude' | 'codex', { label: string; install: string; login: string }> = {
+const INSTALL: Record<ProviderName, { label: string; install: string; login: string }> = {
   claude: { label: 'Claude Code', install: 'npm i -g @anthropic-ai/claude-code', login: 'claude' },
   codex: { label: 'Codex', install: 'npm i -g @openai/codex', login: 'codex login' },
+  grok: { label: 'Grok', install: 'curl -fsSL https://x.ai/cli/install.sh | bash', login: 'grok login' },
 };
 
 export function SetupWizard() {
@@ -65,10 +66,22 @@ export function btn(primary: boolean): React.CSSProperties {
 function AgentsStep({ providers: initial }: { providers: ProviderStatus[] }) {
   const [providers, setProviders] = useState(initial);
   const [checking, setChecking] = useState(false);
+  const [installing, setInstalling] = useState<ProviderName | null>(null);
   const recheck = async () => { setChecking(true); try { setProviders(await api.recheckProviders()); } catch { /* keep prior */ } setChecking(false); };
+  // Same action the New Thread modal offers: run that CLI's own install one-liner here,
+  // rather than making the user copy it into a terminal.
+  const install = async (name: ProviderName) => {
+    if (installing) return;
+    setInstalling(name);
+    try {
+      const result = await api.installProvider(name);
+      setProviders((prev) => prev.map((p) => (p.name === name ? result.status : p)));
+    } catch { /* the pre block still shows the manual command */ }
+    setInstalling(null);
+  };
   return (
     <div>
-      <p style={{ color: 'var(--color-text-secondary)', fontSize: 13, marginTop: 0 }}>Dispatch drives your local Claude Code / Codex CLIs. Install and sign in to the ones you want.</p>
+      <p style={{ color: 'var(--color-text-secondary)', fontSize: 13, marginTop: 0 }}>Dispatch drives your local Claude Code, Codex and Grok CLIs. Install and sign in to the ones you want.</p>
       {providers.map((p) => {
         const meta = INSTALL[p.name];
         const ok = p.installed && p.signedIn === true;
@@ -83,6 +96,12 @@ function AgentsStep({ providers: initial }: { providers: ProviderStatus[] }) {
             </div>
             {!ok && (
               <pre style={{ margin: '8px 0 0', font: '400 11.5px var(--font-mono)', background: 'var(--color-elevated)', borderRadius: 8, padding: '8px 10px', whiteSpace: 'pre-wrap' }}>{meta.install}{'\n'}{meta.login}</pre>
+            )}
+            {!p.installed && (
+              <button onClick={() => void install(p.name)} disabled={installing !== null}
+                style={{ ...btn(false), marginTop: 8, height: 28, fontSize: 12, borderColor: 'var(--color-accent)', color: 'var(--color-accent)' }}>
+                {installing === p.name ? 'Installing…' : `Install ${meta.label}`}
+              </button>
             )}
           </div>
         );

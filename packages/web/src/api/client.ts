@@ -1,4 +1,4 @@
-import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus, PendingPermission, UpdateState } from './types';
+import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus, PendingPermission, UpdateState, ProviderName, InstallResult } from './types';
 
 /**
  * A content block for a structured `user` turn (mirrors the daemon's wire shape). A
@@ -96,6 +96,8 @@ export const api = {
   recheckProviders: () => req<ProviderStatus[]>(`/api/setup/providers`),
   recheckTailscale: () => req<TailscaleStatus>(`/api/setup/tailscale`),
   completeSetup: () => req<{ ok: true }>(`/api/setup/complete`, { method: 'POST' }),
+  /** Runs that CLI's own install one-liner on the daemon host. Slow — minutes, not seconds. */
+  installProvider: (name: ProviderName) => req<InstallResult>(`/api/setup/install/${name}`, { method: 'POST' }),
   updateTerminal: (id: string, fields: { label?: string; config?: Record<string, unknown> }) =>
     req<Terminal>(`/api/terminals/${id}`, { method: 'PATCH', body: body(fields) }),
   relaunchTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}/relaunch`, { method: 'POST' }),
