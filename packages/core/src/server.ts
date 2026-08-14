@@ -24,6 +24,7 @@ import { createServersRouter } from './routes/servers.js';
 import { createFilesRouter } from './routes/files.js';
 import { createStateRouter } from './routes/state.js';
 import { attachUsageRecorder, closeInterruptedTurns } from './analytics/recorder.js';
+import { attachPtyCapture } from './analytics/pty-capture.js';
 import { clearStaleImportState } from './analytics/importer.js';
 import { createGitRouter } from './routes/git.js';
 import { createSecretsRouter } from './routes/secrets.js';
@@ -288,6 +289,14 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const pushService = new PushService(db, { vapidDir: dispatchDir });
 
   wireThreadSettledPush(db, statusService, pushService);
+  statusService.addThreadSettledListener(attachPtyCapture({
+    db,
+    isStructured: (terminalId) => {
+      const t = terminalsDb.getById(db, terminalId);
+      return !!t && sessionService.isStructuredTerminal(t);
+    },
+    onTurnClosed: () => broadcaster.broadcast({ type: 'analytics-dirty' }),
+  }));
 
   bootAnalytics(db);
 
@@ -424,6 +433,14 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const pushService = new PushService(db, { vapidDir: dataDir });
 
   wireThreadSettledPush(db, statusService, pushService);
+  statusService.addThreadSettledListener(attachPtyCapture({
+    db,
+    isStructured: (terminalId) => {
+      const t = terminalsDb.getById(db, terminalId);
+      return !!t && sessionService.isStructuredTerminal(t);
+    },
+    onTurnClosed: () => broadcaster.broadcast({ type: 'analytics-dirty' }),
+  }));
 
   // Doppler secrets: token-backed connection + per-spawn injection (DOPPLER_* env +
   // an MCP server) so Claude Code / Codex agents can add & retrieve secrets.
