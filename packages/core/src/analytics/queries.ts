@@ -1,5 +1,4 @@
 import type Database from 'better-sqlite3';
-import { notionalValueUsd } from './pricing.js';
 
 export type Metric = 'tokens' | 'outputTokens' | 'turns' | 'duration';
 export type GroupBy = 'model' | 'provider' | 'project' | 'outcome' | 'none';
@@ -15,8 +14,6 @@ export interface Summary {
   cacheReadTokens: number;
   cacheCreateTokens: number;
   totalTokens: number;
-  notionalUsd: number;
-  unpricedTokens: number;
   /**
    * Turns that closed without a single usage-bearing frame (`messages = 0`).
    *
@@ -85,24 +82,6 @@ export function summary(db: Database.Database, r: Range): Summary {
     FROM usage_turns WHERE ${w.sql}
   `).get(...w.params) as Record<string, number>;
 
-  // Value is summed per model, because the price differs per model.
-  const byModel = db.prepare(`
-    SELECT model,
-           COALESCE(SUM(input_tokens), 0)        AS input,
-           COALESCE(SUM(output_tokens), 0)       AS output,
-           COALESCE(SUM(cache_read_tokens), 0)   AS cacheRead,
-           COALESCE(SUM(cache_create_tokens), 0) AS cacheCreate
-    FROM usage_turns WHERE ${w.sql} GROUP BY model
-  `).all(...w.params) as { model: string; input: number; output: number; cacheRead: number; cacheCreate: number }[];
-
-  let notionalUsd = 0;
-  let unpricedTokens = 0;
-  for (const m of byModel) {
-    const v = notionalValueUsd(m);
-    if (v == null) unpricedTokens += m.input + m.output + m.cacheRead + m.cacheCreate;
-    else notionalUsd += v;
-  }
-
   return {
     turns: agg.turns,
     threads: agg.threads,
@@ -111,8 +90,6 @@ export function summary(db: Database.Database, r: Range): Summary {
     cacheReadTokens: agg.cache_read_tokens,
     cacheCreateTokens: agg.cache_create_tokens,
     totalTokens: agg.input_tokens + agg.output_tokens + agg.cache_read_tokens + agg.cache_create_tokens,
-    notionalUsd,
-    unpricedTokens,
     unreportedTurns: agg.unreported_turns,
     backfilledTurns: agg.backfilled_turns,
   };

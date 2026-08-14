@@ -87,8 +87,8 @@ export function addUsage(db: Database.Database, turnId: string, d: UsageDelta): 
  * bare CLI tier alias — 'sonnet', 'opus', 'haiku', 'fable' (overseer/prompts.ts
  * MODEL_FOR_TYPE) — not a model id. The frame carries the authoritative full id
  * ('claude-sonnet-5'), so the frame wins. A fill-only variant would pin the alias
- * forever: pricing.ts could not price it, the tokens would land in
- * `unpricedTokens`, and the same model would split the charts across two keys.
+ * forever: the same model would split every by-model chart across two keys, and
+ * pricing.ts (still consulted by the state route's cost chip) could not price it.
  *
  * Callers must only call this when the frame actually named a model. Codex frames
  * carry no `message.model` (structured/codex-translate.ts names a model only in

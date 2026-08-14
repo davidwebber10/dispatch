@@ -95,10 +95,9 @@ describe('usage recorder', () => {
 
   /*
    * The turn opens with `terminal.config.model`, which sessions/service.ts writes
-   * as modelFor(config) — a bare CLI tier alias, never a model id. priceFor()
-   * cannot price 'sonnet', so a row that kept the alias would land its tokens in
-   * unpricedTokens and appear as a second key in every by-model chart. The frame
-   * knows the real id, so the frame wins.
+   * as modelFor(config) — a bare CLI tier alias, never a model id. A row that kept
+   * the alias would appear as a second key in every by-model chart, splitting a
+   * single model across two series. The frame knows the real id, so it wins.
    */
   it('replaces the config tier alias with the model the frame names', () => {
     terminalsDb.updateConfig(d, termId, { role: 'coordinator', model: 'sonnet' });

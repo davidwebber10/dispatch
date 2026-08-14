@@ -358,14 +358,6 @@ export interface AnalyticsSummary {
   cacheReadTokens: number;
   cacheCreateTokens: number;
   totalTokens: number;
-  /** Notional list-price value of the tokens above. Not a bill — Dispatch runs on a
-   * subscription, so no dollars actually changed hands. This is what the same tokens
-   * would have cost at API list prices. */
-  notionalUsd: number;
-  /** Tokens summed from models with no price entry, and therefore excluded from
-   * `notionalUsd`. Lets the UI mark the notional value as partial rather than implying
-   * it covers every token. */
-  unpricedTokens: number;
   /**
    * Turns that closed without a single usage-bearing frame ever being seen.
    *

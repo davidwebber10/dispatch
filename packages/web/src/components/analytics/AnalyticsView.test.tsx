@@ -6,7 +6,7 @@ import { useAnalyticsFeed } from '../../stores/analytics';
 
 const EMPTY = {
   turns: 0, threads: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0,
-  cacheCreateTokens: 0, totalTokens: 0, notionalUsd: 0, unpricedTokens: 0,
+  cacheCreateTokens: 0, totalTokens: 0,
   unreportedTurns: 0, backfilledTurns: 0,
 };
 
@@ -81,14 +81,6 @@ describe('AnalyticsView', () => {
     await waitFor(() => expect(screen.getByText('12')).toBeTruthy());
   });
 
-  it('labels the dollar figure as notional, never as cost or spend', async () => {
-    stub({ ...EMPTY, turns: 1, notionalUsd: 4.2 });
-    render(<AnalyticsView />);
-    await waitFor(() => expect(screen.getByText(/equivalent api value/i)).toBeTruthy());
-    expect(screen.queryByText(/^cost$/i)).toBeNull();
-    expect(screen.queryByText(/spend/i)).toBeNull();
-  });
-
   // unreportedTurns counts turns where no usage frame was ever seen. Those turns
   // really did consume tokens; we never got a count. It must never read as a
   // measured zero.
@@ -96,15 +88,6 @@ describe('AnalyticsView', () => {
     stub({ ...EMPTY, turns: 10, unreportedTurns: 4, totalTokens: 900 } as any);
     render(<AnalyticsView />);
     await waitFor(() => expect(screen.getByText(/4 turns reported no usage/i)).toBeTruthy());
-  });
-
-  it('marks the notional value partial when some model has no price entry', async () => {
-    stub({ ...EMPTY, turns: 5, notionalUsd: 1.25, unpricedTokens: 4321 });
-    render(<AnalyticsView />);
-    await waitFor(() => expect(screen.getByText(/equivalent api value/i)).toBeTruthy());
-    const partial = screen.getByText(/partial/i);
-    expect(partial).toBeTruthy();
-    expect(partial.getAttribute('title') ?? '').toMatch(/no price entry/i);
   });
 
   // A day with no turns must look different from a quiet day, so the heatmap

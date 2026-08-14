@@ -42,17 +42,6 @@ function fmtTokens(n: number | null | undefined): string {
   return n < 1000 ? String(n) : COMPACT.format(n);
 }
 
-/**
- * The notional figure. Dispatch runs on a subscription, so no dollars change
- * hands per turn — this is what the same tokens would have been worth at API
- * list prices. The label the user reads says exactly that.
- */
-function fmtNotional(usd: number | null | undefined): string {
-  if (usd == null) return '—';
-  if (usd > 0 && usd < 0.01) return `$${usd.toFixed(4)}`;
-  return `$${usd.toFixed(2)}`;
-}
-
 function fmtSeconds(s: number): string {
   if (s < 60) return `${Math.round(s)}s`;
   const m = Math.floor(s / 60);
@@ -512,7 +501,7 @@ export function AnalyticsView() {
       ) : (
         <>
           {/* 2. Headline totals */}
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(5, 1fr)', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: 12 }}>
             <Kpi label="TOTAL TOKENS" value={nothingReported ? '—' : fmtTokens(summary.totalTokens)} title={nothingReported ? noUsageTitle : undefined} />
             <Kpi label="OUTPUT TOKENS" value={nothingReported ? '—' : fmtTokens(summary.outputTokens)} title={nothingReported ? noUsageTitle : undefined} />
             {/* An imported row is one assistant MESSAGE, not one turn — the transcript
@@ -525,13 +514,6 @@ export function AnalyticsView() {
               badgeTitle="Imported history has no turn boundaries, so each imported row is one assistant message, not one turn. Their tokens are counted normally."
             />
             <Kpi label="THREADS" value={summary.threads.toLocaleString()} />
-            <Kpi
-              label="EQUIVALENT API VALUE"
-              value={nothingReported ? '—' : fmtNotional(summary.notionalUsd)}
-              title={nothingReported ? noUsageTitle : 'What these tokens would be worth at API list prices. Dispatch runs on a subscription, so this is a notional figure, not a bill.'}
-              badge={!nothingReported && summary.unpricedTokens > 0 ? 'partial' : undefined}
-              badgeTitle={`${fmtTokens(summary.unpricedTokens)} tokens came from a model with no price entry, so they are counted in the token totals but not in this value.`}
-            />
           </div>
 
           {/* Turns whose usage was never reported. NOT a measured zero. */}
@@ -542,15 +524,6 @@ export function AnalyticsView() {
                 — no usage frame ever arrived for them, so their tokens are missing from the totals
                 above. They are not turns that used nothing.
               </span>
-            </div>
-          )}
-
-          {/* A `title` is hover-only, and a touch device has no hover, so on mobile
-              the partial marker's reason is rendered as a line the reader can see. */}
-          {isMobile && !nothingReported && summary.unpricedTokens > 0 && (
-            <div style={{ ...muted, marginTop: 10 }}>
-              The value above is partial: {fmtTokens(summary.unpricedTokens)} tokens came from a model
-              with no price entry, so they are counted in the token totals but not in that figure.
             </div>
           )}
 

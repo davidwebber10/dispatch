@@ -21,7 +21,7 @@ const { AnalyticsView } = await import('./AnalyticsView');
 
 const EMPTY = {
   turns: 6, threads: 2, inputTokens: 0, outputTokens: 400, cacheReadTokens: 0,
-  cacheCreateTokens: 0, totalTokens: 9000, notionalUsd: 0, unpricedTokens: 0, unreportedTurns: 0,
+  cacheCreateTokens: 0, totalTokens: 9000, unreportedTurns: 0,
 };
 
 function localDay(offsetDays = 0): string {
