@@ -24,7 +24,8 @@ sign-in URL, shows it in a banner, and takes the callback back.
                   ▼
           AuthRequestService
                   ▼
-       AuthBanner — "Authentication required"
+       AuthBanner — "Authentication required" (sign-in URLs)
+                  or "Link to open" (any other URL a shim relays)
                   │
       you tap "Open in browser" on your phone
                   ▼
@@ -56,6 +57,12 @@ same auth request, distinguished by `source`.
 | `browser-env` | `$BROWSER` / `$GH_BROWSER` point at `dispatch-open` | CLIs that honour the convention |
 | `system-opener` | `open` and `xdg-open` are shadowed on `PATH` | CLIs that exec the platform opener directly — the common case on macOS |
 | `terminal-output` | The thread's output is scanned for sign-in URLs | Device-code grants, which exec nothing at all and only print a URL |
+
+The shims relay **any** http(s) URL, not just sign-ins — an agent opening an artifact preview
+or a docs page arrives through the same pipe. The banner therefore classifies client-side:
+a `terminal-output` request is a sign-in by construction, and a shim-relayed URL is checked
+against the same signal list (mirrored in `AuthBanner.tsx`). A non-sign-in URL renders as
+"Link to open" and hides the callback-paste field, which only makes sense for OAuth.
 
 `$BROWSER` alone was never enough. Measured against a real PTY, `gh auth login --web` never
 invokes it in any configuration — despite the flag name it is a device-code grant that prints
