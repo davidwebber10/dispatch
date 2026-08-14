@@ -109,7 +109,9 @@ It installs to `~/.grok/bin/grok` (symlinked into `~/.local/bin`) and appends a 
 your shell rc. Dispatch also probes those two paths directly, so a Grok installed from the
 New Thread modal is usable **without** restarting the daemon.
 
-**Authenticate** — a browser OAuth flow, so run it in a real terminal:
+**Authenticate** — a browser OAuth flow. Run it in any thread: Dispatch relays the sign-in
+URL to a banner so you can complete it on your phone (see
+[browser-auth-relay.md](browser-auth-relay.md)).
 
 ```bash
 grok login       # or set XAI_API_KEY for pay-as-you-go via api.x.ai
