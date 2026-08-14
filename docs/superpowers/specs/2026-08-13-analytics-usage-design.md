@@ -7,11 +7,10 @@ Branch: `worktree-analytics-usage` (worktree, based on `944f527` — Grok merged
 ## 1. Purpose
 
 Dispatch records numbers today, but it aggregates almost none of them. This design
-adds one aggregation layer and one new view. The view answers three questions:
+adds one recorder and one new view. The view answers three questions:
 
 1. **Token burn.** How many tokens did I use, by model, by project, over time?
-2. **Throughput.** How many threads ran, how long did they take, which projects
-   carried the work?
+2. **Throughput.** How many turns ran, how long did they take, how did they end?
 3. **Personal stats.** All-time totals, the busiest day, the longest thread, the
    most-used model, the active-day streak.
 
@@ -27,17 +26,14 @@ adds one aggregation layer and one new view. The view answers three questions:
 There is no analytics table, no event log, and no telemetry. Dispatch sends nothing
 off the machine. This design does not change that.
 
-The cumulative number on `terminals.config` exists for speed, not for analytics.
-`packages/core/src/sessions/service.ts:1226` explains it: the Work-tab Done cards
-needed a token count without a per-card fetch.
-
 ## 3. Decisions
 
 | Decision | Choice |
 |---|---|
-| History | Scan transcripts into a rollup table. Incremental after the first run. |
-| Sources | Dispatch threads only, across Claude Code, Codex, and Grok. |
-| Scheduled runs | The `agent_runs` dashboard stays as it is. A scheduled run's *thread* appears in the new charts like any other thread. |
+| How data arrives | The daemon records each turn as it happens, from the events it already emits. No background job. No polling. |
+| History | The table starts empty. A manual, one-off backfill button can import the past. |
+| Sources | Dispatch threads only, across every provider that runs in structured mode. |
+| Scheduled runs | The `agent_runs` dashboard stays as it is. A scheduled run's *thread* records turns like any other thread. |
 | Placement (desktop) | A third top-level view, beside Workspace and Board. |
 | Placement (mobile) | A fifth tab in the bottom bar. |
 | Charts | Recharts. |
@@ -53,154 +49,167 @@ Rules:
 - Tokens are the headline metric everywhere.
 - The dollar figure appears as a secondary tile, labelled **"equivalent API value"**.
 - The price table moves out of `routes/state.ts:100` into one shared module,
-  `packages/core/src/analytics/pricing.ts`, with the current model identifiers.
-  The table in the route today is stale.
+  `packages/core/src/analytics/pricing.ts`, with current model identifiers. The
+  table in the route today is stale.
 - A model with no price entry contributes tokens but not dollars, and the tile
   shows a "partial" marker.
 
-## 5. Providers that report no usage
+## 5. What the daemon can and cannot see
 
-Grok reports nothing to count. `packages/core/src/providers/grok.ts:65-72` states
-the reason: the runner uses `--single` with plain output, because Grok's
+Turn boundaries are already events. `server.ts:118-175` wires them:
+
+| Event | Meaning |
+|---|---|
+| `busy` | a turn started |
+| `idle` | a turn ended normally |
+| `needs-help` | a turn ended by asking the human |
+| `scheduled` | a turn ended dormant, waiting on a timer |
+| `exit` | the process ended |
+| `event` | every frame the CLI emitted, including assistant messages with `usage` |
+
+`noteTurnOutcome` (`server.ts:155`) already runs on every turn end, for **every**
+structured thread. That is the insertion point.
+
+**Do not hook `noteAgentCompletion`.** It returns early on `cfg.role !== 'agent'`
+(`service.ts:1117`), so it never runs for ordinary chat threads. Hanging analytics
+off it would silently drop a large part of the usage.
+
+**Usage rides the event stream.** The manager re-emits every frame at
+`manager.ts:334`. Claude's stream-json assistant messages carry a `usage` block,
+and `structured/codex-translate.ts` normalizes Codex frames into the same shape.
+So one recorder reads both. Live recording needs no per-provider usage parser,
+and reads no file. The only per-provider transcript reader in this design belongs
+to the optional importer in section 8, which never runs on a hot path.
+
+**PTY threads emit nothing.** A thread in PTY mode — Grok, and any provider with
+`statusStrategy: 'pty-timing'` — never passes through the structured manager. It
+produces no turn events and no usage. Grok's own source says why
+(`providers/grok.ts:65-72`): its runner prints plain text, because its
 `streaming-json` emits ACP session updates that `RunStreamParser` cannot read.
 
-A hardcoded Claude-or-Codex parser would show every Grok thread as **0 tokens**,
-which reads as "free" instead of "unknown". So usage extraction becomes a
-per-provider capability.
-
-Add one optional method to `SessionProvider`:
-
-```ts
-readUsage?(workDir: string, externalSessionId: string, fromOffset?: number): UsageScanResult | null;
-
-interface UsageScanResult {
-  events: UsageEvent[];   // one per assistant message that carried a usage block
-  nextOffset: number;     // byte offset consumed, for the incremental scan
-}
-
-interface UsageEvent {
-  at: string;             // ISO timestamp from the transcript line
-  model: string;          // '' when the line does not name one
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreateTokens: number;
-}
-```
-
-- `claude-code` implements it. It reuses the logic in
-  `sessions/cc-sessions.ts:191` (`sumTranscriptTokens`), refactored to emit dated
-  events instead of one total. `sumTranscriptTokens` stays, and becomes a thin
-  wrapper so the Done cards keep working unchanged.
-- `codex` implements it against the Codex session files.
-- `grok` does not implement it. The method is absent.
-
-A provider with no `readUsage` marks its threads **"usage not reported"**. The UI
-never prints 0 for them, and they are excluded from token totals and from every
-denominator.
-
-Such a thread writes no `usage_daily` row at all. The API derives the unknown set
-from the `terminals` table: a thread whose provider has no `readUsage` is
-unknown-usage, whether or not it has rows. A thread whose provider *does* report
-usage, but which has no rows yet, is simply a thread the scanner has not reached.
-The two states are different, and the view labels them differently.
-
-This is the only change to the provider interface. It is additive and optional, so
-it does not break the Grok work in flight.
+Such a thread is marked **"usage not reported"**. The UI never prints 0 for it,
+and it is excluded from token totals and from every denominator.
 
 ## 6. Data model
 
-Two new tables, both additive, created with `CREATE TABLE IF NOT EXISTS` in
-`db/schema.ts`. No existing column changes.
+One new table, created with `CREATE TABLE IF NOT EXISTS` in `db/schema.ts`. No
+existing column changes.
 
 ```sql
-CREATE TABLE IF NOT EXISTS usage_daily (
-  day                 TEXT    NOT NULL,   -- 'YYYY-MM-DD', local time
-  terminal_id         TEXT    NOT NULL,
-  project_id          TEXT    NOT NULL,
-  provider            TEXT    NOT NULL,
-  model               TEXT    NOT NULL,   -- '' when the transcript names none
+CREATE TABLE IF NOT EXISTS usage_turns (
+  id                  TEXT PRIMARY KEY,
+  terminal_id         TEXT NOT NULL,
+  project_id          TEXT NOT NULL,
+  provider            TEXT NOT NULL,
+  model               TEXT NOT NULL DEFAULT '',
+  role                TEXT NOT NULL DEFAULT '',   -- 'agent' | 'coordinator' | ''
+  started_at          TEXT NOT NULL,              -- ISO
+  ended_at            TEXT,                       -- NULL while the turn is open
+  outcome             TEXT,                       -- idle | needs_help | scheduled | exit | interrupted
   input_tokens        INTEGER NOT NULL DEFAULT 0,
   output_tokens       INTEGER NOT NULL DEFAULT 0,
   cache_read_tokens   INTEGER NOT NULL DEFAULT 0,
   cache_create_tokens INTEGER NOT NULL DEFAULT 0,
   messages            INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (day, terminal_id, model)
+  tool_calls          INTEGER NOT NULL DEFAULT 0,
+  backfilled          INTEGER NOT NULL DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS idx_usage_daily_day     ON usage_daily(day);
-CREATE INDEX IF NOT EXISTS idx_usage_daily_project ON usage_daily(project_id);
-
-CREATE TABLE IF NOT EXISTS usage_scan_state (
-  terminal_id     TEXT PRIMARY KEY,
-  transcript_path TEXT NOT NULL,
-  mtime_ms        INTEGER NOT NULL,
-  size_bytes      INTEGER NOT NULL,
-  next_offset     INTEGER NOT NULL,   -- bytes already folded into usage_daily
-  scanned_at      TEXT NOT NULL
-);
+CREATE INDEX IF NOT EXISTS idx_usage_turns_started  ON usage_turns(started_at);
+CREATE INDEX IF NOT EXISTS idx_usage_turns_terminal ON usage_turns(terminal_id);
+CREATE INDEX IF NOT EXISTS idx_usage_turns_project  ON usage_turns(project_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_usage_turns_open     ON usage_turns(ended_at) WHERE ended_at IS NULL;
 ```
 
-The grain is **day × thread × model**. That grain answers every question in
-section 1 and keeps the table small: a thread active for three days across two
-models writes six rows.
+The grain is **one row per turn**. It is richer than a daily rollup and costs
+little: a heavy month writes a few thousand rows. Every chart is a `GROUP BY`
+over an indexed column.
 
-Throughput needs no new table. `terminals` already carries `created_at`,
-`last_activity_at`, `archived_at`, and `status`.
+The turn grain gives throughput for free — duration from
+`ended_at - started_at`, and an outcome mix from `outcome`. That partly restores
+the success signal lost by leaving `agent_runs` out: a thread has no pass or fail,
+but a turn that ended `idle` is a different thing from one that ended `needs_help`
+or `exit`.
 
-**Caveat to state in the UI:** a thread has no success or failure outcome. Only
-`agent_runs` has that. So the throughput charts count starts, finishes, and
-durations. They do not show a success rate.
+Two keys in `app_state`:
 
-## 7. Ingest
+- `analytics_tracking_started_at` — the instant recording began. Written once.
+- `analytics_backfill_state` — the importer's progress record.
 
-Two mechanisms write one table.
+## 7. The recorder
 
-**Live.** The turn-settled hook in `sessions/service.ts:1226` already runs at the
-right moment. It gains one line: mark this terminal dirty and ask the scanner to
-fold the tail of its transcript.
+A new module, `packages/core/src/analytics/recorder.ts`, subscribes to the
+structured manager. It holds no aggregate of its own; the table is the only state.
 
-The hook does **no arithmetic of its own**. Dispatch has already shipped a token
-double-count bug once. Two independent adders on one counter is how that happens.
-So there is exactly one adder — the scanner — and the hook only triggers it.
+| Event | Action |
+|---|---|
+| `busy` | Open a row: `started_at = now`, `ended_at = NULL`. Capture `terminal_id`, `project_id`, `provider`, `role`, and `model` from the terminal row. |
+| `event` with `message.usage` | Add the usage to the open row, and increment `messages`. Take `model` from the frame when the row has none. |
+| `event` with a `tool_use` block | Increment `tool_calls`. |
+| `idle` / `needs-help` / `scheduled` | Close the row: set `ended_at` and `outcome`. |
+| `exit` | Close any open row for that terminal with `outcome = 'exit'`. |
 
-**Reconcile.** A background job walks every non-archived terminal on daemon start,
-and hourly after that. For each thread it compares the transcript's `mtime` and
-size against `usage_scan_state`:
+Two rules keep it correct:
 
-- Unchanged → skip.
-- Grew, and the prefix is intact → parse from `next_offset` only, and add the
-  deltas with `INSERT ... ON CONFLICT DO UPDATE SET x = x + excluded.x`.
-- Shrank, or the file is new → `DELETE FROM usage_daily WHERE terminal_id = ?`,
-  then rebuild that thread from byte 0.
+- **One writer.** Nothing else adds tokens to this table. Dispatch has shipped a
+  token double-count bug once already, and two independent adders on one counter
+  is how that happens. `persistAgentTokenUsage` keeps writing `config.totalTokens`
+  for the Done cards, and it stays completely separate from `usage_turns`.
+- **Write through, do not buffer.** Usage is added to the row as each frame
+  arrives, not held in memory until the turn ends. A daemon restart mid-turn then
+  loses nothing. Each write is a single indexed row update.
 
-This repairs anything the live hook missed after a crash, a kill, or a resume.
+**Restart handling.** On daemon start, any row still open is closed with
+`outcome = 'interrupted'` and `ended_at = started_at`. A restart therefore leaves
+an honest record, not a phantom turn of infinite length. The charts count an
+interrupted turn's tokens but exclude it from duration statistics.
 
-**Scheduling rules:**
+**Failure policy.** Every recorder call is best-effort and wrapped. Analytics must
+never break a turn. A write that throws is swallowed and counted in a debug log.
 
-- The scan never blocks daemon startup. It runs after boot, on a timer.
-- It yields between files, so it never starves the event loop.
-- It writes a progress record to `app_state`, so the view can show
-  "scanning 340 / 1200 threads" instead of an empty page.
-- An interrupted scan resumes. Each file's state is committed as that file
-  finishes.
+## 8. Backfill — manual, one-off, bounded
 
-## 8. API
+The table starts empty. The Analytics view offers a **"Import history"** button.
 
-New router at `packages/core/src/routes/analytics.ts`.
+- The importer reads the transcripts of threads Dispatch knows about, and writes
+  turn rows with `backfilled = 1`.
+- It accepts **only** data older than `analytics_tracking_started_at`. Live
+  recording owns everything after that instant, so the two can never overlap and
+  the button cannot double-count.
+- It is idempotent. A re-run deletes rows where `backfilled = 1`, then rebuilds
+  them. Live rows are never touched, so a cancelled or failed import cannot damage
+  a real measurement.
+- It runs only when the human presses the button. It reports progress, and it can
+  be cancelled. It is not a background job, and it never runs on daemon start.
+- The importer needs a per-provider transcript reader. This is the only place that
+  code exists, and it is off every hot path. Claude Code and Codex get one; Grok
+  does not, so Grok threads import nothing.
+- Charts can shade or exclude backfilled turns, because the flag distinguishes an
+  imported turn from a measured one.
+
+An imported turn carries the tokens and the model that its transcript records. It
+carries no reliable duration, so `ended_at` equals `started_at` and the turn is
+excluded from duration statistics.
+
+## 9. API
+
+New router at `packages/core/src/routes/analytics.ts`. Every route reads
+`usage_turns` and never touches a transcript.
 
 | Route | Returns |
 |---|---|
-| `GET /api/analytics/summary?from&to&projectId` | KPI tiles: tokens, output tokens, threads, notional value, unknown-usage thread count |
-| `GET /api/analytics/series?metric&groupBy&bucket&from&to&projectId` | A dated series. `metric` = `tokens` \| `outputTokens` \| `threads`. `groupBy` = `model` \| `provider` \| `project` \| `none`. |
+| `GET /api/analytics/summary?from&to&projectId` | KPI tiles: tokens, output tokens, turns, threads, notional value, unknown-usage thread count |
+| `GET /api/analytics/series?metric&groupBy&bucket&from&to&projectId` | A dated series. `metric` = `tokens` \| `outputTokens` \| `turns` \| `duration`. `groupBy` = `model` \| `provider` \| `project` \| `outcome` \| `none`. |
 | `GET /api/analytics/top?dimension&from&to` | Ranked rows: top projects, top threads, model mix |
-| `GET /api/analytics/records` | Personal stats: all-time totals, busiest day, longest thread, streak |
-| `GET /api/analytics/scan-status` | `{ state, done, total, lastFinishedAt }` |
-| `POST /api/analytics/rescan` | Force a full rebuild |
+| `GET /api/analytics/records` | Personal stats: all-time totals, busiest day, longest thread, active-day streak |
+| `GET /api/analytics/backfill` | `{ trackingStartedAt, state, done, total, lastFinishedAt }` |
+| `POST /api/analytics/backfill` | Start the import |
+| `DELETE /api/analytics/backfill` | Cancel a running import, or remove imported rows |
 
-Every query reads `usage_daily` only. No route reads a transcript. That is what
-keeps the page instant.
+The view refreshes over the existing WebSocket. The recorder emits a lightweight
+`analytics-dirty` signal when it closes a turn, so an open Analytics page updates
+as you work, with no polling.
 
-## 9. UI
+## 10. UI
 
 ### Desktop
 
@@ -212,46 +221,45 @@ established, so the shell needs no restructure.
 
 `components/mobile/MobileApp.tsx` holds
 `bottomTab: 'projects' | 'pinned' | 'agents' | 'settings'`. Add `'analytics'` as a
-fifth tab.
-
-Five is the practical maximum for that bar. The analytics screen stacks to one
-column on mobile, and each chart keeps a minimum height so the marks stay legible.
+fifth tab. Five is the practical maximum for that bar. The screen stacks to one
+column, and each chart keeps a minimum height so the marks stay legible.
 
 ### The page
 
-A filter row sits above the charts: project selector, date range (7 / 30 / 90 days
-/ all), and provider filter. Filters never repaint the surviving series — a model
-keeps its color when another model is filtered out.
+A filter row sits above the charts: project, date range (7 / 30 / 90 days / all),
+and provider. Filters never repaint the surviving series — a model keeps its color
+when another model is filtered out.
 
 | # | Block | Form | Why this form |
 |---|---|---|---|
 | 1 | Headline totals | Stat tiles, no plot | A single number needs no chart |
 | 2 | Tokens over time | Stacked bar, one segment per model | Magnitude over time, split by identity |
-| 3 | Output tokens over time | Line | The "real work" signal, less noisy than total |
-| 4 | Threads started per day | Bar | A count over time |
-| 5 | Model mix | Horizontal ranked bar | Part-to-whole compared by length, not by angle. Not a pie. |
-| 6 | Top projects | Horizontal ranked bar | Ranking |
-| 7 | Activity calendar | Heatmap, sequential single hue | The personal-stats block |
-| 8 | Personal records | Number list | Facts, not trends |
+| 3 | Output tokens over time | Line | The "real work" signal, less noisy than the cache-dominated total |
+| 4 | Turns per day, by outcome | Stacked bar | A count over time, with the outcome mix |
+| 5 | Turn duration | Bar, by bucket | Distribution, not an average that hides the tail |
+| 6 | Model mix | Horizontal ranked bar | Part-to-whole compared by length, not by angle. Not a pie. |
+| 7 | Top projects | Horizontal ranked bar | Ranking |
+| 8 | Activity calendar | Heatmap, sequential single hue | The personal-stats block |
+| 9 | Personal records | Number list | Facts, not trends |
 
 Rules taken from the dataviz method:
 
-- Never a dual-axis chart. Tokens and thread counts get separate charts.
+- Never a dual-axis chart. Tokens and turn counts get separate charts.
 - A legend is always present for two or more series. Four or fewer series are also
   direct-labelled, so identity is never carried by color alone.
 - Marks are thin, with a 2px surface gap between stacked segments.
-- Every chart has a hover tooltip. Recharts supplies it.
+- Every chart has a hover tooltip.
 - Grid and axes stay recessive, in `--color-text-tertiary`.
 
 ### Colors
 
-Dispatch is dark-only. `theme.css` offers just three chart-usable colors, and all
-three are **status** colors: `--color-accent` `#3ECF6A`, `--color-status-yellow`
+Dispatch is dark-only. `theme.css` offers three chart-usable colors, and all three
+are **status** colors: `--color-accent` `#3ECF6A`, `--color-status-yellow`
 `#F5C542`, `--color-status-red` `#F0616D`. A status color must never stand in for
 "series 4", or a model starts to look like a failure.
 
-So the analytics view adds its own categorical palette, validated against the
-Dispatch pane surface `#141416`:
+So the view adds its own categorical palette, validated against the Dispatch pane
+surface `#141416`:
 
 | Slot | Hex | Assigned to |
 |---|---|---|
@@ -261,74 +269,86 @@ Dispatch pane surface `#141416`:
 | 4 | `#c98500` | fourth |
 | 5 | `#d55181` | fifth |
 
-Validator result on surface `#141416`, dark mode: lightness band PASS, chroma floor
-PASS, CVD separation PASS (worst adjacent pair ΔE 8.4 protan), normal-vision floor
-PASS (worst 19.3), contrast PASS. All checks pass.
+Validator result, dark mode on `#141416`: lightness band PASS, chroma floor PASS,
+CVD separation PASS (worst adjacent pair ΔE 8.4, protan), normal-vision floor PASS
+(worst 19.3), contrast PASS. All checks pass.
 
 Hues are assigned in fixed order and never cycled. A sixth model folds into
-"Other" in a neutral gray.
+"Other", in a neutral gray.
+
+The outcome chart is the one exception: `idle`, `needs_help`, and `exit` are
+states, not identities, so they wear the reserved status colors with an icon and a
+label, exactly as a status should.
 
 The heatmap uses a single-hue sequential ramp built from the accent green, from
-near-surface at the low end to full accent at the high end. Its lightness must be
-monotonic.
+near-surface at the low end to full accent at the high end, with monotonic
+lightness.
 
 **Recharts and CSS variables.** Recharts needs literal color values; it cannot
-take `var(--color-accent)`. So a small `chartTheme.ts` reads the computed custom
-properties once at mount and exports hex strings. This keeps one source of truth
-in `theme.css`.
+take `var(--color-accent)`. A small `chartTheme.ts` reads the computed custom
+properties once at mount and exports hex strings, so `theme.css` stays the single
+source of truth.
 
-## 10. Other users, and the update
+## 11. Other users, and the update
 
-- The migration is additive. It follows the existing pattern in `db/schema.ts:148`.
-  An older database upgrades in place, and a downgrade still runs.
-- The first scan runs in the background, never on the startup path. The view shows
-  its progress.
-- Charts are not empty on first open. The backfill covers the user's whole Dispatch
-  history on their own machine.
-- Nothing leaves the machine. The scanner reads token counts, timestamps, and model
-  names. It does not read message text, and it makes no network call.
-- The Recharts dependency adds roughly 100 kb to the web bundle. This is the one
-  cost every user pays, whether or not they open the view. The analytics view is
-  lazy-loaded with `React.lazy`, so the chart code is not in the initial chunk.
+- The migration is additive, following `db/schema.ts:148`. An older database
+  upgrades in place, and a downgrade still runs.
+- Nothing runs on daemon start except closing interrupted rows, which is a single
+  indexed statement.
+- A new user's charts start empty and fill as they work. The "Import history"
+  button is there if they want the past.
+- Nothing leaves the machine. The recorder stores token counts, timestamps, model
+  names, and outcomes. It stores no message text, and it makes no network call.
+- Recharts adds roughly 100 kb to the web bundle. The view is lazy-loaded with
+  `React.lazy`, so the chart code stays out of the initial chunk.
 
-## 11. Testing
+## 12. Testing
 
-Unit, in `packages/core`:
+Core:
 
-- `readUsage` for Claude Code, against a transcript fixture. Assert dated events,
-  not one total.
-- `readUsage` for Codex, reusing `structured/codex-frames.fixture.ts`.
-- A provider with no `readUsage` yields no rows and marks the thread unknown.
-- **Idempotency:** scan the same file twice and assert the totals do not change.
-  This is the direct guard against the double-count bug.
-- Incremental correctness: scan, append to the fixture, scan again, and assert the
-  result equals a full re-parse.
-- Truncation: shrink the file and assert the thread rebuilds from zero.
+- A `busy` → `event` → `idle` sequence writes exactly one closed row with the
+  right totals.
+- A turn with several assistant frames sums them once. Replaying the same frame
+  twice does not double the count. This is the direct guard against the
+  double-count bug.
+- A chat thread with `role !== 'agent'` records a turn. This is the regression
+  test for the `noteAgentCompletion` trap.
+- `needs-help`, `scheduled`, and `exit` each close the row with the right outcome.
+- An open row left by a crash closes as `interrupted` on the next start, and does
+  not produce an enormous duration.
+- A PTY thread writes no row, and reads back as "usage not reported", which is not
+  the same state as a thread with no turns yet.
+- A recorder write that throws does not break the turn.
+- The importer refuses data at or after `analytics_tracking_started_at`.
+- Running the importer twice yields the same totals, and leaves live rows
+  untouched.
 - Day bucketing across midnight and across a timezone offset.
 
-Unit, in `packages/web`:
+Web:
 
-- The KPI and series derivations.
-- The view renders with no data, and with an unknown-usage thread present.
+- The summary and series derivations.
+- The view renders with no data, with an unknown-usage thread, and with backfilled
+  rows present.
 
 End to end: the isolated-instance pattern — a daemon on a fake `HOME` and port
-3999 — so no test ever touches the real `~/.dispatch`.
+3999 — so no test touches the real `~/.dispatch`.
 
-## 12. Out of scope
+## 13. Out of scope
 
 - Any export to CSV or to a sheet.
-- Per-tool-call or per-skill analytics.
+- Per-skill analytics.
 - Folding `agent_runs` into these charts. That dashboard stays as it is.
-- Scanning Claude Code sessions that Dispatch did not create.
+- Recording sessions that Dispatch did not create.
 - Aggregation across machines.
 
-## 13. Risks
+## 14. Risks
 
 | Risk | Response |
 |---|---|
-| The first scan is slow on a large history | It runs in the background, shows progress, and resumes if interrupted |
-| Grok threads have no usage | Shown as "usage not reported", never as 0 |
-| The price table goes stale | One shared module, and a test that fails on an unpriced model that Dispatch can spawn |
+| PTY threads, including Grok, report nothing | Shown as "usage not reported", never as 0, and excluded from denominators |
+| A restart interrupts a turn | The row closes as `interrupted` on the next start, and is excluded from duration statistics |
+| Usage is written on every frame, not batched | One indexed row update per frame; that is far cheaper than the transcript read the daemon already does at turn end |
+| The importer overlaps live data | The `analytics_tracking_started_at` cutoff makes overlap impossible |
+| The price table goes stale | One shared module, and a test that fails on an unpriced model Dispatch can spawn |
 | Bundle growth from Recharts | The view is lazy-loaded |
-| A provider-interface change collides with in-flight provider work | The change is one optional method, additive only |
 | Local timezone shifts day boundaries | Bucket in local time, state that in the UI, and test the boundary |
