@@ -260,7 +260,14 @@ export function attachPtyCapture(deps: PtyCaptureDeps): SettledListener {
         output: reset ? 0 : dOutput,
         cacheRead: reset ? 0 : dCached,
         cacheCreate: 0,
-        messages: reset ? 0 : 1,
+        // `messages` is NOT a count here — it is the flag queries.ts reads as
+        // `SUM(CASE WHEN messages = 0 ...)` to report "N turns reported no usage".
+        // A turn whose running total did not move is a turn we FAILED to measure
+        // (a duplicate token_count emission, an event before turn_aborted, a
+        // post-compaction event), not a turn that genuinely cost nothing. Marking
+        // it 1 would publish a measured zero — the exact silence unreportedTurns
+        // was added to prevent. Only a moved total earns the "reported" flag.
+        messages: (!reset && (dInput || dOutput || dCached)) ? 1 : 0,
         toolCalls: 0,
         backfilled: false,
       };

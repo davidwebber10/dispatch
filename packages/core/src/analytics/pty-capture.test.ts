@@ -10,7 +10,7 @@ import * as ptyDb from '../db/usage-pty.js';
 import { clearTranscriptPathCache } from '../sessions/transcript-path.js';
 import { encodeClaudeProjectDir } from '../platform/encode.js';
 import { attachPtyCapture, type PtyCaptureDeps } from './pty-capture.js';
-import { series, records } from './queries.js';
+import { series, records, summary } from './queries.js';
 
 function claudeLine(model: string, output: number) {
   return JSON.stringify({
@@ -293,11 +293,46 @@ describe('attachPtyCapture', () => {
     expect(all[0].cache_create_tokens).toBe(0);
     expect(all[0].provider).toBe('codex');
     expect(all[0].model).toBe('gpt-5.6-sol');
+    // The totals moved, so this turn IS measured — the counterpart to the
+    // zero-diff test below. Without this the fix could degenerate to always 0.
+    expect(all[0].messages).toBe(1);
+    expect(summary(db, {}).unreportedTurns).toBe(0);
 
     const state = ptyDb.getState(db, termId)!;
     expect(state.last_total_input).toBe(140);
     expect(state.last_total_cached).toBe(25);
     expect(state.last_total_output).toBe(70);
+  });
+
+  // `messages` is not a count on this table — it is the flag that decides whether
+  // a turn is DISCLOSED as unreported. queries.ts computes unreportedTurns as
+  // SUM(CASE WHEN messages = 0 ...) and the view renders it as "N turns reported
+  // no usage". A Codex turn whose running total did not move is precisely a turn
+  // we failed to measure (a duplicate token_count emission, an aborted turn, a
+  // post-compaction event). Writing messages = 1 for it would claim a measured
+  // zero — the exact silence unreportedTurns exists to prevent.
+  it('marks a zero-diff codex turn as unreported, not as a measured zero', () => {
+    const extId = 'codex-zero';
+    const file = writeCodexTranscript(extId, codexTurnContext('gpt-5.6-sol') + '\n' + codexTokenCount(100, 10, 50) + '\n');
+    const termId = makeTerminal('codex', extId);
+
+    const listener = attachPtyCapture(deps());
+    listener({ terminalId: termId, sessionId, threadStatus: 'idle' }); // bootstrap at 100/10/50
+
+    // A second token_count carrying the SAME running total — an emission that
+    // moved nothing. Observed in real transcripts (duplicate emissions and
+    // events before turn_aborted both report diff(total) == 0).
+    fs.appendFileSync(file, codexTokenCount(100, 10, 50) + '\n');
+    clock = '2026-08-14T10:10:00.000Z';
+    listener({ terminalId: termId, sessionId, threadStatus: 'idle' });
+
+    const all = rows();
+    expect(all.length).toBe(1);
+    expect(all[0].input_tokens).toBe(0);
+    expect(all[0].output_tokens).toBe(0);
+    expect(all[0].cache_read_tokens).toBe(0);
+    expect(all[0].messages).toBe(0);
+    expect(summary(db, {}).unreportedTurns).toBe(1);
   });
 
   // A PTY row has no honest start time. The only timestamp capture owns is the
