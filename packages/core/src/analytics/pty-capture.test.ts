@@ -104,18 +104,33 @@ describe('attachPtyCapture', () => {
     return file;
   }
 
-  // The double-count gate. This is the most important test in the plan.
+  // The double-count gate. This is the most important test in the plan. It must
+  // exercise the scenario it is named for: a terminal that has ALREADY bootstrapped
+  // (so a second settle would normally write a row — see the "second settle" test
+  // below) still writes nothing once it is structured. A test that only reaches
+  // first-sight bootstrap would pass even with the gate deleted, since bootstrap
+  // itself never writes a row either way.
   it('writes NOTHING for a structured terminal', () => {
     const workDir = path.join(home, 'proj-a');
     const extId = 'sess-a';
-    writeClaudeTranscript(workDir, extId, claudeLine('claude-opus-5', 20) + '\n');
+    const file = writeClaudeTranscript(workDir, extId, claudeLine('claude-opus-5', 20) + '\n');
     const termId = makeTerminal('claude-code', extId, workDir);
 
-    const listener = attachPtyCapture(deps({ isStructured: () => true }));
+    const flag = { structured: false };
+    const listener = attachPtyCapture(deps({ isStructured: () => flag.structured }));
+
+    listener({ terminalId: termId, sessionId, threadStatus: 'idle' }); // bootstrap, not structured yet
+    expect(rows().length).toBe(0);
+    const bootstrapOffset = ptyDb.getState(db, termId)!.byte_offset;
+
+    fs.appendFileSync(file, claudeLine('claude-opus-5', 7) + '\n');
+    flag.structured = true;
     listener({ terminalId: termId, sessionId, threadStatus: 'idle' });
 
     expect(rows().length).toBe(0);
-    expect(ptyDb.getState(db, termId)).toBeNull();
+    // The gate returns before touching state too — the cursor must not advance.
+    expect(ptyDb.getState(db, termId)!.byte_offset).toBe(bootstrapOffset);
+    expect(ptyDb.getState(db, termId)!.byte_offset).toBeLessThan(fs.statSync(file).size);
   });
 
   it('writes no row on first sight, and records the end position', () => {
@@ -160,6 +175,34 @@ describe('attachPtyCapture', () => {
     expect(all[0].provider).toBe('claude-code');
     expect(all[0].project_id).toBe(sessionId);
 
+    const state = ptyDb.getState(db, termId)!;
+    expect(state.byte_offset).toBe(fs.statSync(file).size);
+  });
+
+  // IMPORTANT 1: readClaudeTail resets to 0 and returns the WHOLE file when the
+  // file is shorter than the stored cursor (pty-claude.ts's compaction guard).
+  // That is correct for a pure reader; the consumer must not write that as one
+  // turn, or a rewrite re-counts the thread's entire prior history.
+  it('starts fresh when a claude transcript is shorter than the stored cursor (truncation)', () => {
+    const workDir = path.join(home, 'proj-trunc');
+    const extId = 'sess-trunc';
+    const file = writeClaudeTranscript(
+      workDir, extId,
+      claudeLine('claude-opus-5', 20) + '\n' + claudeLine('claude-opus-5', 30) + '\n' + claudeLine('claude-opus-5', 40) + '\n',
+    );
+    const termId = makeTerminal('claude-code', extId, workDir);
+
+    const listener = attachPtyCapture(deps());
+    listener({ terminalId: termId, sessionId, threadStatus: 'idle' }); // bootstrap at the full (long) size
+    const bootstrapOffset = ptyDb.getState(db, termId)!.byte_offset;
+
+    // The file gets rewritten shorter than the cursor we hold (a compaction).
+    fs.writeFileSync(file, claudeLine('claude-opus-5', 5) + '\n');
+    expect(fs.statSync(file).size).toBeLessThan(bootstrapOffset);
+
+    listener({ terminalId: termId, sessionId, threadStatus: 'idle' });
+
+    expect(rows().length).toBe(0); // NOT a row summing the whole rewritten file
     const state = ptyDb.getState(db, termId)!;
     expect(state.byte_offset).toBe(fs.statSync(file).size);
   });
@@ -232,6 +275,36 @@ describe('attachPtyCapture', () => {
     expect(state.last_total_output).toBe(10);
   });
 
+  // IMPORTANT 2: locateCodexTranscript can resolve to a DIFFERENT rollout file
+  // than the one we were tracking (a resumed session, or the archived-vs-active
+  // pair). Without a path-changed check, the totals restart low, the negative
+  // guard fires, and a spurious zero-token row lands with a real duration.
+  it('starts fresh when the codex locator resolves to a different file', () => {
+    const extId = 'codex-c';
+    const firstFile = writeCodexTranscript(extId, codexTokenCount(500, 100, 300) + '\n');
+    const termId = makeTerminal('codex', extId);
+
+    const listener = attachPtyCapture(deps());
+    listener({ terminalId: termId, sessionId, threadStatus: 'idle' }); // bootstrap against firstFile
+    expect(ptyDb.getState(db, termId)!.transcript_path).toBe(firstFile);
+
+    // A different rollout file for the same external id — e.g. the session
+    // resumed into a new rollout, or moved from active to archived — whose
+    // totals restart low relative to firstFile's.
+    fs.rmSync(firstFile);
+    const secondFile = path.join(home, '.codex', 'sessions', `rollout-2026-08-14T11-00-00-${extId}.jsonl`);
+    fs.writeFileSync(secondFile, codexTokenCount(10, 2, 5) + '\n');
+
+    listener({ terminalId: termId, sessionId, threadStatus: 'idle' });
+
+    expect(rows().length).toBe(0); // no spurious zero-token row
+    const state = ptyDb.getState(db, termId)!;
+    expect(state.transcript_path).toBe(secondFile);
+    expect(state.last_total_input).toBe(10);
+    expect(state.last_total_cached).toBe(2);
+    expect(state.last_total_output).toBe(5);
+  });
+
   it('starts fresh when a claude transcript path changes (relocation)', () => {
     const oldWorkDir = path.join(home, 'proj-old');
     const newWorkDir = path.join(home, 'proj-new');
@@ -278,6 +351,22 @@ describe('attachPtyCapture', () => {
     expect(() => listener({ terminalId: termId, sessionId, threadStatus: 'idle' })).not.toThrow();
     expect(() => listener({ terminalId: codexTermId, sessionId, threadStatus: 'idle' })).not.toThrow();
 
+    expect(rows().length).toBe(0);
+  });
+
+  // The test above cannot fail even with the try/catch deleted — both fixtures
+  // resolve to `undefined` and no resolver throws, so the listener returns cleanly
+  // through ordinary control flow. This one actually pins the "analytics must never
+  // break a turn" guarantee: a dependency that throws must not escape the listener.
+  it('never throws when a dependency throws (analytics must never break a turn)', () => {
+    const workDir = path.join(home, 'proj-throw');
+    const extId = 'sess-throw';
+    writeClaudeTranscript(workDir, extId, claudeLine('claude-opus-5', 20) + '\n');
+    const termId = makeTerminal('claude-code', extId, workDir);
+
+    const listener = attachPtyCapture(deps({ isStructured: () => { throw new Error('boom'); } }));
+
+    expect(() => listener({ terminalId: termId, sessionId, threadStatus: 'idle' })).not.toThrow();
     expect(rows().length).toBe(0);
   });
 });

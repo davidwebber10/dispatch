@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import fs from 'fs';
 import type Database from 'better-sqlite3';
 import * as terminalsDb from '../db/terminals.js';
 import * as sessionsDb from '../db/sessions.js';
@@ -72,13 +73,15 @@ export function attachPtyCapture(deps: PtyCaptureDeps): SettledListener {
 
         // Relocation: the resolved path differs from the stored one. A byte offset
         // from another file is meaningless — treat the new file as fresh, write no row.
+        // Only the size is needed here, so stat the file directly rather than parsing
+        // its whole content through readClaudeTail — this runs on the settled edge.
         if (priorState && priorState.transcript_path !== file) {
-          const fresh = readClaudeTail(file, 0);
-          if (!fresh) return;
+          let size: number;
+          try { size = fs.statSync(file).size; } catch { return; }
           ptyDb.putState(db, {
             terminal_id: terminalId,
             transcript_path: file,
-            byte_offset: fresh.nextOffset,
+            byte_offset: size,
             last_total_input: 0,
             last_total_output: 0,
             last_total_cached: 0,
@@ -94,6 +97,25 @@ export function attachPtyCapture(deps: PtyCaptureDeps): SettledListener {
         if (!priorState) {
           // Bootstrap at the END, never at zero: a first-sight thread records its
           // current position and writes no row.
+          ptyDb.putState(db, {
+            terminal_id: terminalId,
+            transcript_path: file,
+            byte_offset: tail.nextOffset,
+            last_total_input: 0,
+            last_total_output: 0,
+            last_total_cached: 0,
+            updated_at: nowStr,
+          });
+          return;
+        }
+
+        // Truncation: readClaudeTail resets to 0 and returns the WHOLE file when the
+        // file is shorter than our cursor (pty-claude.ts's compaction guard). That is
+        // correct for a pure reader; the honest response here is the same as
+        // relocation — the file we were tracking no longer exists in the form we
+        // tracked it, so bootstrap at the new end and write no row. Otherwise the
+        // whole file lands in one turn and re-counts everything already recorded.
+        if (tail.nextOffset < priorState.byte_offset) {
           ptyDb.putState(db, {
             terminal_id: terminalId,
             transcript_path: file,
@@ -145,6 +167,24 @@ export function attachPtyCapture(deps: PtyCaptureDeps): SettledListener {
       const tail = readCodexTail(file);
       if (!tail || !tail.totals) return;
 
+      // File switch: a resumed session, or the archived-vs-active pair, can point
+      // the locator at a DIFFERENT rollout file whose totals restart low. The
+      // negative-diff guard below would stop that corrupting the counts, but the
+      // honest behaviour is the same as Claude's relocation case — bootstrap fresh
+      // against the new file and write no row, rather than a spurious zero-token row.
+      if (priorState && priorState.transcript_path !== file) {
+        ptyDb.putState(db, {
+          terminal_id: terminalId,
+          transcript_path: file,
+          byte_offset: 0,
+          last_total_input: tail.totals.input,
+          last_total_output: tail.totals.output,
+          last_total_cached: tail.totals.cached,
+          updated_at: nowStr,
+        });
+        return;
+      }
+
       if (!priorState) {
         // Bootstrap at the END: a first-sight thread records its current running
         // total and writes no row.
@@ -188,7 +228,7 @@ export function attachPtyCapture(deps: PtyCaptureDeps): SettledListener {
         startedAt: priorState.updated_at,
         endedAt: nowStr,
         outcome,
-        input: reset ? 0 : dInput - dCached,
+        input: reset ? 0 : Math.max(0, dInput - dCached),
         output: reset ? 0 : dOutput,
         cacheRead: reset ? 0 : dCached,
         cacheCreate: 0,
