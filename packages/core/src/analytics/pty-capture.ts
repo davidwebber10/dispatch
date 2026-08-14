@@ -45,7 +45,20 @@ export function attachPtyCapture(deps: PtyCaptureDeps): SettledListener {
   return ({ terminalId, threadStatus }) => {
     try {
       // 1. GATE. A structured thread is already covered by the live recorder.
-      if (deps.isStructured(terminalId)) return;
+      // Also clear any stored PTY capture state: a terminal's transport can flip
+      // WITHOUT a new terminal id (SessionService.switchTransport re-spawns onto
+      // the same external_id, in both directions; DISPATCH_CODEX_PRETTY can also
+      // flip what isStructured returns for a Codex row without touching config
+      // at all). While a thread is structured the live recorder owns it, so a
+      // stored cursor/total is meaningless — and if left in place, the next PTY
+      // settle after a flip-back would diff/read from BEFORE the structured
+      // period and re-count everything the live recorder already wrote for it.
+      // Deleting is self-healing: the next PTY settle finds no prior state and
+      // bootstraps fresh, exactly like a first-sight thread.
+      if (deps.isStructured(terminalId)) {
+        ptyDb.deleteState(db, terminalId);
+        return;
+      }
 
       const terminal = terminalsDb.getById(db, terminalId);
       if (!terminal) return;
@@ -90,17 +103,17 @@ export function attachPtyCapture(deps: PtyCaptureDeps): SettledListener {
           return;
         }
 
-        const fromOffset = priorState?.byte_offset ?? 0;
-        const tail = readClaudeTail(file, fromOffset);
-        if (!tail) return;
-
         if (!priorState) {
           // Bootstrap at the END, never at zero: a first-sight thread records its
-          // current position and writes no row.
+          // current position and writes no row. Only the size is needed here, so
+          // stat the file directly rather than parsing the whole transcript
+          // through readClaudeTail — this runs on the settled edge.
+          let size: number;
+          try { size = fs.statSync(file).size; } catch { return; }
           ptyDb.putState(db, {
             terminal_id: terminalId,
             transcript_path: file,
-            byte_offset: tail.nextOffset,
+            byte_offset: size,
             last_total_input: 0,
             last_total_output: 0,
             last_total_cached: 0,
@@ -108,6 +121,9 @@ export function attachPtyCapture(deps: PtyCaptureDeps): SettledListener {
           });
           return;
         }
+
+        const tail = readClaudeTail(file, priorState.byte_offset);
+        if (!tail) return;
 
         // Truncation: readClaudeTail resets to 0 and returns the WHOLE file when the
         // file is shorter than our cursor (pty-claude.ts's compaction guard). That is

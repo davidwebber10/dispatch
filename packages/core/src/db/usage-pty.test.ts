@@ -26,6 +26,18 @@ describe('usage_pty_state', () => {
     expect(ptyDb.getState(d, 'nope')).toBeNull();
   });
 
+  it('deleteState drops the row, so the next read sees a first-sight thread again', () => {
+    ptyDb.putState(d, S);
+    expect(ptyDb.getState(d, 'term1')).not.toBeNull();
+    ptyDb.deleteState(d, 'term1');
+    expect(ptyDb.getState(d, 'term1')).toBeNull();
+  });
+
+  it('deleteState on a terminal with no stored state is a harmless no-op', () => {
+    expect(() => ptyDb.deleteState(d, 'never-seen')).not.toThrow();
+    expect(ptyDb.getState(d, 'never-seen')).toBeNull();
+  });
+
   // The atomicity guard. If the row lands but the state does not, the next turn
   // re-reads the same range and double-counts.
   it('recordTurn writes the row and the state together, or neither', () => {

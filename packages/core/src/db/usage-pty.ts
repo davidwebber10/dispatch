@@ -16,6 +16,17 @@ export function getState(db: Database.Database, terminalId: string): PtyStateRow
   return (row as PtyStateRow | undefined) ?? null;
 }
 
+/**
+ * Drop any stored capture state for a terminal. Called when a thread turns
+ * structured: the live recorder owns it from that point on, so a stored PTY
+ * cursor/total is meaningless, and a stale one would let a later PTY settle
+ * re-count whatever the structured period already recorded. A delete of a
+ * row that isn't there is harmless, so callers need not check first.
+ */
+export function deleteState(db: Database.Database, terminalId: string): void {
+  db.prepare('DELETE FROM usage_pty_state WHERE terminal_id = ?').run(terminalId);
+}
+
 export function putState(db: Database.Database, s: PtyStateRow): void {
   db.prepare(`
     INSERT INTO usage_pty_state

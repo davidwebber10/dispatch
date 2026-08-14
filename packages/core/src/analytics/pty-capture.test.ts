@@ -128,9 +128,55 @@ describe('attachPtyCapture', () => {
     listener({ terminalId: termId, sessionId, threadStatus: 'idle' });
 
     expect(rows().length).toBe(0);
-    // The gate returns before touching state too — the cursor must not advance.
-    expect(ptyDb.getState(db, termId)!.byte_offset).toBe(bootstrapOffset);
-    expect(ptyDb.getState(db, termId)!.byte_offset).toBeLessThan(fs.statSync(file).size);
+    // The gate CLEARS stored state rather than leaving it in place (see the
+    // switchTransport double-count test below for why a merely-unchanged cursor
+    // is not enough) — a later PTY settle must find no prior state at all.
+    expect(bootstrapOffset).toBeGreaterThan(0);
+    expect(ptyDb.getState(db, termId)).toBeNull();
+  });
+
+  // The transport can flip WITHOUT a new terminal id: SessionService.switchTransport
+  // re-spawns onto the same external_id in both directions, and DISPATCH_CODEX_PRETTY
+  // can flip what isStructured() returns for a Codex row without touching config at
+  // all. If the gate merely returned (leaving the stored cursor/total untouched),
+  // the transcript keeps growing through the whole structured period — recorded
+  // turn-by-turn by the live recorder — and the FIRST post-flip-back PTY settle would
+  // read/diff from before that period, re-counting everything the live recorder
+  // already wrote. Clearing state on every structured settle is what prevents that.
+  it('clears stored state when a thread turns structured, so a later PTY settle cannot re-count', () => {
+    const workDir = path.join(home, 'proj-switch');
+    const extId = 'sess-switch';
+    const file = writeClaudeTranscript(workDir, extId, claudeLine('claude-opus-5', 20) + '\n');
+    const termId = makeTerminal('claude-code', extId, workDir);
+
+    const flag = { structured: false };
+    const listener = attachPtyCapture(deps({ isStructured: () => flag.structured }));
+
+    // 1. settle as PTY -> bootstraps, stores an offset, no row.
+    listener({ terminalId: termId, sessionId, threadStatus: 'idle' });
+    expect(rows().length).toBe(0);
+    expect(ptyDb.getState(db, termId)).not.toBeNull();
+
+    // 2. append bytes -> simulate the structured period's growth (the live
+    //    recorder is recording these turn-by-turn; capture must not touch them).
+    fs.appendFileSync(file, claudeLine('claude-opus-5', 500) + '\n');
+
+    // 3. settle with isStructured: () => true -> gate fires, state must be CLEARED.
+    flag.structured = true;
+    listener({ terminalId: termId, sessionId, threadStatus: 'idle' });
+
+    // 4. append more bytes (still within the structured period, or right after
+    //    the flip back — either way, more content the PTY capture never saw).
+    fs.appendFileSync(file, claudeLine('claude-opus-5', 900) + '\n');
+
+    // 5. settle as PTY again -> must BOOTSTRAP (no row), not read from the stale offset.
+    flag.structured = false;
+    listener({ terminalId: termId, sessionId, threadStatus: 'idle' });
+
+    expect(rows().length).toBe(0); // zero rows across the WHOLE sequence
+    const state = ptyDb.getState(db, termId)!;
+    expect(state).not.toBeNull();
+    expect(state.byte_offset).toBe(fs.statSync(file).size); // bootstrapped at the current end
   });
 
   it('writes no row on first sight, and records the end position', () => {
