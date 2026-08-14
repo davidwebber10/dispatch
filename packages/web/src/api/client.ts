@@ -28,8 +28,13 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 const body = (data: unknown) => JSON.stringify(data);
 
+type QueryParams =
+  | AnalyticsRange
+  | (AnalyticsRange & { metric: AnalyticsMetric; groupBy: AnalyticsGroupBy })
+  | (AnalyticsRange & { dimension: AnalyticsDimension });
+
 /** Build a query string from defined values only — an absent filter must not become "undefined". */
-const qs = (o: object): string => {
+const qs = (o: QueryParams): string => {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(o)) if (v !== undefined && v !== null && v !== '') p.set(k, String(v));
   const s = p.toString();

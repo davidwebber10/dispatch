@@ -14,9 +14,13 @@ describe('analytics api client', () => {
     expect(url).toContain('projectId=p1');
   });
 
-  it('omits absent range fields instead of sending "undefined"', async () => {
-    await api.analyticsSummary({});
+  // The realistic shape: a UI filter object that carries its keys with undefined
+  // values. This is what would put "from=undefined" on the wire. An empty object
+  // cannot exercise the guard at all — Object.entries({}) is [] regardless.
+  it('drops present-but-undefined filters instead of sending the string "undefined"', async () => {
+    await api.analyticsSummary({ from: undefined, to: undefined, projectId: undefined });
     const url = (globalThis.fetch as any).mock.calls[0][0] as string;
+    expect(url).toBe('/api/analytics/summary');
     expect(url).not.toContain('undefined');
   });
 
