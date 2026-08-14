@@ -24,7 +24,11 @@ import { platform } from '../platform/index.js';
 import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.js';
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
 import { resolveTranscriptPath } from './transcript-path.js';
+import { randomUUID } from 'crypto';
+import { isAgentType } from '../providers/agent-types.js';
+import { writeGrokHome, type McpServerEntry } from '../providers/grok-home.js';
 import { TERMINAL_ID_ENV_VAR } from '../auth/shim.js';
+import { LOGIN_ARGV, isProviderName } from '../setup/install.js';
 import { withAutoArchive, DEFAULT_AUTO_ARCHIVE_MS } from './auto-archive.js';
 import { ptyMessagePayload, flattenForPty } from './pty-message.js';
 
@@ -34,6 +38,8 @@ interface StatusContext {
   hooksDir: string;
   /** Absolute path to the Codex notify helper script. */
   codexHelperPath: string;
+  /** Absolute path to the Grok hook helper script. */
+  grokHelperPath?: string;
 }
 
 /** Grace period before the boot kickstart runs, so a save-burst on shutdown can coalesce. */
@@ -192,7 +198,12 @@ export class SessionService {
    * the plan, then do the IO (write the Claude settings file) so the build*
    * commands receive ready-to-use args. No-op until the server sets the context.
    */
-  private buildStatusHooks(terminalId: string, type: string): StatusHooksInjection | undefined {
+  /**
+   * `mcpSpecs` is only consulted by providers whose hooks and MCP servers share one
+   * artifact — Grok, whose plugin directory carries both. Claude writes a settings file and
+   * Codex passes argv, so for them the specs are already handled by composeInjection.
+   */
+  private buildStatusHooks(terminalId: string, type: string, mcpSpecs: McpServerSpec[] = []): StatusHooksInjection | undefined {
     const ctx = this.statusContext;
     if (!ctx) return undefined;
     const provider = getProvider(type);
@@ -200,8 +211,27 @@ export class SessionService {
       serverUrl: ctx.serverUrl,
       terminalId,
       codexHelperPath: ctx.codexHelperPath,
+      grokHelperPath: ctx.grokHelperPath,
     });
     if (!plan) return undefined;
+    if (plan.grokHooks) {
+      try {
+        const mcpServers: Record<string, McpServerEntry> = {};
+        for (const spec of mcpSpecs) {
+          mcpServers[spec.name] = { command: spec.command, args: spec.args, ...(spec.env ? { env: spec.env } : {}) };
+        }
+        const dir = writeGrokHome({
+          dir: path.join(ctx.hooksDir, 'grok-homes', terminalId),
+          realHome: path.join(os.homedir(), '.grok'),
+          mcpServers,
+          eventsUrl: plan.grokHooks.eventsUrl,
+          hookHelperPath: plan.grokHooks.helperPath,
+        });
+        return dir ? { grokHomeDir: dir } : undefined;
+      } catch {
+        return undefined; // hooks are best-effort; never block a spawn
+      }
+    }
     if (plan.claudeSettings) {
       try {
         fs.mkdirSync(ctx.hooksDir, { recursive: true });
@@ -1683,11 +1713,24 @@ export class SessionService {
 
     let command: string;
     let args: string[];
+    /** Set when this provider names its own session — persisted only after a live pid. */
+    let assignedSessionId: string | undefined;
+    /** Set for Grok: the per-thread config home carrying its hooks and MCP servers. */
+    let grokHomeDir: string | undefined;
 
     if (terminal.type === 'shell') {
-      const shell = platform.defaultShell();
-      command = shell.command;
-      args = shell.args;
+      // A "Sign in — X" thread runs that CLI's login command DIRECTLY rather than a shell
+      // we then type into: no racing a shell prompt, and the process is exactly the command
+      // whose output Dispatch is watching for a sign-in URL.
+      const signIn = typeof config.signIn === 'string' && isProviderName(config.signIn) ? LOGIN_ARGV[config.signIn] : null;
+      if (signIn) {
+        command = signIn.command;
+        args = signIn.args;
+      } else {
+        const shell = platform.defaultShell();
+        command = shell.command;
+        args = shell.args;
+      }
     } else {
       const provider = getProvider(terminal.type);
       const specs: McpServerSpec[] = [];
@@ -1715,24 +1758,36 @@ export class SessionService {
         // Runner launches emit their own structured stream-json; no hooks needed.
         cmd = provider.buildRunnerCommand({ workDir, prompt: runnerPrompt, secretsMcp });
       } else {
-        const statusHooks = this.buildStatusHooks(terminalId, terminal.type);
+        const statusHooks = this.buildStatusHooks(terminalId, terminal.type, specs);
+        grokHomeDir = statusHooks?.grokHomeDir;
         const branchFrom: string | undefined = typeof config.branchFrom === 'string' ? config.branchFrom : undefined;
         // Honor a per-thread model pick (config.model) for CLI (PTY) threads too, not
         // just structured ones — the New Thread modal offers the picker in both modes.
         // modelFor returns config.model for a plain user thread (no role/agentType).
         const model = modelFor(config);
+        // A provider that names its own session (Grok) gets a fresh uuid here, which is
+        // stored once the process is alive. Without it a relaunch after a daemon restart
+        // had no id to resume into and silently began a new conversation.
+        if (!terminal.external_id && !branchFrom && provider.assignsSessionId) assignedSessionId = randomUUID();
         cmd = terminal.external_id
           ? provider.buildResumeCommand({ externalSessionId: terminal.external_id, workDir, secretsMcp, statusHooks, model })
           : (branchFrom && provider.buildBranchCommand)
             ? provider.buildBranchCommand({ sourceSessionId: branchFrom, workDir, secretsMcp, statusHooks })
-            : provider.buildNewCommand({ workDir, secretsMcp, statusHooks, model });
+            : provider.buildNewCommand({ workDir, secretsMcp, statusHooks, model, sessionId: assignedSessionId });
       }
       command = cmd.command;
       args = cmd.args;
     }
 
-    const pid = this.ptyManager.spawn(terminalId, command, args, workDir, { [TERMINAL_ID_ENV_VAR]: terminalId });
+    // GROK_HOME is how Grok's hooks and MCP servers reach the thread — argv cannot carry
+    // them for the top-level command. Everything but `plugins` links back to the real home.
+    const spawnEnv: Record<string, string> = { [TERMINAL_ID_ENV_VAR]: terminalId };
+    if (grokHomeDir) spawnEnv.GROK_HOME = grokHomeDir;
+    const pid = this.ptyManager.spawn(terminalId, command, args, workDir, spawnEnv);
     terminalsDb.updatePid(this.db, terminalId, pid);
+    // AFTER the spawn, never before: a stored id for a process that failed to start would
+    // send the next relaunch chasing a conversation that never existed.
+    if (assignedSessionId) terminalsDb.updateExternalId(this.db, terminalId, assignedSessionId);
 
     // If this was a fresh spawn (no external_id yet), let the provider try to
     // discover the session id it assigned — so a later relaunch can resume.
@@ -1963,7 +2018,7 @@ export class SessionService {
    * server or system prompt into, so it's excluded.
    */
   private isPeerEligible(type: string): boolean {
-    return type === 'claude-code' || type === 'codex';
+    return isAgentType(type);
   }
 
   /**

@@ -31,6 +31,7 @@ import { createSecretsRouter } from './routes/secrets.js';
 import { createTranscribeRouter } from './routes/transcribe.js';
 import { TranscriptionService } from './transcription/service.js';
 import { createSetupRouter } from './routes/setup.js';
+import { withShimPath } from './auth/shim.js';
 import { createToolsRouter } from './routes/tools.js';
 import { getToolsSpawnEnv, toolStatuses, awarenessNote } from './tools/status.js';
 import { SecretsService } from './secrets/service.js';
@@ -467,6 +468,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   let effectiveShimEnv = browserShimEnv;
   const refreshPtyEnv = () => {
     const spawnEnv = { ...effectiveShimEnv, ...secretsService.getSpawnEnv(), ...getToolsSpawnEnv({ base: toolsBase }) };
+    // Each of those three builds its own PATH off process.env.PATH, so the last spread wins
+    // and the earlier prefixes are lost. Re-assert the shim's bin dir explicitly — without
+    // it $BROWSER points at a `dispatch-open` that is not on PATH, and the whole
+    // browser-auth relay silently does nothing.
+    spawnEnv.PATH = withShimPath(dataDir, spawnEnv.PATH);
     ptyManager.setDefaultEnv(spawnEnv);
     structuredManager.setDefaultEnv(spawnEnv);
   };
@@ -476,7 +482,23 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Terminal activity monitor — parses status bar, detects busy/idle
   const terminalMonitor = new TerminalMonitor(broadcaster, db, (terminalId, activity) => {
     agentService.updateRunFromTerminalActivity(terminalId, activity);
-  }, (id) => threadAutoNamer.notifyActivity(id));
+  }, (id) => threadAutoNamer.notifyActivity(id), (terminalId, url) => {
+    // A CLI printed a sign-in URL instead of opening one — raise the same auth request the
+    // $BROWSER shim raises, so it reaches the operator's banner (and their phone).
+    //
+    // ONLY for a thread Dispatch itself started to sign in (config.signIn). Scanning every
+    // thread's output was far too loose: an agent that merely PRINTS an auth-shaped URL —
+    // including one writing about OAuth, or a coding agent quoting a login link — raised a
+    // banner. In practice the agent's own prose triggered a stream of them. A URL in a
+    // sign-in thread is unambiguous; a URL anywhere else is just text. Every other thread
+    // still relies on the shim, where an actual exec proves intent.
+    try {
+      const t = terminalsDb.getById(db, terminalId);
+      const cfg = t ? (JSON.parse(t.config || '{}') as { signIn?: unknown }) : {};
+      if (typeof cfg.signIn !== 'string') return;
+      authRequestService.create({ url, source: 'terminal-output', terminalId });
+    } catch { /* a malformed URL or config is not worth failing the output path over */ }
+  });
 
   // Wire PTY data through the monitor (busy/idle + status-bar HUD) and, for
   // autonomous agent-runner terminals, through the structured stream parser
@@ -645,6 +667,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     serverUrl: `http://127.0.0.1:${port}`,
     hooksDir: path.join(dataDir, 'hooks'),
     codexHelperPath: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../scripts/codex-notify.mjs'),
+    grokHelperPath: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../scripts/grok-hook.mjs'),
   });
 
   console.log(`Dispatch server listening on port ${port}`);

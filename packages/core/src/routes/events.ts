@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import type { StatusService } from '../status/service.js';
 
-/** Receives provider lifecycle events: POST /api/events/:provider/:terminalId (claude|codex). */
+/** Receives provider lifecycle events: POST /api/events/:provider/:terminalId (claude|codex|grok). */
 export function createEventsRouter(status: StatusService): Router {
   const router = Router();
   router.post('/:provider/:terminalId', (req, res) => {

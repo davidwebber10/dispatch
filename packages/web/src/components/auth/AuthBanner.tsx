@@ -7,7 +7,12 @@ const primary: React.CSSProperties = { height: 30, padding: '0 14px', background
 const ghost: React.CSSProperties = { height: 28, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 7, color: 'var(--color-text-secondary)', fontSize: 12, cursor: 'pointer' };
 
 export function AuthBanner() {
-  const req = useAuth((s) => s.requests.find((r) => r.status === 'pending' || r.status === 'opened'));
+  // Select the STABLE array and derive here. A selector that returns `.filter(...)` hands
+  // zustand a new array every render, so its snapshot never settles and React loops until
+  // it throws "Maximum update depth exceeded".
+  const requests = useAuth((s) => s.requests);
+  const pending = requests.filter((r) => r.status === 'pending' || r.status === 'opened');
+  const req = pending[0];
   // Resolve which agent/mission needs auth (falls back to generic copy if the
   // terminal's project tabs haven't been loaded, or this request predates terminalId).
   const agentLabel = useTabs((s) => (req?.terminalId ? findTerminal(s.byProject, req.terminalId)?.label : undefined));
@@ -21,7 +26,14 @@ export function AuthBanner() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ color: 'var(--color-status-yellow)' }}>🔑</span>
         <span style={{ fontWeight: 600, fontSize: 13 }}>{agentLabel ? `Authentication required — ${agentLabel}` : 'Authentication required'}</span>
-        <button onClick={() => void api.completeAuth(req.id)} style={{ marginLeft: 'auto', ...ghost }}>Dismiss</button>
+        {pending.length > 1 && (
+          <span style={{ font: '500 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>1 of {pending.length}</span>
+        )}
+        {/* Dismiss clears the whole queue, not just the top one: a burst used to cost one
+            tap each, with the next appearing the instant you cleared the last. */}
+        <button onClick={() => void api.dismissAllAuth()} style={{ marginLeft: 'auto', ...ghost }}>
+          {pending.length > 1 ? 'Dismiss all' : 'Dismiss'}
+        </button>
       </div>
       <div style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-secondary)', margin: '8px 0', wordBreak: 'break-all' }}>{req.url}</div>
       {/* A real anchor (not window.open) so a PWA opens the SYSTEM browser — Safari

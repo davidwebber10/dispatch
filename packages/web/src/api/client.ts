@@ -106,7 +106,7 @@ export const api = {
     req<{ terminalId: string }>(`/api/sessions/${sessionId}/overseer/coordinator`, { method: 'POST' }),
 
   getSetupState: () => req<SetupState>(`/api/setup/state`),
-  recheckProviders: () => req<ProviderStatus[]>(`/api/setup/providers`),
+  recheckProviders: (fresh?: boolean) => req<ProviderStatus[]>(`/api/setup/providers${fresh ? '?fresh=1' : ''}`),
   recheckTailscale: () => req<TailscaleStatus>(`/api/setup/tailscale`),
   completeSetup: () => req<{ ok: true }>(`/api/setup/complete`, { method: 'POST' }),
   /** Runs that CLI's own install one-liner on the daemon host. Slow — minutes, not seconds. */
@@ -250,6 +250,7 @@ export const api = {
   listAuthRequests: () => req<AuthRequest[]>('/api/auth-requests'),
   markAuthOpened: (id: string) => req<AuthRequest>(`/api/auth-requests/${id}/opened`, { method: 'POST' }),
   completeAuth: (id: string) => req<AuthRequest>(`/api/auth-requests/${id}/complete`, { method: 'POST' }),
+  dismissAllAuth: () => req<{ completed: number }>(`/api/auth-requests/complete-all`, { method: 'POST' }),
   forwardAuthCallback: (id: string, url: string) =>
     req<AuthRequest>(`/api/auth-requests/${id}/callback`, { method: 'POST', body: body({ url }) }),
 

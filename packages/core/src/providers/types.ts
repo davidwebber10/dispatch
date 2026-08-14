@@ -22,6 +22,8 @@ export interface StatusHooksContext {
   terminalId: string;
   /** Absolute path to the Codex notify helper script (POSTs the notify payload). */
   codexHelperPath: string;
+  /** Absolute path to the Grok hook helper script (POSTs the hook payload from stdin). */
+  grokHelperPath?: string;
 }
 
 /**
@@ -32,6 +34,12 @@ export interface StatusHooksContext {
 export interface StatusHooksPlan {
   claudeSettings?: Record<string, unknown>;
   codexArgs?: string[];
+  /**
+   * Grok reads hooks from a plugin directory rather than a settings file or argv, and the
+   * SAME directory also carries its MCP servers — so the plan hands back the hooks JSON and
+   * the caller merges it into the one plugin dir it writes for the spawn.
+   */
+  grokHooks?: { eventsUrl: string; helperPath: string };
 }
 
 /** Resolved injection passed into the build* commands (after IO is done). */
@@ -40,13 +48,26 @@ export interface StatusHooksInjection {
   claudeSettingsPath?: string;
   /** Extra `-c notify=[...]` args spliced before the codex subcommand. */
   codexNotifyArgs?: string[];
+  /** Per-thread GROK_HOME, exported into the spawn env. Holds this thread's plugin. */
+  grokHomeDir?: string;
 }
 
 export interface SessionProvider {
   name: string;
   displayName: string;
   statusStrategy?: 'hooks' | 'pty-timing';
-  buildNewCommand(args: { workDir: string; prompt?: string; secretsMcp?: SecretsMcpInjection; statusHooks?: StatusHooksInjection; model?: string }): { command: string; args: string[] };
+  /**
+   * True when this CLI lets the caller NAME the session up front, rather than making us
+   * discover the id it chose after the fact.
+   *
+   * The discover path (`captureSessionId`) is inherently lossy: it polls the filesystem,
+   * it can miss, and Claude's version needs an ambiguity heuristic for when two sessions
+   * are born in the same window. A provider that accepts an id has none of those problems,
+   * so the caller generates one, passes it to `buildNewCommand` as `sessionId`, and stores
+   * it as soon as the process is alive.
+   */
+  assignsSessionId?: boolean;
+  buildNewCommand(args: { workDir: string; prompt?: string; secretsMcp?: SecretsMcpInjection; statusHooks?: StatusHooksInjection; model?: string; sessionId?: string }): { command: string; args: string[] };
   buildResumeCommand(args: { externalSessionId: string; workDir: string; secretsMcp?: SecretsMcpInjection; statusHooks?: StatusHooksInjection; model?: string }): { command: string; args: string[] };
   /**
    * Build the command to BRANCH (fork) an existing conversation: resume the

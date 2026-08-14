@@ -1,6 +1,9 @@
-export type Provider = 'claude-code' | 'codex' | 'grok';
+import type { AgentType, TerminalType as HarnessTerminalType } from './providers/agent-types.js';
 
-export type TerminalType = 'claude-code' | 'codex' | 'grok' | 'shell';
+/** The agent CLIs. Defined once in providers/agent-types.ts. */
+export type Provider = AgentType;
+
+export type TerminalType = HarnessTerminalType;
 
 export type SessionStatus = 'working' | 'waiting' | 'needs_input' | 'error' | 'done';
 

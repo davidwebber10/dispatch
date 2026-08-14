@@ -109,7 +109,9 @@ It installs to `~/.grok/bin/grok` (symlinked into `~/.local/bin`) and appends a 
 your shell rc. Dispatch also probes those two paths directly, so a Grok installed from the
 New Thread modal is usable **without** restarting the daemon.
 
-**Authenticate** — a browser OAuth flow, so run it in a real terminal:
+**Authenticate** — a browser OAuth flow. Run it in any thread: Dispatch relays the sign-in
+URL to a banner so you can complete it on your phone (see
+[browser-auth-relay.md](browser-auth-relay.md)).
 
 ```bash
 grok login       # or set XAI_API_KEY for pay-as-you-go via api.x.ai
@@ -132,7 +134,7 @@ several third-party guides describe a `--yolo` flag that does not exist.
 
 | Purpose | Command |
 | --- | --- |
-| New thread | `grok --permission-mode bypassPermissions [--model <id>] [prompt]` |
+| New thread | `grok --permission-mode bypassPermissions [--model <id>] --session-id <uuid> [prompt]` |
 | Resume | `grok --permission-mode bypassPermissions [--model <id>] --resume <id>` |
 | Agent run | `grok --permission-mode bypassPermissions --single <prompt>` |
 
@@ -148,12 +150,44 @@ These are deliberate gaps, not oversights:
   event stream `ChatView` consumes. `grok agent stdio` does speak one (ACP), so this is
   buildable — it is the same project Codex Pretty was. Until then the modal renders Pretty
   disabled for Grok.
-- **No resume list.** Nothing captures Grok's external session id at spawn, so the modal
-  offers no "Resume recent" for it. `grok sessions list` could back this, but it prints human
-  text with no JSON output flag.
-- **No Doppler secrets MCP.** Grok configures MCP through `grok mcp`, not through argv, so
-  there is no per-spawn injection point of the shape the other two providers use.
-- **No status hooks.** Grok has no `notify`-style completion hook, so thread status falls back
-  to `pty-timing`.
+- **No resume LIST.** Resuming works — Dispatch assigns the session id at spawn with
+  `--session-id`, so a Grok thread relaunches into the same conversation after a daemon
+  restart. What is missing is *browsing* prior sessions in the New Thread modal:
+  `grok sessions list` could back that, but it prints human text with no JSON output flag.
 - **Not offered for scheduled agent runs.** `--single` works, but its `streaming-json` emits
   ACP updates that `RunStreamParser` cannot read yet.
+
+### How Grok is injected
+
+Grok reads Claude Code plugin layouts, so Dispatch writes a plugin holding both injections.
+It reaches the CLI through a **per-thread `GROK_HOME`**, not a flag.
+
+> `--plugin-dir` looks like the obvious answer and is a trap: it exists only on the `grok
+> agent` **subcommand**. Passing it to the top-level `grok` the PTY runs is a hard startup
+> error — `error: unexpected argument '--plugin-dir' found` — and every thread fails to
+> launch. That shipped once; the provider test now asserts every flag it emits is one the
+> top-level command accepts.
+
+Everything in the per-thread home except `plugins` is symlinked back to the real `~/.grok`,
+so the thread keeps the user's credentials, their `config.toml`, and one shared session
+store. Only `plugins` is per-thread — sharing it would make every thread load every other
+thread's hooks and report status for the wrong terminal.
+
+| Injection | Claude Code | Codex | Grok |
+| --- | --- | --- | --- |
+| MCP servers | `--mcp-config <file>` | `-c mcp_servers.*` | `.mcp.json` in `$GROK_HOME/plugins/dispatch/` |
+| Status hooks | `--settings <file>` | `-c notify=[...]` | `hooks/hooks.json` in the same plugin |
+| System prompt | `--append-system-prompt` | `-c developer_instructions` | `--rules` |
+| Session id | discovered after spawn | discovered after spawn | assigned with `--session-id` |
+
+Grok's binary carries Claude's full hook vocabulary — `Stop`, `PreToolUse`, `PostToolUse`,
+`SubagentStop`, `Idle`, `SessionStart`, `SessionEnd`, `Notification`, `UserPromptSubmit`,
+`PreCompact` — so `statusStrategy` is `hooks`, and the events route needs no special case:
+`ingest()` sends anything that is not `codex` through `normalizeClaude`, which Grok's
+payloads already match.
+
+> The plugin mechanism is documented in the README the installer writes to
+> `~/.grok/README.md`, **not** in `grok --help`. An earlier version of this page claimed Grok
+> had no hooks and no MCP injection because it was written from `--help` alone — and the
+> first fix then used a flag read from the wrong subcommand's help. Check which command a
+> flag belongs to, and verify by launching the thing.

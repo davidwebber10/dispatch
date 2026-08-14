@@ -14,11 +14,26 @@ export const INSTALL_COMMANDS: Record<ProviderName, string> = {
   grok: 'curl -fsSL https://x.ai/cli/install.sh | bash',
 };
 
-/** How each CLI is signed in afterwards. Installing never authenticates. */
+/**
+ * How each CLI is signed in afterwards. Installing never authenticates.
+ *
+ * These are the PLAIN login commands, not the interactive TUIs. That distinction is the
+ * whole point: bare `claude` and bare `grok` open a full-screen UI that renders the sign-in
+ * link as an unclickable region and never prints it — a dead end on a phone. `claude auth
+ * login`, `codex login` and `grok login` each print the URL outright, which is what lets
+ * Dispatch relay it (verified against all three under a real PTY).
+ */
 export const LOGIN_COMMANDS: Record<ProviderName, string> = {
-  claude: 'claude',
+  claude: 'claude auth login',
   codex: 'codex login',
   grok: 'grok login',
+};
+
+/** The same commands as argv, for spawning one directly rather than through a shell. */
+export const LOGIN_ARGV: Record<ProviderName, { command: string; args: string[] }> = {
+  claude: { command: 'claude', args: ['auth', 'login'] },
+  codex: { command: 'codex', args: ['login'] },
+  grok: { command: 'grok', args: ['login'] },
 };
 
 /** Grok downloads a ~130MB binary; a cold npm global install is slower than it looks. */
@@ -83,7 +98,9 @@ const defaultRun: ShellRunner = (command) =>
  */
 export async function installProvider(name: ProviderName, run: ShellRunner = defaultRun): Promise<InstallResult> {
   const { ok: exitedClean, output } = await run(INSTALL_COMMANDS[name]);
-  const status = await detectProvider(name);
+  // fresh: this just changed what is on disk, so a cached signed-in verdict from before
+  // the install would be reporting a world that no longer exists.
+  const status = await detectProvider(name, { fresh: true });
   return {
     ok: exitedClean && status.installed,
     output: tail(output),

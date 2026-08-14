@@ -141,3 +141,35 @@ test('expanding the notes does not dismiss the modal', () => {
   fireEvent.click(screen.getByText('Release notes'));
   expect(screen.getByText('Update available')).toBeInTheDocument();
 });
+
+test('draws the rain only while an update is actually running', () => {
+  useUpdate.setState({ available: { version: 'v1.2.0', url: null, publishedAt: null } });
+  const { container, rerender } = render(<UpdateModal />);
+  // Update available, not started: no canvas burning frames in the background.
+  expect(container.querySelector('canvas')).toBeNull();
+
+  useUpdate.setState({ inProgress: true });
+  rerender(<UpdateModal />);
+  expect(container.querySelector('canvas')).not.toBeNull();
+});
+
+test('the rain is decorative and never announced', () => {
+  useUpdate.setState({ available: { version: 'v1.2.0', url: null, publishedAt: null }, inProgress: true });
+  const { container } = render(<UpdateModal />);
+  expect(container.querySelector('canvas')).toHaveAttribute('aria-hidden', 'true');
+});
+
+test('the progress copy still reads over the rain', () => {
+  useUpdate.setState({ inProgress: true });
+  render(<UpdateModal />);
+  expect(screen.getByText('Updating Dispatch…')).toBeInTheDocument();
+  expect(screen.getByText(/refresh automatically/)).toBeInTheDocument();
+});
+
+test('a canvas with no 2d context does not break the modal', () => {
+  // jsdom returns null from getContext. The update screen must survive that — decoration
+  // is never allowed to take down the thing the user is waiting on.
+  useUpdate.setState({ inProgress: true });
+  expect(() => render(<UpdateModal />)).not.toThrow();
+  expect(screen.getByText('Updating Dispatch…')).toBeInTheDocument();
+});

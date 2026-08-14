@@ -3,16 +3,23 @@ import QRCode from 'qrcode';
 import type { SetupState, ProviderStatus, ProviderName, TailscaleStatus } from '../../api/types';
 import { api } from '../../api/client';
 import { useSetup } from '../../stores/setup';
+import { HARNESSES, INSTALL_COMMAND, LOGIN_COMMAND } from '../../lib/harnesses';
 import { SecretsSection } from '../settings/SecretsSection';
 
 type Step = 'agents' | 'mobile' | 'secrets' | 'done';
 const ORDER: Step[] = ['agents', 'mobile', 'secrets', 'done'];
 
-const INSTALL: Record<ProviderName, { label: string; install: string; login: string }> = {
-  claude: { label: 'Claude Code', install: 'npm i -g @anthropic-ai/claude-code', login: 'claude' },
-  codex: { label: 'Codex', install: 'npm i -g @openai/codex', login: 'codex login' },
-  grok: { label: 'Grok', install: 'curl -fsSL https://x.ai/cli/install.sh | bash', login: 'grok login' },
-};
+/**
+ * Derived from the one harness list, so the wizard cannot describe a CLI differently from
+ * the New Thread modal — or miss one entirely. `login` was previously `claude` here, the
+ * bare TUI that never prints its sign-in link.
+ */
+const INSTALL: Record<ProviderName, { label: string; install: string; login: string }> = Object.fromEntries(
+  HARNESSES.filter((h) => h.provider !== null).map((h) => [
+    h.provider as ProviderName,
+    { label: h.label, install: INSTALL_COMMAND[h.provider as ProviderName], login: LOGIN_COMMAND[h.provider as ProviderName] },
+  ]),
+) as Record<ProviderName, { label: string; install: string; login: string }>;
 
 export function SetupWizard() {
   const forceOpen = useSetup((s) => s.forceOpen);
@@ -67,7 +74,7 @@ function AgentsStep({ providers: initial }: { providers: ProviderStatus[] }) {
   const [providers, setProviders] = useState(initial);
   const [checking, setChecking] = useState(false);
   const [installing, setInstalling] = useState<ProviderName | null>(null);
-  const recheck = async () => { setChecking(true); try { setProviders(await api.recheckProviders()); } catch { /* keep prior */ } setChecking(false); };
+  const recheck = async () => { setChecking(true); try { setProviders(await api.recheckProviders(true)); } catch { /* keep prior */ } setChecking(false); };
   // Same action the New Thread modal offers: run that CLI's own install one-liner here,
   // rather than making the user copy it into a terminal.
   const install = async (name: ProviderName) => {
