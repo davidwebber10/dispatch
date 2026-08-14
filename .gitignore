@@ -10,6 +10,9 @@ coverage/
 .vscode/
 .idea/
 .worktrees/
+# Claude Code's native worktree isolation checks out here (embedded repos);
+# unignored, the directory shows as untracked and trips the release clean-tree guard.
+.claude/worktrees/
 
 # Runtime data + tool scratch (never tracked)
 .dispatch/
