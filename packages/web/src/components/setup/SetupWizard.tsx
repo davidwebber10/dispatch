@@ -67,7 +67,7 @@ function AgentsStep({ providers: initial }: { providers: ProviderStatus[] }) {
   const [providers, setProviders] = useState(initial);
   const [checking, setChecking] = useState(false);
   const [installing, setInstalling] = useState<ProviderName | null>(null);
-  const recheck = async () => { setChecking(true); try { setProviders(await api.recheckProviders()); } catch { /* keep prior */ } setChecking(false); };
+  const recheck = async () => { setChecking(true); try { setProviders(await api.recheckProviders(true)); } catch { /* keep prior */ } setChecking(false); };
   // Same action the New Thread modal offers: run that CLI's own install one-liner here,
   // rather than making the user copy it into a terminal.
   const install = async (name: ProviderName) => {

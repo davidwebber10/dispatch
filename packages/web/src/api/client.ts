@@ -93,7 +93,7 @@ export const api = {
     req<{ terminalId: string }>(`/api/sessions/${sessionId}/overseer/coordinator`, { method: 'POST' }),
 
   getSetupState: () => req<SetupState>(`/api/setup/state`),
-  recheckProviders: () => req<ProviderStatus[]>(`/api/setup/providers`),
+  recheckProviders: (fresh?: boolean) => req<ProviderStatus[]>(`/api/setup/providers${fresh ? '?fresh=1' : ''}`),
   recheckTailscale: () => req<TailscaleStatus>(`/api/setup/tailscale`),
   completeSetup: () => req<{ ok: true }>(`/api/setup/complete`, { method: 'POST' }),
   /** Runs that CLI's own install one-liner on the daemon host. Slow — minutes, not seconds. */

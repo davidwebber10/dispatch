@@ -21,7 +21,12 @@ export function createSetupRouter(db: Database.Database, secrets: SecretsService
     });
   });
 
-  router.get('/providers', async (_req, res) => res.json(await detectAllProviders()));
+  // ?fresh=1 bypasses the signed-in cache. The Setup wizard's Re-check button uses it —
+  // that is pressed right after signing in, the one moment a cached answer is wrong. The
+  // New Thread modal omits it, so opening the modal repeatedly does not spawn three
+  // status processes each time.
+  router.get('/providers', async (req, res) =>
+    res.json(await detectAllProviders({ fresh: req.query.fresh === '1' || req.query.fresh === 'true' })));
   router.get('/tailscale', async (_req, res) => res.json(await detectTailscale(port())));
   router.post('/complete', (_req, res) => { appState.set(db, SETUP_KEY, new Date().toISOString()); res.json({ ok: true }); });
 

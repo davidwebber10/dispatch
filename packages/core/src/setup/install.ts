@@ -98,7 +98,9 @@ const defaultRun: ShellRunner = (command) =>
  */
 export async function installProvider(name: ProviderName, run: ShellRunner = defaultRun): Promise<InstallResult> {
   const { ok: exitedClean, output } = await run(INSTALL_COMMANDS[name]);
-  const status = await detectProvider(name);
+  // fresh: this just changed what is on disk, so a cached signed-in verdict from before
+  // the install would be reporting a world that no longer exists.
+  const status = await detectProvider(name, { fresh: true });
   return {
     ok: exitedClean && status.installed,
     output: tail(output),

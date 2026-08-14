@@ -3,6 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { INSTALL_COMMANDS, LOGIN_ARGV, LOGIN_COMMANDS, installProvider, isProviderName } from '../../src/setup/install.js';
+import { _resetAuthCache } from '../../src/setup/detect.js';
 
 let home: string;
 let realHome: string | undefined;
@@ -22,6 +23,9 @@ beforeEach(() => {
   realPath = process.env.PATH;
   process.env.HOME = home;
   process.env.PATH = path.join(home, 'no-bins');
+  // The signed-in cache is keyed by provider name only, so a verdict from the previous
+  // test's fake HOME would otherwise leak into this one.
+  _resetAuthCache();
 });
 afterEach(() => {
   if (realHome === undefined) delete process.env.HOME; else process.env.HOME = realHome;

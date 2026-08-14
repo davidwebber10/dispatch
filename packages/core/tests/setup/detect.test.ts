@@ -19,10 +19,12 @@ function whenExec(impl: (cmd: string, args: string[]) => { stdout: string } | Er
   });
 }
 
-import { detectProvider, detectTailscale } from '../../src/setup/detect.js';
+import { detectProvider, detectTailscale, _resetAuthCache } from '../../src/setup/detect.js';
 
 describe('detectProvider', () => {
-  beforeEach(() => { execFileMock.mockReset(); fsExists = () => false; });
+  // The signed-in cache is module-level and keyed by provider name, so a verdict from the
+  // previous test would otherwise be reused here.
+  beforeEach(() => { execFileMock.mockReset(); fsExists = () => false; _resetAuthCache(); });
 
   it('reports not installed when the binary is absent', async () => {
     whenExec((cmd) => cmd === 'which' ? new Error('not found') : { stdout: '' });
@@ -48,6 +50,61 @@ describe('detectProvider', () => {
     whenExec((cmd) => cmd === 'which' ? { stdout: '/usr/local/bin/claude\n' } : { stdout: '' });
     const r = await detectProvider('claude');
     expect(r.signedIn).toBe('unknown');
+  });
+
+  it('believes the CLI over the credential file — an EXPIRED token still has a file', async () => {
+    // This is the whole reason for asking the CLI: logging out removes the file, but a
+    // token that merely expired leaves it exactly where it was.
+    fsExists = (p) => p.endsWith('/.claude') || p.endsWith('/.credentials.json');
+    whenExec((cmd, args) => {
+      if (cmd === 'which') return { stdout: '/usr/local/bin/claude\n' };
+      if (args.includes('--version')) return { stdout: 'claude 1.2.3\n' };
+      return { stdout: JSON.stringify({ loggedIn: false }) };
+    });
+    const r = await detectProvider('claude');
+    expect(r.signedIn).toBe(false);
+  });
+
+  it('falls back to the file when the status command cannot run', async () => {
+    fsExists = (p) => p.endsWith('/.claude') || p.endsWith('/.credentials.json');
+    whenExec((cmd, args) => {
+      if (cmd === 'which') return { stdout: '/usr/local/bin/claude\n' };
+      if (args.includes('--version')) return { stdout: 'claude 1.2.3\n' };
+      return new Error('spawn failed');
+    });
+    const r = await detectProvider('claude');
+    expect(r.signedIn).toBe(true);
+  });
+
+  it('reuses a cached verdict, and re-asks when told to be fresh', async () => {
+    fsExists = () => false;
+    let statusCalls = 0;
+    whenExec((cmd, args) => {
+      if (cmd === 'which') return { stdout: '/usr/local/bin/claude\n' };
+      if (args.includes('--version')) return { stdout: 'claude 1.2.3\n' };
+      statusCalls++;
+      return { stdout: JSON.stringify({ loggedIn: true }) };
+    });
+
+    await detectProvider('claude');
+    await detectProvider('claude');
+    expect(statusCalls).toBe(1); // second read came from the cache
+
+    await detectProvider('claude', { fresh: true });
+    expect(statusCalls).toBe(2); // fresh bypasses it — the Re-check button's job
+  });
+
+  it('forgets the cached verdict when the CLI disappears', async () => {
+    whenExec((cmd, args) => {
+      if (cmd === 'which') return { stdout: '/usr/local/bin/claude\n' };
+      if (args.includes('--version')) return { stdout: 'claude 1.2.3\n' };
+      return { stdout: JSON.stringify({ loggedIn: true }) };
+    });
+    expect((await detectProvider('claude')).signedIn).toBe(true);
+
+    whenExec((cmd) => cmd === 'which' ? new Error('gone') : { stdout: '' });
+    const r = await detectProvider('claude');
+    expect(r).toEqual({ name: 'claude', installed: false, signedIn: false });
   });
 });
 
