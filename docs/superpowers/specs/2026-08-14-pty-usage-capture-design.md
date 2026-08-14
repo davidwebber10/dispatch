@@ -35,9 +35,32 @@ Both providers announce the end of a turn. Neither is a timing heuristic.
 Both already flow through `StatusService.ingest`. `pty-timing` describes only how *busy*
 is detected; the close half is event-driven for both.
 
-`StatusService` exposes this today only as a single-callback `threadSettledHook`. This
-design adds a proper subscriber seam — the PTY analogue of what `wirePermissionMembrane`
-does for the structured `idle` event.
+### The seam, and the trap in it
+
+`StatusService.apply()` already fires `threadSettledHook` on exactly the right edge
+(`status/service.ts:204-206`): `prior === 'working'` and the new status is `waiting` or
+`needs_input`. It carries `terminalId`, `sessionId`, and `threadStatus`. Both a settled
+turn and a turn that stopped to ask count — both consumed tokens.
+
+Two things about that seam must be handled or the feature double-counts:
+
+**1. It fires for BOTH transports.** `markIdle()` (`service.ts:152`) is the structured
+path, called by `wirePermissionMembrane`'s `idle` listener, and it calls the same
+`apply()`. So a structured turn fires this hook too. A PTY reader attached naively would
+write a second row for every structured turn, on top of the live recorder's — the exact
+"two adders on one counter" failure this project has already shipped once.
+
+**The gate:** PTY capture runs only when the terminal is NOT structured, tested with
+`SessionService.isStructuredTerminal` (`sessions/service.ts:859`). That predicate checks
+**both** `config.transport === 'structured'` **and** a registered manager for the type,
+because a `transport: 'structured'` Codex row is still a PTY thread when Codex-Pretty is
+disabled. Do not re-implement it as a config read — expose the existing predicate and use
+it. Getting this wrong is silent: the numbers just come out roughly double.
+
+**2. It is single-subscriber.** `setThreadSettledHook` (`service.ts:41`) replaces rather
+than adds, and `wireThreadSettledPush` (`push/notify.ts:17`) already owns it. Convert it to
+a subscriber list so push notifications and usage capture can coexist. One replaces the
+other today, silently.
 
 ## 3. Two providers, two mechanisms
 
@@ -161,6 +184,13 @@ Codex locator, make the importer provider-aware and it gets Codex history for fr
 
 ## 10. Testing
 
+- **A structured thread's settle writes NO PTY row.** This is the double-count guard and
+  the most important test in the set. Drive a structured terminal through the settled hook
+  and assert `usage_turns` gains nothing from the PTY reader.
+- A `transport: 'structured'` Codex terminal with Codex-Pretty DISABLED is treated as PTY
+  and IS captured — the case a naive `config.transport` check gets backwards.
+- Registering a second settled-listener does not displace the first: push and capture both
+  fire.
 - A Claude close writes one row summed from only the new bytes; a second close does not
   re-read the first range.
 - A first-sight thread bootstraps at end of file and writes **no** history-dump row.
