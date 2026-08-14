@@ -28,6 +28,7 @@ import { createSecretsRouter } from './routes/secrets.js';
 import { createTranscribeRouter } from './routes/transcribe.js';
 import { TranscriptionService } from './transcription/service.js';
 import { createSetupRouter } from './routes/setup.js';
+import { withShimPath } from './auth/shim.js';
 import { createToolsRouter } from './routes/tools.js';
 import { getToolsSpawnEnv, toolStatuses, awarenessNote } from './tools/status.js';
 import { SecretsService } from './secrets/service.js';
@@ -397,6 +398,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   let effectiveShimEnv = browserShimEnv;
   const refreshPtyEnv = () => {
     const spawnEnv = { ...effectiveShimEnv, ...secretsService.getSpawnEnv(), ...getToolsSpawnEnv({ base: toolsBase }) };
+    // Each of those three builds its own PATH off process.env.PATH, so the last spread wins
+    // and the earlier prefixes are lost. Re-assert the shim's bin dir explicitly — without
+    // it $BROWSER points at a `dispatch-open` that is not on PATH, and the whole
+    // browser-auth relay silently does nothing.
+    spawnEnv.PATH = withShimPath(dataDir, spawnEnv.PATH);
     ptyManager.setDefaultEnv(spawnEnv);
     structuredManager.setDefaultEnv(spawnEnv);
   };
@@ -406,7 +412,12 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Terminal activity monitor — parses status bar, detects busy/idle
   const terminalMonitor = new TerminalMonitor(broadcaster, db, (terminalId, activity) => {
     agentService.updateRunFromTerminalActivity(terminalId, activity);
-  }, (id) => threadAutoNamer.notifyActivity(id));
+  }, (id) => threadAutoNamer.notifyActivity(id), (terminalId, url) => {
+    // A CLI printed a sign-in URL instead of opening one. Raise the same auth request the
+    // $BROWSER shim raises, so it reaches the operator's banner (and their phone).
+    try { authRequestService.create({ url, source: 'terminal-output', terminalId }); }
+    catch { /* a malformed URL is not worth failing the output path over */ }
+  });
 
   // Wire PTY data through the monitor (busy/idle + status-bar HUD) and, for
   // autonomous agent-runner terminals, through the structured stream parser

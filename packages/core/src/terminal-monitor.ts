@@ -2,6 +2,7 @@ import type { EventBroadcaster } from './ws/events.js';
 import type Database from 'better-sqlite3';
 import * as sessionsDb from './db/sessions.js';
 import * as terminalsDb from './db/terminals.js';
+import { AuthUrlScanner } from './auth/url-detect.js';
 
 interface TerminalStatus {
   terminalId: string;
@@ -68,6 +69,8 @@ export class TerminalMonitor {
   private broadcaster: EventBroadcaster;
   private db: Database.Database | null = null;
   private onActivity?: (terminalId: string, activity: 'busy' | 'idle') => void;
+  private onAuthUrl?: (terminalId: string, url: string) => void;
+  private authUrls = new AuthUrlScanner();
   /** Optional real-activity signal (feeds ThreadAutoNamer.notifyActivity). Fires on the same edge as touchActivity, below — NOT on every busy/idle transition. */
   private onThreadActivity?: (terminalId: string) => void;
   private idleThresholdMs = 3000;
@@ -81,17 +84,32 @@ export class TerminalMonitor {
     db?: Database.Database,
     onActivity?: (terminalId: string, activity: 'busy' | 'idle') => void,
     onThreadActivity?: (terminalId: string) => void,
+    /**
+     * A sign-in URL the CLI printed rather than opened. Many CLIs never exec a browser at
+     * all — a device-code grant just prints a URL and polls — so reading the output is the
+     * only way those ever reach the operator. See auth/url-detect.ts.
+     */
+    onAuthUrl?: (terminalId: string, url: string) => void,
   ) {
     this.broadcaster = broadcaster;
     this.db = db || null;
     this.onActivity = onActivity;
     this.onThreadActivity = onThreadActivity;
+    this.onAuthUrl = onAuthUrl;
   }
 
   /** Call this every time PTY output arrives for a terminal */
   onOutput(terminalId: string, data: string | Buffer) {
     const text = typeof data === 'string' ? data : data.toString('utf-8');
     const now = Date.now();
+
+    // Relay any sign-in URL the CLI printed. Never let a detector fault break the output
+    // path — this is best-effort convenience riding on the critical stream.
+    if (this.onAuthUrl) {
+      try {
+        for (const url of this.authUrls.feed(terminalId, text)) this.onAuthUrl(terminalId, url);
+      } catch { /* detection is best-effort */ }
+    }
 
     let status = this.statuses.get(terminalId);
     if (!status) {
@@ -180,6 +198,7 @@ export class TerminalMonitor {
 
   /** Remove tracking for a terminal */
   remove(terminalId: string) {
+    this.authUrls.forget(terminalId);
     this.statuses.delete(terminalId);
     this.burstBytes.delete(terminalId);
     const timer = this.idleTimers.get(terminalId);
