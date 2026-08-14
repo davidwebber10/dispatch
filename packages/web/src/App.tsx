@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, lazy, Suspense } from 'react';
 import { AppShell } from './components/layout/AppShell';
 import { Workspace } from './components/layout/Workspace';
 import { BoardView } from './components/board/BoardView';
@@ -41,6 +41,8 @@ import { parseThreadPath } from './lib/deepLink';
 import { readPendingIntent } from './lib/pendingIntent';
 import { resyncAfterReconnect } from './lib/resync';
 import { clearBadge } from './lib/badge';
+
+const AnalyticsView = lazy(() => import('./components/analytics/AnalyticsView').then((m) => ({ default: m.AnalyticsView })));
 
 export default function App() {
   const activeTerminalId = useTabs((s) => s.activeTabId);
@@ -189,7 +191,9 @@ export default function App() {
       <AuthBanner />
       <UpdateModal />
       <AppShell>
-        {view === 'board'
+        {view === 'analytics'
+          ? <Suspense fallback={null}><AnalyticsView /></Suspense>
+          : view === 'board'
           ? <BoardView />
           : (
             <Workspace

@@ -46,6 +46,9 @@ export function TopBar() {
         <button type="button" aria-pressed={view === 'board'} onClick={() => setView('board')} style={segBtn(view === 'board')}>
           Board
         </button>
+        <button type="button" aria-pressed={view === 'analytics'} onClick={() => setView('analytics')} style={segBtn(view === 'analytics')}>
+          Analytics
+        </button>
       </div>
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
         <ConnectionStatus />

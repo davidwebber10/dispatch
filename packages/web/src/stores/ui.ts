@@ -4,7 +4,7 @@ import { create } from 'zustand';
 // board (docs/superpowers/specs/2026-07-20-thread-board-design.md's "Placement" section):
 // 'workspace' is the normal project/thread layout, 'board' is the full-bleed cross-project board
 // that bypasses Workspace entirely (see App.tsx).
-export type View = 'workspace' | 'board';
+export type View = 'workspace' | 'board' | 'analytics';
 export type InspectorTab = 'details' | 'files';
 
 const LKEY = 'dispatch:left-collapsed';
@@ -12,7 +12,13 @@ const RKEY = 'dispatch:right-collapsed';
 const VKEY = 'dispatch:view';
 const loadBool = (k: string): boolean => { try { return localStorage.getItem(k) === '1'; } catch { return false; } };
 const saveBool = (k: string, v: boolean): void => { try { localStorage.setItem(k, v ? '1' : '0'); } catch { /* ignore */ } };
-const loadView = (): View => { try { return localStorage.getItem(VKEY) === 'board' ? 'board' : 'workspace'; } catch { return 'workspace'; } };
+const VIEWS: readonly View[] = ['workspace', 'board', 'analytics'];
+const loadView = (): View => {
+  try {
+    const v = localStorage.getItem(VKEY) as View | null;
+    return v && VIEWS.includes(v) ? v : 'workspace';
+  } catch { return 'workspace'; }
+};
 const saveView = (v: View): void => { try { localStorage.setItem(VKEY, v); } catch { /* ignore */ } };
 
 export const useUI = create<{
