@@ -2051,6 +2051,7 @@ export class SessionService {
     switch (type) {
       case 'claude-code': return sameType.length > 0 ? `Claude Code #${sameType.length + 1}` : 'Claude Code';
       case 'codex': return sameType.length > 0 ? `Codex #${sameType.length + 1}` : 'Codex';
+      case 'grok': return sameType.length > 0 ? `Grok #${sameType.length + 1}` : 'Grok';
       case 'shell': return sameType.length > 0 ? `Terminal #${sameType.length + 1}` : 'Terminal';
     }
   }

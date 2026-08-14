@@ -6,41 +6,83 @@ import * as path from 'node:path';
 
 const exec = promisify(execFile);
 
-export interface ProviderStatus { name: 'claude' | 'codex'; installed: boolean; version?: string; signedIn: boolean | 'unknown'; }
+/** The agent CLIs Dispatch can drive. Keep in sync with PROVIDER_NAMES below. */
+export type ProviderName = 'claude' | 'codex' | 'grok';
+export const PROVIDER_NAMES: readonly ProviderName[] = ['claude', 'codex', 'grok'];
+
+export interface ProviderStatus { name: ProviderName; installed: boolean; version?: string; signedIn: boolean | 'unknown'; }
 export interface TailscaleStatus { installed: boolean; running: boolean; dnsName?: string; url?: string; }
+
+/**
+ * Where each CLI's installer puts its binary when it is NOT on the daemon's PATH.
+ *
+ * The daemon resolves the login shell's PATH once, at startup. A CLI installed *after*
+ * that — which is exactly what the in-app Install button does — is therefore invisible to
+ * `which` until the daemon restarts. Probing the installers' known locations lets a fresh
+ * install light up immediately.
+ */
+const FALLBACK_BINS: Record<ProviderName, string[]> = {
+  claude: ['.local/bin/claude', '.claude/local/claude'],
+  codex: ['.local/bin/codex'],
+  grok: ['.grok/bin/grok', '.local/bin/grok'],
+};
+
+/**
+ * Where each CLI stores the credentials its interactive login writes.
+ *
+ * `definitive` says whether a missing credential file PROVES signed-out. It does for Grok:
+ * the installer itself creates `~/.grok`, so the directory tells you nothing and only
+ * `auth.json` does. For Claude and Codex the directory may exist for unrelated reasons and
+ * the credential may live outside these files (a keychain, an env var), so a miss there is
+ * honestly 'unknown' rather than false.
+ */
+const AUTH_FILES: Record<ProviderName, { dir: string; files: string[]; definitive: boolean }> = {
+  claude: { dir: '.claude', files: ['.credentials.json', 'credentials.json'], definitive: false },
+  codex: { dir: '.codex', files: ['auth.json'], definitive: false },
+  grok: { dir: '.grok', files: ['auth.json'], definitive: true },
+};
 
 async function which(bin: string): Promise<string | null> {
   try { const { stdout } = await exec('which', [bin]); return stdout.trim() || null; }
   catch { return null; }
 }
 
-function detectSignedIn(name: 'claude' | 'codex'): boolean | 'unknown' {
+/** `which`, then the installers' known paths — see FALLBACK_BINS. */
+async function resolveBin(name: ProviderName): Promise<string | null> {
+  const onPath = await which(name);
+  if (onPath) return onPath;
+  const home = os.homedir();
+  for (const rel of FALLBACK_BINS[name]) {
+    const abs = path.join(home, rel);
+    if (existsSync(abs)) return abs;
+  }
+  return null;
+}
+
+function detectSignedIn(name: ProviderName): boolean | 'unknown' {
   const home = os.homedir();
   try {
-    if (name === 'claude') {
-      const dir = path.join(home, '.claude');
-      if (!existsSync(dir)) return false;
-      if (['.credentials.json', 'credentials.json'].some((f) => existsSync(path.join(dir, f)))) return true;
-      return 'unknown';
-    }
-    const dir = path.join(home, '.codex');
+    const spec = AUTH_FILES[name];
+    const dir = path.join(home, spec.dir);
     if (!existsSync(dir)) return false;
-    if (existsSync(path.join(dir, 'auth.json'))) return true;
-    return 'unknown';
+    if (spec.files.some((f) => existsSync(path.join(dir, f)))) return true;
+    return spec.definitive ? false : 'unknown';
   } catch { return 'unknown'; }
 }
 
-export async function detectProvider(name: 'claude' | 'codex'): Promise<ProviderStatus> {
-  const bin = await which(name);
+export async function detectProvider(name: ProviderName): Promise<ProviderStatus> {
+  const bin = await resolveBin(name);
   if (!bin) return { name, installed: false, signedIn: false };
   let version: string | undefined;
-  try { const { stdout } = await exec(name, ['--version'], { timeout: 4000 }); version = stdout.trim().split('\n')[0] || undefined; }
+  // Invoke the resolved path, not the bare name — the bare name is not on the daemon's
+  // PATH in exactly the fresh-install case FALLBACK_BINS exists for.
+  try { const { stdout } = await exec(bin, ['--version'], { timeout: 4000 }); version = stdout.trim().split('\n')[0] || undefined; }
   catch { /* version is best-effort */ }
   return { name, installed: true, version, signedIn: detectSignedIn(name) };
 }
 
 export async function detectAllProviders(): Promise<ProviderStatus[]> {
-  return Promise.all([detectProvider('claude'), detectProvider('codex')]);
+  return Promise.all(PROVIDER_NAMES.map(detectProvider));
 }
 
 const TS_APP_BIN = '/Applications/Tailscale.app/Contents/MacOS/Tailscale';

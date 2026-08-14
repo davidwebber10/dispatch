@@ -4,7 +4,7 @@ import { isPtyType } from '../db/terminals.js';
 import type { EventBroadcaster } from '../ws/events.js';
 import type { StatusService } from '../status/service.js';
 
-const VALID_TYPES = ['claude-code', 'codex', 'shell', 'browser', 'notes', 'file'];
+const VALID_TYPES = ['claude-code', 'codex', 'grok', 'shell', 'browser', 'notes', 'file'];
 
 export function createTerminalsRouter(sessionService: SessionService, broadcaster?: EventBroadcaster, statusService?: StatusService): Router {
   const router = Router();
