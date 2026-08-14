@@ -86,12 +86,22 @@ function importClaudeLines(db: Database.Database, t: ImportThread, raw: string, 
  *
  * The baseline starts at zero, so the very first `token_count` in the file
  * produces a real row (the session's opening usage), exactly as if a
- * zero-total `token_count` had preceded it.
+ * zero-total `token_count` had preceded it — UNLESS a `token_count` arrives
+ * before any `turn_context` at all. That happens for a subagent fork
+ * (verified against a real file: six `token_count` events, the first already
+ * at 192,605 input tokens, before its first `turn_context` at line 63) — the
+ * fork inherits its parent's running total, so a pre-`turn_context` total
+ * describes the PARENT's usage, not this thread's. Those steps are skipped
+ * rather than attributed to a sentinel model: the number is known to be
+ * wrong, and labelling it 'unknown' would only hide that. The baseline still
+ * advances past them, exactly like the other three skip reasons below, so
+ * the inherited total cannot leak into the thread's first real diff either.
  */
 function importCodexLines(db: Database.Database, t: ImportThread, raw: string, cutoff: string): LineResult {
   let imported = 0;
   let skipped = 0;
   let model = '';
+  let sawTurnContext = false;
   let prevInput = 0;
   let prevCached = 0;
   let prevOutput = 0;
@@ -104,6 +114,7 @@ function importCodexLines(db: Database.Database, t: ImportThread, raw: string, c
 
     if (ev.type === 'turn_context' && typeof ev.payload?.model === 'string') {
       model = ev.payload.model;
+      sawTurnContext = true;
       continue;
     }
 
@@ -125,6 +136,12 @@ function importCodexLines(db: Database.Database, t: ImportThread, raw: string, c
     prevInput = curInput;
     prevCached = curCached;
     prevOutput = curOutput;
+
+    // A total_token_usage seen before this thread's first turn_context is a
+    // parent's inherited figure on a subagent fork, not this thread's usage.
+    // Skip it — the baseline above has already absorbed it, so it cannot
+    // corrupt the diff once a turn_context finally arrives.
+    if (!sawTurnContext) { skipped += 1; continue; }
 
     // Guard: a negative diff means the total moved backwards in a way nobody
     // has observed (total_token_usage is monotonic in every real file measured).

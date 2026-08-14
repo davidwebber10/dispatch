@@ -179,6 +179,7 @@ describe('history importer — Codex', () => {
 
   it('refuses a Codex token_count at or after the cutoff', () => {
     const file = writeTranscript('cx3', [
+      turnContext('2026-08-10T08:00:00.000Z', 'gpt-5.6-sol'),
       tokenCount('2026-08-10T09:00:00.000Z', 100, 20, 30),
       tokenCount(CUTOFF, 200, 20, 30),
     ]);
@@ -189,6 +190,7 @@ describe('history importer — Codex', () => {
 
   it('guards a negative diff by skipping that step, without corrupting the diff of the step after it', () => {
     const file = writeTranscript('cx4', [
+      turnContext('2026-08-10T08:00:00.000Z', 'gpt-5.6-sol'),
       tokenCount('2026-08-10T09:00:00.000Z', 100, 20, 30),
       tokenCount('2026-08-10T09:00:01.000Z', 50, 10, 10), // total moved backwards — never observed for real, guarded defensively
       tokenCount('2026-08-10T09:00:02.000Z', 150, 30, 50),
@@ -211,6 +213,7 @@ describe('history importer — Codex', () => {
       payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 100, cached_input_tokens: 20, output_tokens: 30, reasoning_output_tokens: 0, total_tokens: 130 } } },
     });
     const file = writeTranscript('cx5', [
+      turnContext('2026-08-10T08:00:00.000Z', 'gpt-5.6-sol'),
       noTimestamp,
       tokenCount('2026-08-10T09:00:00.000Z', 150, 30, 50),
     ]);
@@ -221,6 +224,50 @@ describe('history importer — Codex', () => {
     expect(row.input_tokens).toBe(40); // (150-100) - (30-20)
     expect(row.cache_read_tokens).toBe(10);
     expect(row.output_tokens).toBe(20);
+  });
+
+  // A subagent fork (thread_source: "subagent") inherits its parent's running total and can
+  // emit token_count events BEFORE its own first turn_context — verified against a real sampled
+  // file: six token_count events, the first already at 192,605 input tokens, before the first
+  // turn_context at line 63. That inherited figure is the PARENT's usage, not this thread's, so
+  // it must never become a row — and it must never become part of the baseline for a later diff
+  // either, or the first real diff would absorb the whole inherited total as one bogus row.
+  it('skips token_count events before the first turn_context, and does not let the pre-turn_context total leak into the next diff', () => {
+    const file = writeTranscript('cx6', [
+      tokenCount('2026-08-10T09:00:00.000Z', 192605, 50000, 8000), // inherited parent total — no turn_context yet
+      turnContext('2026-08-10T09:00:01.000Z', 'gpt-5.6-sol'),
+      tokenCount('2026-08-10T09:00:02.000Z', 192705, 50000, 8010), // this thread's first real usage: +100 input, +0 cached, +10 output
+    ]);
+    const res = importHistory(d, { cutoff: CUTOFF, threads: [{ terminalId: 'term1', projectId: 'proj1', provider: 'codex', role: '', transcriptPath: file }] });
+    expect(res.imported).toBe(1);
+    const rows = d.prepare('SELECT * FROM usage_turns').all() as any[];
+    expect(rows.length).toBe(1);
+    expect(rows[0].model).toBe('gpt-5.6-sol');
+    // Diffs from the pre-turn_context baseline (192605/50000/8000), NOT from zero — a diff from
+    // zero would wrongly import the whole 192,605-token inherited total as this row's usage.
+    expect(rows[0].input_tokens).toBe(100);
+    expect(rows[0].cache_read_tokens).toBe(0);
+    expect(rows[0].output_tokens).toBe(10);
+  });
+
+  it('imports zero rows for a Codex transcript with token_count events but no turn_context anywhere', () => {
+    const file = writeTranscript('cx7', [
+      tokenCount('2026-08-10T09:00:00.000Z', 100, 20, 30),
+      tokenCount('2026-08-10T09:00:01.000Z', 200, 40, 60),
+    ]);
+    const res = importHistory(d, { cutoff: CUTOFF, threads: [{ terminalId: 'term1', projectId: 'proj1', provider: 'codex', role: '', transcriptPath: file }] });
+    expect(res.imported).toBe(0);
+    expect(res.threads).toBe(0);
+    const rows = d.prepare('SELECT * FROM usage_turns').all() as any[];
+    expect(rows.length).toBe(0);
+  });
+
+  it('imports zero rows for a zero-byte Codex transcript', () => {
+    const file = path.join(dir, 'cx8.jsonl');
+    fs.writeFileSync(file, '');
+    const res = importHistory(d, { cutoff: CUTOFF, threads: [{ terminalId: 'term1', projectId: 'proj1', provider: 'codex', role: '', transcriptPath: file }] });
+    expect(res.imported).toBe(0);
+    expect(res.threads).toBe(0);
   });
 });
 
