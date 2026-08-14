@@ -1,11 +1,11 @@
 import type Database from 'better-sqlite3';
 
 // Terminal types that have PTY processes
-export type TerminalType = 'claude-code' | 'codex' | 'shell';
+export type TerminalType = 'claude-code' | 'codex' | 'grok' | 'shell';
 // All tab types (terminals + non-PTY tabs)
 export type TabType = TerminalType | 'browser' | 'notes';
 
-export const PTY_TYPES: readonly string[] = ['claude-code', 'codex', 'shell'];
+export const PTY_TYPES: readonly string[] = ['claude-code', 'codex', 'grok', 'shell'];
 
 export function isPtyType(type: string): type is TerminalType {
   return PTY_TYPES.includes(type);

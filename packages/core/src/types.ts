@@ -1,6 +1,6 @@
-export type Provider = 'claude-code' | 'codex';
+export type Provider = 'claude-code' | 'codex' | 'grok';
 
-export type TerminalType = 'claude-code' | 'codex' | 'shell';
+export type TerminalType = 'claude-code' | 'codex' | 'grok' | 'shell';
 
 export type SessionStatus = 'working' | 'waiting' | 'needs_input' | 'error' | 'done';
 

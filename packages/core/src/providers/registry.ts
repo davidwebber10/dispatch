@@ -1,10 +1,12 @@
 import type { SessionProvider } from './types.js';
 import { claudeCodeProvider } from './claude-code.js';
 import { codexProvider } from './codex.js';
+import { grokProvider } from './grok.js';
 
 const providers: Record<string, SessionProvider> = {
   'claude-code': claudeCodeProvider,
   'codex': codexProvider,
+  'grok': grokProvider,
 };
 
 export function getProvider(name: string): SessionProvider {
