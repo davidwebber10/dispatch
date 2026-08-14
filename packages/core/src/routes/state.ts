@@ -7,6 +7,7 @@ import * as appState from '../db/app-state.js';
 import { platform } from '../platform/index.js';
 import { sumTranscriptTokens } from '../sessions/cc-sessions.js';
 import { getRunningVersion, isNewerVersion } from '../update/version.js';
+import { parseStoredNotes, readLocalReleaseNote } from '../update/notes.js';
 import { revealClientFrom } from '../files/reveal.js';
 
 export function createStateRouter(db: Database.Database): Router {
@@ -135,6 +136,12 @@ export function createStateRouter(db: Database.Database): Router {
   // running version on every read (not a trusted stored flag) so a late-joining
   // client — or one that reconnects after `dispatch update` already ran — never
   // sees a stale "update available" banner for a release it's already running.
+  //
+  // `notes` carries the human-readable release notes for every version between the one
+  // running here and the newest one, so the update prompt can show what the update
+  // contains before it installs. `currentNotes` is the note for the version running
+  // right now, read from this checkout — that one CAN come from disk, because the file
+  // shipped with the code.
   router.get('/update', (_req, res) => {
     const tag = appState.get(db, 'latest_release_tag');
     const url = appState.get(db, 'latest_release_url');
@@ -147,6 +154,8 @@ export function createStateRouter(db: Database.Database): Router {
       url: available ? url : null,
       publishedAt: available ? publishedAt : null,
       currentVersion,
+      notes: available ? parseStoredNotes(appState.get(db, 'latest_release_notes'), currentVersion) : [],
+      currentNotes: readLocalReleaseNote(currentVersion),
     });
   });
 
