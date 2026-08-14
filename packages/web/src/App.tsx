@@ -16,6 +16,7 @@ import { AuthBanner } from './components/auth/AuthBanner';
 import { UpdateModal } from './components/update/UpdateModal';
 import { MobileApp } from './components/mobile/MobileApp';
 import { HintToast } from './components/common/HintToast';
+import { Spinner } from './components/common/Spinner';
 import { SetupWizard } from './components/setup/SetupWizard';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useTabCycleShortcut } from './hooks/useTabCycleShortcut';
@@ -44,6 +45,14 @@ import { resyncAfterReconnect } from './lib/resync';
 import { clearBadge } from './lib/badge';
 
 const AnalyticsView = lazy(() => import('./components/analytics/AnalyticsView').then((m) => ({ default: m.AnalyticsView })));
+
+// Centred in the pane at the same footprint the loaded view will occupy, so
+// nothing jumps when the ~120kB gzipped Recharts chunk finishes downloading.
+const analyticsFallback = (
+  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%' }}>
+    <Spinner size={24} />
+  </div>
+);
 
 export default function App() {
   const activeTerminalId = useTabs((s) => s.activeTabId);
@@ -194,7 +203,7 @@ export default function App() {
       <UpdateModal />
       <AppShell>
         {view === 'analytics'
-          ? <Suspense fallback={null}><AnalyticsView /></Suspense>
+          ? <Suspense fallback={analyticsFallback}><AnalyticsView /></Suspense>
           : view === 'board'
           ? <BoardView />
           : (

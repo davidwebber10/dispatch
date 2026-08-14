@@ -30,6 +30,15 @@ import { OverseerView } from '../overseer/OverseerView';
 
 const AnalyticsView = lazy(() => import('../analytics/AnalyticsView').then((m) => ({ default: m.AnalyticsView })));
 
+// Same idiom as App.tsx's desktop fallback: centred at the pane's eventual
+// footprint so the ~120kB gzipped Recharts chunk downloading doesn't read as a
+// blank/broken screen, and nothing jumps once it lands.
+const analyticsFallback = (
+  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%' }}>
+    <Spinner size={24} />
+  </div>
+);
+
 function homePath(p: string): string {
   return (p || '').replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
 }
@@ -230,7 +239,7 @@ export function MobileApp() {
           {/* Level 0 — projects / agents, switched by the bottom tab bar */}
           <div style={{ ...slot, display: 'flex', flexDirection: 'column' }}>
             {bottomTab === 'analytics' ? (
-              <Suspense fallback={null}><AnalyticsView /></Suspense>
+              <Suspense fallback={analyticsFallback}><AnalyticsView /></Suspense>
             ) : bottomTab === 'settings' ? (
               <MobileSettingsList onOpen={openSettingsSection} />
             ) : bottomTab === 'agents' ? (

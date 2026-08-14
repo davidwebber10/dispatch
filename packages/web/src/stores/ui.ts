@@ -13,7 +13,10 @@ const VKEY = 'dispatch:view';
 const loadBool = (k: string): boolean => { try { return localStorage.getItem(k) === '1'; } catch { return false; } };
 const saveBool = (k: string, v: boolean): void => { try { localStorage.setItem(k, v ? '1' : '0'); } catch { /* ignore */ } };
 const VIEWS: readonly View[] = ['workspace', 'board', 'analytics'];
-const loadView = (): View => {
+// Exported so mount.test.tsx can exercise the read-back path directly (pre-seed
+// localStorage, call this) rather than only the write path — the read-back is
+// what regressed originally (the old check recognised only 'board').
+export const loadView = (): View => {
   try {
     const v = localStorage.getItem(VKEY) as View | null;
     return v && VIEWS.includes(v) ? v : 'workspace';
