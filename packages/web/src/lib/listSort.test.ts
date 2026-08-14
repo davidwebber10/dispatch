@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { sortThreads, sortAgents, THREAD_SORTS, AGENT_SORTS, DEFAULT_THREAD_SORT, DEFAULT_AGENT_SORT } from './listSort';
+import { sortThreads, sortAgents, sortFiles, THREAD_SORTS, AGENT_SORTS, DEFAULT_THREAD_SORT, DEFAULT_AGENT_SORT } from './listSort';
 
 function th(over: Record<string, unknown>) {
   return { id: 'x', label: 'thread', status: 'idle', createdAt: '2026-01-01T00:00:00.000Z', sortOrder: 0, ...over } as any;
@@ -114,6 +114,43 @@ test('agents: recently updated, newest, oldest, and name', () => {
   expect(ids(sortAgents(items, 'newest'))).toEqual(['a', 'b']);
   expect(ids(sortAgents(items, 'oldest'))).toEqual(['b', 'a']);
   expect(ids(sortAgents(items, 'name'))).toEqual(['a', 'b']);
+});
+
+test('files: newest, oldest, and name mirror the thread comparators', () => {
+  const items = [
+    th({ id: 'mid', label: 'beta.md', createdAt: '2026-02-01T00:00:00.000Z' }),
+    th({ id: 'new', label: 'alpha.md', createdAt: '2026-03-01T00:00:00.000Z' }),
+    th({ id: 'old', label: 'gamma.md', createdAt: '2026-01-01T00:00:00.000Z' }),
+  ];
+  expect(ids(sortFiles(items, 'newest'))).toEqual(['new', 'mid', 'old']);
+  expect(ids(sortFiles(items, 'oldest'))).toEqual(['old', 'mid', 'new']);
+  expect(ids(sortFiles(items, 'name'))).toEqual(['new', 'mid', 'old']);
+});
+
+test('files: active uses lastActivityAt, falling back to createdAt', () => {
+  const items = [
+    th({ id: 'stale', createdAt: '2026-01-01T00:00:00.000Z', lastActivityAt: '2026-01-02T00:00:00.000Z' }),
+    th({ id: 'nofield', createdAt: '2026-05-01T00:00:00.000Z' }),
+    th({ id: 'fresh', createdAt: '2026-01-01T00:00:00.000Z', lastActivityAt: '2026-06-01T00:00:00.000Z' }),
+  ];
+  expect(ids(sortFiles(items, 'active'))).toEqual(['fresh', 'nofield', 'stale']);
+});
+
+test('files: needs and custom fall back to newest first — files never need you and have no drag order', () => {
+  const items = [
+    th({ id: 'old', createdAt: '2026-01-01T00:00:00.000Z' }),
+    th({ id: 'new', status: 'needs_input', createdAt: '2026-03-01T00:00:00.000Z' }),
+    th({ id: 'mid', createdAt: '2026-02-01T00:00:00.000Z' }),
+  ];
+  expect(ids(sortFiles(items, 'custom'))).toEqual(['new', 'mid', 'old']);
+  expect(ids(sortFiles(items, 'needs'))).toEqual(['new', 'mid', 'old']);
+});
+
+test('files: does not mutate the input array', () => {
+  const input = [th({ id: 'b', createdAt: '2026-01-01T00:00:00.000Z' }), th({ id: 'a', createdAt: '2026-02-01T00:00:00.000Z' })];
+  const snapshot = ids(input);
+  sortFiles(input, 'newest');
+  expect(ids(input)).toEqual(snapshot);
 });
 
 test('agents: does not mutate the input array', () => {
