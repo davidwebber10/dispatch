@@ -1040,6 +1040,18 @@ describe('analytics queries', () => {
     expect(s.totalTokens).toBe(168);
   });
 
+  // A turn that reported no usage at all is not a turn that used nothing. Codex can
+  // settle through its error path with no tokenUsage frame, and a PTY thread emits
+  // no frames at all. Those must be countable separately so the UI never shows them
+  // as a measured zero.
+  it('counts turns that reported no usage separately', () => {
+    turn(d, { id: 'silent', startedAt: '2026-08-12T15:00:00.000Z', endedAt: '2026-08-12T15:00:05.000Z', messages: 0 });
+    const s = summary(d, {});
+    expect(s.turns).toBe(4);
+    expect(s.unreportedTurns).toBe(1);
+    expect(summary(d, { from: '2026-08-13T00:00:00.000Z' }).unreportedTurns).toBe(0);
+  });
+
   it('filters by project and by date range', () => {
     expect(summary(d, { projectId: 'proj2' }).turns).toBe(1);
     expect(summary(d, { from: '2026-08-11T00:00:00.000Z' }).turns).toBe(1);
@@ -1112,6 +1124,17 @@ export interface Summary {
   totalTokens: number;
   notionalUsd: number;
   unpricedTokens: number;
+  /**
+   * Turns that closed without a single usage-bearing frame (`messages = 0`).
+   *
+   * This is NOT the same as a turn that used zero tokens. A Codex turn can settle
+   * through the error path without ever emitting a `tokenUsage` frame
+   * (`structured/codex-translate.ts:320-326` settles straight to idle), and a PTY
+   * thread emits no frames at all. Those turns really did consume tokens; we
+   * simply never saw a count. The spec forbids showing that as a measured zero,
+   * so the UI reports this number separately as "turns that reported no usage".
+   */
+  unreportedTurns: number;
 }
 
 export interface SeriesPoint { day: string; key: string; value: number }
@@ -1140,6 +1163,7 @@ export function summary(db: Database.Database, r: Range): Summary {
   const w = where(r);
   const agg = db.prepare(`
     SELECT COUNT(*) AS turns, COUNT(DISTINCT terminal_id) AS threads,
+           COALESCE(SUM(CASE WHEN messages = 0 THEN 1 ELSE 0 END), 0) AS unreported_turns,
            COALESCE(SUM(input_tokens), 0)        AS input_tokens,
            COALESCE(SUM(output_tokens), 0)       AS output_tokens,
            COALESCE(SUM(cache_read_tokens), 0)   AS cache_read_tokens,
@@ -1175,6 +1199,7 @@ export function summary(db: Database.Database, r: Range): Summary {
     totalTokens: agg.input_tokens + agg.output_tokens + agg.cache_read_tokens + agg.cache_create_tokens,
     notionalUsd,
     unpricedTokens,
+    unreportedTurns: agg.unreported_turns,
   };
 }
 
