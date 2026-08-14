@@ -9,6 +9,7 @@ import { sumTranscriptTokens } from '../sessions/cc-sessions.js';
 import { getRunningVersion, isNewerVersion } from '../update/version.js';
 import { parseStoredNotes, readLocalReleaseNote } from '../update/notes.js';
 import { revealClientFrom } from '../files/reveal.js';
+import { notionalValueUsd } from '../analytics/pricing.js';
 
 export function createStateRouter(db: Database.Database): Router {
   const router = Router();
@@ -97,17 +98,14 @@ export function createStateRouter(db: Database.Database): Router {
       const content = fs.readFileSync(jsonlPath, 'utf-8');
       const stats = sumTranscriptTokens(content);
 
-      // Per-model pricing (per million tokens)
-      const pricing: Record<string, { input: number; output: number; cacheRead: number; cacheCreate: number }> = {
-        'claude-opus-4-6': { input: 15, output: 75, cacheRead: 1.5, cacheCreate: 18.75 },
-        'claude-sonnet-4-6': { input: 3, output: 15, cacheRead: 0.3, cacheCreate: 3.75 },
-        'claude-haiku-4-5-20251001': { input: 0.8, output: 4, cacheRead: 0.08, cacheCreate: 1 },
-      };
-      const p = pricing[stats.model] || pricing['claude-sonnet-4-6'];
-      const totalCost = (stats.inputTokens / 1e6) * p.input
-                       + (stats.outputTokens / 1e6) * p.output
-                       + (stats.cacheReadTokens / 1e6) * p.cacheRead
-                       + (stats.cacheCreationTokens / 1e6) * p.cacheCreate;
+      // Notional: list-price arithmetic, not a bill. Null when the model is unpriced.
+      const totalCost = notionalValueUsd({
+        model: stats.model,
+        input: stats.inputTokens,
+        output: stats.outputTokens,
+        cacheRead: stats.cacheReadTokens,
+        cacheCreate: stats.cacheCreationTokens,
+      }) ?? 0;
 
       res.json({
         found: true,
