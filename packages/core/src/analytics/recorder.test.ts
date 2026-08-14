@@ -93,6 +93,48 @@ describe('usage recorder', () => {
     expect(rows(d).map((r) => r.outcome)).toEqual(['needs_help', 'scheduled', 'exit']);
   });
 
+  /*
+   * The turn opens with `terminal.config.model`, which sessions/service.ts writes
+   * as modelFor(config) — a bare CLI tier alias, never a model id. priceFor()
+   * cannot price 'sonnet', so a row that kept the alias would land its tokens in
+   * unpricedTokens and appear as a second key in every by-model chart. The frame
+   * knows the real id, so the frame wins.
+   */
+  it('replaces the config tier alias with the model the frame names', () => {
+    terminalsDb.updateConfig(d, termId, { role: 'coordinator', model: 'sonnet' });
+    mgr.emit('busy', termId);
+    // The row really did open with the alias — otherwise this test would pass for
+    // the wrong reason.
+    expect(usageDb.findOpenTurn(d, termId)!.model).toBe('sonnet');
+
+    mgr.emit('event', termId, {
+      type: 'assistant',
+      message: { model: 'claude-sonnet-5', content: [], usage: { input_tokens: 1, output_tokens: 1 } },
+    });
+    mgr.emit('idle', termId, { declared: true });
+
+    expect(rows(d)[0].model).toBe('claude-sonnet-5');
+  });
+
+  /*
+   * Codex must NOT be collateral damage. structured/codex-translate.ts names a
+   * model only in its `init` frame, which carries no usage — its usage frames are
+   * `{ type:'assistant', message:{ role, content: [], usage } }` with no `model`.
+   * So the guard never fires and the Codex slug from config survives.
+   */
+  it('keeps a Codex slug when the frame names no model', () => {
+    terminalsDb.updateConfig(d, termId, { role: 'coordinator', model: 'gpt-5.6-sol' });
+    mgr.emit('busy', termId);
+    mgr.emit('event', termId, {
+      type: 'assistant',
+      message: { role: 'assistant', content: [], usage: { input_tokens: 7, cache_read_input_tokens: 2, output_tokens: 3 } },
+    });
+    mgr.emit('idle', termId, { declared: true });
+
+    expect(rows(d)[0].model).toBe('gpt-5.6-sol');
+    expect(rows(d)[0].output_tokens).toBe(3);
+  });
+
   it('ignores frames that arrive with no open turn', () => {
     mgr.emit('event', termId, FRAME);
     expect(rows(d).length).toBe(0);

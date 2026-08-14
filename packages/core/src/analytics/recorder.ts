@@ -78,7 +78,14 @@ export function attachUsageRecorder(manager: EventEmitter, deps: RecorderDeps): 
         messages: usage ? 1 : 0,
         toolCalls,
       });
-      if (usage?.model) usageDb.setModelIfEmpty(db, open.id, usage.model);
+      // The frame's model is AUTHORITATIVE. The row opened with
+      // `terminal.config.model`, which sessions/service.ts persists as
+      // modelFor(config) — a bare CLI tier alias ('sonnet', 'opus', 'haiku',
+      // 'fable'), which priceFor() cannot price and which splits one model across
+      // two chart keys. Codex is unaffected: its frames never name a model
+      // (codex-translate.ts names one only in `init`, which carries no usage), so
+      // the guard below never fires and its slug from config survives.
+      if (usage?.model) usageDb.setModel(db, open.id, usage.model);
     } catch { /* best effort */ }
   });
 

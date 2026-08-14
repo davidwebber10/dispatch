@@ -80,9 +80,22 @@ export function addUsage(db: Database.Database, turnId: string, d: UsageDelta): 
   `).run(d.input, d.output, d.cacheRead, d.cacheCreate, d.messages, d.toolCalls, turnId);
 }
 
-/** Set the model on a turn that opened without one (the frame names it, the terminal row may not). */
-export function setModelIfEmpty(db: Database.Database, turnId: string, model: string): void {
-  db.prepare(`UPDATE usage_turns SET model = ? WHERE id = ? AND model = ''`).run(model, turnId);
+/**
+ * Set the model a frame reported on its turn. Unconditional, and deliberately so.
+ *
+ * The turn OPENS with `terminal.config.model`, which for a Claude thread is a
+ * bare CLI tier alias — 'sonnet', 'opus', 'haiku', 'fable' (overseer/prompts.ts
+ * MODEL_FOR_TYPE) — not a model id. The frame carries the authoritative full id
+ * ('claude-sonnet-5'), so the frame wins. A fill-only variant would pin the alias
+ * forever: pricing.ts could not price it, the tokens would land in
+ * `unpricedTokens`, and the same model would split the charts across two keys.
+ *
+ * Callers must only call this when the frame actually named a model. Codex frames
+ * carry no `message.model` (structured/codex-translate.ts names a model only in
+ * its `init` frame, which carries no usage), so a Codex slug from config survives.
+ */
+export function setModel(db: Database.Database, turnId: string, model: string): void {
+  db.prepare(`UPDATE usage_turns SET model = ? WHERE id = ?`).run(model, turnId);
 }
 
 export function closeTurn(db: Database.Database, turnId: string, at: string, outcome: string): void {

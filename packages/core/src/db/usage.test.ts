@@ -40,12 +40,18 @@ describe('usage_turns db', () => {
     expect(usageDb.findOpenTurn(d, 'term1')).toBeNull();
   });
 
-  it('setModelIfEmpty fills a blank model but never overwrites one', () => {
+  // The frame is authoritative: a turn opens with the CLI tier alias from
+  // terminal.config, and the frame replaces it with the real model id.
+  it('setModel overwrites the alias a turn opened with', () => {
+    usageDb.openTurn(d, { ...OPEN, model: 'sonnet' });
+    usageDb.setModel(d, 't1', 'claude-sonnet-5');
+    expect(usageDb.findOpenTurn(d, 'term1')!.model).toBe('claude-sonnet-5');
+  });
+
+  it('setModel fills a blank model too', () => {
     usageDb.openTurn(d, { ...OPEN, model: '' });
-    usageDb.setModelIfEmpty(d, 't1', 'claude-sonnet-5');
-    expect(usageDb.findOpenTurn(d, 'term1')!.model).toBe('claude-sonnet-5');
-    usageDb.setModelIfEmpty(d, 't1', 'claude-haiku-4-5');
-    expect(usageDb.findOpenTurn(d, 'term1')!.model).toBe('claude-sonnet-5');
+    usageDb.setModel(d, 't1', 'claude-haiku-4-5');
+    expect(usageDb.findOpenTurn(d, 'term1')!.model).toBe('claude-haiku-4-5');
   });
 
   it('deleteBackfilled removes only imported rows', () => {
