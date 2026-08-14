@@ -87,3 +87,19 @@ export function attachUsageRecorder(manager: EventEmitter, deps: RecorderDeps): 
   manager.on('scheduled', (terminalId: string) => close(terminalId, 'scheduled'));
   manager.on('exit', (terminalId: string) => close(terminalId, 'exit'));
 }
+
+/**
+ * Close every row left open by a daemon that died mid-turn. `ended_at` is set to
+ * `started_at`, not to now: the turn's real end is unknown, and a multi-hour
+ * phantom duration would poison every duration statistic. Called once at startup.
+ */
+export function closeInterruptedTurns(db: Database.Database): number {
+  try {
+    return db.prepare(`
+      UPDATE usage_turns SET ended_at = started_at, outcome = 'interrupted'
+      WHERE ended_at IS NULL
+    `).run().changes;
+  } catch {
+    return 0;
+  }
+}

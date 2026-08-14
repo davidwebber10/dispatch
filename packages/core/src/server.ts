@@ -23,6 +23,7 @@ import { createProvidersRouter } from './routes/providers.js';
 import { createServersRouter } from './routes/servers.js';
 import { createFilesRouter } from './routes/files.js';
 import { createStateRouter } from './routes/state.js';
+import { attachUsageRecorder, closeInterruptedTurns } from './analytics/recorder.js';
 import { createGitRouter } from './routes/git.js';
 import { createSecretsRouter } from './routes/secrets.js';
 import { createTranscribeRouter } from './routes/transcribe.js';
@@ -101,7 +102,7 @@ class NoopPTYManager extends PTYManager {
  * once answered, 'resolved' (→ working). Routing it through StatusService means it
  * broadcasts terminal:status + fires the same push/notify path the PTY/hook flow uses.
  */
-function wirePermissionMembrane(structuredManager: IStructuredManager, statusService: StatusService, sessionService: SessionService): void {
+function wirePermissionMembrane(structuredManager: IStructuredManager, statusService: StatusService, sessionService: SessionService, db: Database.Database, broadcaster: EventBroadcaster): void {
   structuredManager.on('permission', (terminalId: string, pending: { toolName?: string; questions?: any[] }) => {
     // An agent's AskUserQuestion escalates UP to its project's coordinator (Dispatch), not to
     // the human. When that routing succeeds the agent stays "working" (it's waiting on the
@@ -114,6 +115,13 @@ function wirePermissionMembrane(structuredManager: IStructuredManager, statusSer
       ? 'Needs your answer'
       : `Needs approval: ${pending?.toolName ?? 'tool'}`;
     statusService.markNeedsInput(terminalId, activity);
+  });
+  // Analytics: one row per turn, written live from the same events that drive status.
+  // Kept as its own subscriber rather than folded into the status handlers so a
+  // failure here can never affect a turn. See analytics/recorder.ts.
+  attachUsageRecorder(structuredManager, {
+    db,
+    onTurnClosed: () => broadcaster.broadcast({ type: 'analytics-dirty' }),
   });
   structuredManager.on('resolved', (terminalId: string) => {
     statusService.markWorking(terminalId, 'Working…');
@@ -189,11 +197,11 @@ const CODEX_PRETTY_ENABLED = process.env.DISPATCH_CODEX_PRETTY !== '0';
  * as Claude — both managers emit the identical Claude-shaped event contract. No-op (returns
  * undefined) when Codex Pretty is disabled; Codex then keeps only its PTY transport.
  */
-function wireCodexPretty(sessionService: SessionService, statusService: StatusService): IStructuredManager | undefined {
+function wireCodexPretty(sessionService: SessionService, statusService: StatusService, db: Database.Database, broadcaster: EventBroadcaster): IStructuredManager | undefined {
   if (!CODEX_PRETTY_ENABLED) return undefined;
   const codexManager = new CodexStructuredSessionManager();
   sessionService.setCodexStructuredManager(codexManager);
-  wirePermissionMembrane(codexManager, statusService, sessionService);
+  wirePermissionMembrane(codexManager, statusService, sessionService, db, broadcaster);
   return codexManager;
 }
 
@@ -247,8 +255,8 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   // optional StatusService dependency, same shape as onActivity below.
   const watchDispatcher = new WatchDispatcher(db, buildWatchDeliver(sessionService));
   const statusService = new StatusService(db, broadcaster, undefined, (terminalId, status) => watchDispatcher.onStatus(terminalId, status));
-  wirePermissionMembrane(structuredManager, statusService, sessionService);
-  wireCodexPretty(sessionService, statusService);
+  wirePermissionMembrane(structuredManager, statusService, sessionService, db, broadcaster);
+  wireCodexPretty(sessionService, statusService, db, broadcaster);
   const pushService = new PushService(db, { vapidDir: dispatchDir });
 
   wireThreadSettledPush(db, statusService, pushService);
@@ -380,8 +388,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   );
   const structuredManager = new ClaudeStructuredSessionManager();
   sessionService.setStructuredManager(structuredManager);
-  wirePermissionMembrane(structuredManager, statusService, sessionService);
-  wireCodexPretty(sessionService, statusService);
+  wirePermissionMembrane(structuredManager, statusService, sessionService, db, broadcaster);
+  wireCodexPretty(sessionService, statusService, db, broadcaster);
   const pushService = new PushService(db, { vapidDir: dataDir });
 
   wireThreadSettledPush(db, statusService, pushService);
@@ -466,6 +474,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       rollupSession(terminal.session_id);
     }
   });
+
+  // A daemon that died mid-turn left rows open; close them before anything reads them.
+  closeInterruptedTurns(db);
 
   // Mount routes
   app.use('/api/sessions', createSessionsRouter(sessionService, broadcaster));
