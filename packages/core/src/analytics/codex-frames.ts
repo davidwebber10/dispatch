@@ -17,8 +17,11 @@ const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v)
  * /compact, so a diff of totals is the honest per-turn figure.
  *
  * Only the NEWEST of each matters, so a bounded tail read suffices. The window widens
- * to the whole file if the tail holds neither — a quiet turn can be a long way from
- * the last token_count.
+ * to the whole file if the tail is missing EITHER field — token_count lines are far
+ * denser than turn_context lines in real transcripts, so a tail can easily hold a
+ * total with no turn_context in it at all. When it widens, the tail's values win
+ * wherever it found any (they're newer than anything the full scan can offer);
+ * the full scan only fills in what the tail was missing.
  *
  * Envelope shapes, verified against real files under ~/.codex/sessions/:
  *   { type: 'turn_context', payload: { model, ...lots more } }
@@ -46,15 +49,20 @@ export function readCodexTail(file: string, tailBytes: number = DEFAULT_TAIL_BYT
     const out: CodexTail = { totals: null, model: '' };
     for (const ln of raw.split('\n')) {
       if (!ln.trim()) continue;
-      let ev: any;
+      let ev: unknown;
       try { ev = JSON.parse(ln); } catch { continue; }
+      if (!ev || typeof ev !== 'object') continue;
+      const rec = ev as Record<string, unknown>;
+      const payload = rec.payload as Record<string, unknown> | undefined;
 
-      if (ev?.type === 'turn_context' && typeof ev?.payload?.model === 'string') {
-        out.model = ev.payload.model;
+      if (rec.type === 'turn_context' && payload && typeof payload.model === 'string') {
+        out.model = payload.model;
         continue;
       }
-      const info = ev?.payload?.type === 'token_count' ? ev?.payload?.info : undefined;
-      const total = info?.total_token_usage;
+      const info = payload && payload.type === 'token_count'
+        ? (payload.info as Record<string, unknown> | undefined)
+        : undefined;
+      const total = info?.total_token_usage as Record<string, unknown> | undefined;
       if (total && typeof total === 'object') {
         out.totals = {
           input: num(total.input_tokens),
@@ -68,6 +76,16 @@ export function readCodexTail(file: string, tailBytes: number = DEFAULT_TAIL_BYT
 
   const from = size > tailBytes ? size - tailBytes : 0;
   const first = scan(from);
-  if (first.totals || from === 0) return first;
-  return scan(0);
+  if ((first.totals && first.model) || from === 0) return first;
+
+  // The tail held one but not the other — commonly a total without a turn_context,
+  // because token_count lines are far denser than turn_context lines. Re-scan the
+  // whole file and fill in only what the tail was missing, so a tail hit is never
+  // thrown away. The tail's values are the newer ones wherever both scans found
+  // something, so the tail wins.
+  const full = scan(0);
+  return {
+    totals: first.totals ?? full.totals,
+    model: first.model || full.model,
+  };
 }

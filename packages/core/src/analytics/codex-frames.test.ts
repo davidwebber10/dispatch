@@ -65,4 +65,17 @@ describe('readCodexTail', () => {
     fs.writeFileSync(file, tokenCount(11, 1, 2) + '\n' + JSON.stringify({ type: 'response_item', payload: { filler } }) + '\n');
     expect(readCodexTail(file, 512)!.totals).toEqual({ input: 11, cached: 1, output: 2 });
   });
+
+  it('widens when the tail holds a total but no model', () => {
+    const filler = 'x'.repeat(4096);
+    fs.writeFileSync(file, [
+      turnContext('gpt-5.6-sol'),
+      JSON.stringify({ type: 'response_item', payload: { filler } }),
+      tokenCount(7, 1, 3),
+    ].join('\n') + '\n');
+
+    const r = readCodexTail(file, 512)!;
+    expect(r.totals).toEqual({ input: 7, cached: 1, output: 3 });
+    expect(r.model).toBe('gpt-5.6-sol');   // '' before the fix
+  });
 });
