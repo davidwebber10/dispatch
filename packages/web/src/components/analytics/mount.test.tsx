@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { useUI, loadView } from '../../stores/ui';
-import { TopBar } from '../layout/TopBar';
+import { IconRail } from '../layout/IconRail';
 
 describe('analytics mounting', () => {
-  it('offers an Analytics segment in the top bar', () => {
-    render(<TopBar />);
+  it('offers an Analytics item in the icon rail', () => {
+    render(<IconRail />);
     expect(screen.getByRole('button', { name: 'Analytics' })).toBeTruthy();
   });
 

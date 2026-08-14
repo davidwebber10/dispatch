@@ -86,7 +86,10 @@ export interface TerminalBoardState {
 
 export interface Provider { name: string; displayName: string; }
 
-export interface FileEntry { name: string; isDirectory: boolean; path: string; }
+export interface FileEntry { name: string; isDirectory: boolean; path: string; size?: number | null; }
+
+export interface GitChangedFile { path: string; status: string }
+export interface GitStatus { branch: string | null; files: GitChangedFile[] }
 
 export interface AuthRequest {
   id: string;

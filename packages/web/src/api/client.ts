@@ -1,4 +1,4 @@
-import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsBackfillState } from './types';
+import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsBackfillState } from './types';
 
 /**
  * A content block for a structured `user` turn (mirrors the daemon's wire shape). A
@@ -133,6 +133,8 @@ export const api = {
 
   listProviders: () => req<Provider[]>('/api/providers'),
   getGitInfo: (sessionId: string) => req<{ branch: string | null }>(`/api/sessions/${sessionId}/git`),
+  // Branch + working-tree changes; a non-git working dir answers { branch: null, files: [] }.
+  getGitStatus: (sessionId: string) => req<GitStatus>(`/api/sessions/${sessionId}/git/status`),
   getLastDirectory: () => req<{ directory: string | null }>('/api/state/last-directory'),
   browse: (path: string) => req<FileEntry[]>(`/api/state/browse?path=${encodeURIComponent(path)}`),
   stateMkdir: (path: string) => req<{ ok: true; path: string }>(`/api/state/mkdir?path=${encodeURIComponent(path)}`, { method: 'POST' }),
@@ -140,6 +142,8 @@ export const api = {
 
   // Files (sandboxed to the session working dir)
   listFiles: (sessionId: string, p = '.') => req<FileEntry[]>(`/api/sessions/${sessionId}/files?path=${encodeURIComponent(p)}`),
+  // Every file path under the working dir (git ls-files, .gitignore-aware) — feeds the Files search.
+  listFilesFlat: (sessionId: string) => req<{ files: string[]; truncated: boolean }>(`/api/sessions/${sessionId}/files/flat`),
   readFile: (sessionId: string, p: string) => req<{ content: string; path: string }>(`/api/sessions/${sessionId}/files/read?path=${encodeURIComponent(p)}`),
   // Byte-route URL for an image file (sandboxed to the session working dir). Sync URL
   // builder (no fetch) so it can feed an <img src> directly; the route streams raw bytes.
