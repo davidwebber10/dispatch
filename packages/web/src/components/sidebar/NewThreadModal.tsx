@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { CaretRight, CheckCircle, DownloadSimple, SignIn, TerminalWindow, WarningCircle } from '@phosphor-icons/react';
 import { Modal } from '../common/Modal';
 import { Spinner } from '../common/Spinner';
 import { AutoArchiveField } from './AutoArchiveField';
@@ -68,6 +69,17 @@ const MODELS: Record<Harness, { label: string; model: string | null }[]> = {
 const ACCENT = 'var(--color-accent)';
 const GLOW = '0 0 6px 1px rgba(62,207,106,.55)';
 
+/**
+ * The command the daemon runs for each CLI, shown next to the Install button. Mirrors
+ * core's INSTALL_COMMANDS — displayed, never executed here, so a user who would rather run
+ * it themselves can copy it.
+ */
+const INSTALL_COMMAND: Record<ProviderName, string> = {
+  claude: 'npm install -g @anthropic-ai/claude-code',
+  codex: 'npm install -g @openai/codex',
+  grok: 'curl -fsSL https://x.ai/cli/install.sh | bash',
+};
+
 function ClaudeMark() {
   return (
     <svg aria-hidden="true" width={20} height={20} viewBox="0 0 512 512" fill="#D97757" style={{ display: 'block' }}>
@@ -93,21 +105,15 @@ function GrokMark() {
   );
 }
 
+/** The plain shell has no brand, so it uses the house icon set like every other glyph. */
 function TerminalMark() {
-  return (
-    <svg aria-hidden="true" width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ display: 'block', color: 'var(--color-text-secondary)' }}>
-      <rect x="3" y="4.5" width="18" height="15" rx="2.5" strokeWidth="1.5" />
-      <path d="M7 9.5l3 2.4-3 2.4M12.5 14.4h4.5" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
+  return <TerminalWindow size={20} weight="regular" color="var(--color-text-secondary)" style={{ display: 'block' }} />;
 }
 
 function CheckBadge() {
   return (
-    <span aria-hidden="true" style={{ position: 'absolute', top: 6, right: 6, width: 13, height: 13, borderRadius: '50%', border: `1px solid ${ACCENT}`, display: 'grid', placeItems: 'center' }}>
-      <svg width={7} height={7} viewBox="0 0 10 10" fill="none" style={{ color: ACCENT }}>
-        <path d="M1.5 5.2l2.2 2.3L8.5 2.6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
+    <span aria-hidden="true" style={{ position: 'absolute', top: 5, right: 5, display: 'flex' }}>
+      <CheckCircle size={14} weight="fill" color={ACCENT} />
     </span>
   );
 }
@@ -152,6 +158,8 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
     [statusFor],
   );
 
+  /** Is the harness you have selected actually runnable on this machine? */
+  const selectedAvailable = isAvailable(spec);
   const currentStatus = statusFor(spec.provider);
   // Installed but not signed in: still startable. The CLI prompts inside the terminal,
   // which is exactly what a CLI-mode thread is for.
@@ -172,8 +180,10 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
   useEffect(() => { void loadProviders(); }, [loadProviders]);
 
   function selectHarness(h: HarnessSpec) {
-    if (!isAvailable(h)) return; // a greyed card is inert; its Install button is not
+    // Every card selects, including one whose CLI is missing — selecting it is how you
+    // reach its install prompt.
     setHarness(h.id);
+    setInstallError(null);
     setModel(null); // model lists are harness-specific — reset to Default
     if (!h.pretty) setMode('cli'); // don't carry a Pretty pick into a harness without it
   }
@@ -250,8 +260,9 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
           onKeyDown={(e) => { if (e.key === 'Enter') void create(); }} />
       </div>
 
-      {/* HARNESS — four across. A harness whose CLI is missing is greyed and inert, and
-          offers to install it in place rather than sending you to a terminal. */}
+      {/* HARNESS — four across. A harness whose CLI is missing is dimmed and labelled
+          "Install", but stays SELECTABLE: picking it swaps the options below for an install
+          prompt, so the fix sits exactly where you hit the problem. */}
       <div style={sectionStyle}>
         <span style={labelStyle}>Harness</span>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
@@ -260,56 +271,74 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
             const available = isAvailable(h);
             const Mark = HARNESS_MARK[h.id];
             return (
-              <button key={h.id} type="button" aria-pressed={on} disabled={!available}
-                title={available ? undefined : `${h.label} is not installed`}
+              <button key={h.id} type="button" aria-pressed={on}
+                title={available ? undefined : `${h.label} is not installed — select to install it`}
                 onClick={() => selectHarness(h)}
                 style={{
-                  position: 'relative', textAlign: 'center', cursor: available ? 'pointer' : 'not-allowed',
+                  position: 'relative', textAlign: 'center', cursor: 'pointer',
                   background: on ? 'color-mix(in srgb, var(--color-accent) 9%, var(--color-elevated))' : 'var(--color-elevated)',
                   border: `1px solid ${on ? ACCENT : '#2C2C32'}`, borderRadius: 10, padding: '12px 6px 11px',
-                  boxShadow: on ? GLOW : 'none', opacity: available ? 1 : 0.4,
+                  boxShadow: on ? GLOW : 'none',
+                  // Dimmed while unavailable, but full strength once selected, so the
+                  // selection never looks half-applied.
+                  opacity: available || on ? 1 : 0.45,
                   transition: 'border-color .15s ease, background .15s ease, box-shadow .2s ease, opacity .15s ease',
                 }}>
                 {on && <CheckBadge />}
                 <span style={{ display: 'flex', justifyContent: 'center', marginBottom: 7 }}><Mark /></span>
                 <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-primary)', lineHeight: 1.2 }}>{h.label}</div>
+                {!available && (
+                  <div style={{ marginTop: 2, font: '600 9.5px var(--font-mono)', letterSpacing: '.06em', textTransform: 'uppercase', color: ACCENT }}>Install</div>
+                )}
               </button>
             );
           })}
         </div>
 
-        {/* One install row per missing CLI — the action sits next to the reason. */}
-        {HARNESSES.filter((h) => h.provider !== null && !isAvailable(h)).map((h) => (
-          <div key={h.id} style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 8 }}>
-            <span style={{ flex: 1, fontSize: 12, color: 'var(--color-text-secondary)' }}>
-              {h.label} isn't installed on this machine.
-            </span>
-            <button type="button" disabled={installing !== null}
-              onClick={() => void install(h.provider!)}
-              style={{ flex: 'none', height: 26, padding: '0 11px', background: 'transparent', border: `1px solid ${ACCENT}`, borderRadius: 7, color: ACCENT, font: '600 11.5px var(--font-sans)', cursor: installing ? 'default' : 'pointer', opacity: installing && installing !== h.provider ? 0.4 : 1, display: 'flex', alignItems: 'center', gap: 6 }}>
-              {installing === h.provider ? (<><Spinner size={11} /> Installing…</>) : 'Install'}
-            </button>
-          </div>
-        ))}
-        {installing && (
-          <div style={{ marginTop: 6, fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>
-            This can take a few minutes. You can leave the modal open.
-          </div>
-        )}
-        {installError && (
-          <div style={{ marginTop: 6, fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-status-red)' }}>{installError}</div>
-        )}
         {needsLogin && (
-          <div style={{ marginTop: 8, fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
-            {spec.label} is installed but signed out. Run{' '}
-            <code style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-primary)' }}>
-              {spec.provider === 'claude' ? 'claude' : `${spec.provider} login`}
-            </code>{' '}
-            once — a CLI thread will also prompt you inline.
+          <div style={{ marginTop: 10, display: 'flex', gap: 7, alignItems: 'flex-start', fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
+            <SignIn size={14} weight="bold" color="var(--color-status-yellow)" style={{ flex: 'none', marginTop: 1 }} />
+            <span>
+              {spec.label} is installed but signed out. Run{' '}
+              <code style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-primary)' }}>
+                {spec.provider === 'claude' ? 'claude' : `${spec.provider} login`}
+              </code>{' '}
+              once — a CLI thread will also prompt you inline.
+            </span>
           </div>
         )}
       </div>
 
+      {/* The selected harness has no CLI: everything below the picker is replaced by the
+          one action that matters. No point offering a model, a mode, or a Start button for
+          something that cannot run. */}
+      {!selectedAvailable ? (
+        <div style={{ padding: '14px 14px 13px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <WarningCircle size={16} weight="fill" color="var(--color-status-yellow)" style={{ flex: 'none' }} />
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>
+              {spec.label} isn't installed
+            </span>
+          </div>
+          <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
+            Dispatch can install it here, on the machine running the daemon. It takes a few
+            minutes, and you can leave this open.
+          </div>
+          <div style={{ marginTop: 9, font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)', background: 'rgba(0,0,0,.22)', border: '1px solid #2C2C32', borderRadius: 7, padding: '7px 9px', overflowX: 'auto', whiteSpace: 'nowrap' }}>
+            {INSTALL_COMMAND[spec.provider!]}
+          </div>
+          {installError && (
+            <div style={{ marginTop: 9, fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-status-red)' }}>{installError}</div>
+          )}
+          <button type="button" disabled={installing !== null} onClick={() => void install(spec.provider!)}
+            style={{ marginTop: 12, height: 38, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: ACCENT, border: 'none', borderRadius: 10, color: '#08240F', fontWeight: 600, fontSize: 13.5, cursor: installing ? 'default' : 'pointer', opacity: installing ? 0.7 : 1, boxShadow: GLOW }}>
+            {installing === spec.provider
+              ? (<><Spinner size={13} /> Installing {spec.label}…</>)
+              : (<><DownloadSimple size={15} weight="bold" /> Install {spec.label}</>)}
+          </button>
+        </div>
+      ) : (
+      <>
       {/* MODE + MODEL share one row. Two full-width stacked sections is what made this
           modal long; with a fourth harness it would not fit a phone at all. */}
       {(showMode || models.length > 0) && (
@@ -358,7 +387,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
       {/* ADVANCED — auto-archive is set once and rarely touched, so it folds away. */}
       <button type="button" onClick={() => setAdvanced((v) => !v)} aria-expanded={advanced}
         style={{ display: 'flex', alignItems: 'center', gap: 7, background: 'none', border: 'none', padding: '6px 2px', font: '500 12px var(--font-sans)', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
-        <span aria-hidden="true" style={{ fontSize: 10, color: 'var(--color-text-tertiary)', transform: advanced ? 'rotate(90deg)' : 'none', transition: 'transform .15s', display: 'inline-block' }}>▶</span>
+        <CaretRight size={11} weight="bold" style={{ transform: advanced ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }} />
         Advanced
       </button>
       {advanced && (
@@ -394,6 +423,8 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
           </div>
         </div>
       ) : null)}
+      </>
+      )}
     </Modal>
   );
 }

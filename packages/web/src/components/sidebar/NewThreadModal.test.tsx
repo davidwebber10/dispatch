@@ -239,7 +239,7 @@ describe('NewThreadModal — uninstalled CLIs', () => {
     name, installed: false, signedIn: false,
   });
 
-  it('greys out a harness whose CLI is missing and refuses to select it', async () => {
+  it('marks a missing CLI Install on its card, but still lets you select it', async () => {
     (api.recheckProviders as any).mockResolvedValue([
       { name: 'claude', installed: true, signedIn: true },
       { name: 'codex', installed: true, signedIn: true },
@@ -247,14 +247,45 @@ describe('NewThreadModal — uninstalled CLIs', () => {
     ]);
     render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
 
-    const grok = await screen.findByRole('button', { name: 'Grok' });
-    await waitFor(() => expect(grok).toBeDisabled());
+    const grok = await screen.findByRole('button', { name: 'Grok Install' });
+    await waitFor(() => expect(grok).toHaveTextContent('Install'));
+    expect(grok).not.toBeDisabled();
     fireEvent.click(grok);
-    expect(grok).toHaveAttribute('aria-pressed', 'false');
-    // Claude stays selected, so Start still creates a working thread.
-    start();
-    await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
-    expect(lastInput().type).toBe('claude-code');
+    expect(grok).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('replaces the options with the install prompt when you select a missing CLI', async () => {
+    (api.recheckProviders as any).mockResolvedValue([
+      { name: 'claude', installed: true, signedIn: true },
+      { name: 'codex', installed: true, signedIn: true },
+      notInstalled('grok'),
+    ]);
+    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Grok Install' }));
+
+    expect(await screen.findByText(/Grok isn't installed/)).toBeInTheDocument();
+    // No point offering any of these for something that cannot run.
+    expect(screen.queryByRole('button', { name: /start new thread/i })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Model')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'CLI mode' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /advanced/i })).not.toBeInTheDocument();
+    // The command is shown so you can run it yourself instead.
+    expect(screen.getByText('curl -fsSL https://x.ai/cli/install.sh | bash')).toBeInTheDocument();
+  });
+
+  it('shows the normal options again as soon as you pick an installed harness', async () => {
+    (api.recheckProviders as any).mockResolvedValue([
+      { name: 'claude', installed: true, signedIn: true },
+      { name: 'codex', installed: true, signedIn: true },
+      notInstalled('grok'),
+    ]);
+    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Grok Install' }));
+    expect(await screen.findByText(/Grok isn't installed/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Codex' }));
+    expect(screen.queryByText(/isn't installed/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /start new thread/i })).toBeInTheDocument();
   });
 
   it('applies the same rule to Claude Code and Codex, not just Grok', async () => {
@@ -264,19 +295,22 @@ describe('NewThreadModal — uninstalled CLIs', () => {
     ]);
     render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
 
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Claude Code' })).toBeDisabled());
-    expect(screen.getByRole('button', { name: 'Codex' })).toBeDisabled();
-    // Terminal has no CLI behind it, so it is never disabled.
-    expect(screen.getByRole('button', { name: 'Terminal' })).not.toBeDisabled();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Claude Code Install' })).toHaveTextContent('Install'));
+    expect(screen.getByRole('button', { name: 'Codex Install' })).toHaveTextContent('Install');
+    // Terminal has no CLI behind it, so it is never marked.
+    expect(screen.getByRole('button', { name: 'Terminal' })).not.toHaveTextContent('Install');
+    // Claude is selected by default and missing, so the prompt names Claude Code.
+    expect(await screen.findByText(/Claude Code isn't installed/)).toBeInTheDocument();
   });
 
-  it('leaves every card enabled while the probe is still in flight', () => {
+  it('marks nothing while the probe is still in flight', () => {
     (api.recheckProviders as any).mockReturnValue(new Promise(() => {}));
     render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
-    expect(screen.getByRole('button', { name: 'Grok' })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Grok' })).not.toHaveTextContent('Install');
+    expect(screen.getByRole('button', { name: /start new thread/i })).toBeInTheDocument();
   });
 
-  it('installs a missing CLI in place, then enables its card', async () => {
+  it('installs a missing CLI in place, then restores the options', async () => {
     (api.recheckProviders as any).mockResolvedValue([
       { name: 'claude', installed: true, signedIn: true },
       { name: 'codex', installed: true, signedIn: true },
@@ -289,11 +323,15 @@ describe('NewThreadModal — uninstalled CLIs', () => {
     });
     render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Install' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Grok Install' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Install Grok' }));
     await waitFor(() => expect(api.installProvider).toHaveBeenCalledWith('grok'));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Grok' })).not.toBeDisabled());
-    // The install row is gone once the CLI is there.
-    expect(screen.queryByRole('button', { name: 'Install' })).not.toBeInTheDocument();
+    // The prompt gives way to the real options, on the harness you already picked.
+    await waitFor(() => expect(screen.getByRole('button', { name: /start new thread/i })).toBeInTheDocument());
+    expect(screen.queryByText(/isn't installed/)).not.toBeInTheDocument();
+    start();
+    await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
+    expect(lastInput().type).toBe('grok');
   });
 
   it('surfaces an install failure instead of silently doing nothing', async () => {
@@ -309,9 +347,11 @@ describe('NewThreadModal — uninstalled CLIs', () => {
     });
     render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Install' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Grok Install' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Install Grok' }));
     expect(await screen.findByText(/Could not resolve host/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Grok' })).toBeDisabled();
+    // Still not installed, so the prompt stays put.
+    expect(screen.getByText(/Grok isn't installed/)).toBeInTheDocument();
   });
 
   it('tells you to sign in when the CLI is installed but signed out', async () => {
