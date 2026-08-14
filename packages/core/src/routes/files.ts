@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { execFile } from 'child_process';
 import { Router } from 'express';
 import multer from 'multer';
 import type Database from 'better-sqlite3';
@@ -68,12 +69,62 @@ export function createFilesRouter(db: Database.Database): Router {
 
     try {
       const entries = fs.readdirSync(resolved, { withFileTypes: true });
-      const result = entries.map(entry => ({
-        name: entry.name,
-        isDirectory: entry.isDirectory(),
-        path: path.relative(session.workingDir, path.join(resolved, entry.name)),
-      }));
+      const result = entries.map(entry => {
+        const abs = path.join(resolved, entry.name);
+        const isDirectory = entry.isDirectory();
+        // Size is best-effort decoration for the Files pane; a broken symlink or a
+        // permission error must not fail the whole listing.
+        let size: number | null = null;
+        if (!isDirectory) { try { size = fs.statSync(abs).size; } catch { /* ignore */ } }
+        return {
+          name: entry.name,
+          isDirectory,
+          path: path.relative(session.workingDir, abs),
+          size,
+        };
+      });
       res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // GET /api/sessions/:id/files/flat — every file path under the working dir, for search.
+  // Inside a git repo this is `git ls-files` (tracked + untracked-but-not-ignored), which
+  // respects .gitignore and is fast even on big repos. Outside git it falls back to a
+  // bounded fs walk that skips the classic bulk directories.
+  router.get('/flat', async (req, res) => {
+    const session = (req as any).session;
+    const CAP = 20000;
+    try {
+      const files = await new Promise<string[] | null>((resolve) => {
+        execFile(
+          'git',
+          ['-C', session.workingDir, 'ls-files', '--cached', '--others', '--exclude-standard', '-z'],
+          { timeout: 10_000, maxBuffer: 32 * 1024 * 1024 },
+          (err, stdout) => resolve(err ? null : stdout.split('\0').filter(Boolean)),
+        );
+      });
+      if (files) {
+        return res.json({ files: files.slice(0, CAP), truncated: files.length > CAP });
+      }
+      // Non-git fallback: breadth-limited walk.
+      const SKIP = new Set(['.git', 'node_modules', 'dist', 'build', '.next', '__pycache__']);
+      const out: string[] = [];
+      let truncated = false;
+      const walk = (dir: string) => {
+        if (out.length >= CAP) { truncated = true; return; }
+        let entries: fs.Dirent[];
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+        for (const e of entries) {
+          if (out.length >= CAP) { truncated = true; return; }
+          const abs = path.join(dir, e.name);
+          if (e.isDirectory()) { if (!SKIP.has(e.name)) walk(abs); }
+          else if (e.isFile()) out.push(path.relative(session.workingDir, abs));
+        }
+      };
+      walk(path.resolve(session.workingDir));
+      res.json({ files: out, truncated });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
