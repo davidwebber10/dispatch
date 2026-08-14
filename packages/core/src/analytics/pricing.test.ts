@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { priceFor, notionalValueUsd } from './pricing.js';
@@ -82,22 +81,34 @@ describe('pricing', () => {
  * Spec section 14 promised "a test that fails on an unpriced model Dispatch can
  * spawn". This is it.
  *
- * The model list is READ FROM THE SOURCE, not copied into this file — a copy
- * would be documentation, not verification, and would never notice a new model
- * being added to the picker.
+ * The model list is READ FROM THE SOURCE — a real import of web's `HARNESSES`
+ * (the single ordered source for the New Thread picker, mirroring core's own
+ * `providers/agent-types.ts`), not a copy and not a text scrape. A copy would be
+ * documentation, not verification, and would never notice a new model being
+ * added to the picker; a scrape breaks the moment the picker's own source moves,
+ * which is exactly what happened here — this test used to regex the `MODELS`
+ * constant out of NewThreadModal.tsx, and the harness refactor moved that list
+ * into web/src/lib/harnesses.ts as `HARNESSES[].models`, taking the constant
+ * (and this test) down with it.
+ *
+ * The import is dynamic and the path is a runtime-computed value, not a string
+ * literal: core's tsconfig scopes `rootDir` to its own `src`, and a literal
+ * cross-package import would fail the build with TS6059 ("File is not under
+ * 'rootDir'"). A non-literal specifier is invisible to tsc's module resolution
+ * — it never joins the program, so the build stays scoped to core — while
+ * vitest (via vite-node) resolves and runs it exactly like any other import.
  */
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const NEW_THREAD_MODAL = path.resolve(HERE, '../../../web/src/components/sidebar/NewThreadModal.tsx');
+const HARNESSES_MODULE = path.resolve(HERE, '../../../web/src/lib/harnesses.ts');
 
-/** Every non-default `model` value in the New Thread modal's harness-aware lists. */
-function spawnableFromModal(): string[] {
-  const src = fs.readFileSync(NEW_THREAD_MODAL, 'utf-8');
-  const start = src.indexOf('const MODELS');
-  expect(start, `MODELS list not found in ${NEW_THREAD_MODAL} — re-point this test`).toBeGreaterThan(-1);
-  const end = src.indexOf('\n};', start);
-  expect(end).toBeGreaterThan(start);
-  const block = src.slice(start, end);
-  return [...block.matchAll(/model:\s*'([^']+)'/g)].map((m) => m[1]);
+interface HarnessesModule {
+  HARNESSES: { models: { label: string; model: string | null }[] }[];
+}
+
+/** Every non-default `model` value across every harness's model list. */
+async function spawnableFromHarnesses(): Promise<string[]> {
+  const mod = (await import(HARNESSES_MODULE)) as HarnessesModule;
+  return mod.HARNESSES.flatMap((h) => h.models.map((m) => m.model)).filter((m): m is string => m !== null);
 }
 
 /**
@@ -119,10 +130,10 @@ const UNPRICED: Record<string, string> = {
 };
 
 describe('every model Dispatch can spawn either prices or is a documented exclusion', () => {
-  it('covers the New Thread modal', () => {
-    const spawnable = spawnableFromModal();
-    // Guard the reader: if the regex ever stops finding models, the loop below
-    // would pass vacuously.
+  it('covers the New Thread modal', async () => {
+    const spawnable = await spawnableFromHarnesses();
+    // Guard the reader: if HARNESSES ever stops carrying real model ids, the
+    // loop below would pass vacuously.
     expect(spawnable.length).toBeGreaterThanOrEqual(8);
 
     const unpriced = spawnable.filter((m) => priceFor(m) === null && !(m in UNPRICED));

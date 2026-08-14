@@ -6,10 +6,10 @@ import type { Metric, GroupBy, Dimension } from '../analytics/queries.js';
 import * as terminalsDb from '../db/terminals.js';
 import * as sessionsDb from '../db/sessions.js';
 import { importHistory } from '../analytics/importer.js';
-import { resolveTranscriptPath } from '../sessions/transcript-path.js';
-import { locateCodexTranscript } from '../analytics/codex-locate.js';
+import { HISTORY_IMPORT_STRATEGY } from '../analytics/history-import-strategy.js';
 import * as usageDb from '../db/usage.js';
 import { readBackfillState, writeBackfillState } from '../analytics/backfill-state.js';
+import { isAgentType } from '../providers/agent-types.js';
 
 const METRICS: ReadonlySet<string> = new Set(['tokens', 'outputTokens', 'turns', 'duration']);
 const GROUPS: ReadonlySet<string> = new Set(['model', 'provider', 'project', 'outcome', 'none']);
@@ -98,18 +98,16 @@ export function createAnalyticsRouter(db: Database.Database): Router {
       for (const terminal of terminalsDb.listBySession(db, session.id)) {
         if (!terminal.external_id) continue;
 
-        // Route by provider: Codex never writes under ~/.claude/projects, so
-        // the Claude-only resolveTranscriptPath always returned undefined for
-        // it and every Codex thread silently imported zero rows. Codex needs
-        // no working dir — locateCodexTranscript searches ~/.codex/sessions
-        // (and its archive) by the thread's external_id alone.
-        let transcriptPath: string | undefined;
-        if (terminal.type === 'codex') {
-          transcriptPath = locateCodexTranscript(terminal.external_id);
-        } else {
-          const workDir = terminal.working_dir || session.working_dir;
-          if (workDir) transcriptPath = resolveTranscriptPath(workDir, terminal.external_id);
-        }
+        // Route by provider via the ONE shared map (history-import-strategy.ts):
+        // Codex never writes under ~/.claude/projects, so the Claude-only
+        // resolveTranscriptPath always returned undefined for it and every Codex
+        // thread silently imported zero rows. A provider with no declared
+        // strategy (or not an agent type at all — the plain shell) is skipped
+        // rather than falling through to Claude's locator.
+        const strategy = isAgentType(terminal.type) ? HISTORY_IMPORT_STRATEGY[terminal.type] : null;
+        if (!strategy) continue;
+        const workDir = terminal.working_dir || session.working_dir;
+        const transcriptPath = strategy.locateTranscript(terminal, workDir);
         if (!transcriptPath) continue;
         let cfg: Record<string, any> = {};
         try { cfg = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
