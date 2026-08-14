@@ -9,13 +9,6 @@ import { importHistory } from '../analytics/importer.js';
 import { resolveTranscriptPath } from '../sessions/cc-sessions.js';
 import * as usageDb from '../db/usage.js';
 import { readBackfillState, writeBackfillState } from '../analytics/backfill-state.js';
-import type { BackfillState } from '../analytics/backfill-state.js';
-
-// Re-exported for anything still importing these from routes/analytics.js — the
-// state itself moved to analytics/backfill-state.ts so analytics/importer.ts can
-// read/clear it without an import cycle through this router.
-export type { BackfillState };
-export { readBackfillState, writeBackfillState };
 
 const METRICS: ReadonlySet<string> = new Set(['tokens', 'outputTokens', 'turns', 'duration']);
 const GROUPS: ReadonlySet<string> = new Set(['model', 'provider', 'project', 'outcome', 'none']);
@@ -24,10 +17,17 @@ const DIMENSIONS: ReadonlySet<string> = new Set(['project', 'thread', 'model']);
 export const TRACKING_KEY = 'analytics_tracking_started_at';
 
 /**
- * The instant recording began, stamped once on first read. The history importer
- * accepts only turns OLDER than this, so imported and live rows can never
- * describe the same turn — that boundary is what makes the import button safe to
- * press twice.
+ * The instant recording began, stamped once and never moved.
+ *
+ * `bootAnalytics` (server.ts) calls this on every app start, BEFORE any route is
+ * mounted, so the value is the instant the recorder began recording. The history
+ * importer accepts only turns OLDER than this, so imported and live rows can
+ * never describe the same turn — that boundary is what makes the import button
+ * safe to press twice.
+ *
+ * Stamping it on first read instead would put the cutoff at "the first time
+ * someone opened the Analytics view", and every turn measured live between boot
+ * and that moment would be imported a second time.
  */
 export function trackingStartedAt(db: Database.Database): string {
   const existing = appState.get(db, TRACKING_KEY);
