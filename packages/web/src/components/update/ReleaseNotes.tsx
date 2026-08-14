@@ -82,9 +82,11 @@ export function ReleaseNotes({ notes, currentNote, currentVersion, onToggle }: P
                 {headline && (
                   <div style={{ marginTop: 2, fontSize: 12.5, fontWeight: 600, color: 'var(--color-text-primary)' }}>{headline}</div>
                 )}
+                {/* `.md-view > :first-child` has no top margin, so the gap under the
+                    version/headline rows belongs here rather than on the markdown. */}
                 {body
-                  ? <Markdown source={body} />
-                  : !headline && <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>No notes for this release.</div>}
+                  ? <div style={{ marginTop: 7 }}><Markdown source={body} /></div>
+                  : !headline && <div style={{ marginTop: 4, fontSize: 12, color: 'var(--color-text-tertiary)' }}>No notes for this release.</div>}
               </section>
             );
           })}
