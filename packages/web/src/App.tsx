@@ -29,6 +29,7 @@ import { useAuth } from './stores/auth';
 import { useUpdate } from './stores/update';
 import { useHost } from './stores/host';
 import { useAgents } from './stores/agents';
+import { useAnalyticsFeed } from './stores/analytics';
 import { useAgentUI } from './stores/agentUI';
 import { useReconnect } from './stores/reconnect';
 import { useResume } from './hooks/useResume';
@@ -116,6 +117,7 @@ export default function App() {
         useAuth.getState().applyEvent(e);
         useUpdate.getState().applyEvent(e);
         useAgents.getState().applyEvent(e);
+        useAnalyticsFeed.getState().applyEvent(e);
       },
     });
     sockRef.current = sock;

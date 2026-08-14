@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { AnalyticsView } from './AnalyticsView';
 import { api } from '../../api/client';
+import { useAnalyticsFeed } from '../../stores/analytics';
 
 const EMPTY = {
   turns: 0, threads: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0,
@@ -62,7 +63,7 @@ function mockFetch(overrides: { summary?: Record<string, unknown>; providers?: s
 }
 
 describe('AnalyticsView', () => {
-  beforeEach(() => { vi.restoreAllMocks(); });
+  beforeEach(() => { vi.restoreAllMocks(); useAnalyticsFeed.setState({ rev: 0 }); });
   afterEach(() => { vi.unstubAllGlobals(); });
 
   it('explains an empty table instead of showing zeroes as if they were measured', async () => {
@@ -175,17 +176,22 @@ describe('AnalyticsView', () => {
     // Nothing is filtered until the reader asks for it.
     expect(calls.some((u) => u.includes('provider='))).toBe(false);
 
+    // Only requests made AFTER the select moves prove anything. Judging the whole
+    // list would pass on the first, unfiltered batch alone.
+    const before = calls.length;
     fireEvent.change(select, { target: { value: 'codex' } });
 
     await waitFor(() => {
-      const filtered = calls.filter((u) => u.includes('provider=codex'));
-      expect(filtered.some((u) => u.startsWith('/api/analytics/summary'))).toBe(true);
-      expect(filtered.some((u) => u.startsWith('/api/analytics/series'))).toBe(true);
-      expect(filtered.some((u) => u.startsWith('/api/analytics/top'))).toBe(true);
+      const after = calls.slice(before);
+      expect(after.some((u) => u.startsWith('/api/analytics/summary') && u.includes('provider=codex'))).toBe(true);
+      expect(after.some((u) => u.startsWith('/api/analytics/series') && u.includes('provider=codex'))).toBe(true);
+      expect(after.some((u) => u.startsWith('/api/analytics/top') && u.includes('provider=codex'))).toBe(true);
     });
     // The option list stays unfiltered, or picking one provider would strand the
     // reader with no way back to another.
-    expect(calls.some((u) => u.includes('groupBy=provider') && !u.includes('provider=codex'))).toBe(true);
+    const optionRequests = calls.slice(before).filter((u) => u.includes('groupBy=provider'));
+    expect(optionRequests.length).toBeGreaterThan(0);
+    expect(optionRequests.every((u) => !u.includes('provider=codex'))).toBe(true);
   });
 
   // A provider whose turns never report usage (a PTY provider such as Grok) must
@@ -198,6 +204,48 @@ describe('AnalyticsView', () => {
     const tile = screen.getByText('TOTAL TOKENS').parentElement!;
     expect(tile.textContent).toContain('—');
     expect(tile.textContent).not.toContain('0');
+  });
+
+  // The daemon broadcasts `analytics-dirty` when a turn closes; App.tsx fans it
+  // out to the store this reads. The page must FOLLOW the work without losing
+  // what the reader selected — and with no timer anywhere.
+  it('re-fetches when the daemon reports new data, and keeps the reader\'s filters', async () => {
+    const calls = mockFetch({ providers: ['codex'] });
+    render(<AnalyticsView />);
+
+    const select = await screen.findByLabelText(/provider/i);
+    await waitFor(() => expect(select.textContent).toMatch(/codex/));
+    fireEvent.change(select, { target: { value: 'codex' } });
+    await waitFor(() => expect(calls.some((u) => u.includes('provider=codex'))).toBe(true));
+
+    const before = calls.length;
+    act(() => { useAnalyticsFeed.getState().applyEvent({ type: 'analytics-dirty' }); });
+
+    await waitFor(() => {
+      const after = calls.slice(before);
+      expect(after.some((u) => u.startsWith('/api/analytics/summary') && u.includes('provider=codex'))).toBe(true);
+      expect(after.some((u) => u.startsWith('/api/analytics/records'))).toBe(true);
+    });
+    expect((select as HTMLSelectElement).value).toBe('codex');
+    // The colour-domain queries read the whole table. They are deliberately left
+    // out of the live refresh: re-pulling them on every closed turn would cost
+    // more than it buys, and a domain that never shrinks is the property at stake.
+    expect(calls.slice(before).some((u) => u.includes('groupBy=model') && !u.includes('from='))).toBe(false);
+  });
+
+  // /api/analytics/records takes no range, so a quiet 30 days must not hide a
+  // reader's all-time facts behind an empty state that is only true of the window.
+  it('keeps the all-time records visible when the filtered range is empty', async () => {
+    stub();
+    vi.spyOn(api, 'analyticsRecords').mockResolvedValue({
+      totalTokens: 4_000_000, totalTurns: 900, busiestDay: '2026-07-02', busiestDayTokens: 300_000,
+      topModel: 'claude-opus-5', activeDays: 40, longestTurnSeconds: 300,
+    } as any);
+
+    render(<AnalyticsView />);
+    await waitFor(() => expect(screen.getByText(/No turns recorded yet/i)).toBeTruthy());
+    expect(screen.getByText(/PERSONAL RECORDS/i)).toBeTruthy();
+    expect(screen.getByText('900 turns')).toBeTruthy();
   });
 
   it('charts turn duration as its own chart, in seconds', async () => {

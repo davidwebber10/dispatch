@@ -4,6 +4,7 @@ import {
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import { api } from '../../api/client';
+import { useAnalyticsFeed } from '../../stores/analytics';
 import { useProjects } from '../../stores/projects';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { makeSeriesScale, OUTCOME_COLOR, OTHER, SERIES, resolveChartTheme } from './chartTheme';
@@ -95,6 +96,7 @@ const CALENDAR_DAYS = CALENDAR_WEEKS * 7;
 /** The heatmap ramp: one hue, monotonic lightness, near-surface to full accent. */
 const HEAT = ['#1B1B1E', '#1E3D28', '#256B3C', '#2E9C52', '#3ECF6A'];
 
+/** Everything a filter changes. Re-fetched whenever a select moves. */
 interface Loaded {
   summary: AnalyticsSummary;
   tokensByModel: AnalyticsPoint[];
@@ -107,6 +109,24 @@ interface Loaded {
   calendar: AnalyticsPoint[];
   topModels: AnalyticsTopRow[];
   topProjects: AnalyticsTopRow[];
+}
+
+/**
+ * The COLOUR DOMAINS: every key the table has ever held, fetched with no range,
+ * no project and no provider.
+ *
+ * A domain built from filtered data would shrink when a filter shrinks, the scale
+ * would rebuild over the survivors, and picking one provider would repaint the
+ * models that remain. That is the exact defect `makeSeriesScale` exists to
+ * prevent, one layer up: a stable function over a moving domain is still unstable.
+ */
+interface Domain {
+  modelKeys: string[];
+  projectKeys: string[];
+}
+
+/** The two routes that take no range at all, so no filter can change them. */
+interface Stats {
   records: AnalyticsRecords;
   backfill: AnalyticsBackfillState;
 }
@@ -180,8 +200,27 @@ function Block({ title, note, children, style }: {
   );
 }
 
-function NoData({ height }: { height: number }) {
-  return <div style={{ ...muted, height, display: 'flex', alignItems: 'center' }}>No turns in this range.</div>;
+function NoData({ height, message = 'No turns in this range.' }: { height: number; message?: string }) {
+  return <div style={{ ...muted, height, display: 'flex', alignItems: 'center' }}>{message}</div>;
+}
+
+/**
+ * One tooltip, styled once. Every chart gets a tooltip; only the value formatter
+ * differs, so that is the only thing this takes.
+ */
+function chartTooltip(
+  theme: { text: string; muted: string; grid: string; surface: string },
+  formatter?: (v: unknown, name: unknown) => [string, string],
+) {
+  return (
+    <Tooltip
+      cursor={{ fill: 'rgba(255,255,255,0.04)' }}
+      contentStyle={{ background: theme.surface, border: `1px solid ${theme.grid}`, borderRadius: 8, fontSize: 12 }}
+      labelStyle={{ color: theme.muted }}
+      itemStyle={{ color: theme.text }}
+      formatter={formatter}
+    />
+  );
 }
 
 /* -------------------------------------------------------------- the view */
@@ -196,12 +235,58 @@ export function AnalyticsView() {
   const [projectId, setProjectId] = useState('');
   const [provider, setProvider] = useState('');
   const [data, setData] = useState<Loaded | null>(null);
+  const [domain, setDomain] = useState<Domain | null>(null);
+  const [stats, setStats] = useState<Stats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [reload, setReload] = useState(0);
+  // The daemon bumps this through the single events socket every time a turn
+  // closes, so an open page follows the work. No timer, no polling.
+  const rev = useAnalyticsFeed((s) => s.rev);
 
   const days = RANGES.find((r) => r.id === rangeId)?.days ?? null;
   const from = days == null ? undefined : startOfLocalDay(days - 1).toISOString();
+
+  // The colour domains. Fetched once per mount, and deliberately NOT on `rev`:
+  // these are whole-table queries, and re-pulling them on every closed turn would
+  // cost far more than it buys. A model first seen mid-session therefore wears
+  // OTHER until the page is opened again — a stable grey, which is the property
+  // that matters. Nothing here may ever shrink with a filter.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [modelPoints, projectPoints] = await Promise.all([
+          api.analyticsSeries({ metric: 'tokens', groupBy: 'model' }),
+          api.analyticsSeries({ metric: 'tokens', groupBy: 'project' }),
+        ]);
+        if (cancelled) return;
+        setDomain({
+          modelKeys: [...new Set(modelPoints.map((p) => normKey(p.key)))],
+          projectKeys: [...new Set(projectPoints.map((p) => p.key))],
+        });
+      } catch (e: unknown) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [reload]);
+
+  // The range-less routes. They follow the live revision — an all-time record can
+  // fall at any moment — but no select can change them, so they sit outside the
+  // filtered batch instead of re-requesting on every select change.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [records, backfill] = await Promise.all([api.analyticsRecords(), api.analyticsBackfillState()]);
+        if (!cancelled) setStats({ records, backfill });
+      } catch (e: unknown) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [reload, rev]);
 
   useEffect(() => {
     let cancelled = false;
@@ -215,7 +300,7 @@ export function AnalyticsView() {
       try {
         const [
           summary, tokensByModel, providerOptions, outputTotal, turnsByOutcome,
-          duration, calendar, topModels, topProjects, records, backfill,
+          duration, calendar, topModels, topProjects,
         ] = await Promise.all([
           api.analyticsSummary(range),
           api.analyticsSeries({ ...range, metric: 'tokens', groupBy: 'model' }),
@@ -226,13 +311,11 @@ export function AnalyticsView() {
           api.analyticsSeries({ ...calendarRange, metric: 'tokens', groupBy: 'none' }),
           api.analyticsTop({ ...range, dimension: 'model' }),
           api.analyticsTop({ ...range, dimension: 'project' }),
-          api.analyticsRecords(),
-          api.analyticsBackfillState(),
         ]);
         if (cancelled) return;
         setData({
           summary, tokensByModel, providerOptions, outputTotal, turnsByOutcome,
-          duration, calendar, topModels, topProjects, records, backfill,
+          duration, calendar, topModels, topProjects,
         });
         setError(null);
       } catch (e: unknown) {
@@ -240,7 +323,7 @@ export function AnalyticsView() {
       }
     })();
     return () => { cancelled = true; };
-  }, [from, projectId, provider, reload]);
+  }, [from, projectId, provider, reload, rev]);
 
   const runImport = useCallback(async () => {
     setImporting(true);
@@ -250,30 +333,26 @@ export function AnalyticsView() {
   }, []);
 
   /*
-   * ONE scale per dimension, built from EVERY key the dataset contains — the
-   * union of the time series and the ranked table — and then reused by every
-   * block and every filtered view. Rebuilding it from the keys that happen to
-   * be visible would repaint the survivors whenever a filter hid a key that
-   * sorts earlier; see makeSeriesScale's docstring.
+   * ONE scale per dimension, built from the UNFILTERED domain — every key the
+   * table has ever held — and then reused by every block and every filtered view.
+   *
+   * The domain comes from `base`, which no select can touch. Sourcing it from the
+   * filtered data instead would let a filter shrink the domain, rebuild the scale
+   * over the survivors, and repaint them: pick one provider and the models that
+   * remain would change colour. A ranked table is worse still, because it is
+   * truncated as well as filtered.
+   *
+   * The price is that a wide domain pushes more keys past SERIES.length into
+   * OTHER. That is the right trade: a stable grey beats a series that changes
+   * colour when you touch a filter.
    */
-  const modelDomain = useMemo(() => [
-    ...new Set([
-      ...(data?.tokensByModel ?? []).map((p) => normKey(p.key)),
-      ...(data?.topModels ?? []).map((r) => normKey(r.key)),
-    ]),
-  ], [data?.tokensByModel, data?.topModels]);
-  const modelScale = useMemo(() => makeSeriesScale(modelDomain), [modelDomain]);
+  const modelScale = useMemo(() => makeSeriesScale(domain?.modelKeys ?? []), [domain?.modelKeys]);
+  const projectScale = useMemo(() => makeSeriesScale(domain?.projectKeys ?? []), [domain?.projectKeys]);
 
   const providerDomain = useMemo(
     () => [...new Set((data?.providerOptions ?? []).map((p) => normKey(p.key)))].sort(),
     [data?.providerOptions],
   );
-
-  const projectDomain = useMemo(
-    () => [...new Set((data?.topProjects ?? []).map((r) => r.key))],
-    [data?.topProjects],
-  );
-  const projectScale = useMemo(() => makeSeriesScale(projectDomain), [projectDomain]);
 
   const tokensChart = useMemo(
     () => (data ? pivot(data.tokensByModel, (p) => normKey(p.key)) : { rows: [], keys: [] }),
@@ -315,14 +394,15 @@ export function AnalyticsView() {
     return cells;
   }, [data?.calendar, theme.surface]);
 
-  if (error && !data) {
+  if (error && (!data || !domain || !stats)) {
     return <div style={{ flex: 1, padding: 24, color: 'var(--color-status-red)' }}>Analytics unavailable: {error}</div>;
   }
-  if (!data) {
+  if (!data || !domain || !stats) {
     return <div style={{ flex: 1, padding: 24, ...muted }}>Loading analytics…</div>;
   }
 
-  const { summary, records, backfill } = data;
+  const { summary } = data;
+  const { records, backfill } = stats;
   const trackingDate = backfill.trackingStartedAt
     ? new Date(backfill.trackingStartedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
     : 'recently';
@@ -341,15 +421,7 @@ export function AnalyticsView() {
 
   const chartH = isMobile ? 200 : 240;
   const axisTick = { fill: theme.muted, fontSize: 11 };
-  const tooltip = (
-    <Tooltip
-      cursor={{ fill: 'rgba(255,255,255,0.04)' }}
-      contentStyle={{ background: theme.surface, border: `1px solid ${theme.grid}`, borderRadius: 8, fontSize: 12 }}
-      labelStyle={{ color: theme.muted }}
-      itemStyle={{ color: theme.text }}
-      formatter={(v: unknown, name: unknown) => [fmtTokens(Number(v)), String(name)] as [string, string]}
-    />
-  );
+  const tokenTooltip = chartTooltip(theme, (v, name) => [fmtTokens(Number(v)), String(name)]);
   const legend = (
     <Legend
       formatter={(v: string) => <span style={{ color: theme.muted, fontSize: 11 }}>{v}</span>}
@@ -424,21 +496,33 @@ export function AnalyticsView() {
             </div>
           )}
 
+          {/* A `title` is hover-only, and a touch device has no hover, so on mobile
+              the partial marker's reason is rendered as a line the reader can see. */}
+          {isMobile && !nothingReported && summary.unpricedTokens > 0 && (
+            <div style={{ ...muted, marginTop: 10 }}>
+              The value above is partial: {fmtTokens(summary.unpricedTokens)} tokens came from a model
+              with no price entry, so they are counted in the token totals but not in that figure.
+            </div>
+          )}
+
           {/* 3. Tokens over time */}
           <div style={{ marginTop: 16 }}>
-            <Block title="TOKENS OVER TIME · BY MODEL">
+            {/* One series carries its identity in the title, which is the only
+                reason the legend may be dropped — so the title names the model. */}
+            <Block title={tokensChart.keys.length === 1 ? `TOKENS OVER TIME · ${tokensChart.keys[0].toUpperCase()}` : 'TOKENS OVER TIME · BY MODEL'}>
               {tokensChart.rows.length === 0 ? <NoData height={chartH} /> : (
                 <ResponsiveContainer width="100%" height={chartH} minHeight={chartH}>
                   <BarChart data={tokensChart.rows} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                     <CartesianGrid stroke={theme.grid} vertical={false} />
                     <XAxis dataKey="day" tickFormatter={fmtDay} tick={axisTick} tickLine={false} axisLine={{ stroke: theme.grid }} />
                     <YAxis tickFormatter={fmtTokens} tick={axisTick} tickLine={false} axisLine={false} width={48} />
-                    {tooltip}
+                    {tokenTooltip}
                     {tokensChart.keys.length > 1 && legend}
                     {tokensChart.keys.map((k) => (
                       <Bar
                         key={k} dataKey={k} stackId="tokens" fill={modelScale(k)}
                         stroke={theme.surface} strokeWidth={2} radius={[4, 4, 0, 0]}
+                        isAnimationActive={false}
                       />
                     ))}
                   </BarChart>
@@ -457,9 +541,9 @@ export function AnalyticsView() {
                     <CartesianGrid stroke={theme.grid} vertical={false} />
                     <XAxis dataKey="day" tickFormatter={fmtDay} tick={axisTick} tickLine={false} axisLine={{ stroke: theme.grid }} />
                     <YAxis tickFormatter={fmtTokens} tick={axisTick} tickLine={false} axisLine={false} width={48} />
-                    {tooltip}
+                    {tokenTooltip}
                     {/* One series, so the title names it and no legend is needed. */}
-                    <Line type="monotone" dataKey="output" name="output tokens" stroke={SERIES[0]} strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="output" name="output tokens" stroke={SERIES[0]} strokeWidth={2} dot={false} isAnimationActive={false} />
                   </LineChart>
                 </ResponsiveContainer>
               )}
@@ -473,17 +557,13 @@ export function AnalyticsView() {
                     <CartesianGrid stroke={theme.grid} vertical={false} />
                     <XAxis dataKey="day" tickFormatter={fmtDay} tick={axisTick} tickLine={false} axisLine={{ stroke: theme.grid }} />
                     <YAxis allowDecimals={false} tick={axisTick} tickLine={false} axisLine={false} width={36} />
-                    <Tooltip
-                      cursor={{ fill: 'rgba(255,255,255,0.04)' }}
-                      contentStyle={{ background: theme.surface, border: `1px solid ${theme.grid}`, borderRadius: 8, fontSize: 12 }}
-                      labelStyle={{ color: theme.muted }}
-                      itemStyle={{ color: theme.text }}
-                    />
+                    {chartTooltip(theme)}
                     {outcomeChart.keys.length > 1 && legend}
                     {outcomeChart.keys.map((k) => (
                       <Bar
                         key={k} dataKey={k} stackId="turns" fill={OUTCOME_COLOR[k] ?? OTHER}
                         stroke={theme.surface} strokeWidth={2} radius={[4, 4, 0, 0]}
+                        isAnimationActive={false}
                       />
                     ))}
                   </BarChart>
@@ -500,21 +580,15 @@ export function AnalyticsView() {
             */}
           <div style={{ marginTop: 12 }}>
             <Block title="AVG TURN DURATION · SECONDS" note="mean per day, interrupted turns excluded">
-              {durationChart.rows.length === 0 ? <NoData height={chartH} /> : (
+              {durationChart.rows.length === 0 ? <NoData height={chartH} message="No durations recorded in this range." /> : (
                 <ResponsiveContainer width="100%" height={chartH} minHeight={chartH}>
                   <BarChart data={durationChart.rows} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                     <CartesianGrid stroke={theme.grid} vertical={false} />
                     <XAxis dataKey="day" tickFormatter={fmtDay} tick={axisTick} tickLine={false} axisLine={{ stroke: theme.grid }} />
-                    <YAxis tickFormatter={(v: number) => `${v}s`} tick={axisTick} tickLine={false} axisLine={false} width={48} />
-                    <Tooltip
-                      cursor={{ fill: 'rgba(255,255,255,0.04)' }}
-                      contentStyle={{ background: theme.surface, border: `1px solid ${theme.grid}`, borderRadius: 8, fontSize: 12 }}
-                      labelStyle={{ color: theme.muted }}
-                      itemStyle={{ color: theme.text }}
-                      formatter={(v: unknown) => [fmtSeconds(Number(v)), 'avg turn'] as [string, string]}
-                    />
+                    <YAxis tickFormatter={(v: number) => fmtSeconds(v)} tick={axisTick} tickLine={false} axisLine={false} width={48} />
+                    {chartTooltip(theme, (v) => [fmtSeconds(Number(v)), 'avg turn'])}
                     {/* One series, so the title names it and no legend is needed. */}
-                    <Bar dataKey="seconds" name="avg turn duration" fill={SERIES[0]} radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="seconds" name="avg turn duration" fill={SERIES[0]} radius={[4, 4, 0, 0]} isAnimationActive={false} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -563,23 +637,6 @@ export function AnalyticsView() {
             </Block>
           </div>
 
-          {/* 9. Personal records — facts, not trends */}
-          <div style={{ marginTop: 12 }}>
-            <Block title="PERSONAL RECORDS · ALL TIME" note="every project, every provider — the filters above do not apply">
-              <div style={{
-                display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)',
-                gap: '8px 24px',
-              }}>
-                <Record label="Tokens" value={`${fmtTokens(records.totalTokens)} tokens`} />
-                <Record label="Turns" value={`${records.totalTurns.toLocaleString()} turns`} />
-                <Record label="Active days" value={`${records.activeDays.toLocaleString()} days`} />
-                <Record label="Busiest day" value={records.busiestDay ? `${records.busiestDay} · ${fmtTokens(records.busiestDayTokens)} tokens` : '—'} />
-                <Record label="Most-used model" value={records.topModel ? normKey(records.topModel) : '—'} />
-                <Record label="Longest turn" value={records.longestTurnSeconds > 0 ? fmtSeconds(records.longestTurnSeconds) : '—'} />
-              </div>
-            </Block>
-          </div>
-
           {/* 10. History import */}
           <div style={{ ...panel, marginTop: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <div style={{ flex: 1, minWidth: 220 }}>
@@ -597,6 +654,32 @@ export function AnalyticsView() {
             </button>
           </div>
         </>
+      )}
+
+      {/*
+        * 9. Personal records — facts, not trends. Rendered OUTSIDE the empty
+        * branch: /api/analytics/records takes no range, so a quiet 30 days would
+        * otherwise hide a reader's all-time facts behind an empty state that is
+        * only true of the filtered window. It is hidden only when there is
+        * genuinely nothing recorded at all, where a list of zeroes would be the
+        * same lie the empty state exists to avoid.
+        */}
+      {records.totalTurns > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <Block title="PERSONAL RECORDS · ALL TIME" note="every project, every provider — the filters above do not apply">
+            <div style={{
+              display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)',
+              gap: '8px 24px',
+            }}>
+              <Record label="Tokens" value={`${fmtTokens(records.totalTokens)} tokens`} />
+              <Record label="Turns" value={`${records.totalTurns.toLocaleString()} turns`} />
+              <Record label="Active days" value={`${records.activeDays.toLocaleString()} days`} />
+              <Record label="Busiest day" value={records.busiestDay ? `${records.busiestDay} · ${fmtTokens(records.busiestDayTokens)} tokens` : '—'} />
+              <Record label="Most-used model" value={records.topModel ? normKey(records.topModel) : '—'} />
+              <Record label="Longest turn" value={records.longestTurnSeconds > 0 ? fmtSeconds(records.longestTurnSeconds) : '—'} />
+            </div>
+          </Block>
+        </div>
       )}
     </div>
   );
@@ -629,14 +712,8 @@ function RankedBars({ rows, color, theme, height }: {
         <CartesianGrid stroke={theme.grid} horizontal={false} />
         <XAxis type="number" tickFormatter={fmtTokens} tick={{ fill: theme.muted, fontSize: 11 }} tickLine={false} axisLine={false} />
         <YAxis type="category" dataKey="label" width={116} tick={{ fill: theme.muted, fontSize: 11 }} tickLine={false} axisLine={false} />
-        <Tooltip
-          cursor={{ fill: 'rgba(255,255,255,0.04)' }}
-          contentStyle={{ background: theme.surface, border: `1px solid ${theme.grid}`, borderRadius: 8, fontSize: 12 }}
-          labelStyle={{ color: theme.muted }}
-          itemStyle={{ color: theme.text }}
-          formatter={(v: unknown) => [fmtTokens(Number(v)), 'tokens'] as [string, string]}
-        />
-        <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={14}>
+        {chartTooltip(theme, (v) => [fmtTokens(Number(v)), 'tokens'])}
+        <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={14} isAnimationActive={false}>
           {rows.map((r) => <Cell key={r.key} fill={color(r.key)} />)}
         </Bar>
       </BarChart>
