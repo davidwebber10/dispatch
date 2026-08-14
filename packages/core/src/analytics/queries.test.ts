@@ -82,6 +82,31 @@ describe('analytics queries', () => {
     expect(rows[0].value).toBe(165);
   });
 
+  it('ranks top threads by tokens, labelled by the terminal label', () => {
+    const rows = top(d, { dimension: 'thread' });
+    expect(rows[0].key).toBe('term1');
+    expect(rows[0].value).toBe(165);
+  });
+
+  // The constraint: an unpriced model's tokens must be COUNTED as tokens but must
+  // never contribute to the dollar figure, because we do not know what they would
+  // have cost. Silently folding them in at some default rate would under- or
+  // over-report; dropping them entirely would lose real usage.
+  it('keeps an unpriced model out of the dollar figure but inside the token totals', () => {
+    turn(d, {
+      id: 'unpriced', startedAt: '2026-08-12T14:00:00.000Z', endedAt: '2026-08-12T14:00:10.000Z',
+      model: 'some-future-model', input: 1_000_000, output: 0,
+    });
+    const s = summary(d, {});
+    // The tokens are real and counted.
+    expect(s.inputTokens).toBe(1_000_111);
+    expect(s.unpricedTokens).toBe(1_000_000);
+    // The value reflects ONLY the priced models. Compare against the same summary
+    // taken before this turn existed, so the assertion cannot drift with the price table.
+    const pricedOnly = summary(d, { to: '2026-08-12T13:00:00.000Z' });
+    expect(s.notionalUsd).toBeCloseTo(pricedOnly.notionalUsd, 10);
+  });
+
   it('reports all-time records', () => {
     const r = records(d);
     expect(r.totalTokens).toBe(168);
