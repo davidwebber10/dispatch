@@ -24,7 +24,7 @@ import { AutoArchiveModal } from './AutoArchiveModal';
 import { ThreadLabel } from './ThreadLabel';
 import { SortMenu } from './SortMenu';
 import { useListSort } from '../../stores/listSort';
-import { sortThreads, sortAgents, THREAD_SORTS, AGENT_SORTS } from '../../lib/listSort';
+import { sortThreads, sortAgents, sortFiles, THREAD_SORTS, AGENT_SORTS } from '../../lib/listSort';
 import { api } from '../../api/client';
 import { canReceiveAlerts, ensurePushEnrolled } from '../../lib/push';
 import { useHint } from '../../stores/hint';
@@ -323,7 +323,10 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   }
 
   const renderSection = (sec: (typeof SECTIONS)[number]) => {
-    const all = tabs.filter((t) => sec.types.includes(t.type) && showRow(t));
+    const raw = tabs.filter((t) => sec.types.includes(t.type) && showRow(t));
+    // FILES follows the thread sort (files default to newest-first under 'custom');
+    // WEB/NOTES keep the server order — they're short and have no sort ask.
+    const all = sec.key === 'files' ? sortFiles(raw, threadSort) : raw;
     if (sec.key !== 'threads' && !all.length) return null;
     // Only FILES is capped (WEB/NOTES stay full — they're usually short). Same
     // active-row escape hatch as the thread list above.
