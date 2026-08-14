@@ -3,6 +3,11 @@ import type Database from 'better-sqlite3';
 import * as appState from '../db/app-state.js';
 import { summary, series, top, records } from '../analytics/queries.js';
 import type { Metric, GroupBy, Dimension } from '../analytics/queries.js';
+import * as terminalsDb from '../db/terminals.js';
+import * as sessionsDb from '../db/sessions.js';
+import { importHistory } from '../analytics/importer.js';
+import { resolveTranscriptPath } from '../sessions/cc-sessions.js';
+import * as usageDb from '../db/usage.js';
 
 const METRICS: ReadonlySet<string> = new Set(['tokens', 'outputTokens', 'turns', 'duration']);
 const GROUPS: ReadonlySet<string> = new Set(['model', 'provider', 'project', 'outcome', 'none']);
@@ -57,6 +62,52 @@ export function createAnalyticsRouter(db: Database.Database): Router {
 
   router.get('/backfill', (_req, res) => {
     res.json({ trackingStartedAt: trackingStartedAt(db), ...readBackfillState(db) });
+  });
+
+  // Manual, human-triggered import. Runs synchronously: a few hundred transcripts
+  // parse in seconds, and a synchronous run cannot leave a half-written state
+  // record behind if the daemon dies mid-import.
+  router.post('/backfill', (_req, res) => {
+    const cutoff = trackingStartedAt(db);
+    const state = readBackfillState(db);
+    if (state.state === 'running') { res.status(409).json({ error: 'an import is already running' }); return; }
+
+    const threads: { terminalId: string; projectId: string; provider: string; role: string; transcriptPath: string }[] = [];
+    for (const session of sessionsDb.list(db)) {
+      for (const terminal of terminalsDb.listBySession(db, session.id)) {
+        if (!terminal.external_id) continue;
+        const workDir = terminal.working_dir || session.working_dir;
+        if (!workDir) continue;
+        const transcriptPath = resolveTranscriptPath(workDir, terminal.external_id);
+        if (!transcriptPath) continue;
+        let cfg: Record<string, any> = {};
+        try { cfg = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
+        threads.push({
+          terminalId: terminal.id, projectId: session.id, provider: terminal.type,
+          role: typeof cfg.role === 'string' ? cfg.role : '', transcriptPath,
+        });
+      }
+    }
+
+    writeBackfillState(db, { state: 'running', done: 0, total: threads.length, lastFinishedAt: null });
+    try {
+      const result = importHistory(db, {
+        cutoff, threads,
+        onProgress: (done, total) => writeBackfillState(db, { state: 'running', done, total, lastFinishedAt: null }),
+      });
+      writeBackfillState(db, { state: 'done', done: threads.length, total: threads.length, lastFinishedAt: new Date().toISOString() });
+      res.json(result);
+    } catch (err: any) {
+      writeBackfillState(db, { state: 'error', done: 0, total: threads.length, lastFinishedAt: null, error: String(err?.message ?? err) });
+      res.status(500).json({ error: String(err?.message ?? err) });
+    }
+  });
+
+  // Remove imported rows. Live measurements are never touched.
+  router.delete('/backfill', (_req, res) => {
+    const removed = usageDb.deleteBackfilled(db);
+    writeBackfillState(db, { state: 'idle', done: 0, total: 0, lastFinishedAt: null });
+    res.json({ removed });
   });
 
   return router;
