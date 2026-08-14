@@ -48,10 +48,15 @@ export const grokProvider: SessionProvider = {
   name: 'grok',
   displayName: 'Grok',
   statusStrategy: 'pty-timing',
+  // `-s/--session-id <UUID>` names a NEW conversation, so Dispatch can assign the id up
+  // front instead of hunting for it afterwards. Grok requires a valid UUID that does not
+  // already exist under the session directory — a fresh v4 satisfies both.
+  assignsSessionId: true,
 
-  buildNewCommand({ prompt, model }) {
+  buildNewCommand({ prompt, model, sessionId }) {
     const args = [...FULL_PERMISSIONS, ...modelArgs(model)];
-    // The initial prompt is positional: `grok "fix the bug"`.
+    if (sessionId) args.push('--session-id', sessionId);
+    // The initial prompt is positional: `grok "fix the bug"`, so it goes last.
     if (prompt) args.push(prompt);
     return { command: 'grok', args };
   },

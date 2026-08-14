@@ -24,6 +24,7 @@ import { platform } from '../platform/index.js';
 import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.js';
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
 import { resolveTranscriptPath } from './transcript-path.js';
+import { randomUUID } from 'crypto';
 import { TERMINAL_ID_ENV_VAR } from '../auth/shim.js';
 import { LOGIN_ARGV, isProviderName } from '../setup/install.js';
 import { withAutoArchive, DEFAULT_AUTO_ARCHIVE_MS } from './auto-archive.js';
@@ -1684,6 +1685,8 @@ export class SessionService {
 
     let command: string;
     let args: string[];
+    /** Set when this provider names its own session — persisted only after a live pid. */
+    let assignedSessionId: string | undefined;
 
     if (terminal.type === 'shell') {
       // A "Sign in — X" thread runs that CLI's login command DIRECTLY rather than a shell
@@ -1731,11 +1734,15 @@ export class SessionService {
         // just structured ones — the New Thread modal offers the picker in both modes.
         // modelFor returns config.model for a plain user thread (no role/agentType).
         const model = modelFor(config);
+        // A provider that names its own session (Grok) gets a fresh uuid here, which is
+        // stored once the process is alive. Without it a relaunch after a daemon restart
+        // had no id to resume into and silently began a new conversation.
+        if (!terminal.external_id && !branchFrom && provider.assignsSessionId) assignedSessionId = randomUUID();
         cmd = terminal.external_id
           ? provider.buildResumeCommand({ externalSessionId: terminal.external_id, workDir, secretsMcp, statusHooks, model })
           : (branchFrom && provider.buildBranchCommand)
             ? provider.buildBranchCommand({ sourceSessionId: branchFrom, workDir, secretsMcp, statusHooks })
-            : provider.buildNewCommand({ workDir, secretsMcp, statusHooks, model });
+            : provider.buildNewCommand({ workDir, secretsMcp, statusHooks, model, sessionId: assignedSessionId });
       }
       command = cmd.command;
       args = cmd.args;
@@ -1743,6 +1750,9 @@ export class SessionService {
 
     const pid = this.ptyManager.spawn(terminalId, command, args, workDir, { [TERMINAL_ID_ENV_VAR]: terminalId });
     terminalsDb.updatePid(this.db, terminalId, pid);
+    // AFTER the spawn, never before: a stored id for a process that failed to start would
+    // send the next relaunch chasing a conversation that never existed.
+    if (assignedSessionId) terminalsDb.updateExternalId(this.db, terminalId, assignedSessionId);
 
     // If this was a fresh spawn (no external_id yet), let the provider try to
     // discover the session id it assigned — so a later relaunch can resume.

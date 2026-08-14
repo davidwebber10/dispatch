@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { grokProvider } from '../../src/providers/grok.js';
 import { getProvider, listProviders } from '../../src/providers/registry.js';
+import { claudeCodeProvider } from '../../src/providers/claude-code.js';
+import { codexProvider } from '../../src/providers/codex.js';
 
 /**
  * Every flag asserted here was read from `grok --help` on Grok 1.0.3, not from
@@ -70,5 +72,45 @@ describe('grok provider', () => {
 
   it('presents a display name for the UI', () => {
     expect(grokProvider.displayName).toBe('Grok');
+  });
+});
+
+describe('grok assigns its own session id', () => {
+  it('declares that it assigns the id rather than discovering it', () => {
+    // Claude and Codex must DISCOVER the id after spawn (Claude even has an ambiguity
+    // heuristic for two sessions born at once). Grok's `--session-id` lets us name it up
+    // front, which cannot miss and cannot be ambiguous.
+    expect(grokProvider.assignsSessionId).toBe(true);
+  });
+
+  it('passes the assigned id with --session-id', () => {
+    const cmd = grokProvider.buildNewCommand({ workDir: '/tmp', sessionId: 'f0ba1c3e-0000-4000-8000-000000000001' });
+    const i = cmd.args.indexOf('--session-id');
+    expect(i).toBeGreaterThan(-1);
+    expect(cmd.args[i + 1]).toBe('f0ba1c3e-0000-4000-8000-000000000001');
+  });
+
+  it('omits --session-id when none is assigned', () => {
+    expect(grokProvider.buildNewCommand({ workDir: '/tmp' }).args).not.toContain('--session-id');
+  });
+
+  it('keeps the id ahead of the prompt, which is positional', () => {
+    const cmd = grokProvider.buildNewCommand({ workDir: '/tmp', sessionId: 'abc', prompt: 'fix the bug' });
+    expect(cmd.args.indexOf('--session-id')).toBeLessThan(cmd.args.indexOf('fix the bug'));
+    expect(cmd.args[cmd.args.length - 1]).toBe('fix the bug');
+  });
+
+  it('never sends --session-id on a resume, where it means something else', () => {
+    // `-s` names a NEW conversation; resuming with it is only valid alongside
+    // --fork-session, which would silently fork instead of resuming.
+    const cmd = grokProvider.buildResumeCommand({ externalSessionId: 'abc', workDir: '/tmp' });
+    expect(cmd.args).not.toContain('--session-id');
+    expect(cmd.args).toContain('--resume');
+  });
+
+  it('leaves the other providers discovering their id, as before', () => {
+    expect(claudeCodeProvider.assignsSessionId).toBeFalsy();
+    expect(codexProvider.assignsSessionId).toBeFalsy();
+    expect(typeof claudeCodeProvider.captureSessionId).toBe('function');
   });
 });

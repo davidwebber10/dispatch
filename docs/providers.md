@@ -134,7 +134,7 @@ several third-party guides describe a `--yolo` flag that does not exist.
 
 | Purpose | Command |
 | --- | --- |
-| New thread | `grok --permission-mode bypassPermissions [--model <id>] [prompt]` |
+| New thread | `grok --permission-mode bypassPermissions [--model <id>] --session-id <uuid> [prompt]` |
 | Resume | `grok --permission-mode bypassPermissions [--model <id>] --resume <id>` |
 | Agent run | `grok --permission-mode bypassPermissions --single <prompt>` |
 
@@ -150,9 +150,10 @@ These are deliberate gaps, not oversights:
   event stream `ChatView` consumes. `grok agent stdio` does speak one (ACP), so this is
   buildable — it is the same project Codex Pretty was. Until then the modal renders Pretty
   disabled for Grok.
-- **No resume list.** Nothing captures Grok's external session id at spawn, so the modal
-  offers no "Resume recent" for it. `grok sessions list` could back this, but it prints human
-  text with no JSON output flag.
+- **No resume LIST.** Resuming works — Dispatch assigns the session id at spawn with
+  `--session-id`, so a Grok thread relaunches into the same conversation after a daemon
+  restart. What is missing is *browsing* prior sessions in the New Thread modal:
+  `grok sessions list` could back that, but it prints human text with no JSON output flag.
 - **No Doppler secrets MCP.** Grok configures MCP through `grok mcp`, not through argv, so
   there is no per-spawn injection point of the shape the other two providers use.
 - **No status hooks.** Grok has no `notify`-style completion hook, so thread status falls back
