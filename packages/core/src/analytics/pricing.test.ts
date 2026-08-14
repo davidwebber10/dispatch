@@ -107,9 +107,8 @@ function spawnableFromModal(): string[] {
  */
 const UNPRICED: Record<string, string> = {
   // OpenAI models, run through the Codex CLI. Dispatch has no published price
-  // source for them, so their tokens are counted in the token totals and reported
-  // through `summary.unpricedTokens`, which is what raises the tile's 'partial'
-  // badge. Add a real entry here the day a source exists — never a guess.
+  // source for them, so their tokens are counted in the token totals but never
+  // priced. Add a real entry here the day a source exists — never a guess.
   'gpt-5.6-sol': 'no published price source in this repo',
   'gpt-5.6-terra': 'no published price source in this repo',
   'gpt-5.6-luna': 'no published price source in this repo',
