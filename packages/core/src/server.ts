@@ -48,6 +48,7 @@ import { handleTerminalConnection } from './ws/terminal.js';
 import { handleStructuredConnection } from './ws/structured.js';
 import { ClaudeStructuredSessionManager, type IStructuredManager } from './structured/manager.js';
 import { CodexStructuredSessionManager } from './structured/codex-manager.js';
+import { GrokStructuredSessionManager } from './structured/grok-manager.js';
 import { startPtyTimingLoop } from './sessions/status.js';
 import { startAutoArchiveLoop } from './sessions/auto-archive.js';
 import { TerminalMonitor } from './terminal-monitor.js';
@@ -264,6 +265,23 @@ function wireCodexPretty(sessionService: SessionService, statusService: StatusSe
 }
 
 /**
+ * Grok "Pretty" (structured ACP transport over `grok agent stdio`, one child per thread —
+ * see GrokStructuredSessionManager). Kill-switch: set DISPATCH_GROK_PRETTY=0 to fall back
+ * to the PTY-only Grok transport (mirrors wireCodexPretty's DISPATCH_CODEX_PRETTY).
+ */
+const GROK_PRETTY_ENABLED = process.env.DISPATCH_GROK_PRETTY !== '0';
+
+/** Wire the Grok ACP structured manager onto the service (so `structuredManagerFor('grok')`
+ *  resolves it), reusing the SAME permission membrane as the other two managers. */
+function wireGrokPretty(sessionService: SessionService, statusService: StatusService, db: Database.Database, broadcaster: EventBroadcaster): IStructuredManager | undefined {
+  if (!GROK_PRETTY_ENABLED) return undefined;
+  const grokManager = new GrokStructuredSessionManager();
+  sessionService.setGrokStructuredManager(grokManager);
+  wirePermissionMembrane(grokManager, statusService, sessionService, db, broadcaster);
+  return grokManager;
+}
+
+/**
  * Builds the WatchDispatcher's `deliver` function: picks transport per target the SAME way
  * spawnTerminal/ensureStructuredAlive already do — `config.transport === 'structured'` AND a
  * structured manager exists for that harness. Structured threads get `ensureStructuredAlive`
@@ -315,6 +333,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const statusService = new StatusService(db, broadcaster, undefined, (terminalId, status) => watchDispatcher.onStatus(terminalId, status));
   wirePermissionMembrane(structuredManager, statusService, sessionService, db, broadcaster);
   wireCodexPretty(sessionService, statusService, db, broadcaster);
+  wireGrokPretty(sessionService, statusService, db, broadcaster);
   const pushService = new PushService(db, { vapidDir: dispatchDir });
 
   wireThreadSettledPush(db, statusService, pushService);
@@ -452,6 +471,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   sessionService.setStructuredManager(structuredManager);
   wirePermissionMembrane(structuredManager, statusService, sessionService, db, broadcaster);
   wireCodexPretty(sessionService, statusService, db, broadcaster);
+  const grokStructured = wireGrokPretty(sessionService, statusService, db, broadcaster);
   const pushService = new PushService(db, { vapidDir: dataDir });
 
   wireThreadSettledPush(db, statusService, pushService);
@@ -475,6 +495,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     spawnEnv.PATH = withShimPath(dataDir, spawnEnv.PATH);
     ptyManager.setDefaultEnv(spawnEnv);
     structuredManager.setDefaultEnv(spawnEnv);
+    // The Grok ACP children run real tools directly (no app-server indirection), so they
+    // need the same spawn env a PTY thread gets — secrets, bundled tools, the browser shim.
+    grokStructured?.setDefaultEnv(spawnEnv);
   };
   secretsService.onChange(refreshPtyEnv);
   refreshPtyEnv();

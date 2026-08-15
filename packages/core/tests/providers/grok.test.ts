@@ -54,10 +54,25 @@ describe('grok provider', () => {
     expect(cmd.args).toEqual(['--permission-mode', 'bypassPermissions', '--single', 'do the thing']);
   });
 
-  it('does not claim a structured transport it cannot speak', () => {
-    // `grok agent stdio` exists, but nothing translates ACP into the Claude-shaped event
-    // stream yet — so Pretty must stay unavailable rather than spawn and hang.
-    expect(grokProvider.buildStructuredCommand).toBeUndefined();
+  it('structured transport speaks ACP over `grok agent stdio`, auto-approving', () => {
+    const cmd = grokProvider.buildStructuredCommand!({ workDir: '/tmp' });
+    expect(cmd.command).toBe('grok');
+    expect(cmd.args).toEqual(['agent', '--always-approve', 'stdio']);
+  });
+
+  it('structured transport pins the model and carries rules BEFORE the agent subcommand', () => {
+    const cmd = grokProvider.buildStructuredCommand!({ workDir: '/tmp', model: 'grok-4.6', appendSystemPrompt: 'be brief', secretsMcp: { systemPrompt: 'use Doppler' } });
+    // Top-level flags must precede `agent` (clap rejects them after the subcommand).
+    expect(cmd.args.indexOf('--rules')).toBeLessThan(cmd.args.indexOf('agent'));
+    expect(cmd.args.indexOf('--model')).toBeLessThan(cmd.args.indexOf('agent'));
+    expect(cmd.args).toContain('grok-4.6');
+    expect(cmd.args[cmd.args.indexOf('--rules') + 1]).toBe('be brief\n\nuse Doppler');
+  });
+
+  it('structured resume rides out-of-band (session/load), never argv', () => {
+    const cmd = grokProvider.buildStructuredCommand!({ workDir: '/tmp', resumeSessionId: 'abc-123' });
+    expect(cmd.args).not.toContain('abc-123');
+    expect(cmd.args).not.toContain('--resume');
   });
 
   it('is reachable from the registry under the name the wire type uses', () => {

@@ -19,12 +19,7 @@ export interface Harness {
   type: TerminalType;
   /** Which detected CLI backs it, or null for the plain shell (always available). */
   provider: ProviderName | null;
-  /**
-   * Whether this harness can run the structured "Pretty" transport.
-   *
-   * Grok is false: `grok agent stdio` speaks ACP, and nothing translates that into the
-   * Claude-shaped event stream ChatView consumes — so Pretty would spawn and hang.
-   */
+  /** Whether this harness can run the structured "Pretty" transport. */
   pretty: boolean;
   /** Models offered for it. `null` means "let the CLI choose". */
   models: { label: string; model: string | null }[];
@@ -51,7 +46,8 @@ export const HARNESSES: Harness[] = [
     ],
   },
   {
-    id: 'grok', label: 'Grok', type: 'grok', provider: 'grok', pretty: false,
+    // Pretty since the ACP transport landed (grok agent stdio → GrokStructuredSessionManager).
+    id: 'grok', label: 'Grok', type: 'grok', provider: 'grok', pretty: true,
     models: [
       { label: 'Default', model: null },
       { label: 'Grok 4.5', model: 'grok-4.5' },

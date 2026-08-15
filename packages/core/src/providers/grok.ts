@@ -48,12 +48,12 @@ function rulesArgs(secretsMcp?: SecretsMcpInjection): string[] {
  * - **The system prompt** — `--rules`, Grok's `--append-system-prompt`.
  * - **The session id** — assigned up front with `--session-id` rather than discovered.
  *
- * ONE capability is genuinely absent: **`buildStructuredCommand`**. Grok has a bidirectional
- * stdio channel (`grok agent stdio`, speaking ACP), so a "Pretty" transport is possible in
- * principle, but it needs its own manager translating ACP into the Claude-shaped event
- * stream the ChatView consumes — exactly what CodexStructuredSessionManager does for the
- * app-server protocol. Until then Grok threads are CLI (PTY) only, and the New Thread modal
- * renders Pretty disabled for Grok.
+ * The structured "Pretty" transport (**`buildStructuredCommand`**) speaks ACP over
+ * `grok agent stdio`; GrokStructuredSessionManager (structured/grok-manager.ts) translates
+ * that into the Claude-shaped event stream the ChatView consumes, exactly as
+ * CodexStructuredSessionManager does for the app-server protocol. MCP servers still ride a
+ * per-thread GROK_HOME (spawnStructured builds one without hooks — the manager's own turn
+ * boundaries drive status, so hook-reported Stop events would double-report).
  *
  * Two corrections worth keeping, both from reading the wrong help text:
  *   - An earlier version claimed Grok had no hooks and no MCP injection. Wrong: they are in
@@ -94,6 +94,25 @@ export const grokProvider: SessionProvider = {
     // autonomously as a fresh one, so it carries the same permission mode — and the same
     // hooks and MCP servers, or it would come back mute.
     return { command: 'grok', args: [...FULL_PERMISSIONS, ...rulesArgs(secretsMcp), ...modelArgs(model), '--resume', externalSessionId] };
+  },
+
+  buildStructuredCommand({ secretsMcp, appendSystemPrompt, model }) {
+    // Grok "Pretty" speaks ACP over `grok agent stdio`. Resume rides OUT-OF-BAND
+    // (`session/load` over JSON-RPC, applied by GrokStructuredSessionManager via
+    // StructuredSpawnOpts.resumeId), so `resumeSessionId` is deliberately not read here.
+    //
+    // Flag placement matters: `--rules` and `-m` are TOP-LEVEL flags (verified to parse
+    // ahead of the subcommand), while `--always-approve` lives on the `agent` subcommand —
+    // it is the stdio agent's own autonomy switch (the analogue of bypassPermissions; the
+    // spike showed default stdio mode already runs tools unprompted, this makes it explicit).
+    // The membrane still answers any session/request_permission a Grok mode ever emits.
+    const rules = [appendSystemPrompt, secretsMcp?.systemPrompt].filter(Boolean).join('\n\n');
+    const args = [
+      ...(rules ? ['--rules', rules] : []),
+      ...modelArgs(model),
+      'agent', '--always-approve', 'stdio',
+    ];
+    return { command: 'grok', args };
   },
 
   buildRunnerCommand({ prompt, secretsMcp }) {
