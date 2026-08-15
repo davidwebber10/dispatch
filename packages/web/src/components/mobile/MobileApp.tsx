@@ -211,7 +211,29 @@ export function MobileApp() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--color-base)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
       <header style={{ position: 'relative', height: 'calc(50px + env(safe-area-inset-top))', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px', paddingTop: 'env(safe-area-inset-top)', background: 'var(--color-pane)' }}>
         {level === 0 ? (
-          <BrandSwitcher />
+          <>
+            <BrandSwitcher />
+            {/* One-line top bar: the project search lives IN the header beside the app icon
+                (it used to be a second full-width row below it). Sized down to the header's
+                50px; fontSize stays 16 — anything smaller makes iOS zoom the page on focus. */}
+            {bottomTab === 'projects' && mobileViewMode !== 'board' && (
+              <>
+                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search projects"
+                  style={{ flex: 1, minWidth: 0, height: 36, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 10, color: 'var(--color-text-primary)', fontSize: 16 }} />
+                <SortMenu
+                  value={projectSort}
+                  options={PROJECT_SORTS}
+                  onChange={(v) => setProjectSort(v as ProjectSort)}
+                  isMobile
+                  iconSize={18}
+                  buttonStyle={{ width: 36, height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 10, color: 'var(--color-text-secondary)', cursor: 'pointer' }}
+                />
+                <button onClick={() => setNewProject(true)} title="New project" style={{ width: 36, height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', border: 'none', borderRadius: 10, color: '#06140B', cursor: 'pointer' }}>
+                  <Plus size={18} weight="bold" />
+                </button>
+              </>
+            )}
+          </>
         ) : (
           <button onClick={back} style={{ background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, padding: '4px 2px', minWidth: 0 }}>
             <CaretLeft size={20} weight="bold" />
@@ -250,22 +272,8 @@ export function MobileApp() {
               <BoardMobile onOpenThread={openThreadFromList} />
             ) : (
             <>
-            <div style={{ display: 'flex', gap: 8, padding: 10, flexShrink: 0 }}>
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search projects"
-                style={{ flex: 1, minWidth: 0, height: 40, padding: '0 13px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 12, color: 'var(--color-text-primary)', fontSize: 16 }} />
-              <SortMenu
-                value={projectSort}
-                options={PROJECT_SORTS}
-                onChange={(v) => setProjectSort(v as ProjectSort)}
-                isMobile
-                iconSize={20}
-                buttonStyle={{ width: 40, height: 40, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 12, color: 'var(--color-text-secondary)', cursor: 'pointer' }}
-              />
-              <button onClick={() => setNewProject(true)} title="New project" style={{ width: 40, height: 40, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', border: 'none', borderRadius: 12, color: '#06140B', cursor: 'pointer' }}>
-                <Plus size={20} weight="bold" />
-              </button>
-            </div>
-            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y', padding: '0 4px 12px' }}>
+            {/* The search/sort/new controls moved up into the header (one-line top bar). */}
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y', padding: '6px 4px 12px' }}>
               <SortableList
                 items={sortedProjects}
                 disabled={!!query}
