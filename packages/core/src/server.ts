@@ -282,6 +282,23 @@ function wireGrokPretty(sessionService: SessionService, statusService: StatusSer
 }
 
 /**
+ * OpenCode "Pretty" (structured ACP transport over `opencode acp`, one child per thread).
+ * SAME manager class as Grok — both harnesses speak ACP over stdio; the dialect deltas
+ * live in the translator/manager themselves (see grok-manager.ts header). Kill-switch:
+ * DISPATCH_OPENCODE_PRETTY=0. OpenCode has no PTY fallback — switched off, the type
+ * simply cannot spawn.
+ */
+const OPENCODE_PRETTY_ENABLED = process.env.DISPATCH_OPENCODE_PRETTY !== '0';
+
+function wireOpencodePretty(sessionService: SessionService, statusService: StatusService, db: Database.Database, broadcaster: EventBroadcaster): IStructuredManager | undefined {
+  if (!OPENCODE_PRETTY_ENABLED) return undefined;
+  const opencodeManager = new GrokStructuredSessionManager();
+  sessionService.setOpencodeStructuredManager(opencodeManager);
+  wirePermissionMembrane(opencodeManager, statusService, sessionService, db, broadcaster);
+  return opencodeManager;
+}
+
+/**
  * Builds the WatchDispatcher's `deliver` function: picks transport per target the SAME way
  * spawnTerminal/ensureStructuredAlive already do — `config.transport === 'structured'` AND a
  * structured manager exists for that harness. Structured threads get `ensureStructuredAlive`
@@ -334,6 +351,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   wirePermissionMembrane(structuredManager, statusService, sessionService, db, broadcaster);
   wireCodexPretty(sessionService, statusService, db, broadcaster);
   wireGrokPretty(sessionService, statusService, db, broadcaster);
+  wireOpencodePretty(sessionService, statusService, db, broadcaster);
   const pushService = new PushService(db, { vapidDir: dispatchDir });
 
   wireThreadSettledPush(db, statusService, pushService);
@@ -472,6 +490,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   wirePermissionMembrane(structuredManager, statusService, sessionService, db, broadcaster);
   wireCodexPretty(sessionService, statusService, db, broadcaster);
   const grokStructured = wireGrokPretty(sessionService, statusService, db, broadcaster);
+  const opencodeStructured = wireOpencodePretty(sessionService, statusService, db, broadcaster);
   const pushService = new PushService(db, { vapidDir: dataDir });
 
   wireThreadSettledPush(db, statusService, pushService);
@@ -495,9 +514,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     spawnEnv.PATH = withShimPath(dataDir, spawnEnv.PATH);
     ptyManager.setDefaultEnv(spawnEnv);
     structuredManager.setDefaultEnv(spawnEnv);
-    // The Grok ACP children run real tools directly (no app-server indirection), so they
-    // need the same spawn env a PTY thread gets — secrets, bundled tools, the browser shim.
+    // The ACP children (Grok, OpenCode) run real tools directly (no app-server
+    // indirection), so they need the same spawn env a PTY thread gets — secrets, bundled
+    // tools, the browser shim.
     grokStructured?.setDefaultEnv(spawnEnv);
+    opencodeStructured?.setDefaultEnv(spawnEnv);
   };
   secretsService.onChange(refreshPtyEnv);
   refreshPtyEnv();

@@ -27,6 +27,8 @@ import { resolveTranscriptPath } from './transcript-path.js';
 import { randomUUID } from 'crypto';
 import { isAgentType } from '../providers/agent-types.js';
 import { writeGrokHome, type McpServerEntry } from '../providers/grok-home.js';
+import { writeOpencodeConfig } from '../providers/opencode-config.js';
+import { OPENCODE_DEFAULT_MODEL } from '../providers/opencode.js';
 import { TERMINAL_ID_ENV_VAR } from '../auth/shim.js';
 import { LOGIN_ARGV, isProviderName } from '../setup/install.js';
 import { withAutoArchive, DEFAULT_AUTO_ARCHIVE_MS } from './auto-archive.js';
@@ -91,6 +93,10 @@ export class SessionService {
   /** Drives structured (ACP `grok agent stdio`) sessions for grok threads; set by server
    *  wiring only when GROK_PRETTY_ENABLED. Undefined ⇒ grok has only the PTY transport. */
   private grokStructuredManager?: import('../structured/manager.js').IStructuredManager;
+  /** Drives structured (ACP `opencode acp`) sessions for opencode threads; set by server
+   *  wiring only when OPENCODE_PRETTY_ENABLED. OpenCode is Pretty-ONLY: no manager ⇒ the
+   *  type cannot spawn at all (there is deliberately no PTY fallback). */
+  private opencodeStructuredManager?: import('../structured/manager.js').IStructuredManager;
   /** Override for structured command (test seam: lets tests spawn fake-claude instead of real claude). */
   private structuredCommandOverride?: { command: string; args: string[] };
 
@@ -194,6 +200,13 @@ export class SessionService {
     this.persistStructuredSessionIds(m);
   }
 
+  /** Wire the OpenCode structured (ACP) manager. Same id-persistence contract as Grok:
+   *  `session/new` mints the id exactly once; resume is `session/load` by external_id. */
+  setOpencodeStructuredManager(m: import('../structured/manager.js').IStructuredManager): void {
+    this.opencodeStructuredManager = m;
+    this.persistStructuredSessionIds(m);
+  }
+
   /**
    * The structured manager for a terminal type, or undefined when that type has no
    * structured transport. Both managers satisfy IStructuredManager, so every structured
@@ -206,6 +219,7 @@ export class SessionService {
     if (type === 'claude-code') return this.structuredManager;
     if (type === 'codex') return this.codexStructuredManager;
     if (type === 'grok') return this.grokStructuredManager;
+    if (type === 'opencode') return this.opencodeStructuredManager;
     return undefined;
   }
 
@@ -400,6 +414,11 @@ export class SessionService {
     // an explicit `transport` in the request still wins. Skipped when the structured manager
     // is absent (DISPATCH_GROK_PRETTY=0 falls back to PTY).
     if (type === 'grok' && !config?.transport && this.grokStructuredManager) {
+      config = { ...(config ?? {}), transport: 'structured' };
+    }
+    // OpenCode is Pretty-ONLY — there is no PTY provider at all, so unlike Grok this is
+    // not conditional on a transport already being named: every opencode row is structured.
+    if (type === 'opencode') {
       config = { ...(config ?? {}), transport: 'structured' };
     }
 
@@ -1901,8 +1920,9 @@ export class SessionService {
 
     // Resolve the model up front and persist it into the terminal's config if it
     // wasn't already pinned there — so it survives a daemon-restart resume and is
-    // returned to the frontend as part of the terminal row's config.
-    const resolvedModel = modelFor(config);
+    // returned to the frontend as part of the terminal row's config. OpenCode always
+    // pins a model (its config file must name one), defaulting the curated pick.
+    const resolvedModel = modelFor(config) ?? (terminal.type === 'opencode' ? OPENCODE_DEFAULT_MODEL : undefined);
     if (resolvedModel && !config.model) {
       config.model = resolvedModel;
       terminalsDb.updateConfig(this.db, terminal.id, config);
@@ -1942,6 +1962,28 @@ export class SessionService {
     // resume after a daemon restart.
     const escalate = config.role === 'agent' && config.autonomy === 'supervised';
 
+    // OpenCode's whole injection (model, permission mode, system prompt, MCP servers)
+    // rides ONE per-thread config file pointed at via OPENCODE_CONFIG — `opencode acp`
+    // takes no flags for any of it. Best-effort like the grok plugin dir: a thread
+    // without injections still runs, on OpenCode's own global config.
+    let opencodeEnv: Record<string, string> | undefined;
+    if (terminal.type === 'opencode' && this.statusContext) {
+      try {
+        const mcpServers: Record<string, McpServerEntry> = {};
+        for (const spec of specs) {
+          mcpServers[spec.name] = { command: spec.command, args: spec.args, ...(spec.env ? { env: spec.env } : {}) };
+        }
+        const cfgPath = writeOpencodeConfig({
+          dir: path.join(this.statusContext.hooksDir, 'opencode-homes', terminal.id),
+          model: resolvedModel,
+          escalate,
+          systemPrompt: [systemPromptFor(config), structuredMcp?.systemPrompt].filter(Boolean).join('\n\n') || undefined,
+          mcpServers,
+        });
+        opencodeEnv = { OPENCODE_CONFIG: cfgPath };
+      } catch { /* best-effort — a thread without injections still runs */ }
+    }
+
     const pid = manager.spawn(terminal.id, {
       command: sc.command,
       args: sc.args,
@@ -1952,7 +1994,7 @@ export class SessionService {
       // ignores these); shared on the interface so this one call drives either manager.
       resumeId: resumeSessionId,
       model: resolvedModel,
-      env: { [TERMINAL_ID_ENV_VAR]: terminal.id },
+      env: { [TERMINAL_ID_ENV_VAR]: terminal.id, ...(opencodeEnv ?? {}) },
     });
     terminalsDb.updatePid(this.db, terminal.id, pid);
   }
@@ -2176,6 +2218,7 @@ export class SessionService {
       case 'claude-code': return sameType.length > 0 ? `Claude Code #${sameType.length + 1}` : 'Claude Code';
       case 'codex': return sameType.length > 0 ? `Codex #${sameType.length + 1}` : 'Codex';
       case 'grok': return sameType.length > 0 ? `Grok #${sameType.length + 1}` : 'Grok';
+      case 'opencode': return sameType.length > 0 ? `OpenCode #${sameType.length + 1}` : 'OpenCode';
       case 'shell': return sameType.length > 0 ? `Terminal #${sameType.length + 1}` : 'Terminal';
     }
   }

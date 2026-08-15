@@ -210,4 +210,7 @@ export const HISTORY_IMPORT_STRATEGY: Record<AgentType, HistoryImportStrategy | 
     importLines: importCodexLines,
   },
   grok: null,
+  // OpenCode stores sessions in its own format under ~/.local/share/opencode; no importer
+  // yet — live usage records through the structured frames, history stays unimported.
+  opencode: null,
 };

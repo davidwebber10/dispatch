@@ -29,6 +29,7 @@ const FALLBACK_BINS: Record<ProviderName, string[]> = {
   claude: ['.local/bin/claude', '.claude/local/claude'],
   codex: ['.local/bin/codex'],
   grok: ['.grok/bin/grok', '.local/bin/grok'],
+  opencode: ['.opencode/bin/opencode', '.local/bin/opencode'],
 };
 
 /**
@@ -44,6 +45,9 @@ const AUTH_FILES: Record<ProviderName, { dir: string; files: string[]; definitiv
   claude: { dir: '.claude', files: ['.credentials.json', 'credentials.json'], definitive: false },
   codex: { dir: '.codex', files: ['auth.json'], definitive: false },
   grok: { dir: '.grok', files: ['auth.json'], definitive: true },
+  // `opencode auth login` writes exactly this file. Not definitive: provider keys can also
+  // arrive via env vars (e.g. OPENROUTER_API_KEY), which leave no file behind.
+  opencode: { dir: '.local/share/opencode', files: ['auth.json'], definitive: false },
 };
 
 async function which(bin: string): Promise<string | null> {
@@ -104,6 +108,17 @@ const AUTH_PROBES: Record<ProviderName, { args: string[]; read(stdout: string): 
       if (/not authenticated|not logged in|please (log|sign) in/.test(t)) return false;
       if (/model/.test(t)) return true;
       return 'unknown';
+    },
+  },
+  opencode: {
+    // `auth list` prints a credential count ("└  1 credentials"), verified on 1.18.18.
+    // Zero credentials is honestly signed-out for our purposes: the free default model
+    // works keyless, but the OpenRouter models Dispatch spawns do not.
+    args: ['auth', 'list'],
+    read(stdout) {
+      const m = /(\d+)\s+credentials?/.exec(stdout);
+      if (!m) return 'unknown';
+      return Number(m[1]) > 0;
     },
   },
 };

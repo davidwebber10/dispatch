@@ -90,9 +90,9 @@ describe('POST /api/setup/install/:provider', () => {
 });
 
 describe('GET /api/setup/state', () => {
-  it('reports all three agent CLIs, so the modal can grey out what is missing', async () => {
+  it('reports all four agent CLIs, so the modal can grey out what is missing', async () => {
     const res = await request(app()).get('/api/setup/state');
     expect(res.status).toBe(200);
-    expect(res.body.providers.map((p: { name: string }) => p.name)).toEqual(['claude', 'codex', 'grok']);
+    expect(res.body.providers.map((p: { name: string }) => p.name)).toEqual(['claude', 'codex', 'grok', 'opencode']);
   });
 });

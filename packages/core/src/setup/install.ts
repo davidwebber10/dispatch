@@ -12,6 +12,7 @@ export const INSTALL_COMMANDS: Record<ProviderName, string> = {
   claude: 'npm install -g @anthropic-ai/claude-code',
   codex: 'npm install -g @openai/codex',
   grok: 'curl -fsSL https://x.ai/cli/install.sh | bash',
+  opencode: 'npm install -g opencode-ai',
 };
 
 /**
@@ -27,6 +28,7 @@ export const LOGIN_COMMANDS: Record<ProviderName, string> = {
   claude: 'claude auth login',
   codex: 'codex login',
   grok: 'grok login',
+  opencode: 'opencode auth login',
 };
 
 /** The same commands as argv, for spawning one directly rather than through a shell. */
@@ -34,6 +36,7 @@ export const LOGIN_ARGV: Record<ProviderName, { command: string; args: string[] 
   claude: { command: 'claude', args: ['auth', 'login'] },
   codex: { command: 'codex', args: ['login'] },
   grok: { command: 'grok', args: ['login'] },
+  opencode: { command: 'opencode', args: ['auth', 'login'] },
 };
 
 /** Grok downloads a ~130MB binary; a cold npm global install is slower than it looks. */

@@ -127,6 +127,14 @@ const UNPRICED: Record<string, string> = {
   // manager, and so records no usage_turns row at all (spec section 5). Its model
   // string can therefore never reach the price table.
   'grok-4.5': 'PTY provider — records no turns, so it never reaches pricing',
+  // OpenCode threads run OpenRouter models, whose REAL per-turn dollar cost arrives on the
+  // wire (ACP usage_update.cost) and rides the result footer as total_cost_usd — a price
+  // table here would duplicate a number the provider already reports authoritatively.
+  'openrouter/z-ai/glm-5.2': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/moonshotai/kimi-k3': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/deepseek/deepseek-v4-pro': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/qwen/qwen3.7-max': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/minimax/minimax-m3': 'real cost arrives via ACP usage_update, not a price table',
 };
 
 describe('every model Dispatch can spawn either prices or is a documented exclusion', () => {

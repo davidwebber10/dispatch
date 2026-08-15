@@ -1,9 +1,15 @@
 // packages/core/src/structured/grok-manager.ts
 //
-// The Grok "Pretty" structured transport: a third IStructuredManager whose payload is the
-// ACP protocol (`grok agent stdio`, JSON-RPC over stdio) instead of Claude's stream-json or
-// Codex's app-server. It emits the SAME Claude-shaped events (see grok-translate.ts) so the
-// SessionService, the structured ws, and the ChatView drive it identically to the other two.
+// The ACP "Pretty" structured transport: an IStructuredManager whose payload is the ACP
+// protocol (JSON-RPC over stdio) instead of Claude's stream-json or Codex's app-server. It
+// emits the SAME Claude-shaped events (see grok-translate.ts) so the SessionService, the
+// structured ws, and the ChatView drive it identically to the other two.
+//
+// TWO harnesses ride this manager, one instance each: Grok (`grok agent stdio`) and
+// OpenCode (`opencode acp`). The dialect differences are small and live where they belong:
+// the translator handles OpenCode's usage_update, adoptModel() reads either bind-response
+// shape, and runTurn() settles OpenCode's response-driven turn boundary (Grok's arrives as
+// a turn_completed notification first, so the response path is its cancel/error fallback).
 //
 // Connection model: ONE `grok agent stdio` child PER TERMINAL — unlike Codex's shared
 // app-server. ACP itself multiplexes sessions over one connection, but Dispatch's per-thread
@@ -235,7 +241,7 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
       session.loading = true;
       try {
         const res = await session.conn.request('session/load', { sessionId: resumeId, cwd, mcpServers: [] });
-        if (res?.models?.currentModelId) session.model = res.models.currentModelId;
+        this.adoptModel(session, res);
       } finally {
         session.loading = false;
       }
@@ -244,7 +250,7 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
       const sessionId = res?.sessionId;
       if (typeof sessionId !== 'string' || !sessionId) throw new Error('session/new returned no sessionId');
       session.sessionId = sessionId;
-      if (res?.models?.currentModelId) session.model = res.models.currentModelId;
+      this.adoptModel(session, res);
       this.emit('session', session.terminalId, sessionId);
     }
     this.applyActions(session, session.translator.init(session.model));
@@ -253,6 +259,17 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
     // synthetic settle the client swallows without rendering (same shape cc-sessions.ts
     // appends for Claude), or a revived thread sits on "Working…" forever.
     if (resumeId && session.events.length) this.pushEvent(session, { type: 'result', subtype: 'backfill', is_error: false });
+  }
+
+  /** The session's REAL model id from the bind response. Grok reports
+   *  `models.currentModelId`; OpenCode reports a `configOptions` entry with id 'model'. */
+  private adoptModel(session: GrokSession, res: any): void {
+    const fromModels = res?.models?.currentModelId;
+    const fromConfig = Array.isArray(res?.configOptions)
+      ? res.configOptions.find((o: any) => o?.id === 'model')?.currentValue
+      : undefined;
+    const model = fromModels ?? fromConfig;
+    if (typeof model === 'string' && model) session.model = model;
   }
 
   // --- inbound -------------------------------------------------------------------------------
@@ -359,17 +376,21 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
   private async runTurn(session: GrokSession, content: string | ContentBlock[]): Promise<void> {
     if (!session.conn.alive || !session.sessionId) return;
     session.turnActive = true;
+    let result: unknown;
     try {
-      await session.conn.request('session/prompt', { sessionId: session.sessionId, prompt: toPrompt(content) });
+      result = await session.conn.request('session/prompt', { sessionId: session.sessionId, prompt: toPrompt(content) });
     } catch (err) {
       this.pushEvent(session, { type: 'result', subtype: 'error', is_error: true, result: String(err) });
     }
-    // Fallback boundary: normally turn_completed already settled this (turnActive false). A
-    // cancel or an error response reaches here with the turn still open — settle it now so
-    // the thread never sticks on "working".
+    // Response-driven boundary: OpenCode sends no turn_completed update — the prompt
+    // RESPONSE (stopReason + usage) IS its turn end, translated into the same result
+    // footer + idle/needs-help as Grok's notification path. On Grok, turn_completed
+    // normally settled the turn already (turnActive false, nothing happens here); a
+    // cancel or protocol error reaches here with the turn still open and now settles
+    // with a real footer instead of a bare idle — the thread never sticks on "working".
     if (session.turnActive) {
       session.turnActive = false;
-      this.settleTurn(session, { kind: 'idle', summary: '' });
+      this.applyActions(session, session.translator.promptResult(result));
     }
   }
 

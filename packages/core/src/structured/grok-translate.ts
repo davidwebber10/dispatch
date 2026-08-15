@@ -108,6 +108,7 @@ export class GrokTranslator {
       case 'tool_call_update': return this.toolCallUpdate(update);
       case 'turn_completed': return replay ? [] : this.turnCompleted(update);
       case 'response_completed': return replay ? [] : this.responseCompleted(update);
+      case 'usage_update': return replay ? [] : this.usageUpdate(update);
       default: return []; // model_changed, available_commands_update, hook_execution, … — ignored
     }
   }
@@ -165,6 +166,7 @@ export class GrokTranslator {
     const out: GrokAction[] = [];
     this.closeOpenBlock(out); // a tool interrupts the prose — later prose starts a fresh block
     const name = update?._meta?.['x.ai/tool']?.name ?? update?.title ?? 'tool';
+    this.toolNames.set(id, String(name));
     out.push({
       kind: 'event',
       event: { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name: String(name), input: update?.rawInput ?? {} }] } },
@@ -176,6 +178,17 @@ export class GrokTranslator {
     const id = update?.toolCallId;
     const status = update?.status;
     if (typeof id !== 'string' || !id) return [];
+    // OpenCode enriches a call's REAL input on in_progress updates — the initial tool_call
+    // carries only scaffolding ({cwd}). Re-emit the whole tool_use with the same id: the
+    // web's whole-assistant reconcile updates the existing row's input in place (matched by
+    // tool id), so the Bash card shows the actual command instead of an empty input.
+    if (status === 'in_progress' && update?.rawInput && !this.resultEmitted.has(id)) {
+      const name = this.toolNames.get(id) ?? update?.title ?? 'tool';
+      return [{
+        kind: 'event',
+        event: { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name: String(name), input: update.rawInput }] } },
+      }];
+    }
     if (status !== 'completed' && status !== 'failed') return []; // progress frames repeat per status
     if (this.resultEmitted.has(id)) return [];
     this.resultEmitted.add(id);
@@ -185,20 +198,54 @@ export class GrokTranslator {
     }];
   }
 
+  /** tool_call id → name, for re-emitting an input-enriched tool_use (see toolCallUpdate). */
+  private toolNames = new Map<string, string>();
+
   // --- turn boundary + usage -----------------------------------------------------------------
 
   private turnCompleted(update: any): GrokAction[] {
+    const usage = update?.usage ?? {};
+    return this.finishTurn({
+      subtype: 'grok_turn',
+      isError: update?.stop_reason === 'error' || update?.stop_reason === 'refusal',
+      durationMs: typeof usage.apiDurationMs === 'number' ? usage.apiDurationMs : undefined,
+      inputTokens: usage.inputTokens ?? 0,
+      outputTokens: usage.outputTokens ?? 0,
+    });
+  }
+
+  /**
+   * The turn boundary driven by the session/prompt RESPONSE — OpenCode's ONLY boundary
+   * (unlike Grok it sends no `turn_completed` update; the response's stopReason + usage are
+   * where the turn ends). Called by the manager when the response resolves with the turn
+   * still open, so on Grok it doubles as the cancel/protocol-error fallback — which now
+   * settles with a real result footer instead of a bare idle.
+   */
+  promptResult(result: any): GrokAction[] {
+    const usage = result?.usage ?? {};
+    const stop = result?.stopReason ?? result?.stop_reason;
+    return this.finishTurn({
+      subtype: 'acp_turn',
+      isError: stop === 'error' || stop === 'refusal',
+      inputTokens: usage.inputTokens ?? 0,
+      outputTokens: usage.outputTokens ?? 0,
+      costUsd: this.takeCostDelta(),
+    });
+  }
+
+  /** Shared tail of every turn boundary: result footer, per-turn state reset, idle/needs-help. */
+  private finishTurn(t: { subtype: string; isError: boolean; durationMs?: number; inputTokens: number; outputTokens: number; costUsd?: number }): GrokAction[] {
     const out: GrokAction[] = [];
     this.closeOpenBlock(out);
-    const usage = update?.usage ?? {};
     out.push({
       kind: 'event',
       event: {
         type: 'result',
-        subtype: 'grok_turn',
-        is_error: update?.stop_reason === 'error' || update?.stop_reason === 'refusal',
-        duration_ms: typeof usage.apiDurationMs === 'number' ? usage.apiDurationMs : undefined,
-        usage: { input_tokens: usage.inputTokens ?? 0, output_tokens: usage.outputTokens ?? 0 },
+        subtype: t.subtype,
+        is_error: t.isError,
+        duration_ms: t.durationMs,
+        usage: { input_tokens: t.inputTokens, output_tokens: t.outputTokens },
+        ...(typeof t.costUsd === 'number' && t.costUsd > 0 ? { total_cost_usd: t.costUsd } : {}),
       },
     });
     // Read the closing prose ONCE, then clear it — a stale value would let a question from a
@@ -209,11 +256,46 @@ export class GrokTranslator {
     this.messageStarted = false;
     this.nextBlockIndex = 0;
     this.textAcc = '';
-    // `summary` is ALWAYS carried (even '') — its presence tells the idle listener "Grok
+    // `summary` is ALWAYS carried (even '') — its presence tells the idle listener "the agent
     // answered for this turn", never to fall back to the Claude ring walk (see the
     // wirePermissionMembrane idle handler's comment on Codex, which Grok shares).
     out.push(looksLikeQuestion(text) ? { kind: 'needs-help', ask: text, summary: text } : { kind: 'idle', summary: text });
     return out;
+  }
+
+  /**
+   * OpenCode's `usage_update` — the context-fill signal: `used` tokens of a `size`-token
+   * window, plus the session-cumulative dollar `cost`. Emits the same zero-content assistant
+   * usage frame as responseCompleted, with the REAL window carried as `context_window` so the
+   * web needs no per-model window table for open models.
+   */
+  private usageUpdate(update: any): GrokAction[] {
+    const used = typeof update?.used === 'number' ? update.used : 0;
+    const size = typeof update?.size === 'number' ? update.size : undefined;
+    if (typeof update?.cost?.amount === 'number') this.cumulativeCostUsd = update.cost.amount;
+    if (!used) return [];
+    return [{
+      kind: 'event',
+      event: {
+        type: 'assistant',
+        ...(size ? { context_window: size } : {}),
+        message: {
+          role: 'assistant',
+          ...(this.model ? { model: this.model } : {}),
+          content: [],
+          usage: { input_tokens: used, output_tokens: 0 },
+        },
+      },
+    }];
+  }
+
+  /** Session-cumulative cost as last reported by usage_update; deltas are per-turn. */
+  private cumulativeCostUsd = 0;
+  private costReportedUsd = 0;
+  private takeCostDelta(): number | undefined {
+    const delta = this.cumulativeCostUsd - this.costReportedUsd;
+    this.costReportedUsd = this.cumulativeCostUsd;
+    return delta > 0 ? delta : undefined;
   }
 
   private responseCompleted(update: any): GrokAction[] {

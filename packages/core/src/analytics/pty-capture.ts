@@ -275,6 +275,9 @@ export const PTY_CAPTURE_STRATEGY: Record<AgentType, ((ctx: CaptureContext) => v
   'claude-code': captureClaudeTurn,
   codex: captureCodexTurn,
   grok: null,
+  // OpenCode is Pretty-only — there is no PTY to capture from; usage arrives through the
+  // structured manager's frames (grok-translate.ts usage stamping) like Grok Pretty.
+  opencode: null,
 };
 
 /**
