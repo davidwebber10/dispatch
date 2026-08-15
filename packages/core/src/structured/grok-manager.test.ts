@@ -48,6 +48,13 @@ rl.on('line', (line) => {
       global.pendingFinish = finish;
       return;
     }
+    if (MODE === 'echo-prompt') {
+      // Echo the RECEIVED prompt array back as prose, so a test can assert exactly what
+      // wire shape toPrompt produced (e.g. an ACP image block, not a text marker).
+      notify('session/update', { sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(msg.params.prompt) } } });
+      notify('_x.ai/session_notification', { sessionId, update: { sessionUpdate: 'turn_completed', stop_reason: 'end_turn', usage: {} } });
+      return finish('end_turn');
+    }
     if (MODE === 'silent') {
       // A turn that ends with NO turn_completed notification — the prompt response is the
       // only boundary signal. (Also what a cancel looks like.)
@@ -203,6 +210,26 @@ describe('GrokStructuredSessionManager', () => {
     const picked = events.filter((e) => e?.type === 'stream_event').map((e) => e.event?.delta?.text ?? '').join('');
     expect(picked).toContain('picked:no');
     expect(m.getPending('t1')).toBeNull();
+  });
+
+  it('an image block reaches the wire as a REAL ACP image, not a text marker', async () => {
+    // grok agent stdio declares promptCapabilities.image=false, but a live probe proved the
+    // channel accepts {type:'image', data, mimeType} and the model SEES the picture — the
+    // declaration is stale. Send the image through; never degrade it to a marker.
+    const m = makeManager();
+    m.spawn('t1', spawnOpts({ env: { FAKE_MODE: 'echo-prompt' } }));
+    const idle = until<any>((resolve) => m.on('idle', () => resolve(m.getEvents('t1'))));
+    m.sendMessage('t1', [
+      { type: 'text', text: 'what color?' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } },
+    ]);
+    const events = (await idle) as any[];
+    const echoed = events.filter((e) => e?.type === 'stream_event').map((e) => e.event?.delta?.text ?? '').join('');
+    const prompt = JSON.parse(echoed);
+    expect(prompt).toEqual([
+      { type: 'text', text: 'what color?' },
+      { type: 'image', data: 'QUJD', mimeType: 'image/png' },
+    ]);
   });
 
   it('kill tears the session down and isAlive flips', async () => {

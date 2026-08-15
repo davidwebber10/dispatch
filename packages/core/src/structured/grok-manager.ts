@@ -442,15 +442,21 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
   killAll(): void { for (const id of [...this.sessions.keys()]) this.kill(id); }
 }
 
-/** Map a Claude turn payload onto ACP prompt content blocks. Grok reports
- *  `promptCapabilities.image: false`, so image blocks degrade to a text marker rather than
- *  being dropped silently. */
+/** Map a Claude turn payload onto ACP prompt content blocks. Grok DECLARES
+ *  `promptCapabilities.image: false`, but a live probe proved the channel accepts
+ *  `{type:'image', data, mimeType}` and the model genuinely sees the picture — the
+ *  declaration is stale, so base64 images pass through as real ACP image blocks. Only a
+ *  url-source image (which ACP has no wire shape for) degrades to a text marker. */
 function toPrompt(content: string | ContentBlock[]): unknown[] {
   if (typeof content === 'string') return [{ type: 'text', text: content }];
   const out: unknown[] = [];
   for (const b of content) {
     if (b.type === 'text') out.push({ type: 'text', text: b.text });
-    else if (b.type === 'image') out.push({ type: 'text', text: '[image attached — this Grok channel cannot receive images]' });
+    else if (b.type === 'image') {
+      const src: any = b.source;
+      if (src?.type === 'base64' && src.data) out.push({ type: 'image', data: src.data, mimeType: src.media_type });
+      else out.push({ type: 'text', text: '[image attachment could not be delivered on this channel]' });
+    }
   }
   return out.length ? out : [{ type: 'text', text: '' }];
 }
