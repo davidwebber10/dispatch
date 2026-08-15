@@ -394,6 +394,15 @@ export class SessionService {
     const labelSource: 'user' | 'default' = label ? 'user' : 'default';
     const displayLabel = label || this.defaultTerminalLabel(sessionId, type);
 
+    // Grok is structured-only for NEW threads: its PTY/TUI never rendered well in Dispatch
+    // (mobile paging, alt-screen churn), so any creation path that doesn't name a transport
+    // gets Pretty. Applied at creation, never at spawn — existing PTY rows keep working, and
+    // an explicit `transport` in the request still wins. Skipped when the structured manager
+    // is absent (DISPATCH_GROK_PRETTY=0 falls back to PTY).
+    if (type === 'grok' && !config?.transport && this.grokStructuredManager) {
+      config = { ...(config ?? {}), transport: 'structured' };
+    }
+
     terminalsDb.create(this.db, {
       id: terminalId,
       sessionId,

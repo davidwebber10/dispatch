@@ -203,16 +203,17 @@ describe('NewThreadModal — Grok', () => {
     expect(lastInput().type).toBe('grok');
   });
 
-  it('offers Pretty for Grok — the ACP structured transport translates its stdio protocol', async () => {
+  it('Grok is Pretty-only: CLI is disabled and Pretty reads as active without a pick', async () => {
     render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: 'Grok' }));
+    expect(screen.getByRole('button', { name: 'CLI mode' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Pretty mode' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Pretty mode' })).toHaveAttribute('aria-pressed', 'true');
   });
 
-  it('sends transport:structured for a Grok thread created in Pretty mode', async () => {
+  it('sends transport:structured for a Grok thread WITHOUT the user picking a mode', async () => {
     render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: 'Grok' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Pretty mode' }));
     start();
     await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
     expect(lastInput().config.transport).toBe('structured');

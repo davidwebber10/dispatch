@@ -111,7 +111,11 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
   const canResume = harness === 'claude' || harness === 'codex';
   const showMode = harness !== 'terminal';
   const models = spec.models;
-  const prettyDisabled = !spec.pretty;
+  const prettyDisabled = !spec.modes.includes('pretty');
+  const cliDisabled = !spec.modes.includes('cli');
+  // A stale pick from a previously-selected harness must never survive onto one that
+  // doesn't offer it (Grok is pretty-only; the shell is cli-only).
+  const effectiveMode: Mode = spec.modes.includes(mode) ? mode : spec.modes[0];
 
   const loadProviders = useCallback(async () => {
     try { setProviders(await api.recheckProviders()); } catch { setProviders(null); }
@@ -125,7 +129,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
     setHarness(h.id);
     setInstallError(null);
     setModel(null); // model lists are harness-specific — reset to Default
-    if (!h.pretty) setMode('cli'); // don't carry a Pretty pick into a harness without it
+    if (!h.modes.includes(mode)) setMode(h.modes[0]); // don't carry a mode into a harness without it
   }
 
   /**
@@ -188,7 +192,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
     try {
       const config: Record<string, unknown> = {};
       // Pretty → structured transport. Only for harnesses that support it.
-      if (showMode && mode === 'pretty' && !prettyDisabled) config.transport = 'structured';
+      if (showMode && effectiveMode === 'pretty') config.transport = 'structured';
       if (harness !== 'terminal' && model) config.model = model;
       if (autoArchive) { config.autoArchive = true; config.autoArchiveMs = autoArchiveMs; }
 
@@ -317,12 +321,12 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
               <span style={labelStyle}>Mode</span>
               <div style={{ display: 'flex', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 8, padding: 3, gap: 3 }}>
                 {([['cli', 'CLI'], ['pretty', 'Pretty']] as const).map(([m, title]) => {
-                  const disabled = m === 'pretty' && prettyDisabled;
-                  const on = mode === m && !disabled;
+                  const disabled = m === 'pretty' ? prettyDisabled : cliDisabled;
+                  const on = effectiveMode === m && !disabled;
                   return (
                     <button key={m} type="button" aria-pressed={on} disabled={disabled}
                       aria-label={`${title} mode`}
-                      title={disabled ? `${spec.label} has no structured transport yet` : undefined}
+                      title={disabled ? (m === 'pretty' ? `${spec.label} has no structured transport yet` : `${spec.label} runs structured-only`) : undefined}
                       onClick={() => { if (!disabled) setMode(m); }}
                       style={{
                         flex: 1, font: '600 12px var(--font-sans)', padding: '6px 4px', borderRadius: 6,
