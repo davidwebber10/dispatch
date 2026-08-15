@@ -88,6 +88,9 @@ export class SessionService {
   /** Drives structured (app-server) sessions for codex threads; set by server wiring only
    *  when CODEX_PRETTY_ENABLED. Undefined ⇒ codex has no structured transport (Phase A). */
   private codexStructuredManager?: import('../structured/manager.js').IStructuredManager;
+  /** Drives structured (ACP `grok agent stdio`) sessions for grok threads; set by server
+   *  wiring only when GROK_PRETTY_ENABLED. Undefined ⇒ grok has only the PTY transport. */
+  private grokStructuredManager?: import('../structured/manager.js').IStructuredManager;
   /** Override for structured command (test seam: lets tests spawn fake-claude instead of real claude). */
   private structuredCommandOverride?: { command: string; args: string[] };
 
@@ -117,26 +120,7 @@ export class SessionService {
 
   setStructuredManager(m: import('../structured/manager.js').IStructuredManager): void {
     this.structuredManager = m;
-    // Persist the claude session_id (surfaced from the structured init event) onto the
-    // terminal's external_id, mirroring how the PTY path captures session ids. This is
-    // what lets us resume the SAME conversation after a daemon restart. First-write-wins
-    // for a HEALTHY identity — but a stored id whose transcript exists NOWHERE (captured
-    // from a boot that never ran a turn) is a ghost: it can never be resumed or read, and
-    // leaving it locked the terminal onto an empty history forever (the Dispatch
-    // coordinator served 0 items and every resume referenced a nonexistent session). The
-    // live process's self-reported id is authoritative over a ghost.
-    m.on('session', (terminalId: string, sessionId: string) => {
-      try {
-        const t = terminalsDb.getById(this.db, terminalId);
-        if (!t || !sessionId || t.external_id === sessionId) return;
-        if (t.external_id) {
-          const session = sessionsDb.getById(this.db, t.session_id);
-          const workDir = t.working_dir || session?.working_dir || '';
-          if (resolveTranscriptPath(workDir, t.external_id)) return; // healthy — never clobber
-        }
-        terminalsDb.updateExternalId(this.db, terminalId, sessionId);
-      } catch { /* best effort */ }
-    });
+    this.persistStructuredSessionIds(m);
     // Durable source persistence: the manager emits this once a tagged turn's `result`
     // lands (its transcript lines are guaranteed flushed by then — see manager.ts's
     // `result` handler). Resolve it to the newest not-yet-recorded real user-text uuid in
@@ -158,6 +142,35 @@ export class SessionService {
     });
   }
 
+  /**
+   * Persist a structured manager's session id (surfaced from its init/session event) onto
+   * the terminal's external_id, mirroring how the PTY path captures session ids. This is
+   * what lets us resume the SAME conversation after a daemon restart. First-write-wins
+   * for a HEALTHY identity — but a stored id whose transcript exists NOWHERE (captured
+   * from a boot that never ran a turn) is a ghost: it can never be resumed or read, and
+   * leaving it locked the terminal onto an empty history forever (the Dispatch
+   * coordinator served 0 items and every resume referenced a nonexistent session). The
+   * live process's self-reported id is authoritative over a ghost.
+   *
+   * The ghost check reads the CLAUDE transcript store, so for non-claude managers (Grok,
+   * whose ids never resolve there) an existing external_id simply always wins — which is
+   * right: a Grok id comes from session/new exactly once and never changes thereafter.
+   */
+  private persistStructuredSessionIds(m: import('../structured/manager.js').IStructuredManager): void {
+    m.on('session', (terminalId: string, sessionId: string) => {
+      try {
+        const t = terminalsDb.getById(this.db, terminalId);
+        if (!t || !sessionId || t.external_id === sessionId) return;
+        if (t.external_id) {
+          const session = sessionsDb.getById(this.db, t.session_id);
+          const workDir = t.working_dir || session?.working_dir || '';
+          if (resolveTranscriptPath(workDir, t.external_id)) return; // healthy — never clobber
+        }
+        terminalsDb.updateExternalId(this.db, terminalId, sessionId);
+      } catch { /* best effort */ }
+    });
+  }
+
   setStructuredCommandOverride(cmd: { command: string; args: string[] }): void { this.structuredCommandOverride = cmd; }
 
   /**
@@ -170,15 +183,29 @@ export class SessionService {
   }
 
   /**
+   * Wire the Grok structured (ACP) manager. Only called by server wiring when
+   * GROK_PRETTY_ENABLED — until then `structuredManagerFor('grok')` is undefined and grok
+   * threads have only the PTY transport. Unlike Codex, the Grok id must be persisted here:
+   * `session/new` mints it exactly once, and resume after a daemon restart is `session/load`
+   * by that stored external_id.
+   */
+  setGrokStructuredManager(m: import('../structured/manager.js').IStructuredManager): void {
+    this.grokStructuredManager = m;
+    this.persistStructuredSessionIds(m);
+  }
+
+  /**
    * The structured manager for a terminal type, or undefined when that type has no
    * structured transport. Both managers satisfy IStructuredManager, so every structured
    * operation routes through this one accessor:
    *   claude-code → the Claude stream-json manager
    *   codex       → the Codex app-server manager (only when CODEX_PRETTY_ENABLED)
+   *   grok        → the Grok ACP manager (only when GROK_PRETTY_ENABLED)
    */
   structuredManagerFor(type: string): import('../structured/manager.js').IStructuredManager | undefined {
     if (type === 'claude-code') return this.structuredManager;
     if (type === 'codex') return this.codexStructuredManager;
+    if (type === 'grok') return this.grokStructuredManager;
     return undefined;
   }
 
@@ -366,6 +393,15 @@ export class SessionService {
     const terminalId = uuid();
     const labelSource: 'user' | 'default' = label ? 'user' : 'default';
     const displayLabel = label || this.defaultTerminalLabel(sessionId, type);
+
+    // Grok is structured-only for NEW threads: its PTY/TUI never rendered well in Dispatch
+    // (mobile paging, alt-screen churn), so any creation path that doesn't name a transport
+    // gets Pretty. Applied at creation, never at spawn — existing PTY rows keep working, and
+    // an explicit `transport` in the request still wins. Skipped when the structured manager
+    // is absent (DISPATCH_GROK_PRETTY=0 falls back to PTY).
+    if (type === 'grok' && !config?.transport && this.grokStructuredManager) {
+      config = { ...(config ?? {}), transport: 'structured' };
+    }
 
     terminalsDb.create(this.db, {
       id: terminalId,
@@ -1828,6 +1864,28 @@ export class SessionService {
     const developerNote = this.toolsAwareness?.() ?? null;
     const structuredMcp = composeInjection(specs, { configPath: this.perTerminalMcpConfigPath(terminal.id), prompts, developerNote });
 
+    // Grok's MCP servers ride a per-thread plugin passed as `--plugin-dir` — the `grok
+    // agent` subcommand's TRUSTED plugin scope. NOT via GROK_HOME like the PTY flow: a
+    // home-injected plugin loads untrusted, and an untrusted plugin's MCP tools are
+    // visible to the model but not callable (verified live). Written with NO hooks: the
+    // manager's own turn boundaries drive status, and hook-reported Stop events on top
+    // would double-report every turn.
+    let grokPluginDir: string | undefined;
+    if (terminal.type === 'grok' && this.statusContext) {
+      try {
+        const mcpServers: Record<string, McpServerEntry> = {};
+        for (const spec of specs) {
+          mcpServers[spec.name] = { command: spec.command, args: spec.args, ...(spec.env ? { env: spec.env } : {}) };
+        }
+        const dir = writeGrokHome({
+          dir: path.join(this.statusContext.hooksDir, 'grok-homes', terminal.id),
+          realHome: path.join(os.homedir(), '.grok'),
+          mcpServers,
+        });
+        if (dir) grokPluginDir = path.join(dir, 'plugins', 'dispatch');
+      } catch { /* best-effort — a thread without injections still runs */ }
+    }
+
     const resumeSessionId = terminal.external_id || undefined;
 
     // Resolve the model up front and persist it into the terminal's config if it
@@ -1846,7 +1904,7 @@ export class SessionService {
       sc = { command: this.structuredCommandOverride.command, args: [...this.structuredCommandOverride.args] };
       if (resumeSessionId) sc.args.push('-r', resumeSessionId);
     } else {
-      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config), resumeSessionId, model: resolvedModel });
+      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config), resumeSessionId, model: resolvedModel, grokPluginDir });
       if (!built) throw new Error('structured transport not supported for this provider');
       sc = built;
     }

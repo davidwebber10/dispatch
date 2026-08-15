@@ -20,19 +20,19 @@ export interface Harness {
   /** Which detected CLI backs it, or null for the plain shell (always available). */
   provider: ProviderName | null;
   /**
-   * Whether this harness can run the structured "Pretty" transport.
-   *
-   * Grok is false: `grok agent stdio` speaks ACP, and nothing translates that into the
-   * Claude-shaped event stream ChatView consumes — so Pretty would spawn and hang.
+   * The modes this harness can run, in display order. `cli` is the raw terminal (PTY),
+   * `pretty` the structured chat transport. Grok is pretty-only: its TUI never rendered
+   * well in Dispatch (mobile paging, alt-screen churn), so the PTY option is gone for new
+   * Grok threads — existing PTY threads keep working.
    */
-  pretty: boolean;
+  modes: ReadonlyArray<'cli' | 'pretty'>;
   /** Models offered for it. `null` means "let the CLI choose". */
   models: { label: string; model: string | null }[];
 }
 
 export const HARNESSES: Harness[] = [
   {
-    id: 'claude', label: 'Claude Code', type: 'claude-code', provider: 'claude', pretty: true,
+    id: 'claude', label: 'Claude Code', type: 'claude-code', provider: 'claude', modes: ['cli', 'pretty'],
     models: [
       { label: 'Default', model: null },
       { label: 'Fable', model: 'fable' },
@@ -42,7 +42,7 @@ export const HARNESSES: Harness[] = [
     ],
   },
   {
-    id: 'codex', label: 'Codex', type: 'codex', provider: 'codex', pretty: true,
+    id: 'codex', label: 'Codex', type: 'codex', provider: 'codex', modes: ['cli', 'pretty'],
     models: [
       { label: 'Default', model: null },
       { label: '5.6 Sol', model: 'gpt-5.6-sol' },
@@ -51,13 +51,14 @@ export const HARNESSES: Harness[] = [
     ],
   },
   {
-    id: 'grok', label: 'Grok', type: 'grok', provider: 'grok', pretty: false,
+    // Pretty-ONLY since the ACP transport landed (grok agent stdio → GrokStructuredSessionManager).
+    id: 'grok', label: 'Grok', type: 'grok', provider: 'grok', modes: ['pretty'],
     models: [
       { label: 'Default', model: null },
       { label: 'Grok 4.5', model: 'grok-4.5' },
     ],
   },
-  { id: 'terminal', label: 'Terminal', type: 'shell', provider: null, pretty: false, models: [] },
+  { id: 'terminal', label: 'Terminal', type: 'shell', provider: null, modes: ['cli'], models: [] },
 ];
 
 /** Wire types for the agent CLIs — everything except the plain shell. */

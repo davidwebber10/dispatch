@@ -101,6 +101,10 @@ export interface SessionProvider {
    * the structured stream-json flags + persona + MCP wiring.
    * `model` pins the CLI model for this thread (e.g. a per-agent-type tier) via
    * `--model <alias>`; omitted flag means the CLI's default model.
+   * `grokPluginDir` (Grok only) is the per-thread plugin directory carrying the MCP
+   * servers, passed as `--plugin-dir` on the `grok agent` subcommand — the TRUSTED plugin
+   * scope. The same plugin under GROK_HOME loads untrusted, which leaves its MCP tools
+   * visible but uncallable (verified live).
    */
-  buildStructuredCommand?(args: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string; model?: string }): { command: string; args: string[] };
+  buildStructuredCommand?(args: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string; model?: string; grokPluginDir?: string }): { command: string; args: string[] };
 }
