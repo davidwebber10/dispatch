@@ -788,26 +788,31 @@ function AssistantText({ text }: { text: string }) {
   return <InsightText source={text} scheme="global" />;
 }
 
-// The collapsed row carries a one-line PREVIEW of the thought (dimmer than the label, ellipsized),
-// not just the bare word "Thinking" — a Grok turn interleaves many thinking blocks between tool
-// calls, and a column of identical "Thinking" rows is unscannable. Expanding swaps the preview for
-// the full text.
+// Collapsed, the row IS the preview: brain icon + the thought's first words in one dim italic
+// line (the icon alone says "thinking" — pairing the word with a preview read as two competing
+// texts). A Grok turn interleaves many thinking blocks between tool calls, so a column of
+// identical "Thinking" rows is unscannable, but so is a column of full-width ragged prose —
+// hence the single ellipsized line, width-capped so it doesn't stretch edge to edge. The word
+// "Thinking" returns as the header only while the row is open.
 function Thinking({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   if (!text.trim()) return null;
-  const preview = text.trim().replace(/\s+/g, ' ');
+  // One flat line: collapse whitespace, drop backtick fences — markdown isn't rendered here,
+  // so literal backticks are just clutter in a preview.
+  const preview = text.trim().replace(/\s+/g, ' ').replace(/`/g, '');
   return (
     <div>
       <button
         onClick={() => setOpen((o) => !o)}
-        style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', minWidth: 0, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-secondary)', font: 'italic 400 12.5px var(--font-sans)', padding: 0 }}
+        style={{ display: 'flex', alignItems: 'center', gap: 6, maxWidth: '100%', minWidth: 0, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', font: 'italic 400 12.5px var(--font-sans)', padding: 0 }}
       >
         <CaretRight size={11} weight="bold" style={{ flexShrink: 0, transition: 'transform .12s', transform: open ? 'rotate(90deg)' : 'none' }} />
         <Brain size={13} weight="duotone" style={{ flexShrink: 0 }} />
-        <span style={{ flexShrink: 0 }}>Thinking</span>
-        {!open && (
-          <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--color-text-tertiary)' }}>
-            {preview}
+        {open ? (
+          <span style={{ flexShrink: 0, color: 'var(--color-text-secondary)' }}>Thinking</span>
+        ) : (
+          <span style={{ minWidth: 0, maxWidth: 520, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {preview || 'Thinking'}
           </span>
         )}
       </button>
