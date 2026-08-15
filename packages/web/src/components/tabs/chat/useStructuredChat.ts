@@ -241,7 +241,24 @@ function nextRevealed(revealed: number, targetLen: number): number {
  * the footer from `result`. The user's own turns arrive as echoed `user` text
  * blocks (the backend buffers them), so reconnect replay restores them.
  */
-export function useStructuredChat(terminalId: string, sessionId?: string): StructuredChat {
+export function useStructuredChat(
+  terminalId: string,
+  sessionId?: string,
+  opts?: {
+    /**
+     * False for a harness whose getConversation is `unsupported` (Grok): there is never
+     * REST history to page, so the whole older-pages machinery stays off — no optimistic
+     * hasMore (which rendered a permanently-inert "Load earlier messages" button, since
+     * grok items carry no transcript uuid to anchor on), no bootstrap fetches. The full
+     * ws-ring replay IS the recoverable history for such threads. Defaults to true.
+     */
+    pageableHistory?: boolean;
+  },
+): StructuredChat {
+  const pageable = opts?.pageableHistory !== false;
+  // Read by the reset paths inside effects/callbacks keyed only on terminalId.
+  const pageableRef = useRef(pageable);
+  pageableRef.current = pageable;
   const [items, setItems] = useState<ConvItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [model, setModel] = useState<string | undefined>();
@@ -262,9 +279,9 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
   // Older-history pagination (loadOlder). Refs mirror the state so the stable loadOlder
   // callback below always reads the CURRENT hasMore/loadingOlder without needing them in
   // its dependency array (which would otherwise change its identity on every fetch).
-  const [hasMore, setHasMore] = useState(true); // optimistic until the first loadOlder() settles
+  const [hasMore, setHasMore] = useState(pageable); // optimistic until the first loadOlder() settles
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const hasMoreRef = useRef(true);
+  const hasMoreRef = useRef(pageable);
   const loadingOlderRef = useRef(false);
   const oldestLineRef = useRef<number | undefined>(undefined); // REST `before` anchor; undefined = not yet probed
   const pageTokenRef = useRef(0); // bumped on terminal switch to discard a stale in-flight fetch
@@ -323,7 +340,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
     if (!terminalId) {
       setItems([]); setBusy(false); setModel(undefined); setPending(null);
       setContextTokens(undefined); setCompacting(false); setCompactResult(null); setApiRetry(null);
-      hasMoreRef.current = true; setHasMore(true);
+      hasMoreRef.current = pageableRef.current; setHasMore(pageableRef.current);
       loadingOlderRef.current = false; setLoadingOlder(false);
       oldestLineRef.current = undefined; pageTokenRef.current += 1;
       inactiveHydratedRef.current = false; anchorBlockedRef.current = false;
@@ -331,7 +348,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
     }
     setItems([]); setBusy(false); setModel(undefined); setPending(null);
     setContextTokens(undefined); setCompacting(false); setCompactResult(null); setApiRetry(null);
-    hasMoreRef.current = true; setHasMore(true);
+    hasMoreRef.current = pageableRef.current; setHasMore(pageableRef.current);
     loadingOlderRef.current = false; setLoadingOlder(false);
     oldestLineRef.current = undefined; pageTokenRef.current += 1; // discard any in-flight fetch from the previous thread
     inactiveHydratedRef.current = false; anchorBlockedRef.current = false;
@@ -416,7 +433,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
         // Re-arm pagination too: `items` above is being fully rebuilt from a fresh replay,
         // so a stale REST anchor from before the reconnect could otherwise skip a gap of
         // history between the new tail replay and where the old anchor left off.
-        hasMoreRef.current = true; setHasMore(true);
+        hasMoreRef.current = pageableRef.current; setHasMore(pageableRef.current);
         loadingOlderRef.current = false; setLoadingOlder(false);
         oldestLineRef.current = undefined; pageTokenRef.current += 1;
         inactiveHydratedRef.current = false; anchorBlockedRef.current = false;

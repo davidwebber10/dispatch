@@ -1131,3 +1131,35 @@ test('apiRetry clears on streaming progress and resets on terminal switch', () =
   rerender({ id: 't2' });
   expect(result.current.apiRetry).toBeNull();
 });
+
+// ---- Harness with no pageable transcript (Grok) --------------------------------------------
+//
+// Grok's getConversation is `unsupported` — there is never REST history to page, so the
+// older-pages machinery must not run at all: no optimistic hasMore (which rendered a
+// "Load earlier messages" button on a brand-new thread, permanently inert because grok
+// items carry no transcript uuid to anchor on), no bootstrap fetches, no anchorless bails.
+// The full ws-ring replay IS the whole recoverable history for these threads.
+
+test('pageableHistory:false → hasMore is false from the start and loadOlder never fetches', () => {
+  const spy = vi.spyOn(api, 'getConversation');
+  const { result } = renderHook(() => useStructuredChat('t1', 's1', { pageableHistory: false }));
+  expect(result.current.hasMore).toBe(false);
+  act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: 'hello' } }));
+  expect(result.current.hasMore).toBe(false);
+  act(() => { result.current.loadOlder(); });
+  expect(spy).not.toHaveBeenCalled();
+});
+
+test('pageableHistory:false survives a thread switch (reset does not resurrect optimism)', () => {
+  const { result, rerender } = renderHook(
+    ({ tid }) => useStructuredChat(tid, 's1', { pageableHistory: false }),
+    { initialProps: { tid: 't1' } },
+  );
+  rerender({ tid: 't2' });
+  expect(result.current.hasMore).toBe(false);
+});
+
+test('default (no opts) keeps the optimistic hasMore for pageable harnesses', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  expect(result.current.hasMore).toBe(true);
+});

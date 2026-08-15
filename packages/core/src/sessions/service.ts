@@ -698,6 +698,17 @@ export class SessionService {
     return terminalsDb.getById(this.db, terminalId)?.type === 'codex';
   }
 
+  /**
+   * True when anything the ws replay's `tail=N` bound cuts is recoverable by paging the
+   * REST transcript (getConversation). Grok is the odd one out: it has NO pageable
+   * transcript (unsupported), so its threads must replay the full ring or the cut history
+   * is simply gone from the UI. See ws/structured.ts's `restCanPageHistory`.
+   */
+  historyRestPageable(terminalId: string): boolean {
+    const type = terminalsDb.getById(this.db, terminalId)?.type;
+    return type === 'claude-code' || type === 'codex';
+  }
+
   getConversation(
     terminalId: string,
     opts: { since?: number; before?: number; beforeUuid?: string; limit?: number } = {},

@@ -636,6 +636,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
           ws, request, manager,
           (tid) => sessionService.ensureStructuredAlive(tid),
           (tid) => sessionService.historyOwnedByRest(tid),
+          (tid) => sessionService.historyRestPageable(tid),
         );
       });
     } else if (url.match(/\/api\/terminals\/[^/]+\/ws/) || url.match(/\/api\/sessions\/[^/]+\/terminal/)) {

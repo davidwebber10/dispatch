@@ -51,7 +51,12 @@ async function fileToBase64(file: File): Promise<string> {
 export function ChatView({ terminalId }: { terminalId: string }) {
   const tab = useTabs((s) => findTerminal(s.byProject, terminalId));
   const sessionId = tab?.sessionId;
-  const { items, busy, model, send, pending, answer, contextTokens, compacting, compactResult, apiRetry, compact, hasMore, loadingOlder, loadOlder } = useStructuredChat(terminalId, sessionId);
+  // Grok has no pageable REST transcript (getConversation → unsupported): its full ws-ring
+  // replay IS the whole recoverable history, so the older-pages machinery stays off — no
+  // phantom "Load earlier messages" on a thread with nothing earlier to load. An unresolved
+  // tab keeps the pageable default (claude-code is the common case).
+  const { items, busy, model, send, pending, answer, contextTokens, compacting, compactResult, apiRetry, compact, hasMore, loadingOlder, loadOlder } =
+    useStructuredChat(terminalId, sessionId, { pageableHistory: tab?.type !== 'grok' });
 
   // Advice is about THIS resume, so "not now" lives in component state rather than
   // storage: a later resume of the same thread (older and larger still) should ask again.

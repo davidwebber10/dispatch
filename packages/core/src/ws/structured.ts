@@ -54,6 +54,15 @@ export function handleStructuredConnection(
    * the same path an archived thread already takes.
    */
   restOwnsHistory?: (terminalId: string) => boolean,
+  /**
+   * True when the client can recover anything the `tail=N` bound cuts by paging the REST
+   * transcript (loadOlder) — Claude Code. For a harness with NO pageable transcript (Grok:
+   * getConversation → unsupported), the bound would silently AMPUTATE history — one chatty
+   * turn (~1600 word-delta events) pushes the whole conversation above a 200-event tail and
+   * a reopened thread shows nothing but the result footer — so such threads replay the FULL
+   * ring instead. Absent ⇒ the bound applies (the pre-Grok default).
+   */
+  restCanPageHistory?: (terminalId: string) => boolean,
 ): void {
   const m = req.url?.match(/\/api\/terminals\/([^/]+)\/structured-ws/);
   const id = m?.[1];
@@ -71,9 +80,12 @@ export function handleStructuredConnection(
   // A predicate that throws must never silently drop a thread's history — replay by default.
   let restOwned = false;
   try { restOwned = restOwnsHistory?.(id) === true; } catch { restOwned = false; }
+  // Same failure posture: on a throwing predicate, prefer the full replay over amputation.
+  let tailRecoverable = restCanPageHistory === undefined;
+  try { tailRecoverable = restCanPageHistory ? restCanPageHistory(id) === true : tailRecoverable; } catch { tailRecoverable = false; }
   const events = restOwned
     ? []
-    : (Number.isFinite(tailParam) && tailParam > 0 ? manager.getEventsTail(id, tailParam) : manager.getEvents(id));
+    : (tailRecoverable && Number.isFinite(tailParam) && tailParam > 0 ? manager.getEventsTail(id, tailParam) : manager.getEvents(id));
   // Nothing RENDERABLE to replay ⇒ the client would sit on an empty view: the live channel
   // only carries FUTURE turns, and any history not in the ring never reaches it this way.
   // Tell the client to hydrate its initial view from the REST transcript instead. Covers a

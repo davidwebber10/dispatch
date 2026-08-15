@@ -129,3 +129,43 @@ describe('replay when REST owns the thread history', () => {
     expect(sent).toEqual([REAL_TURN]);
   });
 });
+
+// ---- The tail bound vs harnesses REST cannot page (Grok) ----
+//
+// `?tail=N` exists so a long Claude thread opens fast — anything the tail cuts is
+// recoverable through REST paging (loadOlder). Grok has NO pageable transcript
+// (getConversation → unsupported), so for it the tail bound silently AMPUTATES history:
+// one chatty turn (~1600 word-delta events) pushed the whole conversation above the
+// 200-event tail and a reopened thread showed nothing but the result footer.
+
+describe('tail bound applies only when REST can page what it cuts', () => {
+  const bigRing = Array.from({ length: 500 }, (_, i) => ({
+    type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: `w${i}` } },
+  }));
+
+  it('replays the FULL ring, ignoring tail, when restCanPageHistory says false', () => {
+    const { ws, sent } = fakeWs();
+    handleStructuredConnection(ws, REQ, ringManager(bigRing), undefined, () => false, () => false);
+    // sentinel may precede the replay (deltas alone are non-renderable); the replay itself
+    // must be the WHOLE ring, not the last 200.
+    expect(sent.filter((e) => e.type === 'stream_event')).toHaveLength(500);
+  });
+
+  it('keeps the bounded tail when restCanPageHistory says true (Claude)', () => {
+    const { ws, sent } = fakeWs();
+    handleStructuredConnection(ws, REQ, ringManager(bigRing), undefined, () => false, () => true);
+    expect(sent.filter((e) => e.type === 'stream_event')).toHaveLength(200);
+  });
+
+  it('keeps the bounded tail when no predicate is supplied (unchanged default)', () => {
+    const { ws, sent } = fakeWs();
+    handleStructuredConnection(ws, REQ, ringManager(bigRing), undefined, () => false);
+    expect(sent.filter((e) => e.type === 'stream_event')).toHaveLength(200);
+  });
+
+  it('a throwing predicate falls back to the FULL replay — never amputate on error', () => {
+    const { ws, sent } = fakeWs();
+    handleStructuredConnection(ws, REQ, ringManager(bigRing), undefined, () => false, () => { throw new Error('db gone'); });
+    expect(sent.filter((e) => e.type === 'stream_event')).toHaveLength(500);
+  });
+});
