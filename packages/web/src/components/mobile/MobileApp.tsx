@@ -16,7 +16,7 @@ import { AgentPane } from '../agents/AgentPane';
 import { EditAgentModal } from '../agents/EditAgentModal';
 import { MobileSettingsList, MobileSettingsSection } from '../settings/MobileSettings';
 import { settingsSection, type SettingsSectionKey } from '../settings/sections';
-import { useTabs } from '../../stores/tabs';
+import { findTerminal, useTabs } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
 import { useAgentUI } from '../../stores/agentUI';
 import { useReconnect } from '../../stores/reconnect';
@@ -308,7 +308,7 @@ export function MobileApp() {
 
           {/* Level 2 — the thread terminal or the agent dashboard */}
           <div style={{ ...slot, overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative' }}>
-            {leaf === 'tab' && leafTabId && (
+            {leaf === 'tab' && leafTabId && findTerminal(byProject, leafTabId)?.type !== 'grok' && (
               <div style={{ position: 'absolute', top: 8, right: 10, zIndex: 5, pointerEvents: 'none', display: 'flex', alignItems: 'center', lineHeight: 1, background: 'rgba(10,10,12,.6)', borderRadius: 8, padding: '5px 9px', backdropFilter: 'blur(4px)' }}>
                 <ConnectionStatus />
               </div>

@@ -58,7 +58,7 @@ import { TerminalTab } from './TerminalTab';
 import { api } from '../../api/client';
 import { useSettings } from '../../stores/settings';
 import { INITIAL_REPLAY_MOBILE, MAX_REPLAY, nextReplayStep } from '../../api/terminal-socket';
-import { WHEEL_UP } from '../../lib/ptyWheel';
+import { PAGE_UP, WHEEL_UP } from '../../lib/ptyWheel';
 
 type FakeMeta = { startOffset: number; totalWritten: number; complete: boolean };
 type FakeOpts = { terminalId: string; replayBytes?: number; onData: (c: string) => void; onMeta?: (m: FakeMeta) => void; onReset?: () => void; onClose?: () => void };
@@ -863,9 +863,8 @@ function swipe(el: Element, fromY: number, toY: number) {
   fireEvent.touchEnd(el);
 }
 
-test('on an alt-screen TUI, a mobile swipe sends mouse-wheel ticks to the PTY instead of scrolling xterm', async () => {
-  // Grok (and Claude/Codex CLI) run in the alternate buffer. xterm has no
-  // scrollback there — the overlay used to rubber-band and swallow the gesture.
+test('on an alt-screen TUI, a mobile swipe sends PageUp to the PTY instead of scrolling xterm', async () => {
+  // Grok's prompt swallows mouse-wheel; PageUp/PageDown work in both focus modes.
   isMobileMock.mockReturnValue(true);
   const { factory, created } = makeSocketFactory();
   const { getByTestId } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
@@ -874,15 +873,15 @@ test('on an alt-screen TUI, a mobile swipe sends mouse-wheel ticks to the PTY in
   const term = instances[0];
   term.buffer.active.type = 'alternate';
   const overlay = getByTestId('term-scroll-overlay');
-  act(() => { swipe(overlay, 200, 260); }); // finger down → see older
+  act(() => { swipe(overlay, 200, 290); }); // 90px finger-down → one PageUp
 
   expect(created[0].send).toHaveBeenCalled();
   const bytes = created[0].send.mock.calls.map((c) => c[0]).join('');
-  expect(bytes).toContain(WHEEL_UP);
+  expect(bytes).toContain(PAGE_UP);
   expect(term.scrolledLines).toBe(0);
 });
 
-test('on the normal buffer, a mobile swipe still scrolls xterm and does not write wheel CSI', async () => {
+test('on the normal buffer, a mobile swipe still scrolls xterm and does not write page keys', async () => {
   isMobileMock.mockReturnValue(true);
   const { factory, created } = makeSocketFactory();
   const { getByTestId } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
@@ -892,11 +891,30 @@ test('on the normal buffer, a mobile swipe still scrolls xterm and does not writ
   // Give xterm somewhere to scroll so the gesture is not just a rubber-band.
   instances[0].buffer.active.baseY = 40;
   instances[0].buffer.active.viewportY = 20;
-  act(() => { swipe(getByTestId('term-scroll-overlay'), 200, 260); });
+  act(() => { swipe(getByTestId('term-scroll-overlay'), 200, 290); });
 
   expect(instances[0].scrolledLines).not.toBe(0);
   const bytes = created[0].send.mock.calls.map((c) => c[0]).join('');
+  expect(bytes).not.toContain(PAGE_UP);
   expect(bytes).not.toContain(WHEEL_UP);
+});
+
+test('a Grok thread on the normal buffer still pages the PTY (it is a TUI either way)', async () => {
+  isMobileMock.mockReturnValue(true);
+  vi.spyOn(api, 'getTerminal').mockResolvedValue({ id: 't1', sessionId: 's1', type: 'grok', workingDir: '/p/x', pid: 1, status: 'working' } as any);
+  const { factory, created } = makeSocketFactory();
+  const { getByTestId } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+  await waitFor(() => expect(document.body.textContent).toContain('PgUp'));
+
+  instances[0].buffer.active.type = 'normal';
+  instances[0].buffer.active.baseY = 40;
+  instances[0].buffer.active.viewportY = 20;
+  act(() => { swipe(getByTestId('term-scroll-overlay'), 200, 290); });
+
+  const bytes = created[0].send.mock.calls.map((c) => c[0]).join('');
+  expect(bytes).toContain(PAGE_UP);
+  expect(instances[0].scrolledLines).toBe(0);
 });
 
 test('a Grok thread offers Page Up / Page Down on the mobile key row', async () => {
@@ -906,4 +924,37 @@ test('a Grok thread offers Page Up / Page Down on the mobile key row', async () 
   const { findByTitle } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
   expect(await findByTitle('Page up')).toBeTruthy();
   expect(await findByTitle('Page down')).toBeTruthy();
+});
+
+test('returning to the foreground refits and notifies the PTY so a TUI redraws', async () => {
+  // iOS often restores the same layout box, so the size-check in scheduleFit
+  // would skip. Grok then keeps the drawing it made for the backgrounded
+  // viewport — a tiny card in a sea of empty rows.
+  isMobileMock.mockReturnValue(true);
+  const { factory, created } = makeSocketFactory();
+  const { getByTestId } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  const host = getByTestId('term-host');
+  Object.defineProperty(host, 'clientWidth', { configurable: true, value: 390 });
+  Object.defineProperty(host, 'clientHeight', { configurable: true, value: 640 });
+  // Drain the mount-time fit so the assertion below is only the resume path.
+  await act(async () => { await new Promise((r) => requestAnimationFrame(r)); });
+  const before = created[0].resize.mock.calls.length;
+
+  Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+  act(() => { document.dispatchEvent(new Event('visibilitychange')); });
+  await act(async () => { await new Promise((r) => requestAnimationFrame(r)); });
+
+  expect(created[0].resize.mock.calls.length).toBeGreaterThan(before);
+});
+
+test('a Grok thread on mobile is flush — no card margin or host inset', async () => {
+  isMobileMock.mockReturnValue(true);
+  vi.spyOn(api, 'getTerminal').mockResolvedValue({ id: 't1', sessionId: 's1', type: 'grok', workingDir: '/p/x', pid: 1, status: 'working' } as any);
+  const { factory } = makeSocketFactory();
+  const { getByTestId } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(['0', '0px']).toContain(getByTestId('term-host').style.inset));
+  expect(getByTestId('term-frame').style.margin).toBe('');
+  expect(getByTestId('term-frame').style.borderRadius).toBe('');
 });

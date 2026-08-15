@@ -4,6 +4,7 @@ import { MobileApp } from './MobileApp';
 import { useTabs } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
 import { useSettings } from '../../stores/settings';
+import { useConnection } from '../../stores/connection';
 import { api } from '../../api/client';
 import * as sock from '../../api/structured-socket';
 
@@ -83,6 +84,22 @@ describe('MobileApp header — CLI ⇄ Pretty transport switch', () => {
     seedThreadAt('/', { type: 'claude-code', externalId: 'e1', config: { transport: 'structured' } });
     render(<MobileApp />);
     expect(screen.queryByRole('group', { name: 'Transport' })).not.toBeInTheDocument();
+  });
+});
+
+describe('MobileApp — Grok thread chrome', () => {
+  beforeEach(() => { useConnection.setState({ status: 'open' }); });
+
+  it('hides the Connected overlay on a Grok thread so it does not sit on the TUI header', () => {
+    seedThreadAt('/p/s1/t/t1', { type: 'grok', externalId: 'e1', config: {} });
+    render(<MobileApp />);
+    expect(screen.queryByText('Connected')).not.toBeInTheDocument();
+  });
+
+  it('keeps the Connected overlay on a Claude CLI thread', () => {
+    seedThreadAt('/p/s1/t/t1', { type: 'claude-code', externalId: 'e1', config: {} });
+    render(<MobileApp />);
+    expect(screen.getByText('Connected')).toBeInTheDocument();
   });
 });
 

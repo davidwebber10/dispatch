@@ -15,7 +15,8 @@ import { useSettings } from '../../stores/settings';
 import { useDictation } from '../../hooks/useDictation';
 import { DictationControl } from '../dictation/DictationControl';
 import { InputActionsMenu } from '../dictation/InputActionsMenu';
-import { consumeWheelTicks, isAltBuffer } from '../../lib/ptyWheel';
+import { consumePageTicks, shouldPtyScroll } from '../../lib/ptyWheel';
+import { findTerminal, useTabs } from '../../stores/tabs';
 
 type SoftKey = { label: string; seq: string; title?: string; Icon?: Icon };
 // Slash commands live in a searchable sheet behind the "/" key. Run-commands end
@@ -59,9 +60,9 @@ const CLAUDE_ACTIONS: SoftKey[] = [
   { label: '⌃O', seq: '\x0f', title: 'Ctrl-O' },
   { label: '⌃E', seq: '\x05', title: 'Ctrl-E' },
 ];
-// Grok's fullscreen TUI owns its own scrollback (alt screen). Page Up/Down
-// work even while the prompt is focused — the swipe path sends mouse-wheel
-// ticks; these keys are the tap fallback.
+// Grok's fullscreen TUI owns its own scrollback. Page Up/Down work even while
+// the prompt is focused (mouse-wheel does not). The swipe path sends these
+// keys; the buttons are the tap fallback.
 const GROK_ACTIONS: SoftKey[] = [
   { label: 'esc', seq: '\x1b', title: 'Escape' }, ENTER, ...UP_DOWN,
   { label: 'PgUp', seq: '\x1b[5~', title: 'Page up' },
@@ -126,6 +127,10 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
   const sockRef = useRef<ReturnType<typeof openTerminalSocket> | null>(null);
   const termRef = useRef<XTerm | null>(null);
   const [meta, setMeta] = useState<Terminal | null>(null);
+  const cachedType = useTabs((s) => findTerminal(s.byProject, terminalId)?.type);
+  const termType = cachedType ?? meta?.type;
+  const typeRef = useRef(termType);
+  typeRef.current = termType;
   const [drop, setDrop] = useState(false);
   const [note, setNote] = useState('');
   const [atBottom, setAtBottom] = useState(true);
@@ -140,6 +145,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashQuery, setSlashQuery] = useState('');
   const isMobile = useIsMobile();
+  const grokFlush = isMobile && termType === 'grok';
   const termFontSize = useSettings((s) => s.fontSize);
   const termScrollback = useSettings((s) => s.scrollback);
   const ptyAutocorrect = useSettings((s) => s.ptyAutocorrect);
@@ -463,6 +469,22 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     term.onData((d) => sockRef.current?.send(d));
 
     let lastW = -1, lastH = -1, lastCols = -1, lastRows = -1, pending = false;
+    const applyFit = (opts?: { alwaysNotify?: boolean }) => {
+      const el = hostRef.current;
+      // Skip while backgrounded: iOS reports a collapsed visual viewport and a
+      // fit here would tell Grok it is 10×8. We refit on the way back instead.
+      if (disposed || !el || document.hidden) return;
+      const w = el.clientWidth, h = el.clientHeight;
+      if (w === 0 || h === 0) return;
+      try { fit.fit(); } catch { return; }
+      lastW = w; lastH = h;
+      const changed = term.cols !== lastCols || term.rows !== lastRows;
+      if (changed || opts?.alwaysNotify) {
+        lastCols = term.cols; lastRows = term.rows;
+        sockRef.current?.resize(term.cols, term.rows);
+      }
+      rowMeasureRef.current();
+    };
     const scheduleFit = () => {
       if (pending) return;
       pending = true;
@@ -470,31 +492,14 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
         pending = false;
         const el = hostRef.current;
         if (disposed || !el) return;
-        const w = el.clientWidth, h = el.clientHeight;
-        if (w === lastW && h === lastH) return;
-        lastW = w; lastH = h;
-        if (w === 0 || h === 0) return;
-        try { fit.fit(); } catch { return; }
-        if (term.cols !== lastCols || term.rows !== lastRows) {
-          lastCols = term.cols; lastRows = term.rows;
-          sockRef.current?.resize(term.cols, term.rows);
-        }
-        rowMeasureRef.current();
+        if (el.clientWidth === lastW && el.clientHeight === lastH) return;
+        applyFit();
       });
     };
 
-    // Force a refit even when the container size is unchanged (e.g. font-size change).
-    forceFitRef.current = () => {
-      const el = hostRef.current;
-      if (disposed || !el || el.clientWidth === 0 || el.clientHeight === 0) return;
-      try { fit.fit(); } catch { return; }
-      lastW = el.clientWidth; lastH = el.clientHeight;
-      if (term.cols !== lastCols || term.rows !== lastRows) {
-        lastCols = term.cols; lastRows = term.rows;
-        sockRef.current?.resize(term.cols, term.rows);
-      }
-      rowMeasureRef.current();
-    };
+    // Force a refit even when the container size is unchanged (font-size, or
+    // returning from background — iOS often restores the same box).
+    forceFitRef.current = () => applyFit({ alwaysNotify: true });
 
     requestAnimationFrame(() => { if (!disposed) { scheduleFit(); try { term.focus(); } catch { /* jsdom */ } } });
 
@@ -504,6 +509,15 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       ro.observe(hostRef.current);
     }
     window.addEventListener('resize', scheduleFit);
+    const vv = window.visualViewport;
+    vv?.addEventListener('resize', scheduleFit);
+    const onForeground = () => {
+      if (document.hidden) return;
+      // iOS applies the restored layout a frame after visibilitychange.
+      requestAnimationFrame(() => { if (!disposed) applyFit({ alwaysNotify: true }); });
+    };
+    document.addEventListener('visibilitychange', onForeground);
+    window.addEventListener('pageshow', onForeground);
 
     // --- Sub-pixel smooth touch scrolling (mobile) ---
     // xterm's DOM renderer only repaints in whole rows, so every scroll path it
@@ -566,13 +580,15 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       };
       springId = requestAnimationFrame(step);
     };
+    const ptyScroll = () => shouldPtyScroll(term.buffer.active.type, typeRef.current);
     const scrollByPx = (px: number) => {
       const h = rowHeight || 17;
-      // Alternate buffer: the app (Grok fullscreen, Claude/Codex CLI) owns
-      // scrolling. xterm has no history there — send SGR wheel ticks instead.
-      // Normal buffer keeps the existing sub-pixel xterm path (shell, --minimal).
-      if (isAltBuffer(term.buffer.active.type)) {
-        const next = consumeWheelTicks(tuiAcc, px, h);
+      // Grok (always) and any alt-screen TUI own their own scrollback. Mouse-wheel
+      // CSI is ignored while Grok's prompt is focused — which is the idle state —
+      // so we send Page Up/Down, which the TUI documents as working in both
+      // focus modes. The normal-buffer xterm path stays for shell / --minimal.
+      if (ptyScroll()) {
+        const next = consumePageTicks(tuiAcc, px);
         tuiAcc = next.accPx;
         if (next.seq) sockRef.current?.send(next.seq);
         return;
@@ -620,6 +636,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       e.preventDefault();
     };
     const onTouchEnd = () => {
+      if (ptyScroll()) { tuiAcc = 0; return; } // page keys are discrete — no inertial extra pages
       if (overscroll !== 0) { springBack(); return; } // released mid rubber-band → bounce home
       if (!moved) return; // terminal is non-interactive on mobile — a tap does nothing (type via the input bar)
       let v = Math.max(-12, Math.min(12, vel));
@@ -675,6 +692,9 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       offRender.dispose();
       ro?.disconnect();
       window.removeEventListener('resize', scheduleFit);
+      vv?.removeEventListener('resize', scheduleFit);
+      document.removeEventListener('visibilitychange', onForeground);
+      window.removeEventListener('pageshow', onForeground);
       // If a rebuild is mid-flight at unmount time, abort it first so its 10s
       // stall timer is cleared here rather than firing up to 10s after unmount.
       activeRebuildAbort?.();
@@ -750,13 +770,14 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
           drives the flex layout width (which previously blew the column out).
           On mobile the terminal is a rounded card with a thin frame (the pane bg
           shows through the 2px margin). */}
-      <div style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', ...(isMobile ? { margin: '2px 8px', borderRadius: 12, background: 'var(--color-terminal)' } : {}) }}>
+      <div data-testid="term-frame" style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', background: isMobile ? 'var(--color-terminal)' : undefined, ...(isMobile && !grokFlush ? { margin: '2px 8px', borderRadius: 12 } : {}) }}>
         {/* inset (not padding): FitAddon measures the host's width, and padding on
             the host makes it over-count columns so the right edge clips. On mobile
             the right inset is trimmed: xterm's column quantization + scrollbar leave
             ~7px unused on the right, so a smaller right inset re-centres the text
-            (and gains a column or two of width). */}
-        <div ref={hostRef} style={{ position: 'absolute', ...(isMobile ? { top: 0, bottom: 12, left: 3, right: 3 } : { inset: 15 }) }} />
+            (and gains a column or two of width). Grok is a full-screen TUI — flush
+            it so the card chrome does not steal columns. */}
+        <div ref={hostRef} data-testid="term-host" style={{ position: 'absolute', ...(grokFlush ? { inset: 0 } : isMobile ? { top: 0, bottom: 12, left: 3, right: 3 } : { inset: 15 }) }} />
         {/* Stable transparent touch surface (mobile): the gesture lands here, never
             on the xterm spans that get destroyed on every repaint. Sits above the
             terminal but below the jump-to-latest button. */}
