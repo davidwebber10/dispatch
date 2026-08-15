@@ -183,6 +183,12 @@ export class GrokTranslator {
     // web's whole-assistant reconcile updates the existing row's input in place (matched by
     // tool id), so the Bash card shows the actual command instead of an empty input.
     if (status === 'in_progress' && update?.rawInput && !this.resultEmitted.has(id)) {
+      // Progress frames repeat with the SAME rawInput several times per call (verified
+      // live) — re-emit only when the input actually changed, or the ring carries three
+      // identical copies of every tool_use.
+      const serialized = JSON.stringify(update.rawInput);
+      if (this.lastInputEmitted.get(id) === serialized) return [];
+      this.lastInputEmitted.set(id, serialized);
       const name = this.toolNames.get(id) ?? update?.title ?? 'tool';
       return [{
         kind: 'event',
@@ -200,6 +206,8 @@ export class GrokTranslator {
 
   /** tool_call id → name, for re-emitting an input-enriched tool_use (see toolCallUpdate). */
   private toolNames = new Map<string, string>();
+  /** tool_call id → last emitted rawInput JSON, so repeated identical progress frames dedup. */
+  private lastInputEmitted = new Map<string, string>();
 
   // --- turn boundary + usage -----------------------------------------------------------------
 
