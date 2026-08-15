@@ -174,3 +174,35 @@ test('a canvas with no 2d context does not break the modal', () => {
   expect(() => render(<UpdateModal />)).not.toThrow();
   expect(screen.getByText('Updating Dispatch…')).toBeInTheDocument();
 });
+
+// ---- Liquid-glass progress card -----------------------------------------------------------
+// While the update runs, the card sits as frosted glass IN FRONT of the terminal rain — a
+// translucent, backdrop-blurred block the rain stays visible behind — instead of the opaque
+// panel the idle prompt uses.
+test('the in-progress card is translucent glass (backdrop blur), not the opaque panel', () => {
+  useUpdate.setState({ inProgress: true });
+  render(<UpdateModal />);
+  const card = screen.getByText('Updating Dispatch…').closest('div[style]') as HTMLElement;
+  const glass = card.closest('div[class], div')! as HTMLElement;
+  // The styled card is the nearest ancestor carrying the backdrop filter.
+  let node: HTMLElement | null = card;
+  let found = false;
+  while (node) {
+    const bf = node.style.backdropFilter || (node.style as any).webkitBackdropFilter;
+    if (bf && bf.includes('blur')) { found = true; expect(node.style.background).toMatch(/rgba/); break; }
+    node = node.parentElement;
+  }
+  expect(found).toBe(true);
+  void glass;
+});
+
+test('the idle "Update available" card stays an opaque panel (no backdrop blur)', () => {
+  useUpdate.setState({ available: { version: 'v1.2.0', url: null, publishedAt: null }, inProgress: false });
+  render(<UpdateModal />);
+  let node: HTMLElement | null = screen.getByText('Update available') as HTMLElement;
+  while (node) {
+    const bf = node.style.backdropFilter || (node.style as any).webkitBackdropFilter;
+    expect(bf || '').not.toMatch(/blur/);
+    node = node.parentElement;
+  }
+});

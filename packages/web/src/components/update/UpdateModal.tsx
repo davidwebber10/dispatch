@@ -34,17 +34,32 @@ export function UpdateModal() {
       onClick={inProgress ? undefined : dismiss}
       style={{ position: 'fixed', inset: 0, zIndex: 280, background: inProgress ? 'transparent' : 'rgba(0,0,0,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom))' }}
     >
-      {/* While the update runs, the backdrop becomes three layers: the rain, then the same
-          scrim the backdrop used to be, then the card. Keeping the scrim ON TOP of the rain
-          means the card's contrast is exactly what it has always been — the rain is dimmed
-          by it rather than competing with the text. */}
+      {/* While the update runs, the backdrop is the rain under a LIGHT scrim, and the card
+          becomes liquid glass — translucent, backdrop-blurred — so the rain visibly falls
+          BEHIND it instead of being blacked out by the old heavy scrim + opaque panel. The
+          blur itself is what keeps the text readable over the moving glyphs. */}
       {inProgress && (
         <>
           <TerminalRain />
-          <div aria-hidden="true" style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.55)' }} />
+          <div aria-hidden="true" style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.22)' }} />
         </>
       )}
-      <div onClick={(e) => e.stopPropagation()} style={{ position: 'relative', width: notesOpen && !inProgress ? 460 : 340, maxWidth: '100%', transition: 'width .18s ease', background: '#1B1B1E', border: '1px solid #2C3A4A', borderRadius: 16, padding: '22px 20px', boxShadow: '0 30px 80px -20px rgba(0,0,0,.85)', textAlign: 'center' }}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          position: 'relative',
+          width: notesOpen && !inProgress ? 460 : 340,
+          maxWidth: '100%',
+          transition: 'width .18s ease',
+          background: inProgress ? 'rgba(27,27,30,.48)' : '#1B1B1E',
+          ...(inProgress ? { backdropFilter: 'blur(22px) saturate(1.5)', WebkitBackdropFilter: 'blur(22px) saturate(1.5)' } : {}),
+          // A faint light edge reads as a glass rim; the idle prompt keeps its solid border.
+          border: inProgress ? '1px solid rgba(255,255,255,.14)' : '1px solid #2C3A4A',
+          borderRadius: 16,
+          padding: '22px 20px',
+          boxShadow: '0 30px 80px -20px rgba(0,0,0,.85)',
+          textAlign: 'center',
+        }}>
         {inProgress ? (
           <>
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}><Spinner size={26} /></div>
