@@ -41,7 +41,7 @@ export function UpdateModal() {
       {inProgress && (
         <>
           <TerminalRain />
-          <div aria-hidden="true" style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.22)' }} />
+          <div aria-hidden="true" style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.14)', pointerEvents: 'none' }} />
         </>
       )}
       <div
@@ -51,8 +51,11 @@ export function UpdateModal() {
           width: notesOpen && !inProgress ? 460 : 340,
           maxWidth: '100%',
           transition: 'width .18s ease',
-          background: inProgress ? 'rgba(27,27,30,.48)' : '#1B1B1E',
-          ...(inProgress ? { backdropFilter: 'blur(22px) saturate(1.5)', WebkitBackdropFilter: 'blur(22px) saturate(1.5)' } : {}),
+          // Glass, not smoked glass: a low fill alpha and a MODERATE blur — 22px averaged the
+          // rain into a flat wash, so the card read as near-opaque however low the fill went.
+          // At ~10px individual glyph streaks stay recognizably falling behind the text.
+          background: inProgress ? 'rgba(27,27,30,.24)' : '#1B1B1E',
+          ...(inProgress ? { backdropFilter: 'blur(10px) saturate(1.4)', WebkitBackdropFilter: 'blur(10px) saturate(1.4)' } : {}),
           // A faint light edge reads as a glass rim; the idle prompt keeps its solid border.
           border: inProgress ? '1px solid rgba(255,255,255,.14)' : '1px solid #2C3A4A',
           borderRadius: 16,
