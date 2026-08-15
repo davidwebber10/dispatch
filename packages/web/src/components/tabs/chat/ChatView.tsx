@@ -352,7 +352,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
           ) : (
             <label
               title="Attach file"
-              style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'var(--color-hover)', color: 'var(--color-text-secondary)' }}
+              style={{ flexShrink: 0, width: 34, height: 34, padding: 0, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'var(--color-hover)', color: 'var(--color-text-secondary)' }}
             >
               <Paperclip size={17} />
               <input
@@ -381,13 +381,16 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                help is always on here and gets no toggle. autoCapitalize stays off so a
                path or a command name pasted mid-message is not altered. */
             autoCapitalize="off" autoCorrect="on" spellCheck
-            style={{ flex: 1, resize: 'none', border: 'none', outline: 'none', background: 'transparent', color: 'var(--color-text-primary)', font: '400 15px var(--font-sans)', lineHeight: 1.5, maxHeight: 180, overflowY: 'auto' }}
+            /* One-line box is 22px line + 6px padding = 34px, matching the attach/send
+               keys. Without this the UA textarea is shorter than the keys and flex-end
+               drops the placeholder below their optical center. */
+            style={{ flex: 1, resize: 'none', border: 'none', outline: 'none', background: 'transparent', color: 'var(--color-text-primary)', font: '400 15px var(--font-sans)', lineHeight: '22px', maxHeight: 180, minHeight: 34, padding: '6px 4px', margin: 0, overflowY: 'auto' }}
           />
           <button
             onClick={doSend}
             disabled={!canSend}
             title="Send"
-            style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 9, border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: canSend ? 'pointer' : 'default', background: canSend ? 'var(--color-accent)' : 'var(--color-hover)', color: canSend ? '#06140B' : 'var(--color-text-tertiary)', transition: 'background .15s' }}
+            style={{ flexShrink: 0, width: 34, height: 34, padding: 0, borderRadius: 9, border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: canSend ? 'pointer' : 'default', background: canSend ? 'var(--color-accent)' : 'var(--color-hover)', color: canSend ? '#06140B' : 'var(--color-text-tertiary)', transition: 'background .15s' }}
           >
             <PaperPlaneTilt size={17} weight="fill" />
           </button>

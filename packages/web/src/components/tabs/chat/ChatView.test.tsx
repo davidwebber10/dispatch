@@ -539,3 +539,13 @@ test('the Pretty composer always spell-checks and autocorrects, and never auto-c
   expect(ta.getAttribute('autocorrect')).toBe('on');
   expect(ta.getAttribute('autocapitalize')).toBe('off');
 });
+
+test('the Pretty composer textarea is one key tall so the placeholder lines up with attach/send', async () => {
+  render(<ChatView terminalId="t1" />);
+  const ta = await screen.findByPlaceholderText('Message…');
+  expect(ta.style.minHeight).toBe('34px');
+  expect(ta.style.lineHeight).toBe('22px');
+  expect(ta.style.padding).toBe('6px 4px');
+  const send = screen.getByTitle('Send');
+  expect(send.style.height).toBe('34px');
+});
