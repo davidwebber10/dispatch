@@ -88,7 +88,7 @@ function AgentsStep({ providers: initial }: { providers: ProviderStatus[] }) {
   };
   return (
     <div>
-      <p style={{ color: 'var(--color-text-secondary)', fontSize: 13, marginTop: 0 }}>Dispatch drives your local Claude Code, Codex and Grok CLIs. Install and sign in to the ones you want.</p>
+      <p style={{ color: 'var(--color-text-secondary)', fontSize: 13, marginTop: 0 }}>Dispatch drives your local Claude Code, Codex, Grok and OpenCode CLIs. Install and sign in to the ones you want.</p>
       {providers.map((p) => {
         const meta = INSTALL[p.name];
         const ok = p.installed && p.signedIn === true;

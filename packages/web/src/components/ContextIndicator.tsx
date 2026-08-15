@@ -22,6 +22,8 @@ export function modelDisplayName(model?: string): string | undefined {
 
 export interface ContextIndicatorProps {
   contextTokens?: number;
+  /** Wire-reported window size (ACP usage_update); beats the contextWindowFor table. */
+  contextWindow?: number;
   compacting: boolean;
   compactResult: CompactResult | null;
   model?: string;
@@ -34,7 +36,7 @@ export interface ContextIndicatorProps {
  * assistant turn (contextTokens undefined), so it renders nothing until then —
  * except a compaction's own compacting/result state, which can still flash.
  */
-export function ContextIndicator({ contextTokens, compacting, compactResult, model, compact }: ContextIndicatorProps) {
+export function ContextIndicator({ contextTokens, contextWindow, compacting, compactResult, model, compact }: ContextIndicatorProps) {
   const [open, setOpen] = useState(false);
   const [flash, setFlash] = useState(false);
 
@@ -50,7 +52,7 @@ export function ContextIndicator({ contextTokens, compacting, compactResult, mod
 
   if (contextTokens === undefined && !compacting && !flash) return null;
 
-  const pct = Math.min(100, Math.round(((contextTokens ?? 0) / contextWindowFor(model)) * 100));
+  const pct = Math.min(100, Math.round(((contextTokens ?? 0) / (contextWindow ?? contextWindowFor(model))) * 100));
   const barColor = pct >= 90 ? 'var(--color-status-red)' : pct >= 75 ? 'var(--color-status-yellow)' : 'var(--color-accent)';
 
   return (
@@ -91,6 +93,7 @@ export function ContextIndicator({ contextTokens, compacting, compactResult, mod
       {open && (
         <ContextDetailModal
           contextTokens={contextTokens}
+          contextWindow={contextWindow}
           model={model}
           compacting={compacting}
           compactResult={compactResult}

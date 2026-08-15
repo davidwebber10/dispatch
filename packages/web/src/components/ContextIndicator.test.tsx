@@ -30,4 +30,13 @@ describe('<ContextIndicator>', () => {
     render(<ContextIndicator contextTokens={50_000} compacting={false} compactResult={null} compact={() => {}} />);
     expect(screen.getByText(/% context/)).toBeTruthy();
   });
+
+  it('a wire-reported contextWindow beats the per-model table as the denominator', () => {
+    // 100k of a 200k wire window = 50%. The model table would say 1M (unknown id → default)
+    // and render 10% — exactly the wrong number this override exists to fix for open models.
+    render(
+      <ContextIndicator contextTokens={100_000} contextWindow={200_000} compacting={false} compactResult={null} model="openrouter/z-ai/glm-5.2" compact={() => {}} />,
+    );
+    expect(screen.getByText(/50% context/)).toBeTruthy();
+  });
 });

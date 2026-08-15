@@ -41,6 +41,9 @@ export interface StructuredChat {
    *  Undefined until the first assistant event of the thread lands. Compare against
    *  contextWindowFor(model) to render a fill indicator. */
   contextTokens?: number;
+  /** The wire-reported context-window size (tokens), when the harness sends one — beats
+   *  the contextWindowFor(model) table. Today only ACP/OpenCode reports it. */
+  contextWindow?: number;
   /** True while a native `/compact` triggered via `compact()` is in progress. */
   compacting: boolean;
   /** Outcome of the most recently finished compaction (transient — for a toast/indicator). */
@@ -265,6 +268,10 @@ export function useStructuredChat(
   const [busy, setBusy] = useState(false);
   const [model, setModel] = useState<string | undefined>();
   const [contextTokens, setContextTokens] = useState<number | undefined>();
+  // The REAL context-window size when the wire reports one (ACP usage_update.size, carried
+  // as `context_window` on the assistant frame). Undefined → the per-model table
+  // (contextWindowFor) stays the denominator, as before.
+  const [contextWindow, setContextWindow] = useState<number | undefined>();
   const [compacting, setCompacting] = useState(false);
   const [compactResult, setCompactResult] = useState<CompactResult | null>(null);
   // API-retry visibility: set by system/api_retry, cleared by any sign the turn progressed
@@ -341,7 +348,7 @@ export function useStructuredChat(
   useEffect(() => {
     if (!terminalId) {
       setItems([]); setBusy(false); setModel(undefined); setPending(null);
-      setContextTokens(undefined); setCompacting(false); setCompactResult(null); setApiRetry(null);
+      setContextTokens(undefined); setContextWindow(undefined); setCompacting(false); setCompactResult(null); setApiRetry(null);
       hasMoreRef.current = pageableRef.current; setHasMore(pageableRef.current);
       loadingOlderRef.current = false; setLoadingOlder(false);
       oldestLineRef.current = undefined; pageTokenRef.current += 1;
@@ -349,7 +356,7 @@ export function useStructuredChat(
       return;
     }
     setItems([]); setBusy(false); setModel(undefined); setPending(null);
-    setContextTokens(undefined); setCompacting(false); setCompactResult(null); setApiRetry(null);
+    setContextTokens(undefined); setContextWindow(undefined); setCompacting(false); setCompactResult(null); setApiRetry(null);
     hasMoreRef.current = pageableRef.current; setHasMore(pageableRef.current);
     loadingOlderRef.current = false; setLoadingOlder(false);
     oldestLineRef.current = undefined; pageTokenRef.current += 1; // discard any in-flight fetch from the previous thread
@@ -430,7 +437,7 @@ export function useStructuredChat(
         pendingRef.current.clear();
         setItems([]); setBusy(false);
         setPending(null); // the server re-sends a still-pending permission after replay
-        setContextTokens(undefined); setCompacting(false); setCompactResult(null); setApiRetry(null); // replay rebuilds these
+        setContextTokens(undefined); setContextWindow(undefined); setCompacting(false); setCompactResult(null); setApiRetry(null); // replay rebuilds these
         blockMapRef.current.clear();
         // Re-arm pagination too: `items` above is being fully rebuilt from a fresh replay,
         // so a stale REST anchor from before the reconnect could otherwise skip a gap of
@@ -605,6 +612,7 @@ export function useStructuredChat(
             const tokens = (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
             setContextTokens(tokens);
           }
+          if (typeof event.context_window === 'number' && event.context_window > 0) setContextWindow(event.context_window);
           // Claude Code's own per-message-block identity (verified against a real captured
           // session — see backfillEventsFromTranscript's doc comment): the SAME field the
           // on-disk transcript writes per line, so an item built from this live event and one
@@ -902,5 +910,5 @@ export function useStructuredChat(
     // body reads nothing from it.
   }, [terminalId, anchorRetry]);
 
-  return { items, busy, model, contextTokens, compacting, compactResult, apiRetry, send, pending, answer, compact, hasMore, loadingOlder, loadOlder };
+  return { items, busy, model, contextTokens, contextWindow, compacting, compactResult, apiRetry, send, pending, answer, compact, hasMore, loadingOlder, loadOlder };
 }

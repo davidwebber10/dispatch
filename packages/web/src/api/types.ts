@@ -1,4 +1,4 @@
-export type TerminalType = 'claude-code' | 'codex' | 'grok' | 'shell' | 'browser' | 'notes' | 'file';
+export type TerminalType = 'claude-code' | 'codex' | 'grok' | 'opencode' | 'shell' | 'browser' | 'notes' | 'file';
 export type SessionStatus = 'working' | 'waiting' | 'needs_input' | 'done';
 // The backend genuinely persists AND broadcasts 'scheduled' (a wake-scheduler tool ended the
 // turn — see structured/manager.ts's WAKE_TOOLS) and 'queued' (accepted but not yet launched —
@@ -325,7 +325,7 @@ export interface CcRecentSession { id: string; mtime: number; preview: string; m
 export interface CodexRecentSession { id: string; mtime: number; preview: string; messageCount: number; truncated: boolean; }
 
 // Setup / onboarding — mirrors core /api/setup.
-export type ProviderName = 'claude' | 'codex' | 'grok';
+export type ProviderName = 'claude' | 'codex' | 'grok' | 'opencode';
 export interface ProviderStatus { name: ProviderName; installed: boolean; version?: string; signedIn: boolean | 'unknown'; }
 /** Result of POST /api/setup/install/:provider — the re-detected truth, not the exit code. */
 export interface InstallResult { ok: boolean; output: string; status: ProviderStatus; loginCommand: string; }

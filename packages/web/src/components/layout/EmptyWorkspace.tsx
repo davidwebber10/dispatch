@@ -9,7 +9,7 @@ function homeAbbrev(p: string): string {
   return (p || '').replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
 }
 
-const THREAD_TYPES = ['claude-code', 'codex', 'shell'];
+const THREAD_TYPES = ['claude-code', 'codex', 'grok', 'opencode', 'shell'];
 
 export function EmptyWorkspace({ onSelectTab }: { onSelectTab: (id: string) => void }) {
   const activeId = useProjects((s) => s.activeId);

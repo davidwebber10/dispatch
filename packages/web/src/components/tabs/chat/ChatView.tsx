@@ -51,12 +51,13 @@ async function fileToBase64(file: File): Promise<string> {
 export function ChatView({ terminalId }: { terminalId: string }) {
   const tab = useTabs((s) => findTerminal(s.byProject, terminalId));
   const sessionId = tab?.sessionId;
-  // Grok has no pageable REST transcript (getConversation → unsupported): its full ws-ring
-  // replay IS the whole recoverable history, so the older-pages machinery stays off — no
-  // phantom "Load earlier messages" on a thread with nothing earlier to load. An unresolved
-  // tab keeps the pageable default (claude-code is the common case).
-  const { items, busy, model, send, pending, answer, contextTokens, compacting, compactResult, apiRetry, compact, hasMore, loadingOlder, loadOlder } =
-    useStructuredChat(terminalId, sessionId, { pageableHistory: tab?.type !== 'grok' });
+  // The ACP harnesses (grok, opencode) have no pageable REST transcript (getConversation →
+  // unsupported): their full ws-ring replay IS the whole recoverable history, so the
+  // older-pages machinery stays off — no phantom "Load earlier messages" on a thread with
+  // nothing earlier to load. An unresolved tab keeps the pageable default (claude-code is
+  // the common case).
+  const { items, busy, model, send, pending, answer, contextTokens, contextWindow, compacting, compactResult, apiRetry, compact, hasMore, loadingOlder, loadOlder } =
+    useStructuredChat(terminalId, sessionId, { pageableHistory: tab?.type !== 'grok' && tab?.type !== 'opencode' });
 
   // Advice is about THIS resume, so "not now" lives in component state rather than
   // storage: a later resume of the same thread (older and larger still) should ask again.
@@ -400,7 +401,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
 
         {/* thin status row: muted context-window fill indicator, tappable for detail */}
         <div style={{ maxWidth: 768, margin: '6px auto 0', display: 'flex', justifyContent: 'flex-end' }}>
-          <ContextIndicator contextTokens={contextTokens} compacting={compacting} compactResult={compactResult} model={model} compact={compact} />
+          <ContextIndicator contextTokens={contextTokens} contextWindow={contextWindow} compacting={compacting} compactResult={compactResult} model={model} compact={compact} />
         </div>
       </div>
     </div>

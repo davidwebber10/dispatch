@@ -13,7 +13,7 @@ import type { ProviderName, TerminalType } from '../api/types';
  */
 export interface Harness {
   /** The picker's own id. */
-  id: 'claude' | 'codex' | 'grok' | 'terminal';
+  id: 'claude' | 'codex' | 'grok' | 'opencode' | 'terminal';
   label: string;
   /** The wire `type` sent to POST /terminals. */
   type: TerminalType;
@@ -58,6 +58,20 @@ export const HARNESSES: Harness[] = [
       { label: 'Grok 4.5', model: 'grok-4.5' },
     ],
   },
+  {
+    // Pretty-ONLY, like Grok, and the only harness with no bundled model: it runs the
+    // leading OPEN-WEIGHTS models through OpenRouter (`opencode acp`, same ACP transport
+    // as Grok). The model list is curated — the strongest open model per family as of
+    // 2026-08 — and every id is a real OpenRouter id verified against the live catalog.
+    id: 'opencode', label: 'OpenCode', type: 'opencode', provider: 'opencode', modes: ['pretty'],
+    models: [
+      { label: 'GLM-5.2', model: 'openrouter/z-ai/glm-5.2' },
+      { label: 'Kimi K3', model: 'openrouter/moonshotai/kimi-k3' },
+      { label: 'DeepSeek V4 Pro', model: 'openrouter/deepseek/deepseek-v4-pro' },
+      { label: 'Qwen3.7 Max', model: 'openrouter/qwen/qwen3.7-max' },
+      { label: 'MiniMax M3', model: 'openrouter/minimax/minimax-m3' },
+    ],
+  },
   { id: 'terminal', label: 'Terminal', type: 'shell', provider: null, modes: ['cli'], models: [] },
 ];
 
@@ -72,6 +86,7 @@ export const INSTALL_COMMAND: Record<ProviderName, string> = {
   claude: 'npm install -g @anthropic-ai/claude-code',
   codex: 'npm install -g @openai/codex',
   grok: 'curl -fsSL https://x.ai/cli/install.sh | bash',
+  opencode: 'npm install -g opencode-ai',
 };
 
 /**
@@ -84,4 +99,5 @@ export const LOGIN_COMMAND: Record<ProviderName, string> = {
   claude: 'claude auth login',
   codex: 'codex login',
   grok: 'grok login',
+  opencode: 'opencode auth login',
 };

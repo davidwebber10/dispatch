@@ -44,6 +44,17 @@ function GrokMark() {
   );
 }
 
+/** OpenCode's mark — the square-bracket code glyph, matching its terminal-brand look. */
+function OpenCodeMark() {
+  return (
+    <svg aria-hidden="true" width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="#E9E9EC" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" style={{ display: 'block' }}>
+      <path d="M8 4H5v16h3" />
+      <path d="M16 4h3v16h-3" />
+      <path d="M10.5 15l3-6" />
+    </svg>
+  );
+}
+
 /** The plain shell has no brand, so it uses the house icon set like every other glyph. */
 function TerminalMark() {
   return <TerminalWindow size={20} weight="regular" color="var(--color-text-secondary)" style={{ display: 'block' }} />;
@@ -61,6 +72,7 @@ const HARNESS_MARK: Record<Harness, () => JSX.Element> = {
   claude: ClaudeMark,
   codex: OpenAIMark,
   grok: GrokMark,
+  opencode: OpenCodeMark,
   terminal: TerminalMark,
 };
 
@@ -225,12 +237,14 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
           onKeyDown={(e) => { if (e.key === 'Enter') void create(); }} />
       </div>
 
-      {/* HARNESS — four across. A harness whose CLI is missing is dimmed and labelled
-          "Install", but stays SELECTABLE: picking it swaps the options below for an install
-          prompt, so the fix sits exactly where you hit the problem. */}
+      {/* HARNESS — auto-fit so five cards share one row where there's width and wrap
+          cleanly where there isn't (the old repeat(4) hardcode broke at the fifth). A
+          harness whose CLI is missing is dimmed and labelled "Install", but stays
+          SELECTABLE: picking it swaps the options below for an install prompt, so the
+          fix sits exactly where you hit the problem. */}
       <div style={sectionStyle}>
         <span style={labelStyle}>Harness</span>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(84px, 1fr))', gap: 8 }}>
           {HARNESSES.map((h) => {
             const on = harness === h.id;
             const available = isAvailable(h);
