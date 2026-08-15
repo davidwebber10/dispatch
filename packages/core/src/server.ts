@@ -637,6 +637,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
           (tid) => sessionService.ensureStructuredAlive(tid),
           (tid) => sessionService.historyOwnedByRest(tid),
           (tid) => sessionService.historyRestPageable(tid),
+          // Settled = the daemon's own status row says the thread is not mid-turn. Drives
+          // the phantom-"Working…" settle for replays that end mid-turn (see ws/structured.ts).
+          (tid) => sessionService.getTerminal(tid)?.status !== 'working',
         );
       });
     } else if (url.match(/\/api\/terminals\/[^/]+\/ws/) || url.match(/\/api\/sessions\/[^/]+\/terminal/)) {

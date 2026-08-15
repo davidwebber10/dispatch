@@ -248,6 +248,11 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
       this.emit('session', session.terminalId, sessionId);
     }
     this.applyActions(session, session.translator.init(session.model));
+    // After a resume: the replay emitted whole `assistant` events (which set the chat's
+    // busy=true) and — by design — no per-turn result footers. Close the ring with the
+    // synthetic settle the client swallows without rendering (same shape cc-sessions.ts
+    // appends for Claude), or a revived thread sits on "Working…" forever.
+    if (resumeId && session.events.length) this.pushEvent(session, { type: 'result', subtype: 'backfill', is_error: false });
   }
 
   // --- inbound -------------------------------------------------------------------------------

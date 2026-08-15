@@ -169,3 +169,54 @@ describe('tail bound applies only when REST can page what it cuts', () => {
     expect(sent.filter((e) => e.type === 'stream_event')).toHaveLength(500);
   });
 });
+
+// ---- Stuck "Working…" after replay ----------------------------------------------------------
+//
+// stream_event / whole-assistant events set the client's busy=true; only a `result` (or a
+// `permission`) clears it. A ring can legitimately END on busy-setting events — a process
+// killed mid-turn never wrote its closing result, and a tail can slice mid-turn — so a
+// reconnect replayed "Working…" forever on a thread the daemon itself knew was settled.
+// When the replay would leave busy latched AND the thread is not actually working, the
+// handler appends the synthetic settle the client swallows (subtype 'backfill').
+
+const MID_TURN_RING = [
+  { type: 'user', message: { role: 'user', content: 'go' } },
+  { type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'text' } } },
+  { type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'partial' } } },
+];
+
+describe('replay settle for rings that end mid-turn', () => {
+  it('appends a backfill result when the ring ends busy and the thread is settled', () => {
+    const { ws, sent } = fakeWs();
+    handleStructuredConnection(ws, REQ, ringManager(MID_TURN_RING), undefined, undefined, undefined, () => true);
+    expect(sent[sent.length - 1]).toMatchObject({ type: 'result', subtype: 'backfill', is_error: false });
+  });
+
+  it('appends nothing while the thread is genuinely working — busy is TRUE truth there', () => {
+    const { ws, sent } = fakeWs();
+    handleStructuredConnection(ws, REQ, ringManager(MID_TURN_RING), undefined, undefined, undefined, () => false);
+    expect(sent.some((e) => e.subtype === 'backfill')).toBe(false);
+  });
+
+  it('appends nothing when the ring already settles itself (ends with a result)', () => {
+    const { ws, sent } = fakeWs();
+    const ring = [...MID_TURN_RING, { type: 'result', subtype: 'x_turn', is_error: false }];
+    handleStructuredConnection(ws, REQ, ringManager(ring), undefined, undefined, undefined, () => true);
+    expect(sent.some((e) => e.subtype === 'backfill')).toBe(false);
+  });
+
+  it('appends nothing without the predicate (no authority on settledness → no guess)', () => {
+    const { ws, sent } = fakeWs();
+    handleStructuredConnection(ws, REQ, ringManager(MID_TURN_RING));
+    expect(sent.some((e) => e.subtype === 'backfill')).toBe(false);
+  });
+
+  it('a pending permission at the ring tail also counts as settled-for-busy (the client shows the card, not the spinner)', () => {
+    const { ws, sent } = fakeWs();
+    const ring = [...MID_TURN_RING];
+    const manager = { ...ringManager(ring), getPending: () => ({ requestId: 'r1', toolName: 'AskUserQuestion', input: {} }) } as any;
+    handleStructuredConnection(ws, REQ, manager, undefined, undefined, undefined, () => true);
+    // The replayed pending permission frame already clears busy client-side; no settle needed.
+    expect(sent.some((e) => e.subtype === 'backfill')).toBe(false);
+  });
+});

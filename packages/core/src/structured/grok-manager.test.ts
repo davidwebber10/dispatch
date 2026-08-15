@@ -159,8 +159,14 @@ describe('GrokStructuredSessionManager', () => {
     expect(user.message.content[0].text).toBe('earlier question');
     const agent = events.find((e) => e?.type === 'assistant');
     expect(agent.message.content[0].text).toBe('earlier answer');
-    expect(events.some((e) => e?.type === 'result')).toBe(false); // replay writes no turn footer
+    // Replay writes no per-turn footers (no usage double-counting, no rendered cards)…
+    expect(events.some((e) => e?.type === 'result' && e?.subtype !== 'backfill')).toBe(false);
     expect(boundaries).toBe(0);
+    // …but it MUST end with the synthetic settle the client swallows: replayed whole
+    // `assistant` events set the chat's busy=true, and with no result after them a revived
+    // thread showed "Working…" forever (the same fix cc-sessions.ts applies for Claude).
+    const last = events[events.length - 1];
+    expect(last).toMatchObject({ type: 'result', subtype: 'backfill', is_error: false });
   });
 
   it('a turn with no turn_completed still settles when the prompt response lands', async () => {

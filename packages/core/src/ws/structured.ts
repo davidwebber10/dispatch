@@ -34,6 +34,24 @@ export function hasRenderableEvents(events: unknown[]): boolean {
   });
 }
 
+/**
+ * True when replaying `events` would leave the client's busy spinner LATCHED: the last
+ * busy-affecting event is a stream_event or a whole `assistant` (both set busy=true in
+ * useStructuredChat) with no `result` (or surfaced permission) after it to clear it. A ring
+ * ends this way when a process was killed mid-turn (its closing result was never written)
+ * or a bounded tail sliced mid-turn.
+ */
+function replayLeavesBusy(events: unknown[]): boolean {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e: any = events[i];
+    if (!e || typeof e !== 'object') continue;
+    if (e.type === 'result' || e.type === 'permission') return false;
+    if (e.type === 'stream_event' && e.event) return true;
+    if (e.type === 'assistant' && Array.isArray(e.message?.content)) return true;
+  }
+  return false;
+}
+
 export function handleStructuredConnection(
   ws: WebSocket,
   req: IncomingMessage,
@@ -63,6 +81,14 @@ export function handleStructuredConnection(
    * ring instead. Absent ⇒ the bound applies (the pre-Grok default).
    */
   restCanPageHistory?: (terminalId: string) => boolean,
+  /**
+   * True when the daemon's own status for this thread says it is NOT mid-turn (anything but
+   * 'working'). When the replay would leave busy latched (see replayLeavesBusy) on a thread
+   * that is actually settled, the handler appends the synthetic `result` the client swallows
+   * (`subtype: 'backfill'`, same shape cc-sessions.ts uses) so the chat never shows a
+   * phantom "Working…". Absent ⇒ no settle is ever appended (no authority, no guess).
+   */
+  isThreadSettled?: (terminalId: string) => boolean,
 ): void {
   const m = req.url?.match(/\/api\/terminals\/([^/]+)\/structured-ws/);
   const id = m?.[1];
@@ -98,6 +124,14 @@ export function handleStructuredConnection(
   // conversational is rendered (see useStructuredChat's 'system'/'inactive' handler).
   if (!hasRenderableEvents(events) && ws.readyState === 1) ws.send(JSON.stringify({ type: 'system', subtype: 'inactive' }));
   for (const e of events) { if (ws.readyState === 1) ws.send(JSON.stringify(e)); }
+  // Phantom-"Working…" guard: a replay that ends mid-turn latches the client's busy spinner.
+  // If the daemon's own status says this thread is settled — and no pending permission is
+  // about to be surfaced (that frame clears busy itself) — append the swallowed settle.
+  let settled = false;
+  try { settled = isThreadSettled?.(id) === true; } catch { settled = false; }
+  if (settled && !manager.getPending(id) && replayLeavesBusy(events) && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'result', subtype: 'backfill', is_error: false }));
+  }
   const onEvent = (eid: string, event: unknown) => { if (eid === id && ws.readyState === 1) ws.send(JSON.stringify(event)); };
   // P0b: the CLI never emits a `result` when its process exits/crashes mid-turn,
   // so the client's `busy` would spin forever. Synthesize one from the manager's
