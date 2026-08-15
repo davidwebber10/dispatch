@@ -19,11 +19,19 @@ describe('<StatusNotice>', () => {
     expect(screen.getByText('waiting on the deploy')).toBeTruthy();
   });
 
-  it('renders a done turn as a muted one-line summary', () => {
+  it('renders a done turn as a labeled Done card', () => {
     render(<StatusNotice input={j({ state: 'done', summary: 'shipped v2.9.0' })} />);
     expect(screen.getByTestId('status-notice')).toBeTruthy();
+    expect(screen.getByText(/done/i)).toBeTruthy();
     expect(screen.getByText('shipped v2.9.0')).toBeTruthy();
     expect(screen.queryByText(/waiting on you/i)).toBeNull();
+  });
+
+  it('labels an unknown state with the raw state name instead of borrowing Done', () => {
+    render(<StatusNotice input={j({ state: 'paused', summary: 'holding until CI finishes' })} />);
+    expect(screen.getByText(/paused/i)).toBeTruthy();
+    expect(screen.getByText('holding until CI finishes')).toBeTruthy();
+    expect(screen.queryByText(/done/i)).toBeNull();
   });
 
   it('does not duplicate the summary when it equals the primary line', () => {

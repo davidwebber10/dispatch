@@ -8,6 +8,18 @@ import { contextWindowFor, type CompactResult } from './tabs/chat/useStructuredC
  *  reverts to its normal percentage display. */
 const RESULT_FLASH_MS = 3000;
 
+/** Short human label for a raw model id: "claude-opus-4-6" → "Opus 4.6",
+ *  "claude-haiku-4-5-20251001" → "Haiku 4.5" (date segment dropped), "grok-4" → "Grok 4".
+ *  Non-numeric tails (e.g. "-latest") are dropped too; an unparseable id shows verbatim. */
+export function modelDisplayName(model?: string): string | undefined {
+  if (!model) return undefined;
+  const parts = model.replace(/^claude-/, '').split('-').filter((p) => !/^\d{8}$/.test(p));
+  if (!parts.length || !parts[0]) return model;
+  const family = parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
+  const nums = parts.slice(1).filter((p) => /^\d+$/.test(p));
+  return nums.length ? `${family} ${nums.join('.')}` : family;
+}
+
 export interface ContextIndicatorProps {
   contextTokens?: number;
   compacting: boolean;
@@ -68,6 +80,7 @@ export function ContextIndicator({ contextTokens, compacting, compactResult, mod
           )
         ) : (
           <>
+            {modelDisplayName(model) && <span>{modelDisplayName(model)} ·</span>}
             <span style={{ width: 28, height: 3, borderRadius: 2, background: 'var(--color-border)', overflow: 'hidden', display: 'inline-block' }}>
               <span style={{ display: 'block', width: `${pct}%`, height: '100%', background: barColor }} />
             </span>

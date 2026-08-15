@@ -74,11 +74,13 @@ export interface StructuredChat {
    * reverse-infinite-scroll uses). No-ops while already loading or once hasMore is false.
    *
    * KNOWN SHAPE-PARITY GAP: the REST parser (conversation/transcript.ts) is leaner than the
-   * ws fold above — it never emits `image` items, never carries `toolId` (tool_use/
-   * tool_result pairing falls back to array adjacency), and never carries `source` (a
+   * ws fold above — it never emits `image` items and never carries `source` (a
    * coordinator-relayed turn reads as a plain "You" bubble instead of "via Dispatch" once
    * paged in). Accepted for v1: the live tail, where users spend most of their time, stays
-   * full-fidelity via the ws; only older, scrolled-past-the-fold history degrades.
+   * full-fidelity via the ws; only older, scrolled-past-the-fold history degrades. It DOES
+   * carry `toolId` now (both sides): Grok/ACP transcripts interleave thinking between a
+   * tool_use and its tool_result, so the adjacency fallback paired nothing there and every
+   * reloaded call rendered permanently "running…" — id pairing is position-independent.
    *
    * FIRST-CALL ANCHOR: `before` starts undefined, but the first call also passes
    * `beforeUuid` — the oldest already-rendered item's real Claude Code message identity

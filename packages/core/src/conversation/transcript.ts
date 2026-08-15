@@ -19,6 +19,12 @@ export interface ConvItem {
   toolName?: string;
   toolTitle?: string;
   toolDetail?: string;
+  /** tool_use block id (kind 'tool') / tool_use_id (kind 'tool-result'). Carrying the id lets
+   *  the web pair a call with its result POSITION-INDEPENDENTLY — required for Grok/ACP
+   *  transcripts, which interleave thinking blocks between a tool_use and its tool_result, so
+   *  the web's adjacency fallback (its only option when ids are absent) pairs nothing and every
+   *  reloaded call renders permanently "running…". */
+  toolId?: string;
   isError?: boolean;
   ts?: string;
   uuid?: string;
@@ -72,7 +78,7 @@ function parseEntry(o: any): ConvItem[] {
           const it = userOrNotice(b.text, ts, uuid);
           if (it) out.push(it);
         } else if (b.type === 'tool_result') {
-          out.push({ kind: 'tool-result', text: stringifyContent(b.content), isError: b.is_error === true, ts, uuid });
+          out.push({ kind: 'tool-result', toolId: str(b.tool_use_id), text: stringifyContent(b.content), isError: b.is_error === true, ts, uuid });
         }
       }
       return out;
@@ -92,7 +98,7 @@ function parseEntry(o: any): ConvItem[] {
         const name = str(b.name) ?? 'tool';
         const file = b.input?.file_path ?? b.input?.path ?? b.input?.notebook_path;
         out.push({
-          kind: 'tool', toolName: name, toolTitle: toolTitle(name, b.input), toolDetail: toolDetail(name, b.input),
+          kind: 'tool', toolId: str(b.id), toolName: name, toolTitle: toolTitle(name, b.input), toolDetail: toolDetail(name, b.input),
           toolInput: toolInputString(name, b.input), toolFile: file ? String(file) : undefined, ts, uuid,
         });
       }

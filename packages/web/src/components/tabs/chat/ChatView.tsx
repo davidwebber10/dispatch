@@ -788,14 +788,28 @@ function AssistantText({ text }: { text: string }) {
   return <InsightText source={text} scheme="global" />;
 }
 
+// The collapsed row carries a one-line PREVIEW of the thought (dimmer than the label, ellipsized),
+// not just the bare word "Thinking" — a Grok turn interleaves many thinking blocks between tool
+// calls, and a column of identical "Thinking" rows is unscannable. Expanding swaps the preview for
+// the full text.
 function Thinking({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   if (!text.trim()) return null;
+  const preview = text.trim().replace(/\s+/g, ' ');
   return (
     <div>
-      <button onClick={() => setOpen((o) => !o)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-secondary)', font: 'italic 400 12.5px var(--font-sans)', padding: 0 }}>
-        <CaretRight size={11} weight="bold" style={{ transition: 'transform .12s', transform: open ? 'rotate(90deg)' : 'none' }} />
-        <Brain size={13} weight="duotone" /> Thinking
+      <button
+        onClick={() => setOpen((o) => !o)}
+        style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', minWidth: 0, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-secondary)', font: 'italic 400 12.5px var(--font-sans)', padding: 0 }}
+      >
+        <CaretRight size={11} weight="bold" style={{ flexShrink: 0, transition: 'transform .12s', transform: open ? 'rotate(90deg)' : 'none' }} />
+        <Brain size={13} weight="duotone" style={{ flexShrink: 0 }} />
+        <span style={{ flexShrink: 0 }}>Thinking</span>
+        {!open && (
+          <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--color-text-tertiary)' }}>
+            {preview}
+          </span>
+        )}
       </button>
       {open && (
         <div style={{ marginTop: 5, paddingLeft: 12, borderLeft: '2px solid var(--color-border)', color: 'var(--color-text-secondary)', font: 'italic 400 13px var(--font-sans)', lineHeight: 1.55, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
