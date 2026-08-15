@@ -1864,11 +1864,13 @@ export class SessionService {
     const developerNote = this.toolsAwareness?.() ?? null;
     const structuredMcp = composeInjection(specs, { configPath: this.perTerminalMcpConfigPath(terminal.id), prompts, developerNote });
 
-    // Grok's MCP servers ride a per-thread GROK_HOME (argv cannot carry them — see
-    // providers/grok-home.ts). Structured spawns get the SAME home as PTY spawns but with
-    // NO hooks: the manager's own turn boundaries drive status, and hook-reported Stop
-    // events on top would double-report every turn.
-    const grokEnv: Record<string, string> = {};
+    // Grok's MCP servers ride a per-thread plugin passed as `--plugin-dir` — the `grok
+    // agent` subcommand's TRUSTED plugin scope. NOT via GROK_HOME like the PTY flow: a
+    // home-injected plugin loads untrusted, and an untrusted plugin's MCP tools are
+    // visible to the model but not callable (verified live). Written with NO hooks: the
+    // manager's own turn boundaries drive status, and hook-reported Stop events on top
+    // would double-report every turn.
+    let grokPluginDir: string | undefined;
     if (terminal.type === 'grok' && this.statusContext) {
       try {
         const mcpServers: Record<string, McpServerEntry> = {};
@@ -1880,7 +1882,7 @@ export class SessionService {
           realHome: path.join(os.homedir(), '.grok'),
           mcpServers,
         });
-        if (dir) grokEnv.GROK_HOME = dir;
+        if (dir) grokPluginDir = path.join(dir, 'plugins', 'dispatch');
       } catch { /* best-effort — a thread without injections still runs */ }
     }
 
@@ -1902,7 +1904,7 @@ export class SessionService {
       sc = { command: this.structuredCommandOverride.command, args: [...this.structuredCommandOverride.args] };
       if (resumeSessionId) sc.args.push('-r', resumeSessionId);
     } else {
-      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config), resumeSessionId, model: resolvedModel });
+      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config), resumeSessionId, model: resolvedModel, grokPluginDir });
       if (!built) throw new Error('structured transport not supported for this provider');
       sc = built;
     }
@@ -1939,7 +1941,7 @@ export class SessionService {
       // ignores these); shared on the interface so this one call drives either manager.
       resumeId: resumeSessionId,
       model: resolvedModel,
-      env: { [TERMINAL_ID_ENV_VAR]: terminal.id, ...grokEnv },
+      env: { [TERMINAL_ID_ENV_VAR]: terminal.id },
     });
     terminalsDb.updatePid(this.db, terminal.id, pid);
   }

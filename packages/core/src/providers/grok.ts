@@ -51,9 +51,11 @@ function rulesArgs(secretsMcp?: SecretsMcpInjection): string[] {
  * The structured "Pretty" transport (**`buildStructuredCommand`**) speaks ACP over
  * `grok agent stdio`; GrokStructuredSessionManager (structured/grok-manager.ts) translates
  * that into the Claude-shaped event stream the ChatView consumes, exactly as
- * CodexStructuredSessionManager does for the app-server protocol. MCP servers still ride a
- * per-thread GROK_HOME (spawnStructured builds one without hooks — the manager's own turn
- * boundaries drive status, so hook-reported Stop events would double-report).
+ * CodexStructuredSessionManager does for the app-server protocol. Its MCP servers ride
+ * `--plugin-dir` on the agent subcommand (the trusted plugin scope — see
+ * buildStructuredCommand below), written per-thread by spawnStructured with no hooks: the
+ * manager's own turn boundaries drive status, so hook-reported Stop events would
+ * double-report.
  *
  * Two corrections worth keeping, both from reading the wrong help text:
  *   - An earlier version claimed Grok had no hooks and no MCP injection. Wrong: they are in
@@ -96,7 +98,7 @@ export const grokProvider: SessionProvider = {
     return { command: 'grok', args: [...FULL_PERMISSIONS, ...rulesArgs(secretsMcp), ...modelArgs(model), '--resume', externalSessionId] };
   },
 
-  buildStructuredCommand({ secretsMcp, appendSystemPrompt, model }) {
+  buildStructuredCommand({ secretsMcp, appendSystemPrompt, model, grokPluginDir }) {
     // Grok "Pretty" speaks ACP over `grok agent stdio`. Resume rides OUT-OF-BAND
     // (`session/load` over JSON-RPC, applied by GrokStructuredSessionManager via
     // StructuredSpawnOpts.resumeId), so `resumeSessionId` is deliberately not read here.
@@ -106,11 +108,17 @@ export const grokProvider: SessionProvider = {
     // it is the stdio agent's own autonomy switch (the analogue of bypassPermissions; the
     // spike showed default stdio mode already runs tools unprompted, this makes it explicit).
     // The membrane still answers any session/request_permission a Grok mode ever emits.
+    // MCP servers ride `--plugin-dir` — the agent subcommand's TRUSTED plugin scope. The
+    // same plugin injected via GROK_HOME loads untrusted, and an untrusted plugin's MCP
+    // tools are visible to the model but NOT callable (verified live: the thread could
+    // name dispatch__report_status yet every use_tool call failed until --plugin-dir).
     const rules = [appendSystemPrompt, secretsMcp?.systemPrompt].filter(Boolean).join('\n\n');
     const args = [
       ...(rules ? ['--rules', rules] : []),
       ...modelArgs(model),
-      'agent', '--always-approve', 'stdio',
+      'agent',
+      ...(grokPluginDir ? ['--plugin-dir', grokPluginDir] : []),
+      '--always-approve', 'stdio',
     ];
     return { command: 'grok', args };
   },

@@ -60,6 +60,17 @@ describe('grok provider', () => {
     expect(cmd.args).toEqual(['agent', '--always-approve', 'stdio']);
   });
 
+  it('structured transport carries the MCP plugin via --plugin-dir on the agent subcommand', () => {
+    // --plugin-dir is the TRUSTED plugin scope: a GROK_HOME plugin loads untrusted and its
+    // MCP tools end up hidden from the model (verified live — the thread could see the
+    // dispatch server but not call report_status until the plugin came in via --plugin-dir).
+    const cmd = grokProvider.buildStructuredCommand!({ workDir: '/tmp', grokPluginDir: '/x/plugins/dispatch' });
+    const i = cmd.args.indexOf('--plugin-dir');
+    expect(i).toBeGreaterThan(cmd.args.indexOf('agent')); // subcommand-scoped flag
+    expect(cmd.args[i + 1]).toBe('/x/plugins/dispatch');
+    expect(cmd.args.indexOf('stdio')).toBeGreaterThan(i);
+  });
+
   it('structured transport pins the model and carries rules BEFORE the agent subcommand', () => {
     const cmd = grokProvider.buildStructuredCommand!({ workDir: '/tmp', model: 'grok-4.6', appendSystemPrompt: 'be brief', secretsMcp: { systemPrompt: 'use Doppler' } });
     // Top-level flags must precede `agent` (clap rejects them after the subcommand).
