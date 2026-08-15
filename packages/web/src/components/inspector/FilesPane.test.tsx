@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { vi, beforeEach, afterEach, test, it, expect } from 'vitest';
 import { FilesPane } from './FilesPane';
 import { api } from '../../api/client';
@@ -475,4 +475,28 @@ test('Changed mode lists the uncommitted files with their status letter', async 
 test('the header shows the current branch chip', async () => {
   render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
   expect(await screen.findByText('main')).toBeInTheDocument();
+});
+
+// ---- Slow / hung search-index fetch --------------------------------------------------------
+// A big cold project can take a long while to walk, and a request fired into a network blip
+// can hang outright. The pane used to sit on a bare "SEARCHING…" forever. After 15s the
+// heading flips to the slow/unavailable notice — but the request is NOT abandoned: a late
+// success still lands and replaces it.
+test('a slow index fetch flips to the slow-notice heading, and a late result still lands', async () => {
+  vi.useFakeTimers();
+  try {
+    let resolveLate!: (v: unknown) => void;
+    vi.spyOn(api, 'listFilesFlat').mockReturnValue(new Promise((r) => { resolveLate = r; }) as any);
+    render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
+    fireEvent.change(screen.getByPlaceholderText(/Filter files/), { target: { value: '2026' } });
+    expect(screen.getByText('SEARCHING…')).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(16_000); });
+    expect(screen.queryByText('SEARCHING…')).not.toBeInTheDocument();
+    expect(screen.getByText(/INDEX SLOW OR UNAVAILABLE/)).toBeInTheDocument();
+    // The walk finally finishes — results replace the notice.
+    await act(async () => { resolveLate({ files: ['docs/2026-plan.md', 'src/other.ts'], truncated: false }); });
+    expect(screen.getByText(/1 MATCHES/)).toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
 });

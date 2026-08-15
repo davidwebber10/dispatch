@@ -131,6 +131,10 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
   const [mode, setMode] = useState<'tree' | 'changed'>('tree');
   const [showHidden, setShowHidden] = useState<boolean>(() => { try { return localStorage.getItem(HIDDEN_KEY) === '1'; } catch { return false; } });
   const [flat, setFlat] = useState<{ files: string[]; truncated: boolean } | null>(null);
+  // True when the index fetch failed or timed out — renders a retry heading instead of the
+  // eternal "SEARCHING…" a hung request used to leave behind (a socket that dies mid-blip
+  // never rejects). `flat` stays null in that state, so the next keystroke retries.
+  const [flatError, setFlatError] = useState(false);
   const project = useProjects((s) => s.sessions.find((x) => x.id === projectId));
   const activeTabId = useTabs((s) => s.activeTabId);
   const tabsForProj = useTabs((s) => (projectId ? s.byProject[projectId] : undefined)) ?? [];
@@ -157,14 +161,20 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
     }
   }, [projectId, loadDir]);
 
-  // The all-files search index is fetched lazily, on the first keystroke.
+  // The all-files search index is fetched lazily, on the first keystroke. A big cold
+  // project can take a long while to walk, and a request fired into a network blip can hang
+  // outright — either way the pane used to sit on a bare "SEARCHING…" with no hint. After
+  // 15s the heading flips to the slow/unavailable notice, but the request is NOT abandoned:
+  // a late success still lands and replaces it (the timeout only re-labels, never cancels).
   useEffect(() => {
     if (!query || flat || !projectId) return;
     let stale = false;
+    setFlatError(false);
+    const slowTimer = setTimeout(() => { if (!stale) setFlatError(true); }, 15_000);
     api.listFilesFlat(projectId)
-      .then((r) => { if (!stale) setFlat(r); })
-      .catch(() => { if (!stale) setFlat({ files: [], truncated: false }); });
-    return () => { stale = true; };
+      .then((r) => { if (!stale) { clearTimeout(slowTimer); setFlat(r); setFlatError(false); } })
+      .catch(() => { if (!stale) { clearTimeout(slowTimer); setFlatError(true); } }); // flat stays null → the next keystroke retries
+    return () => { stale = true; clearTimeout(slowTimer); };
   }, [query, flat, projectId]);
 
   function toggleHidden() {
@@ -415,7 +425,9 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
   );
 
   const heading = searching
-    ? (flat ? `${searchRows.length} MATCHES${flat.truncated ? ' · INDEX TRUNCATED' : ''}` : 'SEARCHING…')
+    ? (flat
+        ? `${searchRows.length} MATCHES${flat.truncated ? ' · INDEX TRUNCATED' : ''}`
+        : flatError ? 'INDEX SLOW OR UNAVAILABLE · STILL TRYING' : 'SEARCHING…')
     : mode === 'changed' ? `UNCOMMITTED${git.branch ? ` · ${git.branch.toUpperCase()}` : ''}`
     : 'PROJECT TREE';
 
