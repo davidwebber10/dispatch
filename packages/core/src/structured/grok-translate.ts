@@ -79,10 +79,15 @@ export class GrokTranslator {
   private lastAgentText = '';
   /** tool_call ids whose tool_result has already been emitted (updates repeat per status). */
   private resultEmitted = new Set<string>();
+  /** The ACP session's real model id (models.currentModelId), kept to stamp usage-bearing
+   *  assistant frames — analytics takes a frame's `message.model` as AUTHORITATIVE
+   *  (recorder.ts), and without it every Grok turn charts as "unknown". */
+  private model?: string;
 
   /** Emit a Claude `system/init` carrying the model (parity with Claude's system/init).
    *  Called by the manager once session/new|load resolves with the current model id. */
   init(model?: string): GrokAction[] {
+    this.model = model;
     return [{ kind: 'event', event: { type: 'system', subtype: 'init', model } }];
   }
 
@@ -224,6 +229,8 @@ export class GrokTranslator {
         type: 'assistant',
         message: {
           role: 'assistant',
+          // The real model id, so analytics groups these tokens under it (see `model` field).
+          ...(this.model ? { model: this.model } : {}),
           content: [],
           usage: {
             input_tokens: Math.max(0, (u.input_tokens ?? 0) - cacheRead),

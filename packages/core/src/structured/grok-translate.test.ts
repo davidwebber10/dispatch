@@ -135,6 +135,17 @@ describe('GrokTranslator — ACP session/update → Claude-shaped stream', () =>
       message: { role: 'assistant', content: [], usage: { input_tokens: 16952 - 3072, cache_read_input_tokens: 3072, output_tokens: 45 } },
     });
   });
+
+  it('stamps the init model onto usage frames so analytics never charts Grok as "unknown"', () => {
+    const t = new GrokTranslator();
+    t.init('grok-4');
+    const out = events(t.translate(fx.responseCompleted as any));
+    // recorder.ts treats a frame's message.model as authoritative for the turn's row.
+    expect(out[0].message.model).toBe('grok-4');
+    // Without init (no model known yet) the field stays absent rather than empty.
+    const bare = new GrokTranslator();
+    expect(events(bare.translate(fx.responseCompleted as any))[0].message.model).toBeUndefined();
+  });
 });
 
 describe('GrokTranslator — session/load replay (the resume backfill)', () => {
