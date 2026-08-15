@@ -232,7 +232,9 @@ export function ChatView({ terminalId }: { terminalId: string }) {
       <MessageScroller.Provider autoScroll defaultScrollPosition="end" scrollEdgeThreshold={48}>
         <MessageScroller.Root style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex' }}>
           <MessageScroller.Viewport preserveScrollOnPrepend onScroll={onViewportScroll} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
-            <MessageScroller.Content style={{ maxWidth: 768, margin: '0 auto', padding: '24px 20px 8px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Bottom padding matches the top: the last row — usually the Working… indicator —
+                used to sit 8px off the composer, which read as cramped on a phone. */}
+            <MessageScroller.Content style={{ maxWidth: 768, margin: '0 auto', padding: '24px 20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
               <LoadEarlierButton show={hasMore && !loadingOlder} onClick={loadOlder} />
               {items.length === 0 && !busy && !compacting && <EmptyState model={model} />}
               {renderTimeline(items, openFileInViewer, pageBoundariesRef.current)}
