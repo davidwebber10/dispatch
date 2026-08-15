@@ -8,7 +8,7 @@ import { useTabs } from '../../stores/tabs';
 import { timeAgo } from '../../lib/time';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { DEFAULT_AUTO_ARCHIVE_MS } from '../../lib/autoArchive';
-import type { CcRecentSession, CodexRecentSession, ProviderName, ProviderStatus } from '../../api/types';
+import type { CcRecentSession, CodexRecentSession, HarnessSettingsResponse, ProviderName, ProviderStatus } from '../../api/types';
 import { HARNESSES, INSTALL_COMMAND, LOGIN_COMMAND, type Harness as Harnesses } from '../../lib/harnesses';
 
 /** The harness (agent/shell) a new thread runs. Maps to the wire `type`. */
@@ -95,6 +95,12 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
   // Which agent CLIs are actually on the box. `null` = not asked yet: until the answer
   // arrives every card stays enabled, so a slow probe never makes the modal look broken.
   const [providers, setProviders] = useState<ProviderStatus[] | null>(null);
+  // Per-harness defaults + the opencode key status, from the daemon. `null` until loaded;
+  // the modal works without it (defaults simply don't apply, the key step stays hidden).
+  const [harnessSettings, setHarnessSettings] = useState<HarnessSettingsResponse | null>(null);
+  const [keyDraft, setKeyDraft] = useState('');
+  const [keySaving, setKeySaving] = useState(false);
+  const [keyError, setKeyError] = useState<string | null>(null);
   const [installing, setInstalling] = useState<ProviderName | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
   const [signingIn, setSigningIn] = useState(false);
@@ -114,8 +120,13 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
   const selectedAvailable = isAvailable(spec);
   const currentStatus = statusFor(spec.provider);
   // Installed but not signed in: still startable. The CLI prompts inside the terminal,
-  // which is exactly what a CLI-mode thread is for.
-  const needsLogin = currentStatus?.installed === true && currentStatus.signedIn === false;
+  // which is exactly what a CLI-mode thread is for. OpenCode is exempt: its "sign-in" is
+  // an OpenRouter API key resolved from Doppler at spawn (needsKey below), not a login
+  // command — its own auth-store state is irrelevant when the daemon injects the key.
+  const needsLogin = currentStatus?.installed === true && currentStatus.signedIn === false && harness !== 'opencode';
+  // OpenCode's gate: installed, but the configured Doppler secret doesn't resolve. Until
+  // settings load, assume the key is fine — a slow probe never blocks the modal.
+  const needsKey = harness === 'opencode' && selectedAvailable && harnessSettings !== null && !harnessSettings.opencodeKey.present;
 
   // Resuming an on-disk session only makes sense for the harnesses that take an
   // externalId today: Claude Code and Codex. Grok captures no session id yet, and the
@@ -134,14 +145,39 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
   }, []);
 
   useEffect(() => { void loadProviders(); }, [loadProviders]);
+  useEffect(() => { api.getHarnessSettings().then(setHarnessSettings).catch(() => {}); }, []);
+
+  /** The settings-configured default model for a harness, when it's still a valid option;
+   *  OpenCode falls back to its first curated model (it has no "let the CLI choose"). */
+  const defaultModelFor = useCallback((h: Harnesses, hs: HarnessSettingsResponse | null): string | null => {
+    const pref = hs?.settings?.[h.type]?.defaultModel;
+    if (pref && h.models.some((m) => m.model === pref)) return pref;
+    return h.id === 'opencode' ? h.models[0]?.model ?? null : null;
+  }, []);
+
+  // Apply the saved defaults to the INITIAL harness once settings arrive. Only while the
+  // model is untouched (null === "Default"), so a fast first click is never stomped.
+  useEffect(() => {
+    if (!harnessSettings || model !== null) return;
+    const h = HARNESSES.find((x) => x.id === harness)!;
+    const m = defaultModelFor(h, harnessSettings);
+    if (m) setModel(m);
+    const prefMode = harnessSettings.settings?.[h.type]?.defaultMode;
+    if (prefMode && h.modes.includes(prefMode)) setMode(prefMode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once when settings land
+  }, [harnessSettings]);
 
   function selectHarness(h: Harnesses) {
     // Every card selects, including one whose CLI is missing — selecting it is how you
     // reach its install prompt.
     setHarness(h.id);
     setInstallError(null);
-    setModel(null); // model lists are harness-specific — reset to Default
-    if (!h.modes.includes(mode)) setMode(h.modes[0]); // don't carry a mode into a harness without it
+    setKeyError(null);
+    // Model lists are harness-specific: reset to the harness's configured default.
+    setModel(defaultModelFor(h, harnessSettings));
+    const prefMode = harnessSettings?.settings?.[h.type]?.defaultMode;
+    if (prefMode && h.modes.includes(prefMode)) setMode(prefMode);
+    else if (!h.modes.includes(mode)) setMode(h.modes[0]); // don't carry a mode into a harness without it
   }
 
   /**
@@ -197,6 +233,22 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  async function saveKey() {
+    if (keySaving || !harnessSettings || !keyDraft.trim()) return;
+    setKeySaving(true);
+    setKeyError(null);
+    try {
+      // POST /api/secrets also fires the daemon's env refresh, so the very next spawn
+      // picks the key up — no restart.
+      await api.setSecret({ name: harnessSettings.opencodeKey.secret, value: keyDraft.trim() });
+      setKeyDraft('');
+      setHarnessSettings(await api.getHarnessSettings());
+    } catch (err) {
+      setKeyError(err instanceof Error ? err.message : 'Could not save the key. Connect Doppler in Settings → Secrets first.');
+    }
+    setKeySaving(false);
+  }
 
   async function create(externalId?: string) {
     if (busy) return;
@@ -297,6 +349,34 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
           <button type="button" disabled={signingIn} onClick={() => void signIn(spec.provider!)}
             style={{ marginTop: 12, height: 38, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: ACCENT, border: 'none', borderRadius: 10, color: '#08240F', fontWeight: 600, fontSize: 13.5, cursor: signingIn ? 'default' : 'pointer', opacity: signingIn ? 0.7 : 1, boxShadow: GLOW }}>
             {signingIn ? (<><Spinner size={13} /> Opening…</>) : (<><SignIn size={15} weight="bold" /> Sign in to {spec.label}</>)}
+          </button>
+        </div>
+      ) : selectedAvailable && needsKey ? (
+        <div style={{ padding: '14px 14px 13px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <SignIn size={16} weight="bold" color="var(--color-status-yellow)" style={{ flex: 'none' }} />
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>
+              OpenCode needs an OpenRouter API key
+            </span>
+          </div>
+          <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
+            OpenCode runs open models through OpenRouter. Paste a key from openrouter.ai — it's
+            saved to Doppler as <code style={{ font: '400 11px var(--font-mono)' }}>{harnessSettings!.opencodeKey.secret}</code> and
+            injected at spawn, never stored in a file. Change the secret later in Settings → Harnesses.
+          </div>
+          <input
+            type="password"
+            placeholder="sk-or-v1-…"
+            value={keyDraft}
+            onChange={(e) => setKeyDraft(e.target.value)}
+            style={{ marginTop: 10, height: 36, width: '100%', padding: '0 12px', background: 'rgba(0,0,0,.22)', border: '1px solid #2C2C32', borderRadius: 8, color: 'var(--color-text-primary)', fontSize: 13, boxSizing: 'border-box', font: '400 12px var(--font-mono)' }}
+          />
+          {keyError && (
+            <div style={{ marginTop: 9, fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-status-red)' }}>{keyError}</div>
+          )}
+          <button type="button" disabled={keySaving || !keyDraft.trim()} onClick={() => void saveKey()}
+            style={{ marginTop: 12, height: 38, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: ACCENT, border: 'none', borderRadius: 10, color: '#08240F', fontWeight: 600, fontSize: 13.5, cursor: keySaving || !keyDraft.trim() ? 'default' : 'pointer', opacity: keySaving || !keyDraft.trim() ? 0.7 : 1, boxShadow: GLOW }}>
+            {keySaving ? (<><Spinner size={13} /> Saving…</>) : 'Save key'}
           </button>
         </div>
       ) : !selectedAvailable ? (

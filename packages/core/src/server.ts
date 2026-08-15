@@ -28,6 +28,8 @@ import { attachPtyCapture } from './analytics/pty-capture.js';
 import { clearStaleImportState } from './analytics/importer.js';
 import { createGitRouter } from './routes/git.js';
 import { createSecretsRouter } from './routes/secrets.js';
+import { createHarnessSettingsRouter } from './routes/harness-settings.js';
+import { opencodeKeySecretName } from './settings/harness-settings.js';
 import { createTranscribeRouter } from './routes/transcribe.js';
 import { TranscriptionService } from './transcription/service.js';
 import { createSetupRouter } from './routes/setup.js';
@@ -367,6 +369,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   app.use('/api/providers', createProvidersRouter());
   app.use('/api/servers', createServersRouter(db));
   app.use('/api/secrets', createSecretsRouter(secretsService));
+  app.use('/api/settings/harnesses', createHarnessSettingsRouter(db, secretsService));
   app.use('/api/transcribe', createTranscribeRouter(new TranscriptionService(secretsService)));
   app.use('/api/setup', createSetupRouter(db, secretsService));
   app.use('/api/sessions/:id/files', createFilesRouter(db));
@@ -505,6 +508,21 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   sessionService.setIntegrationsSpecs(() => integrationsService.getServerSpecs());
   sessionService.setToolsAwareness(() => awarenessNote(toolStatuses({ base: toolsBase })));
   let effectiveShimEnv = browserShimEnv;
+  // Resolve the OpenCode/OpenRouter key from Doppler BY CONFIGURED NAME (settings/harness-
+  // settings.ts) and layer it onto the opencode children's env as OPENROUTER_API_KEY.
+  // Async on purpose (Doppler round-trip) atop the sync env refresh; re-fired on boot,
+  // secrets connection changes, any secret write, and harness-settings PUTs — so saving or
+  // renaming the key takes effect on the next spawn without a restart. Resolution failure
+  // is fine: opencode falls back to its own auth store.
+  const refreshOpencodeKeyEnv = (baseEnv: Record<string, string>) => {
+    if (!opencodeStructured) return;
+    void (async () => {
+      try {
+        const value = await secretsService.getSecret(opencodeKeySecretName(db));
+        if (value) opencodeStructured.setDefaultEnv({ ...baseEnv, OPENROUTER_API_KEY: value });
+      } catch { /* Doppler not connected — auth store fallback */ }
+    })();
+  };
   const refreshPtyEnv = () => {
     const spawnEnv = { ...effectiveShimEnv, ...secretsService.getSpawnEnv(), ...getToolsSpawnEnv({ base: toolsBase }) };
     // Each of those three builds its own PATH off process.env.PATH, so the last spread wins
@@ -519,6 +537,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     // tools, the browser shim.
     grokStructured?.setDefaultEnv(spawnEnv);
     opencodeStructured?.setDefaultEnv(spawnEnv);
+    refreshOpencodeKeyEnv(spawnEnv);
   };
   secretsService.onChange(refreshPtyEnv);
   refreshPtyEnv();
@@ -612,7 +631,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.use('/api/agents', createAgentsRouter(agentService));
   app.use('/api/providers', createProvidersRouter());
   app.use('/api/servers', createServersRouter(db));
-  app.use('/api/secrets', createSecretsRouter(secretsService));
+  app.use('/api/secrets', createSecretsRouter(secretsService, refreshPtyEnv));
+  app.use('/api/settings/harnesses', createHarnessSettingsRouter(db, secretsService, refreshPtyEnv));
   app.use('/api/transcribe', createTranscribeRouter(new TranscriptionService(secretsService)));
   app.use('/api/setup', createSetupRouter(db, secretsService));
   app.use('/api/sessions/:id/files', createFilesRouter(db));

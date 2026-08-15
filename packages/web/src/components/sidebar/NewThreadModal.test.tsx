@@ -13,8 +13,15 @@ vi.mock('../../api/client', () => ({
       { name: 'claude', installed: true, signedIn: true },
       { name: 'codex', installed: true, signedIn: true },
       { name: 'grok', installed: true, signedIn: true },
+      { name: 'opencode', installed: true, signedIn: true },
     ]),
     installProvider: vi.fn(),
+    getHarnessSettings: vi.fn().mockResolvedValue({
+      settings: {},
+      opencodeKey: { secret: 'OPENROUTER_API_KEY', present: true },
+    }),
+    putHarnessSettings: vi.fn(),
+    setSecret: vi.fn().mockResolvedValue({}),
   },
 }));
 

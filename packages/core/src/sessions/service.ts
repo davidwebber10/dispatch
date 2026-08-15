@@ -29,6 +29,7 @@ import { isAgentType } from '../providers/agent-types.js';
 import { writeGrokHome, type McpServerEntry } from '../providers/grok-home.js';
 import { writeOpencodeConfig } from '../providers/opencode-config.js';
 import { OPENCODE_DEFAULT_MODEL } from '../providers/opencode.js';
+import { readHarnessSettings } from '../settings/harness-settings.js';
 import { TERMINAL_ID_ENV_VAR } from '../auth/shim.js';
 import { LOGIN_ARGV, isProviderName } from '../setup/install.js';
 import { withAutoArchive, DEFAULT_AUTO_ARCHIVE_MS } from './auto-archive.js';
@@ -1921,8 +1922,12 @@ export class SessionService {
     // Resolve the model up front and persist it into the terminal's config if it
     // wasn't already pinned there — so it survives a daemon-restart resume and is
     // returned to the frontend as part of the terminal row's config. OpenCode always
-    // pins a model (its config file must name one), defaulting the curated pick.
-    const resolvedModel = modelFor(config) ?? (terminal.type === 'opencode' ? OPENCODE_DEFAULT_MODEL : undefined);
+    // pins a model (its config file must name one): the user's harness-settings default
+    // wins over the curated fallback.
+    const resolvedModel = modelFor(config)
+      ?? (terminal.type === 'opencode'
+        ? readHarnessSettings(this.db).opencode?.defaultModel ?? OPENCODE_DEFAULT_MODEL
+        : undefined);
     if (resolvedModel && !config.model) {
       config.model = resolvedModel;
       terminalsDb.updateConfig(this.db, terminal.id, config);

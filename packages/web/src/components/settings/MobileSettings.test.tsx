@@ -21,6 +21,6 @@ describe('MobileSettingsList', () => {
 
   it('stays in sync with the desktop modal by sharing one registry', () => {
     // Guards against a section being added to one shell but not the other.
-    expect(SETTINGS_SECTIONS.map((s) => s.key)).toEqual(['general', 'integrations', 'secrets', 'tools', 'transcription']);
+    expect(SETTINGS_SECTIONS.map((s) => s.key)).toEqual(['general', 'harnesses', 'integrations', 'secrets', 'tools', 'transcription']);
   });
 });

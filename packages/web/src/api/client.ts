@@ -1,4 +1,4 @@
-import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsBackfillState } from './types';
+import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsBackfillState } from './types';
 
 /**
  * A content block for a structured `user` turn (mirrors the daemon's wire shape). A
@@ -107,6 +107,11 @@ export const api = {
 
   getSetupState: () => req<SetupState>(`/api/setup/state`),
   recheckProviders: (fresh?: boolean) => req<ProviderStatus[]>(`/api/setup/providers${fresh ? '?fresh=1' : ''}`),
+
+  // Per-harness settings (server-backed — the daemon needs them at spawn time).
+  getHarnessSettings: () => req<HarnessSettingsResponse>('/api/settings/harnesses'),
+  putHarnessSettings: (patch: Record<string, Partial<Record<'defaultModel' | 'defaultMode' | 'keySecret', string | null>>>) =>
+    req<HarnessSettingsResponse>('/api/settings/harnesses', { method: 'PUT', body: body(patch) }),
   recheckTailscale: () => req<TailscaleStatus>(`/api/setup/tailscale`),
   completeSetup: () => req<{ ok: true }>(`/api/setup/complete`, { method: 'POST' }),
   /** Runs that CLI's own install one-liner on the daemon host. Slow — minutes, not seconds. */

@@ -1,7 +1,8 @@
 import type { ComponentType } from 'react';
-import { Gear, PlugsConnected, Key, Wrench, Microphone } from '@phosphor-icons/react';
+import { Gear, PlugsConnected, Key, Wrench, Microphone, Robot } from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
 import { GeneralSection } from './GeneralSection';
+import { HarnessesSection } from './HarnessesSection';
 import { SecretsSection } from './SecretsSection';
 import { IntegrationsSection } from './IntegrationsSection';
 import { ToolsSection } from './ToolsSection';
@@ -15,7 +16,7 @@ import { TranscriptionSection } from './TranscriptionSection';
  * Adding a section here surfaces it in both places. `blurb` is mobile-only — the
  * desktop tab strip has no room for a subtitle.
  */
-export type SettingsSectionKey = 'general' | 'integrations' | 'secrets' | 'tools' | 'transcription';
+export type SettingsSectionKey = 'general' | 'harnesses' | 'integrations' | 'secrets' | 'tools' | 'transcription';
 
 export type SettingsSection = {
   key: SettingsSectionKey;
@@ -28,6 +29,7 @@ export type SettingsSection = {
 
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { key: 'general', label: 'General', blurb: 'Coordinator, connection, appearance, updates', icon: Gear, Component: GeneralSection },
+  { key: 'harnesses', label: 'Harnesses', blurb: 'Default model and mode per agent CLI, OpenCode key', icon: Robot, Component: HarnessesSection },
   { key: 'integrations', label: 'Integrations', blurb: 'Connected services', icon: PlugsConnected, Component: IntegrationsSection },
   { key: 'secrets', label: 'Secrets', blurb: 'Doppler environment variables', icon: Key, Component: SecretsSection },
   { key: 'tools', label: 'Tools', blurb: 'Agent tool permissions', icon: Wrench, Component: ToolsSection },

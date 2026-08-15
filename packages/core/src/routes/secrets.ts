@@ -8,7 +8,7 @@ function fail(res: import('express').Response, e: unknown): void {
   res.status(client ? 400 : 502).json({ error: msg });
 }
 
-export function createSecretsRouter(secrets: SecretsService): Router {
+export function createSecretsRouter(secrets: SecretsService, onWrite?: () => void): Router {
   const router = Router();
 
   // Status never includes the token.
@@ -42,12 +42,12 @@ export function createSecretsRouter(secrets: SecretsService): Router {
   router.post('/', async (req, res) => {
     const name = String(req.body?.name ?? '').trim();
     if (!name) { res.status(400).json({ error: 'name is required' }); return; }
-    try { await secrets.setSecret(name, String(req.body?.value ?? '')); res.status(204).end(); }
+    try { await secrets.setSecret(name, String(req.body?.value ?? '')); onWrite?.(); res.status(204).end(); }
     catch (e) { fail(res, e); }
   });
 
   router.delete('/:name', async (req, res) => {
-    try { await secrets.deleteSecret(req.params.name); res.status(204).end(); } catch (e) { fail(res, e); }
+    try { await secrets.deleteSecret(req.params.name); onWrite?.(); res.status(204).end(); } catch (e) { fail(res, e); }
   });
 
   return router;

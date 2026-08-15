@@ -332,6 +332,14 @@ export interface InstallResult { ok: boolean; output: string; status: ProviderSt
 export interface TailscaleStatus { installed: boolean; running: boolean; dnsName?: string; url?: string; }
 export interface SetupState { firstRun: boolean; providers: ProviderStatus[]; tailscale: TailscaleStatus; secrets: { connected: boolean }; }
 
+// Harness settings — mirrors core /api/settings/harnesses. The opencode KEY itself never
+// crosses this wire: `opencodeKey` carries the Doppler secret NAME and a presence boolean.
+export interface HarnessSettingsEntry { defaultModel?: string; defaultMode?: 'cli' | 'pretty'; keySecret?: string; }
+export interface HarnessSettingsResponse {
+  settings: Partial<Record<string, HarnessSettingsEntry>>;
+  opencodeKey: { secret: string; present: boolean };
+}
+
 // Secrets (Doppler) — mirrors core /api/secrets.
 export interface DopplerStatus { connected: boolean; project: string | null; config: string | null; enabled: boolean; readOnly: boolean }
 export interface DopplerSecret { name: string; value: string }
