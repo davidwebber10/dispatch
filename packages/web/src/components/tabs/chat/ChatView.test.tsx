@@ -553,6 +553,53 @@ test('the Pretty composer textarea is one key tall so the placeholder lines up w
 // An empty item list means "no messages yet" ONLY when the socket is open. While the app
 // is (re)connecting the history simply hasn't replayed — the old render said "Send a
 // message to start the conversation" over threads that were full of messages.
+describe('ChatView — mid-compaction timeline split', () => {
+  // A message sent DURING a native compaction is echoed into the item list immediately,
+  // but the CLI holds it on stdin until the compaction ends. Plain arrival order rendered
+  // it ABOVE the bottom-left "Compacting context…" row, which read as "sent". The fix
+  // pins a full-width CompactingBar at the point the compaction began and renders the
+  // queued turns BELOW it.
+  function mountWithEvents() {
+    let onEvent: (e: unknown) => void = () => {};
+    vi.spyOn(sock, 'openStructuredSocket').mockImplementation((opts: any) => {
+      onEvent = opts.onEvent;
+      return { close: () => {} } as any;
+    });
+    const utils = render(<ChatView terminalId="t1" />);
+    return { ...utils, emit: (e: unknown) => onEvent(e) };
+  }
+  const user = (text: string, uuid: string) => ({ type: 'user', uuid, message: { content: [{ type: 'text', text }] } });
+
+  test('queued turns render below the bar; the bar clears when compaction ends', async () => {
+    const { emit } = mountWithEvents();
+    const { act } = await import('@testing-library/react');
+    act(() => { emit(user('before compaction', 'u1')); });
+    act(() => { emit({ type: 'system', subtype: 'status', status: 'compacting' }); });
+    act(() => { emit(user('queued hello', 'u2')); });
+
+    const bar = await screen.findByText('Compacting context…');
+    expect(screen.getByText(/The message below sends when compacting finishes/)).toBeInTheDocument();
+    // DOM order is the contract: before-turn → bar → queued turn.
+    const before = screen.getByText('before compaction');
+    const queued = screen.getByText('queued hello');
+    expect(before.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(bar.compareDocumentPosition(queued) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    // Compaction ends → the bar goes away and the timeline re-merges in order.
+    act(() => { emit({ type: 'system', subtype: 'status', status: null, compact_result: 'success' }); });
+    expect(screen.queryByText('Compacting context…')).toBeNull();
+    expect(screen.getByText('queued hello')).toBeInTheDocument();
+  });
+
+  test('a compaction with nothing queued shows the bar without the queue caption', async () => {
+    const { emit } = mountWithEvents();
+    const { act } = await import('@testing-library/react');
+    act(() => { emit({ type: 'system', subtype: 'status', status: 'compacting' }); });
+    expect(await screen.findByText('Compacting context…')).toBeInTheDocument();
+    expect(screen.queryByText(/sends when compacting finishes/)).toBeNull();
+  });
+});
+
 describe('ChatView — empty list vs reconnecting', () => {
   test('while the socket is (re)connecting, an empty chat shows a centered Reconnecting state', async () => {
     const { useConnection } = await import('../../../stores/connection');

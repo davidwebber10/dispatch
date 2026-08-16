@@ -19,7 +19,7 @@ import { DictationControl } from '../../dictation/DictationControl';
 import { InputActionsMenu } from '../../dictation/InputActionsMenu';
 import { InsightText } from '../../InsightText';
 import { ResumeAdviceCard } from './ResumeAdviceCard';
-import { WorkingIndicator, CompactingIndicator, ApiRetryIndicator } from '../../WorkingIndicator';
+import { WorkingIndicator, CompactingBar, ApiRetryIndicator } from '../../WorkingIndicator';
 import { Spinner } from '../../common/Spinner';
 import { ChatImage } from '../../ChatImage';
 import { ContextIndicator } from '../../ContextIndicator';
@@ -76,6 +76,21 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   // callback can fire (a rejection) long after a later render has replaced the closure that
   // registered it, once the reader has already switched to a different thread.
   const terminalIdRef = useRef(terminalId); terminalIdRef.current = terminalId;
+
+  // Where the timeline splits while a compaction runs: the item count at the moment
+  // `compacting` flipped true, remembered per terminal. Turns echoed AFTER that point
+  // are ones the CLI is holding on stdin until the compaction ends — rendering them
+  // BELOW the CompactingBar (rather than above, in plain arrival order) is what tells
+  // the reader "these send when compacting finishes". Render-time mutation is safe
+  // here: the write is idempotent for a given (terminalId, compacting) pair, and the
+  // hook resets `compacting` on replay/terminal switch, which clears the split.
+  const compactSplit = useRef<{ id: string; index: number } | null>(null);
+  if (compacting) {
+    if (!compactSplit.current || compactSplit.current.id !== terminalId) compactSplit.current = { id: terminalId, index: items.length };
+  } else {
+    compactSplit.current = null;
+  }
+  const splitIdx = compactSplit.current ? Math.min(compactSplit.current.index, items.length) : null;
 
   useEffect(() => {
     // Clear any stale advice/error from a PREVIOUS terminalId before anything else — PaneTree/
@@ -244,7 +259,22 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                   showing "send a message to start" over a thread that may be full of
                   messages is a lie, so that state gets a centered reconnect spinner. */}
               {items.length === 0 && !busy && !compacting && (connStatus === 'open' ? <EmptyState model={model} /> : <ReconnectingState />)}
-              {renderTimeline(items, openFileInViewer, pageBoundariesRef.current)}
+              {splitIdx === null ? (
+                renderTimeline(items, openFileInViewer, pageBoundariesRef.current)
+              ) : (
+                <>
+                  {/* Mid-compaction: the bar is a full-width divider pinned at the point the
+                      compaction began. Turns echoed after it (held on the CLI's stdin) render
+                      below, so their position says "queued". The split is render-only — when
+                      `compacting` clears, the timeline re-merges into one render and tool/result
+                      pairing across the boundary works again. */}
+                  {renderTimeline(items.slice(0, splitIdx), openFileInViewer, pageBoundariesRef.current)}
+                  <MessageScroller.Item messageId="__compacting" style={{ display: 'flex' }}>
+                    <CompactingBar queued={items.length - splitIdx} />
+                  </MessageScroller.Item>
+                  {renderTimeline(items.slice(splitIdx), openFileInViewer, pageBoundariesRef.current)}
+                </>
+              )}
               {pending?.questions && pending.questions.length > 0 && (
                 <MessageScroller.Item messageId="__ask" style={{ display: 'flex' }}>
                   {/* Interactive AskUserQuestion — answering unblocks the CLI (which is
@@ -254,11 +284,11 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                   </div>
                 </MessageScroller.Item>
               )}
-              {(busy || compacting) && (
+              {busy && !compacting && (
                 <MessageScroller.Item messageId="__working" style={{ display: 'flex' }}>
-                  {/* Compaction wins the slot: it can coincide with busy (a message sent
-                      mid-compaction sets busy too) but must never read as "Working…". */}
-                  {apiRetry ? <ApiRetryIndicator retry={apiRetry} /> : compacting ? <CompactingIndicator /> : <WorkingIndicator />}
+                  {/* While compacting, the full-width CompactingBar (in the timeline above)
+                      owns the state — a second spinner down here would read as "answering". */}
+                  {apiRetry ? <ApiRetryIndicator retry={apiRetry} /> : <WorkingIndicator />}
                 </MessageScroller.Item>
               )}
             </MessageScroller.Content>

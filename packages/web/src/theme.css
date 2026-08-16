@@ -112,3 +112,12 @@ body { background: var(--color-canvas); color: var(--color-text-primary); font-f
 @media (prefers-reduced-motion: reduce) {
   .dispatch-caret { animation: none; }
 }
+
+/* Indeterminate sweep for the full-width compacting bar (CompactingBar). The CLI
+   reports no compaction progress, so the segment sweeps rather than fills. Under
+   reduced motion it becomes a static dim full-width fill. */
+@keyframes dispatch-compact-sweep { from { left: -35% } to { left: 100% } }
+.dispatch-compact-sweep { animation: dispatch-compact-sweep 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .dispatch-compact-sweep { animation: none; left: 0; width: 100% !important; opacity: .35; }
+}
