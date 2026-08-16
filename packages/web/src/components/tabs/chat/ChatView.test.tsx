@@ -549,3 +549,24 @@ test('the Pretty composer textarea is one key tall so the placeholder lines up w
   const send = screen.getByTitle('Send');
   expect(send.style.height).toBe('34px');
 });
+
+// An empty item list means "no messages yet" ONLY when the socket is open. While the app
+// is (re)connecting the history simply hasn't replayed — the old render said "Send a
+// message to start the conversation" over threads that were full of messages.
+describe('ChatView — empty list vs reconnecting', () => {
+  test('while the socket is (re)connecting, an empty chat shows a centered Reconnecting state', async () => {
+    const { useConnection } = await import('../../../stores/connection');
+    useConnection.setState({ status: 'connecting' });
+    render(<ChatView terminalId="t1" />);
+    expect(await screen.findByText('Reconnecting…')).toBeInTheDocument();
+    expect(screen.queryByText(/start the conversation/i)).toBeNull();
+  });
+
+  test('with the socket open, an empty chat is genuinely empty and says so', async () => {
+    const { useConnection } = await import('../../../stores/connection');
+    useConnection.setState({ status: 'open' });
+    render(<ChatView terminalId="t1" />);
+    expect(await screen.findByText(/start the conversation/i)).toBeInTheDocument();
+    expect(screen.queryByText('Reconnecting…')).toBeNull();
+  });
+});

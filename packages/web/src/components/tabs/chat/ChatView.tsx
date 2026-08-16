@@ -9,6 +9,7 @@ import { AskQuestionCard, AnsweredQuestionCard } from './AskQuestionCard';
 import { StatusNotice } from './StatusNotice';
 import { isReportStatusTool, parseReportStatus } from './reportStatus';
 import { useTabs, findTerminal } from '../../../stores/tabs';
+import { useConnection } from '../../../stores/connection';
 import { ThreadAskBanner } from '../ThreadAskBanner';
 import { useDraft } from '../../../hooks/useDraft';
 import { useIsMobile } from '../../../hooks/useIsMobile';
@@ -51,6 +52,7 @@ async function fileToBase64(file: File): Promise<string> {
 export function ChatView({ terminalId }: { terminalId: string }) {
   const tab = useTabs((s) => findTerminal(s.byProject, terminalId));
   const sessionId = tab?.sessionId;
+  const connStatus = useConnection((s) => s.status);
   // The ACP harnesses (grok, opencode) have no pageable REST transcript (getConversation →
   // unsupported): their full ws-ring replay IS the whole recoverable history, so the
   // older-pages machinery stays off — no phantom "Load earlier messages" on a thread with
@@ -237,7 +239,11 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                 used to sit 8px off the composer, which read as cramped on a phone. */}
             <MessageScroller.Content style={{ maxWidth: 768, margin: '0 auto', padding: '24px 20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
               <LoadEarlierButton show={hasMore && !loadingOlder} onClick={loadOlder} />
-              {items.length === 0 && !busy && !compacting && <EmptyState model={model} />}
+              {/* An empty item list means "no messages yet" ONLY when the socket is open.
+                  While it's still (re)connecting, the history simply hasn't replayed —
+                  showing "send a message to start" over a thread that may be full of
+                  messages is a lie, so that state gets a centered reconnect spinner. */}
+              {items.length === 0 && !busy && !compacting && (connStatus === 'open' ? <EmptyState model={model} /> : <ReconnectingState />)}
               {renderTimeline(items, openFileInViewer, pageBoundariesRef.current)}
               {pending?.questions && pending.questions.length > 0 && (
                 <MessageScroller.Item messageId="__ask" style={{ display: 'flex' }}>
@@ -733,6 +739,17 @@ function GroupHeader({ heading, lines, running, open, onClick }: { heading: stri
         ? <span className="chat-shimmer" style={{ flexShrink: 0, fontSize: 11 }}>running…</span>
         : <span style={{ flexShrink: 0, fontSize: 11, color: 'var(--color-text-secondary)' }}>{lines} line{lines !== 1 ? 's' : ''}</span>}
     </button>
+  );
+}
+
+// Centered in the visible chat area (55vh ≈ the space above the composer on a phone),
+// replacing the EmptyState while the socket is down — see the render-site comment.
+function ReconnectingState() {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, height: '55vh', color: 'var(--color-text-secondary)', fontSize: 13.5 }}>
+      <Spinner size={22} />
+      <span>Reconnecting…</span>
+    </div>
   );
 }
 
