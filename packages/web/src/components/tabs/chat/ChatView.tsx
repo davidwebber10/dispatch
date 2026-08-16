@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
-import { PaperPlaneTilt, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip, ArrowBendDownRight, Wrench, X } from '@phosphor-icons/react';
+import { ArrowUp, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip, ArrowBendDownRight, X } from '@phosphor-icons/react';
 import type { ConvItem, PermissionQuestion } from '../../../api/types';
 import { api, type ContentBlock } from '../../../api/client';
 import { useStructuredChat } from './useStructuredChat';
@@ -23,7 +23,7 @@ import { WorkingIndicator, CompactingBar, ApiRetryIndicator } from '../../Workin
 import { Spinner } from '../../common/Spinner';
 import { ChatImage } from '../../ChatImage';
 import { ContextIndicator } from '../../ContextIndicator';
-import { ToolCall, ToolResult } from '../ToolCall';
+import { ToolCall, ToolResult, editDiffStat } from '../ToolCall';
 import { useUI } from '../../../stores/ui';
 import { useToolGroupExpanded } from '../../../hooks/useToolUIState';
 
@@ -91,6 +91,20 @@ export function ChatView({ terminalId }: { terminalId: string }) {
     compactSplit.current = null;
   }
   const splitIdx = compactSplit.current ? Math.min(compactSplit.current.index, items.length) : null;
+
+  // Global machinery visibility (2026-08-16 redesign): one header toggle hides every tool
+  // call/group/result in the timeline, leaving prose + insights + status cards — the
+  // "just tell me what happened" reading mode. Per-DEVICE, not per-thread: it's a reading
+  // preference, so it persists in localStorage and applies to every Pretty thread.
+  const [showMachinery, setShowMachinery] = useState(() => {
+    try { return localStorage.getItem('dispatch:chat-show-machinery') !== '0'; } catch { return true; }
+  });
+  const toggleMachinery = () => setShowMachinery((v) => {
+    try { localStorage.setItem('dispatch:chat-show-machinery', v ? '0' : '1'); } catch { /* storage denied */ }
+    return !v;
+  });
+  // Harness tag for the header + composer chip: the wire type, shortened for display.
+  const harness = tab?.type === 'claude-code' ? 'claude' : tab?.type ?? 'agent';
 
   useEffect(() => {
     // Clear any stale advice/error from a PREVIOUS terminalId before anything else — PaneTree/
@@ -247,6 +261,31 @@ export function ChatView({ terminalId }: { terminalId: string }) {
 
   return (
     <div className="chat-scope" style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, background: 'var(--color-base)' }}>
+      {/* Thread header (2026-08-16 redesign): identity on the left (thread · harness · mode),
+          the machinery toggle + a live idle/working word on the right. On mobile the thread
+          label already lives in the shell's own header, so only the tag + toggle render. */}
+      <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 12, height: isMobile ? 38 : 44, padding: '0 16px', borderBottom: '1px solid var(--color-border)' }}>
+        {!isMobile && (
+          <>
+            <span style={{ font: '400 12.5px var(--font-mono)', color: 'var(--color-text-primary)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tab?.label ?? 'Thread'}</span>
+            <span aria-hidden style={{ width: 1, height: 14, background: 'var(--color-border)', flexShrink: 0 }} />
+          </>
+        )}
+        <span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)', flexShrink: 0 }}>{harness} · pretty</span>
+        <span style={{ flex: 1 }} />
+        <button
+          onClick={toggleMachinery}
+          style={{ height: 28, padding: '0 11px', borderRadius: 6, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)', fontSize: 11.5, cursor: 'pointer', flexShrink: 0 }}
+        >
+          {showMachinery ? 'Hide tool calls' : 'Show tool calls'}
+        </button>
+        {!isMobile && (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0 }}>
+            <span aria-hidden style={{ width: 6, height: 6, borderRadius: '50%', background: busy ? 'var(--color-status-yellow)' : 'var(--color-accent)' }} />
+            <span style={{ font: '400 11px var(--font-mono)', color: busy ? 'var(--color-status-yellow)' : 'var(--color-accent)' }}>{busy ? 'working' : 'idle'}</span>
+          </span>
+        )}
+      </div>
       <MessageScroller.Provider autoScroll defaultScrollPosition="end" scrollEdgeThreshold={48}>
         <MessageScroller.Root style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex' }}>
           <MessageScroller.Viewport preserveScrollOnPrepend onScroll={onViewportScroll} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
@@ -260,7 +299,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                   messages is a lie, so that state gets a centered reconnect spinner. */}
               {items.length === 0 && !busy && !compacting && (connStatus === 'open' ? <EmptyState model={model} /> : <ReconnectingState />)}
               {splitIdx === null ? (
-                renderTimeline(items, openFileInViewer, pageBoundariesRef.current)
+                renderTimeline(items, openFileInViewer, pageBoundariesRef.current, { hideMachinery: !showMachinery })
               ) : (
                 <>
                   {/* Mid-compaction: the bar is a full-width divider pinned at the point the
@@ -268,11 +307,11 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                       below, so their position says "queued". The split is render-only — when
                       `compacting` clears, the timeline re-merges into one render and tool/result
                       pairing across the boundary works again. */}
-                  {renderTimeline(items.slice(0, splitIdx), openFileInViewer, pageBoundariesRef.current)}
+                  {renderTimeline(items.slice(0, splitIdx), openFileInViewer, pageBoundariesRef.current, { hideMachinery: !showMachinery })}
                   <MessageScroller.Item messageId="__compacting" style={{ display: 'flex' }}>
                     <CompactingBar queued={items.length - splitIdx} />
                   </MessageScroller.Item>
-                  {renderTimeline(items.slice(splitIdx), openFileInViewer, pageBoundariesRef.current)}
+                  {renderTimeline(items.slice(splitIdx), openFileInViewer, pageBoundariesRef.current, { hideMachinery: !showMachinery })}
                 </>
               )}
               {pending?.questions && pending.questions.length > 0 && (
@@ -377,67 +416,66 @@ export function ChatView({ terminalId }: { terminalId: string }) {
             )}
           </div>
         )}
-        <div style={{ maxWidth: 768, margin: '0 auto', display: 'flex', alignItems: 'flex-end', gap: 8, background: dragActive ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-elevated))' : 'var(--color-elevated)', border: dragActive ? '1px solid var(--color-accent)' : '1px solid var(--color-border)', borderRadius: 12, padding: '8px 8px 8px 8px', transition: 'border-color .12s, background .12s' }}>
-          {isMobile ? (
-            <InputActionsMenu
-              onAddFile={() => fileInputRef.current?.click()}
-              onDictate={() => void dictation.start()}
-              dictateDisabled={!sttConfigured}
-              dictateHint="Set up in Settings → Transcription"
-              triggerStyle={{ width: 34, height: 34, borderRadius: 9, border: 'none', background: 'var(--color-hover)' }}
-            />
-          ) : (
-            <label
-              title="Attach file"
-              style={{ flexShrink: 0, width: 34, height: 34, padding: 0, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'var(--color-hover)', color: 'var(--color-text-secondary)' }}
-            >
-              <Paperclip size={17} />
-              <input
-                type="file"
-                multiple
-                style={{ display: 'none' }}
-                onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }}
-              />
-            </label>
-          )}
-          {/* hidden input the mobile + menu triggers (routes through the same attachFiles) */}
-          <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }} />
+        {/* Composer card (2026-08-16 redesign): textarea on top, a control row beneath —
+            attach, harness chip, context meter, send. The border brightens on draft/drag. */}
+        <div style={{ maxWidth: 768, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 8, background: dragActive ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-elevated))' : 'var(--color-elevated)', border: dragActive ? '1px solid var(--color-accent)' : canSend ? '1px solid color-mix(in srgb, var(--color-text-tertiary) 45%, var(--color-border))' : '1px solid var(--color-border)', borderRadius: 8, padding: '9px 11px', transition: 'border-color .12s, background .12s' }}>
           {isMobile && dictation.state !== 'idle' ? (
             <DictationControl dictation={dictation} />
           ) : (
-            <>
-          <textarea
-            ref={taRef}
-            value={draft}
-            onChange={(e) => { setDraft(e.target.value); const el = e.target; el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 180) + 'px'; }}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); } }}
-            onPaste={onPaste}
-            placeholder="Message…"
-            rows={1}
-            /* Prose only — the Pretty composer never carries shell input, so spelling
-               help is always on here and gets no toggle. autoCapitalize stays off so a
-               path or a command name pasted mid-message is not altered. */
-            autoCapitalize="off" autoCorrect="on" spellCheck
-            /* One-line box is 22px line + 6px padding = 34px, matching the attach/send
-               keys. Without this the UA textarea is shorter than the keys and flex-end
-               drops the placeholder below their optical center. */
-            style={{ flex: 1, resize: 'none', border: 'none', outline: 'none', background: 'transparent', color: 'var(--color-text-primary)', font: '400 15px var(--font-sans)', lineHeight: '22px', maxHeight: 180, minHeight: 34, padding: '6px 4px', margin: 0, overflowY: 'auto' }}
-          />
-          <button
-            onClick={doSend}
-            disabled={!canSend}
-            title="Send"
-            style={{ flexShrink: 0, width: 34, height: 34, padding: 0, borderRadius: 9, border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: canSend ? 'pointer' : 'default', background: canSend ? 'var(--color-accent)' : 'var(--color-hover)', color: canSend ? '#06140B' : 'var(--color-text-tertiary)', transition: 'background .15s' }}
-          >
-            <PaperPlaneTilt size={17} weight="fill" />
-          </button>
-            </>
+            <textarea
+              ref={taRef}
+              value={draft}
+              onChange={(e) => { setDraft(e.target.value); const el = e.target; el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 140) + 'px'; }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); } }}
+              onPaste={onPaste}
+              placeholder="Message…"
+              rows={1}
+              /* Prose only — the Pretty composer never carries shell input, so spelling
+                 help is always on here and gets no toggle. autoCapitalize stays off so a
+                 path or a command name pasted mid-message is not altered. */
+              autoCapitalize="off" autoCorrect="on" spellCheck
+              style={{ width: '100%', resize: 'none', border: 'none', outline: 'none', background: 'transparent', color: 'var(--color-text-primary)', font: '400 14px var(--font-sans)', lineHeight: 1.6, maxHeight: 140, minHeight: 22, padding: '1px 0', margin: 0, overflowY: 'auto' }}
+            />
           )}
-        </div>
-
-        {/* thin status row: muted context-window fill indicator, tappable for detail */}
-        <div style={{ maxWidth: 768, margin: '6px auto 0', display: 'flex', justifyContent: 'flex-end' }}>
-          <ContextIndicator contextTokens={contextTokens} contextWindow={contextWindow} compacting={compacting} compactResult={compactResult} model={model} compact={compact} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {isMobile ? (
+              <InputActionsMenu
+                onAddFile={() => fileInputRef.current?.click()}
+                onDictate={() => void dictation.start()}
+                dictateDisabled={!sttConfigured}
+                dictateHint="Set up in Settings → Transcription"
+                triggerStyle={{ width: 26, height: 26, borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent' }}
+              />
+            ) : (
+              <label
+                title="Attach file"
+                style={{ flexShrink: 0, width: 26, height: 26, padding: 0, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+              >
+                <Paperclip size={14} />
+                <input
+                  type="file"
+                  multiple
+                  style={{ display: 'none' }}
+                  onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }}
+                />
+              </label>
+            )}
+            {/* hidden input the mobile + menu triggers (routes through the same attachFiles) */}
+            <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }} />
+            {/* Harness chip — display-only identity, matching the header's tag. */}
+            <span style={{ flexShrink: 0, height: 26, display: 'inline-flex', alignItems: 'center', padding: '0 9px', borderRadius: 6, border: '1px solid var(--color-border)', font: '400 11px var(--font-mono)', color: 'var(--color-text-secondary)' }}>{harness}</span>
+            <ContextIndicator contextTokens={contextTokens} contextWindow={contextWindow} compacting={compacting} compactResult={compactResult} model={model} compact={compact} />
+            <span style={{ flex: 1 }} />
+            {!isMobile && <span style={{ flexShrink: 0, font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>⏎ send · ⇧⏎ newline</span>}
+            <button
+              onClick={doSend}
+              disabled={!canSend}
+              title="Send"
+              style={{ flexShrink: 0, width: 28, height: 28, padding: 0, borderRadius: 6, border: canSend ? '1px solid var(--color-accent)' : '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: canSend ? 'pointer' : 'default', background: canSend ? 'var(--color-accent)' : 'transparent', color: canSend ? '#06140B' : 'var(--color-text-tertiary)', transition: 'background .15s, border-color .15s' }}
+            >
+              <ArrowUp size={14} weight="bold" />
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -489,7 +527,8 @@ function StagedThumbnail({ src, onRemove }: { src: string; onRemove: () => void 
  * comment on pageBoundariesRef) also forces a break — otherwise a loadOlder() prepend
  * could silently merge into a group that already existed, defeating scroll preservation.
  */
-export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void, pageBoundaries: Set<ConvItem>) {
+export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void, pageBoundaries: Set<ConvItem>, opts?: { hideMachinery?: boolean }) {
+  const hideMachinery = opts?.hideMachinery === true;
   // Map tool_use id -> its result item, so paired results aren't rendered standalone.
   const resultById = new Map<string, ConvItem>();
   // Set of tool ids that actually have a tool card, so an ORPHAN result (whose tool
@@ -506,7 +545,19 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
 
   const rows: React.ReactNode[] = [];
   let group: { key: string; nodes: React.ReactNode[] } | null = null;
+  // Consecutive machinery nodes (tool calls/groups/orphan results) coalesce into ONE
+  // hairline-bordered block per the redesign — a run of calls reads as a single strip of
+  // terminal output between prose paragraphs, not a stack of standalone cards.
+  let mach: { key: string; nodes: React.ReactNode[] } | null = null;
+  const flushMach = () => {
+    if (mach && mach.nodes.length > 0 && group) {
+      group.nodes.push(<MachineryBlock key={`m-${mach.key}`} nodes={mach.nodes} />);
+      group.key = mach.key;
+    }
+    mach = null;
+  };
   const flushGroup = () => {
+    flushMach();
     if (group && group.nodes.length > 0) {
       rows.push(
         <MessageScroller.Item key={group.key} messageId={group.key} style={{ display: 'flex' }}>
@@ -515,6 +566,14 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
       );
     }
     group = null;
+  };
+  const pushMach = (id: string, node: React.ReactNode) => {
+    if (hideMachinery) return;
+    if (!group) group = { key: id, nodes: [] };
+    group.key = id;
+    if (!mach) mach = { key: id, nodes: [] };
+    mach.key = id;
+    mach.nodes.push(<div key={id}>{node}</div>);
   };
 
   for (let i = 0; i < items.length; i++) {
@@ -525,6 +584,11 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
 
     if (it.kind === 'user') {
       flushGroup();
+      // Turn separator: a hairline between the previous assistant block and this user turn,
+      // so long threads read as clearly delimited exchanges (redesign). Not before the first.
+      if (rows.length > 0) {
+        rows.push(<div key={`sep-${id}`} aria-hidden style={{ height: 1, background: 'var(--color-hover)', flexShrink: 0 }} />);
+      }
       rows.push(
         <MessageScroller.Item key={id} messageId={id} style={{ display: 'flex', flexDirection: 'column' }}>
           <UserBubble text={it.text ?? ''} source={it.source} />
@@ -597,11 +661,8 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
           tool: t,
           result: t.toolId ? resultById.get(t.toolId) : runResults[toolIdLessSeen++],
         }));
-        const groupNode = <ToolGroup pairs={pairs} onViewFile={onViewFile} />;
         const lastId = stableId(run[run.length - 1]);
-        if (!group) group = { key: lastId, nodes: [] };
-        group.key = lastId;
-        group.nodes.push(<div key={lastId}>{groupNode}</div>);
+        pushMach(lastId, <ToolGroup pairs={pairs} onViewFile={onViewFile} />);
         // Skip past the run's members; their paired results are skipped by the
         // existing `toolIds.has(...)` guard on the 'tool-result' branch.
         i = lastIdx;
@@ -642,12 +703,16 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
         // content to show.
         node = <StatusNotice input={it.toolInput} />;
       } else {
-        node = <ToolCall tool={it} result={result} onViewFile={onViewFile} />;
+        // Generic machinery — routes through pushMach so consecutive calls share one
+        // bordered block, and so the header's Hide-tool-calls toggle can drop it.
+        pushMach(id, <ToolCall tool={it} result={result} onViewFile={onViewFile} />);
+        continue;
       }
     } else if (it.kind === 'tool-result') {
       if (it.toolId && toolIds.has(it.toolId)) continue; // already shown paired with its tool
       if (consumed.has(it)) continue;                    // ...or paired by adjacency, above
-      node = <ToolResult item={it} />;
+      pushMach(id, <ToolResult item={it} />);
+      continue;
     } else if (it.kind === 'result') node = <ResultFooter item={it} />;
     // A system-injected event (background-task completion) that arrived as a `user`-role
     // turn. Deliberately does NOT flushGroup() the way a real `user` turn does: it isn't a
@@ -657,6 +722,9 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
     else if (it.kind === 'notice') node = <TaskNotice text={it.text ?? ''} />;
     if (node == null) continue;
 
+    // A non-machinery node closes any open machinery strip first, so the bordered block
+    // ends exactly where the prose resumes.
+    flushMach();
     if (!group) group = { key: id, nodes: [] };
     // Anchor the group's React key to its LAST item, re-set on every push (not just at
     // creation). A group's start can move earlier when loadOlder() prepends older history
@@ -693,8 +761,24 @@ export function TaskNotice({ text }: { text: string }) {
 /** One assistant turn: a flush-left flex-column holding all its blocks. */
 function AssistantTurn({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
       {children}
+    </div>
+  );
+}
+
+/**
+ * A consecutive run of machinery (tool calls/groups/orphan results) fenced by hairlines —
+ * the redesign renders a turn's tool activity as one strip of terminal-ish rows between
+ * prose paragraphs. Inner rows separate with a fainter hairline; the strip has no side
+ * borders or background, so it stays quieter than a card.
+ */
+function MachineryBlock({ nodes }: { nodes: React.ReactNode[] }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', borderTop: '1px solid var(--color-hover)', borderBottom: '1px solid var(--color-hover)' }}>
+      {nodes.map((n, i) => (
+        <div key={i} style={{ minWidth: 0, borderTop: i > 0 ? '1px solid color-mix(in srgb, var(--color-hover) 55%, transparent)' : 'none' }}>{n}</div>
+      ))}
     </div>
   );
 }
@@ -730,18 +814,20 @@ function ToolGroup({ pairs, onViewFile }: { pairs: ToolPair[]; onViewFile: (p: s
   const running = pairs.some((p) => !p.result);
   const [manualOpen, setManualOpen] = useToolGroupExpanded(firstId ? `group:${firstId}` : undefined, undefined);
   const expanded = manualOpen === undefined ? running : manualOpen;
-  const toolName = pairs[0].tool.toolName;
-  const label = `${toolName} ${pairs.length} calls`;
-  // "Read 3 files" reads better than "Read 3 calls" for the file-shaped tools.
-  const fileish = toolName === 'Read' || toolName === 'Write' || toolName === 'Edit';
-  const heading = fileish ? `${toolName} ${pairs.length} files` : label;
+  const toolName = pairs[0].tool.toolName ?? 'tool';
   const lines = pairs.reduce((n, p) => n + (p.result?.text?.split('\n').length ?? 0), 0);
+  // Aggregate edit stat across the run (the redesign's `+33 −9`): only shown when EVERY
+  // member yields a stat — a mixed/partial sum would misstate the run.
+  const stats = pairs.map((p) => editDiffStat(p.tool.toolName, p.tool.toolInput));
+  const diff = stats.length > 0 && stats.every((s): s is { add: number; del: number } => s !== null)
+    ? stats.reduce((a, s) => ({ add: a.add + s.add, del: a.del + s.del }), { add: 0, del: 0 })
+    : null;
 
   if (expanded) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <GroupHeader heading={heading} lines={lines} running={running} open onClick={() => setManualOpen(false)} />
-        <div style={{ paddingLeft: 14, display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
+        <GroupHeader toolName={toolName} count={pairs.length} lines={lines} diff={diff} running={running} open onClick={() => setManualOpen(false)} />
+        <div style={{ paddingLeft: 20, display: 'flex', flexDirection: 'column', paddingBottom: 4 }}>
           {pairs.map(({ tool: t, result }) => (
             <ToolCall key={stableId(t)} tool={t} result={result} onViewFile={onViewFile} />
           ))}
@@ -749,25 +835,29 @@ function ToolGroup({ pairs, onViewFile }: { pairs: ToolPair[]; onViewFile: (p: s
       </div>
     );
   }
-  return <GroupHeader heading={heading} lines={lines} running={running} open={false} onClick={() => setManualOpen(true)} />;
+  return <GroupHeader toolName={toolName} count={pairs.length} lines={lines} diff={diff} running={running} open={false} onClick={() => setManualOpen(true)} />;
 }
 
-function GroupHeader({ heading, lines, running, open, onClick }: { heading: string; lines: number; running: boolean; open: boolean; onClick: () => void }) {
+function GroupHeader({ toolName, count, lines, diff, running, open, onClick }: { toolName: string; count: number; lines: number; diff: { add: number; del: number } | null; running: boolean; open: boolean; onClick: () => void }) {
   return (
     <button
       type="button"
       aria-expanded={open}
       onClick={onClick}
-      style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: 7, display: 'flex', gap: 7, alignItems: 'center' }}
+      style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: 0, height: 30, display: 'flex', gap: 10, alignItems: 'center' }}
       onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-hover)'; }}
       onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
     >
-      <CaretRight size={11} weight="bold" style={{ flexShrink: 0, color: 'var(--color-text-tertiary)', transition: 'transform .12s ease', transform: open ? 'rotate(90deg)' : 'none' }} />
-      <Wrench size={13} color="#5A8DD6" style={{ flexShrink: 0 }} />
-      <span style={{ minWidth: 0, flex: 1, fontSize: 12.5, color: 'var(--color-text-primary)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{heading}</span>
+      <span style={{ width: 20, flexShrink: 0, display: 'flex', justifyContent: 'center' }}>
+        <CaretRight size={10} weight="bold" style={{ color: 'var(--color-text-tertiary)', transition: 'transform .12s ease', transform: open ? 'rotate(90deg)' : 'none' }} />
+      </span>
+      <span style={{ flexShrink: 0, font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)' }}>{toolName}</span>
+      <span style={{ flexShrink: 0, font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>×{count}</span>
+      <span style={{ flex: 1, minWidth: 0 }} />
+      {diff && <span style={{ flexShrink: 0, font: '400 11px var(--font-mono)', color: '#8fb79a' }}>+{diff.add} −{diff.del}</span>}
       {running
         ? <span className="chat-shimmer" style={{ flexShrink: 0, fontSize: 11 }}>running…</span>
-        : <span style={{ flexShrink: 0, fontSize: 11, color: 'var(--color-text-secondary)' }}>{lines} line{lines !== 1 ? 's' : ''}</span>}
+        : !diff && <span style={{ flexShrink: 0, font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{lines} line{lines !== 1 ? 's' : ''}</span>}
     </button>
   );
 }
@@ -803,22 +893,28 @@ export function UserBubble({ text, source }: { text: string; source?: 'user' | '
   const dispatchName = useDispatchName();
   const viaCoordinator = source === 'coordinator';
   return (
-    <div style={{ alignSelf: 'flex-end', maxWidth: '85%', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-      {viaCoordinator && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, color: 'var(--color-accent)' }}>
-          <ArrowBendDownRight size={12} weight="bold" />
-          via {dispatchName}
+    <div style={{ alignSelf: 'flex-end', maxWidth: '82%', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, padding: '8px 0 4px' }}>
+      {/* Turn meta (redesign): a small mono label above the bubble instead of an anonymous
+          blob — YOU for the human, the relay attribution for a coordinator-sent turn. No
+          timestamp yet: ConvItems carry no wall-clock time, and a fabricated one would lie
+          on every replayed/paged item. */}
+      {viaCoordinator ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, font: '500 9.5px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-accent)' }}>
+          <ArrowBendDownRight size={11} weight="bold" />
+          VIA {dispatchName.toUpperCase()}
         </div>
+      ) : (
+        <span style={{ font: '500 9.5px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-accent)' }}>YOU</span>
       )}
       <div
         style={{
           background: viaCoordinator ? 'var(--color-elevated)' : 'var(--color-accent)',
           border: viaCoordinator ? '1px solid var(--color-border)' : 'none',
           color: viaCoordinator ? 'var(--color-text-primary)' : '#06140B',
-          borderRadius: '14px 14px 4px 14px',
-          padding: '9px 13px',
-          font: '400 15px var(--font-sans)',
-          lineHeight: 1.5,
+          borderRadius: 8,
+          padding: '12px 15px',
+          font: '500 15.5px var(--font-sans)',
+          lineHeight: 1.55,
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
         }}
@@ -829,11 +925,16 @@ export function UserBubble({ text, source }: { text: string; source?: 'user' | '
   );
 }
 
-// Assistant prose flows through the SHARED <InsightText> so ★ Insight blocks become tinted
-// callouts here identically to the coordinator stream (scheme="global" → app --color-* tokens).
+// Assistant prose flows through the SHARED <InsightText>; the chat surface uses the redesign's
+// left-railed clamped insight blocks (variant="rail") rather than the coordinator's tinted
+// callouts. The wrapper sets the redesign's reading size — md-view inherits it.
 function AssistantText({ text }: { text: string }) {
   if (!text) return null;
-  return <InsightText source={text} scheme="global" />;
+  return (
+    <div style={{ fontSize: 14.5, lineHeight: 1.75, minWidth: 0 }}>
+      <InsightText source={text} scheme="global" variant="rail" />
+    </div>
+  );
 }
 
 // Collapsed, the row IS the preview: brain icon + the thought's first words in one dim italic

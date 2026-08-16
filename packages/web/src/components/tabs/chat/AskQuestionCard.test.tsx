@@ -125,3 +125,26 @@ describe('AnsweredQuestionCard — the collapsed "answered" record', () => {
     expect(screen.getAllByText(/some future CLI format/).length).toBeGreaterThan(0);
   });
 });
+
+// Reported 2026-08-16: an answered card marked only the multi-select answer — every
+// single-select whose chosen label contained a comma ("No, visual redesign only") showed
+// NO selection, because the parser blind-split answers on ", ".
+describe('selectedOptionLabels — comma-bearing labels (regression)', () => {
+  it('matches a single-select answer whose label contains a comma', async () => {
+    const { selectedOptionLabels } = await import('./AskQuestionCard');
+    const labels = ['Yes, live health (Recommended)', 'No, visual redesign only'];
+    expect([...(selectedOptionLabels('No, visual redesign only', labels) ?? [])]).toEqual(['No, visual redesign only']);
+  });
+
+  it('greedily parses a multi-select join of comma-bearing labels', async () => {
+    const { selectedOptionLabels } = await import('./AskQuestionCard');
+    const labels = ['Run install button', 'No, skip it', 'Row menu extras'];
+    const sel = selectedOptionLabels('No, skip it, Run install button', labels);
+    expect(sel && [...sel].sort()).toEqual(['No, skip it', 'Run install button']);
+  });
+
+  it('returns null for a free-text Other answer so the card shows it verbatim', async () => {
+    const { selectedOptionLabels } = await import('./AskQuestionCard');
+    expect(selectedOptionLabels('do something else entirely', ['A', 'B'])).toBeNull();
+  });
+});

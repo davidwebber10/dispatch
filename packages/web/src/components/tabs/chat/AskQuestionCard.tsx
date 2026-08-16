@@ -59,19 +59,25 @@ export function AskQuestionCard({ questions, onAnswer }: { questions: Permission
 
   const allAnswered = questions.every((_, i) => (sel[i]?.length ?? 0) > 0);
 
+  // NEEDS YOU card (2026-08-16 pretty-chat redesign): coral-tinted, dot + letterspaced mono
+  // label + right meta — the same visual state as a needs_you StatusNotice, because to the
+  // reader both mean exactly one thing: the thread is paused on them.
   return (
-    <div style={{ border: '1px solid var(--color-accent)', borderRadius: 12, background: 'color-mix(in srgb, var(--color-accent) 7%, var(--color-elevated))', padding: 14, display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div style={{ border: '1px solid #7d4640', borderRadius: 6, background: 'rgba(243,113,101,.06)', padding: '12px 13px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+        <span aria-hidden style={{ width: 6, height: 6, borderRadius: '50%', background: '#F37165', flexShrink: 0 }} />
+        <span style={{ font: '500 9.5px var(--font-mono)', letterSpacing: '1.3px', color: '#f0a79f' }}>NEEDS YOU</span>
+        <span style={{ flex: 1 }} />
+        <span style={{ font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>paused · {questions.length} question{questions.length !== 1 ? 's' : ''}</span>
+      </div>
       {questions.map((q, qi) => {
         const multi = q.multiSelect === true;
         const chosen = sel[qi] ?? [];
         return (
           <div key={qi} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-              <Question size={15} weight="fill" color="var(--color-accent)" />
-              {q.header && (
-                <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--color-accent)', background: 'color-mix(in srgb, var(--color-accent) 15%, transparent)', padding: '1px 7px', borderRadius: 6 }}>{q.header}</span>
-              )}
-            </div>
+            {q.header && (
+              <span style={{ alignSelf: 'flex-start', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--color-text-secondary)', background: 'var(--color-hover)', padding: '1px 7px', borderRadius: 6 }}>{q.header}</span>
+            )}
             <div style={{ fontSize: 14.5, fontWeight: 500, color: 'var(--color-text-primary)', lineHeight: 1.45 }}>{q.question}</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {(q.options ?? []).map((o, oi) => {
@@ -103,20 +109,23 @@ export function AskQuestionCard({ questions, onAnswer }: { questions: Permission
           </div>
         );
       })}
-      {!autoSubmit && (
-        <button
-          onClick={() => buildAndSubmit(sel)}
-          disabled={submitted || !allAnswered}
-          style={{
-            alignSelf: 'flex-end', border: 'none', borderRadius: 9, padding: '8px 18px', fontWeight: 600, fontSize: 13.5,
-            background: allAnswered && !submitted ? 'var(--color-accent)' : 'var(--color-hover)',
-            color: allAnswered && !submitted ? '#06140B' : 'var(--color-text-tertiary)',
-            cursor: allAnswered && !submitted ? 'pointer' : 'default', transition: 'background .15s',
-          }}
-        >
-          {submitted ? 'Sent' : 'Submit'}
-        </button>
-      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+        {!autoSubmit && (
+          <button
+            onClick={() => buildAndSubmit(sel)}
+            disabled={submitted || !allAnswered}
+            style={{
+              border: 'none', borderRadius: 6, height: 30, padding: '0 16px', fontWeight: 600, fontSize: 12.5,
+              background: allAnswered && !submitted ? 'var(--color-accent)' : 'var(--color-hover)',
+              color: allAnswered && !submitted ? '#06140B' : 'var(--color-text-tertiary)',
+              cursor: allAnswered && !submitted ? 'pointer' : 'default', transition: 'background .15s',
+            }}
+          >
+            {submitted ? 'Sent' : 'Submit'}
+          </button>
+        )}
+        <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>or reply below</span>
+      </div>
     </div>
   );
 }
@@ -155,6 +164,29 @@ function parseAnsweredResult(resultText: string, questions: PermissionQuestion[]
 }
 
 /**
+ * Which option labels does an answer string select? NOT a bare `split(', ')`: a single-select
+ * answer whose label itself contains a comma — "No, visual redesign only" — used to split into
+ * two bogus labels and match nothing, so the answered card showed the user's choice as
+ * unselected (reported 2026-08-16). Exact-match first; then a greedy parse of the multi-select
+ * `", "`-joined shape that only ever consumes WHOLE known labels, so comma-bearing labels
+ * survive inside a join too. Returns null when nothing parses — a free-text "Other" answer —
+ * and the caller then shows the raw answer text instead of a silently unmarked option list.
+ */
+export function selectedOptionLabels(answer: string, labels: string[]): Set<string> | null {
+  if (labels.includes(answer)) return new Set([answer]);
+  const sel = new Set<string>();
+  let rest = answer;
+  outer: while (rest.length > 0) {
+    for (const l of labels) {
+      if (rest === l) { sel.add(l); return sel; }
+      if (l && rest.startsWith(l + ', ')) { sel.add(l); rest = rest.slice(l.length + 2); continue outer; }
+    }
+    return null;
+  }
+  return sel.size > 0 ? sel : null;
+}
+
+/**
  * A collapsed, expandable record of an AskUserQuestion that has already been answered —
  * rendered in the permanent timeline once the interactive <AskQuestionCard> above resolves
  * (its paired tool_result has landed), so an answered question stays in the conversation
@@ -186,7 +218,9 @@ export function AnsweredQuestionCard({ questions, resultText }: { questions: Per
         <div style={{ padding: '0 14px 14px', display: 'flex', flexDirection: 'column', gap: 14 }}>
           {questions.map((q, qi) => {
             const answer = q.question ? parsed?.[q.question] : undefined;
-            const chosen = (answer ?? '').split(', ').map((s) => s.trim()).filter(Boolean);
+            const labels = (q.options ?? []).map(optionLabel);
+            const chosenSet = answer != null ? selectedOptionLabels(answer, labels) : null;
+            const chosen = chosenSet ? [...chosenSet] : [];
             return (
               <div key={qi} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {q.header && (
@@ -219,6 +253,13 @@ export function AnsweredQuestionCard({ questions, resultText }: { questions: Per
                 </div>
                 {answer == null && (
                   <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>{resultText}</div>
+                )}
+                {/* A free-text "Other" answer matches no option — show it verbatim instead of
+                    presenting an all-unselected list that looks like nothing was chosen. */}
+                {answer != null && chosenSet == null && (
+                  <div style={{ fontSize: 13, color: 'var(--color-text-primary)' }}>
+                    <span style={{ color: 'var(--color-text-tertiary)' }}>answered: </span>{answer}
+                  </div>
                 )}
               </div>
             );

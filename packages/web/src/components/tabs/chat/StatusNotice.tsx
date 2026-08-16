@@ -3,54 +3,52 @@
 // findings/question inside report_status while its reply says only "waiting on your feedback":
 // the tool still captures the status for the board, but the human reading the thread now sees it.
 //
-// Every state renders as a card with the same shape — icon, uppercase label, summary — so a turn's
-// ending is always obvious at a glance, with the accent color carrying the state:
+// Card language (2026-08-16 pretty-chat redesign, docs/design/2026-08-16-pretty-chat-restyle.md):
+// a tinted card with a header row — 6px state dot, letterspaced mono label, right-aligned mono
+// meta — over the summary/ask text. State accents:
 //
-//   - needs_you  — amber, the most prominent: label, the summary (its findings), and the ask
-//                  verbatim. This is the "important response" that was being buried.
-//   - blocked    — blue: same layout, with the blocker verbatim. Blue (not amber) so "waiting on
-//                  another agent/timer" doesn't read as "waiting on you".
-//   - done       — green: label + full summary (wrapped, not truncated). Lighter accent than
-//                  needs_you, but a real card — the earlier one-line muted render was easy to miss.
-//   - unknown    — neutral gray card labeled with the raw state, so a new state never silently
-//                  borrows another state's meaning.
-//
-// Uses app-global `--color-*` tokens plus hard-coded accents: the board's amber (#E8B04B) for
-// Needs Help and the overseer rail's green (--acc, #3ECF6A) for Done, so both states read the
-// same across surfaces.
+//   - needs_you — CORAL (the design's #F37165 family), the most prominent: findings + the ask
+//                 verbatim, meta "paused". Coral, not amber: it must match the NEEDS YOU ask-card
+//                 so "waiting on you" reads as ONE state everywhere in the thread.
+//   - blocked   — blue: same layout, blocker verbatim. Blue so "waiting on another agent/timer"
+//                 doesn't read as "waiting on you".
+//   - done      — green tinted card, label DONE.
+//   - unknown   — neutral card labeled with the raw state, so a new state never silently borrows
+//                 another state's meaning.
 
-import { CheckCircle, HourglassMedium, PauseCircle, Info } from '@phosphor-icons/react';
-import type { Icon } from '@phosphor-icons/react';
 import { parseReportStatus } from './reportStatus';
 
 interface StateStyle {
   label: string;
-  IconGlyph: Icon;
-  accent: string;      // label + icon color
+  dot: string;
+  accent: string;      // label color
   border: string;
   background: string;
+  meta?: string;
 }
 
 const STATE_STYLES: Record<'done' | 'needs_you' | 'blocked', StateStyle> = {
   needs_you: {
-    label: 'Waiting on you',
-    IconGlyph: PauseCircle,
-    accent: '#E8B04B',
-    border: 'rgba(232,176,75,.5)',
-    background: 'rgba(232,176,75,.07)',
+    label: 'NEEDS YOU',
+    dot: '#F37165',
+    accent: '#f0a79f',
+    border: '#7d4640',
+    background: 'rgba(243,113,101,.06)',
+    meta: 'paused',
   },
   blocked: {
-    label: 'Blocked',
-    IconGlyph: HourglassMedium,
-    accent: '#5CA7E8',
+    label: 'BLOCKED',
+    dot: '#5CA7E8',
+    accent: '#8fc1ea',
     border: 'rgba(92,167,232,.45)',
     background: 'rgba(92,167,232,.07)',
+    meta: 'waiting',
   },
   done: {
-    label: 'Done',
-    IconGlyph: CheckCircle,
-    accent: '#3ECF6A',
-    border: 'rgba(62,207,106,.35)',
+    label: 'DONE',
+    dot: '#3ECF6A',
+    accent: '#8bc994',
+    border: 'rgba(62,207,106,.3)',
     background: 'rgba(62,207,106,.06)',
   },
 };
@@ -63,8 +61,8 @@ export function StatusNotice({ input }: { input?: string }) {
   const style: StateStyle = known
     ? STATE_STYLES[rs.state as 'done' | 'needs_you' | 'blocked']
     : {
-        label: rs.state ?? 'Status',
-        IconGlyph: Info,
+        label: (rs.state ?? 'STATUS').toUpperCase(),
+        dot: 'var(--color-text-tertiary)',
         accent: 'var(--color-text-secondary)',
         border: 'var(--color-border)',
         background: 'transparent',
@@ -82,30 +80,33 @@ export function StatusNotice({ input }: { input?: string }) {
   // Nothing to say at all (e.g. a bare `{state:"done"}`) → no card.
   if (!showSummary && !primary) return null;
 
-  const { IconGlyph } = style;
-
   return (
     <div
       data-testid="status-notice"
       style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 9,
         borderWidth: 1,
         borderStyle: 'solid',
         borderColor: style.border,
         background: style.background,
-        borderRadius: 'var(--radius-md)',
-        padding: '8px 11px',
+        borderRadius: 6,
+        padding: '12px 13px',
         minWidth: 0,
       }}
     >
-      <div style={{ fontSize: 10.5, textTransform: 'uppercase', letterSpacing: 0.4, color: style.accent, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
-        <IconGlyph size={14} weight="fill" color={style.accent} style={{ flexShrink: 0 }} aria-hidden />
-        {style.label}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+        <span aria-hidden style={{ width: 6, height: 6, borderRadius: '50%', background: style.dot, flexShrink: 0 }} />
+        <span style={{ font: '500 9.5px var(--font-mono)', letterSpacing: '1.3px', color: style.accent }}>{style.label}</span>
+        <span style={{ flex: 1 }} />
+        {style.meta && <span style={{ font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{style.meta}</span>}
       </div>
       {showSummary && (
-        <div style={{ marginTop: 4, fontSize: 12.5, color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap', overflowWrap: 'break-word' }}>{rs.summary}</div>
+        <div style={{ fontSize: 13.5, lineHeight: 1.6, color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap', overflowWrap: 'break-word' }}>{rs.summary}</div>
       )}
       {primary && (
-        <div style={{ marginTop: 4, fontSize: 13, color: 'var(--color-text-primary)', fontStyle: 'italic', whiteSpace: 'pre-wrap', overflowWrap: 'break-word' }}>{primary}</div>
+        <div style={{ fontSize: 14, lineHeight: 1.6, color: 'var(--color-text-primary)', whiteSpace: 'pre-wrap', overflowWrap: 'break-word' }}>{primary}</div>
       )}
     </div>
   );

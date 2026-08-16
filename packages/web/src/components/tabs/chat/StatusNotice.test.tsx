@@ -8,14 +8,14 @@ describe('<StatusNotice>', () => {
   it('surfaces a needs_you question (the buried "waiting on your feedback" case)', () => {
     render(<StatusNotice input={j({ state: 'needs_you', summary: 'Found 3 candidates', ask: 'Which auth flow — OAuth or PAT?' })} />);
     expect(screen.getByTestId('status-notice')).toBeTruthy();
-    expect(screen.getByText(/waiting on you/i)).toBeTruthy();
+    expect(screen.getByText('NEEDS YOU')).toBeTruthy();
     expect(screen.getByText('Which auth flow — OAuth or PAT?')).toBeTruthy(); // the question, verbatim
     expect(screen.getByText('Found 3 candidates')).toBeTruthy();              // the findings/summary too
   });
 
   it('surfaces a blocked blocker', () => {
     render(<StatusNotice input={j({ state: 'blocked', blocker: 'waiting on the deploy' })} />);
-    expect(screen.getByText(/blocked/i)).toBeTruthy();
+    expect(screen.getByText('BLOCKED')).toBeTruthy();
     expect(screen.getByText('waiting on the deploy')).toBeTruthy();
   });
 
