@@ -20,6 +20,40 @@ export function toolGlyph(name?: string): string {
 }
 
 /**
+ * Human arg summary for a machinery row. Raw JSON inputs — `{"query":"x","limit":5}`,
+ * the shape every MCP tool and most built-ins send — read as noise in a one-line row, so
+ * an object input becomes up to three `key: value` pairs (salient keys first, nested
+ * objects skipped) joined with `·`. A non-JSON detail (Bash commands, extracted paths)
+ * passes through untouched.
+ */
+export function inputSummary(tool: Pick<ConvItem, 'toolDetail' | 'toolInput'>): string | undefined {
+  const detail = tool.toolDetail;
+  if (detail && !detail.trimStart().startsWith('{')) return detail;
+  const raw = tool.toolInput;
+  if (!raw?.trim()) return detail;
+  let input: unknown;
+  try { input = JSON.parse(raw); } catch { return detail ?? undefined; }
+  if (input == null || typeof input !== 'object' || Array.isArray(input)) return detail ?? undefined;
+  const scalar = (v: unknown): string | null => {
+    if (typeof v === 'string') return v;
+    if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+    if (Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === 'string' || typeof x === 'number')) return v.join(' ');
+    return null; // nested object / empty array → not row material
+  };
+  const PRIORITY = ['command', 'file_path', 'path', 'pattern', 'query', 'q', 'url', 'prompt', 'description', 'name'];
+  const rank = (k: string) => { const i = PRIORITY.indexOf(k); return i === -1 ? PRIORITY.length : i; };
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(input as Record<string, unknown>).sort((a, b) => rank(a[0]) - rank(b[0]))) {
+    const s = scalar(v);
+    if (s == null || s === '') continue;
+    const flat = s.replace(/\s+/g, ' ');
+    parts.push(`${k}: ${flat.length > 80 ? `${flat.slice(0, 79)}…` : flat}`);
+    if (parts.length >= 3) break;
+  }
+  return parts.length ? parts.join(' · ') : detail;
+}
+
+/**
  * Best-effort +added −removed for an Edit/Write/MultiEdit input, for the row's right meta —
  * the design's `+33 −9`. Line counts of new_string vs old_string; a Write is all additions.
  * Null for anything unparseable: the meta then falls back to output lines, never a fake stat.
@@ -89,11 +123,14 @@ export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?
           shelf below are unchanged. */}
       <button
         onClick={() => expandable && setOpen((o) => !o)}
-        style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: expandable ? 'pointer' : 'default', padding: 0, height: 30, display: 'flex', gap: 10, alignItems: 'center' }}
+        style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: expandable ? 'pointer' : 'default', padding: '0 20px', height: 30, display: 'flex', gap: 10, alignItems: 'center' }}
         onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-hover)'; }}
         onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
       >
-        <span style={{ width: 20, flexShrink: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 0 }}>
+        {/* Rows carry the column's 20px side padding themselves (MachineryBlock is
+            full-bleed), so the hover wash spans the screen while the caret column —
+            left-aligned, not centered — puts the chevron exactly on the text rail. */}
+        <span style={{ width: 14, flexShrink: 0, display: 'flex', justifyContent: 'flex-start', alignItems: 'center' }}>
           {expandable
             ? <CaretRight size={10} weight="bold" style={{ color: 'var(--color-text-tertiary)', transition: 'transform .12s ease', transform: open ? 'rotate(90deg)' : 'none' }} />
             : <span aria-hidden style={{ font: '400 10px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{toolGlyph(tool.toolName)}</span>}
@@ -102,14 +139,17 @@ export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?
             always short, so it never shrinks; the arg detail is the elastic half. maxWidth caps
             the pathological case (a very long MCP tool name). */}
         <span style={{ minWidth: 0, maxWidth: '55%', flexShrink: 0, font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{headerName}</span>
-        {tool.toolDetail && (
-          <span
-            title={tool.toolDetail}
-            style={{ minWidth: 0, flex: '1 1 auto', font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-          >
-            {tool.toolDetail}
-          </span>
-        )}
+        {(() => {
+          const arg = inputSummary(tool);
+          return arg ? (
+            <span
+              title={tool.toolDetail ?? arg}
+              style={{ minWidth: 0, flex: '1 1 auto', font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            >
+              {arg}
+            </span>
+          ) : null;
+        })()}
         {/* marginLeft:auto, not a flex-grow sibling — plenty of tools populate no detail at all,
             and without this the meta would wander instead of right-aligning. */}
         {meta
@@ -117,7 +157,7 @@ export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?
           : <span className="chat-shimmer" style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 11 }}>running…</span>}
       </button>
       {open && expandable && (
-        <div style={{ border: '1px solid var(--color-border)', borderRadius: 8, background: 'var(--color-elevated)', overflow: 'hidden', marginTop: 4 }}>
+        <div style={{ border: '1px solid var(--color-border)', borderRadius: 8, background: 'var(--color-elevated)', overflow: 'hidden', margin: '4px 20px 8px' }}>
           {view ? view.expanded(tool, result) : (
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '6px 8px 0', background: 'var(--color-pane)' }}>

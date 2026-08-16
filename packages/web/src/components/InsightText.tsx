@@ -112,13 +112,16 @@ function InsightCallout({ content, tokens }: { content: string; tokens: Tokens }
 function InsightRail({ content }: { content: string }) {
   const [open, setOpen] = useState(false);
   return (
+    // Accent left rail + a faint accent wash ("insight needs visual distinction" — David):
+    // still quieter than the coordinator's callout card, but unmistakably not prose.
     <div
       data-testid="insight-rail"
       onClick={() => setOpen((o) => !o)}
-      style={{ display: 'flex', flexDirection: 'column', gap: 3, paddingLeft: 13, borderLeft: '1px solid var(--color-border)', cursor: 'pointer', minWidth: 0 }}
+      style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '7px 12px 8px 13px', borderLeft: '2px solid color-mix(in srgb, var(--color-accent) 55%, transparent)', borderRadius: '0 8px 8px 0', background: 'color-mix(in srgb, var(--color-accent) 5%, transparent)', cursor: 'pointer', minWidth: 0 }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ font: '500 9.5px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-text-tertiary)' }}>INSIGHT</span>
+        <Lightbulb size={12} weight="fill" color="var(--color-accent)" style={{ flex: 'none' }} />
+        <span style={{ font: '500 9.5px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-accent)' }}>INSIGHT</span>
         <span aria-hidden style={{ font: '400 9px var(--font-mono)', color: 'var(--color-text-tertiary)', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}>▸</span>
       </div>
       <div

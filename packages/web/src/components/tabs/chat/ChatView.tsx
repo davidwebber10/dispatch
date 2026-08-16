@@ -529,6 +529,9 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
   }
 
   const rows: React.ReactNode[] = [];
+  // Whether the previously RENDERED row was part of the human's turn (bubble or attached
+  // image). Consecutive user rows group: one YOU label on the first, no separators between.
+  let lastRowWasUser = false;
   let group: { key: string; nodes: React.ReactNode[] } | null = null;
   // Consecutive machinery nodes (tool calls/groups/orphan results) coalesce into ONE
   // hairline-bordered block per the redesign — a run of calls reads as a single strip of
@@ -549,6 +552,7 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
           <AssistantTurn>{group.nodes}</AssistantTurn>
         </MessageScroller.Item>,
       );
+      lastRowWasUser = false;
     }
     group = null;
   };
@@ -577,15 +581,18 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
     if (it.kind === 'user') {
       flushGroup();
       // Turn separator: a hairline between the previous assistant block and this user turn,
-      // so long threads read as clearly delimited exchanges (redesign). Not before the first.
-      if (rows.length > 0) {
+      // so long threads read as clearly delimited exchanges (redesign). Not before the
+      // first row, and not between CONSECUTIVE user rows — back-to-back sends read as one
+      // turn: one YOU label on the first, the rest grouped tight beneath it.
+      if (rows.length > 0 && !lastRowWasUser) {
         rows.push(<div key={`sep-${id}`} aria-hidden style={{ height: 1, background: 'var(--color-hover)', flexShrink: 0 }} />);
       }
       rows.push(
         <MessageScroller.Item key={id} messageId={id} style={{ display: 'flex', flexDirection: 'column' }}>
-          <UserBubble text={it.text ?? ''} source={it.source} />
+          <UserBubble text={it.text ?? ''} source={it.source} grouped={lastRowWasUser} />
         </MessageScroller.Item>,
       );
+      lastRowWasUser = true;
       continue;
     }
 
@@ -597,11 +604,13 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
       flushGroup();
       rows.push(
         <MessageScroller.Item key={id} messageId={id} style={{ display: 'flex', flexDirection: 'column' }}>
-          <div style={{ alignSelf: 'flex-end', maxWidth: '85%' }}>
+          <div style={{ alignSelf: 'flex-end', maxWidth: '85%', paddingBottom: 4 }}>
             <ChatImage src={it.imageUrl ?? ''} alt={it.imageAlt} />
           </div>
         </MessageScroller.Item>,
       );
+      // Part of the human's turn: a following caption/text send groups under the same YOU.
+      lastRowWasUser = true;
       continue;
     }
 
@@ -703,7 +712,7 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
     } else if (it.kind === 'tool-result') {
       if (it.toolId && toolIds.has(it.toolId)) continue; // already shown paired with its tool
       if (consumed.has(it)) continue;                    // ...or paired by adjacency, above
-      pushMach(id, <ToolResult item={it} />);
+      pushMach(id, <div style={{ padding: '0 20px' }}><ToolResult item={it} /></div>);
       continue;
     } else if (it.kind === 'result') node = <ResultFooter item={it} />;
     // A system-injected event (background-task completion) that arrived as a `user`-role
@@ -767,7 +776,10 @@ function AssistantTurn({ children }: { children: React.ReactNode }) {
  */
 function MachineryBlock({ nodes }: { nodes: React.ReactNode[] }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', borderTop: '1px solid var(--color-hover)', borderBottom: '1px solid var(--color-hover)' }}>
+    // Full-bleed (David's call): the -20px margins cancel MessageScroller.Content's side
+    // padding so row hover backgrounds run edge to edge; each row re-adds the 20px as its
+    // OWN padding, which keeps the caret exactly on the text rail.
+    <div style={{ display: 'flex', flexDirection: 'column', margin: '0 -20px', borderTop: '1px solid var(--color-hover)', borderBottom: '1px solid var(--color-hover)' }}>
       {nodes.map((n, i) => (
         <div key={i} style={{ minWidth: 0, borderTop: i > 0 ? '1px solid color-mix(in srgb, var(--color-hover) 55%, transparent)' : 'none' }}>{n}</div>
       ))}
@@ -838,11 +850,11 @@ function GroupHeader({ toolName, count, lines, diff, running, open, onClick }: {
       type="button"
       aria-expanded={open}
       onClick={onClick}
-      style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: 0, height: 30, display: 'flex', gap: 10, alignItems: 'center' }}
+      style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '0 20px', height: 30, display: 'flex', gap: 10, alignItems: 'center' }}
       onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-hover)'; }}
       onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
     >
-      <span style={{ width: 20, flexShrink: 0, display: 'flex', justifyContent: 'center' }}>
+      <span style={{ width: 14, flexShrink: 0, display: 'flex', justifyContent: 'flex-start' }}>
         <CaretRight size={10} weight="bold" style={{ color: 'var(--color-text-tertiary)', transition: 'transform .12s ease', transform: open ? 'rotate(90deg)' : 'none' }} />
       </span>
       <span style={{ flexShrink: 0, font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)' }}>{toolName}</span>
@@ -883,16 +895,17 @@ function EmptyState({ model }: { model?: string }) {
 // name}" label (same ArrowBendDownRight "relayed" icon the coordinator's own Stream uses for
 // injected notices) and a muted/bordered bubble instead of the bright human-accent one.
 // `source === 'user'` or undefined (untagged/legacy) renders exactly like before.
-export function UserBubble({ text, source }: { text: string; source?: 'user' | 'coordinator' }) {
+export function UserBubble({ text, source, grouped = false }: { text: string; source?: 'user' | 'coordinator'; grouped?: boolean }) {
   const dispatchName = useDispatchName();
   const viaCoordinator = source === 'coordinator';
   return (
-    <div style={{ alignSelf: 'flex-end', maxWidth: '82%', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, padding: '8px 0 4px' }}>
+    <div style={{ alignSelf: 'flex-end', maxWidth: '82%', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, padding: grouped ? '0 0 4px' : '8px 0 4px' }}>
       {/* Turn meta (redesign): a small mono label above the bubble instead of an anonymous
-          blob — YOU for the human, the relay attribution for a coordinator-sent turn. No
-          timestamp yet: ConvItems carry no wall-clock time, and a fabricated one would lie
-          on every replayed/paged item. */}
-      {viaCoordinator ? (
+          blob — YOU for the human, the relay attribution for a coordinator-sent turn. A
+          `grouped` bubble (back-to-back sends with no agent response between) omits the
+          label: one YOU covers the whole run. No timestamp yet: ConvItems carry no
+          wall-clock time, and a fabricated one would lie on every replayed/paged item. */}
+      {grouped ? null : viaCoordinator ? (
         <div style={{ display: 'flex', alignItems: 'center', gap: 5, font: '500 9.5px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-accent)' }}>
           <ArrowBendDownRight size={11} weight="bold" />
           VIA {dispatchName.toUpperCase()}

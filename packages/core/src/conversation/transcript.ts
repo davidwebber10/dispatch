@@ -79,6 +79,12 @@ function parseEntry(o: any): ConvItem[] {
           if (it) out.push(it);
         } else if (b.type === 'tool_result') {
           out.push({ kind: 'tool-result', toolId: str(b.tool_use_id), text: stringifyContent(b.content), isError: b.is_error === true, ts, uuid });
+        } else if (b.type === 'image') {
+          // A user-attached image on a NORMAL turn (not the queued_command shape below).
+          // Dropping these was why a sent screenshot vanished — and so couldn't be tapped —
+          // once the view rebuilt from disk instead of the live echo (reported 2026-08-16).
+          const img = imageItem(b);
+          if (img) out.push({ ...img, ts, uuid });
         }
       }
       return out;
