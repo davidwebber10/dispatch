@@ -16,6 +16,7 @@ import { AgentPane } from './components/agents/AgentPane';
 import { EditAgentModal } from './components/agents/EditAgentModal';
 import { AuthBanner } from './components/auth/AuthBanner';
 import { UpdateModal } from './components/update/UpdateModal';
+import { HighScoreCelebration } from './components/update/HighScoreCelebration';
 import { MobileApp } from './components/mobile/MobileApp';
 import { HintToast } from './components/common/HintToast';
 import { Spinner } from './components/common/Spinner';
@@ -193,7 +194,7 @@ export default function App() {
   }, []);
 
   if (isMobile) {
-    return (<><SetupWizard /><AuthBanner /><UpdateModal /><MobileApp /><HintToast /></>);
+    return (<><SetupWizard /><AuthBanner /><UpdateModal /><HighScoreCelebration /><MobileApp /><HintToast /></>);
   }
 
   const showAgent = agentFocused && !!agentSelected;
@@ -203,6 +204,7 @@ export default function App() {
       <SetupWizard />
       <AuthBanner />
       <UpdateModal />
+      <HighScoreCelebration />
       <AppShell>
         {view === 'settings'
           ? <SettingsView />

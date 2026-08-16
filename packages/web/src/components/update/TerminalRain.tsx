@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { readBest, recordBest, formatBestDate } from './popScore';
 
 /**
  * Falling monospace glyph columns, drawn behind the update modal while the daemon rebuilds
@@ -76,6 +77,7 @@ function paint(
   cols: Column[],
   sparks: Spark[],
   pointer: { x: number; y: number } | null,
+  onPop?: () => void,
 ): void {
   ctx.fillStyle = TRAIL_FADE;
   ctx.fillRect(0, 0, w, h);
@@ -97,6 +99,7 @@ function paint(
       spawnBurst(sparks, col.x + FONT_PX / 2, col.y + FONT_PX / 2);
       col.y = -FONT_PX * (2 + Math.random() * 12);
       col.speed = 0.9 + Math.random() * 2.4;
+      onPop?.();
       continue;
     }
     const row = Math.floor(col.y / FONT_PX);
@@ -128,6 +131,19 @@ function paint(
 
 export function TerminalRain() {
   const ref = useRef<HTMLCanvasElement | null>(null);
+  // The pop game. `best` is FROZEN at mount — it is the target this round plays
+  // against; re-breaking your own new record mid-round should not move the
+  // goalpost (or churn the HUD). Persistence is eager (see popScore.ts): every
+  // pop past `best` rewrites the stored score + the post-restart celebration,
+  // because the page hard-reloads the moment the updated daemon answers.
+  const [count, setCount] = useState(0);
+  const [best] = useState(readBest);
+  const startedAgainst = best?.score ?? 0;
+  const beatBest = count > startedAgainst;
+
+  useEffect(() => {
+    if (count > 0 && count > startedAgainst) recordBest(count, startedAgainst);
+  }, [count, startedAgainst]);
 
   useEffect(() => {
     const canvas = ref.current;
@@ -175,9 +191,13 @@ export function TerminalRain() {
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerout', onPointerLeave);
 
+    // Pops happen inside the rAF loop; a functional setState per pop is cheap
+    // (pops are discrete contact events, not per-frame).
+    const onPop = () => setCount((c) => c + 1);
+
     let raf = 0;
     const frame = () => {
-      paint(ctx, w, h, cols, sparks, pointer);
+      paint(ctx, w, h, cols, sparks, pointer, onPop);
       raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);
@@ -190,11 +210,46 @@ export function TerminalRain() {
     };
   }, []);
 
+  // Reduced motion renders one settled, non-interactive frame — no pops are
+  // possible, so no scoreboard either.
+  const reduced = typeof window !== 'undefined' && (window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false);
+
   return (
-    <canvas
-      ref={ref}
-      aria-hidden="true"
-      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }}
-    />
+    <>
+      <canvas
+        ref={ref}
+        aria-hidden="true"
+        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }}
+      />
+      {!reduced && (
+        /* Scoreboard. zIndex 1 lifts it over the scrim UpdateModal renders as a
+           later sibling; pointer-events none keeps the whole surface poppable. */
+        <div
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            top: 'max(18px, env(safe-area-inset-top))',
+            right: 18,
+            zIndex: 1,
+            pointerEvents: 'none',
+            textAlign: 'right',
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            userSelect: 'none',
+          }}
+        >
+          <div style={{ fontSize: 11, letterSpacing: 2, color: 'rgba(62,207,106,.72)' }}>POPS</div>
+          <div style={{ fontSize: 26, fontWeight: 700, lineHeight: 1.15, color: beatBest ? 'rgba(140,255,180,1)' : 'rgba(62,207,106,.92)', textShadow: beatBest ? '0 0 12px rgba(140,255,180,.6)' : '0 0 8px rgba(62,207,106,.35)' }}>
+            {count}
+          </div>
+          {beatBest ? (
+            <div style={{ marginTop: 2, fontSize: 11, letterSpacing: 1, color: 'rgba(140,255,180,.95)' }}>NEW BEST!</div>
+          ) : best ? (
+            <div style={{ marginTop: 2, fontSize: 11, color: 'rgba(62,207,106,.6)' }}>
+              BEST {best.score}{best.date ? ` · ${formatBestDate(best.date)}` : ''}
+            </div>
+          ) : null}
+        </div>
+      )}
+    </>
   );
 }
