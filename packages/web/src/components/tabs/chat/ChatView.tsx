@@ -92,18 +92,6 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   }
   const splitIdx = compactSplit.current ? Math.min(compactSplit.current.index, items.length) : null;
 
-  // Global machinery visibility (2026-08-16 redesign): one header toggle hides every tool
-  // call/group/result in the timeline, leaving prose + insights + status cards — the
-  // "just tell me what happened" reading mode. Per-DEVICE, not per-thread: it's a reading
-  // preference, so it persists in localStorage and applies to every Pretty thread.
-  const [showMachinery, setShowMachinery] = useState(() => {
-    try { return localStorage.getItem('dispatch:chat-show-machinery') !== '0'; } catch { return true; }
-  });
-  const toggleMachinery = () => setShowMachinery((v) => {
-    try { localStorage.setItem('dispatch:chat-show-machinery', v ? '0' : '1'); } catch { /* storage denied */ }
-    return !v;
-  });
-
   useEffect(() => {
     // Clear any stale advice/error from a PREVIOUS terminalId before anything else — PaneTree/
     // PaneFrame render <TabHost terminalId={tabId}/> with no `key`, so switching a pane's tab
@@ -276,7 +264,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                   messages is a lie, so that state gets a centered reconnect spinner. */}
               {items.length === 0 && !busy && !compacting && (connStatus === 'open' ? <EmptyState model={model} /> : <ReconnectingState />)}
               {splitIdx === null ? (
-                renderTimeline(items, openFileInViewer, pageBoundariesRef.current, { hideMachinery: !showMachinery })
+                renderTimeline(items, openFileInViewer, pageBoundariesRef.current)
               ) : (
                 <>
                   {/* Mid-compaction: the bar is a full-width divider pinned at the point the
@@ -284,11 +272,11 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                       below, so their position says "queued". The split is render-only — when
                       `compacting` clears, the timeline re-merges into one render and tool/result
                       pairing across the boundary works again. */}
-                  {renderTimeline(items.slice(0, splitIdx), openFileInViewer, pageBoundariesRef.current, { hideMachinery: !showMachinery })}
+                  {renderTimeline(items.slice(0, splitIdx), openFileInViewer, pageBoundariesRef.current)}
                   <MessageScroller.Item messageId="__compacting" style={{ display: 'flex' }}>
                     <CompactingBar queued={items.length - splitIdx} />
                   </MessageScroller.Item>
-                  {renderTimeline(items.slice(splitIdx), openFileInViewer, pageBoundariesRef.current, { hideMachinery: !showMachinery })}
+                  {renderTimeline(items.slice(splitIdx), openFileInViewer, pageBoundariesRef.current)}
                 </>
               )}
               {pending?.questions && pending.questions.length > 0 && (
@@ -457,16 +445,8 @@ export function ChatView({ terminalId }: { terminalId: string }) {
           )}
         </div>
 
-        {/* thin status row: machinery toggle on the left (the thread header it debuted in was
-            cut on David's feedback — this quiet corner keeps the feature reachable), context
-            indicator on the right */}
-        <div style={{ maxWidth: 768, margin: '6px auto 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <button
-            onClick={toggleMachinery}
-            style={{ background: 'none', border: 'none', padding: '2px 4px', font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', cursor: 'pointer' }}
-          >
-            {showMachinery ? 'Hide tool calls' : 'Show tool calls'}
-          </button>
+        {/* thin status row: muted context-window fill indicator, tappable for detail */}
+        <div style={{ maxWidth: 768, margin: '6px auto 0', display: 'flex', justifyContent: 'flex-end' }}>
           <ContextIndicator contextTokens={contextTokens} contextWindow={contextWindow} compacting={compacting} compactResult={compactResult} model={model} compact={compact} />
         </div>
       </div>
@@ -519,8 +499,7 @@ function StagedThumbnail({ src, onRemove }: { src: string; onRemove: () => void 
  * comment on pageBoundariesRef) also forces a break — otherwise a loadOlder() prepend
  * could silently merge into a group that already existed, defeating scroll preservation.
  */
-export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void, pageBoundaries: Set<ConvItem>, opts?: { hideMachinery?: boolean }) {
-  const hideMachinery = opts?.hideMachinery === true;
+export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void, pageBoundaries: Set<ConvItem>) {
   // Map tool_use id -> its result item, so paired results aren't rendered standalone.
   const resultById = new Map<string, ConvItem>();
   // Set of tool ids that actually have a tool card, so an ORPHAN result (whose tool
@@ -539,8 +518,7 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
   // Whether the previously RENDERED row was part of the human's turn (bubble or attached
   // image). Consecutive user rows group: one YOU label on the first, no separators between.
   // Strict adjacency (David's final rule): grouped when NOTHING rendered between them,
-  // split when ANYTHING did — including a tool strip. With machinery hidden, tool calls
-  // render nothing, so they don't split a group the reader can't see.
+  // split when ANYTHING did — including a tool strip.
   let lastRowWasUser = false;
   let group: { key: string; nodes: React.ReactNode[] } | null = null;
   // Consecutive machinery nodes (tool calls/groups/orphan results) coalesce into ONE
@@ -567,7 +545,6 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
     group = null;
   };
   const pushMach = (id: string, node: React.ReactNode) => {
-    if (hideMachinery) return;
     if (!group) group = { key: id, nodes: [] };
     group.key = id;
     if (!mach) mach = { key: id, nodes: [] };

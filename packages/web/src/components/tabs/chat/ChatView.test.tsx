@@ -550,8 +550,6 @@ test('the Pretty composer keeps the single-row layout: textarea one key tall, ar
   expect(ta.style.padding).toBe('6px 4px');
   const send = screen.getByTitle('Send');
   expect(send.style.height).toBe('34px');
-  // The header's machinery toggle is redesign-new and stays.
-  expect(screen.getByText(/Hide tool calls|Show tool calls/)).toBeInTheDocument();
 });
 
 // An empty item list means "no messages yet" ONLY when the socket is open. While the app
