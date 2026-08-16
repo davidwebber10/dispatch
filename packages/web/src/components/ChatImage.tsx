@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type TouchEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { Check, Copy, DownloadSimple, X } from '@phosphor-icons/react';
 import { clipboardImageSupported, copyImageToClipboard } from '../lib/clipboard';
 
@@ -170,7 +171,11 @@ export function ImageLightbox({ src, alt, onClose }: { src: string; alt?: string
     ? 'Copy not supported in this browser'
     : copyState === 'copied' ? 'Copied!' : copyState === 'error' ? 'Copy failed — try again' : 'Copy image';
 
-  return (
+  // PORTAL to <body>, not an inline overlay: `position: fixed` is trapped by any
+  // transformed ancestor (the mobile shell slides screens with CSS transforms), which
+  // left the lightbox mounted but CLIPPED INVISIBLE — it only appeared once navigation
+  // reset the transform ("doesn't open until I navigate to settings", 2026-08-16).
+  return createPortal(
     <div
       onClick={onClose}
       style={{
@@ -231,7 +236,8 @@ export function ImageLightbox({ src, alt, onClose }: { src: string; alt?: string
           cursor: scale > 1 ? 'grab' : 'zoom-out',
         }}
       />
-    </div>
+    </div>,
+    document.body,
   );
 }
 

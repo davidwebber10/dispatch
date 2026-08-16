@@ -256,6 +256,10 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   // Send is enabled by EITHER a non-empty draft OR at least one staged image (a screenshot
   // with no caption is a valid turn on its own).
   const canSend = draft.trim().length > 0 || stagedImages.length > 0;
+  // Composer key size: 44px on mobile — the platform minimum touch target; the 34px keys
+  // were "too small and too hard to press" (David, on-device). Desktop keeps the tighter 34.
+  const keySize = isMobile ? 44 : 34;
+  const taPad = Math.max(6, (keySize - 22) / 2); // center the 22px text line against the keys
 
   return (
     <div className="chat-scope" style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, background: 'var(--color-base)' }}>
@@ -399,12 +403,12 @@ export function ChatView({ terminalId }: { terminalId: string }) {
               onDictate={() => void dictation.start()}
               dictateDisabled={!sttConfigured}
               dictateHint="Set up in Settings → Transcription"
-              triggerStyle={{ width: 34, height: 34, borderRadius: 9, border: 'none', background: 'var(--color-hover)' }}
+              triggerStyle={{ width: keySize, height: keySize, borderRadius: 9, border: 'none', background: 'var(--color-hover)' }}
             />
           ) : (
             <label
               title="Attach file"
-              style={{ flexShrink: 0, width: 34, height: 34, padding: 0, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'var(--color-hover)', color: 'var(--color-text-secondary)' }}
+              style={{ flexShrink: 0, width: keySize, height: keySize, padding: 0, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'var(--color-hover)', color: 'var(--color-text-secondary)' }}
             >
               <Paperclip size={17} />
               <input
@@ -433,18 +437,21 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                help is always on here and gets no toggle. autoCapitalize stays off so a
                path or a command name pasted mid-message is not altered. */
             autoCapitalize="off" autoCorrect="on" spellCheck
+            /* iOS renders the return key as a blue Send action key (Enter already sends
+               here — the hint makes the keyboard say so). */
+            enterKeyHint="send"
             /* One-line box is 22px line + 6px padding = 34px, matching the attach/send
                keys. Without this the UA textarea is shorter than the keys and flex-end
                drops the placeholder below their optical center. */
-            style={{ flex: 1, resize: 'none', border: 'none', outline: 'none', background: 'transparent', color: 'var(--color-text-primary)', font: '400 15px var(--font-sans)', lineHeight: '22px', maxHeight: 180, minHeight: 34, padding: '6px 4px', margin: 0, overflowY: 'auto' }}
+            style={{ flex: 1, resize: 'none', border: 'none', outline: 'none', background: 'transparent', color: 'var(--color-text-primary)', font: '400 15px var(--font-sans)', lineHeight: '22px', maxHeight: 180, minHeight: keySize, padding: `${taPad}px 4px`, margin: 0, overflowY: 'auto' }}
           />
           <button
             onClick={doSend}
             disabled={!canSend}
             title="Send"
-            style={{ flexShrink: 0, width: 34, height: 34, padding: 0, borderRadius: 9, border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: canSend ? 'pointer' : 'default', background: canSend ? 'var(--color-accent)' : 'var(--color-hover)', color: canSend ? '#06140B' : 'var(--color-text-tertiary)', transition: 'background .15s' }}
+            style={{ flexShrink: 0, width: keySize, height: keySize, padding: 0, borderRadius: 9, border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: canSend ? 'pointer' : 'default', background: canSend ? 'var(--color-accent)' : 'var(--color-hover)', color: canSend ? '#06140B' : 'var(--color-text-tertiary)', transition: 'background .15s' }}
           >
-            <ArrowUp size={16} weight="bold" />
+            <ArrowUp size={isMobile ? 19 : 16} weight="bold" />
           </button>
             </>
           )}
@@ -531,6 +538,9 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
   const rows: React.ReactNode[] = [];
   // Whether the previously RENDERED row was part of the human's turn (bubble or attached
   // image). Consecutive user rows group: one YOU label on the first, no separators between.
+  // Strict adjacency (David's final rule): grouped when NOTHING rendered between them,
+  // split when ANYTHING did — including a tool strip. With machinery hidden, tool calls
+  // render nothing, so they don't split a group the reader can't see.
   let lastRowWasUser = false;
   let group: { key: string; nodes: React.ReactNode[] } | null = null;
   // Consecutive machinery nodes (tool calls/groups/orphan results) coalesce into ONE
