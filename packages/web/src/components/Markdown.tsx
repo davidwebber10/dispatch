@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import DOMPurify from 'dompurify';
 import { renderMarkdown } from '../lib/markdown';
+import { ImageLightbox } from './ChatImage';
 
 /**
  * Shared markdown surface for the agent chat and the coordinator stream. Routing both
@@ -22,5 +23,21 @@ const sanitize = (html: string): string =>
   DOMPurify.sanitize(html, { ADD_TAGS: ['img'], ADD_ATTR: ['src', 'alt'] });
 
 export const Markdown = React.memo(function Markdown({ source }: { source: string }) {
-  return <div className="md-view" style={{ minWidth: 0 }} dangerouslySetInnerHTML={{ __html: sanitize(renderMarkdown(source)) }} />;
+  // Markdown-embedded images render as raw sanitized <img> tags with no React handlers,
+  // so on a phone a tap did nothing while every ChatImage opened the lightbox — one
+  // delegated click handler on the chokepoint gives every markdown image the same viewer.
+  const [lightbox, setLightbox] = useState<{ src: string; alt?: string } | null>(null);
+  const onClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const t = e.target as HTMLElement;
+    if (t.tagName === 'IMG') {
+      const img = t as HTMLImageElement;
+      if (img.src) setLightbox({ src: img.src, alt: img.alt || undefined });
+    }
+  };
+  return (
+    <>
+      <div className="md-view" style={{ minWidth: 0 }} onClick={onClick} dangerouslySetInnerHTML={{ __html: sanitize(renderMarkdown(source)) }} />
+      {lightbox && <ImageLightbox src={lightbox.src} alt={lightbox.alt} onClose={() => setLightbox(null)} />}
+    </>
+  );
 });

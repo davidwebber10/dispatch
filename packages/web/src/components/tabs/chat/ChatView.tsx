@@ -103,8 +103,6 @@ export function ChatView({ terminalId }: { terminalId: string }) {
     try { localStorage.setItem('dispatch:chat-show-machinery', v ? '0' : '1'); } catch { /* storage denied */ }
     return !v;
   });
-  // Harness tag for the header + composer chip: the wire type, shortened for display.
-  const harness = tab?.type === 'claude-code' ? 'claude' : tab?.type ?? 'agent';
 
   useEffect(() => {
     // Clear any stale advice/error from a PREVIOUS terminalId before anything else — PaneTree/
@@ -261,31 +259,6 @@ export function ChatView({ terminalId }: { terminalId: string }) {
 
   return (
     <div className="chat-scope" style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, background: 'var(--color-base)' }}>
-      {/* Thread header (2026-08-16 redesign): identity on the left (thread · harness · mode),
-          the machinery toggle + a live idle/working word on the right. On mobile the thread
-          label already lives in the shell's own header, so only the tag + toggle render. */}
-      <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 12, height: isMobile ? 38 : 44, padding: '0 16px', borderBottom: '1px solid var(--color-border)' }}>
-        {!isMobile && (
-          <>
-            <span style={{ font: '400 12.5px var(--font-mono)', color: 'var(--color-text-primary)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tab?.label ?? 'Thread'}</span>
-            <span aria-hidden style={{ width: 1, height: 14, background: 'var(--color-border)', flexShrink: 0 }} />
-          </>
-        )}
-        <span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)', flexShrink: 0 }}>{harness} · pretty</span>
-        <span style={{ flex: 1 }} />
-        <button
-          onClick={toggleMachinery}
-          style={{ height: 28, padding: '0 11px', borderRadius: 6, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)', fontSize: 11.5, cursor: 'pointer', flexShrink: 0 }}
-        >
-          {showMachinery ? 'Hide tool calls' : 'Show tool calls'}
-        </button>
-        {!isMobile && (
-          <span style={{ display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0 }}>
-            <span aria-hidden style={{ width: 6, height: 6, borderRadius: '50%', background: busy ? 'var(--color-status-yellow)' : 'var(--color-accent)' }} />
-            <span style={{ font: '400 11px var(--font-mono)', color: busy ? 'var(--color-status-yellow)' : 'var(--color-accent)' }}>{busy ? 'working' : 'idle'}</span>
-          </span>
-        )}
-      </div>
       <MessageScroller.Provider autoScroll defaultScrollPosition="end" scrollEdgeThreshold={48}>
         <MessageScroller.Root style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex' }}>
           <MessageScroller.Viewport preserveScrollOnPrepend onScroll={onViewportScroll} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
@@ -477,8 +450,16 @@ export function ChatView({ terminalId }: { terminalId: string }) {
           )}
         </div>
 
-        {/* thin status row: muted context-window fill indicator, tappable for detail */}
-        <div style={{ maxWidth: 768, margin: '6px auto 0', display: 'flex', justifyContent: 'flex-end' }}>
+        {/* thin status row: machinery toggle on the left (the thread header it debuted in was
+            cut on David's feedback — this quiet corner keeps the feature reachable), context
+            indicator on the right */}
+        <div style={{ maxWidth: 768, margin: '6px auto 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <button
+            onClick={toggleMachinery}
+            style={{ background: 'none', border: 'none', padding: '2px 4px', font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', cursor: 'pointer' }}
+          >
+            {showMachinery ? 'Hide tool calls' : 'Show tool calls'}
+          </button>
           <ContextIndicator contextTokens={contextTokens} contextWindow={contextWindow} compacting={compacting} compactResult={compactResult} model={model} compact={compact} />
         </div>
       </div>
@@ -583,6 +564,13 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     const id = stableId(it);
+
+    // A blank assistant/thinking item (a streamed message whose text block is empty —
+    // the common shape when a message only carries tool calls) renders nothing, but if
+    // it reaches the push path it still SPLITS a machinery strip in two and occupies a
+    // flex-gap slot — the "inconsistent tool-call spacing" bug: hollow hairline bands
+    // between blocks that should have been one strip. Skip it before it breaks anything.
+    if ((it.kind === 'assistant' || it.kind === 'thinking') && !(it.text ?? '').trim()) continue;
 
     if (pageBoundaries.has(it)) flushGroup();
 
