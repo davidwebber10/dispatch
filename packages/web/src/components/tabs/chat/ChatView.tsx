@@ -819,7 +819,9 @@ function ToolGroup({ pairs, onViewFile }: { pairs: ToolPair[]; onViewFile: (p: s
     return (
       <div style={{ display: 'flex', flexDirection: 'column' }}>
         <GroupHeader toolName={toolName} count={pairs.length} lines={lines} diff={diff} running={running} open onClick={() => setManualOpen(false)} />
-        <div style={{ paddingLeft: 20, display: 'flex', flexDirection: 'column', paddingBottom: 4 }}>
+        {/* Members flush-left with the header (no indent — David's call): the caret column
+            on each row already provides the visual hierarchy. */}
+        <div style={{ display: 'flex', flexDirection: 'column', paddingBottom: 4 }}>
           {pairs.map(({ tool: t, result }) => (
             <ToolCall key={stableId(t)} tool={t} result={result} onViewFile={onViewFile} />
           ))}
