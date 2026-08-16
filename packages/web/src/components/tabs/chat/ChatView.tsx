@@ -416,66 +416,70 @@ export function ChatView({ terminalId }: { terminalId: string }) {
             )}
           </div>
         )}
-        {/* Composer card (2026-08-16 redesign): textarea on top, a control row beneath —
-            attach, harness chip, context meter, send. The border brightens on draft/drag. */}
-        <div style={{ maxWidth: 768, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 8, background: dragActive ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-elevated))' : 'var(--color-elevated)', border: dragActive ? '1px solid var(--color-accent)' : canSend ? '1px solid color-mix(in srgb, var(--color-text-tertiary) 45%, var(--color-border))' : '1px solid var(--color-border)', borderRadius: 8, padding: '9px 11px', transition: 'border-color .12s, background .12s' }}>
+        {/* Composer: the pre-redesign single-row layout, kept by David's explicit call
+            ("I like the old composer but I like the new button as an arrow") — only the
+            send glyph adopted the redesign's ↑. */}
+        <div style={{ maxWidth: 768, margin: '0 auto', display: 'flex', alignItems: 'flex-end', gap: 8, background: dragActive ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-elevated))' : 'var(--color-elevated)', border: dragActive ? '1px solid var(--color-accent)' : '1px solid var(--color-border)', borderRadius: 12, padding: '8px 8px 8px 8px', transition: 'border-color .12s, background .12s' }}>
+          {isMobile ? (
+            <InputActionsMenu
+              onAddFile={() => fileInputRef.current?.click()}
+              onDictate={() => void dictation.start()}
+              dictateDisabled={!sttConfigured}
+              dictateHint="Set up in Settings → Transcription"
+              triggerStyle={{ width: 34, height: 34, borderRadius: 9, border: 'none', background: 'var(--color-hover)' }}
+            />
+          ) : (
+            <label
+              title="Attach file"
+              style={{ flexShrink: 0, width: 34, height: 34, padding: 0, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'var(--color-hover)', color: 'var(--color-text-secondary)' }}
+            >
+              <Paperclip size={17} />
+              <input
+                type="file"
+                multiple
+                style={{ display: 'none' }}
+                onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }}
+              />
+            </label>
+          )}
+          {/* hidden input the mobile + menu triggers (routes through the same attachFiles) */}
+          <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }} />
           {isMobile && dictation.state !== 'idle' ? (
             <DictationControl dictation={dictation} />
           ) : (
-            <textarea
-              ref={taRef}
-              value={draft}
-              onChange={(e) => { setDraft(e.target.value); const el = e.target; el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 140) + 'px'; }}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); } }}
-              onPaste={onPaste}
-              placeholder="Message…"
-              rows={1}
-              /* Prose only — the Pretty composer never carries shell input, so spelling
-                 help is always on here and gets no toggle. autoCapitalize stays off so a
-                 path or a command name pasted mid-message is not altered. */
-              autoCapitalize="off" autoCorrect="on" spellCheck
-              style={{ width: '100%', resize: 'none', border: 'none', outline: 'none', background: 'transparent', color: 'var(--color-text-primary)', font: '400 14px var(--font-sans)', lineHeight: 1.6, maxHeight: 140, minHeight: 22, padding: '1px 0', margin: 0, overflowY: 'auto' }}
-            />
+            <>
+          <textarea
+            ref={taRef}
+            value={draft}
+            onChange={(e) => { setDraft(e.target.value); const el = e.target; el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 180) + 'px'; }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); } }}
+            onPaste={onPaste}
+            placeholder="Message…"
+            rows={1}
+            /* Prose only — the Pretty composer never carries shell input, so spelling
+               help is always on here and gets no toggle. autoCapitalize stays off so a
+               path or a command name pasted mid-message is not altered. */
+            autoCapitalize="off" autoCorrect="on" spellCheck
+            /* One-line box is 22px line + 6px padding = 34px, matching the attach/send
+               keys. Without this the UA textarea is shorter than the keys and flex-end
+               drops the placeholder below their optical center. */
+            style={{ flex: 1, resize: 'none', border: 'none', outline: 'none', background: 'transparent', color: 'var(--color-text-primary)', font: '400 15px var(--font-sans)', lineHeight: '22px', maxHeight: 180, minHeight: 34, padding: '6px 4px', margin: 0, overflowY: 'auto' }}
+          />
+          <button
+            onClick={doSend}
+            disabled={!canSend}
+            title="Send"
+            style={{ flexShrink: 0, width: 34, height: 34, padding: 0, borderRadius: 9, border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: canSend ? 'pointer' : 'default', background: canSend ? 'var(--color-accent)' : 'var(--color-hover)', color: canSend ? '#06140B' : 'var(--color-text-tertiary)', transition: 'background .15s' }}
+          >
+            <ArrowUp size={16} weight="bold" />
+          </button>
+            </>
           )}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {isMobile ? (
-              <InputActionsMenu
-                onAddFile={() => fileInputRef.current?.click()}
-                onDictate={() => void dictation.start()}
-                dictateDisabled={!sttConfigured}
-                dictateHint="Set up in Settings → Transcription"
-                triggerStyle={{ width: 26, height: 26, borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent' }}
-              />
-            ) : (
-              <label
-                title="Attach file"
-                style={{ flexShrink: 0, width: 26, height: 26, padding: 0, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
-              >
-                <Paperclip size={14} />
-                <input
-                  type="file"
-                  multiple
-                  style={{ display: 'none' }}
-                  onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }}
-                />
-              </label>
-            )}
-            {/* hidden input the mobile + menu triggers (routes through the same attachFiles) */}
-            <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }} />
-            {/* Harness chip — display-only identity, matching the header's tag. */}
-            <span style={{ flexShrink: 0, height: 26, display: 'inline-flex', alignItems: 'center', padding: '0 9px', borderRadius: 6, border: '1px solid var(--color-border)', font: '400 11px var(--font-mono)', color: 'var(--color-text-secondary)' }}>{harness}</span>
-            <ContextIndicator contextTokens={contextTokens} contextWindow={contextWindow} compacting={compacting} compactResult={compactResult} model={model} compact={compact} />
-            <span style={{ flex: 1 }} />
-            {!isMobile && <span style={{ flexShrink: 0, font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>⏎ send · ⇧⏎ newline</span>}
-            <button
-              onClick={doSend}
-              disabled={!canSend}
-              title="Send"
-              style={{ flexShrink: 0, width: 28, height: 28, padding: 0, borderRadius: 6, border: canSend ? '1px solid var(--color-accent)' : '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: canSend ? 'pointer' : 'default', background: canSend ? 'var(--color-accent)' : 'transparent', color: canSend ? '#06140B' : 'var(--color-text-tertiary)', transition: 'background .15s, border-color .15s' }}
-            >
-              <ArrowUp size={14} weight="bold" />
-            </button>
-          </div>
+        </div>
+
+        {/* thin status row: muted context-window fill indicator, tappable for detail */}
+        <div style={{ maxWidth: 768, margin: '6px auto 0', display: 'flex', justifyContent: 'flex-end' }}>
+          <ContextIndicator contextTokens={contextTokens} contextWindow={contextWindow} compacting={compacting} compactResult={compactResult} model={model} compact={compact} />
         </div>
       </div>
     </div>

@@ -540,14 +540,17 @@ test('the Pretty composer always spell-checks and autocorrects, and never auto-c
   expect(ta.getAttribute('autocapitalize')).toBe('off');
 });
 
-test('the Pretty composer is the redesign card: full-width textarea over a control row', async () => {
+test('the Pretty composer keeps the single-row layout: textarea one key tall, arrow send key', async () => {
+  // David kept the OLD composer in the 2026-08 redesign ("I like the old composer but I
+  // like the new button as an arrow") — only the send glyph changed. Pin that layout.
   render(<ChatView terminalId="t1" />);
   const ta = await screen.findByPlaceholderText('Message…');
-  // Redesign: the textarea spans the card's top row; the send key lives in the row below.
-  expect(ta.style.width).toBe('100%');
+  expect(ta.style.minHeight).toBe('34px');
+  expect(ta.style.lineHeight).toBe('22px');
+  expect(ta.style.padding).toBe('6px 4px');
   const send = screen.getByTitle('Send');
-  expect(send.style.height).toBe('28px');
-  // The control row carries the harness chip and the machinery toggle lives in the header.
+  expect(send.style.height).toBe('34px');
+  // The header's machinery toggle is redesign-new and stays.
   expect(screen.getByText(/Hide tool calls|Show tool calls/)).toBeInTheDocument();
 });
 
