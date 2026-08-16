@@ -475,7 +475,16 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // StatusService (hook events) and TerminalMonitor (PTY busy/idle), below. Uses the
   // real (websocket-wired) broadcaster so a successful rename's `session:tabs-changed`
   // reaches connected clients the same way a user rename does today.
-  const threadAutoNamer = new ThreadAutoNamer(db, broadcaster);
+  //
+  // When the OpenRouter key resolves (same Doppler secret the OpenCode harness uses),
+  // names come from a fast GLM call over the first prompt instead of the prompt's
+  // first 48 chars. Late-bound resolver: SecretsService is constructed further down,
+  // and the first naming attempt can't fire before the debounce (≥5s after first
+  // activity), by which point the resolver is installed.
+  let resolveOpenRouterKey: (() => Promise<string | null>) | null = null;
+  const threadAutoNamer = new ThreadAutoNamer(db, broadcaster, {
+    getApiKey: () => resolveOpenRouterKey?.() ?? Promise.resolve(null),
+  });
 
   // Determine actual server URL after port is known
   const sessionService = new SessionService(db, ptyManager, path.join(dataDir, 'mcp.json'));
@@ -504,6 +513,14 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const secretsService = new SecretsService(dataDir);
   const integrationsService = new IntegrationsService(db);
   const toolsBase = path.join(dataDir, 'tools');
+  // Install the auto-namer's key resolver (declared above, next to the namer):
+  // the OpenCode/OpenRouter key by its CONFIGURED Doppler name, resolved fresh
+  // per naming attempt so key changes apply without a restart. null (not throw)
+  // when Doppler isn't connected — the namer then keeps prefix-derived names.
+  resolveOpenRouterKey = async () => {
+    try { return (await secretsService.getSecret(opencodeKeySecretName(db))) ?? null; }
+    catch { return null; }
+  };
   sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
   sessionService.setIntegrationsSpecs(() => integrationsService.getServerSpecs());
   sessionService.setToolsAwareness(() => awarenessNote(toolStatuses({ base: toolsBase })));
