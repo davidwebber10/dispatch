@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
-import { ArrowUp, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip, ArrowBendDownRight, X } from '@phosphor-icons/react';
+import { ArrowUp, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip, ArrowBendDownRight, X, Stop } from '@phosphor-icons/react';
 import type { ConvItem, PermissionQuestion } from '../../../api/types';
 import { api, type ContentBlock } from '../../../api/client';
 import { useStructuredChat } from './useStructuredChat';
@@ -244,6 +244,18 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   // Send is enabled by EITHER a non-empty draft OR at least one staged image (a screenshot
   // with no caption is a valid turn on its own).
   const canSend = draft.trim().length > 0 || stagedImages.length > 0;
+  // The composer key doubles as the turn's brake. It offers Stop in the ONE state where
+  // there is nothing to send and something worth stopping: a turn in flight over an empty
+  // composer. Typing always wins — a mid-turn follow-up (the CLI queues it as its own turn)
+  // must never be blocked by the key having become a Stop. Deliberately keyed on `busy`
+  // alone: a native compaction is left to finish, since interrupting one mid-way is messy.
+  const stopMode = busy && !canSend;
+  function doStop() {
+    // Graceful: ends the CURRENT TURN and leaves the thread alive (Claude gets the
+    // stream-json `interrupt` control, Codex `turn/interrupt`). Deliberately not
+    // api.stopTerminal, which kills the process.
+    api.interrupt(terminalId).catch(() => { /* best-effort — nothing live to interrupt */ });
+  }
   // Composer key size: 44px on mobile — the platform minimum touch target; the 34px keys
   // were "too small and too hard to press" (David, on-device). Desktop keeps the tighter 34.
   const keySize = isMobile ? 44 : 34;
@@ -434,12 +446,16 @@ export function ChatView({ terminalId }: { terminalId: string }) {
             style={{ flex: 1, resize: 'none', border: 'none', outline: 'none', background: 'transparent', color: 'var(--color-text-primary)', font: '400 15px var(--font-sans)', lineHeight: '22px', maxHeight: 180, minHeight: keySize, padding: `${taPad}px 4px`, margin: 0, overflowY: 'auto' }}
           />
           <button
-            onClick={doSend}
-            disabled={!canSend}
-            title="Send"
-            style={{ flexShrink: 0, width: keySize, height: keySize, padding: 0, borderRadius: 9, border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: canSend ? 'pointer' : 'default', background: canSend ? 'var(--color-accent)' : 'var(--color-hover)', color: canSend ? '#06140B' : 'var(--color-text-tertiary)', transition: 'background .15s' }}
+            onClick={stopMode ? doStop : doSend}
+            disabled={!stopMode && !canSend}
+            title={stopMode ? 'Stop' : 'Send'}
+            aria-label={stopMode ? 'Stop' : 'Send'}
+            /* Stop is red-tinted rather than reusing the disabled key's grey, so an ACTIVE
+               brake never reads as a dead Send. padding:0 is load-bearing on a fixed-width
+               icon button — see plusBtn in sidebar/ProjectCard.tsx. */
+            style={{ flexShrink: 0, width: keySize, height: keySize, padding: 0, borderRadius: 9, border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: (stopMode || canSend) ? 'pointer' : 'default', background: stopMode ? 'color-mix(in srgb, var(--color-status-red) 20%, transparent)' : canSend ? 'var(--color-accent)' : 'var(--color-hover)', color: stopMode ? 'var(--color-status-red)' : canSend ? '#06140B' : 'var(--color-text-tertiary)', transition: 'background .15s' }}
           >
-            <ArrowUp size={isMobile ? 19 : 16} weight="bold" />
+            {stopMode ? <Stop size={isMobile ? 17 : 14} weight="fill" /> : <ArrowUp size={isMobile ? 19 : 16} weight="bold" />}
           </button>
             </>
           )}

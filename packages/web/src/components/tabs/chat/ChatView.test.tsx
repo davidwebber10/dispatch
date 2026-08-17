@@ -552,6 +552,50 @@ test('the Pretty composer keeps the single-row layout: textarea one key tall, ar
   expect(send.style.height).toBe('34px');
 });
 
+// The composer key is dual-purpose: it offers Stop only in the one state where there is
+// nothing to send and something to stop. Typing must always win, so a mid-turn follow-up
+// (which the CLI queues) is never blocked by the key having become a Stop.
+describe('ChatView — composer stop key', () => {
+  async function sendATurn() {
+    vi.spyOn(api, 'sendStructuredMessage').mockResolvedValue(undefined as never);
+    const utils = render(<ChatView terminalId="t1" />);
+    const ta = await screen.findByPlaceholderText('Message…');
+    fireEvent.change(ta, { target: { value: 'hello' } });
+    fireEvent.click(screen.getByTitle('Send'));
+    return { ...utils, ta };
+  }
+
+  it('offers Stop once a turn is in flight and the composer has emptied', async () => {
+    await sendATurn();
+    expect(await screen.findByTitle('Stop')).toBeInTheDocument();
+    expect(screen.queryByTitle('Send')).toBeNull();
+  });
+
+  it('interrupts the turn — it must NOT kill the thread', async () => {
+    const interrupt = vi.spyOn(api, 'interrupt').mockResolvedValue(undefined as never);
+    const stopTerminal = vi.spyOn(api, 'stopTerminal').mockResolvedValue(undefined as never);
+    await sendATurn();
+    fireEvent.click(await screen.findByTitle('Stop'));
+    expect(interrupt).toHaveBeenCalledWith('t1');
+    expect(stopTerminal).not.toHaveBeenCalled();
+  });
+
+  it('reverts to Send the moment you type, so a mid-turn message can still go out', async () => {
+    const { ta } = await sendATurn();
+    await screen.findByTitle('Stop');
+    fireEvent.change(ta, { target: { value: 'follow-up' } });
+    expect(screen.getByTitle('Send')).toBeInTheDocument();
+    expect(screen.queryByTitle('Stop')).toBeNull();
+  });
+
+  it('never offers Stop on an idle thread', async () => {
+    render(<ChatView terminalId="t1" />);
+    await screen.findByPlaceholderText('Message…');
+    expect(screen.getByTitle('Send')).toBeInTheDocument();
+    expect(screen.queryByTitle('Stop')).toBeNull();
+  });
+});
+
 // An empty item list means "no messages yet" ONLY when the socket is open. While the app
 // is (re)connecting the history simply hasn't replayed — the old render said "Send a
 // message to start the conversation" over threads that were full of messages.
