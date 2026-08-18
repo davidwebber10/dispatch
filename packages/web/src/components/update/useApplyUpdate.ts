@@ -17,6 +17,9 @@ export function useApplyUpdate() {
   const [failDirty, setFailDirty] = useState<{ status: string; path: string }[] | null>(null);
   const [failDirtyOverflow, setFailDirtyOverflow] = useState(0);
   const [canForce, setCanForce] = useState(false);
+  // Set from the server's answer rather than guessed: only the daemon knows
+  // whether it is a hosted box, and the failure advice differs entirely.
+  const [hosted, setHosted] = useState(false);
 
   const apply = async (force?: boolean) => {
     setApplying(true);
@@ -26,6 +29,7 @@ export function useApplyUpdate() {
     setCanForce(false);
     try {
       const res = await api.applyUpdate(force);
+      setHosted(res.hosted === true);
       if (res.ok) useUpdate.setState({ inProgress: true });
       else {
         setFailReason(res.reason ?? 'Update could not be applied automatically.');
@@ -54,5 +58,5 @@ export function useApplyUpdate() {
     return () => clearInterval(timer);
   }, [inProgress]);
 
-  return { apply, applying, failReason, failDirty, failDirtyOverflow, canForce, inProgress };
+  return { apply, applying, failReason, failDirty, failDirtyOverflow, canForce, inProgress, hosted };
 }

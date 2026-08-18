@@ -172,3 +172,78 @@ describe('POST /api/update/check', () => {
     expect(res.body.version).toBeNull();
   });
 });
+
+describe('a HOSTED box updates by rolling onto a new image, not by pulling git', () => {
+  // The git preflight is not merely unnecessary here, it fails: the image is built
+  // with `COPY . .` and .dockerignore excludes `.git`, so `git status` reports
+  // "not a git repository" and the update button looks broken. And /app is in the
+  // container layer, so a pull would silently revert on the next task restart.
+  const HOSTED = { baseUrl: 'http://os.internal', boxToken: 'box-secret' };
+  const explodingGit: GitExec = () => { throw new Error('not a git repository'); };
+
+  it('never touches git, asks OS instead, and broadcasts the same progress event', async () => {
+    const events: Record<string, unknown>[] = [];
+    const broadcaster: EventBroadcaster = { broadcast: (e) => { events.push(e); } };
+    const applyFn = vi.fn();
+    const hostedApplyFn = vi.fn(async () => ({ ok: true }));
+
+    const res = await request(
+      app(broadcaster, explodingGit, applyFn, { hosted: HOSTED, hostedApplyFn }),
+    ).post('/api/update/apply');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, hosted: true });
+    expect(hostedApplyFn).toHaveBeenCalledWith(HOSTED);
+    // The local path must not run at all — spawning `bin/dispatch update` in a
+    // container would rebuild into an ephemeral layer and then vanish.
+    expect(applyFn).not.toHaveBeenCalled();
+    expect(events).toEqual([{ type: 'update:in-progress' }]);
+  });
+
+  it('reports the control plane\'s refusal as 409 and does not claim progress', async () => {
+    const events: Record<string, unknown>[] = [];
+    const broadcaster: EventBroadcaster = { broadcast: (e) => { events.push(e); } };
+    const hostedApplyFn = vi.fn(async () => ({ ok: false, reason: 'no newer image has been built' }));
+
+    const res = await request(
+      app(broadcaster, explodingGit, vi.fn(), { hosted: HOSTED, hostedApplyFn }),
+    ).post('/api/update/apply');
+
+    expect(res.status).toBe(409);
+    expect(res.body.reason).toBe('no newer image has been built');
+    expect(events).toEqual([]);
+  });
+
+  it('checks the image registry rather than GitHub releases', async () => {
+    const broadcaster: EventBroadcaster = { broadcast: () => {} };
+    const checkFn = vi.fn(async () => {});
+    const hostedCheckFn = vi.fn(async () => ({
+      available: true, version: '2.28.0', currentVersion: '2.27.0',
+    }));
+
+    const res = await request(
+      app(broadcaster, explodingGit, vi.fn(), { hosted: HOSTED, checkFn, hostedCheckFn }),
+    ).post('/api/update/check');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ available: true, version: '2.28.0', hosted: true });
+    // A GitHub release nobody has built into an image is not an update this box
+    // can take, so polling releases here would offer an update that cannot apply.
+    expect(checkFn).not.toHaveBeenCalled();
+    expect(hostedCheckFn).toHaveBeenCalled();
+  });
+
+  it('leaves the local git path completely unchanged when not hosted', async () => {
+    const broadcaster: EventBroadcaster = { broadcast: () => {} };
+    const applyFn = vi.fn();
+    const hostedApplyFn = vi.fn();
+
+    const res = await request(
+      app(broadcaster, fakeGit(CLEAN_AND_FF_ABLE), applyFn, { hosted: null, hostedApplyFn }),
+    ).post('/api/update/apply');
+
+    expect(res.status).toBe(200);
+    expect(applyFn).toHaveBeenCalledWith('/repo');
+    expect(hostedApplyFn).not.toHaveBeenCalled();
+  });
+});

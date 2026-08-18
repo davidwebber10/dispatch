@@ -18,7 +18,7 @@ export function UpdatesSection() {
   const currentVersion = useUpdate((s) => s.currentVersion);
   const notes = useUpdate((s) => s.notes);
   const currentNotes = useUpdate((s) => s.currentNotes);
-  const { apply, applying, failReason, inProgress } = useApplyUpdate();
+  const { apply, applying, failReason, inProgress, hosted } = useApplyUpdate();
   const [checking, setChecking] = useState(false);
   const [checked, setChecked] = useState(false);
   const [checkError, setCheckError] = useState(false);
@@ -55,7 +55,13 @@ export function UpdatesSection() {
       )}
       {failReason && (
         <div style={{ fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
-          Couldn't update automatically: {failReason} Run <code style={{ font: '400 11px var(--font-mono)' }}>dispatch update</code> manually instead.
+          {/* `dispatch update` is dead advice on a hosted workspace: there is no
+              checkout to pull and no shell to run it in. The honest fallback is the
+              person who can rebuild the fleet image. */}
+          Couldn't update automatically: {failReason}{' '}
+          {hosted
+            ? 'Your workspace updates when it is rebuilt onto a newer image — ask an administrator if this keeps failing.'
+            : <>Run <code style={{ font: '400 11px var(--font-mono)' }}>dispatch update</code> manually instead.</>}
         </div>
       )}
       {/* Pending update → what it contains. Up to date → what the running version brought. */}

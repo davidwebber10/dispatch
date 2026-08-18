@@ -284,6 +284,10 @@ export const api = {
       dirty?: { status: string; path: string }[];
       dirtyOverflow?: number;
       forceable?: boolean;
+      /** True on a hosted box, where an update rolls the container onto a new
+       *  image. Failure advice differs: there is no checkout to clean up, and
+       *  no `dispatch update` to run — the box has no shell for the user. */
+      hosted?: boolean;
     };
   },
 

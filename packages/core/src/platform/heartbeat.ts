@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { getRunningVersion } from '../update/version.js';
 
 /**
  * Publishes a small per-box state projection to OS.
@@ -33,6 +34,15 @@ export interface BoxHeartbeat {
   lastActivityAt: string | null;
   /** Whether OS-brokered tools resolved on the last attempt (design §4.2.1). */
   toolsReachable: boolean;
+  /**
+   * Dispatch version this box is running.
+   *
+   * The control plane cannot infer it: the task definition names an image, and an
+   * image tag is not proof of what is inside a container that may have been
+   * started weeks ago. Reporting it is what lets the fleet view answer "who is
+   * behind?" and the update check answer "is the built image newer than me?".
+   */
+  version?: string;
   /**
    * Trailing-7-day token usage, split by model.
    *
@@ -89,6 +99,7 @@ export function collectHeartbeat(
     },
     lastActivityAt,
     toolsReachable: extra.toolsReachable,
+    version: getRunningVersion(),
   };
 }
 

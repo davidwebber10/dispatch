@@ -21,7 +21,7 @@ export function UpdateModal() {
   const dismissedVersion = useUpdate((s) => s.dismissedVersion);
   const currentVersion = useUpdate((s) => s.currentVersion);
   const notes = useUpdate((s) => s.notes);
-  const { apply, applying, failReason, failDirty, failDirtyOverflow, canForce, inProgress } = useApplyUpdate();
+  const { apply, applying, failReason, failDirty, failDirtyOverflow, canForce, inProgress, hosted } = useApplyUpdate();
   // The card is a narrow prompt until the notes open, then it widens to stay readable.
   const [notesOpen, setNotesOpen] = useState(false);
 
@@ -83,7 +83,11 @@ export function UpdateModal() {
               <div style={{ marginTop: 12, fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-secondary)', textAlign: 'left', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 9, padding: '9px 11px' }}>
                 Couldn't update automatically: {failReason}
                 <br />
-                Run it manually instead: <code style={{ font: '400 11px var(--font-mono)' }}>dispatch update</code>
+                {/* A hosted workspace has no checkout and no shell, so the manual
+                    command is advice the reader cannot follow. */}
+                {hosted
+                  ? 'Your workspace updates when it is rebuilt onto a newer image — ask an administrator if this keeps failing.'
+                  : <>Run it manually instead: <code style={{ font: '400 11px var(--font-mono)' }}>dispatch update</code></>}
                 {failDirty && failDirty.length > 0 && (
                   <div style={{ marginTop: 8, maxHeight: 136, overflowY: 'auto', font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', background: 'rgba(0,0,0,.2)', border: '1px solid #2C2C32', borderRadius: 6, padding: '6px 8px' }}>
                     {/* `pre` on the status only: porcelain codes carry a meaningful leading
