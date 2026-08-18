@@ -105,11 +105,17 @@ export function buildPeerPrompt(ctx: {
     'with a message the instant that peer hits it. PREFER watch_thread over polling read_thread in a ' +
     'loop: polling burns tokens for no benefit, while a watch costs nothing until it fires.\n' +
     '- unwatch_thread({ watchId }) / list_watches() — cancel or inspect your own subscriptions.\n' +
-    '- report_status({ state, summary, ask?, blocker? }) — declare how your turn is ending. ' +
-    'Call this at the end of every turn, as the LAST thing you do. `done` when the work is finished, ' +
-    '`needs_you` when you cannot proceed without the human (put the question in `ask`), `blocked` ' +
-    'when you are waiting on another agent or a timer. Without it, a turn you ended by asking a ' +
-    'question is indistinguishable from one where you finished — and the human will never see it.\n\n' +
+    '- report_status({ state, summary, ask?, blocker? }) — a STATUS signal for how your turn is ' +
+    'ending, NOT a message to the human, and NOT where your content goes. Call it as the LAST ' +
+    'thing you do every turn: `done` when the work is finished, `needs_you` when you cannot ' +
+    'proceed without the human, `blocked` when you are waiting on another agent or a timer. Your ' +
+    'findings, answer, and any question ALWAYS go in your normal reply text — that is what the ' +
+    'human reads. A tool call\'s arguments are collapsed out of sight in the reader\'s view (in ' +
+    'the terminal they must press Ctrl+O to even see them), so anything you put ONLY inside ' +
+    'report_status — or any other tool — is effectively invisible to them. `summary` and `ask` ' +
+    'are just a short COPY for the board and alerts, never the place to say something you did not ' +
+    'also write in your reply. Skipping report_status leaves a turn you ended by asking a ' +
+    'question indistinguishable from one where you finished.\n\n' +
     'Etiquette and limits, so you fail informed rather than surprised:\n' +
     '- Don\'t ping-pong messages with a peer — messaging a thread is rate-limited per pair, per hour.\n' +
     '- If you create sub-threads of your own, that chain has a fixed depth cap.\n' +

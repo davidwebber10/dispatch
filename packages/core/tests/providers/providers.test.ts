@@ -83,15 +83,19 @@ describe('claude-code provider', () => {
 });
 
 describe('codex provider', () => {
-  it('builds new command', () => {
+  it('builds new command with full permissions (the analogue of Claude --dangerously-skip-permissions)', () => {
     const cmd = codexProvider.buildNewCommand({ workDir: '/tmp' });
     expect(cmd.command).toBe('codex');
+    // Regression: an interactive/PTY Codex thread must launch fully autonomous. Without this
+    // flag it starts with Codex's default approval policy + sandbox and stalls on prompts.
+    expect(cmd.args[0]).toBe('--dangerously-bypass-approvals-and-sandbox');
   });
 
-  it('builds resume command', () => {
+  it('builds resume command with full permissions, flag before the subcommand', () => {
     const cmd = codexProvider.buildResumeCommand({ externalSessionId: 'xyz', workDir: '/tmp' });
     expect(cmd.command).toBe('codex');
-    expect(cmd.args).toEqual(['resume', 'xyz']);
+    // The global bypass flag precedes the `resume` subcommand (same as the -c overrides).
+    expect(cmd.args).toEqual(['--dangerously-bypass-approvals-and-sandbox', 'resume', 'xyz']);
   });
 
   it('pins the model with --model, before the resume subcommand', () => {
@@ -134,8 +138,12 @@ describe('codex provider', () => {
     expect(plan!.codexArgs![1]).toContain('http://localhost:3456/api/events/codex/cx-1');
 
     const cmd = codexProvider.buildResumeCommand({ externalSessionId: 'xyz', workDir: '/tmp', statusHooks: { codexNotifyArgs: plan!.codexArgs } });
-    // -c overrides must precede the `resume` subcommand.
-    expect(cmd.args[0]).toBe('-c');
+    // The full-permissions flag leads; the -c overrides still precede the `resume` subcommand.
+    expect(cmd.args[0]).toBe('--dangerously-bypass-approvals-and-sandbox');
+    const c = cmd.args.indexOf('-c');
+    const r = cmd.args.indexOf('resume');
+    expect(c).toBeGreaterThan(-1);
+    expect(c).toBeLessThan(r);
     expect(cmd.args[cmd.args.length - 2]).toBe('resume');
     expect(cmd.args[cmd.args.length - 1]).toBe('xyz');
   });

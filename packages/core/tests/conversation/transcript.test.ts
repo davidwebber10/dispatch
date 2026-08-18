@@ -86,3 +86,24 @@ describe('mid-turn posts (queued_command attachments)', () => {
     expect(parseClaudeTranscript('{"type":"attachment","attachment":{"type":"task_reminder","content":"x"}}')).toEqual([]);
   });
 });
+
+// Reported 2026-08-16: an image the human sent on a NORMAL user turn was silently dropped
+// by this parser (only queued_command attachments kept images), so a sent screenshot
+// vanished — and couldn't be tapped/enlarged — once the view rebuilt from disk.
+describe('user-turn image blocks', () => {
+  it('parses a base64 image block in a regular user message into a tappable image item', () => {
+    const line = JSON.stringify({
+      type: 'user', uuid: 'u-img', timestamp: '2026-08-16T00:00:00Z',
+      message: { role: 'user', content: [
+        { type: 'text', text: 'look at this' },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'aGk=' } },
+      ] },
+    });
+    const items = parseClaudeTranscript(line);
+    const img = items.find((i) => i.kind === 'image');
+    expect(img).toBeTruthy();
+    expect(img!.imageFromUser).toBe(true);
+    expect(img!.imageUrl).toBe('data:image/png;base64,aGk=');
+    expect(items.some((i) => i.kind === 'user' && i.text === 'look at this')).toBe(true);
+  });
+});

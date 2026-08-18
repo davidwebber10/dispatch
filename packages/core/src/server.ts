@@ -29,11 +29,17 @@ import { createProvidersRouter } from './routes/providers.js';
 import { createServersRouter } from './routes/servers.js';
 import { createFilesRouter } from './routes/files.js';
 import { createStateRouter } from './routes/state.js';
+import { attachUsageRecorder, closeInterruptedTurns } from './analytics/recorder.js';
+import { attachPtyCapture } from './analytics/pty-capture.js';
+import { clearStaleImportState } from './analytics/importer.js';
 import { createGitRouter } from './routes/git.js';
 import { createSecretsRouter } from './routes/secrets.js';
+import { createHarnessSettingsRouter } from './routes/harness-settings.js';
+import { opencodeKeySecretName } from './settings/harness-settings.js';
 import { createTranscribeRouter } from './routes/transcribe.js';
 import { TranscriptionService } from './transcription/service.js';
 import { createSetupRouter } from './routes/setup.js';
+import { withShimPath } from './auth/shim.js';
 import { createToolsRouter } from './routes/tools.js';
 import { getToolsSpawnEnv, toolStatuses, awarenessNote } from './tools/status.js';
 import { SecretsService } from './secrets/service.js';
@@ -50,6 +56,7 @@ import { handleTerminalConnection } from './ws/terminal.js';
 import { handleStructuredConnection } from './ws/structured.js';
 import { ClaudeStructuredSessionManager, type IStructuredManager } from './structured/manager.js';
 import { CodexStructuredSessionManager } from './structured/codex-manager.js';
+import { GrokStructuredSessionManager } from './structured/grok-manager.js';
 import { startPtyTimingLoop } from './sessions/status.js';
 import { startAutoArchiveLoop } from './sessions/auto-archive.js';
 import { TerminalMonitor } from './terminal-monitor.js';
@@ -60,6 +67,61 @@ import { createUpdateRouter } from './routes/update.js';
 import { createAppearanceRouter, customIconHandler } from './routes/appearance.js';
 import { createWatchesRouter } from './routes/watches.js';
 import { WatchDispatcher } from './sessions/watch-dispatcher.js';
+import { createAnalyticsRouter, trackingStartedAt } from './routes/analytics.js';
+
+/**
+ * The analytics boot steps, run once per app before any route is mounted.
+ *
+ * `trackingStartedAt` belongs HERE, not on the first request to /api/analytics.
+ * The cutoff it stamps is the instant recording began, and the history importer
+ * accepts only turns older than it. Stamped lazily on first read, a user who
+ * upgrades and opens the Analytics view a week later would stamp the cutoff a
+ * week late — and the importer would then re-import the week the recorder had
+ * already measured live, double-counting every one of those tokens. Stamping at
+ * boot is what makes the "imported and measured rows can never describe the same
+ * turn" claim in db/schema.ts and analytics/importer.ts actually true.
+ *
+ * createApp and startServer both call this, so the two app builders cannot drift.
+ */
+function bootAnalytics(db: Database.Database): void {
+  // A daemon that died mid-turn left rows open; close them before anything reads them.
+  closeInterruptedTurns(db);
+  // A daemon that died mid-import left the backfill state stuck at 'running',
+  // which would 409 the Import button forever. Clear it — the import is
+  // synchronous and in-process, so a restart makes any 'running' state stale.
+  clearStaleImportState(db);
+  // Stamp the import cutoff at the instant recording begins. Written once; every
+  // later boot reads back the original value.
+  trackingStartedAt(db);
+}
+
+/**
+ * Subscribe PTY usage capture to the turn-settled edge.
+ *
+ * `isStructured` is the double-count gate and the reason this is a function rather
+ * than an inline literal. It must go through `SessionService.isStructuredTerminal`,
+ * which checks BOTH `config.transport === 'structured'` AND a registered manager for
+ * the type — a `transport: 'structured'` Codex row is still a PTY thread when
+ * Codex-Pretty is off. Re-implementing it as a config read in one builder and not
+ * the other would silently roughly double that builder's numbers.
+ *
+ * createApp and startServer both call this, so the two app builders cannot drift.
+ */
+function wirePtyUsageCapture(
+  db: Database.Database,
+  statusService: StatusService,
+  sessionService: SessionService,
+  broadcaster: EventBroadcaster,
+): void {
+  statusService.addThreadSettledListener(attachPtyCapture({
+    db,
+    isStructured: (terminalId) => {
+      const t = terminalsDb.getById(db, terminalId);
+      return !!t && sessionService.isStructuredTerminal(t);
+    },
+    onTurnClosed: () => broadcaster.broadcast({ type: 'analytics-dirty' }),
+  }));
+}
 
 /** Repo root, derived the same way as the webDist fallback below (works from both src/ in dev and dist/ once built, since both sit at the same depth under packages/core). */
 function resolveRepoRoot(): string {
@@ -163,7 +225,7 @@ class NoopPTYManager extends PTYManager {
  * once answered, 'resolved' (→ working). Routing it through StatusService means it
  * broadcasts terminal:status + fires the same push/notify path the PTY/hook flow uses.
  */
-function wirePermissionMembrane(structuredManager: IStructuredManager, statusService: StatusService, sessionService: SessionService): void {
+function wirePermissionMembrane(structuredManager: IStructuredManager, statusService: StatusService, sessionService: SessionService, db: Database.Database, broadcaster: EventBroadcaster): void {
   structuredManager.on('permission', (terminalId: string, pending: { toolName?: string; questions?: any[] }) => {
     // An agent's AskUserQuestion escalates UP to its project's coordinator (Dispatch), not to
     // the human. When that routing succeeds the agent stays "working" (it's waiting on the
@@ -176,6 +238,13 @@ function wirePermissionMembrane(structuredManager: IStructuredManager, statusSer
       ? 'Needs your answer'
       : `Needs approval: ${pending?.toolName ?? 'tool'}`;
     statusService.markNeedsInput(terminalId, activity);
+  });
+  // Analytics: one row per turn, written live from the same events that drive status.
+  // Kept as its own subscriber rather than folded into the status handlers so a
+  // failure here can never affect a turn. See analytics/recorder.ts.
+  attachUsageRecorder(structuredManager, {
+    db,
+    onTurnClosed: () => broadcaster.broadcast({ type: 'analytics-dirty' }),
   });
   structuredManager.on('resolved', (terminalId: string) => {
     statusService.markWorking(terminalId, 'Working…');
@@ -251,12 +320,46 @@ const CODEX_PRETTY_ENABLED = process.env.DISPATCH_CODEX_PRETTY !== '0';
  * as Claude — both managers emit the identical Claude-shaped event contract. No-op (returns
  * undefined) when Codex Pretty is disabled; Codex then keeps only its PTY transport.
  */
-function wireCodexPretty(sessionService: SessionService, statusService: StatusService): IStructuredManager | undefined {
+function wireCodexPretty(sessionService: SessionService, statusService: StatusService, db: Database.Database, broadcaster: EventBroadcaster): IStructuredManager | undefined {
   if (!CODEX_PRETTY_ENABLED) return undefined;
   const codexManager = new CodexStructuredSessionManager();
   sessionService.setCodexStructuredManager(codexManager);
-  wirePermissionMembrane(codexManager, statusService, sessionService);
+  wirePermissionMembrane(codexManager, statusService, sessionService, db, broadcaster);
   return codexManager;
+}
+
+/**
+ * Grok "Pretty" (structured ACP transport over `grok agent stdio`, one child per thread —
+ * see GrokStructuredSessionManager). Kill-switch: set DISPATCH_GROK_PRETTY=0 to fall back
+ * to the PTY-only Grok transport (mirrors wireCodexPretty's DISPATCH_CODEX_PRETTY).
+ */
+const GROK_PRETTY_ENABLED = process.env.DISPATCH_GROK_PRETTY !== '0';
+
+/** Wire the Grok ACP structured manager onto the service (so `structuredManagerFor('grok')`
+ *  resolves it), reusing the SAME permission membrane as the other two managers. */
+function wireGrokPretty(sessionService: SessionService, statusService: StatusService, db: Database.Database, broadcaster: EventBroadcaster): IStructuredManager | undefined {
+  if (!GROK_PRETTY_ENABLED) return undefined;
+  const grokManager = new GrokStructuredSessionManager();
+  sessionService.setGrokStructuredManager(grokManager);
+  wirePermissionMembrane(grokManager, statusService, sessionService, db, broadcaster);
+  return grokManager;
+}
+
+/**
+ * OpenCode "Pretty" (structured ACP transport over `opencode acp`, one child per thread).
+ * SAME manager class as Grok — both harnesses speak ACP over stdio; the dialect deltas
+ * live in the translator/manager themselves (see grok-manager.ts header). Kill-switch:
+ * DISPATCH_OPENCODE_PRETTY=0. OpenCode has no PTY fallback — switched off, the type
+ * simply cannot spawn.
+ */
+const OPENCODE_PRETTY_ENABLED = process.env.DISPATCH_OPENCODE_PRETTY !== '0';
+
+function wireOpencodePretty(sessionService: SessionService, statusService: StatusService, db: Database.Database, broadcaster: EventBroadcaster): IStructuredManager | undefined {
+  if (!OPENCODE_PRETTY_ENABLED) return undefined;
+  const opencodeManager = new GrokStructuredSessionManager();
+  sessionService.setOpencodeStructuredManager(opencodeManager);
+  wirePermissionMembrane(opencodeManager, statusService, sessionService, db, broadcaster);
+  return opencodeManager;
 }
 
 /**
@@ -309,11 +412,16 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   // optional StatusService dependency, same shape as onActivity below.
   const watchDispatcher = new WatchDispatcher(db, buildWatchDeliver(sessionService));
   const statusService = new StatusService(db, broadcaster, undefined, (terminalId, status) => watchDispatcher.onStatus(terminalId, status));
-  wirePermissionMembrane(structuredManager, statusService, sessionService);
-  wireCodexPretty(sessionService, statusService);
+  wirePermissionMembrane(structuredManager, statusService, sessionService, db, broadcaster);
+  wireCodexPretty(sessionService, statusService, db, broadcaster);
+  wireGrokPretty(sessionService, statusService, db, broadcaster);
+  wireOpencodePretty(sessionService, statusService, db, broadcaster);
   const pushService = new PushService(db, { vapidDir: dispatchDir });
 
   wireThreadSettledPush(db, statusService, pushService);
+  wirePtyUsageCapture(db, statusService, sessionService, broadcaster);
+
+  bootAnalytics(db);
 
   // Mount routes
   app.use('/api/sessions', createSessionsRouter(sessionService, broadcaster));
@@ -323,6 +431,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   app.use('/api/providers', createProvidersRouter());
   app.use('/api/servers', createServersRouter(db));
   app.use('/api/secrets', createSecretsRouter(secretsService));
+  app.use('/api/settings/harnesses', createHarnessSettingsRouter(db, secretsService));
   app.use('/api/transcribe', createTranscribeRouter(new TranscriptionService(secretsService)));
   app.use('/api/setup', createSetupRouter(db, secretsService));
   app.use('/api/sessions/:id/files', createFilesRouter(db));
@@ -336,6 +445,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   app.use('/api/update', createUpdateRouter(broadcaster, resolveRepoRoot(), db));
   app.use('/api/appearance', createAppearanceRouter(dispatchDir));
   app.use('/api/watches', createWatchesRouter(db));
+  app.use('/api/analytics', createAnalyticsRouter(db));
 
   // Attach internals for server wiring
   (app as any)._ptyManager = ptyManager;
@@ -434,7 +544,16 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // StatusService (hook events) and TerminalMonitor (PTY busy/idle), below. Uses the
   // real (websocket-wired) broadcaster so a successful rename's `session:tabs-changed`
   // reaches connected clients the same way a user rename does today.
-  const threadAutoNamer = new ThreadAutoNamer(db, broadcaster);
+  //
+  // When the OpenRouter key resolves (same Doppler secret the OpenCode harness uses),
+  // names come from a fast GLM call over the first prompt instead of the prompt's
+  // first 48 chars. Late-bound resolver: SecretsService is constructed further down,
+  // and the first naming attempt can't fire before the debounce (≥5s after first
+  // activity), by which point the resolver is installed.
+  let resolveOpenRouterKey: (() => Promise<string | null>) | null = null;
+  const threadAutoNamer = new ThreadAutoNamer(db, broadcaster, {
+    getApiKey: () => resolveOpenRouterKey?.() ?? Promise.resolve(null),
+  });
 
   // Determine actual server URL after port is known
   const sessionService = new SessionService(db, ptyManager, path.join(dataDir, 'mcp.json'));
@@ -449,8 +568,12 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   );
   const structuredManager = new ClaudeStructuredSessionManager();
   sessionService.setStructuredManager(structuredManager);
-  wirePermissionMembrane(structuredManager, statusService, sessionService);
-  const codexManager = wireCodexPretty(sessionService, statusService);
+  wirePermissionMembrane(structuredManager, statusService, sessionService, db, broadcaster);
+  // Kept as a binding (main had dropped it, nothing used it) because the usage
+  // recorder below subscribes to it. A hosted fleet needs per-user token totals.
+  const codexManager = wireCodexPretty(sessionService, statusService, db, broadcaster);
+  const grokStructured = wireGrokPretty(sessionService, statusService, db, broadcaster);
+  const opencodeStructured = wireOpencodePretty(sessionService, statusService, db, broadcaster);
   const pushService = new PushService(db, { vapidDir: dataDir });
 
   // Token usage for INTERACTIVE threads. Scheduled runs already record theirs on
@@ -459,8 +582,13 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const usage = new UsageRecorder(db);
   structuredManager.on('event', (_id: string, event: unknown) => usage.observe(event));
   codexManager?.on('event', (_id: string, event: unknown) => usage.observe(event));
+  // Grok and OpenCode are deliberately NOT wired here. observe() reads Claude
+  // stream-json `result` usage; their translators emit Claude-SHAPED events, which
+  // is not the same claim. Wire them once their usage payload is verified, rather
+  // than silently recording zeros or double-counting.
 
   wireThreadSettledPush(db, statusService, pushService);
+  wirePtyUsageCapture(db, statusService, sessionService, broadcaster);
 
   // Doppler secrets: token-backed connection + per-spawn injection (DOPPLER_* env +
   // an MCP server) so Claude Code / Codex agents can add & retrieve secrets.
@@ -473,21 +601,59 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Tools brokered by OS, resolved per spawn (design §4.2.1).
   const osConnections = new OsConnectionsProvider();
   const toolsBase = path.join(dataDir, 'tools');
+  // Install the auto-namer's key resolver (declared above, next to the namer):
+  // the OpenCode/OpenRouter key by its CONFIGURED Doppler name, resolved fresh
+  // per naming attempt so key changes apply without a restart. null (not throw)
+  // when Doppler isn't connected — the namer then keeps prefix-derived names.
+  resolveOpenRouterKey = async () => {
+    try { return (await secretsService.getSecret(opencodeKeySecretName(db))) ?? null; }
+    catch { return null; }
+  };
   sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
   sessionService.setIntegrationsSpecs(() => [...integrationsService.getServerSpecs(), ...osConnections.getServerSpecs()]);
   sessionService.setToolsAwareness(() => awarenessNote(toolStatuses({ base: toolsBase })));
   let effectiveShimEnv = browserShimEnv;
+  // Resolve the OpenCode/OpenRouter key from Doppler BY CONFIGURED NAME (settings/harness-
+  // settings.ts) and layer it onto the opencode children's env as OPENROUTER_API_KEY.
+  // Async on purpose (Doppler round-trip) atop the sync env refresh; re-fired on boot,
+  // secrets connection changes, any secret write, and harness-settings PUTs — so saving or
+  // renaming the key takes effect on the next spawn without a restart. Resolution failure
+  // is fine: opencode falls back to its own auth store.
+  const refreshOpencodeKeyEnv = (baseEnv: Record<string, string>) => {
+    if (!opencodeStructured) return;
+    void (async () => {
+      try {
+        const value = await secretsService.getSecret(opencodeKeySecretName(db));
+        if (value) opencodeStructured.setDefaultEnv({ ...baseEnv, OPENROUTER_API_KEY: value });
+      } catch { /* Doppler not connected — auth store fallback */ }
+    })();
+  };
   const refreshPtyEnv = () => {
-    // getToolsSpawnEnv prepends the bundled-tools bin to a BASE PATH. That base must be
-    // the shim env's PATH (which itself prepends ~/.dispatch/bin), not process.env.PATH —
-    // otherwise this spread, being last, silently drops the browser shim from PATH and
-    // BROWSER=dispatch-open resolves to nothing. Locally that's invisible (macOS Claude
-    // Code opens the browser itself and the loopback callback still lands), but on a
-    // headless/remote box the shim is the ONLY way an OAuth URL reaches the operator.
-    const toolsEnv = getToolsSpawnEnv({ base: toolsBase, env: { ...process.env, ...effectiveShimEnv } });
-    const spawnEnv = { ...effectiveShimEnv, ...claudeLogin.getSpawnEnv(), ...osConnections.getSpawnEnv(), ...secretsService.getSpawnEnv(), ...toolsEnv };
+    // claudeLogin and osConnections are the hosted box's two spawn-env providers:
+    // the user's own Claude credential, and the MCP tools OS brokers per spawn. Both
+    // are no-ops on a local daemon (no OS_BASE_URL, no login session), so one
+    // composition serves both deployments rather than forking the spawn path.
+    const spawnEnv = {
+      ...effectiveShimEnv,
+      ...claudeLogin.getSpawnEnv(),
+      ...osConnections.getSpawnEnv(),
+      ...secretsService.getSpawnEnv(),
+      ...getToolsSpawnEnv({ base: toolsBase }),
+    };
+    // Each of those builds its own PATH off process.env.PATH, so the last spread wins
+    // and the earlier prefixes are lost. Re-assert the shim's bin dir explicitly — without
+    // it $BROWSER points at a `dispatch-open` that is not on PATH, and the whole
+    // browser-auth relay silently does nothing. On a hosted box that relay is the ONLY
+    // route an OAuth URL has to the person signing in: there is no local browser.
+    spawnEnv.PATH = withShimPath(dataDir, spawnEnv.PATH);
     ptyManager.setDefaultEnv(spawnEnv);
     structuredManager.setDefaultEnv(spawnEnv);
+    // The ACP children (Grok, OpenCode) run real tools directly (no app-server
+    // indirection), so they need the same spawn env a PTY thread gets — secrets, bundled
+    // tools, the browser shim.
+    grokStructured?.setDefaultEnv(spawnEnv);
+    opencodeStructured?.setDefaultEnv(spawnEnv);
+    refreshOpencodeKeyEnv(spawnEnv);
   };
   secretsService.onChange(refreshPtyEnv);
   claudeLogin.onChange(refreshPtyEnv);
@@ -496,7 +662,23 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Terminal activity monitor — parses status bar, detects busy/idle
   const terminalMonitor = new TerminalMonitor(broadcaster, db, (terminalId, activity) => {
     agentService.updateRunFromTerminalActivity(terminalId, activity);
-  }, (id) => threadAutoNamer.notifyActivity(id));
+  }, (id) => threadAutoNamer.notifyActivity(id), (terminalId, url) => {
+    // A CLI printed a sign-in URL instead of opening one — raise the same auth request the
+    // $BROWSER shim raises, so it reaches the operator's banner (and their phone).
+    //
+    // ONLY for a thread Dispatch itself started to sign in (config.signIn). Scanning every
+    // thread's output was far too loose: an agent that merely PRINTS an auth-shaped URL —
+    // including one writing about OAuth, or a coding agent quoting a login link — raised a
+    // banner. In practice the agent's own prose triggered a stream of them. A URL in a
+    // sign-in thread is unambiguous; a URL anywhere else is just text. Every other thread
+    // still relies on the shim, where an actual exec proves intent.
+    try {
+      const t = terminalsDb.getById(db, terminalId);
+      const cfg = t ? (JSON.parse(t.config || '{}') as { signIn?: unknown }) : {};
+      if (typeof cfg.signIn !== 'string') return;
+      authRequestService.create({ url, source: 'terminal-output', terminalId });
+    } catch { /* a malformed URL or config is not worth failing the output path over */ }
+  });
 
   // Wire PTY data through the monitor (busy/idle + status-bar HUD) and, for
   // autonomous agent-runner terminals, through the structured stream parser
@@ -509,7 +691,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   function rollupSession(sessionId: string) {
     const status = aggregateSessionStatus(terminalsDb.listBySession(db, sessionId).map((t) => t.status || 'waiting'));
     sessionsDb.updateStatus(db, sessionId, status);
-    broadcaster.broadcast({ type: 'session:status', sessionId, status });
+    broadcaster.broadcast({ type: 'session:status', sessionId, status, lastActivityAt: sessionsDb.getLastActivity(db, sessionId) });
   }
 
   // When a PTY exits, clean up monitor and update status
@@ -531,7 +713,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       // Legacy: id is a session ID
       sessionsDb.updateStatus(db, id, 'waiting');
       sessionsDb.updatePid(db, id, null);
-      broadcaster.broadcast({ type: 'session:status', sessionId: id, status: 'waiting' });
+      broadcaster.broadcast({ type: 'session:status', sessionId: id, status: 'waiting', lastActivityAt: sessionsDb.getLastActivity(db, id) });
     }
 
     // If this terminal was backing an autonomous agent run, finalize the run:
@@ -557,6 +739,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     }
   });
 
+  bootAnalytics(db);
+
   // Mount routes
   app.use('/api/sessions', createSessionsRouter(sessionService, broadcaster));
   app.use('/api', createTerminalsRouter(sessionService, broadcaster, statusService));
@@ -564,7 +748,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.use('/api/agents', createAgentsRouter(agentService));
   app.use('/api/providers', createProvidersRouter());
   app.use('/api/servers', createServersRouter(db));
-  app.use('/api/secrets', createSecretsRouter(secretsService));
+  app.use('/api/secrets', createSecretsRouter(secretsService, refreshPtyEnv));
+  app.use('/api/settings/harnesses', createHarnessSettingsRouter(db, secretsService, refreshPtyEnv));
   app.use('/api/transcribe', createTranscribeRouter(new TranscriptionService(secretsService)));
   app.use('/api/setup', createSetupRouter(db, secretsService));
   app.use('/api/sessions/:id/files', createFilesRouter(db));
@@ -580,6 +765,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.use('/api/update', createUpdateRouter(broadcaster, repoRoot, db));
   app.use('/api/appearance', createAppearanceRouter(dataDir));
   app.use('/api/watches', createWatchesRouter(db));
+  app.use('/api/analytics', createAnalyticsRouter(db));
 
   // Serve the built web client (single-origin) when a build is present.
   // SPA fallback returns index.html for any non-/api, non-WS GET.
@@ -628,7 +814,15 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
         // Falls back to the Claude manager when the terminal/type can't be resolved yet.
         const id = url.match(/\/api\/terminals\/([^/]+)\/structured-ws/)?.[1];
         const manager = (id && sessionService.structuredManagerForTerminal(id)) || structuredManager;
-        handleStructuredConnection(ws, request, manager, (tid) => sessionService.ensureStructuredAlive(tid));
+        handleStructuredConnection(
+          ws, request, manager,
+          (tid) => sessionService.ensureStructuredAlive(tid),
+          (tid) => sessionService.historyOwnedByRest(tid),
+          (tid) => sessionService.historyRestPageable(tid),
+          // Settled = the daemon's own status row says the thread is not mid-turn. Drives
+          // the phantom-"Working…" settle for replays that end mid-turn (see ws/structured.ts).
+          (tid) => sessionService.getTerminal(tid)?.status !== 'working',
+        );
       });
     } else if (url.match(/\/api\/terminals\/[^/]+\/ws/) || url.match(/\/api\/sessions\/[^/]+\/terminal/)) {
       terminalWss.handleUpgrade(request, socket, head, (ws) => {
@@ -682,6 +876,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     serverUrl: `http://127.0.0.1:${port}`,
     hooksDir: path.join(dataDir, 'hooks'),
     codexHelperPath: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../scripts/codex-notify.mjs'),
+    grokHelperPath: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../scripts/grok-hook.mjs'),
   });
 
   console.log(`Dispatch server listening on port ${port}`);

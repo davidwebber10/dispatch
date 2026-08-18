@@ -15,11 +15,11 @@ import { api } from '../../../api/client';
 import { Icon } from '../atoms';
 
 type Mode = 'supervised' | 'autonomous';
-type Scheme = 'scoped' | 'global';
+export type Scheme = 'scoped' | 'global';
 
-interface Tokens { border: string; dim: string; accent: string; accentFg: string; surface: string; danger: string; }
+export interface Tokens { border: string; dim: string; accent: string; accentFg: string; surface: string; danger: string; }
 
-const SCHEMES: Record<Scheme, Tokens> = {
+export const SCHEMES: Record<Scheme, Tokens> = {
   scoped: { border: 'var(--border)', dim: 'var(--ts)', accent: 'var(--acc)', accentFg: '#06140B', surface: 'var(--elev)', danger: 'var(--red)' },
   global: { border: 'var(--color-border)', dim: 'var(--color-text-secondary)', accent: 'var(--color-accent)', accentFg: '#06140B', surface: 'var(--color-elevated)', danger: 'var(--color-status-red)' },
 };

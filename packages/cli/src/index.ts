@@ -179,7 +179,16 @@ export function cmdRun(ctx: Ctx): void {
  * If no version is provided, bumps the patch number of the latest v* tag (or reads
  * from package.json if no tags exist). Delegates tagging/push/release to git and gh.
  */
-function cmdRelease(ctx: Ctx, args: string[]): void {
+/**
+ * Tag a release and publish it on GitHub.
+ *
+ * The GitHub Release body is the hand-written `docs/releases/vX.Y.Z.md`, not an
+ * auto-generated commit list, because the in-app update prompt shows that body to
+ * whoever is about to install it. A release with no readable note is therefore refused,
+ * and so is one whose `package.json` was never bumped — that mismatch leaves every
+ * install nagging forever. See docs/RELEASING.md.
+ */
+export function cmdRelease(ctx: Ctx, args: string[]): void {
   const shellOpt = ctx.platformId === 'win32' ? { shell: true } : {};
   const repoRoot = ctx.repoRoot ?? process.cwd();
 
@@ -244,19 +253,47 @@ function cmdRelease(ctx: Ctx, args: string[]): void {
     version = 'v' + version;
   }
 
-  // 7. Ensure tag does not already exist.
+  // 7. A human-readable release note is REQUIRED. It becomes the GitHub Release body,
+  //    which every install shows in its update prompt before it installs anything.
+  const notesPath = path.join(repoRoot, 'docs', 'releases', `${version}.md`);
+  if (!fs.existsSync(notesPath)) {
+    throw new Error(
+      `Missing release note: docs/releases/${version}.md\n` +
+      `Every release needs one — the update prompt shows it to whoever is about to install.\n` +
+      `Copy a recent note for the shape, then retry.`,
+    );
+  }
+  if (fs.readFileSync(notesPath, 'utf-8').trim() === '') {
+    throw new Error(`Release note docs/releases/${version}.md is empty — write it, then retry.`);
+  }
+
+  // 8. package.json must already carry this version. If it does not, a freshly-updated
+  //    install still reports the old version and its update prompt never clears.
+  const pkgVersion = String(
+    (JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf-8')) as { version?: string }).version ?? '',
+  );
+  if (`v${pkgVersion}` !== version) {
+    throw new Error(
+      `package.json is on ${pkgVersion} but you are releasing ${version}.\n` +
+      `Bump all four package.json (root + cli + core + web) to ${version.slice(1)}, commit, push, then retry.`,
+    );
+  }
+
+  // 9. Ensure tag does not already exist.
   const tagCheck = spawnSync('git', ['rev-parse', version],
     { cwd: repoRoot, encoding: 'utf-8', ...shellOpt });
   if (tagCheck.status === 0) {
     throw new Error(`Tag ${version} already exists.`);
   }
 
-  // 8. Tag, push, release.
+  // 10. Tag, push, release.
   execFileSync('git', ['tag', '-a', version, '-m', version],
     { stdio: 'inherit', cwd: repoRoot, ...shellOpt });
   execFileSync('git', ['push', 'origin', version],
     { stdio: 'inherit', cwd: repoRoot, ...shellOpt });
-  execFileSync('gh', ['release', 'create', version, '--repo', 'davidwebber10/dispatch', '--generate-notes'],
+  // `--title` is explicit: --generate-notes used to name the release for us, --notes-file
+  // does not, and a release with no title renders as a blank heading on GitHub.
+  execFileSync('gh', ['release', 'create', version, '--repo', 'davidwebber10/dispatch', '--title', version, '--notes-file', notesPath],
     { stdio: 'inherit', cwd: repoRoot, ...shellOpt });
   console.log(`Released ${version}.`);
 }

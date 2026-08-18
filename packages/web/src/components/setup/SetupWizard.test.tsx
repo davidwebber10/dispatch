@@ -28,7 +28,7 @@ test('shows the Agents step on first run with provider badges', async () => {
   getSetupState.mockResolvedValue({ firstRun: true, providers: [{ name: 'claude', installed: true, signedIn: true }, { name: 'codex', installed: false, signedIn: false }], tailscale: { installed: false, running: false }, secrets: { connected: false } });
   render(<SetupWizard />);
   // Codex is signed out, so its install command (unique) renders once loaded.
-  await waitFor(() => expect(screen.getByText(/npm i -g @openai\/codex/)).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText(/npm install -g @openai\/codex/)).toBeInTheDocument());
   expect(screen.getByText('Set up Dispatch')).toBeInTheDocument();
 });
 

@@ -5,6 +5,10 @@ import { isInjectedUserEntry } from '../conversation/task-notification.js';
 import { resolveTranscriptPath, claudeProjectsRoot } from './transcript-path.js';
 import { encodeClaudeProjectDir } from '../platform/encode.js';
 
+// Re-exported so the (Task 8) history importer can resolve a terminal's transcript
+// without reaching past sessions/ into the transcript-path module directly.
+export { resolveTranscriptPath };
+
 export interface RecentCcSession {
   id: string;          // session UUID (jsonl filename)
   mtime: number;       // last-modified epoch ms

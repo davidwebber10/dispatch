@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { execFile } from 'child_process';
 import { Router } from 'express';
 import multer from 'multer';
 import type Database from 'better-sqlite3';
@@ -11,6 +12,45 @@ import { platform } from '../platform/index.js';
 /** Upper bound on a single reveal: no native file manager can usefully select more, and this is
  *  the only route that shells out — an unbounded argv is not worth the risk. */
 const MAX_REVEAL_PATHS = 256;
+
+const FLAT_CAP = 20000;
+const FLAT_SKIP = new Set(['.git', 'node_modules', 'dist', 'build', '.next', '__pycache__']);
+
+function isHiddenRelPath(p: string): boolean {
+  return p.split(/[\\/]/).some((seg) => seg.startsWith('.') && seg !== '.' && seg !== '..');
+}
+
+function hasSkippedSegment(p: string): boolean {
+  return p.split(/[\\/]/).some((seg) => FLAT_SKIP.has(seg));
+}
+
+/** True when some parent of `relPath` is a nested git checkout / worktree (has its own `.git`). */
+function underNestedGit(workingDir: string, relPath: string, cache: Map<string, boolean>): boolean {
+  const parts = relPath.split(/[\\/]/);
+  let acc = workingDir;
+  for (const part of parts.slice(0, -1)) {
+    acc = path.join(acc, part);
+    if (part === '.git') return true;
+    let hit = cache.get(acc);
+    if (hit === undefined) {
+      hit = fs.existsSync(path.join(acc, '.git'));
+      cache.set(acc, hit);
+    }
+    if (hit) return true;
+  }
+  return false;
+}
+
+function gitLsFiles(workingDir: string, extraArgs: string[]): Promise<string[] | null> {
+  return new Promise((resolve) => {
+    execFile(
+      'git',
+      ['-C', workingDir, 'ls-files', ...extraArgs, '-z'],
+      { timeout: 10_000, maxBuffer: 32 * 1024 * 1024 },
+      (err, stdout) => resolve(err ? null : stdout.split('\0').filter(Boolean)),
+    );
+  });
+}
 
 export function createFilesRouter(db: Database.Database): Router {
   const router = Router({ mergeParams: true });
@@ -68,12 +108,63 @@ export function createFilesRouter(db: Database.Database): Router {
 
     try {
       const entries = fs.readdirSync(resolved, { withFileTypes: true });
-      const result = entries.map(entry => ({
-        name: entry.name,
-        isDirectory: entry.isDirectory(),
-        path: path.relative(session.workingDir, path.join(resolved, entry.name)),
-      }));
+      const result = entries.map(entry => {
+        const abs = path.join(resolved, entry.name);
+        const isDirectory = entry.isDirectory();
+        // Size is best-effort decoration for the Files pane; a broken symlink or a
+        // permission error must not fail the whole listing.
+        let size: number | null = null;
+        if (!isDirectory) { try { size = fs.statSync(abs).size; } catch { /* ignore */ } }
+        return {
+          name: entry.name,
+          isDirectory,
+          path: path.relative(session.workingDir, abs),
+          size,
+        };
+      });
       res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // GET /api/sessions/:id/files/flat — every file path under the working dir, for search.
+  // Inside a git repo the base set is `git ls-files` (tracked + untracked-but-not-ignored).
+  // Hidden paths the Files tree can show (`.env`, `.dispatch/…`) are often gitignored, so
+  // we merge those back in — still skipping node_modules / nested worktrees so they cannot
+  // blow the cap. Outside git it falls back to a bounded fs walk.
+  router.get('/flat', async (req, res) => {
+    const session = (req as any).session;
+    try {
+      const files = await gitLsFiles(session.workingDir, ['--cached', '--others', '--exclude-standard']);
+      if (files) {
+        const ignored = await gitLsFiles(session.workingDir, ['--others', '--ignored', '--exclude-standard']) ?? [];
+        const seen = new Set(files);
+        const gitCache = new Map<string, boolean>();
+        for (const p of ignored) {
+          if (seen.has(p) || !isHiddenRelPath(p) || hasSkippedSegment(p)) continue;
+          if (underNestedGit(session.workingDir, p, gitCache)) continue;
+          files.push(p);
+          seen.add(p);
+        }
+        return res.json({ files: files.slice(0, FLAT_CAP), truncated: files.length > FLAT_CAP });
+      }
+      // Non-git fallback: breadth-limited walk.
+      const out: string[] = [];
+      let truncated = false;
+      const walk = (dir: string) => {
+        if (out.length >= FLAT_CAP) { truncated = true; return; }
+        let entries: fs.Dirent[];
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+        for (const e of entries) {
+          if (out.length >= FLAT_CAP) { truncated = true; return; }
+          const abs = path.join(dir, e.name);
+          if (e.isDirectory()) { if (!FLAT_SKIP.has(e.name)) walk(abs); }
+          else if (e.isFile()) out.push(path.relative(session.workingDir, abs));
+        }
+      };
+      walk(path.resolve(session.workingDir));
+      res.json({ files: out, truncated });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }

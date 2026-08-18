@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, test, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { listRecentCodexSessions } from '../../src/sessions/codex-sessions.js';
+import { listRecentCodexSessions, findCodexRolloutPath } from '../../src/sessions/codex-sessions.js';
 
 function writeRollout(root: string, rel: string, lines: any[], mtimeMs?: number) {
   const full = path.join(root, rel);
@@ -88,5 +88,48 @@ describe('listRecentCodexSessions', () => {
     ], now);
     const list = await listRecentCodexSessions('/work/proj', 1, root);
     expect(list).toHaveLength(1);
+  });
+});
+
+// ---- findCodexRolloutPath ----
+
+describe('findCodexRolloutPath', () => {
+  let root: string;
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-rollout-'));
+  });
+  afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
+
+  const write = (rel: string, name: string) => {
+    const dir = path.join(root, rel);
+    fs.mkdirSync(dir, { recursive: true });
+    const full = path.join(dir, name);
+    fs.writeFileSync(full, '');
+    return full;
+  };
+
+  test('finds a rollout by its session id, wherever the date tree put it', () => {
+    const want = write('2026/07/31', 'rollout-2026-07-31T00-39-59-019fb678-d13c-7d02-b46d-9d0c2533649f.jsonl');
+    write('2026/07/30', 'rollout-2026-07-30T10-00-00-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl');
+    expect(findCodexRolloutPath('019fb678-d13c-7d02-b46d-9d0c2533649f', root)).toBe(want);
+  });
+
+  test('returns undefined for an unknown session, and never throws on a missing root', () => {
+    write('2026/07/31', 'rollout-2026-07-31T00-39-59-019fb678-d13c-7d02-b46d-9d0c2533649f.jsonl');
+    expect(findCodexRolloutPath('no-such-session', root)).toBeUndefined();
+    expect(findCodexRolloutPath('anything', path.join(root, 'does-not-exist'))).toBeUndefined();
+    expect(findCodexRolloutPath('', root)).toBeUndefined();
+  });
+
+  // A session id must match the WHOLE trailing segment: a prefix of another id is not a hit.
+  test('does not match a session id that is only a prefix of the filename id', () => {
+    write('2026/07/31', 'rollout-2026-07-31T00-39-59-019fb678-d13c-7d02-b46d-9d0c2533649f.jsonl');
+    expect(findCodexRolloutPath('019fb678', root)).toBeUndefined();
+  });
+
+  test('picks the newest file when a session id somehow appears twice', () => {
+    write('2026/07/30', 'rollout-2026-07-30T10-00-00-dup-session.jsonl');
+    const newer = write('2026/08/01', 'rollout-2026-08-01T10-00-00-dup-session.jsonl');
+    expect(findCodexRolloutPath('dup-session', root)).toBe(newer);
   });
 });

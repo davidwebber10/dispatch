@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, lazy, Suspense } from 'react';
 import { AppShell } from './components/layout/AppShell';
 import { Workspace } from './components/layout/Workspace';
 import { BoardView } from './components/board/BoardView';
@@ -9,13 +9,17 @@ import { TabHost } from './components/tabs/TabHost';
 import { OverseerView } from './components/overseer/OverseerView';
 import { EmptyWorkspace } from './components/layout/EmptyWorkspace';
 import { Inspector } from './components/inspector/Inspector';
+import { SettingsView } from './components/settings/SettingsView';
+import { PanelToggle } from './components/layout/PanelToggle';
 import { DispatchWorkPane } from './components/overseer/components/DispatchWorkPane';
 import { AgentPane } from './components/agents/AgentPane';
 import { EditAgentModal } from './components/agents/EditAgentModal';
 import { AuthBanner } from './components/auth/AuthBanner';
 import { UpdateModal } from './components/update/UpdateModal';
+import { HighScoreCelebration } from './components/update/HighScoreCelebration';
 import { MobileApp } from './components/mobile/MobileApp';
 import { HintToast } from './components/common/HintToast';
+import { Spinner } from './components/common/Spinner';
 import { SetupWizard } from './components/setup/SetupWizard';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useTabCycleShortcut } from './hooks/useTabCycleShortcut';
@@ -29,6 +33,7 @@ import { useAuth } from './stores/auth';
 import { useUpdate } from './stores/update';
 import { useHost } from './stores/host';
 import { useAgents } from './stores/agents';
+import { useAnalyticsFeed } from './stores/analytics';
 import { useAgentUI } from './stores/agentUI';
 import { useReconnect } from './stores/reconnect';
 import { useResume } from './hooks/useResume';
@@ -42,6 +47,16 @@ import { appPath, href } from './lib/basePath';
 import { readPendingIntent } from './lib/pendingIntent';
 import { resyncAfterReconnect } from './lib/resync';
 import { clearBadge } from './lib/badge';
+
+const AnalyticsView = lazy(() => import('./components/analytics/AnalyticsView').then((m) => ({ default: m.AnalyticsView })));
+
+// Centred in the pane at the same footprint the loaded view will occupy, so
+// nothing jumps when the ~120kB gzipped Recharts chunk finishes downloading.
+const analyticsFallback = (
+  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%' }}>
+    <Spinner size={24} />
+  </div>
+);
 
 export default function App() {
   const activeTerminalId = useTabs((s) => s.activeTabId);
@@ -115,6 +130,7 @@ export default function App() {
         useAuth.getState().applyEvent(e);
         useUpdate.getState().applyEvent(e);
         useAgents.getState().applyEvent(e);
+        useAnalyticsFeed.getState().applyEvent(e);
       },
     });
     sockRef.current = sock;
@@ -179,7 +195,7 @@ export default function App() {
   }, []);
 
   if (isMobile) {
-    return (<><SetupWizard /><AuthBanner /><UpdateModal /><MobileApp /><HintToast /></>);
+    return (<><SetupWizard /><AuthBanner /><UpdateModal /><HighScoreCelebration /><MobileApp /><HintToast /></>);
   }
 
   const showAgent = agentFocused && !!agentSelected;
@@ -189,8 +205,13 @@ export default function App() {
       <SetupWizard />
       <AuthBanner />
       <UpdateModal />
+      <HighScoreCelebration />
       <AppShell>
-        {view === 'board'
+        {view === 'settings'
+          ? <SettingsView />
+          : view === 'analytics'
+          ? <Suspense fallback={analyticsFallback}><AnalyticsView /></Suspense>
+          : view === 'board'
           ? <BoardView />
           : (
             <Workspace
@@ -206,7 +227,17 @@ export default function App() {
                   ? <AgentPane />
                   : (
                     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-                      <GroupedTabBar onSelect={() => useAgentUI.getState().blur()} />
+                      {/* The panel toggles flank the tab strip — the old TopBar's
+                          top-left / top-right positions, one row down. */}
+                      <div style={{ display: 'flex', flexShrink: 0 }}>
+                        <PanelToggle side="left" />
+                        {/* Own bar styling too: GroupedTabBar returns null with no tabs,
+                            and the strip must stay a continuous 44px bar even then. */}
+                        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: 'var(--color-pane)', borderBottom: '1px solid var(--color-border)' }}>
+                          <GroupedTabBar onSelect={() => useAgentUI.getState().blur()} />
+                        </div>
+                        <PanelToggle side="right" />
+                      </div>
                       {activeTerminalId
                         ? (isDispatchTab(activeTerminalId)
                             // Dispatch coordinator opens as a tab — wrap it so its height:100%

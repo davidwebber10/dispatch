@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SortableList } from '../common/SortableList';
 import { SwipeRow } from '../common/SwipeRow';
-import { FolderOpen, CaretRight, Network, TerminalWindow, ChatCircle, PushPin, Timer, Bell, Plus } from '@phosphor-icons/react';
+import { FolderOpen, CaretRight, CaretDown, Network, TerminalWindow, ChatCircle, PushPin, Timer, Bell, Plus } from '@phosphor-icons/react';
 import type { Session, Terminal, AgentSchedule } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
 import { projectIndicator } from '../../lib/status';
@@ -24,10 +24,11 @@ import { AutoArchiveModal } from './AutoArchiveModal';
 import { ThreadLabel } from './ThreadLabel';
 import { SortMenu } from './SortMenu';
 import { useListSort } from '../../stores/listSort';
-import { sortThreads, sortAgents, THREAD_SORTS, AGENT_SORTS } from '../../lib/listSort';
+import { sortThreads, sortAgents, sortFiles, THREAD_SORTS, AGENT_SORTS } from '../../lib/listSort';
 import { api } from '../../api/client';
 import { canReceiveAlerts, ensurePushEnrolled } from '../../lib/push';
 import { useHint } from '../../stores/hint';
+import { AGENT_TYPES, THREAD_TYPES } from '../../lib/harnesses';
 
 /* The sidebar's search header is sticky (~52px). A row revealed by scrollIntoView would sit
    underneath it without this margin. */
@@ -49,7 +50,7 @@ const DENSITY: Record<Density, { rowY: number; sectionMt: number; rowGap: number
 };
 
 const SECTIONS: { key: string; label: string; types: Terminal['type'][]; add: 'menu' | 'browser' | 'notes' | null; prominent?: boolean }[] = [
-  { key: 'threads', label: 'THREADS', types: ['claude-code', 'codex', 'shell'], add: 'menu', prominent: true },
+  { key: 'threads', label: 'THREADS', types: THREAD_TYPES, add: 'menu', prominent: true },
   { key: 'web', label: 'WEB', types: ['browser'], add: 'browser' },
   { key: 'notes', label: 'NOTES', types: ['notes'], add: 'notes' },
   { key: 'files', label: 'FILES', types: ['file'], add: null },
@@ -84,7 +85,7 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
   // glance; browser/notes keep a dot. Every leading glyph sits in a fixed-width slot
   // (iconSlot) so labels line up no matter which glyph — or dot — a row shows.
   const structuredClaude = tab.type === 'claude-code' && (tab.config as { transport?: string })?.transport === 'structured';
-  const isTerminalThread = !structuredClaude && (tab.type === 'claude-code' || tab.type === 'codex' || tab.type === 'shell');
+  const isTerminalThread = !structuredClaude && THREAD_TYPES.includes(tab.type);
   const iconSlot = isMobile ? 18 : 15;
   // Auto-archive threads trade their timeAgo for a countdown: both derive from
   // lastActivityAt, and "how long until this disappears" is the more useful read.
@@ -141,7 +142,7 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
       {isMobile && (tab.config as { pinned?: boolean })?.pinned && (
         <PushPin size={13} weight="fill" color="var(--color-text-tertiary)" style={{ flexShrink: 0, marginLeft: 4 }} />
       )}
-      {(tab.type === 'claude-code' || tab.type === 'codex') && (tab.config as { alertsEnabled?: boolean })?.alertsEnabled && canReceiveAlerts() && (
+      {AGENT_TYPES.includes(tab.type) && (tab.config as { alertsEnabled?: boolean })?.alertsEnabled && canReceiveAlerts() && (
         <Bell size={13} weight="fill" color="var(--color-text-tertiary)" style={{ flexShrink: 0, marginLeft: 4 }} />
       )}
       <span style={{ flexShrink: 0, marginLeft: 8, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
@@ -249,6 +250,12 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   const loadingMap = useTabs((s) => s.loading);
   const pfs = useSettings((s) => s.projectFontSize);
   const density = useSettings((s) => s.density);
+  const maxThreads = useSettings((s) => s.sidebarMaxThreads);
+  const maxFiles = useSettings((s) => s.sidebarMaxFiles);
+  // Per-card, per-session expansion: "Show N more" reveals the rest until the
+  // card unmounts. Deliberately not persisted — the cap is the steady state.
+  const [showAllThreads, setShowAllThreads] = useState(false);
+  const [showAllFiles, setShowAllFiles] = useState(false);
   const isMobile = useIsMobile();
   // Expansion is decoupled from the active highlight on desktop; on mobile the
   // project screen is always expanded (open defaults to active when not provided).
@@ -272,6 +279,11 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   const visibleTabs = tabs.filter(showRow);
   const indicator = projectIndicator(session.status, visibleTabs.map((t) => t.status), visibleTabs.some((t) => loadingMap[t.id]));
   const threadItems = sortThreads(visibleTabs.filter((t) => SECTIONS[0].types.includes(t.type)), threadSort);
+  // Cap the list at the configured limit (0 = All). The active thread must never
+  // be hidden by the cap — if it falls past the cut, the cap lifts while it's active.
+  const activeThreadHidden = maxThreads > 0 && threadItems.findIndex((t) => t.id === highlightId) >= maxThreads;
+  const threadsCapped = maxThreads > 0 && !showAllThreads && !activeThreadHidden && threadItems.length > maxThreads;
+  const visibleThreads = threadsCapped ? threadItems.slice(0, maxThreads) : threadItems;
   useEffect(() => { if (isOpen) void useTabs.getState().loadTabs(session.id); }, [isOpen, session.id]);
 
   async function addTab(type: string, config?: Record<string, unknown>) {
@@ -311,11 +323,19 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   }
 
   const renderSection = (sec: (typeof SECTIONS)[number]) => {
-    const items = tabs.filter((t) => sec.types.includes(t.type) && showRow(t));
-    if (sec.key !== 'threads' && !items.length) return null;
+    const raw = tabs.filter((t) => sec.types.includes(t.type) && showRow(t));
+    // FILES follows the thread sort (files default to newest-first under 'custom');
+    // WEB/NOTES keep the server order — they're short and have no sort ask.
+    const all = sec.key === 'files' ? sortFiles(raw, threadSort) : raw;
+    if (sec.key !== 'threads' && !all.length) return null;
+    // Only FILES is capped (WEB/NOTES stay full — they're usually short). Same
+    // active-row escape hatch as the thread list above.
+    const activeFileHidden = maxFiles > 0 && all.findIndex((t) => t.id === highlightId) >= maxFiles;
+    const capped = sec.key === 'files' && maxFiles > 0 && !showAllFiles && !activeFileHidden && all.length > maxFiles;
+    const items = capped ? all.slice(0, maxFiles) : all;
     return (
       <div key={sec.key} style={{ marginTop: sec.prominent ? DENSITY[density].sectionMt : Math.round(DENSITY[density].sectionMt * 0.7) }}>
-        <SectionHeader label={sec.label} count={items.length} prominent={sec.prominent}>
+        <SectionHeader label={sec.label} count={all.length} prominent={sec.prominent}>
           {sec.add && (
             <span style={{ position: 'relative', display: 'inline-flex' }}>
               <button title={`Add ${sec.label.toLowerCase()}`} onClick={(e) => {
@@ -339,6 +359,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
               onContext={(x, y) => setCtxMenu({ tab: t, x, y })} />
           </SwipeRow>
         ))}
+        {capped && <ShowMoreRow count={all.length - items.length} onClick={() => setShowAllFiles(true)} />}
         {sec.key === 'threads' && !items.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No threads yet</div>}
       </div>
     );
@@ -436,14 +457,18 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
           {projTab === 'threads' ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: isMobile ? 0 : DENSITY[density].rowGap }}>
               <SortableList
-                items={threadItems}
+                items={visibleThreads}
                 disabled={false}
                 onReorder={(orderedIds) => {
+                  // A truncated drag hands back only the visible ids. The server rewrites
+                  // sortOrder for exactly the ids it receives, so append the hidden tail
+                  // or its rows would interleave unpredictably.
+                  const fullOrder = [...orderedIds, ...threadItems.filter((t) => !orderedIds.includes(t.id)).map((t) => t.id)];
                   // The dropped arrangement IS the user's custom order now; persisting it
                   // under any other mode would save an order they'd never see again.
                   const prev = useListSort.getState().threadSort(session.id);
                   useListSort.getState().setThreadSort(session.id, 'custom');
-                  void useTabs.getState().reorder(session.id, orderedIds).then((ok) => {
+                  void useTabs.getState().reorder(session.id, fullOrder).then((ok) => {
                     // The server rejected the new order and reorder() restored server truth,
                     // so the mode flip no longer corresponds to anything the user can see.
                     if (!ok) useListSort.getState().setThreadSort(session.id, prev);
@@ -462,6 +487,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
                   </SwipeRow>
                 )}
               />
+              {threadsCapped && <ShowMoreRow count={threadItems.length - visibleThreads.length} onClick={() => setShowAllThreads(true)} />}
               {!threadItems.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No threads yet</div>}
             </div>
           ) : (
@@ -494,7 +520,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
             {ctxMenu.tab.type === 'claude-code' && (
               <button onClick={() => { void branch(ctxMenu.tab); setCtxMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>Branch thread</button>
             )}
-            {(ctxMenu.tab.type === 'claude-code' || ctxMenu.tab.type === 'codex' || ctxMenu.tab.type === 'shell') && (
+            {THREAD_TYPES.includes(ctxMenu.tab.type) && (
               <button onClick={() => { setAutoArchiveTarget(ctxMenu.tab); setCtxMenu(null); }}
                 style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>
                 Auto-archive…
@@ -594,6 +620,28 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
         />
       )}
     </div>
+  );
+}
+
+function ShowMoreRow({ count, onClick }: { count: number; onClick: () => void }) {
+  const [hover, setHover] = useState(false);
+  const isMobile = useIsMobile();
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 6, width: '100%',
+        padding: isMobile ? '12px' : '4px 9px', background: hover ? 'rgba(255,255,255,0.05)' : 'transparent',
+        border: 'none', borderRadius: isMobile ? 0 : 5, textAlign: 'left', cursor: 'pointer',
+        color: hover ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)',
+        fontSize: isMobile ? 14 : 11.5,
+      }}
+    >
+      <CaretDown size={isMobile ? 13 : 11} style={{ flexShrink: 0 }} />
+      Show {count} more
+    </button>
   );
 }
 

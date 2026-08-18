@@ -9,7 +9,7 @@ import { UpdateModal } from './UpdateModal';
 import { useUpdate } from '../../stores/update';
 
 beforeEach(() => {
-  useUpdate.setState({ available: null, currentVersion: null, dismissedVersion: null, inProgress: false });
+  useUpdate.setState({ available: null, currentVersion: null, dismissedVersion: null, inProgress: false, notes: [], currentNotes: null });
   applyUpdate.mockReset();
   getUpdateState.mockReset();
   getUpdateState.mockResolvedValue({ available: false, version: null, url: null, publishedAt: null, currentVersion: '1.0.0' });
@@ -109,4 +109,100 @@ test('no Update anyway button when the preflight failure is not forceable', asyn
   fireEvent.click(screen.getByText('Update'));
   await waitFor(() => expect(screen.getByText(/network unreachable/)).toBeInTheDocument());
   expect(screen.queryByText('Update anyway')).not.toBeInTheDocument();
+});
+
+test('offers a collapsed Release notes row, and expands it in place', () => {
+  useUpdate.setState({
+    available: { version: 'v1.2.0', url: null, publishedAt: null },
+    currentVersion: '1.1.0',
+    notes: [{ version: 'v1.2.0', url: 'u', publishedAt: '2026-08-01T00:00:00Z', notes: '# Dispatch v1.2.0 — the headline\n\nWhat changed.' }],
+  });
+  render(<UpdateModal />);
+  expect(screen.queryByText('What changed.')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByText('Release notes'));
+  // A single line of what changed, not the whole note.
+  expect(screen.getByText('the headline')).toBeInTheDocument();
+  expect(screen.queryByText('What changed.')).not.toBeInTheDocument();
+  // The Update action stays reachable with the notes open.
+  expect(screen.getByText('Update')).toBeInTheDocument();
+});
+
+test('shows no Release notes row when the server sent none', () => {
+  useUpdate.setState({ available: { version: 'v1.2.0', url: null, publishedAt: null }, notes: [] });
+  render(<UpdateModal />);
+  expect(screen.queryByText('Release notes')).not.toBeInTheDocument();
+});
+
+test('expanding the notes does not dismiss the modal', () => {
+  useUpdate.setState({
+    available: { version: 'v1.2.0', url: null, publishedAt: null },
+    notes: [{ version: 'v1.2.0', url: 'u', publishedAt: null as unknown as string, notes: 'Body.' }],
+  });
+  render(<UpdateModal />);
+  fireEvent.click(screen.getByText('Release notes'));
+  expect(screen.getByText('Update available')).toBeInTheDocument();
+});
+
+test('draws the rain only while an update is actually running', () => {
+  useUpdate.setState({ available: { version: 'v1.2.0', url: null, publishedAt: null } });
+  const { container, rerender } = render(<UpdateModal />);
+  // Update available, not started: no canvas burning frames in the background.
+  expect(container.querySelector('canvas')).toBeNull();
+
+  useUpdate.setState({ inProgress: true });
+  rerender(<UpdateModal />);
+  expect(container.querySelector('canvas')).not.toBeNull();
+});
+
+test('the rain is decorative and never announced', () => {
+  useUpdate.setState({ available: { version: 'v1.2.0', url: null, publishedAt: null }, inProgress: true });
+  const { container } = render(<UpdateModal />);
+  expect(container.querySelector('canvas')).toHaveAttribute('aria-hidden', 'true');
+});
+
+test('the progress copy still reads over the rain', () => {
+  useUpdate.setState({ inProgress: true });
+  render(<UpdateModal />);
+  expect(screen.getByText('Updating Dispatch…')).toBeInTheDocument();
+  expect(screen.getByText(/refresh automatically/)).toBeInTheDocument();
+});
+
+test('a canvas with no 2d context does not break the modal', () => {
+  // jsdom returns null from getContext. The update screen must survive that — decoration
+  // is never allowed to take down the thing the user is waiting on.
+  useUpdate.setState({ inProgress: true });
+  expect(() => render(<UpdateModal />)).not.toThrow();
+  expect(screen.getByText('Updating Dispatch…')).toBeInTheDocument();
+});
+
+// ---- Liquid-glass progress card -----------------------------------------------------------
+// While the update runs, the card sits as frosted glass IN FRONT of the terminal rain — a
+// translucent, backdrop-blurred block the rain stays visible behind — instead of the opaque
+// panel the idle prompt uses.
+test('the in-progress card is translucent glass (backdrop blur), not the opaque panel', () => {
+  useUpdate.setState({ inProgress: true });
+  render(<UpdateModal />);
+  const card = screen.getByText('Updating Dispatch…').closest('div[style]') as HTMLElement;
+  const glass = card.closest('div[class], div')! as HTMLElement;
+  // The styled card is the nearest ancestor carrying the backdrop filter.
+  let node: HTMLElement | null = card;
+  let found = false;
+  while (node) {
+    const bf = node.style.backdropFilter || (node.style as any).webkitBackdropFilter;
+    if (bf && bf.includes('blur')) { found = true; expect(node.style.background).toMatch(/rgba/); break; }
+    node = node.parentElement;
+  }
+  expect(found).toBe(true);
+  void glass;
+});
+
+test('the idle "Update available" card stays an opaque panel (no backdrop blur)', () => {
+  useUpdate.setState({ available: { version: 'v1.2.0', url: null, publishedAt: null }, inProgress: false });
+  render(<UpdateModal />);
+  let node: HTMLElement | null = screen.getByText('Update available') as HTMLElement;
+  while (node) {
+    const bf = node.style.backdropFilter || (node.style as any).webkitBackdropFilter;
+    expect(bf || '').not.toMatch(/blur/);
+    node = node.parentElement;
+  }
 });

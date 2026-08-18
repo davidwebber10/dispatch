@@ -37,9 +37,11 @@ export function useBootstrapOlderPages({
   const loadOlderRef = useRef(loadOlder);
 
   useEffect(() => {
-    // `loadOlder`'s identity changes per terminalId (useStructuredChat's useCallback deps
-    // on it) — a change here means a thread switch, so the attempt count from the OUTGOING
-    // thread must not carry over and cap the incoming one.
+    // `loadOlder`'s identity changes per terminalId, and again whenever useStructuredChat
+    // re-arms after a first call that bailed for want of a `beforeUuid` anchor (its
+    // anchorRetry nonce — that re-arm is what re-fires THIS effect once the ws replay
+    // settles a real uuid). Either way the previous attempt count must not carry over: those
+    // attempts belong to the outgoing thread, or to a run that never reached the network.
     if (loadOlderRef.current !== loadOlder) {
       loadOlderRef.current = loadOlder;
       attemptsRef.current = 0;

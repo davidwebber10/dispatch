@@ -1,4 +1,4 @@
-import { render, waitFor, act } from '@testing-library/react';
+import { render, waitFor, act, fireEvent } from '@testing-library/react';
 import { vi, test, expect, beforeEach, afterEach, type Mock } from 'vitest';
 
 // A minimal fake xterm Terminal that models just enough async behaviour to make
@@ -17,8 +17,10 @@ vi.mock('@xterm/xterm', () => {
     cols = 80;
     rows = 24;
     options: Record<string, unknown> = {};
-    buffer = { active: { length: 0, viewportY: 0, baseY: 0 } };
+    buffer = { active: { length: 0, viewportY: 0, baseY: 0, type: 'normal' as 'normal' | 'alternate' } };
     written: string[] = [];
+    scrolledToBottom = 0;
+    scrolledLines = 0;
     dataHandler: ((d: string) => void) | null = null;
     private scrollHandlers: Array<() => void> = [];
     constructor() { instances.push(this); }
@@ -31,8 +33,8 @@ vi.mock('@xterm/xterm', () => {
     onData(cb: (d: string) => void) { this.dataHandler = cb; return { dispose: () => {} }; }
     onScroll(cb: () => void) { this.scrollHandlers.push(cb); return { dispose: () => {} }; }
     onRender() { return { dispose() {} }; }
-    scrollLines() {}
-    scrollToBottom() {}
+    scrollLines(n = 0) { this.scrolledLines += n; }
+    scrollToBottom() { this.scrolledToBottom++; }
     scrollToLine(line: number) { this.buffer.active.viewportY = line; }
     reset() { this.buffer.active.length = 0; this.buffer.active.viewportY = 0; this.buffer.active.baseY = 0; }
     write(data: string, cb?: () => void) {
@@ -54,25 +56,34 @@ vi.mock('../../hooks/useIsMobile', () => ({ useIsMobile: isMobileMock }));
 
 import { TerminalTab } from './TerminalTab';
 import { api } from '../../api/client';
+import { useSettings } from '../../stores/settings';
 import { INITIAL_REPLAY_MOBILE, MAX_REPLAY, nextReplayStep } from '../../api/terminal-socket';
+import { PAGE_UP, WHEEL_UP } from '../../lib/ptyWheel';
 
-type FakeOpts = { terminalId: string; replayBytes?: number; onData: (c: string) => void; onReset?: () => void; onClose?: () => void };
+type FakeMeta = { startOffset: number; totalWritten: number; complete: boolean };
+type FakeOpts = { terminalId: string; replayBytes?: number; onData: (c: string) => void; onMeta?: (m: FakeMeta) => void; onReset?: () => void; onClose?: () => void };
 
 function makeSocketFactory() {
-  const created: { opts: FakeOpts; close: Mock; send: Mock; resize: Mock }[] = [];
+  const created: { opts: FakeOpts; close: Mock; send: Mock; resize: Mock; setReplayBytes: Mock }[] = [];
   const factory = (opts: FakeOpts) => {
-    const entry = { opts, close: vi.fn(), send: vi.fn(), resize: vi.fn() };
+    const entry = { opts, close: vi.fn(), send: vi.fn(), resize: vi.fn(), setReplayBytes: vi.fn() };
     created.push(entry);
-    return { send: entry.send, resize: entry.resize, close: entry.close };
+    return { send: entry.send, resize: entry.resize, close: entry.close, setReplayBytes: entry.setReplayBytes };
   };
   return { factory, created };
 }
+
+const meta = (startOffset: number, over: Partial<FakeMeta> = {}): FakeMeta =>
+  ({ startOffset, totalWritten: 10_000_000, complete: false, ...over });
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
 beforeEach(() => {
   instances.length = 0;
   isMobileMock.mockReturnValue(false);
+  // The settings store is module-level, so a test that flips the toggle would leak
+  // into every test after it.
+  useSettings.setState({ ptyAutocorrect: true });
   vi.spyOn(api, 'getTerminal').mockResolvedValue({ id: 't1', sessionId: 's1', workingDir: '/p/x', pid: 4242, status: 'working' } as any);
   vi.spyOn(api, 'getGitInfo').mockResolvedValue({ branch: 'main' });
   vi.spyOn(api, 'getScrollbackSize').mockResolvedValue(0);
@@ -109,6 +120,61 @@ test('desktop mount requests MAX_REPLAY (4_000_000) — byte-identical to today'
   await waitFor(() => expect(created).toHaveLength(1));
 
   expect(created[0].opts.replayBytes).toBe(MAX_REPLAY);
+});
+
+// ---- mobile composer: spell check on by default, toggleable, capitalisation never ----
+
+test('the mobile composer spell-checks and autocorrects by default, but never auto-capitalises', async () => {
+  isMobileMock.mockReturnValue(true);
+  useSettings.setState({ ptyAutocorrect: true });
+  const { factory } = makeSocketFactory();
+
+  const { getByPlaceholderText } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(api.getTerminal).toHaveBeenCalledWith('t1'));
+
+  const input = getByPlaceholderText('Type a message or command…');
+  // Prose typed to the agent gets the keyboard's spelling help...
+  expect(input.getAttribute('spellcheck')).toBe('true');
+  expect(input.getAttribute('autocorrect')).toBe('on');
+  // ...but `git`, `rg` and paths must survive untouched at the start of a line.
+  expect(input.getAttribute('autocapitalize')).toBe('off');
+});
+
+test('the "Aa" key turns the composer\'s spelling help off, and leaves capitalisation off', async () => {
+  isMobileMock.mockReturnValue(true);
+  useSettings.setState({ ptyAutocorrect: true });
+  const { factory } = makeSocketFactory();
+
+  const { getByPlaceholderText, getByLabelText } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(api.getTerminal).toHaveBeenCalledWith('t1'));
+
+  const toggle = getByLabelText('Autocorrect');
+  expect(toggle.getAttribute('aria-pressed')).toBe('true');
+
+  act(() => { fireEvent.click(toggle); });
+
+  const input = getByPlaceholderText('Type a message or command…');
+  expect(input.getAttribute('spellcheck')).toBe('false');
+  expect(input.getAttribute('autocorrect')).toBe('off');
+  expect(input.getAttribute('autocapitalize')).toBe('off');
+  expect(getByLabelText('Autocorrect').getAttribute('aria-pressed')).toBe('false');
+  // The choice is remembered, not per-render.
+  expect(useSettings.getState().ptyAutocorrect).toBe(false);
+});
+
+test('the soft-key row scrolls horizontally instead of squeezing its keys', async () => {
+  isMobileMock.mockReturnValue(true);
+  const { factory } = makeSocketFactory();
+
+  const { getByLabelText } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(api.getTerminal).toHaveBeenCalledWith('t1'));
+
+  const row = getByLabelText('Autocorrect').parentElement!;
+  expect(row.style.overflowX).toBe('auto');
+  expect(row.style.flexWrap).toBe('nowrap');
+  // Each key holds its own width — `flex: 1 1 0` would divide the row evenly and
+  // shrink every key below a hittable size once the count grows.
+  expect(getByLabelText('Autocorrect').style.flex).toBe('0 0 auto');
 });
 
 // ---- scroll-to-top rebuild: triggers once, at the next step ----
@@ -162,6 +228,14 @@ test('live frames arriving mid-rebuild are written after the replay, in arrival 
   // The new socket's FIRST message is the replay frame. Before its write callback
   // fires, simulate live output arriving on BOTH the old (still open) socket and
   // the new one — this must all be buffered, not written immediately.
+  //
+  // NOTE the distinct labels are a TEST FICTION. In production both sockets are subscribed to
+  // the SAME pty (ws/terminal.ts adds one 'data' listener per connection), so these two frames
+  // are byte-identical: 'LIVE_OLD' and 'LIVE_NEW' are the same chunk arriving twice. Writing
+  // both — which this test used to assert — duplicated every mid-rebuild chunk, and a doubled
+  // cursor/scroll-region escape moves the cursor twice as far, overwriting lines that should
+  // have survived. Only the NEW socket's copy is written: it is the one contiguous with the
+  // fresh replay snapshot this rebuild just reset to.
   act(() => {
     created[1].opts.onData('REPLAY2');
     created[0].opts.onData('LIVE_OLD');
@@ -171,7 +245,45 @@ test('live frames arriving mid-rebuild are written after the replay, in arrival 
   // Rebuild completes (old socket closed) once everything has drained.
   await waitFor(() => expect(created[0].close).toHaveBeenCalled());
 
-  expect(term.written).toEqual(['INITIAL_REPLAY', 'REPLAY2', 'LIVE_OLD', 'LIVE_NEW']);
+  expect(term.written).toEqual(['INITIAL_REPLAY', 'REPLAY2', 'LIVE_NEW']);
+});
+
+test('a rebuild that stalls out replays the frames withheld from the OLD socket (no lost output)', async () => {
+  // The data-loss bug: while a rebuild is in flight the primary socket's frames are withheld
+  // from the terminal. Abort used to drop them, and since the old view is never reset nothing
+  // ever replayed them — up to 10s of PTY output silently gone.
+  isMobileMock.mockReturnValue(true);
+  (api.getScrollbackSize as Mock).mockResolvedValue(2_000_000);
+  const { factory, created } = makeSocketFactory();
+
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(api.getScrollbackSize).toHaveBeenCalledWith('t1'));
+  await tick();
+
+  const term = instances[0];
+  term.buffer.active.viewportY = 0;
+
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    act(() => { term.fireScroll(); });   // starts the rebuild
+    expect(created).toHaveLength(2);
+
+    // Live output lands on the PRIMARY socket while the rebuild is pending — buffered, not shown.
+    act(() => { created[0].opts.onData('WITHHELD_1'); created[0].opts.onData('WITHHELD_2'); });
+    expect(term.written).toEqual(['INITIAL_REPLAY']);
+
+    // The new socket never delivers its replay, so the stall guard aborts.
+    act(() => { vi.advanceTimersByTime(10_000); });
+
+    // Both withheld frames are recovered, in arrival order, onto the still-intact old view.
+    expect(term.written).toEqual(['INITIAL_REPLAY', 'WITHHELD_1', 'WITHHELD_2']);
+    expect(created[0].close).not.toHaveBeenCalled();  // the old socket stayed primary
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 // ---- anchor restore uses the POST-write length (computed in the write callback) ----
@@ -483,6 +595,180 @@ test('after a rebuild settles, typed input goes through the CURRENT primary sock
   expect(created[0].send).not.toHaveBeenCalledWith('x');
 });
 
+// ---- scrollback-offset protocol: only a STRICTLY older window may replace the view ----
+//
+// Without the offset there is no way to tell whether a freshly replayed window is
+// older, newer, or the very same bytes — yet the rebuild always reset the screen
+// before writing it. The `dispatch:replay-meta` frame arrives BEFORE the replay
+// bytes, so a worthless rebuild can be refused before anything is destroyed.
+
+test('a rebuild whose replay is not older than the view aborts: no reset, no write, withheld output recovered', async () => {
+  isMobileMock.mockReturnValue(true);
+  (api.getScrollbackSize as Mock).mockResolvedValue(2_000_000);
+  const { factory, created } = makeSocketFactory();
+
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  // What is on screen begins 5000 bytes into the PTY's lifetime output.
+  act(() => { created[0].opts.onMeta?.(meta(5000)); });
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(api.getScrollbackSize).toHaveBeenCalledWith('t1'));
+
+  const term = instances[0];
+  const resetSpy = vi.spyOn(term, 'reset');
+  await waitFor(() => {
+    term.buffer.active.viewportY = 0;
+    act(() => { term.fireScroll(); });
+    expect(created).toHaveLength(2);
+  });
+
+  // Live output on the primary socket is withheld while the rebuild is in flight.
+  act(() => { created[0].opts.onData('WITHHELD'); });
+
+  // The larger request comes back starting at the SAME offset — the ring's head is
+  // already on screen, so this window holds nothing older.
+  act(() => { created[1].opts.onMeta?.(meta(5000, { complete: true })); });
+
+  expect(created[1].close).toHaveBeenCalled();       // the pointless rebuild is discarded
+  expect(created[0].close).not.toHaveBeenCalled();   // the old socket stays primary
+  expect(resetSpy).not.toHaveBeenCalled();           // the view was never cleared
+  // The old view survives and simply continues: its withheld frame is recovered.
+  expect(term.written).toEqual(['INITIAL_REPLAY', 'WITHHELD']);
+
+  // A replay frame the server had already queued before our close() landed must not
+  // resurrect the aborted rebuild and blow away the view we just kept.
+  act(() => { created[1].opts.onData('LATE_REPLAY'); });
+  expect(resetSpy).not.toHaveBeenCalled();
+  expect(term.written).toEqual(['INITIAL_REPLAY', 'WITHHELD']);
+
+  // Nothing older exists, so scrolling to the top must stop offering it.
+  term.buffer.active.viewportY = 0;
+  act(() => { term.fireScroll(); });
+  await tick();
+  expect(created).toHaveLength(2);
+});
+
+test('a strictly older replay replaces the view, and its offset becomes the new floor', async () => {
+  isMobileMock.mockReturnValue(true);
+  (api.getScrollbackSize as Mock).mockResolvedValue(2_000_000);
+  const { factory, created } = makeSocketFactory();
+
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  act(() => { created[0].opts.onMeta?.(meta(5000)); });
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(api.getScrollbackSize).toHaveBeenCalledWith('t1'));
+
+  const term = instances[0];
+  await waitFor(() => {
+    term.buffer.active.viewportY = 0;
+    act(() => { term.fireScroll(); });
+    expect(created).toHaveLength(2);
+  });
+
+  // 1000 < 5000: genuinely older history, so the rebuild proceeds as normal.
+  act(() => { created[1].opts.onMeta?.(meta(1000)); });
+  act(() => { created[1].opts.onData('OLDER_REPLAY'); });
+  await waitFor(() => expect(created[0].close).toHaveBeenCalled());
+  expect(term.written).toEqual(['INITIAL_REPLAY', 'OLDER_REPLAY']);
+
+  // A later rebuild is compared against 1000 — the offset now on screen — not the
+  // stale 5000. Same offset means nothing older, so it must abort.
+  await waitFor(() => {
+    term.buffer.active.viewportY = 0;
+    act(() => { term.fireScroll(); });
+    expect(created).toHaveLength(3);
+  });
+  act(() => { created[2].opts.onMeta?.(meta(1000)); });
+
+  expect(created[2].close).toHaveBeenCalled();
+  expect(created[1].close).not.toHaveBeenCalled(); // the promoted socket survives
+  expect(term.written).toEqual(['INITIAL_REPLAY', 'OLDER_REPLAY']);
+});
+
+test('a successful rebuild tells the surviving socket to reconnect at the LARGER replay size', async () => {
+  // Otherwise the next network blip reconnects at the original window and silently
+  // throws away every line the reader just paged back to.
+  isMobileMock.mockReturnValue(true);
+  (api.getScrollbackSize as Mock).mockResolvedValue(2_000_000);
+  const { factory, created } = makeSocketFactory();
+
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(api.getScrollbackSize).toHaveBeenCalledWith('t1'));
+
+  const term = instances[0];
+  await waitFor(() => {
+    term.buffer.active.viewportY = 0;
+    act(() => { term.fireScroll(); });
+    expect(created).toHaveLength(2);
+  });
+
+  act(() => { created[1].opts.onData('REPLAY2'); });
+  await waitFor(() => expect(created[0].close).toHaveBeenCalled());
+
+  expect(created[1].setReplayBytes).toHaveBeenCalledWith(nextReplayStep(INITIAL_REPLAY_MOBILE));
+});
+
+// ---- xterm's own ceiling ----
+
+test('no rebuild once xterm is at its scrollback cap — a bigger replay cannot show more', async () => {
+  // xterm keeps at most `options.scrollback` lines and trims the head. At the cap a
+  // bigger replay adds no visible history, but still resets the screen and (because
+  // newLength - oldLength collapses to ~0) yanks the viewport to the top.
+  isMobileMock.mockReturnValue(true);
+  (api.getScrollbackSize as Mock).mockResolvedValue(2_000_000);
+  const { factory, created } = makeSocketFactory();
+
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(api.getScrollbackSize).toHaveBeenCalledWith('t1'));
+  await tick(); // let getScrollbackSize().then flip hasOlder=true
+
+  const term = instances[0];
+  const resetSpy = vi.spyOn(term, 'reset');
+  // Saturated: the line buffer is sitting on the configured ceiling.
+  term.options.scrollback = 100;
+  term.buffer.active.length = 100;
+  term.buffer.active.viewportY = 0;
+
+  act(() => { term.fireScroll(); });
+  await tick();
+
+  // Identical to the "triggers exactly one rebuild" test above except for the cap,
+  // which is the only reason no second socket exists here.
+  expect(created).toHaveLength(1);
+  expect(resetSpy).not.toHaveBeenCalled();
+  expect(term.written).toEqual(['INITIAL_REPLAY']);
+});
+
+test('a rebuild still runs while the buffer is well under the scrollback cap', async () => {
+  isMobileMock.mockReturnValue(true);
+  (api.getScrollbackSize as Mock).mockResolvedValue(2_000_000);
+  const { factory, created } = makeSocketFactory();
+
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(api.getScrollbackSize).toHaveBeenCalledWith('t1'));
+  await tick();
+
+  const term = instances[0];
+  term.options.scrollback = 100;
+  term.buffer.active.length = 40; // plenty of room left
+  term.buffer.active.viewportY = 0;
+
+  act(() => { term.fireScroll(); });
+  expect(created).toHaveLength(2);
+});
+
 test('unmounting mid-rebuild clears the pending stall timer — no abort fires after unmount', async () => {
   isMobileMock.mockReturnValue(true);
   (api.getScrollbackSize as Mock).mockResolvedValue(2_000_000);
@@ -517,4 +803,158 @@ test('unmounting mid-rebuild clears the pending stall timer — no abort fires a
   } finally {
     vi.useRealTimers();
   }
+});
+
+// ---- opening a CLI thread lands on the NEWEST output, not the top ----
+
+test('the initial replay pins the view to the bottom (a CLI thread opens at its newest output)', async () => {
+  // Pretty threads have always done this (MessageScroller defaultScrollPosition="end" plus its
+  // post-mount pin); a PTY thread did nothing, so it opened wherever xterm's viewport landed
+  // after a big replay — usually the top, leaving the reader to scroll down. Codex threads hit
+  // this every time because they are always PTY.
+  const { factory, created } = makeSocketFactory();
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+  const term = instances[0];
+  expect(term.scrolledToBottom).toBe(0);
+
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(term.scrolledToBottom).toBeGreaterThan(0));
+});
+
+test('ordinary live frames do NOT yank the viewport back down', async () => {
+  // Only the replay pins. Otherwise a reader scrolled up reading history would be dragged to
+  // the bottom by every frame the agent emits.
+  const { factory, created } = makeSocketFactory();
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+  const term = instances[0];
+
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(term.scrolledToBottom).toBeGreaterThan(0));
+  const afterReplay = term.scrolledToBottom;
+
+  act(() => { created[0].opts.onData('later output'); created[0].opts.onData('more output'); });
+  await tick();
+  expect(term.scrolledToBottom).toBe(afterReplay);
+});
+
+test('a reconnect re-pins: the replayed scrollback lands at the bottom again', async () => {
+  const { factory, created } = makeSocketFactory();
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+  const term = instances[0];
+
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(term.scrolledToBottom).toBeGreaterThan(0));
+  const afterFirst = term.scrolledToBottom;
+
+  // Reconnect: the socket resets the view, then the server replays everything.
+  act(() => { created[0].opts.onReset?.(); });
+  act(() => { created[0].opts.onData('FULL_REPLAY_AGAIN'); });
+  await waitFor(() => expect(term.scrolledToBottom).toBeGreaterThan(afterFirst));
+});
+
+// ---- mobile swipe: alt-screen TUI (Grok) vs normal xterm scrollback ----
+
+function swipe(el: Element, fromY: number, toY: number) {
+  fireEvent.touchStart(el, { touches: [{ clientX: 10, clientY: fromY }] });
+  fireEvent.touchMove(el, { touches: [{ clientX: 10, clientY: toY }] });
+  fireEvent.touchEnd(el);
+}
+
+test('on an alt-screen TUI, a mobile swipe sends PageUp to the PTY instead of scrolling xterm', async () => {
+  // Grok's prompt swallows mouse-wheel; PageUp/PageDown work in both focus modes.
+  isMobileMock.mockReturnValue(true);
+  const { factory, created } = makeSocketFactory();
+  const { getByTestId } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  const term = instances[0];
+  term.buffer.active.type = 'alternate';
+  const overlay = getByTestId('term-scroll-overlay');
+  act(() => { swipe(overlay, 200, 290); }); // 90px finger-down → one PageUp
+
+  expect(created[0].send).toHaveBeenCalled();
+  const bytes = created[0].send.mock.calls.map((c) => c[0]).join('');
+  expect(bytes).toContain(PAGE_UP);
+  expect(term.scrolledLines).toBe(0);
+});
+
+test('on the normal buffer, a mobile swipe still scrolls xterm and does not write page keys', async () => {
+  isMobileMock.mockReturnValue(true);
+  const { factory, created } = makeSocketFactory();
+  const { getByTestId } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  instances[0].buffer.active.type = 'normal';
+  // Give xterm somewhere to scroll so the gesture is not just a rubber-band.
+  instances[0].buffer.active.baseY = 40;
+  instances[0].buffer.active.viewportY = 20;
+  act(() => { swipe(getByTestId('term-scroll-overlay'), 200, 290); });
+
+  expect(instances[0].scrolledLines).not.toBe(0);
+  const bytes = created[0].send.mock.calls.map((c) => c[0]).join('');
+  expect(bytes).not.toContain(PAGE_UP);
+  expect(bytes).not.toContain(WHEEL_UP);
+});
+
+test('a Grok thread on the normal buffer still pages the PTY (it is a TUI either way)', async () => {
+  isMobileMock.mockReturnValue(true);
+  vi.spyOn(api, 'getTerminal').mockResolvedValue({ id: 't1', sessionId: 's1', type: 'grok', workingDir: '/p/x', pid: 1, status: 'working' } as any);
+  const { factory, created } = makeSocketFactory();
+  const { getByTestId } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+  await waitFor(() => expect(document.body.textContent).toContain('PgUp'));
+
+  instances[0].buffer.active.type = 'normal';
+  instances[0].buffer.active.baseY = 40;
+  instances[0].buffer.active.viewportY = 20;
+  act(() => { swipe(getByTestId('term-scroll-overlay'), 200, 290); });
+
+  const bytes = created[0].send.mock.calls.map((c) => c[0]).join('');
+  expect(bytes).toContain(PAGE_UP);
+  expect(instances[0].scrolledLines).toBe(0);
+});
+
+test('a Grok thread offers Page Up / Page Down on the mobile key row', async () => {
+  isMobileMock.mockReturnValue(true);
+  vi.spyOn(api, 'getTerminal').mockResolvedValue({ id: 't1', sessionId: 's1', type: 'grok', workingDir: '/p/x', pid: 1, status: 'working' } as any);
+  const { factory } = makeSocketFactory();
+  const { findByTitle } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  expect(await findByTitle('Page up')).toBeTruthy();
+  expect(await findByTitle('Page down')).toBeTruthy();
+});
+
+test('returning to the foreground refits and notifies the PTY so a TUI redraws', async () => {
+  // iOS often restores the same layout box, so the size-check in scheduleFit
+  // would skip. Grok then keeps the drawing it made for the backgrounded
+  // viewport — a tiny card in a sea of empty rows.
+  isMobileMock.mockReturnValue(true);
+  const { factory, created } = makeSocketFactory();
+  const { getByTestId } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  const host = getByTestId('term-host');
+  Object.defineProperty(host, 'clientWidth', { configurable: true, value: 390 });
+  Object.defineProperty(host, 'clientHeight', { configurable: true, value: 640 });
+  // Drain the mount-time fit so the assertion below is only the resume path.
+  await act(async () => { await new Promise((r) => requestAnimationFrame(r)); });
+  const before = created[0].resize.mock.calls.length;
+
+  Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+  act(() => { document.dispatchEvent(new Event('visibilitychange')); });
+  await act(async () => { await new Promise((r) => requestAnimationFrame(r)); });
+
+  expect(created[0].resize.mock.calls.length).toBeGreaterThan(before);
+});
+
+test('a Grok thread on mobile is flush — no card margin or host inset', async () => {
+  isMobileMock.mockReturnValue(true);
+  vi.spyOn(api, 'getTerminal').mockResolvedValue({ id: 't1', sessionId: 's1', type: 'grok', workingDir: '/p/x', pid: 1, status: 'working' } as any);
+  const { factory } = makeSocketFactory();
+  const { getByTestId } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(['0', '0px']).toContain(getByTestId('term-host').style.inset));
+  expect(getByTestId('term-frame').style.margin).toBe('');
+  expect(getByTestId('term-frame').style.borderRadius).toBe('');
 });

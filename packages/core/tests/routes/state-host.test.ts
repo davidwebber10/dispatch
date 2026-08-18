@@ -9,11 +9,21 @@ import { initSchema } from '../../src/db/schema.js';
 describe('GET /api/state/host', () => {
   let app: any;
   let isLocalClientSpy: ReturnType<typeof vi.spyOn>;
+  let fileManagerDesc: PropertyDescriptor | undefined;
 
   beforeEach(() => {
     const db = new Database(':memory:');
     initSchema(db);
     app = createApp({ db, skipPty: true });
+    // Hold the file-manager gate OPEN: `canReveal` is `fileManagerName !== null &&
+    // isLocalClient(client)` (routes/state.ts), so on a platform with no native file
+    // manager (linux CI: fileManagerName === null) the predicate is short-circuited and
+    // never called — the socket-vs-header tests below would find an empty spy and the
+    // fail-closed tests would pass vacuously. The gate isn't what this suite probes;
+    // the client-locality discrimination is. Restored via descriptor in afterEach
+    // (it's a plain data property on darwin/linux and a getter on wsl).
+    fileManagerDesc = Object.getOwnPropertyDescriptor(platform, 'fileManagerName');
+    Object.defineProperty(platform, 'fileManagerName', { value: 'Test File Manager', configurable: true });
     // Wraps the REAL predicate (this suite asserts genuine end-to-end capability) — the spy only
     // exists so tests can inspect the client the route hands it, which is how we prove the route
     // reads the socket peer address and not req.ip.
@@ -22,6 +32,7 @@ describe('GET /api/state/host', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    if (fileManagerDesc) Object.defineProperty(platform, 'fileManagerName', fileManagerDesc);
   });
 
   it('reports the platform, flavor, file manager, and reveal capability', async () => {
@@ -40,6 +51,9 @@ describe('GET /api/state/host', () => {
     app.set('trust proxy', true);
     await request(app).get('/api/state/host').set('X-Forwarded-For', '8.8.8.8');
 
+    // A clear failure (not a TypeError on calls[0]) if some other gate ever
+    // short-circuits the predicate again.
+    expect(isLocalClientSpy).toHaveBeenCalled();
     const [client] = isLocalClientSpy.mock.calls[0];
     expect(client.remoteAddress).toMatch(/^(::1|::ffff:127\.|127\.)/);
     expect(client.remoteAddress).not.toBe('8.8.8.8');   // req.ip would be exactly this

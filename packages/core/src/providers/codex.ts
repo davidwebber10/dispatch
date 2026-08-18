@@ -1,5 +1,12 @@
 import type { SessionProvider, SecretsMcpInjection, StatusHooksInjection } from './types.js';
 
+// Run Codex fully autonomously: skip every approval prompt AND drop the sandbox. This is the
+// Codex analogue of Claude's `--dangerously-skip-permissions`, and Dispatch applies it to every
+// Codex launch (new, resume, and the exec runner) the same way Claude always skips permissions —
+// a Dispatch thread is an autonomous agent, not an interactive session that should stop to ask.
+// It is a global flag (shown at the root of `codex --help`), so it precedes any subcommand.
+const FULL_PERMISSIONS = '--dangerously-bypass-approvals-and-sandbox';
+
 // Codex `-c` overrides are global options and must precede the subcommand.
 // Returns [] when Doppler isn't connected.
 function mcpArgs(secretsMcp?: SecretsMcpInjection): string[] {
@@ -24,13 +31,17 @@ export const codexProvider: SessionProvider = {
   displayName: 'Codex',
   statusStrategy: 'pty-timing',
   buildNewCommand({ prompt, secretsMcp, statusHooks, model }) {
-    const args: string[] = [...mcpArgs(secretsMcp), ...hookArgs(statusHooks), ...modelArgs(model)];
+    // Without FULL_PERMISSIONS an interactive Codex thread launches with Codex's default
+    // approval policy + sandbox and stalls waiting for approvals — the bug this fixes.
+    const args: string[] = [FULL_PERMISSIONS, ...mcpArgs(secretsMcp), ...hookArgs(statusHooks), ...modelArgs(model)];
     if (prompt) args.push(prompt);
     return { command: 'codex', args };
   },
 
   buildResumeCommand({ externalSessionId, secretsMcp, statusHooks, model }) {
-    return { command: 'codex', args: [...mcpArgs(secretsMcp), ...hookArgs(statusHooks), ...modelArgs(model), 'resume', externalSessionId] };
+    // A resumed thread must run as autonomously as a fresh one — same FULL_PERMISSIONS flag,
+    // preceding the `resume` subcommand.
+    return { command: 'codex', args: [FULL_PERMISSIONS, ...mcpArgs(secretsMcp), ...hookArgs(statusHooks), ...modelArgs(model), 'resume', externalSessionId] };
   },
 
   buildStatusHooks({ serverUrl, terminalId, codexHelperPath }) {
@@ -66,7 +77,7 @@ export const codexProvider: SessionProvider = {
     // -c overrides (Doppler MCP) precede the `exec` subcommand. Prompt is positional.
     return {
       command: 'codex',
-      args: [...mcpArgs(secretsMcp), 'exec', '--json', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', prompt],
+      args: [...mcpArgs(secretsMcp), 'exec', '--json', FULL_PERMISSIONS, '--skip-git-repo-check', prompt],
     };
   },
 };

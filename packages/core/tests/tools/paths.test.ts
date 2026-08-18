@@ -17,8 +17,14 @@ describe('tool paths', () => {
     expect(p.dir).toBe('/tmp/x');
     expect(p.bin).toBe('/tmp/x/bin');
   });
-  it('hostPlatformKey is a darwin key on this platform', () => {
-    expect(['darwin-arm64', 'darwin-x64']).toContain(hostPlatformKey());
+  it('hostPlatformKey reflects the host OS family and architecture', () => {
+    // Derived from the host, not hardcoded: this suite runs on macOS dev machines AND
+    // linux CI runners, where a darwin-only expectation fails even though the code is
+    // right. WSL reports linux keys too (platform/index.ts picks wsl only as a linux
+    // sub-flavor), so the family for any non-darwin host here is 'linux'.
+    const family = process.platform === 'darwin' ? 'darwin' : 'linux';
+    const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+    expect(hostPlatformKey()).toBe(`${family}-${arch}`);
   });
   it('hostPlatformKey delegates to platform.toolPlatformKey()', () => {
     expect(hostPlatformKey()).toBe(platform.toolPlatformKey());

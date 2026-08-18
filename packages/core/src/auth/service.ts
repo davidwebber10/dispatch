@@ -67,6 +67,21 @@ export class AuthRequestService {
     return this.updateStatus(id, 'opened');
   }
 
+  /**
+   * Complete every outstanding request at once. The banner shows one at a time, so a burst
+   * of them meant one dismissal each — five taps to clear five. Dismiss now means dismiss.
+   */
+  completeAll(): AuthRequestRecord[] {
+    const done: AuthRequestRecord[] = [];
+    for (const r of this.requests.values()) {
+      if (r.status === 'pending' || r.status === 'opened') {
+        const updated = this.markComplete(r.id);
+        if (updated) done.push(updated);
+      }
+    }
+    return done;
+  }
+
   markComplete(id: string): AuthRequestRecord | null {
     return this.updateStatus(id, 'completed');
   }

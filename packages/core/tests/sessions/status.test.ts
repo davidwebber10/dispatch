@@ -33,7 +33,9 @@ describe('ptyStatusTick', () => {
     expect(terminalsDb.getById(db, 't1')!.status).toBe('working');
     expect(sessionsDb.getById(db, 's1')!.status).toBe('working');
     expect(events).toContainEqual({ type: 'terminal:status', terminalId: 't1', status: 'working' });
-    expect(events).toContainEqual({ type: 'session:status', sessionId: 's1', status: 'working' });
+    // session:status now carries the session's lastActivityAt so the client can track a
+    // project's "last active" live (drives the "most recent" project sort).
+    expect(events).toContainEqual(expect.objectContaining({ type: 'session:status', sessionId: 's1', status: 'working', lastActivityAt: expect.any(String) }));
   });
 
   it('marks a terminal waiting once its PTY goes quiet', () => {

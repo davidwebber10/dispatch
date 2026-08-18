@@ -107,7 +107,10 @@ describe('ConversationStream — answered AskUserQuestion stays visible (regress
     // `hidden: true`: with no question pending, ConversationStream's paint gate keeps the
     // scroller `visibility: hidden` until a real IntersectionObserver settles it — which jsdom
     // never fires — so the (very much present) toggle button is accessibility-hidden here.
-    fireEvent.click(screen.getByRole('button', { hidden: true }));
+    // Text-targeted: visibility:hidden strips accessible NAMES, so a name-scoped role query
+    // can't work under the gate — and a bare role query now matches the Load-earlier button
+    // too. Click the summary text; it bubbles to the toggle button.
+    fireEvent.click(screen.getByText(/Deploy to prod/));
     expect(screen.getByText('No')).toBeInTheDocument();
   });
 
@@ -134,5 +137,98 @@ describe('ConversationStream — coordinator message header', () => {
     render(<ConversationStream />);
     expect(screen.getByText('Stage deploy failed and rolled back cleanly.')).toBeInTheDocument();
     expect(screen.queryByText('Control Plane')).not.toBeInTheDocument();
+  });
+});
+
+// The overseer's older-history paging is otherwise scroll-triggered only (onViewportScroll's
+// near-top check + the bootstrap's no-overflow case), and the scroll trigger has been observed
+// sticking in the field (unstuck only by a window resize) — stranding hasMore:true history.
+// ChatView gained an explicit LoadEarlierButton in 0b8e106; this is the Control Plane's parity.
+describe('ConversationStream — Load earlier messages button', () => {
+  it('renders when older history exists and pages on click', () => {
+    const loadOlder = vi.fn();
+    useOverseer.setState({
+      coordinatorStream: [m('overseer', 'Control Plane', 'newest turn', '9:02', 1)],
+      coordinatorHasMore: true,
+      coordinatorLoadingOlder: false,
+      coordinatorLoadOlder: loadOlder,
+    });
+    render(<ConversationStream />);
+    // Text query: the paint gate keeps the scroller visibility:hidden in jsdom, which strips
+    // accessible names — role+name queries can't see it (see the answered-question test).
+    // BootstrapOlderPages may already have fired on mount (jsdom viewports never overflow),
+    // so assert the click's INCREMENT, not an absolute count.
+    const callsBeforeClick = loadOlder.mock.calls.length;
+    fireEvent.click(screen.getByText('Load earlier messages'));
+    expect(loadOlder.mock.calls.length).toBe(callsBeforeClick + 1);
+  });
+
+  it('is hidden while an older-page fetch is in flight (the pill owns that state)', () => {
+    useOverseer.setState({
+      coordinatorStream: [m('overseer', 'Control Plane', 'newest turn', '9:02', 1)],
+      coordinatorHasMore: true,
+      coordinatorLoadingOlder: true,
+      coordinatorLoadOlder: vi.fn(),
+    });
+    render(<ConversationStream />);
+    expect(screen.queryByText('Load earlier messages')).not.toBeInTheDocument();
+  });
+
+  it('is hidden once hasMore is exhausted', () => {
+    useOverseer.setState({
+      coordinatorStream: [m('overseer', 'Control Plane', 'newest turn', '9:02', 1)],
+      coordinatorHasMore: false,
+      coordinatorLoadingOlder: false,
+      coordinatorLoadOlder: vi.fn(),
+    });
+    render(<ConversationStream />);
+    expect(screen.queryByText('Load earlier messages')).not.toBeInTheDocument();
+  });
+
+  it('is hidden when the loaded coordinator belongs to ANOTHER project (cross-tab gate)', () => {
+    useProjects.setState({ activeId: 'proj-OTHER' });
+    useOverseer.setState({
+      coordinatorStream: [m('overseer', 'Control Plane', 'newest turn', '9:02', 1)],
+      coordinatorHasMore: true,
+      coordinatorLoadingOlder: false,
+      coordinatorLoadOlder: vi.fn(),
+    });
+    render(<ConversationStream />);
+    expect(screen.queryByText('Load earlier messages')).not.toBeInTheDocument();
+  });
+});
+
+// API-retry visibility: during an outage the CLI retries 529s for minutes while the busy
+// slot showed only "Working…" — reading as a dead session. The slot now names the retry.
+describe('ConversationStream — API retry indicator', () => {
+  it('replaces "Working…" with the retry status while a model call is being retried', () => {
+    useOverseer.setState({
+      coordinatorStream: [m('overseer', 'Control Plane', 'a turn', '9:02', 1)],
+      coordinatorBusy: true,
+      coordinatorApiRetry: { attempt: 3, maxRetries: 10, errorStatus: 529 },
+    });
+    render(<ConversationStream />);
+    expect(screen.getByText(/API overloaded — retrying \(3\/10\)/)).toBeInTheDocument();
+    expect(screen.queryByText('Working…')).not.toBeInTheDocument();
+  });
+
+  it('shows the plain Working indicator when no retry is in flight', () => {
+    useOverseer.setState({
+      coordinatorStream: [m('overseer', 'Control Plane', 'a turn', '9:02', 1)],
+      coordinatorBusy: true,
+      coordinatorApiRetry: null,
+    });
+    render(<ConversationStream />);
+    expect(screen.getByText('Working…')).toBeInTheDocument();
+  });
+
+  it('names a non-529 status generically', () => {
+    useOverseer.setState({
+      coordinatorStream: [m('overseer', 'Control Plane', 'a turn', '9:02', 1)],
+      coordinatorBusy: true,
+      coordinatorApiRetry: { attempt: 1, maxRetries: 10, errorStatus: 500 },
+    });
+    render(<ConversationStream />);
+    expect(screen.getByText(/API error 500 — retrying \(1\/10\)/)).toBeInTheDocument();
   });
 });

@@ -83,3 +83,30 @@ dispatch update       # git pull + rebuild + restart
 dispatch uninstall    # remove the daemon (keeps ~/.dispatch)
 PORT=4000 dispatch install   # use a non-default port
 ```
+
+## Cutting a release
+
+Shipping a new version is a **git tag + a GitHub Release**, driven by `dispatch release`.
+Three things must land on `main` **before** you tag, and the command refuses if any is
+missing:
+
+1. **The version in all four `package.json`** (root + cli + core + web). Bump only the tag and
+   the in-app update prompt never converges.
+2. **A release note at `docs/releases/vX.Y.Z.md`.** It becomes the GitHub Release body and is
+   what users read in the update prompt before they install. It is required, not optional.
+3. **Your actual changes**, obviously.
+
+The full runbook — the three-things model, the note template, and the worktree caveat — is in
+[`docs/RELEASING.md`](docs/RELEASING.md).
+
+```bash
+# after your changes are on origin/main:
+#   1. bump the version in all four package.json (root + cli + core + web)
+#   2. write docs/releases/vX.Y.Z.md   (required)
+#   3. git commit -am "chore(release): X.Y.Z — <headline>" && git push origin main
+./bin/dispatch release        # tags, pushes the tag, cuts the GitHub Release
+```
+
+A release is **not** a deploy: it never builds, restarts, or updates any machine. Installs
+upgrade themselves with `dispatch update`; deploying to the user's own Mac mini is opt-in —
+**ask first**.

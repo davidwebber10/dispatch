@@ -22,7 +22,7 @@ test('a coordinator-relayed turn (source="coordinator") gets a "via {coordinator
   render(<UserBubble text="do the thing" source="coordinator" />);
   expect(screen.getByText('do the thing')).toBeInTheDocument();
   // Default coordinatorName is '' → useDispatchName falls back to "Control Plane".
-  expect(screen.getByText(/via Control Plane/)).toBeInTheDocument();
+  expect(screen.getByText(/VIA CONTROL PLANE/)).toBeInTheDocument();
 });
 
 // jsdom lacks the observers the MessageScroller primitive touches (mirrors Stream.test.tsx).
@@ -157,14 +157,14 @@ describe('renderTimeline — groups a run of consecutive same-tool calls', () =>
   it('collapses a run of same-tool calls into one row', () => {
     const items = [...read('a', 'one.ts', 3), ...read('b', 'two.ts', 3), ...read('c', 'three.ts', 3)];
     renderTimelineItems(items);
-    expect(screen.getByText('Read 3 files')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Read ×3/ })).toBeTruthy();
     expect(screen.queryByText('one.ts')).toBeNull();
   });
 
   it('expands the group to the individual calls', () => {
     const items = [...read('a', 'one.ts', 3), ...read('b', 'two.ts', 3), ...read('c', 'three.ts', 3)];
     renderTimelineItems(items);
-    fireEvent.click(screen.getByText('Read 3 files'));
+    fireEvent.click(screen.getByRole('button', { name: /Read ×3/ }));
     expect(screen.getByText('one.ts')).toBeTruthy();
     expect(screen.getByText('three.ts')).toBeTruthy();
   });
@@ -178,7 +178,7 @@ describe('renderTimeline — groups a run of consecutive same-tool calls', () =>
     ] as ConvItem[];
     const items = [...read('a', 'one.ts', 3), ...read('b', 'two.ts', 3), ...bash, ...read('c', 'three.ts', 3), ...read('d', 'four.ts', 3)];
     renderTimelineItems(items);
-    expect(screen.getAllByText('Read 2 files')).toHaveLength(2); // two separate groups, not one run of 4
+    expect(screen.getAllByRole('button', { name: /Read ×2/ })).toHaveLength(2); // two separate groups, not one run of 4
     expect(screen.queryByText(/Bash \d (files|calls)/)).toBeNull(); // the lone Bash never groups
   });
 
@@ -238,7 +238,7 @@ describe('renderTimeline — groups a run of consecutive same-tool calls', () =>
       { kind: 'tool-result', text: 'x\nx\nx' },
     ];
     renderTimelineItems(items);
-    expect(screen.getByText('Read 2 files')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Read ×2/ })).toBeTruthy();
     expect(screen.getByText('6 lines')).toBeTruthy(); // a real, adjacency-derived line count
     expect(screen.queryByText('running…')).toBeNull(); // not permanently force-expanded
   });
@@ -252,7 +252,7 @@ describe('renderTimeline — groups a run of consecutive same-tool calls', () =>
     const items = [...read('c', 'three.ts', 3), ...read('d', 'four.ts', 3)];
     const { container, rerender } = renderTimelineItems(items);
 
-    fireEvent.click(screen.getByText('Read 2 files'));
+    fireEvent.click(screen.getByRole('button', { name: /Read ×2/ }));
     expect(screen.getByText('three.ts')).toBeTruthy(); // expanded
 
     const groupNodeBefore = container.querySelector('[data-message-id="d"]');
@@ -281,7 +281,7 @@ describe('renderTimeline — groups a run of consecutive same-tool calls', () =>
     expect(container.querySelector('[data-message-id="d"]')).toBe(groupNodeBefore);
     // Two SEPARATE groups now render — the prepended page's own run, plus the pre-existing
     // group — rather than one run of 4 merged across the boundary.
-    expect(screen.getAllByText('Read 2 files')).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: /Read ×2/ })).toHaveLength(2);
   });
 });
 
@@ -309,17 +309,17 @@ describe('renderTimeline — ToolGroup tri-state expansion', () => {
     expect(screen.getByText('6 lines')).toBeTruthy(); // en-bloc pairing: 3 + 3, not stuck on one orphaned member
     expect(screen.queryByText('running…')).toBeNull();
 
-    const header = screen.getByRole('button', { name: /Read 2 files/ });
+    const header = screen.getByRole('button', { name: /Read ×2/ });
     expect(header).toHaveAttribute('aria-expanded', 'false'); // untouched + settled -> auto-collapsed
 
     fireEvent.click(header); // manual expand
     expect(screen.getByText('one.ts')).toBeTruthy();
     expect(screen.getByText('two.ts')).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('button', { name: /Read 2 files/ })); // manual collapse
+    fireEvent.click(screen.getByRole('button', { name: /Read ×2/ })); // manual collapse
     expect(screen.queryByText('one.ts')).toBeNull();
     expect(screen.queryByText('two.ts')).toBeNull();
-    expect(screen.getByRole('button', { name: /Read 2 files/ })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('button', { name: /Read ×2/ })).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('a manual collapse survives a member still running', () => {
@@ -331,13 +331,13 @@ describe('renderTimeline — ToolGroup tri-state expansion', () => {
     renderTimelineItems(items);
     expect(screen.getByText('one.ts')).toBeTruthy(); // untouched + a member running -> auto-expanded
 
-    fireEvent.click(screen.getByRole('button', { name: /Read 2 (files|calls)/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Read ×2/ }));
 
     // Still running (no rerender) — the OLD `open || running` logic would force this back
     // open, making the collapse click a no-op. The manual collapse must stick regardless.
     expect(screen.getByText('running…')).toBeTruthy(); // genuinely still running
     expect(screen.queryByText('one.ts')).toBeNull();
-    expect(screen.getByRole('button', { name: /Read 2 (files|calls)/ })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('button', { name: /Read ×2/ })).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('a manual expand survives the run settling', () => {
@@ -351,9 +351,9 @@ describe('renderTimeline — ToolGroup tri-state expansion', () => {
 
     // Collapse, then explicitly re-expand — an unambiguous MANUAL `true`, not merely the
     // still-running auto default.
-    fireEvent.click(screen.getByRole('button', { name: /Read 2 (files|calls)/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Read ×2/ }));
     expect(screen.queryByText('one.ts')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: /Read 2 (files|calls)/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Read ×2/ }));
     expect(screen.getByText('one.ts')).toBeTruthy();
 
     // The run settles — 'grp-c2' now has its result too.
@@ -374,7 +374,7 @@ describe('renderTimeline — ToolGroup tri-state expansion', () => {
     expect(screen.getByText('one.ts')).toBeTruthy();
     expect(screen.getByText('two.ts')).toBeTruthy();
     expect(screen.queryByText('running…')).toBeNull(); // genuinely settled now
-    expect(screen.getByRole('button', { name: /Read 2 files/ })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: /Read ×2/ })).toHaveAttribute('aria-expanded', 'true');
   });
 });
 
@@ -525,5 +525,141 @@ describe('tool rows with no tool ids (REST-paged history)', () => {
     const name = screen.getByText('Bash');
     expect(name).toBeInTheDocument();
     expect(name.style.flexShrink).toBe('0');
+  });
+});
+
+// The Pretty composer takes prose only — no shell input ever reaches it, so spelling help
+// is unconditional here and has no toggle (unlike the CLI/PTY composer, whose "Aa" key
+// turns it off for a run of shell commands). autoCapitalize stays off in both, so a path
+// or command name pasted mid-message is not altered.
+test('the Pretty composer always spell-checks and autocorrects, and never auto-capitalises', async () => {
+  render(<ChatView terminalId="t1" />);
+  const ta = await screen.findByPlaceholderText('Message…');
+  expect(ta.getAttribute('spellcheck')).toBe('true');
+  expect(ta.getAttribute('autocorrect')).toBe('on');
+  expect(ta.getAttribute('autocapitalize')).toBe('off');
+});
+
+test('the Pretty composer keeps the single-row layout: textarea one key tall, arrow send key', async () => {
+  // David kept the OLD composer in the 2026-08 redesign ("I like the old composer but I
+  // like the new button as an arrow") — only the send glyph changed. Pin that layout.
+  render(<ChatView terminalId="t1" />);
+  const ta = await screen.findByPlaceholderText('Message…');
+  expect(ta.style.minHeight).toBe('34px');
+  expect(ta.style.lineHeight).toBe('22px');
+  expect(ta.style.padding).toBe('6px 4px');
+  const send = screen.getByTitle('Send');
+  expect(send.style.height).toBe('34px');
+});
+
+// The composer key is dual-purpose: it offers Stop only in the one state where there is
+// nothing to send and something to stop. Typing must always win, so a mid-turn follow-up
+// (which the CLI queues) is never blocked by the key having become a Stop.
+describe('ChatView — composer stop key', () => {
+  async function sendATurn() {
+    vi.spyOn(api, 'sendStructuredMessage').mockResolvedValue(undefined as never);
+    const utils = render(<ChatView terminalId="t1" />);
+    const ta = await screen.findByPlaceholderText('Message…');
+    fireEvent.change(ta, { target: { value: 'hello' } });
+    fireEvent.click(screen.getByTitle('Send'));
+    return { ...utils, ta };
+  }
+
+  it('offers Stop once a turn is in flight and the composer has emptied', async () => {
+    await sendATurn();
+    expect(await screen.findByTitle('Stop')).toBeInTheDocument();
+    expect(screen.queryByTitle('Send')).toBeNull();
+  });
+
+  it('interrupts the turn — it must NOT kill the thread', async () => {
+    const interrupt = vi.spyOn(api, 'interrupt').mockResolvedValue(undefined as never);
+    const stopTerminal = vi.spyOn(api, 'stopTerminal').mockResolvedValue(undefined as never);
+    await sendATurn();
+    fireEvent.click(await screen.findByTitle('Stop'));
+    expect(interrupt).toHaveBeenCalledWith('t1');
+    expect(stopTerminal).not.toHaveBeenCalled();
+  });
+
+  it('reverts to Send the moment you type, so a mid-turn message can still go out', async () => {
+    const { ta } = await sendATurn();
+    await screen.findByTitle('Stop');
+    fireEvent.change(ta, { target: { value: 'follow-up' } });
+    expect(screen.getByTitle('Send')).toBeInTheDocument();
+    expect(screen.queryByTitle('Stop')).toBeNull();
+  });
+
+  it('never offers Stop on an idle thread', async () => {
+    render(<ChatView terminalId="t1" />);
+    await screen.findByPlaceholderText('Message…');
+    expect(screen.getByTitle('Send')).toBeInTheDocument();
+    expect(screen.queryByTitle('Stop')).toBeNull();
+  });
+});
+
+// An empty item list means "no messages yet" ONLY when the socket is open. While the app
+// is (re)connecting the history simply hasn't replayed — the old render said "Send a
+// message to start the conversation" over threads that were full of messages.
+describe('ChatView — mid-compaction timeline split', () => {
+  // A message sent DURING a native compaction is echoed into the item list immediately,
+  // but the CLI holds it on stdin until the compaction ends. Plain arrival order rendered
+  // it ABOVE the bottom-left "Compacting context…" row, which read as "sent". The fix
+  // pins a full-width CompactingBar at the point the compaction began and renders the
+  // queued turns BELOW it.
+  function mountWithEvents() {
+    let onEvent: (e: unknown) => void = () => {};
+    vi.spyOn(sock, 'openStructuredSocket').mockImplementation((opts: any) => {
+      onEvent = opts.onEvent;
+      return { close: () => {} } as any;
+    });
+    const utils = render(<ChatView terminalId="t1" />);
+    return { ...utils, emit: (e: unknown) => onEvent(e) };
+  }
+  const user = (text: string, uuid: string) => ({ type: 'user', uuid, message: { content: [{ type: 'text', text }] } });
+
+  test('queued turns render below the bar; the bar clears when compaction ends', async () => {
+    const { emit } = mountWithEvents();
+    const { act } = await import('@testing-library/react');
+    act(() => { emit(user('before compaction', 'u1')); });
+    act(() => { emit({ type: 'system', subtype: 'status', status: 'compacting' }); });
+    act(() => { emit(user('queued hello', 'u2')); });
+
+    const bar = await screen.findByText('Compacting context…');
+    expect(screen.getByText(/The message below sends when compacting finishes/)).toBeInTheDocument();
+    // DOM order is the contract: before-turn → bar → queued turn.
+    const before = screen.getByText('before compaction');
+    const queued = screen.getByText('queued hello');
+    expect(before.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(bar.compareDocumentPosition(queued) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    // Compaction ends → the bar goes away and the timeline re-merges in order.
+    act(() => { emit({ type: 'system', subtype: 'status', status: null, compact_result: 'success' }); });
+    expect(screen.queryByText('Compacting context…')).toBeNull();
+    expect(screen.getByText('queued hello')).toBeInTheDocument();
+  });
+
+  test('a compaction with nothing queued shows the bar without the queue caption', async () => {
+    const { emit } = mountWithEvents();
+    const { act } = await import('@testing-library/react');
+    act(() => { emit({ type: 'system', subtype: 'status', status: 'compacting' }); });
+    expect(await screen.findByText('Compacting context…')).toBeInTheDocument();
+    expect(screen.queryByText(/sends when compacting finishes/)).toBeNull();
+  });
+});
+
+describe('ChatView — empty list vs reconnecting', () => {
+  test('while the socket is (re)connecting, an empty chat shows a centered Reconnecting state', async () => {
+    const { useConnection } = await import('../../../stores/connection');
+    useConnection.setState({ status: 'connecting' });
+    render(<ChatView terminalId="t1" />);
+    expect(await screen.findByText('Reconnecting…')).toBeInTheDocument();
+    expect(screen.queryByText(/start the conversation/i)).toBeNull();
+  });
+
+  test('with the socket open, an empty chat is genuinely empty and says so', async () => {
+    const { useConnection } = await import('../../../stores/connection');
+    useConnection.setState({ status: 'open' });
+    render(<ChatView terminalId="t1" />);
+    expect(await screen.findByText(/start the conversation/i)).toBeInTheDocument();
+    expect(screen.queryByText('Reconnecting…')).toBeNull();
   });
 });

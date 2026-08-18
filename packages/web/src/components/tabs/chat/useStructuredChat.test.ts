@@ -4,6 +4,12 @@ import { test, expect, vi, beforeEach } from 'vitest';
 import { useStructuredChat, contextWindowFor } from './useStructuredChat';
 import * as sock from '../../../api/structured-socket';
 import { api, type ContentBlock } from '../../../api/client';
+// Used by the anchorless-bail RE-ARM test below, which drives the REAL bootstrap loop (the
+// only caller that can re-fire paging on its own) instead of asserting on internals. The
+// scroller reports "not overflowing" — jsdom measures every element as 0-sized, so the
+// library's own geometry is unusable here (same mock as useBootstrapOlderPages.test.ts).
+vi.mock('@shadcn/react/message-scroller', () => ({ useMessageScrollerScrollable: () => ({ start: false, end: false }) }));
+import { useBootstrapOlderPages } from '../../../hooks/useBootstrapOlderPages';
 
 // Captures the socket callbacks so a test can drive events directly.
 interface Cbs { onEvent: (e: any) => void; onReset?: () => void; onClose?: () => void }
@@ -573,6 +579,33 @@ test('loadOlder dedups a page whose boundary item overlaps content already rende
   expect(result.current.items.map((i) => i.text)).toEqual(['genuinely older', 'recent turn']);
 });
 
+test('loadOlder KEEPS older items whose content repeats but whose uuid is different (the 27-30% history loss)', async () => {
+  // Regression for the dominant "history skips lines" bug. The dedup used to build its
+  // fingerprint set from EVERY rendered item and apply it even to items carrying a brand-new
+  // uuid — so a genuinely distinct older message was deleted just for looking like one already
+  // on screen. Repetition is routine in a coding session (the same Edit result, a re-run
+  // command, two empty tool outputs), which is why this silently ate a quarter of paged history.
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'u9', message: { content: [{ type: 'text', text: 'The file App.tsx has been updated.' }] } }));
+  expect(result.current.items).toHaveLength(1);
+
+  vi.spyOn(api, 'getConversation').mockResolvedValue({
+    items: [
+      // Identical rendered content, DIFFERENT uuids — three separate real messages.
+      { kind: 'tool-result', text: '', uuid: 'a1', ts: 't', line: 1 },
+      { kind: 'tool-result', text: '', uuid: 'a2', ts: 't', line: 2 },
+      { kind: 'assistant', text: 'The file App.tsx has been updated.', uuid: 'a3', ts: 't', line: 3 },
+    ],
+    cursor: 50, startLine: 1, hasMore: true,
+  } as any);
+  act(() => { result.current.loadOlder(); });
+  await flushAsync();
+
+  // All three older messages survive alongside the one already rendered.
+  expect(result.current.items).toHaveLength(4);
+  expect(result.current.items.map((i) => i.uuid)).toEqual(['a1', 'a2', 'a3', 'u9']);
+});
+
 test('loadOlder still advances the anchor/hasMore when an ENTIRE page duplicates existing items (no stall)', async () => {
   const { result } = renderHook(() => useStructuredChat('t1'));
   act(() => cbs.onEvent({ type: 'assistant', uuid: 'u1', message: { content: [{ type: 'text', text: 'dup' }] } }));
@@ -644,6 +677,69 @@ test('the inactive hydration does not clobber items a live event already populat
   expect(result.current.items.map((i) => i.text)).toEqual(['live wins']);
 });
 
+test('the inactive hydration still applies when only a stale result FOOTER rendered (deadlock ring), keeping the footer below the history', async () => {
+  vi.spyOn(api, 'getConversation').mockResolvedValue({
+    items: [
+      { kind: 'user', text: 'from disk', uuid: 'u1', line: 10 },
+      { kind: 'assistant', text: 'reply', uuid: 'u2', line: 11 },
+    ],
+    cursor: 50, startLine: 10, hasMore: false,
+  } as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'inactive' }));
+  // The deadlock ring replays a stale (non-backfill) result AFTER the sentinel — the
+  // footer item this appends must not defeat the hydration.
+  act(() => cbs.onEvent({ type: 'result', is_error: false, duration_ms: 5 }));
+  await flushAsync();
+  expect(result.current.items.map((i) => i.kind)).toEqual(['user', 'assistant', 'result']);
+  expect(result.current.items.map((i) => i.text ?? '')).toEqual(['from disk', 'reply', '']);
+});
+
+test('a discarded inactive page leaves the paging anchor UNSET so later paging cannot skip its window', async () => {
+  const spy = vi.spyOn(api, 'getConversation')
+    .mockResolvedValueOnce({ items: [{ kind: 'user', text: 'newest disk window', uuid: 'w1', line: 30 }], cursor: 50, startLine: 30, hasMore: true } as any)
+    .mockResolvedValueOnce({ items: [], cursor: 0, startLine: 0, hasMore: false } as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'inactive' }));
+  // A live turn lands before the rescue fetch resolves — the page is discarded.
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'live1', message: { content: [{ type: 'text', text: 'live wins' }] } }));
+  await flushAsync();
+  expect(result.current.items.map((i) => i.text)).toEqual(['live wins']);
+  // The next loadOlder must anchor on the live item's uuid — NOT on the discarded page's
+  // startLine, which would silently skip everything in that dropped window.
+  act(() => { result.current.loadOlder(); });
+  await flushAsync();
+  expect(spy).toHaveBeenLastCalledWith('t1', { before: undefined, beforeUuid: 'live1', limit: 120 });
+});
+
+test('RACE: a live conversational event lands in the SAME microtask window as the rescue fetch resolving (itemsRef not yet re-synced) — hasMore is not latched false by the discarded page, and the anchor stays unset', async () => {
+  let resolveFetch!: (v: unknown) => void;
+  const spy = vi.spyOn(api, 'getConversation').mockReturnValue(new Promise((r) => { resolveFetch = r; }) as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'inactive' }));
+  // Both the live event AND the fetch resolution happen inside ONE act(async...) callback,
+  // with no intervening `await act(...)` boundary — the narrowest window we can force in a
+  // test environment for the itemsRef passive-effect sync to lag behind. The rescue page
+  // below carries hasMore:false and a startLine far from the live item, so either bug
+  // symptom (a latched-false hasMore, or an anchor pointing at the discarded page) would be
+  // caught by the assertions after.
+  await act(async () => {
+    cbs.onEvent({ type: 'assistant', uuid: 'live1', message: { content: [{ type: 'text', text: 'live wins' }] } });
+    resolveFetch({ items: [{ kind: 'user', text: 'stale disk read', uuid: 'w1', line: 30 }], cursor: 50, startLine: 30, hasMore: false });
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  // The live item is the only thing rendered — the rescue page must have been discarded.
+  expect(result.current.items.map((i) => i.text)).toEqual(['live wins']);
+  // Must NOT be latched false by the discarded page's hasMore:false (the bug this guards).
+  expect(result.current.hasMore).toBe(true);
+  // The next loadOlder must anchor on the live item's uuid — NOT `before: 30` (the
+  // discarded page's startLine), which would silently skip everything in that window.
+  act(() => { result.current.loadOlder(); });
+  await flushAsync();
+  expect(spy).toHaveBeenLastCalledWith('t1', { before: undefined, beforeUuid: 'live1', limit: 120 });
+});
+
 // ---- BUG 2 (tool rows render above the prompt that kicked off the agent) ----------------
 // Root fix: the ws fold and the REST/transcript parser now share Claude Code's own
 // per-message-block `uuid` (threaded onto ConvItems in the 'assistant'/'user' handlers
@@ -711,6 +807,23 @@ test('streaming mode: a reconciled tool item gets its synthetic key upgraded to 
   expect(result.current.items.filter((i) => i.kind === 'tool')).toHaveLength(1); // no duplicate appended
 });
 
+test('DEFENSE: a streamed rebuild whose reconciled uuid is ALREADY rendered is dropped, not duplicated', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  // A copy of this message is already rendered (e.g. a REST-hydrated page).
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'U', message: { content: [{ type: 'text', text: 'answer' }] } }));
+  expect(result.current.items.map((i) => i.text)).toEqual(['answer']);
+  // A replayed stream burst rebuilds the SAME message: message_start → block → delta →
+  // whole-assistant reconcile carrying the same transcript uuid.
+  act(() => cbs.onEvent({ type: 'stream_event', event: { type: 'message_start' } }));
+  act(() => cbs.onEvent(start(0, { type: 'text' })));
+  act(() => cbs.onEvent(textDelta(0, 'answer')));
+  drainRaf();
+  expect(result.current.items).toHaveLength(2); // burst item visible mid-stream (pre-reconcile)
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'U', message: { content: [{ type: 'text', text: 'answer' }] } }));
+  expect(result.current.items.filter((i) => i.text === 'answer')).toHaveLength(1); // dropped, not upgraded
+  expect(result.current.items.filter((i) => i.uuid === 'U')).toHaveLength(1);
+});
+
 test("loadOlder's first call anchors on the oldest rendered item's uuid (beforeUuid), not just before:undefined", async () => {
   const spy = vi.spyOn(api, 'getConversation').mockResolvedValue({ items: [], cursor: 0, startLine: 0, hasMore: false } as any);
   const { result } = renderHook(() => useStructuredChat('t1'));
@@ -721,32 +834,31 @@ test("loadOlder's first call anchors on the oldest rendered item's uuid (beforeU
 });
 
 // ---- Transcript-duplication regression (anchorless loadOlder racing the ws replay) -------
-// BootstrapOlderPages fires loadOlder() on mount. If it fires before the ws replay has
-// settled a real transcript uuid onto `items`, loadOlder sends an ANCHORLESS fetch
-// (before/beforeUuid both undefined), which the server answers with the NEWEST window (the
-// whole transcript). The ws onEvent handlers would then re-append the same turns, so the
-// conversation rendered twice. The guard below suppresses that fetch whenever items EXIST
-// but carry no real anchor; the zero-items case is instead made safe by uuid-dedup on the
-// ws append paths (see the deadlock tests further down).
+// BootstrapOlderPages fires loadOlder() on mount. If it fired before the ws replay had
+// settled a real transcript uuid onto `items`, an ANCHORLESS fetch (before/beforeUuid both
+// undefined) returned the NEWEST window — the whole transcript — which the ws replay then
+// re-appended (the streaming rebuild path has no dedup), rendering the conversation twice
+// and out of order. The guard suppresses that fetch under EVERY anchorless state: items
+// with only synthetic keys AND zero items. loadOlder serves strictly-older history; the
+// newest window is owned by the ws replay.
 
 // ---- Zero-items history DEADLOCK (the "reopening a Pretty thread shows no history" bug) --
 // A replay ring holding only NON-RENDERING events (system/init, system/status, a stale
-// result) is non-empty, so ws/structured.ts never sends the `system/inactive` REST-hydration
-// rescue — yet ChatView renders zero items. The old guard also bailed on zero items, and did
-// so SYNCHRONOUSLY without touching `loadingOlder`, so useBootstrapOlderPages' effect never
-// re-fired and there was nothing on screen to scroll. History was permanently unreachable.
+// result) paints nothing, and with the guard also bailing on zero items — SYNCHRONOUSLY,
+// without touching `loadingOlder` — nothing ever re-triggered paging: history was
+// unreachable. The rescue now lives at the SERVER: ws/structured.ts sends the
+// `system/inactive` REST-hydration sentinel whenever the ring has no RENDERABLE events
+// (hasRenderableEvents), and the client's inactive handler hydrates even past a stale
+// replayed result footer. loadOlder itself never fetches anchorless.
 
-test('DEADLOCK FIX: with ZERO items rendered, loadOlder DOES issue the anchorless REST fetch (initial hydration)', async () => {
-  const spy = vi.spyOn(api, 'getConversation').mockResolvedValue({
-    items: [{ kind: 'user', text: 'q', uuid: 'u1', line: 0 }],
-    cursor: 1, startLine: 0, hasMore: false,
-  } as any);
+test('with ZERO items rendered, loadOlder does NOT fetch — the newest window is owned by the ws replay / server inactive rescue', async () => {
+  const spy = vi.spyOn(api, 'getConversation').mockResolvedValue({ items: [], cursor: 0, startLine: 0, hasMore: false } as any);
   const { result } = renderHook(() => useStructuredChat('t1'));
-  expect(result.current.items).toHaveLength(0); // nothing rendered — nothing to duplicate
+  expect(result.current.items).toHaveLength(0);
   act(() => { result.current.loadOlder(); });
   await flushAsync();
-  expect(spy).toHaveBeenCalledWith('t1', { before: undefined, limit: 120 });
-  expect(result.current.items.map((i) => i.text)).toEqual(['q']); // history is now reachable
+  expect(spy).not.toHaveBeenCalled(); // an anchorless fetch returns the NEWEST window and races the replay
+  expect(result.current.loadingOlder).toBe(false);
 });
 
 test('GUARD PRESERVED: with items rendered but no real uuid among them, loadOlder still bails (no anchorless fetch)', async () => {
@@ -781,12 +893,8 @@ test('a synthetic streaming key does NOT count as an anchor (still no anchorless
   expect(spy).not.toHaveBeenCalled();
 });
 
-test('REGRESSION: a mount-time loadOlder racing the ws replay does not double the transcript', async () => {
-  // With zero items the anchorless newest-window fetch is now ALLOWED (it's the deadlock
-  // rescue), so it resolves and prepends the whole transcript — and the ws replay then appends
-  // the very same turns. The uuid-dedup armed on the ws append paths after an anchorless
-  // hydration is what keeps this a single copy.
-  vi.spyOn(api, 'getConversation').mockResolvedValue({
+test('REGRESSION: a mount-time loadOlder racing the ws replay does not double the transcript (no anchorless fetch is ever issued)', async () => {
+  const spy = vi.spyOn(api, 'getConversation').mockResolvedValue({
     items: [
       { kind: 'user', text: 'q', uuid: 'u1', line: 0 },
       { kind: 'assistant', text: 'a', uuid: 'u2', line: 1 },
@@ -796,10 +904,11 @@ test('REGRESSION: a mount-time loadOlder racing the ws replay does not double th
   const { result } = renderHook(() => useStructuredChat('t1'));
   act(() => { result.current.loadOlder(); }); // bootstrap fires on mount, items still empty
   await flushAsync();
-  // ws replay lands the two turns (real uuids).
+  expect(spy).not.toHaveBeenCalled(); // the newest-window fetch that caused the doubling never happens
+  // The ws replay lands the turns exactly once, in order.
   act(() => cbs.onEvent({ type: 'user', uuid: 'u1', message: { role: 'user', content: [{ type: 'text', text: 'q' }] } }));
   act(() => cbs.onEvent({ type: 'assistant', uuid: 'u2', message: { content: [{ type: 'text', text: 'a' }] } }));
-  expect(result.current.items.map((i) => i.text)).toEqual(['q', 'a']); // single copy, not doubled
+  expect(result.current.items.map((i) => i.text)).toEqual(['q', 'a']);
 });
 
 test('resolves a PATH-form image via the byte route ONLY when sessionId is wired (BUG 2)', () => {
@@ -858,4 +967,199 @@ test('a human turn that merely mentions the tag keeps its bubble', () => {
   act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'why is <task-notification> showing as a user chat?' }] } }));
   expect(result.current.items.filter((i) => i.kind === 'user')).toHaveLength(1);
   expect(result.current.items.filter((i) => i.kind === 'notice')).toHaveLength(0);
+});
+
+// ---- API-retry visibility (the "dead Control Plane" outage illusion) -------------------
+// During an Anthropic outage the CLI retries 529s for MINUTES, emitting system/api_retry
+// events the UI silently dropped — the user watched a bare "Working…" spinner, concluded
+// the session was dead, and the eventual error landed long after they'd left. The hook now
+// surfaces the retry state so both chat surfaces can say what's actually happening.
+test('a system/api_retry event surfaces apiRetry (attempt/max/status)', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  expect(result.current.apiRetry).toBeNull();
+  act(() => cbs.onEvent({ type: 'system', subtype: 'api_retry', attempt: 3, max_retries: 10, retry_delay_ms: 500, error_status: 529, error: 'overloaded' }));
+  expect(result.current.apiRetry).toEqual({ attempt: 3, maxRetries: 10, errorStatus: 529 });
+});
+
+test('a later retry attempt replaces the earlier one', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 10, error_status: 529 }));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'api_retry', attempt: 4, max_retries: 10, error_status: 529 }));
+  expect(result.current.apiRetry).toEqual({ attempt: 4, maxRetries: 10, errorStatus: 529 });
+});
+
+test('apiRetry clears when the turn PROGRESSES (an assistant event lands)', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'api_retry', attempt: 2, max_retries: 10, error_status: 529 }));
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'u1', message: { content: [{ type: 'text', text: 'recovered' }] } }));
+  expect(result.current.apiRetry).toBeNull();
+});
+
+test('apiRetry clears when the turn ENDS (result — including the give-up error result)', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'api_retry', attempt: 10, max_retries: 10, error_status: 529 }));
+  act(() => cbs.onEvent({ type: 'result', is_error: true, result: 'API Error: 529 Overloaded' }));
+  expect(result.current.apiRetry).toBeNull();
+});
+
+// ---- Anchorless-bail DEAD END ("Load earlier" goes permanently inert) -------------------
+// loadOlder's first call refuses to fetch while no rendered item carries a real uuid (the
+// ANCHORLESS-FETCH GUARD — an anchorless fetch returns the NEWEST window and double-renders
+// the thread, so the guard itself is correct and stays). But that bail changed NO state, and
+// nothing else re-fires paging: useBootstrapOlderPages' effect depends on
+// [overflowing, hasMore, loadingOlder, loadOlder], none of which move when an anchor finally
+// arrives. So the first bail was permanent — the Load-earlier button stayed visible and did
+// nothing, forever. It is the NORMAL state on a streaming thread: the replay is bounded to
+// the last 200 ring events (every stdout line, stream_event deltas included), so every
+// rendered item can still carry a synthetic `s-<turn>-<idx>` key with no real uuid anywhere.
+
+/** useStructuredChat wired to the REAL bootstrap loop, exactly as ChatView/Stream mount it. */
+function useChatWithBootstrap(id: string) {
+  const chat = useStructuredChat(id);
+  useBootstrapOlderPages({ hasMore: chat.hasMore, loadingOlder: chat.loadingOlder, loadOlder: chat.loadOlder });
+  return chat;
+}
+
+test('RE-ARM: a first loadOlder that bails for want of an anchor resumes paging once the replay settles a real uuid (no permanent dead end)', async () => {
+  const spy = vi.spyOn(api, 'getConversation').mockResolvedValue({
+    items: [{ kind: 'user', text: 'older history', uuid: 'o1', line: 1 }],
+    cursor: 9, startLine: 1, hasMore: false, // exhausted in one page → the loop settles here
+  } as any);
+  const { result } = renderHook(() => useChatWithBootstrap('t1'));
+  // Mount: the bootstrap loop fires loadOlder with nothing rendered → the guard bails.
+  await flushAsync();
+  expect(spy).not.toHaveBeenCalled();
+
+  // The bounded replay paints a streaming message: its block carries only a synthetic key,
+  // so there is still no anchor and still no fetch — and the bail must NOT re-arm on its own
+  // (that would spin the bootstrap loop), so the callback identity has to hold steady here.
+  act(() => cbs.onEvent({ type: 'stream_event', event: { type: 'message_start' } }));
+  act(() => cbs.onEvent(start(0, { type: 'text' })));
+  act(() => cbs.onEvent(textDelta(0, 'streamed answer')));
+  drainRaf();
+  await flushAsync();
+  expect(result.current.items[0].uuid).toMatch(/^s-/);
+  expect(spy).not.toHaveBeenCalled();
+  const blocked = result.current.loadOlder;
+
+  // The whole-assistant reconcile upgrades that item to its real transcript uuid — an anchor
+  // now exists, so paging must resume BY ITSELF (this is the fix: before it, nothing ever
+  // re-fired the bootstrap effect and the button below stayed inert forever).
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'real-1', message: { content: [{ type: 'text', text: 'streamed answer' }] } }));
+  await flushAsync();
+  expect(spy).toHaveBeenCalledWith('t1', { before: undefined, beforeUuid: 'real-1', limit: 120 });
+  expect(result.current.items.map((i) => i.text)).toEqual(['older history', 'streamed answer']);
+  expect(result.current.loadOlder).not.toBe(blocked); // the mechanism: a new identity is what re-fires the effect
+});
+
+// ---- Replay cut MID-MESSAGE loses that message's prose -----------------------------------
+// The 200-event replay window can start PAST a message's content_block_start. Its deltas then
+// hit `blockMapRef.get(index)` with no rec and are dropped, and `streamingRef` is sticky true,
+// so the whole-`assistant` reconcile also skipped the text/thinking blocks ("already rendered
+// from deltas") — the message's prose came from neither source and was lost permanently. The
+// reconcile now appends any text/thinking block whose stream index never opened a BlockRec,
+// mirroring the "append any tool we never saw start" rule.
+
+test('REPLAY CUT: a message whose content_block_start was trimmed still renders its prose from the whole-assistant reconcile', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  // Replay begins mid-message: no message_start, no content_block_start — just the tail of
+  // the deltas, which have no BlockRec to land in and are dropped (nothing rendered).
+  act(() => cbs.onEvent(textDelta(0, 'tail of the sentence.')));
+  drainRaf();
+  expect(result.current.items).toHaveLength(0);
+  expect(result.current.busy).toBe(true); // streamingRef is now sticky true
+
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'real-1', message: { content: [{ type: 'text', text: 'The whole answer, tail of the sentence.' }] } }));
+  const txt = result.current.items.filter((i) => i.kind === 'assistant');
+  expect(txt).toHaveLength(1);
+  expect(txt[0].text).toBe('The whole answer, tail of the sentence.'); // the AUTHORITATIVE text, not the delta tail
+  expect(txt[0].uuid).toBe('real-1'); // real identity → loadOlder can dedup/anchor on it
+});
+
+test('REPLAY CUT: a cut thinking block is recovered too', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent(thinkDelta(0, 'in progress')));
+  drainRaf();
+  expect(result.current.items).toHaveLength(0);
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'real-1', message: { content: [{ type: 'thinking', thinking: 'the full reasoning' }] } }));
+  const think = result.current.items.filter((i) => i.kind === 'thinking');
+  expect(think).toHaveLength(1);
+  expect(think[0].text).toBe('the full reasoning');
+});
+
+test('REPLAY CUT: recovers only the blocks that were cut — a block that DID stream is not duplicated', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  // The cut lands between block 0 (text — start and deltas gone) and block 1 (tool_use,
+  // whose content_block_start survived and streamed normally).
+  act(() => cbs.onEvent(start(1, { type: 'tool_use', name: 'Read', id: 'tu-1' })));
+  act(() => cbs.onEvent(jsonDelta(1, '{"file_path":"/a.ts"}')));
+  flushRaf();
+  expect(result.current.items.map((i) => i.kind)).toEqual(['tool']);
+
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'real-1', message: { content: [
+    { type: 'text', text: 'Reading the file.' },
+    { type: 'tool_use', name: 'Read', id: 'tu-1', input: { file_path: '/a.ts' } },
+  ] } }));
+  // The lost text is recovered exactly once; the streamed tool is reconciled in place, not
+  // appended a second time.
+  expect(result.current.items.filter((i) => i.kind === 'assistant').map((i) => i.text)).toEqual(['Reading the file.']);
+  expect(result.current.items.filter((i) => i.kind === 'tool')).toHaveLength(1);
+  expect(result.current.items.find((i) => i.kind === 'tool')?.toolInput).toContain('/a.ts');
+  // ACCEPTED TRADEOFF, pinned here on purpose: a recovered block is APPENDED at reconcile
+  // time, so it lands after the blocks of the same message that did stream, not back at its
+  // original content position. Content is complete and correctly identified; only the
+  // intra-message order of the cut-off head is approximate — the same caveat the pre-existing
+  // "append any tool we never saw start" rule already carries, and it only ever affects the
+  // single oldest message the replay window bisects.
+  expect(result.current.items.map((i) => i.kind)).toEqual(['tool', 'assistant']);
+});
+
+test('REPLAY CUT: an empty text block in the whole event does not append a blank bubble', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent(textDelta(0, 'x')));
+  drainRaf();
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'real-1', message: { content: [{ type: 'text', text: '' }] } }));
+  expect(result.current.items).toHaveLength(0);
+});
+
+test('apiRetry clears on streaming progress and resets on terminal switch', () => {
+  const { result, rerender } = renderHook(({ id }) => useStructuredChat(id), { initialProps: { id: 't1' } });
+  act(() => cbs.onEvent({ type: 'system', subtype: 'api_retry', attempt: 2, max_retries: 10, error_status: 529 }));
+  act(() => cbs.onEvent({ type: 'stream_event', event: { type: 'message_start' } }));
+  expect(result.current.apiRetry).toBeNull();
+  act(() => cbs.onEvent({ type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 10, error_status: 500 }));
+  rerender({ id: 't2' });
+  expect(result.current.apiRetry).toBeNull();
+});
+
+// ---- Harness with no pageable transcript (Grok) --------------------------------------------
+//
+// Grok's getConversation is `unsupported` — there is never REST history to page, so the
+// older-pages machinery must not run at all: no optimistic hasMore (which rendered a
+// "Load earlier messages" button on a brand-new thread, permanently inert because grok
+// items carry no transcript uuid to anchor on), no bootstrap fetches, no anchorless bails.
+// The full ws-ring replay IS the whole recoverable history for these threads.
+
+test('pageableHistory:false → hasMore is false from the start and loadOlder never fetches', () => {
+  const spy = vi.spyOn(api, 'getConversation');
+  const { result } = renderHook(() => useStructuredChat('t1', 's1', { pageableHistory: false }));
+  expect(result.current.hasMore).toBe(false);
+  act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: 'hello' } }));
+  expect(result.current.hasMore).toBe(false);
+  act(() => { result.current.loadOlder(); });
+  expect(spy).not.toHaveBeenCalled();
+});
+
+test('pageableHistory:false survives a thread switch (reset does not resurrect optimism)', () => {
+  const { result, rerender } = renderHook(
+    ({ tid }) => useStructuredChat(tid, 's1', { pageableHistory: false }),
+    { initialProps: { tid: 't1' } },
+  );
+  rerender({ tid: 't2' });
+  expect(result.current.hasMore).toBe(false);
+});
+
+test('default (no opts) keeps the optimistic hasMore for pageable harnesses', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  expect(result.current.hasMore).toBe(true);
 });

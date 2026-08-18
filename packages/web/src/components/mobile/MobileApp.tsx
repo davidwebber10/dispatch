@@ -1,6 +1,6 @@
 import { appPath, href } from '../../lib/basePath';
-import { useState, useEffect } from 'react';
-import { Gear, CaretLeft, CaretRight, Plus, Folders, PushPin, Robot } from '@phosphor-icons/react';
+import { useState, useEffect, lazy, Suspense } from 'react';
+import { Gear, CaretLeft, CaretRight, Plus, Folders, PushPin, Robot, ChartBar } from '@phosphor-icons/react';
 import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
 import { TransportToggle } from '../layout/TransportToggle';
@@ -17,7 +17,7 @@ import { AgentPane } from '../agents/AgentPane';
 import { EditAgentModal } from '../agents/EditAgentModal';
 import { MobileSettingsList, MobileSettingsSection } from '../settings/MobileSettings';
 import { settingsSection, type SettingsSectionKey } from '../settings/sections';
-import { useTabs } from '../../stores/tabs';
+import { findTerminal, useTabs } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
 import { useAgentUI } from '../../stores/agentUI';
 import { useReconnect } from '../../stores/reconnect';
@@ -28,6 +28,17 @@ import { Spinner } from '../common/Spinner';
 import { SortableList } from '../common/SortableList';
 import { timeAgo } from '../../lib/time';
 import { OverseerView } from '../overseer/OverseerView';
+
+const AnalyticsView = lazy(() => import('../analytics/AnalyticsView').then((m) => ({ default: m.AnalyticsView })));
+
+// Same idiom as App.tsx's desktop fallback: centred at the pane's eventual
+// footprint so the ~120kB gzipped Recharts chunk downloading doesn't read as a
+// blank/broken screen, and nothing jumps once it lands.
+const analyticsFallback = (
+  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%' }}>
+    <Spinner size={24} />
+  </div>
+);
 
 function homePath(p: string): string {
   return (p || '').replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
@@ -88,7 +99,7 @@ export function MobileApp() {
   const [query, setQuery] = useState('');
   const [projectSort, setProjectSort] = useState<ProjectSort>(() => (localStorage.getItem('dispatch:sort') as ProjectSort) || 'recent');
   useEffect(() => { try { localStorage.setItem('dispatch:sort', projectSort); } catch { /* ignore */ } }, [projectSort]);
-  const [bottomTab, setBottomTab] = useState<'projects' | 'pinned' | 'agents' | 'settings'>('projects');
+  const [bottomTab, setBottomTab] = useState<'projects' | 'pinned' | 'agents' | 'analytics' | 'settings'>('projects');
   // Dispatch mode (mobile): the coordinator view opens as a full-screen overlay
   // over the active project (mirrors browseFiles). Closing returns to the project.
   const [dispatchOpen, setDispatchOpen] = useState(false);
@@ -201,7 +212,29 @@ export function MobileApp() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--color-base)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
       <header style={{ position: 'relative', height: 'calc(50px + env(safe-area-inset-top))', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px', paddingTop: 'env(safe-area-inset-top)', background: 'var(--color-pane)' }}>
         {level === 0 ? (
-          <BrandSwitcher />
+          <>
+            <BrandSwitcher />
+            {/* One-line top bar: the project search lives IN the header beside the app icon
+                (it used to be a second full-width row below it). Sized down to the header's
+                50px; fontSize stays 16 — anything smaller makes iOS zoom the page on focus. */}
+            {bottomTab === 'projects' && mobileViewMode !== 'board' && (
+              <>
+                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search projects"
+                  style={{ flex: 1, minWidth: 0, height: 36, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 10, color: 'var(--color-text-primary)', fontSize: 16 }} />
+                <SortMenu
+                  value={projectSort}
+                  options={PROJECT_SORTS}
+                  onChange={(v) => setProjectSort(v as ProjectSort)}
+                  isMobile
+                  iconSize={18}
+                  buttonStyle={{ width: 36, height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 10, color: 'var(--color-text-secondary)', cursor: 'pointer' }}
+                />
+                <button onClick={() => setNewProject(true)} title="New project" style={{ width: 36, height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', border: 'none', borderRadius: 10, color: '#06140B', cursor: 'pointer' }}>
+                  <Plus size={18} weight="bold" />
+                </button>
+              </>
+            )}
+          </>
         ) : (
           <button onClick={back} style={{ background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, padding: '4px 2px', minWidth: 0 }}>
             <CaretLeft size={20} weight="bold" />
@@ -228,7 +261,9 @@ export function MobileApp() {
         <div style={{ display: 'flex', width: '100%', height: '100%', transform: `translateX(-${level * 100}%)`, transition: 'transform .28s cubic-bezier(.4,0,.2,1)' }}>
           {/* Level 0 — projects / agents, switched by the bottom tab bar */}
           <div style={{ ...slot, display: 'flex', flexDirection: 'column' }}>
-            {bottomTab === 'settings' ? (
+            {bottomTab === 'analytics' ? (
+              <Suspense fallback={analyticsFallback}><AnalyticsView /></Suspense>
+            ) : bottomTab === 'settings' ? (
               <MobileSettingsList onOpen={openSettingsSection} />
             ) : bottomTab === 'agents' ? (
               <AllAgentsView onOpenAgent={openAgentFromList} />
@@ -238,22 +273,8 @@ export function MobileApp() {
               <BoardMobile onOpenThread={openThreadFromList} />
             ) : (
             <>
-            <div style={{ display: 'flex', gap: 8, padding: 10, flexShrink: 0 }}>
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search projects"
-                style={{ flex: 1, minWidth: 0, height: 40, padding: '0 13px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 12, color: 'var(--color-text-primary)', fontSize: 16 }} />
-              <SortMenu
-                value={projectSort}
-                options={PROJECT_SORTS}
-                onChange={(v) => setProjectSort(v as ProjectSort)}
-                isMobile
-                iconSize={20}
-                buttonStyle={{ width: 40, height: 40, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 12, color: 'var(--color-text-secondary)', cursor: 'pointer' }}
-              />
-              <button onClick={() => setNewProject(true)} title="New project" style={{ width: 40, height: 40, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', border: 'none', borderRadius: 12, color: '#06140B', cursor: 'pointer' }}>
-                <Plus size={20} weight="bold" />
-              </button>
-            </div>
-            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y', padding: '0 4px 12px' }}>
+            {/* The search/sort/new controls moved up into the header (one-line top bar). */}
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y', padding: '6px 4px 12px' }}>
               <SortableList
                 items={sortedProjects}
                 disabled={!!query}
@@ -296,7 +317,7 @@ export function MobileApp() {
 
           {/* Level 2 — the thread terminal or the agent dashboard */}
           <div style={{ ...slot, overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative' }}>
-            {leaf === 'tab' && leafTabId && (
+            {leaf === 'tab' && leafTabId && findTerminal(byProject, leafTabId)?.type !== 'grok' && (
               <div style={{ position: 'absolute', top: 8, right: 10, zIndex: 5, pointerEvents: 'none', display: 'flex', alignItems: 'center', lineHeight: 1, background: 'rgba(10,10,12,.6)', borderRadius: 8, padding: '5px 9px', backdropFilter: 'blur(4px)' }}>
                 <ConnectionStatus />
               </div>
@@ -313,7 +334,7 @@ export function MobileApp() {
           reclaims the space. Tapping a tab from a project pops back to the root. */}
       {level < 2 && (
         <div style={{ flexShrink: 0, display: 'flex', borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
-          {([['projects', 'Projects', Folders], ['pinned', 'Pinned', PushPin], ['agents', 'Automations', Robot], ['settings', 'Settings', Gear]] as const).map(([key, label, Icon]) => {
+          {([['projects', 'Projects', Folders], ['pinned', 'Pinned', PushPin], ['agents', 'Automations', Robot], ['analytics', 'Usage', ChartBar], ['settings', 'Settings', Gear]] as const).map(([key, label, Icon]) => {
             const on = bottomTab === key;
             return (
               <button key={key} onClick={() => { setBottomTab(key); if (level > 0) history.back(); }}

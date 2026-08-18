@@ -21,7 +21,7 @@ import { api, type ContentBlock } from '../../api/client';
 import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
 import { useThreadStatus } from '../../stores/threadStatus';
-import { useStructuredChat, type CompactResult } from '../tabs/chat/useStructuredChat';
+import { useStructuredChat, type ApiRetry, type CompactResult } from '../tabs/chat/useStructuredChat';
 import { clearStoredDraft } from '../../hooks/useDraft';
 import type { PendingPermission, Terminal } from '../../api/types';
 import { CANNED, m } from './data';
@@ -96,6 +96,7 @@ interface OverseerState {
   coordinatorContextTokens?: number; // context fill for the ContextIndicator; pushed in by useCoordinatorSync()
   coordinatorCompacting: boolean; // a native /compact is in progress on the coordinator thread
   coordinatorCompactResult: CompactResult | null; // outcome of the coordinator's last compaction attempt
+  coordinatorApiRetry: ApiRetry | null; // a model-call retry in flight on the coordinator (e.g. a 529 outage); pushed in by useCoordinatorSync()
   coordinatorModel?: string; // resolved model name for the coordinator thread
   // Older-history pagination for the coordinator's own ConversationStream, mirroring the
   // agent ChatView's use of useStructuredChat's loadOlder/hasMore/loadingOlder. `loadOlder`
@@ -144,10 +145,21 @@ interface OverseerState {
   // ---- new actions ----
   closeWorkerLightbox: () => void;
   ensureForProject: (sessionId: string | null) => void;
+  /** "New session": archive the current coordinator, then find-or-create a fresh one now.
+   *  Resolves `false` only when the initial archive fails (nothing changed — the menu
+   *  should stay open); `true` on every path where the session actually changed, including
+   *  the mid-flight project-switch early return (the view moved on, so closing is correct). */
+  newCoordinatorSession: (sessionId: string, currentTerminalId: string) => Promise<boolean>;
+  /** "Previous sessions" swap: archive the current coordinator FIRST, then restore the chosen
+   *  archived one (preserves the one-active-coordinator-per-project invariant). Resolves
+   *  `false` only when the initial archive fails; `true` on every path where the session
+   *  actually changed (including the restore-failure → fresh-coordinator fallback, and the
+   *  mid-flight project-switch early return). */
+  resumeCoordinatorSession: (sessionId: string, currentTerminalId: string, archivedTerminalId: string) => Promise<boolean>;
   setCoordinatorStream: (stream: StreamMessage[]) => void;
   setCoordinatorBusy: (busy: boolean) => void;
   /** Pushed in by useCoordinatorSync() from the same useStructuredChat() call as the stream/busy above. */
-  setCoordinatorContextInfo: (info: { contextTokens?: number; compacting: boolean; compactResult: CompactResult | null; model?: string }) => void;
+  setCoordinatorContextInfo: (info: { contextTokens?: number; compacting: boolean; compactResult: CompactResult | null; model?: string; apiRetry: ApiRetry | null }) => void;
   /** Trigger native compaction on the coordinator thread (mirrors useStructuredChat's own `compact`). */
   compactCoordinator: () => void;
   /** Pushed in by useCoordinatorSync() from the same useStructuredChat() call's hasMore/loadingOlder/loadOlder. */
@@ -178,6 +190,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   coordinatorContextTokens: undefined,
   coordinatorCompacting: false,
   coordinatorCompactResult: null,
+  coordinatorApiRetry: null,
   coordinatorModel: undefined,
   coordinatorHasMore: true,
   coordinatorLoadingOlder: false,
@@ -325,6 +338,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       coordinatorContextTokens: undefined,
       coordinatorCompacting: false,
       coordinatorCompactResult: null,
+  coordinatorApiRetry: null,
       coordinatorModel: undefined,
       coordinatorHasMore: true,
       coordinatorLoadingOlder: false,
@@ -349,6 +363,58 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       });
   },
 
+  newCoordinatorSession: async (sessionId, currentTerminalId) => {
+    // Archive first; a failure here means the current session is fully intact — abort.
+    // This is the ONLY path that resolves false: nothing changed, so the caller (the
+    // CoordinatorMenu) should keep the menu open rather than silently closing on a no-op.
+    try { await api.archiveTerminal(currentTerminalId); } catch { return false; }
+    if (get().coordinatorProject !== sessionId) return true; // view moved on mid-flight — closing is still correct
+    // Clear the guard fields so ensureForProject actually runs (it bails while a
+    // coordinatorId is loaded) — it then resets the view + find-or-creates fresh.
+    set({ coordinatorId: null, ensuring: false });
+    get().ensureForProject(sessionId);
+    return true;
+  },
+
+  resumeCoordinatorSession: async (sessionId, currentTerminalId, archivedTerminalId) => {
+    // Order matters: archive the current coordinator BEFORE restoring, or the project
+    // briefly holds two active coordinators and ensureCoordinator's find-first pick
+    // becomes order-dependent.
+    try { await api.archiveTerminal(currentTerminalId); } catch { return false; } // nothing changed
+    let restored = true;
+    try { await api.restoreTerminal(archivedTerminalId); } catch { restored = false; }
+    if (get().coordinatorProject !== sessionId) return true; // view moved on mid-flight — closing is still correct
+    if (!restored) {
+      // The archived row wouldn't come back (e.g. daemon hiccup) — never leave the
+      // project with ZERO active coordinators; fall back to a fresh one. The current
+      // coordinator is already archived at this point, so the session DID change.
+      set({ coordinatorId: null, ensuring: false });
+      get().ensureForProject(sessionId);
+      return true;
+    }
+    // Point the view at the restored thread; reset the same derived fields
+    // ensureForProject resets so the stream remounts cleanly on the new id.
+    set({
+      coordinatorId: archivedTerminalId,
+      coordinatorStream: [],
+      coordinatorBusy: false,
+      coordinatorContextTokens: undefined,
+      coordinatorCompacting: false,
+      coordinatorCompactResult: null,
+      coordinatorApiRetry: null,
+      coordinatorModel: undefined,
+      coordinatorHasMore: true,
+      coordinatorLoadingOlder: false,
+      coordinatorLoadOlder: () => {},
+      coordinatorPending: null,
+      coordinatorAnswer: () => {},
+      sendError: null,
+      ensuring: false,
+    });
+    void useTabs.getState().loadTabs(sessionId).catch(() => {});
+    return true;
+  },
+
   setCoordinatorStream: (stream) => set({ coordinatorStream: stream }),
 
   setCoordinatorBusy: (busy) => set({ coordinatorBusy: busy }),
@@ -359,6 +425,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       coordinatorCompacting: info.compacting,
       coordinatorCompactResult: info.compactResult,
       coordinatorModel: info.model,
+      coordinatorApiRetry: info.apiRetry,
     }),
 
   compactCoordinator: () => {
@@ -394,6 +461,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       coordinatorContextTokens: undefined,
       coordinatorCompacting: false,
       coordinatorCompactResult: null,
+  coordinatorApiRetry: null,
       coordinatorModel: undefined,
       coordinatorHasMore: true,
       coordinatorLoadingOlder: false,
@@ -522,7 +590,7 @@ export function useCoordinatorSync(): void {
   // — without it, imageItemFromBlock returns null for path refs and images vanish after a
   // daemon-restart/transcript-resume. (The hook reads sessionId via a ref, so this does
   // NOT re-key the socket effect.)
-  const { items, busy, model, contextTokens, compacting, compactResult, pending, answer, hasMore, loadingOlder, loadOlder } = useStructuredChat(coordinatorId ?? '', coordinatorProject ?? undefined);
+  const { items, busy, model, contextTokens, compacting, compactResult, apiRetry, pending, answer, hasMore, loadingOlder, loadOlder } = useStructuredChat(coordinatorId ?? '', coordinatorProject ?? undefined);
   const stream = useMemo(() => convItemsToStream(items), [items]);
   useEffect(() => {
     setCoordinatorStream(stream);
@@ -531,8 +599,8 @@ export function useCoordinatorSync(): void {
     setCoordinatorBusy(busy);
   }, [busy, setCoordinatorBusy]);
   useEffect(() => {
-    setCoordinatorContextInfo({ contextTokens, compacting, compactResult, model });
-  }, [contextTokens, compacting, compactResult, model, setCoordinatorContextInfo]);
+    setCoordinatorContextInfo({ contextTokens, compacting, compactResult, model, apiRetry });
+  }, [contextTokens, compacting, compactResult, model, apiRetry, setCoordinatorContextInfo]);
   useEffect(() => {
     setCoordinatorPaging({ hasMore, loadingOlder, loadOlder });
   }, [hasMore, loadingOlder, loadOlder, setCoordinatorPaging]);

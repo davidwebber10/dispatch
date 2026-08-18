@@ -39,7 +39,14 @@ export const useProjects = create<ProjectsState>((set, get) => ({
     if (e.type === 'session:created' && e.session) {
       set({ sessions: [e.session as Session, ...get().sessions] });
     } else if (e.type === 'session:status') {
-      set({ sessions: get().sessions.map(s => s.id === e.sessionId ? { ...s, status: e.status as Session['status'] } : s) });
+      // The event carries the session's freshly-bumped lastActivityAt on activity edges,
+      // so the project card's timestamp — and the "most recent" sort — track thread work
+      // live instead of going stale until a full reload. The backend only bumps on REAL
+      // activity, so a passive status flip (attach/resize) omits the field: adopt it only
+      // when present, never clobbering the existing value with undefined.
+      set({ sessions: get().sessions.map(s => s.id === e.sessionId
+        ? { ...s, status: e.status as Session['status'], ...(e.lastActivityAt ? { lastActivityAt: e.lastActivityAt as string } : {}) }
+        : s) });
     } else if (e.type === 'session:archived') {
       set({ sessions: get().sessions.filter(s => s.id !== e.sessionId) });
     } else if (e.type === 'session:updated') {

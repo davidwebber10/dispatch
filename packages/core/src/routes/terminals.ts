@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import type { SessionService } from '../sessions/service.js';
 import { isPtyType } from '../db/terminals.js';
+import { TAB_ONLY_TYPES, THREAD_TYPES } from '../providers/agent-types.js';
 import type { EventBroadcaster } from '../ws/events.js';
 import type { StatusService } from '../status/service.js';
 
-const VALID_TYPES = ['claude-code', 'codex', 'shell', 'browser', 'notes', 'file'];
+const VALID_TYPES: readonly string[] = [...THREAD_TYPES, ...TAB_ONLY_TYPES];
 
 export function createTerminalsRouter(sessionService: SessionService, broadcaster?: EventBroadcaster, statusService?: StatusService): Router {
   const router = Router();
@@ -69,13 +70,14 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   });
 
   // GET /api/terminals/:terminalId/scrollback — the ring's true byte count, so a client
-  // that requested a trimmed replay (mobile) can tell whether older history exists.
-  // Deliberately NOT sent over the terminal websocket — that stream carries raw PTY
-  // bytes, and injecting a JSON frame there would corrupt terminal output.
+  // that requested a trimmed replay (mobile) can tell whether older history exists,
+  // plus where that ring sits in the process's lifetime output (`startOffset`,
+  // `totalWritten`) so a client can tell WHICH window it is looking at. `totalBytes`
+  // stays for back-compat.
   router.get('/terminals/:terminalId/scrollback', (req, res) => {
     const terminal = sessionService.getTerminal(req.params.terminalId);
     if (!terminal) return res.status(404).json({ error: 'Terminal not found' });
-    res.json({ totalBytes: sessionService.getScrollbackSize(req.params.terminalId) });
+    res.json(sessionService.getScrollbackInfo(req.params.terminalId));
   });
 
   // GET /api/terminals/:terminalId/conversation?since=N&before=M&beforeUuid=U&limit=L —
@@ -113,8 +115,14 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     const ok = typeof payload === 'string' ? payload.length > 0 : Array.isArray(payload) && payload.length > 0;
     if (!ok) return res.status(400).json({ error: 'text (string) or content (string | block[]) is required' });
     try {
-      sessionService.sendStructuredMessage(req.params.terminalId, payload, source);
+      // Transport-agnostic: a Pretty thread takes it over its structured channel, a CLI/PTY
+      // thread gets it typed into its TUI. Before this, a PTY target threw "no structured
+      // session for terminal" — which is why one thread could only message a Pretty peer.
+      const sent = sessionService.sendThreadMessage(req.params.terminalId, payload, source);
       if (source === 'user') sessionService.noteUserMessageToAgent(req.params.terminalId, payload); // tell the coordinator
+      // A structured send flips to working off its own stream events; a PTY write has no such
+      // signal, so mark it here exactly like the /input route does for a submitted line.
+      if (sent.transport === 'pty') statusService?.markWorking(req.params.terminalId, 'Thinking…');
       res.status(204).end();
     } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
   });

@@ -7,7 +7,9 @@ import * as appState from '../db/app-state.js';
 import { platform } from '../platform/index.js';
 import { sumTranscriptTokens } from '../sessions/cc-sessions.js';
 import { getRunningVersion, isNewerVersion } from '../update/version.js';
+import { parseStoredNotes, readLocalReleaseNote } from '../update/notes.js';
 import { revealClientFrom } from '../files/reveal.js';
+import { notionalValueUsd } from '../analytics/pricing.js';
 
 export function createStateRouter(db: Database.Database): Router {
   const router = Router();
@@ -96,17 +98,18 @@ export function createStateRouter(db: Database.Database): Router {
       const content = fs.readFileSync(jsonlPath, 'utf-8');
       const stats = sumTranscriptTokens(content);
 
-      // Per-model pricing (per million tokens)
-      const pricing: Record<string, { input: number; output: number; cacheRead: number; cacheCreate: number }> = {
-        'claude-opus-4-6': { input: 15, output: 75, cacheRead: 1.5, cacheCreate: 18.75 },
-        'claude-sonnet-4-6': { input: 3, output: 15, cacheRead: 0.3, cacheCreate: 3.75 },
-        'claude-haiku-4-5-20251001': { input: 0.8, output: 4, cacheRead: 0.08, cacheCreate: 1 },
-      };
-      const p = pricing[stats.model] || pricing['claude-sonnet-4-6'];
-      const totalCost = (stats.inputTokens / 1e6) * p.input
-                       + (stats.outputTokens / 1e6) * p.output
-                       + (stats.cacheReadTokens / 1e6) * p.cacheRead
-                       + (stats.cacheCreationTokens / 1e6) * p.cacheCreate;
+      // Notional: list-price arithmetic, not a bill.
+      const totalCost = notionalValueUsd({
+        model: stats.model,
+        input: stats.inputTokens,
+        output: stats.outputTokens,
+        cacheRead: stats.cacheReadTokens,
+        cacheCreate: stats.cacheCreationTokens,
+      });
+      // null (not 0) when the model has no price entry: "we do not know this model's
+      // price" and "this cost nothing" are different facts, and a caller must be able
+      // to tell them apart.
+      const estimatedCostUSD = totalCost === null ? null : Math.round(totalCost * 100) / 100;
 
       res.json({
         found: true,
@@ -116,7 +119,7 @@ export function createStateRouter(db: Database.Database): Router {
         cacheReadTokens: stats.cacheReadTokens,
         cacheCreationTokens: stats.cacheCreationTokens,
         totalTokens: stats.totalTokens,
-        estimatedCostUSD: Math.round(totalCost * 100) / 100,
+        estimatedCostUSD,
         messageCount: stats.messageCount,
       });
     } catch (err: any) {
@@ -135,6 +138,12 @@ export function createStateRouter(db: Database.Database): Router {
   // running version on every read (not a trusted stored flag) so a late-joining
   // client — or one that reconnects after `dispatch update` already ran — never
   // sees a stale "update available" banner for a release it's already running.
+  //
+  // `notes` carries the human-readable release notes for every version between the one
+  // running here and the newest one, so the update prompt can show what the update
+  // contains before it installs. `currentNotes` is the note for the version running
+  // right now, read from this checkout — that one CAN come from disk, because the file
+  // shipped with the code.
   router.get('/update', (_req, res) => {
     const tag = appState.get(db, 'latest_release_tag');
     const url = appState.get(db, 'latest_release_url');
@@ -147,6 +156,8 @@ export function createStateRouter(db: Database.Database): Router {
       url: available ? url : null,
       publishedAt: available ? publishedAt : null,
       currentVersion,
+      notes: available ? parseStoredNotes(appState.get(db, 'latest_release_notes'), currentVersion) : [],
+      currentNotes: readLocalReleaseNote(currentVersion),
     });
   });
 

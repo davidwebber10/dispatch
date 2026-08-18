@@ -1,4 +1,4 @@
-export type TerminalType = 'claude-code' | 'codex' | 'shell' | 'browser' | 'notes' | 'file';
+export type TerminalType = 'claude-code' | 'codex' | 'grok' | 'opencode' | 'shell' | 'browser' | 'notes' | 'file';
 export type SessionStatus = 'working' | 'waiting' | 'needs_input' | 'done';
 // The backend genuinely persists AND broadcasts 'scheduled' (a wake-scheduler tool ended the
 // turn — see structured/manager.ts's WAKE_TOOLS) and 'queued' (accepted but not yet launched —
@@ -86,7 +86,10 @@ export interface TerminalBoardState {
 
 export interface Provider { name: string; displayName: string; }
 
-export interface FileEntry { name: string; isDirectory: boolean; path: string; }
+export interface FileEntry { name: string; isDirectory: boolean; path: string; size?: number | null; }
+
+export interface GitChangedFile { path: string; status: string }
+export interface GitStatus { branch: string | null; files: GitChangedFile[] }
 
 export interface AuthRequest {
   id: string;
@@ -100,19 +103,33 @@ export interface AuthRequest {
   updatedAt: string;
 }
 
+/** One release's human-readable notes, as written in docs/releases/vX.Y.Z.md. */
+export interface ReleaseNote {
+  /** The git tag, e.g. `v2.11.0`. */
+  version: string;
+  url: string;
+  publishedAt: string;
+  /** Markdown. */
+  notes: string;
+}
+
 export interface UpdateState {
   available: boolean;
   version: string | null;
   url: string | null;
   publishedAt: string | null;
   currentVersion: string;
+  /** Notes for every version between the running one and the newest, newest first. */
+  notes?: ReleaseNote[];
+  /** The note for the version running right now, for "what's new" in Settings. */
+  currentNotes?: string | null;
 }
 
 export interface SessionStats {
   found: boolean;
   model?: string;
   totalTokens?: number;
-  estimatedCostUSD?: number;
+  estimatedCostUSD?: number | null;
   messageCount?: number;
 }
 
@@ -308,9 +325,20 @@ export interface CcRecentSession { id: string; mtime: number; preview: string; m
 export interface CodexRecentSession { id: string; mtime: number; preview: string; messageCount: number; truncated: boolean; }
 
 // Setup / onboarding — mirrors core /api/setup.
-export interface ProviderStatus { name: 'claude' | 'codex'; installed: boolean; version?: string; signedIn: boolean | 'unknown'; }
+export type ProviderName = 'claude' | 'codex' | 'grok' | 'opencode';
+export interface ProviderStatus { name: ProviderName; installed: boolean; version?: string; signedIn: boolean | 'unknown'; }
+/** Result of POST /api/setup/install/:provider — the re-detected truth, not the exit code. */
+export interface InstallResult { ok: boolean; output: string; status: ProviderStatus; loginCommand: string; }
 export interface TailscaleStatus { installed: boolean; running: boolean; dnsName?: string; url?: string; }
 export interface SetupState { firstRun: boolean; providers: ProviderStatus[]; tailscale: TailscaleStatus; secrets: { connected: boolean }; }
+
+// Harness settings — mirrors core /api/settings/harnesses. The opencode KEY itself never
+// crosses this wire: `opencodeKey` carries the Doppler secret NAME and a presence boolean.
+export interface HarnessSettingsEntry { defaultModel?: string; defaultMode?: 'cli' | 'pretty'; keySecret?: string; }
+export interface HarnessSettingsResponse {
+  settings: Partial<Record<string, HarnessSettingsEntry>>;
+  opencodeKey: { secret: string; present: boolean };
+}
 
 // Secrets (Doppler) — mirrors core /api/secrets.
 export interface DopplerStatus { connected: boolean; project: string | null; config: string | null; enabled: boolean; readOnly: boolean }
@@ -325,3 +353,64 @@ export type AddIntegrationInput =
   | { type: 'remote'; name: string; url: string; headers?: Record<string, string>; env?: Record<string, string> }
   | { type: 'stdio'; name: string; command: string; args?: string[]; env?: Record<string, string> };
 export interface IntegrationsExport { version: 1; integrations: Omit<Integration, 'id' | 'createdAt' | 'updatedAt'>[] }
+
+// Analytics (usage, throughput, personal stats) — mirrors core packages/core/src/analytics/queries.ts
+// and packages/core/src/routes/analytics.ts.
+export interface AnalyticsRange { from?: string; to?: string; projectId?: string; provider?: string }
+export type AnalyticsMetric = 'tokens' | 'outputTokens' | 'turns' | 'duration';
+export type AnalyticsGroupBy = 'model' | 'provider' | 'project' | 'outcome' | 'none';
+export type AnalyticsDimension = 'project' | 'thread' | 'model';
+
+export interface AnalyticsSummary {
+  turns: number;
+  threads: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreateTokens: number;
+  totalTokens: number;
+  /**
+   * Turns that closed without a single usage-bearing frame ever being seen.
+   *
+   * This is NOT the same as a turn that used zero tokens. A Codex turn can settle
+   * through its error path without ever emitting a usage frame, and a PTY thread emits
+   * no frames at all. Those turns really did consume tokens; we simply never got a
+   * count. Never render this as a measured zero — show it separately, e.g. "N turns
+   * reported no usage".
+   */
+  unreportedTurns: number;
+  /**
+   * How many of `turns` came from the history importer, under the same filters.
+   *
+   * Imported rows are one per assistant MESSAGE, not one per turn — a transcript
+   * records no turn boundaries — so a non-zero value here means `turns` mixes two
+   * units. Their tokens are real and stay in every token total; only the count
+   * differs. The TURNS tile must say so rather than let the reader assume.
+   */
+  backfilledTurns: number;
+}
+
+export interface AnalyticsPoint { day: string; key: string; value: number }
+export interface AnalyticsTopRow { key: string; label: string; value: number }
+
+export interface AnalyticsRecords {
+  totalTokens: number;
+  totalTurns: number;
+  busiestDay: string | null;
+  busiestDayTokens: number;
+  topModel: string | null;
+  activeDays: number;
+  longestTurnSeconds: number;
+}
+
+export interface AnalyticsBackfillState {
+  trackingStartedAt: string;
+  state: 'idle' | 'running' | 'done' | 'error';
+  done: number;
+  total: number;
+  lastFinishedAt: string | null;
+  error?: string;
+  /** Imported rows in the table, over ALL time — unaffected by the view's filters,
+   * so the remove control stays reachable whatever range the reader is looking at. */
+  backfilledTurns: number;
+}

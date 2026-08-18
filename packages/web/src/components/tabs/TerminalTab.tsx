@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -9,11 +9,14 @@ import { openTerminalSocket, INITIAL_REPLAY_MOBILE, MAX_REPLAY, nextReplayStep }
 import { api } from '../../api/client';
 import type { Terminal } from '../../api/types';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { ThreadAskBanner } from './ThreadAskBanner';
 import { useDraft } from '../../hooks/useDraft';
 import { useSettings } from '../../stores/settings';
 import { useDictation } from '../../hooks/useDictation';
 import { DictationControl } from '../dictation/DictationControl';
 import { InputActionsMenu } from '../dictation/InputActionsMenu';
+import { consumePageTicks, shouldPtyScroll } from '../../lib/ptyWheel';
+import { findTerminal, useTabs } from '../../stores/tabs';
 
 type SoftKey = { label: string; seq: string; title?: string; Icon?: Icon };
 // Slash commands live in a searchable sheet behind the "/" key. Run-commands end
@@ -26,6 +29,26 @@ type SlashCmd = { cmd: string; seq: string; desc: string };
 // this must not be tight enough to abort a merely-slow-but-alive rebuild.
 const REBUILD_TIMEOUT_MS = 10_000;
 
+// xterm keeps at most `options.scrollback` lines and trims the HEAD to stay under
+// it. Once the buffer sits at that ceiling a larger replay adds no visible history
+// at all — it still resets the screen, and the anchor delta (newLength - oldLength)
+// collapses to ~0, so the viewport is yanked to scrollToLine(0). A rebuild there is
+// pure loss, so we refuse it. The fraction leaves a small margin: the last couple of
+// percent of the buffer is not worth a full reset either.
+const SCROLLBACK_CAP_FRACTION = 0.98;
+
+// Shared look for every key in the row above the mobile composer. `flex: 0 0 auto` is
+// the important part: the row scrolls, so a key keeps its natural width instead of
+// dividing the row evenly and shrinking below a hittable size as the count grows.
+// The explicit padding overrides the UA button padding — without it a fixed-width
+// icon button collapses its SVG to a sliver under the global `border-box`.
+const SOFT_KEY: CSSProperties = {
+  flex: '0 0 auto', minWidth: 46, height: 36, padding: '0 10px',
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  background: 'var(--color-elevated)', border: '1px solid var(--color-border)',
+  borderRadius: 12, cursor: 'pointer',
+};
+
 const ENTER: SoftKey = { label: 'Enter', seq: '\r', title: 'Enter', Icon: ArrowElbowDownLeft };
 const UP_DOWN: SoftKey[] = [
   { label: 'Up', seq: '\x1b[A', title: 'Up', Icon: CaretUp },
@@ -36,6 +59,14 @@ const CLAUDE_ACTIONS: SoftKey[] = [
   { label: 'esc', seq: '\x1b', title: 'Escape' }, ENTER, ...UP_DOWN,
   { label: '⌃O', seq: '\x0f', title: 'Ctrl-O' },
   { label: '⌃E', seq: '\x05', title: 'Ctrl-E' },
+];
+// Grok's fullscreen TUI owns its own scrollback. Page Up/Down work even while
+// the prompt is focused (mouse-wheel does not). The swipe path sends these
+// keys; the buttons are the tap fallback.
+const GROK_ACTIONS: SoftKey[] = [
+  { label: 'esc', seq: '\x1b', title: 'Escape' }, ENTER, ...UP_DOWN,
+  { label: 'PgUp', seq: '\x1b[5~', title: 'Page up' },
+  { label: 'PgDn', seq: '\x1b[6~', title: 'Page down' },
 ];
 const CODEX_ACTIONS: SoftKey[] = [
   { label: 'esc', seq: '\x1b', title: 'Escape' }, ENTER, ...UP_DOWN,
@@ -85,6 +116,7 @@ const CODEX_SLASH: SlashCmd[] = [
 ];
 function keysFor(type?: string): { actions: SoftKey[]; slash: SlashCmd[] } {
   if (type === 'codex') return { actions: CODEX_ACTIONS, slash: CODEX_SLASH };
+  if (type === 'grok') return { actions: GROK_ACTIONS, slash: [] };
   if (type === 'shell') return { actions: SHELL_ACTIONS, slash: [] };
   return { actions: CLAUDE_ACTIONS, slash: CLAUDE_SLASH };
 }
@@ -95,6 +127,10 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
   const sockRef = useRef<ReturnType<typeof openTerminalSocket> | null>(null);
   const termRef = useRef<XTerm | null>(null);
   const [meta, setMeta] = useState<Terminal | null>(null);
+  const cachedType = useTabs((s) => findTerminal(s.byProject, terminalId)?.type);
+  const termType = cachedType ?? meta?.type;
+  const typeRef = useRef(termType);
+  typeRef.current = termType;
   const [drop, setDrop] = useState(false);
   const [note, setNote] = useState('');
   const [atBottom, setAtBottom] = useState(true);
@@ -109,8 +145,11 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashQuery, setSlashQuery] = useState('');
   const isMobile = useIsMobile();
+  const grokFlush = isMobile && termType === 'grok';
   const termFontSize = useSettings((s) => s.fontSize);
   const termScrollback = useSettings((s) => s.scrollback);
+  const ptyAutocorrect = useSettings((s) => s.ptyAutocorrect);
+  const setPtyAutocorrect = useSettings((s) => s.setPtyAutocorrect);
   const forceFitRef = useRef<() => void>(() => {});
   const scrollToEndRef = useRef<() => void>(() => {});
   const rowMeasureRef = useRef<() => void>(() => {});
@@ -132,13 +171,36 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     let currentReplay = initialReplay;
     let hasOlder = false;   // the ring holds more than we've currently loaded
     let rebuilding = false; // guards re-entry: one rebuild at a time
-    let pendingLive: string[] = []; // live frames buffered while a rebuild is in flight
+    // Absolute byte position, in the PTY's lifetime output, where the replay that
+    // is CURRENTLY on screen begins (from the `dispatch:replay-meta` frame of
+    // whichever socket owns the view). Infinity means "not known": a daemon older
+    // than the meta protocol never sends the frame, and every comparison below must
+    // then fall back to the pre-protocol behaviour instead of blocking rebuilds.
+    let displayedStartOffset = Number.POSITIVE_INFINITY;
+    // Set once the daemon has PROVEN nothing older exists (a rebuild's replay began
+    // at the same offset as, or later than, what is already displayed). A ring only
+    // ever loses history, so this can never become false again — and it has to
+    // survive the getScrollbackSize() writers below, which compare RETAINED bytes
+    // and would otherwise keep re-offering a rebuild that can only abort again.
+    let noOlderProven = false;
+    // Live frames buffered while a rebuild is in flight, kept PER SOCKET. Both sockets are
+    // subscribed to the same PTY during a rebuild (ws/terminal.ts registers one 'data' listener
+    // per connection), so each chunk arrives TWICE — once on each. One shared buffer therefore
+    // wrote every mid-rebuild chunk twice on success (doubled cursor/scroll-region escapes move
+    // the cursor twice as far, so later output overwrites lines that should have survived —
+    // "lines disappear"), and threw them ALL away on abort even though the old socket's view was
+    // never reset, permanently losing up to REBUILD_TIMEOUT_MS of output. Splitting them lets
+    // each outcome drain exactly the buffer that is contiguous with the view it keeps:
+    //   success → drain pendingNew (continues the new socket's fresh replay snapshot)
+    //   abort   → drain pendingOld (continues the old socket's still-intact view)
+    let pendingOld: string[] = []; // frames from the CURRENT (primary) socket
+    let pendingNew: string[] = []; // frames from the speculative rebuild socket
     // Aborts the in-flight rebuild, if any. Shared across the whole effect
     // lifetime (not just one startRebuild call) so ANY socket's onReset —
     // whichever one is currently authoritative — can abort a rebuild before
     // doing its own reset, even a LATER rebuild than the one active when that
     // socket was created.
-    let activeRebuildAbort: (() => void) | null = null;
+    let activeRebuildAbort: ((opts?: { recoverBuffered?: boolean }) => void) | null = null;
     const openSockets = new Set<ReturnType<typeof socketFactory>>();
     const resyncSize = () => { if (term.cols && term.rows) sockRef.current?.resize(term.cols, term.rows); };
 
@@ -152,15 +214,38 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       activeRebuildAbort?.();
       term.reset();
       resyncSize();
+      // The server replays the whole scrollback next — land at the newest output, not at
+      // whatever line the pre-reset viewport happened to sit on (see pinNextReplay).
+      pinNextReplay = true;
     };
 
     let gotData = false;
+    // A CLI thread must open showing its NEWEST output, the same way a Pretty thread does
+    // (ChatView pins to the bottom via MessageScroller's defaultScrollPosition="end" plus its
+    // post-mount backfill pin). Nothing did that here, so a PTY thread opened wherever xterm's
+    // viewport happened to land after a large replay was written — usually the top, leaving the
+    // reader to scroll down to catch up. Codex threads show this every time because they are
+    // always PTY; Claude threads mostly hid it by running on the Pretty transport.
+    //
+    // Armed for the FIRST frame of the connection and re-armed on a reconnect (whose reset is
+    // followed by a fresh full replay). Deliberately NOT set for ordinary live frames — that
+    // would yank the viewport back down while the reader is deliberately scrolled up reading
+    // history. The rebuild path owns its own anchor restore (finishRebuild) and never routes
+    // through here, so the two can't fight.
+    let pinNextReplay = true;
     // The "just show it" path: used for every socket's data whenever that data is
     // NOT part of an in-flight rebuild's buffered catch-up — i.e. the original
     // connection's normal traffic, and any survivor-of-a-rebuild socket once it
     // has become primary again.
     const attachLive = (chunk: string) => {
-      term.write(chunk);
+      if (pinNextReplay) {
+        pinNextReplay = false;
+        // In the write CALLBACK: xterm parses asynchronously, so scrolling synchronously after
+        // write() would target the PRE-write buffer and land short of the end.
+        term.write(chunk, () => { if (!disposed) scrollToEndRef.current(); });
+      } else {
+        term.write(chunk);
+      }
       if (!gotData) {
         gotData = true;
         setLoading(false);
@@ -170,15 +255,27 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
         // just means scrolling up won't offer more, not a broken attach.
         void api.getScrollbackSize(terminalId).then((total) => {
           if (disposed) return;
-          hasOlder = total > currentReplay;
+          hasOlder = !noOlderProven && total > currentReplay;
         }).catch(() => { /* best-effort */ });
       }
+    };
+
+    // True when xterm's line buffer is at (or within a hair of) its configured
+    // ceiling — see SCROLLBACK_CAP_FRACTION. `options.scrollback` is undefined only
+    // before the terminal is configured, in which case there is nothing to compare.
+    const atScrollbackCap = () => {
+      const cap = term.options.scrollback;
+      if (typeof cap !== 'number' || cap <= 0) return false;
+      return term.buffer.active.length >= cap * SCROLLBACK_CAP_FRACTION;
     };
 
     function maybeStartRebuild() {
       if (disposed || rebuilding || !hasOlder) return;
       if (currentReplay >= MAX_REPLAY) return;
       if (term.buffer.active.viewportY !== 0) return;
+      // A bigger replay cannot show more than xterm is willing to keep. Stop
+      // offering it rather than paying a reset + viewport jump for zero new lines.
+      if (atScrollbackCap()) { hasOlder = false; return; }
       startRebuild();
     }
 
@@ -193,12 +290,21 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     function startRebuild() {
       rebuilding = true;
       setLoadingOlder(true);
-      pendingLive = [];
+      pendingOld = [];
+      pendingNew = [];
       const nextSize = nextReplayStep(currentReplay);
       const oldSock = sockRef.current!;
       let gotReplay = false;
       let oldLength = 0;
       let oldViewportY = 0;
+      // Where the new socket's replay begins, from its meta frame. Undefined when
+      // the daemon does not speak the meta protocol — then the offset check is
+      // skipped entirely and the rebuild behaves exactly as it did before.
+      let newStartOffset: number | undefined;
+      // Set by abort(): the discarded socket may still deliver frames the server had
+      // already queued before our close() took effect. They belong to a snapshot we
+      // threw away — resetting the screen for them would destroy the surviving view.
+      let aborted = false;
       // True once THIS attempt has finished or aborted — guards re-entrant
       // callbacks (our own newSock.close() below still fires the socket's
       // onClose once more; a stale rebuildTimer could in principle still be
@@ -210,8 +316,8 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
 
       const drainPending = () => {
         if (disposed || settled) return;
-        if (pendingLive.length === 0) { finishRebuild(); return; }
-        const chunk = pendingLive.shift()!;
+        if (pendingNew.length === 0) { finishRebuild(); return; }
+        const chunk = pendingNew.shift()!;
         term.write(chunk, drainPending);
       };
 
@@ -220,33 +326,58 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
         settled = true;
         clearRebuildTimer();
         activeRebuildAbort = null;
+        // The old socket's buffered frames are deliberately dropped on SUCCESS: its view is
+        // being replaced wholesale, and the same bytes already reached us on the new socket
+        // (both were subscribed to the one PTY) — writing them too is what doubled them.
+        pendingOld = [];
         const newLength = term.buffer.active.length;
         term.scrollToLine(Math.max(0, oldViewportY + (newLength - oldLength)));
         sockRef.current = newSock;
         openSockets.delete(oldSock);
         oldSock.close();
         currentReplay = nextSize;
+        // The new socket's window is now the one on screen.
+        if (newStartOffset !== undefined) displayedStartOffset = newStartOffset;
+        // Keep the surviving socket's RECONNECT size in step with what we display.
+        // It was opened at nextSize, so this is belt-and-braces — but the whole
+        // reconnect-shrinks-history bug came from a replay size drifting out of
+        // sync with the view, so state it explicitly instead of relying on that.
+        newSock.setReplayBytes?.(nextSize);
         rebuilding = false;
         setLoadingOlder(false);
         void api.getScrollbackSize(terminalId).then((total) => {
           if (disposed) return;
-          hasOlder = currentReplay < MAX_REPLAY && total > currentReplay;
+          hasOlder = !noOlderProven && currentReplay < MAX_REPLAY && total > currentReplay;
         }).catch(() => { hasOlder = false; });
       };
 
       // Abort a rebuild that failed or stalled before delivering its replay:
       // undo NOTHING that is already visible — the old socket and current
       // terminal content are left exactly as they were — just discard the
-      // speculative new socket and any live frames buffered for it, and clear
-      // the guard so a later scroll-to-top can try again. This is the fix for
-      // the worst failure mode: a dead new socket must never leave "load
-      // older" permanently stuck for the rest of the session.
-      const abort = () => {
+      // speculative new socket, and clear the guard so a later scroll-to-top can
+      // try again. This is the fix for the worst failure mode: a dead new socket
+      // must never leave "load older" permanently stuck for the rest of the session.
+      //
+      // The old socket's frames withheld during the attempt MUST still be written: its view
+      // was never reset, so they are the missing continuation of what the reader is looking
+      // at. Discarding them (the previous behaviour) silently lost every byte the PTY emitted
+      // during the attempt — up to REBUILD_TIMEOUT_MS (10s) on a stall, and unrecoverable
+      // because nothing replays afterwards. The speculative socket's own buffer IS dropped:
+      // it belongs to a snapshot that is being thrown away.
+      const abort = (opts?: { recoverBuffered?: boolean }) => {
         if (settled) return;
         settled = true;
+        aborted = true;
         clearRebuildTimer();
         activeRebuildAbort = null;
-        pendingLive = [];
+        // Only when the OLD view survives and simply continues. The reset-driven and unmount
+        // callers pass nothing: a full replay is already inbound (and will contain these bytes),
+        // or the terminal is going away — replaying here would duplicate or waste.
+        // Written before `rebuilding` clears, so xterm's ordered write queue keeps these
+        // ahead of any frame that lands immediately after.
+        if (opts?.recoverBuffered) for (const chunk of pendingOld) term.write(chunk);
+        pendingOld = [];
+        pendingNew = [];
         rebuilding = false;
         setLoadingOlder(false);
         openSockets.delete(newSock);
@@ -257,13 +388,32 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       // Silent-hang guard: the new socket connects but the replay frame never
       // arrives (e.g. server never responds). Cleared the instant the replay
       // frame lands — see onData below.
-      rebuildTimer = setTimeout(abort, REBUILD_TIMEOUT_MS);
+      rebuildTimer = setTimeout(() => abort({ recoverBuffered: true }), REBUILD_TIMEOUT_MS);
 
       const newSock = socketFactory({
         terminalId,
         replayBytes: nextSize,
+        // Arrives BEFORE the replay bytes, which is the whole point: it lets us
+        // decide whether this window is worth showing before anything is destroyed.
+        onMeta: (m) => {
+          if (disposed || aborted) return;
+          // Already promoted to primary — this is a later reconnect's replay, which
+          // replaces the view wholesale, so its offset is what's now on screen.
+          if (settled) { displayedStartOffset = m.startOffset; return; }
+          // A window that starts at or after what we already show contains nothing
+          // older. Rebuilding would reset the screen and jump the viewport to buy
+          // the reader exactly zero extra history, so keep the current view and
+          // stop offering more. Only a STRICTLY lower offset may replace it.
+          if (m.startOffset >= displayedStartOffset) {
+            noOlderProven = true;
+            hasOlder = false;
+            abort({ recoverBuffered: true });
+            return;
+          }
+          newStartOffset = m.startOffset;
+        },
         onData: (chunk) => {
-          if (disposed) return;
+          if (disposed || aborted) return;
           if (!gotReplay) {
             gotReplay = true;
             clearRebuildTimer();
@@ -274,7 +424,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
             term.write(chunk, drainPending);
             return;
           }
-          if (rebuilding) { pendingLive.push(chunk); return; }
+          if (rebuilding) { pendingNew.push(chunk); return; }
           attachLive(chunk);
         },
         // Before the replay lands, a reset here means THIS socket dropped and
@@ -282,13 +432,13 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
         // an error/close/timeout (no term.reset(): the old view must survive).
         // After it's settled (this socket has already become primary), it's an
         // ordinary later reconnect — route through the shared handler.
-        onReset: () => { if (settled) { handleConnectionReset(); return; } abort(); },
+        onReset: () => { if (settled) { handleConnectionReset(); return; } abort({ recoverBuffered: true }); },
         // The new socket errors or closes before ever delivering a replay —
         // same abort. (The socket abstraction has no separate error event: a
         // WebSocket error always surfaces via close, so this one hook covers
         // both triggers.) A close AFTER the replay already landed is ignored
         // here — that socket's own reconnect/onReset path takes over instead.
-        onClose: () => { if (!gotReplay) abort(); },
+        onClose: () => { if (!gotReplay) abort({ recoverBuffered: true }); },
       });
       openSockets.add(newSock);
     }
@@ -296,9 +446,12 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     const sock = socketFactory({
       terminalId,
       replayBytes: initialReplay,
+      // This socket owns the view, so its replay window IS what the reader sees —
+      // on the first connect and again after every reconnect-driven replay.
+      onMeta: (m) => { if (!disposed) displayedStartOffset = m.startOffset; },
       onData: (chunk) => {
         if (disposed) return;
-        if (rebuilding) { pendingLive.push(chunk); return; }
+        if (rebuilding) { pendingOld.push(chunk); return; }
         attachLive(chunk);
       },
       // On reconnect the server replays the scrollback — clear first so it
@@ -316,6 +469,22 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     term.onData((d) => sockRef.current?.send(d));
 
     let lastW = -1, lastH = -1, lastCols = -1, lastRows = -1, pending = false;
+    const applyFit = (opts?: { alwaysNotify?: boolean }) => {
+      const el = hostRef.current;
+      // Skip while backgrounded: iOS reports a collapsed visual viewport and a
+      // fit here would tell Grok it is 10×8. We refit on the way back instead.
+      if (disposed || !el || document.hidden) return;
+      const w = el.clientWidth, h = el.clientHeight;
+      if (w === 0 || h === 0) return;
+      try { fit.fit(); } catch { return; }
+      lastW = w; lastH = h;
+      const changed = term.cols !== lastCols || term.rows !== lastRows;
+      if (changed || opts?.alwaysNotify) {
+        lastCols = term.cols; lastRows = term.rows;
+        sockRef.current?.resize(term.cols, term.rows);
+      }
+      rowMeasureRef.current();
+    };
     const scheduleFit = () => {
       if (pending) return;
       pending = true;
@@ -323,31 +492,14 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
         pending = false;
         const el = hostRef.current;
         if (disposed || !el) return;
-        const w = el.clientWidth, h = el.clientHeight;
-        if (w === lastW && h === lastH) return;
-        lastW = w; lastH = h;
-        if (w === 0 || h === 0) return;
-        try { fit.fit(); } catch { return; }
-        if (term.cols !== lastCols || term.rows !== lastRows) {
-          lastCols = term.cols; lastRows = term.rows;
-          sockRef.current?.resize(term.cols, term.rows);
-        }
-        rowMeasureRef.current();
+        if (el.clientWidth === lastW && el.clientHeight === lastH) return;
+        applyFit();
       });
     };
 
-    // Force a refit even when the container size is unchanged (e.g. font-size change).
-    forceFitRef.current = () => {
-      const el = hostRef.current;
-      if (disposed || !el || el.clientWidth === 0 || el.clientHeight === 0) return;
-      try { fit.fit(); } catch { return; }
-      lastW = el.clientWidth; lastH = el.clientHeight;
-      if (term.cols !== lastCols || term.rows !== lastRows) {
-        lastCols = term.cols; lastRows = term.rows;
-        sockRef.current?.resize(term.cols, term.rows);
-      }
-      rowMeasureRef.current();
-    };
+    // Force a refit even when the container size is unchanged (font-size, or
+    // returning from background — iOS often restores the same box).
+    forceFitRef.current = () => applyFit({ alwaysNotify: true });
 
     requestAnimationFrame(() => { if (!disposed) { scheduleFit(); try { term.focus(); } catch { /* jsdom */ } } });
 
@@ -357,6 +509,15 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       ro.observe(hostRef.current);
     }
     window.addEventListener('resize', scheduleFit);
+    const vv = window.visualViewport;
+    vv?.addEventListener('resize', scheduleFit);
+    const onForeground = () => {
+      if (document.hidden) return;
+      // iOS applies the restored layout a frame after visibilitychange.
+      requestAnimationFrame(() => { if (!disposed) applyFit({ alwaysNotify: true }); });
+    };
+    document.addEventListener('visibilitychange', onForeground);
+    window.addEventListener('pageshow', onForeground);
 
     // --- Sub-pixel smooth touch scrolling (mobile) ---
     // xterm's DOM renderer only repaints in whole rows, so every scroll path it
@@ -390,6 +551,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
 
     let subPx = 0;       // sub-row remainder, applied as a screen translate
     let overscroll = 0;  // signed px pulled past an end (>0 past bottom) — the rubber-band
+    let tuiAcc = 0;      // leftover px toward the next mouse-wheel tick (alt-screen TUIs)
     const applyTransform = () => { const s = screenEl(); if (!s) return; const ty = -subPx - overscroll; s.style.transform = ty ? `translate3d(0,${ty}px,0)` : ''; };
     const offRender = term.onRender(() => applyTransform()); // keep the offset locked to each repaint
 
@@ -418,8 +580,19 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       };
       springId = requestAnimationFrame(step);
     };
+    const ptyScroll = () => shouldPtyScroll(term.buffer.active.type, typeRef.current);
     const scrollByPx = (px: number) => {
       const h = rowHeight || 17;
+      // Grok (always) and any alt-screen TUI own their own scrollback. Mouse-wheel
+      // CSI is ignored while Grok's prompt is focused — which is the idle state —
+      // so we send Page Up/Down, which the TUI documents as working in both
+      // focus modes. The normal-buffer xterm path stays for shell / --minimal.
+      if (ptyScroll()) {
+        const next = consumePageTicks(tuiAcc, px);
+        tuiAcc = next.accPx;
+        if (next.seq) sockRef.current?.send(next.seq);
+        return;
+      }
       // Already rubber-banded: deeper pull resists (×0.45), pulling back releases
       // it 1:1; snap to 0 when it crosses neutral. Never touches content here.
       if (overscroll !== 0) {
@@ -463,6 +636,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       e.preventDefault();
     };
     const onTouchEnd = () => {
+      if (ptyScroll()) { tuiAcc = 0; return; } // page keys are discrete — no inertial extra pages
       if (overscroll !== 0) { springBack(); return; } // released mid rubber-band → bounce home
       if (!moved) return; // terminal is non-interactive on mobile — a tap does nothing (type via the input bar)
       let v = Math.max(-12, Math.min(12, vel));
@@ -518,6 +692,9 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       offRender.dispose();
       ro?.disconnect();
       window.removeEventListener('resize', scheduleFit);
+      vv?.removeEventListener('resize', scheduleFit);
+      document.removeEventListener('visibilitychange', onForeground);
+      window.removeEventListener('pageshow', onForeground);
       // If a rebuild is mid-flight at unmount time, abort it first so its 10s
       // stall timer is cleared here rather than firing up to 10s after unmount.
       activeRebuildAbort?.();
@@ -585,21 +762,26 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       onPaste={(e) => { const f = Array.from(e.clipboardData?.files ?? []); if (f.length) { e.preventDefault(); f.forEach((x) => void uploadImage(x)); } }}
       style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', background: isMobile ? 'var(--color-pane)' : 'var(--color-terminal)', position: 'relative' }}
     >
+      {/* Safety net: a needs_you question a CLI thread declared via report_status lands only on
+          the status channel — surface it as a top strip so it isn't invisible in the terminal. */}
+      <ThreadAskBanner terminalId={terminalId} onAnswer={() => { try { termRef.current?.focus(); } catch { /* jsdom */ } }} />
+
       {/* The xterm host is absolutely positioned so the terminal's own size never
           drives the flex layout width (which previously blew the column out).
           On mobile the terminal is a rounded card with a thin frame (the pane bg
           shows through the 2px margin). */}
-      <div style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', ...(isMobile ? { margin: '2px 8px', borderRadius: 12, background: 'var(--color-terminal)' } : {}) }}>
+      <div data-testid="term-frame" style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', background: isMobile ? 'var(--color-terminal)' : undefined, ...(isMobile && !grokFlush ? { margin: '2px 8px', borderRadius: 12 } : {}) }}>
         {/* inset (not padding): FitAddon measures the host's width, and padding on
             the host makes it over-count columns so the right edge clips. On mobile
             the right inset is trimmed: xterm's column quantization + scrollbar leave
             ~7px unused on the right, so a smaller right inset re-centres the text
-            (and gains a column or two of width). */}
-        <div ref={hostRef} style={{ position: 'absolute', ...(isMobile ? { top: 0, bottom: 12, left: 3, right: 3 } : { inset: 15 }) }} />
+            (and gains a column or two of width). Grok is a full-screen TUI — flush
+            it so the card chrome does not steal columns. */}
+        <div ref={hostRef} data-testid="term-host" style={{ position: 'absolute', ...(grokFlush ? { inset: 0 } : isMobile ? { top: 0, bottom: 12, left: 3, right: 3 } : { inset: 15 }) }} />
         {/* Stable transparent touch surface (mobile): the gesture lands here, never
             on the xterm spans that get destroyed on every repaint. Sits above the
             terminal but below the jump-to-latest button. */}
-        {isMobile && <div ref={scrollOverlayRef} style={{ position: 'absolute', inset: 0, zIndex: 3, touchAction: 'none' }} />}
+        {isMobile && <div ref={scrollOverlayRef} data-testid="term-scroll-overlay" style={{ position: 'absolute', inset: 0, zIndex: 3, touchAction: 'none' }} />}
         {loading && (
           <div style={{ position: 'absolute', inset: 0, zIndex: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-terminal)', pointerEvents: 'none' }}>
             <Spinner size={26} />
@@ -626,14 +808,17 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       </div>
       {isMobile && (
         <>
-          {/* One fixed-width row of action keys plus a "/" that opens the
-              searchable slash-command sheet — no horizontal scrolling. */}
-          <div style={{ display: 'flex', gap: 6, padding: '6px 8px', background: 'var(--color-pane)', flexShrink: 0 }}>
+          {/* A row of action keys, a "/" that opens the searchable slash-command sheet,
+              and the autocorrect toggle. The row scrolls left/right rather than dividing
+              the width evenly: the key count varies by agent type, and squeezing eight
+              keys onto a phone leaves each one too narrow to hit. Every key keeps its
+              own width and overflow scrolls. */}
+          <div style={{ display: 'flex', gap: 6, padding: '6px 8px', background: 'var(--color-pane)', flexShrink: 0, overflowX: 'auto', overflowY: 'hidden', flexWrap: 'nowrap', WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none' }}>
             {softActions.map((k) => (
               <button key={k.label} title={k.title}
                 onMouseDown={(e) => e.preventDefault() /* don't steal focus / dismiss the keyboard */}
                 onClick={() => sockRef.current?.send(k.seq) /* fire on tap, not on press */}
-                style={{ flex: '1 1 0', minWidth: 0, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 12, color: 'var(--color-text-primary)', font: '500 14px var(--font-mono)', cursor: 'pointer' }}>
+                style={{ ...SOFT_KEY, color: 'var(--color-text-primary)', font: '500 14px var(--font-mono)' }}>
                 {k.Icon ? <k.Icon size={18} weight="bold" /> : k.label}
               </button>
             ))}
@@ -641,10 +826,21 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
               <button title="Slash commands"
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => { setSlashQuery(''); setSlashOpen(true); }}
-                style={{ flex: '1 1 0', minWidth: 0, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 12, color: 'var(--color-accent)', font: '600 17px var(--font-mono)', cursor: 'pointer' }}>
+                style={{ ...SOFT_KEY, color: 'var(--color-accent)', font: '600 17px var(--font-mono)' }}>
                 /
               </button>
             )}
+            {/* Autocorrect toggle. Accent when on, muted when off — the same on/off
+                language the rest of the app uses, and it reads at a glance mid-typing. */}
+            <button
+              title={ptyAutocorrect ? 'Autocorrect on — tap to turn off' : 'Autocorrect off — tap to turn on'}
+              aria-label="Autocorrect"
+              aria-pressed={ptyAutocorrect}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setPtyAutocorrect(!ptyAutocorrect)}
+              style={{ ...SOFT_KEY, color: ptyAutocorrect ? 'var(--color-accent)' : 'var(--color-text-tertiary)', font: '600 14px var(--font-mono)', textDecoration: ptyAutocorrect ? 'none' : 'line-through' }}>
+              Aa
+            </button>
           </div>
           <form
             onSubmit={(e) => { e.preventDefault(); sendMobileInput(); }}
@@ -664,7 +860,15 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
                 value={mobileInput}
                 onChange={(e) => setMobileInput(e.target.value)}
                 placeholder="Type a message or command…"
-                autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck={false}
+                /* Prose, not a shell prompt — most of what gets typed here is an English
+                   message to the agent, so spelling help is ON by default. It is a
+                   toggle rather than a constant because a run of shell commands is
+                   exactly when it gets in the way; the "Aa" key in the row above flips it.
+                   autoCapitalize stays OFF either way so `git`, `rg` and paths aren't
+                   capitalised, and autoComplete stays OFF so browser form-autofill
+                   never offers a value. */
+                autoCapitalize="off" autoComplete="off"
+                autoCorrect={ptyAutocorrect ? 'on' : 'off'} spellCheck={ptyAutocorrect}
                 enterKeyHint="send"
                 /* 16px font avoids iOS auto-zoom on focus */
                 style={{ flex: 1, minWidth: 0, height: 40, padding: '0 13px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 12, color: 'var(--color-text-primary)', fontSize: 16 }}

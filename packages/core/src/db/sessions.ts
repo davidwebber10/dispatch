@@ -64,6 +64,13 @@ export function touchActivity(db: Database.Database, id: string): void {
     .run(new Date().toISOString(), id);
 }
 
+// Light single-column read for enriching session:status broadcasts (fires on every status
+// edge) so the client can track the project's "last active" live without a SELECT * per event.
+export function getLastActivity(db: Database.Database, id: string): string | null {
+  const row = db.prepare('SELECT last_activity_at FROM sessions WHERE id = ?').get(id) as { last_activity_at: string | null } | undefined;
+  return row?.last_activity_at ?? null;
+}
+
 export function setError(db: Database.Database, id: string, error: string): void {
   db.prepare('UPDATE sessions SET error = ?, updated_at = ? WHERE id = ?')
     .run(error, new Date().toISOString(), id);

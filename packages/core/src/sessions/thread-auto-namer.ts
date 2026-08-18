@@ -2,7 +2,8 @@ import fs from 'fs';
 import type Database from 'better-sqlite3';
 import * as sessionsDb from '../db/sessions.js';
 import * as terminalsDb from '../db/terminals.js';
-import { deriveThreadName, resolveTranscriptPath } from './thread-namer.js';
+import { cleanName, deriveThreadRaw, resolveTranscriptPath } from './thread-namer.js';
+import { generateThreadName } from './model-namer.js';
 import type { EventBroadcaster } from '../ws/events.js';
 
 /** Terminal types eligible for auto-naming, mapped to thread-namer's transcript kind. */
@@ -18,6 +19,15 @@ export interface ThreadAutoNamerOptions {
   maxAttempts?: number;
   /** Injectable transcript reader, for tests. Default: fs.promises.readFile(p, 'utf-8'). */
   readFile?: (p: string) => Promise<string>;
+  /**
+   * Resolves the OpenRouter API key (the OpenCode key from Doppler, by configured
+   * name). Absent or resolving to null → prefix-derived names only, exactly the
+   * pre-model behavior. Resolved PER ATTEMPT, not cached here, so connecting
+   * Doppler / saving a key upgrades naming without a restart.
+   */
+  getApiKey?: () => Promise<string | null>;
+  /** Injectable model-title generator, for tests. Default: model-namer's generateThreadName. */
+  generateModelName?: (apiKey: string, conversationText: string) => Promise<string | null>;
 }
 
 /**
@@ -41,6 +51,8 @@ export class ThreadAutoNamer {
   private readonly delayMs: number;
   private readonly maxAttempts: number;
   private readonly readFile: (p: string) => Promise<string>;
+  private readonly getApiKey?: () => Promise<string | null>;
+  private readonly generateModelName: (apiKey: string, conversationText: string) => Promise<string | null>;
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly attempts = new Map<string, number>();
 
@@ -50,6 +62,8 @@ export class ThreadAutoNamer {
     this.delayMs = opts?.delayMs ?? 5000;
     this.maxAttempts = opts?.maxAttempts ?? 3;
     this.readFile = opts?.readFile ?? ((p: string) => fs.promises.readFile(p, 'utf-8'));
+    this.getApiKey = opts?.getApiKey;
+    this.generateModelName = opts?.generateModelName ?? generateThreadName;
   }
 
   /** Call on every real-activity moment. Cheap; self-filters. */
@@ -126,11 +140,29 @@ export class ThreadAutoNamer {
         return;
       }
 
-      const name = deriveThreadName(text, kind);
-      if (!name) {
+      const raw = deriveThreadRaw(text, kind);
+      const fallback = cleanName(raw);
+      if (!fallback) {
         this.bumpAttempts(terminalId);
         console.debug('[thread-auto-namer] giving up on terminal', terminalId, 'no derivable name');
         return;
+      }
+
+      // Model upgrade: when an OpenRouter key resolves, ask GLM for a 3-5 word
+      // title from the FULL prompt text (`raw`, not the 48-char `fallback`).
+      // Every failure path — no resolver, no key, model error/timeout — lands on
+      // the prefix-derived fallback, which is exactly the pre-model behavior.
+      // The await is safe against double-naming: the `timers` entry blocks
+      // re-entry for this terminal until `finally` below, and setAutoLabel's
+      // label_source='default' SQL guard still lets a concurrent user rename win.
+      let name = fallback;
+      if (this.getApiKey) {
+        try {
+          const key = await this.getApiKey();
+          if (key) name = (await this.generateModelName(key, raw)) ?? fallback;
+        } catch {
+          // key resolution failed (Doppler down/not connected) — fallback name
+        }
       }
 
       const applied = terminalsDb.setAutoLabel(this.db, terminalId, name);

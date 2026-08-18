@@ -17,6 +17,7 @@
 // --acc/--accLine/--accDim tokens; 'global' reads the app-wide --color-* tokens (the tint /
 // line are mixed from --color-accent, matching the codebase's other color-mix accents).
 
+import { useState } from 'react';
 import { Lightbulb } from '@phosphor-icons/react';
 import { Markdown } from './Markdown';
 
@@ -103,10 +104,50 @@ function InsightCallout({ content, tokens }: { content: string; tokens: Tokens }
 }
 
 /**
- * Render assistant text: prose through <Markdown>, any ★ Insight blocks lifted into tinted
- * callouts. `scheme` selects the token set (default 'scoped' for the coordinator surface).
+ * The agent chat's insight treatment (2026-08-16 pretty-chat redesign): a left-railed block —
+ * mono letterspaced INSIGHT header with a rotating caret, italic dim body clamped to 2 lines,
+ * click anywhere to expand. Deliberately quieter than the coordinator's tinted callout: in a
+ * thread the insight is an aside to the work, not a headline.
  */
-export function InsightText({ source, scheme = 'scoped' }: { source: string; scheme?: Scheme }) {
+function InsightRail({ content }: { content: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    // Accent left rail + a faint accent wash ("insight needs visual distinction" — David):
+    // still quieter than the coordinator's callout card, but unmistakably not prose.
+    <div
+      data-testid="insight-rail"
+      onClick={() => setOpen((o) => !o)}
+      style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '7px 12px 8px 13px', borderLeft: '2px solid color-mix(in srgb, var(--color-accent) 55%, transparent)', borderRadius: '0 8px 8px 0', background: 'color-mix(in srgb, var(--color-accent) 5%, transparent)', cursor: 'pointer', minWidth: 0 }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Lightbulb size={12} weight="fill" color="var(--color-accent)" style={{ flex: 'none' }} />
+        <span style={{ font: '500 9.5px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-accent)' }}>INSIGHT</span>
+        <span aria-hidden style={{ font: '400 9px var(--font-mono)', color: 'var(--color-text-tertiary)', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}>▸</span>
+      </div>
+      <div
+        style={{
+          fontSize: 13,
+          lineHeight: 1.7,
+          fontStyle: 'italic',
+          color: 'var(--color-text-secondary)',
+          minWidth: 0,
+          // -webkit-box line clamping works on the markdown container's rendered lines;
+          // expanded removes the clamp entirely rather than raising it.
+          ...(open ? {} : { display: '-webkit-box', WebkitBoxOrient: 'vertical' as const, WebkitLineClamp: 2, overflow: 'hidden' }),
+        }}
+      >
+        <Markdown source={content} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Render assistant text: prose through <Markdown>, any ★ Insight blocks lifted into tinted
+ * callouts. `scheme` selects the token set (default 'scoped' for the coordinator surface);
+ * `variant="rail"` (agent chat) swaps the callout for the clamped left-rail block.
+ */
+export function InsightText({ source, scheme = 'scoped', variant = 'callout' }: { source: string; scheme?: Scheme; variant?: 'callout' | 'rail' }) {
   const segs = splitInsights(source);
   if (segs.length === 0) return null; // all-blank body → nothing to render
   const tokens = SCHEMES[scheme];
@@ -114,7 +155,7 @@ export function InsightText({ source, scheme = 'scoped' }: { source: string; sch
     <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
       {segs.map((seg, i) =>
         seg.type === 'insight' ? (
-          <InsightCallout key={i} content={seg.content} tokens={tokens} />
+          variant === 'rail' ? <InsightRail key={i} content={seg.content} /> : <InsightCallout key={i} content={seg.content} tokens={tokens} />
         ) : (
           <Markdown key={i} source={seg.content} />
         ),

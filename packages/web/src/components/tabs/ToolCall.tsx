@@ -1,8 +1,83 @@
-import { CaretRight, Wrench, FileText } from '@phosphor-icons/react';
+import { CaretRight, FileText } from '@phosphor-icons/react';
 import type { ConvItem } from '../../api/types';
 import { highlightCode, langFromPath } from '../../lib/markdown';
 import { getToolView, parseToolInput } from './toolviews/registry';
 import { useToolExpanded, useToolTab } from '../../hooks/useToolUIState';
+
+/**
+ * One mono glyph per tool family (2026-08-16 pretty-chat redesign): the leading column of a
+ * machinery row identifies the KIND of call at a glance — $ shell, ≡ read, ✎ edit, ⌕ search,
+ * ◇ subagent, ⚙ everything else — the way a prompt char identifies a terminal line.
+ */
+export function toolGlyph(name?: string): string {
+  const n = (name ?? '').toLowerCase();
+  if (n === 'bash' || n.endsWith('shell') || n === 'run_terminal_command') return '$';
+  if (n === 'read' || n === 'notebookread' || n === 'read_file') return '≡';
+  if (n === 'edit' || n === 'write' || n === 'notebookedit' || n === 'search_replace' || n === 'multiedit') return '✎';
+  if (n === 'grep' || n === 'glob' || n === 'websearch' || n.includes('search')) return '⌕';
+  if (n === 'task' || n === 'agent') return '◇';
+  return '⚙';
+}
+
+/**
+ * Human arg summary for a machinery row. Raw JSON inputs — `{"query":"x","limit":5}`,
+ * the shape every MCP tool and most built-ins send — read as noise in a one-line row, so
+ * an object input becomes up to three `key: value` pairs (salient keys first, nested
+ * objects skipped) joined with `·`. A non-JSON detail (Bash commands, extracted paths)
+ * passes through untouched.
+ */
+export function inputSummary(tool: Pick<ConvItem, 'toolDetail' | 'toolInput'>): string | undefined {
+  const detail = tool.toolDetail;
+  if (detail && !detail.trimStart().startsWith('{')) return detail;
+  const raw = tool.toolInput;
+  if (!raw?.trim()) return detail;
+  let input: unknown;
+  try { input = JSON.parse(raw); } catch { return detail ?? undefined; }
+  if (input == null || typeof input !== 'object' || Array.isArray(input)) return detail ?? undefined;
+  const scalar = (v: unknown): string | null => {
+    if (typeof v === 'string') return v;
+    if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+    if (Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === 'string' || typeof x === 'number')) return v.join(' ');
+    return null; // nested object / empty array → not row material
+  };
+  const PRIORITY = ['command', 'file_path', 'path', 'pattern', 'query', 'q', 'url', 'prompt', 'description', 'name'];
+  const rank = (k: string) => { const i = PRIORITY.indexOf(k); return i === -1 ? PRIORITY.length : i; };
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(input as Record<string, unknown>).sort((a, b) => rank(a[0]) - rank(b[0]))) {
+    const s = scalar(v);
+    if (s == null || s === '') continue;
+    const flat = s.replace(/\s+/g, ' ');
+    parts.push(`${k}: ${flat.length > 80 ? `${flat.slice(0, 79)}…` : flat}`);
+    if (parts.length >= 3) break;
+  }
+  return parts.length ? parts.join(' · ') : detail;
+}
+
+/**
+ * Best-effort +added −removed for an Edit/Write/MultiEdit input, for the row's right meta —
+ * the design's `+33 −9`. Line counts of new_string vs old_string; a Write is all additions.
+ * Null for anything unparseable: the meta then falls back to output lines, never a fake stat.
+ */
+export function editDiffStat(toolName?: string, toolInput?: string): { add: number; del: number } | null {
+  const n = (toolName ?? '').toLowerCase();
+  if (!['edit', 'write', 'notebookedit', 'multiedit'].includes(n) || !toolInput) return null;
+  try {
+    const p = JSON.parse(toolInput) as { old_string?: string; new_string?: string; content?: string; edits?: { old_string?: string; new_string?: string }[] };
+    const count = (s?: string) => (s ? s.split('\n').length : 0);
+    if (n === 'write') return p.content !== undefined ? { add: count(p.content), del: 0 } : null;
+    const edits = Array.isArray(p.edits) ? p.edits : [{ old_string: p.old_string, new_string: p.new_string }];
+    let add = 0;
+    let del = 0;
+    for (const e of edits) {
+      if (e.old_string === undefined && e.new_string === undefined) return null;
+      add += count(e.new_string);
+      del += count(e.old_string);
+    }
+    return { add, del };
+  } catch {
+    return null;
+  }
+}
 
 /** A tool call: single-line summary; expand to an Input/Output tabbed, syntax-
  *  highlighted shelf. If it references a file, the shelf offers "View file".
@@ -27,49 +102,62 @@ export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?
   const err = result?.isError;
   const lines = hasOut ? out.split('\n').length : 0;
   const view = getToolView(tool.toolName, parseToolInput(tool.toolInput));
-  const headerIcon = view?.icon ?? <Wrench size={13} color="#5A8DD6" style={{ flexShrink: 0 }} />;
   const headerName = view?.label?.(tool) ?? name;
   const expandable = hasIn || hasOut;
   const effTab: 'input' | 'output' = (tab === 'input' && hasIn) ? 'input' : (hasOut ? 'output' : 'input');
   const content = effTab === 'input' ? input : out;
   const lang = effTab === 'input' ? (tool.toolName === 'Bash' ? 'bash' : 'json') : langFromPath(tool.toolFile);
+  const diff = editDiffStat(tool.toolName, tool.toolInput);
+  // Right meta priority: error > running > edit diff stat > output line count.
+  const meta = result
+    ? err
+      ? { text: 'error', color: 'var(--color-status-red)' }
+      : diff
+      ? { text: `+${diff.add} −${diff.del}`, color: '#8fb79a' }
+      : { text: `${lines} line${lines !== 1 ? 's' : ''}`, color: 'var(--color-text-tertiary)' }
+    : null;
   return (
-    <div style={{ borderRadius: 9, overflow: 'hidden' }}>
+    <div style={{ overflow: 'hidden' }}>
+      {/* Machinery row (2026-08-16 redesign): 30px mono line — caret · glyph · name · arg ·
+          meta — reading like terminal output rather than a card. Expansion behavior and the
+          shelf below are unchanged. */}
       <button
         onClick={() => expandable && setOpen((o) => !o)}
-        style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: expandable ? 'pointer' : 'default', padding: '4px 6px', borderRadius: 7, display: 'flex', gap: 7, alignItems: 'center' }}
+        style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: expandable ? 'pointer' : 'default', padding: '0 20px', height: 30, display: 'flex', gap: 10, alignItems: 'center' }}
         onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-hover)'; }}
         onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
       >
-        <CaretRight size={11} weight="bold" style={{ flexShrink: 0, color: 'var(--color-text-tertiary)', visibility: expandable ? 'visible' : 'hidden', transition: 'transform .12s ease', transform: open ? 'rotate(90deg)' : 'none' }} />
-        {headerIcon}
-        {/* flexShrink 0, NOT the `0 1 auto` this used to be. CSS distributes shrinkage in
-            proportion to each item's flex-basis, so when the detail below is long (a Bash
-            command with a long path, say) the name absorbs its own proportional share of the
-            overflow — enough to clip "Bash" down to "B…" while the detail, being far wider,
-            still had room. The name is the single most identifying thing on the row and is
-            almost always short, so it never shrinks; the detail is the elastic half.
-            maxWidth caps the pathological case (a very long MCP tool name) so a huge name
-            still can't push the status column off the row. */}
-        <span style={{ minWidth: 0, maxWidth: '55%', flexShrink: 0, fontSize: 12.5, color: 'var(--color-text-primary)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{headerName}</span>
-        {tool.toolDetail && (
-          <span
-            title={tool.toolDetail}
-            style={{ minWidth: 0, flex: '1 1 auto', fontSize: 11.5, fontFamily: 'var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-          >
-            {tool.toolDetail}
-          </span>
-        )}
-        {/* marginLeft:auto, not a flex-grow sibling — only the toolDetail span grows, and plenty
-            of tools (Glob, TodoWrite, most MCP calls) populate no detail at all. Without this the
-            status would sit flush against the name on those rows while right-aligning on others,
-            so the column would visibly wander down a list of mixed tools. */}
-        {result
-          ? <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 11, color: err ? 'var(--color-status-red)' : 'var(--color-text-secondary)' }}>{err ? 'error' : `${lines} line${lines !== 1 ? 's' : ''}`}</span>
+        {/* Rows carry the column's 20px side padding themselves (MachineryBlock is
+            full-bleed), so the hover wash spans the screen while the caret column —
+            left-aligned, not centered — puts the chevron exactly on the text rail. */}
+        <span style={{ width: 14, flexShrink: 0, display: 'flex', justifyContent: 'flex-start', alignItems: 'center' }}>
+          {expandable
+            ? <CaretRight size={10} weight="bold" style={{ color: 'var(--color-text-tertiary)', transition: 'transform .12s ease', transform: open ? 'rotate(90deg)' : 'none' }} />
+            : <span aria-hidden style={{ font: '400 10px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{toolGlyph(tool.toolName)}</span>}
+        </span>
+        {/* flexShrink 0: the name is the single most identifying thing on the row and is almost
+            always short, so it never shrinks; the arg detail is the elastic half. maxWidth caps
+            the pathological case (a very long MCP tool name). */}
+        <span style={{ minWidth: 0, maxWidth: '55%', flexShrink: 0, font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{headerName}</span>
+        {(() => {
+          const arg = inputSummary(tool);
+          return arg ? (
+            <span
+              title={tool.toolDetail ?? arg}
+              style={{ minWidth: 0, flex: '1 1 auto', font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            >
+              {arg}
+            </span>
+          ) : null;
+        })()}
+        {/* marginLeft:auto, not a flex-grow sibling — plenty of tools populate no detail at all,
+            and without this the meta would wander instead of right-aligning. */}
+        {meta
+          ? <span style={{ marginLeft: 'auto', flexShrink: 0, font: '400 11px var(--font-mono)', color: meta.color }}>{meta.text}</span>
           : <span className="chat-shimmer" style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 11 }}>running…</span>}
       </button>
       {open && expandable && (
-        <div style={{ border: '1px solid var(--color-border)', borderRadius: 8, background: 'var(--color-elevated)', overflow: 'hidden', marginTop: 4 }}>
+        <div style={{ border: '1px solid var(--color-border)', borderRadius: 8, background: 'var(--color-elevated)', overflow: 'hidden', margin: '4px 20px 8px' }}>
           {view ? view.expanded(tool, result) : (
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '6px 8px 0', background: 'var(--color-pane)' }}>

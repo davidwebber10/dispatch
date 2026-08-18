@@ -112,14 +112,24 @@ function deriveCodexRaw(text: string): string {
 }
 
 /**
+ * The raw (uncleaned, untruncated) name candidate: the transcript summary or first
+ * user prompt. Exposed separately from deriveThreadName because the model-namer wants
+ * the FULL prompt text as context — cleanName's 48-char word-boundary cut is a display
+ * constraint, not an extraction step, and feeding the model a pre-truncated fragment
+ * loses exactly the detail a good 3-5 word title needs.
+ */
+export function deriveThreadRaw(transcriptText: string, kind: 'claude' | 'codex'): string {
+  if (!transcriptText) return '';
+  return kind === 'claude' ? deriveClaudeRaw(transcriptText) : deriveCodexRaw(transcriptText);
+}
+
+/**
  * Derive a thread name candidate from a raw transcript. Pure (no fs) — callers read
  * the transcript first via resolveTranscriptPath + fs. Returns null on an empty/
  * unparseable transcript or when cleanName rejects the result.
  */
 export function deriveThreadName(transcriptText: string, kind: 'claude' | 'codex'): string | null {
-  if (!transcriptText) return null;
-  const raw = kind === 'claude' ? deriveClaudeRaw(transcriptText) : deriveCodexRaw(transcriptText);
-  return cleanName(raw);
+  return cleanName(deriveThreadRaw(transcriptText, kind));
 }
 
 const CODEX_SESSIONS_ROOT = path.join(os.homedir(), '.codex', 'sessions');

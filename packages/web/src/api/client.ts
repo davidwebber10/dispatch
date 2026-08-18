@@ -1,5 +1,5 @@
 import { apiPath } from '../lib/basePath';
-import type { Session, Terminal, Provider, FileEntry, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus, PendingPermission, UpdateState } from './types';
+import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsBackfillState } from './types';
 
 /**
  * A content block for a structured `user` turn (mirrors the daemon's wire shape). A
@@ -28,6 +28,19 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 const body = (data: unknown) => JSON.stringify(data);
+
+type QueryParams =
+  | AnalyticsRange
+  | (AnalyticsRange & { metric: AnalyticsMetric; groupBy: AnalyticsGroupBy })
+  | (AnalyticsRange & { dimension: AnalyticsDimension });
+
+/** Build a query string from defined values only — an absent filter must not become "undefined". */
+const qs = (o: QueryParams): string => {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(o)) if (v !== undefined && v !== null && v !== '') p.set(k, String(v));
+  const s = p.toString();
+  return s ? `?${s}` : '';
+};
 
 export const api = {
   listServers: () => req<{ label: string; origin: string }[]>('/api/servers'),
@@ -94,9 +107,16 @@ export const api = {
     req<{ terminalId: string }>(`/api/sessions/${sessionId}/overseer/coordinator`, { method: 'POST' }),
 
   getSetupState: () => req<SetupState>(`/api/setup/state`),
-  recheckProviders: () => req<ProviderStatus[]>(`/api/setup/providers`),
+  recheckProviders: (fresh?: boolean) => req<ProviderStatus[]>(`/api/setup/providers${fresh ? '?fresh=1' : ''}`),
+
+  // Per-harness settings (server-backed — the daemon needs them at spawn time).
+  getHarnessSettings: () => req<HarnessSettingsResponse>('/api/settings/harnesses'),
+  putHarnessSettings: (patch: Record<string, Partial<Record<'defaultModel' | 'defaultMode' | 'keySecret', string | null>>>) =>
+    req<HarnessSettingsResponse>('/api/settings/harnesses', { method: 'PUT', body: body(patch) }),
   recheckTailscale: () => req<TailscaleStatus>(`/api/setup/tailscale`),
   completeSetup: () => req<{ ok: true }>(`/api/setup/complete`, { method: 'POST' }),
+  /** Runs that CLI's own install one-liner on the daemon host. Slow — minutes, not seconds. */
+  installProvider: (name: ProviderName) => req<InstallResult>(`/api/setup/install/${name}`, { method: 'POST' }),
   updateTerminal: (id: string, fields: { label?: string; config?: Record<string, unknown> }) =>
     req<Terminal>(`/api/terminals/${id}`, { method: 'PATCH', body: body(fields) }),
   relaunchTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}/relaunch`, { method: 'POST' }),
@@ -119,6 +139,8 @@ export const api = {
 
   listProviders: () => req<Provider[]>('/api/providers'),
   getGitInfo: (sessionId: string) => req<{ branch: string | null }>(`/api/sessions/${sessionId}/git`),
+  // Branch + working-tree changes; a non-git working dir answers { branch: null, files: [] }.
+  getGitStatus: (sessionId: string) => req<GitStatus>(`/api/sessions/${sessionId}/git/status`),
   getLastDirectory: () => req<{ directory: string | null }>('/api/state/last-directory'),
   browse: (path: string) => req<FileEntry[]>(`/api/state/browse?path=${encodeURIComponent(path)}`),
   stateMkdir: (path: string) => req<{ ok: true; path: string }>(`/api/state/mkdir?path=${encodeURIComponent(path)}`, { method: 'POST' }),
@@ -126,6 +148,8 @@ export const api = {
 
   // Files (sandboxed to the session working dir)
   listFiles: (sessionId: string, p = '.') => req<FileEntry[]>(`/api/sessions/${sessionId}/files?path=${encodeURIComponent(p)}`),
+  // Every file path under the working dir (git-visible + gitignored hidden paths) — feeds Files search.
+  listFilesFlat: (sessionId: string) => req<{ files: string[]; truncated: boolean }>(`/api/sessions/${sessionId}/files/flat`),
   readFile: (sessionId: string, p: string) => req<{ content: string; path: string }>(`/api/sessions/${sessionId}/files/read?path=${encodeURIComponent(p)}`),
   // Byte-route URL for an image file (sandboxed to the session working dir). Sync URL
   // builder (no fetch) so it can feed an <img src> directly; the route streams raw bytes.
@@ -236,6 +260,7 @@ export const api = {
   listAuthRequests: () => req<AuthRequest[]>('/api/auth-requests'),
   markAuthOpened: (id: string) => req<AuthRequest>(`/api/auth-requests/${id}/opened`, { method: 'POST' }),
   completeAuth: (id: string) => req<AuthRequest>(`/api/auth-requests/${id}/complete`, { method: 'POST' }),
+  dismissAllAuth: () => req<{ completed: number }>(`/api/auth-requests/complete-all`, { method: 'POST' }),
   forwardAuthCallback: (id: string, url: string) =>
     req<AuthRequest>(`/api/auth-requests/${id}/callback`, { method: 'POST', body: body({ url }) }),
 
@@ -261,4 +286,15 @@ export const api = {
       forceable?: boolean;
     };
   },
+
+  // Analytics (usage, throughput, personal stats)
+  analyticsSummary: (r: AnalyticsRange) => req<AnalyticsSummary>(`/api/analytics/summary${qs(r)}`),
+  analyticsSeries: (o: AnalyticsRange & { metric: AnalyticsMetric; groupBy: AnalyticsGroupBy }) =>
+    req<AnalyticsPoint[]>(`/api/analytics/series${qs(o)}`),
+  analyticsTop: (o: AnalyticsRange & { dimension: AnalyticsDimension }) =>
+    req<AnalyticsTopRow[]>(`/api/analytics/top${qs(o)}`),
+  analyticsRecords: () => req<AnalyticsRecords>('/api/analytics/records'),
+  analyticsBackfillState: () => req<AnalyticsBackfillState>('/api/analytics/backfill'),
+  analyticsRunBackfill: () => req<{ imported: number; skipped: number; threads: number }>('/api/analytics/backfill', { method: 'POST' }),
+  analyticsClearBackfill: () => req<{ removed: number }>('/api/analytics/backfill', { method: 'DELETE' }),
 };

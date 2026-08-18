@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { vi, beforeEach, afterEach, test, it, expect } from 'vitest';
 import { FilesPane } from './FilesPane';
 import { api } from '../../api/client';
@@ -40,6 +40,7 @@ beforeEach(() => {
         { name: 'a.png', isDirectory: false, path: 'a.png' },
         { name: 'b.png', isDirectory: false, path: 'b.png' },
         { name: 'c.txt', isDirectory: false, path: 'c.txt' },
+        { name: '.env', isDirectory: false, path: '.env' },
       ];
     }
     if (path === 'src') {
@@ -56,6 +57,20 @@ beforeEach(() => {
     workingDir: null, status: 'idle', createdAt: '', config: {}, archivedAt: null, sortOrder: 0,
   } as any);
   vi.spyOn(api, 'listTerminals').mockResolvedValue([]);
+  // The pane now loads git state on mount and the search index on the first keystroke —
+  // deterministic stubs so no test depends on a live daemon. `.env` exercises the
+  // hidden-files filter; `src/deep/file.ts` only ever surfaces through search.
+  vi.spyOn(api, 'getGitStatus').mockResolvedValue({
+    branch: 'main',
+    files: [{ path: 'c.txt', status: 'M' }],
+  });
+  vi.spyOn(api, 'listFilesFlat').mockResolvedValue({
+    files: ['README.md', 'a.png', 'b.png', 'c.txt', 'src/x.ts', 'src/deep/file.ts', '.env'],
+    truncated: false,
+  });
+  // The hidden-files toggle persists to localStorage; a test that flips it must not
+  // leak that state into the next test.
+  localStorage.removeItem('dispatch:files-hidden');
   // Secure context by default (re-asserted per test, since afterEach restores mocks).
   vi.mocked(clipboardImageSupported).mockReturnValue(true);
   // Fresh per test: fail closed on Reveal, and give project 'p1' a real workingDir so the
@@ -404,4 +419,84 @@ it('clears the anchor when the collapsed directory held it, so re-expanding cann
 
   expect(screen.getByText('Delete')).toBeInTheDocument();              // singular — only c.txt
   expect(screen.queryByText(/Delete \d+ items/)).toBeNull();
+});
+
+// ————— Design-refresh features: search-all-files, hidden toggle, Changed mode, branch chip —————
+
+test('typing a query searches ALL files via the flat index and surfaces deep matches', async () => {
+  render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
+  await screen.findByText('a.png');
+
+  fireEvent.change(screen.getByPlaceholderText(/Filter files/), { target: { value: 'deep' } });
+
+  await waitFor(() => expect(api.listFilesFlat).toHaveBeenCalledWith('p1'));
+  // src/deep/file.ts exists ONLY in the flat index (the tree never loaded src/deep),
+  // so its appearance proves search runs against the whole repo, not loaded dirs.
+  await waitFor(() => expect(document.body.textContent).toContain('src/deep/file.ts'));
+  // The matched characters are highlighted (bold accent spans), one per query char.
+  const bold = document.querySelectorAll('span[style*="font-weight: 700"]');
+  expect(bold.length).toBeGreaterThanOrEqual(4);
+});
+
+test('dotfiles are hidden by default and appear after the ·* toggle', async () => {
+  render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
+  await screen.findByText('a.png');
+
+  expect(screen.queryByText('.env')).toBeNull();
+  fireEvent.click(screen.getByTitle('Show dotfiles'));
+  expect(await screen.findByText('.env')).toBeInTheDocument();
+});
+
+test('search omits hidden paths until the ·* toggle is on', async () => {
+  render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
+  await screen.findByText('a.png');
+
+  fireEvent.change(screen.getByPlaceholderText(/Filter files/), { target: { value: 'env' } });
+  await waitFor(() => expect(api.listFilesFlat).toHaveBeenCalledWith('p1'));
+  await waitFor(() => expect(document.body.textContent).toMatch(/0 MATCHES/));
+  expect(document.body.textContent).not.toContain('.env');
+
+  fireEvent.click(screen.getByTitle('Show dotfiles'));
+  await waitFor(() => expect(document.body.textContent).toContain('.env'));
+  expect(document.body.textContent).toMatch(/1 MATCHES/);
+});
+
+test('Changed mode lists the uncommitted files with their status letter', async () => {
+  render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
+  await screen.findByText('a.png');
+
+  fireEvent.click(screen.getByRole('button', { name: /Changed/ }));
+
+  expect(await screen.findByText(/UNCOMMITTED · MAIN/)).toBeInTheDocument();
+  expect(screen.getByText('c.txt')).toBeInTheDocument();
+  expect(screen.getByText('M')).toBeInTheDocument();
+});
+
+test('the header shows the current branch chip', async () => {
+  render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
+  expect(await screen.findByText('main')).toBeInTheDocument();
+});
+
+// ---- Slow / hung search-index fetch --------------------------------------------------------
+// A big cold project can take a long while to walk, and a request fired into a network blip
+// can hang outright. The pane used to sit on a bare "SEARCHING…" forever. After 15s the
+// heading flips to the slow/unavailable notice — but the request is NOT abandoned: a late
+// success still lands and replaces it.
+test('a slow index fetch flips to the slow-notice heading, and a late result still lands', async () => {
+  vi.useFakeTimers();
+  try {
+    let resolveLate!: (v: unknown) => void;
+    vi.spyOn(api, 'listFilesFlat').mockReturnValue(new Promise((r) => { resolveLate = r; }) as any);
+    render(<FilesPane projectId="p1" onOpenFile={() => {}} />);
+    fireEvent.change(screen.getByPlaceholderText(/Filter files/), { target: { value: '2026' } });
+    expect(screen.getByText('SEARCHING…')).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(16_000); });
+    expect(screen.queryByText('SEARCHING…')).not.toBeInTheDocument();
+    expect(screen.getByText(/INDEX SLOW OR UNAVAILABLE/)).toBeInTheDocument();
+    // The walk finally finishes — results replace the notice.
+    await act(async () => { resolveLate({ files: ['docs/2026-plan.md', 'src/other.ts'], truncated: false }); });
+    expect(screen.getByText(/1 MATCHES/)).toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
 });

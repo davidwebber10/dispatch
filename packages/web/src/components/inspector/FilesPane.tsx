@@ -1,22 +1,35 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CaretRight, Copy, DownloadSimple, FolderOpen, ImageSquare, PencilSimple, TrashSimple } from '@phosphor-icons/react';
+import { ArrowLineLeft, CaretRight, Copy, DownloadSimple, FolderOpen, GitBranch, ImageSquare, MagnifyingGlass, PencilSimple, TrashSimple } from '@phosphor-icons/react';
 import { api } from '../../api/client';
 import type { FileEntry } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
 import { useSettings } from '../../stores/settings';
 import { useHost } from '../../stores/host';
+import { useGitStatus, gitStatusFor } from '../../stores/gitStatus';
 import { fileVisual } from '../common/typeIcons';
+import { fuzzyFilter } from '../../lib/fuzzy';
 import { saveFilesAs, type RemoteFile } from '../../lib/saveFiles';
 import { clipboardImageSupported, copyImageToClipboard, copyText } from '../../lib/clipboard';
 import { isImage } from '../../lib/fileType';
 
 const INDENT = 14;
+const HIDDEN_KEY = 'dispatch:files-hidden';
 
 const MENU_ITEM: React.CSSProperties = {
   display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 10px',
   background: 'none', border: 'none', font: '400 13px var(--font-sans)', cursor: 'pointer',
   borderRadius: 6, textAlign: 'left',
+};
+
+const TOOL_BTN: React.CSSProperties = {
+  width: 26, height: 26, flexShrink: 0, border: '1px solid var(--color-border)', borderRadius: 6,
+  display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0,
+};
+
+const STATUS_COLOR: Record<string, string> = {
+  M: 'var(--color-status-yellow)', A: 'var(--color-accent)', D: 'var(--color-status-red)',
+  R: 'var(--color-status-yellow)', '?': 'var(--color-text-tertiary)',
 };
 
 /** Parent directory of a working-dir-relative path (or '.' for a top-level entry). */
@@ -29,6 +42,24 @@ function homeAbbrev(p: string): string {
   return p.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
 }
 
+function baseName(p: string): string {
+  return p.replace(/\/+$/, '').split('/').pop() ?? p;
+}
+
+/** Hidden = any dot-segment anywhere in the path (matches what the tree's per-level filter hides). */
+export function isHiddenPath(p: string): boolean {
+  return p.split('/').some((seg) => seg.startsWith('.') && seg !== '.' && seg !== '..');
+}
+
+/** Compact human size for the meta column: 820b, 1.2k, 31k, 4.5M. */
+export function fmtSize(n?: number | null): string {
+  if (n == null) return '';
+  if (n < 1000) return `${n}b`;
+  if (n < 10_000) return `${(n / 1000).toFixed(1)}k`;
+  if (n < 1_000_000) return `${Math.round(n / 1000)}k`;
+  return `${(n / 1_000_000).toFixed(1)}M`;
+}
+
 /** Directories first, then name — the single ordering both the tree and Shift-ranges use. */
 export function sortEntries(a: FileEntry, b: FileEntry): number {
   return Number(b.isDirectory) - Number(a.isDirectory) || a.name.localeCompare(b.name);
@@ -36,18 +67,21 @@ export function sortEntries(a: FileEntry, b: FileEntry): number {
 
 /**
  * The visible FILE rows in render order. This is the coordinate space a Shift-click range spans:
- * it must walk the tree exactly as renderDir does (same sort, only into expanded directories),
- * or "select everything between these two rows" would select rows the user can't see.
+ * it must walk the tree exactly as renderDir does (same sort, same hidden filter, only into
+ * expanded directories), or "select everything between these two rows" would select rows the
+ * user can't see.
  */
 export function flattenFiles(
   children: Record<string, FileEntry[]>,
   expanded: Set<string>,
   path = '.',
+  showHidden = true,
 ): string[] {
   const out: string[] = [];
   for (const e of (children[path] ?? []).slice().sort(sortEntries)) {
+    if (!showHidden && e.name.startsWith('.')) continue;
     if (e.isDirectory) {
-      if (expanded.has(e.path)) out.push(...flattenFiles(children, expanded, e.path));
+      if (expanded.has(e.path)) out.push(...flattenFiles(children, expanded, e.path, showHidden));
     } else {
       out.push(e.path);
     }
@@ -68,12 +102,39 @@ function Row({ children, style, onClick, onMiddle, onContext }: { children: Reac
   );
 }
 
+/** A path with its fuzzy-matched characters highlighted; the directory part stays dim. */
+function HighlightedPath({ path, indices }: { path: string; indices: number[] }) {
+  const hit = new Set(indices);
+  const baseStart = path.lastIndexOf('/') + 1;
+  return (
+    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', direction: 'rtl', textAlign: 'left' }}>
+      {/* rtl + ltr embed: long paths truncate on the LEFT so the basename stays visible */}
+      <span style={{ unicodeBidi: 'plaintext' }}>
+        {path.split('').map((ch, i) => (
+          <span key={i} style={{
+            color: hit.has(i) ? 'var(--color-accent)' : i < baseStart ? 'var(--color-text-tertiary)' : undefined,
+            fontWeight: hit.has(i) ? 700 : undefined,
+          }}>{ch}</span>
+        ))}
+      </span>
+    </span>
+  );
+}
+
 export function FilesPane({ projectId, onOpenFile }: { projectId: string | null; onOpenFile: (terminalId: string) => void }) {
   const [children, setChildren] = useState<Record<string, FileEntry[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [menu, setMenu] = useState<{ x: number; y: number; entry: FileEntry } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [anchor, setAnchor] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [mode, setMode] = useState<'tree' | 'changed'>('tree');
+  const [showHidden, setShowHidden] = useState<boolean>(() => { try { return localStorage.getItem(HIDDEN_KEY) === '1'; } catch { return false; } });
+  const [flat, setFlat] = useState<{ files: string[]; truncated: boolean } | null>(null);
+  // True when the index fetch failed or timed out — renders a retry heading instead of the
+  // eternal "SEARCHING…" a hung request used to leave behind (a socket that dies mid-blip
+  // never rejects). `flat` stays null in that state, so the next keystroke retries.
+  const [flatError, setFlatError] = useState(false);
   const project = useProjects((s) => s.sessions.find((x) => x.id === projectId));
   const activeTabId = useTabs((s) => s.activeTabId);
   const tabsForProj = useTabs((s) => (projectId ? s.byProject[projectId] : undefined)) ?? [];
@@ -81,6 +142,7 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
   const fs = useSettings((s) => s.sidebarFontSize);
   const canReveal = useHost((s) => s.canReveal);
   const fileManagerName = useHost((s) => s.fileManagerName);
+  const git = useGitStatus((s) => gitStatusFor(s.byProject, projectId));
 
   const loadDir = useCallback(async (path: string) => {
     if (!projectId) return;
@@ -92,8 +154,41 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
 
   useEffect(() => {
     setChildren({}); setExpanded(new Set()); setSelected(new Set()); setAnchor(null);
-    if (projectId) void loadDir('.');
+    setQuery(''); setMode('tree'); setFlat(null);
+    if (projectId) {
+      void loadDir('.');
+      void useGitStatus.getState().refresh(projectId);
+    }
   }, [projectId, loadDir]);
+
+  // The all-files search index is fetched lazily, on the first keystroke. A big cold
+  // project can take a long while to walk, and a request fired into a network blip can hang
+  // outright — either way the pane used to sit on a bare "SEARCHING…" with no hint. After
+  // 15s the heading flips to the slow/unavailable notice, but the request is NOT abandoned:
+  // a late success still lands and replaces it (the timeout only re-labels, never cancels).
+  useEffect(() => {
+    if (!query || flat || !projectId) return;
+    let stale = false;
+    setFlatError(false);
+    const slowTimer = setTimeout(() => { if (!stale) setFlatError(true); }, 15_000);
+    api.listFilesFlat(projectId)
+      .then((r) => { if (!stale) { clearTimeout(slowTimer); setFlat(r); setFlatError(false); } })
+      .catch(() => { if (!stale) { clearTimeout(slowTimer); setFlatError(true); } }); // flat stays null → the next keystroke retries
+    return () => { stale = true; clearTimeout(slowTimer); };
+  }, [query, flat, projectId]);
+
+  function toggleHidden() {
+    setShowHidden((prev) => {
+      const v = !prev;
+      try { localStorage.setItem(HIDDEN_KEY, v ? '1' : '0'); } catch { /* ignore */ }
+      return v;
+    });
+  }
+
+  function refresh() {
+    setChildren({}); setExpanded(new Set()); setSelected(new Set()); setAnchor(null); setFlat(null);
+    if (projectId) { void loadDir('.'); void useGitStatus.getState().refresh(projectId); }
+  }
 
   // Dismiss the right-click menu on Escape (outside-click is handled by the backdrop).
   useEffect(() => {
@@ -109,6 +204,19 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
     for (const list of Object.values(children)) for (const e of list) m.set(e.path, e);
     return m;
   }, [children]);
+
+  // Untracked directories arrive from porcelain as one `dir/` record with no per-file rows;
+  // files under them inherit the '?' through this prefix list.
+  const changedDirPrefixes = useMemo(
+    () => Object.keys(git.changed).filter((p) => p.endsWith('/')),
+    [git.changed],
+  );
+  const statusFor = useCallback((path: string): string => {
+    const exact = git.changed[path];
+    if (exact) return exact;
+    for (const d of changedDirPrefixes) if (path.startsWith(d)) return git.changed[d];
+    return '';
+  }, [git.changed, changedDirPrefixes]);
 
   function nameOf(p: string): string {
     return entryByPath.get(p)?.name ?? p.split('/').pop() ?? p;
@@ -217,15 +325,15 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
       return;
     }
     if (ev.shiftKey && anchor) {
-      const flat = flattenFiles(children, expanded);
-      const i = flat.indexOf(anchor);
-      const j = flat.indexOf(entry.path);
+      const flatRows = flattenFiles(children, expanded, '.', showHidden);
+      const i = flatRows.indexOf(anchor);
+      const j = flatRows.indexOf(entry.path);
       // If the anchor's row isn't currently visible (e.g. its directory got collapsed),
       // indexOf returns -1 and this guard deliberately falls through to plain-click
       // semantics below, rather than ranging over rows the user can't see.
       if (i >= 0 && j >= 0) {
         const [lo, hi] = i <= j ? [i, j] : [j, i];
-        setSelected(new Set(flat.slice(lo, hi + 1)));
+        setSelected(new Set(flatRows.slice(lo, hi + 1)));
         return; // range-select does not open anything
       }
     }
@@ -247,7 +355,8 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
   if (!projectId) return <div style={{ padding: 12, color: 'var(--color-text-tertiary)' }}>No project selected</div>;
 
   function renderDir(path: string, depth: number): React.ReactNode {
-    const entries = (children[path] ?? []).slice().sort(sortEntries);
+    const entries = (children[path] ?? []).slice().sort(sortEntries)
+      .filter((e) => showHidden || !e.name.startsWith('.'));
     return entries.map((e) => {
       const pl = 8 + depth * INDENT;
       if (e.isDirectory) {
@@ -265,6 +374,7 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
       const isSel = selected.has(e.path);
       const isOpen = e.path === selectedPath;
       const { Icon: FIcon, color: fcolor } = fileVisual(e.name);
+      const st = statusFor(e.path);
       return (
         <Row key={e.path}
           onClick={(ev) => onRowClick(ev, e)}
@@ -272,11 +382,61 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
           onContext={(ev) => onRowContext(ev, e)}
           style={{ display: 'flex', alignItems: 'center', gap: 7, padding: `6px 8px 6px ${pl}px`, borderRadius: 5, color: isSel || isOpen ? '#e9e9ec' : '#a8a8b0', background: isSel ? '#33333c' : isOpen ? '#26262b' : undefined, cursor: 'pointer' }}>
           <FIcon size={15} weight="fill" color={isSel || isOpen ? '#e9e9ec' : fcolor} style={{ flexShrink: 0 }} />
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
+          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
+          <span style={{ flexShrink: 0, font: '400 9.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{fmtSize(e.size)}</span>
+          {st && <span style={{ flexShrink: 0, width: 12, textAlign: 'center', font: '700 10px var(--font-mono)', color: STATUS_COLOR[st] ?? 'var(--color-text-tertiary)' }}>{st}</span>}
         </Row>
       );
     });
   }
+
+  /** A row in the search / changed flat lists: full path, optional highlight, status letter. */
+  function renderFlatRow(path: string, indices: number[] | null, st: string) {
+    const entry: FileEntry = { name: baseName(path), isDirectory: false, path: path.replace(/\/+$/, '') };
+    const isOpen = entry.path === selectedPath;
+    const { Icon: FIcon, color: fcolor } = fileVisual(entry.name);
+    return (
+      <Row key={path}
+        onClick={() => { setSelected(new Set([entry.path])); setAnchor(entry.path); void openFile(entry); }}
+        onMiddle={() => void openFile(entry, true)}
+        onContext={(ev) => onRowContext(ev, entry)}
+        style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 8px', borderRadius: 5, color: isOpen ? '#e9e9ec' : '#a8a8b0', background: isOpen ? '#26262b' : undefined, cursor: 'pointer' }}>
+        <FIcon size={15} weight="fill" color={isOpen ? '#e9e9ec' : fcolor} style={{ flexShrink: 0 }} />
+        <span style={{ flex: 1, minWidth: 0, display: 'flex' }}>
+          {indices
+            ? <HighlightedPath path={path} indices={indices} />
+            : <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{path}</span>}
+        </span>
+        {st && <span style={{ flexShrink: 0, width: 12, textAlign: 'center', font: '700 10px var(--font-mono)', color: STATUS_COLOR[st] ?? 'var(--color-text-tertiary)' }}>{st}</span>}
+      </Row>
+    );
+  }
+
+  const searching = query.trim().length > 0;
+  const searchRows = useMemo(() => {
+    if (!searching || !flat) return [];
+    const pool = showHidden ? flat.files : flat.files.filter((p) => !isHiddenPath(p));
+    return fuzzyFilter(query.trim(), pool);
+  }, [searching, flat, query, showHidden]);
+
+  const changedRows = useMemo(
+    () => Object.entries(git.changed).sort(([a], [b]) => a.localeCompare(b)),
+    [git.changed],
+  );
+
+  const heading = searching
+    ? (flat
+        ? `${searchRows.length} MATCHES${flat.truncated ? ' · INDEX TRUNCATED' : ''}`
+        : flatError ? 'INDEX SLOW OR UNAVAILABLE · STILL TRYING' : 'SEARCHING…')
+    : mode === 'changed' ? `UNCOMMITTED${git.branch ? ` · ${git.branch.toUpperCase()}` : ''}`
+    : 'PROJECT TREE';
+
+  const segStyle = (on: boolean): React.CSSProperties => ({
+    flex: 1, textAlign: 'center', font: `400 11px var(--font-sans)`, padding: '4px 0', borderRadius: 6,
+    cursor: 'pointer', border: 'none',
+    background: on && !searching ? 'var(--color-hover)' : 'var(--color-elevated)',
+    color: on && !searching ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+  });
 
   // What the menu acts on: the whole selection if the right-clicked row is part of it,
   // otherwise just that row (onRowContext has already collapsed the selection to it).
@@ -295,13 +455,66 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ padding: '9px 12px', borderBottom: '1px solid #1d1d21', font: '400 11px var(--font-mono)', color: '#6a6a72', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project ? homeAbbrev(project.workingDir) : ''}</span>
-        <button title="Refresh" onClick={() => { setChildren({}); setExpanded(new Set()); setSelected(new Set()); setAnchor(null); void loadDir('.'); }} style={{ background: 'none', border: 'none', color: '#46464d', cursor: 'pointer', fontSize: 14, flexShrink: 0 }}>⟳</button>
+      {/* root + branch */}
+      <div style={{ padding: '9px 10px', borderBottom: '1px solid #1d1d21', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        <span style={{ flex: 1, minWidth: 0, font: '400 11px var(--font-mono)', color: '#6a6a72', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {project ? homeAbbrev(project.workingDir) : ''}
+        </span>
+        {git.branch && (
+          <span title="Current branch" style={{
+            display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0,
+            font: '500 10.5px var(--font-mono)', color: 'var(--color-accent)',
+            background: 'rgba(62,207,106,0.08)', border: '1px solid rgba(62,207,106,0.25)',
+            borderRadius: 5, padding: '1px 6px', maxWidth: 140,
+          }}>
+            <GitBranch size={11} weight="bold" style={{ flexShrink: 0 }} />
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{git.branch}</span>
+          </span>
+        )}
+        <button title="Refresh" onClick={refresh} style={{ background: 'none', border: 'none', color: '#46464d', cursor: 'pointer', fontSize: 14, flexShrink: 0, padding: 0 }}>⟳</button>
       </div>
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 6, font: `400 ${fs}px/1.4 var(--font-mono)` }}>
-        {renderDir('.', 0)}
-        {!(children['.']?.length) && <div style={{ padding: 8, color: 'var(--color-text-tertiary)' }}>Empty</div>}
+
+      {/* search + view toggles */}
+      <div style={{ padding: '8px 10px 6px', display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 6, padding: '5px 8px' }}>
+          <MagnifyingGlass size={12} color="var(--color-text-tertiary)" style={{ flexShrink: 0 }} />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter files… (fuzzy)"
+            style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', outline: 'none', color: 'var(--color-text-primary)', font: '400 12px var(--font-sans)' }} />
+          {query && (
+            <button onClick={() => setQuery('')} title="Clear"
+              style={{ background: 'none', border: 'none', color: 'var(--color-text-tertiary)', cursor: 'pointer', fontSize: 11, padding: 0, flexShrink: 0 }}>×</button>
+          )}
+        </div>
+        <button onClick={toggleHidden} title={showHidden ? 'Hide dotfiles' : 'Show dotfiles'}
+          style={{ ...TOOL_BTN, font: '600 11px var(--font-mono)', background: showHidden ? 'var(--color-accent)' : 'transparent', color: showHidden ? '#08240F' : 'var(--color-text-secondary)' }}>·*</button>
+        <button onClick={() => setExpanded(new Set())} title="Collapse all"
+          style={{ ...TOOL_BTN, background: 'transparent', color: 'var(--color-text-secondary)' }}>
+          <ArrowLineLeft size={13} />
+        </button>
+      </div>
+
+      {/* mode filters */}
+      <div style={{ display: 'flex', gap: 4, padding: '2px 10px 8px', flexShrink: 0 }}>
+        <button onClick={() => { setMode('tree'); setQuery(''); }} style={segStyle(mode === 'tree')}>Tree</button>
+        <button onClick={() => { setMode('changed'); setQuery(''); }} style={segStyle(mode === 'changed')}>
+          Changed{git.count > 0 && <span style={{ color: 'var(--color-status-yellow)', marginLeft: 4 }}>{git.count}</span>}
+        </button>
+      </div>
+
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '0 6px 8px', font: `400 ${fs}px/1.4 var(--font-mono)` }}>
+        <div style={{ padding: '2px 4px 5px', font: '500 9.5px var(--font-mono)', letterSpacing: '0.1em', color: 'var(--color-text-tertiary)' }}>{heading}</div>
+        {searching
+          ? searchRows.map((r) => renderFlatRow(r.path, r.indices, statusFor(r.path)))
+          : mode === 'changed'
+          ? (changedRows.length
+              ? changedRows.map(([p, st]) => renderFlatRow(p, null, st))
+              : <div style={{ padding: 8, color: 'var(--color-text-tertiary)' }}>No uncommitted changes</div>)
+          : (
+            <>
+              {renderDir('.', 0)}
+              {!(children['.']?.length) && <div style={{ padding: 8, color: 'var(--color-text-tertiary)' }}>Empty</div>}
+            </>
+          )}
       </div>
       {menu && (
         <>

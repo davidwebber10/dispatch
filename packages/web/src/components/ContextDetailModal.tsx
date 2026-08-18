@@ -6,6 +6,8 @@ import { contextWindowFor, type CompactResult } from './tabs/chat/useStructuredC
 
 export interface ContextDetailModalProps {
   contextTokens?: number;
+  /** Wire-reported window size (ACP usage_update); beats the contextWindowFor table. */
+  contextWindow?: number;
   model?: string;
   compacting: boolean;
   compactResult: CompactResult | null;
@@ -16,8 +18,8 @@ export interface ContextDetailModalProps {
 const row: CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 0', borderBottom: '1px solid var(--color-border)', fontSize: 13 };
 
 /** Utility modal for the <ContextIndicator> pill: tokens/window/model detail + a Compact button. */
-export function ContextDetailModal({ contextTokens, model, compacting, compactResult, compact, onClose }: ContextDetailModalProps) {
-  const contextWindow = contextWindowFor(model);
+export function ContextDetailModal({ contextTokens, contextWindow: wireWindow, model, compacting, compactResult, compact, onClose }: ContextDetailModalProps) {
+  const contextWindow = wireWindow ?? contextWindowFor(model);
   const pct = Math.min(100, Math.round(((contextTokens ?? 0) / contextWindow) * 100));
   return (
     <Modal open onClose={onClose} title="Context window">

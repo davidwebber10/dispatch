@@ -72,6 +72,24 @@ export function sortThreads(items: Terminal[], mode: ThreadSort): Terminal[] {
   }
 }
 
+/** The FILES section follows the thread sort, but two modes don't map to files:
+ *  'needs' (a file never needs you) and 'custom' (files have no drag order).
+ *  Both fall back to newest-first — which, since 'custom' is the default mode,
+ *  makes newest-first the files default. */
+export function sortFiles(items: Terminal[], mode: ThreadSort): Terminal[] {
+  switch (mode) {
+    case 'active':
+    case 'oldest':
+    case 'name':
+      return sortThreads(items, mode);
+    case 'newest':
+    case 'needs':
+    case 'custom':
+    default:
+      return sortThreads(items, 'newest');
+  }
+}
+
 export function sortAgents(items: AgentSchedule[], mode: AgentSort): AgentSchedule[] {
   const out = [...items];
   switch (mode) {

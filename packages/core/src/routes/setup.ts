@@ -3,11 +3,12 @@ import type Database from 'better-sqlite3';
 import * as appState from '../db/app-state.js';
 import type { SecretsService } from '../secrets/service.js';
 import { detectAllProviders, detectTailscale } from '../setup/detect.js';
+import { installProvider, isProviderName, type ShellRunner } from '../setup/install.js';
 
 const SETUP_KEY = 'setup_completed_at';
 const port = () => Number(process.env.PORT) || 3456;
 
-export function createSetupRouter(db: Database.Database, secrets: SecretsService): Router {
+export function createSetupRouter(db: Database.Database, secrets: SecretsService, runInstall?: ShellRunner): Router {
   const router = Router();
 
   router.get('/state', async (_req, res) => {
@@ -20,9 +21,31 @@ export function createSetupRouter(db: Database.Database, secrets: SecretsService
     });
   });
 
-  router.get('/providers', async (_req, res) => res.json(await detectAllProviders()));
+  // ?fresh=1 bypasses the signed-in cache. The Setup wizard's Re-check button uses it —
+  // that is pressed right after signing in, the one moment a cached answer is wrong. The
+  // New Thread modal omits it, so opening the modal repeatedly does not spawn three
+  // status processes each time.
+  router.get('/providers', async (req, res) =>
+    res.json(await detectAllProviders({ fresh: req.query.fresh === '1' || req.query.fresh === 'true' })));
   router.get('/tailscale', async (_req, res) => res.json(await detectTailscale(port())));
   router.post('/complete', (_req, res) => { appState.set(db, SETUP_KEY, new Date().toISOString()); res.json({ ok: true }); });
+
+  // POST /api/setup/install/:provider — run that CLI's own documented install one-liner,
+  // then re-detect. The provider name is validated against the known set BEFORE it is used
+  // to look up a constant command, so no request can influence what runs in the shell.
+  //
+  // This can take minutes (Grok ships a ~130MB binary), so the client shows progress and
+  // waits. Installing never signs the CLI in — the response carries the login command for
+  // the user to run in a real terminal, because those flows are interactive.
+  router.post('/install/:provider', async (req, res) => {
+    const name = String(req.params.provider);
+    if (!isProviderName(name)) return res.status(400).json({ error: `Unknown provider: ${name}` });
+    try {
+      res.json(await installProvider(name, runInstall));
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
 
   return router;
 }

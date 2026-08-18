@@ -242,6 +242,99 @@ describe('ThreadAutoNamer', () => {
     namer.dispose();
   });
 
+  // --- model naming (OpenRouter/GLM upgrade path) -------------------------------
+  // With a resolvable key the title comes from the model; every failure mode —
+  // no key, generator null, resolver throw — must land on the prefix-derived
+  // fallback with no visible error. See model-namer.ts for the actual HTTP call
+  // (injected here, never hit in tests).
+
+  function makeThread() {
+    terminalsDb.create(db, {
+      id: 't1', sessionId: 's1', type: 'claude-code', label: 'Claude Code',
+      externalId: 'ext-1', labelSource: 'default',
+    });
+  }
+
+  it('uses the model title when a key resolves, feeding it the full raw prompt', async () => {
+    makeThread();
+    const { broadcaster, events } = fakeBroadcaster();
+    const readFile = vi.fn().mockResolvedValue(CC_TRANSCRIPT);
+    const generateModelName = vi.fn().mockResolvedValue('Fix flaky login test');
+    const namer = new ThreadAutoNamer(db, broadcaster, {
+      readFile,
+      getApiKey: async () => 'sk-or-test',
+      generateModelName,
+    });
+
+    namer.notifyActivity('t1');
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(generateModelName).toHaveBeenCalledWith('sk-or-test', 'fix the flaky login test please');
+    const row = terminalsDb.getById(db, 't1')!;
+    expect(row.label).toBe('Fix flaky login test');
+    expect(row.label_source).toBe('auto');
+    expect(events).toEqual([{ type: 'session:tabs-changed', sessionId: 's1' }]);
+
+    namer.dispose();
+  });
+
+  it('falls back to the prefix name when the model returns null', async () => {
+    makeThread();
+    const { broadcaster } = fakeBroadcaster();
+    const namer = new ThreadAutoNamer(db, broadcaster, {
+      readFile: vi.fn().mockResolvedValue(CC_TRANSCRIPT),
+      getApiKey: async () => 'sk-or-test',
+      generateModelName: vi.fn().mockResolvedValue(null),
+    });
+
+    namer.notifyActivity('t1');
+    await vi.advanceTimersByTimeAsync(5000);
+
+    const row = terminalsDb.getById(db, 't1')!;
+    expect(row.label).toBe('fix the flaky login test please');
+    expect(row.label_source).toBe('auto');
+
+    namer.dispose();
+  });
+
+  it('no key resolved → prefix name, model never called', async () => {
+    makeThread();
+    const { broadcaster } = fakeBroadcaster();
+    const generateModelName = vi.fn();
+    const namer = new ThreadAutoNamer(db, broadcaster, {
+      readFile: vi.fn().mockResolvedValue(CC_TRANSCRIPT),
+      getApiKey: async () => null,
+      generateModelName,
+    });
+
+    namer.notifyActivity('t1');
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(generateModelName).not.toHaveBeenCalled();
+    expect(terminalsDb.getById(db, 't1')!.label).toBe('fix the flaky login test please');
+
+    namer.dispose();
+  });
+
+  it('a throwing key resolver degrades to the prefix name, not an error', async () => {
+    makeThread();
+    const { broadcaster } = fakeBroadcaster();
+    const namer = new ThreadAutoNamer(db, broadcaster, {
+      readFile: vi.fn().mockResolvedValue(CC_TRANSCRIPT),
+      getApiKey: async () => { throw new Error('doppler down'); },
+      generateModelName: vi.fn(),
+    });
+
+    namer.notifyActivity('t1');
+    await vi.advanceTimersByTimeAsync(5000);
+
+    const row = terminalsDb.getById(db, 't1')!;
+    expect(row.label).toBe('fix the flaky login test please');
+    expect(row.label_source).toBe('auto');
+
+    namer.dispose();
+  });
+
   it('shell threads and non-default (auto/user) rows never schedule', async () => {
     terminalsDb.create(db, {
       id: 'shell1', sessionId: 's1', type: 'shell', label: 'Terminal',

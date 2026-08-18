@@ -20,6 +20,13 @@ export function contextWindowFor(model?: string): number {
   return model?.includes('haiku') ? 200_000 : 1_000_000;
 }
 
+/** A model-call retry in flight (from the CLI's `system/api_retry` events). */
+export interface ApiRetry {
+  attempt: number;
+  maxRetries: number;
+  errorStatus?: number;
+}
+
 /** The outcome of the most recent native compaction, or null before any has run. */
 export interface CompactResult {
   success: boolean;
@@ -34,10 +41,18 @@ export interface StructuredChat {
    *  Undefined until the first assistant event of the thread lands. Compare against
    *  contextWindowFor(model) to render a fill indicator. */
   contextTokens?: number;
+  /** The wire-reported context-window size (tokens), when the harness sends one — beats
+   *  the contextWindowFor(model) table. Today only ACP/OpenCode reports it. */
+  contextWindow?: number;
   /** True while a native `/compact` triggered via `compact()` is in progress. */
   compacting: boolean;
   /** Outcome of the most recently finished compaction (transient — for a toast/indicator). */
   compactResult: CompactResult | null;
+  /** Live API-retry state (the CLI's system/api_retry events): the model call is failing
+   *  and being retried — e.g. a 529 outage — which can run for MINUTES behind an otherwise
+   *  bare "Working…" spinner. Null when no retry is in flight; cleared the moment the turn
+   *  progresses (stream/assistant) or ends (result). */
+  apiRetry: ApiRetry | null;
   // Accepts plain text OR a content-block array (e.g. a real image block the model SEES).
   send: (content: string | ContentBlock[]) => void;
   /** The AskUserQuestion / gated tool this thread is blocked on, or null. */
@@ -62,11 +77,13 @@ export interface StructuredChat {
    * reverse-infinite-scroll uses). No-ops while already loading or once hasMore is false.
    *
    * KNOWN SHAPE-PARITY GAP: the REST parser (conversation/transcript.ts) is leaner than the
-   * ws fold above — it never emits `image` items, never carries `toolId` (tool_use/
-   * tool_result pairing falls back to array adjacency), and never carries `source` (a
+   * ws fold above — it never emits `image` items and never carries `source` (a
    * coordinator-relayed turn reads as a plain "You" bubble instead of "via Dispatch" once
    * paged in). Accepted for v1: the live tail, where users spend most of their time, stays
-   * full-fidelity via the ws; only older, scrolled-past-the-fold history degrades.
+   * full-fidelity via the ws; only older, scrolled-past-the-fold history degrades. It DOES
+   * carry `toolId` now (both sides): Grok/ACP transcripts interleave thinking between a
+   * tool_use and its tool_result, so the adjacency fallback paired nothing there and every
+   * reloaded call rendered permanently "running…" — id pairing is position-independent.
    *
    * FIRST-CALL ANCHOR: `before` starts undefined, but the first call also passes
    * `beforeUuid` — the oldest already-rendered item's real Claude Code message identity
@@ -94,6 +111,16 @@ function safeJson(v: unknown): string {
  * heuristic, not an identity: two genuinely distinct turns with identical rendered content
  * (rare) would collide — accepted as the fallback of last resort, not the primary check.
  */
+/**
+ * True when this item carries a REAL Claude Code transcript uuid — a durable per-message
+ * identity — as opposed to no uuid at all (the client's own optimistic echo) or the synthetic
+ * `s-<turn>-<idx>` key a still-streaming block carries until the whole-assistant reconcile
+ * upgrades it. Only a real uuid is trustworthy enough to decide "same message" on its own.
+ */
+function hasRealUuid(it: ConvItem): boolean {
+  return !!it.uuid && !it.uuid.startsWith('s-');
+}
+
 function convItemFingerprint(it: ConvItem): string {
   // imageUrl is included so distinct images (which otherwise share an empty text/tool
   // fingerprint) don't collapse to one — matters now that REST pages can carry user-attached
@@ -219,13 +246,39 @@ function nextRevealed(revealed: number, targetLen: number): number {
  * the footer from `result`. The user's own turns arrive as echoed `user` text
  * blocks (the backend buffers them), so reconnect replay restores them.
  */
-export function useStructuredChat(terminalId: string, sessionId?: string): StructuredChat {
+export function useStructuredChat(
+  terminalId: string,
+  sessionId?: string,
+  opts?: {
+    /**
+     * False for a harness whose getConversation is `unsupported` (Grok): there is never
+     * REST history to page, so the whole older-pages machinery stays off — no optimistic
+     * hasMore (which rendered a permanently-inert "Load earlier messages" button, since
+     * grok items carry no transcript uuid to anchor on), no bootstrap fetches. The full
+     * ws-ring replay IS the recoverable history for such threads. Defaults to true.
+     */
+    pageableHistory?: boolean;
+  },
+): StructuredChat {
+  const pageable = opts?.pageableHistory !== false;
+  // Read by the reset paths inside effects/callbacks keyed only on terminalId.
+  const pageableRef = useRef(pageable);
+  pageableRef.current = pageable;
   const [items, setItems] = useState<ConvItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [model, setModel] = useState<string | undefined>();
   const [contextTokens, setContextTokens] = useState<number | undefined>();
+  // The REAL context-window size when the wire reports one (ACP usage_update.size, carried
+  // as `context_window` on the assistant frame). Undefined → the per-model table
+  // (contextWindowFor) stays the denominator, as before.
+  const [contextWindow, setContextWindow] = useState<number | undefined>();
   const [compacting, setCompacting] = useState(false);
   const [compactResult, setCompactResult] = useState<CompactResult | null>(null);
+  // API-retry visibility: set by system/api_retry, cleared by any sign the turn progressed
+  // (stream_event / assistant / result) — functional clears bail out when already null so
+  // per-delta stream events don't churn renders.
+  const [apiRetry, setApiRetry] = useState<ApiRetry | null>(null);
+  const clearApiRetry = () => setApiRetry((p) => (p ? null : p));
   // The AskUserQuestion the CLI is blocked on (mirrored in a ref so the `answer`
   // callback and the tool_result handler read the latest value without re-subscribing).
   const [pending, setPendingState] = useState<PendingPermission | null>(null);
@@ -235,9 +288,9 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
   // Older-history pagination (loadOlder). Refs mirror the state so the stable loadOlder
   // callback below always reads the CURRENT hasMore/loadingOlder without needing them in
   // its dependency array (which would otherwise change its identity on every fetch).
-  const [hasMore, setHasMore] = useState(true); // optimistic until the first loadOlder() settles
+  const [hasMore, setHasMore] = useState(pageable); // optimistic until the first loadOlder() settles
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const hasMoreRef = useRef(true);
+  const hasMoreRef = useRef(pageable);
   const loadingOlderRef = useRef(false);
   const oldestLineRef = useRef<number | undefined>(undefined); // REST `before` anchor; undefined = not yet probed
   const pageTokenRef = useRef(0); // bumped on terminal switch to discard a stale in-flight fetch
@@ -245,18 +298,35 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
   // uuid (for the first call's precise `beforeUuid` anchor) without depending on `items`
   // in its own closure — same rationale as the hasMore/loadingOlder refs above.
   const itemsRef = useRef<ConvItem[]>([]);
-  useEffect(() => { itemsRef.current = items; }, [items]);
+  // ANCHORLESS-BAIL RE-ARM. loadOlder's first call refuses to fetch while no rendered item
+  // carries a real uuid (see its ANCHORLESS-FETCH GUARD — an anchorless fetch returns the
+  // NEWEST window and double-renders the thread). That bail is correct, but it touched NO
+  // state, and the only things that re-fire paging are useBootstrapOlderPages' effect
+  // (deps: overflowing/hasMore/loadingOlder/loadOlder), a near-top scroll, and the
+  // Load-earlier button — none of which change when an anchor finally arrives. So the FIRST
+  // bail was permanent: the button stayed visible and inert forever, and the bootstrap loop
+  // never ran again. That is routine on a streaming thread, because the bounded ws replay
+  // (last 200 ring events, every stdout line included) can leave every rendered item on a
+  // synthetic `s-<turn>-<idx>` key.
+  // The fix: remember that a call bailed for want of an anchor, and bump `anchorRetry` the
+  // moment a real uuid actually lands. `anchorRetry` is a loadOlder dependency, so its
+  // identity changes — exactly the dependency the bootstrap effect re-runs on — and a scroll
+  // or a button click after that point proceeds normally too. The nonce is bumped ONLY when
+  // a real anchor exists (never on the bail itself), so it cannot spin.
+  const anchorBlockedRef = useRef(false);
+  const [anchorRetry, setAnchorRetry] = useState(0);
+  useEffect(() => {
+    itemsRef.current = items;
+    if (anchorBlockedRef.current && items.some(hasRealUuid)) {
+      anchorBlockedRef.current = false;
+      setAnchorRetry((n) => n + 1);
+    }
+  }, [items]);
   // Bug 1 (archived agent shows an empty chat): latches once we've hydrated from the REST
   // transcript after a `system/inactive` signal (no live process ⇒ nothing to ws-replay),
   // so a later reconnect / duplicate signal doesn't re-fetch. Reset alongside the other
   // per-thread refs below.
   const inactiveHydratedRef = useRef(false);
-  // Latches once loadOlder() has performed an ANCHORLESS first fetch (the zero-items deadlock
-  // rescue — see loadOlder's guard). That page is the NEWEST window, i.e. the same turns a ws
-  // replay may still be about to append, so while it's latched the whole-event `user`/`assistant`
-  // append paths drop any item whose real uuid is already rendered. Scoped to this flag so the
-  // normal live/streaming path keeps its existing append-everything behavior untouched.
-  const anchorlessHydratedRef = useRef(false);
 
   // Session is read by the image parser (path refs → byte route) but must NOT key the
   // socket effect — it can resolve a render after terminalId, and we don't want that to
@@ -278,21 +348,19 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
   useEffect(() => {
     if (!terminalId) {
       setItems([]); setBusy(false); setModel(undefined); setPending(null);
-      setContextTokens(undefined); setCompacting(false); setCompactResult(null);
-      hasMoreRef.current = true; setHasMore(true);
+      setContextTokens(undefined); setContextWindow(undefined); setCompacting(false); setCompactResult(null); setApiRetry(null);
+      hasMoreRef.current = pageableRef.current; setHasMore(pageableRef.current);
       loadingOlderRef.current = false; setLoadingOlder(false);
       oldestLineRef.current = undefined; pageTokenRef.current += 1;
-      inactiveHydratedRef.current = false;
-      anchorlessHydratedRef.current = false;
+      inactiveHydratedRef.current = false; anchorBlockedRef.current = false;
       return;
     }
     setItems([]); setBusy(false); setModel(undefined); setPending(null);
-    setContextTokens(undefined); setCompacting(false); setCompactResult(null);
-    hasMoreRef.current = true; setHasMore(true);
+    setContextTokens(undefined); setContextWindow(undefined); setCompacting(false); setCompactResult(null); setApiRetry(null);
+    hasMoreRef.current = pageableRef.current; setHasMore(pageableRef.current);
     loadingOlderRef.current = false; setLoadingOlder(false);
     oldestLineRef.current = undefined; pageTokenRef.current += 1; // discard any in-flight fetch from the previous thread
-    inactiveHydratedRef.current = false;
-    anchorlessHydratedRef.current = false;
+    inactiveHydratedRef.current = false; anchorBlockedRef.current = false;
     streamingRef.current = false; turnRef.current = 0; blockMapRef.current.clear();
     pendingRef.current.clear();
     if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
@@ -351,19 +419,12 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
       flush(true);
     };
 
-    // Append whole-event items, dropping any whose real Claude Code uuid is ALREADY rendered
-    // — but only after loadOlder() performed an anchorless newest-window hydration (see
-    // anchorlessHydratedRef). That page covers the same turns this replay is about to append,
-    // and the ws path has no dedup of its own, so without this the transcript would render
-    // twice. Outside that case this is a pass-through, leaving live behavior unchanged.
+    // Append whole-event items. Plain append: the anchorless newest-window fetch that once
+    // required uuid-dedup here is gone — loadOlder never fetches without an anchor, and the
+    // inactive-rescue page only lands on a view with no conversation items to collide with
+    // (see the 'system'/'inactive' handler below).
     const appendItems = (add: ConvItem[]) => {
-      if (!add.length) return;
-      setItems((p) => {
-        if (!anchorlessHydratedRef.current) return [...p, ...add];
-        const seen = new Set(p.map((it) => it.uuid).filter((u): u is string => !!u));
-        const fresh = add.filter((it) => !(it.uuid && seen.has(it.uuid)));
-        return fresh.length ? [...p, ...fresh] : p;
-      });
+      if (add.length) setItems((p) => [...p, ...add]);
     };
 
     const sock = openStructuredSocket({
@@ -376,16 +437,15 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
         pendingRef.current.clear();
         setItems([]); setBusy(false);
         setPending(null); // the server re-sends a still-pending permission after replay
-        setContextTokens(undefined); setCompacting(false); setCompactResult(null); // replay rebuilds these
+        setContextTokens(undefined); setContextWindow(undefined); setCompacting(false); setCompactResult(null); setApiRetry(null); // replay rebuilds these
         blockMapRef.current.clear();
         // Re-arm pagination too: `items` above is being fully rebuilt from a fresh replay,
         // so a stale REST anchor from before the reconnect could otherwise skip a gap of
         // history between the new tail replay and where the old anchor left off.
-        hasMoreRef.current = true; setHasMore(true);
+        hasMoreRef.current = pageableRef.current; setHasMore(pageableRef.current);
         loadingOlderRef.current = false; setLoadingOlder(false);
         oldestLineRef.current = undefined; pageTokenRef.current += 1;
-        inactiveHydratedRef.current = false;
-        anchorlessHydratedRef.current = false;
+        inactiveHydratedRef.current = false; anchorBlockedRef.current = false;
       },
       onClose: () => {
         // P0b safety net: if the ws drops we can't trust an in-flight turn to ever
@@ -416,14 +476,45 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
           api.getConversation(terminalId, { limit: OLDER_PAGE_LIMIT })
             .then((conv) => {
               if (tok !== pageTokenRef.current) return; // thread switched / ws reset mid-flight
-              oldestLineRef.current = conv.startLine;
-              hasMoreRef.current = conv.hasMore; setHasMore(conv.hasMore);
-              if (conv.items.length) setItems((prev) => (prev.length ? prev : conv.items));
+              // Apply only while nothing CONVERSATIONAL is rendered. A ring that earned this
+              // rescue replays no conversation items, but can still deposit a stale `result`
+              // FOOTER (the result handler appends one for any non-backfill result) — a footer
+              // alone doesn't own the view: hydrate and keep it BELOW the history, where the
+              // newest turn's footer belongs. A real conversation item (a live turn that
+              // started mid-flight) means the stream owns the view — discard the page AND
+              // leave the paging anchor unset: anchoring at this page's startLine while
+              // dropping its content would leave a gap later loadOlder() pages right past.
+              // The anchor writes live INSIDE the updater: itemsRef syncs via a passive effect
+              // and can lag a just-committed live event, so an outside check could anchor (or
+              // latch hasMore=false, permanently killing loadOlder) on a page the updater is
+              // about to discard. The updater's `prev` is the authoritative fresh state; the
+              // itemsRef check outside is a fast-path only. The ref/setHasMore writes in here
+              // are idempotent, so a double-invoked (StrictMode) updater is harmless.
+              const conversational = (it: ConvItem) => it.kind !== 'result';
+              if (itemsRef.current.some(conversational)) return; // fast path only
+              setItems((prev) => {
+                if (prev.some(conversational)) return prev; // authoritative — skips the anchor too
+                oldestLineRef.current = conv.startLine;
+                hasMoreRef.current = conv.hasMore; setHasMore(conv.hasMore);
+                return conv.items.length ? [...conv.items, ...prev] : prev;
+              });
             })
             .catch(() => { /* transient — the next near-top scroll retries via loadOlder */ })
             .finally(() => {
               if (tok === pageTokenRef.current) { loadingOlderRef.current = false; setLoadingOlder(false); }
             });
+          return;
+        }
+
+        // A model-call retry (529 overload, 5xx): surface it so the busy slot can say what's
+        // actually happening — during an outage the CLI retries for minutes and a bare
+        // "Working…" spinner reads as a dead session. Cleared on any turn progress below.
+        if (type === 'system' && event.subtype === 'api_retry') {
+          setApiRetry({
+            attempt: typeof event.attempt === 'number' ? event.attempt : 0,
+            maxRetries: typeof event.max_retries === 'number' ? event.max_retries : 0,
+            errorStatus: typeof event.error_status === 'number' ? event.error_status : undefined,
+          });
           return;
         }
 
@@ -456,6 +547,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
         if (type === 'stream_event' && event.event) {
           streamingRef.current = true;
           setBusy(true);
+          clearApiRetry(); // the call went through — retries are over
           const se = event.event;
 
           if (se.type === 'message_start') {
@@ -511,6 +603,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
 
         if (type === 'assistant' && Array.isArray(event.message?.content)) {
           setBusy(true);
+          clearApiRetry(); // the call went through — retries are over
           // Context fill: the LATEST assistant call's usage (not a running sum — result.usage
           // sums every API round-trip in a multi-tool turn, badly over-counting). Recomputed
           // on every assistant event so it always reflects the most recent call.
@@ -519,6 +612,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
             const tokens = (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
             setContextTokens(tokens);
           }
+          if (typeof event.context_window === 'number' && event.context_window > 0) setContextWindow(event.context_window);
           // Claude Code's own per-message-block identity (verified against a real captured
           // session — see backfillEventsFromTranscript's doc comment): the SAME field the
           // on-disk transcript writes per line, so an item built from this live event and one
@@ -526,10 +620,11 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
           // stable identity. Threaded onto every item below so loadOlder's dedup/anchor can
           // use real identity instead of a lossy content fingerprint.
           const uuid = typeof event.uuid === 'string' ? event.uuid : undefined;
-          // Streaming mode: text/thinking already rendered from deltas — ignore them
-          // to avoid duplication. Reconcile each tool_use's parsed input from the
-          // authoritative whole event (and append any tool we never saw start, e.g.
-          // if its content_block_start was trimmed out of the replay ring).
+          // Streaming mode: text/thinking ALREADY rendered from deltas — ignore those to
+          // avoid duplication. Reconcile each tool_use's parsed input from the authoritative
+          // whole event, and append any block we never saw start (a tool, or — see
+          // REPLAY-CUT RECOVERY below — text/thinking), e.g. because its content_block_start
+          // was trimmed out of the replay ring.
           if (streamingRef.current) {
             // Land any buffered deltas first so trailing text/thinking isn't lost and
             // no later frame overwrites the authoritative tool input reconciled below.
@@ -541,8 +636,37 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
             // loadOlder() page recognize (and correctly dedup) this same item from disk.
             const blockKeys = new Set(Array.from(blockMapRef.current.values(), (r) => r.key));
             const tools = event.message.content.filter((b: any) => b.type === 'tool_use');
-            if (tools.length || (uuid && blockKeys.size)) {
+            // REPLAY-CUT RECOVERY. The ws replay is bounded to the last 200 ring events, so it
+            // can start PAST a message's content_block_start. Those orphaned deltas are dropped
+            // (no BlockRec to land in — see content_block_delta above), and `streamingRef` is
+            // sticky, so this reconcile's "text/thinking already rendered from deltas" rule
+            // used to lose that message's prose from BOTH sources — permanently. Any block this
+            // whole event reports whose stream index never opened a BlockRec was rendered by
+            // nothing, so it is appended here from the authoritative whole event — the SAME
+            // rule already applied to "any tool we never saw start", now covering text/thinking
+            // too, and in content order so a recovered block keeps its place relative to the
+            // rest of the message. `index` is a position in this message's content array, which
+            // is exactly what a stream_event's `index` addresses. The check is presence-only
+            // (not the rec's kind): if an index ever failed to line up, skipping is the safe
+            // direction — a miss, never a duplicated bubble.
+            const appendable: { b: any; index: number }[] = event.message.content
+              .map((b: any, index: number) => ({ b, index }))
+              .filter(({ b, index }: { b: any; index: number }) => b.type === 'tool_use'
+                || ((b.type === 'text' || b.type === 'thinking') && !blockMapRef.current.has(index)));
+            if (appendable.length || (uuid && blockKeys.size)) {
               setItems((p) => {
+                // DEFENSE-IN-DEPTH (replay/REST overlap): if this message's real uuid is already
+                // rendered by an item OUTSIDE this stream burst (a REST-hydrated copy), drop the
+                // burst's rebuilt items instead of upgrading them — upgrading would leave two
+                // items sharing one identity, i.e. the same turn rendered twice. With the
+                // anchorless fetch gone this cannot occur today; it exists so a future overlap
+                // regression duplicates nothing. (Burst items still carry synthetic `s-` keys
+                // here, so `it.uuid === uuid` matches an outside copy — or an already-upgraded
+                // item from an earlier reconcile of this SAME message, in which case the filter
+                // removes nothing and this is a harmless no-op.)
+                if (uuid && p.some((it) => it.uuid === uuid)) {
+                  return p.filter((it) => !(it.uuid && blockKeys.has(it.uuid)));
+                }
                 const haveIds = new Set(p.filter((i) => i.kind === 'tool' && i.toolId).map((i) => i.toolId));
                 const next = p.map((it) => {
                   const patch: Partial<ConvItem> = {};
@@ -553,8 +677,15 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
                   }
                   return Object.keys(patch).length ? { ...it, ...patch } : it;
                 });
-                for (const b of tools) {
-                  if (!haveIds.has(b.id)) next.push({ kind: 'tool', toolName: b.name, toolId: b.id, toolInput: safeJson(b.input), toolFile: b.input?.file_path ?? b.input?.path, ...(uuid ? { uuid } : {}) });
+                for (const { b } of appendable) {
+                  if (b.type === 'tool_use') {
+                    if (!haveIds.has(b.id)) next.push({ kind: 'tool', toolName: b.name, toolId: b.id, toolInput: safeJson(b.input), toolFile: b.input?.file_path ?? b.input?.path, ...(uuid ? { uuid } : {}) });
+                    continue;
+                  }
+                  // text / thinking whose content_block_start the replay cut (see appendable).
+                  const text = b.type === 'thinking' ? (b.thinking ?? b.text ?? '') : (b.text ?? '');
+                  if (!text) continue; // an empty block would render as a blank bubble
+                  next.push({ kind: b.type === 'thinking' ? 'thinking' : 'assistant', text, ...(uuid ? { uuid } : {}) });
                 }
                 return next;
               });
@@ -627,6 +758,7 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
         if (type === 'result') {
           flushNow(); // land any buffered trailing tokens before the footer
           setBusy(false);
+          clearApiRetry(); // turn over — either recovered or gave up with an error result
           // Synthetic result from backfillEventsFromTranscript (see cc-sessions.ts): Claude
           // Code transcripts never write a real trailing `result` line, so a revived
           // completed thread's replay would otherwise end on `assistant` with nothing to
@@ -712,26 +844,20 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
     const beforeUuid = firstCall
       ? itemsRef.current.find((it) => it.uuid && !it.uuid.startsWith('s-'))?.uuid
       : undefined;
-    // ANCHORLESS-FETCH GUARD (narrowed — see the deadlock note below): on the first call, if
-    // items EXIST but none carries a real uuid (only synthetic `s-<turn>-<idx>` streaming keys),
-    // do NOT fetch. An anchorless request makes getConversation return the NEWEST window — the
-    // whole transcript — which the ws onEvent handlers would re-append, rendering the
-    // conversation twice. Bail and let BootstrapOlderPages / a near-top scroll retry once the
+    // ANCHORLESS-FETCH GUARD: on the first call, if no rendered item carries a real uuid yet
+    // (items empty, mid-stream synthetic keys only, or optimistic echoes), do NOT fetch. An
+    // anchorless request makes getConversation return the NEWEST window — the whole transcript
+    // tail — which collides with the ws replay and renders the conversation twice / out of
+    // order (fixed in d91fcf6, regressed by 0b8e106's zero-items exception, re-fixed here).
+    // loadOlder serves strictly-older history; the newest window is owned by the ws replay,
+    // and a ring with nothing renderable gets the server's `system/inactive` REST rescue
+    // instead (ws/structured.ts hasRenderableEvents + the 'inactive' handler above). Bail and
+    // let BootstrapOlderPages / a near-top scroll / the Load-earlier button retry once the
     // replay settles an anchor.
-    //
-    // DEADLOCK FIX: this guard used to also cover the ZERO-items case, which permanently
-    // stranded a thread whose replay ring holds only NON-RENDERING events (system/init,
-    // system/status, a stale result). Such a ring is non-empty, so ws/structured.ts never sends
-    // the `system/inactive` REST-hydration rescue — yet ChatView renders zero items, so there is
-    // nothing to scroll, onViewportScroll's near-top trigger never fires, and this guard bailed
-    // SYNCHRONOUSLY without touching `loadingOlder`, so useBootstrapOlderPages' effect (keyed on
-    // overflowing/hasMore/loadingOlder/loadOlder) never re-fired either. History was unreachable.
-    // With nothing rendered there is nothing to duplicate against, and this IS the initial
-    // hydration — exactly what the `system/inactive` path does — so the anchorless fetch is
-    // allowed. `anchorlessHydratedRef` below then arms uuid-dedup on the ws append paths so a
-    // replay that lands AFTER this page still can't double the transcript.
-    if (firstCall && !beforeUuid && itemsRef.current.length > 0) return;
-    if (firstCall && !beforeUuid) anchorlessHydratedRef.current = true;
+    // The bail RE-ARMS instead of dead-ending: it changes no other state, so without the flag
+    // below nothing would ever re-fire paging and the Load-earlier button would stay visible
+    // and inert forever (see anchorBlockedRef / anchorRetry above).
+    if (firstCall && !beforeUuid) { anchorBlockedRef.current = true; return; }
     loadingOlderRef.current = true;
     setLoadingOlder(true);
     api.getConversation(terminalId, { before: oldestLineRef.current, ...(beforeUuid ? { beforeUuid } : {}), limit: OLDER_PAGE_LIMIT })
@@ -750,12 +876,27 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
           // either side that predate this identity (the client's own optimistic echo, an
           // image, which the REST parser never emits anyway).
           setItems((prev) => {
-            const seenUuids = new Set(prev.map((it) => it.uuid).filter((u): u is string => !!u));
-            const seenFingerprints = new Set(prev.map(convItemFingerprint));
-            const fresh = conv.items.filter((it) => {
-              if (it.uuid && seenUuids.has(it.uuid)) return false;
-              return !seenFingerprints.has(convItemFingerprint(it));
-            });
+            const seenUuids = new Set(prev.filter(hasRealUuid).map((it) => it.uuid as string));
+            // The fingerprint set is built ONLY from already-rendered items that have no real
+            // identity — that is what makes it the FALLBACK this comment always described.
+            // Building it from every `prev` item (the old behaviour) meant a genuinely new
+            // message was deleted merely because its rendered text matched something already on
+            // screen, which is routine in a coding session: the same `Edit` result, the same
+            // command re-run, two empty tool outputs, a repeated short user turn. Measured on
+            // real transcripts that silently discarded 27-30% of paged history — the "history
+            // skips lines" bug. `prev` also grows with every page, so it got worse the further
+            // back you scrolled.
+            const anonymousFingerprints = new Set(
+              prev.filter((it) => !hasRealUuid(it)).map(convItemFingerprint),
+            );
+            const fresh = conv.items.filter((it) =>
+              // A real uuid IS the identity — trust it alone. Anything else falls back to
+              // content, which still catches the case the fallback exists for (the client's
+              // own optimistic echo / a mid-stream synthetic block).
+              hasRealUuid(it)
+                ? !seenUuids.has(it.uuid as string)
+                : !anonymousFingerprints.has(convItemFingerprint(it)),
+            );
             return fresh.length ? [...fresh, ...prev] : prev;
           });
         }
@@ -764,7 +905,10 @@ export function useStructuredChat(terminalId: string, sessionId?: string): Struc
       .finally(() => {
         if (tok === pageTokenRef.current) { loadingOlderRef.current = false; setLoadingOlder(false); }
       });
-  }, [terminalId]);
+    // `anchorRetry` is a dependency ON PURPOSE: bumping it re-creates this callback, which is
+    // what re-fires useBootstrapOlderPages' effect after an anchorless bail (see above). The
+    // body reads nothing from it.
+  }, [terminalId, anchorRetry]);
 
-  return { items, busy, model, contextTokens, compacting, compactResult, send, pending, answer, compact, hasMore, loadingOlder, loadOlder };
+  return { items, busy, model, contextTokens, contextWindow, compacting, compactResult, apiRetry, send, pending, answer, compact, hasMore, loadingOlder, loadOlder };
 }

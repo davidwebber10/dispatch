@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { CaretRight, CheckCircle, DownloadSimple, SignIn, TerminalWindow, WarningCircle } from '@phosphor-icons/react';
 import { Modal } from '../common/Modal';
 import { Spinner } from '../common/Spinner';
 import { AutoArchiveField } from './AutoArchiveField';
@@ -7,56 +8,20 @@ import { useTabs } from '../../stores/tabs';
 import { timeAgo } from '../../lib/time';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { DEFAULT_AUTO_ARCHIVE_MS } from '../../lib/autoArchive';
-import type { CcRecentSession, CodexRecentSession } from '../../api/types';
+import type { CcRecentSession, CodexRecentSession, HarnessSettingsResponse, ProviderName, ProviderStatus } from '../../api/types';
+import { HARNESSES, INSTALL_COMMAND, LOGIN_COMMAND, type Harness as Harnesses } from '../../lib/harnesses';
 
 /** The harness (agent/shell) a new thread runs. Maps to the wire `type`. */
-type Harness = 'claude' | 'codex' | 'terminal';
+type Harness = Harnesses['id'];
 /** CLI = raw terminal TUI (PTY). Pretty = the structured (stream-json) chat UI. */
 type Mode = 'cli' | 'pretty';
-
-/**
- * Codex "Pretty" (structured transport) is now wired on the backend: the daemon runs a second
- * structured manager (CodexStructuredSessionManager) speaking the `codex app-server` v2 JSON-RPC
- * protocol, translated into the SAME Claude-shaped event stream the ChatView consumes. Enabled
- * after the Phase B live E2E proved a real Codex-Pretty thread streams a turn + surfaces/answers
- * an approval end-to-end. (Server kill-switch: DISPATCH_CODEX_PRETTY=0.)
- */
-const CODEX_PRETTY_ENABLED = true;
-
-const HARNESSES: { id: Harness; label: string; type: string }[] = [
-  { id: 'claude', label: 'Claude Code', type: 'claude-code' },
-  { id: 'codex', label: 'Codex', type: 'codex' },
-  { id: 'terminal', label: 'Terminal', type: 'shell' },
-];
-
-/**
- * Harness-aware model lists. "Default" (model:null) omits the flag and lets the
- * CLI pick. Claude values are `--model` aliases; Codex values are the real
- * `--model` slugs (confirmed from `~/.codex/models_cache.json`).
- */
-const MODELS: Record<Harness, { label: string; model: string | null }[]> = {
-  claude: [
-    { label: 'Default', model: null },
-    { label: 'Fable', model: 'fable' },
-    { label: 'Opus', model: 'opus' },
-    { label: 'Sonnet', model: 'sonnet' },
-    { label: 'Haiku', model: 'haiku' },
-  ],
-  codex: [
-    { label: 'Default', model: null },
-    { label: '5.6 Sol', model: 'gpt-5.6-sol' },
-    { label: '5.6 Terra', model: 'gpt-5.6-terra' },
-    { label: '5.6 Luna', model: 'gpt-5.6-luna' },
-  ],
-  terminal: [],
-};
 
 const ACCENT = 'var(--color-accent)';
 const GLOW = '0 0 6px 1px rgba(62,207,106,.55)';
 
 function ClaudeMark() {
   return (
-    <svg aria-hidden="true" width={22} height={22} viewBox="0 0 512 512" fill="#D97757" style={{ display: 'block' }}>
+    <svg aria-hidden="true" width={20} height={20} viewBox="0 0 512 512" fill="#D97757" style={{ display: 'block' }}>
       <path d="M100.4 340.5l100.7-56.5 1.7-4.9-1.7-2.7-4.9 0-16.8-1-57.5-1.6-49.9-2.1-48.3-2.6-12.2-2.6-11.4-15 1.2-7.5 10.2-6.9 14.7 1.3c18.9 1.3 45.9 3.1 81 5.6l35.2 2.1 52.2 5.4 8.3 0 1.2-3.4-2.8-2.1-2.2-2.1-50.3-34.1-54.4-36-28.5-20.7-15.4-10.5-7.8-9.8-3.4-21.5 14-15.4 18.8 1.3 4.8 1.3 19 14.7 40.7 31.5 53.1 39.1 7.8 6.5 3.1-2.2 .4-1.6-3.5-5.8-28.9-52.2-30.8-53.1-13.7-22-3.6-13.2c-1.3-5.4-2.2-10-2.2-15.5l15.9-21.6 8.8-2.8 21.2 2.8 8.9 7.8 13.2 30.2 21.4 47.5 33.2 64.6 9.7 19.2 5.2 17.8 1.9 5.4 3.4 0 0-3.1 2.7-36.4 5-44.7 4.9-57.5 1.7-16.2 8-19.4 15.9-10.5 12.4 5.9 10.2 14.7-1.4 9.5-6.1 39.5-11.9 61.9-7.8 41.5 4.5 0 5.2-5.2 21-27.8 35.2-44.1 15.5-17.5 18.1-19.3 11.6-9.2 22 0 16.2 24.1-7.3 24.9-22.7 28.7-18.8 24.4-27 36.3-16.8 29 1.6 2.3 4-.4 60.9-13 32.9-5.9 39.3-6.7 17.8 8.3 1.9 8.4-7 17.2-42 10.4-49.2 9.8-73.3 17.3-.9 .7 1 1.3 33 3.1 14.1 .8 34.6 0 64.4 4.8 16.8 11.1 10.1 13.6-1.7 10.4-25.9 13.2c-15.5-3.7-54.4-12.9-116.6-27.7l-28-7-3.9 0 0 2.3 23.3 22.8 42.7 38.6 53.5 49.8 2.7 12.3-6.9 9.7-7.3-1-47-35.4-18.1-15.9-41.1-34.6-2.7 0 0 3.6 9.5 13.9 50 75.2 2.6 23-3.6 7.5-13 4.5-14.2-2.6-29.3-41.1-30.2-46.3-24.4-41.5-3 1.7-14.4 154.8-6.7 7.9-15.5 5.9-13-9.8-6.9-15.9 6.9-31.5 8.3-41.1 6.7-32.7 6.1-40.6 3.6-13.5-.2-.9-3 .4-30.6 42-46.5 62.9-36.8 39.4-8.8 3.5-15.3-7.9 1.4-14.1 8.5-12.6 50.9-64.8 30.7-40.2 19.8-23.2-.1-3.4-1.2 0-135.3 87.8-24.1 3.1-10.4-9.7 1.3-15.9 4.9-5.2 40.7-28-.1 .1 0 .1z" />
     </svg>
   );
@@ -64,41 +29,50 @@ function ClaudeMark() {
 
 function OpenAIMark() {
   return (
-    <svg aria-hidden="true" width={22} height={22} viewBox="0 0 512 512" fill="#ECECEC" style={{ display: 'block' }}>
+    <svg aria-hidden="true" width={20} height={20} viewBox="0 0 512 512" fill="#ECECEC" style={{ display: 'block' }}>
       <path d="M196.4 185.8l0-48.6c0-4.1 1.5-7.2 5.1-9.2l97.8-56.3c13.3-7.7 29.2-11.3 45.6-11.3 61.4 0 100.4 47.6 100.4 98.3 0 3.6 0 7.7-.5 11.8L343.3 111.1c-6.1-3.6-12.3-3.6-18.4 0L196.4 185.8zM424.7 375.2l0-116.2c0-7.2-3.1-12.3-9.2-15.9L287 168.4 329 144.3c3.6-2 6.7-2 10.2 0L437 200.7c28.2 16.4 47.1 51.2 47.1 85 0 38.9-23 74.8-59.4 89.6l0 0zM166.2 272.8l-42-24.6c-3.6-2-5.1-5.1-5.1-9.2l0-112.6c0-54.8 42-96.3 98.8-96.3 21.5 0 41.5 7.2 58.4 20L175.4 108.5c-6.1 3.6-9.2 8.7-9.2 15.9l0 148.5 0 0zm90.4 52.2l-60.2-33.8 0-71.7 60.2-33.8 60.2 33.8 0 71.7-60.2 33.8zm38.7 155.7c-21.5 0-41.5-7.2-58.4-20l100.9-58.4c6.1-3.6 9.2-8.7 9.2-15.9l0-148.5 42.5 24.6c3.6 2 5.1 5.1 5.1 9.2l0 112.6c0 54.8-42.5 96.3-99.3 96.3l0 0zM173.8 366.5L76.1 310.2c-28.2-16.4-47.1-51.2-47.1-85 0-39.4 23.6-74.8 59.9-89.6l0 116.7c0 7.2 3.1 12.3 9.2 15.9l128 74.2-42 24.1c-3.6 2-6.7 2-10.2 0zm-5.6 84c-57.9 0-100.4-43.5-100.4-97.3 0-4.1 .5-8.2 1-12.3l100.9 58.4c6.1 3.6 12.3 3.6 18.4 0l128.5-74.2 0 48.6c0 4.1-1.5 7.2-5.1 9.2l-97.8 56.3c-13.3 7.7-29.2 11.3-45.6 11.3l0 0zm127 60.9c62 0 113.7-44 125.4-102.4 57.3-14.9 94.2-68.6 94.2-123.4 0-35.8-15.4-70.7-43-95.7 2.6-10.8 4.1-21.5 4.1-32.3 0-73.2-59.4-128-128-128-13.8 0-27.1 2-40.4 6.7-23-22.5-54.8-36.9-89.6-36.9-62 0-113.7 44-125.4 102.4-57.3 14.8-94.2 68.6-94.2 123.4 0 35.8 15.4 70.7 43 95.7-2.6 10.8-4.1 21.5-4.1 32.3 0 73.2 59.4 128 128 128 13.8 0 27.1-2 40.4-6.7 23 22.5 54.8 36.9 89.6 36.9z" />
     </svg>
   );
 }
 
-function TerminalMark() {
+/** xAI's mark — the angular slash monogram. */
+function GrokMark() {
   return (
-    <svg aria-hidden="true" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ display: 'block', color: 'var(--color-text-secondary)' }}>
-      <rect x="3" y="4.5" width="18" height="15" rx="2.5" strokeWidth="1.5" />
-      <path d="M7 9.5l3 2.4-3 2.4M12.5 14.4h4.5" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    <svg aria-hidden="true" width={20} height={20} viewBox="0 0 24 24" fill="#E9E9EC" style={{ display: 'block' }}>
+      <path d="M4.2 19.8L14.6 4.2h3.5L7.7 19.8H4.2zm11.1 0l-3.4-5.1 2-3 5.4 8.1h-4z" />
     </svg>
   );
 }
 
+/** OpenCode's mark — the square-bracket code glyph, matching its terminal-brand look. */
+function OpenCodeMark() {
+  return (
+    <svg aria-hidden="true" width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="#E9E9EC" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" style={{ display: 'block' }}>
+      <path d="M8 4H5v16h3" />
+      <path d="M16 4h3v16h-3" />
+      <path d="M10.5 15l3-6" />
+    </svg>
+  );
+}
+
+/** The plain shell has no brand, so it uses the house icon set like every other glyph. */
+function TerminalMark() {
+  return <TerminalWindow size={20} weight="regular" color="var(--color-text-secondary)" style={{ display: 'block' }} />;
+}
+
 function CheckBadge() {
   return (
-    <span aria-hidden="true" style={{ position: 'absolute', top: 8, right: 8, width: 14, height: 14, borderRadius: '50%', border: `1px solid ${ACCENT}`, display: 'grid', placeItems: 'center' }}>
-      <svg width={8} height={8} viewBox="0 0 10 10" fill="none" style={{ color: ACCENT }}>
-        <path d="M1.5 5.2l2.2 2.3L8.5 2.6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
+    <span aria-hidden="true" style={{ position: 'absolute', top: 5, right: 5, display: 'flex' }}>
+      <CheckCircle size={14} weight="fill" color={ACCENT} />
     </span>
   );
 }
 
-const CliGlyph = () => (
-  <svg aria-hidden="true" width={16} height={16} viewBox="0 0 24 24" fill="none"><path d="M4 6l5 4-5 4M12 15h8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
-);
-const PrettyGlyph = () => (
-  <svg aria-hidden="true" width={16} height={16} viewBox="0 0 24 24" fill="none"><path d="M12 3l1.9 4.6L18.7 9l-3.4 3.3.8 4.9L12 14.9 7.9 17.2l.8-4.9L5.3 9l4.8-1.4L12 3z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" /></svg>
-);
-
 const HARNESS_MARK: Record<Harness, () => JSX.Element> = {
   claude: ClaudeMark,
   codex: OpenAIMark,
+  grok: GrokMark,
+  opencode: OpenCodeMark,
   terminal: TerminalMark,
 };
 
@@ -113,24 +87,132 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
   const [model, setModel] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
   const [autoArchive, setAutoArchive] = useState(false);
   const [autoArchiveMs, setAutoArchiveMs] = useState(DEFAULT_AUTO_ARCHIVE_MS);
   const [recent, setRecent] = useState<CcRecentSession[] | CodexRecentSession[] | null>(null);
 
+  // Which agent CLIs are actually on the box. `null` = not asked yet: until the answer
+  // arrives every card stays enabled, so a slow probe never makes the modal look broken.
+  const [providers, setProviders] = useState<ProviderStatus[] | null>(null);
+  // Per-harness defaults + the opencode key status, from the daemon. `null` until loaded;
+  // the modal works without it (defaults simply don't apply, the key step stays hidden).
+  const [harnessSettings, setHarnessSettings] = useState<HarnessSettingsResponse | null>(null);
+  const [keyDraft, setKeyDraft] = useState('');
+  const [keySaving, setKeySaving] = useState(false);
+  const [keyError, setKeyError] = useState<string | null>(null);
+  const [installing, setInstalling] = useState<ProviderName | null>(null);
+  const [installError, setInstallError] = useState<string | null>(null);
+  const [signingIn, setSigningIn] = useState(false);
+
+  const spec = HARNESSES.find((h) => h.id === harness)!;
+  const statusFor = useCallback(
+    (p: ProviderName | null) => (p === null ? null : providers?.find((s) => s.name === p) ?? null),
+    [providers],
+  );
+  /** The plain shell always works. An agent harness needs its CLI present. */
+  const isAvailable = useCallback(
+    (h: Harnesses) => (h.provider === null ? true : statusFor(h.provider)?.installed !== false),
+    [statusFor],
+  );
+
+  /** Is the harness you have selected actually runnable on this machine? */
+  const selectedAvailable = isAvailable(spec);
+  const currentStatus = statusFor(spec.provider);
+  // Installed but not signed in: still startable. The CLI prompts inside the terminal,
+  // which is exactly what a CLI-mode thread is for. OpenCode is exempt: its "sign-in" is
+  // an OpenRouter API key resolved from Doppler at spawn (needsKey below), not a login
+  // command — its own auth-store state is irrelevant when the daemon injects the key.
+  const needsLogin = currentStatus?.installed === true && currentStatus.signedIn === false && harness !== 'opencode';
+  // OpenCode's gate: installed, but the configured Doppler secret doesn't resolve. Until
+  // settings load, assume the key is fine — a slow probe never blocks the modal.
+  const needsKey = harness === 'opencode' && selectedAvailable && harnessSettings !== null && !harnessSettings.opencodeKey.present;
+
   // Resuming an on-disk session only makes sense for the harnesses that take an
-  // externalId today: Claude Code and Codex. The plain shell has no sessions.
+  // externalId today: Claude Code and Codex. Grok captures no session id yet, and the
+  // plain shell has no sessions.
   const canResume = harness === 'claude' || harness === 'codex';
   const showMode = harness !== 'terminal';
-  const models = MODELS[harness];
-  // Codex Pretty is gated off until the backend supports it (Phase 2).
-  const codexPrettyDisabled = harness === 'codex' && !CODEX_PRETTY_ENABLED;
+  const models = spec.models;
+  const prettyDisabled = !spec.modes.includes('pretty');
+  const cliDisabled = !spec.modes.includes('cli');
+  // A stale pick from a previously-selected harness must never survive onto one that
+  // doesn't offer it (Grok is pretty-only; the shell is cli-only).
+  const effectiveMode: Mode = spec.modes.includes(mode) ? mode : spec.modes[0];
 
-  function selectHarness(h: Harness) {
-    setHarness(h);
-    setModel(null); // model lists are harness-specific — reset to Default
-    // Codex can't do Pretty yet; snap back to CLI so a stale Pretty pick from
-    // Claude doesn't ride along into a Codex thread.
-    if (h === 'codex' && !CODEX_PRETTY_ENABLED) setMode('cli');
+  const loadProviders = useCallback(async () => {
+    try { setProviders(await api.recheckProviders()); } catch { setProviders(null); }
+  }, []);
+
+  useEffect(() => { void loadProviders(); }, [loadProviders]);
+  useEffect(() => { api.getHarnessSettings().then(setHarnessSettings).catch(() => {}); }, []);
+
+  /** The settings-configured default model for a harness, when it's still a valid option;
+   *  OpenCode falls back to its first curated model (it has no "let the CLI choose"). */
+  const defaultModelFor = useCallback((h: Harnesses, hs: HarnessSettingsResponse | null): string | null => {
+    const pref = hs?.settings?.[h.type]?.defaultModel;
+    if (pref && h.models.some((m) => m.model === pref)) return pref;
+    return h.id === 'opencode' ? h.models[0]?.model ?? null : null;
+  }, []);
+
+  // Apply the saved defaults to the INITIAL harness once settings arrive. Only while the
+  // model is untouched (null === "Default"), so a fast first click is never stomped.
+  useEffect(() => {
+    if (!harnessSettings || model !== null) return;
+    const h = HARNESSES.find((x) => x.id === harness)!;
+    const m = defaultModelFor(h, harnessSettings);
+    if (m) setModel(m);
+    const prefMode = harnessSettings.settings?.[h.type]?.defaultMode;
+    if (prefMode && h.modes.includes(prefMode)) setMode(prefMode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once when settings land
+  }, [harnessSettings]);
+
+  function selectHarness(h: Harnesses) {
+    // Every card selects, including one whose CLI is missing — selecting it is how you
+    // reach its install prompt.
+    setHarness(h.id);
+    setInstallError(null);
+    setKeyError(null);
+    // Model lists are harness-specific: reset to the harness's configured default.
+    setModel(defaultModelFor(h, harnessSettings));
+    const prefMode = harnessSettings?.settings?.[h.type]?.defaultMode;
+    if (prefMode && h.modes.includes(prefMode)) setMode(prefMode);
+    else if (!h.modes.includes(mode)) setMode(h.modes[0]); // don't carry a mode into a harness without it
+  }
+
+  /**
+   * Open a thread that runs this CLI's login command. The thread is tagged `config.signIn`,
+   * which is both what makes the daemon spawn the login command directly (rather than a
+   * shell) and the only place Dispatch reads output for a sign-in URL.
+   */
+  async function signIn(name: ProviderName) {
+    if (signingIn) return;
+    setSigningIn(true);
+    try {
+      const t = await api.createTerminal(sessionId, {
+        type: 'shell',
+        label: `Sign in — ${spec.label}`,
+        config: { signIn: name },
+      });
+      await useTabs.getState().loadTabs(sessionId);
+      useTabs.getState().markLoading(t.id);
+      onCreated(t.id);
+      onClose();
+    } catch { setSigningIn(false); }
+  }
+
+  async function install(name: ProviderName) {
+    if (installing) return;
+    setInstalling(name);
+    setInstallError(null);
+    try {
+      const result = await api.installProvider(name);
+      setProviders((prev) => (prev ?? []).filter((p) => p.name !== name).concat(result.status));
+      if (!result.ok) setInstallError(result.output.trim().split('\n').slice(-2).join(' ') || 'Install failed.');
+    } catch (err) {
+      setInstallError(err instanceof Error ? err.message : 'Install failed.');
+    }
+    setInstalling(null);
   }
 
   useEffect(() => {
@@ -152,15 +234,29 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  async function saveKey() {
+    if (keySaving || !harnessSettings || !keyDraft.trim()) return;
+    setKeySaving(true);
+    setKeyError(null);
+    try {
+      // POST /api/secrets also fires the daemon's env refresh, so the very next spawn
+      // picks the key up — no restart.
+      await api.setSecret({ name: harnessSettings.opencodeKey.secret, value: keyDraft.trim() });
+      setKeyDraft('');
+      setHarnessSettings(await api.getHarnessSettings());
+    } catch (err) {
+      setKeyError(err instanceof Error ? err.message : 'Could not save the key. Connect Doppler in Settings → Secrets first.');
+    }
+    setKeySaving(false);
+  }
+
   async function create(externalId?: string) {
     if (busy) return;
     setBusy(true);
     try {
-      const spec = HARNESSES.find((h) => h.id === harness)!;
       const config: Record<string, unknown> = {};
-      // Pretty → structured transport. Only for harnesses that support it (never
-      // the plain shell; never Codex until Phase 2).
-      if (showMode && mode === 'pretty' && !codexPrettyDisabled) config.transport = 'structured';
+      // Pretty → structured transport. Only for harnesses that support it.
+      if (showMode && effectiveMode === 'pretty') config.transport = 'structured';
       if (harness !== 'terminal' && model) config.model = model;
       if (autoArchive) { config.autoArchive = true; config.autoArchiveMs = autoArchiveMs; }
 
@@ -183,86 +279,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
 
   return (
     <Modal open onClose={onClose} title="New Thread">
-      {/* HARNESS */}
-      <div style={sectionStyle}>
-        <span style={labelStyle}>Harness</span>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-          {HARNESSES.map((h) => {
-            const on = harness === h.id;
-            const Mark = HARNESS_MARK[h.id];
-            return (
-              <button key={h.id} type="button" aria-pressed={on} onClick={() => selectHarness(h.id)}
-                style={{
-                  position: 'relative', textAlign: 'center', cursor: 'pointer',
-                  background: on ? 'color-mix(in srgb, var(--color-accent) 9%, var(--color-elevated))' : 'var(--color-elevated)',
-                  border: `1px solid ${on ? ACCENT : '#2C2C32'}`, borderRadius: 10, padding: '15px 10px 13px',
-                  boxShadow: on ? GLOW : 'none', transition: 'border-color .15s ease, background .15s ease, box-shadow .2s ease',
-                }}>
-                {on && <CheckBadge />}
-                <span style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}><Mark /></span>
-                <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--color-text-primary)', lineHeight: 1.2 }}>{h.label}</div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* MODE (Claude + Codex; not the plain shell) */}
-      {showMode && (
-        <div style={sectionStyle}>
-          <span style={labelStyle}>Mode</span>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            {([['cli', 'CLI', 'Raw terminal'], ['pretty', 'Pretty', 'Rich chat UI']] as const).map(([m, title, sub]) => {
-              const on = mode === m;
-              const disabled = m === 'pretty' && codexPrettyDisabled;
-              return (
-                <button key={m} type="button" aria-pressed={on} disabled={disabled}
-                  aria-label={`${title} mode`}
-                  onClick={() => { if (!disabled) setMode(m); }}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 9, textAlign: 'left',
-                    background: on ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-elevated))' : 'var(--color-elevated)',
-                    border: `1px solid ${on ? ACCENT : '#2C2C32'}`, borderRadius: 9, padding: '9px 11px',
-                    color: on ? ACCENT : 'var(--color-text-tertiary)', boxShadow: on ? GLOW : 'none',
-                    cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.5 : 1,
-                    transition: 'border-color .15s ease, background .15s ease, box-shadow .2s ease',
-                  }}>
-                  <span style={{ flex: 'none', display: 'flex' }}>{m === 'cli' ? <CliGlyph /> : <PrettyGlyph />}</span>
-                  <span>
-                    <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: 'var(--color-text-primary)', lineHeight: 1.15 }}>{title}</span>
-                    <span style={{ display: 'block', fontSize: 10, color: 'var(--color-text-tertiary)', marginTop: 1 }}>{disabled ? 'Coming soon' : sub}</span>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* MODEL */}
-      {models.length > 0 && (
-        <div style={sectionStyle}>
-          <span style={labelStyle}>Model</span>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {models.map((m) => {
-              const on = model === m.model;
-              return (
-                <button key={m.label} type="button" aria-pressed={on} onClick={() => setModel(m.model)}
-                  style={{
-                    cursor: 'pointer', font: '500 12px var(--font-sans)', padding: '6px 11px', borderRadius: 7,
-                    background: on ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'var(--color-elevated)',
-                    border: `1px solid ${on ? ACCENT : '#2C2C32'}`, color: on ? ACCENT : 'var(--color-text-secondary)',
-                    transition: 'border-color .15s, background .15s, color .15s',
-                  }}>
-                  {m.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* NAME */}
+      {/* NAME — first, because it's the one field you always fill in and it takes focus. */}
       <div style={sectionStyle}>
         <label style={labelStyle} htmlFor="new-thread-name">Name</label>
         {/* Desktop only: on a phone, autofocus raises the keyboard the instant the
@@ -272,12 +289,181 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
           onKeyDown={(e) => { if (e.key === 'Enter') void create(); }} />
       </div>
 
-      {/* AUTO-ARCHIVE (whole-row toggle; available for every harness) */}
-      <AutoArchiveField
-        enabled={autoArchive}
-        ms={autoArchiveMs}
-        onChange={(enabled, ms) => { setAutoArchive(enabled); setAutoArchiveMs(ms); }}
-      />
+      {/* HARNESS — auto-fit so five cards share one row where there's width and wrap
+          cleanly where there isn't (the old repeat(4) hardcode broke at the fifth). A
+          harness whose CLI is missing is dimmed and labelled "Install", but stays
+          SELECTABLE: picking it swaps the options below for an install prompt, so the
+          fix sits exactly where you hit the problem. */}
+      <div style={sectionStyle}>
+        <span style={labelStyle}>Harness</span>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(84px, 1fr))', gap: 8 }}>
+          {HARNESSES.map((h) => {
+            const on = harness === h.id;
+            const available = isAvailable(h);
+            const Mark = HARNESS_MARK[h.id];
+            return (
+              <button key={h.id} type="button" aria-pressed={on}
+                title={available ? undefined : `${h.label} is not installed — select to install it`}
+                onClick={() => selectHarness(h)}
+                style={{
+                  position: 'relative', textAlign: 'center', cursor: 'pointer',
+                  background: on ? 'color-mix(in srgb, var(--color-accent) 9%, var(--color-elevated))' : 'var(--color-elevated)',
+                  border: `1px solid ${on ? ACCENT : '#2C2C32'}`, borderRadius: 10, padding: '12px 6px 11px',
+                  boxShadow: on ? GLOW : 'none',
+                  // Dimmed while unavailable, but full strength once selected, so the
+                  // selection never looks half-applied.
+                  opacity: available || on ? 1 : 0.45,
+                  transition: 'border-color .15s ease, background .15s ease, box-shadow .2s ease, opacity .15s ease',
+                }}>
+                {on && <CheckBadge />}
+                <span style={{ display: 'flex', justifyContent: 'center', marginBottom: 7 }}><Mark /></span>
+                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-primary)', lineHeight: 1.2 }}>{h.label}</div>
+                {!available && (
+                  <div style={{ marginTop: 2, font: '600 9.5px var(--font-mono)', letterSpacing: '.06em', textTransform: 'uppercase', color: ACCENT }}>Install</div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+      </div>
+
+      {/* The selected harness has no CLI: everything below the picker is replaced by the
+          one action that matters. No point offering a model, a mode, or a Start button for
+          something that cannot run. */}
+      {selectedAvailable && needsLogin ? (
+        <div style={{ padding: '14px 14px 13px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <SignIn size={16} weight="bold" color="var(--color-status-yellow)" style={{ flex: 'none' }} />
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>
+              {spec.label} isn't signed in
+            </span>
+          </div>
+          <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
+            Dispatch can run the sign-in for you and hand you the link. A thread that starts
+            without this just stops at a login screen you can't finish from a phone.
+          </div>
+          <div style={{ marginTop: 9, font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)', background: 'rgba(0,0,0,.22)', border: '1px solid #2C2C32', borderRadius: 7, padding: '7px 9px', overflowX: 'auto', whiteSpace: 'nowrap' }}>
+            {LOGIN_COMMAND[spec.provider!]}
+          </div>
+          <button type="button" disabled={signingIn} onClick={() => void signIn(spec.provider!)}
+            style={{ marginTop: 12, height: 38, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: ACCENT, border: 'none', borderRadius: 10, color: '#08240F', fontWeight: 600, fontSize: 13.5, cursor: signingIn ? 'default' : 'pointer', opacity: signingIn ? 0.7 : 1, boxShadow: GLOW }}>
+            {signingIn ? (<><Spinner size={13} /> Opening…</>) : (<><SignIn size={15} weight="bold" /> Sign in to {spec.label}</>)}
+          </button>
+        </div>
+      ) : selectedAvailable && needsKey ? (
+        <div style={{ padding: '14px 14px 13px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <SignIn size={16} weight="bold" color="var(--color-status-yellow)" style={{ flex: 'none' }} />
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>
+              OpenCode needs an OpenRouter API key
+            </span>
+          </div>
+          <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
+            OpenCode runs open models through OpenRouter. Paste a key from openrouter.ai — it's
+            saved to Doppler as <code style={{ font: '400 11px var(--font-mono)' }}>{harnessSettings!.opencodeKey.secret}</code> and
+            injected at spawn, never stored in a file. Change the secret later in Settings → Harnesses.
+          </div>
+          <input
+            type="password"
+            placeholder="sk-or-v1-…"
+            value={keyDraft}
+            onChange={(e) => setKeyDraft(e.target.value)}
+            style={{ marginTop: 10, height: 36, width: '100%', padding: '0 12px', background: 'rgba(0,0,0,.22)', border: '1px solid #2C2C32', borderRadius: 8, color: 'var(--color-text-primary)', fontSize: 13, boxSizing: 'border-box', font: '400 12px var(--font-mono)' }}
+          />
+          {keyError && (
+            <div style={{ marginTop: 9, fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-status-red)' }}>{keyError}</div>
+          )}
+          <button type="button" disabled={keySaving || !keyDraft.trim()} onClick={() => void saveKey()}
+            style={{ marginTop: 12, height: 38, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: ACCENT, border: 'none', borderRadius: 10, color: '#08240F', fontWeight: 600, fontSize: 13.5, cursor: keySaving || !keyDraft.trim() ? 'default' : 'pointer', opacity: keySaving || !keyDraft.trim() ? 0.7 : 1, boxShadow: GLOW }}>
+            {keySaving ? (<><Spinner size={13} /> Saving…</>) : 'Save key'}
+          </button>
+        </div>
+      ) : !selectedAvailable ? (
+        <div style={{ padding: '14px 14px 13px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <WarningCircle size={16} weight="fill" color="var(--color-status-yellow)" style={{ flex: 'none' }} />
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>
+              {spec.label} isn't installed
+            </span>
+          </div>
+          <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
+            Dispatch can install it here, on the machine running the daemon. It takes a few
+            minutes, and you can leave this open.
+          </div>
+          <div style={{ marginTop: 9, font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)', background: 'rgba(0,0,0,.22)', border: '1px solid #2C2C32', borderRadius: 7, padding: '7px 9px', overflowX: 'auto', whiteSpace: 'nowrap' }}>
+            {INSTALL_COMMAND[spec.provider!]}
+          </div>
+          {installError && (
+            <div style={{ marginTop: 9, fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-status-red)' }}>{installError}</div>
+          )}
+          <button type="button" disabled={installing !== null} onClick={() => void install(spec.provider!)}
+            style={{ marginTop: 12, height: 38, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: ACCENT, border: 'none', borderRadius: 10, color: '#08240F', fontWeight: 600, fontSize: 13.5, cursor: installing ? 'default' : 'pointer', opacity: installing ? 0.7 : 1, boxShadow: GLOW }}>
+            {installing === spec.provider
+              ? (<><Spinner size={13} /> Installing {spec.label}…</>)
+              : (<><DownloadSimple size={15} weight="bold" /> Install {spec.label}</>)}
+          </button>
+        </div>
+      ) : (
+      <>
+      {/* MODE + MODEL share one row. Two full-width stacked sections is what made this
+          modal long; with a fourth harness it would not fit a phone at all. */}
+      {(showMode || models.length > 0) && (
+        <div style={{ ...sectionStyle, display: 'grid', gridTemplateColumns: showMode && models.length > 0 ? '1fr 1fr' : '1fr', gap: 10 }}>
+          {showMode && (
+            <div>
+              <span style={labelStyle}>Mode</span>
+              <div style={{ display: 'flex', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 8, padding: 3, gap: 3 }}>
+                {([['cli', 'CLI'], ['pretty', 'Pretty']] as const).map(([m, title]) => {
+                  const disabled = m === 'pretty' ? prettyDisabled : cliDisabled;
+                  const on = effectiveMode === m && !disabled;
+                  return (
+                    <button key={m} type="button" aria-pressed={on} disabled={disabled}
+                      aria-label={`${title} mode`}
+                      title={disabled ? (m === 'pretty' ? `${spec.label} has no structured transport yet` : `${spec.label} runs structured-only`) : undefined}
+                      onClick={() => { if (!disabled) setMode(m); }}
+                      style={{
+                        flex: 1, font: '600 12px var(--font-sans)', padding: '6px 4px', borderRadius: 6,
+                        background: on ? 'color-mix(in srgb, var(--color-accent) 14%, var(--color-elevated))' : 'transparent',
+                        boxShadow: on ? `inset 0 0 0 1px color-mix(in srgb, ${ACCENT} 55%, transparent)` : 'none',
+                        border: 'none', color: on ? ACCENT : 'var(--color-text-tertiary)',
+                        cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.4 : 1,
+                        transition: 'background .15s, color .15s',
+                      }}>
+                      {title}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {models.length > 0 && (
+            <div>
+              <label style={labelStyle} htmlFor="new-thread-model">Model</label>
+              {/* A select, not chips: it holds any number of models on one line, and each
+                  provider's list grows over time. */}
+              <select id="new-thread-model" value={model ?? ''} onChange={(e) => setModel(e.target.value || null)}
+                style={{ ...input, height: 34, fontSize: 12.5, fontWeight: 500, cursor: 'pointer', padding: '0 8px' }}>
+                {models.map((m) => <option key={m.label} value={m.model ?? ''}>{m.label}</option>)}
+              </select>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ADVANCED — auto-archive is set once and rarely touched, so it folds away. */}
+      <button type="button" onClick={() => setAdvanced((v) => !v)} aria-expanded={advanced}
+        style={{ display: 'flex', alignItems: 'center', gap: 7, background: 'none', border: 'none', padding: '6px 2px', font: '500 12px var(--font-sans)', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
+        <CaretRight size={11} weight="bold" style={{ transform: advanced ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }} />
+        Advanced
+      </button>
+      {advanced && (
+        <AutoArchiveField
+          enabled={autoArchive}
+          ms={autoArchiveMs}
+          onChange={(enabled, ms) => { setAutoArchive(enabled); setAutoArchiveMs(ms); }}
+        />
+      )}
 
       <button disabled={busy} onClick={() => void create()}
         style={{ marginTop: 18, height: 40, width: '100%', background: ACCENT, border: 'none', borderRadius: 10, color: '#08240F', fontWeight: 600, fontSize: 14, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1, boxShadow: GLOW }}>
@@ -304,6 +490,8 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
           </div>
         </div>
       ) : null)}
+      </>
+      )}
     </Modal>
   );
 }

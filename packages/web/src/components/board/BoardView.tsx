@@ -10,8 +10,8 @@
 // before-real-board.png for the problem this fixes. The rail's own layout/behaviour lives in
 // RestingRail.tsx; this file only decides which cards reach it.
 //
-// The Threads ⇄ Board mode switch lives in TopBar rather than here — a switch rendered only
-// inside the board could get you out but never in. Layout, proportions and the WAITING divider
+// The Threads ⇄ Board mode switch lives in the IconRail rather than here — a switch rendered
+// only inside the board could get you out but never in. Layout, proportions and the WAITING divider
 // match the canvas literally — do not improvise a different treatment.
 //
 // Uses ONLY app-global `var(--color-*)` tokens (never `--tp`/`--ts`/`--elev`/`--acc`/`--border`/
@@ -358,9 +358,9 @@ export function BoardView() {
   return (
     <div data-testid="board-view" style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--color-base)' }}>
       <header style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px', borderWidth: 0, borderBottomWidth: 1, borderBottomStyle: 'solid', borderBottomColor: 'var(--color-border)', flexShrink: 0 }}>
-        {/* The Threads ⇄ Board switch lives in TopBar, not here: a switch rendered only
+        {/* The Threads ⇄ Board switch lives in the IconRail, not here: a switch rendered only
             inside the board can get you out but never in, leaving the board unreachable.
-            TopBar sits directly above this header, so it reads the same either way. */}
+            The rail sits directly beside this header, so it reads the same either way. */}
 
         {/* "All projects ▾" — resets the filter AND opens a dropdown listing EVERY project
             (including resting-only ones, which never earn a chip below — Open #6's "the rest

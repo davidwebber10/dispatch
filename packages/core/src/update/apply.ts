@@ -76,19 +76,35 @@ export function preflightUpdate(repoDir: string, gitExec?: GitExec, opts?: { for
     return { ok: false, reason: `could not determine current branch: ${err.message}` };
   }
 
+  // Resolve the branch's configured upstream (@{u}) rather than assuming origin/<branch> exists.
+  // A checkout sitting on a local-only feature branch — never pushed, so there is no
+  // origin/<branch> — has no upstream and cannot be fast-forwarded. Say so actionably instead of
+  // failing on the cryptic `could not resolve origin/<branch>` a bare `rev-parse origin/<branch>`
+  // produced. (The manual fallback `dispatch update` runs `git pull --ff-only`, which also fails
+  // on such a branch — "no tracking information" — so pointing at it would be dead advice.)
+  let upstream: string;
+  try {
+    upstream = git(['rev-parse', '--abbrev-ref', '@{u}']).trim();
+  } catch {
+    return {
+      ok: false,
+      reason: `This checkout is on '${branch}', which has no upstream branch to update from — the daemon only auto-updates a branch that tracks a remote (normally main). Switch to the release branch with \`git checkout main\` and update, or if you're developing on '${branch}', bring in the latest with \`git fetch origin && git merge origin/main\` and rebuild.`,
+    };
+  }
+
   let localHead: string;
   let remoteHead: string;
   try {
     localHead = git(['rev-parse', 'HEAD']).trim();
-    remoteHead = git(['rev-parse', `origin/${branch}`]).trim();
+    remoteHead = git(['rev-parse', upstream]).trim();
   } catch (err: any) {
-    return { ok: false, reason: `could not resolve origin/${branch}: ${err.message}` };
+    return { ok: false, reason: `could not resolve ${upstream}: ${err.message}` };
   }
 
   try {
     git(['merge-base', '--is-ancestor', localHead, remoteHead]);
   } catch {
-    return { ok: false, reason: `Local ${branch} has diverged from origin/${branch} — cannot fast-forward. Run 'dispatch update' manually after resolving.` };
+    return { ok: false, reason: `Local ${branch} has diverged from ${upstream} — cannot fast-forward. Run 'dispatch update' manually after resolving.` };
   }
 
   return { ok: true };

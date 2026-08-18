@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type TouchEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { Check, Copy, DownloadSimple, X } from '@phosphor-icons/react';
 import { clipboardImageSupported, copyImageToClipboard } from '../lib/clipboard';
 
@@ -89,30 +90,26 @@ function touchDist(touches: React.TouchList): number {
   return Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
 }
 
-export function ChatImage({ src, alt, maxHeight = 320 }: { src: string; alt?: string; maxHeight?: number | string }) {
-  const [open, setOpen] = useState(false);
+/**
+ * The full-viewport image lightbox, extracted from ChatImage so surfaces that render raw
+ * <img> tags (markdown bodies — see Markdown.tsx) can open the SAME viewer on tap instead
+ * of doing nothing. Copy/Download toolbar, Escape/backdrop close, pinch-to-zoom + pan, and
+ * DOUBLE-TAP zoom toggle (1 ↔ 2.5×) — the pinch gesture is easy to miss one-handed.
+ */
+export function ImageLightbox({ src, alt, onClose }: { src: string; alt?: string; onClose: () => void }) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
   const [scale, setScale] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const gesture = useRef<Gesture>(IDLE_GESTURE);
-
-  // Reset zoom/pan each time the lightbox closes, so it reopens un-zoomed.
-  useEffect(() => {
-    if (open) return;
-    setScale(1);
-    setPan({ x: 0, y: 0 });
-  }, [open]);
+  const lastTap = useRef(0);
 
   useEffect(() => {
-    if (!open) return;
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key === 'Escape') onClose();
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open]);
-
-  if (!src) return null;
+  }, [onClose]);
 
   async function handleCopy() {
     if (!clipboardImageSupported()) return;
@@ -154,7 +151,19 @@ export function ChatImage({ src, alt, maxHeight = 320 }: { src: string; alt?: st
         : IDLE_GESTURE;
       return;
     }
+    const wasPanning = gesture.current.mode === 'pan';
     gesture.current = IDLE_GESTURE;
+    // Double-tap toggles zoom. Only when the finger wasn't dragging — a pan that ends
+    // near a recent tap must not surprise-zoom.
+    if (!wasPanning) {
+      const now = Date.now();
+      if (now - lastTap.current < 300) {
+        lastTap.current = 0;
+        if (scale > 1) { setScale(1); setPan({ x: 0, y: 0 }); } else { setScale(2.5); }
+        return;
+      }
+      lastTap.current = now;
+    }
     if (scale <= 1.02) { setScale(1); setPan({ x: 0, y: 0 }); }
   }
 
@@ -162,6 +171,79 @@ export function ChatImage({ src, alt, maxHeight = 320 }: { src: string; alt?: st
     ? 'Copy not supported in this browser'
     : copyState === 'copied' ? 'Copied!' : copyState === 'error' ? 'Copy failed — try again' : 'Copy image';
 
+  // PORTAL to <body>, not an inline overlay: `position: fixed` is trapped by any
+  // transformed ancestor (the mobile shell slides screens with CSS transforms), which
+  // left the lightbox mounted but CLIPPED INVISIBLE — it only appeared once navigation
+  // reset the transform ("doesn't open until I navigate to settings", 2026-08-16).
+  return createPortal(
+    <div
+      onClick={onClose}
+      style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 1000,
+            background: 'rgba(0,0,0,.82)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 24,
+            cursor: 'zoom-out',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ position: 'absolute', top: 'max(16px, env(safe-area-inset-top))', right: 16, zIndex: 1001, display: 'flex', gap: 8 }}
+      >
+        <button
+          onClick={handleCopy}
+          disabled={!clipboardImageSupported()}
+          title={copyTitle}
+          aria-label="Copy image"
+          style={toolbarButtonStyle(!clipboardImageSupported())}
+        >
+          {copyState === 'copied'
+            ? <Check size={17} weight="bold" color="var(--color-accent)" />
+            : <Copy size={17} weight="bold" color={copyState === 'error' ? 'var(--color-status-red)' : undefined} />}
+        </button>
+        <button
+          onClick={() => downloadImage(src, alt)}
+          title="Download image"
+          aria-label="Download image"
+          style={toolbarButtonStyle(false)}
+        >
+          <DownloadSimple size={17} weight="bold" />
+        </button>
+        <button onClick={onClose} title="Close" aria-label="Close" style={toolbarButtonStyle(false)}>
+          <X size={17} weight="bold" />
+        </button>
+      </div>
+      <img
+        src={src}
+        alt={alt || ''}
+        onClick={(e) => e.stopPropagation()}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        onTouchCancel={onTouchEnd}
+        style={{
+          maxWidth: '92vw',
+          maxHeight: '92vh',
+          borderRadius: 8,
+          boxShadow: '0 12px 48px -8px rgba(0,0,0,.7)',
+          touchAction: 'none',
+          transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
+          transition: gesture.current.mode ? 'none' : 'transform 120ms ease-out',
+          cursor: scale > 1 ? 'grab' : 'zoom-out',
+        }}
+      />
+    </div>,
+    document.body,
+  );
+}
+
+export function ChatImage({ src, alt, maxHeight = 320 }: { src: string; alt?: string; maxHeight?: number | string }) {
+  const [open, setOpen] = useState(false);
+  if (!src) return null;
   return (
     <>
       <img
@@ -183,69 +265,7 @@ export function ChatImage({ src, alt, maxHeight = 320 }: { src: string; alt?: st
           cursor: 'zoom-in',
         }}
       />
-      {open && (
-        <div
-          onClick={() => setOpen(false)}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 1000,
-            background: 'rgba(0,0,0,.82)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 24,
-            cursor: 'zoom-out',
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{ position: 'absolute', top: 16, right: 16, zIndex: 1001, display: 'flex', gap: 8 }}
-          >
-            <button
-              onClick={handleCopy}
-              disabled={!clipboardImageSupported()}
-              title={copyTitle}
-              aria-label="Copy image"
-              style={toolbarButtonStyle(!clipboardImageSupported())}
-            >
-              {copyState === 'copied'
-                ? <Check size={17} weight="bold" color="var(--color-accent)" />
-                : <Copy size={17} weight="bold" color={copyState === 'error' ? 'var(--color-status-red)' : undefined} />}
-            </button>
-            <button
-              onClick={() => downloadImage(src, alt)}
-              title="Download image"
-              aria-label="Download image"
-              style={toolbarButtonStyle(false)}
-            >
-              <DownloadSimple size={17} weight="bold" />
-            </button>
-            <button onClick={() => setOpen(false)} title="Close" aria-label="Close" style={toolbarButtonStyle(false)}>
-              <X size={17} weight="bold" />
-            </button>
-          </div>
-          <img
-            src={src}
-            alt={alt || ''}
-            onClick={(e) => e.stopPropagation()}
-            onTouchStart={onTouchStart}
-            onTouchMove={onTouchMove}
-            onTouchEnd={onTouchEnd}
-            onTouchCancel={onTouchEnd}
-            style={{
-              maxWidth: '92vw',
-              maxHeight: '92vh',
-              borderRadius: 8,
-              boxShadow: '0 12px 48px -8px rgba(0,0,0,.7)',
-              touchAction: 'none',
-              transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
-              transition: gesture.current.mode ? 'none' : 'transform 120ms ease-out',
-              cursor: scale > 1 ? 'grab' : 'zoom-out',
-            }}
-          />
-        </div>
-      )}
+      {open && <ImageLightbox src={src} alt={alt} onClose={() => setOpen(false)} />}
     </>
   );
 }

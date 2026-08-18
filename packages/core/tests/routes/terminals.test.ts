@@ -140,7 +140,7 @@ describe('terminal routes', () => {
   });
 
   describe('GET /api/terminals/:terminalId/scrollback', () => {
-    it('returns the manager\'s byte count as { totalBytes }', async () => {
+    it('returns the manager\'s byte count as { totalBytes } plus the ring\'s offsets', async () => {
       const create = await request(app)
         .post(`/api/sessions/${sessionId}/terminals`)
         .send({ type: 'shell', workingDir: '/tmp' });
@@ -148,11 +148,23 @@ describe('terminal routes', () => {
 
       const ptyManager = (app as any)._ptyManager;
       const spy = vi.spyOn(ptyManager, 'getBufferSize').mockReturnValue(12345);
+      const offsets = vi.spyOn(ptyManager, 'getBufferOffsets')
+        .mockReturnValue({ startOffset: 4321, totalWritten: 999999 });
 
       const res = await request(app).get(`/api/terminals/${id}/scrollback`);
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ totalBytes: 12345 });
+      expect(res.body).toEqual({ totalBytes: 12345, startOffset: 4321, totalWritten: 999999 });
       expect(spy).toHaveBeenCalledWith(id);
+      expect(offsets).toHaveBeenCalledWith(id);
+    });
+
+    it('reports zeroed offsets for a terminal with no live PTY', async () => {
+      const create = await request(app)
+        .post(`/api/sessions/${sessionId}/terminals`)
+        .send({ type: 'shell', workingDir: '/tmp' });
+      const res = await request(app).get(`/api/terminals/${create.body.id}/scrollback`);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ totalBytes: 0, startOffset: 0, totalWritten: 0 });
     });
 
     it('404s for an unknown terminal', async () => {

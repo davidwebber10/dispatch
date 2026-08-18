@@ -28,9 +28,10 @@ import { Icon } from '../atoms';
 import { AgentCard } from './AgentCard';
 import { ChatImage } from '../../ChatImage';
 import { InsightText } from '../../InsightText';
-import { WorkingIndicator } from '../../WorkingIndicator';
+import { ApiRetryIndicator, WorkingIndicator } from '../../WorkingIndicator';
 import { Spinner } from '../../common/Spinner';
 import { AskQuestionCard, AnsweredQuestionCard } from '../../tabs/chat/AskQuestionCard';
+import { LoadEarlierButton } from '../../tabs/chat/ChatView';
 import { useOverseer, useRenderVals } from '../store';
 import { useBootstrapOlderPages } from '../../../hooks/useBootstrapOlderPages';
 import type { StreamMessage } from '../types';
@@ -540,6 +541,7 @@ export function ConversationStream() {
   const coordinatorHasMore = useOverseer((s) => s.coordinatorHasMore);
   const coordinatorLoadingOlder = useOverseer((s) => s.coordinatorLoadingOlder);
   const coordinatorLoadOlder = useOverseer((s) => s.coordinatorLoadOlder);
+  const coordinatorApiRetry = useOverseer((s) => s.coordinatorApiRetry);
 
   // Reverse-infinite-scroll trigger, mirroring the agent ChatView's own onScroll threshold
   // (packages/web/src/components/tabs/chat/ChatView.tsx). preserveScrollOnPrepend on the
@@ -577,6 +579,12 @@ export function ConversationStream() {
         >
           <MessageScroller.Viewport preserveScrollOnPrepend onScroll={onViewportScroll} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
             <MessageScroller.Content style={{ maxWidth: 1200, margin: '0 auto', padding: '20px 26px 12px', display: 'flex', flexDirection: 'column', gap: 17 }}>
+              {/* Explicit older-history control (parity with ChatView's LoadEarlierButton, see
+                  its doc comment): the scroll-near-top trigger has been observed sticking in
+                  the field until a window resize, and the replay tail covers only the last few
+                  turns — without a tappable control, hasMore:true history is stranded. Gated on
+                  projectMatches like every other coordinator read (the cross-tab bleed fix). */}
+              <LoadEarlierButton show={projectMatches && coordinatorHasMore && !coordinatorLoadingOlder} onClick={coordinatorLoadOlder} />
               {renderStream(stream)}
               {/* The coordinator's OWN AskUserQuestion, rendered inline (mirrors the agent
                   ChatView). Answering unblocks its CLI, which is parked on stdin — without this
@@ -593,7 +601,11 @@ export function ConversationStream() {
               {/* single indeterminate spinner while the coordinator works */}
               {busy && (
                 <MessageScroller.Item messageId="__working" style={{ display: 'flex' }}>
-                  <WorkingIndicator />
+                  {/* Name a model-call retry instead of a bare spinner — during an outage the
+                      CLI retries for minutes and "Working…" reads as a dead session. Gated on
+                      projectMatches like every coordinator read (busy already is, via
+                      useRenderVals; the direct store read here needs its own gate). */}
+                  {projectMatches && coordinatorApiRetry ? <ApiRetryIndicator retry={coordinatorApiRetry} /> : <WorkingIndicator />}
                 </MessageScroller.Item>
               )}
             </MessageScroller.Content>

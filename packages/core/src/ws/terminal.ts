@@ -19,6 +19,22 @@ function parseReplayBytes(url: string | undefined): number | undefined {
   }
 }
 
+/**
+ * `meta=1` opts the client into the scrollback-offset protocol: one JSON control
+ * frame before the replay bytes. Absent (an old browser tab against a new daemon)
+ * the stream stays byte-for-byte what it has always been — that tab would print
+ * the JSON straight into its terminal.
+ */
+function wantsReplayMeta(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    const raw = new URL(url, 'http://dispatch.local').searchParams.get('meta');
+    return raw === '1' || raw === 'true';
+  } catch {
+    return false;
+  }
+}
+
 export function handleTerminalConnection(
   ws: WebSocket,
   req: IncomingMessage,
@@ -73,7 +89,20 @@ export function handleTerminalConnection(
 
   // Send scrollback buffer
   const replayBytes = parseReplayBytes(req.url);
-  const buffer = ptyManager.getBuffer(targetId, replayBytes);
+  let buffer: string;
+  if (wantsReplayMeta(req.url)) {
+    // Exactly one control frame, always first, on every (re)connect that asked for it.
+    const slice = ptyManager.getBufferSlice(targetId, replayBytes);
+    buffer = slice.data;
+    ws.send(JSON.stringify({
+      type: 'dispatch:replay-meta',
+      startOffset: slice.startOffset,
+      totalWritten: ptyManager.getBufferOffsets(targetId).totalWritten,
+      complete: ptyManager.isReplayComplete(targetId, replayBytes),
+    }));
+  } else {
+    buffer = ptyManager.getBuffer(targetId, replayBytes);
+  }
   if (buffer) ws.send(buffer);
   // A trimmed replay can't reconstruct a diff-painting TUI's screen (codex only
   // redraws changed cells, so the viewer would see just the actively-updating

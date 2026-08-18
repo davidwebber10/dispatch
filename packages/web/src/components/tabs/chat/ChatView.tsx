@@ -1,12 +1,16 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
-import { PaperPlaneTilt, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip, ArrowBendDownRight, Wrench, X } from '@phosphor-icons/react';
+import { ArrowUp, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip, ArrowBendDownRight, X, Stop } from '@phosphor-icons/react';
 import type { ConvItem, PermissionQuestion } from '../../../api/types';
 import { api, type ContentBlock } from '../../../api/client';
 import { useStructuredChat } from './useStructuredChat';
 import { useBootstrapOlderPages } from '../../../hooks/useBootstrapOlderPages';
 import { AskQuestionCard, AnsweredQuestionCard } from './AskQuestionCard';
+import { StatusNotice } from './StatusNotice';
+import { isReportStatusTool, parseReportStatus } from './reportStatus';
 import { useTabs, findTerminal } from '../../../stores/tabs';
+import { useConnection } from '../../../stores/connection';
+import { ThreadAskBanner } from '../ThreadAskBanner';
 import { useDraft } from '../../../hooks/useDraft';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { useSettings, useDispatchName } from '../../../stores/settings';
@@ -15,11 +19,11 @@ import { DictationControl } from '../../dictation/DictationControl';
 import { InputActionsMenu } from '../../dictation/InputActionsMenu';
 import { InsightText } from '../../InsightText';
 import { ResumeAdviceCard } from './ResumeAdviceCard';
-import { WorkingIndicator, CompactingIndicator } from '../../WorkingIndicator';
+import { WorkingIndicator, CompactingBar, ApiRetryIndicator } from '../../WorkingIndicator';
 import { Spinner } from '../../common/Spinner';
 import { ChatImage } from '../../ChatImage';
 import { ContextIndicator } from '../../ContextIndicator';
-import { ToolCall, ToolResult } from '../ToolCall';
+import { ToolCall, ToolResult, editDiffStat } from '../ToolCall';
 import { useUI } from '../../../stores/ui';
 import { useToolGroupExpanded } from '../../../hooks/useToolUIState';
 
@@ -48,7 +52,14 @@ async function fileToBase64(file: File): Promise<string> {
 export function ChatView({ terminalId }: { terminalId: string }) {
   const tab = useTabs((s) => findTerminal(s.byProject, terminalId));
   const sessionId = tab?.sessionId;
-  const { items, busy, model, send, pending, answer, contextTokens, compacting, compactResult, compact, hasMore, loadingOlder, loadOlder } = useStructuredChat(terminalId, sessionId);
+  const connStatus = useConnection((s) => s.status);
+  // The ACP harnesses (grok, opencode) have no pageable REST transcript (getConversation →
+  // unsupported): their full ws-ring replay IS the whole recoverable history, so the
+  // older-pages machinery stays off — no phantom "Load earlier messages" on a thread with
+  // nothing earlier to load. An unresolved tab keeps the pageable default (claude-code is
+  // the common case).
+  const { items, busy, model, send, pending, answer, contextTokens, contextWindow, compacting, compactResult, apiRetry, compact, hasMore, loadingOlder, loadOlder } =
+    useStructuredChat(terminalId, sessionId, { pageableHistory: tab?.type !== 'grok' && tab?.type !== 'opencode' });
 
   // Advice is about THIS resume, so "not now" lives in component state rather than
   // storage: a later resume of the same thread (older and larger still) should ask again.
@@ -65,6 +76,21 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   // callback can fire (a rejection) long after a later render has replaced the closure that
   // registered it, once the reader has already switched to a different thread.
   const terminalIdRef = useRef(terminalId); terminalIdRef.current = terminalId;
+
+  // Where the timeline splits while a compaction runs: the item count at the moment
+  // `compacting` flipped true, remembered per terminal. Turns echoed AFTER that point
+  // are ones the CLI is holding on stdin until the compaction ends — rendering them
+  // BELOW the CompactingBar (rather than above, in plain arrival order) is what tells
+  // the reader "these send when compacting finishes". Render-time mutation is safe
+  // here: the write is idempotent for a given (terminalId, compacting) pair, and the
+  // hook resets `compacting` on replay/terminal switch, which clears the split.
+  const compactSplit = useRef<{ id: string; index: number } | null>(null);
+  if (compacting) {
+    if (!compactSplit.current || compactSplit.current.id !== terminalId) compactSplit.current = { id: terminalId, index: items.length };
+  } else {
+    compactSplit.current = null;
+  }
+  const splitIdx = compactSplit.current ? Math.min(compactSplit.current.index, items.length) : null;
 
   useEffect(() => {
     // Clear any stale advice/error from a PREVIOUS terminalId before anything else — PaneTree/
@@ -218,16 +244,53 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   // Send is enabled by EITHER a non-empty draft OR at least one staged image (a screenshot
   // with no caption is a valid turn on its own).
   const canSend = draft.trim().length > 0 || stagedImages.length > 0;
+  // The composer key doubles as the turn's brake. It offers Stop in the ONE state where
+  // there is nothing to send and something worth stopping: a turn in flight over an empty
+  // composer. Typing always wins — a mid-turn follow-up (the CLI queues it as its own turn)
+  // must never be blocked by the key having become a Stop. Deliberately keyed on `busy`
+  // alone: a native compaction is left to finish, since interrupting one mid-way is messy.
+  const stopMode = busy && !canSend;
+  function doStop() {
+    // Graceful: ends the CURRENT TURN and leaves the thread alive (Claude gets the
+    // stream-json `interrupt` control, Codex `turn/interrupt`). Deliberately not
+    // api.stopTerminal, which kills the process.
+    api.interrupt(terminalId).catch(() => { /* best-effort — nothing live to interrupt */ });
+  }
+  // Composer key size: 44px on mobile — the platform minimum touch target; the 34px keys
+  // were "too small and too hard to press" (David, on-device). Desktop keeps the tighter 34.
+  const keySize = isMobile ? 44 : 34;
+  const taPad = Math.max(6, (keySize - 22) / 2); // center the 22px text line against the keys
 
   return (
     <div className="chat-scope" style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, background: 'var(--color-base)' }}>
       <MessageScroller.Provider autoScroll defaultScrollPosition="end" scrollEdgeThreshold={48}>
         <MessageScroller.Root style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex' }}>
           <MessageScroller.Viewport preserveScrollOnPrepend onScroll={onViewportScroll} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
-            <MessageScroller.Content style={{ maxWidth: 768, margin: '0 auto', padding: '24px 20px 8px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Bottom padding matches the top: the last row — usually the Working… indicator —
+                used to sit 8px off the composer, which read as cramped on a phone. */}
+            <MessageScroller.Content style={{ maxWidth: 768, margin: '0 auto', padding: '24px 20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
               <LoadEarlierButton show={hasMore && !loadingOlder} onClick={loadOlder} />
-              {items.length === 0 && !busy && !compacting && <EmptyState model={model} />}
-              {renderTimeline(items, openFileInViewer, pageBoundariesRef.current)}
+              {/* An empty item list means "no messages yet" ONLY when the socket is open.
+                  While it's still (re)connecting, the history simply hasn't replayed —
+                  showing "send a message to start" over a thread that may be full of
+                  messages is a lie, so that state gets a centered reconnect spinner. */}
+              {items.length === 0 && !busy && !compacting && (connStatus === 'open' ? <EmptyState model={model} /> : <ReconnectingState />)}
+              {splitIdx === null ? (
+                renderTimeline(items, openFileInViewer, pageBoundariesRef.current)
+              ) : (
+                <>
+                  {/* Mid-compaction: the bar is a full-width divider pinned at the point the
+                      compaction began. Turns echoed after it (held on the CLI's stdin) render
+                      below, so their position says "queued". The split is render-only — when
+                      `compacting` clears, the timeline re-merges into one render and tool/result
+                      pairing across the boundary works again. */}
+                  {renderTimeline(items.slice(0, splitIdx), openFileInViewer, pageBoundariesRef.current)}
+                  <MessageScroller.Item messageId="__compacting" style={{ display: 'flex' }}>
+                    <CompactingBar queued={items.length - splitIdx} />
+                  </MessageScroller.Item>
+                  {renderTimeline(items.slice(splitIdx), openFileInViewer, pageBoundariesRef.current)}
+                </>
+              )}
               {pending?.questions && pending.questions.length > 0 && (
                 <MessageScroller.Item messageId="__ask" style={{ display: 'flex' }}>
                   {/* Interactive AskUserQuestion — answering unblocks the CLI (which is
@@ -237,11 +300,11 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                   </div>
                 </MessageScroller.Item>
               )}
-              {(busy || compacting) && (
+              {busy && !compacting && (
                 <MessageScroller.Item messageId="__working" style={{ display: 'flex' }}>
-                  {/* Compaction wins the slot: it can coincide with busy (a message sent
-                      mid-compaction sets busy too) but must never read as "Working…". */}
-                  {compacting ? <CompactingIndicator /> : <WorkingIndicator />}
+                  {/* While compacting, the full-width CompactingBar (in the timeline above)
+                      owns the state — a second spinner down here would read as "answering". */}
+                  {apiRetry ? <ApiRetryIndicator retry={apiRetry} /> : <WorkingIndicator />}
                 </MessageScroller.Item>
               )}
             </MessageScroller.Content>
@@ -297,6 +360,11 @@ export function ChatView({ terminalId }: { terminalId: string }) {
         </div>
       )}
 
+      {/* Safety net: if this thread declared a needs_you question via report_status (which only
+          lands on the status/board channel, never in the transcript), surface it right above the
+          composer so it isn't invisible in thread mode. */}
+      <ThreadAskBanner terminalId={terminalId} onAnswer={() => taRef.current?.focus()} />
+
       {/* Composer (drop a file anywhere on it, or paste — routes through attachFiles) */}
       <div
         onDragOver={onDragOver}
@@ -325,6 +393,9 @@ export function ChatView({ terminalId }: { terminalId: string }) {
             )}
           </div>
         )}
+        {/* Composer: the pre-redesign single-row layout, kept by David's explicit call
+            ("I like the old composer but I like the new button as an arrow") — only the
+            send glyph adopted the redesign's ↑. */}
         <div style={{ maxWidth: 768, margin: '0 auto', display: 'flex', alignItems: 'flex-end', gap: 8, background: dragActive ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-elevated))' : 'var(--color-elevated)', border: dragActive ? '1px solid var(--color-accent)' : '1px solid var(--color-border)', borderRadius: 12, padding: '8px 8px 8px 8px', transition: 'border-color .12s, background .12s' }}>
           {isMobile ? (
             <InputActionsMenu
@@ -332,12 +403,12 @@ export function ChatView({ terminalId }: { terminalId: string }) {
               onDictate={() => void dictation.start()}
               dictateDisabled={!sttConfigured}
               dictateHint="Set up in Settings → Transcription"
-              triggerStyle={{ width: 34, height: 34, borderRadius: 9, border: 'none', background: 'var(--color-hover)' }}
+              triggerStyle={{ width: keySize, height: keySize, borderRadius: 9, border: 'none', background: 'var(--color-hover)' }}
             />
           ) : (
             <label
               title="Attach file"
-              style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'var(--color-hover)', color: 'var(--color-text-secondary)' }}
+              style={{ flexShrink: 0, width: keySize, height: keySize, padding: 0, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'var(--color-hover)', color: 'var(--color-text-secondary)' }}
             >
               <Paperclip size={17} />
               <input
@@ -362,16 +433,29 @@ export function ChatView({ terminalId }: { terminalId: string }) {
             onPaste={onPaste}
             placeholder="Message…"
             rows={1}
-            autoCapitalize="off" autoCorrect="off" spellCheck={false}
-            style={{ flex: 1, resize: 'none', border: 'none', outline: 'none', background: 'transparent', color: 'var(--color-text-primary)', font: '400 15px var(--font-sans)', lineHeight: 1.5, maxHeight: 180, overflowY: 'auto' }}
+            /* Prose only — the Pretty composer never carries shell input, so spelling
+               help is always on here and gets no toggle. autoCapitalize stays off so a
+               path or a command name pasted mid-message is not altered. */
+            autoCapitalize="off" autoCorrect="on" spellCheck
+            /* iOS renders the return key as a blue Send action key (Enter already sends
+               here — the hint makes the keyboard say so). */
+            enterKeyHint="send"
+            /* One-line box is 22px line + 6px padding = 34px, matching the attach/send
+               keys. Without this the UA textarea is shorter than the keys and flex-end
+               drops the placeholder below their optical center. */
+            style={{ flex: 1, resize: 'none', border: 'none', outline: 'none', background: 'transparent', color: 'var(--color-text-primary)', font: '400 15px var(--font-sans)', lineHeight: '22px', maxHeight: 180, minHeight: keySize, padding: `${taPad}px 4px`, margin: 0, overflowY: 'auto' }}
           />
           <button
-            onClick={doSend}
-            disabled={!canSend}
-            title="Send"
-            style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 9, border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: canSend ? 'pointer' : 'default', background: canSend ? 'var(--color-accent)' : 'var(--color-hover)', color: canSend ? '#06140B' : 'var(--color-text-tertiary)', transition: 'background .15s' }}
+            onClick={stopMode ? doStop : doSend}
+            disabled={!stopMode && !canSend}
+            title={stopMode ? 'Stop' : 'Send'}
+            aria-label={stopMode ? 'Stop' : 'Send'}
+            /* Stop is red-tinted rather than reusing the disabled key's grey, so an ACTIVE
+               brake never reads as a dead Send. padding:0 is load-bearing on a fixed-width
+               icon button — see plusBtn in sidebar/ProjectCard.tsx. */
+            style={{ flexShrink: 0, width: keySize, height: keySize, padding: 0, borderRadius: 9, border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: (stopMode || canSend) ? 'pointer' : 'default', background: stopMode ? 'color-mix(in srgb, var(--color-status-red) 20%, transparent)' : canSend ? 'var(--color-accent)' : 'var(--color-hover)', color: stopMode ? 'var(--color-status-red)' : canSend ? '#06140B' : 'var(--color-text-tertiary)', transition: 'background .15s' }}
           >
-            <PaperPlaneTilt size={17} weight="fill" />
+            {stopMode ? <Stop size={isMobile ? 17 : 14} weight="fill" /> : <ArrowUp size={isMobile ? 19 : 16} weight="bold" />}
           </button>
             </>
           )}
@@ -379,7 +463,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
 
         {/* thin status row: muted context-window fill indicator, tappable for detail */}
         <div style={{ maxWidth: 768, margin: '6px auto 0', display: 'flex', justifyContent: 'flex-end' }}>
-          <ContextIndicator contextTokens={contextTokens} compacting={compacting} compactResult={compactResult} model={model} compact={compact} />
+          <ContextIndicator contextTokens={contextTokens} contextWindow={contextWindow} compacting={compacting} compactResult={compactResult} model={model} compact={compact} />
         </div>
       </div>
     </div>
@@ -447,31 +531,71 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
   }
 
   const rows: React.ReactNode[] = [];
+  // Whether the previously RENDERED row was part of the human's turn (bubble or attached
+  // image). Consecutive user rows group: one YOU label on the first, no separators between.
+  // Strict adjacency (David's final rule): grouped when NOTHING rendered between them,
+  // split when ANYTHING did — including a tool strip.
+  let lastRowWasUser = false;
   let group: { key: string; nodes: React.ReactNode[] } | null = null;
+  // Consecutive machinery nodes (tool calls/groups/orphan results) coalesce into ONE
+  // hairline-bordered block per the redesign — a run of calls reads as a single strip of
+  // terminal output between prose paragraphs, not a stack of standalone cards.
+  let mach: { key: string; nodes: React.ReactNode[] } | null = null;
+  const flushMach = () => {
+    if (mach && mach.nodes.length > 0 && group) {
+      group.nodes.push(<MachineryBlock key={`m-${mach.key}`} nodes={mach.nodes} />);
+      group.key = mach.key;
+    }
+    mach = null;
+  };
   const flushGroup = () => {
+    flushMach();
     if (group && group.nodes.length > 0) {
       rows.push(
         <MessageScroller.Item key={group.key} messageId={group.key} style={{ display: 'flex' }}>
           <AssistantTurn>{group.nodes}</AssistantTurn>
         </MessageScroller.Item>,
       );
+      lastRowWasUser = false;
     }
     group = null;
+  };
+  const pushMach = (id: string, node: React.ReactNode) => {
+    if (!group) group = { key: id, nodes: [] };
+    group.key = id;
+    if (!mach) mach = { key: id, nodes: [] };
+    mach.key = id;
+    mach.nodes.push(<div key={id}>{node}</div>);
   };
 
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     const id = stableId(it);
 
+    // A blank assistant/thinking item (a streamed message whose text block is empty —
+    // the common shape when a message only carries tool calls) renders nothing, but if
+    // it reaches the push path it still SPLITS a machinery strip in two and occupies a
+    // flex-gap slot — the "inconsistent tool-call spacing" bug: hollow hairline bands
+    // between blocks that should have been one strip. Skip it before it breaks anything.
+    if ((it.kind === 'assistant' || it.kind === 'thinking') && !(it.text ?? '').trim()) continue;
+
     if (pageBoundaries.has(it)) flushGroup();
 
     if (it.kind === 'user') {
       flushGroup();
+      // Turn separator: a hairline between the previous assistant block and this user turn,
+      // so long threads read as clearly delimited exchanges (redesign). Not before the
+      // first row, and not between CONSECUTIVE user rows — back-to-back sends read as one
+      // turn: one YOU label on the first, the rest grouped tight beneath it.
+      if (rows.length > 0 && !lastRowWasUser) {
+        rows.push(<div key={`sep-${id}`} aria-hidden style={{ height: 1, background: 'var(--color-hover)', flexShrink: 0 }} />);
+      }
       rows.push(
         <MessageScroller.Item key={id} messageId={id} style={{ display: 'flex', flexDirection: 'column' }}>
-          <UserBubble text={it.text ?? ''} source={it.source} />
+          <UserBubble text={it.text ?? ''} source={it.source} grouped={lastRowWasUser} />
         </MessageScroller.Item>,
       );
+      lastRowWasUser = true;
       continue;
     }
 
@@ -483,18 +607,20 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
       flushGroup();
       rows.push(
         <MessageScroller.Item key={id} messageId={id} style={{ display: 'flex', flexDirection: 'column' }}>
-          <div style={{ alignSelf: 'flex-end', maxWidth: '85%' }}>
+          <div style={{ alignSelf: 'flex-end', maxWidth: '85%', paddingBottom: 4 }}>
             <ChatImage src={it.imageUrl ?? ''} alt={it.imageAlt} />
           </div>
         </MessageScroller.Item>,
       );
+      // Part of the human's turn: a following caption/text send groups under the same YOU.
+      lastRowWasUser = true;
       continue;
     }
 
     // Look ahead for a run of consecutive same-tool calls (ignoring their interleaved
     // results, which are rendered paired). A run of 2+ collapses into one ToolGroup.
     // AskUserQuestion is excluded — it has live-overlay special-casing below.
-    if (it.kind === 'tool' && it.toolName !== 'AskUserQuestion') {
+    if (it.kind === 'tool' && it.toolName !== 'AskUserQuestion' && !isReportStatusTool(it.toolName)) {
       const run: ConvItem[] = [it];
       // Tool-result items encountered while scanning the run, IN ENCOUNTER ORDER — used
       // below for en-bloc pairing of toolId-less members (see the `pairs` comment). Not
@@ -539,11 +665,8 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
           tool: t,
           result: t.toolId ? resultById.get(t.toolId) : runResults[toolIdLessSeen++],
         }));
-        const groupNode = <ToolGroup pairs={pairs} onViewFile={onViewFile} />;
         const lastId = stableId(run[run.length - 1]);
-        if (!group) group = { key: lastId, nodes: [] };
-        group.key = lastId;
-        group.nodes.push(<div key={lastId}>{groupNode}</div>);
+        pushMach(lastId, <ToolGroup pairs={pairs} onViewFile={onViewFile} />);
         // Skip past the run's members; their paired results are skipped by the
         // existing `toolIds.has(...)` guard on the 'tool-result' branch.
         i = lastIdx;
@@ -576,13 +699,24 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
           try { questions = JSON.parse(it.toolInput ?? '{}')?.questions ?? []; } catch { /* malformed */ }
           if (questions.length) node = <AnsweredQuestionCard questions={questions} resultText={result.text ?? ''} />;
         }
+      } else if (isReportStatusTool(it.toolName) && parseReportStatus(it.toolInput)) {
+        // Surface the buried status inline instead of the collapsed tool row: the model's
+        // findings/question (report_status summary/ask/blocker) become visible in thread view.
+        // The `{ ok: true }` result is already consumed by the pairing logic above, so it won't
+        // render a stray row beneath. Falls back to the generic ToolCall when there's no usable
+        // content to show.
+        node = <StatusNotice input={it.toolInput} />;
       } else {
-        node = <ToolCall tool={it} result={result} onViewFile={onViewFile} />;
+        // Generic machinery — routes through pushMach so consecutive calls share one
+        // bordered block, and so the header's Hide-tool-calls toggle can drop it.
+        pushMach(id, <ToolCall tool={it} result={result} onViewFile={onViewFile} />);
+        continue;
       }
     } else if (it.kind === 'tool-result') {
       if (it.toolId && toolIds.has(it.toolId)) continue; // already shown paired with its tool
       if (consumed.has(it)) continue;                    // ...or paired by adjacency, above
-      node = <ToolResult item={it} />;
+      pushMach(id, <div style={{ padding: '0 20px' }}><ToolResult item={it} /></div>);
+      continue;
     } else if (it.kind === 'result') node = <ResultFooter item={it} />;
     // A system-injected event (background-task completion) that arrived as a `user`-role
     // turn. Deliberately does NOT flushGroup() the way a real `user` turn does: it isn't a
@@ -592,6 +726,9 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
     else if (it.kind === 'notice') node = <TaskNotice text={it.text ?? ''} />;
     if (node == null) continue;
 
+    // A non-machinery node closes any open machinery strip first, so the bordered block
+    // ends exactly where the prose resumes.
+    flushMach();
     if (!group) group = { key: id, nodes: [] };
     // Anchor the group's React key to its LAST item, re-set on every push (not just at
     // creation). A group's start can move earlier when loadOlder() prepends older history
@@ -628,8 +765,27 @@ export function TaskNotice({ text }: { text: string }) {
 /** One assistant turn: a flush-left flex-column holding all its blocks. */
 function AssistantTurn({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
       {children}
+    </div>
+  );
+}
+
+/**
+ * A consecutive run of machinery (tool calls/groups/orphan results) fenced by hairlines —
+ * the redesign renders a turn's tool activity as one strip of terminal-ish rows between
+ * prose paragraphs. Inner rows separate with a fainter hairline; the strip has no side
+ * borders or background, so it stays quieter than a card.
+ */
+function MachineryBlock({ nodes }: { nodes: React.ReactNode[] }) {
+  return (
+    // Full-bleed (David's call): the -20px margins cancel MessageScroller.Content's side
+    // padding so row hover backgrounds run edge to edge; each row re-adds the 20px as its
+    // OWN padding, which keeps the caret exactly on the text rail.
+    <div style={{ display: 'flex', flexDirection: 'column', margin: '0 -20px', borderTop: '1px solid var(--color-hover)', borderBottom: '1px solid var(--color-hover)' }}>
+      {nodes.map((n, i) => (
+        <div key={i} style={{ minWidth: 0, borderTop: i > 0 ? '1px solid color-mix(in srgb, var(--color-hover) 55%, transparent)' : 'none' }}>{n}</div>
+      ))}
     </div>
   );
 }
@@ -665,18 +821,22 @@ function ToolGroup({ pairs, onViewFile }: { pairs: ToolPair[]; onViewFile: (p: s
   const running = pairs.some((p) => !p.result);
   const [manualOpen, setManualOpen] = useToolGroupExpanded(firstId ? `group:${firstId}` : undefined, undefined);
   const expanded = manualOpen === undefined ? running : manualOpen;
-  const toolName = pairs[0].tool.toolName;
-  const label = `${toolName} ${pairs.length} calls`;
-  // "Read 3 files" reads better than "Read 3 calls" for the file-shaped tools.
-  const fileish = toolName === 'Read' || toolName === 'Write' || toolName === 'Edit';
-  const heading = fileish ? `${toolName} ${pairs.length} files` : label;
+  const toolName = pairs[0].tool.toolName ?? 'tool';
   const lines = pairs.reduce((n, p) => n + (p.result?.text?.split('\n').length ?? 0), 0);
+  // Aggregate edit stat across the run (the redesign's `+33 −9`): only shown when EVERY
+  // member yields a stat — a mixed/partial sum would misstate the run.
+  const stats = pairs.map((p) => editDiffStat(p.tool.toolName, p.tool.toolInput));
+  const diff = stats.length > 0 && stats.every((s): s is { add: number; del: number } => s !== null)
+    ? stats.reduce((a, s) => ({ add: a.add + s.add, del: a.del + s.del }), { add: 0, del: 0 })
+    : null;
 
   if (expanded) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <GroupHeader heading={heading} lines={lines} running={running} open onClick={() => setManualOpen(false)} />
-        <div style={{ paddingLeft: 14, display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
+        <GroupHeader toolName={toolName} count={pairs.length} lines={lines} diff={diff} running={running} open onClick={() => setManualOpen(false)} />
+        {/* Members flush-left with the header (no indent — David's call): the caret column
+            on each row already provides the visual hierarchy. */}
+        <div style={{ display: 'flex', flexDirection: 'column', paddingBottom: 4 }}>
           {pairs.map(({ tool: t, result }) => (
             <ToolCall key={stableId(t)} tool={t} result={result} onViewFile={onViewFile} />
           ))}
@@ -684,26 +844,41 @@ function ToolGroup({ pairs, onViewFile }: { pairs: ToolPair[]; onViewFile: (p: s
       </div>
     );
   }
-  return <GroupHeader heading={heading} lines={lines} running={running} open={false} onClick={() => setManualOpen(true)} />;
+  return <GroupHeader toolName={toolName} count={pairs.length} lines={lines} diff={diff} running={running} open={false} onClick={() => setManualOpen(true)} />;
 }
 
-function GroupHeader({ heading, lines, running, open, onClick }: { heading: string; lines: number; running: boolean; open: boolean; onClick: () => void }) {
+function GroupHeader({ toolName, count, lines, diff, running, open, onClick }: { toolName: string; count: number; lines: number; diff: { add: number; del: number } | null; running: boolean; open: boolean; onClick: () => void }) {
   return (
     <button
       type="button"
       aria-expanded={open}
       onClick={onClick}
-      style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: 7, display: 'flex', gap: 7, alignItems: 'center' }}
+      style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '0 20px', height: 30, display: 'flex', gap: 10, alignItems: 'center' }}
       onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-hover)'; }}
       onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
     >
-      <CaretRight size={11} weight="bold" style={{ flexShrink: 0, color: 'var(--color-text-tertiary)', transition: 'transform .12s ease', transform: open ? 'rotate(90deg)' : 'none' }} />
-      <Wrench size={13} color="#5A8DD6" style={{ flexShrink: 0 }} />
-      <span style={{ minWidth: 0, flex: 1, fontSize: 12.5, color: 'var(--color-text-primary)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{heading}</span>
+      <span style={{ width: 14, flexShrink: 0, display: 'flex', justifyContent: 'flex-start' }}>
+        <CaretRight size={10} weight="bold" style={{ color: 'var(--color-text-tertiary)', transition: 'transform .12s ease', transform: open ? 'rotate(90deg)' : 'none' }} />
+      </span>
+      <span style={{ flexShrink: 0, font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)' }}>{toolName}</span>
+      <span style={{ flexShrink: 0, font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>×{count}</span>
+      <span style={{ flex: 1, minWidth: 0 }} />
+      {diff && <span style={{ flexShrink: 0, font: '400 11px var(--font-mono)', color: '#8fb79a' }}>+{diff.add} −{diff.del}</span>}
       {running
         ? <span className="chat-shimmer" style={{ flexShrink: 0, fontSize: 11 }}>running…</span>
-        : <span style={{ flexShrink: 0, fontSize: 11, color: 'var(--color-text-secondary)' }}>{lines} line{lines !== 1 ? 's' : ''}</span>}
+        : !diff && <span style={{ flexShrink: 0, font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{lines} line{lines !== 1 ? 's' : ''}</span>}
     </button>
+  );
+}
+
+// Centered in the visible chat area (55vh ≈ the space above the composer on a phone),
+// replacing the EmptyState while the socket is down — see the render-site comment.
+function ReconnectingState() {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, height: '55vh', color: 'var(--color-text-secondary)', fontSize: 13.5 }}>
+      <Spinner size={22} />
+      <span>Reconnecting…</span>
+    </div>
   );
 }
 
@@ -723,26 +898,33 @@ function EmptyState({ model }: { model?: string }) {
 // name}" label (same ArrowBendDownRight "relayed" icon the coordinator's own Stream uses for
 // injected notices) and a muted/bordered bubble instead of the bright human-accent one.
 // `source === 'user'` or undefined (untagged/legacy) renders exactly like before.
-export function UserBubble({ text, source }: { text: string; source?: 'user' | 'coordinator' }) {
+export function UserBubble({ text, source, grouped = false }: { text: string; source?: 'user' | 'coordinator'; grouped?: boolean }) {
   const dispatchName = useDispatchName();
   const viaCoordinator = source === 'coordinator';
   return (
-    <div style={{ alignSelf: 'flex-end', maxWidth: '85%', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-      {viaCoordinator && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, color: 'var(--color-accent)' }}>
-          <ArrowBendDownRight size={12} weight="bold" />
-          via {dispatchName}
+    <div style={{ alignSelf: 'flex-end', maxWidth: '82%', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, padding: grouped ? '0 0 4px' : '8px 0 4px' }}>
+      {/* Turn meta (redesign): a small mono label above the bubble instead of an anonymous
+          blob — YOU for the human, the relay attribution for a coordinator-sent turn. A
+          `grouped` bubble (back-to-back sends with no agent response between) omits the
+          label: one YOU covers the whole run. No timestamp yet: ConvItems carry no
+          wall-clock time, and a fabricated one would lie on every replayed/paged item. */}
+      {grouped ? null : viaCoordinator ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, font: '500 9.5px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-accent)' }}>
+          <ArrowBendDownRight size={11} weight="bold" />
+          VIA {dispatchName.toUpperCase()}
         </div>
+      ) : (
+        <span style={{ font: '500 9.5px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-accent)' }}>YOU</span>
       )}
       <div
         style={{
           background: viaCoordinator ? 'var(--color-elevated)' : 'var(--color-accent)',
           border: viaCoordinator ? '1px solid var(--color-border)' : 'none',
           color: viaCoordinator ? 'var(--color-text-primary)' : '#06140B',
-          borderRadius: '14px 14px 4px 14px',
-          padding: '9px 13px',
-          font: '400 15px var(--font-sans)',
-          lineHeight: 1.5,
+          borderRadius: 8,
+          padding: '12px 15px',
+          font: '500 15.5px var(--font-sans)',
+          lineHeight: 1.55,
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
         }}
@@ -753,21 +935,45 @@ export function UserBubble({ text, source }: { text: string; source?: 'user' | '
   );
 }
 
-// Assistant prose flows through the SHARED <InsightText> so ★ Insight blocks become tinted
-// callouts here identically to the coordinator stream (scheme="global" → app --color-* tokens).
+// Assistant prose flows through the SHARED <InsightText>; the chat surface uses the redesign's
+// left-railed clamped insight blocks (variant="rail") rather than the coordinator's tinted
+// callouts. The wrapper sets the redesign's reading size — md-view inherits it.
 function AssistantText({ text }: { text: string }) {
   if (!text) return null;
-  return <InsightText source={text} scheme="global" />;
+  return (
+    <div style={{ fontSize: 14.5, lineHeight: 1.75, minWidth: 0 }}>
+      <InsightText source={text} scheme="global" variant="rail" />
+    </div>
+  );
 }
 
+// Collapsed, the row IS the preview: brain icon + the thought's first words in one dim italic
+// line (the icon alone says "thinking" — pairing the word with a preview read as two competing
+// texts). A Grok turn interleaves many thinking blocks between tool calls, so a column of
+// identical "Thinking" rows is unscannable, but so is a column of full-width ragged prose —
+// hence the single ellipsized line, width-capped so it doesn't stretch edge to edge. The word
+// "Thinking" returns as the header only while the row is open.
 function Thinking({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   if (!text.trim()) return null;
+  // One flat line: collapse whitespace, drop backtick fences — markdown isn't rendered here,
+  // so literal backticks are just clutter in a preview.
+  const preview = text.trim().replace(/\s+/g, ' ').replace(/`/g, '');
   return (
     <div>
-      <button onClick={() => setOpen((o) => !o)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-secondary)', font: 'italic 400 12.5px var(--font-sans)', padding: 0 }}>
-        <CaretRight size={11} weight="bold" style={{ transition: 'transform .12s', transform: open ? 'rotate(90deg)' : 'none' }} />
-        <Brain size={13} weight="duotone" /> Thinking
+      <button
+        onClick={() => setOpen((o) => !o)}
+        style={{ display: 'flex', alignItems: 'center', gap: 6, maxWidth: '100%', minWidth: 0, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', font: 'italic 400 12.5px var(--font-sans)', padding: 0 }}
+      >
+        <CaretRight size={11} weight="bold" style={{ flexShrink: 0, transition: 'transform .12s', transform: open ? 'rotate(90deg)' : 'none' }} />
+        <Brain size={13} weight="duotone" style={{ flexShrink: 0 }} />
+        {open ? (
+          <span style={{ flexShrink: 0, color: 'var(--color-text-secondary)' }}>Thinking</span>
+        ) : (
+          <span style={{ minWidth: 0, maxWidth: 520, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {preview || 'Thinking'}
+          </span>
+        )}
       </button>
       {open && (
         <div style={{ marginTop: 5, paddingLeft: 12, borderLeft: '2px solid var(--color-border)', color: 'var(--color-text-secondary)', font: 'italic 400 13px var(--font-sans)', lineHeight: 1.55, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>

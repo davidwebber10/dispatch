@@ -18,12 +18,22 @@ import type { TerminalType } from '../db/terminals.js';
 import type { StatusHooksInjection } from '../providers/types.js';
 import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
 import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript.js';
+import { parseCodexRollout } from '../conversation/codex-transcript.js';
+import { findCodexRolloutPath } from './codex-sessions.js';
 import { platform } from '../platform/index.js';
 import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.js';
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
 import { resolveTranscriptPath } from './transcript-path.js';
+import { randomUUID } from 'crypto';
+import { isAgentType } from '../providers/agent-types.js';
+import { writeGrokHome, type McpServerEntry } from '../providers/grok-home.js';
+import { writeOpencodeConfig } from '../providers/opencode-config.js';
+import { OPENCODE_DEFAULT_MODEL } from '../providers/opencode.js';
+import { readHarnessSettings } from '../settings/harness-settings.js';
 import { TERMINAL_ID_ENV_VAR } from '../auth/shim.js';
+import { LOGIN_ARGV, isProviderName } from '../setup/install.js';
 import { withAutoArchive, DEFAULT_AUTO_ARCHIVE_MS } from './auto-archive.js';
+import { ptyMessagePayload, flattenForPty } from './pty-message.js';
 
 interface StatusContext {
   serverUrl: string;
@@ -31,6 +41,8 @@ interface StatusContext {
   hooksDir: string;
   /** Absolute path to the Codex notify helper script. */
   codexHelperPath: string;
+  /** Absolute path to the Grok hook helper script. */
+  grokHelperPath?: string;
 }
 
 /** Grace period before the boot kickstart runs, so a save-burst on shutdown can coalesce. */
@@ -48,6 +60,23 @@ const KICKSTART_CONTINUE_PROMPT =
   '⚙️ Dispatch restarted and interrupted you mid-task — re-read your last steps above and continue your ' +
   'mission from where you left off. If you had already finished, briefly say so instead of redoing work.';
 
+/**
+ * The one-file recovery decision, pure for testability: adopt the project dir's single
+ * transcript ONLY when it could plausibly belong to this terminal — i.e. it was born at or
+ * after the terminal's creation (60s slack for clock skew). A transcript that predates the
+ * terminal is someone else's session that happens to share the project dir (the user's own
+ * `claude` runs) — adopting it made a coordinator resume the USER'S conversation (Control
+ * Plane rendered their terminal history; their terminal resume showed coordinator turns).
+ * 0 files = nothing to recover; 2+ = ambiguous (unchanged rule, see recoverSessionId).
+ */
+export function pickRecoverableSession(
+  files: { id: string; birth: number }[],
+  terminalCreatedAtMs: number,
+): string | null {
+  if (files.length !== 1) return null;
+  return files[0].birth >= terminalCreatedAtMs - 60_000 ? files[0].id : null;
+}
+
 export class SessionService {
   /** Supplies the Doppler MCP spec for spawned CLIs; set by the server wiring. */
   private secretsServerSpec: (() => { spec: McpServerSpec | null; prompt: string | null }) | null = null;
@@ -62,6 +91,13 @@ export class SessionService {
   /** Drives structured (app-server) sessions for codex threads; set by server wiring only
    *  when CODEX_PRETTY_ENABLED. Undefined ⇒ codex has no structured transport (Phase A). */
   private codexStructuredManager?: import('../structured/manager.js').IStructuredManager;
+  /** Drives structured (ACP `grok agent stdio`) sessions for grok threads; set by server
+   *  wiring only when GROK_PRETTY_ENABLED. Undefined ⇒ grok has only the PTY transport. */
+  private grokStructuredManager?: import('../structured/manager.js').IStructuredManager;
+  /** Drives structured (ACP `opencode acp`) sessions for opencode threads; set by server
+   *  wiring only when OPENCODE_PRETTY_ENABLED. OpenCode is Pretty-ONLY: no manager ⇒ the
+   *  type cannot spawn at all (there is deliberately no PTY fallback). */
+  private opencodeStructuredManager?: import('../structured/manager.js').IStructuredManager;
   /** Override for structured command (test seam: lets tests spawn fake-claude instead of real claude). */
   private structuredCommandOverride?: { command: string; args: string[] };
 
@@ -91,16 +127,7 @@ export class SessionService {
 
   setStructuredManager(m: import('../structured/manager.js').IStructuredManager): void {
     this.structuredManager = m;
-    // Persist the claude session_id (surfaced from the structured init event) onto the
-    // terminal's external_id, mirroring how the PTY path captures session ids. This is
-    // what lets us resume the SAME conversation after a daemon restart. First-write-wins
-    // (a `-r` resume keeps the same id, so we never need to overwrite).
-    m.on('session', (terminalId: string, sessionId: string) => {
-      try {
-        const t = terminalsDb.getById(this.db, terminalId);
-        if (t && !t.external_id && sessionId) terminalsDb.updateExternalId(this.db, terminalId, sessionId);
-      } catch { /* best effort */ }
-    });
+    this.persistStructuredSessionIds(m);
     // Durable source persistence: the manager emits this once a tagged turn's `result`
     // lands (its transcript lines are guaranteed flushed by then — see manager.ts's
     // `result` handler). Resolve it to the newest not-yet-recorded real user-text uuid in
@@ -122,6 +149,35 @@ export class SessionService {
     });
   }
 
+  /**
+   * Persist a structured manager's session id (surfaced from its init/session event) onto
+   * the terminal's external_id, mirroring how the PTY path captures session ids. This is
+   * what lets us resume the SAME conversation after a daemon restart. First-write-wins
+   * for a HEALTHY identity — but a stored id whose transcript exists NOWHERE (captured
+   * from a boot that never ran a turn) is a ghost: it can never be resumed or read, and
+   * leaving it locked the terminal onto an empty history forever (the Dispatch
+   * coordinator served 0 items and every resume referenced a nonexistent session). The
+   * live process's self-reported id is authoritative over a ghost.
+   *
+   * The ghost check reads the CLAUDE transcript store, so for non-claude managers (Grok,
+   * whose ids never resolve there) an existing external_id simply always wins — which is
+   * right: a Grok id comes from session/new exactly once and never changes thereafter.
+   */
+  private persistStructuredSessionIds(m: import('../structured/manager.js').IStructuredManager): void {
+    m.on('session', (terminalId: string, sessionId: string) => {
+      try {
+        const t = terminalsDb.getById(this.db, terminalId);
+        if (!t || !sessionId || t.external_id === sessionId) return;
+        if (t.external_id) {
+          const session = sessionsDb.getById(this.db, t.session_id);
+          const workDir = t.working_dir || session?.working_dir || '';
+          if (resolveTranscriptPath(workDir, t.external_id)) return; // healthy — never clobber
+        }
+        terminalsDb.updateExternalId(this.db, terminalId, sessionId);
+      } catch { /* best effort */ }
+    });
+  }
+
   setStructuredCommandOverride(cmd: { command: string; args: string[] }): void { this.structuredCommandOverride = cmd; }
 
   /**
@@ -134,15 +190,37 @@ export class SessionService {
   }
 
   /**
+   * Wire the Grok structured (ACP) manager. Only called by server wiring when
+   * GROK_PRETTY_ENABLED — until then `structuredManagerFor('grok')` is undefined and grok
+   * threads have only the PTY transport. Unlike Codex, the Grok id must be persisted here:
+   * `session/new` mints it exactly once, and resume after a daemon restart is `session/load`
+   * by that stored external_id.
+   */
+  setGrokStructuredManager(m: import('../structured/manager.js').IStructuredManager): void {
+    this.grokStructuredManager = m;
+    this.persistStructuredSessionIds(m);
+  }
+
+  /** Wire the OpenCode structured (ACP) manager. Same id-persistence contract as Grok:
+   *  `session/new` mints the id exactly once; resume is `session/load` by external_id. */
+  setOpencodeStructuredManager(m: import('../structured/manager.js').IStructuredManager): void {
+    this.opencodeStructuredManager = m;
+    this.persistStructuredSessionIds(m);
+  }
+
+  /**
    * The structured manager for a terminal type, or undefined when that type has no
    * structured transport. Both managers satisfy IStructuredManager, so every structured
    * operation routes through this one accessor:
    *   claude-code → the Claude stream-json manager
    *   codex       → the Codex app-server manager (only when CODEX_PRETTY_ENABLED)
+   *   grok        → the Grok ACP manager (only when GROK_PRETTY_ENABLED)
    */
   structuredManagerFor(type: string): import('../structured/manager.js').IStructuredManager | undefined {
     if (type === 'claude-code') return this.structuredManager;
     if (type === 'codex') return this.codexStructuredManager;
+    if (type === 'grok') return this.grokStructuredManager;
+    if (type === 'opencode') return this.opencodeStructuredManager;
     return undefined;
   }
 
@@ -162,7 +240,12 @@ export class SessionService {
    * the plan, then do the IO (write the Claude settings file) so the build*
    * commands receive ready-to-use args. No-op until the server sets the context.
    */
-  private buildStatusHooks(terminalId: string, type: string): StatusHooksInjection | undefined {
+  /**
+   * `mcpSpecs` is only consulted by providers whose hooks and MCP servers share one
+   * artifact — Grok, whose plugin directory carries both. Claude writes a settings file and
+   * Codex passes argv, so for them the specs are already handled by composeInjection.
+   */
+  private buildStatusHooks(terminalId: string, type: string, mcpSpecs: McpServerSpec[] = []): StatusHooksInjection | undefined {
     const ctx = this.statusContext;
     if (!ctx) return undefined;
     const provider = getProvider(type);
@@ -170,8 +253,27 @@ export class SessionService {
       serverUrl: ctx.serverUrl,
       terminalId,
       codexHelperPath: ctx.codexHelperPath,
+      grokHelperPath: ctx.grokHelperPath,
     });
     if (!plan) return undefined;
+    if (plan.grokHooks) {
+      try {
+        const mcpServers: Record<string, McpServerEntry> = {};
+        for (const spec of mcpSpecs) {
+          mcpServers[spec.name] = { command: spec.command, args: spec.args, ...(spec.env ? { env: spec.env } : {}) };
+        }
+        const dir = writeGrokHome({
+          dir: path.join(ctx.hooksDir, 'grok-homes', terminalId),
+          realHome: path.join(os.homedir(), '.grok'),
+          mcpServers,
+          eventsUrl: plan.grokHooks.eventsUrl,
+          hookHelperPath: plan.grokHooks.helperPath,
+        });
+        return dir ? { grokHomeDir: dir } : undefined;
+      } catch {
+        return undefined; // hooks are best-effort; never block a spawn
+      }
+    }
     if (plan.claudeSettings) {
       try {
         fs.mkdirSync(ctx.hooksDir, { recursive: true });
@@ -322,6 +424,20 @@ export class SessionService {
     const terminalId = uuid();
     const labelSource: 'user' | 'default' = label ? 'user' : 'default';
     const displayLabel = label || this.defaultTerminalLabel(sessionId, type);
+
+    // Grok is structured-only for NEW threads: its PTY/TUI never rendered well in Dispatch
+    // (mobile paging, alt-screen churn), so any creation path that doesn't name a transport
+    // gets Pretty. Applied at creation, never at spawn — existing PTY rows keep working, and
+    // an explicit `transport` in the request still wins. Skipped when the structured manager
+    // is absent (DISPATCH_GROK_PRETTY=0 falls back to PTY).
+    if (type === 'grok' && !config?.transport && this.grokStructuredManager) {
+      config = { ...(config ?? {}), transport: 'structured' };
+    }
+    // OpenCode is Pretty-ONLY — there is no PTY provider at all, so unlike Grok this is
+    // not conditional on a transport already being named: every opencode row is structured.
+    if (type === 'opencode') {
+      config = { ...(config ?? {}), transport: 'structured' };
+    }
 
     terminalsDb.create(this.db, {
       id: terminalId,
@@ -605,6 +721,30 @@ export class SessionService {
    * polling), `startLine` (top edge of the returned window), and `hasMore`
    * (whether older lines exist above the window). Claude Code only for now.
    */
+  /**
+   * True when this thread's history should come from its REST transcript rather than from a
+   * ws replay of the ring. Only Codex qualifies, and the reason is identity, not format:
+   * a Codex item carries no per-message uuid, so a REST page overlapping the ring replay
+   * cannot be dedup'd (the client falls back to a content fingerprint, which the two
+   * translators do not agree on for tool calls). Claude Code keeps replaying its ring —
+   * its uuids make the overlap safe, and that path is the fast, well-covered one.
+   * See ws/structured.ts's `restOwnsHistory` and getConversation's codex branch.
+   */
+  historyOwnedByRest(terminalId: string): boolean {
+    return terminalsDb.getById(this.db, terminalId)?.type === 'codex';
+  }
+
+  /**
+   * True when anything the ws replay's `tail=N` bound cuts is recoverable by paging the
+   * REST transcript (getConversation). Grok is the odd one out: it has NO pageable
+   * transcript (unsupported), so its threads must replay the full ring or the cut history
+   * is simply gone from the UI. See ws/structured.ts's `restCanPageHistory`.
+   */
+  historyRestPageable(terminalId: string): boolean {
+    const type = terminalsDb.getById(this.db, terminalId)?.type;
+    return type === 'claude-code' || type === 'codex';
+  }
+
   getConversation(
     terminalId: string,
     opts: { since?: number; before?: number; beforeUuid?: string; limit?: number } = {},
@@ -612,26 +752,45 @@ export class SessionService {
     const empty = { items: [] as ConvItem[], cursor: 0, startLine: 0, hasMore: false };
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return empty;
-    if (terminal.type !== 'claude-code') return { ...empty, unsupported: true };
+    // Both agent types keep a durable transcript on disk, in their own format and their own
+    // place. Anything else (a plain shell) has none, and says so rather than looking empty.
+    if (terminal.type !== 'claude-code' && terminal.type !== 'codex') return { ...empty, unsupported: true };
 
-    const session = sessionsDb.getById(this.db, terminal.session_id);
-    const workDir = terminal.working_dir || session?.working_dir;
-    if (!workDir) return empty;
-
-    const dir = platform.claudeProjectDir(workDir);
-    // external_id is normally captured at spawn; when it wasn't, recover it from the
-    // project's transcript files so the thread still renders in View.
-    const sessionId = terminal.external_id || this.recoverSessionId(terminalId, dir);
-    if (!sessionId) return empty;
-
-    // Resolve rather than assume: a session that changed cwd (EnterWorktree) keeps its id
-    // but relocates under a different project dir, and `workDir` here is whatever the thread
-    // spawned with. Reading the computed path directly is what made those chats render
-    // empty — see sessions/transcript-path.ts.
-    const file = resolveTranscriptPath(workDir, sessionId);
-    if (!file) return empty;
     let raw: string;
-    try { raw = fs.readFileSync(file, 'utf8'); } catch { return empty; }
+    // Per-line parser for whichever transcript format this thread writes. Both take one
+    // line and return the items it contains, so the windowing below is format-agnostic.
+    let parseLine: (line: string) => ConvItem[];
+
+    if (terminal.type === 'codex') {
+      // Codex has no Claude project dir. It files rollouts by date under ~/.codex/sessions,
+      // keyed by the session id we captured at spawn — there is no equivalent of
+      // recoverSessionId, so a thread that never recorded one has no history to serve.
+      const sessionId = terminal.external_id;
+      if (!sessionId) return empty;
+      const file = findCodexRolloutPath(sessionId);
+      if (!file) return empty;
+      try { raw = fs.readFileSync(file, 'utf8'); } catch { return empty; }
+      parseLine = parseCodexRollout;
+    } else {
+      const session = sessionsDb.getById(this.db, terminal.session_id);
+      const workDir = terminal.working_dir || session?.working_dir;
+      if (!workDir) return empty;
+
+      const dir = platform.claudeProjectDir(workDir);
+      // external_id is normally captured at spawn; when it wasn't, recover it from the
+      // project's transcript files so the thread still renders in View.
+      const sessionId = terminal.external_id || this.recoverSessionId(terminalId, dir);
+      if (!sessionId) return empty;
+
+      // Resolve rather than assume: a session that changed cwd (EnterWorktree) keeps its id
+      // but relocates under a different project dir, and `workDir` here is whatever the thread
+      // spawned with. Reading the computed path directly is what made those chats render
+      // empty — see sessions/transcript-path.ts.
+      const file = resolveTranscriptPath(workDir, sessionId);
+      if (!file) return empty;
+      try { raw = fs.readFileSync(file, 'utf8'); } catch { return empty; }
+      parseLine = parseClaudeTranscript;
+    }
 
     // Consume only complete lines (the trailing element is an empty string after a
     // final newline, or a half-written entry) so we never parse a partial record.
@@ -667,7 +826,7 @@ export class SessionService {
     // Parse per line so each item carries its source line index (enables jump-to).
     const items: ConvItem[] = [];
     for (let i = start; i < end; i++) {
-      for (const it of parseClaudeTranscript(usable[i])) items.push({ ...it, line: i });
+      for (const it of parseLine(usable[i])) items.push({ ...it, line: i });
     }
     // Merge durably-stored `source` tags onto user turns (see db/message-source.ts) — the
     // REST transcript parser (conversation/transcript.ts) never sets this itself, matching
@@ -731,18 +890,25 @@ export class SessionService {
    * ran captured its external_id at the structured `init` event (first-write-wins, see
    * setStructuredManager), so it never depends on this fallback; a never-run coordinator
    * correctly falls back to the empty greeting instead of an arbitrary transcript.
+   * Even a single file is adopted only if it was born after this terminal was created (see pickRecoverableSession) — the sole transcript in a quiet dir is usually the USER'S own session, not this terminal's.
    */
   private recoverSessionId(terminalId: string, dir: string): string | null {
-    let files: { id: string; m: number }[];
+    let files: { id: string; birth: number }[];
     try {
       files = fs.readdirSync(dir)
         .filter((f) => f.endsWith('.jsonl'))
-        .map((f) => ({ id: f.replace(/\.jsonl$/, ''), m: fs.statSync(path.join(dir, f)).mtimeMs }))
-        .sort((a, b) => b.m - a.m);
+        .map((f) => {
+          const s = fs.statSync(path.join(dir, f));
+          return { id: f.replace(/\.jsonl$/, ''), birth: s.birthtimeMs || s.ctimeMs };
+        });
     } catch { return null; }
-    if (files.length !== 1) return null; // 0 = nothing to recover; 2+ = ambiguous, don't guess
-    try { terminalsDb.updateExternalId(this.db, terminalId, files[0].id); } catch { /* best effort */ }
-    return files[0].id;
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    const createdAtMs = terminal ? Date.parse(terminal.created_at) : NaN;
+    if (!Number.isFinite(createdAtMs)) return null; // no terminal row → nothing to attribute to
+    const id = pickRecoverableSession(files, createdAtMs);
+    if (!id) return null;
+    try { terminalsDb.updateExternalId(this.db, terminalId, id); } catch { /* best effort */ }
+    return id;
   }
 
   relaunchTerminal(terminalId: string): terminalsDb.Terminal | null {
@@ -771,18 +937,13 @@ export class SessionService {
     if (!terminal) return null;
     if (!terminalsDb.isPtyType(terminal.type)) return terminalsDb.rowToTerminal(terminal);
 
-    if (this.ptyManager.isAlive(terminalId)) {
-      // Wait for the old process to fully exit before respawning, so its async
-      // exit handler can't delete the fresh PTY out from under us.
-      await new Promise<void>((resolve) => {
-        let done = false;
-        const finish = () => { if (!done) { done = true; this.ptyManager.off('exit', onExit); resolve(); } };
-        const onExit = (id: string) => { if (id === terminalId) finish(); };
-        this.ptyManager.on('exit', onExit);
-        this.ptyManager.kill(terminalId);
-        setTimeout(finish, 3000);
-      });
-    }
+    // Kill whichever transport actually backs the thread. A structured thread lives in
+    // its manager, not the PTY table — killing only via ptyManager left it alive, and
+    // spawnStructured bails while the manager still reports alive, making relaunch a
+    // silent no-op. The respawn is what re-reads the MCP config (tools load at spawn),
+    // so the coordinator's "Restart session" action depends on this kill landing.
+    const current = this.isStructuredTerminal(terminal) ? ('structured' as const) : ('pty' as const);
+    await this.killCurrentTransport(terminal.type, terminalId, current);
     return this.relaunchTerminal(terminalId);
   }
 
@@ -801,6 +962,57 @@ export class SessionService {
     if (!manager?.isAlive(terminalId)) this.ensureStructuredAlive(terminalId);
     if (!manager?.isAlive(terminalId)) throw new Error('no structured session for terminal');
     manager.sendMessage(terminalId, content, source);
+  }
+
+  /**
+   * True when this terminal actually runs the structured (Pretty) transport — BOTH the config
+   * flag and a registered manager for its type, the same pair spawnTerminal/ensureStructuredAlive
+   * gate on (a `transport: 'structured'` codex row is still a PTY when Codex-Pretty is disabled).
+   */
+  isStructuredTerminal(terminal: terminalsDb.TerminalRow): boolean {
+    let config: Record<string, unknown> = {};
+    try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
+    return config.transport === 'structured' && !!this.structuredManagerFor(terminal.type);
+  }
+
+  /**
+   * Deliver a message to a thread on EITHER transport — the transport-agnostic entry point
+   * behind POST /terminals/:id/message (and so behind the dispatch MCP's message_thread).
+   *
+   * Previously that route called sendStructuredMessage directly, which throws
+   * "no structured session for terminal" for a PTY thread — so one thread could only ever
+   * message a peer that happened to be in Pretty mode. A PTY thread has no message channel,
+   * but it does have a TUI we can type into (exactly what sendFileReference already does), so
+   * route it there instead of failing. Returns which transport delivered it, plus whether any
+   * non-text blocks had to be dropped, so the caller can be honest with the sender.
+   */
+  sendThreadMessage(
+    terminalId: string,
+    content: string | import('../structured/manager.js').ContentBlock[],
+    source?: import('../structured/manager.js').MessageSource,
+  ): { transport: 'structured' | 'pty'; droppedNonText: boolean } {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) throw new Error('Thread not found');
+
+    if (this.isStructuredTerminal(terminal)) {
+      this.sendStructuredMessage(terminalId, content, source);
+      return { transport: 'structured', droppedNonText: false };
+    }
+
+    // PTY: type the message into the CLI's own input box and submit it.
+    const { text, droppedNonText } = flattenForPty(content as string | { type?: string; text?: string }[]);
+    if (!text) {
+      throw new Error(
+        droppedNonText
+          ? 'cannot deliver this message to a CLI thread: it has no text (images can only be sent to a Pretty thread)'
+          : 'text is required',
+      );
+    }
+    // Deliberately NOT auto-relaunched the way a structured thread is: restarting a PTY would
+    // discard the live terminal the human may be reading. Fail loudly instead.
+    if (!this.ptyManager.isAlive(terminalId)) throw new Error('thread process is not running');
+    this.ptyManager.write(terminalId, ptyMessagePayload(text));
+    return { transport: 'pty', droppedNonText };
   }
 
   /**
@@ -1172,6 +1384,16 @@ export class SessionService {
   /** The terminal's current PTY scrollback ring size in bytes (0 if not live). */
   getScrollbackSize(terminalId: string): number {
     return this.ptyManager.getBufferSize(terminalId);
+  }
+
+  /**
+   * The scrollback ring's retained size PLUS where it sits in the process's
+   * lifetime output: `startOffset` is the absolute position of the first retained
+   * byte, `totalWritten` counts every byte ever written (evicted ones included).
+   */
+  getScrollbackInfo(terminalId: string): { totalBytes: number; startOffset: number; totalWritten: number } {
+    const { startOffset, totalWritten } = this.ptyManager.getBufferOffsets(terminalId);
+    return { totalBytes: this.ptyManager.getBufferSize(terminalId), startOffset, totalWritten };
   }
 
   /**
@@ -1574,11 +1796,24 @@ export class SessionService {
 
     let command: string;
     let args: string[];
+    /** Set when this provider names its own session — persisted only after a live pid. */
+    let assignedSessionId: string | undefined;
+    /** Set for Grok: the per-thread config home carrying its hooks and MCP servers. */
+    let grokHomeDir: string | undefined;
 
     if (terminal.type === 'shell') {
-      const shell = platform.defaultShell();
-      command = shell.command;
-      args = shell.args;
+      // A "Sign in — X" thread runs that CLI's login command DIRECTLY rather than a shell
+      // we then type into: no racing a shell prompt, and the process is exactly the command
+      // whose output Dispatch is watching for a sign-in URL.
+      const signIn = typeof config.signIn === 'string' && isProviderName(config.signIn) ? LOGIN_ARGV[config.signIn] : null;
+      if (signIn) {
+        command = signIn.command;
+        args = signIn.args;
+      } else {
+        const shell = platform.defaultShell();
+        command = shell.command;
+        args = shell.args;
+      }
     } else {
       const provider = getProvider(terminal.type);
       const specs: McpServerSpec[] = [];
@@ -1606,24 +1841,36 @@ export class SessionService {
         // Runner launches emit their own structured stream-json; no hooks needed.
         cmd = provider.buildRunnerCommand({ workDir, prompt: runnerPrompt, secretsMcp });
       } else {
-        const statusHooks = this.buildStatusHooks(terminalId, terminal.type);
+        const statusHooks = this.buildStatusHooks(terminalId, terminal.type, specs);
+        grokHomeDir = statusHooks?.grokHomeDir;
         const branchFrom: string | undefined = typeof config.branchFrom === 'string' ? config.branchFrom : undefined;
         // Honor a per-thread model pick (config.model) for CLI (PTY) threads too, not
         // just structured ones — the New Thread modal offers the picker in both modes.
         // modelFor returns config.model for a plain user thread (no role/agentType).
         const model = modelFor(config);
+        // A provider that names its own session (Grok) gets a fresh uuid here, which is
+        // stored once the process is alive. Without it a relaunch after a daemon restart
+        // had no id to resume into and silently began a new conversation.
+        if (!terminal.external_id && !branchFrom && provider.assignsSessionId) assignedSessionId = randomUUID();
         cmd = terminal.external_id
           ? provider.buildResumeCommand({ externalSessionId: terminal.external_id, workDir, secretsMcp, statusHooks, model })
           : (branchFrom && provider.buildBranchCommand)
             ? provider.buildBranchCommand({ sourceSessionId: branchFrom, workDir, secretsMcp, statusHooks })
-            : provider.buildNewCommand({ workDir, secretsMcp, statusHooks, model });
+            : provider.buildNewCommand({ workDir, secretsMcp, statusHooks, model, sessionId: assignedSessionId });
       }
       command = cmd.command;
       args = cmd.args;
     }
 
-    const pid = this.ptyManager.spawn(terminalId, command, args, workDir, { [TERMINAL_ID_ENV_VAR]: terminalId });
+    // GROK_HOME is how Grok's hooks and MCP servers reach the thread — argv cannot carry
+    // them for the top-level command. Everything but `plugins` links back to the real home.
+    const spawnEnv: Record<string, string> = { [TERMINAL_ID_ENV_VAR]: terminalId };
+    if (grokHomeDir) spawnEnv.GROK_HOME = grokHomeDir;
+    const pid = this.ptyManager.spawn(terminalId, command, args, workDir, spawnEnv);
     terminalsDb.updatePid(this.db, terminalId, pid);
+    // AFTER the spawn, never before: a stored id for a process that failed to start would
+    // send the next relaunch chasing a conversation that never existed.
+    if (assignedSessionId) terminalsDb.updateExternalId(this.db, terminalId, assignedSessionId);
 
     // If this was a fresh spawn (no external_id yet), let the provider try to
     // discover the session id it assigned — so a later relaunch can resume.
@@ -1664,12 +1911,39 @@ export class SessionService {
     const developerNote = this.toolsAwareness?.() ?? null;
     const structuredMcp = composeInjection(specs, { configPath: this.perTerminalMcpConfigPath(terminal.id), prompts, developerNote });
 
+    // Grok's MCP servers ride a per-thread plugin passed as `--plugin-dir` — the `grok
+    // agent` subcommand's TRUSTED plugin scope. NOT via GROK_HOME like the PTY flow: a
+    // home-injected plugin loads untrusted, and an untrusted plugin's MCP tools are
+    // visible to the model but not callable (verified live). Written with NO hooks: the
+    // manager's own turn boundaries drive status, and hook-reported Stop events on top
+    // would double-report every turn.
+    let grokPluginDir: string | undefined;
+    if (terminal.type === 'grok' && this.statusContext) {
+      try {
+        const mcpServers: Record<string, McpServerEntry> = {};
+        for (const spec of specs) {
+          mcpServers[spec.name] = { command: spec.command, args: spec.args, ...(spec.env ? { env: spec.env } : {}) };
+        }
+        const dir = writeGrokHome({
+          dir: path.join(this.statusContext.hooksDir, 'grok-homes', terminal.id),
+          realHome: path.join(os.homedir(), '.grok'),
+          mcpServers,
+        });
+        if (dir) grokPluginDir = path.join(dir, 'plugins', 'dispatch');
+      } catch { /* best-effort — a thread without injections still runs */ }
+    }
+
     const resumeSessionId = terminal.external_id || undefined;
 
     // Resolve the model up front and persist it into the terminal's config if it
     // wasn't already pinned there — so it survives a daemon-restart resume and is
-    // returned to the frontend as part of the terminal row's config.
-    const resolvedModel = modelFor(config);
+    // returned to the frontend as part of the terminal row's config. OpenCode always
+    // pins a model (its config file must name one): the user's harness-settings default
+    // wins over the curated fallback.
+    const resolvedModel = modelFor(config)
+      ?? (terminal.type === 'opencode'
+        ? readHarnessSettings(this.db).opencode?.defaultModel ?? OPENCODE_DEFAULT_MODEL
+        : undefined);
     if (resolvedModel && !config.model) {
       config.model = resolvedModel;
       terminalsDb.updateConfig(this.db, terminal.id, config);
@@ -1682,7 +1956,7 @@ export class SessionService {
       sc = { command: this.structuredCommandOverride.command, args: [...this.structuredCommandOverride.args] };
       if (resumeSessionId) sc.args.push('-r', resumeSessionId);
     } else {
-      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config), resumeSessionId, model: resolvedModel });
+      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config), resumeSessionId, model: resolvedModel, grokPluginDir });
       if (!built) throw new Error('structured transport not supported for this provider');
       sc = built;
     }
@@ -1709,6 +1983,28 @@ export class SessionService {
     // resume after a daemon restart.
     const escalate = config.role === 'agent' && config.autonomy === 'supervised';
 
+    // OpenCode's whole injection (model, permission mode, system prompt, MCP servers)
+    // rides ONE per-thread config file pointed at via OPENCODE_CONFIG — `opencode acp`
+    // takes no flags for any of it. Best-effort like the grok plugin dir: a thread
+    // without injections still runs, on OpenCode's own global config.
+    let opencodeEnv: Record<string, string> | undefined;
+    if (terminal.type === 'opencode' && this.statusContext) {
+      try {
+        const mcpServers: Record<string, McpServerEntry> = {};
+        for (const spec of specs) {
+          mcpServers[spec.name] = { command: spec.command, args: spec.args, ...(spec.env ? { env: spec.env } : {}) };
+        }
+        const cfgPath = writeOpencodeConfig({
+          dir: path.join(this.statusContext.hooksDir, 'opencode-homes', terminal.id),
+          model: resolvedModel,
+          escalate,
+          systemPrompt: [systemPromptFor(config), structuredMcp?.systemPrompt].filter(Boolean).join('\n\n') || undefined,
+          mcpServers,
+        });
+        opencodeEnv = { OPENCODE_CONFIG: cfgPath };
+      } catch { /* best-effort — a thread without injections still runs */ }
+    }
+
     const pid = manager.spawn(terminal.id, {
       command: sc.command,
       args: sc.args,
@@ -1719,7 +2015,7 @@ export class SessionService {
       // ignores these); shared on the interface so this one call drives either manager.
       resumeId: resumeSessionId,
       model: resolvedModel,
-      env: { [TERMINAL_ID_ENV_VAR]: terminal.id },
+      env: { [TERMINAL_ID_ENV_VAR]: terminal.id, ...(opencodeEnv ?? {}) },
     });
     terminalsDb.updatePid(this.db, terminal.id, pid);
   }
@@ -1854,7 +2150,7 @@ export class SessionService {
    * server or system prompt into, so it's excluded.
    */
   private isPeerEligible(type: string): boolean {
-    return type === 'claude-code' || type === 'codex';
+    return isAgentType(type);
   }
 
   /**
@@ -1942,6 +2238,8 @@ export class SessionService {
     switch (type) {
       case 'claude-code': return sameType.length > 0 ? `Claude Code #${sameType.length + 1}` : 'Claude Code';
       case 'codex': return sameType.length > 0 ? `Codex #${sameType.length + 1}` : 'Codex';
+      case 'grok': return sameType.length > 0 ? `Grok #${sameType.length + 1}` : 'Grok';
+      case 'opencode': return sameType.length > 0 ? `OpenCode #${sameType.length + 1}` : 'OpenCode';
       case 'shell': return sameType.length > 0 ? `Terminal #${sameType.length + 1}` : 'Terminal';
     }
   }
