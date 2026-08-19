@@ -65,10 +65,10 @@ export const HARNESSES: Harness[] = [
     // 2026-08 — and every id is a real OpenRouter id verified against the live catalog.
     id: 'opencode', label: 'OpenCode', type: 'opencode', provider: 'opencode', modes: ['pretty'],
     models: [
-      { label: 'GLM-5.2', model: 'openrouter/z-ai/glm-5.2' },
+      { label: 'GLM-5.3', model: 'openrouter/z-ai/glm-5.3' },
       { label: 'Kimi K3', model: 'openrouter/moonshotai/kimi-k3' },
       { label: 'DeepSeek V4 Pro', model: 'openrouter/deepseek/deepseek-v4-pro' },
-      { label: 'Qwen3.7 Max', model: 'openrouter/qwen/qwen3.7-max' },
+      { label: 'Qwen3.8 Max', model: 'openrouter/qwen/qwen3.8-max' },
       { label: 'MiniMax M3', model: 'openrouter/minimax/minimax-m3' },
     ],
   },

@@ -18,11 +18,11 @@ import type { SessionProvider } from './types.js';
  * ~/.local/share/opencode/auth.json). The OpenRouter key lives THERE, never in argv, env
  * blocks, or this repo — verified live that a prompt authenticates from the store alone.
  *
- * Model ids are OpenCode-namespaced OpenRouter ids (`openrouter/z-ai/glm-5.2`). The web's
+ * Model ids are OpenCode-namespaced OpenRouter ids (`openrouter/z-ai/glm-5.3`). The web's
  * picker (lib/harnesses.ts) offers the curated open-weights list; DEFAULT_MODEL covers a
  * thread created with no pick.
  */
-export const OPENCODE_DEFAULT_MODEL = 'openrouter/z-ai/glm-5.2';
+export const OPENCODE_DEFAULT_MODEL = 'openrouter/z-ai/glm-5.3';
 
 export const opencodeProvider: SessionProvider = {
   name: 'opencode',
