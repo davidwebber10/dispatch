@@ -1,7 +1,7 @@
 import type { SessionProvider } from './types.js';
 
 /**
- * OpenCode (`opencode`, npm `opencode-ai`) — the open-model harness. Dispatch drives it
+ * OpenCode (`opencode`, npm `opencode-ai`) — the OpenRouter harness. Dispatch drives it
  * Pretty-ONLY: `opencode acp` speaks ACP (JSON-RPC over stdio), the same protocol as
  * `grok agent stdio`, so GrokStructuredSessionManager/GrokTranslator drive it unchanged.
  * There is no PTY flavor on purpose (buildNewCommand/buildResumeCommand are absent, and
@@ -18,11 +18,11 @@ import type { SessionProvider } from './types.js';
  * ~/.local/share/opencode/auth.json). The OpenRouter key lives THERE, never in argv, env
  * blocks, or this repo — verified live that a prompt authenticates from the store alone.
  *
- * Model ids are OpenCode-namespaced OpenRouter ids (`openrouter/z-ai/glm-5.3`). The web's
+ * Model ids are OpenCode-namespaced OpenRouter ids (`openrouter/z-ai/glm-latest`). The web's
  * picker (lib/harnesses.ts) offers the curated open-weights list; DEFAULT_MODEL covers a
  * thread created with no pick.
  */
-export const OPENCODE_DEFAULT_MODEL = 'openrouter/z-ai/glm-5.3';
+export const OPENCODE_DEFAULT_MODEL = 'openrouter/z-ai/glm-latest';
 
 export const opencodeProvider: SessionProvider = {
   name: 'opencode',

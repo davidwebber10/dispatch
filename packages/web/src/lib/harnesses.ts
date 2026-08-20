@@ -59,17 +59,30 @@ export const HARNESSES: Harness[] = [
     ],
   },
   {
-    // Pretty-ONLY, like Grok, and the only harness with no bundled model: it runs the
-    // leading OPEN-WEIGHTS models through OpenRouter (`opencode acp`, same ACP transport
-    // as Grok). The model list is curated — the strongest open model per family as of
-    // 2026-08 — and every id is a real OpenRouter id verified against the live catalog.
+    // Pretty-ONLY, like Grok, and the only harness with no bundled model: it runs
+    // models through OpenRouter (`opencode acp`, same ACP transport as Grok) under
+    // the user's OpenCode/OpenRouter credential. The list spans frontier proprietary
+    // families (Claude, GPT, Gemini, Grok) and open-weights flagships (GLM, Kimi,
+    // DeepSeek, Qwen, MiniMax, Llama, Mistral). Every family that exposes an
+    // OpenRouter "-latest" alias uses it, so the picker always resolves to the
+    // current flagship and never falls a version behind; the few without an alias
+    // (Qwen, MiniMax, Llama, Mistral) are pinned to their current top id. All ids
+    // verified against OpenRouter's live catalog.
     id: 'opencode', label: 'OpenCode', type: 'opencode', provider: 'opencode', modes: ['pretty'],
     models: [
-      { label: 'GLM-5.3', model: 'openrouter/z-ai/glm-5.3' },
-      { label: 'Kimi K3', model: 'openrouter/moonshotai/kimi-k3' },
-      { label: 'DeepSeek V4 Pro', model: 'openrouter/deepseek/deepseek-v4-pro' },
+      { label: 'Claude Opus', model: 'openrouter/anthropic/claude-opus-latest' },
+      { label: 'Claude Fable', model: 'openrouter/anthropic/claude-fable-latest' },
+      { label: 'GPT', model: 'openrouter/openai/gpt-latest' },
+      { label: 'Gemini Pro', model: 'openrouter/google/gemini-pro-latest' },
+      { label: 'Gemini Flash', model: 'openrouter/google/gemini-flash-latest' },
+      { label: 'Grok', model: 'openrouter/x-ai/grok-latest' },
+      { label: 'GLM', model: 'openrouter/z-ai/glm-latest' },
+      { label: 'Kimi', model: 'openrouter/moonshotai/kimi-latest' },
+      { label: 'DeepSeek V4', model: 'openrouter/deepseek/deepseek-v4-flash-latest' },
       { label: 'Qwen3.8 Max', model: 'openrouter/qwen/qwen3.8-max' },
       { label: 'MiniMax M3', model: 'openrouter/minimax/minimax-m3' },
+      { label: 'Llama 4 Maverick', model: 'openrouter/meta-llama/llama-4-maverick' },
+      { label: 'Mistral Large', model: 'openrouter/mistralai/mistral-large' },
     ],
   },
   { id: 'terminal', label: 'Terminal', type: 'shell', provider: null, modes: ['cli'], models: [] },

@@ -130,11 +130,22 @@ const UNPRICED: Record<string, string> = {
   // OpenCode threads run OpenRouter models, whose REAL per-turn dollar cost arrives on the
   // wire (ACP usage_update.cost) and rides the result footer as total_cost_usd — a price
   // table here would duplicate a number the provider already reports authoritatively.
-  'openrouter/z-ai/glm-5.3': 'real cost arrives via ACP usage_update, not a price table',
-  'openrouter/moonshotai/kimi-k3': 'real cost arrives via ACP usage_update, not a price table',
-  'openrouter/deepseek/deepseek-v4-pro': 'real cost arrives via ACP usage_update, not a price table',
+  // Most entries use OpenRouter "-latest" aliases, which auto-resolve to the current
+  // flagship; the alias string itself never reaches a price table, so every alias needs
+  // its own documented exclusion.
+  'openrouter/anthropic/claude-opus-latest': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/anthropic/claude-fable-latest': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/openai/gpt-latest': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/google/gemini-pro-latest': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/google/gemini-flash-latest': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/x-ai/grok-latest': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/z-ai/glm-latest': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/moonshotai/kimi-latest': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/deepseek/deepseek-v4-flash-latest': 'real cost arrives via ACP usage_update, not a price table',
   'openrouter/qwen/qwen3.8-max': 'real cost arrives via ACP usage_update, not a price table',
   'openrouter/minimax/minimax-m3': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/meta-llama/llama-4-maverick': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/mistralai/mistral-large': 'real cost arrives via ACP usage_update, not a price table',
 };
 
 describe('every model Dispatch can spawn either prices or is a documented exclusion', () => {
