@@ -45,6 +45,58 @@ test('file rows are excluded from the list and the count', async () => {
   expect(screen.queryByText('notes.md')).not.toBeInTheDocument();
 });
 
+test('managed (coordinator/agent) rows are excluded from the list and the count', async () => {
+  vi.spyOn(api, 'listArchivedTerminals').mockResolvedValue([
+    arch('a1', 'old thread', '2026-08-20T00:00:00.000Z'),
+    { ...arch('c1', 'coordinator session', '2026-08-21T00:00:00.000Z'), config: { role: 'coordinator' } },
+    { ...arch('g1', 'researcher agent', '2026-08-22T00:00:00.000Z'), config: { agentType: 'researcher' } },
+  ]);
+  renderSection();
+  expect(await screen.findByText('ARCHIVED')).toBeInTheDocument();
+  expect(screen.getByText('1')).toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText('Toggle archived threads'));
+  expect(screen.getByText('old thread')).toBeInTheDocument();
+  expect(screen.queryByText('coordinator session')).not.toBeInTheDocument();
+  expect(screen.queryByText('researcher agent')).not.toBeInTheDocument();
+});
+
+test('a double click on restore sends only one restore request', async () => {
+  vi.spyOn(api, 'listArchivedTerminals').mockResolvedValue([arch('a1', 'old thread', '2026-08-20T00:00:00.000Z')]);
+  const restoreSpy = vi.spyOn(api, 'restoreTerminal').mockReturnValue(new Promise(() => {})); // never resolves
+  renderSection();
+  fireEvent.click(await screen.findByLabelText('Toggle archived threads'));
+  const row = document.querySelector('[data-archived-id="a1"]') as HTMLElement;
+  fireEvent.mouseEnter(row);
+  const btn = screen.getByLabelText('Restore old thread');
+  fireEvent.click(btn);
+  fireEvent.click(btn);
+  await new Promise((r) => setTimeout(r, 0));
+  expect(restoreSpy).toHaveBeenCalledTimes(1);
+});
+
+test('a stale response from an overlapping fetch does not overwrite newer rows', async () => {
+  let resolveFirst!: (v: unknown[]) => void;
+  let resolveSecond!: (v: unknown[]) => void;
+  const first = new Promise((res) => { resolveFirst = res; });
+  const second = new Promise((res) => { resolveSecond = res; });
+  const spy = vi.spyOn(api, 'listArchivedTerminals')
+    .mockReturnValueOnce(first as any)
+    .mockReturnValueOnce(second as any);
+  renderSection();
+  await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+  // A live tab-id change fires the second (newer) request while the first is still pending.
+  act(() => {
+    useTabs.setState({ byProject: { [SID]: [arch('t1', 'live', '2026-08-20T00:00:00.000Z')] }, loading: {} } as any);
+  });
+  await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
+  // Resolve the newer request first, then the stale (first) one lands after it.
+  await act(async () => { resolveSecond([arch('new1', 'new thread', '2026-08-21T00:00:00.000Z')]); });
+  await act(async () => { resolveFirst([arch('old1', 'stale thread', '2026-08-20T00:00:00.000Z')]); });
+  fireEvent.click(await screen.findByLabelText('Toggle archived threads'));
+  expect(screen.getByText('new thread')).toBeInTheDocument();
+  expect(screen.queryByText('stale thread')).not.toBeInTheDocument();
+});
+
 test('expands on click, sorts newest first, caps at 10 with Show more', async () => {
   const many = Array.from({ length: 12 }, (_, i) =>
     arch(`a${i + 1}`, `thread ${i + 1}`, `2026-08-${String(i + 1).padStart(2, '0')}T00:00:00.000Z`));
@@ -100,11 +152,15 @@ test('a failed fetch shows a retry row that refetches', async () => {
 });
 
 test('refetches when the live tab-id set changes', async () => {
-  const spy = vi.spyOn(api, 'listArchivedTerminals').mockResolvedValue([]);
+  const spy = vi.spyOn(api, 'listArchivedTerminals')
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([arch('a1', 'newly archived', '2026-08-22T00:00:00.000Z')]);
   renderSection();
   await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
   act(() => {
     useTabs.setState({ byProject: { [SID]: [arch('t1', 'live', '2026-08-20T00:00:00.000Z')] }, loading: {} } as any);
   });
   await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
+  fireEvent.click(await screen.findByLabelText('Toggle archived threads'));
+  expect(screen.getByText('newly archived')).toBeInTheDocument();
 });
