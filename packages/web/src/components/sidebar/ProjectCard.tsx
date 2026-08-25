@@ -30,6 +30,7 @@ import { canReceiveAlerts, ensurePushEnrolled } from '../../lib/push';
 import { useHint } from '../../stores/hint';
 import { AGENT_TYPES, THREAD_TYPES } from '../../lib/harnesses';
 import { SectionHeader, ShowMoreRow } from './sectionParts';
+import { ArchivedSection } from './ArchivedSection';
 
 /* The sidebar's search header is sticky (~52px). A row revealed by scrollIntoView would sit
    underneath it without this margin. */
@@ -482,6 +483,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
             </div>
           )}
           {SECTIONS.slice(1).map(renderSection)}
+          <ArchivedSection sessionId={session.id} open={isOpen} onSelectTab={onSelectTab} />
           {isMobile && onBrowseFiles && (
             <button onClick={(e) => { e.stopPropagation(); onBrowseFiles(session.id); }}
               style={{ display: 'flex', alignItems: 'center', gap: 11, width: '100%', marginTop: 18, padding: '14px 12px', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 12, color: 'var(--color-text-primary)', fontSize: 16, fontWeight: 500, textAlign: 'left', cursor: 'pointer' }}>
