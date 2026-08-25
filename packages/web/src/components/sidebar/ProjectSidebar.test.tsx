@@ -9,6 +9,7 @@ beforeEach(() => {
   vi.spyOn(api, 'listTerminals').mockResolvedValue([
     { id: 't1', sessionId: 's1', type: 'claude-code', label: 'main', status: 'working' } as any,
   ]);
+  vi.spyOn(api, 'listArchivedTerminals').mockResolvedValue([]);
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -258,7 +259,7 @@ describe('ProjectSidebar settle pass survives the thread-list reload', () => {
     });
 
     // Let the expand transition settle.
-    await new Promise((r) => setTimeout(r, 220));
+    await act(async () => { await new Promise((r) => setTimeout(r, 220)); });
 
     const afterSettle = revealed.filter((e) => (e as HTMLElement).dataset.threadId === 't2').length;
     expect(afterSettle).toBeGreaterThan(afterFirst);   // the corrective pass MUST still have run
@@ -309,7 +310,7 @@ describe('ProjectSidebar never yanks back to a superseded selection', () => {
     act(() => { useTabs.setState({ activeTabId: 't2' }); useProjects.getState().setActive('s2'); });
 
     // Let A's settle window elapse.
-    await new Promise((r) => setTimeout(r, 220));
+    await act(async () => { await new Promise((r) => setTimeout(r, 220)); });
 
     // Nothing after the user moved to B may scroll them back to A's row.
     const yankedBack = revealed.some((e) => (e as HTMLElement).dataset.threadId === 't1');

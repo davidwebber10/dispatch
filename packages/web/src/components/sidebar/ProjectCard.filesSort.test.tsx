@@ -37,6 +37,7 @@ beforeEach(() => {
   useSettings.setState({ sidebarMaxThreads: 10, sidebarMaxFiles: 10 });
   useTabs.setState({ byProject: {}, loading: {}, activeTabId: null } as any);
   vi.spyOn(api, 'listTerminals').mockResolvedValue([]);
+  vi.spyOn(api, 'listArchivedTerminals').mockResolvedValue([]);
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 

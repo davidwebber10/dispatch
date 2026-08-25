@@ -33,6 +33,7 @@ beforeEach(() => {
   localStorage.clear();
   useListSort.setState({ threads: {}, agents: {} });
   vi.spyOn(api, 'listTerminals').mockResolvedValue([]);
+  vi.spyOn(api, 'listArchivedTerminals').mockResolvedValue([]);
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 

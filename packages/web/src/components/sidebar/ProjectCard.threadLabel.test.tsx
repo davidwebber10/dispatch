@@ -35,6 +35,7 @@ beforeEach(() => {
   // doesn't fire a real fetch() (unhandled rejection under jsdom) and clobber the byProject /
   // autoNamed fixtures seeded below before the layout effect gets a chance to run.
   vi.spyOn(api, 'listTerminals').mockResolvedValue([]);
+  vi.spyOn(api, 'listArchivedTerminals').mockResolvedValue([]);
   useTabs.setState({
     byProject: { s1: [thread] },
     autoNamed: { t1: { from: 'Claude Code', to: 'Fix login bug', at: NOW } },
