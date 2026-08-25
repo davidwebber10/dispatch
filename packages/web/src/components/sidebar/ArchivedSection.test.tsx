@@ -1,5 +1,5 @@
 import { expect, test, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
 import { ArchivedSection } from './ArchivedSection';
 import { useTabs } from '../../stores/tabs';
 import { api } from '../../api/client';
@@ -74,4 +74,37 @@ test('restore removes the row, reloads tabs, and selects the thread', async () =
   expect(api.restoreTerminal).toHaveBeenCalledWith('a1');
   expect(listTerminals).toHaveBeenCalledWith(SID);
   expect(document.querySelector('[data-archived-id="a1"]')).toBeNull();
+});
+
+test('a failed restore keeps the row and shows an inline error', async () => {
+  vi.spyOn(api, 'listArchivedTerminals').mockResolvedValue([arch('a1', 'old thread', '2026-08-20T00:00:00.000Z')]);
+  vi.spyOn(api, 'restoreTerminal').mockRejectedValue(new Error('nope'));
+  renderSection();
+  fireEvent.click(await screen.findByLabelText('Toggle archived threads'));
+  const row = document.querySelector('[data-archived-id="a1"]') as HTMLElement;
+  fireEvent.mouseEnter(row);
+  fireEvent.click(screen.getByLabelText('Restore old thread'));
+  expect(await screen.findByText('Restore failed')).toBeInTheDocument();
+  expect(document.querySelector('[data-archived-id="a1"]')).not.toBeNull();
+});
+
+test('a failed fetch shows a retry row that refetches', async () => {
+  const spy = vi.spyOn(api, 'listArchivedTerminals')
+    .mockRejectedValueOnce(new Error('boom'))
+    .mockResolvedValue([arch('a1', 'old thread', '2026-08-20T00:00:00.000Z')]);
+  renderSection();
+  fireEvent.click(await screen.findByLabelText('Toggle archived threads'));
+  fireEvent.click(await screen.findByText("Couldn't load archived threads. Retry."));
+  expect(await screen.findByText('old thread')).toBeInTheDocument();
+  expect(spy).toHaveBeenCalledTimes(2);
+});
+
+test('refetches when the live tab-id set changes', async () => {
+  const spy = vi.spyOn(api, 'listArchivedTerminals').mockResolvedValue([]);
+  renderSection();
+  await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+  act(() => {
+    useTabs.setState({ byProject: { [SID]: [arch('t1', 'live', '2026-08-20T00:00:00.000Z')] }, loading: {} } as any);
+  });
+  await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
 });
