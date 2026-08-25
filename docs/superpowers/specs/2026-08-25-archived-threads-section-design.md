@@ -40,19 +40,20 @@ once per project, after the FILES section.
 
 ### Data flow
 
-- When the project card is open, the section fetches
-  `api.listArchivedTerminals(sessionId)` once (lazy on first open, cached in
-  component state).
+- When the project card opens, the section fetches
+  `api.listArchivedTerminals(sessionId)` once and caches it in component
+  state. The fetch keys on the card being open, not on the section being
+  expanded: the count decides whether the section renders at all.
 - Filter: keep thread types only (`THREAD_TYPES`: claude-code, codex, shell).
   Drop `file` rows; archive is the delete path for file tabs.
 - Sort: `archivedAt` descending (newest first).
 - Cap: show the newest 10 rows plus a "Show all (N)" expander, following the
   existing `showAllThreads` pattern in `ProjectCard`.
-- Refresh: refetch on the `session:tabs-changed` broadcast event for this
-  `sessionId`. The daemon fires it on every thread archive (manual and
-  auto-archive loop) and on restore, so archives and restores from another
-  device stay in sync. Only refetch after the section was first expanded;
-  before that, stay lazy.
+- Refresh: while the card is open, refetch on the `session:tabs-changed`
+  broadcast event for this `sessionId`. The daemon fires it on every thread
+  archive (manual and auto-archive loop) and on restore, so archives and
+  restores from another device stay in sync, and a first archive makes the
+  section appear without a reload.
 
 ### Row
 
@@ -103,5 +104,5 @@ behavior and out of scope here.
    expands.
 4. Restore success: row removed, `loadTabs` called, `onSelectTab` called.
 5. Fetch failure: retry row shown, clicking refetches.
-6. Refetch on `session:tabs-changed` broadcast for the same project, but
-   only after the section was first expanded.
+6. Refetch on `session:tabs-changed` broadcast for the same project while
+   the card is open; a first archive makes the hidden section appear.
