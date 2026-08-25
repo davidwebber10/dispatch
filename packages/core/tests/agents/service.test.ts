@@ -308,4 +308,12 @@ describe('AgentService', () => {
     expect(service.getSchedule(schedule.id)).toBeNull();
     expect(service.listRuns({ scheduleId: schedule.id })).toHaveLength(0);
   });
+  // Issue #18: node-pty flushes output after shutdown closes the DB; the
+  // activity update must degrade to a dropped write, not an uncaught throw.
+  it('updateRunFromTerminalActivity is a no-op after the DB handle closes', () => {
+    const service = new AgentService(db, sessionService, broadcaster);
+    db.close();
+    expect(() => service.updateRunFromTerminalActivity('term-1', 'busy')).not.toThrow();
+    expect(service.updateRunFromTerminalActivity('term-1', 'busy')).toBeNull();
+  });
 });

@@ -398,6 +398,10 @@ export class AgentService {
   }
 
   updateRunFromTerminalActivity(terminalId: string, activity: 'busy' | 'idle' | 'needs_input'): AgentRun | null {
+    // During shutdown the DB is closed while node-pty is still flushing output;
+    // a straggler activity event must degrade to a dropped write, not an uncaught
+    // throw (same guard as the PTY exit handlers in server.ts — issue #18).
+    if (!this.db.open) return null;
     // For autonomous runner terminals the structured stream parser is the source
     // of truth for status — ignore the coarse busy/idle heuristic so a thinking
     // pause is never misread as 'idle' or completion.
