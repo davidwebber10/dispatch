@@ -48,9 +48,11 @@ once per project, after the FILES section.
 - Sort: `archivedAt` descending (newest first).
 - Cap: show the newest 10 rows plus a "Show all (N)" expander, following the
   existing `showAllThreads` pattern in `ProjectCard`.
-- Refresh: refetch on `session:archived` and `terminal:created` broadcast
-  events for this project, so archives and restores from another device stay
-  in sync. (`terminal:created` is what the daemon broadcasts on restore.)
+- Refresh: refetch on the `session:tabs-changed` broadcast event for this
+  `sessionId`. The daemon fires it on every thread archive (manual and
+  auto-archive loop) and on restore, so archives and restores from another
+  device stay in sync. Only refetch after the section was first expanded;
+  before that, stay lazy.
 
 ### Row
 
@@ -101,4 +103,5 @@ behavior and out of scope here.
    expands.
 4. Restore success: row removed, `loadTabs` called, `onSelectTab` called.
 5. Fetch failure: retry row shown, clicking refetches.
-6. Refetch on `session:archived` broadcast for the same project.
+6. Refetch on `session:tabs-changed` broadcast for the same project, but
+   only after the section was first expanded.
