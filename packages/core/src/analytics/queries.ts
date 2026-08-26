@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { notionalValueUsd } from './pricing.js';
 
 export type Metric = 'tokens' | 'outputTokens' | 'turns' | 'duration';
 export type GroupBy = 'model' | 'provider' | 'project' | 'outcome' | 'none';
@@ -35,6 +36,20 @@ export interface Summary {
    * tile whenever this is non-zero rather than letting the reader assume.
    */
   backfilledTurns: number;
+  /**
+   * The "equivalent API value" of the range, in dollars — a NOTIONAL figure (on a
+   * subscription no dollars change hands), never to be labelled "cost" or "spend".
+   *
+   * One rule per model: a model pricing.ts knows is valued at list rates; a model
+   * it does not know is valued at the cost its provider actually reported
+   * (cost_usd — OpenCode's ACP per-turn delta); a model with neither contributes
+   * tokens but no dollars and sets `valueIsPartial` instead. Reported cost is
+   * never ADDED on top of a priced model's notional figure — one source per
+   * model, so nothing can double-value.
+   */
+  apiValueUsd: number;
+  /** True when tokens exist in the range that carry no price and no reported cost. */
+  valueIsPartial: boolean;
 }
 
 export interface SeriesPoint { day: string; key: string; value: number }
@@ -82,6 +97,30 @@ export function summary(db: Database.Database, r: Range): Summary {
     FROM usage_turns WHERE ${w.sql}
   `).get(...w.params) as Record<string, number>;
 
+  // Per-model sums, folded through pricing.ts in JS: SQLite cannot hold the
+  // price table, and the fold is over at most a handful of model groups.
+  const byModel = db.prepare(`
+    SELECT model,
+           COALESCE(SUM(input_tokens), 0)        AS input,
+           COALESCE(SUM(output_tokens), 0)       AS output,
+           COALESCE(SUM(cache_read_tokens), 0)   AS cache_read,
+           COALESCE(SUM(cache_create_tokens), 0) AS cache_create,
+           COALESCE(SUM(cost_usd), 0)            AS cost_usd
+    FROM usage_turns WHERE ${w.sql} GROUP BY model
+  `).all(...w.params) as { model: string; input: number; output: number; cache_read: number; cache_create: number; cost_usd: number }[];
+
+  let apiValueUsd = 0;
+  let valueIsPartial = false;
+  for (const g of byModel) {
+    const notional = notionalValueUsd({
+      model: g.model, input: g.input, output: g.output, cacheRead: g.cache_read, cacheCreate: g.cache_create,
+    });
+    if (notional !== null) { apiValueUsd += notional; continue; }
+    if (g.cost_usd > 0) { apiValueUsd += g.cost_usd; continue; }
+    // Tokens with no price and no reported cost: contribute nothing, but say so.
+    if (g.input + g.output + g.cache_read + g.cache_create > 0) valueIsPartial = true;
+  }
+
   return {
     turns: agg.turns,
     threads: agg.threads,
@@ -92,6 +131,8 @@ export function summary(db: Database.Database, r: Range): Summary {
     totalTokens: agg.input_tokens + agg.output_tokens + agg.cache_read_tokens + agg.cache_create_tokens,
     unreportedTurns: agg.unreported_turns,
     backfilledTurns: agg.backfilled_turns,
+    apiValueUsd,
+    valueIsPartial,
   };
 }
 

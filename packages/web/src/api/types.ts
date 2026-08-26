@@ -388,6 +388,16 @@ export interface AnalyticsSummary {
    * differs. The TURNS tile must say so rather than let the reader assume.
    */
   backfilledTurns: number;
+  /**
+   * The range's "equivalent API value" in dollars — NOTIONAL (on a subscription no
+   * dollars change hands), so every surface labels it as value, never cost. Priced
+   * models are valued at list rates; unpriced models at the cost their provider
+   * reported (OpenCode's ACP per-turn delta); tokens with neither contribute
+   * nothing and set `valueIsPartial`.
+   */
+  apiValueUsd: number;
+  /** True when tokens exist in the range that carry no price and no reported cost. */
+  valueIsPartial: boolean;
 }
 
 export interface AnalyticsPoint { day: string; key: string; value: number }

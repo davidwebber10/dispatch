@@ -151,6 +151,12 @@ function calendarStart(): Date {
   return d;
 }
 
+/** Notional dollars: two decimals at bill scale, four below a dollar so a cheap
+ *  OpenCode range never rounds to a flat $0.00. */
+function fmtUsd(v: number): string {
+  return '$' + (v >= 1 ? v.toFixed(2) : v.toFixed(4));
+}
+
 /* ------------------------------------------------------------- small parts */
 
 function Kpi({ label, value, title, badge, badgeTitle }: {
@@ -500,10 +506,18 @@ export function AnalyticsView() {
         </div>
       ) : (
         <>
-          {/* 2. Headline totals */}
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: 12 }}>
+          {/* 2. Headline totals. Tokens are the headline metric; the dollar tile is
+              secondary and NOTIONAL — value, never cost (spec section 4). */}
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(5, 1fr)', gap: 12 }}>
             <Kpi label="TOTAL TOKENS" value={nothingReported ? '—' : fmtTokens(summary.totalTokens)} title={nothingReported ? noUsageTitle : undefined} />
             <Kpi label="OUTPUT TOKENS" value={nothingReported ? '—' : fmtTokens(summary.outputTokens)} title={nothingReported ? noUsageTitle : undefined} />
+            <Kpi
+              label="EQUIV API VALUE"
+              value={nothingReported ? '—' : fmtUsd(Number(summary.apiValueUsd ?? 0))}
+              title={nothingReported ? noUsageTitle : 'What these tokens would cost at API list rates — a notional figure, not a bill. Models with no list price are valued at the cost their provider reported.'}
+              badge={!nothingReported && summary.valueIsPartial ? 'partial' : undefined}
+              badgeTitle="Some tokens in this range belong to a model with no list price and no provider-reported cost. They are counted in the token totals but add nothing here, so the real value is higher than shown."
+            />
             {/* An imported row is one assistant MESSAGE, not one turn — the transcript
                 records no turn boundaries. So once history is imported this count mixes
                 two units, and the badge says so instead of letting the reader assume. */}

@@ -8,6 +8,7 @@ const EMPTY = {
   turns: 0, threads: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0,
   cacheCreateTokens: 0, totalTokens: 0,
   unreportedTurns: 0, backfilledTurns: 0,
+  apiValueUsd: 0, valueIsPartial: false,
 };
 
 function stub(summary = EMPTY, points: any[] = [], backfilled = 0) {
@@ -79,6 +80,30 @@ describe('AnalyticsView', () => {
     stub({ ...EMPTY, turns: 12, threads: 3, totalTokens: 1_500_000, outputTokens: 40_000 });
     render(<AnalyticsView />);
     await waitFor(() => expect(screen.getByText('12')).toBeTruthy());
+  });
+
+  /*
+   * The "equivalent API value" tile (spec section 4): tokens are the headline,
+   * the dollar figure is secondary and NOTIONAL — and when tokens exist that
+   * carry no price and no provider-reported cost, the figure must say it is
+   * partial rather than silently understate.
+   */
+  it('shows the equivalent API value with a partial badge when some tokens are unvalued', async () => {
+    stub({ ...EMPTY, turns: 3, totalTokens: 900, apiValueUsd: 12.3456, valueIsPartial: true } as any);
+    render(<AnalyticsView />);
+    await waitFor(() => expect(screen.getByText('EQUIV API VALUE')).toBeTruthy());
+    const tile = screen.getByText('EQUIV API VALUE').parentElement!;
+    expect(tile.textContent).toContain('$12.35');
+    expect(tile.textContent).toContain('partial');
+  });
+
+  it('shows the value unbadged when every token in the range is valued', async () => {
+    stub({ ...EMPTY, turns: 3, totalTokens: 900, apiValueUsd: 0.0024, valueIsPartial: false } as any);
+    render(<AnalyticsView />);
+    await waitFor(() => expect(screen.getByText('EQUIV API VALUE')).toBeTruthy());
+    const tile = screen.getByText('EQUIV API VALUE').parentElement!;
+    expect(tile.textContent).toContain('$0.0024');
+    expect(tile.textContent).not.toContain('partial');
   });
 
   // unreportedTurns counts turns where no usage frame was ever seen. Those turns
