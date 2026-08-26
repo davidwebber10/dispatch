@@ -27,16 +27,6 @@ export interface Summary {
    */
   unreportedTurns: number;
   /**
-   * How many of `turns` came from the history importer.
-   *
-   * These rows are NOT the same unit as a measured turn. A transcript records no
-   * turn boundaries, so importer.ts writes one row per assistant MESSAGE. Their
-   * tokens are real and belong in every token total, but counting them as turns
-   * silently mixes a message count into a turn count — so the UI labels the TURNS
-   * tile whenever this is non-zero rather than letting the reader assume.
-   */
-  backfilledTurns: number;
-  /**
    * The "equivalent API value" of the range, in dollars — a NOTIONAL figure (on a
    * subscription no dollars change hands), never to be labelled "cost" or "spend".
    *
@@ -89,7 +79,6 @@ export function summary(db: Database.Database, r: Range): Summary {
   const agg = db.prepare(`
     SELECT COUNT(*) AS turns, COUNT(DISTINCT terminal_id) AS threads,
            COALESCE(SUM(CASE WHEN messages = 0 THEN 1 ELSE 0 END), 0) AS unreported_turns,
-           COALESCE(SUM(backfilled), 0)          AS backfilled_turns,
            COALESCE(SUM(input_tokens), 0)        AS input_tokens,
            COALESCE(SUM(output_tokens), 0)       AS output_tokens,
            COALESCE(SUM(cache_read_tokens), 0)   AS cache_read_tokens,
@@ -99,15 +88,21 @@ export function summary(db: Database.Database, r: Range): Summary {
 
   // Per-model sums, folded through pricing.ts in JS: SQLite cannot hold the
   // price table, and the fold is over at most a handful of model groups.
+  // `uncosted_tokens` is judged per TURN, not per group: one costed turn must
+  // not hide a same-model turn that carries tokens but reported no cost (every
+  // OpenCode turn recorded before cost capture shipped is exactly that shape).
   const byModel = db.prepare(`
     SELECT model,
            COALESCE(SUM(input_tokens), 0)        AS input,
            COALESCE(SUM(output_tokens), 0)       AS output,
            COALESCE(SUM(cache_read_tokens), 0)   AS cache_read,
            COALESCE(SUM(cache_create_tokens), 0) AS cache_create,
-           COALESCE(SUM(cost_usd), 0)            AS cost_usd
+           COALESCE(SUM(cost_usd), 0)            AS cost_usd,
+           COALESCE(SUM(CASE WHEN cost_usd = 0
+             THEN input_tokens + output_tokens + cache_read_tokens + cache_create_tokens
+             ELSE 0 END), 0)                     AS uncosted_tokens
     FROM usage_turns WHERE ${w.sql} GROUP BY model
-  `).all(...w.params) as { model: string; input: number; output: number; cache_read: number; cache_create: number; cost_usd: number }[];
+  `).all(...w.params) as { model: string; input: number; output: number; cache_read: number; cache_create: number; cost_usd: number; uncosted_tokens: number }[];
 
   let apiValueUsd = 0;
   let valueIsPartial = false;
@@ -116,9 +111,9 @@ export function summary(db: Database.Database, r: Range): Summary {
       model: g.model, input: g.input, output: g.output, cacheRead: g.cache_read, cacheCreate: g.cache_create,
     });
     if (notional !== null) { apiValueUsd += notional; continue; }
-    if (g.cost_usd > 0) { apiValueUsd += g.cost_usd; continue; }
-    // Tokens with no price and no reported cost: contribute nothing, but say so.
-    if (g.input + g.output + g.cache_read + g.cache_create > 0) valueIsPartial = true;
+    apiValueUsd += g.cost_usd;
+    // Tokens with no price and no reported cost contribute nothing — but say so.
+    if (g.uncosted_tokens > 0) valueIsPartial = true;
   }
 
   return {
@@ -130,7 +125,6 @@ export function summary(db: Database.Database, r: Range): Summary {
     cacheCreateTokens: agg.cache_create_tokens,
     totalTokens: agg.input_tokens + agg.output_tokens + agg.cache_read_tokens + agg.cache_create_tokens,
     unreportedTurns: agg.unreported_turns,
-    backfilledTurns: agg.backfilled_turns,
     apiValueUsd,
     valueIsPartial,
   };

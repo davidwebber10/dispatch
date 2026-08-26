@@ -7,9 +7,10 @@ import { api } from '../../api/client';
 import { useAnalyticsFeed } from '../../stores/analytics';
 import { useProjects } from '../../stores/projects';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { formatCost } from '../../lib/agentStats';
 import { makeSeriesScale, OUTCOME_COLOR, OTHER, SERIES, resolveChartTheme } from './chartTheme';
 import type {
-  AnalyticsBackfillState, AnalyticsPoint, AnalyticsRecords, AnalyticsSummary, AnalyticsTopRow,
+  AnalyticsPoint, AnalyticsRecords, AnalyticsSummary, AnalyticsTopRow,
 } from '../../api/types';
 
 /* ------------------------------------------------------------------ styles */
@@ -117,7 +118,7 @@ interface Domain {
 /** The two routes that take no range at all, so no filter can change them. */
 interface Stats {
   records: AnalyticsRecords;
-  backfill: AnalyticsBackfillState;
+  tracking: { trackingStartedAt: string };
 }
 
 /**
@@ -149,12 +150,6 @@ function calendarStart(): Date {
   const d = startOfLocalDay(CALENDAR_DAYS - 1);
   d.setDate(d.getDate() - d.getDay());
   return d;
-}
-
-/** Notional dollars: two decimals at bill scale, four below a dollar so a cheap
- *  OpenCode range never rounds to a flat $0.00. */
-function fmtUsd(v: number): string {
-  return '$' + (v >= 1 ? v.toFixed(2) : v.toFixed(4));
 }
 
 /* ------------------------------------------------------------- small parts */
@@ -233,10 +228,7 @@ export function AnalyticsView() {
   const [domain, setDomain] = useState<Domain | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [importing, setImporting] = useState(false);
-  const [removing, setRemoving] = useState(false);
-  const [confirmRemove, setConfirmRemove] = useState(false);
-  const [reload, setReload] = useState(0);
+  const [reload] = useState(0);
   // The daemon bumps this through the single events socket every time a turn
   // closes, so an open page follows the work. No timer, no polling.
   const rev = useAnalyticsFeed((s) => s.rev);
@@ -276,8 +268,8 @@ export function AnalyticsView() {
     let cancelled = false;
     (async () => {
       try {
-        const [records, backfill] = await Promise.all([api.analyticsRecords(), api.analyticsBackfillState()]);
-        if (!cancelled) setStats({ records, backfill });
+        const [records, tracking] = await Promise.all([api.analyticsRecords(), api.analyticsTracking()]);
+        if (!cancelled) setStats({ records, tracking });
       } catch (e: unknown) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       }
@@ -321,25 +313,6 @@ export function AnalyticsView() {
     })();
     return () => { cancelled = true; };
   }, [from, projectId, provider, reload, rev]);
-
-  const runImport = useCallback(async () => {
-    setImporting(true);
-    try { await api.analyticsRunBackfill(); setReload((n) => n + 1); }
-    catch (e: unknown) { setError(e instanceof Error ? e.message : String(e)); }
-    finally { setImporting(false); }
-  }, []);
-
-  /*
-   * Undo an import. It deletes ONLY rows with backfilled = 1; a measured turn is
-   * never touched. Destructive, so it is never a single click — `confirmRemove`
-   * gates it behind a second, explicit press.
-   */
-  const removeImport = useCallback(async () => {
-    setRemoving(true);
-    try { await api.analyticsClearBackfill(); setConfirmRemove(false); setReload((n) => n + 1); }
-    catch (e: unknown) { setError(e instanceof Error ? e.message : String(e)); }
-    finally { setRemoving(false); }
-  }, []);
 
   /*
    * ONE scale per dimension, built from the UNFILTERED domain — every key the
@@ -411,15 +384,14 @@ export function AnalyticsView() {
   }
 
   const { summary } = data;
-  const { records, backfill } = stats;
-  const trackingDate = backfill.trackingStartedAt
-    ? new Date(backfill.trackingStartedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+  const { records, tracking } = stats;
+  const trackingDate = tracking.trackingStartedAt
+    ? new Date(tracking.trackingStartedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
     : 'recently';
   const filtered = Boolean(projectId) || Boolean(provider) || rangeId !== '30';
   const isEmpty = summary.turns === 0;
 
   const unreported = Number(summary.unreportedTurns ?? 0);
-  const imported = Number(summary.backfilledTurns ?? 0);
   /*
    * Every turn in this range closed without a usage frame. The token totals are
    * then not a measurement of zero — they are the absence of one, and a "0" would
@@ -428,29 +400,6 @@ export function AnalyticsView() {
    */
   const nothingReported = summary.turns > 0 && unreported >= summary.turns;
   const noUsageTitle = 'No usage was ever reported for these turns, so there is nothing to count. This is not a measured zero.';
-
-  /*
-   * Undoing an import. The count is the ALL-TIME one from /backfill, not the
-   * range-scoped figure, so a reader looking at the last 7 days can still remove
-   * an import of much older history.
-   *
-   * Two presses, always: an import changes what TURNS counts, and a control that
-   * destroys rows on one click is a trap. The confirm step names the number.
-   */
-  const importedAllTime = Number(backfill.backfilledTurns ?? 0);
-  const removeControl = importedAllTime > 0 && (
-    confirmRemove ? (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <span style={muted}>Remove {importedAllTime.toLocaleString()} imported {importedAllTime === 1 ? 'row' : 'rows'}? Measured turns are kept.</span>
-        <button onClick={() => void removeImport()} disabled={removing} style={{ ...ghost, color: 'var(--color-status-red)' }}>
-          {removing ? 'Removing…' : 'Remove'}
-        </button>
-        <button onClick={() => setConfirmRemove(false)} disabled={removing} style={ghost}>Cancel</button>
-      </div>
-    ) : (
-      <button onClick={() => setConfirmRemove(true)} style={ghost}>Remove imported history</button>
-    )
-  );
 
   const chartH = isMobile ? 200 : 240;
   const axisTick = { fill: theme.muted, fontSize: 11 };
@@ -494,14 +443,8 @@ export function AnalyticsView() {
               : `No turns recorded yet — analytics started ${trackingDate}.`}
           </div>
           <div style={{ ...muted, marginTop: 8, maxWidth: 620 }}>
-            Dispatch records one row per turn as you work. Everything before that date is missing
-            until you import it.
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 16 }}>
-            <button onClick={() => void runImport()} disabled={importing} style={ghost}>
-              {importing ? 'Importing history…' : 'Import history'}
-            </button>
-            {removeControl}
+            Dispatch records one row per turn as you work, from that moment on. Earlier work is
+            not recorded.
           </div>
         </div>
       ) : (
@@ -513,20 +456,12 @@ export function AnalyticsView() {
             <Kpi label="OUTPUT TOKENS" value={nothingReported ? '—' : fmtTokens(summary.outputTokens)} title={nothingReported ? noUsageTitle : undefined} />
             <Kpi
               label="EQUIV API VALUE"
-              value={nothingReported ? '—' : fmtUsd(Number(summary.apiValueUsd ?? 0))}
+              value={nothingReported ? '—' : formatCost(Number(summary.apiValueUsd ?? 0))}
               title={nothingReported ? noUsageTitle : 'What these tokens would cost at API list rates — a notional figure, not a bill. Models with no list price are valued at the cost their provider reported.'}
               badge={!nothingReported && summary.valueIsPartial ? 'partial' : undefined}
               badgeTitle="Some tokens in this range belong to a model with no list price and no provider-reported cost. They are counted in the token totals but add nothing here, so the real value is higher than shown."
             />
-            {/* An imported row is one assistant MESSAGE, not one turn — the transcript
-                records no turn boundaries. So once history is imported this count mixes
-                two units, and the badge says so instead of letting the reader assume. */}
-            <Kpi
-              label="TURNS"
-              value={summary.turns.toLocaleString()}
-              badge={imported > 0 ? `includes ${imported.toLocaleString()} imported` : undefined}
-              badgeTitle="Imported history has no turn boundaries, so each imported row is one assistant message, not one turn. Their tokens are counted normally."
-            />
+            <Kpi label="TURNS" value={summary.turns.toLocaleString()} />
             <Kpi label="THREADS" value={summary.threads.toLocaleString()} />
           </div>
 
@@ -673,23 +608,13 @@ export function AnalyticsView() {
             </Block>
           </div>
 
-          {/* 10. History import */}
-          <div style={{ ...panel, marginTop: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-            <div style={{ flex: 1, minWidth: 220 }}>
-              <div style={labelStyle}>HISTORY</div>
-              <div style={{ ...muted, marginTop: 6 }}>
-                Analytics started {trackingDate}. Import reads the transcripts of older threads once;
-                it never touches a measured turn.
-                {backfill.state === 'running' && ` Importing ${backfill.done}/${backfill.total}…`}
-                {backfill.state === 'error' && ` Last import failed: ${backfill.error ?? 'unknown error'}`}
-                {backfill.state === 'done' && backfill.lastFinishedAt && ` Last imported ${new Date(backfill.lastFinishedAt).toLocaleString()}.`}
-              </div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <button onClick={() => void runImport()} disabled={importing || backfill.state === 'running'} style={ghost}>
-                {importing ? 'Importing history…' : 'Import history'}
-              </button>
-              {removeControl}
+          {/* 10. Recording floor — when measurement began. Live recording only;
+              nothing can write turns for the time before this date. */}
+          <div style={{ ...panel, marginTop: 12 }}>
+            <div style={labelStyle}>HISTORY</div>
+            <div style={{ ...muted, marginTop: 6 }}>
+              Analytics started {trackingDate}. Dispatch records turns live from that moment on;
+              earlier work is not recorded.
             </div>
           </div>
         </>

@@ -115,6 +115,35 @@ describe('GrokTranslator — OpenCode dialect', () => {
     expect(second.total_cost_usd).toBeUndefined();
   });
 
+  /*
+   * Resume safety. usage_update's cost is SESSION-cumulative. A resumed session
+   * builds a fresh translator whose baseline is zero, so the first live
+   * usage_update would otherwise report the ENTIRE prior session's dollars as
+   * one turn's delta — dollars analytics already booked, row by row, before the
+   * restart. The first turn after a resume seeds the baseline and bills
+   * nothing; growth after that is billable again.
+   */
+  it('a resumed session does not bill the pre-resume cumulative cost as one delta', () => {
+    const t = new GrokTranslator();
+    t.init('openrouter/z-ai/glm-5.2', { resumed: true });
+    t.translate(fx.usageUpdate as any); // cumulative 0.0024469632 — includes pre-resume turns
+    const first = events(t.promptResult(fx.promptResponse)).find((e) => e.type === 'result') as any;
+    expect(first.total_cost_usd).toBeUndefined();
+
+    const grown = JSON.parse(JSON.stringify(fx.usageUpdate));
+    grown.params.update.cost.amount = 0.004;
+    t.translate(grown as any);
+    const second = events(t.promptResult(fx.promptResponse)).find((e) => e.type === 'result') as any;
+    expect(second.total_cost_usd).toBeCloseTo(0.004 - 0.0024469632, 9);
+  });
+
+  it('a replayed usage_update seeds the cost baseline and emits nothing', () => {
+    const t = new GrokTranslator();
+    expect(t.translate(fx.usageUpdate as any, { replay: true })).toEqual([]);
+    const result = events(t.promptResult(fx.promptResponse)).find((e) => e.type === 'result') as any;
+    expect(result.total_cost_usd).toBeUndefined();
+  });
+
   it('a closing question in the prose settles promptResult as needs-help, not idle', () => {
     const t = new GrokTranslator();
     t.translate({

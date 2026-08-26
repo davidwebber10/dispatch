@@ -14,6 +14,11 @@
  * as "usage not reported", never as zero.
  */
 
+/** Claude Code's placeholder `model` on error/no-op assistant messages. Not a
+ *  model: every consumer must treat it as "no model named". Shared so a rename
+ *  upstream gets fixed in one place (cc-sessions.ts reads it too). */
+export const SYNTHETIC_MODEL = '<synthetic>';
+
 export interface FrameUsage {
   input: number;
   output: number;
@@ -44,7 +49,7 @@ export function usageFromFrame(ev: unknown): FrameUsage | null {
   // not a model. Its usage is real and counts; the label is dropped so it can
   // never overwrite the real model another frame named (recorder setModel and
   // pty-claude's tail both take the LAST model seen).
-  const model = typeof msg.model === 'string' && msg.model !== '<synthetic>' ? msg.model : '';
+  const model = typeof msg.model === 'string' && msg.model !== SYNTHETIC_MODEL ? msg.model : '';
   return {
     input: num(usage.input_tokens),
     output: num(usage.output_tokens),

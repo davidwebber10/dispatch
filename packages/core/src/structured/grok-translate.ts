@@ -85,9 +85,16 @@ export class GrokTranslator {
   private model?: string;
 
   /** Emit a Claude `system/init` carrying the model (parity with Claude's system/init).
-   *  Called by the manager once session/new|load resolves with the current model id. */
-  init(model?: string): GrokAction[] {
+   *  Called by the manager once session/new|load resolves with the current model id.
+   *  `resumed` marks the cost baseline as unseeded: usage_update's cost is
+   *  SESSION-cumulative, so after a resume the first live report includes every
+   *  pre-resume dollar — dollars analytics already booked. Unless the replay
+   *  already seeded a baseline, the first live usage_update seeds it and bills
+   *  nothing (see usageUpdate). Losing that one turn's delta understates; the
+   *  alternative re-bills the whole session. */
+  init(model?: string, opts?: { resumed?: boolean }): GrokAction[] {
     this.model = model;
+    if (opts?.resumed && this.costReportedUsd === 0) this.costBaselineUnseeded = true;
     return [{ kind: 'event', event: { type: 'system', subtype: 'init', model } }];
   }
 
@@ -108,7 +115,7 @@ export class GrokTranslator {
       case 'tool_call_update': return this.toolCallUpdate(update);
       case 'turn_completed': return replay ? [] : this.turnCompleted(update);
       case 'response_completed': return replay ? [] : this.responseCompleted(update);
-      case 'usage_update': return replay ? [] : this.usageUpdate(update);
+      case 'usage_update': return this.usageUpdate(update, replay);
       default: return []; // model_changed, available_commands_update, hook_execution, … — ignored
     }
   }
@@ -266,6 +273,16 @@ export class GrokTranslator {
     // so no subtraction happens — unlike responseCompleted, whose wire figure
     // merges the two.
     if (t.emitBillableUsage && !this.usageReportedThisTurn && (t.inputTokens || t.outputTokens || t.cacheReadTokens)) {
+      // The two ACP dialects disagree on inputTokens. OpenCode's is the
+      // NON-cached slice (fixture: 1311 beside cachedReadTokens 7425 — cache
+      // exceeds input). Grok's aggregate MERGES cache into it (fixture: 40372
+      // containing 25856). Emitting a merged figure beside its own cache split
+      // counts the cache twice, so when the cache fits inside the input it is
+      // subtracted out; when it cannot fit, the input was already exclusive.
+      // The ambiguous middle (an exclusive input that happens to exceed its
+      // cache) subtracts too much — an undercount, the safe direction.
+      const cacheRead = t.cacheReadTokens ?? 0;
+      const input = cacheRead <= t.inputTokens ? t.inputTokens - cacheRead : t.inputTokens;
       out.push({
         kind: 'event',
         event: {
@@ -275,8 +292,8 @@ export class GrokTranslator {
             ...(this.model ? { model: this.model } : {}),
             content: [],
             usage: {
-              input_tokens: t.inputTokens,
-              cache_read_input_tokens: t.cacheReadTokens ?? 0,
+              input_tokens: input,
+              cache_read_input_tokens: cacheRead,
               output_tokens: t.outputTokens,
             },
           },
@@ -316,11 +333,19 @@ export class GrokTranslator {
    * usage frame as responseCompleted, with the REAL window carried as `context_window` so the
    * web needs no per-model window table for open models.
    */
-  private usageUpdate(update: any): GrokAction[] {
+  private usageUpdate(update: any, replay = false): GrokAction[] {
     const used = typeof update?.used === 'number' ? update.used : 0;
     const size = typeof update?.size === 'number' ? update.size : undefined;
-    if (typeof update?.cost?.amount === 'number') this.cumulativeCostUsd = update.cost.amount;
-    if (!used) return [];
+    if (typeof update?.cost?.amount === 'number') {
+      this.cumulativeCostUsd = update.cost.amount;
+      // Seed, don't bill: a replayed update describes turns analytics already
+      // recorded, and the first live update after a resume includes every
+      // pre-resume dollar (see init's `resumed`). Either way the amount becomes
+      // the baseline and only growth beyond it is ever billed.
+      if (replay || this.costBaselineUnseeded) this.costReportedUsd = update.cost.amount;
+      this.costBaselineUnseeded = false;
+    }
+    if (replay || !used) return [];
     return [{
       kind: 'event',
       event: {
@@ -345,6 +370,10 @@ export class GrokTranslator {
    *  the boundary must not repeat their aggregate (see finishTurn). Grok sets it;
    *  OpenCode never does (its dialect has no response_completed). */
   private usageReportedThisTurn = false;
+
+  /** Set by init({resumed}) when no baseline exists yet — the next usage_update
+   *  seeds costReportedUsd instead of leaving the whole session as a "delta". */
+  private costBaselineUnseeded = false;
 
   /** Session-cumulative cost as last reported by usage_update; deltas are per-turn. */
   private cumulativeCostUsd = 0;

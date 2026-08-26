@@ -253,7 +253,10 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
       this.adoptModel(session, res);
       this.emit('session', session.terminalId, sessionId);
     }
-    this.applyActions(session, session.translator.init(session.model));
+    // `resumed` tells the translator its cost baseline may be missing: usage_update's
+    // cost is session-cumulative, and a fresh translator on an old session would
+    // otherwise bill the whole pre-resume total as one turn's delta.
+    this.applyActions(session, session.translator.init(session.model, { resumed: !!resumeId }));
     // After a resume: the replay emitted whole `assistant` events (which set the chat's
     // busy=true) and — by design — no per-turn result footers. Close the ring with the
     // synthetic settle the client swallows without rendering (same shape cc-sessions.ts

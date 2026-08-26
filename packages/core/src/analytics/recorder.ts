@@ -31,8 +31,13 @@ export interface RecorderDeps {
  * session-cumulative — summing it per turn would multiply the real number, so
  * everything outside this set is ignored. Claude turns are valued from their
  * tokens by pricing.ts instead.
+ *
+ * Deliberately NOT 'grok_turn': its footer carries no total_cost_usd today
+ * (turnCompleted sets no costUsd), and Grok's wire cost is `usage.costUsdTicks`,
+ * whose unit is unverified — wire it in only once the tick unit is confirmed
+ * against a real bill, never on a guess.
  */
-const PER_TURN_COST_SUBTYPES: ReadonlySet<string> = new Set(['acp_turn', 'grok_turn']);
+const PER_TURN_COST_SUBTYPES: ReadonlySet<string> = new Set(['acp_turn']);
 
 function reportedCostFromFrame(ev: unknown): number {
   if (!ev || typeof ev !== 'object') return 0;

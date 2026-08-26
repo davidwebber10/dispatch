@@ -195,6 +195,19 @@ describe('usage recorder', () => {
     expect(rows(d)[0].cost_usd).toBe(0);
   });
 
+  /*
+   * grok_turn footers never carry total_cost_usd today (turnCompleted sets no
+   * costUsd; Grok's wire cost is costUsdTicks, whose unit is unverified). Keep
+   * the allow-list to the one subtype that actually reports a per-turn delta,
+   * so an unexpected figure on a grok_turn footer cannot slip in unvetted.
+   */
+  it('ignores a total_cost_usd on a grok_turn footer', () => {
+    mgr.emit('busy', termId);
+    mgr.emit('event', termId, { type: 'result', subtype: 'grok_turn', total_cost_usd: 0.5, usage: {} });
+    mgr.emit('idle', termId, { declared: true });
+    expect(rows(d)[0].cost_usd).toBe(0);
+  });
+
   it('ignores frames that arrive with no open turn', () => {
     mgr.emit('event', termId, FRAME);
     expect(rows(d).length).toBe(0);

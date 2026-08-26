@@ -108,6 +108,28 @@ describe('GrokTranslator — ACP session/update → Claude-shaped stream', () =>
     expect(frames.some((e) => e.type === 'assistant' && e.message?.usage)).toBe(false);
   });
 
+  /*
+   * Grok's aggregate usage MERGES cache into inputTokens (unlike OpenCode's
+   * promptResult usage, where inputTokens is the non-cached slice — its
+   * cachedReadTokens can exceed inputTokens). A cancelled Grok turn that never
+   * saw a response_completed reaches the fallback billable frame with the
+   * merged figure; emitting it verbatim beside cache_read_input_tokens would
+   * count the cache twice. When cache fits inside input, subtract it out.
+   */
+  it('the cancel-fallback billable frame does not double-count cache merged into inputTokens', () => {
+    const t = new GrokTranslator();
+    const frames = events(t.promptResult({
+      stopReason: 'cancelled',
+      usage: { inputTokens: 40372, outputTokens: 125, cachedReadTokens: 25856 },
+    }));
+    const uf = frames.find((e) => e.type === 'assistant' && e.message?.usage) as any;
+    expect(uf.message.usage).toMatchObject({
+      input_tokens: 40372 - 25856,
+      cache_read_input_tokens: 25856,
+      output_tokens: 125,
+    });
+  });
+
   it('a turn whose last agent prose asks a question ends in needs-help, not idle', () => {
     const t = new GrokTranslator();
     const chunk = JSON.parse(JSON.stringify(fx.agentMsgChunk1));
