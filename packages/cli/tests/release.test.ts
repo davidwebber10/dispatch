@@ -17,6 +17,10 @@ let calls: Array<{ cmd: string; args: string[] }>;
 /** A repo that satisfies every guard, so each test can break exactly one thing. */
 function goodRepo(version = '2.11.0'): void {
   fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({ version }));
+  for (const pkg of ['cli', 'core', 'web']) {
+    fs.mkdirSync(path.join(repoRoot, 'packages', pkg), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, 'packages', pkg, 'package.json'), JSON.stringify({ version }));
+  }
   fs.mkdirSync(path.join(repoRoot, 'docs', 'releases'), { recursive: true });
   fs.writeFileSync(path.join(repoRoot, 'docs', 'releases', `v${version}.md`), `# Dispatch v${version}\n\nThe change.\n`);
 }
@@ -107,6 +111,23 @@ describe('dispatch release — package.json guard', () => {
   test('the error names both versions, so the fix is obvious', () => {
     fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({ version: '2.10.0' }));
     expect(() => cmdRelease({ repoRoot } as any, ['2.11.0'])).toThrow(/2\.10\.0[\s\S]*2\.11\.0|2\.11\.0[\s\S]*2\.10\.0/);
+  });
+
+  // The daemon reports its version from packages/core/package.json (update/version.ts),
+  // NOT the root one. v2.31.0 shipped with only the root bumped: the update applied,
+  // the daemon restarted on the new code, and then kept announcing the update forever
+  // because core still said 2.30.1. Every one of the four files must carry the version.
+  test('refuses when packages/core/package.json lags — the daemon reads THAT file', () => {
+    fs.writeFileSync(path.join(repoRoot, 'packages', 'core', 'package.json'), JSON.stringify({ version: '2.10.0' }));
+    expect(() => cmdRelease({ repoRoot } as any, ['2.11.0'])).toThrow(/packages\/core\/package\.json/);
+    expect(ghReleaseCall()).toBeUndefined();
+  });
+
+  test('refuses when packages/cli or packages/web lag, and names every laggard', () => {
+    fs.writeFileSync(path.join(repoRoot, 'packages', 'cli', 'package.json'), JSON.stringify({ version: '2.10.0' }));
+    fs.writeFileSync(path.join(repoRoot, 'packages', 'web', 'package.json'), JSON.stringify({ version: '2.9.0' }));
+    expect(() => cmdRelease({ repoRoot } as any, ['2.11.0']))
+      .toThrow(/packages\/cli\/package\.json[\s\S]*packages\/web\/package\.json/);
   });
 });
 

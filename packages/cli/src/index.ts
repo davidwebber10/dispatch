@@ -267,14 +267,21 @@ export function cmdRelease(ctx: Ctx, args: string[]): void {
     throw new Error(`Release note docs/releases/${version}.md is empty — write it, then retry.`);
   }
 
-  // 8. package.json must already carry this version. If it does not, a freshly-updated
-  //    install still reports the old version and its update prompt never clears.
-  const pkgVersion = String(
-    (JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf-8')) as { version?: string }).version ?? '',
-  );
-  if (`v${pkgVersion}` !== version) {
+  // 8. Every package.json must already carry this version — all four, not just the
+  //    root. The daemon reports its running version from packages/core/package.json
+  //    (update/version.ts), so a release that bumps only the root still leaves every
+  //    freshly-updated install announcing the update forever (v2.31.0 shipped that way:
+  //    the update applied and restarted cleanly, then never cleared its own prompt).
+  const pkgFiles = ['package.json', 'packages/cli/package.json', 'packages/core/package.json', 'packages/web/package.json'];
+  const laggards = pkgFiles
+    .map((rel) => ({
+      rel,
+      version: String((JSON.parse(fs.readFileSync(path.join(repoRoot, rel), 'utf-8')) as { version?: string }).version ?? ''),
+    }))
+    .filter((p) => `v${p.version}` !== version);
+  if (laggards.length > 0) {
     throw new Error(
-      `package.json is on ${pkgVersion} but you are releasing ${version}.\n` +
+      laggards.map((p) => `${p.rel} is on ${p.version} but you are releasing ${version}.`).join('\n') + '\n' +
       `Bump all four package.json (root + cli + core + web) to ${version.slice(1)}, commit, push, then retry.`,
     );
   }
