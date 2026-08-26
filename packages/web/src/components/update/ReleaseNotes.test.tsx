@@ -50,6 +50,20 @@ test('several versions read as one line each', () => {
   expect(screen.getAllByText('Full notes')).toHaveLength(2);
 });
 
+test('shows the release author beside the date when the release carries one', () => {
+  render(<ReleaseNotes notes={[
+    { ...note('v2.11.0', '# Dispatch v2.11.0 — headline\n\nBody.'), author: 'davidwebber10' },
+  ]} />);
+  fireEvent.click(screen.getByText('Release notes'));
+  expect(screen.getByText(/by davidwebber10/)).toBeInTheDocument();
+});
+
+test('a release with no author shows no author line', () => {
+  render(<ReleaseNotes notes={[note('v2.11.0', '# Dispatch v2.11.0 — headline\n\nBody.')]} />);
+  fireEvent.click(screen.getByText('Release notes'));
+  expect(screen.queryByText(/by /)).not.toBeInTheDocument();
+});
+
 test('a release with only a headline offers no empty detail toggle', () => {
   render(<ReleaseNotes notes={[note('v2.11.0', '# Dispatch v2.11.0 — just a headline')]} />);
   fireEvent.click(screen.getByText('Release notes'));

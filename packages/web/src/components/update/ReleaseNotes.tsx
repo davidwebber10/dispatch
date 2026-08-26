@@ -50,10 +50,20 @@ function ReleaseEntry({ entry, first }: { entry: ReleaseNote; first: boolean }) 
 
   return (
     <section style={{ marginTop: first ? 0 : 14, paddingTop: first ? 0 : 12, borderTop: first ? 'none' : '1px solid #2C2C32' }}>
-      {/* Title row: the version leads, the date is metadata beside it. */}
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+      {/* Title row: the version leads; the date and the publishing account are
+          metadata beside it. The author comes off the GitHub release itself. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={{ font: '600 13px var(--font-mono)', color: 'var(--color-accent)', letterSpacing: '-.01em' }}>{entry.version}</span>
         {date && <span style={{ font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{date}</span>}
+        {entry.author && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>
+            {entry.authorAvatarUrl && (
+              <img src={entry.authorAvatarUrl} alt="" width={12} height={12}
+                style={{ borderRadius: '50%', display: 'block' }} />
+            )}
+            by {entry.author}
+          </span>
+        )}
       </div>
 
       {/* The one line that answers "what changed". */}
