@@ -129,17 +129,11 @@ export function insertClosed(db: Database.Database, r: ClosedTurnInput): void {
 }
 
 /**
- * How many imported rows exist, over all time and every project.
- *
- * The history panel needs this rather than the range-filtered figure from
- * summary(): the "Remove imported history" control acts on the whole table, so
- * hiding it because the reader happens to be looking at the last 7 days would
- * strand a user who imported older history.
+ * Remove rows the removed history importer once wrote. Called from the boot
+ * path (server.ts bootAnalytics): the import feature is gone by decision —
+ * analytics is live recording only — and an install that used the old Import
+ * button would otherwise mix message-grain rows into its turn counts forever.
  */
-export function countBackfilled(db: Database.Database): number {
-  return (db.prepare(`SELECT COUNT(*) AS n FROM usage_turns WHERE backfilled = 1`).get() as { n: number }).n;
-}
-
 export function deleteBackfilled(db: Database.Database): number {
   return db.prepare(`DELETE FROM usage_turns WHERE backfilled = 1`).run().changes;
 }

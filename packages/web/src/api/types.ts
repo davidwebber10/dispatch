@@ -111,6 +111,9 @@ export interface ReleaseNote {
   publishedAt: string;
   /** Markdown. */
   notes: string;
+  /** The GitHub account that published the release. Absent when unknown. */
+  author?: string;
+  authorAvatarUrl?: string;
 }
 
 export interface UpdateState {
@@ -380,15 +383,6 @@ export interface AnalyticsSummary {
    */
   unreportedTurns: number;
   /**
-   * How many of `turns` came from the history importer, under the same filters.
-   *
-   * Imported rows are one per assistant MESSAGE, not one per turn — a transcript
-   * records no turn boundaries — so a non-zero value here means `turns` mixes two
-   * units. Their tokens are real and stay in every token total; only the count
-   * differs. The TURNS tile must say so rather than let the reader assume.
-   */
-  backfilledTurns: number;
-  /**
    * The range's "equivalent API value" in dollars — NOTIONAL (on a subscription no
    * dollars change hands), so every surface labels it as value, never cost. Priced
    * models are valued at list rates; unpriced models at the cost their provider
@@ -413,14 +407,7 @@ export interface AnalyticsRecords {
   longestTurnSeconds: number;
 }
 
-export interface AnalyticsBackfillState {
+/** When analytics recording began. Live recording only — the history importer is gone. */
+export interface AnalyticsTracking {
   trackingStartedAt: string;
-  state: 'idle' | 'running' | 'done' | 'error';
-  done: number;
-  total: number;
-  lastFinishedAt: string | null;
-  error?: string;
-  /** Imported rows in the table, over ALL time — unaffected by the view's filters,
-   * so the remove control stays reachable whatever range the reader is looking at. */
-  backfilledTurns: number;
 }

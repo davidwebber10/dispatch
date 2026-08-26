@@ -76,4 +76,33 @@ describe('the boot path stamps the tracking cutoff', () => {
     const row = d.prepare('SELECT * FROM usage_turns').get() as usageDb.TurnRow;
     expect(row.outcome).toBe('interrupted');
   });
+
+  /*
+   * The history import is gone by decision: analytics is live recording from
+   * the tracking start, and nothing else. An install that pressed the old
+   * Import button still holds message-grain rows that would silently mix units
+   * into every turn count forever — with the remove control gone too, boot is
+   * the only place left that can honor the decision, so it sweeps them.
+   */
+  it('sweeps rows the removed history importer left behind', () => {
+    const d = new Database(':memory:');
+    initSchema(d);
+    usageDb.insertClosed(d, {
+      id: 'imported', terminalId: 'term1', projectId: 'p', provider: 'claude-code',
+      model: 'claude-opus-5', role: '', startedAt: '2020-01-01T00:00:00.000Z',
+      endedAt: '2020-01-01T00:00:00.000Z', outcome: 'idle',
+      input: 5, output: 5, cacheRead: 0, cacheCreate: 0, messages: 1, toolCalls: 0, backfilled: true,
+    });
+    usageDb.insertClosed(d, {
+      id: 'measured', terminalId: 'term1', projectId: 'p', provider: 'claude-code',
+      model: 'claude-opus-5', role: '', startedAt: '2026-08-13T10:00:00.000Z',
+      endedAt: '2026-08-13T10:00:10.000Z', outcome: 'idle',
+      input: 5, output: 5, cacheRead: 0, cacheCreate: 0, messages: 1, toolCalls: 0, backfilled: false,
+    });
+
+    createApp({ db: d, skipPty: true });
+
+    const ids = d.prepare('SELECT id FROM usage_turns').all() as { id: string }[];
+    expect(ids.map((r) => r.id)).toEqual(['measured']);
+  });
 });

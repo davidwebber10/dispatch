@@ -31,7 +31,7 @@ import { createFilesRouter } from './routes/files.js';
 import { createStateRouter } from './routes/state.js';
 import { attachUsageRecorder, closeInterruptedTurns } from './analytics/recorder.js';
 import { attachPtyCapture } from './analytics/pty-capture.js';
-import { clearStaleImportState } from './analytics/importer.js';
+import * as usageDb from './db/usage.js';
 import { createGitRouter } from './routes/git.js';
 import { createSecretsRouter } from './routes/secrets.js';
 import { createHarnessSettingsRouter } from './routes/harness-settings.js';
@@ -72,26 +72,24 @@ import { createAnalyticsRouter, trackingStartedAt } from './routes/analytics.js'
 /**
  * The analytics boot steps, run once per app before any route is mounted.
  *
- * `trackingStartedAt` belongs HERE, not on the first request to /api/analytics.
- * The cutoff it stamps is the instant recording began, and the history importer
- * accepts only turns older than it. Stamped lazily on first read, a user who
- * upgrades and opens the Analytics view a week later would stamp the cutoff a
- * week late — and the importer would then re-import the week the recorder had
- * already measured live, double-counting every one of those tokens. Stamping at
- * boot is what makes the "imported and measured rows can never describe the same
- * turn" claim in db/schema.ts and analytics/importer.ts actually true.
+ * `trackingStartedAt` belongs HERE, not on the first request to /api/analytics:
+ * stamped lazily on first read, it would record "the first time someone opened
+ * the Analytics view", not the instant recording actually began.
  *
  * createApp and startServer both call this, so the two app builders cannot drift.
  */
 function bootAnalytics(db: Database.Database): void {
   // A daemon that died mid-turn left rows open; close them before anything reads them.
   closeInterruptedTurns(db);
-  // A daemon that died mid-import left the backfill state stuck at 'running',
-  // which would 409 the Import button forever. Clear it — the import is
-  // synchronous and in-process, so a restart makes any 'running' state stale.
-  clearStaleImportState(db);
-  // Stamp the import cutoff at the instant recording begins. Written once; every
-  // later boot reads back the original value.
+  // The history importer was removed by decision: analytics is live recording
+  // from the tracking start and nothing else. An install that used the old
+  // Import button still holds message-grain rows that would mix units into
+  // every turn count forever — and the remove control is gone too, so boot is
+  // the only place left that can honor the decision. Idempotent; a no-op sweep
+  // costs one indexed statement.
+  usageDb.deleteBackfilled(db);
+  // Stamp the recording start at the instant recording begins. Written once;
+  // every later boot reads back the original value.
   trackingStartedAt(db);
 }
 

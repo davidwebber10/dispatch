@@ -3,13 +3,6 @@ import type Database from 'better-sqlite3';
 import * as appState from '../db/app-state.js';
 import { summary, series, top, records } from '../analytics/queries.js';
 import type { Metric, GroupBy, Dimension } from '../analytics/queries.js';
-import * as terminalsDb from '../db/terminals.js';
-import * as sessionsDb from '../db/sessions.js';
-import { importHistory } from '../analytics/importer.js';
-import { HISTORY_IMPORT_STRATEGY } from '../analytics/history-import-strategy.js';
-import * as usageDb from '../db/usage.js';
-import { readBackfillState, writeBackfillState } from '../analytics/backfill-state.js';
-import { isAgentType } from '../providers/agent-types.js';
 
 const METRICS: ReadonlySet<string> = new Set(['tokens', 'outputTokens', 'turns', 'duration']);
 const GROUPS: ReadonlySet<string> = new Set(['model', 'provider', 'project', 'outcome', 'none']);
@@ -21,14 +14,13 @@ export const TRACKING_KEY = 'analytics_tracking_started_at';
  * The instant recording began, stamped once and never moved.
  *
  * `bootAnalytics` (server.ts) calls this on every app start, BEFORE any route is
- * mounted, so the value is the instant the recorder began recording. The history
- * importer accepts only turns OLDER than this, so imported and live rows can
- * never describe the same turn — that boundary is what makes the import button
- * safe to press twice.
+ * mounted, so the value is the instant the recorder began recording. Analytics
+ * is live recording from this instant and nothing else — the history importer
+ * was removed by decision (nothing may write turns for the time before this
+ * stamp), so the charts' honest floor is exactly this moment.
  *
- * Stamping it on first read instead would put the cutoff at "the first time
- * someone opened the Analytics view", and every turn measured live between boot
- * and that moment would be imported a second time.
+ * Stamping it on first read instead would put the start at "the first time
+ * someone opened the Analytics view", misstating when measurement really began.
  */
 export function trackingStartedAt(db: Database.Database): string {
   const existing = appState.get(db, TRACKING_KEY);
@@ -74,69 +66,11 @@ export function createAnalyticsRouter(db: Database.Database): Router {
     res.json(records(db));
   });
 
-  router.get('/backfill', (_req, res) => {
-    // `backfilledTurns` is the ALL-TIME count, deliberately unfiltered: the panel's
-    // remove control acts on the whole table, and the summary's range-scoped count
-    // would hide it from a reader whose current range holds no imported rows.
-    res.json({
-      trackingStartedAt: trackingStartedAt(db),
-      ...readBackfillState(db),
-      backfilledTurns: usageDb.countBackfilled(db),
-    });
-  });
-
-  // Manual, human-triggered import. Runs synchronously: a few hundred transcripts
-  // parse in seconds, and a synchronous run cannot leave a half-written state
-  // record behind if the daemon dies mid-import.
-  router.post('/backfill', (_req, res) => {
-    const cutoff = trackingStartedAt(db);
-    const state = readBackfillState(db);
-    if (state.state === 'running') { res.status(409).json({ error: 'an import is already running' }); return; }
-
-    const threads: { terminalId: string; projectId: string; provider: string; role: string; transcriptPath: string }[] = [];
-    for (const session of sessionsDb.list(db)) {
-      for (const terminal of terminalsDb.listBySession(db, session.id)) {
-        if (!terminal.external_id) continue;
-
-        // Route by provider via the ONE shared map (history-import-strategy.ts):
-        // Codex never writes under ~/.claude/projects, so the Claude-only
-        // resolveTranscriptPath always returned undefined for it and every Codex
-        // thread silently imported zero rows. A provider with no declared
-        // strategy (or not an agent type at all — the plain shell) is skipped
-        // rather than falling through to Claude's locator.
-        const strategy = isAgentType(terminal.type) ? HISTORY_IMPORT_STRATEGY[terminal.type] : null;
-        if (!strategy) continue;
-        const workDir = terminal.working_dir || session.working_dir;
-        const transcriptPath = strategy.locateTranscript(terminal, workDir);
-        if (!transcriptPath) continue;
-        let cfg: Record<string, any> = {};
-        try { cfg = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
-        threads.push({
-          terminalId: terminal.id, projectId: session.id, provider: terminal.type,
-          role: typeof cfg.role === 'string' ? cfg.role : '', transcriptPath,
-        });
-      }
-    }
-
-    writeBackfillState(db, { state: 'running', done: 0, total: threads.length, lastFinishedAt: null });
-    try {
-      const result = importHistory(db, {
-        cutoff, threads,
-        onProgress: (done, total) => writeBackfillState(db, { state: 'running', done, total, lastFinishedAt: null }),
-      });
-      writeBackfillState(db, { state: 'done', done: threads.length, total: threads.length, lastFinishedAt: new Date().toISOString() });
-      res.json(result);
-    } catch (err: any) {
-      writeBackfillState(db, { state: 'error', done: 0, total: threads.length, lastFinishedAt: null, error: String(err?.message ?? err) });
-      res.status(500).json({ error: String(err?.message ?? err) });
-    }
-  });
-
-  // Remove imported rows. Live measurements are never touched.
-  router.delete('/backfill', (_req, res) => {
-    const removed = usageDb.deleteBackfilled(db);
-    writeBackfillState(db, { state: 'idle', done: 0, total: 0, lastFinishedAt: null });
-    res.json({ removed });
+  // When measurement began — the honest floor under every chart. The old
+  // /backfill routes are gone with the history importer; nothing may write
+  // turns for the time before this stamp.
+  router.get('/tracking', (_req, res) => {
+    res.json({ trackingStartedAt: trackingStartedAt(db) });
   });
 
   return router;
