@@ -165,7 +165,13 @@ export function initSchema(db: Database.Database): void {
       cache_create_tokens INTEGER NOT NULL DEFAULT 0,
       messages            INTEGER NOT NULL DEFAULT 0,
       tool_calls          INTEGER NOT NULL DEFAULT 0,
-      backfilled          INTEGER NOT NULL DEFAULT 0
+      backfilled          INTEGER NOT NULL DEFAULT 0,
+      -- The per-turn dollar cost the provider itself reported, when one exists.
+      -- Only the translator-owned per-turn deltas are ever written here
+      -- (OpenCode's ACP cost delta on the acp_turn result footer). 0 means "no
+      -- cost was reported", never "it was free" — priced models are valued from
+      -- their tokens by analytics/pricing.ts instead.
+      cost_usd            REAL NOT NULL DEFAULT 0
     );
 
     CREATE INDEX IF NOT EXISTS idx_usage_turns_started  ON usage_turns(started_at);
@@ -211,6 +217,8 @@ export function initSchema(db: Database.Database): void {
     { table: 'terminals', column: 'last_activity_at', sql: 'ALTER TABLE terminals ADD COLUMN last_activity_at TEXT' },
     { table: 'terminals', column: 'label_source', sql: "ALTER TABLE terminals ADD COLUMN label_source TEXT NOT NULL DEFAULT 'user'" },
     { table: 'sessions', column: 'sort_order', sql: 'ALTER TABLE sessions ADD COLUMN sort_order INTEGER DEFAULT 0' },
+    // Provider-reported per-turn cost, added after usage_turns first shipped.
+    { table: 'usage_turns', column: 'cost_usd', sql: 'ALTER TABLE usage_turns ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0' },
     // Structured agent-run outcome capture (tokens, cost, model, result, transcript).
     { table: 'agent_runs', column: 'cost_usd', sql: 'ALTER TABLE agent_runs ADD COLUMN cost_usd REAL' },
     { table: 'agent_runs', column: 'total_tokens', sql: 'ALTER TABLE agent_runs ADD COLUMN total_tokens INTEGER' },

@@ -17,6 +17,8 @@ export interface TurnRow {
   messages: number;
   tool_calls: number;
   backfilled: number;
+  /** Provider-reported per-turn dollars (OpenCode's ACP cost delta). 0 = none reported. */
+  cost_usd: number;
 }
 
 export interface OpenTurnInput {
@@ -42,6 +44,7 @@ export interface ClosedTurnInput extends OpenTurnInput, UsageDelta {
   endedAt: string;
   outcome: string;
   backfilled: boolean;
+  costUsd?: number;
 }
 
 export function openTurn(db: Database.Database, input: OpenTurnInput): void {
@@ -98,6 +101,16 @@ export function setModel(db: Database.Database, turnId: string, model: string): 
   db.prepare(`UPDATE usage_turns SET model = ? WHERE id = ?`).run(model, turnId);
 }
 
+/**
+ * Add a provider-reported per-turn cost to an open turn. Additive for the same
+ * reason addUsage is: write-through, no in-memory counter to drift. Callers must
+ * only pass translator-owned PER-TURN deltas — a session-cumulative figure
+ * (Claude's result footer) summed per turn would multiply the real number.
+ */
+export function addCost(db: Database.Database, turnId: string, usd: number): void {
+  db.prepare(`UPDATE usage_turns SET cost_usd = cost_usd + ? WHERE id = ?`).run(usd, turnId);
+}
+
 export function closeTurn(db: Database.Database, turnId: string, at: string, outcome: string): void {
   db.prepare(`UPDATE usage_turns SET ended_at = ?, outcome = ? WHERE id = ? AND ended_at IS NULL`)
     .run(at, outcome, turnId);
@@ -107,11 +120,11 @@ export function insertClosed(db: Database.Database, r: ClosedTurnInput): void {
   db.prepare(`
     INSERT INTO usage_turns (
       id, terminal_id, project_id, provider, model, role, started_at, ended_at, outcome,
-      input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, messages, tool_calls, backfilled
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, messages, tool_calls, backfilled, cost_usd
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     r.id, r.terminalId, r.projectId, r.provider, r.model, r.role, r.startedAt, r.endedAt, r.outcome,
-    r.input, r.output, r.cacheRead, r.cacheCreate, r.messages, r.toolCalls, r.backfilled ? 1 : 0,
+    r.input, r.output, r.cacheRead, r.cacheCreate, r.messages, r.toolCalls, r.backfilled ? 1 : 0, r.costUsd ?? 0,
   );
 }
 

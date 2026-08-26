@@ -24,6 +24,24 @@ export interface RecorderDeps {
  *
  * Every handler is best-effort. Analytics must never break a turn.
  */
+/**
+ * The subtypes whose result-footer `total_cost_usd` is a translator-computed
+ * PER-TURN delta (grok-translate.ts takeCostDelta), safe to sum row by row.
+ * Claude's own result footer also carries `total_cost_usd`, but that figure is
+ * session-cumulative — summing it per turn would multiply the real number, so
+ * everything outside this set is ignored. Claude turns are valued from their
+ * tokens by pricing.ts instead.
+ */
+const PER_TURN_COST_SUBTYPES: ReadonlySet<string> = new Set(['acp_turn', 'grok_turn']);
+
+function reportedCostFromFrame(ev: unknown): number {
+  if (!ev || typeof ev !== 'object') return 0;
+  const rec = ev as Record<string, unknown>;
+  if (rec.type !== 'result' || typeof rec.subtype !== 'string' || !PER_TURN_COST_SUBTYPES.has(rec.subtype)) return 0;
+  return typeof rec.total_cost_usd === 'number' && Number.isFinite(rec.total_cost_usd) && rec.total_cost_usd > 0
+    ? rec.total_cost_usd : 0;
+}
+
 export function attachUsageRecorder(manager: EventEmitter, deps: RecorderDeps): void {
   const { db, onTurnClosed } = deps;
   const now = deps.now ?? (() => new Date().toISOString());
@@ -65,10 +83,14 @@ export function attachUsageRecorder(manager: EventEmitter, deps: RecorderDeps): 
     try {
       const usage = usageFromFrame(ev);
       const toolCalls = toolCallsInFrame(ev);
-      if (!usage && !toolCalls) return;
+      const costUsd = reportedCostFromFrame(ev);
+      if (!usage && !toolCalls && !costUsd) return;
 
       const open = usageDb.findOpenTurn(db, terminalId);
       if (!open) return; // a frame outside a turn is not attributable; drop it
+
+      if (costUsd) usageDb.addCost(db, open.id, costUsd);
+      if (!usage && !toolCalls) return;
 
       usageDb.addUsage(db, open.id, {
         input: usage?.input ?? 0,
