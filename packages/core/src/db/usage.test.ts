@@ -54,6 +54,45 @@ describe('usage_turns db', () => {
     expect(usageDb.findOpenTurn(d, 'term1')!.model).toBe('claude-haiku-4-5');
   });
 
+  it('addCost accumulates reported per-turn cost on an open turn', () => {
+    usageDb.openTurn(d, OPEN);
+    usageDb.addCost(d, 't1', 0.001);
+    usageDb.addCost(d, 't1', 0.002);
+    expect(usageDb.findOpenTurn(d, 'term1')!.cost_usd).toBeCloseTo(0.003, 9);
+  });
+
+  /*
+   * cost_usd arrived after usage_turns first shipped, so a real database exists
+   * without it and CREATE TABLE IF NOT EXISTS alone will never add it. The
+   * migrations list must, exactly as it does for older tables' late columns.
+   */
+  it('adds the cost_usd column to a database created before it existed', () => {
+    const old = new Database(':memory:');
+    old.exec(`
+      CREATE TABLE usage_turns (
+        id                  TEXT PRIMARY KEY,
+        terminal_id         TEXT NOT NULL,
+        project_id          TEXT NOT NULL,
+        provider            TEXT NOT NULL,
+        model               TEXT NOT NULL DEFAULT '',
+        role                TEXT NOT NULL DEFAULT '',
+        started_at          TEXT NOT NULL,
+        ended_at            TEXT,
+        outcome             TEXT,
+        input_tokens        INTEGER NOT NULL DEFAULT 0,
+        output_tokens       INTEGER NOT NULL DEFAULT 0,
+        cache_read_tokens   INTEGER NOT NULL DEFAULT 0,
+        cache_create_tokens INTEGER NOT NULL DEFAULT 0,
+        messages            INTEGER NOT NULL DEFAULT 0,
+        tool_calls          INTEGER NOT NULL DEFAULT 0,
+        backfilled          INTEGER NOT NULL DEFAULT 0
+      );
+    `);
+    initSchema(old);
+    const cols = (old.prepare(`PRAGMA table_info(usage_turns)`).all() as { name: string }[]).map((c) => c.name);
+    expect(cols).toContain('cost_usd');
+  });
+
   it('deleteBackfilled removes only imported rows', () => {
     usageDb.insertClosed(d, { ...OPEN, id: 'live', endedAt: '2026-08-13T10:01:00.000Z', outcome: 'idle',
       input: 1, output: 1, cacheRead: 0, cacheCreate: 0, messages: 1, toolCalls: 0, backfilled: false });

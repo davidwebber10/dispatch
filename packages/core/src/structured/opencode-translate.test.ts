@@ -48,6 +48,52 @@ describe('GrokTranslator — OpenCode dialect', () => {
     });
   });
 
+  /*
+   * The gauge/bill split. usage_update's input_tokens is the WHOLE current
+   * context re-reported on every publish — a gauge. The recorder must never sum
+   * it, so the frame is tagged context_fill (frames.ts returns null for it).
+   * The BILLABLE per-turn figure arrives once, in the session/prompt response,
+   * and promptResult re-emits it as a plain assistant usage frame with the cache
+   * split, stamped with the model — that frame is what analytics records.
+   * Before this split, every OpenCode turn recorded its context size as input,
+   * zero output, and zero cache.
+   */
+  it('tags the usage_update frame context_fill, so analytics skips the gauge', () => {
+    const t = new GrokTranslator();
+    t.init('openrouter/z-ai/glm-5.2');
+    const out = events(t.translate(fx.usageUpdate as any));
+    expect(out[0].subtype).toBe('context_fill');
+  });
+
+  it('promptResult emits the real per-turn usage as an assistant frame with the cache split', () => {
+    const t = new GrokTranslator();
+    t.init('openrouter/z-ai/glm-5.2');
+    const frames = events(t.promptResult(fx.promptResponse));
+    const usageIdx = frames.findIndex((e) => e.type === 'assistant' && e.message?.usage);
+    const resultIdx = frames.findIndex((e) => e.type === 'result');
+    expect(usageIdx).toBeGreaterThanOrEqual(0);
+    // The frame must land while the turn is still open — before the result footer.
+    expect(usageIdx).toBeLessThan(resultIdx);
+    const usageFrame = frames[usageIdx];
+    expect(usageFrame).toMatchObject({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        model: 'openrouter/z-ai/glm-5.2',
+        content: [],
+        usage: { input_tokens: 1311, cache_read_input_tokens: 7425, output_tokens: 6 },
+      },
+    });
+    // NOT a gauge — the recorder must count this one.
+    expect(usageFrame.subtype).toBeUndefined();
+  });
+
+  it('promptResult with no usage numbers emits no usage frame', () => {
+    const t = new GrokTranslator();
+    const frames = events(t.promptResult({ stopReason: 'end_turn', usage: {} }));
+    expect(frames.some((e) => e.type === 'assistant' && e.message?.usage)).toBe(false);
+  });
+
   it('promptResult → result footer with usage + the cost DELTA, then idle with the prose', () => {
     const t = new GrokTranslator();
     t.translate(fx.agentMessageChunk as any);
@@ -67,6 +113,35 @@ describe('GrokTranslator — OpenCode dialect', () => {
     // the footer must NOT charge it again.
     const second = events(t.promptResult(fx.promptResponse)).find((e) => e.type === 'result') as any;
     expect(second.total_cost_usd).toBeUndefined();
+  });
+
+  /*
+   * Resume safety. usage_update's cost is SESSION-cumulative. A resumed session
+   * builds a fresh translator whose baseline is zero, so the first live
+   * usage_update would otherwise report the ENTIRE prior session's dollars as
+   * one turn's delta — dollars analytics already booked, row by row, before the
+   * restart. The first turn after a resume seeds the baseline and bills
+   * nothing; growth after that is billable again.
+   */
+  it('a resumed session does not bill the pre-resume cumulative cost as one delta', () => {
+    const t = new GrokTranslator();
+    t.init('openrouter/z-ai/glm-5.2', { resumed: true });
+    t.translate(fx.usageUpdate as any); // cumulative 0.0024469632 — includes pre-resume turns
+    const first = events(t.promptResult(fx.promptResponse)).find((e) => e.type === 'result') as any;
+    expect(first.total_cost_usd).toBeUndefined();
+
+    const grown = JSON.parse(JSON.stringify(fx.usageUpdate));
+    grown.params.update.cost.amount = 0.004;
+    t.translate(grown as any);
+    const second = events(t.promptResult(fx.promptResponse)).find((e) => e.type === 'result') as any;
+    expect(second.total_cost_usd).toBeCloseTo(0.004 - 0.0024469632, 9);
+  });
+
+  it('a replayed usage_update seeds the cost baseline and emits nothing', () => {
+    const t = new GrokTranslator();
+    expect(t.translate(fx.usageUpdate as any, { replay: true })).toEqual([]);
+    const result = events(t.promptResult(fx.promptResponse)).find((e) => e.type === 'result') as any;
+    expect(result.total_cost_usd).toBeUndefined();
   });
 
   it('a closing question in the prose settles promptResult as needs-help, not idle', () => {

@@ -55,6 +55,27 @@ describe('collectPendingNotes', () => {
     prerelease: false,
   });
 
+  /*
+   * The release AUTHOR: GitHub's release objects carry the publishing account
+   * (`author.login`, `author.avatar_url`), and the update prompt shows it. A
+   * release without one — deleted account, API shape drift — must simply omit
+   * the field, never fail the whole poll.
+   */
+  it('carries the release author through to the note', () => {
+    const withAuthor = {
+      ...rel('v2.31.0'),
+      author: { login: 'davidwebber10', avatar_url: 'https://avatars.example.com/u/1' },
+    };
+    const out = collectPendingNotes([withAuthor], '2.30.0');
+    expect(out[0].author).toBe('davidwebber10');
+    expect(out[0].authorAvatarUrl).toBe('https://avatars.example.com/u/1');
+  });
+
+  it('omits the author when the release has none', () => {
+    const out = collectPendingNotes([rel('v2.31.0')], '2.30.0');
+    expect(out[0].author).toBeUndefined();
+  });
+
   it('keeps only releases newer than the running version, newest first', () => {
     const out = collectPendingNotes([rel('v2.9.0'), rel('v2.11.0'), rel('v2.10.0'), rel('v2.12.0')], '2.10.0');
     expect(out.map((n) => n.version)).toEqual(['v2.12.0', 'v2.11.0']);

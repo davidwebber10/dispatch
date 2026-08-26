@@ -28,33 +28,6 @@ describe('analytics queries', () => {
     turn(d, { id: 'c', startedAt: '2026-08-12T09:00:00.000Z', endedAt: '2026-08-12T09:01:00.000Z', input: 1, output: 2, projectId: 'proj2', terminalId: 'term2' });
   });
 
-  /*
-   * The importer writes one row per assistant MESSAGE, not one per turn — a
-   * transcript records no turn boundaries. So after an import the TURNS figure
-   * mixes two units, and the reader has to be told. The tokens stay in the totals
-   * either way; only the COUNT is a different unit.
-   */
-  it('counts imported rows separately, with the same filters as everything else', () => {
-    turn(d, {
-      id: 'imported', startedAt: '2026-08-01T09:00:00.000Z', endedAt: '2026-08-01T09:00:00.000Z',
-      input: 1000, output: 500, backfilled: true,
-    });
-
-    const s = summary(d, {});
-    expect(s.turns).toBe(4);
-    expect(s.backfilledTurns).toBe(1);
-    // Imported tokens are real and stay in the totals.
-    expect(s.inputTokens).toBe(1111);
-
-    // Same filters as every other figure in the summary.
-    expect(summary(d, { from: '2026-08-05T00:00:00.000Z' }).backfilledTurns).toBe(0);
-    expect(summary(d, { projectId: 'proj2' }).backfilledTurns).toBe(0);
-  });
-
-  it('reports zero imported rows when nothing was imported', () => {
-    expect(summary(d, {}).backfilledTurns).toBe(0);
-  });
-
   it('summarises tokens, turns and threads', () => {
     const s = summary(d, {});
     expect(s.turns).toBe(3);
@@ -201,6 +174,68 @@ describe('analytics queries', () => {
     expect(s.turns).toBe(0);
     expect(s.totalTokens).toBe(0);
     expect(s.unreportedTurns).toBe(0);
+  });
+
+  /*
+   * The "equivalent API value" figure the design promised (spec section 4). One
+   * rule per model group: a priced model is valued at list rates; an unpriced
+   * model is valued at the cost its provider actually reported (OpenCode's ACP
+   * cost delta, stored in cost_usd); a model with neither contributes tokens but
+   * no dollars, and marks the figure partial so the tile never understates
+   * silently.
+   */
+  it('values priced models at list rates and unpriced models at their reported cost', () => {
+    turn(d, {
+      id: 'oc', startedAt: '2026-08-12T10:00:00.000Z', endedAt: '2026-08-12T10:00:10.000Z',
+      provider: 'opencode', model: 'openrouter/z-ai/glm-5.2',
+      input: 1311, output: 6, cacheRead: 7425, costUsd: 0.0024469632,
+    });
+    const s = summary(d, {});
+    // opus: (101 in × $5 + 52 out × $25) / 1e6; sonnet: (10 × $3 + 5 × $15) / 1e6
+    expect(s.apiValueUsd).toBeCloseTo(0.001805 + 0.000105 + 0.0024469632, 9);
+    expect(s.valueIsPartial).toBe(false);
+  });
+
+  it('flags the value partial when tokens exist that are neither priced nor costed', () => {
+    turn(d, {
+      id: 'codex-unpriced', startedAt: '2026-08-12T11:00:00.000Z', endedAt: '2026-08-12T11:00:10.000Z',
+      provider: 'codex', model: 'gpt-5.6-sol', input: 500, output: 100,
+    });
+    const s = summary(d, {});
+    expect(s.valueIsPartial).toBe(true);
+    // The known part still prices; the unknown part adds nothing rather than a guess.
+    expect(s.apiValueUsd).toBeCloseTo(0.00191, 9);
+  });
+
+  /*
+   * Granularity guard: partial is judged per TURN, not per model group. Every
+   * OpenCode turn recorded before cost capture shipped carries cost_usd 0 — one
+   * new costed turn of the same model must not hide those tokens behind an
+   * unbadged figure.
+   */
+  it('flags partial when an unpriced model mixes costed and uncosted turns', () => {
+    turn(d, {
+      id: 'oc-old', startedAt: '2026-08-12T09:30:00.000Z', endedAt: '2026-08-12T09:30:10.000Z',
+      provider: 'opencode', model: 'openrouter/z-ai/glm-5.2', input: 500, output: 0,
+    });
+    turn(d, {
+      id: 'oc-new', startedAt: '2026-08-12T10:00:00.000Z', endedAt: '2026-08-12T10:00:10.000Z',
+      provider: 'opencode', model: 'openrouter/z-ai/glm-5.2', input: 100, output: 5, costUsd: 0.002,
+    });
+    const s = summary(d, {});
+    expect(s.valueIsPartial).toBe(true);
+    expect(s.apiValueUsd).toBeCloseTo(0.00191 + 0.002, 9);
+  });
+
+  it('the api value respects the same filters as every other figure', () => {
+    turn(d, {
+      id: 'oc', startedAt: '2026-08-12T10:00:00.000Z', endedAt: '2026-08-12T10:00:10.000Z',
+      provider: 'opencode', model: 'openrouter/z-ai/glm-5.2',
+      input: 1311, output: 6, cacheRead: 7425, costUsd: 0.0024469632,
+    });
+    const s = summary(d, { provider: 'opencode' });
+    expect(s.apiValueUsd).toBeCloseTo(0.0024469632, 9);
+    expect(s.valueIsPartial).toBe(false);
   });
 
   it('reports all-time records', () => {

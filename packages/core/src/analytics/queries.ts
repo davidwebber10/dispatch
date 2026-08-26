@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { notionalValueUsd } from './pricing.js';
 
 export type Metric = 'tokens' | 'outputTokens' | 'turns' | 'duration';
 export type GroupBy = 'model' | 'provider' | 'project' | 'outcome' | 'none';
@@ -26,15 +27,19 @@ export interface Summary {
    */
   unreportedTurns: number;
   /**
-   * How many of `turns` came from the history importer.
+   * The "equivalent API value" of the range, in dollars — a NOTIONAL figure (on a
+   * subscription no dollars change hands), never to be labelled "cost" or "spend".
    *
-   * These rows are NOT the same unit as a measured turn. A transcript records no
-   * turn boundaries, so importer.ts writes one row per assistant MESSAGE. Their
-   * tokens are real and belong in every token total, but counting them as turns
-   * silently mixes a message count into a turn count — so the UI labels the TURNS
-   * tile whenever this is non-zero rather than letting the reader assume.
+   * One rule per model: a model pricing.ts knows is valued at list rates; a model
+   * it does not know is valued at the cost its provider actually reported
+   * (cost_usd — OpenCode's ACP per-turn delta); a model with neither contributes
+   * tokens but no dollars and sets `valueIsPartial` instead. Reported cost is
+   * never ADDED on top of a priced model's notional figure — one source per
+   * model, so nothing can double-value.
    */
-  backfilledTurns: number;
+  apiValueUsd: number;
+  /** True when tokens exist in the range that carry no price and no reported cost. */
+  valueIsPartial: boolean;
 }
 
 export interface SeriesPoint { day: string; key: string; value: number }
@@ -74,13 +79,42 @@ export function summary(db: Database.Database, r: Range): Summary {
   const agg = db.prepare(`
     SELECT COUNT(*) AS turns, COUNT(DISTINCT terminal_id) AS threads,
            COALESCE(SUM(CASE WHEN messages = 0 THEN 1 ELSE 0 END), 0) AS unreported_turns,
-           COALESCE(SUM(backfilled), 0)          AS backfilled_turns,
            COALESCE(SUM(input_tokens), 0)        AS input_tokens,
            COALESCE(SUM(output_tokens), 0)       AS output_tokens,
            COALESCE(SUM(cache_read_tokens), 0)   AS cache_read_tokens,
            COALESCE(SUM(cache_create_tokens), 0) AS cache_create_tokens
     FROM usage_turns WHERE ${w.sql}
   `).get(...w.params) as Record<string, number>;
+
+  // Per-model sums, folded through pricing.ts in JS: SQLite cannot hold the
+  // price table, and the fold is over at most a handful of model groups.
+  // `uncosted_tokens` is judged per TURN, not per group: one costed turn must
+  // not hide a same-model turn that carries tokens but reported no cost (every
+  // OpenCode turn recorded before cost capture shipped is exactly that shape).
+  const byModel = db.prepare(`
+    SELECT model,
+           COALESCE(SUM(input_tokens), 0)        AS input,
+           COALESCE(SUM(output_tokens), 0)       AS output,
+           COALESCE(SUM(cache_read_tokens), 0)   AS cache_read,
+           COALESCE(SUM(cache_create_tokens), 0) AS cache_create,
+           COALESCE(SUM(cost_usd), 0)            AS cost_usd,
+           COALESCE(SUM(CASE WHEN cost_usd = 0
+             THEN input_tokens + output_tokens + cache_read_tokens + cache_create_tokens
+             ELSE 0 END), 0)                     AS uncosted_tokens
+    FROM usage_turns WHERE ${w.sql} GROUP BY model
+  `).all(...w.params) as { model: string; input: number; output: number; cache_read: number; cache_create: number; cost_usd: number; uncosted_tokens: number }[];
+
+  let apiValueUsd = 0;
+  let valueIsPartial = false;
+  for (const g of byModel) {
+    const notional = notionalValueUsd({
+      model: g.model, input: g.input, output: g.output, cacheRead: g.cache_read, cacheCreate: g.cache_create,
+    });
+    if (notional !== null) { apiValueUsd += notional; continue; }
+    apiValueUsd += g.cost_usd;
+    // Tokens with no price and no reported cost contribute nothing — but say so.
+    if (g.uncosted_tokens > 0) valueIsPartial = true;
+  }
 
   return {
     turns: agg.turns,
@@ -91,7 +125,8 @@ export function summary(db: Database.Database, r: Range): Summary {
     cacheCreateTokens: agg.cache_create_tokens,
     totalTokens: agg.input_tokens + agg.output_tokens + agg.cache_read_tokens + agg.cache_create_tokens,
     unreportedTurns: agg.unreported_turns,
-    backfilledTurns: agg.backfilled_turns,
+    apiValueUsd,
+    valueIsPartial,
   };
 }
 

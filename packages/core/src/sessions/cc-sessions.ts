@@ -2,11 +2,12 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { isInjectedUserEntry } from '../conversation/task-notification.js';
+import { SYNTHETIC_MODEL } from '../analytics/frames.js';
 import { resolveTranscriptPath, claudeProjectsRoot } from './transcript-path.js';
 import { encodeClaudeProjectDir } from '../platform/encode.js';
 
-// Re-exported so the (Task 8) history importer can resolve a terminal's transcript
-// without reaching past sessions/ into the transcript-path module directly.
+// Re-exported so callers can resolve a terminal's transcript without reaching
+// past sessions/ into the transcript-path module directly.
 export { resolveTranscriptPath };
 
 export interface RecentCcSession {
@@ -210,7 +211,7 @@ export function sumTranscriptTokens(raw: string): TranscriptTokenStats {
       const entry = JSON.parse(line);
       const msg = entry.message;
       if (!msg || typeof msg !== 'object') continue;
-      if (msg.model && msg.model !== '<synthetic>') model = msg.model;
+      if (msg.model && msg.model !== SYNTHETIC_MODEL) model = msg.model;
       if (msg.usage) {
         if (msg.id) {
           if (seenMessageIds.has(msg.id)) continue;

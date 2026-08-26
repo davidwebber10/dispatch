@@ -123,10 +123,12 @@ const UNPRICED: Record<string, string> = {
   'gpt-5.6-sol': 'no published price source in this repo',
   'gpt-5.6-terra': 'no published price source in this repo',
   'gpt-5.6-luna': 'no published price source in this repo',
-  // Grok runs as a raw PTY (providers/grok.ts), never reaches the structured
-  // manager, and so records no usage_turns row at all (spec section 5). Its model
-  // string can therefore never reach the price table.
-  'grok-4.5': 'PTY provider — records no turns, so it never reaches pricing',
+  // Grok Pretty threads DO record turns now (grok-translate.ts response_completed
+  // frames carry per-call usage), so this model reaches the price table — but the
+  // repo's designated price source (the claude-api skill) covers Anthropic models
+  // only, and inventing an xAI rate would put a fabricated figure in a headline
+  // tile. Its tokens are counted, and the summary marks the value partial.
+  'grok-4.5': 'no published price source in this repo; tokens counted, value marked partial',
   // OpenCode threads run OpenRouter models, whose REAL per-turn dollar cost arrives on the
   // wire (ACP usage_update.cost) and rides the result footer as total_cost_usd — a price
   // table here would duplicate a number the provider already reports authoritatively.

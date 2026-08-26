@@ -1,5 +1,5 @@
 import { apiPath } from '../lib/basePath';
-import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsBackfillState } from './types';
+import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking } from './types';
 
 /**
  * A content block for a structured `user` turn (mirrors the daemon's wire shape). A
@@ -298,7 +298,5 @@ export const api = {
   analyticsTop: (o: AnalyticsRange & { dimension: AnalyticsDimension }) =>
     req<AnalyticsTopRow[]>(`/api/analytics/top${qs(o)}`),
   analyticsRecords: () => req<AnalyticsRecords>('/api/analytics/records'),
-  analyticsBackfillState: () => req<AnalyticsBackfillState>('/api/analytics/backfill'),
-  analyticsRunBackfill: () => req<{ imported: number; skipped: number; threads: number }>('/api/analytics/backfill', { method: 'POST' }),
-  analyticsClearBackfill: () => req<{ removed: number }>('/api/analytics/backfill', { method: 'DELETE' }),
+  analyticsTracking: () => req<AnalyticsTracking>('/api/analytics/tracking'),
 };

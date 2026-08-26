@@ -55,9 +55,9 @@ interface CaptureContext {
  * would give a thread left open overnight a multi-hour "turn" that lands in
  * AVG(duration) and reads out as the headline longestTurnSeconds. The live
  * recorder has a genuine start (the manager's `busy` event); a PTY reader does
- * not, and honest absence beats a plausible wrong number. This is the same answer
- * importer.ts gives for a backfilled row, and queries.ts already excludes
- * `ended_at == started_at` from every duration query for exactly this reason.
+ * not, and honest absence beats a plausible wrong number. queries.ts already
+ * excludes `ended_at == started_at` from every duration query for exactly this
+ * reason.
  */
 function captureClaudeTurn(ctx: CaptureContext): void {
   const { db, terminalId, terminal, projectId, role, outcome, nowStr, priorState, onTurnClosed } = ctx;

@@ -11,6 +11,10 @@ export interface ReleaseNote {
   publishedAt: string;
   /** Markdown — the GitHub Release body, which `dispatch release` fills from docs/releases/. */
   notes: string;
+  /** The GitHub account that published the release (`author.login`). Absent when
+   *  the release carries none — never a placeholder. */
+  author?: string;
+  authorAvatarUrl?: string;
 }
 
 /** Shape of the entries GitHub's `GET /repos/:repo/releases` returns. */
@@ -21,6 +25,8 @@ export interface GitHubRelease {
   body?: string | null;
   draft?: boolean;
   prerelease?: boolean;
+  /** The publishing account. GitHub sends null for a deleted account. */
+  author?: { login?: string; avatar_url?: string } | null;
 }
 
 /**
@@ -82,6 +88,8 @@ export function collectPendingNotes(releases: GitHubRelease[], currentVersion: s
       url: r.html_url ?? '',
       publishedAt: r.published_at ?? '',
       notes: truncate(String(r.body ?? '')),
+      ...(typeof r.author?.login === 'string' && r.author.login ? { author: r.author.login } : {}),
+      ...(typeof r.author?.avatar_url === 'string' && r.author.avatar_url ? { authorAvatarUrl: r.author.avatar_url } : {}),
     }));
 }
 
