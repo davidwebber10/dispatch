@@ -48,6 +48,52 @@ describe('GrokTranslator — OpenCode dialect', () => {
     });
   });
 
+  /*
+   * The gauge/bill split. usage_update's input_tokens is the WHOLE current
+   * context re-reported on every publish — a gauge. The recorder must never sum
+   * it, so the frame is tagged context_fill (frames.ts returns null for it).
+   * The BILLABLE per-turn figure arrives once, in the session/prompt response,
+   * and promptResult re-emits it as a plain assistant usage frame with the cache
+   * split, stamped with the model — that frame is what analytics records.
+   * Before this split, every OpenCode turn recorded its context size as input,
+   * zero output, and zero cache.
+   */
+  it('tags the usage_update frame context_fill, so analytics skips the gauge', () => {
+    const t = new GrokTranslator();
+    t.init('openrouter/z-ai/glm-5.2');
+    const out = events(t.translate(fx.usageUpdate as any));
+    expect(out[0].subtype).toBe('context_fill');
+  });
+
+  it('promptResult emits the real per-turn usage as an assistant frame with the cache split', () => {
+    const t = new GrokTranslator();
+    t.init('openrouter/z-ai/glm-5.2');
+    const frames = events(t.promptResult(fx.promptResponse));
+    const usageIdx = frames.findIndex((e) => e.type === 'assistant' && e.message?.usage);
+    const resultIdx = frames.findIndex((e) => e.type === 'result');
+    expect(usageIdx).toBeGreaterThanOrEqual(0);
+    // The frame must land while the turn is still open — before the result footer.
+    expect(usageIdx).toBeLessThan(resultIdx);
+    const usageFrame = frames[usageIdx];
+    expect(usageFrame).toMatchObject({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        model: 'openrouter/z-ai/glm-5.2',
+        content: [],
+        usage: { input_tokens: 1311, cache_read_input_tokens: 7425, output_tokens: 6 },
+      },
+    });
+    // NOT a gauge — the recorder must count this one.
+    expect(usageFrame.subtype).toBeUndefined();
+  });
+
+  it('promptResult with no usage numbers emits no usage frame', () => {
+    const t = new GrokTranslator();
+    const frames = events(t.promptResult({ stopReason: 'end_turn', usage: {} }));
+    expect(frames.some((e) => e.type === 'assistant' && e.message?.usage)).toBe(false);
+  });
+
   it('promptResult → result footer with usage + the cost DELTA, then idle with the prose', () => {
     const t = new GrokTranslator();
     t.translate(fx.agentMessageChunk as any);

@@ -237,14 +237,52 @@ export class GrokTranslator {
       isError: stop === 'error' || stop === 'refusal',
       inputTokens: usage.inputTokens ?? 0,
       outputTokens: usage.outputTokens ?? 0,
+      cacheReadTokens: usage.cachedReadTokens ?? 0,
       costUsd: this.takeCostDelta(),
+      // The response's usage is the turn's BILLABLE record on OpenCode, whose
+      // dialect has no response_completed. On Grok this path is only the
+      // cancel/protocol-error fallback, and the per-call frames (when any came)
+      // have already reported — finishTurn's usageReportedThisTurn guard keeps
+      // those turns from double-counting.
+      emitBillableUsage: true,
     });
   }
 
   /** Shared tail of every turn boundary: result footer, per-turn state reset, idle/needs-help. */
-  private finishTurn(t: { subtype: string; isError: boolean; durationMs?: number; inputTokens: number; outputTokens: number; costUsd?: number }): GrokAction[] {
+  private finishTurn(t: { subtype: string; isError: boolean; durationMs?: number; inputTokens: number; outputTokens: number; cacheReadTokens?: number; costUsd?: number; emitBillableUsage?: boolean }): GrokAction[] {
     const out: GrokAction[] = [];
     this.closeOpenBlock(out);
+    // The BILLABLE per-turn usage, as a plain (untagged) assistant frame — the
+    // one frame the recorder counts for an OpenCode turn. OpenCode reports usage
+    // nowhere else analytics may read: usage_update is a context gauge (tagged
+    // context_fill, skipped by frames.ts), and the result footer below is not a
+    // message. Only promptResult opts in (emitBillableUsage), and only when NO
+    // per-call response_completed frame already reported this turn's usage — on
+    // Grok those frames are the record, and repeating their aggregate here would
+    // double-count the turn. Grok's turn_completed path never opts in at all: its
+    // aggregate can span several calls, and pushing it as an assistant frame
+    // would also yank the web's context bar to a multi-call sum. `inputTokens`
+    // here is already the NON-cached slice (cachedReadTokens is its own field),
+    // so no subtraction happens — unlike responseCompleted, whose wire figure
+    // merges the two.
+    if (t.emitBillableUsage && !this.usageReportedThisTurn && (t.inputTokens || t.outputTokens || t.cacheReadTokens)) {
+      out.push({
+        kind: 'event',
+        event: {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            ...(this.model ? { model: this.model } : {}),
+            content: [],
+            usage: {
+              input_tokens: t.inputTokens,
+              cache_read_input_tokens: t.cacheReadTokens ?? 0,
+              output_tokens: t.outputTokens,
+            },
+          },
+        },
+      });
+    }
     out.push({
       kind: 'event',
       event: {
@@ -264,6 +302,7 @@ export class GrokTranslator {
     this.messageStarted = false;
     this.nextBlockIndex = 0;
     this.textAcc = '';
+    this.usageReportedThisTurn = false;
     // `summary` is ALWAYS carried (even '') — its presence tells the idle listener "the agent
     // answered for this turn", never to fall back to the Claude ring walk (see the
     // wirePermissionMembrane idle handler's comment on Codex, which Grok shares).
@@ -286,6 +325,10 @@ export class GrokTranslator {
       kind: 'event',
       event: {
         type: 'assistant',
+        // A GAUGE, not a bill: `used` is the whole current context, re-reported
+        // on every publish. The tag makes analytics skip it (frames.ts); the web
+        // reads it for the fill bar exactly as before and ignores the subtype.
+        subtype: 'context_fill',
         ...(size ? { context_window: size } : {}),
         message: {
           role: 'assistant',
@@ -296,6 +339,12 @@ export class GrokTranslator {
       },
     }];
   }
+
+  /** True once a per-call response_completed frame reported usage for the CURRENT
+   *  turn — the signal that the per-call frames are this turn's usage record and
+   *  the boundary must not repeat their aggregate (see finishTurn). Grok sets it;
+   *  OpenCode never does (its dialect has no response_completed). */
+  private usageReportedThisTurn = false;
 
   /** Session-cumulative cost as last reported by usage_update; deltas are per-turn. */
   private cumulativeCostUsd = 0;
@@ -309,6 +358,7 @@ export class GrokTranslator {
   private responseCompleted(update: any): GrokAction[] {
     const u = update?.usage;
     if (!u) return [];
+    this.usageReportedThisTurn = true;
     // A zero-content `assistant` event drives the chat's context-fill bar. ACP's
     // input_tokens is the WHOLE context of the model call (cache included), so the
     // non-cached slice is input minus cache_read — same convention as codex-translate.

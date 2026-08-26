@@ -134,6 +134,67 @@ describe('usage recorder', () => {
     expect(rows(d)[0].output_tokens).toBe(3);
   });
 
+  /*
+   * The OpenCode shape: the context_fill gauge re-reports the whole context as
+   * input_tokens on every publish, and the real per-turn bill arrives once at
+   * the boundary (grok-translate.ts promptResult). Only the bill may land in
+   * the row — counting the gauge recorded 8736 input / 0 output / 0 cache for
+   * a turn that really cost 1311 / 6 / 7425.
+   */
+  it('records the OpenCode boundary usage frame and skips the context_fill gauge', () => {
+    mgr.emit('busy', termId);
+    mgr.emit('event', termId, {
+      type: 'assistant', subtype: 'context_fill',
+      message: { role: 'assistant', model: 'openrouter/z-ai/glm-5.2', content: [], usage: { input_tokens: 8736, output_tokens: 0 } },
+    });
+    mgr.emit('event', termId, {
+      type: 'assistant',
+      message: { role: 'assistant', model: 'openrouter/z-ai/glm-5.2', content: [], usage: { input_tokens: 1311, cache_read_input_tokens: 7425, output_tokens: 6 } },
+    });
+    mgr.emit('idle', termId, { declared: false });
+
+    const all = rows(d);
+    expect(all.length).toBe(1);
+    expect(all[0].input_tokens).toBe(1311);
+    expect(all[0].cache_read_tokens).toBe(7425);
+    expect(all[0].output_tokens).toBe(6);
+    expect(all[0].messages).toBe(1); // the gauge is not a usage-bearing message
+  });
+
+  /*
+   * OpenCode reports a REAL per-turn dollar cost (the translator computes the
+   * delta and rides it on the acp_turn result footer). pricing.ts deliberately
+   * has no entry for OpenRouter models because this figure exists — so the
+   * recorder has to actually store it, or the exclusion's premise is false.
+   */
+  it('adds a per-turn reported cost from an ACP result footer', () => {
+    mgr.emit('busy', termId);
+    mgr.emit('event', termId, {
+      type: 'result', subtype: 'acp_turn', is_error: false,
+      usage: { input_tokens: 1311, output_tokens: 6 }, total_cost_usd: 0.0024469632,
+    });
+    mgr.emit('idle', termId, { declared: false });
+    expect(rows(d)[0].cost_usd).toBeCloseTo(0.0024469632, 10);
+    // Footer usage is turn-aggregate, not a message — never double counted.
+    expect(rows(d)[0].input_tokens).toBe(0);
+  });
+
+  /*
+   * Claude's own result footer also carries total_cost_usd, but that figure is
+   * SESSION-cumulative — summing it per turn would multiply the real number.
+   * Claude turns are priced from their tokens instead; only the translator-owned
+   * per-turn deltas (acp_turn / grok_turn) may be ingested.
+   */
+  it('never ingests a Claude result footer cost', () => {
+    mgr.emit('busy', termId);
+    mgr.emit('event', termId, {
+      type: 'result', subtype: 'success', total_cost_usd: 1.23,
+      usage: { input_tokens: 5, output_tokens: 5 },
+    });
+    mgr.emit('idle', termId, { declared: true });
+    expect(rows(d)[0].cost_usd).toBe(0);
+  });
+
   it('ignores frames that arrive with no open turn', () => {
     mgr.emit('event', termId, FRAME);
     expect(rows(d).length).toBe(0);

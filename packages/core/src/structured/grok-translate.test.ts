@@ -95,6 +95,19 @@ describe('GrokTranslator — ACP session/update → Claude-shaped stream', () =>
     });
   });
 
+  /*
+   * The promptResult fallback (cancel/protocol error) opts in to the billable
+   * usage frame OpenCode needs — but on Grok the per-call response_completed
+   * frames ARE the usage record. Once one has reported this turn, the fallback
+   * must not add its aggregate on top, or analytics counts the turn twice.
+   */
+  it('promptResult after response_completed emits no second usage frame', () => {
+    const t = new GrokTranslator();
+    t.translate(fx.responseCompleted as any);
+    const frames = events(t.promptResult({ stopReason: 'cancelled', usage: { inputTokens: 16952, outputTokens: 45 } }));
+    expect(frames.some((e) => e.type === 'assistant' && e.message?.usage)).toBe(false);
+  });
+
   it('a turn whose last agent prose asks a question ends in needs-help, not idle', () => {
     const t = new GrokTranslator();
     const chunk = JSON.parse(JSON.stringify(fx.agentMsgChunk1));
