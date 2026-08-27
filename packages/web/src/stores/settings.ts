@@ -57,6 +57,13 @@ interface SettingsState {
   projectFontSize: number;
   sidebarMaxThreads: number;  // 0 = All (no cap)
   sidebarMaxFiles: number;    // 0 = All (no cap)
+  /**
+   * Whether a project card shows its FILES shelf at all. Off hides the shelf outright
+   * — header, chevron and rows — for people who open files from the browser and never
+   * want the pinned list in the sidebar. Pinning still works and "Browse Files" stays;
+   * this only controls the shelf.
+   */
+  showPinnedFiles: boolean;
   density: Density;
   accent: string;
   coordinatorName: string;   // raw value; empty falls back to "Control Plane" at display (see useDispatchName)
@@ -81,6 +88,7 @@ interface SettingsState {
   setProjectFontSize: (n: number) => void;
   setSidebarMaxThreads: (n: number) => void;
   setSidebarMaxFiles: (n: number) => void;
+  setShowPinnedFiles: (b: boolean) => void;
   setDensity: (d: Density) => void;
   setAccent: (c: string) => void;
   setPushEnabled: (b: boolean) => Promise<void>;
@@ -123,6 +131,7 @@ export const useSettings = create<SettingsState>((set) => ({
   projectFontSize: load('dispatch:projectFontSize', 15),
   sidebarMaxThreads: load('dispatch:sidebarMaxThreads', 10),
   sidebarMaxFiles: load('dispatch:sidebarMaxFiles', 10),
+  showPinnedFiles: load('dispatch:showPinnedFiles', true),
   density: load<Density>('dispatch:density', 'cozy'),
   accent: initialAccent,
   coordinatorName: load('dispatch:coordinatorName', 'Control Plane'),
@@ -140,6 +149,7 @@ export const useSettings = create<SettingsState>((set) => ({
   setProjectFontSize: (n) => { const projectFontSize = Math.max(11, Math.min(22, Math.round(n))); save('dispatch:projectFontSize', projectFontSize); set({ projectFontSize }); },
   setSidebarMaxThreads: (n) => { const sidebarMaxThreads = clampSidebarLimit(n); save('dispatch:sidebarMaxThreads', sidebarMaxThreads); set({ sidebarMaxThreads }); },
   setSidebarMaxFiles: (n) => { const sidebarMaxFiles = clampSidebarLimit(n); save('dispatch:sidebarMaxFiles', sidebarMaxFiles); set({ sidebarMaxFiles }); },
+  setShowPinnedFiles: (b) => { save('dispatch:showPinnedFiles', b); set({ showPinnedFiles: b }); },
   setDensity: (density) => { save('dispatch:density', density); set({ density }); },
   setCoordinatorName: (coordinatorName) => { save('dispatch:coordinatorName', coordinatorName); set({ coordinatorName }); },
   setMultiPane: (b) => { save('dispatch:multiPane', b); set({ multiPane: b }); },
