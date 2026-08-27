@@ -24,7 +24,7 @@ import { AutoArchiveModal } from './AutoArchiveModal';
 import { ThreadLabel } from './ThreadLabel';
 import { SortMenu } from './SortMenu';
 import { useListSort } from '../../stores/listSort';
-import { useSectionCollapse } from '../../stores/sectionCollapse';
+import { useSectionCollapse, collapseKey } from '../../stores/sectionCollapse';
 import { sortThreads, sortAgents, sortFiles, THREAD_SORTS, AGENT_SORTS } from '../../lib/listSort';
 import { api } from '../../api/client';
 import { canReceiveAlerts, ensurePushEnrolled } from '../../lib/push';
@@ -236,10 +236,12 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   const maxThreads = useSettings((s) => s.sidebarMaxThreads);
   const maxFiles = useSettings((s) => s.sidebarMaxFiles);
   const showPinnedFiles = useSettings((s) => s.showPinnedFiles);
-  // Subscribed here rather than inside renderSection: that helper runs once per section
-  // during render, and a hook call in there would be a rules-of-hooks trap the moment a
-  // section is conditionally skipped.
-  const filesCollapsed = useSectionCollapse((s) => s.isCollapsed(session.id, 'files'));
+  // The whole per-project map, subscribed once here rather than inside renderSection:
+  // that helper runs once per section during render, and a hook call in there would be a
+  // rules-of-hooks trap the moment a section is conditionally skipped. Reading the map by
+  // `sec.key` below keeps the read and the write on the same key — a single hard-coded
+  // 'files' read would silently fold the wrong shelf the day another section collapses.
+  const collapsedMap = useSectionCollapse((s) => s.collapsed);
   // Per-card, per-session expansion: "Show N more" reveals the rest until the
   // card unmounts. Deliberately not persisted — the cap is the steady state.
   const [showAllThreads, setShowAllThreads] = useState(false);
@@ -326,7 +328,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
     // Only FILES collapses today; WEB/NOTES are short enough that a shelf toggle would
     // be more chrome than the rows it hides.
     const collapsible = sec.key === 'files';
-    const collapsed = collapsible && filesCollapsed;
+    const collapsed = collapsible && collapsedMap[collapseKey(session.id, sec.key)] === true;
     const items = collapsed ? [] : capped ? all.slice(0, maxFiles) : all;
     return (
       <div key={sec.key} style={{ marginTop: sec.prominent ? DENSITY[density].sectionMt : Math.round(DENSITY[density].sectionMt * 0.7) }}>

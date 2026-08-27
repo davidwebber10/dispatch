@@ -27,7 +27,8 @@ function load(): Collapsed {
 }
 function save(v: Collapsed) { try { localStorage.setItem(SECTION_COLLAPSE_KEY, JSON.stringify(v)); } catch { /* ignore */ } }
 
-const key = (projectId: string, section: string) => `${projectId}:${section}`;
+/** The map key for one project's shelf. Exported so readers can't drift from writers. */
+export const collapseKey = (projectId: string, section: string) => `${projectId}:${section}`;
 
 interface SectionCollapseState {
   collapsed: Collapsed;
@@ -38,13 +39,13 @@ interface SectionCollapseState {
 
 export const useSectionCollapse = create<SectionCollapseState>((set, get) => ({
   collapsed: load(),
-  isCollapsed: (projectId, section) => get().collapsed[key(projectId, section)] === true,
+  isCollapsed: (projectId, section) => get().collapsed[collapseKey(projectId, section)] === true,
   setCollapsed: (projectId, section, v) => {
     const next = { ...get().collapsed };
     // Drop rather than store `false`: absent already means open, and pruning keeps a
     // long-lived blob from accumulating an entry per project the user merely toggled.
-    if (v) next[key(projectId, section)] = true;
-    else delete next[key(projectId, section)];
+    if (v) next[collapseKey(projectId, section)] = true;
+    else delete next[collapseKey(projectId, section)];
     set({ collapsed: next });
     save(next);
   },

@@ -9,7 +9,10 @@ import { useSettings } from '../../stores/settings';
 // were swapped — that exact bug shape has slipped through twice on this project before.
 beforeEach(() => {
   try { localStorage.clear(); } catch { /* ignore */ }
-  useSettings.setState({ mobileViewMode: 'threads' });
+  // showPinnedFiles is reset here, not just in its own describe: it gates whether the
+  // "Files shown" row renders at all, so a case that leaves it off would break the
+  // sidebar-limit suite depending on file order.
+  useSettings.setState({ mobileViewMode: 'threads', showPinnedFiles: true });
 });
 
 describe('GeneralSection — mobile view mode picker', () => {

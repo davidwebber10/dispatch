@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { ProjectCard } from './ProjectCard';
 import { useTabs } from '../../stores/tabs';
 import { useListSort } from '../../stores/listSort';
-import { useSectionCollapse } from '../../stores/sectionCollapse';
+import { useSectionCollapse, collapseKey, SECTION_COLLAPSE_KEY } from '../../stores/sectionCollapse';
 import { useSettings } from '../../stores/settings';
 import { api } from '../../api/client';
 
@@ -26,9 +26,6 @@ const files = (n: number) => Array.from({ length: n }, (_, i) => term(`f${i + 1}
 const rowIds = () => screen.queryAllByRole('button').filter((b) => b.hasAttribute('data-thread-id')).map((b) => b.getAttribute('data-thread-id'));
 const fileRows = () => rowIds().filter((id) => id!.startsWith('f'));
 const collapseBtn = () => screen.getByRole('button', { name: 'Collapse files' });
-
-// Read at module load, before any beforeEach reset can mask what the store ships with.
-const SHIPPED_SHOW_PINNED_FILES = useSettings.getState().showPinnedFiles;
 
 beforeEach(() => {
   localStorage.clear();
@@ -95,6 +92,31 @@ test('the closed state survives a remount — a shelf you closed stays closed', 
   expect(fileRows()).toHaveLength(0);
 });
 
+// The remount above only proves the in-memory store outlived the unmount. What the store
+// exists for is surviving a RELOAD, which means the write has to reach localStorage — so
+// assert the stored blob itself, then rebuild the state from it the way a boot would.
+test('closing a shelf writes through to localStorage under the project-scoped key', () => {
+  useTabs.setState({ byProject: { [SID]: files(3) }, loading: {} } as any);
+  renderCard();
+  fireEvent.click(collapseBtn());
+
+  const stored = JSON.parse(localStorage.getItem(SECTION_COLLAPSE_KEY)!);
+  expect(stored).toEqual({ [collapseKey(SID, 'files')]: true });
+
+  cleanup();
+  useSectionCollapse.setState({ collapsed: stored }); // what a fresh boot would load
+  renderCard();
+  expect(fileRows()).toHaveLength(0);
+});
+
+test('reopening a shelf prunes its key rather than storing false', () => {
+  useTabs.setState({ byProject: { [SID]: files(3) }, loading: {} } as any);
+  renderCard();
+  fireEvent.click(collapseBtn());
+  fireEvent.click(screen.getByRole('button', { name: 'Expand files' }));
+  expect(JSON.parse(localStorage.getItem(SECTION_COLLAPSE_KEY)!)).toEqual({});
+});
+
 test('the collapsed state is per project, not global', () => {
   useSectionCollapse.getState().setCollapsed('other-project', 'files', true);
   useTabs.setState({ byProject: { [SID]: files(3) }, loading: {} } as any);
@@ -121,6 +143,12 @@ test('hiding pinned files leaves threads untouched', () => {
   expect(fileRows()).toHaveLength(0);
 });
 
-test('the setting ships on, so an install that never touches it sees no change', () => {
-  expect(SHIPPED_SHOW_PINNED_FILES).toBe(true);
+// Reads the DECLARED default, not whatever this file's jsdom storage happened to hold at
+// import time: clear storage, drop the module cache, and let the store initialise afresh
+// the way it does on a real boot with nothing saved.
+test('a fresh install with nothing stored shows pinned files', async () => {
+  localStorage.clear();
+  vi.resetModules();
+  const { useSettings: freshSettings } = await import('../../stores/settings');
+  expect(freshSettings.getState().showPinnedFiles).toBe(true);
 });
