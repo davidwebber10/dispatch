@@ -24,6 +24,7 @@ import { AutoArchiveModal } from './AutoArchiveModal';
 import { ThreadLabel } from './ThreadLabel';
 import { SortMenu } from './SortMenu';
 import { useListSort } from '../../stores/listSort';
+import { useSectionCollapse } from '../../stores/sectionCollapse';
 import { sortThreads, sortAgents, sortFiles, THREAD_SORTS, AGENT_SORTS } from '../../lib/listSort';
 import { api } from '../../api/client';
 import { canReceiveAlerts, ensurePushEnrolled } from '../../lib/push';
@@ -234,6 +235,11 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   const density = useSettings((s) => s.density);
   const maxThreads = useSettings((s) => s.sidebarMaxThreads);
   const maxFiles = useSettings((s) => s.sidebarMaxFiles);
+  const showPinnedFiles = useSettings((s) => s.showPinnedFiles);
+  // Subscribed here rather than inside renderSection: that helper runs once per section
+  // during render, and a hook call in there would be a rules-of-hooks trap the moment a
+  // section is conditionally skipped.
+  const filesCollapsed = useSectionCollapse((s) => s.isCollapsed(session.id, 'files'));
   // Per-card, per-session expansion: "Show N more" reveals the rest until the
   // card unmounts. Deliberately not persisted — the cap is the steady state.
   const [showAllThreads, setShowAllThreads] = useState(false);
@@ -305,6 +311,9 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   }
 
   const renderSection = (sec: (typeof SECTIONS)[number]) => {
+    // "Pinned files" off removes the shelf outright — header, chevron and rows. Pinning
+    // and Browse Files are untouched; this is only about the sidebar list.
+    if (sec.key === 'files' && !showPinnedFiles) return null;
     const raw = tabs.filter((t) => sec.types.includes(t.type) && showRow(t));
     // FILES follows the thread sort (files default to newest-first under 'custom');
     // WEB/NOTES keep the server order — they're short and have no sort ask.
@@ -314,10 +323,16 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
     // active-row escape hatch as the thread list above.
     const activeFileHidden = maxFiles > 0 && all.findIndex((t) => t.id === highlightId) >= maxFiles;
     const capped = sec.key === 'files' && maxFiles > 0 && !showAllFiles && !activeFileHidden && all.length > maxFiles;
-    const items = capped ? all.slice(0, maxFiles) : all;
+    // Only FILES collapses today; WEB/NOTES are short enough that a shelf toggle would
+    // be more chrome than the rows it hides.
+    const collapsible = sec.key === 'files';
+    const collapsed = collapsible && filesCollapsed;
+    const items = collapsed ? [] : capped ? all.slice(0, maxFiles) : all;
     return (
       <div key={sec.key} style={{ marginTop: sec.prominent ? DENSITY[density].sectionMt : Math.round(DENSITY[density].sectionMt * 0.7) }}>
-        <SectionHeader label={sec.label} count={all.length} prominent={sec.prominent}>
+        <SectionHeader label={sec.label} count={all.length} prominent={sec.prominent}
+          collapsed={collapsible ? collapsed : undefined}
+          onToggleCollapse={collapsible ? () => useSectionCollapse.getState().toggle(session.id, sec.key) : undefined}>
           {sec.add && (
             <span style={{ position: 'relative', display: 'inline-flex' }}>
               <button title={`Add ${sec.label.toLowerCase()}`} onClick={(e) => {
@@ -341,7 +356,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
               onContext={(x, y) => setCtxMenu({ tab: t, x, y })} />
           </SwipeRow>
         ))}
-        {capped && <ShowMoreRow count={all.length - items.length} onClick={() => setShowAllFiles(true)} />}
+        {capped && !collapsed && <ShowMoreRow count={all.length - items.length} onClick={() => setShowAllFiles(true)} />}
         {sec.key === 'threads' && !items.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No threads yet</div>}
       </div>
     );

@@ -89,3 +89,38 @@ describe('GeneralSection — sidebar list limits', () => {
     expect(useSettings.getState().sidebarMaxFiles).toBe(10);
   });
 });
+
+describe('GeneralSection — pinned files toggle', () => {
+  const toggleFor = (label: string) => {
+    const row = screen.getByText(label).closest('div') as HTMLElement;
+    return within(row).getByRole('button');
+  };
+
+  it('ships on, so project cards keep showing pinned files until you say otherwise', () => {
+    useSettings.setState({ showPinnedFiles: true });
+    render(<GeneralSection />);
+    expect(screen.getByText('Pinned files')).toBeInTheDocument();
+  });
+
+  it('clicking the toggle turns pinned files off and persists it', () => {
+    useSettings.setState({ showPinnedFiles: true });
+    render(<GeneralSection />);
+    fireEvent.click(toggleFor('Pinned files'));
+    expect(useSettings.getState().showPinnedFiles).toBe(false);
+    expect(JSON.parse(localStorage.getItem('dispatch:showPinnedFiles')!)).toBe(false);
+  });
+
+  it('clicking it again on a fresh off render turns them back on', () => {
+    useSettings.setState({ showPinnedFiles: false });
+    render(<GeneralSection />);
+    fireEvent.click(toggleFor('Pinned files'));
+    expect(useSettings.getState().showPinnedFiles).toBe(true);
+  });
+
+  it('the pinned-files toggle never touches the file limit', () => {
+    useSettings.setState({ showPinnedFiles: true, sidebarMaxFiles: 10 });
+    render(<GeneralSection />);
+    fireEvent.click(toggleFor('Pinned files'));
+    expect(useSettings.getState().sidebarMaxFiles).toBe(10);
+  });
+});

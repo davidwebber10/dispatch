@@ -70,6 +70,7 @@ export function GeneralSection({ onDone }: { onDone?: () => void }) {
   const mobileViewMode = useSettings((s) => s.mobileViewMode);
   const sidebarMaxThreads = useSettings((s) => s.sidebarMaxThreads);
   const sidebarMaxFiles = useSettings((s) => s.sidebarMaxFiles);
+  const showPinnedFiles = useSettings((s) => s.showPinnedFiles);
   const coordinatorName = useSettings((s) => s.coordinatorName);
   const pushEnabled = useSettings((s) => s.pushEnabled);
   const [pushMsg, setPushMsg] = useState('');
@@ -147,6 +148,8 @@ export function GeneralSection({ onDone }: { onDone?: () => void }) {
         <div style={row}><span style={item}>Threads shown</span><Stepper value={formatSidebarLimit(sidebarMaxThreads)} onDec={() => useSettings.getState().setSidebarMaxThreads(stepSidebarLimit(sidebarMaxThreads, -1))} onInc={() => useSettings.getState().setSidebarMaxThreads(stepSidebarLimit(sidebarMaxThreads, 1))} /></div>
         <div style={row}><span style={item}>Files shown</span><Stepper value={formatSidebarLimit(sidebarMaxFiles)} onDec={() => useSettings.getState().setSidebarMaxFiles(stepSidebarLimit(sidebarMaxFiles, -1))} onInc={() => useSettings.getState().setSidebarMaxFiles(stepSidebarLimit(sidebarMaxFiles, 1))} /></div>
         <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>Longer lists collapse behind a “Show more” row. Step past 50 for All.</div>
+        <div style={row}><span style={item}>Pinned files</span><Toggle on={showPinnedFiles} onClick={() => useSettings.getState().setShowPinnedFiles(!showPinnedFiles)} /></div>
+        <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>Off hides the FILES shelf from every project. Pinning and “Browse Files” still work.</div>
       </div>
       <Divider />
 
