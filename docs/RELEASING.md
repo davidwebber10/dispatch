@@ -175,7 +175,11 @@ Source: `packages/cli/src/index.ts` (`cmdRelease`). In order, it:
 6. Determines the version: your argument, or (with no argument) the patch bump of the newest
    `v*` tag.
 7. **Refuses if `docs/releases/<version>.md` is missing or empty.**
-8. **Refuses if the root `package.json` version ≠ the version being released.**
+8. **Refuses if ANY of the four `package.json` versions ≠ the version being released**
+   (root + cli + core + web; it names each laggard). The daemon reports its running
+   version from `packages/core/package.json`, so a release that bumps only the root
+   still leaves every updated install announcing the update forever — v2.31.0 shipped
+   that way before this guard checked all four.
 9. **Refuses if that tag already exists.**
 10. `git tag -a <version>` → `git push origin <version>` →
     `gh release create <version> --repo davidwebber10/dispatch --notes-file docs/releases/<version>.md`.

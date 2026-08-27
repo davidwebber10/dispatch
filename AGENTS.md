@@ -90,8 +90,10 @@ Shipping a new version is a **git tag + a GitHub Release**, driven by `dispatch 
 Three things must land on `main` **before** you tag, and the command refuses if any is
 missing:
 
-1. **The version in all four `package.json`** (root + cli + core + web). Bump only the tag and
-   the in-app update prompt never converges.
+1. **The version in all four `package.json`** (root + cli + core + web). The daemon reports
+   its running version from `packages/core/package.json` alone, so bumping only the root
+   ships an update that applies cleanly and then re-announces itself forever (v2.31.0 did).
+   `dispatch release` refuses and names every laggard file.
 2. **A release note at `docs/releases/vX.Y.Z.md`.** It becomes the GitHub Release body and is
    what users read in the update prompt before they install. It is required, not optional.
 3. **Your actual changes**, obviously.
