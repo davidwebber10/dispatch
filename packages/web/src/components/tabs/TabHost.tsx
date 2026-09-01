@@ -7,6 +7,7 @@ import { NotesTab } from './NotesTab';
 import { FileEditorTab } from './FileEditorTab';
 import { ImageFileTab } from './ImageFileTab';
 import { ChatView } from './chat/ChatView';
+import { CliPrettyHint } from './CliPrettyHint';
 import { useTabs } from '../../stores/tabs';
 import { TransportToggle } from '../layout/TransportToggle';
 import { AlertBell } from '../layout/AlertBell';
@@ -30,8 +31,9 @@ function AiThread({ tab }: { tab: Terminal }) {
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
       {/* Structured threads are chat-only (no xterm — it would crash on a missing PTY);
-          CLI threads render the terminal. */}
-      {structured ? <ChatView terminalId={tab.id} /> : <TerminalTab terminalId={tab.id} />}
+          CLI threads render the terminal, topped by a one-time nudge toward Pretty
+          (the terminal's replay can't reliably show a finished turn's prose). */}
+      {structured ? <ChatView terminalId={tab.id} /> : <><CliPrettyHint tab={tab} /><TerminalTab terminalId={tab.id} /></>}
       {/* Desktop: the CLI⇄Pretty transport switch floats over the top-right (the only render
           switch now; mobile keeps the same control in its header). */}
       {!isMobile && (

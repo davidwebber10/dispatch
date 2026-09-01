@@ -26,13 +26,26 @@ export interface Harness {
    * Grok threads — existing PTY threads keep working.
    */
   modes: ReadonlyArray<'cli' | 'pretty'>;
+  /**
+   * The mode a NEW thread starts on when the user saved no per-harness preference.
+   * Claude defaults to `pretty`: the CLI (PTY) view can only ever show what the TUI
+   * leaves in a bounded byte replay — respawns reduce history to a resume stub and a
+   * width change rewraps it into noise — so long turns are only reliably readable on
+   * the structured chat. Absent ⇒ the first listed mode.
+   */
+  defaultMode?: 'cli' | 'pretty';
   /** Models offered for it. `null` means "let the CLI choose". */
   models: { label: string; model: string | null }[];
 }
 
+/** The mode a new thread of this harness starts on absent a saved preference. */
+export function defaultModeFor(h: Harness): 'cli' | 'pretty' {
+  return h.defaultMode ?? h.modes[0];
+}
+
 export const HARNESSES: Harness[] = [
   {
-    id: 'claude', label: 'Claude Code', type: 'claude-code', provider: 'claude', modes: ['cli', 'pretty'],
+    id: 'claude', label: 'Claude Code', type: 'claude-code', provider: 'claude', modes: ['cli', 'pretty'], defaultMode: 'pretty',
     models: [
       { label: 'Default', model: null },
       { label: 'Fable', model: 'fable' },
