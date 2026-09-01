@@ -8,6 +8,7 @@ import { FileEditorTab } from './FileEditorTab';
 import { ImageFileTab } from './ImageFileTab';
 import { ChatView } from './chat/ChatView';
 import { CliPrettyHint } from './CliPrettyHint';
+import { CliStatusCard } from './CliStatusCard';
 import { useTabs } from '../../stores/tabs';
 import { TransportToggle } from '../layout/TransportToggle';
 import { AlertBell } from '../layout/AlertBell';
@@ -31,9 +32,17 @@ function AiThread({ tab }: { tab: Terminal }) {
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
       {/* Structured threads are chat-only (no xterm — it would crash on a missing PTY);
-          CLI threads render the terminal, topped by a one-time nudge toward Pretty
-          (the terminal's replay can't reliably show a finished turn's prose). */}
-      {structured ? <ChatView terminalId={tab.id} /> : <><CliPrettyHint tab={tab} /><TerminalTab terminalId={tab.id} /></>}
+          CLI threads render the terminal, topped by a one-time nudge toward Pretty and
+          the latest declared turn outcome (the TUI collapses report_status's arguments,
+          so a turn's substance was otherwise invisible here). Keyed by thread so a tab
+          switch never carries one thread's outcome state onto another. */}
+      {structured ? <ChatView terminalId={tab.id} /> : (
+        <>
+          <CliPrettyHint tab={tab} />
+          <CliStatusCard key={tab.id} tab={tab} />
+          <TerminalTab terminalId={tab.id} />
+        </>
+      )}
       {/* Desktop: the CLI⇄Pretty transport switch floats over the top-right (the only render
           switch now; mobile keeps the same control in its header). */}
       {!isMobile && (
