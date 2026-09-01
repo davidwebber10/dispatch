@@ -20,6 +20,25 @@ function parseReplayBytes(url: string | undefined): number | undefined {
 }
 
 /**
+ * `cols`/`rows` declare the viewer's fitted size at connect time, so the pty can be
+ * resized BEFORE the replay is read (see the declared-size block below). Both must
+ * be sane positive integers or the declaration is ignored entirely.
+ */
+function parseDeclaredSize(url: string | undefined): { cols: number; rows: number } | null {
+  if (!url) return null;
+  try {
+    const params = new URL(url, 'http://dispatch.local').searchParams;
+    const cols = Number(params.get('cols'));
+    const rows = Number(params.get('rows'));
+    if (!Number.isInteger(cols) || !Number.isInteger(rows)) return null;
+    if (cols < 2 || cols > 1000 || rows < 2 || rows > 500) return null;
+    return { cols, rows };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * `meta=1` opts the client into the scrollback-offset protocol: one JSON control
  * frame before the replay bytes. Absent (an old browser tab against a new daemon)
  * the stream stays byte-for-byte what it has always been — that tab would print
@@ -84,6 +103,20 @@ export function handleTerminalConnection(
     if (isPtyType(terminal.type) && !ptyManager.isAlive(targetId)) {
       ws.close(1011, 'Terminal process is not running');
       return;
+    }
+  }
+
+  // A viewer that declared its fitted size gets the pty resized BEFORE the replay is
+  // read. A width change evicts the ring (PTYManager.resize → trimToNow) — bytes
+  // wrapped for another width would only replay as shredded columns — and the SIGWINCH
+  // makes the TUI repaint at the new size, arriving as live data on this same socket.
+  // A matching size is a no-op, and absent params (an older client) keep the
+  // historical order: replay first, resize when the client's first message lands.
+  const declared = parseDeclaredSize(req.url);
+  if (declared) {
+    const current = ptyManager.getSize(targetId);
+    if (current && (current.cols !== declared.cols || current.rows !== declared.rows)) {
+      ptyManager.resize(targetId, declared.cols, declared.rows);
     }
   }
 

@@ -363,3 +363,59 @@ describe('replay meta', () => {
     }
   });
 });
+
+// ---- declared viewer size (the width-scramble fix): cols/rows ride the ws URL so the
+// server can resize the pty BEFORE reading the replay ----
+
+describe('declared size on the URL', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  test('the size getter is read per connect and lands as cols/rows params', () => {
+    const urls: string[] = [];
+    let size: { cols: number; rows: number } | null = { cols: 132, rows: 43 };
+    const sockets: FakeTermWS[] = [];
+    const sock = openTerminalSocket({
+      terminalId: 't1',
+      onData: () => {},
+      size: () => size,
+      wsFactory: (u) => { urls.push(u); const ws = new FakeTermWS(); sockets.push(ws); return ws; },
+    });
+    expect(urls[0]).toContain('cols=132');
+    expect(urls[0]).toContain('rows=43');
+
+    // The viewer was re-fitted between connects: the reconnect must declare the
+    // CURRENT size, not the construction-time one.
+    size = { cols: 80, rows: 24 };
+    sockets[0].onopen!();
+    sockets[0].onclose!();
+    vi.advanceTimersByTime(500);
+    expect(urls[1]).toContain('cols=80');
+    expect(urls[1]).toContain('rows=24');
+    sock.close();
+  });
+
+  test('a null size (not fitted yet) omits the params entirely', () => {
+    const urls: string[] = [];
+    const sock = openTerminalSocket({
+      terminalId: 't1',
+      onData: () => {},
+      size: () => null,
+      wsFactory: (u) => { urls.push(u); return new FakeTermWS(); },
+    });
+    expect(urls[0]).not.toContain('cols=');
+    expect(urls[0]).not.toContain('rows=');
+    sock.close();
+  });
+
+  test('no size getter at all keeps the URL byte-identical to the old client', () => {
+    const urls: string[] = [];
+    const sock = openTerminalSocket({
+      terminalId: 't1',
+      onData: () => {},
+      wsFactory: (u) => { urls.push(u); return new FakeTermWS(); },
+    });
+    expect(urls[0]).not.toContain('cols=');
+    sock.close();
+  });
+});

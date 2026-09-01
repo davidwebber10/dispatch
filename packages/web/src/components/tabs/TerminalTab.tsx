@@ -393,6 +393,10 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       const newSock = socketFactory({
         terminalId,
         replayBytes: nextSize,
+        // Same declared size as the primary socket: a rebuild whose width silently
+        // differed from the pty's would replay rewrapped noise (defined below;
+        // rebuilds only ever run after the primary connect, so it's initialized).
+        size: () => currentSize(),
         // Arrives BEFORE the replay bytes, which is the whole point: it lets us
         // decide whether this window is worth showing before anything is destroyed.
         onMeta: (m) => {
@@ -443,9 +447,51 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       openSockets.add(newSock);
     }
 
+    let lastW = -1, lastH = -1, lastCols = -1, lastRows = -1, pending = false;
+    // True once a REAL fit has happened (non-zero host box) — the gate for declaring
+    // a size to the server. Without it, currentSize() would report xterm's 80×24
+    // default and the server would resize the pty to a size nobody renders at.
+    let fitted = false;
+    const applyFit = (opts?: { alwaysNotify?: boolean }) => {
+      const el = hostRef.current;
+      // Skip while backgrounded: iOS reports a collapsed visual viewport and a
+      // fit here would tell Grok it is 10×8. We refit on the way back instead.
+      if (disposed || !el || document.hidden) return;
+      const w = el.clientWidth, h = el.clientHeight;
+      if (w === 0 || h === 0) return;
+      try { fit.fit(); } catch { return; }
+      fitted = true;
+      lastW = w; lastH = h;
+      const changed = term.cols !== lastCols || term.rows !== lastRows;
+      if (changed || opts?.alwaysNotify) {
+        lastCols = term.cols; lastRows = term.rows;
+        sockRef.current?.resize(term.cols, term.rows);
+      }
+      rowMeasureRef.current();
+    };
+    const scheduleFit = () => {
+      if (pending) return;
+      pending = true;
+      requestAnimationFrame(() => {
+        pending = false;
+        const el = hostRef.current;
+        if (disposed || !el) return;
+        if (el.clientWidth === lastW && el.clientHeight === lastH) return;
+        applyFit();
+      });
+    };
+    // Fit BEFORE the socket opens (the host is laid out by effect time), so the
+    // connect below can declare the real viewer size and the server can resize the
+    // pty ahead of reading the replay — the width-scramble fix. sockRef is still
+    // null here, so this fit sends no resize message; the URL params carry it.
+    applyFit();
+    /** The size the socket declares on every (re)connect; null until truly fitted. */
+    const currentSize = () => (fitted && term.cols > 0 && term.rows > 0 ? { cols: term.cols, rows: term.rows } : null);
+
     const sock = socketFactory({
       terminalId,
       replayBytes: initialReplay,
+      size: currentSize,
       // This socket owns the view, so its replay window IS what the reader sees —
       // on the first connect and again after every reconnect-driven replay.
       onMeta: (m) => { if (!disposed) displayedStartOffset = m.startOffset; },
@@ -467,35 +513,6 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     // period so a genuinely-quiet terminal doesn't spin forever).
     const loadTimer = setTimeout(() => setLoading(false), 6000);
     term.onData((d) => sockRef.current?.send(d));
-
-    let lastW = -1, lastH = -1, lastCols = -1, lastRows = -1, pending = false;
-    const applyFit = (opts?: { alwaysNotify?: boolean }) => {
-      const el = hostRef.current;
-      // Skip while backgrounded: iOS reports a collapsed visual viewport and a
-      // fit here would tell Grok it is 10×8. We refit on the way back instead.
-      if (disposed || !el || document.hidden) return;
-      const w = el.clientWidth, h = el.clientHeight;
-      if (w === 0 || h === 0) return;
-      try { fit.fit(); } catch { return; }
-      lastW = w; lastH = h;
-      const changed = term.cols !== lastCols || term.rows !== lastRows;
-      if (changed || opts?.alwaysNotify) {
-        lastCols = term.cols; lastRows = term.rows;
-        sockRef.current?.resize(term.cols, term.rows);
-      }
-      rowMeasureRef.current();
-    };
-    const scheduleFit = () => {
-      if (pending) return;
-      pending = true;
-      requestAnimationFrame(() => {
-        pending = false;
-        const el = hostRef.current;
-        if (disposed || !el) return;
-        if (el.clientWidth === lastW && el.clientHeight === lastH) return;
-        applyFit();
-      });
-    };
 
     // Force a refit even when the container size is unchanged (font-size, or
     // returning from background — iOS often restores the same box).
