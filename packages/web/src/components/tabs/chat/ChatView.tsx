@@ -24,9 +24,9 @@ import { Spinner } from '../../common/Spinner';
 import { ChatImage } from '../../ChatImage';
 import { ContextIndicator } from '../../ContextIndicator';
 import { ToolCall, ToolResult, editDiffStat } from '../ToolCall';
-import { useUI } from '../../../stores/ui';
 import { useToolGroupExpanded } from '../../../hooks/useToolUIState';
 import { modLabel } from '../../../lib/hostkeys';
+import { openFileTab } from '../../../lib/openFileTab';
 
 // Anthropic-vision-supported image types. Only these become a REAL base64 image block
 // the model SEES; anything else (incl. SVG, which the model can't read) falls back to
@@ -231,15 +231,9 @@ export function ChatView({ terminalId }: { terminalId: string }) {
 
   async function openFileInViewer(path: string) {
     if (!sessionId) return;
-    const st = useTabs.getState();
-    const existing = (st.byProject[sessionId] ?? []).find((t) => t.type === 'file' && (t.config?.path as string) === path);
-    let id = existing?.id;
-    if (!id) {
-      try { const t = await api.createTerminal(sessionId, { type: 'file', label: path.split('/').pop() || path, config: { path } }); await st.loadTabs(sessionId); id = t.id; }
-      catch { return; }
-    }
-    st.openTab(id);
-    useUI.getState().requestOpenTab(id);
+    // focus:true — you're on the Threads surface, so the file comes to front. (The
+    // Control Plane calls the same helper with focus:false and stays put.)
+    await openFileTab(sessionId, path, { focus: true });
   }
 
   // Send is enabled by EITHER a non-empty draft OR at least one staged image (a screenshot
