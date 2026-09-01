@@ -31,7 +31,9 @@ import { InsightText } from '../../InsightText';
 import { ApiRetryIndicator, WorkingIndicator } from '../../WorkingIndicator';
 import { Spinner } from '../../common/Spinner';
 import { AskQuestionCard, AnsweredQuestionCard } from '../../tabs/chat/AskQuestionCard';
-import { LoadEarlierButton } from '../../tabs/chat/ChatView';
+import { LoadEarlierButton, ResultFooter, TaskNotice, Thinking } from '../../tabs/chat/ChatView';
+import { MachineryStrip } from '../../tabs/chat/MachineryStrip';
+import { StatusNotice } from '../../tabs/chat/StatusNotice';
 import { useOverseer, useRenderVals } from '../store';
 import { useBootstrapOlderPages } from '../../../hooks/useBootstrapOlderPages';
 import type { StreamMessage } from '../types';
@@ -462,6 +464,49 @@ function renderStream(stream: StreamMessage[]) {
         </MessageScroller.Item>,
       );
       prevDispatch = false;
+    } else if (msg.isMachinery) {
+      // The coordinator's own tool work — the shared machinery strip (same ToolCall/
+      // ToolGroup rows as the agent ChatView). Part of the Dispatch run: no header churn.
+      if (!msg.machineryItems?.length) continue;
+      rows.push(
+        <MessageScroller.Item key={msg.key} messageId={msg.key} style={{ display: 'flex', flexDirection: 'column' }}>
+          <MachineryStrip items={msg.machineryItems} />
+        </MessageScroller.Item>,
+      );
+      prevDispatch = true;
+    } else if (msg.isThinking) {
+      rows.push(
+        <MessageScroller.Item key={msg.key} messageId={msg.key} style={{ display: 'flex', flexDirection: 'column' }}>
+          <Thinking text={msg.text} />
+        </MessageScroller.Item>,
+      );
+      prevDispatch = true;
+    } else if (msg.isStatus) {
+      // The coordinator's declared status — the same state card the agent ChatView and
+      // the CLI view render, instead of the collapsed (previously: dropped) tool call.
+      rows.push(
+        <MessageScroller.Item key={msg.key} messageId={msg.key} style={{ display: 'flex' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <StatusNotice input={msg.statusInput} />
+          </div>
+        </MessageScroller.Item>,
+      );
+      prevDispatch = true;
+    } else if (msg.isFooter) {
+      if (!msg.footerItem) continue;
+      rows.push(
+        <MessageScroller.Item key={msg.key} messageId={msg.key} style={{ display: 'flex', flexDirection: 'column' }}>
+          <ResultFooter item={msg.footerItem} />
+        </MessageScroller.Item>,
+      );
+      prevDispatch = true;
+    } else if (msg.isNotice) {
+      rows.push(
+        <MessageScroller.Item key={msg.key} messageId={msg.key} style={{ display: 'flex', flexDirection: 'column' }}>
+          <TaskNotice text={msg.text} />
+        </MessageScroller.Item>,
+      );
+      prevDispatch = true;
     } else if (msg.isAgentCard) {
       if (!msg.agentId) continue;
       rows.push(

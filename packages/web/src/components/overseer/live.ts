@@ -12,6 +12,7 @@
 //   worker      → { transport: 'structured', agentType, mission? }            (managed)
 
 import type { ConvItem, PendingPermission, PermissionQuestion, Terminal } from '../../api/types';
+import { isReportStatusTool, parseReportStatus } from '../tabs/chat/reportStatus';
 import { btn, m, mission as makeMission, outc, th } from './data';
 import {
   AGENT_TYPE,
@@ -298,6 +299,20 @@ function stableKey(it: ConvItem): string {
 /** The coordinator conversation (ConvItem timeline) → the Overseer message stream. */
 export function convItemsToStream(items: ConvItem[]): StreamMessage[] {
   const out: StreamMessage[] = [];
+  // Consecutive generic tool/tool-result items buffer here and flush as ONE 'machinery'
+  // StreamMessage (rendered by the shared MachineryStrip) the moment anything that is
+  // not machinery arrives — mirroring renderTimeline's pushMach/flushMach strips.
+  let machinery: ConvItem[] = [];
+  const flushMachinery = () => {
+    if (!machinery.length) return;
+    const first = machinery[0];
+    const key = `mach${first.toolId ?? first.uuid ?? out.length}`;
+    out.push({ ...m('machinery', null, '', '', key), key, isMachinery: true, machineryItems: machinery });
+    machinery = [];
+  };
+  // report_status tool_use ids whose `{ok:true}` result must be swallowed (the status
+  // itself renders as a card; a stray result row under it would double the record).
+  const statusIds = new Set<string>();
   // Pairs an agent tool_use (by toolId) with its later tool_result — tool calls always
   // precede their result in the timeline, so a single forward pass suffices.
   const pendingCalls = new Map<string, { toolName: string; args: Record<string, unknown> }>();
@@ -311,10 +326,19 @@ export function convItemsToStream(items: ConvItem[]): StreamMessage[] {
 
   items.forEach((it) => {
     const key = stableKey(it);
-    if (it.kind === 'user' && it.text?.trim()) out.push(m('user', 'You', it.text, '', key));
-    else if (it.kind === 'assistant' && it.text?.trim()) out.push(m('overseer', 'Control Plane', it.text, '', key));
-    else if (it.kind === 'image' && it.imageUrl) out.push(imageMessage(it.imageUrl, it.imageAlt, key, it.imageFromUser === true));
-    else if (it.kind === 'tool' && it.toolId && it.toolName === 'AskUserQuestion') {
+    if (it.kind === 'user' && it.text?.trim()) { flushMachinery(); out.push(m('user', 'You', it.text, '', key)); }
+    else if (it.kind === 'assistant' && it.text?.trim()) { flushMachinery(); out.push(m('overseer', 'Control Plane', it.text, '', key)); }
+    else if (it.kind === 'image' && it.imageUrl) { flushMachinery(); out.push(imageMessage(it.imageUrl, it.imageAlt, key, it.imageFromUser === true)); }
+    else if (it.kind === 'thinking' && it.text?.trim()) {
+      flushMachinery();
+      out.push({ ...m('thinking', null, it.text, '', `th${key}`), isThinking: true });
+    } else if (it.kind === 'result') {
+      flushMachinery();
+      out.push({ ...m('footer', null, '', '', `rf${key}`), isFooter: true, footerItem: it });
+    } else if (it.kind === 'notice' && it.text?.trim()) {
+      flushMachinery();
+      out.push({ ...m('notice', null, it.text, '', `tn${key}`), isNotice: true });
+    } else if (it.kind === 'tool' && it.toolId && it.toolName === 'AskUserQuestion') {
       try {
         const input = it.toolInput ? JSON.parse(it.toolInput) : {};
         if (Array.isArray(input.questions)) pendingQuestions.set(it.toolId, input.questions);
@@ -323,19 +347,32 @@ export function convItemsToStream(items: ConvItem[]): StreamMessage[] {
       let args: Record<string, unknown> = {};
       try { args = it.toolInput ? JSON.parse(it.toolInput) : {}; } catch { /* still streaming / malformed input */ }
       pendingCalls.set(it.toolId, { toolName: it.toolName, args });
+    } else if (it.kind === 'tool' && isReportStatusTool(it.toolName) && parseReportStatus(it.toolInput)) {
+      // The coordinator's own declared status — a card, not a collapsed tool row (the
+      // same burying fix the agent ChatView and the CLI view already have).
+      flushMachinery();
+      if (it.toolId) statusIds.add(it.toolId);
+      out.push({ ...m('status', null, '', '', `rs${key}`), isStatus: true, statusInput: it.toolInput });
+    } else if (it.kind === 'tool') {
+      // Generic machinery (Bash/Read/Edit/…, or a still-streaming report_status whose
+      // input doesn't parse yet): buffer into the current strip.
+      machinery.push(it);
     } else if (it.kind === 'tool-result' && it.toolId && pendingQuestions.has(it.toolId)) {
       // The coordinator's own AskUserQuestion just got its (durable, transcript-backed)
       // answer — render the collapsed record instead of dropping the pair silently, which
       // is what happened before this branch existed (nothing here ever matched a
       // 'tool'/AskUserQuestion or its paired 'tool-result', so both fell through unhandled).
+      flushMachinery();
       out.push(answeredQuestionMessage(pendingQuestions.get(it.toolId)!, it.text ?? '', `aq${key}`));
-    } else if (it.kind === 'tool-result' && it.toolId && !it.isError) {
-      const call = pendingCalls.get(it.toolId);
-      if (!call) return; // no matching tool_use in this window (e.g. trimmed backlog)
+    } else if (it.kind === 'tool-result' && it.toolId && statusIds.has(it.toolId)) {
+      // report_status's `{ok:true}` — already represented by the status card above.
+    } else if (it.kind === 'tool-result' && it.toolId && pendingCalls.has(it.toolId) && !it.isError) {
+      const call = pendingCalls.get(it.toolId)!;
       let result: Record<string, unknown> = {};
       try { result = it.text ? JSON.parse(it.text) : {}; } catch { return; } // not a JSON tool result
       const agentId = typeof result.agentId === 'string' ? result.agentId : undefined;
       if (!agentId) return;
+      flushMachinery();
       const action = AGENT_TOOL_ACTION[call.toolName];
       if (call.toolName === 'spawn_agent' || call.toolName === 'queue_agent') {
         const name = (typeof result.label === 'string' && result.label.trim()) || 'Agent';
@@ -347,10 +384,21 @@ export function convItemsToStream(items: ConvItem[]): StreamMessage[] {
         const known = knownAgents.get(agentId);
         out.push(agentCardMessage(agentId, known?.name ?? agentId, known?.agentType, known?.mission, action, `ac${key}`));
       }
+    } else if (it.kind === 'tool-result') {
+      // An agency result whose call fell outside the window was always dropped — keep
+      // that: its text is internal JSON (agentId bookkeeping), not output to show.
+      if (it.toolId && !pendingCalls.has(it.toolId)) {
+        try {
+          const parsed: unknown = it.text ? JSON.parse(it.text) : null;
+          if (parsed && typeof parsed === 'object' && typeof (parsed as Record<string, unknown>).agentId === 'string') return;
+        } catch { /* not JSON — a real tool's output */ }
+      }
+      // A generic tool's result (paired, adjacency-paired, or orphaned): the strip's
+      // own pairing rules sort it out (see MachineryStrip).
+      machinery.push(it);
     }
-    // thinking/result/system are internal: the Overseer does no tool work and rich
-    // escalations are surfaced as Needs in incr. 3, not in this stream.
   });
+  flushMachinery();
   return out;
 }
 
