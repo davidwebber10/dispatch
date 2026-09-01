@@ -167,3 +167,73 @@ describe('convItemsToStream — answered AskUserQuestion', () => {
     expect(stream.find((m) => m.isAgentCard)?.agentId).toBe('a1');
   });
 });
+
+// ---- Stream render parity: generic tools / thinking / report_status / footers / notices ----
+// Before this, convItemsToStream rendered FOUR kinds and silently dropped the rest — the
+// coordinator looked idle while it ran tools, and its report_status findings never showed.
+describe('convItemsToStream — render parity (machinery, thinking, status, footer, notice)', () => {
+  const bash = (id: string, cmd: string): ConvItem => ({ kind: 'tool', toolId: id, toolName: 'Bash', toolInput: JSON.stringify({ command: cmd }) });
+  const res = (id: string, text = 'ok'): ConvItem => ({ kind: 'tool-result', toolId: id, text });
+
+  it('a generic tool call + its result become ONE machinery message carrying both items', () => {
+    const stream = convItemsToStream([bash('b1', 'ls'), res('b1')]);
+    expect(stream).toHaveLength(1);
+    expect(stream[0].isMachinery).toBe(true);
+    expect(stream[0].machineryItems?.map((i) => [i.kind, i.toolId])).toEqual([['tool', 'b1'], ['tool-result', 'b1']]);
+  });
+
+  it('consecutive tools coalesce into one machinery message; prose splits the run', () => {
+    const stream = convItemsToStream([
+      bash('b1', 'ls'), res('b1'),
+      bash('b2', 'pwd'), res('b2'),
+      { kind: 'assistant', text: 'both ran fine' },
+      bash('b3', 'whoami'), res('b3'),
+    ]);
+    expect(stream.map((s) => s.isMachinery ? `mach:${s.machineryItems?.length}` : s.text)).toEqual([
+      'mach:4', 'both ran fine', 'mach:2',
+    ]);
+  });
+
+  it('report_status becomes a status message and its {ok} result is swallowed', () => {
+    const input = JSON.stringify({ state: 'blocked', summary: 'waiting on CI', blocker: 'run 42 pending' });
+    const stream = convItemsToStream([
+      { kind: 'tool', toolId: 'rs1', toolName: 'mcp__dispatch__report_status', toolInput: input },
+      { kind: 'tool-result', toolId: 'rs1', text: '{"ok":true}' },
+    ]);
+    expect(stream).toHaveLength(1);
+    expect(stream[0].isStatus).toBe(true);
+    expect(stream[0].statusInput).toBe(input);
+  });
+
+  it('a still-streaming report_status (unparsable input) stays generic machinery', () => {
+    const stream = convItemsToStream([
+      { kind: 'tool', toolId: 'rs1', toolName: 'mcp__dispatch__report_status', toolInput: '{"state":"do' },
+    ]);
+    expect(stream).toHaveLength(1);
+    expect(stream[0].isMachinery).toBe(true);
+  });
+
+  it('thinking becomes a thinking message; result becomes a footer; notice becomes a notice', () => {
+    const stream = convItemsToStream([
+      { kind: 'thinking', text: 'weighing options' },
+      { kind: 'result', costUsd: 0.12, tokensIn: 100, tokensOut: 50, durationMs: 4200 },
+      { kind: 'notice', text: 'Background task finished' },
+    ]);
+    expect(stream.map((s) => [!!s.isThinking, !!s.isFooter, !!s.isNotice])).toEqual([
+      [true, false, false], [false, true, false], [false, false, true],
+    ]);
+    expect(stream[0].text).toBe('weighing options');
+    expect(stream[1].footerItem?.costUsd).toBe(0.12);
+    expect(stream[2].text).toBe('Background task finished');
+  });
+
+  it('REGRESSION: agency tools still become agent cards, never machinery', () => {
+    const stream = convItemsToStream([
+      { kind: 'tool', toolId: 's1', toolName: 'spawn_agent', toolInput: JSON.stringify({ agentType: 'implementer' }) },
+      { kind: 'tool-result', toolId: 's1', text: JSON.stringify({ agentId: 'a9', label: 'Fixer' }) },
+    ]);
+    expect(stream).toHaveLength(1);
+    expect(stream[0].isAgentCard).toBe(true);
+    expect(stream[0].isMachinery).toBeFalsy();
+  });
+});

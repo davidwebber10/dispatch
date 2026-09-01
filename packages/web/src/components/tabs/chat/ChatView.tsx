@@ -777,7 +777,7 @@ function AssistantTurn({ children }: { children: React.ReactNode }) {
  * prose paragraphs. Inner rows separate with a fainter hairline; the strip has no side
  * borders or background, so it stays quieter than a card.
  */
-function MachineryBlock({ nodes }: { nodes: React.ReactNode[] }) {
+export function MachineryBlock({ nodes }: { nodes: React.ReactNode[] }) {
   return (
     // Full-bleed (David's call): the -20px margins cancel MessageScroller.Content's side
     // padding so row hover backgrounds run edge to edge; each row re-adds the 20px as its
@@ -793,7 +793,7 @@ function MachineryBlock({ nodes }: { nodes: React.ReactNode[] }) {
 /** One run member paired with its already-resolved result (by toolId, or en bloc by
  * position — see renderTimeline's `pairs` construction), so ToolGroup never has to
  * re-derive pairing. */
-type ToolPair = { tool: ConvItem; result?: ConvItem };
+export type ToolPair = { tool: ConvItem; result?: ConvItem };
 
 /**
  * A run of consecutive same-tool calls, collapsed to one row. Six Reads in a turn
@@ -816,7 +816,7 @@ type ToolPair = { tool: ConvItem; result?: ConvItem };
  * groups within one settled parallel-tool turn would otherwise collide on the same
  * `group:<uuid>` key and share one expansion toggle. `toolId` is unique per tool_use.
  */
-function ToolGroup({ pairs, onViewFile }: { pairs: ToolPair[]; onViewFile: (p: string) => void }) {
+export function ToolGroup({ pairs, onViewFile }: { pairs: ToolPair[]; onViewFile: (p: string) => void }) {
   const firstId = pairs[0].tool.toolId ?? pairs[0].tool.uuid;
   const running = pairs.some((p) => !p.result);
   const [manualOpen, setManualOpen] = useToolGroupExpanded(firstId ? `group:${firstId}` : undefined, undefined);
@@ -953,7 +953,7 @@ function AssistantText({ text }: { text: string }) {
 // identical "Thinking" rows is unscannable, but so is a column of full-width ragged prose —
 // hence the single ellipsized line, width-capped so it doesn't stretch edge to edge. The word
 // "Thinking" returns as the header only while the row is open.
-function Thinking({ text }: { text: string }) {
+export function Thinking({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   if (!text.trim()) return null;
   // One flat line: collapse whitespace, drop backtick fences — markdown isn't rendered here,
@@ -984,7 +984,7 @@ function Thinking({ text }: { text: string }) {
   );
 }
 
-function ResultFooter({ item }: { item: ConvItem }) {
+export function ResultFooter({ item }: { item: ConvItem }) {
   const parts: string[] = [];
   if (typeof item.costUsd === 'number') parts.push(`$${item.costUsd.toFixed(item.costUsd < 0.01 ? 4 : 2)}`);
   const tok = (item.tokensIn ?? 0) + (item.tokensOut ?? 0);

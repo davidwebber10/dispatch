@@ -232,3 +232,49 @@ describe('ConversationStream — API retry indicator', () => {
     expect(screen.getByText(/API error 500 — retrying \(1\/10\)/)).toBeInTheDocument();
   });
 });
+
+// ---- Stream render parity: the new machinery/thinking/status/footer/notice branches ----
+describe('ConversationStream — render parity messages', () => {
+  it('renders a machinery message as tool rows', () => {
+    const stream = convItemsToStream([
+      { kind: 'tool', toolId: 'b1', toolName: 'Bash', toolInput: JSON.stringify({ command: 'ls' }) },
+      { kind: 'tool-result', toolId: 'b1', text: 'ok' },
+    ] as ConvItem[]);
+    useOverseer.setState({ coordinatorStream: stream });
+    render(<ConversationStream />);
+    expect(screen.getByText('Bash')).toBeInTheDocument();
+  });
+
+  it('renders a report_status message as the StatusNotice card', () => {
+    const stream = convItemsToStream([
+      { kind: 'tool', toolId: 'rs1', toolName: 'mcp__dispatch__report_status', toolInput: JSON.stringify({ state: 'blocked', summary: 'waiting on CI', blocker: 'run 42 pending' }) },
+      { kind: 'tool-result', toolId: 'rs1', text: '{"ok":true}' },
+    ] as ConvItem[]);
+    useOverseer.setState({ coordinatorStream: stream });
+    render(<ConversationStream />);
+    expect(screen.getByTestId('status-notice')).toBeInTheDocument();
+    expect(screen.getByText('BLOCKED')).toBeInTheDocument();
+    expect(screen.getByText('run 42 pending')).toBeInTheDocument();
+  });
+
+  it('renders thinking collapsed with its preview text', () => {
+    const stream = convItemsToStream([{ kind: 'thinking', text: 'weighing the options carefully' }] as ConvItem[]);
+    useOverseer.setState({ coordinatorStream: stream });
+    render(<ConversationStream />);
+    expect(screen.getByText(/weighing the options/)).toBeInTheDocument();
+  });
+
+  it('renders a result footer with cost and tokens', () => {
+    const stream = convItemsToStream([{ kind: 'result', costUsd: 0.5, tokensIn: 1000, tokensOut: 200, durationMs: 3000 }] as ConvItem[]);
+    useOverseer.setState({ coordinatorStream: stream });
+    render(<ConversationStream />);
+    expect(screen.getByText(/1,200 tok/)).toBeInTheDocument();
+  });
+
+  it('renders a background-task notice as a muted line', () => {
+    const stream = convItemsToStream([{ kind: 'notice', text: 'Background task finished (exit 0)' }] as ConvItem[]);
+    useOverseer.setState({ coordinatorStream: stream });
+    render(<ConversationStream />);
+    expect(screen.getByText('Background task finished (exit 0)')).toBeInTheDocument();
+  });
+});

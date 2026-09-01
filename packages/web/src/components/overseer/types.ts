@@ -5,7 +5,7 @@
 // STATUS registries below (see spec §10 "production notes"). Keep derivation in
 // data.ts — the store stays a plain state bag.
 
-import type { PermissionQuestion } from '../../api/types';
+import type { ConvItem, PermissionQuestion } from '../../api/types';
 
 export type AgentType = 'planner' | 'implementer' | 'researcher' | 'reviewer';
 // 'scheduled' = a LIVE thread that ended its turn by calling a wake-scheduler tool
@@ -16,7 +16,12 @@ export type AgentType = 'planner' | 'implementer' | 'researcher' | 'reviewer';
 // prompt; this ThreadStatus='waiting' = "needs your input") — 'scheduled' needs neither a
 // human nor a "done" read; it's just asleep.
 export type ThreadStatus = 'working' | 'waiting' | 'done' | 'error' | 'queued' | 'scheduled';
-export type MessageKind = 'user' | 'overseer' | 'note' | 'image' | 'agentCard' | 'answeredQuestion';
+export type MessageKind = 'user' | 'overseer' | 'note' | 'image' | 'agentCard' | 'answeredQuestion'
+  // Render-parity kinds (see live.convItemsToStream): the coordinator's own tool work,
+  // thinking, declared status, turn footers and background-task notices — rendered with
+  // the SAME components the agent ChatView uses, so the two surfaces can't drift apart
+  // block-by-block again.
+  | 'machinery' | 'thinking' | 'status' | 'footer' | 'notice';
 
 // The coordinator tool call an 'agentCard' StreamMessage was built from (spec: agent-card
 // increment). Mirrors the agency-mcp tool names 1:1 so the card's action label reads as a
@@ -135,6 +140,27 @@ export interface StreamMessage {
   isAnsweredQuestion?: boolean;
   questions?: PermissionQuestion[];
   resultText?: string;
+  // machinery (kind 'machinery') — a consecutive run of the coordinator's OWN generic
+  // tool calls + results, carried as the raw ConvItems and rendered by the shared
+  // <MachineryStrip> (components/tabs/chat/MachineryStrip.tsx) with the agent
+  // ChatView's ToolCall/ToolGroup pieces. Optional so m() and every existing
+  // StreamMessage stay valid without change — same pattern as the flags above.
+  isMachinery?: boolean;
+  machineryItems?: ConvItem[];
+  // thinking (kind 'thinking') — a reasoning block; `text` carries the thought,
+  // rendered collapsed-with-preview by the shared <Thinking>.
+  isThinking?: boolean;
+  // status (kind 'status') — the coordinator's own report_status call; `statusInput`
+  // is the raw tool-argument JSON, rendered by the shared <StatusNotice>.
+  isStatus?: boolean;
+  statusInput?: string;
+  // footer (kind 'footer') — the turn's `result` bookkeeping (cost/tokens/duration),
+  // rendered by the shared <ResultFooter>; `footerItem` is the raw ConvItem.
+  isFooter?: boolean;
+  footerItem?: ConvItem;
+  // notice (kind 'notice') — a background-task completion line; `text` carries the
+  // summary, rendered by the shared <TaskNotice>.
+  isNotice?: boolean;
 }
 
 // An action button on a need card (factory: btn(label, primary)).
