@@ -28,7 +28,7 @@ import { Icon } from '../atoms';
 import { AgentCard } from './AgentCard';
 import { ChatImage } from '../../ChatImage';
 import { InsightText } from '../../InsightText';
-import { ApiRetryIndicator, WorkingIndicator } from '../../WorkingIndicator';
+import { ApiRetryIndicator, CompactingBar, WorkingIndicator } from '../../WorkingIndicator';
 import { Spinner } from '../../common/Spinner';
 import { AskQuestionCard, AnsweredQuestionCard } from '../../tabs/chat/AskQuestionCard';
 import { LoadEarlierButton, ResultFooter, TaskNotice, Thinking } from '../../tabs/chat/ChatView';
@@ -587,6 +587,7 @@ export function ConversationStream() {
   const coordinatorLoadingOlder = useOverseer((s) => s.coordinatorLoadingOlder);
   const coordinatorLoadOlder = useOverseer((s) => s.coordinatorLoadOlder);
   const coordinatorApiRetry = useOverseer((s) => s.coordinatorApiRetry);
+  const coordinatorCompacting = useOverseer((s) => s.coordinatorCompacting);
 
   // Reverse-infinite-scroll trigger, mirroring the agent ChatView's own onScroll threshold
   // (packages/web/src/components/tabs/chat/ChatView.tsx). preserveScrollOnPrepend on the
@@ -641,6 +642,16 @@ export function ConversationStream() {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <AskQuestionCard key={coordinatorPending.requestId} questions={coordinatorPending.questions} onAnswer={coordinatorAnswer} />
                   </div>
+                </MessageScroller.Item>
+              )}
+              {/* Native /compact in progress — the same bar the agent ChatView shows, so a
+                  minutes-long compaction never reads as a dead session. queued={0}: the
+                  stream abstracts item indexes away, so the queued-turn split ChatView does
+                  is not reproduced here — messages sent meanwhile still queue on stdin.
+                  Gated on projectMatches like every direct coordinator store read. */}
+              {projectMatches && coordinatorCompacting && (
+                <MessageScroller.Item messageId="__compacting" style={{ display: 'flex' }}>
+                  <CompactingBar queued={0} />
                 </MessageScroller.Item>
               )}
               {/* single indeterminate spinner while the coordinator works */}
