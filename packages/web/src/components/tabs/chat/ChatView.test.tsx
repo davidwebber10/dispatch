@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { test, expect, describe, it, beforeAll, beforeEach, vi } from 'vitest';
 import { MessageScroller } from '@shadcn/react/message-scroller';
 import type { ConvItem } from '../../../api/types';
@@ -661,5 +661,39 @@ describe('ChatView — empty list vs reconnecting', () => {
     render(<ChatView terminalId="t1" />);
     expect(await screen.findByText(/start the conversation/i)).toBeInTheDocument();
     expect(screen.queryByText('Reconnecting…')).toBeNull();
+  });
+});
+
+// ---- Back-ports from the Control Plane composer/stream (parity in the other direction) ----
+describe('ChatView — composer back-ports', () => {
+  it('does not send mid-IME-composition: Enter there commits the CJK candidate, not the turn', () => {
+    const spy = vi.spyOn(api, 'sendStructuredMessage').mockResolvedValue(undefined as never);
+    render(<ChatView terminalId="t1" />);
+    const ta = screen.getByPlaceholderText('Message…');
+    fireEvent.change(ta, { target: { value: '日本語' } });
+    fireEvent.keyDown(ta, { key: 'Enter', isComposing: true });
+    expect(spy).not.toHaveBeenCalled();
+    fireEvent.keyDown(ta, { key: 'Enter' });
+    expect(spy).toHaveBeenCalledWith('t1', '日本語');
+  });
+
+  it('shows the OS-aware send hint on the status row', () => {
+    render(<ChatView terminalId="t1" />);
+    expect(screen.getByText(/(⌘|Ctrl\+)↵ send/)).toBeInTheDocument();
+  });
+});
+
+describe('ChatView — paint-settle gate (back-port of the Stream reveal latch)', () => {
+  it('hides the scroller until the open burst settles, then reveals it', () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render(<ChatView terminalId="t1" />);
+      // Hidden through the replay burst — the reader must never watch the catch-up jumps.
+      expect(container.querySelector('[style*="visibility: hidden"]')).not.toBeNull();
+      act(() => { vi.advanceTimersByTime(250); }); // quiet window (180ms) elapses
+      expect(container.querySelector('[style*="visibility: hidden"]')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
