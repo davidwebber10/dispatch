@@ -46,16 +46,28 @@ const start = () => fireEvent.click(screen.getByRole('button', { name: /start ne
 const lastInput = () => (api.createTerminal as any).mock.calls[0][1];
 
 describe('NewThreadModal', () => {
-  it('opens on Claude Code + CLI by default and creates a plain claude-code thread', async () => {
+  it('opens on Claude Code + Pretty by default and creates a structured thread', async () => {
     render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
     expect(screen.getByRole('button', { name: 'Claude Code' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByRole('button', { name: 'CLI mode' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Pretty mode' })).toHaveAttribute('aria-pressed', 'true');
     start();
     await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
     const input = lastInput();
     expect(input.type).toBe('claude-code');
+    expect(input.config).toEqual({ transport: 'structured' });
+  });
+
+  it('a saved defaultMode of cli for claude still wins over the pretty fallback', async () => {
+    (api.getHarnessSettings as any).mockResolvedValueOnce({
+      settings: { 'claude-code': { defaultMode: 'cli' } },
+      opencodeKey: { secret: 'OPENROUTER_API_KEY', present: true },
+    });
+    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'CLI mode' })).toHaveAttribute('aria-pressed', 'true'));
+    start();
+    await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
     // CLI + Default model + no auto-archive → no config at all.
-    expect(input.config).toBeUndefined();
+    expect(lastInput().config).toBeUndefined();
   });
 
   it('carries transport:structured when Pretty mode is chosen for Claude', async () => {
@@ -76,24 +88,25 @@ describe('NewThreadModal', () => {
     expect(lastInput().config.model).toBe('opus');
   });
 
-  it('omits config.model when the Default option stays selected', async () => {
+  it('omits config.model when the Default option stays selected (transport only)', async () => {
     render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
     pickModel('Opus');
     pickModel('Default');
     start();
     await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
-    expect(lastInput().config).toBeUndefined();
+    expect(lastInput().config).toEqual({ transport: 'structured' });
   });
 
-  it('maps a Codex model option to its real slug (5.6 Sol → "gpt-5.6-sol")', async () => {
+  it('selecting Codex resets to its own default mode (cli), not claude\'s pretty', async () => {
     render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: 'Codex' }));
+    expect(screen.getByRole('button', { name: 'CLI mode' })).toHaveAttribute('aria-pressed', 'true');
     pickModel('5.6 Sol');
     start();
     await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
     const input = lastInput();
     expect(input.type).toBe('codex');
-    expect(input.config.model).toBe('gpt-5.6-sol');
+    expect(input.config).toEqual({ model: 'gpt-5.6-sol' });
   });
 
   it('posts the auto-archive policy alongside the transport when the whole row is toggled', async () => {

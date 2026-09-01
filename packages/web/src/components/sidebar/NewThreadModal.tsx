@@ -9,7 +9,7 @@ import { timeAgo } from '../../lib/time';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { DEFAULT_AUTO_ARCHIVE_MS } from '../../lib/autoArchive';
 import type { CcRecentSession, CodexRecentSession, HarnessSettingsResponse, ProviderName, ProviderStatus } from '../../api/types';
-import { HARNESSES, INSTALL_COMMAND, LOGIN_COMMAND, type Harness as Harnesses } from '../../lib/harnesses';
+import { HARNESSES, INSTALL_COMMAND, LOGIN_COMMAND, defaultModeFor, type Harness as Harnesses } from '../../lib/harnesses';
 
 /** The harness (agent/shell) a new thread runs. Maps to the wire `type`. */
 type Harness = Harnesses['id'];
@@ -83,7 +83,9 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
 }) {
   const isMobile = useIsMobile();
   const [harness, setHarness] = useState<Harness>('claude');
-  const [mode, setMode] = useState<Mode>('cli');
+  // The initial harness is claude, so the initial mode is claude's default (pretty —
+  // see defaultModeFor); a saved per-harness preference overrides it once settings load.
+  const [mode, setMode] = useState<Mode>(defaultModeFor(HARNESSES.find((h) => h.id === 'claude')!));
   const [model, setModel] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
@@ -177,7 +179,9 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
     setModel(defaultModelFor(h, harnessSettings));
     const prefMode = harnessSettings?.settings?.[h.type]?.defaultMode;
     if (prefMode && h.modes.includes(prefMode)) setMode(prefMode);
-    else if (!h.modes.includes(mode)) setMode(h.modes[0]); // don't carry a mode into a harness without it
+    // Each harness opens on its OWN default, mirroring the model reset above — carrying
+    // claude's pretty default onto codex would silently change codex's transport.
+    else setMode(defaultModeFor(h));
   }
 
   /**

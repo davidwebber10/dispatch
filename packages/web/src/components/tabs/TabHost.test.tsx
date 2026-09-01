@@ -12,6 +12,8 @@ vi.mock('./TerminalTab', () => ({ TerminalTab: () => <div data-testid="terminal"
 vi.mock('./BrowserTab', () => ({ BrowserTab: () => <div data-testid="browser" /> }));
 vi.mock('./NotesTab', () => ({ NotesTab: () => <div data-testid="notes" /> }));
 vi.mock('./chat/ChatView', () => ({ ChatView: () => <div data-testid="chat" /> }));
+vi.mock('./CliPrettyHint', () => ({ CliPrettyHint: () => <div data-testid="pretty-hint" /> }));
+vi.mock('./CliStatusCard', () => ({ CliStatusCard: () => <div data-testid="cli-status-card" /> }));
 
 function fileTab(path: string): Terminal {
   return {
@@ -58,4 +60,35 @@ it('routes an SVG to the EDITOR, not the image viewer — an SVG is text', () =>
 it('routes uppercase extensions the same way', () => {
   renderPath('ASSETS/ICON.SVG');
   expect(screen.getByTestId('file-editor')).toBeInTheDocument();
+});
+
+function aiTab(config: Record<string, unknown>): Terminal {
+  return {
+    id: 't1', sessionId: 'p1', type: 'claude-code', label: 'thread', pid: 1, externalId: 'e1',
+    workingDir: null, status: 'idle', createdAt: '', config, archivedAt: null, sortOrder: 0,
+  } as unknown as Terminal;
+}
+
+it('a CLI claude thread renders the terminal WITH the Pretty hint and the status card', () => {
+  useTabs.setState({ byProject: { p1: [aiTab({})] } });
+  render(<TabHost terminalId="t1" />);
+  expect(screen.getByTestId('terminal')).toBeInTheDocument();
+  expect(screen.getByTestId('pretty-hint')).toBeInTheDocument();
+  expect(screen.getByTestId('cli-status-card')).toBeInTheDocument();
+});
+
+it('a structured claude thread renders the chat with NO hint and NO card (StatusNotice is inline there)', () => {
+  useTabs.setState({ byProject: { p1: [aiTab({ transport: 'structured' })] } });
+  render(<TabHost terminalId="t1" />);
+  expect(screen.getByTestId('chat')).toBeInTheDocument();
+  expect(screen.queryByTestId('pretty-hint')).toBeNull();
+  expect(screen.queryByTestId('cli-status-card')).toBeNull();
+});
+
+it('a plain shell renders the terminal with NO hint and NO card — no agent behind it', () => {
+  useTabs.setState({ byProject: { p1: [{ ...aiTab({}), type: 'shell' } as unknown as Terminal] } });
+  render(<TabHost terminalId="t1" />);
+  expect(screen.getByTestId('terminal')).toBeInTheDocument();
+  expect(screen.queryByTestId('pretty-hint')).toBeNull();
+  expect(screen.queryByTestId('cli-status-card')).toBeNull();
 });
