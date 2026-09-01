@@ -102,3 +102,14 @@ describe('viewCoordinatorFields — a stale-project coordinator is never surface
     expect(out.hasCoordinator).toBe(false);
   });
 });
+
+// contextWindow rides the same context-info sync as tokens — without it the Composer's
+// meter guesses the window from the model name instead of the wire-true value.
+import { describe as d2, it as it2, expect as ex2 } from 'vitest';
+import { useOverseer as store2 } from './store';
+d2('setCoordinatorContextInfo — contextWindow plumb', () => {
+  it2('stores the wire-true context window alongside tokens', () => {
+    store2.getState().setCoordinatorContextInfo({ contextTokens: 1000, contextWindow: 200_000, compacting: false, compactResult: null, model: 'm', apiRetry: null });
+    ex2(store2.getState().coordinatorContextWindow).toBe(200_000);
+  });
+});

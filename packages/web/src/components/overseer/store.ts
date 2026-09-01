@@ -95,6 +95,7 @@ interface OverseerState {
   coordinatorBusy: boolean; // coordinator turn in flight; pushed in by useCoordinatorSync()
   coordinatorContextTokens?: number; // context fill for the ContextIndicator; pushed in by useCoordinatorSync()
   coordinatorCompacting: boolean; // a native /compact is in progress on the coordinator thread
+  coordinatorContextWindow?: number; // wire-true window size (ACP/OpenCode); absent → the meter falls back to the model's known size
   coordinatorCompactResult: CompactResult | null; // outcome of the coordinator's last compaction attempt
   coordinatorApiRetry: ApiRetry | null; // a model-call retry in flight on the coordinator (e.g. a 529 outage); pushed in by useCoordinatorSync()
   coordinatorModel?: string; // resolved model name for the coordinator thread
@@ -159,7 +160,7 @@ interface OverseerState {
   setCoordinatorStream: (stream: StreamMessage[]) => void;
   setCoordinatorBusy: (busy: boolean) => void;
   /** Pushed in by useCoordinatorSync() from the same useStructuredChat() call as the stream/busy above. */
-  setCoordinatorContextInfo: (info: { contextTokens?: number; compacting: boolean; compactResult: CompactResult | null; model?: string; apiRetry: ApiRetry | null }) => void;
+  setCoordinatorContextInfo: (info: { contextTokens?: number; contextWindow?: number; compacting: boolean; compactResult: CompactResult | null; model?: string; apiRetry: ApiRetry | null }) => void;
   /** Trigger native compaction on the coordinator thread (mirrors useStructuredChat's own `compact`). */
   compactCoordinator: () => void;
   /** Pushed in by useCoordinatorSync() from the same useStructuredChat() call's hasMore/loadingOlder/loadOlder. */
@@ -337,6 +338,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       coordinatorBusy: false,
       coordinatorContextTokens: undefined,
       coordinatorCompacting: false,
+      coordinatorContextWindow: undefined,
       coordinatorCompactResult: null,
   coordinatorApiRetry: null,
       coordinatorModel: undefined,
@@ -400,6 +402,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       coordinatorBusy: false,
       coordinatorContextTokens: undefined,
       coordinatorCompacting: false,
+      coordinatorContextWindow: undefined,
       coordinatorCompactResult: null,
       coordinatorApiRetry: null,
       coordinatorModel: undefined,
@@ -422,6 +425,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   setCoordinatorContextInfo: (info) =>
     set({
       coordinatorContextTokens: info.contextTokens,
+      coordinatorContextWindow: info.contextWindow,
       coordinatorCompacting: info.compacting,
       coordinatorCompactResult: info.compactResult,
       coordinatorModel: info.model,
@@ -460,6 +464,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       coordinatorBusy: false,
       coordinatorContextTokens: undefined,
       coordinatorCompacting: false,
+      coordinatorContextWindow: undefined,
       coordinatorCompactResult: null,
   coordinatorApiRetry: null,
       coordinatorModel: undefined,
@@ -590,7 +595,7 @@ export function useCoordinatorSync(): void {
   // — without it, imageItemFromBlock returns null for path refs and images vanish after a
   // daemon-restart/transcript-resume. (The hook reads sessionId via a ref, so this does
   // NOT re-key the socket effect.)
-  const { items, busy, model, contextTokens, compacting, compactResult, apiRetry, pending, answer, hasMore, loadingOlder, loadOlder } = useStructuredChat(coordinatorId ?? '', coordinatorProject ?? undefined);
+  const { items, busy, model, contextTokens, contextWindow, compacting, compactResult, apiRetry, pending, answer, hasMore, loadingOlder, loadOlder } = useStructuredChat(coordinatorId ?? '', coordinatorProject ?? undefined);
   const stream = useMemo(() => convItemsToStream(items), [items]);
   useEffect(() => {
     setCoordinatorStream(stream);
@@ -599,8 +604,8 @@ export function useCoordinatorSync(): void {
     setCoordinatorBusy(busy);
   }, [busy, setCoordinatorBusy]);
   useEffect(() => {
-    setCoordinatorContextInfo({ contextTokens, compacting, compactResult, model, apiRetry });
-  }, [contextTokens, compacting, compactResult, model, apiRetry, setCoordinatorContextInfo]);
+    setCoordinatorContextInfo({ contextTokens, contextWindow, compacting, compactResult, model, apiRetry });
+  }, [contextTokens, contextWindow, compacting, compactResult, model, apiRetry, setCoordinatorContextInfo]);
   useEffect(() => {
     setCoordinatorPaging({ hasMore, loadingOlder, loadOlder });
   }, [hasMore, loadingOlder, loadOlder, setCoordinatorPaging]);

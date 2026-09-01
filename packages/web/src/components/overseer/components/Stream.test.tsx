@@ -278,3 +278,18 @@ describe('ConversationStream — render parity messages', () => {
     expect(screen.getByText('Background task finished (exit 0)')).toBeInTheDocument();
   });
 });
+
+// ---- compaction visibility: the stream shows the same bar the agent ChatView shows ----
+describe('ConversationStream — compaction bar', () => {
+  it('renders the Compacting bar while the coordinator compacts', () => {
+    useOverseer.setState({ coordinatorCompacting: true } as never);
+    render(<ConversationStream />);
+    expect(screen.getByText(/Compacting context/)).toBeInTheDocument();
+  });
+
+  it('no bar when not compacting', () => {
+    useOverseer.setState({ coordinatorCompacting: false } as never);
+    render(<ConversationStream />);
+    expect(screen.queryByText(/Compacting context/)).not.toBeInTheDocument();
+  });
+});

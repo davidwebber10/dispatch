@@ -42,3 +42,43 @@ describe('Composer — session menu gated on coordinatorProject matching the vie
     expect(screen.getByTitle('Session menu')).toBeInTheDocument();
   });
 });
+
+// ---- QoL parity with the agent ChatView composer: disabled-empty Send + Stop mode ----
+import { fireEvent } from '@testing-library/react';
+import { vi } from 'vitest';
+import { api } from '../../../api/client';
+
+describe('Composer — Send/Stop key parity', () => {
+  // The draft persists per project (useDraft → localStorage), so a previous test's
+  // typed text would leak into the next one's canSend.
+  beforeEach(() => localStorage.clear());
+
+  it('disables Send while the composer is empty and no image is staged', () => {
+    render(<Composer />);
+    expect(screen.getByTitle('Send directive')).toBeDisabled();
+  });
+
+  it('enables Send once text is typed', () => {
+    render(<Composer />);
+    fireEvent.change(screen.getByPlaceholderText(/directive/i), { target: { value: 'go' } });
+    expect(screen.getByTitle('Send directive')).toBeEnabled();
+  });
+
+  it('offers Stop over an empty composer while a turn is in flight, and interrupts on click', () => {
+    const spy = vi.spyOn(api, 'interrupt').mockResolvedValue(undefined as never);
+    useOverseer.setState({ coordinatorBusy: true } as never);
+    render(<Composer />);
+    const stop = screen.getByTitle('Stop');
+    fireEvent.click(stop);
+    expect(spy).toHaveBeenCalledWith('coord-1');
+    spy.mockRestore();
+  });
+
+  it('typing always wins: a busy turn with a drafted follow-up shows Send, not Stop', () => {
+    useOverseer.setState({ coordinatorBusy: true } as never);
+    render(<Composer />);
+    fireEvent.change(screen.getByPlaceholderText(/directive/i), { target: { value: 'also do this' } });
+    expect(screen.getByTitle('Send directive')).toBeInTheDocument();
+    expect(screen.queryByTitle('Stop')).not.toBeInTheDocument();
+  });
+});

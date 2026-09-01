@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
 import { ArrowUp, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip, ArrowBendDownRight, X, Stop } from '@phosphor-icons/react';
 import type { ConvItem, PermissionQuestion } from '../../../api/types';
@@ -26,6 +26,7 @@ import { ContextIndicator } from '../../ContextIndicator';
 import { ToolCall, ToolResult, editDiffStat } from '../ToolCall';
 import { useUI } from '../../../stores/ui';
 import { useToolGroupExpanded } from '../../../hooks/useToolUIState';
+import { modLabel } from '../../../lib/hostkeys';
 
 // Anthropic-vision-supported image types. Only these become a REAL base64 image block
 // the model SEES; anything else (incl. SVG, which the model can't read) falls back to
@@ -261,10 +262,24 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   const keySize = isMobile ? 44 : 34;
   const taPad = Math.max(6, (keySize - 22) / 2); // center the 22px text line against the keys
 
+  // Paint-settle gate (back-port of the Control Plane Stream's reveal latch): the scroller
+  // stays visibility:hidden until the open/reconnect replay burst settles, so the reader
+  // lands at the bottom with zero visible catch-up motion. A pending question forces the
+  // view visible — the CLI is parked on stdin, nothing is bursting, and the question must
+  // never be swallowed by the gate. See Stream.tsx's `ready` doc for the full mechanics.
+  const [ready, setReady] = useState(false);
+  const handleReady = useCallback(() => setReady(true), []);
+  const hasPendingQuestion = !!pending?.questions?.length;
+  // Re-hide on an in-place thread switch — a layout effect so it lands before paint.
+  useLayoutEffect(() => setReady(false), [terminalId]);
+
   return (
     <div className="chat-scope" style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, background: 'var(--color-base)' }}>
       <MessageScroller.Provider autoScroll defaultScrollPosition="end" scrollEdgeThreshold={48}>
-        <MessageScroller.Root style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex' }}>
+        {/* The wrapper (not Root) hosts the not-ready spinner so it isn't hidden with the
+            scroller; visibility (not display) keeps geometry/scroll math working while hidden. */}
+        <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex' }}>
+        <MessageScroller.Root style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', visibility: ready || hasPendingQuestion ? 'visible' : 'hidden' }}>
           <MessageScroller.Viewport preserveScrollOnPrepend onScroll={onViewportScroll} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
             {/* Bottom padding matches the top: the last row — usually the Working… indicator —
                 used to sit 8px off the composer, which read as cramped on a phone. */}
@@ -313,9 +328,15 @@ export function ChatView({ terminalId }: { terminalId: string }) {
               "Loading earlier…" pill while a loadOlder() fetch is in flight. */}
           <LoadingOlderPill show={loadingOlder} />
           <JumpButton />
-          <StickToEndOnLoad terminalId={terminalId} count={items.length} />
+          <StickToEndOnLoad terminalId={terminalId} count={items.length} onReady={handleReady} />
           <BootstrapOlderPages hasMore={hasMore} loadingOlder={loadingOlder} loadOlder={loadOlder} />
         </MessageScroller.Root>
+        {!ready && !hasPendingQuestion && (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Spinner size={20} />
+          </div>
+        )}
+        </div>
       </MessageScroller.Provider>
 
       {/* Dismissible "resume from summary?" card, above the composer (not inside it — see
@@ -429,7 +450,12 @@ export function ChatView({ terminalId }: { terminalId: string }) {
             ref={taRef}
             value={draft}
             onChange={(e) => { setDraft(e.target.value); const el = e.target; el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 180) + 'px'; }}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); } }}
+            onKeyDown={(e) => {
+              // Don't submit mid-IME-composition: CJK candidate selection commits with Enter,
+              // and firing the send there would swallow the composition (Control Plane parity).
+              if (e.nativeEvent.isComposing) return;
+              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
+            }}
             onPaste={onPaste}
             placeholder="Message…"
             rows={1}
@@ -462,7 +488,12 @@ export function ChatView({ terminalId }: { terminalId: string }) {
         </div>
 
         {/* thin status row: muted context-window fill indicator, tappable for detail */}
-        <div style={{ maxWidth: 768, margin: '6px auto 0', display: 'flex', justifyContent: 'flex-end' }}>
+        <div style={{ maxWidth: 768, margin: '6px auto 0', display: 'flex', alignItems: 'center' }}>
+          {/* OS-aware send hint (Control Plane parity): ⌘↵ on a Mac, Ctrl+↵ elsewhere. */}
+          {!isMobile && (
+            <span style={{ font: '400 10px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{modLabel('↵')} send</span>
+          )}
+          <span style={{ marginLeft: 'auto' }} />
           <ContextIndicator contextTokens={contextTokens} contextWindow={contextWindow} compacting={compacting} compactResult={compactResult} model={model} compact={compact} />
         </div>
       </div>
@@ -1018,19 +1049,36 @@ export function ResultFooter({ item }: { item: ConvItem }) {
  * (pre-paint): the stick lands before the browser paints each backfill frame, so the thread
  * opens ALREADY at the bottom instead of visibly scrolling top→bottom through its history.
  */
-function StickToEndOnLoad({ terminalId, count }: { terminalId: string; count: number }) {
+function StickToEndOnLoad({ terminalId, count, onReady }: { terminalId: string; count: number; onReady?: () => void }) {
   const { scrollToEnd } = useMessageScroller();
   const { end } = useMessageScrollerScrollable(); // end === true ⇒ off-tail (content below the fold)
   const settledRef = useRef(false);
   const prevCountRef = useRef(-1);
   const termRef = useRef(terminalId);
+  const readyRef = useRef(false); // latched — onReady fires at most once per catch-up
+  const quietTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useLayoutEffect(() => {
-    // New thread → re-arm so its own backfill re-sticks to the bottom.
+    // New thread → re-arm so its own backfill re-sticks to the bottom, and hide again
+    // until it settles (the parent's paint gate — see the `ready` state at the render).
     if (termRef.current !== terminalId) {
       termRef.current = terminalId;
       settledRef.current = false;
       prevCountRef.current = -1;
+      readyRef.current = false;
+      if (quietTimerRef.current != null) { clearTimeout(quietTimerRef.current); quietTimerRef.current = null; }
+    }
+    // Reveal latch (back-ported from the Control Plane Stream): any real count change
+    // restarts a short quiet-window timer; once ~180ms passes with no further growth the
+    // burst has caught up and onReady fires ONCE. A count regression below re-arms it, so
+    // a ws-reconnect replay hides through ITS catch-up too.
+    if (count < prevCountRef.current) readyRef.current = false;
+    if (!readyRef.current && count !== prevCountRef.current) {
+      if (quietTimerRef.current != null) clearTimeout(quietTimerRef.current);
+      quietTimerRef.current = setTimeout(() => {
+        quietTimerRef.current = null;
+        if (!readyRef.current) { readyRef.current = true; onReady?.(); }
+      }, 180);
     }
     // `items` only ever GROWS or RESETS-TO-EMPTY (useStructuredChat appends or setItems([])),
     // so a count regression unambiguously means the list was cleared/replaced — a ws-reconnect
@@ -1051,7 +1099,11 @@ function StickToEndOnLoad({ terminalId, count }: { terminalId: string; count: nu
     // Count held steady AND we're parked off-tail → the user scrolled up themselves.
     // Disengage for the rest of this thread; native autoScroll owns follow-while-pinned now.
     if (end) settledRef.current = true;
-  }, [terminalId, count, end, scrollToEnd]);
+  }, [terminalId, count, end, scrollToEnd, onReady]);
+
+  useEffect(() => () => {
+    if (quietTimerRef.current != null) clearTimeout(quietTimerRef.current);
+  }, []);
 
   return null;
 }
