@@ -85,6 +85,11 @@ export class RingBuffer {
   private maxSize: number;
   private dropped = false; // oldest data has been trimmed — contents no longer start at process spawn
   private evictedBytes = 0; // monotonic count of bytes trimmed from the head
+  // True when the retained head is a KNOWN-safe emit point (the first byte written
+  // after a trimToNow — the start of a post-resize repaint frame), so getSlice must
+  // not align it forward to the next newline (which could skip the whole retained
+  // window). Ring eviction clears it: a shifted-off chunk leaves an arbitrary head.
+  private headSafe = false;
   public lastWriteAt: Date | null = null;
 
   // 4MB ≈ hours of TUI diff-frames: codex's spinner floods the ring, and the
@@ -103,6 +108,7 @@ export class RingBuffer {
       this.totalSize -= removedBytes;
       this.evictedBytes += removedBytes;
       this.dropped = true;
+      this.headSafe = false;
     }
   }
 
@@ -189,7 +195,10 @@ export class RingBuffer {
 
     const buf = Buffer.from(this.chunks.join(''), 'utf8');
     const cut = capped ? Math.max(0, buf.length - maxBytes!) : 0;
-    const start = alignStart(buf, cut);
+    // An uncapped slice whose head is a trimToNow boundary starts at a fresh
+    // post-resize repaint frame — emitting from byte 0 is safe and aligning
+    // forward could throw the whole retained window away.
+    const start = cut === 0 && this.headSafe ? 0 : alignStart(buf, cut);
     return {
       data: REPLAY_STATE_PREAMBLE + buf.subarray(start).toString('utf8'),
       startOffset: this.evictedBytes + start,
@@ -202,5 +211,24 @@ export class RingBuffer {
     this.lastWriteAt = null;
     this.dropped = false;
     this.evictedBytes = 0;
+    this.headSafe = false;
+  }
+
+  /**
+   * Evict everything retained while keeping the lifetime counters monotonic.
+   * Called on a width-changing resize (see PTYManager.resize): bytes wrapped for
+   * another terminal width can only ever replay as rewrapped noise, so they leave
+   * the replayable window entirely. The full conversation still lives in the
+   * harness's own transcript (the Pretty view) — this ring only owes the viewer a
+   * faithful terminal, and a faithful terminal shows nothing rather than garbage.
+   * An already-empty ring is a no-op, so the flags stay untouched.
+   */
+  trimToNow(): void {
+    if (this.totalSize === 0) return;
+    this.evictedBytes += this.totalSize;
+    this.totalSize = 0;
+    this.chunks = [];
+    this.dropped = true; // a replay can no longer reconstruct the screen → callers nudge a repaint
+    this.headSafe = true; // the next write starts a post-resize repaint frame
   }
 }

@@ -34,6 +34,13 @@ interface Opts {
    *  the consumer should clear its view (e.g. xterm.reset()) so the replayed
    *  scrollback lands on a clean screen instead of duplicating. */
   onReset?: () => void;
+  /** The viewer's CURRENT fitted size, re-read on every (re)connect and sent as
+   *  `cols`/`rows` URL params so the server can resize the pty BEFORE reading the
+   *  replay (a width change evicts unreplayable bytes server-side — the
+   *  width-scramble fix). Return null while no real fit has happened yet:
+   *  declaring xterm's 80×24 default would resize the pty to a size nobody is
+   *  rendering at. Absent, the URL stays byte-identical to the old client. */
+  size?: () => { cols: number; rows: number } | null;
   onClose?: () => void;
   wsFactory?: (url: string) => TerminalWS;
 }
@@ -56,9 +63,11 @@ export function nextReplayStep(current: number): number {
   return Math.max(current, MAX_REPLAY);
 }
 
-function url(terminalId: string, replayBytes: number, meta: boolean): string {
-  const base = wsUrl(`/api/terminals/${terminalId}/ws?replayBytes=${replayBytes}`);
-  return meta ? `${base}&meta=1` : base;
+function url(terminalId: string, replayBytes: number, meta: boolean, size?: { cols: number; rows: number } | null): string {
+  let base = wsUrl(`/api/terminals/${terminalId}/ws?replayBytes=${replayBytes}`);
+  if (meta) base += '&meta=1';
+  if (size) base += `&cols=${size.cols}&rows=${size.rows}`;
+  return base;
 }
 
 /** Returns the parsed control frame, or null when the frame is ordinary terminal
@@ -105,7 +114,7 @@ export function openTerminalSocket(opts: Opts) {
 
   function connect() {
     if (stopped) return;
-    const sock = factory(url(opts.terminalId, replay, wantMeta));
+    const sock = factory(url(opts.terminalId, replay, wantMeta, opts.size?.() ?? null));
     ws = sock;
     // The server sends the control frame first on EVERY connect that asked for it,
     // so the window is exactly one frame wide, per connection.

@@ -958,3 +958,38 @@ test('a Grok thread on mobile is flush — no card margin or host inset', async 
   expect(getByTestId('term-frame').style.margin).toBe('');
   expect(getByTestId('term-frame').style.borderRadius).toBe('');
 });
+
+// ---- declared viewer size: the socket must learn the fitted size so the server can
+// resize the pty BEFORE replaying (the width-scramble fix) ----
+
+test('passes a size getter to the socket that reports the fitted terminal size', async () => {
+  // jsdom boxes have zero dimensions and the component (correctly) refuses to fit —
+  // and therefore to declare a size — for a zero-sized host. Give the host real ones.
+  // jsdom defines these on Element.prototype; shadowing them on HTMLElement.prototype
+  // means restore = delete the shadow (there is no own descriptor to put back).
+  Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 800 });
+  Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => 600 });
+  try {
+    const { factory, created } = makeSocketFactory();
+    render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+    await waitFor(() => expect(created.length).toBeGreaterThan(0));
+    const size = (created[0].opts as any).size;
+    expect(typeof size).toBe('function');
+    // The fake terminal reports 80×24 and the pre-connect fit has run.
+    expect(size()).toEqual({ cols: 80, rows: 24 });
+  } finally {
+    delete (HTMLElement.prototype as { clientWidth?: unknown }).clientWidth;
+    delete (HTMLElement.prototype as { clientHeight?: unknown }).clientHeight;
+  }
+});
+
+test('the size getter reports null when the host never had dimensions (no false 80×24 declare)', async () => {
+  const { factory, created } = makeSocketFactory();
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created.length).toBeGreaterThan(0));
+  const size = (created[0].opts as any).size;
+  expect(typeof size).toBe('function');
+  // jsdom: clientWidth/Height are 0, so no fit ever succeeded — declaring xterm's
+  // 80×24 default would resize the real pty to a size nobody is rendering at.
+  expect(size()).toBeNull();
+});

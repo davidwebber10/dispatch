@@ -68,6 +68,13 @@ export class PTYManager extends EventEmitter {
   resize(sessionId: string, cols: number, rows: number): void {
     const managed = this.ptys.get(sessionId);
     if (!managed) return;
+    // A width change makes every retained byte unreplayable — output wraps (and TUIs
+    // position their cursor) for the width it was written at, so replaying it into a
+    // different-width viewer renders as shredded columns. Evict it; the SIGWINCH this
+    // resize delivers makes the TUI repaint the current screen at the new width, and
+    // that repaint is the first thing the next replay serves. Rows-only changes
+    // (mobile keyboard, nudgeRepaint's wiggle) don't rewrap and keep the scrollback.
+    if (cols !== managed.process.cols) managed.buffer.trimToNow();
     managed.resizeGen++;
     managed.process.resize(cols, rows);
   }
