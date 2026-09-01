@@ -95,6 +95,8 @@ export function Composer() {
   // that belongs to another project while an ensureForProject swap is in flight.
   const showSessionMenu = !!coordinatorId && !!coordinatorProject && coordinatorMatchesView(coordinatorProject, activeId);
   const composerImages = useComposerImages();
+  const coordinatorBusy = useOverseer((s) => s.coordinatorBusy);
+  const coordinatorContextWindow = useOverseer((s) => s.coordinatorContextWindow);
   const coordinatorContextTokens = useOverseer((s) => s.coordinatorContextTokens);
   const coordinatorCompacting = useOverseer((s) => s.coordinatorCompacting);
   const coordinatorCompactResult = useOverseer((s) => s.coordinatorCompactResult);
@@ -102,11 +104,24 @@ export function Composer() {
   const compactCoordinator = useOverseer((s) => s.compactCoordinator);
   const imageCount = composerImages.length;
   const isMobile = useIsMobile();
-
   // Draft TEXT is scoped per coordinator project (not a global store field) — otherwise
   // every Dispatch tab (one per project) would share the SAME draft, leaking text
   // between unrelated projects. Mirrors the agent ChatView's per-terminal useDraft.
   const [composer, setComposer, clearComposer] = useDraft(coordinatorProject ?? '');
+  // Send/Stop key parity with the agent ChatView composer (see its stopMode doc):
+  // Send needs a non-empty draft OR a staged image; over an EMPTY composer during an
+  // in-flight turn the key becomes a Stop (graceful api.interrupt — the current turn
+  // ends, the thread lives). Typing always wins: a drafted follow-up shows Send.
+  const canSend = composer.trim().length > 0 || imageCount > 0;
+  // showSessionMenu doubles as "this coordinator belongs to the viewed project" — the
+  // exact gate a Stop needs too (never brake a foreign coordinator mid-swap).
+  const stopMode = coordinatorBusy && !canSend && showSessionMenu;
+  const doStop = () => {
+    if (!coordinatorId) return;
+    // Graceful: ends the CURRENT TURN and leaves the coordinator alive (the stream-json
+    // `interrupt` control) — deliberately not a process kill.
+    void api.interrupt(coordinatorId).catch(() => { /* best-effort */ });
+  };
   // Mirror the draft in a ref so the async upload loop / dictation callback append to
   // the latest value (across awaits / multiple files) without clobbering it — same
   // pattern as ChatView's draftRef.
@@ -308,29 +323,36 @@ export function Composer() {
             onKeyDown={handleKeyDown}
             onPaste={onPaste}
             placeholder={isMobile ? 'Fire a directive…' : 'Fire a directive to Control Plane…'}
+            enterKeyHint="send"
+
             style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', resize: 'none', color: 'var(--tp)', fontSize: 13.5, lineHeight: 1.5, maxHeight: 120, padding: '7px 2px', fontFamily: 'inherit', overflow: 'auto' }}
           />
         )}
 
-        {/* send → sendDirective */}
+        {/* send → sendDirective; over an empty composer mid-turn the key is a STOP
+            (red-tinted so an active brake never reads as a dead Send) — parity with
+            the agent ChatView composer. Disabled-grey when there is nothing to send. */}
         <button
-          onClick={handleSend}
-          title="Send directive"
+          onClick={stopMode ? doStop : handleSend}
+          disabled={!stopMode && !canSend}
+          title={stopMode ? 'Stop' : 'Send directive'}
+          aria-label={stopMode ? 'Stop' : 'Send directive'}
           style={{
             flex: 'none',
             width: 32,
             height: 32,
             borderRadius: 8,
-            background: 'var(--acc)',
-            color: '#06140B',
+            background: stopMode ? 'color-mix(in srgb, var(--color-status-red) 20%, transparent)' : canSend ? 'var(--acc)' : 'var(--pane)',
+            color: stopMode ? 'var(--color-status-red)' : canSend ? '#06140B' : 'var(--tt)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            cursor: 'pointer',
+            cursor: stopMode || canSend ? 'pointer' : 'default',
             border: 'none',
+            transition: 'background .15s',
           }}
         >
-          <Icon name="ph-paper-plane-right" weight="fill" size={16} />
+          <Icon name={stopMode ? 'ph-stop' : 'ph-paper-plane-right'} weight="fill" size={16} />
         </button>
         {/* session menu (⋯) — Restart / New session / Previous sessions. Opens upward:
             the composer sits at the bottom of the pane. Desktop only — on mobile,
@@ -353,6 +375,7 @@ export function Composer() {
       >
         <ContextIndicator
           contextTokens={coordinatorContextTokens}
+          contextWindow={coordinatorContextWindow}
           compacting={coordinatorCompacting}
           compactResult={coordinatorCompactResult}
           model={coordinatorModel}
