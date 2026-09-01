@@ -34,6 +34,7 @@ import { AskQuestionCard, AnsweredQuestionCard } from '../../tabs/chat/AskQuesti
 import { LoadEarlierButton, ResultFooter, TaskNotice, Thinking } from '../../tabs/chat/ChatView';
 import { MachineryStrip } from '../../tabs/chat/MachineryStrip';
 import { StatusNotice } from '../../tabs/chat/StatusNotice';
+import { openFileTab } from '../../../lib/openFileTab';
 import { useOverseer, useRenderVals } from '../store';
 import { useBootstrapOlderPages } from '../../../hooks/useBootstrapOlderPages';
 import type { StreamMessage } from '../types';
@@ -446,7 +447,7 @@ function NoteMsg({ msg }: { msg: StreamMessage }) {
 // tracks the previously RENDERED row so a skipped (empty) item doesn't suppress the next
 // real Dispatch header.
 
-function renderStream(stream: StreamMessage[]) {
+function renderStream(stream: StreamMessage[], onViewFile?: (path: string) => void) {
   const rows: React.ReactNode[] = [];
   let prevDispatch = false;
 
@@ -470,7 +471,7 @@ function renderStream(stream: StreamMessage[]) {
       if (!msg.machineryItems?.length) continue;
       rows.push(
         <MessageScroller.Item key={msg.key} messageId={msg.key} style={{ display: 'flex', flexDirection: 'column' }}>
-          <MachineryStrip items={msg.machineryItems} />
+          <MachineryStrip items={msg.machineryItems} onViewFile={onViewFile} />
         </MessageScroller.Item>,
       );
       prevDispatch = true;
@@ -588,6 +589,14 @@ export function ConversationStream() {
   const coordinatorLoadOlder = useOverseer((s) => s.coordinatorLoadOlder);
   const coordinatorApiRetry = useOverseer((s) => s.coordinatorApiRetry);
   const coordinatorCompacting = useOverseer((s) => s.coordinatorCompacting);
+  const coordinatorProject = useOverseer((s) => s.coordinatorProject);
+  // "View file" from a machinery row: open (or reuse) the file tab in the project and
+  // STAY PUT (Jason's call) — focus:false, so the Overseer is never navigated away from;
+  // the tab waits on the Threads surface. Stable identity so renderStream isn't re-keyed.
+  const onViewFile = useCallback(
+    (path: string) => { if (coordinatorProject) void openFileTab(coordinatorProject, path, { focus: false }); },
+    [coordinatorProject],
+  );
 
   // Reverse-infinite-scroll trigger, mirroring the agent ChatView's own onScroll threshold
   // (packages/web/src/components/tabs/chat/ChatView.tsx). preserveScrollOnPrepend on the
@@ -631,7 +640,7 @@ export function ConversationStream() {
                   turns — without a tappable control, hasMore:true history is stranded. Gated on
                   projectMatches like every other coordinator read (the cross-tab bleed fix). */}
               <LoadEarlierButton show={projectMatches && coordinatorHasMore && !coordinatorLoadingOlder} onClick={coordinatorLoadOlder} />
-              {renderStream(stream)}
+              {renderStream(stream, onViewFile)}
               {/* The coordinator's OWN AskUserQuestion, rendered inline (mirrors the agent
                   ChatView). Answering unblocks its CLI, which is parked on stdin — without this
                   the "Open Dispatch" chat silently freezes (the question surfaces nowhere else,

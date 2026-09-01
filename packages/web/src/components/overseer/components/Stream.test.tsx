@@ -293,3 +293,30 @@ describe('ConversationStream — compaction bar', () => {
     expect(screen.queryByText(/Compacting context/)).not.toBeInTheDocument();
   });
 });
+
+// ---- file links from machinery: open the tab, stay put (Jason's call 2026-09-01) ----
+describe('ConversationStream — machinery file links', () => {
+  it('View file opens the file tab in the project WITHOUT navigating away', async () => {
+    const { api: apiClient } = await import('../../../api/client');
+    const { useTabs } = await import('../../../stores/tabs');
+    const { useUI } = await import('../../../stores/ui');
+    const create = vi.spyOn(apiClient, 'createTerminal').mockResolvedValue({ id: 'ft-9' } as never);
+    vi.spyOn(useTabs.getState(), 'loadTabs').mockResolvedValue(undefined as never);
+    vi.spyOn(useTabs.getState(), 'openTab').mockImplementation(() => {});
+    useTabs.setState({ byProject: {} } as never);
+    useUI.setState({ pendingOpenTab: null } as never);
+
+    const stream = convItemsToStream([
+      { kind: 'tool', toolId: 'r1', toolName: 'Read', toolInput: JSON.stringify({ file_path: '/repo/notes.md' }), toolFile: '/repo/notes.md' },
+      { kind: 'tool-result', toolId: 'r1', text: 'contents' },
+    ] as ConvItem[]);
+    useOverseer.setState({ coordinatorStream: stream });
+    render(<ConversationStream />);
+
+    fireEvent.click(screen.getByText('Read'));            // expand the settled tool row
+    fireEvent.click(screen.getByText('View file'));
+    await vi.waitFor(() => expect(create).toHaveBeenCalledWith('proj-1', { type: 'file', label: 'notes.md', config: { path: '/repo/notes.md' } }));
+    expect(useUI.getState().pendingOpenTab).toBeNull();   // no navigation — stay put
+    create.mockRestore();
+  });
+});
