@@ -1,7 +1,8 @@
 // Overseer membrane — escalation Need derivation (the real approve/deny/answer cards).
 import { describe, it, expect } from 'vitest';
-import { convItemsToStream, groupByMission, mapStatus, needsFromThreads } from './live';
+import { convItemsToStream, groupByMission, mapStatus, needsFromThreads, terminalToAgentThread } from './live';
 import type { ConvItem, PendingPermission, Terminal } from '../../api/types';
+import { AGENT_TYPE } from './types';
 
 function term(id: string, config: Record<string, unknown>, status = 'needs_input'): Terminal {
   return {
@@ -284,5 +285,17 @@ describe('convItemsToStream — MCP-namespaced agency tools', () => {
       { kind: 'tool-result', toolId: 'gone', text: JSON.stringify({ ok: true, agentId: 'a1' }) },
     ]);
     expect(stream).toHaveLength(0);
+  });
+});
+
+describe('fable review-gate agent types (web)', () => {
+  it('terminalToAgentThread keeps design-reviewer / code-reviewer instead of falling back to implementer', () => {
+    expect(terminalToAgentThread(agent('t-design-reviewer', 'design-reviewer')).type).toBe('design-reviewer');
+    expect(terminalToAgentThread(agent('t-code-reviewer', 'code-reviewer')).type).toBe('code-reviewer');
+  });
+
+  it('AGENT_TYPE has icon+label entries for both', () => {
+    expect(AGENT_TYPE['design-reviewer']).toEqual({ icon: 'ph-ruler', label: 'design review' });
+    expect(AGENT_TYPE['code-reviewer']).toEqual({ icon: 'ph-git-pull-request', label: 'code review' });
   });
 });

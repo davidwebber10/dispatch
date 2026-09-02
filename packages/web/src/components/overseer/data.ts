@@ -345,6 +345,16 @@ const STEPS_BY_TYPE: Record<AgentType, { s: 'done' | 'now' | 'next'; t: string }
     { s: 'now', t: 'Drafting the migration plan' },
     { s: 'next', t: 'Hand the plan up for your approval' },
   ],
+  'design-reviewer': [
+    { s: 'done', t: 'Read the proposed design against the brief' },
+    { s: 'now', t: 'Checking layout, spacing, and copy against the design system' },
+    { s: 'next', t: 'Return a verdict + notes to Dispatch' },
+  ],
+  'code-reviewer': [
+    { s: 'done', t: 'Read the diff and its test coverage' },
+    { s: 'now', t: 'Checking it against the repo conventions' },
+    { s: 'next', t: 'Return a verdict + risks to Dispatch' },
+  ],
 };
 
 export function detail(key: string, missions: Mission[]): ThreadDetail {
