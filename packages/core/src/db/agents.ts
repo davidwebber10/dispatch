@@ -288,6 +288,25 @@ export function agentOverview(db: Database.Database): AgentOverviewRow[] {
   `).all() as AgentOverviewRow[];
 }
 
+/** Look up the run a runner terminal belongs to — the settled listener only has the
+ *  terminalId (from StatusService), never the run id, so role-run finalization needs
+ *  this lookup to find the row to close out. */
+export function getRunByTerminalId(db: Database.Database, terminalId: string): AgentRunRow | null {
+  return (db.prepare('SELECT * FROM agent_runs WHERE terminal_id = ? ORDER BY created_at DESC LIMIT 1').get(terminalId) as AgentRunRow | undefined) ?? null;
+}
+
+/** Role runs still 'working'/'starting' — feeds the wall-clock cap sweep
+ *  (roles/service.ts's sweepWallCap), which checks each one against its own role's
+ *  wallClockCapMin. Ordinary (non-role) schedules are excluded: they have no def to
+ *  cap against and aren't this sweep's concern. */
+export function listActiveRoleRuns(db: Database.Database): AgentRunRow[] {
+  return db.prepare(`
+    SELECT r.* FROM agent_runs r
+    JOIN agent_schedules s ON s.id = r.schedule_id
+    WHERE r.status IN ('working', 'starting') AND s.role_name IS NOT NULL
+  `).all() as AgentRunRow[];
+}
+
 export function attachTerminal(db: Database.Database, runId: string, terminalId: string): AgentRunRow | null {
   db.prepare('UPDATE agent_runs SET terminal_id = ?, updated_at = ? WHERE id = ?').run(terminalId, nowIso(), runId);
   return getRun(db, runId);

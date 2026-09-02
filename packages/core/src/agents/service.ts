@@ -69,6 +69,25 @@ interface SessionTerminalService {
   stopTerminal(terminalId: string): void;
 }
 
+/**
+ * The role-run branch of `runNow`, injected via `setRoleRunner` rather than a
+ * constructor dependency — RolesService already depends on AgentService, so taking
+ * RolesService here too would be a cycle. Implemented by RolesService.spawnRoleRun:
+ * re-parses the role fresh, spawns a structured typed-agent terminal, and attaches +
+ * transitions the run to 'working' itself. Throws (uncaught) on any failure — parse,
+ * project resolution, or spawn — so runNow's existing catch marks the run failed.
+ */
+export interface RoleRunner {
+  spawnRoleRun(schedule: agentsDb.AgentScheduleRow, run: agentsDb.AgentRunRow): void;
+  /**
+   * Task 7: interrupt + fail any role run that's been alive past its role's
+   * wallClockCapMin, then route the failure through retry/2-night-disable
+   * supervision. Optional so a bare-`spawnRoleRun` test double (pre-Task-7 tests)
+   * doesn't need to implement it; `processDueRuns` no-ops when it's absent.
+   */
+  sweepWallCap?(nowIso: string): void;
+}
+
 export interface CreateScheduleRequest {
   projectId: string;
   name: string;
@@ -178,6 +197,8 @@ interface RunStreamState {
 export class AgentService {
   /** Live stream parsers keyed by the runner terminalId. */
   private runStreams = new Map<string, RunStreamState>();
+  /** Role-run delegate, wired post-construction (see RoleRunner doc comment above). */
+  private roleRunner?: RoleRunner;
 
   constructor(
     private db: Database.Database,
@@ -186,6 +207,11 @@ export class AgentService {
     /** Directory for persisted per-run JSONL transcripts (omit to skip persistence, e.g. in tests). */
     private runsDir?: string,
   ) {}
+
+  /** Inject the role-run delegate (RolesService) after both services exist — see RoleRunner. */
+  setRoleRunner(runner: RoleRunner): void {
+    this.roleRunner = runner;
+  }
 
   // The server is authoritative for next_run_at: derive it from the schedule's
   // rule whenever it's created/updated (disabled schedules never have one).
@@ -340,21 +366,31 @@ export class AgentService {
 
     try {
       run = agentsDb.updateRunStatus(this.db, run.id, 'starting')!;
-      // Launch the provider headlessly WITH the prompt so it actually executes
-      // the run autonomously to completion (and exits), instead of opening an
-      // interactive TUI and typing the prompt into it.
-      const terminal = this.sessionService.createRunnerTerminal(
-        schedule.project_id,
-        schedule.provider,
-        schedule.default_terminal_label || schedule.name,
-        schedule.working_dir,
-        schedule.prompt,
-      );
-      run = agentsDb.attachTerminal(this.db, run.id, terminal.id)!;
-      // Set up structured-output parsing + transcript capture for this run's PTY
-      // before it produces output, so we miss nothing.
-      this.beginRunStream(run.id, terminal.id, schedule.provider);
-      run = agentsDb.updateRunStatus(this.db, run.id, 'working', { externalSessionId: terminal.externalId ?? null })!;
+      if (schedule.role_name) {
+        // Role-backed schedule: hand off to the structured typed-agent path instead
+        // of the static-prompt PTY runner. spawnRoleRun re-parses role.md fresh,
+        // spawns the terminal, and attaches + transitions the run to 'working'
+        // itself — re-read the row afterward since it mutated it out from under us.
+        if (!this.roleRunner) throw new Error('role runner not configured');
+        this.roleRunner.spawnRoleRun(schedule, run);
+        run = agentsDb.getRun(this.db, run.id)!;
+      } else {
+        // Launch the provider headlessly WITH the prompt so it actually executes
+        // the run autonomously to completion (and exits), instead of opening an
+        // interactive TUI and typing the prompt into it.
+        const terminal = this.sessionService.createRunnerTerminal(
+          schedule.project_id,
+          schedule.provider,
+          schedule.default_terminal_label || schedule.name,
+          schedule.working_dir,
+          schedule.prompt,
+        );
+        run = agentsDb.attachTerminal(this.db, run.id, terminal.id)!;
+        // Set up structured-output parsing + transcript capture for this run's PTY
+        // before it produces output, so we miss nothing.
+        this.beginRunStream(run.id, terminal.id, schedule.provider);
+        run = agentsDb.updateRunStatus(this.db, run.id, 'working', { externalSessionId: terminal.externalId ?? null })!;
+      }
       this.broadcaster.broadcast({ type: 'agent:run-updated', run: toRun(run) });
       return toRun(run);
     } catch (err: any) {
@@ -365,6 +401,10 @@ export class AgentService {
   }
 
   processDueRuns(now: string = new Date().toISOString()): AgentRun[] {
+    // Sweep wall-capped role runs BEFORE checking what's due: listDueSchedules skips any
+    // schedule with an active run, so a role stuck past its cap would otherwise block its
+    // own next fire forever instead of just this one.
+    this.roleRunner?.sweepWallCap?.(now);
     const due = agentsDb.listDueSchedules(this.db, now);
     return due.map(schedule => {
       const run = this.runNow(schedule.id);
