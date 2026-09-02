@@ -45,3 +45,11 @@ describe('orchestration tuning', () => {
     expect(COORDINATOR_PROMPT).toContain('read_agent ONCE');
   });
 });
+
+describe('coordinator ground rules', () => {
+  it('states the enforceable rule instead of the absolute ban', () => {
+    expect(COORDINATOR_PROMPT).not.toContain('You do NOT write code, read files, or run tools yourself');
+    expect(COORDINATOR_PROMPT).toContain('read-only');
+    expect(COORDINATOR_PROMPT).toContain('denied at the tool layer');
+  });
+});
