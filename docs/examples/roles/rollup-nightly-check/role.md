@@ -1,5 +1,5 @@
 ---
-project: shopify-product-rollup
+project: Shopify Product Rollup
 agentType: researcher
 model: sonnet
 authority: stage

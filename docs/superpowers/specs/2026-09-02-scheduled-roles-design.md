@@ -161,7 +161,10 @@ implementation, v1 ships with the blanket ban (drop the level; keep `observe`/`s
    sonnet, stage).
 3. **ci-pr-babysitter** — global; watches open PRs across projects, reports failures
    and stalls (researcher, sonnet, observe).
-4. **morning-digest** — global; §4 (researcher, sonnet, observe).
+4. **morning-digest** — global; §4 (researcher, sonnet, `stage` — NOT observe:
+   the digest file is the deliverable and `observe` denies all file writes; the
+   brief narrows `stage` to writing `digest.md` + memory proposals only. Resolved
+   during implementation — §4 and the original §7 contradicted each other).
 
 ## Out of scope for v1
 
