@@ -163,6 +163,11 @@ export class RolesService implements RoleRunner {
         timezone,
         enabled: true,
       });
+      // docs/roles.md §3: "re-enabling resumes from a clean slate for the auto-disable
+      // counter" — a schedule row that was auto-disabled by Task 7's 2-consecutive-failed-
+      // nights supervision keeps its counter at 2 until this call zeroes it explicitly; a
+      // fresh row (the `else` branch below) is already 0 by the schema default.
+      agentsDb.setConsecutiveFailures(this.db, existing.id, 0);
     } else {
       this.agentService.createSchedule({
         projectId: project.id,
@@ -429,10 +434,14 @@ export class RolesService implements RoleRunner {
     agentsDb.updateRunStatus(this.db, run.id, outcome === 'failed' ? 'failed' : 'succeeded');
     try { this.sessionService.removeTerminal(terminalId); } catch { /* best effort — may already be gone on the crash path */ }
 
-    // Spec §4: a successful morning-digest run pushes its headline (the file itself is the
-    // deliverable; this is just the tap-through nudge). Best-effort, same as every other push
-    // in this file — a notification failure must never break run finalization.
-    if (roleName === DIGEST_ROLE_NAME && outcome === 'ok') {
+    // Spec §4: a successful OR attention-needing morning-digest run pushes its headline (the
+    // file itself is the deliverable; this is just the tap-through nudge). 'attention' is
+    // exactly the outcome the digest brief reports when the morning matters most — failures
+    // overnight, staged work awaiting review — so gating the push on 'ok' alone silently
+    // dropped the nights a human most needed the nudge. Still never pushes on 'failed'.
+    // Best-effort, same as every other push in this file — a notification failure must never
+    // break run finalization.
+    if (roleName === DIGEST_ROLE_NAME && (outcome === 'ok' || outcome === 'attention')) {
       this.pushService?.notifyThread({
         terminalId,
         sessionId: run.project_id,

@@ -21,7 +21,7 @@ const AUTHORITY_RULES: Record<RoleAuthority, string> = {
 };
 
 const OUTPUT_CONTRACT = `## Output contract
-End the run by calling report_status. End your FINAL message with exactly ONE fenced \`\`\`json block of this shape. Set "outcome" to exactly one of "ok", "attention", or "failed":
+End the run by calling report_status. Keep your ENTIRE final message under 1500 characters total, and put the fenced \`\`\`json block at the end of your final message — the daemon may truncate an over-length message, and truncation must never be able to cut off the contract. End your FINAL message with exactly ONE fenced \`\`\`json block of this shape. Set "outcome" to exactly one of "ok", "attention", or "failed":
 
 \`\`\`json
 {"outcome":"ok","summary":"one paragraph of what happened","links":["https://github.com/..."],"proposedBriefChanges":"optional — omit when none"}

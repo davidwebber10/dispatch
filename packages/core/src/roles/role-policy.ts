@@ -53,6 +53,8 @@ const PUSH_UNCLASSIFIABLE_MSG =
   'Role policy: could not verify the push target — use the plain form `git push <remote> <branch>` ' +
   '(no quoted arguments); main/production stay human-approval-only.';
 
+const AMBIGUOUS_TARGET_MSG = 'Role policy: ambiguous target — name the branch explicitly.';
+
 // Tolerates a run of leading flags/options before the subcommand, including flags whose value
 // is a separate token (`-C ../wt`, `-c user.email=x`, `-R owner/repo`), so an interposed flag
 // can't be used to slip a blocked subcommand past the check. Same technique as coordinator-policy.ts.
@@ -174,6 +176,25 @@ function remoteRefOf(token: string): string {
   return ref.replace(LEADING_REFS_RE, '').replace(LEADING_HEADS_RE, '');
 }
 
+/** Verified live: `git push origin HEAD` and `git push origin @` (git's shorthand for HEAD)
+ *  both allow at the checker above — `remoteRefOf` normalizes `HEAD`/`@` to themselves, which
+ *  never matches PROTECTED_BRANCH_RE, so the push is treated as fine. But the ACTUAL target of
+ *  a bare HEAD/@ push is "whatever branch is currently checked out" — invisible to this policy,
+ *  and a runner sitting on main pushes main. Split into source/target the same way
+ *  `remoteRefOf` does (a `<local>:<remote>` refspec, minus one leading `+`), and flag either
+ *  half: the target half because that's the actual push destination, the source half because a
+ *  `HEAD:<branch>` refspec pushes whatever's checked out to an explicitly named branch — the
+ *  COMMIT is still checkout-dependent even though the destination branch name is visible. */
+function isAmbiguousRefToken(token: string): boolean {
+  return token.toLowerCase() === 'head' || token === '@';
+}
+function hasAmbiguousRef(token: string): boolean {
+  const t = token.startsWith('+') ? token.slice(1) : token;
+  const idx = t.indexOf(':');
+  const parts = idx === -1 ? [t] : [t.slice(0, idx), t.slice(idx + 1)];
+  return parts.some(isAmbiguousRefToken);
+}
+
 // A push flag we can confidently say never redirects or hides the `<remote> <branch>`
 // positionals — pure boolean switches, no attached value, no aliasing effect on argv shape.
 // Anything NOT in this set (most importantly a flag that might take a separate-token value,
@@ -212,6 +233,7 @@ function checkGitPush(cmd: string, authority: RoleAuthority): PolicyDecision | n
     if (flags.some((f) => !PUSH_SAFE_FLAGS.has(f))) return { allow: false, message: PUSH_UNCLASSIFIABLE_MSG };
     if (positional.length < 2) return { allow: false, message: BARE_PUSH_MSG };
     if (positional.length > 2) return { allow: false, message: PUSH_UNCLASSIFIABLE_MSG };
+    if (hasAmbiguousRef(positional[1])) return { allow: false, message: AMBIGUOUS_TARGET_MSG };
 
     const remoteRef = remoteRefOf(positional[1]);
     if (PROTECTED_BRANCH_RE.test(remoteRef)) return { allow: false, message: PROTECTED_PUSH_MSG };

@@ -131,6 +131,10 @@ denied), `gh release`, package publishes, `dispatch update`/`dispatch release`, 
 authority level never overrides that; GitHub branch protection on `main` remains the
 backstop underneath the policy either way.
 
+At `stage`/`stage-deploy` the membrane does not path-scope file writes to the role's own
+deliverable — so the "the runner never edits `role.md`" rule (§2, the brief-rot guard) is
+enforced by the brief text alone in v1, not by the daemon.
+
 ## 6. The Operations project and the morning digest
 
 Global roles (`global: true`) run against a shared **Operations** project rather than a

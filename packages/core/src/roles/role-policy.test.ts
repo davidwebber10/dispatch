@@ -214,6 +214,39 @@ describe('roleToolPolicy — colon refspecs must be checked on the remote side',
   });
 });
 
+describe('roleToolPolicy — bare HEAD/@ push target is ambiguous (invisible to the policy; depends on checkout)', () => {
+  it('denies `git push origin HEAD` at stage and stage-deploy', () => {
+    for (const [name, policy] of [
+      ['stage', stage],
+      ['stage-deploy', stageDeploy],
+    ] as const) {
+      const d = policy('Bash', { command: 'git push origin HEAD' });
+      expect(d.allow, name).toBe(false);
+      if (!d.allow) expect(d.message).toContain('ambiguous target — name the branch explicitly');
+    }
+  });
+
+  it('denies `git push origin @` at stage and stage-deploy', () => {
+    for (const [name, policy] of [
+      ['stage', stage],
+      ['stage-deploy', stageDeploy],
+    ] as const) {
+      const d = policy('Bash', { command: 'git push origin @' });
+      expect(d.allow, name).toBe(false);
+      if (!d.allow) expect(d.message).toContain('ambiguous target — name the branch explicitly');
+    }
+  });
+
+  it('denies a case-varied `git push origin Head` too (case-insensitive for HEAD)', () => {
+    expect(stage('Bash', { command: 'git push origin Head' }).allow).toBe(false);
+  });
+
+  it('still allows `git push origin stage` (an explicitly named, non-ambiguous branch)', () => {
+    expect(stage('Bash', { command: 'git push origin stage' }).allow).toBe(true);
+    expect(stageDeploy('Bash', { command: 'git push origin stage' }).allow).toBe(true);
+  });
+});
+
 describe('roleToolPolicy — WORKFLOW_PROD_MSG names the alternative', () => {
   it('tells the caller to stage the work and leave the deploy decision in the report', () => {
     const d = stageDeploy('Bash', { command: 'gh workflow run deploy.yml -f environment=production' });

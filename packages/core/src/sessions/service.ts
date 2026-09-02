@@ -1303,8 +1303,16 @@ export class SessionService {
     if (!terminal) return;
     let cfg: Record<string, any> = {};
     try { cfg = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
+    // A role-run terminal's final message ends with a fenced ```json contract block (see
+    // roles/seed.ts's OUTPUT_CONTRACT + roles/service.ts#extractContract) — the 400-char cap
+    // every other terminal gets is tight enough to sever the closing fence off an
+    // over-length message, which makes the contract unparseable and silently turns a
+    // genuinely "failed" night into a recorded 'ok' (no retry, no 2-night-disable counter
+    // movement). config.roleRun (set at spawn — see roles/service.ts#handleTerminalExit,
+    // which reads the same field) is how a role-run terminal is identified here.
+    const cap = typeof cfg.roleRun === 'string' && cfg.roleRun ? 4000 : 400;
     cfg.lastOutcome = {
-      summary: detail.summary.slice(0, 400),
+      summary: detail.summary.slice(0, cap),
       needsHelp: detail.needsHelp,
       inferred: detail.inferred,
       ...(detail.state ? { declaredState: detail.state } : {}),

@@ -164,6 +164,22 @@ describe('RolesService', () => {
     expect(all.n).toBe(1);
   });
 
+  it('enable() on an auto-disabled schedule resets consecutive_failures to 0 and reuses the same row (docs/roles.md: "resumes from a clean slate")', () => {
+    writeRole(tmp, 'x', roleMd());
+    const first = svc.enable('x');
+    // Simulate the 2-consecutive-failed-nights auto-disable (Task 7): counter at 2, disabled.
+    agentsDb.setConsecutiveFailures(db, first.scheduleId!, 2);
+    svc.disable('x');
+    expect(agentsDb.getSchedule(db, first.scheduleId!)!.consecutive_failures).toBe(2);
+
+    const reEnabled = svc.enable('x');
+
+    expect(reEnabled.scheduleId).toBe(first.scheduleId); // same row reused, not a new one
+    const row = agentsDb.getSchedule(db, first.scheduleId!)!;
+    expect(row.consecutive_failures).toBe(0);
+    expect(row.enabled).toBe(1);
+  });
+
   it('disable() flips enabled off but keeps the row', () => {
     writeRole(tmp, 'x', roleMd());
     svc.enable('x');
@@ -980,6 +996,19 @@ Read every role's log and write the digest.`;
       sessionId,
       title: 'Daily Digest',
       body: '2 failures overnight.',
+    });
+  });
+
+  it('an "attention" morning-digest run also sends the push headline — attention is exactly when the morning matters', async () => {
+    const { terminalId, sessionId } = fire('morning-digest', digestRoleMd);
+    await settle(terminalId, sessionId, { outcome: 'attention', summary: '1 role disabled, 2 PRs staged for review.' });
+
+    expect(pushCalls).toHaveLength(1);
+    expect(pushCalls[0]).toEqual({
+      terminalId,
+      sessionId,
+      title: 'Daily Digest',
+      body: '1 role disabled, 2 PRs staged for review.',
     });
   });
 

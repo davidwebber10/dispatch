@@ -113,6 +113,22 @@ describe('buildSeedMessage', () => {
     expect(msg).toMatch(/"failed"/);
   });
 
+  // Final-review Finding 2 (Critical): noteTurnOutcome truncates the runner's final message,
+  // which can sever the closing ``` fence off the contract block if the message runs long —
+  // extractContract then returns null and a genuinely "failed" night silently records as 'ok'.
+  // Part (b) of the fix is instructing the runner itself to stay well under any truncation
+  // cap and to put the json block LAST, so a truncation (if it ever happens) trims prose, not
+  // the contract.
+  it('instructs the runner to keep the entire final message under 1500 characters', () => {
+    const msg = buildSeedMessage({ def: BASE_DEF, memory: '', logTail: [], nowIso: NOW });
+    expect(msg).toMatch(/1500 characters/);
+  });
+
+  it('instructs the runner to put the json block at the end of its final message', () => {
+    const msg = buildSeedMessage({ def: BASE_DEF, memory: '', logTail: [], nowIso: NOW });
+    expect(msg).toMatch(/end of (your|the) final message/i);
+  });
+
   it('is pure: same inputs produce the same output, no Date.now dependency', () => {
     const a = buildSeedMessage({ def: BASE_DEF, memory: 'm', logTail: ['{"n":1}'], nowIso: NOW });
     const b = buildSeedMessage({ def: BASE_DEF, memory: 'm', logTail: ['{"n":1}'], nowIso: NOW });
