@@ -232,6 +232,20 @@ const AGENT_TOOL_ACTION: Record<string, AgentCardAction> = {
   start_agent: 'started',
 };
 
+/**
+ * The bare agency tool name behind any MCP namespacing, or undefined for a non-agency
+ * tool. The live coordinator's transcript records mcp__dispatch__spawn_agent (the server
+ * registers as "dispatch" — sessions/service.ts agencyServerSpec), while an unprefixed
+ * spawn_agent can appear too; same endsWith('__…') boundary trick as isReportStatusTool.
+ */
+function agencyToolName(toolName?: string): string | undefined {
+  if (!toolName) return undefined;
+  for (const bare of Object.keys(AGENT_TOOL_ACTION)) {
+    if (toolName === bare || toolName.endsWith(`__${bare}`)) return bare;
+  }
+  return undefined;
+}
+
 /** An 'agentCard' ConvItem pair → an agentCard StreamMessage. Mirrors imageMessage's shape:
  * constructed inline (not via the m() factory) so it stays disjoint from data.ts. */
 function agentCardMessage(
@@ -303,6 +317,11 @@ export function convItemsToStream(items: ConvItem[]): StreamMessage[] {
   // StreamMessage (rendered by the shared MachineryStrip) the moment anything that is
   // not machinery arrives — mirroring renderTimeline's pushMach/flushMach strips.
   let machinery: ConvItem[] = [];
+  // toolIds of every generic call routed into a machinery strip, across the whole window —
+  // the orphan-agency-result drop below must NOT fire for a result whose call is right
+  // here in a strip (e.g. complete_agent's {ok,agentId}), or the call renders "running…"
+  // forever. Only a result whose call truly fell outside the window gets dropped.
+  const machineryCallIds = new Set<string>();
   const flushMachinery = () => {
     if (!machinery.length) return;
     const first = machinery[0];
@@ -343,10 +362,10 @@ export function convItemsToStream(items: ConvItem[]): StreamMessage[] {
         const input = it.toolInput ? JSON.parse(it.toolInput) : {};
         if (Array.isArray(input.questions)) pendingQuestions.set(it.toolId, input.questions);
       } catch { /* still streaming / malformed input */ }
-    } else if (it.kind === 'tool' && it.toolId && it.toolName && AGENT_TOOL_ACTION[it.toolName]) {
+    } else if (it.kind === 'tool' && it.toolId && agencyToolName(it.toolName)) {
       let args: Record<string, unknown> = {};
       try { args = it.toolInput ? JSON.parse(it.toolInput) : {}; } catch { /* still streaming / malformed input */ }
-      pendingCalls.set(it.toolId, { toolName: it.toolName, args });
+      pendingCalls.set(it.toolId, { toolName: agencyToolName(it.toolName)!, args });
     } else if (it.kind === 'tool' && isReportStatusTool(it.toolName) && parseReportStatus(it.toolInput)) {
       // The coordinator's own declared status — a card, not a collapsed tool row (the
       // same burying fix the agent ChatView and the CLI view already have).
@@ -356,6 +375,7 @@ export function convItemsToStream(items: ConvItem[]): StreamMessage[] {
     } else if (it.kind === 'tool') {
       // Generic machinery (Bash/Read/Edit/…, or a still-streaming report_status whose
       // input doesn't parse yet): buffer into the current strip.
+      if (it.toolId) machineryCallIds.add(it.toolId);
       machinery.push(it);
     } else if (it.kind === 'tool-result' && it.toolId && pendingQuestions.has(it.toolId)) {
       // The coordinator's own AskUserQuestion just got its (durable, transcript-backed)
@@ -386,8 +406,10 @@ export function convItemsToStream(items: ConvItem[]): StreamMessage[] {
       }
     } else if (it.kind === 'tool-result') {
       // An agency result whose call fell outside the window was always dropped — keep
-      // that: its text is internal JSON (agentId bookkeeping), not output to show.
-      if (it.toolId && !pendingCalls.has(it.toolId)) {
+      // that: its text is internal JSON (agentId bookkeeping), not output to show. A
+      // result whose call sits in a machinery strip is NOT an orphan — it must reach the
+      // strip so the call doesn't render as running forever (complete_agent's {ok,agentId}).
+      if (it.toolId && !pendingCalls.has(it.toolId) && !machineryCallIds.has(it.toolId)) {
         try {
           const parsed: unknown = it.text ? JSON.parse(it.text) : null;
           if (parsed && typeof parsed === 'object' && typeof (parsed as Record<string, unknown>).agentId === 'string') return;
