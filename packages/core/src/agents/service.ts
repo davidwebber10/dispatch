@@ -82,6 +82,8 @@ export interface CreateScheduleRequest {
   enabled: boolean;
   nextRunAt: string | null;
   defaultTerminalLabel: string | null;
+  /** Role this schedule was materialized from (role.md name); omit for an ordinary, ad-hoc schedule. */
+  roleName?: string | null;
 }
 
 export interface AgentOverviewAgent {

@@ -16,6 +16,8 @@ import { createSessionsRouter } from './routes/sessions.js';
 import { createTerminalsRouter } from './routes/terminals.js';
 import { AgentService } from './agents/service.js';
 import { createAgentsRouter } from './routes/agents.js';
+import { RolesService } from './roles/service.js';
+import { createRolesRouter } from './routes/roles.js';
 import { aggregateSessionStatus } from './status/aggregate.js';
 import { AuthRequestService } from './auth/service.js';
 import { createAuthRouter } from './routes/auth.js';
@@ -398,6 +400,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const toolsBase = options.toolsDir ?? path.join(dispatchDir, 'tools');
   const sessionService = new SessionService(db, ptyManager, path.join(dispatchDir, 'mcp.json'));
   const agentService = new AgentService(db, sessionService, broadcaster);
+  const rolesService = new RolesService({ db, agentService, sessionService });
   const secretsService = options.secretsService ?? new SecretsService(dispatchDir);
   const integrationsService = new IntegrationsService(db);
   sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
@@ -426,6 +429,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   app.use('/api', createTerminalsRouter(sessionService, undefined, statusService));
   app.use('/api/events', createEventsRouter(statusService));
   app.use('/api/agents', createAgentsRouter(agentService));
+  app.use('/api/roles', createRolesRouter(rolesService));
   app.use('/api/providers', createProvidersRouter());
   app.use('/api/servers', createServersRouter(db));
   app.use('/api/secrets', createSecretsRouter(secretsService));
@@ -556,6 +560,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Determine actual server URL after port is known
   const sessionService = new SessionService(db, ptyManager, path.join(dataDir, 'mcp.json'));
   const agentService = new AgentService(db, sessionService, broadcaster, path.join(dataDir, 'runs'));
+  const rolesService = new RolesService({ db, agentService, sessionService });
   // Wakes watchers on peer status edges (see sessions/watch-dispatcher.ts) — wired as an
   // optional StatusService dependency, same shape as the threadAutoNamer activity callback.
   const watchDispatcher = new WatchDispatcher(db, buildWatchDeliver(sessionService));
@@ -744,6 +749,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.use('/api', createTerminalsRouter(sessionService, broadcaster, statusService));
   app.use('/api/events', createEventsRouter(statusService));
   app.use('/api/agents', createAgentsRouter(agentService));
+  app.use('/api/roles', createRolesRouter(rolesService));
   app.use('/api/providers', createProvidersRouter());
   app.use('/api/servers', createServersRouter(db));
   app.use('/api/secrets', createSecretsRouter(secretsService, refreshPtyEnv));
