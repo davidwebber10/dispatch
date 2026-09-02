@@ -7,7 +7,7 @@
 
 import type { ConvItem, PermissionQuestion } from '../../api/types';
 
-export type AgentType = 'planner' | 'implementer' | 'researcher' | 'reviewer';
+export type AgentType = 'planner' | 'implementer' | 'researcher' | 'reviewer' | 'design-reviewer' | 'code-reviewer';
 // 'scheduled' = a LIVE thread that ended its turn by calling a wake-scheduler tool
 // (ScheduleWakeup/CronCreate) — it's dormant and will resume on its own, so it renders
 // inside the live rail (see live.ts groupByMission) with distinct dormant styling rather
@@ -34,6 +34,8 @@ export const AGENT_TYPE = {
   implementer: { icon: 'ph-code',             label: 'implementer' },
   researcher:  { icon: 'ph-magnifying-glass', label: 'researcher' },
   reviewer:    { icon: 'ph-seal-check',       label: 'reviewer' },
+  'design-reviewer': { icon: 'ph-ruler',            label: 'design review' },
+  'code-reviewer':   { icon: 'ph-git-pull-request', label: 'code review' },
 } as const;
 
 // STATUS registry — dot color + label per status. `scheduled` deliberately reuses the calm

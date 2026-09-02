@@ -35,7 +35,7 @@ import {
 const PROTOCOL_VERSION = '2024-11-05';
 const SERVER_INFO = { name: 'dispatch-agency', version: '0.1.0' } as const;
 
-export type AgentType = 'planner' | 'implementer' | 'researcher' | 'reviewer';
+export type AgentType = 'planner' | 'implementer' | 'researcher' | 'reviewer' | 'design-reviewer' | 'code-reviewer';
 
 function apiBase(): string {
   return process.env.DISPATCH_API || `http://localhost:${process.env.DISPATCH_PORT || 3456}`;
@@ -77,7 +77,7 @@ export const TOOLS = [
     description:
       'Create a typed agent thread in this project and seed it with a task. Pick the type ' +
       'by the work needed: researcher to investigate, planner to plan, implementer to build, ' +
-      'reviewer to check. Group related work by passing a concise `mission` name (e.g. ' +
+      'reviewer to check, design-reviewer to gate a plan/design BEFORE implementation, code-reviewer to gate a finished diff before merge (both run the strongest model — reserve them for genuine review gates on non-trivial code work). Group related work by passing a concise `mission` name (e.g. ' +
       '"Auth refactor"); reuse the SAME mission for related agents so the rail groups them ' +
       'under one initiative (call list_missions first to reuse an existing name). Returns the new agentId.',
     inputSchema: {
@@ -85,7 +85,7 @@ export const TOOLS = [
       properties: {
         agentType: {
           type: 'string',
-          enum: ['planner', 'implementer', 'researcher', 'reviewer'],
+          enum: ['planner', 'implementer', 'researcher', 'reviewer', 'design-reviewer', 'code-reviewer'],
           description: 'The kind of agent to spawn.',
         },
         name: { type: 'string', description: 'Optional label for the agent thread.' },
@@ -102,7 +102,7 @@ export const TOOLS = [
             'Optional model override for this agent — pins it to a specific Claude model instead of ' +
             'the automatic per-type default. Accepts short aliases ("sonnet", "opus", "haiku") or a full ' +
             'model id (e.g. "claude-opus-4-8"). Omit to use the default tier for the type: researcher, ' +
-            'planner, and reviewer run on opus; implementer runs on sonnet. Override when a task is ' +
+            'planner, and reviewer run on opus; implementer runs sonnet; design-reviewer and code-reviewer run fable (the strongest tier — never point them at routine work). Override when a task is ' +
             'unusually easy for its role (e.g. drop a researcher to sonnet for a quick lookup) or ' +
             'unusually hard (e.g. bump an implementer to opus for a hard problem).',
         },
@@ -126,7 +126,7 @@ export const TOOLS = [
       properties: {
         agentType: {
           type: 'string',
-          enum: ['planner', 'implementer', 'researcher', 'reviewer'],
+          enum: ['planner', 'implementer', 'researcher', 'reviewer', 'design-reviewer', 'code-reviewer'],
           description: 'The kind of agent to queue.',
         },
         name: { type: 'string', description: 'Optional label for the agent thread.' },
@@ -150,7 +150,7 @@ export const TOOLS = [
             'Optional model override for this agent — pins it to a specific Claude model instead of ' +
             'the automatic per-type default. Accepts short aliases ("sonnet", "opus", "haiku") or a full ' +
             'model id (e.g. "claude-opus-4-8"). Omit to use the default tier for the type: researcher, ' +
-            'planner, and reviewer run on opus; implementer runs on sonnet. Override when a task is ' +
+            'planner, and reviewer run on opus; implementer runs sonnet; design-reviewer and code-reviewer run fable (the strongest tier — never point them at routine work). Override when a task is ' +
             'unusually easy for its role (e.g. drop a researcher to sonnet for a quick lookup) or ' +
             'unusually hard (e.g. bump an implementer to opus for a hard problem).',
         },

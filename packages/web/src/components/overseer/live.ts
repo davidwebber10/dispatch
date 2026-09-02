@@ -35,7 +35,7 @@ export interface LiveStatus {
 
 export type StatusMap = Record<string, LiveStatus>;
 
-const AGENT_TYPES: readonly AgentType[] = ['planner', 'implementer', 'researcher', 'reviewer'];
+const AGENT_TYPES: readonly AgentType[] = ['planner', 'implementer', 'researcher', 'reviewer', 'design-reviewer', 'code-reviewer'];
 
 function asAgentType(v: unknown): AgentType {
   return typeof v === 'string' && (AGENT_TYPES as readonly string[]).includes(v)
