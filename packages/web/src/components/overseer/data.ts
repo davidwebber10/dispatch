@@ -346,9 +346,9 @@ const STEPS_BY_TYPE: Record<AgentType, { s: 'done' | 'now' | 'next'; t: string }
     { s: 'next', t: 'Hand the plan up for your approval' },
   ],
   'design-reviewer': [
-    { s: 'done', t: 'Read the proposed design against the brief' },
-    { s: 'now', t: 'Checking layout, spacing, and copy against the design system' },
-    { s: 'next', t: 'Return a verdict + notes to Dispatch' },
+    { s: 'done', t: 'Read the plan and referenced code' },
+    { s: 'now', t: 'Weighing decomposition and failure modes' },
+    { s: 'next', t: 'Return verdict with required changes' },
   ],
   'code-reviewer': [
     { s: 'done', t: 'Read the diff and its test coverage' },

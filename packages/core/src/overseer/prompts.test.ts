@@ -32,6 +32,20 @@ describe('coordinator review gates', () => {
     expect(COORDINATOR_PROMPT).toContain('code-reviewer');
     expect(COORDINATOR_PROMPT).toContain('SKIP both gates');
   });
+
+  it('the spawn_agent entry lists the review-gate types and the fable tier', () => {
+    expect(COORDINATOR_PROMPT).toContain('design-reviewer (gate a plan/design before implementation)');
+    expect(COORDINATOR_PROMPT).toContain('code-reviewer (gate a finished diff before merge)');
+    expect(COORDINATOR_PROMPT).toContain('run fable');
+  });
+
+  it('queue_agent guidance forbids pre-queuing an implementer behind a design-reviewer', () => {
+    expect(COORDINATOR_PROMPT).toContain('never pre-queue an implementer behind a design-reviewer');
+  });
+
+  it('MODEL ECONOMY fences downgrading a review-gate model', () => {
+    expect(COORDINATOR_PROMPT).toContain('Never pass a smaller model to a design-reviewer or code-reviewer');
+  });
 });
 
 describe('orchestration tuning', () => {
@@ -43,5 +57,13 @@ describe('orchestration tuning', () => {
   it('teaches model economy and read-once discipline', () => {
     expect(COORDINATOR_PROMPT).toContain('MODEL ECONOMY');
     expect(COORDINATOR_PROMPT).toContain('read_agent ONCE');
+  });
+});
+
+describe('coordinator ground rules', () => {
+  it('states the enforceable rule instead of the absolute ban', () => {
+    expect(COORDINATOR_PROMPT).not.toContain('You do NOT write code, read files, or run tools yourself');
+    expect(COORDINATOR_PROMPT).toContain('read-only');
+    expect(COORDINATOR_PROMPT).toContain('denied at the tool layer');
   });
 });
