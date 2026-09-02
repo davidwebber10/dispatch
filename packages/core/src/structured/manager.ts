@@ -44,6 +44,9 @@ interface Session {
   events: unknown[]; // ring of recent events for replay
   /** When true, gated tools are surfaced as a Need instead of auto-allowed. */
   escalate: boolean;
+  /** Optional per-session tool policy consulted before auto-allow; a deny is written straight
+   *  back to the CLI with the policy's message (no pending, no human involvement). */
+  toolPolicy?: (toolName: string, input: unknown) => { allow: true } | { allow: false; message: string };
   /** The single in-flight permission request awaiting a human decision, if any. */
   pending: PendingPermission | null;
   /** The claude session_id parsed from the init/system event (for resume on restart). */
@@ -83,6 +86,9 @@ export interface StructuredSpawnOpts {
   workDir: string;
   env?: Record<string, string>;
   escalate?: boolean;
+  /** Optional per-session tool policy consulted before auto-allow; a deny is written straight
+   *  back to the CLI with the policy's message (no pending, no human involvement). */
+  toolPolicy?: (toolName: string, input: unknown) => { allow: true } | { allow: false; message: string };
   seedEvents?: unknown[];
   /**
    * App-server-style managers (Codex) resume/model out-of-band over JSON-RPC rather than via
@@ -216,7 +222,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
     child.stdin.on('error', () => {}); // Fix 2: suppress EPIPE if child closes stdin while alive
 
     const rl = readline.createInterface({ input: child.stdout });
-    const session: Session = { child, rl, events: [], escalate: opts.escalate ?? false, pending: null };
+    const session: Session = { child, rl, events: [], escalate: opts.escalate ?? false, toolPolicy: opts.toolPolicy, pending: null };
     // Resume backfill: seed the ring with prior history (restored from the claude
     // transcript) BEFORE any live event lands, so a ws (re)connect replays the past
     // conversation first and the View isn't blank after a daemon restart.
@@ -253,7 +259,17 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
         // human.) Every OTHER gated tool surfaces only when this thread escalates (the
         // supervised membrane); otherwise it's auto-allowed.
         const isAsk = r?.tool_name === 'AskUserQuestion' || questions !== undefined;
-        if (session.escalate || isAsk) {
+        const denied = !isAsk && session.toolPolicy
+          ? session.toolPolicy(typeof r?.tool_name === 'string' ? r.tool_name : '', r?.input)
+          : null;
+        if (denied && !denied.allow) {
+          // Policy deny: answer the CLI immediately with the instructive message — the model
+          // sees it as the tool result and can redirect (spawn an agent) within the same turn.
+          this.write(terminalId, {
+            type: 'control_response',
+            response: { subtype: 'success', request_id: event.request_id, response: { behavior: 'deny', message: denied.message } },
+          });
+        } else if (session.escalate || isAsk) {
           // Do NOT auto-allow. Capture the pending decision and surface it so it can be
           // approved/denied (or an AskUserQuestion answered). The CLI stays blocked on stdin
           // until answerPermission() writes the response.
