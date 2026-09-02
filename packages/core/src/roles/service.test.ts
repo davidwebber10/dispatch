@@ -846,3 +846,130 @@ describe('RolesService — supervision: retry-once, 2-night auto-disable, wall c
     }
   });
 });
+
+describe('RolesService — morning-digest push headline (Task 9)', () => {
+  let tmp: string;
+  let db: Database.Database;
+  let agentService: AgentService;
+  let svc: RolesService;
+  let terminalCalls: Array<{ id: string; sessionId: string }>;
+  let pushCalls: Array<{ terminalId: string; sessionId: string; title: string; body: string }>;
+  let settledListener: ((info: { terminalId: string; sessionId: string; threadStatus: ThreadStatus }) => void) | undefined;
+
+  const digestRoleMd = `---
+name: morning-digest
+global: true
+agentType: researcher
+schedule: {"type":"daily","time":"07:00"}
+authority: stage
+---
+Read every role's log and write the digest.`;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'roles-digest-push-'));
+    db = new Database(':memory:');
+    initSchema(db);
+    sessionsDb.create(db, { id: 'proj-1', provider: 'claude-code', name: 'shopify-product-rollup', workingDir: '/tmp/proj-1' });
+
+    terminalCalls = [];
+    pushCalls = [];
+    settledListener = undefined;
+
+    const sessionStub: Partial<SessionService> = {
+      list: (status?: string) => sessionsDb.list(db, status).map(rowToSession),
+      create: (input: CreateSessionInput) => {
+        const id = uuid();
+        sessionsDb.create(db, { id, provider: input.provider, name: input.name || 'New Project', workingDir: input.workingDir });
+        return rowToSession(sessionsDb.getById(db, id)!);
+      },
+      createTerminal: (sessionId, type, label, skipPermissions, workingDir, externalId, config) => {
+        const id = uuid();
+        terminalCalls.push({ id, sessionId });
+        terminalsDb.create(db, { id, sessionId, type, label: label || 'term', skipPermissions, workingDir, externalId, config });
+        return terminalsDb.rowToTerminal(terminalsDb.getById(db, id)!);
+      },
+      sendThreadMessage: () => ({ transport: 'structured', droppedNonText: false }),
+      removeTerminal: () => {},
+    };
+
+    agentService = new AgentService(
+      db,
+      { createRunnerTerminal: () => { throw new Error('non-role path must not be used for a role schedule'); }, stopTerminal: () => {} },
+      createNoopBroadcaster(),
+    );
+
+    svc = new RolesService({
+      db,
+      agentService,
+      sessionService: sessionStub as unknown as SessionService,
+      rolesRoot: tmp,
+      pushService: {
+        notifyThread: async (input) => { pushCalls.push(input); },
+      },
+    });
+    agentService.setRoleRunner(svc);
+
+    const fakeStatusService = {
+      addThreadSettledListener: (fn: (info: { terminalId: string; sessionId: string; threadStatus: ThreadStatus }) => void) => {
+        settledListener = fn;
+      },
+    } as unknown as StatusService;
+    svc.wireSettled(fakeStatusService);
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  function setLastOutcome(terminalId: string, lastOutcome: Record<string, unknown>): void {
+    const existing = JSON.parse(terminalsDb.getById(db, terminalId)!.config || '{}');
+    terminalsDb.updateConfig(db, terminalId, { ...existing, lastOutcome });
+  }
+
+  function fire(roleName: string, raw: string): { runId: string; terminalId: string; sessionId: string } {
+    writeRole(tmp, roleName, raw);
+    const entry = svc.enable(roleName);
+    const run = agentService.runNow(entry.scheduleId!);
+    const terminalId = run.terminalId!;
+    const sessionId = terminalCalls.find((c) => c.id === terminalId)!.sessionId;
+    return { runId: run.id, terminalId, sessionId };
+  }
+
+  async function settle(terminalId: string, sessionId: string, summaryJson: object): Promise<void> {
+    setLastOutcome(terminalId, {
+      summary: '```json\n' + JSON.stringify(summaryJson) + '\n```',
+      needsHelp: false,
+      inferred: false,
+      at: new Date().toISOString(),
+    });
+    settledListener!({ terminalId, sessionId, threadStatus: 'idle' });
+    await flush();
+  }
+
+  it('a successful morning-digest run sends the push headline with the summary\'s first line', async () => {
+    const { terminalId, sessionId } = fire('morning-digest', digestRoleMd);
+    await settle(terminalId, sessionId, { outcome: 'ok', summary: '2 failures overnight.\nSee digest.md for detail.' });
+
+    expect(pushCalls).toHaveLength(1);
+    expect(pushCalls[0]).toEqual({
+      terminalId,
+      sessionId,
+      title: 'Daily Digest',
+      body: '2 failures overnight.',
+    });
+  });
+
+  it('a successful non-digest role run never sends the digest push', async () => {
+    const { terminalId, sessionId } = fire('x', roleMd());
+    await settle(terminalId, sessionId, { outcome: 'ok', summary: 'rolled up 12 SKUs' });
+
+    expect(pushCalls).toHaveLength(0);
+  });
+
+  it('a failed morning-digest run never sends the digest push', async () => {
+    const { terminalId, sessionId } = fire('morning-digest', digestRoleMd);
+    await settle(terminalId, sessionId, { outcome: 'failed', summary: 'could not reach the daemon API' });
+
+    expect(pushCalls).toHaveLength(0);
+  });
+});

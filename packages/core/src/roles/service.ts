@@ -73,6 +73,16 @@ export interface RolesServiceDeps {
 
 const OPERATIONS_PROJECT_NAME = 'Operations';
 
+/** The one role whose successful run raises a push (spec §4): the digest IS the deliverable
+ *  file, but a human still needs a tap-through to know a new one landed. */
+const DIGEST_ROLE_NAME = 'morning-digest';
+
+/** The push body is a headline, not the whole report — the first line of the run's own
+ *  summary (the contract's "one paragraph of what happened"), trimmed. */
+function firstLine(summary: string): string {
+  return (summary.split('\n')[0] ?? '').trim();
+}
+
 /** Build an Error carrying an HTTP `status` so a route can map it to a response code. */
 function statusError(status: number, message: string): Error & { status: number } {
   const e = new Error(message) as Error & { status: number };
@@ -384,6 +394,18 @@ export class RolesService implements RoleRunner {
 
     agentsDb.updateRunStatus(this.db, run.id, outcome === 'failed' ? 'failed' : 'succeeded');
     try { this.sessionService.removeTerminal(terminalId); } catch { /* best effort — may already be gone on the crash path */ }
+
+    // Spec §4: a successful morning-digest run pushes its headline (the file itself is the
+    // deliverable; this is just the tap-through nudge). Best-effort, same as every other push
+    // in this file — a notification failure must never break run finalization.
+    if (roleName === DIGEST_ROLE_NAME && outcome === 'ok') {
+      this.pushService?.notifyThread({
+        terminalId,
+        sessionId: run.project_id,
+        title: 'Daily Digest',
+        body: firstLine(summary),
+      }).catch(() => { /* best-effort */ });
+    }
 
     try {
       const scheduleRow = agentsDb.getSchedule(this.db, run.schedule_id);
