@@ -24,6 +24,12 @@ export interface Ctx {
    * passthrough argv after `tools`. Defaults to spawning `node <coreDist>/tools/cli.js`.
    */
   toolsRunner?: (args: string[]) => void;
+  /**
+   * Optional injectable HTTP client for `dispatch roles ...` (test seam). Defaults to
+   * the global `fetch` against http://localhost:<port>/api/roles, where <port> is the
+   * same PORT-derived value main() already bakes into ctx.port.
+   */
+  rolesFetch?: typeof fetch;
 }
 
 function buildInstallOpts(ctx: Ctx): DaemonInstallOptions {
@@ -37,7 +43,7 @@ function buildInstallOpts(ctx: Ctx): DaemonInstallOptions {
   };
 }
 
-export function runCommand(argv: string[], ctx: Ctx): void {
+export function runCommand(argv: string[], ctx: Ctx): void | Promise<void> {
   const [cmd, ...rest] = argv;
   switch (cmd) {
     case 'install':
@@ -77,12 +83,14 @@ export function runCommand(argv: string[], ctx: Ctx): void {
     case 'tools':
       cmdTools(ctx, rest);
       return;
+    case 'roles':
+      return cmdRoles(ctx, rest);
     case 'release':
       cmdRelease(ctx, rest);
       return;
     default:
       throw new Error(
-        `usage: dispatch <build|install|uninstall|start|stop|restart|status|update|run|logs|tools|release>`,
+        `usage: dispatch <build|install|uninstall|start|stop|restart|status|update|run|logs|tools|roles|release>`,
       );
   }
 }
@@ -152,6 +160,113 @@ function cmdTools(ctx: Ctx, args: string[]): void {
   const shellOpt = ctx.platformId === 'win32' ? { shell: true } : {};
   const node = ctx.nodePath ?? process.execPath;
   spawnSync(node, [toolsCliPath(ctx), ...args], { stdio: 'inherit', ...shellOpt });
+}
+
+/** Wire shape of `RoleStatusEntry` (packages/core/src/roles/service.ts) once the route
+ *  strips `def.brief` — see packages/core/src/routes/roles.ts `serialize`. Declared
+ *  locally rather than imported since dispatch-server only exports "." and "./platform". */
+interface RoleListEntry {
+  def: {
+    name: string;
+    project: string | null;
+    global: boolean;
+    agentType: string;
+    model?: string;
+    schedule: unknown;
+    tz?: string;
+    authority: string;
+    wallClockCapMin: number;
+  };
+  enabled: boolean;
+  scheduleId?: string;
+  nextRunAt?: string | null;
+  consecutiveFailures?: number;
+  /** Set when the role's role.md failed to parse (see errorStub in service.ts). */
+  error?: string;
+}
+
+/**
+ * `dispatch roles <list|enable|disable>` — talk to the local daemon's /api/roles surface
+ * (packages/core/src/routes/roles.ts). Enabling/disabling is a deliberate per-machine act
+ * (spec invariant), so this never does anything but relay the daemon's own decision.
+ */
+async function cmdRoles(ctx: Ctx, args: string[]): Promise<void> {
+  const [sub, name] = args;
+  switch (sub) {
+    case 'list':
+      return rolesList(ctx);
+    case 'enable':
+      if (!name) throw new Error('usage: dispatch roles enable <name>');
+      return rolesSetEnabled(ctx, name, true);
+    case 'disable':
+      if (!name) throw new Error('usage: dispatch roles disable <name>');
+      return rolesSetEnabled(ctx, name, false);
+    default:
+      throw new Error('usage: dispatch roles <list|enable|disable> [name]');
+  }
+}
+
+/** POST/GET against the daemon's /api/roles surface, translating a refused connection
+ *  into the one message an operator actually needs: start the daemon. */
+async function rolesRequest(ctx: Ctx, path: string, init?: RequestInit): Promise<unknown> {
+  const fetchFn = ctx.rolesFetch ?? fetch;
+  const url = `http://localhost:${ctx.port}/api/roles${path}`;
+  let res: Response;
+  try {
+    res = (await fetchFn(url, init)) as Response;
+  } catch (err: unknown) {
+    const code = (err as { code?: string; cause?: { code?: string } } | undefined)?.code
+      ?? (err as { cause?: { code?: string } } | undefined)?.cause?.code;
+    const msg = err instanceof Error ? err.message : String(err);
+    if (code === 'ECONNREFUSED' || /ECONNREFUSED/.test(msg)) {
+      throw new Error('daemon not running (dispatch start)');
+    }
+    throw err;
+  }
+  const body = (await res.json()) as { error?: string };
+  if (!res.ok) {
+    throw new Error(body?.error ?? `roles request failed (HTTP ${res.status})`);
+  }
+  return body;
+}
+
+async function rolesList(ctx: Ctx): Promise<void> {
+  const body = (await rolesRequest(ctx, '')) as { roles: RoleListEntry[] };
+  const roles = body.roles ?? [];
+  const ok = roles.filter((r) => !r.error);
+  const errored = roles.filter((r) => r.error);
+
+  if (ok.length > 0) {
+    console.log(formatRolesTable(ok));
+  } else if (errored.length === 0) {
+    console.log('no roles found');
+  }
+  if (errored.length > 0) {
+    if (ok.length > 0) console.log('');
+    console.log('Errors:');
+    for (const r of errored) console.log(`  ${r.def.name}: ${r.error}`);
+  }
+}
+
+function formatRolesTable(roles: RoleListEntry[]): string {
+  const header = ['NAME', 'PROJECT', 'ENABLED', 'NEXT RUN', 'FAILURES'];
+  const rows = roles.map((r) => [
+    r.def.name,
+    r.def.global ? 'global' : (r.def.project ?? '-'),
+    r.enabled ? 'yes' : 'no',
+    r.nextRunAt ?? '-',
+    r.consecutiveFailures !== undefined ? String(r.consecutiveFailures) : '-',
+  ]);
+  const widths = header.map((h, i) => Math.max(h.length, ...rows.map((row) => row[i].length)));
+  const fmtRow = (cols: string[]) => cols.map((c, i) => c.padEnd(widths[i])).join('  ').trimEnd();
+  return [fmtRow(header), ...rows.map(fmtRow)].join('\n');
+}
+
+async function rolesSetEnabled(ctx: Ctx, name: string, enabled: boolean): Promise<void> {
+  const action = enabled ? 'enable' : 'disable';
+  const entry = (await rolesRequest(ctx, `/${encodeURIComponent(name)}/${action}`, { method: 'POST' })) as RoleListEntry;
+  const suffix = enabled ? `(next run ${entry.nextRunAt ?? '-'})` : '';
+  console.log(`${entry.def.name}: ${action}d${suffix ? ' ' + suffix : ''}`);
 }
 
 // Order is: git pull → build (pnpm install, since fresh dependencies may be needed
@@ -442,7 +557,7 @@ async function main(): Promise<void> {
   };
 
   try {
-    runCommand(process.argv.slice(2), ctx);
+    await runCommand(process.argv.slice(2), ctx);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(msg);
