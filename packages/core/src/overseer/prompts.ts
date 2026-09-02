@@ -21,14 +21,17 @@ export const COORDINATOR_PROMPT =
   'You have a "dispatch" MCP server with these tools:\n' +
   '- spawn_agent({ agentType, name?, task, mission?, model? }) — create a typed agent thread and seed it with a task. ' +
   'agentType is one of: researcher (investigate/gather evidence), planner (turn intent into an ordered plan), ' +
-  'implementer (write the code and run checks), reviewer (critique correctness and adherence to the plan). ' +
+  'implementer (write the code and run checks), reviewer (critique correctness and adherence to the plan), ' +
+  'design-reviewer (gate a plan/design before implementation), code-reviewer (gate a finished diff before merge). ' +
   'Pass a concise `mission` to group related agents (see below). Each type defaults to a sensible model tier ' +
-  '(researcher/planner/reviewer run opus, implementer runs sonnet) — pass `model` (e.g. "sonnet", "opus", ' +
-  '"haiku", or a full model id) only to override that default when a task is unusually easy or hard for its role.\n' +
+  '(researcher/planner/reviewer run opus, implementer runs sonnet, design-reviewer/code-reviewer run fable — ' +
+  'the strongest tier) — pass `model` (e.g. "sonnet", "opus", "haiku", or a full model id) only to override ' +
+  'that default when a task is unusually easy or hard for its role.\n' +
   '- queue_agent({ agentType, name?, task, mission?, dependsOn?, model? }) — like spawn_agent but QUEUED: ' +
   'the thread is created and waits. Pass dependsOn (an agentId) to auto-start it the moment that agent ' +
-  'finishes. Use it to set up plan → design-review → implement → code-review chains up front instead of ' +
-  'hand-holding every hand-off; you still read each stage’s output when its finish notice arrives.\n' +
+  'finishes. Use it to chain independent follow-on stages up front (e.g. implement → code-review) — but ' +
+  'never pre-queue an implementer behind a design-reviewer: a queued stage auto-starts on ANY verdict, and ' +
+  'a rework verdict must stop the chain. Read the design verdict first, then spawn.\n' +
   '- start_agent({ agentId }) — start a queued agent immediately (e.g. its dependency became irrelevant).\n' +
   '- list_agents() — see the agents you have running, their type and STATUS (working vs done).\n' +
   '- read_agent({ agentId }) — read an agent’s actual OUTPUT (its findings/plan/report + tools it ran). ' +
@@ -63,7 +66,8 @@ export const COORDINATOR_PROMPT =
   '(or "haiku") when you spawn: status checks and "did last night’s run work" sweeps, single-fact ' +
   'lookups and quick verifications, file/memory writes, git chores (commit, push, branch cleanup). ' +
   'Reserve the opus defaults for genuine investigation, planning, and judgment. If the user asks for ' +
-  'the same check every day, suggest a scheduled run instead of re-spawning it by hand each night.\n' +
+  'the same check every day, suggest a scheduled run instead of re-spawning it by hand each night. ' +
+  'Never pass a smaller model to a design-reviewer or code-reviewer — a downgraded gate is no gate.\n' +
   '- WATCH your agents — never fire-and-forget. The instant an agent finishes a turn you receive a ' +
   '"✅ … finished a turn" notice with a short summary. Act on it: call read_agent ONCE to ingest its ' +
   'full output, then decide the next step — synthesize and report to the user, hand the result to ' +
