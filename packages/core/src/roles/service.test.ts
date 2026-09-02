@@ -48,6 +48,7 @@ Send the digest.`;
 
 describe('RolesService', () => {
   let tmp: string;
+  let opsDir: string;
   let db: Database.Database;
   let sessionStub: Partial<SessionService>;
   let agentService: AgentService;
@@ -55,6 +56,10 @@ describe('RolesService', () => {
 
   beforeEach(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'roles-svc-'));
+    // A tmp dir stands in for ~/.dispatch/operations (RolesServiceDeps.operationsDir,
+    // Task 10) — without the override, ensureOperationsProject's digest-tab bootstrap
+    // would write a real digest.md under the developer's actual home directory.
+    opsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'roles-ops-'));
     db = new Database(':memory:');
     initSchema(db);
 
@@ -70,6 +75,12 @@ describe('RolesService', () => {
         sessionsDb.create(db, { id, provider: input.provider, name: input.name || 'New Project', workingDir: input.workingDir });
         return rowToSession(sessionsDb.getById(db, id)!);
       },
+      listTerminals: (sessionId: string) => terminalsDb.listBySession(db, sessionId).map(terminalsDb.rowToTerminal),
+      createTab: (sessionId: string, type: string, label?: string, config?: Record<string, any>) => {
+        const id = uuid();
+        terminalsDb.create(db, { id, sessionId, type, label: label || type, config });
+        return terminalsDb.rowToTerminal(terminalsDb.getById(db, id)!);
+      },
     };
 
     agentService = new AgentService(
@@ -83,11 +94,13 @@ describe('RolesService', () => {
       agentService,
       sessionService: sessionStub as unknown as SessionService,
       rolesRoot: tmp,
+      operationsDir: opsDir,
     });
   });
 
   afterEach(() => {
     fs.rmSync(tmp, { recursive: true, force: true });
+    fs.rmSync(opsDir, { recursive: true, force: true });
   });
 
   it('list() shows a discovered role as disabled with no schedule', () => {
@@ -151,6 +164,22 @@ describe('RolesService', () => {
     expect(all.n).toBe(1);
   });
 
+  it('enable() on an auto-disabled schedule resets consecutive_failures to 0 and reuses the same row (docs/roles.md: "resumes from a clean slate")', () => {
+    writeRole(tmp, 'x', roleMd());
+    const first = svc.enable('x');
+    // Simulate the 2-consecutive-failed-nights auto-disable (Task 7): counter at 2, disabled.
+    agentsDb.setConsecutiveFailures(db, first.scheduleId!, 2);
+    svc.disable('x');
+    expect(agentsDb.getSchedule(db, first.scheduleId!)!.consecutive_failures).toBe(2);
+
+    const reEnabled = svc.enable('x');
+
+    expect(reEnabled.scheduleId).toBe(first.scheduleId); // same row reused, not a new one
+    const row = agentsDb.getSchedule(db, first.scheduleId!)!;
+    expect(row.consecutive_failures).toBe(0);
+    expect(row.enabled).toBe(1);
+  });
+
   it('disable() flips enabled off but keeps the row', () => {
     writeRole(tmp, 'x', roleMd());
     svc.enable('x');
@@ -187,7 +216,7 @@ describe('RolesService', () => {
 
     const ops = sessionsDb.list(db).map(rowToSession).find((s) => s.name === 'Operations');
     expect(ops).toBeTruthy();
-    expect(ops!.workingDir).toBe(path.join(os.homedir(), '.dispatch', 'operations'));
+    expect(ops!.workingDir).toBe(opsDir);
 
     const row = agentsDb.getScheduleByRoleName(db, 'digest');
     expect(row!.project_id).toBe(ops!.id);
@@ -844,5 +873,242 @@ describe('RolesService — supervision: retry-once, 2-night auto-disable, wall c
     } finally {
       process.removeListener('unhandledRejection', onUnhandled);
     }
+  });
+});
+
+describe('RolesService — morning-digest push headline (Task 9)', () => {
+  let tmp: string;
+  let opsDir: string;
+  let db: Database.Database;
+  let agentService: AgentService;
+  let svc: RolesService;
+  let terminalCalls: Array<{ id: string; sessionId: string }>;
+  let pushCalls: Array<{ terminalId: string; sessionId: string; title: string; body: string }>;
+  let settledListener: ((info: { terminalId: string; sessionId: string; threadStatus: ThreadStatus }) => void) | undefined;
+
+  const digestRoleMd = `---
+name: morning-digest
+global: true
+agentType: researcher
+schedule: {"type":"daily","time":"07:00"}
+authority: stage
+---
+Read every role's log and write the digest.`;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'roles-digest-push-'));
+    // Stands in for ~/.dispatch/operations — see the identical note in the top describe block.
+    opsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'roles-ops-'));
+    db = new Database(':memory:');
+    initSchema(db);
+    sessionsDb.create(db, { id: 'proj-1', provider: 'claude-code', name: 'shopify-product-rollup', workingDir: '/tmp/proj-1' });
+
+    terminalCalls = [];
+    pushCalls = [];
+    settledListener = undefined;
+
+    const sessionStub: Partial<SessionService> = {
+      list: (status?: string) => sessionsDb.list(db, status).map(rowToSession),
+      create: (input: CreateSessionInput) => {
+        const id = uuid();
+        sessionsDb.create(db, { id, provider: input.provider, name: input.name || 'New Project', workingDir: input.workingDir });
+        return rowToSession(sessionsDb.getById(db, id)!);
+      },
+      createTerminal: (sessionId, type, label, skipPermissions, workingDir, externalId, config) => {
+        const id = uuid();
+        terminalCalls.push({ id, sessionId });
+        terminalsDb.create(db, { id, sessionId, type, label: label || 'term', skipPermissions, workingDir, externalId, config });
+        return terminalsDb.rowToTerminal(terminalsDb.getById(db, id)!);
+      },
+      sendThreadMessage: () => ({ transport: 'structured', droppedNonText: false }),
+      removeTerminal: () => {},
+      listTerminals: (sessionId: string) => terminalsDb.listBySession(db, sessionId).map(terminalsDb.rowToTerminal),
+      createTab: (sessionId: string, type: string, label?: string, config?: Record<string, any>) => {
+        const id = uuid();
+        terminalsDb.create(db, { id, sessionId, type, label: label || type, config });
+        return terminalsDb.rowToTerminal(terminalsDb.getById(db, id)!);
+      },
+    };
+
+    agentService = new AgentService(
+      db,
+      { createRunnerTerminal: () => { throw new Error('non-role path must not be used for a role schedule'); }, stopTerminal: () => {} },
+      createNoopBroadcaster(),
+    );
+
+    svc = new RolesService({
+      db,
+      agentService,
+      sessionService: sessionStub as unknown as SessionService,
+      rolesRoot: tmp,
+      operationsDir: opsDir,
+      pushService: {
+        notifyThread: async (input) => { pushCalls.push(input); },
+      },
+    });
+    agentService.setRoleRunner(svc);
+
+    const fakeStatusService = {
+      addThreadSettledListener: (fn: (info: { terminalId: string; sessionId: string; threadStatus: ThreadStatus }) => void) => {
+        settledListener = fn;
+      },
+    } as unknown as StatusService;
+    svc.wireSettled(fakeStatusService);
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.rmSync(opsDir, { recursive: true, force: true });
+  });
+
+  function setLastOutcome(terminalId: string, lastOutcome: Record<string, unknown>): void {
+    const existing = JSON.parse(terminalsDb.getById(db, terminalId)!.config || '{}');
+    terminalsDb.updateConfig(db, terminalId, { ...existing, lastOutcome });
+  }
+
+  function fire(roleName: string, raw: string): { runId: string; terminalId: string; sessionId: string } {
+    writeRole(tmp, roleName, raw);
+    const entry = svc.enable(roleName);
+    const run = agentService.runNow(entry.scheduleId!);
+    const terminalId = run.terminalId!;
+    const sessionId = terminalCalls.find((c) => c.id === terminalId)!.sessionId;
+    return { runId: run.id, terminalId, sessionId };
+  }
+
+  async function settle(terminalId: string, sessionId: string, summaryJson: object): Promise<void> {
+    setLastOutcome(terminalId, {
+      summary: '```json\n' + JSON.stringify(summaryJson) + '\n```',
+      needsHelp: false,
+      inferred: false,
+      at: new Date().toISOString(),
+    });
+    settledListener!({ terminalId, sessionId, threadStatus: 'idle' });
+    await flush();
+  }
+
+  it('a successful morning-digest run sends the push headline with the summary\'s first line', async () => {
+    const { terminalId, sessionId } = fire('morning-digest', digestRoleMd);
+    await settle(terminalId, sessionId, { outcome: 'ok', summary: '2 failures overnight.\nSee digest.md for detail.' });
+
+    expect(pushCalls).toHaveLength(1);
+    expect(pushCalls[0]).toEqual({
+      terminalId,
+      sessionId,
+      title: 'Daily Digest',
+      body: '2 failures overnight.',
+    });
+  });
+
+  it('an "attention" morning-digest run also sends the push headline — attention is exactly when the morning matters', async () => {
+    const { terminalId, sessionId } = fire('morning-digest', digestRoleMd);
+    await settle(terminalId, sessionId, { outcome: 'attention', summary: '1 role disabled, 2 PRs staged for review.' });
+
+    expect(pushCalls).toHaveLength(1);
+    expect(pushCalls[0]).toEqual({
+      terminalId,
+      sessionId,
+      title: 'Daily Digest',
+      body: '1 role disabled, 2 PRs staged for review.',
+    });
+  });
+
+  it('a successful non-digest role run never sends the digest push', async () => {
+    const { terminalId, sessionId } = fire('x', roleMd());
+    await settle(terminalId, sessionId, { outcome: 'ok', summary: 'rolled up 12 SKUs' });
+
+    expect(pushCalls).toHaveLength(0);
+  });
+
+  it('a failed morning-digest run never sends the digest push', async () => {
+    const { terminalId, sessionId } = fire('morning-digest', digestRoleMd);
+    await settle(terminalId, sessionId, { outcome: 'failed', summary: 'could not reach the daemon API' });
+
+    expect(pushCalls).toHaveLength(0);
+  });
+});
+
+describe('RolesService — Operations digest file tab (Task 10)', () => {
+  let tmp: string;
+  let opsDir: string;
+  let db: Database.Database;
+  let agentService: AgentService;
+  let svc: RolesService;
+  let tabCalls: Array<{ id: string; sessionId: string; type: string; label?: string; config?: Record<string, any> }>;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'roles-digest-tab-'));
+    opsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'roles-ops-'));
+    db = new Database(':memory:');
+    initSchema(db);
+
+    tabCalls = [];
+
+    const sessionStub: Partial<SessionService> = {
+      list: (status?: string) => sessionsDb.list(db, status).map(rowToSession),
+      create: (input: CreateSessionInput) => {
+        const id = uuid();
+        sessionsDb.create(db, { id, provider: input.provider, name: input.name || 'New Project', workingDir: input.workingDir });
+        return rowToSession(sessionsDb.getById(db, id)!);
+      },
+      listTerminals: (sessionId: string) => terminalsDb.listBySession(db, sessionId).map(terminalsDb.rowToTerminal),
+      createTab: (sessionId: string, type: string, label?: string, config?: Record<string, any>) => {
+        const id = uuid();
+        tabCalls.push({ id, sessionId, type, label, config });
+        terminalsDb.create(db, { id, sessionId, type, label: label || type, config });
+        return terminalsDb.rowToTerminal(terminalsDb.getById(db, id)!);
+      },
+    };
+
+    agentService = new AgentService(
+      db,
+      { createRunnerTerminal: () => ({ id: 'term-1' }), stopTerminal: () => {} },
+      createNoopBroadcaster(),
+    );
+
+    svc = new RolesService({
+      db,
+      agentService,
+      sessionService: sessionStub as unknown as SessionService,
+      rolesRoot: tmp,
+      operationsDir: opsDir,
+    });
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.rmSync(opsDir, { recursive: true, force: true });
+  });
+
+  it('ensureOperationsProject() also ensures a file tab for digest.md exists', () => {
+    const project = svc.ensureOperationsProject();
+
+    const digestPath = path.join(opsDir, 'digest.md');
+    const tabs = tabCalls.filter((c) => c.sessionId === project.id && c.type === 'file' && c.config?.path === digestPath);
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0].label).toBe('digest.md');
+
+    // Missing files 400 on the /read route (routes/files.ts) — the tab must not open
+    // to an error before the role has ever run.
+    expect(fs.existsSync(digestPath)).toBe(true);
+    expect(fs.readFileSync(digestPath, 'utf-8')).toContain('# Daily Digest');
+  });
+
+  it('is idempotent — a second call creates no additional tab', () => {
+    svc.ensureOperationsProject();
+    svc.ensureOperationsProject();
+
+    const digestPath = path.join(opsDir, 'digest.md');
+    const tabs = tabCalls.filter((c) => c.type === 'file' && c.config?.path === digestPath);
+    expect(tabs).toHaveLength(1);
+  });
+
+  it('does not overwrite an existing digest.md', () => {
+    fs.mkdirSync(opsDir, { recursive: true });
+    const digestPath = path.join(opsDir, 'digest.md');
+    fs.writeFileSync(digestPath, '# Daily Digest\n\nreal content from last night.');
+
+    svc.ensureOperationsProject();
+
+    expect(fs.readFileSync(digestPath, 'utf-8')).toContain('real content from last night.');
   });
 });

@@ -3,6 +3,7 @@
 // Discovery (list()) only ever reads the roles directory and the DB; it never creates or
 // starts anything. enable()/disable() are the only mutating entry points, and they are a
 // deliberate per-machine act — never triggered implicitly by discovery.
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
@@ -65,6 +66,11 @@ export interface RolesServiceDeps {
   agentService: AgentService;
   sessionService: SessionService;
   rolesRoot?: string;
+  /** Working dir for the shared Operations project (global roles + the digest.md file
+   *  tab, Task 10). Defaults to ~/.dispatch/operations; overridable — mirroring
+   *  rolesRoot above — so tests don't write a real digest.md under a developer's
+   *  actual home directory. */
+  operationsDir?: string;
   /** Optional (Task 7): backs the 2-consecutive-failed-nights auto-disable push. A no-op
    *  when absent — supervision (retry/counter/disable) still runs without it, it just
    *  can't raise the Needs-you. */
@@ -72,6 +78,20 @@ export interface RolesServiceDeps {
 }
 
 const OPERATIONS_PROJECT_NAME = 'Operations';
+
+/** Name of the shared morning-digest deliverable's file tab within the Operations
+ *  project — see ensureDigestFileTab below. */
+const DIGEST_FILE_NAME = 'digest.md';
+
+/** The one role whose successful run raises a push (spec §4): the digest IS the deliverable
+ *  file, but a human still needs a tap-through to know a new one landed. */
+const DIGEST_ROLE_NAME = 'morning-digest';
+
+/** The push body is a headline, not the whole report — the first line of the run's own
+ *  summary (the contract's "one paragraph of what happened"), trimmed. */
+function firstLine(summary: string): string {
+  return (summary.split('\n')[0] ?? '').trim();
+}
 
 /** Build an Error carrying an HTTP `status` so a route can map it to a response code. */
 function statusError(status: number, message: string): Error & { status: number } {
@@ -101,6 +121,7 @@ export class RolesService implements RoleRunner {
   private agentService: AgentService;
   private sessionService: SessionService;
   private rolesRoot: string;
+  private operationsDir: string;
   private pushService?: Pick<PushService, 'notifyThread'>;
 
   constructor(deps: RolesServiceDeps) {
@@ -108,6 +129,7 @@ export class RolesService implements RoleRunner {
     this.agentService = deps.agentService;
     this.sessionService = deps.sessionService;
     this.rolesRoot = deps.rolesRoot ?? rolesRootDir();
+    this.operationsDir = deps.operationsDir ?? path.join(os.homedir(), '.dispatch', 'operations');
     this.pushService = deps.pushService;
   }
 
@@ -141,6 +163,11 @@ export class RolesService implements RoleRunner {
         timezone,
         enabled: true,
       });
+      // docs/roles.md §3: "re-enabling resumes from a clean slate for the auto-disable
+      // counter" — a schedule row that was auto-disabled by Task 7's 2-consecutive-failed-
+      // nights supervision keeps its counter at 2 until this call zeroes it explicitly; a
+      // fresh row (the `else` branch below) is already 0 by the schema default.
+      agentsDb.setConsecutiveFailures(this.db, existing.id, 0);
     } else {
       this.agentService.createSchedule({
         projectId: project.id,
@@ -174,15 +201,37 @@ export class RolesService implements RoleRunner {
   }
 
   /** Find-or-create the shared project for global roles (docs §1: global roles run
-   *  against a dedicated ~/.dispatch/operations workspace, not a per-role directory). */
+   *  against a dedicated ~/.dispatch/operations workspace, not a per-role directory).
+   *  Also ensures the digest.md file tab (Task 10) — every call, not just creation,
+   *  so an Operations project from before Task 10 still gets the tab retrofitted. */
   ensureOperationsProject(): Session {
     const existing = this.sessionService.list().find((s) => s.name === OPERATIONS_PROJECT_NAME);
-    if (existing) return existing;
-    return this.sessionService.create({
+    const project = existing ?? this.sessionService.create({
       provider: 'claude-code',
       name: OPERATIONS_PROJECT_NAME,
-      workingDir: path.join(os.homedir(), '.dispatch', 'operations'),
+      workingDir: this.operationsDir,
     });
+    this.ensureDigestFileTab(project);
+    return project;
+  }
+
+  /** Find-or-create the pinned FILES tab for digest.md in the Operations project, so the
+   *  digest is one tap away even before the morning-digest role's first run writes it.
+   *  Idempotent: matched the same way the web client dedupes file tabs (openFileTab.ts,
+   *  FilesPane.tsx) — `t.type === 'file' && config.path === <digest path>`. A missing
+   *  digest.md 400s the /read route (routes/files.ts's resolveRead + readFileSync), so a
+   *  placeholder is written the first time only — a real run's content is never clobbered. */
+  private ensureDigestFileTab(project: Session): void {
+    const digestPath = path.join(this.operationsDir, DIGEST_FILE_NAME);
+    const tabs = this.sessionService.listTerminals(project.id);
+    const hasTab = tabs.some((t) => t.type === 'file' && (t.config as { path?: string } | undefined)?.path === digestPath);
+    if (hasTab) return;
+
+    if (!fs.existsSync(digestPath)) {
+      fs.mkdirSync(path.dirname(digestPath), { recursive: true });
+      fs.writeFileSync(digestPath, '# Daily Digest\n');
+    }
+    this.sessionService.createTab(project.id, 'file', DIGEST_FILE_NAME, { path: digestPath });
   }
 
   private resolveProject(def: RoleDefinition): Session {
@@ -384,6 +433,22 @@ export class RolesService implements RoleRunner {
 
     agentsDb.updateRunStatus(this.db, run.id, outcome === 'failed' ? 'failed' : 'succeeded');
     try { this.sessionService.removeTerminal(terminalId); } catch { /* best effort — may already be gone on the crash path */ }
+
+    // Spec §4: a successful OR attention-needing morning-digest run pushes its headline (the
+    // file itself is the deliverable; this is just the tap-through nudge). 'attention' is
+    // exactly the outcome the digest brief reports when the morning matters most — failures
+    // overnight, staged work awaiting review — so gating the push on 'ok' alone silently
+    // dropped the nights a human most needed the nudge. Still never pushes on 'failed'.
+    // Best-effort, same as every other push in this file — a notification failure must never
+    // break run finalization.
+    if (roleName === DIGEST_ROLE_NAME && (outcome === 'ok' || outcome === 'attention')) {
+      this.pushService?.notifyThread({
+        terminalId,
+        sessionId: run.project_id,
+        title: 'Daily Digest',
+        body: firstLine(summary),
+      }).catch(() => { /* best-effort */ });
+    }
 
     try {
       const scheduleRow = agentsDb.getSchedule(this.db, run.schedule_id);
