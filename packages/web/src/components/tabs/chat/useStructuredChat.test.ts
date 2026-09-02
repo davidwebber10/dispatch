@@ -495,6 +495,49 @@ test('a second loadOlder call anchors `before` on the previous response\'s start
   expect(result.current.items.map((i) => i.text)).toEqual(['page2', 'page1', 'newest']);
 });
 
+// REGRESSION (queued-delivery echo duplication, 2026-09-02): right after a respawn, the
+// client's own uuid-less echo of a queued-while-working turn lands in the ring BEFORE the
+// first uuid'd live event. The first older-page fetch then anchors on that later uuid, so
+// the page contains the transcript's uuid'd copy of the SAME turn — and the uuid-only dedup
+// branch prepended it, rendering the message twice (surviving every browser refresh, since
+// both sources re-serve their copy).
+test('a uuid\'d page copy of a pre-anchor echo is dropped (queued-delivery duplication)', async () => {
+  vi.spyOn(api, 'getConversation').mockResolvedValue({
+    items: [
+      { kind: 'user', text: 'older msg', uuid: 'u1', line: 5 },
+      { kind: 'user', text: 'take a moment to familiarize yourself', uuid: 'u-real', line: 9 },
+    ],
+    cursor: 50, startLine: 5, hasMore: false,
+  } as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  // Ring replay after a respawn: the echo (no uuid) precedes the first uuid'd live event.
+  act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'take a moment to familiarize yourself' }] } }));
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'anchor', message: { content: [{ type: 'text', text: 'reply' }] } }));
+  act(() => { result.current.loadOlder(); });
+  await flushAsync();
+  const copies = result.current.items.filter((i) => i.kind === 'user' && i.text === 'take a moment to familiarize yourself');
+  expect(copies).toHaveLength(1); // echo + its transcript copy collapse to one
+  expect(result.current.items[0]).toMatchObject({ text: 'older msg' }); // genuinely-older history still lands
+});
+
+// The guard must stay scoped to PRE-anchor anon items: a TAIL echo (the just-sent "yes")
+// must never delete a genuinely older uuid'd turn with the same text — that is the
+// measured 27-30% "history skips lines" failure class the fingerprint set was narrowed for.
+test('a tail echo does not delete an older uuid\'d turn with identical text', async () => {
+  vi.spyOn(api, 'getConversation').mockResolvedValue({
+    items: [{ kind: 'user', text: 'yes', uuid: 'u-old-yes', line: 3 }],
+    cursor: 50, startLine: 3, hasMore: false,
+  } as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'anchor', message: { content: [{ type: 'text', text: 'question?' }] } }));
+  // The just-sent echo sits at the TAIL (after the anchor).
+  act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'yes' }] } }));
+  act(() => { result.current.loadOlder(); });
+  await flushAsync();
+  const yeses = result.current.items.filter((i) => i.kind === 'user' && i.text === 'yes');
+  expect(yeses).toHaveLength(2); // the old turn AND the fresh echo both stay
+});
+
 test('loadOlder is a no-op while a fetch is already in flight (no concurrent duplicate request)', async () => {
   let resolveFetch!: (v: unknown) => void;
   const spy = vi.spyOn(api, 'getConversation').mockReturnValue(new Promise((r) => { resolveFetch = r; }) as any);
