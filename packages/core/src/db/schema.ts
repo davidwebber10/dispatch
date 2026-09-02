@@ -48,6 +48,8 @@ export function initSchema(db: Database.Database): void {
       enabled                INTEGER NOT NULL DEFAULT 1,
       next_run_at            TEXT,
       default_terminal_label TEXT,
+      role_name              TEXT,
+      consecutive_failures   INTEGER NOT NULL DEFAULT 0,
       created_at             TEXT NOT NULL,
       updated_at             TEXT NOT NULL,
       FOREIGN KEY (project_id) REFERENCES sessions(id)
@@ -76,6 +78,7 @@ export function initSchema(db: Database.Database): void {
       result_text         TEXT,
       transcript_path     TEXT,
       exit_code           INTEGER,
+      attempt             INTEGER NOT NULL DEFAULT 1,
       created_at          TEXT NOT NULL,
       updated_at          TEXT NOT NULL,
       FOREIGN KEY (schedule_id) REFERENCES agent_schedules(id),
@@ -229,6 +232,13 @@ export function initSchema(db: Database.Database): void {
     { table: 'agent_runs', column: 'result_text', sql: 'ALTER TABLE agent_runs ADD COLUMN result_text TEXT' },
     { table: 'agent_runs', column: 'transcript_path', sql: 'ALTER TABLE agent_runs ADD COLUMN transcript_path TEXT' },
     { table: 'agent_runs', column: 'exit_code', sql: 'ALTER TABLE agent_runs ADD COLUMN exit_code INTEGER' },
+    // Role-backed schedules: a schedule may be materialized from a role.md definition
+    // (role_name set) rather than created ad-hoc (role_name null). consecutive_failures
+    // tracks the auto-disable-after-2-failed-nights rule; attempt distinguishes a retry
+    // run from its original fire.
+    { table: 'agent_schedules', column: 'role_name', sql: 'ALTER TABLE agent_schedules ADD COLUMN role_name TEXT' },
+    { table: 'agent_schedules', column: 'consecutive_failures', sql: 'ALTER TABLE agent_schedules ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0' },
+    { table: 'agent_runs', column: 'attempt', sql: 'ALTER TABLE agent_runs ADD COLUMN attempt INTEGER NOT NULL DEFAULT 1' },
   ];
 
   for (const m of migrations) {

@@ -199,4 +199,54 @@ describe('agents db', () => {
     expect(byId.a3.active_runs).toBe(0);
     expect(byId.a3.project_name).toBe('other');
   });
+
+  it('finds a role-backed schedule by role_name and round-trips consecutive_failures', () => {
+    const schedule = agentsDb.createSchedule(db, {
+      id: 'sch-role-1',
+      projectId: 'proj-1',
+      name: 'Nightly Reviewer',
+      provider: 'claude-code',
+      workingDir: '/srv/tenex',
+      prompt: 'Review the queue',
+      scheduleKind: 'recurring',
+      runAt: null,
+      recurrenceRule: JSON.stringify({ type: 'daily', time: '05:30' }),
+      timezone: 'UTC',
+      enabled: true,
+      nextRunAt: null,
+      defaultTerminalLabel: null,
+      roleName: 'x',
+    });
+
+    expect(schedule.role_name).toBe('x');
+    expect(schedule.consecutive_failures).toBe(0);
+
+    const found = agentsDb.getScheduleByRoleName(db, 'x');
+    expect(found?.id).toBe('sch-role-1');
+    expect(agentsDb.getScheduleByRoleName(db, 'does-not-exist')).toBeUndefined();
+
+    agentsDb.setConsecutiveFailures(db, 'sch-role-1', 2);
+    expect(agentsDb.getSchedule(db, 'sch-role-1')!.consecutive_failures).toBe(2);
+  });
+
+  it('createRun persists a given attempt number, defaulting to 1', () => {
+    agentsDb.createSchedule(db, {
+      id: 'sch-1', projectId: 'proj-1', name: 'A', provider: 'claude-code', workingDir: '/srv/tenex',
+      prompt: 'go', scheduleKind: 'one-shot', runAt: null, recurrenceRule: null, timezone: 'UTC',
+      enabled: true, nextRunAt: null, defaultTerminalLabel: null,
+    });
+
+    const defaultRun = agentsDb.createRun(db, {
+      id: 'run-default', scheduleId: 'sch-1', projectId: 'proj-1', terminalId: null, provider: 'claude-code',
+      promptSnapshot: 'go', status: 'queued', error: null, externalSessionId: null,
+    });
+    expect(defaultRun.attempt).toBe(1);
+
+    const retryRun = agentsDb.createRun(db, {
+      id: 'run-retry', scheduleId: 'sch-1', projectId: 'proj-1', terminalId: null, provider: 'claude-code',
+      promptSnapshot: 'go', status: 'queued', error: null, externalSessionId: null, attempt: 2,
+    });
+    expect(retryRun.attempt).toBe(2);
+    expect(agentsDb.getRun(db, 'run-retry')!.attempt).toBe(2);
+  });
 });
