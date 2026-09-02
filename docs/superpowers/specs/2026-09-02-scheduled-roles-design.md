@@ -101,13 +101,20 @@ push-notification headline (existing push machinery). Leads with failures and
 staged-work-awaiting-review (including any proposed brief changes); suppresses
 "nothing happened" noise.
 
-**Display (v1): existing surfaces, zero new UI.** The summary posts as a message
-into one persistent pinned **Daily Digest thread** in a small dedicated project
-(e.g. "Operations"): normal structured rendering (markdown, file/PR links), night-
-over-night history in one scrollback, PWA-readable, push tap-through lands in it.
-The digest RUNNER thread archives like any role run — the pinned thread holds only
-the deliverable. A purpose-built digest panel is deferred until the thread version
-proves insufficient.
+**Display (v1): existing surfaces, zero new UI.** The summary lands in a pinned
+**file tab** — `digest.md` in a small dedicated **Operations** project — newest
+entry on top, night-over-night history in one scrollback, PWA-readable, push
+tap-through lands on it. (A file tab rather than a message thread: posting a
+message to a thread wakes that thread's model; a display board should have no
+model to wake.) The digest RUNNER thread archives like any role run — the file
+holds only the deliverable. A purpose-built digest panel is deferred until the
+file version proves insufficient.
+
+**Implementation note (from machinery recon):** roles ride the existing
+`agent_schedules` scheduler/recurrence/`agent_runs` telemetry unchanged; the role
+branch spawns a STRUCTURED typed agent (persona/model/policy/report_status for
+free) with the seed delivered as the first message — the same shape as
+coordinator-spawned agents — instead of the static-prompt PTY runner path.
 
 ## 5. Authority
 
