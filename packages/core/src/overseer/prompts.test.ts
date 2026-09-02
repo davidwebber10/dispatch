@@ -33,3 +33,15 @@ describe('coordinator review gates', () => {
     expect(COORDINATOR_PROMPT).toContain('SKIP both gates');
   });
 });
+
+describe('orchestration tuning', () => {
+  it('teaches queue_agent and start_agent', () => {
+    expect(COORDINATOR_PROMPT).toContain('queue_agent');
+    expect(COORDINATOR_PROMPT).toContain('start_agent');
+    expect(COORDINATOR_PROMPT).toContain('dependsOn');
+  });
+  it('teaches model economy and read-once discipline', () => {
+    expect(COORDINATOR_PROMPT).toContain('MODEL ECONOMY');
+    expect(COORDINATOR_PROMPT).toContain('read_agent ONCE');
+  });
+});
