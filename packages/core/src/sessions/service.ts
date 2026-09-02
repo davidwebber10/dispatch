@@ -22,6 +22,7 @@ import { parseCodexRollout } from '../conversation/codex-transcript.js';
 import { findCodexRolloutPath } from './codex-sessions.js';
 import { platform } from '../platform/index.js';
 import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.js';
+import { coordinatorToolPolicy } from '../overseer/coordinator-policy.js';
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
 import { resolveTranscriptPath } from './transcript-path.js';
 import { randomUUID } from 'crypto';
@@ -1983,6 +1984,11 @@ export class SessionService {
     // resume after a daemon restart.
     const escalate = config.role === 'agent' && config.autonomy === 'supervised';
 
+    // Daemon-enforced ground rules for the coordinator's own tool use (see coordinator-policy.ts) —
+    // consulted by the manager's can_use_tool membrane ahead of the escalate/auto-allow branches.
+    // Typed agents don't get this; only the coordinator thread itself is bound by it.
+    const toolPolicy = config.role === 'coordinator' ? coordinatorToolPolicy : undefined;
+
     // OpenCode's whole injection (model, permission mode, system prompt, MCP servers)
     // rides ONE per-thread config file pointed at via OPENCODE_CONFIG — `opencode acp`
     // takes no flags for any of it. Best-effort like the grok plugin dir: a thread
@@ -2010,6 +2016,7 @@ export class SessionService {
       args: sc.args,
       workDir,
       escalate,
+      toolPolicy,
       seedEvents,
       // Codex resumes/pins-model out-of-band over JSON-RPC (Claude encodes both in `args` and
       // ignores these); shared on the interface so this one call drives either manager.
