@@ -886,15 +886,27 @@ export function useStructuredChat(
             // real transcripts that silently discarded 27-30% of paged history — the "history
             // skips lines" bug. `prev` also grows with every page, so it got worse the further
             // back you scrolled.
+            // Scoped to items rendered BEFORE the oldest real identity: only those can
+            // overlap an older page. Right after a respawn, the client's own echo of a
+            // queued-while-working turn lands in the ring AHEAD of the first uuid'd live
+            // event — the page then carries the transcript's uuid'd copy of that SAME
+            // turn, which the uuid-only branch below used to prepend as a duplicate
+            // (surviving every refresh, since both sources re-serve their copy). Anon
+            // items at/after the anchor (the normal just-sent tail echo) must NOT
+            // contribute: their transcript line is newer than the anchor, so a match
+            // there is only ever a text coincidence with genuinely-older history (a
+            // repeated "yes") — the measured "history skips lines" deletion class.
+            const anchorIdx = prev.findIndex(hasRealUuid);
             const anonymousFingerprints = new Set(
-              prev.filter((it) => !hasRealUuid(it)).map(convItemFingerprint),
+              (anchorIdx < 0 ? prev : prev.slice(0, anchorIdx))
+                .filter((it) => !hasRealUuid(it)).map(convItemFingerprint),
             );
             const fresh = conv.items.filter((it) =>
-              // A real uuid IS the identity — trust it alone. Anything else falls back to
-              // content, which still catches the case the fallback exists for (the client's
-              // own optimistic echo / a mid-stream synthetic block).
+              // A real uuid IS the identity for uuid-vs-uuid dedup — but a pre-anchor
+              // anon echo has no uuid to match, so the content fallback applies to
+              // uuid'd page items too (it can only fire inside the pre-anchor window).
               hasRealUuid(it)
-                ? !seenUuids.has(it.uuid as string)
+                ? !seenUuids.has(it.uuid as string) && !anonymousFingerprints.has(convItemFingerprint(it))
                 : !anonymousFingerprints.has(convItemFingerprint(it)),
             );
             return fresh.length ? [...fresh, ...prev] : prev;
