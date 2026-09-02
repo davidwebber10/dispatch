@@ -112,13 +112,13 @@ tool use — not just written as a soft rule in the brief.
 | Level | May do | Never |
 |---|---|---|
 | `observe` | read-only actions, and report | any file write |
+| `stage` (default) | write on branches, `git commit`, `git push <remote> <branch>` (branch not main/master/prod\*), `gh pr create` | see below |
+| `stage-deploy` | everything `stage` allows, plus `gh workflow run … environment=staging` and other explicit staging-deploy forms | see below |
 
 > Note: `observe` denies **every** file write, including a role's own deliverable.
 > A digest-style role whose job is writing a file (like the shipped `morning-digest`)
 > needs `authority: stage`, with the brief narrowing writes to its deliverable and
 > memory proposals. Do not model a file-writing role on `observe`.
-| `stage` (default) | write on branches, `git commit`, `git push <remote> <branch>` (branch not main/master/prod\*), `gh pr create` | see below |
-| `stage-deploy` | everything `stage` allows, plus `gh workflow run … environment=staging` and other explicit staging-deploy forms | see below |
 
 Denied at **every** level, with no exception: a bare `git push` with no explicit
 remote and branch (an ambiguous target), any explicit push to a branch matching
