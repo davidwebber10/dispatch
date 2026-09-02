@@ -237,3 +237,52 @@ describe('convItemsToStream — render parity (machinery, thinking, status, foot
     expect(stream[0].isMachinery).toBeFalsy();
   });
 });
+
+// ---- MCP-namespaced agency tools (the names the live coordinator ACTUALLY emits) ----
+// The agency MCP server registers as "dispatch" (sessions/service.ts agencyServerSpec), so
+// the transcript records mcp__dispatch__spawn_agent — not the bare spawn_agent the map keys
+// used. The bare-name mismatch sent calls into machinery, then the orphan-agency-result
+// heuristic dropped their agentId-bearing results, leaving forever-"running…" tool rows.
+describe('convItemsToStream — MCP-namespaced agency tools', () => {
+  it('mcp__dispatch__spawn_agent + result become an agent card, never machinery', () => {
+    const stream = convItemsToStream([
+      { kind: 'tool', toolId: 's1', toolName: 'mcp__dispatch__spawn_agent', toolInput: JSON.stringify({ agentType: 'researcher' }) },
+      { kind: 'tool-result', toolId: 's1', text: JSON.stringify({ agentId: 'a1', label: 'Digger', mission: 'Delta' }) },
+    ]);
+    expect(stream).toHaveLength(1);
+    expect(stream[0].isAgentCard).toBe(true);
+    expect(stream[0].agentId).toBe('a1');
+    expect(stream[0].agentName).toBe('Digger');
+    expect(stream[0].agentType).toBe('researcher');
+  });
+
+  it('a later mcp__dispatch__message_agent card backfills name/type from the namespaced spawn', () => {
+    const stream = convItemsToStream([
+      { kind: 'tool', toolId: 's1', toolName: 'mcp__dispatch__spawn_agent', toolInput: JSON.stringify({ agentType: 'reviewer' }) },
+      { kind: 'tool-result', toolId: 's1', text: JSON.stringify({ agentId: 'a2', label: 'Checker' }) },
+      { kind: 'tool', toolId: 'm1', toolName: 'mcp__dispatch__message_agent', toolInput: JSON.stringify({ agentId: 'a2', text: 'go' }) },
+      { kind: 'tool-result', toolId: 'm1', text: JSON.stringify({ ok: true, agentId: 'a2' }) },
+    ]);
+    expect(stream).toHaveLength(2);
+    expect(stream[1].isAgentCard).toBe(true);
+    expect(stream[1].agentName).toBe('Checker');
+    expect(stream[1].agentAction).toBe('messaged');
+  });
+
+  it('mcp__dispatch__complete_agent keeps its {ok,agentId} result paired in machinery (no forever-running row)', () => {
+    const stream = convItemsToStream([
+      { kind: 'tool', toolId: 'c1', toolName: 'mcp__dispatch__complete_agent', toolInput: JSON.stringify({ agentId: 'a1' }) },
+      { kind: 'tool-result', toolId: 'c1', text: JSON.stringify({ ok: true, agentId: 'a1' }) },
+    ]);
+    expect(stream).toHaveLength(1);
+    expect(stream[0].isMachinery).toBe(true);
+    expect(stream[0].machineryItems?.map((i) => [i.kind, i.toolId])).toEqual([['tool', 'c1'], ['tool-result', 'c1']]);
+  });
+
+  it('a TRUE orphan agency result (its call outside the window) is still dropped', () => {
+    const stream = convItemsToStream([
+      { kind: 'tool-result', toolId: 'gone', text: JSON.stringify({ ok: true, agentId: 'a1' }) },
+    ]);
+    expect(stream).toHaveLength(0);
+  });
+});
