@@ -26,6 +26,8 @@ export interface AgentScheduleRow {
   enabled: number;
   next_run_at: string | null;
   default_terminal_label: string | null;
+  role_name: string | null;
+  consecutive_failures: number;
   created_at: string;
   updated_at: string;
 }
@@ -53,6 +55,7 @@ export interface AgentRunRow {
   result_text: string | null;
   transcript_path: string | null;
   exit_code: number | null;
+  attempt: number;
   created_at: string;
   updated_at: string;
 }
@@ -71,6 +74,8 @@ export interface CreateScheduleInput {
   enabled: boolean;
   nextRunAt: string | null;
   defaultTerminalLabel: string | null;
+  /** Role this schedule was materialized from (role.md name); null = an ordinary, ad-hoc schedule. */
+  roleName?: string | null;
 }
 
 export interface CreateRunInput {
@@ -83,6 +88,8 @@ export interface CreateRunInput {
   status: AgentRunStatus;
   error: string | null;
   externalSessionId: string | null;
+  /** Attempt number within a fire; defaults to 1. A retry (per the once-per-fire rule) passes 2. */
+  attempt?: number;
 }
 
 const nowIso = () => new Date().toISOString();
@@ -97,8 +104,8 @@ export function createSchedule(db: Database.Database, input: CreateScheduleInput
     INSERT INTO agent_schedules (
       id, project_id, name, provider, working_dir, prompt, schedule_kind,
       run_at, recurrence_rule, timezone, enabled, next_run_at,
-      default_terminal_label, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      default_terminal_label, role_name, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     input.id,
     input.projectId,
@@ -113,6 +120,7 @@ export function createSchedule(db: Database.Database, input: CreateScheduleInput
     input.enabled ? 1 : 0,
     input.nextRunAt,
     input.defaultTerminalLabel,
+    input.roleName ?? null,
     now,
     now,
   );
@@ -121,6 +129,16 @@ export function createSchedule(db: Database.Database, input: CreateScheduleInput
 
 export function getSchedule(db: Database.Database, id: string): AgentScheduleRow | null {
   return (db.prepare('SELECT * FROM agent_schedules WHERE id = ?').get(id) as AgentScheduleRow | undefined) ?? null;
+}
+
+/** Look up the schedule materialized from a given role.md definition (role_name), if one exists. */
+export function getScheduleByRoleName(db: Database.Database, roleName: string): AgentScheduleRow | undefined {
+  return db.prepare('SELECT * FROM agent_schedules WHERE role_name = ?').get(roleName) as AgentScheduleRow | undefined;
+}
+
+/** Set the schedule's consecutive-failed-fires counter (used by the 2-consecutive-failures auto-disable rule). */
+export function setConsecutiveFailures(db: Database.Database, scheduleId: string, n: number): void {
+  db.prepare('UPDATE agent_schedules SET consecutive_failures = ?, updated_at = ? WHERE id = ?').run(n, nowIso(), scheduleId);
 }
 
 export function listSchedules(db: Database.Database, filter: { projectId?: string } = {}): AgentScheduleRow[] {
@@ -191,8 +209,8 @@ export function createRun(db: Database.Database, input: CreateRunInput): AgentRu
     INSERT INTO agent_runs (
       id, schedule_id, project_id, terminal_id, provider, prompt_snapshot,
       status, started_at, completed_at, error, external_session_id,
-      last_opened_at, unread_since, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, NULL, NULL, ?, ?)
+      last_opened_at, unread_since, attempt, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, NULL, NULL, ?, ?, ?)
   `).run(
     input.id,
     input.scheduleId,
@@ -203,6 +221,7 @@ export function createRun(db: Database.Database, input: CreateRunInput): AgentRu
     input.status,
     input.error,
     input.externalSessionId,
+    input.attempt ?? 1,
     now,
     now,
   );

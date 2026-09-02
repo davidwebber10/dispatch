@@ -183,3 +183,122 @@ describe('cmdRun', () => {
     exitSpy.mockRestore();
   });
 });
+
+describe('dispatch roles', () => {
+  /** A fake `fetch` response object — just enough of the Response shape for cmdRoles. */
+  function jsonResponse(status: number, body: unknown) {
+    return { ok: status >= 200 && status < 300, status, json: async () => body };
+  }
+
+  function logged(): { logs: string[]; restore: () => void } {
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((s: string) => { logs.push(s); });
+    return { logs, restore: () => spy.mockRestore() };
+  }
+
+  test('roles list renders a table row per role', async () => {
+    const rolesFetch = vi.fn().mockResolvedValue(jsonResponse(200, {
+      roles: [
+        {
+          def: { name: 'nightly-planner', project: 'dispatch', global: false, agentType: 'planner', schedule: { type: 'daily', time: '05:30' }, authority: 'observe', wallClockCapMin: 45 },
+          enabled: true,
+          nextRunAt: '2026-09-03T05:30:00Z',
+          consecutiveFailures: 0,
+        },
+        {
+          def: { name: 'ops-sweep', project: null, global: true, agentType: 'researcher', schedule: { type: 'daily', time: '06:00' }, authority: 'observe', wallClockCapMin: 45 },
+          enabled: false,
+          nextRunAt: null,
+        },
+      ],
+    }));
+    const { logs, restore } = logged();
+
+    await runCommand(['roles', 'list'], { port: 3456, rolesFetch } as any);
+    restore();
+
+    expect(rolesFetch).toHaveBeenCalledWith('http://localhost:3456/api/roles', undefined);
+    const out = logs.join('\n');
+    expect(out).toContain('nightly-planner');
+    expect(out).toContain('dispatch');
+    expect(out).toContain('yes');
+    expect(out).toContain('2026-09-03T05:30:00Z');
+    expect(out).toContain('ops-sweep');
+    expect(out).toContain('global');
+    expect(out).toContain('no');
+  });
+
+  test('roles list surfaces role.md parse failures in an errors section', async () => {
+    const rolesFetch = vi.fn().mockResolvedValue(jsonResponse(200, {
+      roles: [
+        {
+          def: { name: 'broken', project: null, global: false, agentType: '', schedule: null, authority: 'observe', wallClockCapMin: 45 },
+          enabled: false,
+          error: 'role.md must start with a --- frontmatter block',
+        },
+      ],
+    }));
+    const { logs, restore } = logged();
+
+    await runCommand(['roles', 'list'], { port: 3456, rolesFetch } as any);
+    restore();
+
+    const out = logs.join('\n');
+    expect(out).toMatch(/errors/i);
+    expect(out).toContain('broken');
+    expect(out).toContain('role.md must start with a --- frontmatter block');
+  });
+
+  test('roles enable <name> POSTs and prints the updated entry', async () => {
+    const rolesFetch = vi.fn().mockResolvedValue(jsonResponse(200, {
+      def: { name: 'nightly-planner', project: 'dispatch', global: false, agentType: 'planner', schedule: {}, authority: 'observe', wallClockCapMin: 45 },
+      enabled: true,
+      nextRunAt: '2026-09-03T05:30:00Z',
+    }));
+    const { logs, restore } = logged();
+
+    await runCommand(['roles', 'enable', 'nightly-planner'], { port: 3456, rolesFetch } as any);
+    restore();
+
+    expect(rolesFetch).toHaveBeenCalledWith('http://localhost:3456/api/roles/nightly-planner/enable', { method: 'POST' });
+    const out = logs.join('\n');
+    expect(out).toContain('nightly-planner');
+    expect(out).toMatch(/enabled/i);
+  });
+
+  test('roles disable <name> POSTs and prints the updated entry', async () => {
+    const rolesFetch = vi.fn().mockResolvedValue(jsonResponse(200, {
+      def: { name: 'nightly-planner', project: 'dispatch', global: false, agentType: 'planner', schedule: {}, authority: 'observe', wallClockCapMin: 45 },
+      enabled: false,
+      nextRunAt: null,
+    }));
+    const { logs, restore } = logged();
+
+    await runCommand(['roles', 'disable', 'nightly-planner'], { port: 3456, rolesFetch } as any);
+    restore();
+
+    expect(rolesFetch).toHaveBeenCalledWith('http://localhost:3456/api/roles/nightly-planner/disable', { method: 'POST' });
+    const out = logs.join('\n');
+    expect(out).toContain('nightly-planner');
+    expect(out).toMatch(/disabled/i);
+  });
+
+  test('roles enable on an unknown role surfaces the 404 error message', async () => {
+    const rolesFetch = vi.fn().mockResolvedValue(jsonResponse(404, { error: 'role "ghost" not found' }));
+
+    await expect(runCommand(['roles', 'enable', 'ghost'], { port: 3456, rolesFetch } as any))
+      .rejects.toThrow('role "ghost" not found');
+  });
+
+  test('unknown roles subcommand throws a usage error', async () => {
+    await expect(runCommand(['roles', 'bogus'], { port: 3456 } as any)).rejects.toThrow(/usage/i);
+  });
+
+  test('roles list with the daemon down reports a clear "daemon not running" error', async () => {
+    const econnrefused = Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
+    const rolesFetch = vi.fn().mockRejectedValue(econnrefused);
+
+    await expect(runCommand(['roles', 'list'], { port: 3456, rolesFetch } as any))
+      .rejects.toThrow(/daemon not running \(dispatch start\)/i);
+  });
+});
