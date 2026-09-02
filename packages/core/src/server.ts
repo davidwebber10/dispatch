@@ -400,7 +400,11 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const toolsBase = options.toolsDir ?? path.join(dispatchDir, 'tools');
   const sessionService = new SessionService(db, ptyManager, path.join(dispatchDir, 'mcp.json'));
   const agentService = new AgentService(db, sessionService, broadcaster);
-  const rolesService = new RolesService({ db, agentService, sessionService });
+  // Built ahead of rolesService (moved up from below) so it can be handed in as
+  // RolesService's optional push dep — backs the 2-consecutive-failed-nights
+  // auto-disable Needs-you (Task 7).
+  const pushService = new PushService(db, { vapidDir: dispatchDir });
+  const rolesService = new RolesService({ db, agentService, sessionService, pushService });
   agentService.setRoleRunner(rolesService);
   const secretsService = options.secretsService ?? new SecretsService(dispatchDir);
   const integrationsService = new IntegrationsService(db);
@@ -418,7 +422,6 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   wireCodexPretty(sessionService, statusService, db, broadcaster);
   wireGrokPretty(sessionService, statusService, db, broadcaster);
   wireOpencodePretty(sessionService, statusService, db, broadcaster);
-  const pushService = new PushService(db, { vapidDir: dispatchDir });
 
   wireThreadSettledPush(db, statusService, pushService);
   wirePtyUsageCapture(db, statusService, sessionService, broadcaster);
@@ -562,7 +565,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Determine actual server URL after port is known
   const sessionService = new SessionService(db, ptyManager, path.join(dataDir, 'mcp.json'));
   const agentService = new AgentService(db, sessionService, broadcaster, path.join(dataDir, 'runs'));
-  const rolesService = new RolesService({ db, agentService, sessionService });
+  // Built ahead of rolesService (moved up from its former spot below, alongside the other
+  // *Pretty wiring) so it can be handed in as RolesService's optional push dep — backs the
+  // 2-consecutive-failed-nights auto-disable Needs-you (Task 7).
+  const pushService = new PushService(db, { vapidDir: dataDir });
+  const rolesService = new RolesService({ db, agentService, sessionService, pushService });
   agentService.setRoleRunner(rolesService);
   // Wakes watchers on peer status edges (see sessions/watch-dispatcher.ts) — wired as an
   // optional StatusService dependency, same shape as the threadAutoNamer activity callback.
@@ -580,7 +587,6 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const codexManager = wireCodexPretty(sessionService, statusService, db, broadcaster);
   const grokStructured = wireGrokPretty(sessionService, statusService, db, broadcaster);
   const opencodeStructured = wireOpencodePretty(sessionService, statusService, db, broadcaster);
-  const pushService = new PushService(db, { vapidDir: dataDir });
 
   // Token usage for INTERACTIVE threads. Scheduled runs already record theirs on
   // agent_runs; interactive threads discarded it, which left no way to answer the
@@ -743,6 +749,20 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       broadcaster.broadcast({ type: 'terminal:exit', terminalId: id, sessionId: terminal.session_id });
       sessionsDb.updatePid(db, terminal.session_id, null);
       rollupSession(terminal.session_id);
+    }
+
+    // This structured-transport exit path is the ONLY exit signal a role-run terminal
+    // ever gets — role runs never go through ptyManager/agentService.handleTerminalExit
+    // above. Without this hook a crashed runner (or a CLI that just dies) stayed stuck
+    // 'working'/'starting' forever: no log line, no failure counted, terminal never
+    // archived (Task 6 review finding, Critical for Task 7). handleTerminalExit no-ops
+    // for any non-role terminal and for a run that already finalized via the normal
+    // settled path (see its doc comment for why that guard is load-bearing, not just
+    // defensive).
+    try {
+      rolesService.handleTerminalExit(id);
+    } catch (err) {
+      console.error('role run exit handler failed', err);
     }
   });
 

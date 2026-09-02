@@ -79,6 +79,13 @@ interface SessionTerminalService {
  */
 export interface RoleRunner {
   spawnRoleRun(schedule: agentsDb.AgentScheduleRow, run: agentsDb.AgentRunRow): void;
+  /**
+   * Task 7: interrupt + fail any role run that's been alive past its role's
+   * wallClockCapMin, then route the failure through retry/2-night-disable
+   * supervision. Optional so a bare-`spawnRoleRun` test double (pre-Task-7 tests)
+   * doesn't need to implement it; `processDueRuns` no-ops when it's absent.
+   */
+  sweepWallCap?(nowIso: string): void;
 }
 
 export interface CreateScheduleRequest {
@@ -394,6 +401,10 @@ export class AgentService {
   }
 
   processDueRuns(now: string = new Date().toISOString()): AgentRun[] {
+    // Sweep wall-capped role runs BEFORE checking what's due: listDueSchedules skips any
+    // schedule with an active run, so a role stuck past its cap would otherwise block its
+    // own next fire forever instead of just this one.
+    this.roleRunner?.sweepWallCap?.(now);
     const due = agentsDb.listDueSchedules(this.db, now);
     return due.map(schedule => {
       const run = this.runNow(schedule.id);

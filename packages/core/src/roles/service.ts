@@ -6,6 +6,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
+import { v4 as uuid } from 'uuid';
 import { appendRunLog, listRoles, readRoleMemory, readRunLogTail, rolesRootDir, type RoleDefinition } from './definition.js';
 import { buildSeedMessage } from './seed.js';
 import * as agentsDb from '../db/agents.js';
@@ -13,6 +14,7 @@ import * as terminalsDb from '../db/terminals.js';
 import type { AgentService, RoleRunner } from '../agents/service.js';
 import type { SessionService } from '../sessions/service.js';
 import type { StatusService } from '../status/service.js';
+import type { PushService } from '../push/service.js';
 import type { Session } from '../types.js';
 
 /** Number of past run reports fed into a fresh incarnation's seed (spec §2, "tail of log.jsonl"). */
@@ -63,6 +65,10 @@ export interface RolesServiceDeps {
   agentService: AgentService;
   sessionService: SessionService;
   rolesRoot?: string;
+  /** Optional (Task 7): backs the 2-consecutive-failed-nights auto-disable push. A no-op
+   *  when absent — supervision (retry/counter/disable) still runs without it, it just
+   *  can't raise the Needs-you. */
+  pushService?: Pick<PushService, 'notifyThread'>;
 }
 
 const OPERATIONS_PROJECT_NAME = 'Operations';
@@ -95,16 +101,14 @@ export class RolesService implements RoleRunner {
   private agentService: AgentService;
   private sessionService: SessionService;
   private rolesRoot: string;
-
-  /** Task 7 seam: retry/auto-disable supervision hangs off a finalized run's outcome.
-   *  Left unset (no-op) here — wiring it up is Task 7's job, not this one's. */
-  onRunFinalized?: (schedule: agentsDb.AgentScheduleRow | null, run: agentsDb.AgentRunRow, outcome: RunOutcome) => void;
+  private pushService?: Pick<PushService, 'notifyThread'>;
 
   constructor(deps: RolesServiceDeps) {
     this.db = deps.db;
     this.agentService = deps.agentService;
     this.sessionService = deps.sessionService;
     this.rolesRoot = deps.rolesRoot ?? rolesRootDir();
+    this.pushService = deps.pushService;
   }
 
   /** Scan the roles dir and merge in schedule state by role_name. Never mutates anything. */
@@ -318,11 +322,6 @@ export class RolesService implements RoleRunner {
     // once per run. Terminal statuses per agentsDb.AgentRunStatus: succeeded/failed/cancelled.
     if (run.status === 'succeeded' || run.status === 'failed' || run.status === 'cancelled') return;
 
-    // The role may have been edited or deleted since this incarnation spawned; fall back
-    // to a stub with the same directory (errorStub) so the report still lands somewhere.
-    const { roles } = listRoles(this.rolesRoot);
-    const def = roles.find((r) => r.name === roleName) ?? errorStub(this.rolesRoot, roleName);
-
     const lastOutcome = config.lastOutcome as
       | { summary?: string; needsHelp?: boolean; declaredState?: string }
       | undefined;
@@ -347,6 +346,31 @@ export class RolesService implements RoleRunner {
     }
     if (lastOutcome?.declaredState === 'blocked') outcome = 'failed';
 
+    this.closeOutRun(terminalId, roleName, run, outcome, summary, links, proposedBriefChanges);
+  }
+
+  /**
+   * Shared close-out tail once a role-run incarnation's outcome is known: append the
+   * log.jsonl line, settle the run row, archive the runner terminal, and route the
+   * result through Task 7's retry/2-night-disable supervision. Used by both the normal
+   * settled path (finalizeRoleRun, above) and the crash path (handleTerminalExit, below)
+   * so a runner that dies mid-turn is held to the exact same bookkeeping as one that
+   * settles cleanly — same log line, same failure counting, same terminal archiving.
+   */
+  private closeOutRun(
+    terminalId: string,
+    roleName: string,
+    run: agentsDb.AgentRunRow,
+    outcome: RunOutcome,
+    summary: string,
+    links: string[],
+    proposedBriefChanges?: string,
+  ): void {
+    // The role may have been edited or deleted since this incarnation spawned; fall back
+    // to a stub with the same directory (errorStub) so the report still lands somewhere.
+    const { roles } = listRoles(this.rolesRoot);
+    const def = roles.find((r) => r.name === roleName) ?? errorStub(this.rolesRoot, roleName);
+
     appendRunLog(def.dir, {
       start: run.started_at,
       end: new Date().toISOString(),
@@ -359,11 +383,149 @@ export class RolesService implements RoleRunner {
     });
 
     agentsDb.updateRunStatus(this.db, run.id, outcome === 'failed' ? 'failed' : 'succeeded');
-    this.sessionService.removeTerminal(terminalId);
+    try { this.sessionService.removeTerminal(terminalId); } catch { /* best effort — may already be gone on the crash path */ }
 
     try {
       const scheduleRow = agentsDb.getSchedule(this.db, run.schedule_id);
-      this.onRunFinalized?.(scheduleRow, agentsDb.getRun(this.db, run.id)!, outcome);
-    } catch { /* the Task 7 seam must never break finalization */ }
+      this.superviseFinalizedRun(scheduleRow, agentsDb.getRun(this.db, run.id)!, outcome);
+    } catch { /* supervision must never break finalization */ }
+  }
+
+  /**
+   * Mirrors AgentService.handleTerminalExit for the structured-transport role-run path,
+   * which that method never sees: role runs are spawned via createTerminal (structured
+   * transport), not createRunnerTerminal (the plain-PTY runner path handleTerminalExit
+   * closes out), so server.ts's structured-manager exit handler previously left a
+   * crashed role runner stuck 'working'/'starting' forever — no log line, no failure
+   * counting, terminal never archived (Task 6 review finding, escalated to Critical for
+   * Task 7). Wired from that same handler (server.ts) so a runner that crashes or whose
+   * CLI process dies still finalizes as a failed attempt, feeding the identical
+   * retry/2-night-disable supervision a clean settle uses.
+   *
+   * No-ops for a terminal that isn't a role run, or whose run already reached a terminal
+   * state — the normal settled path got there first. That's not just a double-finalize
+   * guard: on a CLEAN completion, closeOutRun's own `removeTerminal` call is what kills
+   * the process and triggers this exact exit event, so without the guard every ordinary
+   * settle would double-count itself as a second, spurious "crash".
+   */
+  handleTerminalExit(terminalId: string): void {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) return;
+    let config: Record<string, any> = {};
+    try { config = JSON.parse(terminal.config || '{}'); } catch { /* malformed → not a role run */ }
+    const roleName = config.roleRun;
+    if (typeof roleName !== 'string' || !roleName) return;
+
+    const run = agentsDb.getRunByTerminalId(this.db, terminalId);
+    if (!run) return;
+    if (run.status === 'succeeded' || run.status === 'failed' || run.status === 'cancelled') return;
+
+    this.closeOutRun(terminalId, roleName, run, 'failed', 'runner process exited unexpectedly', []);
+  }
+
+  /**
+   * Task 7: any role run still 'working'/'starting' past its role's wallClockCapMin
+   * (default 45, spec §3) gets interrupted and failed here, then routed through the
+   * exact same retry/2-night-disable supervision as an ordinary settled failure — a
+   * role never runs forever just because nothing else failed it out. A run still under
+   * its cap (a "fresh" run) is left untouched.
+   *
+   * Routes through the same `closeOutRun` tail every other finalization uses — NOT a
+   * bare `updateRunStatus` — so a wall-cap timeout gets the exact same log.jsonl line
+   * (the digest, and the retry's own seed via `readRunLogTail`, both read it), the same
+   * terminal archiving (no zombie left in the rail), and the same double-finalize guard
+   * (a late settle on the now-already-failed run can't double-fire).
+   *
+   * Falls back to `created_at` when `started_at` is NULL — a run can be persisted
+   * 'starting' with no `started_at` yet if the daemon is hard-killed between `createRun`
+   * and the `updateRunStatus('starting', ...)` that sets it; without the fallback such a
+   * run's NULL `started_at` would never age past the cap, and `listDueSchedules` (which
+   * treats any 'starting' run as still in flight) would block that schedule forever.
+   */
+  sweepWallCap(nowIso: string): void {
+    const now = new Date(nowIso).getTime();
+    for (const run of agentsDb.listActiveRoleRuns(this.db)) {
+      const referenceIso = run.started_at ?? run.created_at;
+      const schedule = agentsDb.getSchedule(this.db, run.schedule_id);
+      const roleName = schedule?.role_name;
+      if (!schedule || !roleName) continue;
+
+      const { roles } = listRoles(this.rolesRoot);
+      const def = roles.find((r) => r.name === roleName);
+      const capMs = (def?.wallClockCapMin ?? 45) * 60_000;
+      if (now - new Date(referenceIso).getTime() < capMs) continue;
+
+      if (run.terminal_id) {
+        try { this.sessionService.interrupt(run.terminal_id); } catch { /* best effort */ }
+      }
+      this.closeOutRun(run.terminal_id ?? '', roleName, run, 'failed', 'wall-clock cap', []);
+    }
+  }
+
+  /**
+   * Task 7 supervision, hung off every finalized role-run incarnation (both the settled
+   * path and the wall-cap sweep route through this, via closeOutRun/sweepWallCap). A
+   * first-attempt (attempt 1) failure spawns one fresh retry (attempt 2) immediately;
+   * a second failure that night (attempt 2, or a retry spawn that itself throws) bumps
+   * `consecutive_failures` and, once it reaches 2, disables the schedule and raises a
+   * push Needs-you. Any success, at either attempt, resets the counter to 0. Bounded:
+   * only `attempt <= 1` ever spawns a retry, so a failing attempt-2 run can never spawn
+   * attempt 3.
+   */
+  private superviseFinalizedRun(schedule: agentsDb.AgentScheduleRow | null, run: agentsDb.AgentRunRow, outcome: RunOutcome): void {
+    if (!schedule) return; // schedule deleted mid-flight — nothing left to supervise
+    if (outcome !== 'failed') {
+      agentsDb.setConsecutiveFailures(this.db, schedule.id, 0);
+      return;
+    }
+
+    if (run.attempt <= 1) {
+      const retry = agentsDb.createRun(this.db, {
+        id: uuid(),
+        scheduleId: schedule.id,
+        projectId: schedule.project_id,
+        terminalId: null,
+        provider: schedule.provider,
+        promptSnapshot: schedule.prompt,
+        status: 'starting',
+        error: null,
+        externalSessionId: null,
+        attempt: 2,
+      });
+      try {
+        this.spawnRoleRun(schedule, retry);
+        return; // attempt 2 is now live; ITS eventual settle re-enters this method
+      } catch (err: any) {
+        // The retry never even got a terminal — that's attempt 2's failure, right now.
+        // Count it against the retry row (not the original attempt-1 run) so a push's
+        // terminalId always points at the attempt that actually failed.
+        const failedRetry = agentsDb.updateRunStatus(this.db, retry.id, 'failed', { error: err?.message ?? String(err) }) ?? retry;
+        this.recordScheduleFailure(schedule, failedRetry);
+        return;
+      }
+    }
+
+    this.recordScheduleFailure(schedule, run);
+  }
+
+  /** consecutive_failures += 1; at >= 2, disable the schedule and (if a pushService is
+   *  configured) raise the "re-enable with dispatch roles enable <name>" Needs-you. */
+  private recordScheduleFailure(schedule: agentsDb.AgentScheduleRow, run: agentsDb.AgentRunRow): void {
+    const n = schedule.consecutive_failures + 1;
+    agentsDb.setConsecutiveFailures(this.db, schedule.id, n);
+    if (n < 2) return;
+
+    this.agentService.updateSchedule(schedule.id, { enabled: false });
+    const name = schedule.role_name ?? schedule.name;
+    // Best-effort: a push failure (e.g. the DB closing mid-shutdown, throwing before
+    // notifyThread's own internal per-subscription try/catch even starts) must not
+    // become an unhandled rejection — nothing here awaits this call, so an uncaught
+    // throw would escape every caller's try/catch.
+    this.pushService?.notifyThread({
+      terminalId: run.terminal_id ?? '',
+      sessionId: schedule.project_id,
+      title: `Role disabled: ${name}`,
+      body: `2 consecutive failed nights — re-enable with dispatch roles enable ${name}`,
+    }).catch(() => { /* best-effort */ });
   }
 }
