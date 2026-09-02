@@ -401,6 +401,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const sessionService = new SessionService(db, ptyManager, path.join(dispatchDir, 'mcp.json'));
   const agentService = new AgentService(db, sessionService, broadcaster);
   const rolesService = new RolesService({ db, agentService, sessionService });
+  agentService.setRoleRunner(rolesService);
   const secretsService = options.secretsService ?? new SecretsService(dispatchDir);
   const integrationsService = new IntegrationsService(db);
   sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
@@ -421,6 +422,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
 
   wireThreadSettledPush(db, statusService, pushService);
   wirePtyUsageCapture(db, statusService, sessionService, broadcaster);
+  rolesService.wireSettled(statusService);
 
   bootAnalytics(db);
 
@@ -561,6 +563,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const sessionService = new SessionService(db, ptyManager, path.join(dataDir, 'mcp.json'));
   const agentService = new AgentService(db, sessionService, broadcaster, path.join(dataDir, 'runs'));
   const rolesService = new RolesService({ db, agentService, sessionService });
+  agentService.setRoleRunner(rolesService);
   // Wakes watchers on peer status edges (see sessions/watch-dispatcher.ts) — wired as an
   // optional StatusService dependency, same shape as the threadAutoNamer activity callback.
   const watchDispatcher = new WatchDispatcher(db, buildWatchDeliver(sessionService));
@@ -592,6 +595,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   wireThreadSettledPush(db, statusService, pushService);
   wirePtyUsageCapture(db, statusService, sessionService, broadcaster);
+  rolesService.wireSettled(statusService);
 
   // Doppler secrets: token-backed connection + per-spawn injection (DOPPLER_* env +
   // an MCP server) so Claude Code / Codex agents can add & retrieve secrets.

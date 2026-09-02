@@ -6,11 +6,47 @@
 import os from 'node:os';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
-import { listRoles, rolesRootDir, type RoleDefinition } from './definition.js';
+import { appendRunLog, listRoles, readRoleMemory, readRunLogTail, rolesRootDir, type RoleDefinition } from './definition.js';
+import { buildSeedMessage } from './seed.js';
 import * as agentsDb from '../db/agents.js';
-import type { AgentService } from '../agents/service.js';
+import * as terminalsDb from '../db/terminals.js';
+import type { AgentService, RoleRunner } from '../agents/service.js';
 import type { SessionService } from '../sessions/service.js';
+import type { StatusService } from '../status/service.js';
 import type { Session } from '../types.js';
+
+/** Number of past run reports fed into a fresh incarnation's seed (spec §2, "tail of log.jsonl"). */
+const LOG_TAIL_LINES = 3;
+
+type RunOutcome = 'ok' | 'attention' | 'failed';
+
+/** The runner's final ```json contract block (see seed.ts's OUTPUT_CONTRACT), when it can be
+ *  recovered from `config.lastOutcome.summary` alone — see the module doc comment on
+ *  `finalizeRoleRun` for why that's the only text available without new transcript plumbing. */
+interface RunContract {
+  outcome: RunOutcome;
+  summary: string;
+  links?: string[];
+  proposedBriefChanges?: string;
+}
+
+function extractContract(summary: string | undefined): RunContract | null {
+  if (!summary) return null;
+  const m = /```json\s*([\s\S]*?)```/.exec(summary);
+  if (!m) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(m[1]); } catch { return null; }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const obj = parsed as Record<string, unknown>;
+  if (obj.outcome !== 'ok' && obj.outcome !== 'attention' && obj.outcome !== 'failed') return null;
+  if (typeof obj.summary !== 'string') return null;
+  return {
+    outcome: obj.outcome,
+    summary: obj.summary,
+    links: Array.isArray(obj.links) ? obj.links.filter((l): l is string => typeof l === 'string') : undefined,
+    proposedBriefChanges: typeof obj.proposedBriefChanges === 'string' ? obj.proposedBriefChanges : undefined,
+  };
+}
 
 export interface RoleStatusEntry {
   def: RoleDefinition;
@@ -54,11 +90,15 @@ function errorStub(root: string, name: string): RoleDefinition {
   };
 }
 
-export class RolesService {
+export class RolesService implements RoleRunner {
   private db: Database.Database;
   private agentService: AgentService;
   private sessionService: SessionService;
   private rolesRoot: string;
+
+  /** Task 7 seam: retry/auto-disable supervision hangs off a finalized run's outcome.
+   *  Left unset (no-op) here — wiring it up is Task 7's job, not this one's. */
+  onRunFinalized?: (schedule: agentsDb.AgentScheduleRow | null, run: agentsDb.AgentRunRow, outcome: RunOutcome) => void;
 
   constructor(deps: RolesServiceDeps) {
     this.db = deps.db;
@@ -180,5 +220,150 @@ export class RolesService {
     };
     if (errorMessage) entry.error = errorMessage;
     return entry;
+  }
+
+  // --- Run lifecycle (Task 6: the live scheduler's role-run branch) --------------
+
+  /**
+   * Fire one incarnation of a role-backed schedule (AgentService.runNow's role branch,
+   * via `agentService.setRoleRunner(this)`). Re-reads + re-parses role.md fresh — never
+   * cached — so a brief edited since the last fire is picked up with no re-registration.
+   * Throws on any failure (parse, unresolvable project, spawn); runNow's own catch marks
+   * the run failed with the thrown message, so this method deliberately does no failure
+   * bookkeeping of its own. On success it attaches the terminal and moves the run to
+   * 'working' itself — the caller only has stale copies of both after this returns.
+   */
+  spawnRoleRun(schedule: agentsDb.AgentScheduleRow, run: agentsDb.AgentRunRow): void {
+    if (!schedule.role_name) throw new Error('schedule has no role_name');
+    const def = this.requireDef(schedule.role_name);
+    const project = this.resolveProject(def);
+
+    const nowIso = new Date().toISOString();
+    const seed = buildSeedMessage({
+      def,
+      memory: readRoleMemory(def.dir),
+      logTail: readRunLogTail(def.dir, LOG_TAIL_LINES),
+      nowIso,
+    });
+
+    const label = `${def.name} · ${nowIso.slice(0, 10)}`;
+    const config: Record<string, unknown> = {
+      transport: 'structured',
+      role: 'agent',
+      agentType: def.agentType,
+      ...(def.model ? { model: def.model } : {}),
+      mission: def.name,
+      roleRun: def.name,
+      roleAuthority: def.authority,
+      spawnDepth: 1,
+    };
+
+    const terminal = this.sessionService.createTerminal(project.id, 'claude-code', label, true, project.workingDir, undefined, config);
+    // Attach BEFORE sending the seed: if sendThreadMessage throws below, the terminal is
+    // already attached to the run (so nothing double-spawns it), and the catch cleans up
+    // the orphan itself — attaching after the send would leave a live, unattached, never-
+    // seeded runner that nothing else knows to remove.
+    agentsDb.attachTerminal(this.db, run.id, terminal.id);
+
+    try {
+      this.sessionService.sendThreadMessage(terminal.id, seed, 'coordinator');
+    } catch (err) {
+      // The terminal spawned but never got its task — archive it rather than leave a dead
+      // runner in the rail. Rethrow (don't set failed here) so runNow's existing catch does
+      // the one, consistent "fail the run" bookkeeping for every spawnRoleRun failure mode.
+      try { this.sessionService.removeTerminal(terminal.id); } catch { /* best effort */ }
+      throw err;
+    }
+
+    agentsDb.updateRunStatus(this.db, run.id, 'working', { externalSessionId: terminal.externalId ?? null });
+  }
+
+  /** Subscribe the settled-listener that closes out a finished role-run incarnation
+   *  (server.ts wiring — mirrors wireThreadSettledPush's shape). One subscription for
+   *  the process lifetime; ignores every settle that isn't a role-run terminal. */
+  wireSettled(statusService: StatusService): void {
+    statusService.addThreadSettledListener(({ terminalId }) => {
+      // Structured threads settle via StatusService.markIdle/markNeedsInput, which fire
+      // this listener SYNCHRONOUSLY and BEFORE SessionService.noteTurnOutcome persists
+      // config.lastOutcome for the very turn that just ended (server.ts calls markIdle
+      // then noteTurnOutcome, in that order, for both the 'idle' and 'needs-help' structured
+      // events). Reading config.lastOutcome right here would see stale or entirely absent
+      // data. noteTurnOutcome runs synchronously in the same call stack, though, so it has
+      // always completed by the next event-loop tick — deferring one tick is enough, is
+      // confined to this listener, and needs no change to that shared ordering.
+      setImmediate(() => {
+        try { this.finalizeRoleRun(terminalId); }
+        catch { /* a settled listener must never throw */ }
+      });
+    });
+  }
+
+  /** Close out one role-run incarnation: append its report to log.jsonl, settle the
+   *  run row, and archive the runner terminal. No-ops for any terminal that isn't a
+   *  role-run terminal (config.roleRun unset) or has no matching run row. `threadStatus`
+   *  isn't consulted: the settled edge only ever fires for 'waiting'/'needs_input'
+   *  terminal statuses (see StatusService.apply), never 'error' — the only signal for a
+   *  bad outcome available here is the runner's own declaredState (below). */
+  private finalizeRoleRun(terminalId: string): void {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) return;
+    let config: Record<string, any> = {};
+    try { config = JSON.parse(terminal.config || '{}'); } catch { /* malformed → not a role run */ }
+    const roleName = config.roleRun;
+    if (typeof roleName !== 'string' || !roleName) return; // ordinary thread — ignore
+
+    const run = agentsDb.getRunByTerminalId(this.db, terminalId);
+    if (!run) return;
+    // Already closed out (e.g. a duplicate settle edge) — appendRunLog must run at most
+    // once per run. Terminal statuses per agentsDb.AgentRunStatus: succeeded/failed/cancelled.
+    if (run.status === 'succeeded' || run.status === 'failed' || run.status === 'cancelled') return;
+
+    // The role may have been edited or deleted since this incarnation spawned; fall back
+    // to a stub with the same directory (errorStub) so the report still lands somewhere.
+    const { roles } = listRoles(this.rolesRoot);
+    const def = roles.find((r) => r.name === roleName) ?? errorStub(this.rolesRoot, roleName);
+
+    const lastOutcome = config.lastOutcome as
+      | { summary?: string; needsHelp?: boolean; declaredState?: string }
+      | undefined;
+    const contract = extractContract(lastOutcome?.summary);
+
+    let outcome: RunOutcome;
+    let summary: string;
+    let links: string[];
+    let proposedBriefChanges: string | undefined;
+    if (contract) {
+      outcome = contract.outcome;
+      summary = contract.summary;
+      links = contract.links ?? [];
+      proposedBriefChanges = contract.proposedBriefChanges;
+    } else {
+      // Permitted v1 simplification (task brief): no fenced contract block recoverable
+      // from the declared summary alone — derive outcome from needsHelp instead of
+      // reading the runner's actual final assistant text (new transcript plumbing).
+      outcome = lastOutcome?.needsHelp ? 'attention' : 'ok';
+      summary = lastOutcome?.summary ?? '';
+      links = [];
+    }
+    if (lastOutcome?.declaredState === 'blocked') outcome = 'failed';
+
+    appendRunLog(def.dir, {
+      start: run.started_at,
+      end: new Date().toISOString(),
+      outcome,
+      summary,
+      links,
+      ...(proposedBriefChanges ? { proposedBriefChanges } : {}),
+      attempt: run.attempt,
+      terminalId,
+    });
+
+    agentsDb.updateRunStatus(this.db, run.id, outcome === 'failed' ? 'failed' : 'succeeded');
+    this.sessionService.removeTerminal(terminalId);
+
+    try {
+      const scheduleRow = agentsDb.getSchedule(this.db, run.schedule_id);
+      this.onRunFinalized?.(scheduleRow, agentsDb.getRun(this.db, run.id)!, outcome);
+    } catch { /* the Task 7 seam must never break finalization */ }
   }
 }

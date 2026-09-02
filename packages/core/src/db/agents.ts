@@ -288,6 +288,13 @@ export function agentOverview(db: Database.Database): AgentOverviewRow[] {
   `).all() as AgentOverviewRow[];
 }
 
+/** Look up the run a runner terminal belongs to — the settled listener only has the
+ *  terminalId (from StatusService), never the run id, so role-run finalization needs
+ *  this lookup to find the row to close out. */
+export function getRunByTerminalId(db: Database.Database, terminalId: string): AgentRunRow | null {
+  return (db.prepare('SELECT * FROM agent_runs WHERE terminal_id = ? ORDER BY created_at DESC LIMIT 1').get(terminalId) as AgentRunRow | undefined) ?? null;
+}
+
 export function attachTerminal(db: Database.Database, runId: string, terminalId: string): AgentRunRow | null {
   db.prepare('UPDATE agent_runs SET terminal_id = ?, updated_at = ? WHERE id = ?').run(terminalId, nowIso(), runId);
   return getRun(db, runId);
