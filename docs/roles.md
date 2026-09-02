@@ -35,7 +35,7 @@ brief body (plain text — what the role does, its soft rules, its output contra
 ```yaml
 ---
 name: rollup-nightly-check
-project: shopify-product-rollup     # a Dispatch project name — or use global: true
+project: Shopify Product Rollup     # a Dispatch PROJECT NAME, matched exactly (spaces and case) — or use global: true
 agentType: researcher               # planner | implementer | researcher | reviewer |
                                      # design-reviewer | code-reviewer
 model: sonnet                       # optional; omit for the type's default model
@@ -112,6 +112,11 @@ tool use — not just written as a soft rule in the brief.
 | Level | May do | Never |
 |---|---|---|
 | `observe` | read-only actions, and report | any file write |
+
+> Note: `observe` denies **every** file write, including a role's own deliverable.
+> A digest-style role whose job is writing a file (like the shipped `morning-digest`)
+> needs `authority: stage`, with the brief narrowing writes to its deliverable and
+> memory proposals. Do not model a file-writing role on `observe`.
 | `stage` (default) | write on branches, `git commit`, `git push <remote> <branch>` (branch not main/master/prod\*), `gh pr create` | see below |
 | `stage-deploy` | everything `stage` allows, plus `gh workflow run … environment=staging` and other explicit staging-deploy forms | see below |
 
