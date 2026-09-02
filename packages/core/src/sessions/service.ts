@@ -23,6 +23,7 @@ import { findCodexRolloutPath } from './codex-sessions.js';
 import { platform } from '../platform/index.js';
 import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.js';
 import { coordinatorToolPolicy } from '../overseer/coordinator-policy.js';
+import { roleToolPolicy } from '../roles/role-policy.js';
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
 import { resolveTranscriptPath } from './transcript-path.js';
 import { randomUUID } from 'crypto';
@@ -1986,8 +1987,17 @@ export class SessionService {
 
     // Daemon-enforced ground rules for the coordinator's own tool use (see coordinator-policy.ts) —
     // consulted by the manager's can_use_tool membrane ahead of the escalate/auto-allow branches.
-    // Typed agents don't get this; only the coordinator thread itself is bound by it.
-    const toolPolicy = config.role === 'coordinator' ? coordinatorToolPolicy : undefined;
+    // A role-run incarnation (config.role === 'agent' with roleAuthority set — see roles/service.ts
+    // fire()) gets the equivalent role-policy.ts membrane instead, keyed to its own authority level.
+    // roleAuthority is untyped at this call site (config: Record<string, any>); role-policy.ts
+    // itself validates it and fails closed to 'observe' for anything it doesn't recognize, so the
+    // `as never` cast here is safe — it defers validation, not skips it.
+    const toolPolicy =
+      config.role === 'coordinator'
+        ? coordinatorToolPolicy
+        : typeof config.roleAuthority === 'string'
+          ? roleToolPolicy(config.roleAuthority as never)
+          : undefined;
 
     // OpenCode's whole injection (model, permission mode, system prompt, MCP servers)
     // rides ONE per-thread config file pointed at via OPENCODE_CONFIG — `opencode acp`
