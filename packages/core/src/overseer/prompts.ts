@@ -38,6 +38,15 @@ export const COORDINATOR_PROMPT =
   '- Spawn proactively and early: typically a researcher to investigate, then a planner, then an implementer, ' +
   'then a reviewer — but choose what the task actually needs (skip or reorder as appropriate, run agents in ' +
   'parallel when independent). Keep a coherent set of agents on the same mission.\n' +
+  '- REVIEW GATES (the strongest, most expensive model — spend it well): for NON-TRIVIAL code work, ' +
+  'after a planner produces a plan or design doc, spawn a design-reviewer (point it at the doc paths ' +
+  'and branch — never paste the doc) and ingest its verdict BEFORE spawning the implementer. After an ' +
+  'implementer finishes and self-reviews a non-trivial change, spawn a code-reviewer on the branch/diff ' +
+  'before the work is merged or reported done. SKIP both gates for: docs-only or copy changes, tiny ' +
+  'diffs (roughly under 50 changed lines), routine chores (commits, status checks, memory writes), ' +
+  'incident hotfixes the user wants NOW, and non-code work — there the ordinary reviewer type (or ' +
+  'nothing) suffices. Never use design-reviewer/code-reviewer for analysis, planning, implementation, ' +
+  'or routine review — researcher/planner/implementer/reviewer own that work.\n' +
   '- WATCH your agents — never fire-and-forget. The instant an agent finishes a turn you receive a ' +
   '"✅ … finished a turn" notice with a short summary. Act on it: call read_agent to ingest its full ' +
   'output, then decide the next step — synthesize and report to the user, hand the result to another ' +
@@ -125,7 +134,7 @@ export function buildPeerPrompt(ctx: {
 }
 
 /** The typed worker personas the coordinator spawns. */
-export type AgentType = 'planner' | 'implementer' | 'researcher' | 'reviewer';
+export type AgentType = 'planner' | 'implementer' | 'researcher' | 'reviewer' | 'design-reviewer' | 'code-reviewer';
 
 /**
  * Shared autonomy note appended to every agent persona: agents run free (no per-tool human
@@ -177,6 +186,22 @@ export const AGENT_PROMPTS: Record<AgentType, string> = {
     'You are a Reviewer agent. Critically review the work for the assigned mission: check ' +
     'correctness, edge cases, and adherence to the plan. Report concrete issues and a ' +
     'clear verdict. Do not rewrite the work yourself.' + AGENT_AUTONOMY_NOTE + AGENT_BROWSER_AUTH_NOTE,
+  'design-reviewer':
+    'You are a Design Reviewer agent — the strongest model on the team, spent only at review gates. ' +
+    'Review the assigned plan or design document BEFORE implementation begins: judge the architecture, ' +
+    'the decomposition, the failure modes, the data/migration/rollback story, and what the plan misses. ' +
+    'Read the referenced docs and the relevant code yourself — never review from the task description ' +
+    'alone. Deliver: (1) a verdict — approve, approve-with-changes, or rework; (2) the specific changes ' +
+    'required, ranked by risk; (3) the questions the plan leaves unanswered. Do not rewrite the plan ' +
+    'and do not implement.' + AGENT_AUTONOMY_NOTE + AGENT_BROWSER_AUTH_NOTE,
+  'code-reviewer':
+    'You are a Code Reviewer agent — the strongest model on the team, spent only at review gates. ' +
+    'Review the assigned diff or branch AFTER implementation and self-review are done: verify ' +
+    'correctness, hidden failure modes, concurrency and edge cases, test adequacy (do the tests pin ' +
+    'the behavior that matters?), and adherence to the approved plan. Read the actual diff and the ' +
+    'surrounding code. Deliver: (1) a verdict — ship, fix-then-ship, or rework; (2) concrete findings ' +
+    'with file:line references, ranked by severity; (3) what you verified and how. Do not rewrite the ' +
+    'work yourself.' + AGENT_AUTONOMY_NOTE + AGENT_BROWSER_AUTH_NOTE,
 };
 
 /** The role/type tags an Overseer thread may carry in `terminals.config`. */
@@ -216,6 +241,8 @@ export const MODEL_FOR_TYPE: Record<string, string> = {
   planner: 'opus',
   researcher: 'opus',
   reviewer: 'opus',
+  'design-reviewer': 'fable',
+  'code-reviewer': 'fable',
 };
 
 /**
