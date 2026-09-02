@@ -50,6 +50,12 @@ wallClockCapMin: 45                 # optional; default 45
   is inherited by tonight's run with no re-registration.
 - The runner may **propose** brief/memory changes in its run report; it never edits
   `role.md` itself (prevents drift-by-small-self-edits — the brief-rot guard).
+- **Applying proposals (v1): deliberate-manual.** Proposals are written as exact
+  ready-to-apply blocks (old text → new text); the digest surfaces them; the human
+  applies via a file-tab edit or by asking an attended agent. No agent-initiated
+  self-editing, even on approval. v1.1 candidate: a one-click Apply in the digest
+  (daemon-side file edit, no agent) — the exact-diff format is chosen to make that
+  trivial later.
 - Backup/sharing: `~/.dispatch/roles` can be its own git repo (private remote).
   Definitions travel by git; **activation never does** — pulling a repo must not
   silently start agents on a machine.
@@ -90,10 +96,18 @@ Deterministic, daemon-side. No agent supervises an agent.
 ## 4. Morning digest
 
 Itself a global role. Each morning it reads every role's latest run report and every
-coordinator's status/lastOutcome, posts ONE cross-project summary to a dedicated
-digest thread, and sends a push-notification headline (existing push machinery).
-Leads with failures and staged-work-awaiting-review; suppresses "nothing happened"
-noise.
+coordinator's status/lastOutcome, posts ONE cross-project summary, and sends a
+push-notification headline (existing push machinery). Leads with failures and
+staged-work-awaiting-review (including any proposed brief changes); suppresses
+"nothing happened" noise.
+
+**Display (v1): existing surfaces, zero new UI.** The summary posts as a message
+into one persistent pinned **Daily Digest thread** in a small dedicated project
+(e.g. "Operations"): normal structured rendering (markdown, file/PR links), night-
+over-night history in one scrollback, PWA-readable, push tap-through lands in it.
+The digest RUNNER thread archives like any role run — the pinned thread holds only
+the deliverable. A purpose-built digest panel is deferred until the thread version
+proves insufficient.
 
 ## 5. Authority
 
