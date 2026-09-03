@@ -86,7 +86,7 @@ export const claudeCodeProvider: SessionProvider = {
     };
   },
 
-  buildStructuredCommand({ workDir, secretsMcp, appendSystemPrompt, resumeSessionId, model }: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string; model?: string }) {
+  buildStructuredCommand({ workDir, secretsMcp, appendSystemPrompt, resumeSessionId, model, disallowedTools }: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string; model?: string; disallowedTools?: string[] }) {
     // The spike-verified stream-json control protocol. Parity permissions come from
     // the StructuredSessionManager's auto-allow loop, NOT --dangerously-skip-permissions.
     const args: string[] = [
@@ -112,6 +112,11 @@ export const claudeCodeProvider: SessionProvider = {
     // Pin the model tier for this thread (per-agent-type default or explicit override).
     // Omitted → the CLI's own default model.
     if (model) args.push('--model', model);
+    // Strip tools from the model's toolset entirely (exact-name match; unknown names are
+    // ignored by the CLI). Used for coordinator threads, whose native-orchestration tools
+    // (Agent/Task/Workflow) are auto-approved by the CLI and thus unreachable by the
+    // can_use_tool membrane — see COORDINATOR_DISALLOWED_TOOLS in overseer/coordinator-policy.ts.
+    if (disallowedTools?.length) args.push('--disallowedTools', ...disallowedTools);
     return { command: 'claude', args };
   },
 

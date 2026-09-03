@@ -22,7 +22,7 @@ import { parseCodexRollout } from '../conversation/codex-transcript.js';
 import { findCodexRolloutPath } from './codex-sessions.js';
 import { platform } from '../platform/index.js';
 import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.js';
-import { coordinatorToolPolicy } from '../overseer/coordinator-policy.js';
+import { COORDINATOR_DISALLOWED_TOOLS, coordinatorToolPolicy } from '../overseer/coordinator-policy.js';
 import { roleToolPolicy } from '../roles/role-policy.js';
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
 import { resolveTranscriptPath } from './transcript-path.js';
@@ -1966,7 +1966,11 @@ export class SessionService {
       sc = { command: this.structuredCommandOverride.command, args: [...this.structuredCommandOverride.args] };
       if (resumeSessionId) sc.args.push('-r', resumeSessionId);
     } else {
-      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config), resumeSessionId, model: resolvedModel, grokPluginDir });
+      // Coordinators get their native-orchestration tools (Agent/Task/Workflow) stripped at
+      // spawn: the CLI auto-approves those tools without a can_use_tool request, so the
+      // membrane's coordinatorToolPolicy deny (below) never reaches them. Removal from the
+      // toolset is the enforcement; the policy deny remains as a backstop.
+      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config), resumeSessionId, model: resolvedModel, grokPluginDir, disallowedTools: config.role === 'coordinator' ? COORDINATOR_DISALLOWED_TOOLS : undefined });
       if (!built) throw new Error('structured transport not supported for this provider');
       sc = built;
     }
