@@ -272,8 +272,14 @@ export function ChatView({ terminalId }: { terminalId: string }) {
       <MessageScroller.Provider autoScroll defaultScrollPosition="end" scrollEdgeThreshold={48}>
         {/* The wrapper (not Root) hosts the not-ready spinner so it isn't hidden with the
             scroller; visibility (not display) keeps geometry/scroll math working while hidden. */}
-        <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex' }}>
-        <MessageScroller.Root style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', visibility: ready || hasPendingQuestion ? 'visible' : 'hidden' }}>
+        {/* minWidth: 0 on this row chain is REQUIRED: without it the flex items refuse to
+            shrink below their content's min-content width, so one long unbreakable token in
+            any message (a joined identifier in inline code) silently widens the whole column
+            past a phone's viewport and every paragraph wraps at the token's width instead of
+            the screen's (the iPhone SE cut-off bug). Only the wrapper and Root need it — the
+            Viewport is overflow-hidden, which already zeroes its automatic minimum size. */}
+        <div style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0, display: 'flex' }}>
+        <MessageScroller.Root style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0, display: 'flex', visibility: ready || hasPendingQuestion ? 'visible' : 'hidden' }}>
           <MessageScroller.Viewport preserveScrollOnPrepend onScroll={onViewportScroll} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
             {/* Bottom padding matches the top: the last row — usually the Working… indicator —
                 used to sit 8px off the composer, which read as cramped on a phone. */}

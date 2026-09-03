@@ -64,7 +64,12 @@ body { background: var(--color-canvas); color: var(--color-text-primary); font-f
 .md-view p { margin: .55em 0; }
 .md-view a { color: var(--color-accent); text-decoration: none; }
 .md-view a:hover { text-decoration: underline; }
-.md-view code { background: var(--color-elevated); padding: 1px 5px; border-radius: 4px; font-family: var(--font-mono); font-size: .88em; }
+/* overflow-wrap on inline code: a long joined identifier wraps mid-token on narrow screens
+   instead of being clipped at the viewport edge. Harmless inside pre>code — `pre` whitespace
+   forbids wrapping, and block-code keeps its own overflow-x scroll. `anywhere` (not
+   break-word) on purpose: it also collapses the token's min-content contribution, so a long
+   token can never again stretch a flex ancestor that forgot minWidth: 0. */
+.md-view code { background: var(--color-elevated); padding: 1px 5px; border-radius: 4px; font-family: var(--font-mono); font-size: .88em; overflow-wrap: anywhere; }
 .md-view pre { background: none; border: 1px solid var(--color-border); border-radius: 8px; padding: 0; margin: .8em 0; overflow: hidden; }
 .md-view pre code, .md-view pre code.hljs { display: block; padding: 12px 14px; overflow-x: auto; background: var(--color-elevated); color: var(--color-text-primary); border-radius: 8px; font-family: var(--font-mono); font-size: .82em; line-height: 1.55; }
 .md-view blockquote { border-left: 3px solid var(--color-accent); margin: .6em 0; padding: 2px 0 2px 14px; color: var(--color-text-secondary); }
