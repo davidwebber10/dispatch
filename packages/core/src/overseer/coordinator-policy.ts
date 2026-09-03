@@ -22,6 +22,13 @@ const AGENT_MSG =
   'Control Plane policy: use spawn_agent (the dispatch MCP tool) instead of a native subagent, so the ' +
   'work is typed, visible in the Control Plane rail, and reviewable.';
 
+// Native orchestration tools stripped from a coordinator's toolset at spawn time via
+// --disallowedTools. The CLI auto-approves these without a can_use_tool request, so the
+// membrane deny below never fires for them — removal at spawn is the only enforcement
+// that actually reaches the model. The policy deny stays as a backstop for CLI versions
+// or paths where the tools do surface a permission request.
+export const COORDINATOR_DISALLOWED_TOOLS = ['Agent', 'Task', 'Workflow'];
+
 // Tolerates a run of leading flags/options before the subcommand, including flags whose value
 // is a separate token (`-C ../wt`, `-c user.email=x`, `-R owner/repo`), so an interposed flag
 // can't be used to slip a blocked subcommand past the check.
@@ -38,7 +45,7 @@ const BLOCKED_BASH: readonly RegExp[] = [
 /** The ground rules for a coordinator thread's own tool use. Pure — no I/O, no state. */
 export function coordinatorToolPolicy(toolName: string, input: unknown): PolicyDecision {
   const inp = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
-  if (toolName === 'Agent' || toolName === 'Task') return { allow: false, message: AGENT_MSG };
+  if (toolName === 'Agent' || toolName === 'Task' || toolName === 'Workflow') return { allow: false, message: AGENT_MSG };
   if (FILE_TOOLS.has(toolName)) {
     const target = [inp.file_path, inp.notebook_path].find((v): v is string => typeof v === 'string') ?? '';
     const claudeDir = path.join(os.homedir(), '.claude') + path.sep;

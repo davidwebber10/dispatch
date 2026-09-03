@@ -1,7 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { coordinatorToolPolicy } from './coordinator-policy.js';
+import { COORDINATOR_DISALLOWED_TOOLS, coordinatorToolPolicy } from './coordinator-policy.js';
 
 const memoryFile = path.join(os.homedir(), '.claude', 'projects', '-x', 'memory', 'MEMORY.md');
 
@@ -48,5 +48,15 @@ describe('coordinatorToolPolicy', () => {
     expect(d.allow).toBe(false);
     if (!d.allow) expect(d.message).toContain('spawn_agent');
     expect(coordinatorToolPolicy('Task', {}).allow).toBe(false);
+  });
+
+  it('denies native Workflow orchestration — same class as a native subagent', () => {
+    const d = coordinatorToolPolicy('Workflow', { script: 'export const meta = {}' });
+    expect(d.allow).toBe(false);
+    if (!d.allow) expect(d.message).toContain('spawn_agent');
+  });
+
+  it('exports the spawn-time disallow list matching the tools the policy denies', () => {
+    expect(COORDINATOR_DISALLOWED_TOOLS).toEqual(['Agent', 'Task', 'Workflow']);
   });
 });
