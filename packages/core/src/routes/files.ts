@@ -13,6 +13,8 @@ import { platform } from '../platform/index.js';
  *  the only route that shells out — an unbounded argv is not worth the risk. */
 const MAX_REVEAL_PATHS = 256;
 
+const UPLOAD_TMP_DIR = '/tmp/commandcenter-uploads';
+
 const FLAT_CAP = 20000;
 const FLAT_SKIP = new Set(['.git', 'node_modules', 'dist', 'build', '.next', '__pycache__']);
 
@@ -54,9 +56,23 @@ function gitLsFiles(workingDir: string, extraArgs: string[]): Promise<string[] |
 
 export function createFilesRouter(db: Database.Database): Router {
   const router = Router({ mergeParams: true });
-  const upload = multer({ dest: '/tmp/commandcenter-uploads' });
+  // Recreate the temp dir on EVERY request, not once at startup (multer's `dest`
+  // shorthand): macOS purges /tmp entries idle for ~3 days, so on a long-running
+  // daemon the dir vanishes mid-uptime and every upload then fails with ENOENT
+  // until a restart.
+  const tmpStorage = multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      try {
+        fs.mkdirSync(UPLOAD_TMP_DIR, { recursive: true });
+        cb(null, UPLOAD_TMP_DIR);
+      } catch (err) {
+        cb(err as Error, UPLOAD_TMP_DIR);
+      }
+    },
+  });
+  const upload = multer({ storage: tmpStorage });
   const inboxUpload = multer({
-    dest: '/tmp/commandcenter-uploads',
+    storage: tmpStorage,
     limits: { fileSize: 50 * 1024 * 1024 },
   });
 
