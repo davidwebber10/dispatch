@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { NewThreadModal } from './NewThreadModal';
 import { api } from '../../api/client';
 import { useTabs } from '../../stores/tabs';
@@ -25,7 +25,7 @@ vi.mock('../../api/client', () => ({
   },
 }));
 
-/** Model moved from chips to a <select>; this picks by visible option label. */
+/** The model is a <select>; this picks by visible option label. */
 const pickModel = (label: string) => {
   const sel = screen.getByLabelText('Model') as HTMLSelectElement;
   const opt = Array.from(sel.options).find((o) => o.text === label);
@@ -33,8 +33,8 @@ const pickModel = (label: string) => {
   fireEvent.change(sel, { target: { value: opt.value } });
 };
 
-/** Auto-archive now lives behind the Advanced disclosure. */
-const openAdvanced = () => fireEvent.click(screen.getByRole('button', { name: /advanced/i }));
+/** The resume list folds behind "Or resume a recent … session"; this opens it once it has loaded. */
+const openResume = async () => fireEvent.click(await screen.findByRole('button', { name: /resume a recent/i }));
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -55,6 +55,12 @@ describe('NewThreadModal', () => {
     const input = lastInput();
     expect(input.type).toBe('claude-code');
     expect(input.config).toEqual({ transport: 'structured' });
+  });
+
+  it('has no name field and no title: the thread is named later, the panel is the picker', () => {
+    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+    expect(screen.queryByLabelText('Thread name')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading')).not.toBeInTheDocument();
   });
 
   it('a saved defaultMode of cli for claude still wins over the pretty fallback', async () => {
@@ -80,7 +86,7 @@ describe('NewThreadModal', () => {
     expect(input.config.transport).toBe('structured');
   });
 
-  it('maps a Claude model chip to config.model (Opus → "opus")', async () => {
+  it('maps a Claude model option to config.model (Opus → "opus")', async () => {
     render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
     pickModel('Opus');
     start();
@@ -109,24 +115,54 @@ describe('NewThreadModal', () => {
     expect(input.config).toEqual({ model: 'gpt-5.6-sol' });
   });
 
-  it('posts the auto-archive policy alongside the transport when the whole row is toggled', async () => {
-    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Pretty mode' }));
-    openAdvanced();
-    // Whole-row toggle: clicking the title (not the switch itself) flips it.
-    fireEvent.click(screen.getByText('Auto-archive thread'));
-    start();
-    await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
-    expect(lastInput().config).toEqual({ transport: 'structured', autoArchive: true, autoArchiveMs: 43_200_000 });
+  describe('auto-archive row', () => {
+    it('is always visible, reads Off, and hides the duration control until switched on', () => {
+      render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+      const sw = screen.getByRole('switch', { name: 'Auto-archive when idle' });
+      expect(sw).toHaveAttribute('aria-checked', 'false');
+      expect(screen.getByText('Off')).toBeInTheDocument();
+      expect(screen.queryByLabelText('Duration')).not.toBeInTheDocument();
+    });
+
+    it('posts the policy alongside the transport when the switch is flipped (12 hours by default)', async () => {
+      render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+      fireEvent.click(screen.getByRole('switch', { name: 'Auto-archive when idle' }));
+      expect(screen.getByRole('switch', { name: 'Auto-archive when idle' })).toHaveAttribute('aria-checked', 'true');
+      expect(screen.getByText('Not while working, queued, or waiting on you')).toBeInTheDocument();
+      expect((screen.getByLabelText('Duration') as HTMLInputElement).value).toBe('12');
+      expect((screen.getByLabelText('Unit') as HTMLSelectElement).value).toBe('hours');
+      start();
+      await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
+      expect(lastInput().config).toEqual({ transport: 'structured', autoArchive: true, autoArchiveMs: 43_200_000 });
+    });
+
+    it('the whole row toggles: clicking the title flips it too', () => {
+      render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+      fireEvent.click(screen.getByText('Auto-archive when idle'));
+      expect(screen.getByRole('switch', { name: 'Auto-archive when idle' })).toHaveAttribute('aria-checked', 'true');
+    });
+
+    it('stores the edited duration in ms (3 days)', async () => {
+      render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+      fireEvent.click(screen.getByRole('switch', { name: 'Auto-archive when idle' }));
+      fireEvent.change(screen.getByLabelText('Duration'), { target: { value: '3' } });
+      fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'days' } });
+      start();
+      await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
+      expect(lastInput().config.autoArchiveMs).toBe(3 * 86_400_000);
+    });
   });
 
-  it('creates a plain shell for Terminal with no mode/model/resume', async () => {
+  it('creates a plain shell for Terminal with no mode/model/resume, and says so', async () => {
     render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: 'Terminal' }));
     // Terminal is a peer card with no mode toggle, no model picker, no resume.
     expect(screen.queryByRole('button', { name: 'CLI mode' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Model')).not.toBeInTheDocument();
-    await waitFor(() => expect(screen.queryByText('Resume recent')).not.toBeInTheDocument());
+    expect(screen.getByText('Plain shell. No mode or model to choose.')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('button', { name: /resume a recent/i })).not.toBeInTheDocument());
+    // Auto-archive still applies to a shell.
+    expect(screen.getByRole('switch', { name: 'Auto-archive when idle' })).toBeInTheDocument();
     start();
     await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
     const input = lastInput();
@@ -148,51 +184,76 @@ describe('NewThreadModal', () => {
     expect(input.config.transport).toBe('structured');
   });
 
-  it('offers RESUME RECENT for Claude Code, fetched from recentCcSessions', async () => {
-    (api.recentCcSessions as any).mockResolvedValue([
-      { id: 'x1', preview: 'earlier chat', mtime: Date.now(), messageCount: 3, truncated: false },
-    ]);
-    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
-    expect(await screen.findByText('earlier chat')).toBeInTheDocument();
-    expect(api.recentCodexSessions).not.toHaveBeenCalled();
-  });
+  describe('resume disclosure', () => {
+    it('folds the Claude Code list behind a header that names the harness and counts the sessions', async () => {
+      (api.recentCcSessions as any).mockResolvedValue([
+        { id: 'x1', preview: 'earlier chat', mtime: Date.now(), messageCount: 3, truncated: false },
+        { id: 'x2', preview: 'another chat', mtime: Date.now(), messageCount: 1, truncated: true },
+      ]);
+      render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+      const header = await screen.findByRole('button', { name: /resume a recent Claude Code session/i });
+      expect(header).toHaveAttribute('aria-expanded', 'false');
+      expect(within(header).getByText('2')).toBeInTheDocument();
+      // Collapsed by default: the rows are not in the document yet.
+      expect(screen.queryByText('earlier chat')).not.toBeInTheDocument();
+      fireEvent.click(header);
+      expect(header).toHaveAttribute('aria-expanded', 'true');
+      expect(screen.getByText('earlier chat')).toBeInTheDocument();
+      expect(screen.getByText('another chat')).toBeInTheDocument();
+      expect(api.recentCodexSessions).not.toHaveBeenCalled();
+    });
 
-  it('offers RESUME RECENT for Codex, fetched from recentCodexSessions', async () => {
-    (api.recentCodexSessions as any).mockResolvedValue([
-      { id: 'codex-1', preview: 'earlier codex session', mtime: Date.now(), messageCount: 5, truncated: false },
-    ]);
-    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Codex' }));
-    // The codex preview text can only come from the codex endpoint's mock.
-    expect(await screen.findByText('earlier codex session')).toBeInTheDocument();
-    expect(api.recentCodexSessions).toHaveBeenCalledWith('s1');
-  });
+    it('hides the disclosure entirely when there is nothing to resume', async () => {
+      // clearAllMocks keeps implementations, so an earlier test's list must be reset here.
+      (api.recentCcSessions as any).mockResolvedValue([]);
+      render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+      await waitFor(() => expect(api.recentCcSessions).toHaveBeenCalled());
+      await waitFor(() => expect(screen.queryByRole('button', { name: /resume a recent/i })).not.toBeInTheDocument());
+    });
 
-  it('creates a resumed codex thread with the chosen session id as externalId', async () => {
-    (api.recentCodexSessions as any).mockResolvedValue([
-      { id: 'codex-1', preview: 'earlier codex session', mtime: Date.now(), messageCount: 5, truncated: false },
-    ]);
-    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Codex' }));
-    fireEvent.click(await screen.findByText('earlier codex session'));
-    await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
-    const input = lastInput();
-    expect(input.type).toBe('codex');
-    expect(input.externalId).toBe('codex-1');
-  });
+    it('offers Codex sessions, fetched from recentCodexSessions', async () => {
+      (api.recentCodexSessions as any).mockResolvedValue([
+        { id: 'codex-1', preview: 'earlier codex session', mtime: Date.now(), messageCount: 5, truncated: false },
+      ]);
+      render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Codex' }));
+      await openResume();
+      // The codex preview text can only come from the codex endpoint's mock.
+      expect(screen.getByText('earlier codex session')).toBeInTheDocument();
+      expect(api.recentCodexSessions).toHaveBeenCalledWith('s1');
+    });
 
-  it('clears the stale resume list when switching harness, and refetches from the new endpoint', async () => {
-    (api.recentCcSessions as any).mockResolvedValue([
-      { id: 'x1', preview: 'earlier chat', mtime: Date.now(), messageCount: 3, truncated: false },
-    ]);
-    (api.recentCodexSessions as any).mockResolvedValue([
-      { id: 'codex-1', preview: 'earlier codex session', mtime: Date.now(), messageCount: 5, truncated: false },
-    ]);
-    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
-    expect(await screen.findByText('earlier chat')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Codex' }));
-    await waitFor(() => expect(screen.queryByText('earlier chat')).not.toBeInTheDocument());
-    expect(await screen.findByText('earlier codex session')).toBeInTheDocument();
+    it('creates a resumed codex thread with the chosen session id as externalId', async () => {
+      (api.recentCodexSessions as any).mockResolvedValue([
+        { id: 'codex-1', preview: 'earlier codex session', mtime: Date.now(), messageCount: 5, truncated: false },
+      ]);
+      render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Codex' }));
+      await openResume();
+      fireEvent.click(screen.getByText('earlier codex session'));
+      await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
+      const input = lastInput();
+      expect(input.type).toBe('codex');
+      expect(input.externalId).toBe('codex-1');
+    });
+
+    it('clears the stale list and re-folds when switching harness, then refetches from the new endpoint', async () => {
+      (api.recentCcSessions as any).mockResolvedValue([
+        { id: 'x1', preview: 'earlier chat', mtime: Date.now(), messageCount: 3, truncated: false },
+      ]);
+      (api.recentCodexSessions as any).mockResolvedValue([
+        { id: 'codex-1', preview: 'earlier codex session', mtime: Date.now(), messageCount: 5, truncated: false },
+      ]);
+      render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+      await openResume();
+      expect(screen.getByText('earlier chat')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Codex' }));
+      await waitFor(() => expect(screen.queryByText('earlier chat')).not.toBeInTheDocument());
+      const header = await screen.findByRole('button', { name: /resume a recent Codex session/i });
+      expect(header).toHaveAttribute('aria-expanded', 'false');
+      fireEvent.click(header);
+      expect(screen.getByText('earlier codex session')).toBeInTheDocument();
+    });
   });
 
   it('resets the model to Default when the harness changes', async () => {
@@ -211,6 +272,30 @@ describe('NewThreadModal', () => {
     render(<NewThreadModal sessionId="s1" onClose={onClose} onCreated={() => {}} />);
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).toHaveBeenCalled();
+  });
+});
+
+describe('NewThreadModal — mobile sheet', () => {
+  const desktopWidth = window.innerWidth;
+  beforeEach(() => { Object.defineProperty(window, 'innerWidth', { value: 390, configurable: true, writable: true }); });
+  afterEach(() => { Object.defineProperty(window, 'innerWidth', { value: desktopWidth, configurable: true, writable: true }); });
+
+  it('renders as a bottom sheet with a drag handle and the same harness choices', async () => {
+    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+    expect(screen.getByTestId('sheet-handle')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Claude Code' })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Grok' }));
+    start();
+    await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
+    expect(lastInput().type).toBe('grok');
+  });
+
+  it('puts the duration control on its own line under the switch', () => {
+    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+    expect(screen.queryByText('Archive after')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('switch', { name: 'Auto-archive when idle' }));
+    expect(screen.getByText('Archive after')).toBeInTheDocument();
+    expect((screen.getByLabelText('Duration') as HTMLInputElement).value).toBe('12');
   });
 });
 
@@ -251,7 +336,7 @@ describe('NewThreadModal — Grok', () => {
   it('offers no resume list for Grok — no session id is captured yet', async () => {
     render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: 'Grok' }));
-    await waitFor(() => expect(screen.queryByText('Resume recent')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('button', { name: /resume a recent/i })).not.toBeInTheDocument());
   });
 });
 
@@ -289,7 +374,7 @@ describe('NewThreadModal — uninstalled CLIs', () => {
     expect(screen.queryByRole('button', { name: /start new thread/i })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Model')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'CLI mode' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /advanced/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('switch')).not.toBeInTheDocument();
     // The command is shown so you can run it yourself instead.
     expect(screen.getByText('curl -fsSL https://x.ai/cli/install.sh | bash')).toBeInTheDocument();
   });

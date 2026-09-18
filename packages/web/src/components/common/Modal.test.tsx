@@ -58,3 +58,43 @@ describe('Modal — scroll and alignment', () => {
     expect(renderModal().backdrop.style.overscrollBehavior).toBe('contain');
   });
 });
+
+describe('Modal — title-less and sheet variants', () => {
+  it('renders no heading when no title is given', () => {
+    render(<Modal open onClose={() => {}}><div>body</div></Modal>);
+    expect(screen.queryByRole('heading')).toBeNull();
+    expect(screen.getByText('body')).toBeInTheDocument();
+  });
+
+  it('as a sheet: full width, anchored to the bottom via marginTop:auto, with a drag handle', () => {
+    render(<Modal open onClose={() => {}} sheet><div>body</div></Modal>);
+    const panel = screen.getByText('body').parentElement as HTMLElement;
+    expect(screen.getByTestId('sheet-handle')).toBeInTheDocument();
+    expect(panel.style.width).toBe('100%');
+    expect(panel.style.maxWidth).toBe('');
+    expect(panel.style.marginTop).toBe('auto');
+    expect(panel.style.borderRadius).toBe('20px 20px 0 0');
+    // Same scroll contract as the card: the backdrop scrolls, the panel is unclamped.
+    const backdrop = panel.parentElement as HTMLElement;
+    expect(backdrop.style.overflowY).toBe('auto');
+    expect(panel.style.maxHeight).toBe('');
+    expect(panel.style.flexShrink).toBe('0');
+  });
+});
+
+describe('Modal — anchor', () => {
+  it('anchor="top" pins the card under a fixed top inset so a height change only moves its bottom edge', () => {
+    render(<Modal open onClose={() => {}} anchor="top"><div>body</div></Modal>);
+    const panel = screen.getByText('body').parentElement as HTMLElement;
+    const backdrop = panel.parentElement as HTMLElement;
+    expect(panel.style.marginTop).toBe('0px');
+    expect(panel.style.marginBottom).toBe('auto');
+    expect(backdrop.style.paddingTop).toContain('12vh');
+  });
+
+  it('defaults to centring via auto margins', () => {
+    render(<Modal open onClose={() => {}}><div>body</div></Modal>);
+    const panel = screen.getByText('body').parentElement as HTMLElement;
+    expect(panel.style.margin).toBe('auto');
+  });
+});
