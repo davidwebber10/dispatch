@@ -5,11 +5,10 @@ import { Router } from 'express';
 import type Database from 'better-sqlite3';
 import * as appState from '../db/app-state.js';
 import { platform } from '../platform/index.js';
-import { sumTranscriptTokens } from '../sessions/cc-sessions.js';
+import { summary } from '../analytics/queries.js';
 import { getRunningVersion, isNewerVersion } from '../update/version.js';
 import { parseStoredNotes, readLocalReleaseNote } from '../update/notes.js';
 import { revealClientFrom } from '../files/reveal.js';
-import { notionalValueUsd } from '../analytics/pricing.js';
 
 export function createStateRouter(db: Database.Database): Router {
   const router = Router();
@@ -74,57 +73,21 @@ export function createStateRouter(db: Database.Database): Router {
     }
   });
 
-  // GET /api/state/session-stats/:sessionId — return Claude session usage stats
+  // Thread statistics share the analytics ledger across all harnesses.
   router.get('/session-stats/:sessionId', (req, res) => {
-    try {
-      const sessionId = req.params.sessionId;
-      const homeDir = os.homedir();
-      const projectDirs = fs.readdirSync(path.join(homeDir, '.claude', 'projects'));
-
-      let jsonlPath: string | null = null;
-      // Search for the session JSONL file across all project dirs
-      for (const dir of projectDirs) {
-        const candidate = path.join(homeDir, '.claude', 'projects', dir, `${sessionId}.jsonl`);
-        if (fs.existsSync(candidate)) {
-          jsonlPath = candidate;
-          break;
-        }
-      }
-
-      if (!jsonlPath) {
-        return res.json({ found: false });
-      }
-
-      const content = fs.readFileSync(jsonlPath, 'utf-8');
-      const stats = sumTranscriptTokens(content);
-
-      // Notional: list-price arithmetic, not a bill.
-      const totalCost = notionalValueUsd({
-        model: stats.model,
-        input: stats.inputTokens,
-        output: stats.outputTokens,
-        cacheRead: stats.cacheReadTokens,
-        cacheCreate: stats.cacheCreationTokens,
-      });
-      // null (not 0) when the model has no price entry: "we do not know this model's
-      // price" and "this cost nothing" are different facts, and a caller must be able
-      // to tell them apart.
-      const estimatedCostUSD = totalCost === null ? null : Math.round(totalCost * 100) / 100;
-
-      res.json({
-        found: true,
-        model: stats.model,
-        inputTokens: stats.inputTokens,
-        outputTokens: stats.outputTokens,
-        cacheReadTokens: stats.cacheReadTokens,
-        cacheCreationTokens: stats.cacheCreationTokens,
-        totalTokens: stats.totalTokens,
-        estimatedCostUSD,
-        messageCount: stats.messageCount,
-      });
-    } catch (err: any) {
-      res.json({ found: false, error: err.message });
-    }
+    const terminal = db.prepare('SELECT id FROM terminals WHERE id=? OR external_id=? LIMIT 1')
+      .get(req.params.sessionId, req.params.sessionId) as { id: string } | undefined;
+    if (!terminal) return res.json({ found: false });
+    const stats = summary(db, { terminalId: terminal.id });
+    if (!stats.turns) return res.json({ found: false });
+    const models = db.prepare(`SELECT DISTINCT model FROM usage_measurements WHERE terminal_id=? AND ended_at IS NOT NULL AND model != ''`).all(terminal.id) as { model: string }[];
+    return res.json({ found: true, model: models.length === 1 ? models[0].model : 'multiple',
+      inputTokens: stats.inputTokens, outputTokens: stats.outputTokens, cacheReadTokens: stats.cacheReadTokens,
+      cacheCreationTokens: stats.cacheCreateTokens, totalTokens: stats.totalTokens,
+      estimatedCostUSD: stats.valueIsPartial && stats.apiValueUsd === 0 ? null : stats.apiValueUsd,
+      reportedCostUSD: stats.reportedCostUsd, coverage: stats.coverage, valueIsPartial: stats.valueIsPartial,
+      messageCount: (db.prepare('SELECT COALESCE(SUM(messages),0) AS n FROM usage_turns WHERE terminal_id=? AND ended_at IS NOT NULL').get(terminal.id) as { n: number }).n,
+    });
   });
 
   // GET /api/state/terminal-status/:terminalId — return live terminal activity/status

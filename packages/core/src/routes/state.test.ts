@@ -100,46 +100,18 @@ describe('GET /api/state/update', () => {
   });
 });
 
-// session-stats reads ~/.claude/projects/<any-dir>/<sessionId>.jsonl, so we point
-// HOME at a temp dir for these tests (same pattern as tests/sessions/kickstart.test.ts).
 describe('GET /api/state/session-stats/:sessionId', () => {
-  const realHome = process.env.HOME;
-  let home: string;
-
-  beforeEach(() => {
-    home = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-state-home-'));
-    process.env.HOME = home;
-  });
-  afterEach(() => {
-    if (realHome === undefined) delete process.env.HOME;
-    else process.env.HOME = realHome;
-    fs.rmSync(home, { recursive: true, force: true });
-  });
-
-  function writeTranscript(sessionId: string, model: string): void {
-    const projDir = path.join(home, '.claude', 'projects', 'test-project');
-    fs.mkdirSync(projDir, { recursive: true });
-    const line = JSON.stringify({
-      type: 'assistant',
-      message: {
-        id: 'msg_1',
-        model,
-        usage: { input_tokens: 999, output_tokens: 999, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
-      },
-    });
-    fs.writeFileSync(path.join(projDir, `${sessionId}.jsonl`), line);
-  }
-
-  // Regression: notionalValueUsd() returning null for an unpriced model must not be
-  // coerced to 0 at this route boundary — that would silently claim the session cost
-  // nothing when the truth is we simply don't know its price.
-  it('reports estimatedCostUSD as null, not 0, for a model with no price entry', async () => {
-    writeTranscript('unpriced-session', 'some-future-model');
-
+  it('reads every harness from the shared ledger and keeps unknown value null', async () => {
+    const sessions = await import('../db/sessions.js');
+    const terminals = await import('../db/terminals.js');
+    const usage = await import('../db/usage.js');
+    sessions.create(db, { id: 'p', provider: 'codex', name: 'P', workingDir: '/tmp' });
+    terminals.create(db, { id: 't', sessionId: 'p', type: 'codex', label: 'T', externalId: 'unpriced-session' });
+    usage.insertClosed(db, { id: 'usage', terminalId: 't', projectId: 'p', provider: 'codex', model: 'some-future-model', role: '', startedAt: '2026-09-18T00:00:00Z', endedAt: '2026-09-18T00:00:01Z', outcome: 'idle', input: 999, output: 999, cacheRead: 0, cacheCreate: 0, messages: 1, toolCalls: 0, backfilled: false });
     const res = await request(app()).get('/api/state/session-stats/unpriced-session');
-
     expect(res.status).toBe(200);
     expect(res.body.found).toBe(true);
+    expect(res.body.totalTokens).toBe(1998);
     expect(res.body.estimatedCostUSD).toBeNull();
   });
 });

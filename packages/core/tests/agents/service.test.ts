@@ -8,6 +8,9 @@ import { initSchema } from '../../src/db/schema.js';
 import * as sessionsDb from '../../src/db/sessions.js';
 import * as terminalsDb from '../../src/db/terminals.js';
 import * as agentsDb from '../../src/db/agents.js';
+import { StatusService } from '../../src/status/service.js';
+import { summary } from '../../src/analytics/queries.js';
+import { attachPtyCapture } from '../../src/analytics/pty-capture.js';
 import { AgentService } from '../../src/agents/service.js';
 
 const claudeFixture = fs.readFileSync(
@@ -126,6 +129,7 @@ describe('AgentService', () => {
     expect(finished.status).toBe('failed');
     expect(finished.completedAt).toBeTruthy();
     expect(finished.error).toContain('1');
+    expect(db.prepare('SELECT outcome FROM usage_turns').get()).toEqual({ outcome: 'error' });
   });
 
   it('handleTerminalExit does not override an already-cancelled run', () => {
@@ -240,6 +244,10 @@ describe('AgentService', () => {
     });
     const run = service.runNow(schedule.id);
 
+    // PTY exit capture must leave this row open for the runner parser to flush.
+    attachPtyCapture({ db, isStructured: () => false })({ terminalId: 'term-1', sessionId: 'proj-1', phase: 'end', threadStatus: 'done' });
+    expect((db.prepare('SELECT ended_at FROM usage_turns').get() as any).ended_at).toBeNull();
+
     // Feed the real captured stream-json output for this run's terminal.
     service.onRunnerData('term-1', claudeFixture);
 
@@ -258,6 +266,12 @@ describe('AgentService', () => {
     expect(finished.numTurns).toBe(3);
     expect(finished.model).toBe('claude-opus-4-8[1m]');
     expect(finished.resultText).toContain('hello.txt');
+    const result = JSON.parse(claudeFixture.trim().split('\n').at(-1)!);
+    expect(summary(db, {})).toMatchObject({
+      turns: 1, inputTokens: result.usage.input_tokens, outputTokens: result.usage.output_tokens,
+      cacheReadTokens: result.usage.cache_read_input_tokens, cacheCreateTokens: result.usage.cache_creation_input_tokens,
+      reportedCostUsd: result.total_cost_usd, coverage: { reported: 1, partial: 0, missing: 0, unsupported: 0 },
+    });
 
     // A subsequent process exit must NOT override the already-finalized run.
     expect(service.handleTerminalExit('term-1', 0)).toBeNull();
@@ -316,4 +330,26 @@ describe('AgentService', () => {
     expect(() => service.updateRunFromTerminalActivity('term-1', 'busy')).not.toThrow();
     expect(service.updateRunFromTerminalActivity('term-1', 'busy')).toBeNull();
   });
+  it('flushes a buffered runner footer into the lifecycle ledger before completion notifications', () => {
+    const service = new AgentService(db, sessionService, broadcaster);
+    const lifecycle = new StatusService(db,broadcaster);
+    service.setLifecycleService(lifecycle);
+    const completed: number[] = [];
+    lifecycle.onHarnessCommitted(event => {
+      if (event.type === 'turn.completed') completed.push(summary(db,{}).outputTokens);
+    });
+    const schedule = service.createSchedule({
+      projectId: 'proj-1', name: 'Claude Run', provider: 'claude-code', workingDir: '/srv/tenex',
+      prompt: 'go', scheduleKind: 'one-shot', runAt: null, recurrenceRule: null,
+      timezone: 'UTC', enabled: true, nextRunAt: null, defaultTerminalLabel: 'Claude Run',
+    });
+    service.runNow(schedule.id);
+    service.onRunnerData('term-1',claudeFixture.trimEnd()); // final JSON line is still buffered
+    expect(completed).toEqual([]);
+    service.handleTerminalExit('term-1',0);
+    expect(completed).toEqual([877]);
+    expect(service.ownsTerminalStream('term-1')).toBe(false);
+    expect(terminalsDb.getById(db,'term-1')!.status).toBe('waiting');
+  });
+
 });

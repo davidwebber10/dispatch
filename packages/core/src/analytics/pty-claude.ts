@@ -1,8 +1,11 @@
 import fs from 'fs';
+import type { Measurement } from '../db/telemetry.js';
 import { usageFromFrame, toolCallsInFrame } from './frames.js';
 
 export interface TailResult {
   input: number; output: number; cacheRead: number; cacheCreate: number;
+  measurements: Measurement[];
+  incomplete: boolean;
   messages: number; toolCalls: number; model: string; nextOffset: number;
 }
 
@@ -37,16 +40,23 @@ export function readClaudeTail(file: string, fromOffset: number): TailResult | n
 
   const out: TailResult = {
     input: 0, output: 0, cacheRead: 0, cacheCreate: 0,
-    messages: 0, toolCalls: 0, model: '', nextOffset: size,
+    incomplete: !raw.endsWith('\n') && raw.length > 0, measurements: [], messages: 0, toolCalls: 0, model: '', nextOffset: start,
   };
 
-  for (const ln of raw.split('\n')) {
+  let offset = start;
+  // Only advance over complete lines; an incomplete final frame makes turn coverage partial.
+  const complete = raw.slice(0, raw.lastIndexOf('\n') + 1);
+  for (const ln of complete.split('\n').slice(0, -1)) {
+    offset += Buffer.byteLength(ln + '\n');
+    out.nextOffset = offset;
     if (!ln.trim()) continue;
     let ev: unknown;
-    try { ev = JSON.parse(ln); } catch { continue; }
+    try { ev = JSON.parse(ln); } catch { out.incomplete = true; continue; }
     out.toolCalls += toolCallsInFrame(ev);
     const usage = usageFromFrame(ev);
     if (!usage) continue;
+    const native = ev as any;
+    out.measurements.push({ ...usage, eventId: native.message?.id ?? native.uuid ?? `byte:${offset}`, source: 'pty', toolCalls: toolCallsInFrame(ev), coverage: native.message?.id || native.uuid ? 'reported' : 'partial' });
     out.input += usage.input;
     out.output += usage.output;
     out.cacheRead += usage.cacheRead;

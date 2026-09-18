@@ -1,3 +1,5 @@
+import { normalizeGrok } from '../status/events.js';
+import { DEFAULT_TELEMETRY } from './telemetry.js';
 import type { SessionProvider, SecretsMcpInjection } from './types.js';
 
 /**
@@ -65,6 +67,8 @@ function rulesArgs(secretsMcp?: SecretsMcpInjection): string[] {
  */
 export const grokProvider: SessionProvider = {
   name: 'grok',
+  structured: { protocol: 'acp', dialect: 'grok', disabledBy: 'DISPATCH_GROK_PRETTY' },
+  telemetry: { ...DEFAULT_TELEMETRY, hookNames: ['grok'], normalizeHook: normalizeGrok },
   displayName: 'Grok',
   statusStrategy: 'hooks',
   // `-s/--session-id <UUID>` names a NEW conversation, so Dispatch can assign the id up

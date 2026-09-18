@@ -1,3 +1,4 @@
+import type { StatusService } from '../status/service.js';
 import type Database from 'better-sqlite3';
 import type { SessionStatus } from '../types.js';
 import type { PTYManager } from '../pty/manager.js';
@@ -7,10 +8,8 @@ import * as terminalsDb from '../db/terminals.js';
 import { getProvider } from '../providers/registry.js';
 import { aggregateSessionStatus } from '../status/aggregate.js';
 
-// A thread is "working" while its PTY is still emitting output. Claude Code /
-// Codex animate a spinner continuously while a turn is active (including during
-// tool calls), so recent output is a reliable "running" signal; a few seconds of
-// silence means it's back at the prompt.
+// Output timing is an inferred fallback for terminals without native lifecycle
+// observations. Silence or a terminal redraw cannot override an authoritative event.
 const ACTIVITY_THRESHOLD_MS = 4_000;
 const DEFAULT_INTERVAL_MS = 2_000;
 
@@ -19,7 +18,7 @@ const DEFAULT_INTERVAL_MS = 2_000;
  * by terminal id, so we walk the live PTYs directly rather than the sessions
  * table (whose ids don't match the PTY map). Each interactive terminal is marked
  * `working` while its PTY is active and `waiting` once it goes quiet; a
- * hook-set `needs_input` is kept sticky until output resumes. Session status is
+ * native status is kept authoritative even when output resumes. Session status is
  * then rolled up from its terminals. Returns the interval id for cleanup.
  */
 export function startPtyTimingLoop(
@@ -27,8 +26,9 @@ export function startPtyTimingLoop(
   ptyManager: PTYManager,
   broadcaster: EventBroadcaster,
   intervalMs: number = DEFAULT_INTERVAL_MS,
+  lifecycle?: StatusService,
 ): NodeJS.Timeout {
-  return setInterval(() => ptyStatusTick(db, ptyManager, broadcaster), intervalMs);
+  return setInterval(() => ptyStatusTick(db, ptyManager, broadcaster, lifecycle), intervalMs);
 }
 
 /** One pass of the activity → status reconciliation (exported for tests). */
@@ -36,6 +36,7 @@ export function ptyStatusTick(
   db: Database.Database,
   ptyManager: PTYManager,
   broadcaster: EventBroadcaster,
+  lifecycle?: StatusService,
 ): void {
   {
     const now = Date.now();
@@ -53,6 +54,9 @@ export function ptyStatusTick(
       try { config = JSON.parse(term.config || '{}'); } catch { /* default {} */ }
       if (config.runner) continue;                 // agent-run terminals are owned by AgentService
 
+      // Native/input lifecycle events outrank output timing, including redraws after completion.
+      if (db.prepare('SELECT 1 FROM thread_lifecycle WHERE terminal_id=? AND source=?').get(id, 'authoritative')) continue;
+
       const last = ptyManager.getLastActivity(id);
       const recent = !!last && now - last.getTime() <= ACTIVITY_THRESHOLD_MS;
       const current = term.status || 'waiting';
@@ -61,6 +65,8 @@ export function ptyStatusTick(
         : current === 'needs_input' ? 'needs_input' : 'waiting';
 
       if (next !== current) {
+        if (lifecycle && next !== 'needs_input') { lifecycle.markInferred(id, next); continue; }
+        db.prepare(`INSERT INTO thread_lifecycle(terminal_id,status,source,observed_at) VALUES (?,?,'inferred',?) ON CONFLICT(terminal_id) DO UPDATE SET status=excluded.status, source='inferred', observed_at=excluded.observed_at`).run(id,next,new Date().toISOString());
         terminalsDb.updateStatus(db, id, next);
         broadcaster.broadcast({ type: 'terminal:status', terminalId: id, status: next });
         touchedSessions.add(term.session_id);

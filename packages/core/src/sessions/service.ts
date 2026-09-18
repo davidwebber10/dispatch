@@ -1,3 +1,4 @@
+import { PromptInput } from './prompt-input.js';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -85,21 +86,30 @@ export class SessionService {
   /** Supplies the catalog MCP specs for spawned CLIs; set by the server wiring. */
   private integrationsSpecs: (() => McpServerSpec[]) | null = null;
   /** How spawned CLIs phone home with lifecycle events; set by the server wiring. */
+  private terminalStatusWriter?: (id: string, status: 'queued' | 'waiting' | 'error') => void;
+  setTerminalStatusWriter(writer: (id: string, status: 'queued' | 'waiting' | 'error') => void): void { this.terminalStatusWriter = writer; }
+  private setTerminalStatus(id: string, status: 'queued' | 'waiting' | 'error'): void {
+    if (this.terminalStatusWriter) this.terminalStatusWriter(id, status);
+    else terminalsDb.updateStatus(this.db, id, status); // isolated service/test compatibility
+  }
+  private onUserPrompt?: (terminalId: string, text: string) => void;
+  private promptInputs = new Map<string, PromptInput>();
+  setUserPromptListener(listener: (terminalId: string, text: string) => void): void { this.onUserPrompt = listener; }
+  noteUserPrompt(terminalId: string, content: string | import('../structured/manager.js').ContentBlock[]): void {
+    const text = typeof content === 'string' ? content : content.filter(b => b.type === 'text').map(b => (b as { text: string }).text).join('\n');
+    try { this.onUserPrompt?.(terminalId, text); } catch { /* naming must never prevent sending */ }
+  }
+  noteUserInput(terminalId: string, data: string): void {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal || terminal.label_source !== 'default' || !isAgentType(terminal.type)) { this.promptInputs.delete(terminalId); return; }
+    const input = this.promptInputs.get(terminalId) ?? new PromptInput();
+    this.promptInputs.set(terminalId, input);
+    for (const prompt of input.feed(data)) this.noteUserPrompt(terminalId, prompt);
+  }
   private statusContext: StatusContext | null = null;
   /** Supplies a tools-awareness note injected into the developer instructions; set by server wiring. */
   private toolsAwareness?: () => string | null;
-  /** Drives structured (stream-json) sessions for claude-code threads; set by server wiring. */
-  private structuredManager?: import('../structured/manager.js').IStructuredManager;
-  /** Drives structured (app-server) sessions for codex threads; set by server wiring only
-   *  when CODEX_PRETTY_ENABLED. Undefined ⇒ codex has no structured transport (Phase A). */
-  private codexStructuredManager?: import('../structured/manager.js').IStructuredManager;
-  /** Drives structured (ACP `grok agent stdio`) sessions for grok threads; set by server
-   *  wiring only when GROK_PRETTY_ENABLED. Undefined ⇒ grok has only the PTY transport. */
-  private grokStructuredManager?: import('../structured/manager.js').IStructuredManager;
-  /** Drives structured (ACP `opencode acp`) sessions for opencode threads; set by server
-   *  wiring only when OPENCODE_PRETTY_ENABLED. OpenCode is Pretty-ONLY: no manager ⇒ the
-   *  type cannot spawn at all (there is deliberately no PTY fallback). */
-  private opencodeStructuredManager?: import('../structured/manager.js').IStructuredManager;
+  private structuredManagers = new Map<string, import('../structured/manager.js').IStructuredManager>();
   /** Override for structured command (test seam: lets tests spawn fake-claude instead of real claude). */
   private structuredCommandOverride?: { command: string; args: string[] };
 
@@ -127,9 +137,21 @@ export class SessionService {
     this.toolsAwareness = fn;
   }
 
+  registerStructuredManager(type: string, manager: import('../structured/manager.js').IStructuredManager): void {
+    getProvider(type); // reject an unregistered harness instead of silently accepting it
+    const existing = this.structuredManagers.get(type);
+    if (existing && existing !== manager) throw new Error(`Structured manager already registered: ${type}`);
+    if (existing) return;
+    this.structuredManagers.set(type, manager);
+    this.persistStructuredSessionIds(manager, type);
+    if (type === 'claude-code') this.persistMessageSources(manager);
+  }
+
   setStructuredManager(m: import('../structured/manager.js').IStructuredManager): void {
-    this.structuredManager = m;
-    this.persistStructuredSessionIds(m);
+    this.registerStructuredManager('claude-code', m);
+  }
+
+  private persistMessageSources(m: import('../structured/manager.js').IStructuredManager): void {
     // Durable source persistence: the manager emits this once a tagged turn's `result`
     // lands (its transcript lines are guaranteed flushed by then — see manager.ts's
     // `result` handler). Resolve it to the newest not-yet-recorded real user-text uuid in
@@ -165,12 +187,13 @@ export class SessionService {
    * whose ids never resolve there) an existing external_id simply always wins — which is
    * right: a Grok id comes from session/new exactly once and never changes thereafter.
    */
-  private persistStructuredSessionIds(m: import('../structured/manager.js').IStructuredManager): void {
+  private persistStructuredSessionIds(m: import('../structured/manager.js').IStructuredManager, type: string): void {
     m.on('session', (terminalId: string, sessionId: string) => {
       try {
         const t = terminalsDb.getById(this.db, terminalId);
-        if (!t || !sessionId || t.external_id === sessionId) return;
+        if (!t || t.type !== type || !sessionId || t.external_id === sessionId) return;
         if (t.external_id) {
+          if (t.type !== 'claude-code') return;
           const session = sessionsDb.getById(this.db, t.session_id);
           const workDir = t.working_dir || session?.working_dir || '';
           if (resolveTranscriptPath(workDir, t.external_id)) return; // healthy — never clobber
@@ -188,7 +211,7 @@ export class SessionService {
    * codex threads have only the PTY transport.
    */
   setCodexStructuredManager(m: import('../structured/manager.js').IStructuredManager): void {
-    this.codexStructuredManager = m;
+    this.registerStructuredManager('codex', m);
   }
 
   /**
@@ -199,15 +222,13 @@ export class SessionService {
    * by that stored external_id.
    */
   setGrokStructuredManager(m: import('../structured/manager.js').IStructuredManager): void {
-    this.grokStructuredManager = m;
-    this.persistStructuredSessionIds(m);
+    this.registerStructuredManager('grok', m);
   }
 
   /** Wire the OpenCode structured (ACP) manager. Same id-persistence contract as Grok:
    *  `session/new` mints the id exactly once; resume is `session/load` by external_id. */
   setOpencodeStructuredManager(m: import('../structured/manager.js').IStructuredManager): void {
-    this.opencodeStructuredManager = m;
-    this.persistStructuredSessionIds(m);
+    this.registerStructuredManager('opencode', m);
   }
 
   /**
@@ -219,11 +240,7 @@ export class SessionService {
    *   grok        → the Grok ACP manager (only when GROK_PRETTY_ENABLED)
    */
   structuredManagerFor(type: string): import('../structured/manager.js').IStructuredManager | undefined {
-    if (type === 'claude-code') return this.structuredManager;
-    if (type === 'codex') return this.codexStructuredManager;
-    if (type === 'grok') return this.grokStructuredManager;
-    if (type === 'opencode') return this.opencodeStructuredManager;
-    return undefined;
+    return this.structuredManagers.get(type);
   }
 
   /** Resolve the structured manager for a terminal id (looks up its type first). Public so the
@@ -432,7 +449,7 @@ export class SessionService {
     // gets Pretty. Applied at creation, never at spawn — existing PTY rows keep working, and
     // an explicit `transport` in the request still wins. Skipped when the structured manager
     // is absent (DISPATCH_GROK_PRETTY=0 falls back to PTY).
-    if (type === 'grok' && !config?.transport && this.grokStructuredManager) {
+    if (type === 'grok' && !config?.transport && this.structuredManagerFor('grok')) {
       config = { ...(config ?? {}), transport: 'structured' };
     }
     // OpenCode is Pretty-ONLY — there is no PTY provider at all, so unlike Grok this is
@@ -490,7 +507,7 @@ export class SessionService {
       workingDir: session.working_dir,
       config: { ...(config ?? {}), queued: true, queuedTask: task },
     });
-    terminalsDb.updateStatus(this.db, terminalId, 'queued');
+    this.setTerminalStatus(terminalId, 'queued');
 
     // dependsOn may already be satisfied (the depended-on agent finished — or was
     // archived — before this one was even queued). Don't leave it waiting forever
@@ -527,7 +544,7 @@ export class SessionService {
     // met), it's no longer meaningfully "waiting" on anything.
     const { queued, queuedTask, dependsOn, ...rest } = config;
     terminalsDb.updateConfig(this.db, terminalId, rest);
-    terminalsDb.updateStatus(this.db, terminalId, 'waiting');
+    this.setTerminalStatus(terminalId, 'waiting');
 
     this.spawnTerminal(terminalId);
     if (task) this.sendStructuredMessage(terminalId, task);
@@ -927,7 +944,7 @@ export class SessionService {
       this.spawnTerminal(terminalId);
     } catch (err: any) {
       terminalsDb.updatePid(this.db, terminalId, null);
-      terminalsDb.updateStatus(this.db, terminalId, 'error');
+      this.setTerminalStatus(terminalId, 'error');
     }
 
     return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
@@ -1778,7 +1795,7 @@ export class SessionService {
         this.spawnTerminal(terminalId);
       } catch {
         terminalsDb.updatePid(this.db, terminalId, null);
-        terminalsDb.updateStatus(this.db, terminalId, 'error');
+        this.setTerminalStatus(terminalId, 'error');
       }
     }
     return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
@@ -2109,7 +2126,7 @@ export class SessionService {
   async kickstartInterruptedAgents(settleMs: number = KICKSTART_SETTLE_MS): Promise<{ kicked: string[]; skipped: string[] }> {
     const kicked: string[] = [];
     const skipped: string[] = [];
-    if (!this.structuredManager) return { kicked, skipped };
+    if (!this.structuredManagerFor('claude-code')) return { kicked, skipped };
 
     // (a) Settle: let any burst of save writes from the shutdown coalesce before we read status.
     if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));

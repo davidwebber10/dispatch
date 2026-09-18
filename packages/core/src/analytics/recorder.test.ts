@@ -40,6 +40,31 @@ describe('usage recorder', () => {
     attachUsageRecorder(mgr, { db: d });
   });
 
+  it('duplicate busy notifications and steering keep one open turn', () => {
+    mgr.emit('busy', termId);
+    mgr.emit('event', termId, FRAME);
+    mgr.emit('busy', termId);
+    mgr.emit('event', termId, FRAME);
+    mgr.emit('idle', termId);
+    expect(rows(d)).toHaveLength(1);
+    expect(rows(d)[0]).toMatchObject({ input_tokens: 20, output_tokens: 40, outcome: 'idle' });
+  });
+
+  it('transport failure closes the active turn without reporting completion', () => {
+    mgr.emit('busy', termId);
+    mgr.emit('event', termId, FRAME);
+    mgr.emit('failed', termId);
+    expect(rows(d)[0].outcome).toBe('error');
+    expect(usageDb.findOpenTurn(d, termId)).toBeNull();
+  });
+
+  it('does not accept another harness cost reported-cost dialect', () => {
+    mgr.emit('busy', termId);
+    mgr.emit('event', termId, { type: 'result', subtype: 'acp_turn', total_cost_usd: 1 });
+    mgr.emit('idle', termId);
+    expect(rows(d)[0].cost_usd).toBe(0);
+  });
+
   it('records one closed turn for busy → frame → idle', () => {
     mgr.emit('busy', termId);
     mgr.emit('event', termId, FRAME);
@@ -168,6 +193,7 @@ describe('usage recorder', () => {
    * recorder has to actually store it, or the exclusion's premise is false.
    */
   it('adds a per-turn reported cost from an ACP result footer', () => {
+    d.prepare('UPDATE terminals SET type = ? WHERE id = ?').run('opencode', termId);
     mgr.emit('busy', termId);
     mgr.emit('event', termId, {
       type: 'result', subtype: 'acp_turn', is_error: false,
@@ -236,4 +262,27 @@ describe('usage recorder', () => {
     m2.emit('idle', termId, { declared: true });
     expect(closed).toBe(1);
   });
+  it('records Claude final per-model counters across turns, replays, and process restarts', () => {
+    const result = (scope: string, input: number, output: number, cost: number) => ({
+      type: 'result', session_id: 'native', telemetry: { counterScope: scope }, total_cost_usd: cost,
+      modelUsage: { 'claude-sonnet-5': { inputTokens: input, outputTokens: output, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 } },
+    });
+    mgr.emit('busy', termId);
+    mgr.emit('event', termId, { ...FRAME, telemetry: { counterScope: 'process1' } });
+    mgr.emit('event', termId, result('process1', 100, 80, 0.2));
+    mgr.emit('event', termId, result('process1', 100, 80, 0.2));
+    mgr.emit('idle', termId);
+    mgr.emit('busy', termId);
+    mgr.emit('event', termId, result('process1', 125, 95, 0.3));
+    mgr.emit('idle', termId);
+    const restarted = new EventEmitter(); attachUsageRecorder(restarted, { db: d });
+    restarted.emit('busy', termId);
+    restarted.emit('event', termId, result('process2', 5, 7, 0.01));
+    restarted.emit('idle', termId);
+    const turns = rows(d);
+    expect(turns.map(t => t.input_tokens)).toEqual([100,25,5]);
+    expect(turns.map(t => t.output_tokens)).toEqual([80,15,7]);
+    expect(turns.map(t => t.cost_usd)).toEqual([0.2, expect.closeTo(0.1), 0.01]);
+  });
+
 });

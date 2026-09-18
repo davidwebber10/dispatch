@@ -1,3 +1,6 @@
+import { codexRunnerFrame } from '../analytics/normalize.js';
+import { normalizeCodex } from '../status/events.js';
+import { DEFAULT_TELEMETRY } from './telemetry.js';
 import type { SessionProvider, SecretsMcpInjection, StatusHooksInjection } from './types.js';
 
 // Run Codex fully autonomously: skip every approval prompt AND drop the sandbox. This is the
@@ -28,6 +31,8 @@ function modelArgs(model?: string): string[] {
 
 export const codexProvider: SessionProvider = {
   name: 'codex',
+  structured: { protocol: 'codex-rpc', disabledBy: 'DISPATCH_CODEX_PRETTY' },
+  telemetry: { ...DEFAULT_TELEMETRY, runnerFrame: codexRunnerFrame, hookNames: ['codex'], normalizeHook: normalizeCodex, ptyCapture: 'codex-transcript' },
   displayName: 'Codex',
   statusStrategy: 'pty-timing',
   buildNewCommand({ prompt, secretsMcp, statusHooks, model }) {

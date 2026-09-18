@@ -1,3 +1,4 @@
+import type { ProviderTelemetry } from './telemetry.js';
 /**
  * Optional per-spawn injection that wires the Doppler secrets MCP server into the
  * launched CLI so agents can add/retrieve secrets. `claudeConfigPath` is the path to
@@ -55,6 +56,9 @@ export interface StatusHooksInjection {
 export interface SessionProvider {
   name: string;
   displayName: string;
+  telemetry: ProviderTelemetry;
+  structured: { protocol: 'claude-json' | 'codex-rpc'; disabledBy?: string }
+    | { protocol: 'acp'; dialect: 'grok' | 'opencode'; disabledBy?: string };
   statusStrategy?: 'hooks' | 'pty-timing';
   /**
    * True when this CLI lets the caller NAME the session up front, rather than making us

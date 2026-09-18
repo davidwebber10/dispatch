@@ -451,19 +451,23 @@ export function AnalyticsView() {
         <>
           {/* 2. Headline totals. Tokens are the headline metric; the dollar tile is
               secondary and NOTIONAL — value, never cost (spec section 4). */}
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(5, 1fr)', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(6, 1fr)', gap: 12 }}>
             <Kpi label="TOTAL TOKENS" value={nothingReported ? '—' : fmtTokens(summary.totalTokens)} title={nothingReported ? noUsageTitle : undefined} />
             <Kpi label="OUTPUT TOKENS" value={nothingReported ? '—' : fmtTokens(summary.outputTokens)} title={nothingReported ? noUsageTitle : undefined} />
             <Kpi
               label="EQUIV API VALUE"
               value={nothingReported ? '—' : formatCost(Number(summary.apiValueUsd ?? 0))}
-              title={nothingReported ? noUsageTitle : 'What these tokens would cost at API list rates — a notional figure, not a bill. Models with no list price are valued at the cost their provider reported.'}
+              title={nothingReported ? noUsageTitle : 'What these tokens would cost at API list rates — a notional figure, not a bill. Models with no list price are excluded.'}
               badge={!nothingReported && summary.valueIsPartial ? 'partial' : undefined}
-              badgeTitle="Some tokens in this range belong to a model with no list price and no provider-reported cost. They are counted in the token totals but add nothing here, so the real value is higher than shown."
+              badgeTitle="Some usage is missing, partial, or has no known list price. This estimate covers only the usage we can value."
             />
+            <Kpi label="REPORTED COST" value={summary.reportedCostUsd == null ? '—' : formatCost(summary.reportedCostUsd)} title="Dollars reported by harnesses that supply cost. Separate from estimated API value; not a complete account invoice." />
             <Kpi label="TURNS" value={summary.turns.toLocaleString()} />
             <Kpi label="THREADS" value={summary.threads.toLocaleString()} />
           </div>
+
+          {(summary.coverage?.partial ?? 0) > 0 && <div style={{ ...muted, marginTop: 10 }}>{summary.coverage!.partial} turns have partial usage coverage</div>}
+          {(summary.coverage?.unsupported ?? 0) > 0 && <div style={{ ...muted, marginTop: 10 }}>{summary.coverage!.unsupported} turns used a transport that does not report usage</div>}
 
           {/* Turns whose usage was never reported. NOT a measured zero. */}
           {unreported > 0 && (

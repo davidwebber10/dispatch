@@ -1,3 +1,4 @@
+import type { StatusService } from '../status/service.js';
 import type { IncomingMessage } from 'http';
 import type { WebSocket } from 'ws';
 import type { PTYManager } from '../pty/manager.js';
@@ -60,6 +61,7 @@ export function handleTerminalConnection(
   ptyManager: PTYManager,
   sessionService?: SessionService,
   monitor?: TerminalMonitor,
+  status?: StatusService,
 ): void {
   // Support both new URL pattern /api/terminals/:terminalId/ws
   // and legacy /api/sessions/:id/terminal
@@ -164,7 +166,9 @@ export function handleTerminalConnection(
         }
       } catch {}
     }
+    if (str.includes('\r')) status?.markWorking(targetId!, 'Thinking…');
     ptyManager.write(targetId!, str);
+    sessionService?.noteUserInput(targetId!, str);
   });
 
   ws.on('close', () => {

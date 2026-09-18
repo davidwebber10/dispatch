@@ -3,6 +3,7 @@ import Database from 'better-sqlite3';
 import { initSchema } from '../../src/db/schema.js';
 import * as sessionsDb from '../../src/db/sessions.js';
 import * as terminalsDb from '../../src/db/terminals.js';
+import { StatusService } from '../../src/status/service.js';
 import { ptyStatusTick } from '../../src/sessions/status.js';
 import type { PTYManager } from '../../src/pty/manager.js';
 
@@ -78,4 +79,25 @@ describe('ptyStatusTick', () => {
 
     expect(terminalsDb.getById(db, 'r1')!.status).not.toBe('working');
   });
+  it('output redraws cannot revive an authoritative idle or permission pause', () => {
+    const { db, broadcaster } = setup();
+    terminalsDb.create(db, { id: 't1', sessionId: 's1', type: 'codex', label: 'CX' });
+    const status = new StatusService(db, broadcaster);
+    status.markWorking('t1'); status.markIdle('t1');
+    ptyStatusTick(db, fakePty({ t1: new Date() }), broadcaster);
+    expect(terminalsDb.getById(db, 't1')!.status).toBe('waiting');
+    status.markNeedsInput('t1');
+    ptyStatusTick(db, fakePty({ t1: new Date() }), broadcaster);
+    expect(terminalsDb.getById(db, 't1')!.status).toBe('needs_input');
+  });
+  it('reconciles a stale working thread only when it has no live process owner', () => {
+    const { db, broadcaster } = setup();
+    for (const id of ['alive', 'dead']) terminalsDb.create(db, { id, sessionId: 's1', type: 'codex', label: id });
+    const status = new StatusService(db, broadcaster);
+    status.markWorking('alive'); status.markWorking('dead');
+    status.reconcileProcesses(id => id === 'alive');
+    expect(terminalsDb.getById(db, 'alive')!.status).toBe('working');
+    expect(terminalsDb.getById(db, 'dead')!.status).toBe('error');
+  });
+
 });

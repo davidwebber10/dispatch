@@ -8,11 +8,13 @@
 // 'scheduled' emit, see structured/manager.ts) — a dormant thread that called a wake-scheduler
 // tool (ScheduleWakeup/CronCreate) to end its turn deliberately. Hook-based normalizeClaude/
 // normalizeCodex below never produce it; PTY-driven threads have no such signal to observe.
-export type ThreadStatus = 'starting' | 'working' | 'needs_input' | 'idle' | 'done' | 'error' | 'scheduled';
+export type ThreadStatus = 'queued' | 'starting' | 'working' | 'needs_input' | 'idle' | 'done' | 'error' | 'scheduled';
 
 export interface NormalizedEvent {
   /** null = this event doesn't change the status (still useful for sessionId capture). */
   status: ThreadStatus | null;
+  turn?: 'baseline' | 'start' | 'end';
+  turnId?: string;
   activity?: string;
   sessionId?: string;
 }
@@ -24,8 +26,8 @@ export function normalizeClaude(payload: any): NormalizedEvent {
   const tool = str(payload?.tool_name);
 
   switch (event) {
-    case 'SessionStart': return { status: 'starting', sessionId };
-    case 'UserPromptSubmit': return { status: 'working', activity: 'Thinking…', sessionId };
+    case 'SessionStart': return { status: 'starting', sessionId, turn: 'baseline' };
+    case 'UserPromptSubmit': return { status: 'working', activity: 'Thinking…', sessionId, turn: 'start' };
     case 'PreToolUse': return { status: 'working', activity: toolActivity(tool, payload?.tool_input), sessionId };
     case 'PostToolUse': return { status: 'working', sessionId };
     case 'PostToolUseFailure': return { status: 'working', activity: tool ? `${tool} failed` : undefined, sessionId };
@@ -39,9 +41,9 @@ export function normalizeClaude(payload: any): NormalizedEvent {
       if (hint.includes('idle') || hint.includes('waiting for')) return { status: 'idle', sessionId };
       return { status: null, sessionId };
     }
-    case 'Stop': return { status: 'idle', sessionId };
-    case 'StopFailure': return { status: 'error', activity: payload?.error_type ? `Error: ${payload.error_type}` : 'Error', sessionId };
-    case 'SessionEnd': return { status: 'done', sessionId };
+    case 'Stop': return { status: 'idle', sessionId, turn: 'end' };
+    case 'StopFailure': return { turn: 'end', status: 'error', activity: payload?.error_type ? `Error: ${payload.error_type}` : 'Error', sessionId };
+    case 'SessionEnd': return { status: 'done', sessionId, turn: 'end' };
     default: return { status: null, sessionId };
   }
 }
@@ -52,7 +54,7 @@ export function normalizeCodex(payload: any): NormalizedEvent {
   const sessionId = str(payload?.['thread-id']) ?? str(payload?.thread_id);
   // `agent-turn-complete` = the turn finished -> idle. `approval-requested`
   // (interactive sessions) = the agent is blocked on the user -> needs_input.
-  if (type === 'agent-turn-complete') return { status: 'idle', sessionId };
+  if (type === 'agent-turn-complete') return { status: 'idle', sessionId, turn: 'end', turnId: str(payload?.['turn-id']) ?? str(payload?.turn_id) };
   if (type === 'approval-requested') return { status: 'needs_input', activity: 'Waiting for approval', sessionId };
   return { status: null, sessionId };
 }
@@ -72,3 +74,11 @@ function basename(p: string): string {
 }
 function truncate(s: string, n: number): string { return s.length <= n ? s : s.slice(0, n - 1) + '…'; }
 function str(v: unknown): string | undefined { return typeof v === 'string' && v ? v : undefined; }
+
+/** Grok shares Claude's hooks and additionally emits a standalone Idle event. */
+export function normalizeGrok(payload: unknown): NormalizedEvent {
+  if (payload && typeof payload === 'object' && (payload as any).hook_event_name === 'Idle') {
+    return { status: 'idle', sessionId: str((payload as any).session_id), turn: 'end' };
+  }
+  return normalizeClaude(payload);
+}

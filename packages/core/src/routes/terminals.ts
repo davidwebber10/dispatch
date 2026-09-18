@@ -1,3 +1,4 @@
+import { harnessCapabilities } from '../providers/capabilities.js';
 import { Router } from 'express';
 import type { SessionService } from '../sessions/service.js';
 import { isPtyType } from '../db/terminals.js';
@@ -26,6 +27,11 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   router.post('/sessions/:id/terminals', (req, res) => {
     try {
       const { type, label, skipPermissions, workingDir, externalId, config, queued, task } = req.body;
+      const capability = harnessCapabilities().find(h => h.type === type);
+      const requestedMode = config?.transport === 'structured' ? 'pretty' : config?.transport === 'pty' ? 'cli' : undefined;
+      if (capability && !config?.signIn && (!capability.modes.length || requestedMode && !capability.modes.includes(requestedMode))) {
+        return res.status(409).json({ error: 'Requested harness transport is disabled on this server' });
+      }
       if (!type || !VALID_TYPES.includes(type)) {
         return res.status(400).json({ error: `Invalid type. Must be one of: ${VALID_TYPES.join(', ')}` });
       }
@@ -101,6 +107,12 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     res.json(sessionService.searchConversation(req.params.terminalId, String(req.query.q ?? '')));
   });
 
+  router.get('/terminals/:terminalId/diagnostics', (req, res) => {
+    const id = req.params.terminalId;
+    if (!sessionService.getTerminal(id)) return res.status(404).json({ error: 'Thread not found' });
+    return res.json(statusService?.diagnostics(id) ?? { lifecycle: null, captureFailure: null, events: [] });
+  });
+
   // POST /api/terminals/:terminalId/message { text } | { content } — send a structured
   // message to a stream-json session. Back-compat: a plain `text` string still works;
   // `content` additionally accepts a string OR an array of content blocks (e.g. a real
@@ -119,6 +131,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       // thread gets it typed into its TUI. Before this, a PTY target threw "no structured
       // session for terminal" — which is why one thread could only message a Pretty peer.
       const sent = sessionService.sendThreadMessage(req.params.terminalId, payload, source);
+      if (source === 'user') sessionService.noteUserPrompt(req.params.terminalId, payload);
       if (source === 'user') sessionService.noteUserMessageToAgent(req.params.terminalId, payload); // tell the coordinator
       // A structured send flips to working off its own stream events; a PTY write has no such
       // signal, so mark it here exactly like the /input route does for a submitted line.
@@ -275,6 +288,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     if (typeof data !== 'string') return res.status(400).json({ error: 'data (string) is required' });
     try {
       sessionService.writeToTerminal(req.params.terminalId, data);
+      sessionService.noteUserInput(req.params.terminalId, data);
       // A CR write means the thread is now working — surface it immediately,
       // before any hook fires (Codex relies on this; notify only reports completion).
       if (data.includes('\r') && data !== '\x1b') statusService?.markWorking(req.params.terminalId, 'Thinking…');

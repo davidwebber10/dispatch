@@ -27,7 +27,7 @@ export interface FrameUsage {
   model: string;
 }
 
-const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0);
 
 function message(ev: unknown): Record<string, any> | null {
   if (!ev || typeof ev !== 'object') return null;

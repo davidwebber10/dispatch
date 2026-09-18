@@ -1,8 +1,9 @@
 import fs from 'fs';
+import { isAgentType } from '../providers/agent-types.js';
 import type Database from 'better-sqlite3';
 import * as sessionsDb from '../db/sessions.js';
 import * as terminalsDb from '../db/terminals.js';
-import { cleanName, deriveThreadRaw, resolveTranscriptPath } from './thread-namer.js';
+import { cleanName, deriveThreadRaw, resolveTranscriptPath, userPromptText, fallbackThreadName } from './thread-namer.js';
 import { generateThreadName } from './model-namer.js';
 import type { EventBroadcaster } from '../ws/events.js';
 
@@ -31,19 +32,10 @@ export interface ThreadAutoNamerOptions {
 }
 
 /**
- * Debounced, one-shot, best-effort auto-namer for `default`-labeled claude-code/codex
- * threads. `notifyActivity` is meant to be called on every real-activity moment
- * (cheap — it self-filters and no-ops for ineligible/already-scheduled/already-named
- * terminals). After `delayMs` of no further activity it reads the terminal's
- * transcript, derives a name, and writes it via `terminalsDb.setAutoLabel`, whose
- * `label_source = 'default'` guard means a concurrent user rename always wins (the
- * write becomes a no-op, silently). Failures (missing transcript, unparseable
- * transcript, no derivable name) count against a small attempt cap so a thread that
- * can never be named doesn't get retried forever; success or a user-won race both stop
- * further scheduling naturally since the row is no longer `label_source: 'default'`.
- * A still-missing `external_id` is NOT a failure — it's a precondition (codex only
- * assigns one at agent-turn-complete, well after idle-bump activity signals can fire)
- * — so it doesn't count against the attempt cap; a later notifyActivity reschedules.
+ * One-shot naming from a durable first user prompt, for every registered harness.
+ * Direct submissions start immediately and have a three-second model/key budget.
+ * Transcript activity is a fallback for raw CLI interactions we cannot capture.
+ * The SQL label-source guard lets manual renames win, including in-flight races.
  */
 export class ThreadAutoNamer {
   private readonly db: Database.Database;
@@ -54,6 +46,8 @@ export class ThreadAutoNamer {
   private readonly getApiKey?: () => Promise<string | null>;
   private readonly generateModelName: (apiKey: string, conversationText: string) => Promise<string | null>;
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private disposed = false;
+  private readonly inFlight = new Set<string>();
   private readonly attempts = new Map<string, number>();
 
   constructor(db: Database.Database, broadcaster?: EventBroadcaster, opts?: ThreadAutoNamerOptions) {
@@ -66,9 +60,34 @@ export class ThreadAutoNamer {
     this.generateModelName = opts?.generateModelName ?? generateThreadName;
   }
 
+  /** Capture the first submitted human prompt before any harness adds setup context. */
+  notifyPrompt(terminalId: string, content: string): void {
+    if (this.disposed || !this.db.open) return;
+    const row = terminalsDb.getById(this.db, terminalId);
+    if (!row || row.label_source !== 'default' || !isAgentType(row.type)) return;
+    const prompt = userPromptText(content).slice(0, 4000);
+    if (!cleanName(prompt)) return;
+    this.db.prepare('INSERT OR IGNORE INTO thread_naming_prompts VALUES (?,?)').run(terminalId, prompt);
+    if (this.inFlight.has(terminalId)) return;
+    const pending = this.timers.get(terminalId);
+    if (pending) clearTimeout(pending);
+    // No debounce, transcript, or native session-ID prerequisite on a user send.
+    const timer = setTimeout(() => { void this.attempt(terminalId); }, 0);
+    timer.unref();
+    this.timers.set(terminalId, timer);
+  }
+
+  resumePending(): void {
+    for (const row of this.db.prepare(`SELECT p.terminal_id, p.prompt FROM thread_naming_prompts p
+      JOIN terminals t ON t.id=p.terminal_id WHERE t.label_source='default' AND t.archived_at IS NULL`).all() as { terminal_id: string; prompt: string }[]) {
+      this.notifyPrompt(row.terminal_id, row.prompt);
+    }
+  }
+
   /** Call on every real-activity moment. Cheap; self-filters. */
   notifyActivity(terminalId: string): void {
     try {
+      if (this.disposed || !this.db.open) return;
       if (this.timers.has(terminalId)) return; // already scheduled or attempt in flight
       if ((this.attempts.get(terminalId) ?? 0) >= this.maxAttempts) return; // gave up
 
@@ -88,6 +107,7 @@ export class ThreadAutoNamer {
 
   /** Clears all pending timers. Good hygiene for tests / shutdown. */
   dispose(): void {
+    this.disposed = true;
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
   }
@@ -103,45 +123,28 @@ export class ThreadAutoNamer {
     // must keep blocking until this attempt fully settles (finally, below) —
     // otherwise a notify arriving mid-await would schedule a second concurrent
     // attempt for the same terminal.
+    this.inFlight.add(terminalId);
     try {
       const row = terminalsDb.getById(this.db, terminalId);
       if (!row || row.label_source !== 'default') return; // renamed/relabeled since scheduling
-      const kind = KIND_BY_TYPE[row.type];
-      if (!kind) return;
-
-      if (!row.external_id) {
-        // Not a failed derivation — the id just hasn't been assigned yet (codex only
-        // assigns external_id at agent-turn-complete, while idle-bump activity signals
-        // can fire well before that). Don't burn the attempt cap on a precondition;
-        // just bail and let a later notifyActivity reschedule once the id shows up.
-        console.debug('[thread-auto-namer] skipping terminal', terminalId, 'no external_id yet');
-        return;
+      const saved = this.db.prepare('SELECT prompt FROM thread_naming_prompts WHERE terminal_id=?').get(terminalId) as { prompt: string } | undefined;
+      let raw = saved?.prompt ?? '';
+      if (!raw) {
+        const kind = KIND_BY_TYPE[row.type];
+        if (!kind || !row.external_id) return;
+        const session = sessionsDb.getById(this.db, row.session_id);
+        const transcriptPath = await resolveTranscriptPath(
+          { type: row.type, externalId: row.external_id, workingDir: row.working_dir },
+          session?.working_dir ?? row.working_dir ?? '',
+        );
+        if (!transcriptPath) { this.bumpAttempts(terminalId); return; }
+        try { raw = deriveThreadRaw(await this.readFile(transcriptPath), kind); }
+        catch { this.bumpAttempts(terminalId); return; }
+        // A human send may have arrived while reading the transcript. It wins.
+        const submitted = this.db.prepare('SELECT prompt FROM thread_naming_prompts WHERE terminal_id=?').get(terminalId) as { prompt: string } | undefined;
+        raw = submitted?.prompt ?? raw;
       }
-
-      const session = sessionsDb.getById(this.db, row.session_id);
-      const sessionWorkingDir = session?.working_dir ?? row.working_dir ?? '';
-
-      const transcriptPath = await resolveTranscriptPath(
-        { type: row.type, externalId: row.external_id, workingDir: row.working_dir },
-        sessionWorkingDir,
-      );
-      if (!transcriptPath) {
-        this.bumpAttempts(terminalId);
-        console.debug('[thread-auto-namer] giving up on terminal', terminalId, 'no transcript path found');
-        return;
-      }
-
-      let text: string;
-      try {
-        text = await this.readFile(transcriptPath);
-      } catch (err) {
-        this.bumpAttempts(terminalId);
-        console.debug('[thread-auto-namer] giving up on terminal', terminalId, err);
-        return;
-      }
-
-      const raw = deriveThreadRaw(text, kind);
-      const fallback = cleanName(raw);
+      const fallback = fallbackThreadName(raw);
       if (!fallback) {
         this.bumpAttempts(terminalId);
         console.debug('[thread-auto-namer] giving up on terminal', terminalId, 'no derivable name');
@@ -157,13 +160,24 @@ export class ThreadAutoNamer {
       // label_source='default' SQL guard still lets a concurrent user rename win.
       let name = fallback;
       if (this.getApiKey) {
+        let expired = false;
+        let deadline: ReturnType<typeof setTimeout> | undefined;
         try {
-          const key = await this.getApiKey();
-          if (key) name = (await this.generateModelName(key, raw)) ?? fallback;
-        } catch {
-          // key resolution failed (Doppler down/not connected) — fallback name
-        }
+          name = await Promise.race([
+            (async () => {
+              const key = await this.getApiKey!();
+              if (!key || expired || this.disposed) return fallback;
+              return cleanName((await this.generateModelName(key, raw)) ?? '') ?? fallback;
+            })(),
+            new Promise<string>((resolve) => {
+              deadline = setTimeout(() => { expired = true; resolve(fallback); }, 3000);
+              deadline.unref?.();
+            }),
+          ]);
+        } catch { /* use the prompt fallback */ }
+        finally { if (deadline) clearTimeout(deadline); }
       }
+      if (this.disposed || !this.db.open) return;
 
       const applied = terminalsDb.setAutoLabel(this.db, terminalId, name);
       if (!applied) return; // a user rename won the race
@@ -174,6 +188,7 @@ export class ThreadAutoNamer {
       console.debug('[ThreadAutoNamer] attempt failed', terminalId, err);
     } finally {
       this.timers.delete(terminalId);
+      this.inFlight.delete(terminalId);
     }
   }
 }

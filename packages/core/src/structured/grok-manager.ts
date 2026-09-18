@@ -181,7 +181,7 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
   private sessions = new Map<string, GrokSession>();
   private defaultEnv: Record<string, string> = {};
 
-  constructor() {
+  constructor(private readonly dialect: 'grok' | 'opencode' = 'grok') {
     super();
     this.setMaxListeners(0);
   }
@@ -195,7 +195,7 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
     const session: GrokSession = {
       terminalId,
       conn,
-      translator: new GrokTranslator(),
+      translator: new GrokTranslator(this.dialect),
       events: [],
       escalate: opts.escalate ?? false,
       pending: null,
@@ -213,19 +213,22 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
     conn.on('notification', (method: string, params: any) => this.onFrame(session, { method, params }));
     conn.on('server-request', (method: string, id: RpcId, params: any) => this.onServerRequest(session, method, id, params));
     conn.on('spawn-error', (err: unknown) => {
+      if (this.sessions.get(terminalId) !== session) return;
       this.pushEvent(session, { type: 'system', subtype: 'spawn_error', message: String(err) });
+      this.emit('failed', terminalId);
     });
     conn.on('exit', (code: number) => {
       // Only evict if this child is still the current session (a re-spawn may have replaced it).
-      if (this.sessions.get(terminalId)?.conn === conn) {
-        session.pending = null;
-        session.pendingApproval = null;
-        this.sessions.delete(terminalId);
-      }
+      if (this.sessions.get(terminalId)?.conn !== conn) return;
+      session.pending = null;
+      session.pendingApproval = null;
+      this.sessions.delete(terminalId);
       this.emit('exit', terminalId, code);
     });
     session.ready = this.startSession(session, opts.resumeId, opts.workDir).catch((err) => {
+      if (this.sessions.get(terminalId) !== session) return;
       this.pushEvent(session, { type: 'system', subtype: 'spawn_error', message: String(err) });
+      this.emit('failed', terminalId);
     });
     return conn.pid;
   }
@@ -281,6 +284,7 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
     // A per-terminal child hosts exactly one ACP session; a frame naming a DIFFERENT session
     // id is foreign noise. Frames without a sessionId (global _x.ai/* chatter) pass through —
     // the translator ignores anything it doesn't recognize.
+    if (this.sessions.get(session.terminalId) !== session) return;
     const sid = frame.params?.sessionId;
     if (typeof sid === 'string' && session.sessionId && sid !== session.sessionId) return;
     this.applyActions(session, session.translator.translate(frame, { replay: session.loading }));
@@ -297,6 +301,10 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
       switch (action.kind) {
         case 'event':
           this.pushEvent(session, action.event);
+          break;
+        case 'failed':
+          session.turnActive = false;
+          this.emit('failed', session.terminalId);
           break;
         case 'busy':
           this.emit('busy', session.terminalId);
@@ -370,20 +378,25 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
     const ev: any = { type: 'user', message: { role: 'user', content: echoContent } };
     if (source) ev.meta = { source };
     this.pushEvent(session, ev);
-    this.emit('busy', terminalId);
     // Serialize turns: session/prompt blocks until the turn ends, and ACP has no steer — a
     // second send while a turn runs simply queues behind it on the ready chain.
     session.ready = session.ready.then(() => this.runTurn(session, content)).catch(() => { /* surfaced in runTurn */ });
   }
 
   private async runTurn(session: GrokSession, content: string | ContentBlock[]): Promise<void> {
-    if (!session.conn.alive || !session.sessionId) return;
+    if (this.sessions.get(session.terminalId) !== session) return;
+    if (!session.conn.alive || !session.sessionId) { this.emit('failed', session.terminalId); return; }
     session.turnActive = true;
+    this.emit('busy', session.terminalId);
     let result: unknown;
     try {
       result = await session.conn.request('session/prompt', { sessionId: session.sessionId, prompt: toPrompt(content) });
     } catch (err) {
+      if (this.sessions.get(session.terminalId) !== session) return;
       this.pushEvent(session, { type: 'result', subtype: 'error', is_error: true, result: String(err) });
+      session.turnActive = false;
+      this.emit('failed', session.terminalId);
+      return;
     }
     // Response-driven boundary: OpenCode sends no turn_completed update — the prompt
     // RESPONSE (stopReason + usage) IS its turn end, translated into the same result

@@ -206,3 +206,26 @@ it('interrupt asks the server to end the turn (settles idle)', async () => {
   expect(m.interrupt('t1')).toBe(true);
   await idle;
 });
+
+it('the real manager records exactly one turn despite send and turn-start busy signals', async () => {
+  const { default: Database } = await import('better-sqlite3');
+  const { initSchema } = await import('../../src/db/schema.js');
+  const sessions = await import('../../src/db/sessions.js');
+  const terminals = await import('../../src/db/terminals.js');
+  const { attachUsageRecorder } = await import('../../src/analytics/recorder.js');
+  const db = new Database(':memory:');
+  initSchema(db);
+  sessions.create(db, { id: 'p', provider: 'codex', name: 'P', workingDir: '/tmp' });
+  terminals.create(db, { id: 't1', sessionId: 'p', type: 'codex', label: 'C' });
+  attachUsageRecorder(m, { db });
+  try {
+    spawnFake(m, 't1');
+    await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+    const idle = waitForManagerEvent(m, 'idle', 't1');
+    m.sendMessage('t1', 'stream please');
+    await idle;
+    const rows = db.prepare('SELECT * FROM usage_turns').all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ model: 'gpt-5.6-sol', input_tokens: 60, cache_read_tokens: 20, output_tokens: 20, outcome: 'idle' });
+  } finally { db.close(); }
+});

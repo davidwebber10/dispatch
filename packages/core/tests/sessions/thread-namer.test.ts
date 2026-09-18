@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { cleanName, deriveThreadName, resolveTranscriptPath } from '../../src/sessions/thread-namer.js';
+import { cleanName, deriveThreadName, resolveTranscriptPath, fallbackThreadName } from '../../src/sessions/thread-namer.js';
 import { platform } from '../../src/platform/index.js';
 
 const CC_WITH_SUMMARY = [
@@ -26,7 +26,7 @@ const CODEX_TRANSCRIPT = [
 ].join('\n');
 
 describe('deriveThreadName', () => {
-  test('summary wins', () => expect(deriveThreadName(CC_WITH_SUMMARY, 'claude')).toBe('Fix login redirect loop'));
+  test('the first user prompt wins over later summaries', () => expect(deriveThreadName(CC_WITH_SUMMARY, 'claude')).toBe('why does the login page loop forever after oauth'));
   test('first prompt when no summary', () => expect(deriveThreadName(CC_PROMPT_ONLY, 'claude')).toBe('add dark mode to the settings page please'));
   test('meta and <-prefixed messages skipped', () => expect(deriveThreadName(CC_NOISE_FIRST, 'claude')).toBe('rename the widget'));
   test('empty/garbage → null', () => {
@@ -35,6 +35,14 @@ describe('deriveThreadName', () => {
   });
   test('codex: first real user message wins, session_meta/assistant/<-prefixed skipped', () => {
     expect(deriveThreadName(CODEX_TRANSCRIPT, 'codex')).toBe('fix the flaky login test');
+  });
+  test('ignores injected AGENTS.md and environment setup before the user task', () => {
+    const transcript = [
+      '# AGENTS.md instructions for /work/proj\n<INSTRUCTIONS>Polywood OS agents guide</INSTRUCTIONS>',
+      '<environment_context>setup</environment_context>',
+      'Improve demand forecasting',
+    ].map(text => JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } })).join('\n');
+    expect(deriveThreadName(transcript, 'codex')).toBe('Improve demand forecasting');
   });
   test('codex: empty/garbage → null', () => {
     expect(deriveThreadName('', 'codex')).toBeNull();
@@ -117,4 +125,9 @@ describe('resolveTranscriptPath', () => {
       expect(result).toBeNull();
     });
   });
+});
+
+test('fallback titles strip greetings and polite prefixes without dropping the task', () => {
+  expect(fallbackThreadName('hello Fable 5.1. please do a thorough review of analytics')).toBe('Review analytics');
+  expect(fallbackThreadName('Could you please fix login redirects?')).toBe('fix login redirects?');
 });

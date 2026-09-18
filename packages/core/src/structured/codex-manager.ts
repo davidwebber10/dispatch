@@ -219,6 +219,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     this.sessions.set(terminalId, session);
     session.ready = this.startThread(session, conn).catch((err) => {
       this.pushEvent(session, { type: 'system', subtype: 'spawn_error', message: String(err) });
+      this.emit('failed', session.terminalId);
     });
     return conn.pid;
   }
@@ -234,7 +235,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
 
   private makeConnection(spec: { command: string; args: string[]; cwd: string; env: Record<string, string> }): CodexConnection {
     const conn = new CodexConnection(spec.command, spec.args, spec.cwd, spec.env);
-    conn.on('notification', (method: string, params: any) => this.onNotification(method, params));
+    conn.on('notification', (method: string, params: any) => { if (this.conn === conn) this.onNotification(method, params); });
     conn.on('server-request', (method: string, id: RpcId, params: any) => this.onServerRequest(method, id, params));
     conn.on('exit', () => this.onConnExit(conn));
     return conn;
@@ -300,6 +301,9 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     const conn2 = this.makeConnection(this.connSpec);
     this.conn = conn2;
     for (const session of live) {
+      session.pending = null;
+      session.pendingApproval = null;
+      this.emit('failed', session.terminalId);
       const resumeId = session.threadId;
       session.threadId = undefined;
       session.turnActive = false;
@@ -307,6 +311,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
       session.resumeId = resumeId;
       session.ready = this.startThread(session, conn2).catch((err) => {
         this.pushEvent(session, { type: 'system', subtype: 'spawn_error', message: String(err) });
+        this.emit('failed', session.terminalId);
       });
     }
   }
@@ -316,6 +321,8 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
   private onNotification(method: string, params: any): void {
     const session = this.routeSession(method, params);
     if (!session) return;
+    const eventTurnId = params?.turnId ?? params?.turn?.id;
+    if (method !== 'turn/started' && eventTurnId && session.currentTurnId && eventTurnId !== session.currentTurnId) return;
     // Track turn liveness for interrupt/steer BEFORE translating (the translator only emits UI).
     if (method === 'turn/started') { session.turnActive = true; session.currentTurnId = params?.turn?.id; }
     else if (method === 'turn/completed') { session.turnActive = false; }
@@ -350,8 +357,12 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
         case 'session':
           if (!session.sessionId) { session.sessionId = action.sessionId; this.emit('session', session.terminalId, action.sessionId); }
           break;
+        case 'failed':
+          session.turnActive = false;
+          this.emit('failed', session.terminalId);
+          break;
         case 'busy':
-          this.emit('busy', session.terminalId);
+          this.emit('busy', session.terminalId, { turnId: session.currentTurnId });
           break;
         case 'idle':
         case 'needs-help':
@@ -433,11 +444,15 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     this.pushEvent(session, ev);
     this.emit('busy', terminalId);
     // Deliver once the thread is started (queued via the ready promise if still starting).
-    session.ready = session.ready.then(() => this.startTurn(session, content)).catch(() => { /* surfaced elsewhere */ });
+    session.ready = session.ready.then(() => this.startTurn(session, content)).catch((err) => {
+      if (this.sessions.get(terminalId) !== session) return;
+      this.pushEvent(session, { type: 'result', subtype: 'error', is_error: true, result: String(err) });
+      this.emit('failed', terminalId);
+    });
   }
 
   private async startTurn(session: CodexSession, content: string | ContentBlock[]): Promise<void> {
-    if (!this.conn?.alive || !session.threadId) return;
+    if (!this.conn?.alive || !session.threadId) throw new Error('Codex thread is not connected');
     const input = toUserInput(content);
     if (session.turnActive && session.currentTurnId) {
       await this.conn.request('turn/steer', { threadId: session.threadId, expectedTurnId: session.currentTurnId, input });

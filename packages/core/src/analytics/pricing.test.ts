@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { HARNESSES } from '../providers/catalog.js';
 import { priceFor, notionalValueUsd } from './pricing.js';
 import { MODEL_FOR_TYPE } from '../overseer/prompts.js';
+import { OPENCODE_DEFAULT_MODELS } from '../providers/opencode.js';
 
 describe('pricing', () => {
   it('prices a known model per million tokens', () => {
@@ -77,38 +77,10 @@ describe('pricing', () => {
 
 /* ------------------------------------------------------------------------- */
 
-/**
- * Spec section 14 promised "a test that fails on an unpriced model Dispatch can
- * spawn". This is it.
- *
- * The model list is READ FROM THE SOURCE — a real import of web's `HARNESSES`
- * (the single ordered source for the New Thread picker, mirroring core's own
- * `providers/agent-types.ts`), not a copy and not a text scrape. A copy would be
- * documentation, not verification, and would never notice a new model being
- * added to the picker; a scrape breaks the moment the picker's own source moves,
- * which is exactly what happened here — this test used to regex the `MODELS`
- * constant out of NewThreadModal.tsx, and the harness refactor moved that list
- * into web/src/lib/harnesses.ts as `HARNESSES[].models`, taking the constant
- * (and this test) down with it.
- *
- * The import is dynamic and the path is a runtime-computed value, not a string
- * literal: core's tsconfig scopes `rootDir` to its own `src`, and a literal
- * cross-package import would fail the build with TS6059 ("File is not under
- * 'rootDir'"). A non-literal specifier is invisible to tsc's module resolution
- * — it never joins the program, so the build stays scoped to core — while
- * vitest (via vite-node) resolves and runs it exactly like any other import.
- */
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const HARNESSES_MODULE = path.resolve(HERE, '../../../web/src/lib/harnesses.ts');
-
-interface HarnessesModule {
-  HARNESSES: { models: { label: string; model: string | null }[] }[];
-}
-
-/** Every non-default `model` value across every harness's model list. */
-async function spawnableFromHarnesses(): Promise<string[]> {
-  const mod = (await import(HARNESSES_MODULE)) as HarnessesModule;
-  return mod.HARNESSES.flatMap((h) => h.models.map((m) => m.model)).filter((m): m is string => m !== null);
+/** Read both the shared picker catalog and daemon-owned OpenCode defaults. */
+function spawnableFromHarnesses(): string[] {
+  const shared = HARNESSES.flatMap((h) => h.models.map((m) => m.model)).filter((m): m is string => m !== null);
+  return [...shared, ...OPENCODE_DEFAULT_MODELS.map((m) => m.model)];
 }
 
 /**
@@ -120,6 +92,7 @@ const UNPRICED: Record<string, string> = {
   // OpenAI models, run through the Codex CLI. Dispatch has no published price
   // source for them, so their tokens are counted in the token totals but never
   // priced. Add a real entry here the day a source exists — never a guess.
+  'gpt-6-astra': 'no published price source in this repo',
   'gpt-5.6-sol': 'no published price source in this repo',
   'gpt-5.6-terra': 'no published price source in this repo',
   'gpt-5.6-luna': 'no published price source in this repo',
@@ -135,19 +108,25 @@ const UNPRICED: Record<string, string> = {
   // Most entries use OpenRouter "-latest" aliases, which auto-resolve to the current
   // flagship; the alias string itself never reaches a price table, so every alias needs
   // its own documented exclusion.
-  'openrouter/anthropic/claude-opus-latest': 'real cost arrives via ACP usage_update, not a price table',
-  'openrouter/anthropic/claude-fable-latest': 'real cost arrives via ACP usage_update, not a price table',
-  'openrouter/openai/gpt-latest': 'real cost arrives via ACP usage_update, not a price table',
-  'openrouter/google/gemini-pro-latest': 'real cost arrives via ACP usage_update, not a price table',
-  'openrouter/google/gemini-flash-latest': 'real cost arrives via ACP usage_update, not a price table',
-  'openrouter/x-ai/grok-latest': 'real cost arrives via ACP usage_update, not a price table',
-  'openrouter/z-ai/glm-latest': 'real cost arrives via ACP usage_update, not a price table',
-  'openrouter/moonshotai/kimi-latest': 'real cost arrives via ACP usage_update, not a price table',
-  'openrouter/deepseek/deepseek-v4-flash-latest': 'real cost arrives via ACP usage_update, not a price table',
-  'openrouter/qwen/qwen3.8-max': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/~anthropic/claude-opus-latest': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/~anthropic/claude-fable-latest': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/~anthropic/claude-sonnet-latest': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/~openai/gpt-sol-latest': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/~openai/gpt-terra-latest': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/~openai/gpt-luna-latest': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/~openai/gpt-astra-latest': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/~google/gemini-pro-latest': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/~google/gemini-flash-latest': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/~x-ai/grok-latest': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/~z-ai/glm-latest': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/~z-ai/glm-flash-latest': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/~moonshotai/kimi-latest': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/~deepseek/deepseek-pro-latest': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/~deepseek/deepseek-flash-latest': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/qwen/qwen3.8-max-0902': 'real cost arrives via ACP usage_update, not a price table',
   'openrouter/minimax/minimax-m3': 'real cost arrives via ACP usage_update, not a price table',
   'openrouter/meta-llama/llama-4-maverick': 'real cost arrives via ACP usage_update, not a price table',
-  'openrouter/mistralai/mistral-large': 'real cost arrives via ACP usage_update, not a price table',
+  'openrouter/mistralai/mistral-medium-3-5': 'real cost arrives via ACP usage_update, not a price table',
 };
 
 describe('every model Dispatch can spawn either prices or is a documented exclusion', () => {

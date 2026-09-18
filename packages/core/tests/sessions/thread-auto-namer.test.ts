@@ -364,4 +364,49 @@ describe('ThreadAutoNamer', () => {
 
     namer.dispose();
   });
+  it.each(['claude-code', 'codex', 'grok', 'opencode'] as const)('names %s immediately from the first submitted prompt without a transcript', async (type) => {
+    terminalsDb.create(db, { id: 'direct', sessionId: 's1', type, label: 'New thread', labelSource: 'default' });
+    const generateModelName = vi.fn().mockResolvedValue('Fix login redirects');
+    const readFile = vi.fn();
+    const namer = new ThreadAutoNamer(db, undefined, { readFile, getApiKey: async () => 'key', generateModelName });
+    namer.notifyActivity('direct');
+    namer.notifyPrompt('direct', 'Fix redirects after login');
+    namer.notifyPrompt('direct', 'A different later task');
+    await vi.advanceTimersByTimeAsync(1);
+    expect(generateModelName).toHaveBeenCalledWith('key', 'Fix redirects after login');
+    expect(terminalsDb.getById(db, 'direct')!.label).toBe('Fix login redirects');
+    expect(readFile).not.toHaveBeenCalled();
+    namer.notifyPrompt('direct', 'Rename this automatically');
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(generateModelName).toHaveBeenCalledTimes(1);
+    namer.dispose();
+  });
+  it('manual rename wins while a model name is in flight', async () => {
+    makeThread();
+    let resolve!: (name: string) => void;
+    const namer = new ThreadAutoNamer(db, undefined, { getApiKey: async () => 'key', generateModelName: () => new Promise(r => { resolve = r; }) });
+    namer.notifyPrompt('t1', 'Fix login'); await vi.advanceTimersByTimeAsync(1);
+    terminalsDb.updateLabel(db, 't1', 'My login work'); resolve('Fix authentication');
+    await vi.advanceTimersByTimeAsync(1);
+    expect(terminalsDb.getById(db, 't1')!.label).toBe('My login work');
+    namer.dispose();
+  });
+  it('uses a bounded fallback once and ignores a late model result', async () => {
+    makeThread();
+    let resolve!: (name: string) => void;
+    const namer = new ThreadAutoNamer(db, undefined, { getApiKey: async () => 'key', generateModelName: () => new Promise(r => { resolve = r; }) });
+    namer.notifyPrompt('t1', 'Fix login'); await vi.advanceTimersByTimeAsync(3001);
+    expect(terminalsDb.getById(db, 't1')!.label).toBe('Fix login');
+    resolve('Late title'); await vi.advanceTimersByTimeAsync(1);
+    expect(terminalsDb.getById(db, 't1')!.label).toBe('Fix login');
+    namer.dispose();
+  });
+  it('retains the first submitted prompt across a daemon restart', async () => {
+    makeThread();
+    const old = new ThreadAutoNamer(db); old.notifyPrompt('t1', 'Original request'); old.dispose();
+    const next = new ThreadAutoNamer(db); next.resumePending(); next.notifyPrompt('t1', 'Later request');
+    await vi.advanceTimersByTimeAsync(1);
+    expect(terminalsDb.getById(db, 't1')!.label).toBe('Original request'); next.dispose();
+  });
+
 });

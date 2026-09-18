@@ -1,3 +1,6 @@
+import { claudeMeasurements } from '../analytics/normalize.js';
+import { normalizeClaude } from '../status/events.js';
+import { DEFAULT_TELEMETRY } from './telemetry.js';
 import fs from 'fs';
 import path from 'path';
 import type { SessionProvider, SecretsMcpInjection, StatusHooksInjection } from './types.js';
@@ -48,6 +51,8 @@ export function pickBornSession(
 
 export const claudeCodeProvider: SessionProvider = {
   name: 'claude-code',
+  structured: { protocol: 'claude-json' },
+  telemetry: { ...DEFAULT_TELEMETRY, normalizeUsage: claudeMeasurements, hookNames: ['claude', 'claude-code'], normalizeHook: normalizeClaude, ptyCapture: 'claude-transcript' },
   displayName: 'Claude Code',
   statusStrategy: 'hooks',
 

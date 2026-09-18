@@ -62,7 +62,7 @@ export interface RunStep {
 export class RunStreamParser {
   private buf = '';
 
-  constructor(private readonly provider: AgentProviderName) {}
+  constructor(private readonly provider: AgentProviderName, private readonly onFrame?: (frame: unknown) => void) {}
 
   /** Feed a chunk of stdout; returns any RunEvents completed by this chunk. */
   feed(chunk: string): RunEvent[] {
@@ -94,6 +94,7 @@ export class RunStreamParser {
       return [];
     }
     if (!obj || typeof obj !== 'object') return [];
+    this.onFrame?.(obj);
     return this.provider === 'codex' ? parseCodex(obj) : parseClaude(obj);
   }
 }

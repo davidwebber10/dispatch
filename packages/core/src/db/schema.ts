@@ -1,6 +1,12 @@
+import { migrate, initRuntimeSchema } from './migrations.js';
+import { initTelemetrySchema } from './telemetry.js';
 import type Database from 'better-sqlite3';
 
 export function initSchema(db: Database.Database): void {
+  db.transaction(() => initializeSchema(db))();
+}
+
+function initializeSchema(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
       id              TEXT PRIMARY KEY,
@@ -146,10 +152,9 @@ export function initSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_thread_watches_target ON thread_watches(target_terminal_id);
     CREATE INDEX IF NOT EXISTS idx_thread_watches_watcher ON thread_watches(watcher_terminal_id);
 
-    -- One row per structured turn, written live by analytics/recorder.ts as the
-    -- turn's own events arrive. This is the ONLY table analytics reads; no query
-    -- ever touches a transcript. backfilled marks a row imported by the manual
-    -- history importer, which only ever writes turns older than
+    -- One lifecycle row per turn, with aggregate projections maintained from
+    -- usage_facts by the shared telemetry ledger. backfilled marks a row imported
+    -- by the manual history importer, which only writes turns older than
     -- app_state's analytics_tracking_started_at — so imported and measured
     -- rows can never describe the same turn.
     CREATE TABLE IF NOT EXISTS usage_turns (
@@ -183,7 +188,7 @@ export function initSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_usage_turns_open     ON usage_turns(terminal_id) WHERE ended_at IS NULL;
 
     -- Per-thread PTY capture state. A PTY thread emits no frames, so its usage is
-    -- read from the provider's own transcript when the turn-settled edge fires.
+    -- read from the provider's own transcript at explicit turn boundaries.
     --
     -- Claude uses byte_offset: its transcript carries per-message usage and no
     -- running total, so a turn's usage is the sum of the messages since the last
@@ -241,12 +246,18 @@ export function initSchema(db: Database.Database): void {
     { table: 'agent_runs', column: 'attempt', sql: 'ALTER TABLE agent_runs ADD COLUMN attempt INTEGER NOT NULL DEFAULT 1' },
   ];
 
-  for (const m of migrations) {
-    try {
+  migrate(db, '001-legacy-columns', () => {
+    for (const m of migrations) {
       const cols = db.pragma(`table_info(${m.table})`) as { name: string }[];
       if (!cols.find(c => c.name === m.column)) {
         db.exec(m.sql);
       }
-    } catch {}
-  }
+    }
+  });
+  migrate(db, '002-telemetry-ledger', () => initTelemetrySchema(db));
+  migrate(db, '003-first-prompt-naming', () => db.exec(`CREATE TABLE IF NOT EXISTS thread_naming_prompts (
+    terminal_id TEXT PRIMARY KEY REFERENCES terminals(id) ON DELETE CASCADE,
+    prompt TEXT NOT NULL
+  )`));
+  migrate(db, '004-lifecycle-runtime', () => initRuntimeSchema(db));
 }

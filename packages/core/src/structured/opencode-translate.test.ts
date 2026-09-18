@@ -13,7 +13,7 @@ const events = (as: GrokAction[]) => as.filter((a): a is Extract<GrokAction, { k
 
 describe('GrokTranslator — OpenCode dialect', () => {
   it('tool_call → tool_use; the in_progress update re-emits it with the REAL input', () => {
-    const t = new GrokTranslator();
+    const t = new GrokTranslator('opencode');
     const first = events(t.translate(fx.toolCall as any));
     expect(first[0].message.content[0]).toMatchObject({ type: 'tool_use', id: 'call_9cb2dac0', name: 'bash', input: { cwd: '/tmp/oc-probe' } });
 
@@ -27,7 +27,7 @@ describe('GrokTranslator — OpenCode dialect', () => {
   });
 
   it('completed update → one tool_result, and repeats emit nothing', () => {
-    const t = new GrokTranslator();
+    const t = new GrokTranslator('opencode');
     t.translate(fx.toolCall as any);
     const done = events(t.translate(fx.toolCallCompleted as any));
     expect(done[0].message.content[0]).toMatchObject({ type: 'tool_result', tool_use_id: 'call_9cb2dac0', is_error: false });
@@ -38,7 +38,7 @@ describe('GrokTranslator — OpenCode dialect', () => {
   });
 
   it('usage_update → context-bar assistant frame with the REAL window and the init model', () => {
-    const t = new GrokTranslator();
+    const t = new GrokTranslator('opencode');
     t.init('openrouter/z-ai/glm-5.2');
     const out = events(t.translate(fx.usageUpdate as any));
     expect(out[0]).toMatchObject({
@@ -59,14 +59,14 @@ describe('GrokTranslator — OpenCode dialect', () => {
    * zero output, and zero cache.
    */
   it('tags the usage_update frame context_fill, so analytics skips the gauge', () => {
-    const t = new GrokTranslator();
+    const t = new GrokTranslator('opencode');
     t.init('openrouter/z-ai/glm-5.2');
     const out = events(t.translate(fx.usageUpdate as any));
     expect(out[0].subtype).toBe('context_fill');
   });
 
   it('promptResult emits the real per-turn usage as an assistant frame with the cache split', () => {
-    const t = new GrokTranslator();
+    const t = new GrokTranslator('opencode');
     t.init('openrouter/z-ai/glm-5.2');
     const frames = events(t.promptResult(fx.promptResponse));
     const usageIdx = frames.findIndex((e) => e.type === 'assistant' && e.message?.usage);
@@ -89,13 +89,13 @@ describe('GrokTranslator — OpenCode dialect', () => {
   });
 
   it('promptResult with no usage numbers emits no usage frame', () => {
-    const t = new GrokTranslator();
+    const t = new GrokTranslator('opencode');
     const frames = events(t.promptResult({ stopReason: 'end_turn', usage: {} }));
     expect(frames.some((e) => e.type === 'assistant' && e.message?.usage)).toBe(false);
   });
 
   it('promptResult → result footer with usage + the cost DELTA, then idle with the prose', () => {
-    const t = new GrokTranslator();
+    const t = new GrokTranslator('opencode');
     t.translate(fx.agentMessageChunk as any);
     t.translate(fx.usageUpdate as any);
     const actions = t.promptResult(fx.promptResponse);
@@ -112,7 +112,7 @@ describe('GrokTranslator — OpenCode dialect', () => {
     // Second turn with no new usage_update: the cumulative cost was already reported —
     // the footer must NOT charge it again.
     const second = events(t.promptResult(fx.promptResponse)).find((e) => e.type === 'result') as any;
-    expect(second.total_cost_usd).toBeUndefined();
+    expect(second.total_cost_usd).toBe(0);
   });
 
   /*
@@ -124,7 +124,7 @@ describe('GrokTranslator — OpenCode dialect', () => {
    * nothing; growth after that is billable again.
    */
   it('a resumed session does not bill the pre-resume cumulative cost as one delta', () => {
-    const t = new GrokTranslator();
+    const t = new GrokTranslator('opencode');
     t.init('openrouter/z-ai/glm-5.2', { resumed: true });
     t.translate(fx.usageUpdate as any); // cumulative 0.0024469632 — includes pre-resume turns
     const first = events(t.promptResult(fx.promptResponse)).find((e) => e.type === 'result') as any;
@@ -138,14 +138,14 @@ describe('GrokTranslator — OpenCode dialect', () => {
   });
 
   it('a replayed usage_update seeds the cost baseline and emits nothing', () => {
-    const t = new GrokTranslator();
+    const t = new GrokTranslator('opencode');
     expect(t.translate(fx.usageUpdate as any, { replay: true })).toEqual([]);
     const result = events(t.promptResult(fx.promptResponse)).find((e) => e.type === 'result') as any;
-    expect(result.total_cost_usd).toBeUndefined();
+    expect(result.total_cost_usd).toBe(0);
   });
 
   it('a closing question in the prose settles promptResult as needs-help, not idle', () => {
-    const t = new GrokTranslator();
+    const t = new GrokTranslator('opencode');
     t.translate({
       method: 'session/update',
       params: { sessionId: 'ses_oc1', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Should I also update the README?' } } },
@@ -157,8 +157,15 @@ describe('GrokTranslator — OpenCode dialect', () => {
   });
 
   it('an error stopReason marks the footer is_error', () => {
-    const t = new GrokTranslator();
+    const t = new GrokTranslator('opencode');
     const result = events(t.promptResult({ stopReason: 'error', usage: {} })).find((e) => e.type === 'result') as any;
     expect(result.is_error).toBe(true);
   });
+  it('keeps OpenCode uncached input intact even when it exceeds cached input', () => {
+    const t = new GrokTranslator('opencode');
+    const frame = events(t.promptResult({ stopReason: 'end_turn', usage: { inputTokens: 100, cachedReadTokens: 20, outputTokens: 5 } }))
+      .find((e) => e.type === 'assistant' && e.message?.usage) as any;
+    expect(frame.message.usage).toMatchObject({ input_tokens: 100, cache_read_input_tokens: 20, output_tokens: 5 });
+  });
+
 });

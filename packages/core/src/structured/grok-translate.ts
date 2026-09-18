@@ -40,6 +40,7 @@ export interface AcpPermissionOption {
 export type GrokAction =
   | { kind: 'event'; event: unknown }
   | { kind: 'busy' }
+  | { kind: 'failed' }
   | { kind: 'idle'; summary?: string }
   | { kind: 'needs-help'; ask: string; summary: string }
   | {
@@ -63,6 +64,8 @@ export interface TranslateOpts {
  * frame for that terminal's connection.
  */
 export class GrokTranslator {
+  constructor(private readonly dialect: 'grok' | 'opencode' = 'grok') {}
+
   private messageStarted = false; // stream_event message_start emitted for the current turn
   private nextBlockIndex = 0;
   /** The open streamed block, if any. Grok chunks carry no item id, so at most ONE block is
@@ -114,7 +117,10 @@ export class GrokTranslator {
       case 'tool_call': return this.toolCall(update);
       case 'tool_call_update': return this.toolCallUpdate(update);
       case 'turn_completed': return replay ? [] : this.turnCompleted(update);
-      case 'response_completed': return replay ? [] : this.responseCompleted(update);
+      case 'response_completed': return replay ? [] : this.responseCompleted(update).map((action) => {
+        if (action.kind === 'event') (action.event as any).telemetry = { eventId: frame.params?._meta?.eventId ?? update.response_id, sessionId: frame.params?.sessionId };
+        return action;
+      });
       case 'usage_update': return this.usageUpdate(update, replay);
       default: return []; // model_changed, available_commands_update, hook_execution, … — ignored
     }
@@ -251,7 +257,7 @@ export class GrokTranslator {
       // cancel/protocol-error fallback, and the per-call frames (when any came)
       // have already reported — finishTurn's usageReportedThisTurn guard keeps
       // those turns from double-counting.
-      emitBillableUsage: true,
+      emitBillableUsage: ['inputTokens', 'outputTokens', 'cachedReadTokens'].some((key) => typeof result?.usage?.[key] === 'number'),
     });
   }
 
@@ -272,17 +278,10 @@ export class GrokTranslator {
     // here is already the NON-cached slice (cachedReadTokens is its own field),
     // so no subtraction happens — unlike responseCompleted, whose wire figure
     // merges the two.
-    if (t.emitBillableUsage && !this.usageReportedThisTurn && (t.inputTokens || t.outputTokens || t.cacheReadTokens)) {
-      // The two ACP dialects disagree on inputTokens. OpenCode's is the
-      // NON-cached slice (fixture: 1311 beside cachedReadTokens 7425 — cache
-      // exceeds input). Grok's aggregate MERGES cache into it (fixture: 40372
-      // containing 25856). Emitting a merged figure beside its own cache split
-      // counts the cache twice, so when the cache fits inside the input it is
-      // subtracted out; when it cannot fit, the input was already exclusive.
-      // The ambiguous middle (an exclusive input that happens to exceed its
-      // cache) subtracts too much — an undercount, the safe direction.
+    if (t.emitBillableUsage && !this.usageReportedThisTurn) {
+      // Input semantics belong to the registered dialect, never to a numeric heuristic.
       const cacheRead = t.cacheReadTokens ?? 0;
-      const input = cacheRead <= t.inputTokens ? t.inputTokens - cacheRead : t.inputTokens;
+      const input = this.dialect === 'opencode' ? t.inputTokens : Math.max(0, t.inputTokens - cacheRead);
       out.push({
         kind: 'event',
         event: {
@@ -305,10 +304,11 @@ export class GrokTranslator {
       event: {
         type: 'result',
         subtype: t.subtype,
+        ...(this.costObserved ? { telemetry: { costTotalUsd: this.cumulativeCostUsd } } : {}),
         is_error: t.isError,
         duration_ms: t.durationMs,
         usage: { input_tokens: t.inputTokens, output_tokens: t.outputTokens },
-        ...(typeof t.costUsd === 'number' && t.costUsd > 0 ? { total_cost_usd: t.costUsd } : {}),
+        ...(typeof t.costUsd === 'number' && t.costUsd >= 0 ? { total_cost_usd: t.costUsd } : {}),
       },
     });
     // Read the closing prose ONCE, then clear it — a stale value would let a question from a
@@ -323,7 +323,7 @@ export class GrokTranslator {
     // `summary` is ALWAYS carried (even '') — its presence tells the idle listener "the agent
     // answered for this turn", never to fall back to the Claude ring walk (see the
     // wirePermissionMembrane idle handler's comment on Codex, which Grok shares).
-    out.push(looksLikeQuestion(text) ? { kind: 'needs-help', ask: text, summary: text } : { kind: 'idle', summary: text });
+    out.push(t.isError ? { kind: 'failed' } : looksLikeQuestion(text) ? { kind: 'needs-help', ask: text, summary: text } : { kind: 'idle', summary: text });
     return out;
   }
 
@@ -336,12 +336,14 @@ export class GrokTranslator {
   private usageUpdate(update: any, replay = false): GrokAction[] {
     const used = typeof update?.used === 'number' ? update.used : 0;
     const size = typeof update?.size === 'number' ? update.size : undefined;
-    if (typeof update?.cost?.amount === 'number') {
+    if (update?.cost?.currency === 'USD' && typeof update?.cost?.amount === 'number' && Number.isFinite(update.cost.amount) && update.cost.amount >= 0) {
+      this.costObserved = true;
       this.cumulativeCostUsd = update.cost.amount;
       // Seed, don't bill: a replayed update describes turns analytics already
       // recorded, and the first live update after a resume includes every
       // pre-resume dollar (see init's `resumed`). Either way the amount becomes
       // the baseline and only growth beyond it is ever billed.
+      if (!replay && this.costBaselineUnseeded) this.costTurnUnknown = true;
       if (replay || this.costBaselineUnseeded) this.costReportedUsd = update.cost.amount;
       this.costBaselineUnseeded = false;
     }
@@ -376,12 +378,15 @@ export class GrokTranslator {
   private costBaselineUnseeded = false;
 
   /** Session-cumulative cost as last reported by usage_update; deltas are per-turn. */
+  private costTurnUnknown = false;
+  private costObserved = false;
   private cumulativeCostUsd = 0;
   private costReportedUsd = 0;
   private takeCostDelta(): number | undefined {
     const delta = this.cumulativeCostUsd - this.costReportedUsd;
     this.costReportedUsd = this.cumulativeCostUsd;
-    return delta > 0 ? delta : undefined;
+    if (this.costTurnUnknown) { this.costTurnUnknown = false; return undefined; }
+    return this.costObserved && delta >= 0 ? delta : undefined;
   }
 
   private responseCompleted(update: any): GrokAction[] {

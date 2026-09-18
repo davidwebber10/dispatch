@@ -1,3 +1,4 @@
+import { harnessCapabilities } from '../providers/capabilities.js';
 import { Router } from 'express';
 import type Database from 'better-sqlite3';
 import * as appState from '../db/app-state.js';
@@ -10,6 +11,7 @@ const port = () => Number(process.env.PORT) || 3456;
 
 export function createSetupRouter(db: Database.Database, secrets: SecretsService, runInstall?: ShellRunner): Router {
   const router = Router();
+  router.get('/harnesses', (_req, res) => res.json(harnessCapabilities()));
 
   router.get('/state', async (_req, res) => {
     const [providers, tailscale] = await Promise.all([detectAllProviders(), detectTailscale(port())]);

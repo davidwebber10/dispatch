@@ -337,10 +337,18 @@ export interface SetupState { firstRun: boolean; providers: ProviderStatus[]; ta
 
 // Harness settings — mirrors core /api/settings/harnesses. The opencode KEY itself never
 // crosses this wire: `opencodeKey` carries the Doppler secret NAME and a presence boolean.
-export interface HarnessSettingsEntry { defaultModel?: string; defaultMode?: 'cli' | 'pretty'; keySecret?: string; }
+/** One entry of the OpenCode picker list: an OpenCode-namespaced OpenRouter id plus its label. */
+export interface OpencodeModel { label: string; model: string }
+export interface HarnessSettingsEntry { defaultModel?: string; defaultMode?: 'cli' | 'pretty'; keySecret?: string; models?: OpencodeModel[] }
 export interface HarnessSettingsResponse {
   settings: Partial<Record<string, HarnessSettingsEntry>>;
   opencodeKey: { secret: string; present: boolean };
+  /** The EFFECTIVE OpenCode picker list: the user's, else the daemon's curated defaults. */
+  opencodeModels: OpencodeModel[];
+}
+/** A row of OpenRouter's catalog, as served by GET /api/settings/harnesses/opencode/catalog. */
+export interface OpencodeCatalogEntry {
+  id: string; label: string; name: string; contextLength: number | null; created: number; alias: boolean; aliasTarget?: string;
 }
 
 // Secrets (Doppler) — mirrors core /api/secrets.
@@ -382,15 +390,12 @@ export interface AnalyticsSummary {
    * reported no usage".
    */
   unreportedTurns: number;
-  /**
-   * The range's "equivalent API value" in dollars — NOTIONAL (on a subscription no
-   * dollars change hands), so every surface labels it as value, never cost. Priced
-   * models are valued at list rates; unpriced models at the cost their provider
-   * reported (OpenCode's ACP per-turn delta); tokens with neither contribute
-   * nothing and set `valueIsPartial`.
-   */
+  /** Estimated API list-price value only; provider-reported dollars are separate. */
   apiValueUsd: number;
-  /** True when tokens exist in the range that carry no price and no reported cost. */
+  reportedCostUsd?: number | null;
+  coverage?: { reported: number; partial: number; missing: number; unsupported: number };
+  pricingVersion?: string;
+  /** True when usage or list-price coverage is incomplete. */
   valueIsPartial: boolean;
 }
 

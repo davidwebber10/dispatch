@@ -19,6 +19,9 @@ export interface TurnRow {
   backfilled: number;
   /** Provider-reported per-turn dollars (OpenCode's ACP cost delta). 0 = none reported. */
   cost_usd: number;
+  native_turn_id?: string | null;
+  external_session_id?: string;
+  telemetry_version?: number;
 }
 
 export interface OpenTurnInput {
@@ -29,6 +32,9 @@ export interface OpenTurnInput {
   model: string;
   role: string;
   startedAt: string;
+  transport?: 'structured' | 'pty' | 'runner';
+  sessionId?: string;
+  coverage?: import('./telemetry.js').Coverage;
 }
 
 export interface UsageDelta {
@@ -52,6 +58,8 @@ export function openTurn(db: Database.Database, input: OpenTurnInput): void {
     INSERT INTO usage_turns (id, terminal_id, project_id, provider, model, role, started_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(input.id, input.terminalId, input.projectId, input.provider, input.model, input.role, input.startedAt);
+  if (input.transport) db.prepare(`UPDATE usage_turns SET telemetry_version=1, transport=?, external_session_id=?, coverage=? WHERE id=?`)
+    .run(input.transport, input.sessionId ?? '', input.coverage ?? 'missing', input.id);
 }
 
 /** The newest still-open turn for a terminal, or null. */
@@ -93,9 +101,7 @@ export function addUsage(db: Database.Database, turnId: string, d: UsageDelta): 
  * forever: the same model would split every by-model chart across two keys, and
  * pricing.ts (still consulted by the state route's cost chip) could not price it.
  *
- * Callers must only call this when the frame actually named a model. Codex frames
- * carry no `message.model` (structured/codex-translate.ts names a model only in
- * its `init` frame, which carries no usage), so a Codex slug from config survives.
+ * Callers must only call this when the frame actually named a model.
  */
 export function setModel(db: Database.Database, turnId: string, model: string): void {
   db.prepare(`UPDATE usage_turns SET model = ? WHERE id = ?`).run(model, turnId);
@@ -112,8 +118,8 @@ export function addCost(db: Database.Database, turnId: string, usd: number): voi
 }
 
 export function closeTurn(db: Database.Database, turnId: string, at: string, outcome: string): void {
-  db.prepare(`UPDATE usage_turns SET ended_at = ?, outcome = ? WHERE id = ? AND ended_at IS NULL`)
-    .run(at, outcome, turnId);
+  db.prepare(`UPDATE usage_turns SET ended_at = ?, outcome = ?, duration_ms = CASE WHEN telemetry_version=1 THEN MAX(0,(julianday(?) - julianday(started_at))*86400000) ELSE duration_ms END WHERE id = ? AND ended_at IS NULL`)
+    .run(at, outcome, at, turnId);
 }
 
 export function insertClosed(db: Database.Database, r: ClosedTurnInput): void {

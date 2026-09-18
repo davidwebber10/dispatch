@@ -1,7 +1,6 @@
 import { useEffect, useRef, lazy, Suspense } from 'react';
 import { AppShell } from './components/layout/AppShell';
 import { Workspace } from './components/layout/Workspace';
-import { BoardView } from './components/board/BoardView';
 import { GroupedTabBar } from './components/panes/GroupedTabBar';
 import { GroupedPaneView } from './components/panes/GroupedPaneView';
 import { ProjectSidebar } from './components/sidebar/ProjectSidebar';
@@ -211,8 +210,6 @@ export default function App() {
           ? <SettingsView />
           : view === 'analytics'
           ? <Suspense fallback={analyticsFallback}><AnalyticsView /></Suspense>
-          : view === 'board'
-          ? <BoardView />
           : (
             <Workspace
               sidebar={

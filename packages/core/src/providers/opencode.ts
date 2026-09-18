@@ -1,3 +1,4 @@
+import { DEFAULT_TELEMETRY, acpTurnCost, acpCostCounter } from './telemetry.js';
 import type { SessionProvider } from './types.js';
 
 /**
@@ -18,14 +19,47 @@ import type { SessionProvider } from './types.js';
  * ~/.local/share/opencode/auth.json). The OpenRouter key lives THERE, never in argv, env
  * blocks, or this repo — verified live that a prompt authenticates from the store alone.
  *
- * Model ids are OpenCode-namespaced OpenRouter ids (`openrouter/z-ai/glm-latest`). The web's
- * picker (lib/harnesses.ts) offers the curated open-weights list; DEFAULT_MODEL covers a
- * thread created with no pick.
+ * Model ids are OpenCode-namespaced OpenRouter ids (`openrouter/~z-ai/glm-latest`). The list
+ * the New Thread picker offers is a per-user setting (settings/harness-settings.ts) seeded
+ * from OPENCODE_DEFAULT_MODELS below; DEFAULT_MODEL covers a thread created with no pick.
+ *
+ * OpenRouter's family aliases carry a `~` prefix (`~anthropic/claude-opus-latest`) and
+ * always resolve to the family's current flagship, so the defaults never fall a version
+ * behind; the families without an alias (Qwen, MiniMax, Llama, Mistral) are pinned to their
+ * current top id. Verified against https://openrouter.ai/api/v1/models on 2026-09-18 — the
+ * un-prefixed `anthropic/claude-opus-latest` form from before is a 404 there now.
  */
-export const OPENCODE_DEFAULT_MODEL = 'openrouter/z-ai/glm-latest';
+export interface OpencodeModel { label: string; model: string }
+
+export const OPENCODE_DEFAULT_MODELS: readonly OpencodeModel[] = [
+  { label: 'Claude Opus', model: 'openrouter/~anthropic/claude-opus-latest' },
+  { label: 'Claude Fable', model: 'openrouter/~anthropic/claude-fable-latest' },
+  { label: 'Claude Sonnet', model: 'openrouter/~anthropic/claude-sonnet-latest' },
+  { label: 'GPT Sol', model: 'openrouter/~openai/gpt-sol-latest' },
+  { label: 'GPT Terra', model: 'openrouter/~openai/gpt-terra-latest' },
+  { label: 'GPT Luna', model: 'openrouter/~openai/gpt-luna-latest' },
+  { label: 'GPT Astra', model: 'openrouter/~openai/gpt-astra-latest' },
+  { label: 'Gemini Pro', model: 'openrouter/~google/gemini-pro-latest' },
+  { label: 'Gemini Flash', model: 'openrouter/~google/gemini-flash-latest' },
+  { label: 'Grok', model: 'openrouter/~x-ai/grok-latest' },
+  { label: 'GLM', model: 'openrouter/~z-ai/glm-latest' },
+  { label: 'GLM Flash', model: 'openrouter/~z-ai/glm-flash-latest' },
+  { label: 'Kimi', model: 'openrouter/~moonshotai/kimi-latest' },
+  { label: 'DeepSeek Pro', model: 'openrouter/~deepseek/deepseek-pro-latest' },
+  { label: 'DeepSeek Flash', model: 'openrouter/~deepseek/deepseek-flash-latest' },
+  { label: 'Qwen3.8 Max', model: 'openrouter/qwen/qwen3.8-max-0902' },
+  { label: 'MiniMax M3', model: 'openrouter/minimax/minimax-m3' },
+  { label: 'Llama 4 Maverick', model: 'openrouter/meta-llama/llama-4-maverick' },
+  { label: 'Mistral Medium 3.5', model: 'openrouter/mistralai/mistral-medium-3-5' },
+];
+
+/** The daemon-side fallback for a thread created with no model pick: the cheap open flagship. */
+export const OPENCODE_DEFAULT_MODEL = 'openrouter/~z-ai/glm-latest';
 
 export const opencodeProvider: SessionProvider = {
   name: 'opencode',
+  structured: { protocol: 'acp', dialect: 'opencode', disabledBy: 'DISPATCH_OPENCODE_PRETTY' },
+  telemetry: { ...DEFAULT_TELEMETRY, reportedCost: acpTurnCost, costCounter: acpCostCounter },
   displayName: 'OpenCode',
   // No status hooks: the structured manager's own turn boundaries drive status, same as
   // the grok Pretty flow (hook-reported Stop events on top would double-report).

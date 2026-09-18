@@ -1,7 +1,7 @@
 import { act, render, screen } from '@testing-library/react';
 import { beforeEach, afterEach, vi, test, expect } from 'vitest';
 import App from './App';
-import { useUI } from './stores/ui';
+import { useUI, loadView } from './stores/ui';
 
 beforeEach(() => {
   vi.stubGlobal('WebSocket', class {
@@ -18,20 +18,14 @@ test('renders the app shell with the icon-rail navigation', () => {
   // The brand text moved into the rail logo's dropdown; the rail's nav items are
   // the always-visible identity of the shell now.
   expect(screen.getByRole('button', { name: 'Threads' })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Board' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Board' })).not.toBeInTheDocument();
 });
 
-test('toggling view in the ui store swaps the shell between the normal workspace and the board', () => {
+test('saved or requested Board views fall back to Threads', () => {
+  localStorage.setItem('dispatch:view', 'board');
+  expect(loadView()).toBe('workspace');
   render(<App />);
-
-  // Workspace mode: no board columns mounted.
-  expect(screen.queryByTestId('board-view')).not.toBeInTheDocument();
-
   act(() => { useUI.getState().setView('board'); });
-  expect(screen.getByTestId('board-view')).toBeInTheDocument();
-  // Board mode bypasses Workspace entirely — its sidebar drag handle is gone too.
-  expect(screen.queryByTestId('board-columns')).toBeInTheDocument();
-
-  act(() => { useUI.getState().setView('workspace'); });
+  expect(useUI.getState().view).toBe('workspace');
   expect(screen.queryByTestId('board-view')).not.toBeInTheDocument();
 });

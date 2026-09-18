@@ -4,7 +4,7 @@ import { AppShell } from './AppShell';
 test('renders the icon rail navigation and its children', () => {
   render(<AppShell><div>BODY</div></AppShell>);
   expect(screen.getByRole('button', { name: 'Threads' })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Board' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Board' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Analytics' })).toBeInTheDocument();
   expect(screen.getByText('BODY')).toBeInTheDocument();
 });

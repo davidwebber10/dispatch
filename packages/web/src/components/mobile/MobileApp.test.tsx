@@ -149,16 +149,16 @@ describe('MobileApp — mobile view mode (Threads vs Board)', () => {
     expect(screen.queryByTestId('board-section-needs_help')).not.toBeInTheDocument();
   });
 
-  it('board mode: renders the board instead of the projects list', () => {
+  it('a saved board preference falls back to the projects list', () => {
     useSettings.setState({ mobileViewMode: 'board' });
     useProjects.setState({ sessions: [] });
     seedThreadAt('/', { type: 'shell', config: {} });
     render(<MobileApp />);
-    expect(screen.getByTestId('board-section-needs_help')).toBeInTheDocument();
-    expect(screen.queryByPlaceholderText('Search projects')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('board-section-needs_help')).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Search projects')).toBeInTheDocument();
   });
 
-  it('board mode still opens a thread via the existing nav-stack (History API)', () => {
+  it('a saved board preference still allows opening a thread through Projects', () => {
     useSettings.setState({ mobileViewMode: 'board' });
     useProjects.setState({ sessions: [{ id: 's1', name: 'dispatch' } as any] });
     seedThreadAt('/', { type: 'shell', config: {} });
@@ -168,6 +168,7 @@ describe('MobileApp — mobile view mode (Threads vs Board)', () => {
       },
     });
     render(<MobileApp />);
+    fireEvent.click(screen.getByText('dispatch'));
     fireEvent.click(screen.getByText('one'));
     expect(history.state).toMatchObject({ nav: 2, projectId: 's1', leaf: 'tab', tabId: 't1' });
   });

@@ -1,8 +1,12 @@
+import type { HarnessEvent } from '../runtime/events.js';
+import { recordHarnessUsage } from '../analytics/recorder.js';
+import { logLifecycle, recordCaptureFailure } from '../runtime/diagnostics.js';
 import type Database from 'better-sqlite3';
 import * as terminalsDb from '../db/terminals.js';
 import * as sessionsDb from '../db/sessions.js';
 import type { EventBroadcaster } from '../ws/events.js';
-import { normalizeClaude, normalizeCodex, type ThreadStatus } from './events.js';
+import type { ThreadStatus } from './events.js';
+import { providerForHook } from '../providers/registry.js';
 import { aggregateSessionStatus } from './aggregate.js';
 import { resolveTranscriptPath } from '../sessions/transcript-path.js';
 
@@ -11,7 +15,8 @@ import { resolveTranscriptPath } from '../sessions/transcript-path.js';
 // 'queued' (see sessions/service.ts createQueuedTerminal): a value TerminalStatus doesn't
 // narrowly type, but the column happily stores and round-trips.
 const TO_TERMINAL: Record<ThreadStatus, string> = {
-  starting: 'working',
+  queued: 'queued',
+  starting: 'waiting', // launching an interactive CLI does not start a turn
   working: 'working',
   needs_input: 'needs_input',
   idle: 'waiting',
@@ -19,6 +24,9 @@ const TO_TERMINAL: Record<ThreadStatus, string> = {
   error: 'error',
   scheduled: 'scheduled',
 };
+
+export type TurnBoundary = { terminalId: string; sessionId: string; threadStatus: ThreadStatus; phase: 'baseline' | 'start' | 'end'; nativeTurnId?: string };
+export type TurnBoundaryListener = (event: TurnBoundary) => void;
 
 export type SettledListener = (info: { terminalId: string; sessionId: string; threadStatus: ThreadStatus }) => void;
 
@@ -29,6 +37,136 @@ export type SettledListener = (info: { terminalId: string; sessionId: string; th
  * broadcasts `terminal:status` (with the rich threadStatus + activity) + session status.
  */
 export class StatusService {
+  diagnostics(terminalId: string) {
+    return {
+      lifecycle: this.db.prepare('SELECT * FROM thread_lifecycle WHERE terminal_id=?').get(terminalId) ?? null,
+      captureFailure: this.db.prepare('SELECT * FROM capture_failures WHERE terminal_id=?').get(terminalId) ?? null,
+      events: this.db.prepare('SELECT event_type,generation,turn_id,observed_at,status,disposition FROM lifecycle_events WHERE terminal_id=? ORDER BY id DESC LIMIT 200').all(terminalId),
+    };
+  }
+
+  markInferred(terminalId: string, status: 'working' | 'waiting'): void {
+    this.transition(() => {
+      const terminal = terminalsDb.getById(this.db, terminalId);
+      if (!terminal || this.db.prepare("SELECT 1 FROM thread_lifecycle WHERE terminal_id=? AND source='authoritative'").get(terminalId)) return;
+      terminalsDb.updateStatus(this.db, terminalId, status);
+      this.db.prepare(`INSERT INTO thread_lifecycle(terminal_id,status,source,observed_at) VALUES (?,?,'inferred',?)
+        ON CONFLICT(terminal_id) DO UPDATE SET status=excluded.status,source='inferred',observed_at=excluded.observed_at`).run(terminalId,status,new Date().toISOString());
+      logLifecycle(this.db,{ terminalId,type: `status.${status}`,observedAt: new Date().toISOString() },'inferred');
+      this.defer(() => this.broadcaster.broadcast({ type: 'terminal:status', terminalId, status }));
+      this.aggregateSession(terminal.session_id);
+    });
+  }
+
+  setTerminalState(terminalId: string, status: 'queued' | 'waiting' | 'error'): void {
+    this.transition(() => {
+      const terminal = terminalsDb.getById(this.db, terminalId);
+      if (terminal) this.apply(terminal.session_id, terminalId, status === 'waiting' ? 'idle' : status);
+    });
+  }
+
+  private committedListeners: ((event: HarnessEvent) => void)[] = [];
+  onHarnessCommitted(listener: (event: HarnessEvent) => void): void { this.committedListeners.push(listener); }
+
+  private effects: (() => void)[] | null = null;
+  private pendingEffects: (() => void)[] = [];
+  private flushingEffects = false;
+  private currentEvent: HarnessEvent | null = null;
+  private flushEffects(): void {
+    if (this.flushingEffects) return;
+    this.flushingEffects = true;
+    try {
+      while (this.pendingEffects.length) {
+        try { this.pendingEffects.shift()!(); }
+        catch (error) { console.warn('Lifecycle effect failed:', error instanceof Error ? error.message : String(error)); }
+      }
+    } finally { this.flushingEffects = false; }
+  }
+  private defer(fn: () => void): void {
+    if (this.effects) this.effects.push(fn);
+    else { this.pendingEffects.push(fn); this.flushEffects(); }
+  }
+  private transition(fn: () => void): void {
+    if (this.effects) { fn(); return; }
+    const effects: (() => void)[] = [];
+    this.effects = effects;
+    try { this.db.transaction(fn)(); }
+    finally { this.effects = null; }
+    this.pendingEffects.push(...effects);
+    this.flushEffects();
+  }
+
+  /** One owner commits usage, lifecycle state, and diagnostics before any effects. */
+  accept(event: HarnessEvent, afterCommit?: (event: HarnessEvent) => void): boolean {
+    if (this.flushingEffects) {
+      this.pendingEffects.push(() => this.acceptEvent(event, afterCommit));
+      return true; // queued behind all effects of the preceding transition
+    }
+    return this.acceptEvent(event, afterCommit);
+  }
+
+  private acceptEvent(event: HarnessEvent, afterCommit?: (event: HarnessEvent) => void): boolean {
+    if (!this.db.open) return false;
+    let accepted = false;
+    try {
+      this.transition(() => {
+        const terminal = terminalsDb.getById(this.db, event.terminalId);
+        if (!terminal || terminal.type !== event.provider) return;
+        const previous = this.db.prepare('SELECT generation,sequence,turn_id,turn_open FROM thread_lifecycle WHERE terminal_id=?').get(event.terminalId) as
+          { generation: string | null; sequence: number; turn_id: string | null; turn_open: number } | undefined;
+        let rejection: string | undefined;
+        if (event.type === 'process.started' && previous?.generation !== event.generation && this.db.prepare('SELECT 1 FROM harness_generations WHERE terminal_id=? AND generation=?').get(event.terminalId,event.generation)) rejection = 'retired-generation';
+        else if (event.type !== 'process.started' && previous?.generation && previous.generation !== event.generation) rejection = 'stale-generation';
+        else if (previous?.generation === event.generation && event.sequence <= previous.sequence) rejection = 'duplicate-or-out-of-order';
+        else if (event.turnId && previous?.turn_id && event.type !== 'turn.started' && event.type !== 'process.started' && event.turnId !== previous.turn_id) rejection = 'stale-turn';
+        else if (['turn.completed','turn.failed','permission.requested','permission.resolved'].includes(event.type) && !previous?.turn_open) rejection = 'turn-already-closed';
+        if (event.type === 'usage.observed' && event.turnId && !previous?.turn_open && !event.measurements.every(m => m.counter?.baselineOnly)) rejection ??= 'turn-already-closed';
+        if (rejection) { logLifecycle(this.db, event, rejection); return; }
+        if (event.type === 'process.started' && previous?.generation && previous.generation !== event.generation) {
+          this.db.prepare("UPDATE usage_turns SET ended_at=started_at,outcome='interrupted',duration_ms=NULL,coverage='partial' WHERE terminal_id=? AND ended_at IS NULL").run(event.terminalId);
+        }
+        if (event.type === 'process.started') this.db.prepare('INSERT OR IGNORE INTO harness_generations VALUES (?,?,?)').run(event.terminalId,event.generation,event.observedAt);
+        this.currentEvent = event;
+        const closed = recordHarnessUsage(this.db, event);
+        switch (event.type) {
+          case 'capture.failed': recordCaptureFailure(this.db,event.terminalId,event.type,new Error(event.reason)); break;
+          case 'turn.started': this.markWorking(event.terminalId, 'Working…'); break;
+          case 'permission.requested': this.markNeedsInput(event.terminalId, event.questions?.length ? 'Needs your answer' : `Needs approval: ${event.toolName ?? 'tool'}`); break;
+          case 'permission.resolved': this.markWorking(event.terminalId, 'Working…'); break;
+          case 'turn.completed':
+            if (event.outcome === 'needs_help') this.markNeedsInput(event.terminalId, event.detail.ask ?? 'Asked a question');
+            else if (event.outcome === 'scheduled') this.markScheduled(event.terminalId, event.detail.activity);
+            else this.markIdle(event.terminalId);
+            break;
+          case 'turn.failed': this.markFailed(event.terminalId); break;
+          case 'process.exited': this.markExited(event.terminalId, event.exitCode); break;
+        }
+        const open = event.type === 'turn.started' ? 1 : ['process.started','turn.completed','turn.failed','process.exited'].includes(event.type) ? 0 : previous?.turn_open ?? 0;
+        this.db.prepare(`INSERT INTO thread_lifecycle(terminal_id,status,source,observed_at,generation,sequence,turn_id,turn_open)
+          VALUES (?,?, 'authoritative',?,?,?,?,?) ON CONFLICT(terminal_id) DO UPDATE SET generation=excluded.generation,
+          sequence=excluded.sequence,turn_id=excluded.turn_id,turn_open=excluded.turn_open`)
+          .run(event.terminalId,terminalsDb.getById(this.db,event.terminalId)!.status ?? 'waiting',event.observedAt,event.generation,event.sequence,event.turnId ?? previous?.turn_id ?? null,open);
+        logLifecycle(this.db, event, 'applied');
+        if (closed) this.defer(() => this.broadcaster.broadcast({ type: 'analytics-dirty' }));
+        if (afterCommit) this.defer(() => afterCommit(event));
+        for (const listener of this.committedListeners) this.defer(() => listener(event));
+        accepted = true;
+      });
+    } catch (error) {
+      recordCaptureFailure(this.db,event.terminalId,event.type,error);
+      console.warn('Harness event capture failed:', event.type, error instanceof Error ? error.message : String(error));
+      accepted = false;
+    } finally { this.currentEvent = null; }
+    return accepted;
+  }
+
+  private turnListeners: TurnBoundaryListener[] = [];
+  addTurnBoundaryListener(listener: TurnBoundaryListener): void { this.turnListeners.push(listener); }
+
+  private turnBoundary(event: TurnBoundary): void {
+    for (const listener of this.turnListeners) listener(event);
+  }
+
   private settledListeners: SettledListener[] = [];
 
   constructor(
@@ -38,6 +176,7 @@ export class StatusService {
     private onActivity?: (terminalId: string) => void,
     /** Optional watch-wake signal (feeds WatchDispatcher.onStatus). Fires on the same edge as onActivity, above. */
     private onWatchStatus?: (terminalId: string, status: ThreadStatus) => void,
+    private onUserPrompt?: (terminalId: string, prompt: string) => void,
   ) {}
 
   /**
@@ -50,17 +189,25 @@ export class StatusService {
   }
 
   ingest(provider: string, terminalId: string, payload: unknown): void {
-    const norm = provider === 'codex' ? normalizeCodex(payload) : normalizeClaude(payload);
+    if (!this.db.open) return;
+    try { this.transition(() => this.ingestInternal(provider, terminalId, payload)); }
+    catch (error) { recordCaptureFailure(this.db,terminalId,'hook',error); throw error; }
+  }
+
+  private ingestInternal(provider: string, terminalId: string, payload: unknown): void {
+    const harness = providerForHook(provider);
     const terminal = terminalsDb.getById(this.db, terminalId);
-    if (!terminal) return;
+    if (!harness || !terminal || terminal.type !== harness.name) return;
+    const norm = harness.telemetry.normalizeHook(payload);
+    if (norm.turn === 'start' && typeof (payload as any)?.prompt === 'string') this.onUserPrompt?.(terminalId, (payload as any).prompt);
 
     // Capture the session/thread id at the source — no more filesystem polling. First-write
     // for a healthy identity; a stored id with NO transcript anywhere (a ghost from a boot
     // that never ran a turn) is healed to the live process's self-reported id — see the
     // structured twin in sessions/service.ts setStructuredManager.
     if (norm.sessionId && terminal.external_id !== norm.sessionId) {
-      let healthy = false;
-      if (terminal.external_id) {
+      let healthy = !!terminal.external_id && terminal.type !== 'claude-code';
+      if (terminal.external_id && terminal.type === 'claude-code') {
         const session = sessionsDb.getById(this.db, terminal.session_id);
         const workDir = terminal.working_dir || session?.working_dir || '';
         healthy = !!resolveTranscriptPath(workDir, terminal.external_id);
@@ -81,11 +228,12 @@ export class StatusService {
     // here, in its caller, which already holds the db handle.
     let status = norm.status;
     let activity = norm.activity;
-    if ((payload as { hook_event_name?: unknown } | null)?.hook_event_name === 'Stop') {
+    if (norm.turn === 'end' && norm.status === 'idle') {
       const settled = this.consumePendingDeclaration(terminal, terminalId);
       if (settled) { status = settled.status; activity = settled.activity; }
     }
 
+    if (norm.turn) this.turnBoundary({ terminalId, sessionId: terminal.session_id, threadStatus: status, phase: norm.turn, nativeTurnId: norm.turnId });
     this.apply(terminal.session_id, terminalId, status, activity);
   }
 
@@ -138,8 +286,16 @@ export class StatusService {
 
   /** Input edge: when the user sends a message the thread is working. */
   markWorking(terminalId: string, activity?: string): void {
+    if (!this.db.open) return;
+    this.transition(() => this.markWorkingInternal(terminalId, activity));
+  }
+
+  private markWorkingInternal(terminalId: string, activity?: string): void {
     const terminal = terminalsDb.getById(this.db, terminalId);
-    if (terminal) this.apply(terminal.session_id, terminalId, 'working', activity);
+    if (terminal) {
+      this.turnBoundary({ terminalId, sessionId: terminal.session_id, threadStatus: 'working', phase: 'start' });
+      this.apply(terminal.session_id, terminalId, 'working', activity);
+    }
   }
 
   /**
@@ -147,6 +303,11 @@ export class StatusService {
    * and is blocked awaiting a human decision (the membrane). Surfaces as needs_input.
    */
   markNeedsInput(terminalId: string, activity?: string): void {
+    if (!this.db.open) return;
+    this.transition(() => this.markNeedsInputInternal(terminalId, activity));
+  }
+
+  private markNeedsInputInternal(terminalId: string, activity?: string): void {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (terminal) this.apply(terminal.session_id, terminalId, 'needs_input', activity);
   }
@@ -157,6 +318,11 @@ export class StatusService {
    * fires the settled hook (push / coordinator completion notice).
    */
   markIdle(terminalId: string, activity?: string): void {
+    if (!this.db.open) return;
+    this.transition(() => this.markIdleInternal(terminalId, activity));
+  }
+
+  private markIdleInternal(terminalId: string, activity?: string): void {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (terminal) this.apply(terminal.session_id, terminalId, 'idle', activity);
   }
@@ -169,6 +335,11 @@ export class StatusService {
    * noteAgentCompletion the way the 'idle' listener does.
    */
   markScheduled(terminalId: string, activity?: string): void {
+    if (!this.db.open) return;
+    this.transition(() => this.markScheduledInternal(terminalId, activity));
+  }
+
+  private markScheduledInternal(terminalId: string, activity?: string): void {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return;
     this.apply(terminal.session_id, terminalId, 'scheduled', activity);
@@ -181,18 +352,56 @@ export class StatusService {
     } catch { /* best effort */ }
   }
 
+  /** After boot recovery, persisted working state must have a live owner. */
+  reconcileProcesses(isAlive: (terminalId: string) => boolean): void {
+    if (!this.db.open) return;
+    const rows = this.db.prepare("SELECT id FROM terminals WHERE archived_at IS NULL AND status IN ('working','needs_input')").all() as { id: string }[];
+    for (const { id } of rows) if (!isAlive(id)) this.markExited(id, 1);
+  }
+
+  markFailed(terminalId: string): void {
+    if (!this.db.open) return;
+    this.transition(() => this.markFailedInternal(terminalId));
+  }
+
+  private markFailedInternal(terminalId: string): void {
+    if (!this.db.open) return;
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (terminal) this.apply(terminal.session_id, terminalId, 'error');
+  }
+
+  /** All structured harnesses share process-exit reconciliation. */
+  markExited(terminalId: string, exitCode: number): void {
+    if (!this.db.open) return;
+    this.transition(() => this.markExitedInternal(terminalId, exitCode));
+  }
+
+  private markExitedInternal(terminalId: string, exitCode: number): void {
+    if (!this.db.open) return;
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) return;
+    this.turnBoundary({ terminalId, sessionId: terminal.session_id, threadStatus: exitCode === 0 ? 'done' : 'error', phase: 'end' });
+    terminalsDb.updatePid(this.db, terminalId, null);
+    this.apply(terminal.session_id, terminalId, exitCode === 0 ? 'done' : 'error');
+    this.defer(() => this.broadcaster.broadcast({ type: 'terminal:exit', terminalId, sessionId: terminal.session_id }));
+  }
+
   private apply(sessionId: string, terminalId: string, status: ThreadStatus, activity?: string): void {
+    this.db.prepare(`INSERT INTO thread_lifecycle(terminal_id, external_session_id, status, source, observed_at) VALUES (?, ?, ?, 'authoritative', ?)
+      ON CONFLICT(terminal_id) DO UPDATE SET external_session_id=excluded.external_session_id, status=excluded.status, source=excluded.source, observed_at=excluded.observed_at`)
+      .run(terminalId, terminalsDb.getById(this.db, terminalId)?.external_id ?? '', status, new Date().toISOString());
     const prior = terminalsDb.getById(this.db, terminalId)?.status; // persisted enum before update
     const terminalStatus = TO_TERMINAL[status];
-    try { terminalsDb.updateStatus(this.db, terminalId, terminalStatus); } catch { /* best effort */ }
+    terminalsDb.updateStatus(this.db, terminalId, terminalStatus);
+    if (!this.currentEvent) logLifecycle(this.db, { terminalId, type: `status.${status}`, observedAt: new Date().toISOString() }, 'applied');
     // Activity means "the thread thought about something": a turn started/ended, it
     // asked for input, went dormant, or errored. 'starting' (SessionStart) is an
     // open/revive edge — attaching to a thread must not make it look recently active.
     if (status !== 'starting') {
-      try { terminalsDb.touchActivity(this.db, terminalId); } catch { /* best effort */ }
-      try { sessionsDb.touchActivity(this.db, sessionId); } catch { /* best effort */ }
-      try { this.onActivity?.(terminalId); } catch { /* best effort */ }
-      try { this.onWatchStatus?.(terminalId, status); } catch { /* best effort */ }
+      terminalsDb.touchActivity(this.db, terminalId);
+      sessionsDb.touchActivity(this.db, sessionId);
+      this.defer(() => this.onActivity?.(terminalId));
+      this.defer(() => this.onWatchStatus?.(terminalId, status));
     }
     // A manual override is a correction to a stale derived status. `apply()` only ever runs
     // in response to a genuine status event, so EVERY call here is real activity — resumes,
@@ -207,10 +416,10 @@ export class StatusService {
         terminalsDb.updateConfig(this.db, terminalId, cfg);
       }
     } catch { /* best effort — status must never fail on board bookkeeping */ }
-    this.broadcaster.broadcast({ type: 'terminal:status', terminalId, status: terminalStatus, threadStatus: status, activity: activity ?? null });
-    if (prior === 'working' && (terminalStatus === 'waiting' || terminalStatus === 'needs_input')) {
+    this.defer(() => this.broadcaster.broadcast({ type: 'terminal:status', terminalId, status: terminalStatus, threadStatus: status, activity: activity ?? null }));
+    if (status !== 'starting' && prior === 'working' && (terminalStatus === 'waiting' || terminalStatus === 'needs_input')) {
       for (const fn of this.settledListeners) {
-        try { fn({ terminalId, sessionId, threadStatus: status }); } catch { /* a listener must never break status */ }
+        this.defer(() => fn({ terminalId, sessionId, threadStatus: status }));
       }
     }
     this.aggregateSession(sessionId);
@@ -218,10 +427,10 @@ export class StatusService {
 
   private aggregateSession(sessionId: string): void {
     const status = aggregateSessionStatus(terminalsDb.listBySession(this.db, sessionId).map((t) => t.status || 'waiting'));
-    try { sessionsDb.updateStatus(this.db, sessionId, status); } catch { /* best effort */ }
+    sessionsDb.updateStatus(this.db, sessionId, status);
     // Carry the freshly-bumped activity stamp (apply() calls touchActivity before this) so the
     // project card's timestamp + "most recent" sort update live, not just on a full reload.
     const lastActivityAt = sessionsDb.getLastActivity(this.db, sessionId);
-    this.broadcaster.broadcast({ type: 'session:status', sessionId, status, lastActivityAt });
+    this.defer(() => this.broadcaster.broadcast({ type: 'session:status', sessionId, status, lastActivityAt }));
   }
 }

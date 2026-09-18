@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { DownloadSimple, SignIn, TerminalWindow, WarningCircle } from '@phosphor-icons/react';
 import { Modal } from '../common/Modal';
 import { Spinner } from '../common/Spinner';
+import { SearchSelect } from '../common/SearchSelect';
 import { api } from '../../api/client';
 import { useTabs } from '../../stores/tabs';
 import { timeAgo } from '../../lib/time';
@@ -112,6 +113,19 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
   onClose: () => void;
   onCreated: (id: string) => void;
 }) {
+  const [capabilitiesLoading, setCapabilitiesLoading] = useState(!!api.getHarnessCapabilities);
+  const [harnesses, setHarnesses] = useState<(Harnesses & { capabilities?: { resume: boolean } })[]>(HARNESSES);
+  useEffect(() => {
+    let live = true;
+    // Older daemon compatibility: presentation metadata comes from the shared catalog.
+    api.getHarnessCapabilities?.().then(items => {
+      if (!live) return;
+      const enabled = items.filter(h => h.modes.length > 0);
+      setHarnesses(enabled);
+      setHarness(current => enabled.some(h => h.id === current) ? current : enabled[0]?.id ?? 'terminal');
+    }).catch(() => {}).finally(() => { if (live) setCapabilitiesLoading(false); });
+    return () => { live = false; };
+  }, []);
   const isMobile = useIsMobile();
   const [harness, setHarness] = useState<Harness>('claude');
   // The initial harness is claude, so the initial mode is claude's default (pretty —
@@ -139,7 +153,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
   const [installError, setInstallError] = useState<string | null>(null);
   const [signingIn, setSigningIn] = useState(false);
 
-  const spec = HARNESSES.find((h) => h.id === harness)!;
+  const spec = harnesses.find((h) => h.id === harness)!;
   const statusFor = useCallback(
     (p: ProviderName | null) => (p === null ? null : providers?.find((s) => s.name === p) ?? null),
     [providers],
@@ -167,9 +181,16 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
   // Resuming an on-disk session only makes sense for the harnesses that take an
   // externalId today: Claude Code and Codex. Grok captures no session id yet, and the
   // plain shell has no sessions.
-  const canResume = harness === 'claude' || harness === 'codex';
+  const canResume = spec.capabilities?.resume ?? (harness === 'claude' || harness === 'codex');
   const showMode = harness !== 'terminal';
-  const models = spec.models;
+  /** The models a harness offers. OpenCode's list is a daemon-side setting (Settings →
+   *  Harnesses → OpenCode) that arrives with the harness settings; every other harness
+   *  ships its list in HARNESSES. */
+  const modelsFor = useCallback(
+    (h: Harnesses, hs: HarnessSettingsResponse | null) => (h.id === 'opencode' ? hs?.opencodeModels ?? [] : h.models),
+    [],
+  );
+  const models = modelsFor(spec, harnessSettings);
   const prettyDisabled = !spec.modes.includes('pretty');
   const cliDisabled = !spec.modes.includes('cli');
   // A stale pick from a previously-selected harness must never survive onto one that
@@ -186,16 +207,17 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
   /** The settings-configured default model for a harness, when it's still a valid option;
    *  OpenCode falls back to its first curated model (it has no "let the CLI choose"). */
   const defaultModelFor = useCallback((h: Harnesses, hs: HarnessSettingsResponse | null): string | null => {
+    const list = modelsFor(h, hs);
     const pref = hs?.settings?.[h.type]?.defaultModel;
-    if (pref && h.models.some((m) => m.model === pref)) return pref;
-    return h.id === 'opencode' ? h.models[0]?.model ?? null : null;
-  }, []);
+    if (pref && list.some((m) => m.model === pref)) return pref;
+    return h.id === 'opencode' ? list[0]?.model ?? null : null;
+  }, [modelsFor]);
 
   // Apply the saved defaults to the INITIAL harness once settings arrive. Only while the
   // model is untouched (null === "Default"), so a fast first click is never stomped.
   useEffect(() => {
     if (!harnessSettings || model !== null) return;
-    const h = HARNESSES.find((x) => x.id === harness)!;
+    const h = harnesses.find((x) => x.id === harness)!;
     const m = defaultModelFor(h, harnessSettings);
     if (m) setModel(m);
     const prefMode = harnessSettings.settings?.[h.type]?.defaultMode;
@@ -289,7 +311,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
   }
 
   async function create(externalId?: string) {
-    if (busy) return;
+    if (busy || capabilitiesLoading) return;
     setBusy(true);
     try {
       const config: Record<string, unknown> = {};
@@ -373,7 +395,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
             the problem. */}
         {m ? (
           <div style={{ display: 'flex', gap: 6, overflowX: 'auto', margin: '0 -16px', padding: '0 16px', scrollbarWidth: 'none' }}>
-            {HARNESSES.map((h) => {
+            {harnesses.map((h) => {
               const on = harness === h.id;
               const available = isAvailable(h);
               const Mark = HARNESS_MARK[h.id];
@@ -398,8 +420,8 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
             })}
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${HARNESSES.length}, minmax(0, 1fr))`, background: 'var(--color-elevated)', border: `1px solid ${BORDER}`, borderRadius: 10, padding: 3, gap: 3 }}>
-            {HARNESSES.map((h) => {
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${harnesses.length}, minmax(0, 1fr))`, background: 'var(--color-elevated)', border: `1px solid ${BORDER}`, borderRadius: 10, padding: 3, gap: 3 }}>
+            {harnesses.map((h) => {
               const on = harness === h.id;
               const available = isAvailable(h);
               const Mark = HARNESS_MARK[h.id];
@@ -529,17 +551,20 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
               </div>
             </Row>
           )}
-          {models.length > 0 && (
+          {(models.length > 0 || harness === 'opencode') && (
             <Row mobile={m}>
               <span style={rowLabel}>Model</span>
-              {/* A select, not chips: it holds any number of models on one line, and each
-                  provider's list grows over time. */}
-              <div style={{ position: 'relative', width: controlWidth }}>
-                <select aria-label="Model" value={model ?? ''} onChange={(e) => setModel(e.target.value || null)}
-                  style={{ ...control, height: m ? 40 : 32, width: '100%', padding: m ? '0 30px 0 12px' : '0 26px 0 10px', fontSize: m ? 14 : 12.5, fontWeight: 500, cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none' }}>
-                  {models.map((o) => <option key={o.label} value={o.model ?? ''}>{o.label}</option>)}
-                </select>
-                <Chevron size={7} rotate="rotate(45deg)" style={{ position: 'absolute', right: m ? 13 : 10, top: m ? 14 : 11, pointerEvents: 'none' }} />
+              {/* A searchable select: it holds any number of models on one line, and the
+                  OpenCode list is whatever the user curated in Settings. Until that list
+                  arrives the row still renders (disabled), so the panel never jumps. */}
+              <div style={{ width: controlWidth }}>
+                <SearchSelect ariaLabel="Model" size={m ? 'lg' : 'md'} value={model ?? ''} disabled={models.length === 0}
+                  onChange={(v) => setModel(v || null)}
+                  options={models.map((o) => ({
+                    value: o.model ?? '',
+                    label: o.label,
+                    hint: o.model?.startsWith('openrouter/') ? o.model.slice('openrouter/'.length) : undefined,
+                  }))} />
               </div>
             </Row>
           )}
@@ -577,7 +602,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
         {/* Takes the grow-only slack on the phone sheet (see `floor`); zero-height otherwise. */}
         <div aria-hidden="true" style={{ flex: 1 }} />
 
-        <button type="button" disabled={busy} onClick={() => void create()}
+        <button type="button" disabled={busy || capabilitiesLoading} onClick={() => void create()}
           style={{ height: m ? 48 : 40, width: '100%', flex: 'none', background: ACCENT, border: 'none', borderRadius: m ? 12 : 10, color: '#08240F', fontWeight: 600, fontSize: m ? 15 : 14, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1, boxShadow: GLOW }}>
           Start new thread
         </button>
@@ -608,7 +633,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
         {!gated && canResume && recent !== null && recent.length > 0 && resumeOpen && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: m ? 6 : 5, maxHeight: 240, overflowY: 'auto', marginTop: m ? -6 : -8 }}>
             {recent.map((s) => (
-              <button key={s.id} type="button" disabled={busy} onClick={() => void create(s.id)}
+              <button key={s.id} type="button" disabled={busy || capabilitiesLoading} onClick={() => void create(s.id)}
                 style={{ display: 'flex', flexDirection: 'column', gap: m ? 4 : 3, width: '100%', textAlign: 'left', background: 'var(--color-elevated)', border: `1px solid ${BORDER}`, borderRadius: m ? 10 : 8, padding: m ? '11px 12px' : '9px 11px', minHeight: m ? 52 : undefined, cursor: busy ? 'default' : 'pointer', flex: 'none' }}>
                 <span style={{ fontSize: m ? 14 : 12.5, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%' }}>{s.preview}</span>
                 <span style={{ font: `400 ${m ? 11 : 10.5}px var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>

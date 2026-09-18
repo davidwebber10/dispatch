@@ -31,6 +31,25 @@ export function cleanName(raw: string): string | null {
   return lastSpace === -1 ? truncated : truncated.slice(0, lastSpace);
 }
 
+/** Remove harness setup envelopes without treating a real request about AGENTS.md as setup. */
+export function userPromptText(raw: string): string {
+  let text = raw.trim();
+  text = text.replace(/^# AGENTS\.md instructions for[^\n]*\n[\s\S]*?<\/INSTRUCTIONS>/i, '');
+  text = text.replace(/<(environment_context|user_instructions|system-reminder|local-command-caveat|context)>[\s\S]*?<\/\1>/gi, '');
+  text = text.replace(/^Use this file as context:\s*[^\n]+\n?/gmi, '');
+  return text.trim();
+}
+
+/** Keep a useful task prefix when a title model is unavailable or slow. */
+export function fallbackThreadName(raw: string): string | null {
+  const task = userPromptText(raw)
+    .replace(/^(?:hello|hi|hey)(?:\s+(?:claude|codex|fable|opus|sonnet|grok|chatgpt)(?:\s+[\d.]+)?)?[!.,:\s]+/i, '')
+    .replace(/^(?:please\s+)?(?:can|could|would) you(?: please)?\s+/i, '')
+    .replace(/^please\s+/i, '')
+    .replace(/^do (?:a |an )?(?:thorough |complete |full )?review of\s+/i, 'Review ');
+  return cleanName(task) ?? cleanName(userPromptText(raw));
+}
+
 // Replicates cc-sessions.ts's (unexported) extractText — see
 // packages/core/src/sessions/cc-sessions.ts:16-25. Claude Code message content is
 // either a plain string or an array of content blocks; only `{type:'text', text}`
@@ -61,14 +80,7 @@ function extractCodexText(content: unknown): string {
   return '';
 }
 
-/**
- * Claude Code branch: mirrors cc-sessions.ts:369-389's filtering exactly — a
- * `{type:'summary'}` line's summary wins over any prompt text if one appears anywhere
- * in the transcript; otherwise the first non-meta `message.role === 'user'` entry
- * whose extracted text doesn't start with '<' (Dispatch's injected system-hint /
- * local-command-caveat wrapper texts). Scans the WHOLE transcript (not just until the
- * first hit) because a summary line can appear after the opening prompt line.
- */
+/** First genuine user prompt wins. A summary is only a fallback for older transcripts. */
 function deriveClaudeRaw(text: string): string {
   let summary = '';
   let preview = '';
@@ -82,11 +94,11 @@ function deriveClaudeRaw(text: string): string {
     if (!msg || (msg.role !== 'user' && msg.role !== 'assistant')) continue;
     if (o.isMeta) continue;
     if (!preview && msg.role === 'user') {
-      const t = extractClaudeText(msg.content).replace(/\s+/g, ' ').trim();
+      const t = userPromptText(extractClaudeText(msg.content)).replace(/\s+/g, ' ').trim();
       if (t && !t.startsWith('<')) preview = t;
     }
   }
-  return summary || preview;
+  return preview || summary;
 }
 
 /**
@@ -105,7 +117,7 @@ function deriveCodexRaw(text: string): string {
     try { o = JSON.parse(trimmed); } catch { continue; } // partial/garbled line
     if (o?.type !== 'response_item' || o.payload?.type !== 'message') continue;
     if (o.payload.role !== 'user') continue;
-    const t = extractCodexText(o.payload.content).replace(/\s+/g, ' ').trim();
+    const t = userPromptText(extractCodexText(o.payload.content)).replace(/\s+/g, ' ').trim();
     if (t && !t.startsWith('<')) return t;
   }
   return '';

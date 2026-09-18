@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import * as appState from '../db/app-state.js';
 import { AGENT_TYPES, type AgentType } from '../providers/agent-types.js';
+import { OPENCODE_DEFAULT_MODELS, type OpencodeModel } from '../providers/opencode.js';
 
 /**
  * Per-harness preferences, persisted DAEMON-side (one app_state JSON blob, the
@@ -15,11 +16,16 @@ import { AGENT_TYPES, type AgentType } from '../providers/agent-types.js';
  *   keySecret     opencode only — the DOPPLER SECRET NAME holding the OpenRouter key. The
  *                 name is stored, never the key; the daemon resolves the value via
  *                 SecretsService.getSecret at env-refresh time (transcription's pattern).
+ *   models        opencode only — the models the New Thread picker offers, in order. Absent
+ *                 ⇒ the curated OPENCODE_DEFAULT_MODELS. Stored whole (a PUT replaces the
+ *                 list), because OpenRouter's catalog is hundreds of ids and which handful
+ *                 a user wants is a preference, not something to derive.
  */
 export interface HarnessSettings {
   defaultModel?: string;
   defaultMode?: 'cli' | 'pretty';
   keySecret?: string;
+  models?: OpencodeModel[];
 }
 
 export type AllHarnessSettings = Partial<Record<AgentType, HarnessSettings>>;
@@ -30,6 +36,22 @@ const STATE_KEY = 'harness_settings';
 export const OPENCODE_DEFAULT_KEY_SECRET = 'OPENROUTER_API_KEY';
 
 const pickString = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+
+/** Keep the well-formed `{label, model}` entries, trimmed, first occurrence of an id wins. */
+function pickModels(v: unknown): OpencodeModel[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const seen = new Set<string>();
+  const out: OpencodeModel[] = [];
+  for (const item of v) {
+    if (!item || typeof item !== 'object') continue;
+    const model = pickString((item as Record<string, unknown>).model);
+    const label = pickString((item as Record<string, unknown>).label);
+    if (!model || !label || seen.has(model)) continue;
+    seen.add(model);
+    out.push({ label, model });
+  }
+  return out.length ? out : undefined;
+}
 
 function sanitize(raw: unknown): AllHarnessSettings {
   if (!raw || typeof raw !== 'object') return {};
@@ -44,6 +66,8 @@ function sanitize(raw: unknown): AllHarnessSettings {
     if (rec.defaultMode === 'cli' || rec.defaultMode === 'pretty') entry.defaultMode = rec.defaultMode;
     const secret = pickString(rec.keySecret);
     if (secret) entry.keySecret = secret;
+    const models = type === 'opencode' ? pickModels(rec.models) : undefined;
+    if (models) entry.models = models;
     if (Object.keys(entry).length) out[type] = entry;
   }
   return out;
@@ -65,7 +89,7 @@ export function updateHarnessSettings(db: Database.Database, patch: unknown): Al
       if (p === undefined) continue;
       const merged: Record<string, unknown> = { ...(current[type] ?? {}) };
       if (p && typeof p === 'object') {
-        for (const field of ['defaultModel', 'defaultMode', 'keySecret'] as const) {
+        for (const field of ['defaultModel', 'defaultMode', 'keySecret', 'models'] as const) {
           const v = (p as Record<string, unknown>)[field];
           if (v === undefined) continue;
           if (v === null) delete merged[field];
@@ -78,6 +102,11 @@ export function updateHarnessSettings(db: Database.Database, patch: unknown): Al
   const clean = sanitize(current);
   appState.set(db, STATE_KEY, JSON.stringify(clean));
   return clean;
+}
+
+/** The models the OpenCode picker offers: the user's list, else the curated defaults. */
+export function opencodeModels(db: Database.Database): OpencodeModel[] {
+  return readHarnessSettings(db).opencode?.models ?? [...OPENCODE_DEFAULT_MODELS];
 }
 
 /** The Doppler secret name for the OpenCode/OpenRouter key. */

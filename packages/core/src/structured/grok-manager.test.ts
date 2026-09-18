@@ -240,3 +240,22 @@ describe('GrokStructuredSessionManager', () => {
     expect(m.isAlive('t1')).toBe(false);
   });
 });
+
+describe('queued ACP turn boundaries', () => {
+  it('starts each queued turn after its predecessor settles', async () => {
+    const m = makeManager();
+    const order: string[] = [];
+    m.on('busy', () => order.push('busy'));
+    m.on('idle', () => order.push('idle'));
+    m.spawn('queued', spawnOpts());
+    const done = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('queued turns did not settle')), 5000);
+      let count = 0;
+      m.on('idle', () => { if (++count === 2) { clearTimeout(timeout); resolve(); } });
+    });
+    m.sendMessage('queued', 'first');
+    m.sendMessage('queued', 'second');
+    await done;
+    expect(order).toEqual(['busy', 'idle', 'busy', 'idle']);
+  });
+});

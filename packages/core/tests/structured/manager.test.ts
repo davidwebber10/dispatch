@@ -543,3 +543,28 @@ it('re-spawn: old child exit does not evict the replacement session (Fix 1 regre
   // not have deleted it from the map
   expect(m.isAlive('t1')).toBe(true);
 });
+
+it('delivers the result frame before settling the turn', async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  const order: string[] = [];
+  m.on('event', (_id, ev) => { if (ev.type === 'result') order.push('result'); });
+  m.on('idle', () => order.push('idle'));
+  const settled = waitForManagerEvent(m, 'idle', 't1');
+  m.sendMessage('t1', 'hello');
+  await settled;
+  expect(order).toEqual(['result', 'idle']);
+});
+
+it('kill emits one exit and the old child cannot settle a replacement', async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  const exits: string[] = [];
+  m.on('exit', (id) => exits.push(id));
+  m.kill('t1');
+  expect(exits).toEqual(['t1']);
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  expect(m.isAlive('t1')).toBe(true);
+  expect(exits).toEqual(['t1']);
+});

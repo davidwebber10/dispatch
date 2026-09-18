@@ -1,5 +1,6 @@
 // packages/core/src/structured/manager.ts
 import { EventEmitter } from 'events';
+import { randomUUID } from 'node:crypto';
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import * as readline from 'readline';
 import { looksLikeQuestion } from '../status/question.js';
@@ -143,7 +144,8 @@ export type PermissionDecision =
  *   'scheduled'(terminalId, activity) — turn ended by a wake-scheduler tool
  *   'needs-help'(terminalId, detail)  — turn ended needing the human (declared or inferred);
  *                                       detail: { ask: string; summary: string; inferred: boolean }
- *   'busy'   (terminalId)             — a turn started
+ *   'busy'   (terminalId)             — a turn started (idempotent while active)
+ *   'failed' (terminalId)             — transport/request failure ended active work
  *   'resolved'(terminalId)            — a pending permission was answered
  *   'exit'   (terminalId, code)       — the backing process/connection exited
  *   'message-source'(terminalId, src) — a tagged turn's result landed (persist src)
@@ -221,6 +223,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
     }) as ChildProcessWithoutNullStreams;
     child.stdin.on('error', () => {}); // Fix 2: suppress EPIPE if child closes stdin while alive
 
+    const counterScope = randomUUID(); // Claude result counters restart with each CLI invocation.
     const rl = readline.createInterface({ input: child.stdout });
     const session: Session = { child, rl, events: [], escalate: opts.escalate ?? false, toolPolicy: opts.toolPolicy, pending: null };
     // Resume backfill: seed the ring with prior history (restored from the claude
@@ -232,6 +235,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
     }
     this.sessions.set(terminalId, session);
     rl.on('line', (line) => {
+      if (this.sessions.get(terminalId) !== session) return;
       const trimmed = line.trim();
       if (!trimmed) return;
       let event: any;
@@ -290,6 +294,8 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
           });
         }
       }
+      // Deliver the final frame before settle listeners close analytics or start another turn.
+      this.emit('event', terminalId, { ...event, telemetry: { counterScope } });
       // Turn boundary: a `result` event ends the current turn. Three things can have
       // happened: the agent DECLARED how it ended (via report_status — see
       // noteDeclaredStatus/Session.declared), the LAST tool called this turn was a
@@ -307,7 +313,9 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
 
         // needs_you wins over everything — a question blocks the thread regardless of a
         // pending timer, so it's checked first even ahead of a wake-scheduler call.
-        if (declared?.state === 'needs_you') {
+        if (event.is_error === true) {
+          this.emit('failed', terminalId);
+        } else if (declared?.state === 'needs_you') {
           this.emit('needs-help', terminalId, { ask: declared.ask ?? declared.summary, summary: declared.summary, inferred: false });
         } else if (wake) {
           // A pending timer is an observable FACT; any other declaration (done/blocked) is
@@ -347,19 +355,21 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
         if (session.pendingSource) this.emit('message-source', terminalId, session.pendingSource);
         session.pendingSource = undefined;
       }
-      this.emit('event', terminalId, event);
     });
 
     child.on('exit', (code) => {
       // Fix 1: only clear the map if this child is still the current session
       // (a re-spawn may have already replaced it; its exit must not evict the new child)
-      if (this.sessions.get(terminalId)?.child === child) {
-        session.pending = null; // drop any unanswered permission — the process is gone
-        this.sessions.delete(terminalId);
-      }
+      if (this.sessions.get(terminalId)?.child !== child) return;
+      session.pending = null; // drop any unanswered permission — the process is gone
+      this.sessions.delete(terminalId);
       this.emit('exit', terminalId, code ?? 0);
     });
-    child.on('error', (err) => { this.emit('event', terminalId, { type: 'system', subtype: 'spawn_error', message: String(err) }); });
+    child.on('error', (err) => {
+      if (this.sessions.get(terminalId)?.child !== child) return;
+      this.emit('event', terminalId, { type: 'system', subtype: 'spawn_error', message: String(err) });
+      this.emit('failed', terminalId);
+    });
 
     return child.pid ?? -1;
   }
@@ -506,6 +516,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
     s.rl.close(); // Fix 3: close readline so buffered lines stop emitting after kill
     try { s.child.kill(); } catch { /* already gone */ }
     this.sessions.delete(terminalId);
+    this.emit('exit', terminalId, 0);
   }
 
   killAll(): void { for (const id of [...this.sessions.keys()]) this.kill(id); }

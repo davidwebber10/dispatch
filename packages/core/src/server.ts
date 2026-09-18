@@ -1,3 +1,5 @@
+import { subscribeHarnessEvents } from './runtime/adapter.js';
+import { listProviders } from './providers/registry.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -31,7 +33,7 @@ import { createProvidersRouter } from './routes/providers.js';
 import { createServersRouter } from './routes/servers.js';
 import { createFilesRouter } from './routes/files.js';
 import { createStateRouter } from './routes/state.js';
-import { attachUsageRecorder, closeInterruptedTurns } from './analytics/recorder.js';
+import { closeInterruptedTurns } from './analytics/recorder.js';
 import { attachPtyCapture } from './analytics/pty-capture.js';
 import * as usageDb from './db/usage.js';
 import { createGitRouter } from './routes/git.js';
@@ -96,7 +98,7 @@ function bootAnalytics(db: Database.Database): void {
 }
 
 /**
- * Subscribe PTY usage capture to the turn-settled edge.
+ * Subscribe PTY usage capture to explicit turn boundaries.
  *
  * `isStructured` is the double-count gate and the reason this is a function rather
  * than an inline literal. It must go through `SessionService.isStructuredTerminal`,
@@ -113,7 +115,7 @@ function wirePtyUsageCapture(
   sessionService: SessionService,
   broadcaster: EventBroadcaster,
 ): void {
-  statusService.addThreadSettledListener(attachPtyCapture({
+  statusService.addTurnBoundaryListener(attachPtyCapture({
     db,
     isStructured: (terminalId) => {
       const t = terminalsDb.getById(db, terminalId);
@@ -225,141 +227,38 @@ class NoopPTYManager extends PTYManager {
  * once answered, 'resolved' (→ working). Routing it through StatusService means it
  * broadcasts terminal:status + fires the same push/notify path the PTY/hook flow uses.
  */
-function wirePermissionMembrane(structuredManager: IStructuredManager, statusService: StatusService, sessionService: SessionService, db: Database.Database, broadcaster: EventBroadcaster): void {
-  structuredManager.on('permission', (terminalId: string, pending: { toolName?: string; questions?: any[] }) => {
-    // An agent's AskUserQuestion escalates UP to its project's coordinator (Dispatch), not to
-    // the human. When that routing succeeds the agent stays "working" (it's waiting on the
-    // coordinator, an internal handoff) — only un-routable permissions reach the human.
-    if (sessionService.routeAgentQuestionToCoordinator(terminalId, pending)) {
-      statusService.markWorking(terminalId, 'Asking Control Plane…');
-      return;
+function wirePermissionMembrane(manager: IStructuredManager, status: StatusService, sessions: SessionService, db: Database.Database, _broadcaster: EventBroadcaster): void {
+  subscribeHarnessEvents(manager, id => db.open ? terminalsDb.getById(db, id)?.type : undefined, event => status.accept(event, committed => {
+    const id = committed.terminalId;
+    if (committed.type === 'permission.requested') {
+      if (sessions.routeAgentQuestionToCoordinator(id, { toolName: committed.toolName, questions: committed.questions })) status.markWorking(id, 'Asking Control Plane…');
+    } else if (committed.type === 'turn.completed') {
+      const detail = committed.detail;
+      if (committed.outcome === 'idle') {
+        const summary = 'summary' in detail ? detail.summary ?? '' : sessions.lastAssistantTextPublic(id);
+        sessions.noteTurnOutcome(id, { summary, needsHelp: false, inferred: !detail.declared, state: detail.state, blocker: detail.blocker });
+        sessions.noteAgentCompletion(id);
+      } else if (committed.outcome === 'needs_help') {
+        sessions.noteTurnOutcome(id, { summary: detail.summary ?? '', needsHelp: true, inferred: !!detail.inferred });
+        sessions.noteAgentNeedsHelp(id, detail.ask ?? 'Needs your input');
+      }
     }
-    const activity = pending?.questions?.length
-      ? 'Needs your answer'
-      : `Needs approval: ${pending?.toolName ?? 'tool'}`;
-    statusService.markNeedsInput(terminalId, activity);
-  });
-  // Analytics: one row per turn, written live from the same events that drive status.
-  // Kept as its own subscriber rather than folded into the status handlers so a
-  // failure here can never affect a turn. See analytics/recorder.ts.
-  attachUsageRecorder(structuredManager, {
-    db,
-    onTurnClosed: () => broadcaster.broadcast({ type: 'analytics-dirty' }),
-  });
-  structuredManager.on('resolved', (terminalId: string) => {
-    statusService.markWorking(terminalId, 'Working…');
-  });
-  // Turn boundaries → accurate status, and the moment an AGENT settles, push an immediate
-  // completion notice up to its coordinator (so Dispatch ingests results, not fire-and-forget).
-  structuredManager.on('busy', (terminalId: string) => {
-    statusService.markWorking(terminalId, 'Working…');
-  });
-  structuredManager.on('idle', (terminalId: string, detail?: { declared: boolean; state?: 'done' | 'blocked'; blocker?: string; summary?: string }) => {
-    statusService.markIdle(terminalId);
-    // `declared` distinguishes an explicit report_status outcome from the undeclared
-    // fallback (nothing declared, heuristic said "not a question") — the latter is a GUESS,
-    // not a fact, so it's persisted as `inferred: true`. This is what keeps the
-    // declared-vs-inferred split (GET /api/state/status-quality) honest instead of ~100%
-    // by construction (see the review finding this fixes).
-    //
-    // `detail.state`/`detail.blocker`, when present, carry WHICH outcome the agent declared
-    // (see the IStructuredManager doc comment in structured/manager.ts) — passed straight
-    // through to noteTurnOutcome so `config.lastOutcome` can tell a `blocked` thread (still
-    // proceeds without the human, queued behind something) apart from a genuinely finished
-    // one, instead of both collapsing into the same "idle, not inferred" fact.
-    //
-    // `detail.summary`, when PRESENT, is the emitting manager's OWN text for this turn (the
-    // Codex manager supplies it from the agentMessage it just stashed — see codex-manager.ts's
-    // settleTurn), and its presence — not its truthiness — is the authority signal: a Codex
-    // turn with no completed agentMessage (failed turn, interrupt before any prose, tool-only
-    // turn) still sets `summary: ''`, and '' must be persisted as-is, NOT papered over by the
-    // ring walk below (a truthiness check would fall through here and risk exactly the stale
-    // text this fix exists to avoid). Only a GENUINELY absent field — the Claude manager never
-    // sets `summary` at all — falls back to lastAssistantTextPublic: it scans for a WHOLE
-    // `{type:'assistant', message.content:[{type:'text'}]}` event, which a live Codex turn never
-    // produces (prose arrives as streaming deltas) — so on Codex that walk returns either '' or
-    // STALE text backfilled from a previously resumed session, and used to get persisted into
-    // config.lastOutcome on every single Codex turn (the Task 5 review finding this fixes). The
-    // Claude path is unchanged: the ring walk IS reliable there (real whole-text `assistant`
-    // events land in its ring).
-    const summary = detail && 'summary' in detail ? (detail.summary ?? '') : sessionService.lastAssistantTextPublic(terminalId);
-    sessionService.noteTurnOutcome(terminalId, { summary, needsHelp: false, inferred: !detail?.declared, state: detail?.state, blocker: detail?.blocker });
-    sessionService.noteAgentCompletion(terminalId);
-  });
-  // A turn that ended needing the human. Deliberately NOT routed through 'idle':
-  // markIdle settles the thread to `waiting` and noteAgentCompletion tells the
-  // coordinator the agent "✅ just finished" — both wrong for a thread that stopped
-  // to ask a question. It still needs its OWN escalation though — an agent's question
-  // must reach its coordinator (same principle as the `permission` listener above),
-  // just with correct "blocked, waiting" framing instead of a false completion note.
-  structuredManager.on('needs-help', (terminalId: string, detail: { ask: string; summary: string; inferred: boolean }) => {
-    statusService.markNeedsInput(terminalId, detail.inferred ? 'Asked a question' : detail.ask.slice(0, 120));
-    sessionService.noteTurnOutcome(terminalId, { summary: detail.summary, needsHelp: true, inferred: detail.inferred });
-    sessionService.noteAgentNeedsHelp(terminalId, detail.ask);
-  });
-  // A wake-scheduler tool (ScheduleWakeup/CronCreate) ended the turn deliberately — the
-  // thread is dormant, not finished. Deliberately does NOT call noteAgentCompletion: the
-  // agent hasn't produced a result for its coordinator yet, it's just asleep until its timer
-  // fires and the CLI process resumes on its own.
-  structuredManager.on('scheduled', (terminalId: string, activity: string) => {
-    statusService.markScheduled(terminalId, activity);
-  });
+  }));
 }
 
-/**
- * Codex "Pretty" (structured app-server transport). Enabled after the Phase B live E2E proved a
- * real Codex-Pretty thread streams a turn + surfaces/answers an approval end-to-end (see the
- * CodexStructuredSessionManager). Kill-switch: set DISPATCH_CODEX_PRETTY=0 to fall back to the
- * PTY-only Codex transport (mirrors the web modal's CODEX_PRETTY_ENABLED flag).
- */
-const CODEX_PRETTY_ENABLED = process.env.DISPATCH_CODEX_PRETTY !== '0';
-
-/**
- * Wire the Codex app-server structured manager onto the service (so `structuredManagerFor('codex')`
- * resolves it and the Codex Pretty transport comes alive), reusing the SAME permission membrane
- * as Claude — both managers emit the identical Claude-shaped event contract. No-op (returns
- * undefined) when Codex Pretty is disabled; Codex then keeps only its PTY transport.
- */
-function wireCodexPretty(sessionService: SessionService, statusService: StatusService, db: Database.Database, broadcaster: EventBroadcaster): IStructuredManager | undefined {
-  if (!CODEX_PRETTY_ENABLED) return undefined;
-  const codexManager = new CodexStructuredSessionManager();
-  sessionService.setCodexStructuredManager(codexManager);
-  wirePermissionMembrane(codexManager, statusService, sessionService, db, broadcaster);
-  return codexManager;
-}
-
-/**
- * Grok "Pretty" (structured ACP transport over `grok agent stdio`, one child per thread —
- * see GrokStructuredSessionManager). Kill-switch: set DISPATCH_GROK_PRETTY=0 to fall back
- * to the PTY-only Grok transport (mirrors wireCodexPretty's DISPATCH_CODEX_PRETTY).
- */
-const GROK_PRETTY_ENABLED = process.env.DISPATCH_GROK_PRETTY !== '0';
-
-/** Wire the Grok ACP structured manager onto the service (so `structuredManagerFor('grok')`
- *  resolves it), reusing the SAME permission membrane as the other two managers. */
-function wireGrokPretty(sessionService: SessionService, statusService: StatusService, db: Database.Database, broadcaster: EventBroadcaster): IStructuredManager | undefined {
-  if (!GROK_PRETTY_ENABLED) return undefined;
-  const grokManager = new GrokStructuredSessionManager();
-  sessionService.setGrokStructuredManager(grokManager);
-  wirePermissionMembrane(grokManager, statusService, sessionService, db, broadcaster);
-  return grokManager;
-}
-
-/**
- * OpenCode "Pretty" (structured ACP transport over `opencode acp`, one child per thread).
- * SAME manager class as Grok — both harnesses speak ACP over stdio; the dialect deltas
- * live in the translator/manager themselves (see grok-manager.ts header). Kill-switch:
- * DISPATCH_OPENCODE_PRETTY=0. OpenCode has no PTY fallback — switched off, the type
- * simply cannot spawn.
- */
-const OPENCODE_PRETTY_ENABLED = process.env.DISPATCH_OPENCODE_PRETTY !== '0';
-
-function wireOpencodePretty(sessionService: SessionService, statusService: StatusService, db: Database.Database, broadcaster: EventBroadcaster): IStructuredManager | undefined {
-  if (!OPENCODE_PRETTY_ENABLED) return undefined;
-  const opencodeManager = new GrokStructuredSessionManager();
-  sessionService.setOpencodeStructuredManager(opencodeManager);
-  wirePermissionMembrane(opencodeManager, statusService, sessionService, db, broadcaster);
-  return opencodeManager;
+/** Every additional harness receives identical registration, lifecycle and accounting wiring. */
+function wireHarnesses(sessionService: SessionService, status: StatusService, db: Database.Database, broadcaster: EventBroadcaster): Map<string, IStructuredManager> {
+  const managers = new Map<string, IStructuredManager>();
+  for (const provider of listProviders()) {
+    if (provider.structured.disabledBy && process.env[provider.structured.disabledBy] === '0') continue;
+    const manager = provider.structured.protocol === 'claude-json' ? new ClaudeStructuredSessionManager()
+      : provider.structured.protocol === 'acp' ? new GrokStructuredSessionManager(provider.structured.dialect)
+      : new CodexStructuredSessionManager();
+    sessionService.registerStructuredManager(provider.name, manager);
+    wirePermissionMembrane(manager, status, sessionService, db, broadcaster);
+    managers.set(provider.name, manager);
+  }
+  return managers;
 }
 
 /**
@@ -411,17 +310,16 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
   sessionService.setIntegrationsSpecs(() => integrationsService.getServerSpecs());
   sessionService.setToolsAwareness(() => awarenessNote(toolStatuses({ base: toolsBase })));
-  const structuredManager = new ClaudeStructuredSessionManager();
-  sessionService.setStructuredManager(structuredManager);
   if (options.structuredCommand) sessionService.setStructuredCommandOverride(options.structuredCommand);
   // Wakes watchers on peer status edges (see sessions/watch-dispatcher.ts) — wired as an
   // optional StatusService dependency, same shape as onActivity below.
   const watchDispatcher = new WatchDispatcher(db, buildWatchDeliver(sessionService));
   const statusService = new StatusService(db, broadcaster, undefined, (terminalId, status) => watchDispatcher.onStatus(terminalId, status));
-  wirePermissionMembrane(structuredManager, statusService, sessionService, db, broadcaster);
-  wireCodexPretty(sessionService, statusService, db, broadcaster);
-  wireGrokPretty(sessionService, statusService, db, broadcaster);
-  wireOpencodePretty(sessionService, statusService, db, broadcaster);
+  const harnessManagers = wireHarnesses(sessionService, statusService, db, broadcaster);
+  const structuredManager = harnessManagers.get('claude-code')!;
+  agentService.setLifecycleService(statusService);
+  statusService.onHarnessCommitted(event => { if (event.type === 'process.exited') rolesService.handleTerminalExit(event.terminalId); });
+  sessionService.setTerminalStatusWriter((id, status) => statusService.setTerminalState(id, status));
 
   wireThreadSettledPush(db, statusService, pushService);
   wirePtyUsageCapture(db, statusService, sessionService, broadcaster);
@@ -547,16 +445,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const broadcaster = createEventsBroadcaster(eventsWss);
   const authRequestService = new AuthRequestService(broadcaster);
 
-  // Debounced, best-effort thread auto-namer — fed by real-activity signals from
-  // StatusService (hook events) and TerminalMonitor (PTY busy/idle), below. Uses the
-  // real (websocket-wired) broadcaster so a successful rename's `session:tabs-changed`
-  // reaches connected clients the same way a user rename does today.
-  //
-  // When the OpenRouter key resolves (same Doppler secret the OpenCode harness uses),
-  // names come from a fast GLM call over the first prompt instead of the prompt's
-  // first 48 chars. Late-bound resolver: SecretsService is constructed further down,
-  // and the first naming attempt can't fire before the debounce (≥5s after first
-  // activity), by which point the resolver is installed.
+  // Name once from the first submitted user prompt; transcript activity is a legacy
+  // fallback. The shared broadcaster publishes the same tab refresh as manual rename.
   let resolveOpenRouterKey: (() => Promise<string | null>) | null = null;
   const threadAutoNamer = new ThreadAutoNamer(db, broadcaster, {
     getApiKey: () => resolveOpenRouterKey?.() ?? Promise.resolve(null),
@@ -564,6 +454,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   // Determine actual server URL after port is known
   const sessionService = new SessionService(db, ptyManager, path.join(dataDir, 'mcp.json'));
+  sessionService.setUserPromptListener((id, text) => threadAutoNamer.notifyPrompt(id, text));
   const agentService = new AgentService(db, sessionService, broadcaster, path.join(dataDir, 'runs'));
   // Built ahead of rolesService (moved up from its former spot below, alongside the other
   // *Pretty wiring) so it can be handed in as RolesService's optional push dep — backs the
@@ -578,26 +469,18 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     db, broadcaster,
     (id) => threadAutoNamer.notifyActivity(id),
     (terminalId, status) => watchDispatcher.onStatus(terminalId, status),
+    (id, prompt) => threadAutoNamer.notifyPrompt(id, prompt),
   );
-  const structuredManager = new ClaudeStructuredSessionManager();
-  sessionService.setStructuredManager(structuredManager);
-  wirePermissionMembrane(structuredManager, statusService, sessionService, db, broadcaster);
-  // Kept as a binding (main had dropped it, nothing used it) because the usage
-  // recorder below subscribes to it. A hosted fleet needs per-user token totals.
-  const codexManager = wireCodexPretty(sessionService, statusService, db, broadcaster);
-  const grokStructured = wireGrokPretty(sessionService, statusService, db, broadcaster);
-  const opencodeStructured = wireOpencodePretty(sessionService, statusService, db, broadcaster);
+  const harnessManagers = wireHarnesses(sessionService, statusService, db, broadcaster);
+  const structuredManager = harnessManagers.get('claude-code')!;
+  const extraManagers = new Map([...harnessManagers].filter(([name]) => name !== 'claude-code'));
+  agentService.setLifecycleService(statusService);
+  statusService.onHarnessCommitted(event => { if (event.type === 'process.exited') rolesService.handleTerminalExit(event.terminalId); });
+  sessionService.setTerminalStatusWriter((id, status) => statusService.setTerminalState(id, status));
+  const opencodeStructured = extraManagers.get('opencode');
 
-  // Token usage for INTERACTIVE threads. Scheduled runs already record theirs on
-  // agent_runs; interactive threads discarded it, which left no way to answer the
-  // question a hosted fleet needs: who is close to their weekly rate limit.
+  // Fleet totals are a read-only projection of the canonical analytics ledger.
   const usage = new UsageRecorder(db);
-  structuredManager.on('event', (_id: string, event: unknown) => usage.observe(event));
-  codexManager?.on('event', (_id: string, event: unknown) => usage.observe(event));
-  // Grok and OpenCode are deliberately NOT wired here. observe() reads Claude
-  // stream-json `result` usage; their translators emit Claude-SHAPED events, which
-  // is not the same claim. Wire them once their usage payload is verified, rather
-  // than silently recording zeros or double-counting.
 
   wireThreadSettledPush(db, statusService, pushService);
   wirePtyUsageCapture(db, statusService, sessionService, broadcaster);
@@ -664,8 +547,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     // The ACP children (Grok, OpenCode) run real tools directly (no app-server
     // indirection), so they need the same spawn env a PTY thread gets — secrets, bundled
     // tools, the browser shim.
-    grokStructured?.setDefaultEnv(spawnEnv);
-    opencodeStructured?.setDefaultEnv(spawnEnv);
+    for (const manager of extraManagers.values()) manager.setDefaultEnv(spawnEnv);
     refreshOpencodeKeyEnv(spawnEnv);
   };
   secretsService.onChange(refreshPtyEnv);
@@ -713,13 +595,14 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     // During shutdown the DB is closed before node-pty's async exit events fire;
     // skip the DB work to avoid "database connection is not open" crashes.
     if (!db.open) return;
-    // Check if this ID is a terminal
+    // Flush a headless runner's final frames before publishing any settled state.
+    let runnerOwned = agentService.ownsTerminalStream(id);
+    try { agentService.handleTerminalExit(id, exitCode); }
+    catch (error) { runnerOwned = false; console.error('agent run exit handler failed', error); }
     const terminal = terminalsDb.getById(db, id);
     if (terminal) {
       terminalsDb.updatePid(db, id, null);
-      terminalsDb.updateStatus(db, id, 'waiting');
-      broadcaster.broadcast({ type: 'terminal:status', terminalId: id, status: 'waiting' });
-      broadcaster.broadcast({ type: 'terminal:exit', terminalId: id, sessionId: terminal.session_id });
+      if (!runnerOwned) statusService.markExited(id, exitCode);
       sessionsDb.updatePid(db, terminal.session_id, null);
       rollupSession(terminal.session_id);
     } else {
@@ -727,42 +610,6 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       sessionsDb.updateStatus(db, id, 'waiting');
       sessionsDb.updatePid(db, id, null);
       broadcaster.broadcast({ type: 'session:status', sessionId: id, status: 'waiting', lastActivityAt: sessionsDb.getLastActivity(db, id) });
-    }
-
-    // If this terminal was backing an autonomous agent run, finalize the run:
-    // exit 0 -> succeeded, non-zero -> failed.
-    try {
-      agentService.handleTerminalExit(id, exitCode);
-    } catch (err) {
-      console.error('agent run exit handler failed', err);
-    }
-  });
-
-  // Mirror the PTY exit handler for structured-transport terminals
-  structuredManager.on('exit', (id: string, _exitCode: number) => {
-    if (!db.open) return;
-    const terminal = terminalsDb.getById(db, id);
-    if (terminal) {
-      terminalsDb.updatePid(db, id, null);
-      terminalsDb.updateStatus(db, id, 'waiting');
-      broadcaster.broadcast({ type: 'terminal:status', terminalId: id, status: 'waiting' });
-      broadcaster.broadcast({ type: 'terminal:exit', terminalId: id, sessionId: terminal.session_id });
-      sessionsDb.updatePid(db, terminal.session_id, null);
-      rollupSession(terminal.session_id);
-    }
-
-    // This structured-transport exit path is the ONLY exit signal a role-run terminal
-    // ever gets — role runs never go through ptyManager/agentService.handleTerminalExit
-    // above. Without this hook a crashed runner (or a CLI that just dies) stayed stuck
-    // 'working'/'starting' forever: no log line, no failure counted, terminal never
-    // archived (Task 6 review finding, Critical for Task 7). handleTerminalExit no-ops
-    // for any non-role terminal and for a run that already finalized via the normal
-    // settled path (see its doc comment for why that guard is load-bearing, not just
-    // defensive).
-    try {
-      rolesService.handleTerminalExit(id);
-    } catch (err) {
-      console.error('role run exit handler failed', err);
     }
   });
 
@@ -854,7 +701,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       });
     } else if (url.match(/\/api\/terminals\/[^/]+\/ws/) || url.match(/\/api\/sessions\/[^/]+\/terminal/)) {
       terminalWss.handleUpgrade(request, socket, head, (ws) => {
-        handleTerminalConnection(ws, request, ptyManager, sessionService, terminalMonitor);
+        handleTerminalConnection(ws, request, ptyManager, sessionService, terminalMonitor, statusService);
       });
     } else if (url === '/api/events') {
       eventsWss.handleUpgrade(request, socket, head, (ws) => {
@@ -935,10 +782,13 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     .then(({ kicked, skipped }) => {
       if (kicked.length) console.log(`Kickstart: resumed ${kicked.length} interrupted thread(s); skipped ${skipped.length}`);
     })
-    .catch((err) => console.error('kickstart failed', err));
+    .catch((err) => console.error('kickstart failed', err))
+    .finally(() => statusService.reconcileProcesses((id) => ptyManager.isAlive(id) || !!sessionService.structuredManagerForTerminal(id)?.isAlive(id)));
+
+  threadAutoNamer.resumePending();
 
   // Start PTY timing loop for Codex-style providers
-  const ptyTimingInterval = startPtyTimingLoop(db, ptyManager, broadcaster);
+  const ptyTimingInterval = startPtyTimingLoop(db, ptyManager, broadcaster, undefined, statusService);
   // Poll GitHub Releases for a newer version than what's running (immediately, then ~45 min)
   const updateCheckInterval = startUpdateCheckLoop(db, broadcaster);
   const agentSchedulerInterval = setInterval(() => {
@@ -966,6 +816,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     threadAutoNamer.dispose();
     ptyManager.killAll();
     structuredManager.killAll();
+    for (const manager of extraManagers.values()) manager.killAll();
     eventsWss.close();
     terminalWss.close();
     structuredWss.close();

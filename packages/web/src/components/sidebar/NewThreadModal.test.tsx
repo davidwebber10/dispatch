@@ -19,18 +19,20 @@ vi.mock('../../api/client', () => ({
     getHarnessSettings: vi.fn().mockResolvedValue({
       settings: {},
       opencodeKey: { secret: 'OPENROUTER_API_KEY', present: true },
+      opencodeModels: [
+        { label: 'Claude Opus', model: 'openrouter/~anthropic/claude-opus-latest' },
+        { label: 'Kimi', model: 'openrouter/~moonshotai/kimi-latest' },
+      ],
     }),
     putHarnessSettings: vi.fn(),
     setSecret: vi.fn().mockResolvedValue({}),
   },
 }));
 
-/** The model is a <select>; this picks by visible option label. */
+/** The model is a searchable select (combobox → listbox); this opens it and picks by label. */
 const pickModel = (label: string) => {
-  const sel = screen.getByLabelText('Model') as HTMLSelectElement;
-  const opt = Array.from(sel.options).find((o) => o.text === label);
-  if (!opt) throw new Error(`no model option "${label}"`);
-  fireEvent.change(sel, { target: { value: opt.value } });
+  fireEvent.click(screen.getByRole('combobox', { name: 'Model' }));
+  fireEvent.click(screen.getByRole('option', { name: new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`) }));
 };
 
 /** The resume list folds behind "Or resume a recent … session"; this opens it once it has loaded. */
@@ -67,6 +69,7 @@ describe('NewThreadModal', () => {
     (api.getHarnessSettings as any).mockResolvedValueOnce({
       settings: { 'claude-code': { defaultMode: 'cli' } },
       opencodeKey: { secret: 'OPENROUTER_API_KEY', present: true },
+      opencodeModels: [],
     });
     render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
     await waitFor(() => expect(screen.getByRole('button', { name: 'CLI mode' })).toHaveAttribute('aria-pressed', 'true'));
@@ -296,6 +299,49 @@ describe('NewThreadModal — mobile sheet', () => {
     fireEvent.click(screen.getByRole('switch', { name: 'Auto-archive when idle' }));
     expect(screen.getByText('Archive after')).toBeInTheDocument();
     expect((screen.getByLabelText('Duration') as HTMLInputElement).value).toBe('12');
+  });
+});
+
+describe('NewThreadModal — OpenCode', () => {
+  it('lists the models from the harness settings, preselects the first, and sends its id', async () => {
+    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'OpenCode' }));
+    const combo = await screen.findByRole('combobox', { name: 'Model' });
+    await waitFor(() => expect(combo).toHaveTextContent('Claude Opus'));
+    fireEvent.click(combo);
+    const opts = screen.getAllByRole('option');
+    expect(opts.map((o) => o.textContent)).toEqual(['Claude Opus~anthropic/claude-opus-latest', 'Kimi~moonshotai/kimi-latest']);
+    fireEvent.click(opts[1]);
+    start();
+    await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
+    expect(lastInput().type).toBe('opencode');
+    expect(lastInput().config).toEqual({ transport: 'structured', model: 'openrouter/~moonshotai/kimi-latest' });
+  });
+
+  it('the picker is searchable: typing narrows the list by label or id', async () => {
+    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'OpenCode' }));
+    const combo = await screen.findByRole('combobox', { name: 'Model' });
+    await waitFor(() => expect(combo).not.toBeDisabled());
+    fireEvent.click(combo);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search model' }), { target: { value: 'moonshot' } });
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+    expect(screen.getByRole('option', { name: /Kimi/ })).toBeInTheDocument();
+  });
+
+  it('honours a saved OpenCode default model when it is still in the list', async () => {
+    (api.getHarnessSettings as any).mockResolvedValueOnce({
+      settings: { opencode: { defaultModel: 'openrouter/~moonshotai/kimi-latest' } },
+      opencodeKey: { secret: 'OPENROUTER_API_KEY', present: true },
+      opencodeModels: [
+        { label: 'Claude Opus', model: 'openrouter/~anthropic/claude-opus-latest' },
+        { label: 'Kimi', model: 'openrouter/~moonshotai/kimi-latest' },
+      ],
+    });
+    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+    await waitFor(() => expect(api.getHarnessSettings).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: 'OpenCode' }));
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Model' })).toHaveTextContent('Kimi'));
   });
 });
 

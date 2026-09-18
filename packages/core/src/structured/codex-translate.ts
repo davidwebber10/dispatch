@@ -47,7 +47,8 @@ export interface CodexFrame {
 export type TranslatedAction =
   | { kind: 'event'; event: unknown } // push to the ring + emit 'event'
   | { kind: 'session'; sessionId: string } // emit 'session' (persist as terminal.external_id)
-  | { kind: 'busy' } // emit 'busy' (a turn started)
+  | { kind: 'busy' }
+  | { kind: 'failed' } // emit 'busy' (a turn started)
   | { kind: 'idle'; summary?: string } // emit 'idle' (turn boundary). `summary`, when present, is
   // the last completed agentMessage's own text — see CodexTranslator.lastAgentText — so the
   // manager/server can persist a REAL outcome line instead of walking the Claude-shaped event
@@ -148,6 +149,9 @@ export class CodexTranslator {
   /** Item details cached from item/started so an approval ServerRequest (whose params omit
    *  the command/diff) can still show what's being approved. Keyed by Codex itemId. */
   private itemDetails = new Map<string, any>();
+  private model: string | undefined;
+  private usageActive = false;
+  private usageTotal: { inputTokens: number; cachedInputTokens: number; outputTokens: number } | null = null;
   private lastUsage: any = null; // most recent thread/tokenUsage/updated → result footer
   /**
    * The full prose of the most recently COMPLETED agentMessage item this turn — the ONLY
@@ -164,6 +168,9 @@ export class CodexTranslator {
   /** Emit a Claude `system/init` carrying the model, so the chat header shows it (parity with
    *  Claude's system/init). Called by the manager once thread/start|resume resolves. */
   init(model?: string): TranslatedAction[] {
+    this.model = model;
+    this.usageActive = false;
+    this.usageTotal = null;
     return [{ kind: 'event', event: { type: 'system', subtype: 'init', model } }];
   }
 
@@ -195,6 +202,8 @@ export class CodexTranslator {
   }
 
   private turnStarted(): TranslatedAction[] {
+    this.usageActive = true;
+    this.lastUsage = null;
     // Reset per-turn streaming bookkeeping. message_start is emitted lazily at the first
     // streamed prose block (a tool-only turn needs none).
     this.messageStarted = false;
@@ -205,6 +214,7 @@ export class CodexTranslator {
   }
 
   private turnCompleted(params: any): TranslatedAction[] {
+    this.usageActive = false;
     const turn = params?.turn ?? {};
     const usage = this.lastUsage?.last ?? this.lastUsage?.total;
     const result: Record<string, unknown> = {
@@ -224,7 +234,7 @@ export class CodexTranslator {
     // truthiness, is what tells server.ts's listener "Codex answered for this turn" (possibly
     // with nothing) vs. "no summary at all" (the Claude path, which never sets this field).
     // See the server.ts listener's comment for the fallback this distinction guards against.
-    const boundary: TranslatedAction = looksLikeQuestion(text)
+    const boundary: TranslatedAction = turn.status === 'failed' ? { kind: 'failed' } : looksLikeQuestion(text)
       ? { kind: 'needs-help', ask: text, summary: text }
       : { kind: 'idle', summary: text };
     return [{ kind: 'event', event: result }, boundary];
@@ -308,20 +318,61 @@ export class CodexTranslator {
     this.lastUsage = tu;
     const last = tu.last ?? tu.total;
     if (!last) return [];
-    // A zero-content `assistant` event drives the chat's context-fill bar (its only source of
-    // contextTokens). input_tokens carries non-cached; cache_read carries the cached slice.
-    const nonCached = Math.max(0, (last.inputTokens ?? 0) - (last.cachedInputTokens ?? 0));
-    return [{
-      kind: 'event',
-      event: { type: 'assistant', message: { role: 'assistant', content: [], usage: { input_tokens: nonCached, cache_read_input_tokens: last.cachedInputTokens ?? 0, output_tokens: last.outputTokens ?? 0 } } },
-    }];
+    // Upstream TokenUsageInfo::append_last_usage adds each response to total;
+    // last is only the most recent response and may be repeated in notifications.
+    // Keep the context gauge separate from additive billable usage.
+    const count = (value: unknown): number => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0;
+    const read = (u: any) => ({ inputTokens: count(u.inputTokens), cachedInputTokens: count(u.cachedInputTokens), outputTokens: count(u.outputTokens) });
+    const total = tu.total ? read(tu.total) : null;
+    const prior = this.usageTotal;
+    if (total) this.usageTotal = total;
+    let delta = null;
+    if (this.usageActive && total) {
+      // With no observed baseline, count only the explicitly reported last call,
+      // never the resumed thread's entire history. A reset seeds a new baseline.
+      if (!prior) delta = tu.last ? read(tu.last) : null;
+      else if (total.inputTokens >= prior.inputTokens && total.cachedInputTokens >= prior.cachedInputTokens && total.outputTokens >= prior.outputTokens) {
+        delta = {
+          inputTokens: total.inputTokens - prior.inputTokens,
+          cachedInputTokens: total.cachedInputTokens - prior.cachedInputTokens,
+          outputTokens: total.outputTokens - prior.outputTokens,
+        };
+      }
+    }
+    const frame = (u: ReturnType<typeof read>, subtype: string): TranslatedAction => ({
+      kind: 'event', event: { type: 'assistant', subtype, message: {
+        role: 'assistant', model: this.model, content: [], usage: {
+          input_tokens: Math.max(0, u.inputTokens - u.cachedInputTokens),
+          cache_read_input_tokens: u.cachedInputTokens,
+          output_tokens: u.outputTokens,
+        },
+      } },
+    });
+    const out: TranslatedAction[] = [];
+    if (delta && (delta.inputTokens || delta.cachedInputTokens || delta.outputTokens)) {
+      const display = frame(delta, 'usage_delta') as any;
+      display.event.telemetry = { displayOnly: true };
+      out.push(display);
+    }
+    // Last so the chat context bar displays the current call, not a billing delta.
+    const gauge = frame(read(last), 'context_fill') as any;
+    if (total) gauge.event.telemetry = {
+      sessionId: params.threadId,
+      turnId: params.turnId,
+      counter: { key: 'codex-tokens', baselineOnly: !this.usageActive, totals: {
+        input: Math.max(0, total.inputTokens - total.cachedInputTokens),
+        output: total.outputTokens, cacheRead: total.cachedInputTokens, cacheCreate: 0,
+      } },
+    };
+    out.push(gauge);
+    return out;
   }
 
   private errorNotif(params: any): TranslatedAction[] {
     const message = typeof params?.message === 'string' ? params.message : (typeof params === 'string' ? params : 'Codex error');
     return [
       { kind: 'event', event: { type: 'result', subtype: 'error', is_error: true, result: message } },
-      { kind: 'idle' },
+      { kind: 'failed' },
     ];
   }
 

@@ -1,5 +1,6 @@
+import type { Harness } from '../lib/harnesses';
 import { apiPath } from '../lib/basePath';
-import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking } from './types';
+import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, OpencodeModel, OpencodeCatalogEntry } from './types';
 
 /**
  * A content block for a structured `user` turn (mirrors the daemon's wire shape). A
@@ -82,6 +83,7 @@ export const api = {
   // is sent as `{ content }` so an attached image travels as a real content block.
   // `source: 'user'` tags this as a direct human send (the single chokepoint every
   // composer funnels through), distinct from the coordinator's own agency-mcp sends.
+  getHarnessCapabilities: () => req<(Harness & { capabilities: { resume: boolean; branch: boolean; permissions: boolean; telemetry: { structured: boolean; pty: boolean } } })[]>('/api/setup/harnesses'),
   sendStructuredMessage: (id: string, content: string | ContentBlock[]) =>
     req<void>(`/api/terminals/${id}/message`, { method: 'POST', body: body({ ...(typeof content === 'string' ? { text: content } : { content }), source: 'user' }) }),
   // The membrane: the gated tool/question a structured AGENT thread is blocked on (or null).
@@ -111,8 +113,11 @@ export const api = {
 
   // Per-harness settings (server-backed — the daemon needs them at spawn time).
   getHarnessSettings: () => req<HarnessSettingsResponse>('/api/settings/harnesses'),
-  putHarnessSettings: (patch: Record<string, Partial<Record<'defaultModel' | 'defaultMode' | 'keySecret', string | null>>>) =>
+  putHarnessSettings: (patch: Record<string, Partial<Record<'defaultModel' | 'defaultMode' | 'keySecret', string | null>> & { models?: OpencodeModel[] | null }>) =>
     req<HarnessSettingsResponse>('/api/settings/harnesses', { method: 'PUT', body: body(patch) }),
+  /** Search OpenRouter's public catalog (daemon-cached) for the OpenCode "add a model" box. */
+  searchOpencodeCatalog: (q: string) =>
+    req<OpencodeCatalogEntry[]>(`/api/settings/harnesses/opencode/catalog?q=${encodeURIComponent(q)}`),
   recheckTailscale: () => req<TailscaleStatus>(`/api/setup/tailscale`),
   completeSetup: () => req<{ ok: true }>(`/api/setup/complete`, { method: 'POST' }),
   /** Runs that CLI's own install one-liner on the daemon host. Slow — minutes, not seconds. */

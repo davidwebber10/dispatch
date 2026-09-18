@@ -110,6 +110,7 @@ describe('CodexTranslator — server → Claude-shaped stream', () => {
 
   it('thread/tokenUsage/updated → a zero-content assistant usage event for the context bar', () => {
     const t = new CodexTranslator();
+    t.translate(fx.turnStarted as any);
     const out = events(t.translate(fx.tokenUsage as any));
     const usage = (fx.tokenUsage as any).params.tokenUsage.last;
     expect(out[0]).toMatchObject({ type: 'assistant', message: { content: [], usage: { cache_read_input_tokens: usage.cachedInputTokens, output_tokens: usage.outputTokens } } });
@@ -180,5 +181,39 @@ describe('buildApprovalResponse — Claude decision → Codex response envelope'
   it('permissions allow echoes the requested profile as granted', () => {
     const pending = { requestId: 'p-1', toolName: 'Permissions', input: { permissions: { network: { allowed: true } } } } as any;
     expect(buildApprovalResponse('item/permissions/requestApproval', { behavior: 'allow' }, pending)).toEqual({ permissions: { network: { allowed: true } }, scope: 'turn' });
+  });
+});
+
+describe('Codex usage accounting', () => {
+  const update = (input: number, cached: number, output: number, lastInput = input) => ({
+    method: 'thread/tokenUsage/updated', params: { tokenUsage: {
+      total: { inputTokens: input, cachedInputTokens: cached, outputTokens: output },
+      last: { inputTokens: lastInput, cachedInputTokens: cached, outputTokens: output },
+    } },
+  });
+  const billed = (t: CodexTranslator, frame: any) => events(t.translate(frame)).filter((e) => e.subtype === 'usage_delta');
+
+  it('deduplicates repeated totals and stamps the actual model', () => {
+    const t = new CodexTranslator();
+    t.init('gpt-example');
+    t.translate(fx.turnStarted as any);
+    expect(billed(t, update(100, 20, 10))[0].message).toMatchObject({ model: 'gpt-example', usage: { input_tokens: 80, output_tokens: 10 } });
+    expect(billed(t, update(100, 20, 10))).toEqual([]);
+    expect(billed(t, update(250, 50, 30))[0].message.usage).toEqual({ input_tokens: 120, cache_read_input_tokens: 30, output_tokens: 20 });
+  });
+
+  it('seeds resume history outside a turn and counts only subsequent increments', () => {
+    const t = new CodexTranslator();
+    expect(billed(t, update(1000, 200, 100))).toEqual([]);
+    t.translate(fx.turnStarted as any);
+    expect(billed(t, update(1100, 220, 110))[0].message.usage).toEqual({ input_tokens: 80, cache_read_input_tokens: 20, output_tokens: 10 });
+  });
+
+  it('never imports an unknown historical total and safely rebases reset counters', () => {
+    const t = new CodexTranslator();
+    t.translate(fx.turnStarted as any);
+    expect(billed(t, update(1000, 0, 10, 100))[0].message.usage.input_tokens).toBe(100);
+    expect(billed(t, update(20, 0, 2))).toEqual([]);
+    expect(billed(t, update(30, 0, 3))[0].message.usage.input_tokens).toBe(10);
   });
 });

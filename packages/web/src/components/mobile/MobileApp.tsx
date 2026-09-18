@@ -9,7 +9,6 @@ import { ProjectCard } from '../sidebar/ProjectCard';
 import { SortMenu } from '../sidebar/SortMenu';
 import { AllAgentsView } from '../agents/AllAgentsView';
 import { PinnedThreadsView } from './PinnedThreadsView';
-import { BoardMobile } from '../board/BoardMobile';
 import { NewProjectModal } from '../sidebar/NewProjectModal';
 import { FilesPane } from '../inspector/FilesPane';
 import { TabHost } from '../tabs/TabHost';
@@ -71,10 +70,7 @@ export function MobileApp() {
   const byProject = useTabs((s) => s.byProject);
   const editing = useAgentUI((s) => s.editing);
   const reconnectGen = useReconnect((s) => s.gen);
-  // Mobile-only board mode (Settings → Appearance → Mobile view): the level-0 "Projects" tab
-  // shows the cross-project board instead of the projects list when set. No new bottom tab —
-  // the Settings mode picker is the sole entry point, so this is the only place it's read.
-  const mobileViewMode = useSettings((s) => s.mobileViewMode);
+
 
   // Initialise straight from the URL so a reload restores the page (no flash to
   // the index, and the rail renders at the right level without an entry slide).
@@ -217,7 +213,7 @@ export function MobileApp() {
             {/* One-line top bar: the project search lives IN the header beside the app icon
                 (it used to be a second full-width row below it). Sized down to the header's
                 50px; fontSize stays 16 — anything smaller makes iOS zoom the page on focus. */}
-            {bottomTab === 'projects' && mobileViewMode !== 'board' && (
+            {bottomTab === 'projects' && (
               <>
                 <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search projects"
                   style={{ flex: 1, minWidth: 0, height: 36, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 10, color: 'var(--color-text-primary)', fontSize: 16 }} />
@@ -269,8 +265,7 @@ export function MobileApp() {
               <AllAgentsView onOpenAgent={openAgentFromList} />
             ) : bottomTab === 'pinned' ? (
               <PinnedThreadsView onOpenThread={openThreadFromList} />
-            ) : mobileViewMode === 'board' ? (
-              <BoardMobile onOpenThread={openThreadFromList} />
+
             ) : (
             <>
             {/* The search/sort/new controls moved up into the header (one-line top bar). */}

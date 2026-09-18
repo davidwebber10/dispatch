@@ -28,6 +28,43 @@ beforeEach(() => {
 const statusEvents = () => broadcaster.broadcast.mock.calls.map((c) => c[0]).filter((e: any) => e.type === 'terminal:status');
 
 describe('StatusService', () => {
+  it('opening a CLI without a prompt is waiting, not working', () => {
+    new StatusService(db, broadcaster).ingest('claude', 'term', { hook_event_name: 'SessionStart' });
+    expect(terminalsDb.getById(db, 'term')?.status).toBe('waiting');
+  });
+
+  it('ignores unknown hook providers and hooks for another harness', () => {
+    const service = new StatusService(db, broadcaster);
+    for (const provider of ['unknown', 'toString', 'grok', 'codex']) {
+      service.ingest(provider, 'term', { hook_event_name: 'UserPromptSubmit', type: 'agent-turn-complete', session_id: 'foreign' });
+    }
+    expect(terminalsDb.getById(db, 'term')?.external_id).toBeNull();
+    expect(broadcaster.broadcast).not.toHaveBeenCalled();
+  });
+
+  it('settles Grok standalone Idle and consumes Codex declarations at its boundary', () => {
+    const service = new StatusService(db, broadcaster);
+    terminalsDb.create(db, { id: 'g', sessionId: 'proj', type: 'grok', label: 'G' });
+    service.markWorking('g');
+    service.ingest('grok', 'g', { hook_event_name: 'Idle' });
+    expect(terminalsDb.getById(db, 'g')?.status).toBe('waiting');
+    terminalsDb.create(db, { id: 'c', sessionId: 'proj', type: 'codex', label: 'C', config: { pendingDeclaration: { state: 'needs_you', summary: 'Need an answer' } } });
+    service.ingest('codex', 'c', { type: 'agent-turn-complete' });
+    expect(terminalsDb.getById(db, 'c')?.status).toBe('needs_input');
+  });
+
+  it.each(['claude-code', 'codex', 'grok', 'opencode'] as const)('reconciles %s process exit and project status', (type) => {
+    terminalsDb.create(db, { id: 'exit', sessionId: 'proj', type, label: type });
+    const service = new StatusService(db, broadcaster);
+    service.markWorking('exit');
+    service.markExited('exit', 0);
+    expect(terminalsDb.getById(db, 'exit')?.status).toBe('waiting');
+    expect(sessionsDb.getById(db, 'proj')?.status).toBe('waiting');
+    service.markWorking('exit');
+    service.markExited('exit', 1);
+    expect(terminalsDb.getById(db, 'exit')?.status).toBe('error');
+  });
+
   it('captures session_id from the first claude event (fixes unlinked threads)', () => {
     new StatusService(db, broadcaster).ingest('claude', 'term', { hook_event_name: 'SessionStart', session_id: 'sid-1' });
     expect(terminalsDb.getById(db, 'term')?.external_id).toBe('sid-1');

@@ -12,7 +12,8 @@ const RKEY = 'dispatch:right-collapsed';
 const VKEY = 'dispatch:view';
 const loadBool = (k: string): boolean => { try { return localStorage.getItem(k) === '1'; } catch { return false; } };
 const saveBool = (k: string, v: boolean): void => { try { localStorage.setItem(k, v ? '1' : '0'); } catch { /* ignore */ } };
-const VIEWS: readonly View[] = ['workspace', 'board', 'analytics', 'settings'];
+// Board is temporarily hidden; restore saved Board selections to Threads.
+const VIEWS: readonly View[] = ['workspace', 'analytics', 'settings'];
 // Exported so mount.test.tsx can exercise the read-back path directly (pre-seed
 // localStorage, call this) rather than only the write path — the read-back is
 // what regressed originally (the old check recognised only 'board').
@@ -48,7 +49,7 @@ export const useUI = create<{
   clearOpenThread: () => void;
 }>((set, get) => ({
   view: loadView(),
-  setView: (view) => { saveView(view); set({ view }); },
+  setView: (requested) => { const view = requested === 'board' ? 'workspace' : requested; saveView(view); set({ view }); },
   inspectorTab: 'details',
   setInspectorTab: (inspectorTab) => set({ inspectorTab }),
   leftCollapsed: loadBool(LKEY),

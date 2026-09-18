@@ -184,7 +184,7 @@ describe('analytics queries', () => {
    * no dollars, and marks the figure partial so the tile never understates
    * silently.
    */
-  it('values priced models at list rates and unpriced models at their reported cost', () => {
+  it('keeps list-price estimates separate from reported cost', () => {
     turn(d, {
       id: 'oc', startedAt: '2026-08-12T10:00:00.000Z', endedAt: '2026-08-12T10:00:10.000Z',
       provider: 'opencode', model: 'openrouter/z-ai/glm-5.2',
@@ -192,8 +192,8 @@ describe('analytics queries', () => {
     });
     const s = summary(d, {});
     // opus: (101 in × $5 + 52 out × $25) / 1e6; sonnet: (10 × $3 + 5 × $15) / 1e6
-    expect(s.apiValueUsd).toBeCloseTo(0.001805 + 0.000105 + 0.0024469632, 9);
-    expect(s.valueIsPartial).toBe(false);
+    expect(s.apiValueUsd).toBeCloseTo(0.001805 + 0.000105, 9);
+    expect(s.valueIsPartial).toBe(true);
   });
 
   it('flags the value partial when tokens exist that are neither priced nor costed', () => {
@@ -224,7 +224,8 @@ describe('analytics queries', () => {
     });
     const s = summary(d, {});
     expect(s.valueIsPartial).toBe(true);
-    expect(s.apiValueUsd).toBeCloseTo(0.00191 + 0.002, 9);
+    expect(s.apiValueUsd).toBeCloseTo(0.00191, 9);
+    expect(s.reportedCostUsd).toBeCloseTo(0.002, 9);
   });
 
   it('the api value respects the same filters as every other figure', () => {
@@ -234,8 +235,9 @@ describe('analytics queries', () => {
       input: 1311, output: 6, cacheRead: 7425, costUsd: 0.0024469632,
     });
     const s = summary(d, { provider: 'opencode' });
-    expect(s.apiValueUsd).toBeCloseTo(0.0024469632, 9);
-    expect(s.valueIsPartial).toBe(false);
+    expect(s.apiValueUsd).toBe(0);
+    expect(s.reportedCostUsd).toBeCloseTo(0.0024469632, 9);
+    expect(s.valueIsPartial).toBe(true);
   });
 
   it('reports all-time records', () => {

@@ -1,17 +1,11 @@
 import { useState } from 'react';
 import { useConnection } from '../../stores/connection';
-import { useSettings, ACCENTS, formatSidebarLimit, stepSidebarLimit, type MobileViewMode } from '../../stores/settings';
+import { useSettings, ACCENTS, formatSidebarLimit, stepSidebarLimit } from '../../stores/settings';
 import { useServers, currentLabel } from '../../stores/servers';
 import { useSetup } from '../../stores/setup';
 import { UpdatesSection } from './UpdatesSection';
 import { MultiPaneSetting } from '../panes/MultiPaneSetting';
-import { ViewModeMiniature } from './ViewModeMiniature';
 import { sectionLabel, row, item, chip, Divider, Toggle, Stepper } from './ui';
-
-const VIEW_MODES: { mode: MobileViewMode; label: string }[] = [
-  { mode: 'threads', label: 'Threads' },
-  { mode: 'board', label: 'Board' },
-];
 
 function ServersSection() {
   const servers = useServers((s) => s.servers);
@@ -67,7 +61,6 @@ export function GeneralSection({ onDone }: { onDone?: () => void }) {
   const projectFontSize = useSettings((s) => s.projectFontSize);
   const accent = useSettings((s) => s.accent);
   const density = useSettings((s) => s.density);
-  const mobileViewMode = useSettings((s) => s.mobileViewMode);
   const sidebarMaxThreads = useSettings((s) => s.sidebarMaxThreads);
   const sidebarMaxFiles = useSettings((s) => s.sidebarMaxFiles);
   const showPinnedFiles = useSettings((s) => s.showPinnedFiles);
@@ -170,34 +163,7 @@ export function GeneralSection({ onDone }: { onDone?: () => void }) {
             </label>
           </div>
         </div>
-        <div style={{ ...row, alignItems: 'flex-start' }}>
-          <span style={{ ...item, paddingTop: 3 }}>Mobile view</span>
-          <div style={{ display: 'flex', gap: 10 }}>
-            {VIEW_MODES.map(({ mode, label }) => {
-              const selected = mobileViewMode === mode;
-              return (
-                <button
-                  key={mode}
-                  onClick={() => useSettings.getState().setMobileViewMode(mode)}
-                  aria-pressed={selected}
-                  title={label}
-                  style={{
-                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
-                    width: 96, padding: '8px 8px 10px', cursor: 'pointer',
-                    background: '#1b1b1e',
-                    border: selected ? '2px solid var(--color-accent)' : '1px solid #2c2c32',
-                    borderRadius: 10,
-                  }}
-                >
-                  <div style={{ width: '100%', background: 'var(--color-elevated)', borderRadius: 7, overflow: 'hidden' }}>
-                    <ViewModeMiniature mode={mode} />
-                  </div>
-                  <span style={{ fontSize: 11.5, fontWeight: selected ? 600 : 400, color: selected ? 'var(--color-text-primary)' : 'var(--color-text-secondary)' }}>{label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
+
       </div>
       <Divider />
 

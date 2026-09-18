@@ -1,3 +1,9 @@
+import { EventEmitter } from 'node:events';
+import { subscribeHarnessEvents } from '../runtime/adapter.js';
+import type { StatusService } from '../status/service.js';
+import { recordHarnessUsage } from '../analytics/recorder.js';
+import { getProvider } from '../providers/registry.js';
+import * as terminalsDb from '../db/terminals.js';
 import fs from 'fs';
 import path from 'path';
 import { StringDecoder } from 'string_decoder';
@@ -196,7 +202,11 @@ interface RunStreamState {
 
 export class AgentService {
   /** Live stream parsers keyed by the runner terminalId. */
+  private readonly telemetry = new EventEmitter();
+  private lifecycle?: StatusService;
+  setLifecycleService(service: StatusService): void { this.lifecycle = service; }
   private runStreams = new Map<string, RunStreamState>();
+  ownsTerminalStream(terminalId: string): boolean { return this.runStreams.has(terminalId); }
   /** Role-run delegate, wired post-construction (see RoleRunner doc comment above). */
   private roleRunner?: RoleRunner;
 
@@ -206,7 +216,12 @@ export class AgentService {
     private broadcaster: EventBroadcaster,
     /** Directory for persisted per-run JSONL transcripts (omit to skip persistence, e.g. in tests). */
     private runsDir?: string,
-  ) {}
+  ) {
+    subscribeHarnessEvents(this.telemetry, id => db.open ? terminalsDb.getById(db,id)?.type : undefined, event => {
+      if (this.lifecycle) this.lifecycle.accept(event);
+      else if (recordHarnessUsage(db,event)) broadcaster.broadcast({ type: 'analytics-dirty' });
+    }, 'runner');
+  }
 
   /** Inject the role-run delegate (RolesService) after both services exist — see RoleRunner. */
   setRoleRunner(runner: RoleRunner): void {
@@ -479,10 +494,17 @@ export class AgentService {
         transcriptPath = null;
       }
     }
+    this.telemetry.emit('busy', terminalId);
     this.runStreams.set(terminalId, {
       runId,
       terminalId,
-      parser: new RunStreamParser(provider),
+      parser: new RunStreamParser(provider, (frame) => {
+        const native = frame as any;
+        const sessionId = native?.session_id ?? (native?.type === 'thread.started' ? native.thread_id : null);
+        if (typeof sessionId === 'string') terminalsDb.updateExternalId(this.db, terminalId, sessionId);
+        const normalized = getProvider(provider).telemetry.runnerFrame(frame) as any;
+        this.telemetry.emit('event', terminalId, { ...normalized, telemetry: { ...normalized?.telemetry, runner: true, counterScope: runId } });
+      }),
       decoder: new StringDecoder('utf8'),
       transcriptPath,
       finalized: false,
@@ -513,6 +535,7 @@ export class AgentService {
   }
 
   private handleRunEvent(state: RunStreamState, ev: RunEvent): void {
+    if (ev.kind === 'init' && ev.sessionId) terminalsDb.updateExternalId(this.db, state.terminalId, ev.sessionId);
     if (ev.kind === 'assistant-text') state.lastAssistantText = ev.text;
     if ((ev.kind === 'init' || ev.kind === 'result') && ev.model) state.model = ev.model;
 
@@ -530,6 +553,7 @@ export class AgentService {
   private finalizeFromResult(state: RunStreamState, ev: Extract<RunEvent, { kind: 'result' }>): void {
     if (state.finalized) return;
     state.finalized = true;
+    this.telemetry.emit(ev.isError ? 'failed' : 'idle', state.terminalId);
     const row = agentsDb.finalizeRun(this.db, state.runId, {
       status: ev.isError ? 'failed' : 'succeeded',
       error: ev.isError ? (ev.result ?? 'Agent reported an error') : null,
@@ -546,13 +570,14 @@ export class AgentService {
   }
 
   /** Flush + close a run's stream (on completion or cancellation). Idempotent. */
-  private endRunStream(terminalId: string): void {
+  private endRunStream(terminalId: string, exitCode = 0): void {
     const state = this.runStreams.get(terminalId);
     if (!state) return;
     this.runStreams.delete(terminalId);
     try {
       for (const ev of state.parser.flush()) this.handleRunEvent(state, ev);
     } catch { /* best effort */ }
+    this.telemetry.emit('exit', terminalId, exitCode);
   }
 
   /**
@@ -565,7 +590,7 @@ export class AgentService {
   handleTerminalExit(terminalId: string, exitCode: number): AgentRun | null {
     // Flush any buffered final events first — a `result` event in the last chunk
     // finalizes the run (with full telemetry) before we fall back to exit code.
-    this.endRunStream(terminalId);
+    this.endRunStream(terminalId, exitCode);
 
     const row = this.db
       .prepare('SELECT id, status FROM agent_runs WHERE terminal_id = ? ORDER BY created_at DESC LIMIT 1')
