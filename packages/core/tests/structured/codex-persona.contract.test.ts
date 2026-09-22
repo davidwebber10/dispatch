@@ -27,6 +27,7 @@ import { detectProvider } from '../../src/setup/detect.js';
 
 const CANARY = 'Begin every single reply with the exact word MELON in capitals, then a space.';
 const TURN_TIMEOUT_MS = 80_000;
+const HANDSHAKE_TIMEOUT_MS = 15_000;
 const TEST_TIMEOUT_MS = 90_000;
 
 const codexStatus = await detectProvider('codex').catch(() => ({ installed: false, signedIn: false as const }));
@@ -36,7 +37,34 @@ const skipReason = !codexStatus.installed
     ? 'codex CLI not signed in'
     : '';
 
+// Failures that mean "this machine/run can't exercise the channel right now", not "the
+// persona channel regressed" — these are soft-skipped instead of failing the suite:
+//   - AUTH_FAILURE_RE:  an expired/missing login the cheap sign-in probe didn't catch.
+//   - SPAWN_FAILURE_RE: `codex` binary missing or unspawnable (ENOENT/EACCES).
+//   - TURN_NOT_DONE_RE: the model turn ended via turn/failed or turn/ended instead of
+//     turn/completed (rate limit, network blip, refusal) — a live-infra hiccup, not a protocol
+//     regression. A genuine turn/completed missing the canary still fails loudly below.
 const AUTH_FAILURE_RE = /auth|sign.?in|log.?in|unauthorized|401|forbidden|credential/i;
+const SPAWN_FAILURE_RE = /enoent|eacces|spawn\s+codex/i;
+const TURN_NOT_DONE_RE = /^turn did not complete/i;
+
+function isSoftSkipFailure(err: unknown): boolean {
+  const msg = String((err as Error)?.message ?? err);
+  return AUTH_FAILURE_RE.test(msg) || SPAWN_FAILURE_RE.test(msg) || TURN_NOT_DONE_RE.test(msg);
+}
+
+/** Races `promise` against a timeout, rejecting with `label` if the timeout wins. Mirrors the
+ *  turnDone timeout pattern below, but rejects (rather than resolving a sentinel) since a
+ *  hung handshake is not a valid protocol state to hand back to the caller. */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
 
 /**
  * A minimal JSON-RPC 2.0 client over a real `codex app-server` child, just enough to run one
@@ -52,6 +80,12 @@ function withCodexAppServer<T>(run: (rpc: {
 }) => Promise<T>): Promise<T> {
   const child: ChildProcessWithoutNullStreams = spawn('codex', ['app-server'], { stdio: ['pipe', 'pipe', 'pipe'] });
   child.stderr.on('data', () => { /* swallow: keep failures readable, not noisy */ });
+  // Without this handler, a spawn failure (e.g. ENOENT if `codex` isn't on PATH) emits an
+  // unhandled 'error' event, which Node treats as fatal and crashes the vitest worker instead
+  // of letting the test soft-skip. Route it into the same promise `run(rpc)` races against.
+  const spawnError = new Promise<never>((_resolve, reject) => {
+    child.on('error', (err) => reject(err));
+  });
   const rl = readline.createInterface({ input: child.stdout });
   let nextId = 1;
   const pending = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void }>();
@@ -94,7 +128,7 @@ function withCodexAppServer<T>(run: (rpc: {
     },
   };
 
-  return run(rpc).finally(() => {
+  return Promise.race([run(rpc), spawnError]).finally(() => {
     try { rl.close(); } catch { /* noop */ }
     try { child.kill(); } catch { /* already gone */ }
   });
@@ -109,26 +143,45 @@ async function runCanaryTurn(threadStartExtra: Record<string, unknown>): Promise
       if (/item|turn/.test(method)) texts.push(`${method} ${JSON.stringify(params).slice(0, 2000)}`);
     });
 
-    await rpc.request('initialize', {
-      clientInfo: { name: 'dispatch-contract-test', title: 'Dispatch contract test', version: '0.0.1' },
-      capabilities: { experimentalApi: true, requestAttestation: false },
-    });
+    await withTimeout(
+      rpc.request('initialize', {
+        clientInfo: { name: 'dispatch-contract-test', title: 'Dispatch contract test', version: '0.0.1' },
+        capabilities: { experimentalApi: true, requestAttestation: false },
+      }),
+      HANDSHAKE_TIMEOUT_MS,
+      'initialize',
+    );
     rpc.notify('initialized');
 
     const model = process.env.CODEX_TEST_MODEL;
-    const started = await rpc.request('thread/start', {
-      cwd: os.tmpdir(),
-      approvalPolicy: 'never',
-      sandbox: 'read-only',
-      ...(model ? { model } : {}),
-      ...threadStartExtra,
-    });
+    const started = await withTimeout(
+      rpc.request('thread/start', {
+        cwd: os.tmpdir(),
+        approvalPolicy: 'never',
+        sandbox: 'read-only',
+        ...(model ? { model } : {}),
+        ...threadStartExtra,
+      }),
+      HANDSHAKE_TIMEOUT_MS,
+      'thread/start',
+    );
     const threadId = started?.thread?.id;
     if (typeof threadId !== 'string' || !threadId) throw new Error('thread/start returned no threadId');
 
-    const turnDone = new Promise<string>((resolve) => {
+    // turn/completed is the only terminal notification that means "the model actually ran the
+    // turn and we can trust the collected text". turn/failed and turn/ended are terminal but
+    // non-completing (rate limit, network blip, refusal, cancellation) — those must NOT be
+    // treated as success, so they reject into the soft-skip path instead of letting the caller
+    // fall through to `expect(blob).toMatch(/MELON/)` and fail on a live-infra hiccup.
+    const turnDone = new Promise<string>((resolve, reject) => {
       rpc.onNotification((method) => {
-        if (/turn\/(completed|failed|ended)|turn(Completed|Failed)/.test(method)) resolve(method);
+        if (/turn\/completed|turnCompleted/.test(method)) {
+          resolve(method);
+          return;
+        }
+        if (/turn\/(failed|ended)|turnFailed/.test(method)) {
+          reject(new Error(`turn did not complete: received ${method} instead of turn/completed`));
+        }
       });
       setTimeout(() => resolve('wait-timeout'), TURN_TIMEOUT_MS);
     });
@@ -150,7 +203,7 @@ describe.skipIf(skipReason !== '')(`Codex persona injection (live contract)${ski
       try {
         blob = await runCanaryTurn({ developerInstructions: CANARY });
       } catch (err) {
-        if (AUTH_FAILURE_RE.test(String((err as Error)?.message ?? err))) return; // skip: live auth failure
+        if (isSoftSkipFailure(err)) return; // skip: live auth/spawn/turn-failure hiccup
         throw err;
       }
       expect(blob).toMatch(/MELON/);
@@ -169,7 +222,7 @@ describe.skipIf(skipReason !== '')(`Codex persona injection (live contract)${ski
       try {
         blob = await runCanaryTurn({ settings: { developer_instructions: CANARY } });
       } catch (err) {
-        if (AUTH_FAILURE_RE.test(String((err as Error)?.message ?? err))) return; // skip: live auth failure
+        if (isSoftSkipFailure(err)) return; // skip: live auth/spawn/turn-failure hiccup
         throw err;
       }
       expect(blob).not.toMatch(/MELON/);
