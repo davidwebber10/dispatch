@@ -345,6 +345,7 @@ export interface HarnessSettingsResponse {
   opencodeKey: { secret: string; present: boolean };
   /** The EFFECTIVE OpenCode picker list: the user's, else the daemon's curated defaults. */
   opencodeModels: OpencodeModel[];
+  overseerWorkers?: { byType: Record<string, { harness?: string; model?: string }> };
 }
 /** A row of OpenRouter's catalog, as served by GET /api/settings/harnesses/opencode/catalog. */
 export interface OpencodeCatalogEntry {
