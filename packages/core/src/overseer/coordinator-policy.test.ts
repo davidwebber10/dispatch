@@ -1,7 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { COORDINATOR_DISALLOWED_TOOLS, coordinatorToolPolicy } from './coordinator-policy.js';
+import { COORDINATOR_DISALLOWED_TOOLS, coordinatorToolPolicy, makeCoordinatorPolicy } from './coordinator-policy.js';
 
 const memoryFile = path.join(os.homedir(), '.claude', 'projects', '-x', 'memory', 'MEMORY.md');
 
@@ -58,5 +58,43 @@ describe('coordinatorToolPolicy', () => {
 
   it('exports the spawn-time disallow list matching the tools the policy denies', () => {
     expect(COORDINATOR_DISALLOWED_TOOLS).toEqual(['Agent', 'Task', 'Workflow']);
+  });
+});
+
+describe('makeCoordinatorPolicy', () => {
+  it('allows a Write under the given memory dir and denies one under ~/.claude', () => {
+    const policy = makeCoordinatorPolicy('/home/x/.codex');
+    expect(policy('Write', { file_path: '/home/x/.codex/projects/-x/memory/MEMORY.md' })).toEqual({ allow: true });
+    const d = policy('Write', { file_path: memoryFile });
+    expect(d.allow).toBe(false);
+  });
+
+  it('denies a mixed changes[] patch (one path outside the memory dir)', () => {
+    const policy = makeCoordinatorPolicy('/home/x/.codex');
+    const d = policy('Write', {
+      changes: [{ path: '/home/x/.codex/memory/MEMORY.md' }, { path: '/repo/src/app.ts' }],
+    });
+    expect(d.allow).toBe(false);
+    if (!d.allow) expect(d.message).toContain('/home/x/.codex');
+  });
+
+  it('allows a changes[] patch when every path is under the memory dir', () => {
+    const policy = makeCoordinatorPolicy('/home/x/.codex');
+    const d = policy('Write', {
+      changes: [{ path: '/home/x/.codex/memory/MEMORY.md' }, { path: '/home/x/.codex/memory/other.md' }],
+    });
+    expect(d).toEqual({ allow: true });
+  });
+
+  it('denies a changes[] patch with no valid paths', () => {
+    const policy = makeCoordinatorPolicy('/home/x/.codex');
+    expect(policy('Write', { changes: [] }).allow).toBe(false);
+  });
+
+  it('leaves coordinatorToolPolicy default behavior unchanged (~/.claude)', () => {
+    expect(coordinatorToolPolicy('Write', { file_path: memoryFile })).toEqual({ allow: true });
+    const d = coordinatorToolPolicy('Write', { file_path: '/repo/src/app.ts' });
+    expect(d.allow).toBe(false);
+    if (!d.allow) expect(d.message).toContain('.claude');
   });
 });

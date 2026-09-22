@@ -10,9 +10,12 @@ export type PolicyDecision = { allow: true } | { allow: false; message: string }
 
 const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 
-const DELEGATE_MSG =
-  'Control Plane policy: coordinators never modify repo files themselves — spawn an implementer agent ' +
-  '(spawn_agent) for this change. (Writes under ~/.claude — your own memory and plans — are allowed.)';
+function delegateMsg(memoryDir: string): string {
+  return (
+    'Control Plane policy: coordinators never modify repo files themselves — spawn an implementer agent ' +
+    `(spawn_agent) for this change. (Writes under ${memoryDir} — your own memory and plans — are allowed.)`
+  );
+}
 const SHIP_MSG =
   'Control Plane policy: repo mutations and ship-shaped commands (git commit/push/merge, gh pr ' +
   'merge/create, gh workflow run, gh release, publish, dispatch update/release, terraform apply) are ' +
@@ -42,20 +45,38 @@ const BLOCKED_BASH: readonly RegExp[] = [
   /\bterraform\s+(apply|destroy)\b/,
 ];
 
-/** The ground rules for a coordinator thread's own tool use. Pure — no I/O, no state. */
-export function coordinatorToolPolicy(toolName: string, input: unknown): PolicyDecision {
-  const inp = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
-  if (toolName === 'Agent' || toolName === 'Task' || toolName === 'Workflow') return { allow: false, message: AGENT_MSG };
-  if (FILE_TOOLS.has(toolName)) {
-    const target = [inp.file_path, inp.notebook_path].find((v): v is string => typeof v === 'string') ?? '';
-    const claudeDir = path.join(os.homedir(), '.claude') + path.sep;
-    if (target.startsWith(claudeDir)) return { allow: true };
-    return { allow: false, message: DELEGATE_MSG };
+/** Every path a file-write-shaped tool call touches: a single `file_path`/`notebook_path`,
+ *  or (for the Codex ApplyPatch→Write adaptation) every `path` in a `changes` array. */
+function extractWritePaths(inp: Record<string, unknown>): string[] {
+  if (Array.isArray(inp.changes)) {
+    return inp.changes
+      .map((change) => (change && typeof change === 'object' ? (change as Record<string, unknown>).path : undefined))
+      .filter((v): v is string => typeof v === 'string');
   }
-  if (toolName === 'Bash') {
-    const cmd = typeof inp.command === 'string' ? inp.command : '';
-    if (BLOCKED_BASH.some((re) => re.test(cmd))) return { allow: false, message: SHIP_MSG };
-    return { allow: true };
-  }
-  return { allow: true };
+  const single = [inp.file_path, inp.notebook_path].find((v): v is string => typeof v === 'string');
+  return single !== undefined ? [single] : [];
 }
+
+/** Builds the ground rules for a coordinator thread's own tool use, scoped to `memoryDir` —
+ *  the one directory a coordinator may write to (its own memory/plans). Pure — no I/O, no state. */
+export function makeCoordinatorPolicy(memoryDir: string): (toolName: string, input: unknown) => PolicyDecision {
+  const memoryDirPrefix = memoryDir.replace(/[/\\]+$/, '') + path.sep;
+  return function coordinatorToolPolicy(toolName: string, input: unknown): PolicyDecision {
+    const inp = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+    if (toolName === 'Agent' || toolName === 'Task' || toolName === 'Workflow') return { allow: false, message: AGENT_MSG };
+    if (FILE_TOOLS.has(toolName)) {
+      const targets = extractWritePaths(inp);
+      if (targets.length > 0 && targets.every((t) => t.startsWith(memoryDirPrefix))) return { allow: true };
+      return { allow: false, message: delegateMsg(memoryDir) };
+    }
+    if (toolName === 'Bash') {
+      const cmd = typeof inp.command === 'string' ? inp.command : '';
+      if (BLOCKED_BASH.some((re) => re.test(cmd))) return { allow: false, message: SHIP_MSG };
+      return { allow: true };
+    }
+    return { allow: true };
+  };
+}
+
+/** Back-compat default: the Claude Code coordinator's memory dir. */
+export const coordinatorToolPolicy = makeCoordinatorPolicy(path.join(os.homedir(), '.claude'));
