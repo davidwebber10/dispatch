@@ -10,21 +10,26 @@ const send = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 const notify = (method, params) => send({ jsonrpc: '2.0', method, params });
 const respond = (id, result) => send({ jsonrpc: '2.0', id, result });
 
-// Opt-in request log for tests that need to inspect exact JSON-RPC params the manager sent
-// (e.g. proving `thread/start` carries top-level `developerInstructions`) without adding any
+// Opt-in request/response log for tests that need to inspect exact JSON-RPC frames the manager
+// sent (e.g. proving `thread/start` carries top-level `developerInstructions`, or that a denied
+// approval's WIRE response is the decline envelope and not an accept) without adding any
 // test-only seam to the manager itself.
 const logPath = process.env.CODEX_FAKE_LOG;
 const logRequest = (method, params) => {
   if (!logPath) return;
   fs.appendFileSync(logPath, JSON.stringify({ method, params }) + '\n');
 };
+const logResponse = (method, result) => {
+  if (!logPath) return;
+  fs.appendFileSync(logPath, JSON.stringify({ response: method, result }) + '\n');
+};
 
 const THREAD = 'thread-fake-1';
 const TURN = 'turn-fake-1';
 let serverReqId = 100; // server→client request ids live in the server's own id space
 const pendingApprovalThreadIds = new Map(); // serverReqId → the threadId the approval request was sent against
-// serverReqId → { itemType, itemId, command } for approval kinds other than the default
-// fileChange (see the generic response handler below), so it can complete the RIGHT item.
+// serverReqId → { method, itemType, itemId, command, changes } for the approval kind, so the
+// generic response handler below can log the right method and complete the RIGHT item.
 const pendingApprovalMeta = new Map();
 
 const rl = readline.createInterface({ input: process.stdin });
@@ -42,14 +47,21 @@ rl.on('line', (line) => {
     const meta = pendingApprovalMeta.get(msg.id);
     pendingApprovalThreadIds.delete(msg.id);
     pendingApprovalMeta.delete(msg.id);
-    if (meta?.itemType === 'commandExecution') {
-      // The command-execution approval was answered (accept OR decline) → complete the item
-      // (a real declined command wouldn't actually run, but the fake doesn't need to model
-      // that — tests only assert on the manager's OWN response/event, not this echo) + turn.
-      notify('item/completed', { threadId: tid, turnId: TURN, item: { type: 'commandExecution', id: meta.itemId, command: meta.command, cwd: '/tmp', aggregatedOutput: 'ok\n', status: 'completed' }, completedAtMs: 4 });
-    } else {
-      // The file-change approval was answered → finish the tool.
-      notify('item/completed', { threadId: tid, turnId: TURN, item: { type: 'fileChange', id: 'fc-1', changes: [{ path: '/tmp/hello.txt', kind: { type: 'add' }, diff: 'hi\n' }], status: 'completed' }, completedAtMs: 4 });
+    logResponse(meta?.method ?? 'unknown', msg.result);
+    switch (meta?.itemType) {
+      case 'commandExecution':
+        // The command-execution approval was answered (accept OR decline) → complete the item
+        // (a real declined command wouldn't actually run, but the fake doesn't need to model
+        // that — tests only assert on the manager's OWN response/event, not this echo) + turn.
+        notify('item/completed', { threadId: tid, turnId: TURN, item: { type: 'commandExecution', id: meta.itemId, command: meta.command, cwd: '/tmp', aggregatedOutput: 'ok\n', status: 'completed' }, completedAtMs: 4 });
+        break;
+      case 'permissions':
+        // A permissions/sandbox escalation isn't backed by a completable tool item — nothing
+        // to finish here besides the turn.
+        break;
+      default:
+        // The file-change approval was answered → finish the tool.
+        notify('item/completed', { threadId: tid, turnId: TURN, item: { type: 'fileChange', id: meta?.itemId ?? 'fc-1', changes: meta?.changes ?? [{ path: '/tmp/hello.txt', kind: { type: 'add' }, diff: 'hi\n' }], status: 'completed' }, completedAtMs: 4 });
     }
     notify('turn/completed', { threadId: tid, turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'completed', durationMs: 42 } });
     return;
@@ -108,6 +120,11 @@ rl.on('line', (line) => {
 
     const execMatch = text.match(/^exec (.+)$/i);
     const askMatch = /^ask /i.test(text);
+    const escalateMatch = /^escalate/i.test(text);
+    // `patch <path1>,<path2>,...` — a fileChange approval whose changes touch exactly the given
+    // paths (Fix 3: multi-file ApplyPatch policy tests need deterministic, caller-chosen paths,
+    // unlike the single hardcoded /tmp/hello.txt the plain `approve` trigger below sends).
+    const patchMatch = text.match(/^patch (.+)$/i);
     if (execMatch) {
       // A shell command that requires approval (Task 5 policy tests): item/started carries the
       // command, then the ServerRequest fires and we WAIT for the client's decision (accept,
@@ -116,20 +133,38 @@ rl.on('line', (line) => {
       notify('item/started', { threadId: tid, turnId: TURN, item: { type: 'commandExecution', id: 'cmd-1', command, cwd: '/tmp', status: 'inProgress' }, startedAtMs: 3 });
       const reqId = serverReqId++;
       pendingApprovalThreadIds.set(reqId, tid);
-      pendingApprovalMeta.set(reqId, { itemType: 'commandExecution', itemId: 'cmd-1', command });
+      pendingApprovalMeta.set(reqId, { method: 'item/commandExecution/requestApproval', itemType: 'commandExecution', itemId: 'cmd-1', command });
       send({ jsonrpc: '2.0', id: reqId, method: 'item/commandExecution/requestApproval', params: { threadId: tid, turnId: TURN, itemId: 'cmd-1', command, cwd: '/tmp', startedAtMs: 3, reason: null } });
     } else if (askMatch) {
       // The AskUserQuestion analogue (Task 5's alwaysSurface exemption test): fires the
       // ServerRequest and never resolves it itself — the test only asserts it SURFACED.
       const reqId = serverReqId++;
       pendingApprovalThreadIds.set(reqId, tid);
+      pendingApprovalMeta.set(reqId, { method: 'item/tool/requestUserInput', itemType: 'askUserInput' });
       send({ jsonrpc: '2.0', id: reqId, method: 'item/tool/requestUserInput', params: { threadId: tid, turnId: TURN, questions: [{ id: 'q1', header: 'Choice', question: 'Pick one', options: ['A', 'B'] }] } });
+    } else if (escalateMatch) {
+      // A permissions/sandbox escalation request (Fix 1 test): the coordinator self-escalation
+      // guard must decline this outright for a governed thread, with no item lifecycle needed.
+      const reqId = serverReqId++;
+      pendingApprovalThreadIds.set(reqId, tid);
+      pendingApprovalMeta.set(reqId, { method: 'item/permissions/requestApproval', itemType: 'permissions', itemId: 'perm-1' });
+      send({ jsonrpc: '2.0', id: reqId, method: 'item/permissions/requestApproval', params: { threadId: tid, turnId: TURN, itemId: 'perm-1', permissions: { network: true, sandbox: 'danger-full-access' }, cwd: '/tmp', reason: null } });
+    } else if (patchMatch) {
+      const paths = patchMatch[1].split(',').map((p) => p.trim()).filter(Boolean);
+      const changes = paths.map((p, i) => ({ path: p, kind: { type: 'update' }, diff: `diff-${i}\n` }));
+      notify('item/started', { threadId: tid, turnId: TURN, item: { type: 'fileChange', id: 'fc-2', changes, status: 'inProgress' }, startedAtMs: 3 });
+      const reqId = serverReqId++;
+      pendingApprovalThreadIds.set(reqId, tid);
+      pendingApprovalMeta.set(reqId, { method: 'item/fileChange/requestApproval', itemType: 'fileChange', itemId: 'fc-2', changes });
+      send({ jsonrpc: '2.0', id: reqId, method: 'item/fileChange/requestApproval', params: { threadId: tid, turnId: TURN, itemId: 'fc-2', startedAtMs: 3, reason: null, grantRoot: null } });
     } else if (/approve/i.test(text)) {
       // A file-change that requires approval: item/started carries the diff (approval params
       // omit it), then the ServerRequest fires and we WAIT for the client's decision.
-      notify('item/started', { threadId: tid, turnId: TURN, item: { type: 'fileChange', id: 'fc-1', changes: [{ path: '/tmp/hello.txt', kind: { type: 'add' }, diff: 'hi\n' }], status: 'inProgress' }, startedAtMs: 3 });
+      const changes = [{ path: '/tmp/hello.txt', kind: { type: 'add' }, diff: 'hi\n' }];
+      notify('item/started', { threadId: tid, turnId: TURN, item: { type: 'fileChange', id: 'fc-1', changes, status: 'inProgress' }, startedAtMs: 3 });
       const reqId = serverReqId++;
       pendingApprovalThreadIds.set(reqId, tid);
+      pendingApprovalMeta.set(reqId, { method: 'item/fileChange/requestApproval', itemType: 'fileChange', itemId: 'fc-1', changes });
       send({ jsonrpc: '2.0', id: reqId, method: 'item/fileChange/requestApproval', params: { threadId: tid, turnId: TURN, itemId: 'fc-1', startedAtMs: 3, reason: null, grantRoot: null } });
     } else {
       notify('turn/completed', { threadId: tid, turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'completed', durationMs: 42 } });

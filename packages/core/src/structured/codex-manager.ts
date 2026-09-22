@@ -432,6 +432,25 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
    *  a gated approval as a pending Need when supervised (or it's the always-surface
    *  AskUserQuestion analogue), else auto-approve it so an autonomous thread never blocks. */
   private handleApproval(session: CodexSession, action: Extract<TranslatedAction, { kind: 'approval' }>): void {
+    // A governed (coordinator) thread must NEVER be allowed to grant itself expanded sandbox
+    // permissions: `item/permissions/requestApproval` is Codex's own self-escalation surface —
+    // the model asking to widen ITS OWN approval/sandbox — and `coordinatorToolPolicy` has no
+    // opinion on the unmapped 'Permissions' tool name (adaptForPolicy passes it through
+    // unchanged, and the policy's default branch is `allow: true`), so left to the policy below
+    // this would auto-grant exactly what the model asked for. This check is therefore a
+    // hardcoded deny whenever ANY toolPolicy is set — governed means never self-escalate,
+    // independent of what the policy itself would say — decided before the policy consult and
+    // before the escalate/auto-allow membrane ever sees it. No pending, no human involvement,
+    // same in-turn-decline contract as a policy deny below.
+    if (session.toolPolicy && action.method === 'item/permissions/requestApproval') {
+      const message = 'Control Plane policy: a coordinator cannot change its own sandbox or approval permissions — spawn an implementer agent for work that needs elevated access.';
+      this.conn?.respond(action.requestId, buildApprovalResponse(action.method, { behavior: 'deny', message }, action.pending));
+      this.pushEvent(session, {
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: action.pending.toolUseId, content: message, is_error: true }] },
+      });
+      return;
+    }
     // AskUserQuestion's Codex analogue can't be auto-answered with a real decision — same
     // exemption the Claude manager gives AskUserQuestion — so it never runs through the policy.
     if (!action.alwaysSurface && session.toolPolicy) {
