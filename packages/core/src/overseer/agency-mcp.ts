@@ -31,6 +31,7 @@ import {
   checkSelfTarget,
   checkArchiveAllowed,
 } from './guards.js';
+import { buildWorkerCreateBody } from './worker-payload.js';
 
 const PROTOCOL_VERSION = '2024-11-05';
 const SERVER_INFO = { name: 'dispatch-agency', version: '0.1.0' } as const;
@@ -99,12 +100,20 @@ export const TOOLS = [
         model: {
           type: 'string',
           description:
-            'Optional model override for this agent — pins it to a specific Claude model instead of ' +
+            'Optional model override for this agent — pins it to a specific model for its harness instead of ' +
             'the automatic per-type default. Accepts short aliases ("sonnet", "opus", "haiku") or a full ' +
-            'model id (e.g. "claude-opus-4-8"). Omit to use the default tier for the type: researcher, ' +
+            'model id (e.g. "claude-opus-4-8") for claude-code workers; other harnesses expect their own model ids. Omit to use the default tier for the type: researcher, ' +
             'planner, and reviewer run on opus; implementer runs sonnet; design-reviewer and code-reviewer run fable (the strongest tier — never point them at routine work). Override when a task is ' +
             'unusually easy for its role (e.g. drop a researcher to sonnet for a quick lookup) or ' +
             'unusually hard (e.g. bump an implementer to opus for a hard problem).',
+        },
+        harness: {
+          type: 'string',
+          enum: ['claude-code', 'codex', 'grok', 'opencode'],
+          description:
+            'Optional harness (agent CLI) for this worker. Omit to use the configured default: ' +
+            'the per-agent-type worker matrix, else the session default the user picked, else claude-code. ' +
+            'Only override when the task clearly benefits from a specific harness.',
         },
       },
       required: ['agentType', 'task'],
@@ -147,12 +156,20 @@ export const TOOLS = [
         model: {
           type: 'string',
           description:
-            'Optional model override for this agent — pins it to a specific Claude model instead of ' +
+            'Optional model override for this agent — pins it to a specific model for its harness instead of ' +
             'the automatic per-type default. Accepts short aliases ("sonnet", "opus", "haiku") or a full ' +
-            'model id (e.g. "claude-opus-4-8"). Omit to use the default tier for the type: researcher, ' +
+            'model id (e.g. "claude-opus-4-8") for claude-code workers; other harnesses expect their own model ids. Omit to use the default tier for the type: researcher, ' +
             'planner, and reviewer run on opus; implementer runs sonnet; design-reviewer and code-reviewer run fable (the strongest tier — never point them at routine work). Override when a task is ' +
             'unusually easy for its role (e.g. drop a researcher to sonnet for a quick lookup) or ' +
             'unusually hard (e.g. bump an implementer to opus for a hard problem).',
+        },
+        harness: {
+          type: 'string',
+          enum: ['claude-code', 'codex', 'grok', 'opencode'],
+          description:
+            'Optional harness (agent CLI) for this worker. Omit to use the configured default: ' +
+            'the per-agent-type worker matrix, else the session default the user picked, else claude-code. ' +
+            'Only override when the task clearly benefits from a specific harness.',
         },
       },
       required: ['agentType', 'task'],
@@ -402,7 +419,7 @@ async function httpJson(method: string, url: string, body?: unknown): Promise<an
 
 // --- tool implementations --------------------------------------------------
 
-async function spawnAgent(args: { agentType: AgentType; name?: string; task: string; mission?: string; model?: string }): Promise<{ agentId: string; label: string; mission?: string }> {
+async function spawnAgent(args: { agentType: AgentType; name?: string; task: string; mission?: string; model?: string; harness?: string }): Promise<{ agentId: string; label: string; mission?: string }> {
   if (!args?.agentType) throw new Error('agentType is required');
   if (!args?.task) throw new Error('task is required');
   const depthCheck = checkSpawnDepth(selfSpawnDepth());
@@ -410,15 +427,17 @@ async function spawnAgent(args: { agentType: AgentType; name?: string; task: str
   const label = args.name || `${args.agentType} agent`;
   const mission = typeof args.mission === 'string' ? args.mission.trim() : '';
   const model = typeof args.model === 'string' ? args.model.trim() : '';
+  const harness = typeof args.harness === 'string' ? args.harness.trim() : '';
   const childDepth = selfSpawnDepth() + 1;
-  const terminal = await httpJson('POST', `${apiBase()}/api/sessions/${sessionId()}/terminals`, {
-    type: 'claude-code',
-    label,
-    config: {
-      transport: 'structured', agentType: args.agentType, role: 'agent',
-      ...(mission ? { mission } : {}), ...(model ? { model } : {}), spawnDepth: childDepth,
-    },
-  });
+
+  // Server-side resolution: matrix + session default live in the daemon (one tested
+  // place); an explicit `harness` arg here overrides the resolved harness.
+  const defaults = await httpJson('GET', `${apiBase()}/api/sessions/${sessionId()}/overseer/worker-defaults?agentType=${encodeURIComponent(args.agentType)}`) as { harness: string; model?: string; available: boolean; reason?: string };
+  const resolved = harness ? { harness, model: undefined } : { harness: defaults.harness, model: defaults.model };
+  if (!harness && !defaults.available) throw new Error(defaults.reason || `${defaults.harness} is not available on this server`);
+
+  const terminal = await httpJson('POST', `${apiBase()}/api/sessions/${sessionId()}/terminals`,
+    buildWorkerCreateBody({ agentType: args.agentType, label, resolved, explicitModel: model, mission, spawnDepth: childDepth }));
   const agentId: string | undefined = terminal?.id;
   if (!agentId) throw new Error('spawn did not return a terminal id');
   await httpJson('POST', `${apiBase()}/api/terminals/${agentId}/message`, { text: args.task, source: 'coordinator' });
@@ -433,7 +452,7 @@ async function spawnAgent(args: { agentType: AgentType; name?: string; task: str
  * has. `dependsOn` rides inside `config` (opaque to the route) alongside the other agent markers.
  * Mirrors spawnAgent's args/mission handling.
  */
-async function queueAgent(args: { agentType: AgentType; name?: string; task: string; mission?: string; dependsOn?: string; model?: string }): Promise<{ agentId: string; label: string; mission?: string; queued: true }> {
+async function queueAgent(args: { agentType: AgentType; name?: string; task: string; mission?: string; dependsOn?: string; model?: string; harness?: string }): Promise<{ agentId: string; label: string; mission?: string; queued: true }> {
   if (!args?.agentType) throw new Error('agentType is required');
   if (!args?.task) throw new Error('task is required');
   const depthCheck = checkSpawnDepth(selfSpawnDepth());
@@ -442,17 +461,17 @@ async function queueAgent(args: { agentType: AgentType; name?: string; task: str
   const mission = typeof args.mission === 'string' ? args.mission.trim() : '';
   const dependsOn = typeof args.dependsOn === 'string' ? args.dependsOn.trim() : '';
   const model = typeof args.model === 'string' ? args.model.trim() : '';
+  const harness = typeof args.harness === 'string' ? args.harness.trim() : '';
   const childDepth = selfSpawnDepth() + 1;
-  const terminal = await httpJson('POST', `${apiBase()}/api/sessions/${sessionId()}/terminals`, {
-    type: 'claude-code',
-    label,
-    queued: true,
-    task: args.task,
-    config: {
-      transport: 'structured', agentType: args.agentType, role: 'agent',
-      ...(mission ? { mission } : {}), ...(dependsOn ? { dependsOn } : {}), ...(model ? { model } : {}), spawnDepth: childDepth,
-    },
-  });
+
+  // Server-side resolution: matrix + session default live in the daemon (one tested
+  // place); an explicit `harness` arg here overrides the resolved harness.
+  const defaults = await httpJson('GET', `${apiBase()}/api/sessions/${sessionId()}/overseer/worker-defaults?agentType=${encodeURIComponent(args.agentType)}`) as { harness: string; model?: string; available: boolean; reason?: string };
+  const resolved = harness ? { harness, model: undefined } : { harness: defaults.harness, model: defaults.model };
+  if (!harness && !defaults.available) throw new Error(defaults.reason || `${defaults.harness} is not available on this server`);
+
+  const terminal = await httpJson('POST', `${apiBase()}/api/sessions/${sessionId()}/terminals`,
+    buildWorkerCreateBody({ agentType: args.agentType, label, resolved, explicitModel: model, mission, spawnDepth: childDepth, queued: true, task: args.task, dependsOn }));
   const agentId: string | undefined = terminal?.id;
   if (!agentId) throw new Error('queue did not return a terminal id');
   return { agentId, label, ...(mission ? { mission } : {}), queued: true };
