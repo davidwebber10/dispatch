@@ -128,13 +128,27 @@ selection; existing coordinator never shows it).
    a Coordinator harness row listing only capable harnesses; Claude stays the
    default.
 3. **Codex first.** The blocker is in OUR provider, not the CLI: `codex.ts`
-   `buildStructuredCommand` discards `appendSystemPrompt`. Codex 0.155.1
-   carries `developer_instructions` (config) and `developerInstructions` /
-   `baseInstructions` (app-server params). Work item one is a probe: pass the
-   coordinator prompt via `thread/start` `developerInstructions`; fallback is
-   a `-c developer_instructions=` config override. Codex upside: a read-only
-   OS sandbox plus `approvalPolicy: 'untrusted'` enforces below the membrane —
-   stronger than what Claude offers.
+   `buildStructuredCommand` discards `appendSystemPrompt`. The injection
+   channel is DOCUMENTED, not just observed in a local binary:
+   - App-server protocol: `thread/start` takes
+     `settings.developer_instructions` (custom instructions), plus
+     `sandboxPolicy` and `approvalPolicy` —
+     https://learn.chatgpt.com/docs/app-server.md
+   - Config reference: `developer_instructions` = "Additional developer
+     instructions injected into the session (optional)" —
+     https://learn.chatgpt.com/docs/config-file/config-reference.md
+   Primary channel: `thread/start` `settings.developer_instructions` (in the
+   protocol we already speak, per-thread, no argv). Fallback: the
+   `developer_instructions` config key. Hard requirement, motivated by
+   openai/codex#11004 (the Codex App silently drops the config-key variant —
+   the channel varies by client): our harness contract test MUST verify the
+   persona actually lands — send a canary instruction through the channel and
+   assert its effect in the reply. No silent-drop path ships.
+   Codex upside: `sandboxPolicy: readOnly` enforces below the membrane at the
+   OS level — enforcement Claude does not have. Note the docs deprecations:
+   `approval_policy "untrusted"` is documented as unsupported (the app-server
+   doc lists `never | unlessTrusted | onRequest`); our `codex-manager.ts`
+   type union still says `'untrusted'` and gets corrected in this work.
 4. **Prompts and models.** Per-harness coordinator model map (real model ids,
    never Claude aliases); prompt variants drop the `~/.claude` memory
    instruction and Claude tier teaching on non-Claude harnesses (memory path
@@ -144,6 +158,15 @@ selection; existing coordinator never shows it).
    equivalent, so spawn-time tool stripping does not exist there. The ported
    membrane (plus the Codex sandbox) is the enforcement. Grok/OpenCode ship
    only after their membranes actually consult the policy.
+
+## References (Codex, Phase 2)
+
+- App-server protocol: https://learn.chatgpt.com/docs/app-server.md
+  (redirect target of https://developers.openai.com/codex — the docs live
+  under learn.chatgpt.com as of 2026-09)
+- Config reference: https://learn.chatgpt.com/docs/config-file/config-reference.md
+- Sandboxing: https://learn.chatgpt.com/docs/sandboxing.md
+- Known injection gap by client: https://github.com/openai/codex/issues/11004
 
 ## Out of scope
 
