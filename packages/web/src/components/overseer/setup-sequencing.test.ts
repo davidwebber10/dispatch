@@ -110,3 +110,51 @@ describe('sendDirective — starts the coordinator first when none exists and se
     expect(useOverseer.getState().setupNeeded).toBe(false);
   });
 });
+
+describe('sendDirective — mid-flight guards on the first-directive (setup) path (regression)', () => {
+  it('startCoordinator rejects → sendDirective surfaces a sendError and sends nothing', async () => {
+    useOverseer.setState({
+      coordinatorProject: 'proj-1',
+      coordinatorId: null,
+      setupNeeded: true,
+      setupSelection: { workerHarness: 'claude-code', model: 'sonnet' },
+      composerImagesByProject: {},
+      sendError: null,
+    } as never);
+    vi.spyOn(api, 'ensureOverseerCoordinator').mockRejectedValue(new Error('boom'));
+    const send = vi.spyOn(api, 'sendStructuredMessage').mockResolvedValue(undefined as unknown as void);
+
+    useOverseer.getState().sendDirective('hello');
+
+    await vi.waitFor(() => expect(useOverseer.getState().sendError).not.toBeNull());
+    // Give any pending microtasks a chance to settle before asserting the negative.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('the project switches during startCoordinator → the directive is dropped, never sent to the new project\'s coordinator', async () => {
+    useOverseer.setState({
+      coordinatorProject: 'proj-1',
+      coordinatorId: null,
+      setupNeeded: true,
+      setupSelection: { workerHarness: 'claude-code', model: 'sonnet' },
+      composerImagesByProject: {},
+      sendError: null,
+    } as never);
+    // Simulate a concurrent project switch (e.g. ensureForProject for a newly active
+    // project) landing WHILE this project's startCoordinator create call is in flight.
+    vi.spyOn(api, 'ensureOverseerCoordinator').mockImplementation(async () => {
+      useOverseer.setState({ coordinatorProject: 'proj-2', coordinatorId: 'coord-2' } as never);
+      return { terminalId: 'coord-1' };
+    });
+    const send = vi.spyOn(api, 'sendStructuredMessage').mockResolvedValue(undefined as unknown as void);
+
+    useOverseer.getState().sendDirective('hello');
+
+    await vi.waitFor(() => expect(useOverseer.getState().coordinatorId).toBe('coord-2'));
+    // Give sendDirective's own post-await continuation a chance to run (and, pre-fix,
+    // to wrongly fire the send) before asserting it never did.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(send).not.toHaveBeenCalled();
+  });
+});

@@ -24,6 +24,7 @@ import { useThreadStatus } from '../../stores/threadStatus';
 import { useStructuredChat, type ApiRetry, type CompactResult } from '../tabs/chat/useStructuredChat';
 import { clearStoredDraft } from '../../hooks/useDraft';
 import type { PendingPermission, Terminal } from '../../api/types';
+import { AGENT_TYPES } from '../../lib/harnesses';
 import { CANNED, m } from './data';
 import { convItemsToStream, groupByMission, isManagedWorker, mapStatus, needsFromThreads } from './live';
 import type { AgentType, Ribbon, RenderVals, Scenario, StreamMessage } from './types';
@@ -255,6 +256,19 @@ export const useOverseer = create<OverseerState>((set, get) => ({
     if (!get().coordinatorId && get().setupNeeded) {
       const sessionId = project ?? useProjects.getState().activeId;
       if (sessionId) await get().startCoordinator(sessionId);
+      // The project the user actually TYPED this directive in may no longer be the
+      // view's current project by the time the create call above resolves (the user
+      // switched projects mid-flight). Bail BEFORE reading coordinatorId — otherwise
+      // we'd read back whatever project is now loaded (possibly a different one that
+      // finished ensuring in the meantime) and send this directive to ITS coordinator.
+      if (get().coordinatorProject !== project) return;
+      // startCoordinator swallows its own errors (sets `ensuring: false` and returns),
+      // so a failed create leaves us here with no coordinatorId and no other signal —
+      // without this, the directive (and any staged image) just vanishes silently.
+      if (!get().coordinatorId) {
+        set({ sendError: 'Could not start the Control Plane session — try again.' });
+        return;
+      }
     }
     const id = get().coordinatorId;
     if (!id) return;
@@ -396,8 +410,8 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       }
       if (get().coordinatorProject !== sessionId) return; // project switched mid-flight
       // Mirror of the daemon's widened findCoordinator filter (isAgentType(t.type)): a
-      // coordinator is never a plain shell.
-      const found = terminals.some((t) => t.type !== 'shell' && t.config?.role === 'coordinator');
+      // coordinator is one of the agent harnesses, never a plain shell.
+      const found = terminals.some((t) => AGENT_TYPES.includes(t.type) && t.config?.role === 'coordinator');
       if (!found) {
         set({ setupNeeded: true, ensuring: false });
         return;
