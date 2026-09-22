@@ -128,10 +128,16 @@ export function createSessionsRouter(sessionService: SessionService, broadcaster
     // INCONCLUSIVE sign-in probe (signedIn === 'unknown') never blocks — only a definitive
     // "signed out" does.
     const status = await detectProvider(AGENT_CLI[resolved.harness]);
-    const available = status.installed && status.signedIn !== false;
+    // opencode never carries its own sign-in: Dispatch injects OPENROUTER_API_KEY from
+    // Doppler into every opencode child (server.ts's refreshOpencodeKeyEnv), so
+    // `opencode auth list` legitimately reports 0 credentials while workers run fine.
+    // NewThreadModal exempts opencode from its login gate for the same reason — mirror
+    // that here so this route doesn't false-block it.
+    const signedInOk = resolved.harness === 'opencode' || status.signedIn !== false;
+    const available = status.installed && signedInOk;
     let reason: string | undefined;
     if (!status.installed) reason = `${resolved.harness} CLI is not installed on this server`;
-    else if (status.signedIn === false) reason = `${resolved.harness} CLI is not signed in on this server`;
+    else if (!signedInOk) reason = `${resolved.harness} CLI is not signed in on this server`;
     res.json({ ...resolved, available, ...(reason ? { reason } : {}) });
   });
 

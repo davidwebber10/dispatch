@@ -154,4 +154,17 @@ describe('GET /api/sessions/:id/overseer/worker-defaults', () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ harness: 'grok', available: false, reason: expect.stringContaining('grok') });
   });
+
+  it('available:true for opencode even when signedIn is false — the daemon injects OPENROUTER_API_KEY itself', async () => {
+    const { db, app } = setup();
+    sessionsDb.create(db, { id: 's11', provider: 'claude-code', name: 'proj11', workingDir: '/tmp/proj11' });
+    (detectProvider as unknown as Mock).mockResolvedValue({ installed: true, signedIn: false });
+
+    const res = await request(app).get('/api/sessions/s11/overseer/worker-defaults?agentType=implementer&harness=opencode');
+
+    expect(res.status).toBe(200);
+    expect(res.body.harness).toBe('opencode');
+    expect(res.body.available).toBe(true);
+    expect(res.body.reason).toBeUndefined();
+  });
 });
