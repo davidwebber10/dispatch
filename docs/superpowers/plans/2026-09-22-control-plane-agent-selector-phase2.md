@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Enforcement for a Codex coordinator = ported membrane + `sandbox: 'workspace-write'` + `approvalPolicy: 'on-request'`. NOT read-only.
+- Enforcement for a Codex coordinator = ported membrane + `sandbox: 'read-only'` + `approvalPolicy: 'on-request'`. (CORRECTED from an earlier workspace-write plan: the Task 5 review proved workspace-write lets in-workspace repo writes/commits bypass the approval, defeating the membrane. read-only makes every write/command surface for the policy; the coordinator's memory writes live under its memory dir, outside the workspace, and the policy allows them.)
 - Persona channel for Codex = `thread/start` top-level `developerInstructions` (camelCase). The documented `settings.developer_instructions` is verified NON-functional on codex-cli 0.155.1 — do not use it.
 - Every persona-delivery path ships with a canary contract test: a canary instruction must be observably honored, or the build fails. No silent-drop path ships.
 - Claude model aliases (`sonnet`/`opus`/`haiku`/`fable`) must NEVER reach Codex (Phase-1 guard stays; the coordinator model default must be a real id for Codex).
@@ -151,10 +151,11 @@ expect(sent.params.settings?.developer_instructions).toBeUndefined();
 - Test: extend `codex-manager.policy.test.ts` or a focused new test
 
 **Interfaces:**
-- A Codex coordinator must spawn with `approvalPolicy: 'on-request'` and `sandbox: 'workspace-write'` so repo-write/command approvals actually reach `handleApproval`. Today these are manager-construction defaults, not per-spawn. Decide the minimal seam: either (a) pass them through `StructuredSpawnOpts` (add `approvalPolicy?`/`sandbox?`, already partially present per the intel — verify) and set them for `config.role === 'coordinator'` in service.ts, or (b) if the shared codex app-server connection makes per-thread sandbox impossible, document that and set the manager defaults to the coordinator-safe pair. Prefer (a) if `thread/start` honors per-thread sandbox.
-- Correct the type union: `'untrusted'` → the documented set `'never' | 'unlessTrusted' | 'onRequest'` (map our internal names as needed). Keep whatever string the CLI actually accepts (the probe used `'never'`/`'on-request'` successfully — verify `on-request` vs `onRequest` against the installed CLI before committing the literal).
+- A Codex coordinator must spawn with `approvalPolicy: 'on-request'` and `sandbox: 'read-only'` (CORRECTED from workspace-write — the Task 5 review proved workspace-write lets in-workspace repo writes/commits run WITHOUT an approval, so the membrane would never fire on exactly the actions it must block). Under `read-only` + `on-request`, every write and every command needing write/network surfaces an approval that `handleApproval` (Task 5) gates: repo writes / `git commit` / `git push` → policy deny; the coordinator's memory writes under its memory dir → `fileChange` approval that the policy ALLOWS (this requires Task 7's memory-dir wiring — `makeCoordinatorPolicy(<codex memory dir>)` — so between this task and Task 7 the integrated behavior is only correct once Task 7 lands; they ship in one PR). Today approval/sandbox are manager-construction defaults, not per-spawn. Minimal seam: pass them through `StructuredSpawnOpts` (add `approvalPolicy?`/`sandbox?`) and set the coordinator-safe pair for `config.role === 'coordinator'` in service.ts; if the shared codex app-server connection makes per-thread sandbox impossible, document that and fall back to coordinator-safe manager defaults.
+- Correct the type union: `'untrusted'` → the documented set `'never' | 'unlessTrusted' | 'onRequest'` (map our internal names as needed). Verify the exact wire literal the CLI accepts (`on-request` vs `onRequest`, `read-only` vs `readOnly`) against the installed CLI before committing — the reference probe at `/tmp/codex-probe/probe.mjs` used `approvalPolicy:'never'`/`sandbox:'read-only'` successfully.
+- Live verification (do here or defer to the Task 12 smoke, but it MUST happen before the PR): against a real `codex app-server`, confirm a `git commit` and a memory-dir write BOTH surface as approvals under `read-only` + `on-request` (i.e. the membrane actually sees them), and a benign read-only command does not brick.
 
-- [ ] **Step 1: Failing test** — a coordinator-role Codex spawn sends `thread/start` with `approvalPolicy` = the ask value and `sandbox: 'workspace-write'`; a non-coordinator Codex thread keeps today's behavior.
+- [ ] **Step 1: Failing test** — a coordinator-role Codex spawn sends `thread/start` with `approvalPolicy` = the ask value and `sandbox: 'read-only'`; a non-coordinator Codex thread keeps today's behavior.
 
 - [ ] **Step 2: Watch fail.**
 
@@ -162,7 +163,7 @@ expect(sent.params.settings?.developer_instructions).toBeUndefined();
 
 - [ ] **Step 4: Tests green** + full core suite + `npm run build`.
 
-- [ ] **Step 5: Commit** — `feat(core): Codex coordinator spawns on-request/workspace-write so the membrane fires`.
+- [ ] **Step 5: Commit** — `feat(core): Codex coordinator spawns on-request/read-only so the membrane fires`.
 
 ---
 
