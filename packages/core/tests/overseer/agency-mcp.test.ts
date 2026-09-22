@@ -233,6 +233,49 @@ describe('agency-mcp', () => {
     expect(JSON.parse(fetchMock.mock.calls[1][1].body).label).toBe('Recon');
   });
 
+  describe('spawn_agent / queue_agent — explicit harness runs through the availability guard', () => {
+    it('an explicit harness arg is forwarded to worker-defaults as ?harness=, and its resolved model is used', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ harness: 'codex', model: 'gpt-5-codex', available: true }) })
+        .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'h1', label: 'researcher agent' }) })
+        .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
+      global.fetch = fetchMock as any;
+
+      const out = await callTool('spawn_agent', { agentType: 'researcher', task: 'x', harness: 'codex' });
+
+      expect(out.isError).toBeUndefined();
+      expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/sessions/sess-1/overseer/worker-defaults?agentType=researcher&harness=codex');
+      const createBody = JSON.parse(fetchMock.mock.calls[1][1].body);
+      expect(createBody.type).toBe('codex');
+      expect(createBody.config.model).toBe('gpt-5-codex');
+    });
+
+    it('spawn_agent throws (MCP isError) when the server reports the harness unavailable, even for an explicit harness', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ harness: 'grok', available: false, reason: 'grok CLI is not installed on this server' }) });
+      global.fetch = fetchMock as any;
+
+      const out = await callTool('spawn_agent', { agentType: 'researcher', task: 'x', harness: 'grok' });
+
+      expect(out.isError).toBe(true);
+      expect(out.content[0].text).toContain('grok CLI is not installed');
+      // Never reached the create call — the guard fires before any thread is created.
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('queue_agent throws when the server reports the resolved (non-explicit) harness unavailable', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ harness: 'claude-code', available: false, reason: 'claude-code CLI is not installed on this server' }) });
+      global.fetch = fetchMock as any;
+
+      const out = await callTool('queue_agent', { agentType: 'researcher', task: 'x' });
+
+      expect(out.isError).toBe(true);
+      expect(out.content[0].text).toContain('not installed');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('list_agents filters to agent-role / typed threads', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce({
       ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify([

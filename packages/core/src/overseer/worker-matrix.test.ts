@@ -34,4 +34,18 @@ describe('resolveWorker', () => {
     expect(resolveWorker({ agentType: 'implementer', matrix, sessionDefault: 'codex' }))
       .toEqual({ harness: 'codex', model: 'gpt-5-codex' });
   });
+
+  it('a matrix model with no harness pinned applies on top of an explicit harness pick too', () => {
+    const matrix = { byType: { implementer: { model: 'gpt-5-codex' } } };
+    expect(resolveWorker({ agentType: 'implementer', explicit: { harness: 'codex' }, matrix }))
+      .toEqual({ harness: 'codex', model: 'gpt-5-codex' });
+  });
+
+  it('a matrix model pinned to a DIFFERENT harness than the resolved one does not ride along', () => {
+    const matrix = { byType: { implementer: { harness: 'grok' as const, model: 'grok-4' } } };
+    // Explicit harness (codex) wins over the matrix's harness (grok); the matrix's model was
+    // meant for grok specifically, so it must not leak onto codex.
+    expect(resolveWorker({ agentType: 'implementer', explicit: { harness: 'codex' }, matrix }))
+      .toEqual({ harness: 'codex' });
+  });
 });

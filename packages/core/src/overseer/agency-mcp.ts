@@ -419,6 +419,20 @@ async function httpJson(method: string, url: string, body?: unknown): Promise<an
 
 // --- tool implementations --------------------------------------------------
 
+/**
+ * Resolve harness/model via the daemon's single tested place (matrix + session default +
+ * availability guard) — GET .../overseer/worker-defaults. An explicit `harness` arg is fed
+ * THROUGH the endpoint as `?harness=` (see Finding 3's harness-affinity semantics for how the
+ * matrix model then applies) rather than bypassing it, so the availability guard always runs —
+ * an explicit pick must not skip the "is this CLI actually installed" check.
+ */
+async function resolveWorkerDefaults(agentType: AgentType, harness: string): Promise<{ harness: string; model?: string }> {
+  const url = `${apiBase()}/api/sessions/${sessionId()}/overseer/worker-defaults?agentType=${encodeURIComponent(agentType)}${harness ? `&harness=${encodeURIComponent(harness)}` : ''}`;
+  const defaults = await httpJson('GET', url) as { harness: string; model?: string; available: boolean; reason?: string };
+  if (!defaults.available) throw new Error(defaults.reason || `${defaults.harness} is not available on this server`);
+  return { harness: defaults.harness, model: defaults.model };
+}
+
 async function spawnAgent(args: { agentType: AgentType; name?: string; task: string; mission?: string; model?: string; harness?: string }): Promise<{ agentId: string; label: string; mission?: string }> {
   if (!args?.agentType) throw new Error('agentType is required');
   if (!args?.task) throw new Error('task is required');
@@ -430,11 +444,7 @@ async function spawnAgent(args: { agentType: AgentType; name?: string; task: str
   const harness = typeof args.harness === 'string' ? args.harness.trim() : '';
   const childDepth = selfSpawnDepth() + 1;
 
-  // Server-side resolution: matrix + session default live in the daemon (one tested
-  // place); an explicit `harness` arg here overrides the resolved harness.
-  const defaults = await httpJson('GET', `${apiBase()}/api/sessions/${sessionId()}/overseer/worker-defaults?agentType=${encodeURIComponent(args.agentType)}`) as { harness: string; model?: string; available: boolean; reason?: string };
-  const resolved = harness ? { harness, model: undefined } : { harness: defaults.harness, model: defaults.model };
-  if (!harness && !defaults.available) throw new Error(defaults.reason || `${defaults.harness} is not available on this server`);
+  const resolved = await resolveWorkerDefaults(args.agentType, harness);
 
   const terminal = await httpJson('POST', `${apiBase()}/api/sessions/${sessionId()}/terminals`,
     buildWorkerCreateBody({ agentType: args.agentType, label, resolved, explicitModel: model, mission, spawnDepth: childDepth }));
@@ -464,11 +474,7 @@ async function queueAgent(args: { agentType: AgentType; name?: string; task: str
   const harness = typeof args.harness === 'string' ? args.harness.trim() : '';
   const childDepth = selfSpawnDepth() + 1;
 
-  // Server-side resolution: matrix + session default live in the daemon (one tested
-  // place); an explicit `harness` arg here overrides the resolved harness.
-  const defaults = await httpJson('GET', `${apiBase()}/api/sessions/${sessionId()}/overseer/worker-defaults?agentType=${encodeURIComponent(args.agentType)}`) as { harness: string; model?: string; available: boolean; reason?: string };
-  const resolved = harness ? { harness, model: undefined } : { harness: defaults.harness, model: defaults.model };
-  if (!harness && !defaults.available) throw new Error(defaults.reason || `${defaults.harness} is not available on this server`);
+  const resolved = await resolveWorkerDefaults(args.agentType, harness);
 
   const terminal = await httpJson('POST', `${apiBase()}/api/sessions/${sessionId()}/terminals`,
     buildWorkerCreateBody({ agentType: args.agentType, label, resolved, explicitModel: model, mission, spawnDepth: childDepth, queued: true, task: args.task, dependsOn }));

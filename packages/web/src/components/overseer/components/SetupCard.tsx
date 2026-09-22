@@ -11,6 +11,7 @@ import { HarnessStrip } from '../../common/HarnessStrip';
 import { SearchSelect } from '../../common/SearchSelect';
 import { Spinner } from '../../common/Spinner';
 import { api } from '../../../api/client';
+import type { ProviderName, ProviderStatus } from '../../../api/types';
 import { HARNESSES, type Harness } from '../../../lib/harnesses';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { useProjects } from '../../../stores/projects';
@@ -57,7 +58,22 @@ export function ControlPlaneSetupCard(): JSX.Element {
     }).catch(() => {});
     return () => { live = false; };
   }, []);
-  const isAvailable = useCallback((id: string) => enabled.some((h) => h.id === id), [enabled]);
+
+  // Provider install state (CLI on PATH), same seam NewThreadModal reads — `null` until the
+  // probe answers, so a slow check never dims a harness that just hasn't heard back yet.
+  const [providers, setProviders] = useState<ProviderStatus[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    api.recheckProviders?.().then((items) => { if (live) setProviders(items); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  const providerFor = useCallback((id: string): ProviderName | null => HARNESSES.find((h) => h.id === id)?.provider ?? null, []);
+  const isAvailable = useCallback((id: string) => {
+    if (!enabled.some((h) => h.id === id)) return false;
+    const provider = providerFor(id);
+    if (!provider) return true;
+    return providers?.find((p) => p.name === provider)?.installed !== false;
+  }, [enabled, providers, providerFor]);
 
   const selectedCatalogId = CATALOG_ID[setupSelection.workerHarness] ?? 'claude';
   const modelOptions = useMemo(

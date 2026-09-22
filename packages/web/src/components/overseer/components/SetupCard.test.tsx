@@ -11,7 +11,7 @@ import { HARNESSES } from '../../../lib/harnesses';
 import { ControlPlaneSetupCard } from './SetupCard';
 
 vi.mock('../../../api/client', () => ({
-  api: { getHarnessCapabilities: vi.fn() },
+  api: { getHarnessCapabilities: vi.fn(), recheckProviders: vi.fn() },
 }));
 
 // The four agent harnesses (everything but the plain shell), shaped like the daemon's
@@ -23,6 +23,14 @@ const AGENT_CAPS = HARNESSES.filter((h) => h.id !== 'terminal').map((h) => ({
 
 beforeEach(() => {
   (api.getHarnessCapabilities as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(AGENT_CAPS);
+  // Default: every provider installed, so existing tests keep asserting on capabilities
+  // filtering alone. Tests below override this to exercise the install-state dimming.
+  (api.recheckProviders as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
+    { name: 'claude', installed: true, signedIn: true },
+    { name: 'codex', installed: true, signedIn: true },
+    { name: 'grok', installed: true, signedIn: true },
+    { name: 'opencode', installed: true, signedIn: true },
+  ]);
   useProjects.setState({ activeId: 'p1' });
   useOverseer.setState({
     setupNeeded: true,
@@ -63,5 +71,18 @@ describe('ControlPlaneSetupCard', () => {
     await waitFor(() => expect(api.getHarnessCapabilities).toHaveBeenCalled());
     fireEvent.click(screen.getByRole('button', { name: 'Start' }));
     expect(startCoordinator).toHaveBeenCalledWith('p1');
+  });
+
+  it('dims a harness and tags it Install when its provider is reported not installed', async () => {
+    (api.recheckProviders as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { name: 'claude', installed: true, signedIn: true },
+      { name: 'codex', installed: false, signedIn: false },
+      { name: 'grok', installed: true, signedIn: true },
+      { name: 'opencode', installed: true, signedIn: true },
+    ]);
+    render(<ControlPlaneSetupCard />);
+    await waitFor(() => expect(api.recheckProviders).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByText('Install')).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: /Codex/ }).getAttribute('title')).toContain('not installed');
   });
 });

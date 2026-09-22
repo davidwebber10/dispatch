@@ -1685,8 +1685,10 @@ export class SessionService {
    *
    * `opts` (model, workerHarness) apply ONLY on create. They are ignored when an
    * existing coordinator is found: the setup card that supplies these options
-   * only shows when no coordinator exists yet, so they can never arrive on a
-   * find-existing call.
+   * only shows when no coordinator exists yet, so in the normal flow they don't
+   * arrive on a find-existing call. A cross-client race (two callers hitting this
+   * at once) CAN still deliver opts alongside a find-existing outcome — that is
+   * fine, since ignoring them here is the intended behavior either way.
    */
   ensureCoordinator(sessionId: string, opts: { model?: string; workerHarness?: AgentType } = {}): terminalsDb.Terminal {
     const session = sessionsDb.getById(this.db, sessionId);

@@ -17,6 +17,10 @@ export function resolveWorker(input: {
 }): { harness: HarnessType; model?: string } {
   const fromMatrix = input.matrix.byType[input.agentType];
   const harness = input.explicit?.harness ?? fromMatrix?.harness ?? input.sessionDefault ?? 'claude-code';
-  const model = input.explicit?.model ?? fromMatrix?.model;
+  // A matrix model pinned to a specific harness must not ride a different, resolved harness
+  // (e.g. an explicit harness pick that overrides the matrix's own harness). A matrix entry
+  // with no harness of its own is harness-agnostic and applies regardless.
+  const matrixModelApplies = fromMatrix && (fromMatrix.harness === undefined || fromMatrix.harness === harness);
+  const model = input.explicit?.model ?? (matrixModelApplies ? fromMatrix?.model : undefined);
   return model ? { harness, model } : { harness };
 }
