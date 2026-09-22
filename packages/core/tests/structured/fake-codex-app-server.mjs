@@ -23,6 +23,9 @@ const THREAD = 'thread-fake-1';
 const TURN = 'turn-fake-1';
 let serverReqId = 100; // server→client request ids live in the server's own id space
 const pendingApprovalThreadIds = new Map(); // serverReqId → the threadId the approval request was sent against
+// serverReqId → { itemType, itemId, command } for approval kinds other than the default
+// fileChange (see the generic response handler below), so it can complete the RIGHT item.
+const pendingApprovalMeta = new Map();
 
 const rl = readline.createInterface({ input: process.stdin });
 rl.on('line', (line) => {
@@ -36,9 +39,18 @@ rl.on('line', (line) => {
     // hardcoded THREAD constant — a resumed session's notifications must route back to it,
     // same as every other notify() below.
     const tid = pendingApprovalThreadIds.get(msg.id) ?? THREAD;
+    const meta = pendingApprovalMeta.get(msg.id);
     pendingApprovalThreadIds.delete(msg.id);
-    // The file-change approval was answered → finish the tool + the turn.
-    notify('item/completed', { threadId: tid, turnId: TURN, item: { type: 'fileChange', id: 'fc-1', changes: [{ path: '/tmp/hello.txt', kind: { type: 'add' }, diff: 'hi\n' }], status: 'completed' }, completedAtMs: 4 });
+    pendingApprovalMeta.delete(msg.id);
+    if (meta?.itemType === 'commandExecution') {
+      // The command-execution approval was answered (accept OR decline) → complete the item
+      // (a real declined command wouldn't actually run, but the fake doesn't need to model
+      // that — tests only assert on the manager's OWN response/event, not this echo) + turn.
+      notify('item/completed', { threadId: tid, turnId: TURN, item: { type: 'commandExecution', id: meta.itemId, command: meta.command, cwd: '/tmp', aggregatedOutput: 'ok\n', status: 'completed' }, completedAtMs: 4 });
+    } else {
+      // The file-change approval was answered → finish the tool.
+      notify('item/completed', { threadId: tid, turnId: TURN, item: { type: 'fileChange', id: 'fc-1', changes: [{ path: '/tmp/hello.txt', kind: { type: 'add' }, diff: 'hi\n' }], status: 'completed' }, completedAtMs: 4 });
+    }
     notify('turn/completed', { threadId: tid, turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'completed', durationMs: 42 } });
     return;
   }
@@ -94,7 +106,25 @@ rl.on('line', (line) => {
     notify('item/completed', { threadId: tid, turnId: TURN, item: { type: 'agentMessage', id: 'msg-1', text: agentText, phase: 'commentary', memoryCitation: null }, completedAtMs: 2 });
     notify('thread/tokenUsage/updated', { threadId: tid, turnId: TURN, tokenUsage: { total: { totalTokens: 100, inputTokens: 80, cachedInputTokens: 20, outputTokens: 20, reasoningOutputTokens: 0 }, last: { totalTokens: 100, inputTokens: 80, cachedInputTokens: 20, outputTokens: 20, reasoningOutputTokens: 0 }, modelContextWindow: 258400 } });
 
-    if (/approve/i.test(text)) {
+    const execMatch = text.match(/^exec (.+)$/i);
+    const askMatch = /^ask /i.test(text);
+    if (execMatch) {
+      // A shell command that requires approval (Task 5 policy tests): item/started carries the
+      // command, then the ServerRequest fires and we WAIT for the client's decision (accept,
+      // decline, OR a policy deny answered without any human involvement at all).
+      const command = execMatch[1];
+      notify('item/started', { threadId: tid, turnId: TURN, item: { type: 'commandExecution', id: 'cmd-1', command, cwd: '/tmp', status: 'inProgress' }, startedAtMs: 3 });
+      const reqId = serverReqId++;
+      pendingApprovalThreadIds.set(reqId, tid);
+      pendingApprovalMeta.set(reqId, { itemType: 'commandExecution', itemId: 'cmd-1', command });
+      send({ jsonrpc: '2.0', id: reqId, method: 'item/commandExecution/requestApproval', params: { threadId: tid, turnId: TURN, itemId: 'cmd-1', command, cwd: '/tmp', startedAtMs: 3, reason: null } });
+    } else if (askMatch) {
+      // The AskUserQuestion analogue (Task 5's alwaysSurface exemption test): fires the
+      // ServerRequest and never resolves it itself — the test only asserts it SURFACED.
+      const reqId = serverReqId++;
+      pendingApprovalThreadIds.set(reqId, tid);
+      send({ jsonrpc: '2.0', id: reqId, method: 'item/tool/requestUserInput', params: { threadId: tid, turnId: TURN, questions: [{ id: 'q1', header: 'Choice', question: 'Pick one', options: ['A', 'B'] }] } });
+    } else if (/approve/i.test(text)) {
       // A file-change that requires approval: item/started carries the diff (approval params
       // omit it), then the ServerRequest fires and we WAIT for the client's decision.
       notify('item/started', { threadId: tid, turnId: TURN, item: { type: 'fileChange', id: 'fc-1', changes: [{ path: '/tmp/hello.txt', kind: { type: 'add' }, diff: 'hi\n' }], status: 'inProgress' }, startedAtMs: 3 });

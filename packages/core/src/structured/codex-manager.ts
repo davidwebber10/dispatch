@@ -27,6 +27,7 @@ import type {
   StatusDeclaration,
 } from './manager.js';
 import { CodexTranslator, buildApprovalResponse, type ApprovalMethod, type TranslatedAction } from './codex-translate.js';
+import { adaptForPolicy } from '../overseer/policy-adapter.js';
 
 const MAX_EVENTS = 5000;
 
@@ -163,6 +164,10 @@ interface CodexSession {
    *  (see StructuredSpawnOpts.systemPrompt). A `thread/resume` restores a thread that already
    *  has its instructions, so it must never carry this. */
   systemPrompt?: string;
+  /** Optional per-session tool policy consulted before the escalate/auto-allow membrane; a
+   *  deny is written straight back to Codex (no pending, no human involvement) — same
+   *  contract as the Claude manager's Session.toolPolicy (see manager.ts). */
+  toolPolicy?: (toolName: string, input: unknown) => { allow: true } | { allow: false; message: string };
   /** Resolves once thread/start|resume has assigned a threadId; sends chain on it. */
   ready: Promise<void>;
   /**
@@ -215,6 +220,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
       model: opts.model,
       resumeId: opts.resumeId,
       systemPrompt: opts.systemPrompt,
+      toolPolicy: opts.toolPolicy,
       ready: Promise.resolve(),
     };
     if (opts.seedEvents?.length) {
@@ -420,10 +426,30 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     }
   }
 
-  /** The escalate/auto-allow membrane (identical policy to the Claude manager): surface a gated
-   *  approval as a pending Need when supervised (or it's the always-surface AskUserQuestion
-   *  analogue), else auto-approve it so an autonomous thread never blocks. */
+  /** The escalate/auto-allow membrane (identical policy to the Claude manager): consult the
+   *  session's toolPolicy first (a deny answers the ServerRequest immediately — no pending, no
+   *  human involvement, same as the Claude manager's can_use_tool deny path); otherwise surface
+   *  a gated approval as a pending Need when supervised (or it's the always-surface
+   *  AskUserQuestion analogue), else auto-approve it so an autonomous thread never blocks. */
   private handleApproval(session: CodexSession, action: Extract<TranslatedAction, { kind: 'approval' }>): void {
+    // AskUserQuestion's Codex analogue can't be auto-answered with a real decision — same
+    // exemption the Claude manager gives AskUserQuestion — so it never runs through the policy.
+    if (!action.alwaysSurface && session.toolPolicy) {
+      const adapted = adaptForPolicy('codex', { toolName: action.pending.toolName, input: action.pending.input });
+      const verdict = session.toolPolicy(adapted.toolName, adapted.input);
+      if (!verdict.allow) {
+        // Codex's decline envelope carries no message field (see buildApprovalResponse), so
+        // Codex itself never learns WHY — inject the policy's message as a synthetic tool_result
+        // into the ring (paired to the tool_use by toolUseId, same shape itemCompleted emits)
+        // so the coordinator/transcript sees the reason. No pending, no 'permission' emit.
+        this.conn?.respond(action.requestId, buildApprovalResponse(action.method, { behavior: 'deny', message: verdict.message }, action.pending));
+        this.pushEvent(session, {
+          type: 'user',
+          message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: action.pending.toolUseId, content: verdict.message, is_error: true }] },
+        });
+        return;
+      }
+    }
     if (session.escalate || action.alwaysSurface) {
       session.pending = action.pending;
       session.pendingApproval = { method: action.method, requestId: action.requestId };
