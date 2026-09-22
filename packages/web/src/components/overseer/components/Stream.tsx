@@ -37,6 +37,7 @@ import { StatusNotice } from '../../tabs/chat/StatusNotice';
 import { openFileTab } from '../../../lib/openFileTab';
 import { useOverseer, useRenderVals } from '../store';
 import { useBootstrapOlderPages } from '../../../hooks/useBootstrapOlderPages';
+import { ControlPlaneSetupCard } from './SetupCard';
 import type { StreamMessage } from '../types';
 
 // `.md-view`'s CSS consumes the GLOBAL `--color-*` tokens (defined on :root), which
@@ -581,6 +582,11 @@ function renderStream(stream: StreamMessage[], onViewFile?: (path: string) => vo
 
 export function ConversationStream() {
   const { stream, busy, projectMatches } = useRenderVals();
+  // No live coordinator for this project yet (ensureForProject peeked and found none) — the
+  // inline setup card replaces the (suppressed, see useRenderVals) canned greeting, so the
+  // user picks the worker harness/model before anything is spawned. Read directly from the
+  // store (not useRenderVals) since it's UI state, not derived transcript data.
+  const setupNeeded = useOverseer((s) => s.setupNeeded);
   const coordinatorId = useOverseer((s) => s.coordinatorId);
   const coordinatorPending = useOverseer((s) => s.coordinatorPending);
   const coordinatorAnswer = useOverseer((s) => s.coordinatorAnswer);
@@ -634,6 +640,10 @@ export function ConversationStream() {
         >
           <MessageScroller.Viewport preserveScrollOnPrepend onScroll={onViewportScroll} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
             <MessageScroller.Content style={{ maxWidth: 1200, margin: '0 auto', padding: '20px 26px 12px', display: 'flex', flexDirection: 'column', gap: 17 }}>
+              {/* No coordinator yet for this project — the inline setup card stands in for
+                  the message list (and the suppressed canned greeting, see useRenderVals)
+                  until the user picks a worker harness/model and hits Start. */}
+              {setupNeeded && <ControlPlaneSetupCard />}
               {/* Explicit older-history control (parity with ChatView's LoadEarlierButton, see
                   its doc comment): the scroll-near-top trigger has been observed sticking in
                   the field until a window resize, and the replay tail covers only the last few
