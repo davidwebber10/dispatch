@@ -192,6 +192,16 @@ export async function detectAllProviders(opts?: { fresh?: boolean }): Promise<Pr
   return Promise.all(PROVIDER_NAMES.map((n) => detectProvider(n, opts)));
 }
 
+/**
+ * Cheap availability check: is this CLI's binary on PATH (or its installer's known fallback
+ * location)? Deliberately skips the sign-in probe `detectProvider` does — callers that only
+ * need to know a spawned thread won't dead-end on a missing binary (e.g. the worker-defaults
+ * route) shouldn't pay for, or block on, an auth check they don't need.
+ */
+export async function isProviderInstalled(name: ProviderName): Promise<boolean> {
+  return (await resolveBin(name)) !== null;
+}
+
 /** Exposed for tests: how each CLI's status output is read. */
 export const _AUTH_PROBES = AUTH_PROBES;
 

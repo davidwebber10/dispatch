@@ -23,12 +23,13 @@ import { parseCodexRollout } from '../conversation/codex-transcript.js';
 import { findCodexRolloutPath } from './codex-sessions.js';
 import { platform } from '../platform/index.js';
 import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.js';
+import { resolveSpawnModel, isClaudeTierAlias } from '../overseer/spawn-model.js';
 import { COORDINATOR_DISALLOWED_TOOLS, coordinatorToolPolicy } from '../overseer/coordinator-policy.js';
 import { roleToolPolicy } from '../roles/role-policy.js';
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
 import { resolveTranscriptPath } from './transcript-path.js';
 import { randomUUID } from 'crypto';
-import { isAgentType } from '../providers/agent-types.js';
+import { isAgentType, type AgentType } from '../providers/agent-types.js';
 import { writeGrokHome, type McpServerEntry } from '../providers/grok-home.js';
 import { writeOpencodeConfig } from '../providers/opencode-config.js';
 import { OPENCODE_DEFAULT_MODEL } from '../providers/opencode.js';
@@ -1049,7 +1050,7 @@ export class SessionService {
     if (cfg.role !== 'agent') return false; // only agents escalate UP; coordinators/plain → human
     const coordinator = terminalsDb.listBySession(this.db, agent.session_id)
       .map(terminalsDb.rowToTerminal)
-      .find((t) => t.type === 'claude-code' && !t.archivedAt && t.id !== agentTerminalId && t.config?.role === 'coordinator');
+      .find((t) => isAgentType(t.type) && !t.archivedAt && t.id !== agentTerminalId && t.config?.role === 'coordinator');
     if (!coordinator) return false;
     try {
       this.ensureStructuredAlive(coordinator.id); // a daemon restart may have killed it
@@ -1665,18 +1666,35 @@ export class SessionService {
   }
 
   /**
-   * Find-or-create the project's Overseer coordinator: a structured claude-code
-   * thread tagged `config.role === 'coordinator'`. Returns the existing one if a
-   * non-archived coordinator already exists, else spawns a new one labelled
-   * "Overseer" via the normal createTerminal path. Idempotent (one per project).
+   * The project's live coordinator thread, any agent harness (null when none). Widened to
+   * any agent harness (`isAgentType`), not just `claude-code`: Phase 1 still CREATES only
+   * claude-code coordinators (see `ensureCoordinator`), but a Phase 2 coordinator on another
+   * harness must be FOUND here, not shadowed by a new claude-code one.
    */
-  ensureCoordinator(sessionId: string): terminalsDb.Terminal {
+  findCoordinator(sessionId: string): terminalsDb.Terminal | null {
+    return terminalsDb.listBySession(this.db, sessionId)
+      .map(terminalsDb.rowToTerminal)
+      .find((t) => isAgentType(t.type) && t.config?.role === 'coordinator') ?? null;
+  }
+
+  /**
+   * Find-or-create the project's Overseer coordinator: a structured thread tagged
+   * `config.role === 'coordinator'`. Returns the existing one if a non-archived
+   * coordinator already exists, else spawns a new one labelled "Overseer" via the
+   * normal createTerminal path. Idempotent (one per project).
+   *
+   * `opts` (model, workerHarness) apply ONLY on create. They are ignored when an
+   * existing coordinator is found: the setup card that supplies these options
+   * only shows when no coordinator exists yet, so in the normal flow they don't
+   * arrive on a find-existing call. A cross-client race (two callers hitting this
+   * at once) CAN still deliver opts alongside a find-existing outcome — that is
+   * fine, since ignoring them here is the intended behavior either way.
+   */
+  ensureCoordinator(sessionId: string, opts: { model?: string; workerHarness?: AgentType } = {}): terminalsDb.Terminal {
     const session = sessionsDb.getById(this.db, sessionId);
     if (!session) throw new Error('Session not found');
 
-    const existing = terminalsDb.listBySession(this.db, sessionId)
-      .map(terminalsDb.rowToTerminal)
-      .find((t) => t.type === 'claude-code' && t.config?.role === 'coordinator');
+    const existing = this.findCoordinator(sessionId);
     if (existing) {
       // A coordinator record can outlive its process (daemon restart). Revive it so
       // the caller gets a LIVE coordinator (resume if a session was captured, else fresh)
@@ -1692,7 +1710,11 @@ export class SessionService {
       undefined,
       undefined,
       undefined,
-      { transport: 'structured', role: 'coordinator' },
+      {
+        transport: 'structured', role: 'coordinator',
+        ...(opts.model ? { model: opts.model } : {}),
+        ...(opts.workerHarness ? { workerHarness: opts.workerHarness } : {}),
+      },
     );
   }
 
@@ -1962,15 +1984,25 @@ export class SessionService {
 
     const resumeSessionId = terminal.external_id || undefined;
 
-    // Resolve the model up front and persist it into the terminal's config if it
+    // Resolve the model up front (harness-aware) and persist it into the terminal's config if it
     // wasn't already pinned there — so it survives a daemon-restart resume and is
     // returned to the frontend as part of the terminal row's config. OpenCode always
     // pins a model (its config file must name one): the user's harness-settings default
     // wins over the curated fallback.
-    const resolvedModel = modelFor(config)
-      ?? (terminal.type === 'opencode'
-        ? readHarnessSettings(this.db).opencode?.defaultModel ?? OPENCODE_DEFAULT_MODEL
-        : undefined);
+    // A poisoned harness-settings default (a Claude tier alias saved into opencode's
+    // defaultModel — e.g. by a stale UI or a hand-edited settings row) must never reach
+    // resolveSpawnModel as "the" opencode default: it would fall through to undefined there,
+    // which is unacceptable for opencode (its config file must name a real model). Filter it
+    // out HERE, before the `?? OPENCODE_DEFAULT_MODEL` fallback, so a poisoned setting falls
+    // back to the curated default instead.
+    const opencodeSettingDefault = readHarnessSettings(this.db).opencode?.defaultModel;
+    const opencodeDefault =
+      opencodeSettingDefault && !isClaudeTierAlias(opencodeSettingDefault) ? opencodeSettingDefault : OPENCODE_DEFAULT_MODEL;
+    const resolvedModel = resolveSpawnModel({
+      harness: terminal.type,
+      config,
+      opencodeDefault,
+    });
     if (resolvedModel && !config.model) {
       config.model = resolvedModel;
       terminalsDb.updateConfig(this.db, terminal.id, config);

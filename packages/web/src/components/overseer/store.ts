@@ -24,6 +24,7 @@ import { useThreadStatus } from '../../stores/threadStatus';
 import { useStructuredChat, type ApiRetry, type CompactResult } from '../tabs/chat/useStructuredChat';
 import { clearStoredDraft } from '../../hooks/useDraft';
 import type { PendingPermission, Terminal } from '../../api/types';
+import { AGENT_TYPES } from '../../lib/harnesses';
 import { CANNED, m } from './data';
 import { convItemsToStream, groupByMission, isManagedWorker, mapStatus, needsFromThreads } from './live';
 import type { AgentType, Ribbon, RenderVals, Scenario, StreamMessage } from './types';
@@ -70,6 +71,20 @@ export function viewCoordinatorFields(args: {
 }
 
 export type MobileTab = 'needs' | 'stream' | 'work';
+
+/**
+ * Generation token guarding `ensureForProject`'s async continuations (and `startCoordinator`,
+ * which supersedes them). `coordinatorProject` alone only catches a CROSS-project race (the
+ * async peek resumes after the view moved to a different project) — it does nothing for a
+ * STALE run for the SAME project: a slow peek (`api.listTerminals`) that is still in flight
+ * when a newer run (a second `ensureForProject`, or `startCoordinator` creating the
+ * coordinator directly) has already landed the correct state. Without this, the stale peek's
+ * continuation reads `coordinatorProject === sessionId` (still true — the project never
+ * changed) and wrongly stomps `setupNeeded`/`coordinatorId` back to a superseded answer.
+ * Bumped at the top of every run that will later resume past an `await`; each continuation
+ * captures its own value before the `await` and bails if a newer run has since started.
+ */
+let ensureGeneration = 0;
 
 interface OverseerState {
   // ---- UI state (public surface) ----
@@ -118,6 +133,8 @@ interface OverseerState {
   coordinatorAnswer: (answers: Record<string, string>) => void;
   sendError: string | null; // last directive send that FAILED (POST rejected); surfaced inline, cleared on next send
   ensuring: boolean; // a find-or-create coordinator request is in flight
+  setupNeeded: boolean; // ensureForProject peeked and found no live coordinator — the inline setup card should show instead of auto-creating one
+  setupSelection: { workerHarness: string; model: string }; // the setup card's current harness/model choice, consumed by startCoordinator
   resolved: string[]; // optimistically dismissed need ids
   pendingByTerminal: Record<string, PendingPermission | null>; // fetched escalations (the membrane), keyed by agent terminal id
   archivedByProject: Record<string, Terminal[]>; // archived (complete_agent'd) terminals per project; surfaced as done outcomes
@@ -146,6 +163,12 @@ interface OverseerState {
   // ---- new actions ----
   closeWorkerLightbox: () => void;
   ensureForProject: (sessionId: string | null) => void;
+  /** Update the setup card's staged harness/model choice (patched, not replaced). */
+  setSetupSelection: (patch: Partial<{ workerHarness: string; model: string }>) => void;
+  /** Create the coordinator with the setup card's current selection (model + workerHarness),
+   *  then clear `setupNeeded` and load the fresh `coordinatorId`. Called from the setup card's
+   *  own "Start" action, and from `sendDirective` when the user types before the card is submitted. */
+  startCoordinator: (sessionId: string) => Promise<void>;
   /** "New session": archive the current coordinator, then find-or-create a fresh one now.
    *  Resolves `false` only when the initial archive fails (nothing changed — the menu
    *  should stay open); `true` on every path where the session actually changed, including
@@ -200,6 +223,8 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   coordinatorAnswer: () => {},
   sendError: null,
   ensuring: false,
+  setupNeeded: false,
+  setupSelection: { workerHarness: 'claude-code', model: 'sonnet' },
   resolved: [],
   pendingByTerminal: {},
   archivedByProject: {},
@@ -234,12 +259,33 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       return { composerImagesByProject: { ...s.composerImagesByProject, [project]: cur.filter((_, i) => i !== index) } };
     }),
 
-  sendDirective: (text) => {
+  sendDirective: async (text) => {
     const trimmed = (text || '').trim();
     const project = get().coordinatorProject;
     const images = (project && get().composerImagesByProject[project]) || EMPTY_IMAGES;
+    if (!trimmed && images.length === 0) return; // nothing to send — don't spin up a coordinator for it
+    // No coordinator yet and the setup card is showing (peeked-empty project): the user typed
+    // ahead of hitting "Start" on the card — create it now with the staged selection so the
+    // directive has somewhere to land, mirroring what the card's own Start button would do.
+    if (!get().coordinatorId && get().setupNeeded) {
+      const sessionId = project ?? useProjects.getState().activeId;
+      if (sessionId) await get().startCoordinator(sessionId);
+      // The project the user actually TYPED this directive in may no longer be the
+      // view's current project by the time the create call above resolves (the user
+      // switched projects mid-flight). Bail BEFORE reading coordinatorId — otherwise
+      // we'd read back whatever project is now loaded (possibly a different one that
+      // finished ensuring in the meantime) and send this directive to ITS coordinator.
+      if (get().coordinatorProject !== project) return;
+      // startCoordinator swallows its own errors (sets `ensuring: false` and returns),
+      // so a failed create leaves us here with no coordinatorId and no other signal —
+      // without this, the directive (and any staged image) just vanishes silently.
+      if (!get().coordinatorId) {
+        set({ sendError: 'Could not start the Control Plane session — try again.' });
+        return;
+      }
+    }
     const id = get().coordinatorId;
-    if ((!trimmed && images.length === 0) || !id) return;
+    if (!id) return;
     // No optimistic bubble: the backend echoes the user's turn (and it survives
     // reconnect replay), so an optimistic append would double up. Clear any prior
     // send-failure notice — this is a fresh attempt. (The draft TEXT is cleared by the
@@ -330,6 +376,10 @@ export const useOverseer = create<OverseerState>((set, get) => ({
     if (!sessionId) return;
     const st = get();
     if (st.coordinatorProject === sessionId && (st.coordinatorId || st.ensuring)) return;
+    // This run supersedes any earlier run still in flight (for this project or another) —
+    // see ensureGeneration's doc comment. Captured now so every continuation below can tell
+    // whether IT is still the newest run by the time its await resolves.
+    const myGen = ++ensureGeneration;
     // Switching projects: reset the coordinator + derived view, then find-or-create.
     set({
       coordinatorProject: sessionId,
@@ -351,18 +401,73 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       resolved: [],
       pendingByTerminal: {},
       ensuring: true,
+      setupNeeded: false,
     });
     // Refresh the project's threads so managed workers show even before the shell loads them.
     void useTabs.getState().loadTabs(sessionId).catch(() => {});
-    api
-      .ensureOverseerCoordinator(sessionId)
-      .then(({ terminalId }) => {
-        if (get().coordinatorProject !== sessionId) return; // project switched mid-flight
-        set({ coordinatorId: terminalId, ensuring: false });
-      })
-      .catch(() => {
-        if (get().coordinatorProject === sessionId) set({ ensuring: false });
-      });
+    // Peek for a live coordinator FIRST — don't auto-create one. A project with none shows
+    // the inline setup card instead (setupNeeded) so the user picks the harness/model before
+    // anything is spawned; `startCoordinator` does the actual create once they choose.
+    void (async () => {
+      // A run is still current only when NEITHER guard tripped: the view is still on this
+      // project AND no newer run (another ensureForProject, or startCoordinator) has started
+      // since. Stale-same-project resumes (this run's own award) are exactly what ensureGeneration
+      // catches — coordinatorProject alone stays true the whole time in that case.
+      const stillCurrent = () => get().coordinatorProject === sessionId && ensureGeneration === myGen;
+      let terminals: Terminal[];
+      try {
+        terminals = await api.listTerminals(sessionId);
+      } catch {
+        // A flaky peek must never strand the card — fall back to today's plain ensure.
+        if (!stillCurrent()) return;
+        api
+          .ensureOverseerCoordinator(sessionId)
+          .then(({ terminalId }) => {
+            if (!stillCurrent()) return;
+            set({ coordinatorId: terminalId, ensuring: false });
+          })
+          .catch(() => {
+            if (stillCurrent()) set({ ensuring: false });
+          });
+        return;
+      }
+      if (!stillCurrent()) return;
+      // Mirror of the daemon's widened findCoordinator filter (isAgentType(t.type)): a
+      // coordinator is one of the agent harnesses, never a plain shell.
+      const found = terminals.some((t) => AGENT_TYPES.includes(t.type) && t.config?.role === 'coordinator');
+      if (!found) {
+        set({ setupNeeded: true, ensuring: false });
+        return;
+      }
+      api
+        .ensureOverseerCoordinator(sessionId)
+        .then(({ terminalId }) => {
+          if (!stillCurrent()) return;
+          set({ coordinatorId: terminalId, ensuring: false });
+        })
+        .catch(() => {
+          if (stillCurrent()) set({ ensuring: false });
+        });
+    })();
+  },
+
+  setSetupSelection: (patch) => set((s) => ({ setupSelection: { ...s.setupSelection, ...patch } })),
+
+  startCoordinator: async (sessionId) => {
+    const { workerHarness, model } = get().setupSelection;
+    // This create is the new authoritative run for the project — bump the generation so a
+    // still-in-flight peek (ensureForProject) that resumes afterward recognises itself as
+    // stale and no longer overwrites the coordinator this call is about to set. See
+    // ensureGeneration's doc comment.
+    const myGen = ++ensureGeneration;
+    set({ ensuring: true });
+    try {
+      const { terminalId } = await api.ensureOverseerCoordinator(sessionId, { model, workerHarness });
+      if (get().coordinatorProject !== sessionId || ensureGeneration !== myGen) return; // project switched, or superseded, mid-flight
+      set({ coordinatorId: terminalId, setupNeeded: false, ensuring: false });
+    } catch {
+      if (get().coordinatorProject === sessionId && ensureGeneration === myGen) set({ ensuring: false });
+    }
   },
 
   newCoordinatorSession: async (sessionId, currentTerminalId) => {
@@ -696,7 +801,7 @@ export function useNeedsSync(): void {
 // Derived view model. Pure read over the live stores (no websocket here — that's
 // owned by useCoordinatorSync), memoized so the snapshot reference is stable.
 export function useRenderVals(): RenderVals {
-  const { coordinatorId, coordinatorProject, coordinatorStream, coordinatorBusy, sendError, resolved, pendingByTerminal, archivedByProject } = useOverseer(
+  const { coordinatorId, coordinatorProject, coordinatorStream, coordinatorBusy, sendError, resolved, pendingByTerminal, archivedByProject, setupNeeded } = useOverseer(
     useShallow((s) => ({
       coordinatorId: s.coordinatorId,
       coordinatorProject: s.coordinatorProject,
@@ -706,6 +811,7 @@ export function useRenderVals(): RenderVals {
       resolved: s.resolved,
       pendingByTerminal: s.pendingByTerminal,
       archivedByProject: s.archivedByProject,
+      setupNeeded: s.setupNeeded,
     })),
   );
   const activeId = useProjects((s) => s.activeId);
@@ -740,10 +846,14 @@ export function useRenderVals(): RenderVals {
     const noMissions = missions.length === 0;
     const emptyMode = !hasCoordinator || (noMissions && gatedStream.length === 0);
 
-    // First-run / empty conversation → the Overseer greeting.
+    // First-run / empty conversation → the Overseer greeting. Suppressed when the inline
+    // setup card is showing (setupNeeded) — the card carries its own copy, so an empty
+    // stream reads as blank rather than doubling up with the canned greeting.
     const base: StreamMessage[] = gatedStream.length
       ? gatedStream
-      : [m('overseer', 'Control Plane', CANNED.emptyGreeting, '', 'greeting')];
+      : setupNeeded
+        ? []
+        : [m('overseer', 'Control Plane', CANNED.emptyGreeting, '', 'greeting')];
     // Append a transient send-failure notice (BUG 1: previously swallowed) so a rejected
     // directive is VISIBLE inline; cleared by the next send attempt / project switch.
     const stream: StreamMessage[] = sendError
@@ -766,5 +876,5 @@ export function useRenderVals(): RenderVals {
       overviewOpen: true,
       projectMatches,
     };
-  }, [coordinatorId, coordinatorProject, coordinatorStream, coordinatorBusy, sendError, resolved, pendingByTerminal, archivedByProject, activeId, byProject, byTerminal]);
+  }, [coordinatorId, coordinatorProject, coordinatorStream, coordinatorBusy, sendError, resolved, pendingByTerminal, archivedByProject, setupNeeded, activeId, byProject, byTerminal]);
 }

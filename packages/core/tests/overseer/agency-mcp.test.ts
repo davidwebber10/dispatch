@@ -27,6 +27,10 @@ describe('agency-mcp', () => {
     vi.restoreAllMocks();
   });
 
+  // spawn_agent/queue_agent now resolve harness/model server-side via GET .../overseer/worker-defaults
+  // BEFORE the create call. This is the default (claude-code, available) response for that call.
+  const workerDefaultsOk = () => ({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ harness: 'claude-code', available: true }) });
+
   it('tools/list returns the agency tools', async () => {
     const res = await handleRequest({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
     expect(res).not.toBeNull();
@@ -52,9 +56,11 @@ describe('agency-mcp', () => {
 
   it('spawn_agent issues create + seed-message fetches and returns the agentId', async () => {
     const fetchMock = vi.fn()
-      // 1) create terminal -> returns the new terminal JSON
+      // 1) worker-defaults resolution
+      .mockResolvedValueOnce(workerDefaultsOk())
+      // 2) create terminal -> returns the new terminal JSON
       .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'agent-1', label: 'researcher agent' }) })
-      // 2) seed message -> 204 no body
+      // 3) seed message -> 204 no body
       .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
     global.fetch = fetchMock as any;
 
@@ -62,9 +68,11 @@ describe('agency-mcp', () => {
     expect(out.isError).toBeUndefined();
     expect(JSON.parse(out.content[0].text)).toEqual({ agentId: 'agent-1', label: 'researcher agent' });
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    // worker-defaults
+    expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/sessions/sess-1/overseer/worker-defaults?agentType=researcher');
     // create
-    const [createUrl, createInit] = fetchMock.mock.calls[0];
+    const [createUrl, createInit] = fetchMock.mock.calls[1];
     expect(createUrl).toBe('http://localhost:9999/api/sessions/sess-1/terminals');
     expect(createInit.method).toBe('POST');
     expect(JSON.parse(createInit.body)).toEqual({
@@ -73,7 +81,7 @@ describe('agency-mcp', () => {
       config: { transport: 'structured', agentType: 'researcher', role: 'agent', spawnDepth: 1 },
     });
     // seed message
-    const [msgUrl, msgInit] = fetchMock.mock.calls[1];
+    const [msgUrl, msgInit] = fetchMock.mock.calls[2];
     expect(msgUrl).toBe('http://localhost:9999/api/terminals/agent-1/message');
     expect(msgInit.method).toBe('POST');
     expect(JSON.parse(msgInit.body)).toEqual({ text: 'investigate X', source: 'coordinator' });
@@ -105,13 +113,14 @@ describe('agency-mcp', () => {
 
   it('spawn_agent forwards a mission into the create body config', async () => {
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(workerDefaultsOk())
       .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'a3', label: 'implementer agent' }) })
       .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
     global.fetch = fetchMock as any;
     const out = await callTool('spawn_agent', { agentType: 'implementer', task: 'do it', mission: 'Auth refactor' });
     expect(out.isError).toBeUndefined();
     expect(JSON.parse(out.content[0].text)).toEqual({ agentId: 'a3', label: 'implementer agent', mission: 'Auth refactor' });
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
       type: 'claude-code',
       label: 'implementer agent',
       config: { transport: 'structured', agentType: 'implementer', role: 'agent', mission: 'Auth refactor', spawnDepth: 1 },
@@ -120,67 +129,75 @@ describe('agency-mcp', () => {
 
   it('spawn_agent omits mission from config when not provided', async () => {
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(workerDefaultsOk())
       .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'a4', label: 'researcher agent' }) })
       .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
     global.fetch = fetchMock as any;
     await callTool('spawn_agent', { agentType: 'researcher', task: 'look' });
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).config).toEqual({
       transport: 'structured', agentType: 'researcher', role: 'agent', spawnDepth: 1,
     });
   });
 
   it('spawn_agent forwards an explicit model override into the create body config', async () => {
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(workerDefaultsOk())
       .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'a5', label: 'researcher agent' }) })
       .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
     global.fetch = fetchMock as any;
     await callTool('spawn_agent', { agentType: 'researcher', task: 'quick lookup', model: 'sonnet' });
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).config).toEqual({
       transport: 'structured', agentType: 'researcher', role: 'agent', model: 'sonnet', spawnDepth: 1,
     });
   });
 
   it('spawn_agent omits model from config when not provided (tier default applies later at spawn time)', async () => {
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(workerDefaultsOk())
       .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'a6', label: 'researcher agent' }) })
       .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
     global.fetch = fetchMock as any;
     await callTool('spawn_agent', { agentType: 'researcher', task: 'look' });
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).config).toEqual({
       transport: 'structured', agentType: 'researcher', role: 'agent', spawnDepth: 1,
     });
   });
 
   it('end-to-end: spawn_agent config resolves via modelFor to the explicit override, or the implementer tier default when omitted', async () => {
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(workerDefaultsOk())
       .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'a7', label: 'implementer agent' }) })
       .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
     global.fetch = fetchMock as any;
     await callTool('spawn_agent', { agentType: 'implementer', task: 'hard problem', model: 'opus' });
-    const overriddenConfig = JSON.parse(fetchMock.mock.calls[0][1].body).config;
+    const overriddenConfig = JSON.parse(fetchMock.mock.calls[1][1].body).config;
     expect(modelFor(overriddenConfig)).toBe('opus'); // override wins over the implementer's sonnet default
 
     fetchMock.mockReset();
     fetchMock
+      .mockResolvedValueOnce(workerDefaultsOk())
       .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'a8', label: 'implementer agent' }) })
       .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
     await callTool('spawn_agent', { agentType: 'implementer', task: 'do it' });
-    const defaultConfig = JSON.parse(fetchMock.mock.calls[0][1].body).config;
+    const defaultConfig = JSON.parse(fetchMock.mock.calls[1][1].body).config;
     expect(modelFor(defaultConfig)).toBe('sonnet'); // falls back to the implementer tier default (no regression)
   });
 
   it('end-to-end: queue_agent config resolves via modelFor to the explicit override, or the researcher tier default when omitted', async () => {
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(workerDefaultsOk())
       .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'q7', label: 'researcher agent' }) });
     global.fetch = fetchMock as any;
     await callTool('queue_agent', { agentType: 'researcher', task: 'quick lookup', model: 'sonnet' });
-    const overriddenConfig = JSON.parse(fetchMock.mock.calls[0][1].body).config;
+    const overriddenConfig = JSON.parse(fetchMock.mock.calls[1][1].body).config;
     expect(modelFor(overriddenConfig)).toBe('sonnet'); // override wins over the researcher's opus default
 
     fetchMock.mockReset();
-    fetchMock.mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'q8', label: 'researcher agent' }) });
+    fetchMock
+      .mockResolvedValueOnce(workerDefaultsOk())
+      .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'q8', label: 'researcher agent' }) });
     await callTool('queue_agent', { agentType: 'researcher', task: 'investigate' });
-    const defaultConfig = JSON.parse(fetchMock.mock.calls[0][1].body).config;
+    const defaultConfig = JSON.parse(fetchMock.mock.calls[1][1].body).config;
     expect(modelFor(defaultConfig)).toBe('opus'); // falls back to the researcher tier default (no regression)
   });
 
@@ -208,11 +225,55 @@ describe('agency-mcp', () => {
 
   it('spawn_agent honors a custom name as the label', async () => {
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(workerDefaultsOk())
       .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'a2', label: 'Recon' }) })
       .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
     global.fetch = fetchMock as any;
     await callTool('spawn_agent', { agentType: 'planner', name: 'Recon', task: 'plan it' });
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body).label).toBe('Recon');
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).label).toBe('Recon');
+  });
+
+  describe('spawn_agent / queue_agent — explicit harness runs through the availability guard', () => {
+    it('an explicit harness arg is forwarded to worker-defaults as ?harness=, and its resolved model is used', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ harness: 'codex', model: 'gpt-5-codex', available: true }) })
+        .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'h1', label: 'researcher agent' }) })
+        .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
+      global.fetch = fetchMock as any;
+
+      const out = await callTool('spawn_agent', { agentType: 'researcher', task: 'x', harness: 'codex' });
+
+      expect(out.isError).toBeUndefined();
+      expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/sessions/sess-1/overseer/worker-defaults?agentType=researcher&harness=codex');
+      const createBody = JSON.parse(fetchMock.mock.calls[1][1].body);
+      expect(createBody.type).toBe('codex');
+      expect(createBody.config.model).toBe('gpt-5-codex');
+    });
+
+    it('spawn_agent throws (MCP isError) when the server reports the harness unavailable, even for an explicit harness', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ harness: 'grok', available: false, reason: 'grok CLI is not installed on this server' }) });
+      global.fetch = fetchMock as any;
+
+      const out = await callTool('spawn_agent', { agentType: 'researcher', task: 'x', harness: 'grok' });
+
+      expect(out.isError).toBe(true);
+      expect(out.content[0].text).toContain('grok CLI is not installed');
+      // Never reached the create call — the guard fires before any thread is created.
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('queue_agent throws when the server reports the resolved (non-explicit) harness unavailable', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ harness: 'claude-code', available: false, reason: 'claude-code CLI is not installed on this server' }) });
+      global.fetch = fetchMock as any;
+
+      const out = await callTool('queue_agent', { agentType: 'researcher', task: 'x' });
+
+      expect(out.isError).toBe(true);
+      expect(out.content[0].text).toContain('not installed');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('list_agents filters to agent-role / typed threads', async () => {
@@ -259,7 +320,9 @@ describe('agency-mcp', () => {
 
   it('queue_agent parks the task in a single queued create (no seed message) and returns queued:true', async () => {
     const fetchMock = vi.fn()
-      // create terminal (queued) -> returns the new terminal JSON. No second (message) fetch.
+      // 1) worker-defaults resolution
+      .mockResolvedValueOnce(workerDefaultsOk())
+      // 2) create terminal (queued) -> returns the new terminal JSON. No third (message) fetch.
       .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'q1', label: 'researcher agent' }) });
     global.fetch = fetchMock as any;
 
@@ -268,8 +331,8 @@ describe('agency-mcp', () => {
     expect(JSON.parse(out.content[0].text)).toEqual({ agentId: 'q1', label: 'researcher agent', queued: true });
 
     // Unlike spawn_agent, queueing does NOT seed a message — the task is parked in the create body.
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [createUrl, createInit] = fetchMock.mock.calls[0];
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [createUrl, createInit] = fetchMock.mock.calls[1];
     expect(createUrl).toBe('http://localhost:9999/api/sessions/sess-1/terminals');
     expect(createInit.method).toBe('POST');
     expect(JSON.parse(createInit.body)).toEqual({
@@ -283,54 +346,59 @@ describe('agency-mcp', () => {
 
   it('queue_agent forwards a mission into the create body config', async () => {
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(workerDefaultsOk())
       .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'q2', label: 'implementer agent' }) });
     global.fetch = fetchMock as any;
     const out = await callTool('queue_agent', { agentType: 'implementer', task: 'do it', mission: 'Auth refactor' });
     expect(out.isError).toBeUndefined();
     expect(JSON.parse(out.content[0].text)).toEqual({ agentId: 'q2', label: 'implementer agent', mission: 'Auth refactor', queued: true });
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).config).toEqual({
       transport: 'structured', agentType: 'implementer', role: 'agent', mission: 'Auth refactor', spawnDepth: 1,
     });
   });
 
   it('queue_agent forwards dependsOn into the create body config', async () => {
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(workerDefaultsOk())
       .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'q3', label: 'implementer agent' }) });
     global.fetch = fetchMock as any;
     const out = await callTool('queue_agent', { agentType: 'implementer', task: 'do it', dependsOn: 'agent-1' });
     expect(out.isError).toBeUndefined();
     expect(JSON.parse(out.content[0].text)).toEqual({ agentId: 'q3', label: 'implementer agent', queued: true });
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).config).toEqual({
       transport: 'structured', agentType: 'implementer', role: 'agent', dependsOn: 'agent-1', spawnDepth: 1,
     });
   });
 
   it('queue_agent omits dependsOn from config when not provided', async () => {
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(workerDefaultsOk())
       .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'q4', label: 'researcher agent' }) });
     global.fetch = fetchMock as any;
     await callTool('queue_agent', { agentType: 'researcher', task: 'look' });
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).config).toEqual({
       transport: 'structured', agentType: 'researcher', role: 'agent', spawnDepth: 1,
     });
   });
 
   it('queue_agent forwards an explicit model override into the create body config', async () => {
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(workerDefaultsOk())
       .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'q5', label: 'implementer agent' }) });
     global.fetch = fetchMock as any;
     await callTool('queue_agent', { agentType: 'implementer', task: 'hard problem', model: 'opus' });
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).config).toEqual({
       transport: 'structured', agentType: 'implementer', role: 'agent', model: 'opus', spawnDepth: 1,
     });
   });
 
   it('queue_agent omits model from config when not provided (tier default applies later at spawn time)', async () => {
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(workerDefaultsOk())
       .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'q6', label: 'implementer agent' }) });
     global.fetch = fetchMock as any;
     await callTool('queue_agent', { agentType: 'implementer', task: 'do it' });
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body).config).toEqual({
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).config).toEqual({
       transport: 'structured', agentType: 'implementer', role: 'agent', spawnDepth: 1,
     });
   });
@@ -631,12 +699,13 @@ describe('agency-mcp', () => {
     it('spawn_agent allows one below the cap and stamps spawnDepth = parent + 1 on the child', async () => {
       process.env.DISPATCH_SPAWN_DEPTH = '2'; // one below MAX_SPAWN_DEPTH (3)
       const fetchMock = vi.fn()
+        .mockResolvedValueOnce(workerDefaultsOk())
         .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'deep-1', label: 'researcher agent' }) })
         .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
       global.fetch = fetchMock as any;
       const out = await callTool('spawn_agent', { agentType: 'researcher', task: 'go deeper' });
       expect(out.isError).toBeUndefined();
-      expect(JSON.parse(fetchMock.mock.calls[0][1].body).config.spawnDepth).toBe(3);
+      expect(JSON.parse(fetchMock.mock.calls[1][1].body).config.spawnDepth).toBe(3);
     });
 
     it('queue_agent refuses at max depth and never calls the daemon', async () => {
@@ -651,11 +720,12 @@ describe('agency-mcp', () => {
 
     it('a caller with no DISPATCH_SPAWN_DEPTH set is treated as depth 0 (root) and its child is stamped depth 1', async () => {
       const fetchMock = vi.fn()
+        .mockResolvedValueOnce(workerDefaultsOk())
         .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'root-child', label: 'researcher agent' }) })
         .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
       global.fetch = fetchMock as any;
       await callTool('spawn_agent', { agentType: 'researcher', task: 'x' });
-      expect(JSON.parse(fetchMock.mock.calls[0][1].body).config.spawnDepth).toBe(1);
+      expect(JSON.parse(fetchMock.mock.calls[1][1].body).config.spawnDepth).toBe(1);
     });
   });
 

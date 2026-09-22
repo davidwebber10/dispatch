@@ -1,10 +1,16 @@
 import { Router } from 'express';
+import type Database from 'better-sqlite3';
 import type { SessionService } from '../sessions/service.js';
 import type { EventBroadcaster } from '../ws/events.js';
 import { listRecentSessions } from '../sessions/cc-sessions.js';
 import { listRecentCodexSessions } from '../sessions/codex-sessions.js';
+import { AGENT_CLI, isAgentType } from '../providers/agent-types.js';
+import { PERSONA_TYPES, type PersonaType, readOverseerWorkers } from '../settings/overseer-workers.js';
+import { resolveWorker } from '../overseer/worker-matrix.js';
+import { harnessCapabilities } from '../providers/capabilities.js';
+import { detectProvider } from '../setup/detect.js';
 
-export function createSessionsRouter(sessionService: SessionService, broadcaster?: EventBroadcaster): Router {
+export function createSessionsRouter(sessionService: SessionService, broadcaster: EventBroadcaster | undefined, db: Database.Database): Router {
   const router = Router();
 
   // POST /api/sessions/reorder — reorder sessions (before parameterized routes)
@@ -65,7 +71,16 @@ export function createSessionsRouter(sessionService: SessionService, broadcaster
   // Overseer coordinator thread (structured, config.role='coordinator'). Idempotent.
   const ensureCoordinator = (req: import('express').Request, res: import('express').Response) => {
     try {
-      const terminal = sessionService.ensureCoordinator(req.params.id);
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const opts: { model?: string; workerHarness?: import('../providers/agent-types.js').AgentType } = {};
+      if (typeof body.model === 'string' && body.model.trim()) opts.model = body.model.trim();
+      if (body.workerHarness !== undefined) {
+        if (typeof body.workerHarness !== 'string' || !isAgentType(body.workerHarness)) {
+          return res.status(400).json({ error: 'workerHarness must be one of the agent harness types' });
+        }
+        opts.workerHarness = body.workerHarness;
+      }
+      const terminal = sessionService.ensureCoordinator(req.params.id, opts);
       broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: req.params.id });
       res.json({ terminalId: terminal.id });
     } catch (err: any) {
@@ -74,6 +89,57 @@ export function createSessionsRouter(sessionService: SessionService, broadcaster
   };
   router.post('/:id/overseer/coordinator', ensureCoordinator);
   router.get('/:id/overseer/coordinator', ensureCoordinator);
+
+  // GET /api/sessions/:id/overseer/worker-defaults?agentType=&harness= — the resolved
+  // harness/model a spawned worker of this type would get. `harness`, when present, is the
+  // caller's own explicit pick (agency-mcp's spawn_agent/queue_agent `harness` arg) — it is
+  // fed through resolveWorker's `explicit` precedence rather than bypassing resolution, so
+  // the availability guard below still runs for it. agency-mcp calls this before creating a
+  // worker thread.
+  router.get('/:id/overseer/worker-defaults', async (req, res) => {
+    const agentType = req.query.agentType;
+    if (typeof agentType !== 'string' || !(PERSONA_TYPES as readonly string[]).includes(agentType)) {
+      return res.status(400).json({ error: `agentType must be one of: ${PERSONA_TYPES.join(', ')}` });
+    }
+    const harnessParam = req.query.harness;
+    let explicitHarness: import('../providers/agent-types.js').AgentType | undefined;
+    if (harnessParam !== undefined) {
+      if (typeof harnessParam !== 'string' || !isAgentType(harnessParam)) {
+        return res.status(400).json({ error: 'harness must be one of the agent harness types' });
+      }
+      explicitHarness = harnessParam;
+    }
+    const coordinator = sessionService.findCoordinator(req.params.id);
+    const sessionDefault = coordinator?.config?.workerHarness;
+    const resolved = resolveWorker({
+      agentType: agentType as PersonaType,
+      explicit: explicitHarness ? { harness: explicitHarness } : undefined,
+      matrix: readOverseerWorkers(db),
+      sessionDefault: typeof sessionDefault === 'string' && isAgentType(sessionDefault) ? sessionDefault : undefined,
+    });
+    const cap = harnessCapabilities().find((h) => h.type === resolved.harness);
+    const structurallyAvailable = !!cap && cap.modes.length > 0;
+    if (!structurallyAvailable) {
+      return res.json({ ...resolved, available: false, reason: `${resolved.harness} structured transport is disabled on this server` });
+    }
+    // Structured transport is enabled, but that doesn't mean the CLI is actually installed
+    // and signed in — spec says "installed/authenticated". An uninstalled binary or a signed-
+    // out session would still create a thread that dead-ends the moment it spawns. An
+    // INCONCLUSIVE sign-in probe (signedIn === 'unknown') never blocks — only a definitive
+    // "signed out" does.
+    const status = await detectProvider(AGENT_CLI[resolved.harness]);
+    // opencode never carries its own sign-in: Dispatch injects OPENROUTER_API_KEY from
+    // Doppler into every opencode child (server.ts's refreshOpencodeKeyEnv), so
+    // `opencode auth list` legitimately reports 0 credentials while workers run fine.
+    // NewThreadModal exempts opencode from its login gate for the same reason — mirror
+    // that here so this route doesn't false-block it.
+    const signedInOk = resolved.harness === 'opencode' || status.signedIn !== false;
+    const available = status.installed && signedInOk;
+    let reason: string | undefined;
+    if (!status.installed) reason = `${resolved.harness} CLI is not installed on this server`;
+    else if (!signedInOk) reason = `${resolved.harness} CLI is not signed in on this server`;
+    res.json({ ...resolved, available, ...(reason ? { reason } : {}) });
+  });
 
   // PATCH /api/sessions/:id — update session fields
   router.patch('/:id', (req, res) => {

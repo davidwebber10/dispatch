@@ -105,8 +105,12 @@ export const api = {
   switchTransport: (terminalId: string, transport: 'structured' | 'pty') =>
     req<Terminal>(`/api/terminals/${terminalId}/transport`, { method: 'POST', body: body({ transport }) }),
   // Overseer: find-or-create this project's coordinator thread (idempotent) → { terminalId }.
-  ensureOverseerCoordinator: (sessionId: string) =>
-    req<{ terminalId: string }>(`/api/sessions/${sessionId}/overseer/coordinator`, { method: 'POST' }),
+  // opts apply only when this call CREATES the coordinator (setup card / first directive).
+  ensureOverseerCoordinator: (sessionId: string, opts?: { model?: string; workerHarness?: string }) =>
+    req<{ terminalId: string }>(`/api/sessions/${sessionId}/overseer/coordinator`, { method: 'POST', ...(opts && Object.keys(opts).length ? { body: body(opts) } : {}) }),
+  // The Control Plane worker matrix (per-agent-type harness/model) — plumbing, no UI yet.
+  putOverseerWorkers: (patch: { byType: Record<string, { harness?: string; model?: string } | null> }) =>
+    req<{ byType: Record<string, { harness?: string; model?: string }> }>('/api/settings/harnesses/overseer-workers', { method: 'PUT', body: body(patch) }),
 
   getSetupState: () => req<SetupState>(`/api/setup/state`),
   recheckProviders: (fresh?: boolean) => req<ProviderStatus[]>(`/api/setup/providers${fresh ? '?fresh=1' : ''}`),

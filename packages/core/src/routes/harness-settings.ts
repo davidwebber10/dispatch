@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type Database from 'better-sqlite3';
 import { readHarnessSettings, updateHarnessSettings, opencodeKeySecretName, opencodeModels } from '../settings/harness-settings.js';
+import { readOverseerWorkers, updateOverseerWorkers } from '../settings/overseer-workers.js';
 import { loadCatalog, searchCatalog } from '../settings/openrouter-catalog.js';
 
 /** The narrow secrets surface this router needs (SecretsService satisfies it). */
@@ -36,7 +37,7 @@ export function createHarnessSettingsRouter(db: Database.Database, secrets?: Sec
     return { secret, present };
   };
 
-  const payload = async () => ({ settings: readHarnessSettings(db), opencodeKey: await keyStatus(), opencodeModels: opencodeModels(db) });
+  const payload = async () => ({ settings: readHarnessSettings(db), opencodeKey: await keyStatus(), opencodeModels: opencodeModels(db), overseerWorkers: readOverseerWorkers(db) });
 
   router.get('/', async (_req, res) => {
     res.json(await payload());
@@ -56,6 +57,12 @@ export function createHarnessSettingsRouter(db: Database.Database, secrets?: Sec
     } catch (err) {
       res.status(502).json({ error: `Could not reach the OpenRouter catalog: ${err instanceof Error ? err.message : String(err)}` });
     }
+  });
+
+  // The Control Plane worker matrix (per-agent-type harness/model). Plumbing only —
+  // no picker UI edits this yet; spawn-time resolution reads it (overseer/worker-matrix).
+  router.put('/overseer-workers', (req, res) => {
+    res.json(updateOverseerWorkers(db, req.body));
   });
 
   return router;
