@@ -57,16 +57,23 @@ function extractWritePaths(inp: Record<string, unknown>): string[] {
   return single !== undefined ? [single] : [];
 }
 
+/** True when `target` resolves to a path strictly inside `dir` (not `dir` itself). Resolves
+ *  both sides with `path.resolve` first, so a traversal segment like `..` can't slip a path
+ *  that only *textually* starts with `dir` past a raw string-prefix check. */
+function isUnder(dir: string, target: string): boolean {
+  const rel = path.relative(path.resolve(dir), path.resolve(target));
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
 /** Builds the ground rules for a coordinator thread's own tool use, scoped to `memoryDir` —
  *  the one directory a coordinator may write to (its own memory/plans). Pure — no I/O, no state. */
 export function makeCoordinatorPolicy(memoryDir: string): (toolName: string, input: unknown) => PolicyDecision {
-  const memoryDirPrefix = memoryDir.replace(/[/\\]+$/, '') + path.sep;
   return function coordinatorToolPolicy(toolName: string, input: unknown): PolicyDecision {
     const inp = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
     if (toolName === 'Agent' || toolName === 'Task' || toolName === 'Workflow') return { allow: false, message: AGENT_MSG };
     if (FILE_TOOLS.has(toolName)) {
       const targets = extractWritePaths(inp);
-      if (targets.length > 0 && targets.every((t) => t.startsWith(memoryDirPrefix))) return { allow: true };
+      if (targets.length > 0 && targets.every((t) => isUnder(memoryDir, t))) return { allow: true };
       return { allow: false, message: delegateMsg(memoryDir) };
     }
     if (toolName === 'Bash') {

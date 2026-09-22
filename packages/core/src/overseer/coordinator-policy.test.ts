@@ -97,4 +97,30 @@ describe('makeCoordinatorPolicy', () => {
     expect(d.allow).toBe(false);
     if (!d.allow) expect(d.message).toContain('.claude');
   });
+
+  it('denies a file_path that traverses out of the memory dir via ..', () => {
+    const policy = makeCoordinatorPolicy('/home/x/.codex');
+    // String-prefix check would pass this (it starts with '/home/x/.codex/'), but it resolves
+    // to /home/x/etc/passwd — outside the memory dir.
+    const d = policy('Write', { file_path: '/home/x/.codex/../../etc/passwd' });
+    expect(d.allow).toBe(false);
+  });
+
+  it('denies a changes[] entry with a traversal path', () => {
+    const policy = makeCoordinatorPolicy('/home/x/.codex');
+    const d = policy('Write', {
+      changes: [{ path: '/home/x/.codex/memory/MEMORY.md' }, { path: '/home/x/.codex/../../etc/passwd' }],
+    });
+    expect(d.allow).toBe(false);
+  });
+
+  it('allows a legitimate nested path under the memory dir', () => {
+    const policy = makeCoordinatorPolicy('/home/x/.codex');
+    expect(policy('Write', { file_path: '/home/x/.codex/sub/dir/file.md' })).toEqual({ allow: true });
+  });
+
+  it('denies a write targeting the memory dir root itself (not a real write target)', () => {
+    const policy = makeCoordinatorPolicy('/home/x/.codex');
+    expect(policy('Write', { file_path: '/home/x/.codex' }).allow).toBe(false);
+  });
 });
