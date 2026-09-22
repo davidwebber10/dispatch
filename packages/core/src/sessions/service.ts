@@ -23,6 +23,7 @@ import { parseCodexRollout } from '../conversation/codex-transcript.js';
 import { findCodexRolloutPath } from './codex-sessions.js';
 import { platform } from '../platform/index.js';
 import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.js';
+import { resolveSpawnModel } from '../overseer/spawn-model.js';
 import { COORDINATOR_DISALLOWED_TOOLS, coordinatorToolPolicy } from '../overseer/coordinator-policy.js';
 import { roleToolPolicy } from '../roles/role-policy.js';
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
@@ -1976,15 +1977,16 @@ export class SessionService {
 
     const resumeSessionId = terminal.external_id || undefined;
 
-    // Resolve the model up front and persist it into the terminal's config if it
+    // Resolve the model up front (harness-aware) and persist it into the terminal's config if it
     // wasn't already pinned there — so it survives a daemon-restart resume and is
     // returned to the frontend as part of the terminal row's config. OpenCode always
     // pins a model (its config file must name one): the user's harness-settings default
     // wins over the curated fallback.
-    const resolvedModel = modelFor(config)
-      ?? (terminal.type === 'opencode'
-        ? readHarnessSettings(this.db).opencode?.defaultModel ?? OPENCODE_DEFAULT_MODEL
-        : undefined);
+    const resolvedModel = resolveSpawnModel({
+      harness: terminal.type,
+      config,
+      opencodeDefault: readHarnessSettings(this.db).opencode?.defaultModel ?? OPENCODE_DEFAULT_MODEL,
+    });
     if (resolvedModel && !config.model) {
       config.model = resolvedModel;
       terminalsDb.updateConfig(this.db, terminal.id, config);
