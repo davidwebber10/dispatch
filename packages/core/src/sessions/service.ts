@@ -28,7 +28,7 @@ import { roleToolPolicy } from '../roles/role-policy.js';
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
 import { resolveTranscriptPath } from './transcript-path.js';
 import { randomUUID } from 'crypto';
-import { isAgentType } from '../providers/agent-types.js';
+import { isAgentType, type AgentType } from '../providers/agent-types.js';
 import { writeGrokHome, type McpServerEntry } from '../providers/grok-home.js';
 import { writeOpencodeConfig } from '../providers/opencode-config.js';
 import { OPENCODE_DEFAULT_MODEL } from '../providers/opencode.js';
@@ -1049,7 +1049,7 @@ export class SessionService {
     if (cfg.role !== 'agent') return false; // only agents escalate UP; coordinators/plain → human
     const coordinator = terminalsDb.listBySession(this.db, agent.session_id)
       .map(terminalsDb.rowToTerminal)
-      .find((t) => t.type === 'claude-code' && !t.archivedAt && t.id !== agentTerminalId && t.config?.role === 'coordinator');
+      .find((t) => isAgentType(t.type) && !t.archivedAt && t.id !== agentTerminalId && t.config?.role === 'coordinator');
     if (!coordinator) return false;
     try {
       this.ensureStructuredAlive(coordinator.id); // a daemon restart may have killed it
@@ -1665,18 +1665,28 @@ export class SessionService {
   }
 
   /**
-   * Find-or-create the project's Overseer coordinator: a structured claude-code
-   * thread tagged `config.role === 'coordinator'`. Returns the existing one if a
-   * non-archived coordinator already exists, else spawns a new one labelled
-   * "Overseer" via the normal createTerminal path. Idempotent (one per project).
+   * Find-or-create the project's Overseer coordinator: a structured thread tagged
+   * `config.role === 'coordinator'`. Returns the existing one if a non-archived
+   * coordinator already exists, else spawns a new one labelled "Overseer" via the
+   * normal createTerminal path. Idempotent (one per project).
+   *
+   * The lookup is widened to any agent harness (`isAgentType`), not just
+   * `claude-code`: Phase 1 still CREATES only claude-code coordinators, but a
+   * Phase 2 coordinator on another harness must be FOUND here, not shadowed by a
+   * new claude-code one.
+   *
+   * `opts` (model, workerHarness) apply ONLY on create. They are ignored when an
+   * existing coordinator is found: the setup card that supplies these options
+   * only shows when no coordinator exists yet, so they can never arrive on a
+   * find-existing call.
    */
-  ensureCoordinator(sessionId: string): terminalsDb.Terminal {
+  ensureCoordinator(sessionId: string, opts: { model?: string; workerHarness?: AgentType } = {}): terminalsDb.Terminal {
     const session = sessionsDb.getById(this.db, sessionId);
     if (!session) throw new Error('Session not found');
 
     const existing = terminalsDb.listBySession(this.db, sessionId)
       .map(terminalsDb.rowToTerminal)
-      .find((t) => t.type === 'claude-code' && t.config?.role === 'coordinator');
+      .find((t) => isAgentType(t.type) && t.config?.role === 'coordinator');
     if (existing) {
       // A coordinator record can outlive its process (daemon restart). Revive it so
       // the caller gets a LIVE coordinator (resume if a session was captured, else fresh)
@@ -1692,7 +1702,11 @@ export class SessionService {
       undefined,
       undefined,
       undefined,
-      { transport: 'structured', role: 'coordinator' },
+      {
+        transport: 'structured', role: 'coordinator',
+        ...(opts.model ? { model: opts.model } : {}),
+        ...(opts.workerHarness ? { workerHarness: opts.workerHarness } : {}),
+      },
     );
   }
 

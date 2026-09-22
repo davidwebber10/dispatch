@@ -3,6 +3,7 @@ import type { SessionService } from '../sessions/service.js';
 import type { EventBroadcaster } from '../ws/events.js';
 import { listRecentSessions } from '../sessions/cc-sessions.js';
 import { listRecentCodexSessions } from '../sessions/codex-sessions.js';
+import { isAgentType } from '../providers/agent-types.js';
 
 export function createSessionsRouter(sessionService: SessionService, broadcaster?: EventBroadcaster): Router {
   const router = Router();
@@ -65,7 +66,16 @@ export function createSessionsRouter(sessionService: SessionService, broadcaster
   // Overseer coordinator thread (structured, config.role='coordinator'). Idempotent.
   const ensureCoordinator = (req: import('express').Request, res: import('express').Response) => {
     try {
-      const terminal = sessionService.ensureCoordinator(req.params.id);
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const opts: { model?: string; workerHarness?: import('../providers/agent-types.js').AgentType } = {};
+      if (typeof body.model === 'string' && body.model.trim()) opts.model = body.model.trim();
+      if (body.workerHarness !== undefined) {
+        if (typeof body.workerHarness !== 'string' || !isAgentType(body.workerHarness)) {
+          return res.status(400).json({ error: 'workerHarness must be one of the agent harness types' });
+        }
+        opts.workerHarness = body.workerHarness;
+      }
+      const terminal = sessionService.ensureCoordinator(req.params.id, opts);
       broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: req.params.id });
       res.json({ terminalId: terminal.id });
     } catch (err: any) {
