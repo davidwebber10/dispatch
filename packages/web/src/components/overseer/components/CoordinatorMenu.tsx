@@ -72,7 +72,7 @@ export function CoordinatorMenu({ terminalId, sessionId, scheme = 'scoped', dire
     setConfirmingNew(false);
     try {
       const all = await api.listArchivedTerminals(sessionId);
-      setPrevious(all.filter((x) => x.type === 'claude-code' && x.config?.role === 'coordinator'));
+      setPrevious(all.filter((x) => x.config?.role === 'coordinator'));
     } catch {
       // Leave `previous` at null (list closed) rather than [] — an [] renders the
       // misleading "No previous sessions." empty state on a FETCH failure, when previous

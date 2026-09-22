@@ -87,6 +87,18 @@ describe('CoordinatorMenu — Previous sessions', () => {
     await vi.waitFor(() => expect(resumeSession).toHaveBeenCalledWith('proj-1', 'coord-1', 'old-1'));
   });
 
+  it('offers an archived coordinator from a non-claude-code harness (role alone identifies a coordinator)', async () => {
+    vi.spyOn(api, 'listArchivedTerminals').mockResolvedValue([
+      { id: 'old-codex', type: 'codex', config: { role: 'coordinator' }, archivedAt: '2026-08-03T10:00:00Z' },
+    ] as never);
+    mount();
+    openMenu();
+    fireEvent.click(screen.getByText('Previous sessions…'));
+    const row = await screen.findByText(/Archived .*2026/);
+    fireEvent.click(row);
+    await vi.waitFor(() => expect(resumeSession).toHaveBeenCalledWith('proj-1', 'coord-1', 'old-codex'));
+  });
+
   it('shows an empty state when no archived coordinators exist', async () => {
     vi.spyOn(api, 'listArchivedTerminals').mockResolvedValue([] as never);
     mount();
