@@ -1,11 +1,15 @@
 import { Router } from 'express';
+import type Database from 'better-sqlite3';
 import type { SessionService } from '../sessions/service.js';
 import type { EventBroadcaster } from '../ws/events.js';
 import { listRecentSessions } from '../sessions/cc-sessions.js';
 import { listRecentCodexSessions } from '../sessions/codex-sessions.js';
 import { isAgentType } from '../providers/agent-types.js';
+import { PERSONA_TYPES, type PersonaType, readOverseerWorkers } from '../settings/overseer-workers.js';
+import { resolveWorker } from '../overseer/worker-matrix.js';
+import { harnessCapabilities } from '../providers/capabilities.js';
 
-export function createSessionsRouter(sessionService: SessionService, broadcaster?: EventBroadcaster): Router {
+export function createSessionsRouter(sessionService: SessionService, broadcaster: EventBroadcaster | undefined, db: Database.Database): Router {
   const router = Router();
 
   // POST /api/sessions/reorder — reorder sessions (before parameterized routes)
@@ -84,6 +88,26 @@ export function createSessionsRouter(sessionService: SessionService, broadcaster
   };
   router.post('/:id/overseer/coordinator', ensureCoordinator);
   router.get('/:id/overseer/coordinator', ensureCoordinator);
+
+  // GET /api/sessions/:id/overseer/worker-defaults?agentType= — the resolved harness/model
+  // a spawned worker of this type would get (explicit spawn args excluded — those are the
+  // caller's own override). agency-mcp calls this before creating a worker thread.
+  router.get('/:id/overseer/worker-defaults', (req, res) => {
+    const agentType = req.query.agentType;
+    if (typeof agentType !== 'string' || !(PERSONA_TYPES as readonly string[]).includes(agentType)) {
+      return res.status(400).json({ error: `agentType must be one of: ${PERSONA_TYPES.join(', ')}` });
+    }
+    const coordinator = sessionService.findCoordinator(req.params.id);
+    const sessionDefault = coordinator?.config?.workerHarness;
+    const resolved = resolveWorker({
+      agentType: agentType as PersonaType,
+      matrix: readOverseerWorkers(db),
+      sessionDefault: typeof sessionDefault === 'string' && isAgentType(sessionDefault) ? sessionDefault : undefined,
+    });
+    const cap = harnessCapabilities().find((h) => h.type === resolved.harness);
+    const available = !!cap && cap.modes.length > 0;
+    res.json({ ...resolved, available, ...(available ? {} : { reason: `${resolved.harness} structured transport is disabled on this server` }) });
+  });
 
   // PATCH /api/sessions/:id — update session fields
   router.patch('/:id', (req, res) => {

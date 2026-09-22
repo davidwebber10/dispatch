@@ -1,13 +1,17 @@
 import { describe, it, expect, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import Database from 'better-sqlite3';
+import { initSchema } from '../db/schema.js';
 import { createSessionsRouter } from '../routes/sessions.js';
 import type { SessionService } from './service.js';
 
 function app(stub: Partial<SessionService>) {
+  const db = new Database(':memory:');
+  initSchema(db);
   const a = express();
   a.use(express.json());
-  a.use('/api/sessions', createSessionsRouter(stub as unknown as SessionService, undefined));
+  a.use('/api/sessions', createSessionsRouter(stub as unknown as SessionService, undefined, db));
   return a;
 }
 

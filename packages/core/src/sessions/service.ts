@@ -1666,15 +1666,22 @@ export class SessionService {
   }
 
   /**
+   * The project's live coordinator thread, any agent harness (null when none). Widened to
+   * any agent harness (`isAgentType`), not just `claude-code`: Phase 1 still CREATES only
+   * claude-code coordinators (see `ensureCoordinator`), but a Phase 2 coordinator on another
+   * harness must be FOUND here, not shadowed by a new claude-code one.
+   */
+  findCoordinator(sessionId: string): terminalsDb.Terminal | null {
+    return terminalsDb.listBySession(this.db, sessionId)
+      .map(terminalsDb.rowToTerminal)
+      .find((t) => isAgentType(t.type) && t.config?.role === 'coordinator') ?? null;
+  }
+
+  /**
    * Find-or-create the project's Overseer coordinator: a structured thread tagged
    * `config.role === 'coordinator'`. Returns the existing one if a non-archived
    * coordinator already exists, else spawns a new one labelled "Overseer" via the
    * normal createTerminal path. Idempotent (one per project).
-   *
-   * The lookup is widened to any agent harness (`isAgentType`), not just
-   * `claude-code`: Phase 1 still CREATES only claude-code coordinators, but a
-   * Phase 2 coordinator on another harness must be FOUND here, not shadowed by a
-   * new claude-code one.
    *
    * `opts` (model, workerHarness) apply ONLY on create. They are ignored when an
    * existing coordinator is found: the setup card that supplies these options
@@ -1685,9 +1692,7 @@ export class SessionService {
     const session = sessionsDb.getById(this.db, sessionId);
     if (!session) throw new Error('Session not found');
 
-    const existing = terminalsDb.listBySession(this.db, sessionId)
-      .map(terminalsDb.rowToTerminal)
-      .find((t) => isAgentType(t.type) && t.config?.role === 'coordinator');
+    const existing = this.findCoordinator(sessionId);
     if (existing) {
       // A coordinator record can outlive its process (daemon restart). Revive it so
       // the caller gets a LIVE coordinator (resume if a session was captured, else fresh)

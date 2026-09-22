@@ -328,7 +328,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   bootAnalytics(db);
 
   // Mount routes
-  app.use('/api/sessions', createSessionsRouter(sessionService, broadcaster));
+  app.use('/api/sessions', createSessionsRouter(sessionService, broadcaster, db));
   app.use('/api', createTerminalsRouter(sessionService, undefined, statusService));
   app.use('/api/events', createEventsRouter(statusService));
   app.use('/api/agents', createAgentsRouter(agentService));
@@ -616,7 +616,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   bootAnalytics(db);
 
   // Mount routes
-  app.use('/api/sessions', createSessionsRouter(sessionService, broadcaster));
+  app.use('/api/sessions', createSessionsRouter(sessionService, broadcaster, db));
   app.use('/api', createTerminalsRouter(sessionService, broadcaster, statusService));
   app.use('/api/events', createEventsRouter(statusService));
   app.use('/api/agents', createAgentsRouter(agentService));
