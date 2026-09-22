@@ -99,6 +99,13 @@ export interface StructuredSpawnOpts {
    */
   resumeId?: string;
   model?: string;
+  /**
+   * Persona/system prompt for harnesses that inject it out-of-band rather than via argv, e.g.
+   * Codex's `thread/start` `developerInstructions` param. Argv-based harnesses (Claude
+   * `--append-system-prompt`, Grok `--rules`, OpenCode's config file) already receive the
+   * persona via their own existing paths and ignore this field.
+   */
+  systemPrompt?: string;
 }
 
 /** A permission decision written back to a blocked structured session. */

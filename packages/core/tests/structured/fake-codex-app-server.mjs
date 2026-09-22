@@ -4,10 +4,20 @@
 // ServerRequest), so the CodexStructuredSessionManager can be tested hermetically. The frame
 // SHAPES mirror the real captured fixtures (src/structured/codex-frames.fixture.ts).
 import readline from 'node:readline';
+import fs from 'node:fs';
 
 const send = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 const notify = (method, params) => send({ jsonrpc: '2.0', method, params });
 const respond = (id, result) => send({ jsonrpc: '2.0', id, result });
+
+// Opt-in request log for tests that need to inspect exact JSON-RPC params the manager sent
+// (e.g. proving `thread/start` carries top-level `developerInstructions`) without adding any
+// test-only seam to the manager itself.
+const logPath = process.env.CODEX_FAKE_LOG;
+const logRequest = (method, params) => {
+  if (!logPath) return;
+  fs.appendFileSync(logPath, JSON.stringify({ method, params }) + '\n');
+};
 
 const THREAD = 'thread-fake-1';
 const TURN = 'turn-fake-1';
@@ -37,12 +47,14 @@ rl.on('line', (line) => {
   if (msg.method === 'initialized') { return; }
 
   if (msg.method === 'thread/start') {
+    logRequest('thread/start', msg.params);
     respond(msg.id, { thread: { id: THREAD, turns: [] }, model: msg.params?.model ?? 'gpt-5.6-sol' });
     notify('thread/started', { thread: { id: THREAD, sessionId: THREAD, turns: [] } });
     return;
   }
 
   if (msg.method === 'thread/resume') {
+    logRequest('thread/resume', msg.params);
     const tid = msg.params?.threadId ?? THREAD;
     // Return one prior completed turn so the backfill path has history to replay.
     respond(msg.id, { thread: { id: tid, turns: [{ id: 'prev', items: [

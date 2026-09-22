@@ -2093,6 +2093,10 @@ export class SessionService {
       // ignores these); shared on the interface so this one call drives either manager.
       resumeId: resumeSessionId,
       model: resolvedModel,
+      // Codex delivers this via thread/start's `developerInstructions` (see codex-manager.ts).
+      // Redundant-but-harmless for Claude/Grok/OpenCode, which already receive the persona via
+      // their own argv/config paths (appendSystemPrompt above, OpenCode's config file below).
+      systemPrompt: systemPromptFor(config),
       env: { [TERMINAL_ID_ENV_VAR]: terminal.id, ...(opencodeEnv ?? {}) },
     });
     terminalsDb.updatePid(this.db, terminal.id, pid);

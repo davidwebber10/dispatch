@@ -159,6 +159,10 @@ interface CodexSession {
   model?: string;
   cwd: string;
   resumeId?: string;
+  /** Persona for a FRESH thread only — sent as `thread/start`'s `developerInstructions` param
+   *  (see StructuredSpawnOpts.systemPrompt). A `thread/resume` restores a thread that already
+   *  has its instructions, so it must never carry this. */
+  systemPrompt?: string;
   /** Resolves once thread/start|resume has assigned a threadId; sends chain on it. */
   ready: Promise<void>;
   /**
@@ -210,6 +214,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
       cwd: opts.workDir,
       model: opts.model,
       resumeId: opts.resumeId,
+      systemPrompt: opts.systemPrompt,
       ready: Promise.resolve(),
     };
     if (opts.seedEvents?.length) {
@@ -254,6 +259,9 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
         model: session.model ?? null,
         approvalPolicy: this.approvalPolicy,
         sandbox: this.sandbox,
+        // TOP-LEVEL, camelCase — NOT `settings.developer_instructions` (the OpenAI-documented
+        // spelling is silently ignored by codex-cli; verified live on codex-cli 0.155.1).
+        ...(session.systemPrompt ? { developerInstructions: session.systemPrompt } : {}),
       });
       const threadId = res?.thread?.id;
       if (typeof threadId !== 'string' || !threadId) throw new Error('thread/start returned no threadId');
