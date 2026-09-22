@@ -35,10 +35,22 @@ describe('resolveWorker', () => {
       .toEqual({ harness: 'codex', model: 'gpt-5-codex' });
   });
 
-  it('a matrix model with no harness pinned applies on top of an explicit harness pick too', () => {
+  it('a matrix model with no harness pinned does NOT apply once the caller gives an explicit harness', () => {
+    // Changed by the fix (Finding B): a harness-agnostic matrix entry is only meant for the
+    // resolution the caller left up to us (matrix/session-default) — an explicit harness pick
+    // is the caller overriding that resolution outright, so the model doesn't ride along.
     const matrix = { byType: { implementer: { model: 'gpt-5-codex' } } };
     expect(resolveWorker({ agentType: 'implementer', explicit: { harness: 'codex' }, matrix }))
-      .toEqual({ harness: 'codex', model: 'gpt-5-codex' });
+      .toEqual({ harness: 'codex' });
+  });
+
+  it('a harness-agnostic matrix model does not leak onto an EXPLICIT different harness', () => {
+    const matrix = { byType: { implementer: { model: 'gpt-5-codex' } } };
+    // The matrix entry has no harness of its own, but the caller gave an EXPLICIT harness
+    // (grok) that differs from the session default (codex) the model was implicitly meant
+    // for — the model must not ride onto grok uninvited.
+    expect(resolveWorker({ agentType: 'implementer', explicit: { harness: 'grok' }, matrix, sessionDefault: 'codex' }))
+      .toEqual({ harness: 'grok' });
   });
 
   it('a matrix model pinned to a DIFFERENT harness than the resolved one does not ride along', () => {

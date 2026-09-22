@@ -72,6 +72,20 @@ export function viewCoordinatorFields(args: {
 
 export type MobileTab = 'needs' | 'stream' | 'work';
 
+/**
+ * Generation token guarding `ensureForProject`'s async continuations (and `startCoordinator`,
+ * which supersedes them). `coordinatorProject` alone only catches a CROSS-project race (the
+ * async peek resumes after the view moved to a different project) — it does nothing for a
+ * STALE run for the SAME project: a slow peek (`api.listTerminals`) that is still in flight
+ * when a newer run (a second `ensureForProject`, or `startCoordinator` creating the
+ * coordinator directly) has already landed the correct state. Without this, the stale peek's
+ * continuation reads `coordinatorProject === sessionId` (still true — the project never
+ * changed) and wrongly stomps `setupNeeded`/`coordinatorId` back to a superseded answer.
+ * Bumped at the top of every run that will later resume past an `await`; each continuation
+ * captures its own value before the `await` and bails if a newer run has since started.
+ */
+let ensureGeneration = 0;
+
 interface OverseerState {
   // ---- UI state (public surface) ----
   scenario: Scenario; // vestigial: kept only so TopBar's ScenarioDemo compiles
@@ -362,6 +376,10 @@ export const useOverseer = create<OverseerState>((set, get) => ({
     if (!sessionId) return;
     const st = get();
     if (st.coordinatorProject === sessionId && (st.coordinatorId || st.ensuring)) return;
+    // This run supersedes any earlier run still in flight (for this project or another) —
+    // see ensureGeneration's doc comment. Captured now so every continuation below can tell
+    // whether IT is still the newest run by the time its await resolves.
+    const myGen = ++ensureGeneration;
     // Switching projects: reset the coordinator + derived view, then find-or-create.
     set({
       coordinatorProject: sessionId,
@@ -391,24 +409,29 @@ export const useOverseer = create<OverseerState>((set, get) => ({
     // the inline setup card instead (setupNeeded) so the user picks the harness/model before
     // anything is spawned; `startCoordinator` does the actual create once they choose.
     void (async () => {
+      // A run is still current only when NEITHER guard tripped: the view is still on this
+      // project AND no newer run (another ensureForProject, or startCoordinator) has started
+      // since. Stale-same-project resumes (this run's own award) are exactly what ensureGeneration
+      // catches — coordinatorProject alone stays true the whole time in that case.
+      const stillCurrent = () => get().coordinatorProject === sessionId && ensureGeneration === myGen;
       let terminals: Terminal[];
       try {
         terminals = await api.listTerminals(sessionId);
       } catch {
         // A flaky peek must never strand the card — fall back to today's plain ensure.
-        if (get().coordinatorProject !== sessionId) return; // project switched mid-flight
+        if (!stillCurrent()) return;
         api
           .ensureOverseerCoordinator(sessionId)
           .then(({ terminalId }) => {
-            if (get().coordinatorProject !== sessionId) return; // project switched mid-flight
+            if (!stillCurrent()) return;
             set({ coordinatorId: terminalId, ensuring: false });
           })
           .catch(() => {
-            if (get().coordinatorProject === sessionId) set({ ensuring: false });
+            if (stillCurrent()) set({ ensuring: false });
           });
         return;
       }
-      if (get().coordinatorProject !== sessionId) return; // project switched mid-flight
+      if (!stillCurrent()) return;
       // Mirror of the daemon's widened findCoordinator filter (isAgentType(t.type)): a
       // coordinator is one of the agent harnesses, never a plain shell.
       const found = terminals.some((t) => AGENT_TYPES.includes(t.type) && t.config?.role === 'coordinator');
@@ -419,11 +442,11 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       api
         .ensureOverseerCoordinator(sessionId)
         .then(({ terminalId }) => {
-          if (get().coordinatorProject !== sessionId) return; // project switched mid-flight
+          if (!stillCurrent()) return;
           set({ coordinatorId: terminalId, ensuring: false });
         })
         .catch(() => {
-          if (get().coordinatorProject === sessionId) set({ ensuring: false });
+          if (stillCurrent()) set({ ensuring: false });
         });
     })();
   },
@@ -432,13 +455,18 @@ export const useOverseer = create<OverseerState>((set, get) => ({
 
   startCoordinator: async (sessionId) => {
     const { workerHarness, model } = get().setupSelection;
+    // This create is the new authoritative run for the project — bump the generation so a
+    // still-in-flight peek (ensureForProject) that resumes afterward recognises itself as
+    // stale and no longer overwrites the coordinator this call is about to set. See
+    // ensureGeneration's doc comment.
+    const myGen = ++ensureGeneration;
     set({ ensuring: true });
     try {
       const { terminalId } = await api.ensureOverseerCoordinator(sessionId, { model, workerHarness });
-      if (get().coordinatorProject !== sessionId) return; // project switched mid-flight
+      if (get().coordinatorProject !== sessionId || ensureGeneration !== myGen) return; // project switched, or superseded, mid-flight
       set({ coordinatorId: terminalId, setupNeeded: false, ensuring: false });
     } catch {
-      if (get().coordinatorProject === sessionId) set({ ensuring: false });
+      if (get().coordinatorProject === sessionId && ensureGeneration === myGen) set({ ensuring: false });
     }
   },
 

@@ -8,7 +8,7 @@ import { AGENT_CLI, isAgentType } from '../providers/agent-types.js';
 import { PERSONA_TYPES, type PersonaType, readOverseerWorkers } from '../settings/overseer-workers.js';
 import { resolveWorker } from '../overseer/worker-matrix.js';
 import { harnessCapabilities } from '../providers/capabilities.js';
-import { isProviderInstalled } from '../setup/detect.js';
+import { detectProvider } from '../setup/detect.js';
 
 export function createSessionsRouter(sessionService: SessionService, broadcaster: EventBroadcaster | undefined, db: Database.Database): Router {
   const router = Router();
@@ -122,11 +122,17 @@ export function createSessionsRouter(sessionService: SessionService, broadcaster
     if (!structurallyAvailable) {
       return res.json({ ...resolved, available: false, reason: `${resolved.harness} structured transport is disabled on this server` });
     }
-    // Structured transport is enabled, but that doesn't mean the CLI is actually installed —
-    // an uninstalled binary would still create a thread that dead-ends the moment it spawns.
-    const installed = await isProviderInstalled(AGENT_CLI[resolved.harness]);
-    const available = installed;
-    res.json({ ...resolved, available, ...(available ? {} : { reason: `${resolved.harness} CLI is not installed on this server` }) });
+    // Structured transport is enabled, but that doesn't mean the CLI is actually installed
+    // and signed in — spec says "installed/authenticated". An uninstalled binary or a signed-
+    // out session would still create a thread that dead-ends the moment it spawns. An
+    // INCONCLUSIVE sign-in probe (signedIn === 'unknown') never blocks — only a definitive
+    // "signed out" does.
+    const status = await detectProvider(AGENT_CLI[resolved.harness]);
+    const available = status.installed && status.signedIn !== false;
+    let reason: string | undefined;
+    if (!status.installed) reason = `${resolved.harness} CLI is not installed on this server`;
+    else if (status.signedIn === false) reason = `${resolved.harness} CLI is not signed in on this server`;
+    res.json({ ...resolved, available, ...(reason ? { reason } : {}) });
   });
 
   // PATCH /api/sessions/:id — update session fields

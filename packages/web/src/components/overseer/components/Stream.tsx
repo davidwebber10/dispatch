@@ -642,8 +642,11 @@ export function ConversationStream() {
             <MessageScroller.Content style={{ maxWidth: 1200, margin: '0 auto', padding: '20px 26px 12px', display: 'flex', flexDirection: 'column', gap: 17 }}>
               {/* No coordinator yet for this project — the inline setup card stands in for
                   the message list (and the suppressed canned greeting, see useRenderVals)
-                  until the user picks a worker harness/model and hits Start. */}
-              {setupNeeded && <ControlPlaneSetupCard />}
+                  until the user picks a worker harness/model and hits Start. Belt-and-braces
+                  on `!coordinatorId`: a stale peek landing after startCoordinator already set
+                  a live coordinatorId must never re-show the card even if setupNeeded briefly
+                  glitches true again (see ensureGeneration in store.ts for the actual fix). */}
+              {setupNeeded && !coordinatorId && <ControlPlaneSetupCard />}
               {/* Explicit older-history control (parity with ChatView's LoadEarlierButton, see
                   its doc comment): the scroll-near-top trigger has been observed sticking in
                   the field until a window resize, and the replay tail covers only the last few

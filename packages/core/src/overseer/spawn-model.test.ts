@@ -22,4 +22,26 @@ describe('resolveSpawnModel', () => {
   it('opencode falls back to its harness default', () => {
     expect(resolveSpawnModel({ harness: 'opencode', config: { agentType: 'implementer' }, opencodeDefault: 'openrouter/z' })).toBe('openrouter/z');
   });
+
+  // Finding E: a Claude tier alias (sonnet/opus/haiku/fable) configured as a HARNESS DEFAULT
+  // model must not slip through the guard that only checked explicit `config.model` before.
+  it('opencode ignores an explicit Claude tier alias and falls through to its harness default', () => {
+    expect(resolveSpawnModel({ harness: 'opencode', config: { model: 'sonnet' }, opencodeDefault: 'openrouter/z' })).toBe('openrouter/z');
+  });
+
+  it('opencode whose OWN default is a poisoned Claude tier alias never returns it (undefined, not the alias)', () => {
+    expect(resolveSpawnModel({ harness: 'opencode', config: {}, opencodeDefault: 'sonnet' })).toBeUndefined();
+  });
+
+  it('codex ignores an explicit Claude tier alias and falls through (undefined — codex has no harness default here)', () => {
+    expect(resolveSpawnModel({ harness: 'codex', config: { model: 'opus' } })).toBeUndefined();
+  });
+});
+
+describe('isClaudeTierAlias', () => {
+  it('is true for each Claude tier alias and false for a real model id', async () => {
+    const { isClaudeTierAlias } = await import('./spawn-model.js');
+    for (const alias of ['sonnet', 'opus', 'haiku', 'fable']) expect(isClaudeTierAlias(alias)).toBe(true);
+    expect(isClaudeTierAlias('gpt-5-codex')).toBe(false);
+  });
 });

@@ -57,7 +57,19 @@ export function updateOverseerWorkers(db: Database.Database, patch: unknown): Ov
         const p = (byType as Record<string, unknown>)[type];
         if (p === undefined) continue;
         if (p === null) { delete current.byType[type]; continue; }
-        current.byType[type] = { ...(current.byType[type] ?? {}), ...(p as object) } as WorkerPick;
+        const patchPick = p as Record<string, unknown>;
+        const stored = current.byType[type];
+        // A patch that changes the harness WITHOUT also supplying a model is switching
+        // harnesses, not tweaking one — the stored model belonged to the OLD harness and
+        // must not silently carry over onto the new one (it may not even be a valid model
+        // id there). A patch that supplies both keeps the new model as given.
+        const switchingHarness =
+          stored?.harness !== undefined &&
+          typeof patchPick.harness === 'string' &&
+          patchPick.harness !== stored.harness &&
+          patchPick.model === undefined;
+        const base = switchingHarness ? { ...stored, model: undefined } : stored;
+        current.byType[type] = { ...(base ?? {}), ...patchPick } as WorkerPick;
       }
     }
   }

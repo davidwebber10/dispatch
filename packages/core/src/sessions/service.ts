@@ -23,7 +23,7 @@ import { parseCodexRollout } from '../conversation/codex-transcript.js';
 import { findCodexRolloutPath } from './codex-sessions.js';
 import { platform } from '../platform/index.js';
 import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.js';
-import { resolveSpawnModel } from '../overseer/spawn-model.js';
+import { resolveSpawnModel, isClaudeTierAlias } from '../overseer/spawn-model.js';
 import { COORDINATOR_DISALLOWED_TOOLS, coordinatorToolPolicy } from '../overseer/coordinator-policy.js';
 import { roleToolPolicy } from '../roles/role-policy.js';
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
@@ -1989,10 +1989,19 @@ export class SessionService {
     // returned to the frontend as part of the terminal row's config. OpenCode always
     // pins a model (its config file must name one): the user's harness-settings default
     // wins over the curated fallback.
+    // A poisoned harness-settings default (a Claude tier alias saved into opencode's
+    // defaultModel — e.g. by a stale UI or a hand-edited settings row) must never reach
+    // resolveSpawnModel as "the" opencode default: it would fall through to undefined there,
+    // which is unacceptable for opencode (its config file must name a real model). Filter it
+    // out HERE, before the `?? OPENCODE_DEFAULT_MODEL` fallback, so a poisoned setting falls
+    // back to the curated default instead.
+    const opencodeSettingDefault = readHarnessSettings(this.db).opencode?.defaultModel;
+    const opencodeDefault =
+      opencodeSettingDefault && !isClaudeTierAlias(opencodeSettingDefault) ? opencodeSettingDefault : OPENCODE_DEFAULT_MODEL;
     const resolvedModel = resolveSpawnModel({
       harness: terminal.type,
       config,
-      opencodeDefault: readHarnessSettings(this.db).opencode?.defaultModel ?? OPENCODE_DEFAULT_MODEL,
+      opencodeDefault,
     });
     if (resolvedModel && !config.model) {
       config.model = resolvedModel;

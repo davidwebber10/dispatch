@@ -19,8 +19,10 @@ export function resolveWorker(input: {
   const harness = input.explicit?.harness ?? fromMatrix?.harness ?? input.sessionDefault ?? 'claude-code';
   // A matrix model pinned to a specific harness must not ride a different, resolved harness
   // (e.g. an explicit harness pick that overrides the matrix's own harness). A matrix entry
-  // with no harness of its own is harness-agnostic and applies regardless.
-  const matrixModelApplies = fromMatrix && (fromMatrix.harness === undefined || fromMatrix.harness === harness);
+  // with no harness of its own is harness-agnostic, but that only means "whatever harness the
+  // matrix/session-default resolution lands on" — an EXPLICIT harness pick is the caller
+  // overriding that resolution outright, so the model must not leak onto it uninvited.
+  const matrixModelApplies = !!fromMatrix && (fromMatrix.harness ? fromMatrix.harness === harness : !input.explicit?.harness);
   const model = input.explicit?.model ?? (matrixModelApplies ? fromMatrix?.model : undefined);
   return model ? { harness, model } : { harness };
 }

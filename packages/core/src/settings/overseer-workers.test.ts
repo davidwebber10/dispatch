@@ -27,6 +27,18 @@ describe('overseer workers settings', () => {
     expect(w.byType.implementer).toEqual({ harness: 'codex' });
   });
 
+  it('changing only the harness drops the stale model from the previous harness', () => {
+    updateOverseerWorkers(d, { byType: { implementer: { harness: 'codex', model: 'gpt-5-codex' } } });
+    updateOverseerWorkers(d, { byType: { implementer: { harness: 'grok' } } });
+    expect(readOverseerWorkers(d).byType.implementer).toEqual({ harness: 'grok' });
+  });
+
+  it('changing the harness AND supplying a new model keeps both', () => {
+    updateOverseerWorkers(d, { byType: { implementer: { harness: 'codex', model: 'gpt-5-codex' } } });
+    updateOverseerWorkers(d, { byType: { implementer: { harness: 'grok', model: 'grok-4' } } });
+    expect(readOverseerWorkers(d).byType.implementer).toEqual({ harness: 'grok', model: 'grok-4' });
+  });
+
   it('drops unknown harnesses, unknown persona types, and empty entries', () => {
     updateOverseerWorkers(d, { byType: { implementer: { harness: 'shell' }, wizard: { harness: 'codex' }, planner: {} } } as never);
     expect(readOverseerWorkers(d)).toEqual({ byType: {} });

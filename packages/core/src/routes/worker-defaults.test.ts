@@ -8,18 +8,18 @@ import * as terminalsDb from '../db/terminals.js';
 import { updateOverseerWorkers } from '../settings/overseer-workers.js';
 import { SessionService } from '../sessions/service.js';
 import { createSessionsRouter } from './sessions.js';
-import { isProviderInstalled } from '../setup/detect.js';
+import { detectProvider } from '../setup/detect.js';
 
 // Detection hits the real filesystem/PATH otherwise — stub it for deterministic shapes,
-// same seam routes/setup.test.ts stubs (`../setup/detect.js`). Defaults to "installed" so
-// existing tests keep asserting on harness/model resolution, not CLI presence.
-vi.mock('../setup/detect.js', () => ({ isProviderInstalled: vi.fn() }));
+// same seam routes/setup.test.ts stubs (`../setup/detect.js`). Defaults to "installed and
+// signed in" so existing tests keep asserting on harness/model resolution, not CLI presence.
+vi.mock('../setup/detect.js', () => ({ detectProvider: vi.fn() }));
 
 // archive()/etc. only touch ptyManager.isAlive/kill; nothing is alive in a test DB.
 const fakePty = { isAlive: () => false, kill: () => {} } as any;
 
 beforeEach(() => {
-  (isProviderInstalled as unknown as Mock).mockReset().mockResolvedValue(true);
+  (detectProvider as unknown as Mock).mockReset().mockResolvedValue({ installed: true, signedIn: true });
 });
 
 function setup() {
@@ -82,7 +82,7 @@ describe('GET /api/sessions/:id/overseer/worker-defaults', () => {
     const { db, app } = setup();
     sessionsDb.create(db, { id: 's5', provider: 'claude-code', name: 'proj5', workingDir: '/tmp/proj5' });
     updateOverseerWorkers(db, { byType: { implementer: { harness: 'codex' } } });
-    (isProviderInstalled as unknown as Mock).mockResolvedValue(false);
+    (detectProvider as unknown as Mock).mockResolvedValue({ installed: false, signedIn: false });
 
     const res = await request(app).get('/api/sessions/s5/overseer/worker-defaults?agentType=implementer');
 
@@ -90,8 +90,36 @@ describe('GET /api/sessions/:id/overseer/worker-defaults', () => {
     expect(res.body.harness).toBe('codex');
     expect(res.body.available).toBe(false);
     expect(res.body.reason).toMatch(/codex/);
-    // The install check runs against the CLI backing the RESOLVED harness (codex -> codex).
-    expect(isProviderInstalled).toHaveBeenCalledWith('codex');
+    // The detection check runs against the CLI backing the RESOLVED harness (codex -> codex).
+    expect(detectProvider).toHaveBeenCalledWith('codex');
+  });
+
+  it('available:false with a "not signed in" reason when the CLI is installed but signed out', async () => {
+    const { db, app } = setup();
+    sessionsDb.create(db, { id: 's9', provider: 'claude-code', name: 'proj9', workingDir: '/tmp/proj9' });
+    updateOverseerWorkers(db, { byType: { implementer: { harness: 'codex' } } });
+    (detectProvider as unknown as Mock).mockResolvedValue({ installed: true, signedIn: false });
+
+    const res = await request(app).get('/api/sessions/s9/overseer/worker-defaults?agentType=implementer');
+
+    expect(res.status).toBe(200);
+    expect(res.body.harness).toBe('codex');
+    expect(res.body.available).toBe(false);
+    expect(res.body.reason).toBe('codex CLI is not signed in on this server');
+  });
+
+  it('available:true when signedIn is "unknown" (an inconclusive probe never blocks)', async () => {
+    const { db, app } = setup();
+    sessionsDb.create(db, { id: 's10', provider: 'claude-code', name: 'proj10', workingDir: '/tmp/proj10' });
+    updateOverseerWorkers(db, { byType: { implementer: { harness: 'codex' } } });
+    (detectProvider as unknown as Mock).mockResolvedValue({ installed: true, signedIn: 'unknown' });
+
+    const res = await request(app).get('/api/sessions/s10/overseer/worker-defaults?agentType=implementer');
+
+    expect(res.status).toBe(200);
+    expect(res.body.harness).toBe('codex');
+    expect(res.body.available).toBe(true);
+    expect(res.body.reason).toBeUndefined();
   });
 
   it('an explicit ?harness= query param is treated as the explicit pick, overriding the matrix', async () => {
@@ -117,7 +145,9 @@ describe('GET /api/sessions/:id/overseer/worker-defaults', () => {
   it('an explicit ?harness= whose CLI is missing reports available:false too', async () => {
     const { db, app } = setup();
     sessionsDb.create(db, { id: 's8', provider: 'claude-code', name: 'proj8', workingDir: '/tmp/proj8' });
-    (isProviderInstalled as unknown as Mock).mockImplementation(async (name: string) => name !== 'grok');
+    (detectProvider as unknown as Mock).mockImplementation(async (name: string) =>
+      name === 'grok' ? { installed: false, signedIn: false } : { installed: true, signedIn: true },
+    );
 
     const res = await request(app).get('/api/sessions/s8/overseer/worker-defaults?agentType=implementer&harness=grok');
 

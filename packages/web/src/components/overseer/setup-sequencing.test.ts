@@ -92,6 +92,46 @@ describe('startCoordinator — create with the setup selection', () => {
   });
 });
 
+describe('ensureForProject — stale peek race (regression, Finding D)', () => {
+  it('a slow peek that resolves AFTER startCoordinator has already set a live coordinator must not clobber it', async () => {
+    let resolvePeek1: (terminals: Terminal[]) => void = () => {};
+    const peek1 = new Promise<Terminal[]>((resolve) => { resolvePeek1 = resolve; });
+    vi.spyOn(api, 'listTerminals')
+      .mockReturnValueOnce(peek1) // peek1: DELAYED — still in flight when everything else below happens
+      .mockResolvedValueOnce([]); // peek2: resolves empty right away
+    vi.spyOn(api, 'ensureOverseerCoordinator').mockResolvedValue({ terminalId: 'coord-new' });
+
+    // peek1: kick off the first ensureForProject run for project A; its listTerminals call
+    // is now pending on the un-resolved `peek1` promise above.
+    useOverseer.getState().ensureForProject('proj-1');
+    expect(useOverseer.getState().ensuring).toBe(true);
+
+    // A second, newer run lands for the SAME project while peek1 is still in flight (e.g. a
+    // retry/remount). Force past the same-project "already ensuring" guard the way some other
+    // in-flight state transition legitimately could — this run's own peek resolves empty,
+    // correctly flipping setupNeeded.
+    useOverseer.setState({ ensuring: false } as never);
+    useOverseer.getState().ensureForProject('proj-1');
+    await vi.waitFor(() => expect(useOverseer.getState().setupNeeded).toBe(true));
+
+    // The user picks a harness/model on the (correctly shown) setup card and starts the
+    // coordinator — this is the newest, authoritative run.
+    await useOverseer.getState().startCoordinator('proj-1');
+    expect(useOverseer.getState().coordinatorId).toBe('coord-new');
+    expect(useOverseer.getState().setupNeeded).toBe(false);
+
+    // THEN the stale peek1 (from the very first, now thoroughly superseded run) finally
+    // resolves with no coordinator found. Without the generation guard, its continuation
+    // reads `coordinatorProject === 'proj-1'` (still true — the project never changed) and
+    // wrongly flips setupNeeded back to true, resurrecting the setup card over a live
+    // coordinator that already exists.
+    resolvePeek1([]);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(useOverseer.getState().setupNeeded).toBe(false);
+    expect(useOverseer.getState().coordinatorId).toBe('coord-new');
+  });
+});
+
 describe('sendDirective — starts the coordinator first when none exists and setup is needed', () => {
   it('creates the coordinator via startCoordinator before sending the directive', async () => {
     useOverseer.setState({
