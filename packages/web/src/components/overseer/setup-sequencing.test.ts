@@ -106,6 +106,26 @@ describe('startCoordinator — create with the setup selection', () => {
   });
 });
 
+describe('startCoordinator — failure is visible on the setup card (review L2)', () => {
+  it('a rejected create sets setupError (the card shows it), and the next attempt clears it', async () => {
+    useOverseer.setState({
+      coordinatorProject: 'proj-1',
+      setupNeeded: true,
+      setupError: null,
+      setupSelection: { workerHarness: 'claude-code', model: '', coordinatorHarness: 'codex' },
+    } as never);
+    const ensure = vi.spyOn(api, 'ensureOverseerCoordinator').mockRejectedValueOnce(new Error('POST failed: 400'));
+
+    await useOverseer.getState().startCoordinator('proj-1');
+    expect(useOverseer.getState().setupError).toMatch(/could not start/i);
+    expect(useOverseer.getState().ensuring).toBe(false);
+
+    ensure.mockResolvedValueOnce({ terminalId: 'coord-ok' });
+    await useOverseer.getState().startCoordinator('proj-1');
+    expect(useOverseer.getState().setupError).toBeNull();
+  });
+});
+
 describe('ensureForProject — stale peek race (regression, Finding D)', () => {
   it('a slow peek that resolves AFTER startCoordinator has already set a live coordinator must not clobber it', async () => {
     let resolvePeek1: (terminals: Terminal[]) => void = () => {};

@@ -143,15 +143,26 @@ describe('coordinatorMemoryDirFor', () => {
     expect(coordinatorMemoryDirFor('claude-code')).toBe(path.join(os.homedir(), '.claude'));
   });
 
-  it('resolves the codex coordinator memory dir to ~/.codex', () => {
-    expect(coordinatorMemoryDirFor('codex')).toBe(path.join(os.homedir(), '.codex'));
+  it('resolves the codex coordinator memory dir to a DEDICATED subdir, not the whole Codex home', () => {
+    expect(coordinatorMemoryDirFor('codex')).toBe(path.join(os.homedir(), '.codex', 'dispatch-coordinator'));
   });
 
-  it('a codex coordinator policy allows a write under ~/.codex, denies one under ~/.claude, and denies a repo path', () => {
+  it('a codex coordinator policy allows a write under its memory subdir, denies one under ~/.claude, and denies a repo path', () => {
     const policy = makeCoordinatorPolicy(coordinatorMemoryDirFor('codex'));
-    expect(policy('Write', { file_path: path.join(os.homedir(), '.codex', 'memory', 'MEMORY.md') })).toEqual({ allow: true });
+    expect(policy('Write', { file_path: path.join(os.homedir(), '.codex', 'dispatch-coordinator', 'MEMORY.md') })).toEqual({ allow: true });
     expect(policy('Write', { file_path: path.join(os.homedir(), '.claude', 'memory', 'MEMORY.md') }).allow).toBe(false);
     expect(policy('Edit', { file_path: '/Users/x/Developer/Projects/repo/src/app.ts' }).allow).toBe(false);
+  });
+
+  // N1: the Codex home holds the CLI's OWN config — config.toml (notify / mcp_servers run
+  // commands outside the sandbox), rules/*.rules (execpolicy allow rules), the global AGENTS.md
+  // every Codex thread loads, skills, and real git worktrees. None of it is coordinator memory.
+  it('a codex coordinator policy denies writes to the Codex CLI config, rules, instructions, skills, and worktrees (N1)', () => {
+    const policy = makeCoordinatorPolicy(coordinatorMemoryDirFor('codex'), { commandsEscalate: true });
+    const codexHome = path.join(os.homedir(), '.codex');
+    for (const rel of ['config.toml', 'rules/default.rules', 'AGENTS.md', 'skills/x/SKILL.md', 'worktrees/744c/repo/README.md', 'auth.json']) {
+      expect(policy('Write', { changes: [{ path: path.join(codexHome, rel) }] }).allow, rel).toBe(false);
+    }
   });
 
   it('falls back to ~/.claude for an unrecognized harness', () => {
@@ -282,5 +293,53 @@ describe('makeCoordinatorPolicy ApplyPatch move destination — M2', () => {
     const dir = path.join(os.homedir(), '.codex');
     const policy = makeCoordinatorPolicy(dir);
     expect(policy('Write', { changes: [{ path: path.join(dir, 'a.md'), dest: path.join(dir, 'b.md') }] })).toEqual({ allow: true });
+  });
+});
+
+describe('makeCoordinatorPolicy relative targets and a resolve-once memory dir (review L4)', () => {
+  it('denies a relative target even when the daemon process cwd sits inside the memory dir', () => {
+    const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'coord-rel-')));
+    const mem = path.join(base, 'mem');
+    fs.mkdirSync(mem);
+    const prevCwd = process.cwd();
+    process.chdir(mem); // a relative path would resolve "under" the memory dir from HERE
+    try {
+      const policy = makeCoordinatorPolicy(mem);
+      // …but Codex anchors it to the THREAD cwd (the repo), so it must be denied.
+      expect(policy('Write', { file_path: 'notes.md' }).allow).toBe(false);
+      expect(policy('Write', { file_path: path.join(mem, 'notes.md') }).allow).toBe(true);
+    } finally {
+      process.chdir(prevCwd);
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it('denies a nested relative target (fail closed)', () => {
+    const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'coord-rel2-')));
+    const prevCwd = process.cwd();
+    process.chdir(base);
+    try {
+      const policy = makeCoordinatorPolicy(base);
+      expect(policy('Write', { file_path: path.join('sub', 'notes.md') }).allow).toBe(false);
+    } finally {
+      process.chdir(prevCwd);
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it('pins the memory dir to its real path when the policy is built (a later swap to a symlink does not widen it)', () => {
+    const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'coord-pin-')));
+    const mem = path.join(base, 'mem');
+    const repo = path.join(base, 'repo');
+    fs.mkdirSync(mem);
+    fs.mkdirSync(repo);
+    try {
+      const policy = makeCoordinatorPolicy(mem);
+      fs.rmSync(mem, { recursive: true });
+      fs.symlinkSync(repo, mem); // mem -> repo AFTER the policy was built
+      expect(policy('Write', { file_path: path.join(mem, 'x.ts') }).allow).toBe(false);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
   });
 });

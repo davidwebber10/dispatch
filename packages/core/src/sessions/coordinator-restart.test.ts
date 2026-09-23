@@ -12,15 +12,11 @@
 //     claude seedEvents even when a same-named claude transcript happens to exist on disk.
 //
 //  2. Boot kickstart: `kickstartInterruptedAgents` re-prompts a coordinator/agent that was
-//     stale-`working` when the daemon died, using `transcriptTailStatus` (claude JSONL) for
-//     idempotency (skip if already kicked and nothing moved since, skip if the transcript
-//     shows the turn actually completed). That signal doesn't exist for Codex — there is no
-//     local file to tail — so `terminalsDb.listWorkingStructured` scopes the whole mechanism
-//     to `type = 'claude-code'` at the SQL layer. A Codex coordinator is therefore never
-//     proactively boot-kicked; it isn't wedged, though, because every real path that talks to
-//     a coordinator (opening it, an agent escalating up via notifyCoordinatorOfAgent, sending
-//     it a message) already revives it first through the harness-agnostic
-//     `ensureStructuredAlive`. This file pins that revive-on-open covers the gap.
+//     stale-`working` when the daemon died. Idempotency reads the thread's own record of the
+//     turn: the claude JSONL (transcriptTailStatus) for Claude, the Codex rollout
+//     (codexRolloutTailStatus) for Codex — skip if already kicked and nothing moved since, skip
+//     if the record shows the turn actually completed. (Review T1: this used to be claude-only,
+//     so a Codex coordinator stopped mid-turn lost its directive until someone messaged it.)
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { EventEmitter } from 'events';
 import fs from 'fs';
@@ -147,25 +143,65 @@ describe('Codex coordinator resume does not hit the claude-only readSessionBackf
   });
 });
 
-describe('boot kickstart is claude-transcript-gated by design; Codex relies on ensureStructuredAlive (revive-on-open)', () => {
-  it('listWorkingStructured excludes a stale-working Codex coordinator row (SQL-level type filter)', () => {
+/** Write a Codex rollout for `threadId` under the (mocked) home, whose last turn marker is `last`. */
+function writeCodexRollout(threadId: string, last: 'task_started' | 'task_complete') {
+  const d = path.join(home, '.codex', 'sessions', '2026', '09', '23');
+  fs.mkdirSync(d, { recursive: true });
+  const ev = (type: string) => JSON.stringify({ type: 'event_msg', payload: { type } });
+  const lines = [JSON.stringify({ type: 'session_meta', payload: { id: threadId } }), ev('task_started'), ev('item_completed')];
+  if (last === 'task_complete') lines.push(ev('task_complete'));
+  const full = path.join(d, `rollout-2026-09-23T10-00-00-${threadId}.jsonl`);
+  fs.writeFileSync(full, lines.join('\n') + '\n');
+  return full;
+}
+
+describe('boot kickstart covers Codex coordinators too (review T1), gated on the Codex rollout', () => {
+  it('listWorkingStructured includes a stale-working Codex coordinator row alongside claude', () => {
     seedCoordinator('cx', 'codex', { externalId: 'codex-thread-1', status: 'working' });
     seedCoordinator('cc', 'claude-code', { externalId: 'claude-session-1', status: 'working' });
 
     const rows = terminalsDb.listWorkingStructured(db);
 
-    expect(rows.map((r) => r.id)).toEqual(['cc']);
+    expect(rows.map((r) => r.id).sort()).toEqual(['cc', 'cx']);
   });
 
-  it('kickstartInterruptedAgents never touches a stuck-working Codex coordinator: not kicked, not messaged, not skipped-as-if-seen', async () => {
+  it('kicks a Codex coordinator whose rollout shows the turn was cut off (task_started, no task_complete)', async () => {
+    writeCodexRollout('codex-thread-1', 'task_started');
     seedCoordinator('cx', 'codex', { externalId: 'codex-thread-1', status: 'working' });
 
     const result = await svc.kickstartInterruptedAgents(0);
 
-    expect(result.kicked).not.toContain('cx');
-    expect(result.skipped).not.toContain('cx'); // invisible to the mechanism, not "considered and skipped"
+    expect(result.kicked).toContain('cx');
+    expect(codexStructured.spawns).toEqual(['cx']); // revived (resume) …
+    expect(codexStructured.sent.map((m) => m.id)).toEqual(['cx']); // … and re-prompted
+    const cfg = JSON.parse(terminalsDb.getById(db, 'cx')!.config || '{}');
+    expect(typeof cfg.kickedAt).toBe('string'); // stamped, so a later boot won't double-kick
+  });
+
+  it('skips a Codex coordinator whose rollout shows the turn actually completed', async () => {
+    writeCodexRollout('codex-thread-2', 'task_complete');
+    seedCoordinator('cx', 'codex', { externalId: 'codex-thread-2', status: 'working' });
+
+    const result = await svc.kickstartInterruptedAgents(0);
+
+    expect(result.skipped).toContain('cx');
     expect(codexStructured.sent).toEqual([]);
-    expect(codexStructured.spawns).toEqual([]);
+  });
+
+  it('does not re-kick a Codex coordinator already kicked when its rollout has not moved since', async () => {
+    const file = writeCodexRollout('codex-thread-3', 'task_started');
+    const past = (Date.now() - 60_000) / 1000;
+    fs.utimesSync(file, past, past);
+    terminalsDb.create(db, {
+      id: 'cx', sessionId: 's1', type: 'codex', label: 'cx', workingDir: WORKDIR_PROJ(), externalId: 'codex-thread-3',
+      config: { transport: 'structured', role: 'coordinator', kickedAt: new Date().toISOString() },
+    });
+    terminalsDb.updateStatus(db, 'cx', 'working');
+
+    const result = await svc.kickstartInterruptedAgents(0);
+
+    expect(result.skipped).toContain('cx');
+    expect(codexStructured.sent).toEqual([]);
   });
 
   it('a stuck-working Codex coordinator still revives via ensureStructuredAlive — the revive-on-open path the design relies on', () => {

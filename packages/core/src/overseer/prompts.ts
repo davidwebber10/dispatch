@@ -9,6 +9,8 @@
  *   { transport: 'structured', agentType: <AgentType>, mission?: string }  // a worker
  */
 
+import { coordinatorMemoryRelDir } from './coordinator-policy.js';
+
 /** The one-per-project Overseer that converses with the user and delegates. */
 export const COORDINATOR_PROMPT =
   'You are Control Plane — a coordinator. Your job is ORCHESTRATION: typed agents do the work. ' +
@@ -97,20 +99,17 @@ export const COORDINATOR_PROMPT =
   'Resist it — delegation IS the job. If you catch yourself editing repo files or running ship commands, ' +
   'stop and spawn an agent.';
 
-/** Coordinator memory-root label shown IN THE PROMPT TEXT for a given harness — a display
- *  string, not a resolved path (see coordinator-policy.ts's coordinatorMemoryDirFor for the
- *  actual absolute path the enforcement policy uses; the two must name the same directory). */
-const COORDINATOR_MEMORY_LABEL: Record<string, string> = {
-  'claude-code': '~/.claude',
-  codex: '~/.codex',
-};
-
-/** The prompt-facing memory-root LABEL for a harness (e.g. '~/.codex'), or undefined if this
- *  harness has no coordinator variant yet. Exposed so a test can assert it names the same
- *  directory the enforcement policy uses (coordinator-policy.ts's coordinatorMemoryDirFor). */
+/** The prompt-facing memory-root LABEL for a harness (e.g. '~/.codex/dispatch-coordinator'), or
+ *  undefined if this harness has no coordinator variant yet. DERIVED from the enforcement policy's
+ *  own map (coordinator-policy.ts's coordinatorMemoryRelDir) so the directory the persona TELLS the
+ *  model and the directory the membrane ENFORCES are one value, not two maps kept in sync by hand. */
 export function coordinatorMemoryLabelFor(harness: string): string | undefined {
-  return COORDINATOR_MEMORY_LABEL[harness];
+  if (!COORDINATOR_PROMPT_HARNESSES.has(harness)) return undefined;
+  return `~/${coordinatorMemoryRelDir(harness)}`;
 }
+
+/** Harnesses with a coordinator persona variant (see buildCoordinatorPrompt). */
+const COORDINATOR_PROMPT_HARNESSES = new Set(['claude-code', 'codex']);
 
 // Harness-specific gap this note closes: the Claude membrane's tool-call denial delivers OUR
 // message text straight to the model, so the generic "spawn the right agent instead of
@@ -139,7 +138,7 @@ const CODEX_DECLINE_GUIDANCE =
 export function buildCoordinatorPrompt(opts: { harness: string }): string {
   if (opts.harness === 'claude-code') return COORDINATOR_PROMPT;
 
-  const memoryLabel = COORDINATOR_MEMORY_LABEL[opts.harness];
+  const memoryLabel = coordinatorMemoryLabelFor(opts.harness);
   if (!memoryLabel) return COORDINATOR_PROMPT; // no known variant for this harness yet — safest default
 
   let out = COORDINATOR_PROMPT.replaceAll('~/.claude', memoryLabel);

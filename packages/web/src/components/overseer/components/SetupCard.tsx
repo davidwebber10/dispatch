@@ -57,6 +57,7 @@ export function ControlPlaneSetupCard(): JSX.Element {
   const coordinatorProject = useOverseer((s) => s.coordinatorProject);
   const startCoordinator = useOverseer((s) => s.startCoordinator);
   const ensuring = useOverseer((s) => s.ensuring);
+  const setupError = useOverseer((s) => s.setupError);
 
   // Availability (CLI installed / enabled on this box) + coordinator eligibility: seed with
   // the full catalog (every pill selectable) so a slow probe never blocks the card, then
@@ -88,6 +89,18 @@ export function ControlPlaneSetupCard(): JSX.Element {
     return providers?.find((p) => p.name === provider)?.installed !== false;
   }, [enabled, providers, providerFor]);
 
+  // M3 block: Codex threads share one app-server and so one Dispatch MCP identity, so a Codex
+  // coordinator cannot run Codex workers yet (the daemon refuses the pair). Don't offer it: drop
+  // Codex from the Workers strip while Codex coordinates, and move a Codex worker pick to Claude.
+  const codexCoordinates = setupSelection.coordinatorHarness === 'codex';
+  const workerHarnesses = useMemo(
+    () => (codexCoordinates ? AGENT_HARNESSES.filter((h) => h.id !== 'codex') : AGENT_HARNESSES),
+    [codexCoordinates],
+  );
+  useEffect(() => {
+    if (codexCoordinates && setupSelection.workerHarness === 'codex') setSetupSelection({ workerHarness: 'claude-code' });
+  }, [codexCoordinates, setupSelection.workerHarness, setSetupSelection]);
+
   const selectedCatalogId = CATALOG_ID[setupSelection.workerHarness] ?? 'claude';
 
   // The harnesses eligible to BE the coordinator (Claude + Codex today) — narrower than
@@ -98,6 +111,14 @@ export function ControlPlaneSetupCard(): JSX.Element {
     [enabled],
   );
   const selectedCoordinatorCatalogId = CATALOG_ID[setupSelection.coordinatorHarness] ?? 'claude';
+  // The seed guesses Codex can coordinate before the probe answers; if the probe then drops the
+  // current pick from the strip, fall back to the first harness it does offer (with that
+  // harness's default model) — otherwise the invisible stale pick makes Start fail.
+  useEffect(() => {
+    if (!coordinatorHarnesses.length || coordinatorHarnesses.some((h) => h.id === selectedCoordinatorCatalogId)) return;
+    const first = coordinatorHarnesses[0].id;
+    setSetupSelection({ coordinatorHarness: WIRE[first] ?? first, model: COORDINATOR_DEFAULT_MODEL[first] ?? '' });
+  }, [coordinatorHarnesses, selectedCoordinatorCatalogId, setSetupSelection]);
   const modelOptions = useMemo(() => {
     const models = HARNESSES.find((h) => h.id === selectedCoordinatorCatalogId)?.models ?? [];
     return models.map((o) => ({ value: o.model ?? '', label: o.label }));
@@ -139,12 +160,17 @@ export function ControlPlaneSetupCard(): JSX.Element {
           Workers
         </span>
         <HarnessStrip
-          harnesses={AGENT_HARNESSES}
+          harnesses={workerHarnesses}
           value={selectedCatalogId}
           onSelect={(id) => setSetupSelection({ workerHarness: WIRE[id] ?? id })}
           isAvailable={isAvailable}
           mobile={isMobile}
         />
+        {codexCoordinates && (
+          <span style={{ fontSize: isMobile ? 12.5 : 11.5, color: 'var(--color-text-tertiary)' }}>
+            Codex workers can't run under a Codex coordinator yet.
+          </span>
+        )}
       </div>
 
       <div data-testid="coordinator-strip" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -207,6 +233,11 @@ export function ControlPlaneSetupCard(): JSX.Element {
       >
         {ensuring ? (<><Spinner size={13} /> Starting…</>) : 'Start'}
       </button>
+      {setupError && (
+        <div role="alert" style={{ fontSize: isMobile ? 13 : 12, color: 'var(--color-status-red)' }}>
+          {setupError}
+        </div>
+      )}
     </div>
   );
 }

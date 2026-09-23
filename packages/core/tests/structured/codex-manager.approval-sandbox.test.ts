@@ -126,3 +126,33 @@ it('a manager constructed with different defaults still lets a per-spawn overrid
     m2.killAll();
   }
 });
+
+// N3 (independent review of PR #47): Codex can route approval requests to its OWN reviewer
+// (`approvals_reviewer = "auto_review" | "guardian_subagent"` in config.toml). Then a sandbox
+// escape is answered inside Codex and never reaches Dispatch as a ServerRequest, so the
+// coordinator membrane (handleApproval → toolPolicy) never sees it. A governed thread (any
+// toolPolicy) must therefore pin the reviewer to `user` — i.e. the client, Dispatch — on BOTH
+// thread/start and thread/resume. Live-verified on codex-cli 0.156.1: thread/start accepts
+// `approvalsReviewer: 'user'` and echoes it back; an unknown value is rejected.
+const allowAll = () => ({ allow: true as const });
+
+it('a governed thread (toolPolicy set) pins approvalsReviewer "user" on thread/start', async () => {
+  m.spawn('t1', { command: process.execPath, args: [fake], workDir: process.cwd(), toolPolicy: allowAll, env: { CODEX_FAKE_LOG: logPath } });
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  const [sent] = readLogged('thread/start');
+  expect(sent.params.approvalsReviewer).toBe('user');
+});
+
+it('a governed thread pins approvalsReviewer "user" on a thread/resume too', async () => {
+  m.spawn('t1', { command: process.execPath, args: [fake], workDir: process.cwd(), toolPolicy: allowAll, resumeId: 'thread-existing-9', env: { CODEX_FAKE_LOG: logPath } });
+  await waitForEvent(m, 't1', (e) => e.type === 'assistant' && e.message?.content?.[0]?.text === 'earlier answer');
+  const [sent] = readLogged('thread/resume');
+  expect(sent.params.approvalsReviewer).toBe('user');
+});
+
+it('an ungoverned thread (no toolPolicy) leaves the reviewer to the user\'s own Codex config', async () => {
+  m.spawn('t1', { command: process.execPath, args: [fake], workDir: process.cwd(), env: { CODEX_FAKE_LOG: logPath } });
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  const [sent] = readLogged('thread/start');
+  expect(sent.params).not.toHaveProperty('approvalsReviewer');
+});

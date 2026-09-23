@@ -20,18 +20,22 @@
 import type { PendingPermission, PermissionDecision } from './manager.js';
 import { looksLikeQuestion } from '../status/question.js';
 
-/** The four ServerRequest approval methods this layer understands (spec mapping table). */
+/** The ServerRequest approval methods this layer understands (spec mapping table). An
+ *  `mcpServer/elicitation/request` counts only when it is an MCP TOOL-CALL approval (see
+ *  approval()); a real elicitation form yields no action and the manager refuses it. */
 export type ApprovalMethod =
   | 'item/commandExecution/requestApproval'
   | 'item/fileChange/requestApproval'
   | 'item/permissions/requestApproval'
-  | 'item/tool/requestUserInput';
+  | 'item/tool/requestUserInput'
+  | 'mcpServer/elicitation/request';
 
 export const APPROVAL_METHODS: ReadonlySet<string> = new Set<ApprovalMethod>([
   'item/commandExecution/requestApproval',
   'item/fileChange/requestApproval',
   'item/permissions/requestApproval',
   'item/tool/requestUserInput',
+  'mcpServer/elicitation/request',
 ]);
 
 /** A Codex JSON-RPC frame the translator accepts (notification OR server→client request). */
@@ -188,6 +192,7 @@ export class CodexTranslator {
       case 'item/reasoning/summaryTextDelta': return this.reasoningDelta(frame.params, `${frame.params?.itemId}:s${frame.params?.summaryIndex ?? 0}`);
       case 'item/started': return this.itemStarted(frame.params?.item);
       case 'item/completed': return this.itemCompleted(frame.params?.item);
+      case 'item/fileChange/patchUpdated': return this.patchUpdated(frame.params);
       case 'thread/tokenUsage/updated': return this.tokenUsage(frame.params);
       case 'error': return this.errorNotif(frame.params);
       default: return []; // account/*, mcpServer/*, skills/*, thread/status, turn/diff, … — ignored
@@ -289,6 +294,18 @@ export class CodexTranslator {
       kind: 'event',
       event: { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: item.id, name: toolNameForItem(item), input: toolInputForItem(item) }] } },
     }];
+  }
+
+  /** A fileChange's change list can change after item/started (codex-cli 0.156+). Keep the
+   *  cached item's `changes` current, because a later approval checks the coordinator policy
+   *  against exactly this cache — a stale list could omit a path the patch now writes. Renders
+   *  nothing (the tool_use block from item/started already shows the call). */
+  private patchUpdated(params: any): TranslatedAction[] {
+    const itemId = params?.itemId;
+    if (typeof itemId !== 'string' || !Array.isArray(params?.changes)) return [];
+    const cached = this.itemDetails.get(itemId);
+    this.itemDetails.set(itemId, { ...(cached ?? { type: 'fileChange', id: itemId }), changes: params.changes });
+    return [];
   }
 
   private itemCompleted(item: any): TranslatedAction[] {
@@ -398,6 +415,26 @@ export class CodexTranslator {
         pending = { requestId: itemId, toolName: 'Permissions', toolUseId: itemId, input: { reason: params.reason ?? undefined, permissions: params.permissions, cwd: params.cwd } };
         autoApprove = { permissions: params.permissions ?? {}, scope: 'turn' };
         break;
+      case 'mcpServer/elicitation/request': {
+        // Under approvalPolicy 'on-request', Codex gates EVERY MCP tool call behind this request,
+        // tagged `_meta.codex_approval_kind: 'mcp_tool_call'` (live-verified, codex-cli 0.156.1).
+        // Treat it like any other tool approval so the membrane decides — an unanswered/errored
+        // request is "user rejected MCP tool call", which cut a Codex coordinator off from
+        // spawn_agent entirely. Any OTHER elicitation is a real form asking for data that
+        // Dispatch cannot fill in: no action, so the manager refuses it as before.
+        if (params?._meta?.codex_approval_kind !== 'mcp_tool_call') return [];
+        const server = typeof params.serverName === 'string' ? params.serverName : 'unknown';
+        // The request names no item or tool; pair it with the in-progress mcpToolCall for this
+        // server (item/started arrives first), else take the tool name from the message.
+        const item = [...this.itemDetails.values()].reverse()
+          .find((it: any) => it?.type === 'mcpToolCall' && it.server === server && it.status === 'inProgress');
+        const tool = typeof item?.tool === 'string' ? item.tool
+          : (typeof params.message === 'string' ? params.message.match(/run tool "([^"]+)"/)?.[1] : undefined) ?? 'unknown';
+        const toolUseId = typeof item?.id === 'string' ? item.id : `mcp-approval-${requestId}`;
+        pending = { requestId: toolUseId, toolName: `mcp__${server}__${tool}`, toolUseId, input: params._meta.tool_params ?? item?.arguments ?? {} };
+        autoApprove = { action: 'accept', content: {}, _meta: null };
+        break;
+      }
       case 'item/tool/requestUserInput': {
         // The AskUserQuestion analogue — ALWAYS surfaces (can't be auto-answered; needs a real
         // choice). Questions are Claude-shaped (header/question/options) with the Codex option
@@ -431,6 +468,9 @@ export function buildApprovalResponse(method: ApprovalMethod, decision: Permissi
       return { decision: allow ? 'accept' : 'decline' };
     case 'item/fileChange/requestApproval':
       return { decision: allow ? 'accept' : 'decline' };
+    case 'mcpServer/elicitation/request':
+      // An MCP tool-call approval (the only elicitation kind that reaches here — see approval()).
+      return allow ? { action: 'accept', content: {}, _meta: null } : { action: 'decline', content: null, _meta: null };
     case 'item/permissions/requestApproval':
       // No "decline" variant exists — denial grants an empty profile (nothing extra).
       return allow ? { permissions: (pending?.input as any)?.permissions ?? {}, scope: 'turn' } : { permissions: {}, scope: 'turn' };

@@ -47,13 +47,23 @@ rl.on('line', (line) => {
     const meta = pendingApprovalMeta.get(msg.id);
     pendingApprovalThreadIds.delete(msg.id);
     pendingApprovalMeta.delete(msg.id);
-    logResponse(meta?.method ?? 'unknown', msg.result);
+    logResponse(meta?.method ?? 'unknown', msg.result !== undefined ? msg.result : { error: msg.error });
+    // A declined request completes its item the way the real app-server does: status 'declined'
+    // and no output (a declined command never ran) — so tests see the same follow-up frame a
+    // live coordinator gets after a policy deny.
+    const declined = msg.result?.decision === 'decline';
     switch (meta?.itemType) {
+      case 'mcpToolCall': {
+        // An MCP tool-call approval (elicitation) was answered → the tool runs only on accept.
+        const accepted = msg.result?.action === 'accept';
+        notify('item/completed', { threadId: tid, turnId: TURN, item: { type: 'mcpToolCall', id: meta.itemId, server: meta.server, tool: meta.tool, status: accepted ? 'completed' : 'failed', arguments: {}, result: accepted ? { content: [{ type: 'text', text: 'pong' }] } : null, error: accepted ? null : { message: 'user rejected MCP tool call' } }, completedAtMs: 4 });
+        break;
+      }
+      case 'elicitation':
+        break; // a real (non-tool) elicitation: nothing to complete besides the turn
       case 'commandExecution':
-        // The command-execution approval was answered (accept OR decline) → complete the item
-        // (a real declined command wouldn't actually run, but the fake doesn't need to model
-        // that — tests only assert on the manager's OWN response/event, not this echo) + turn.
-        notify('item/completed', { threadId: tid, turnId: TURN, item: { type: 'commandExecution', id: meta.itemId, command: meta.command, cwd: '/tmp', aggregatedOutput: 'ok\n', status: 'completed' }, completedAtMs: 4 });
+        // The command-execution approval was answered (accept OR decline) → complete the item + turn.
+        notify('item/completed', { threadId: tid, turnId: TURN, item: { type: 'commandExecution', id: meta.itemId, command: meta.command, cwd: '/tmp', aggregatedOutput: declined ? null : 'ok\n', status: declined ? 'declined' : 'completed' }, completedAtMs: 4 });
         break;
       case 'permissions':
         // A permissions/sandbox escalation isn't backed by a completable tool item — nothing
@@ -61,7 +71,7 @@ rl.on('line', (line) => {
         break;
       default:
         // The file-change approval was answered → finish the tool.
-        notify('item/completed', { threadId: tid, turnId: TURN, item: { type: 'fileChange', id: meta?.itemId ?? 'fc-1', changes: meta?.changes ?? [{ path: '/tmp/hello.txt', kind: { type: 'add' }, diff: 'hi\n' }], status: 'completed' }, completedAtMs: 4 });
+        notify('item/completed', { threadId: tid, turnId: TURN, item: { type: 'fileChange', id: meta?.itemId ?? 'fc-1', changes: meta?.changes ?? [{ path: '/tmp/hello.txt', kind: { type: 'add' }, diff: 'hi\n' }], status: declined ? 'declined' : 'completed' }, completedAtMs: 4 });
     }
     notify('turn/completed', { threadId: tid, turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'completed', durationMs: 42 } });
     return;
@@ -129,7 +139,25 @@ rl.on('line', (line) => {
     // plus a `kind.move_path` destination. Exercises the M2 containment path (a move whose
     // DESTINATION escapes the memory dir must be denied even when the source is inside it).
     const patchMoveMatch = text.match(/^patchmove (.+?)>(.+)$/i);
-    if (execMatch) {
+    // `mcp <server> <tool>` — an MCP tool call that Codex (on-request) gates behind an
+    // `mcpServer/elicitation/request` with `_meta.codex_approval_kind: 'mcp_tool_call'`, in the
+    // live order (codex-cli 0.156.1): item/started mcpToolCall → the ServerRequest → item/completed.
+    const mcpMatch = text.match(/^mcp (\S+) (\S+)$/i);
+    // `elicit` — a REAL MCP elicitation (a form asking the user for data), not a tool approval.
+    const elicitMatch = /^elicit$/i.test(text);
+    if (mcpMatch) {
+      const [, server, tool] = mcpMatch;
+      notify('item/started', { threadId: tid, turnId: TURN, item: { type: 'mcpToolCall', id: 'mcp-1', server, tool, status: 'inProgress', arguments: {} }, startedAtMs: 3 });
+      const reqId = serverReqId++;
+      pendingApprovalThreadIds.set(reqId, tid);
+      pendingApprovalMeta.set(reqId, { method: 'mcpServer/elicitation/request', itemType: 'mcpToolCall', itemId: 'mcp-1', server, tool });
+      send({ jsonrpc: '2.0', id: reqId, method: 'mcpServer/elicitation/request', params: { threadId: tid, turnId: TURN, serverName: server, mode: 'form', _meta: { codex_approval_kind: 'mcp_tool_call', persist: ['session', 'always'], tool_description: 'd', tool_params: { a: 1 }, tool_params_display: [] }, message: `Allow the ${server} MCP server to run tool "${tool}"?`, requestedSchema: { type: 'object', properties: {} } } });
+    } else if (elicitMatch) {
+      const reqId = serverReqId++;
+      pendingApprovalThreadIds.set(reqId, tid);
+      pendingApprovalMeta.set(reqId, { method: 'mcpServer/elicitation/request', itemType: 'elicitation' });
+      send({ jsonrpc: '2.0', id: reqId, method: 'mcpServer/elicitation/request', params: { threadId: tid, turnId: TURN, serverName: 'somesrv', mode: 'form', _meta: null, message: 'What is your email?', requestedSchema: { type: 'object', properties: { email: { type: 'string' } } } } });
+    } else if (execMatch) {
       // A shell command that requires approval (Task 5 policy tests): item/started carries the
       // command, then the ServerRequest fires and we WAIT for the client's decision (accept,
       // decline, OR a policy deny answered without any human involvement at all).

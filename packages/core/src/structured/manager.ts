@@ -120,6 +120,15 @@ export interface StructuredSpawnOpts {
    */
   approvalPolicy?: 'untrusted' | 'on-request' | 'never';
   sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+  /**
+   * Codex only: this thread must have the shared `codex app-server` child to itself. That child's
+   * argv/env carry the `dispatch` MCP identity (DISPATCH_TERMINAL / DISPATCH_SESSION /
+   * DISPATCH_SPAWN_DEPTH) of whichever thread spawned it FIRST, so a thread sharing it acts under
+   * someone else's identity (review finding M3). Until per-thread identity lands, a COORDINATOR
+   * sets this: its spawn is refused while any other Codex thread is live, and every other Codex
+   * spawn is refused while it is live. Ignored by every other harness's manager.
+   */
+  exclusiveConnection?: boolean;
 }
 
 /** A permission decision written back to a blocked structured session. */

@@ -130,19 +130,16 @@ export function listQueuedDependents(db: Database.Database, agentId: string): Te
  * write, and clearStalePids only touches sessions). The caller filters to
  * structured overseer threads and applies idempotency.
  *
- * `type = 'claude-code'` is deliberate, not an oversight: the caller's idempotency
- * check (transcriptTailStatus) reads the claude JSONL transcript, which has no
- * equivalent for Codex/Grok/OpenCode coordinators — there is no local file to tail,
- * so there is no safe way to tell "already kicked, nothing new happened" from
- * "still genuinely stuck" for them. Rather than guess, those harnesses are left out
- * of the proactive boot nudge entirely; they aren't wedged, because every real path
- * that talks to a coordinator (opening it, an agent escalating up, sending it a
- * message) already revives it first via the harness-agnostic
- * `SessionService.ensureStructuredAlive`. See coordinator-restart.test.ts.
+ * Scoped to the harnesses whose idempotency check has a local record of the turn to read:
+ * claude-code (its JSONL transcript — transcriptTailStatus) and codex (its rollout file —
+ * codexRolloutTailStatus). Grok/OpenCode have no such local record, so there is no safe way to
+ * tell "already kicked, nothing new happened" from "still genuinely stuck" for them; they are
+ * left out of the proactive boot nudge and rely on `SessionService.ensureStructuredAlive`
+ * (revive-on-open). See coordinator-restart.test.ts.
  */
 export function listWorkingStructured(db: Database.Database): TerminalRow[] {
   return db.prepare(
-    "SELECT * FROM terminals WHERE status = 'working' AND archived_at IS NULL AND type = 'claude-code'",
+    "SELECT * FROM terminals WHERE status = 'working' AND archived_at IS NULL AND type IN ('claude-code', 'codex')",
   ).all() as TerminalRow[];
 }
 

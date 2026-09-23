@@ -20,7 +20,7 @@ import type { StatusHooksInjection } from '../providers/types.js';
 import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
 import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript.js';
 import { parseCodexRollout } from '../conversation/codex-transcript.js';
-import { findCodexRolloutPath } from './codex-sessions.js';
+import { findCodexRolloutPath, codexRolloutTailStatus } from './codex-sessions.js';
 import { platform } from '../platform/index.js';
 import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.js';
 import { resolveSpawnModel, isClaudeTierAlias } from '../overseer/spawn-model.js';
@@ -1856,23 +1856,11 @@ export class SessionService {
     const runnerPrompt: string | undefined =
       config.runner && typeof config.runnerPrompt === 'string' ? config.runnerPrompt : undefined;
 
-    // A coordinator's persona AND its enforcement membrane (coordinatorToolPolicy) are honored ONLY
-    // by a coordinator-CAPABLE harness's structured manager (claude-code / codex — see
-    // COORDINATOR_CAPABLE_HARNESSES; Grok/OpenCode ACP ignore toolPolicy, and a `shell` never has a
-    // membrane at all). Fail closed for ANY coordinator that is not a capable harness running
-    // governed structured transport — otherwise it would spawn ungoverned (a raw PTY with
-    // --dangerously-bypass-approvals-and-sandbox, or an ACP thread that never consults the policy).
+    // Fail closed for a coordinator that cannot run governed — see assertCoordinatorGoverned.
     // Checked HERE, before the shell branch and before composeInjection writes a per-thread MCP file,
     // so a refused spawn leaves nothing behind; callers (createTerminal/relaunchTerminal/restore/ws)
-    // catch this and surface the error.
-    if (
-      config.role === 'coordinator' &&
-      !(COORDINATOR_CAPABLE_HARNESSES.has(terminal.type) && config.transport === 'structured' && this.structuredManagerFor(terminal.type))
-    ) {
-      throw new Error(
-        `refusing to spawn coordinator ${terminal.id} (${terminal.type}) without a governed coordinator-capable structured transport`,
-      );
-    }
+    // catch this and surface the error. spawnStructured re-checks it for the revive path.
+    this.assertCoordinatorGoverned(terminal, config);
 
     let command: string;
     let args: string[];
@@ -1971,7 +1959,28 @@ export class SessionService {
    * conversation) and backfills the ring with prior history so the View isn't blank
    * after a daemon restart. Idempotent: a no-op when the thread is already alive.
    */
+  /**
+   * A coordinator's persona AND its enforcement membrane (coordinatorToolPolicy) are honored ONLY
+   * by a coordinator-CAPABLE harness's structured manager (claude-code / codex — see
+   * COORDINATOR_CAPABLE_HARNESSES; Grok/OpenCode ACP ignore toolPolicy, and a `shell` never has a
+   * membrane at all). Throws for ANY coordinator that is not a capable harness running governed
+   * structured transport — otherwise it would spawn ungoverned (a raw PTY with
+   * --dangerously-bypass-approvals-and-sandbox, or an ACP thread that never consults the policy).
+   *
+   * Called from BOTH spawn doors: spawnTerminal (create / relaunch / restore / ws) and
+   * spawnStructured itself, because the revive path (ensureStructuredAlive) enters
+   * spawnStructured directly — a guard on only one door is no guard (review finding N2).
+   */
+  private assertCoordinatorGoverned(terminal: terminalsDb.TerminalRow, config: Record<string, any>): void {
+    if (config.role !== 'coordinator') return;
+    if (COORDINATOR_CAPABLE_HARNESSES.has(terminal.type) && config.transport === 'structured' && this.structuredManagerFor(terminal.type)) return;
+    throw new Error(
+      `refusing to spawn coordinator ${terminal.id} (${terminal.type}) without a governed coordinator-capable structured transport`,
+    );
+  }
+
   private spawnStructured(terminal: terminalsDb.TerminalRow, config: Record<string, any>, workDir: string): void {
+    this.assertCoordinatorGoverned(terminal, config);
     const manager = this.structuredManagerFor(terminal.type);
     if (!manager) throw new Error('structured transport not supported for this provider');
     if (manager.isAlive(terminal.id)) return; // already running — don't double-spawn
@@ -2135,10 +2144,13 @@ export class SessionService {
       // ignores these); shared on the interface so this one call drives either manager.
       resumeId: resumeSessionId,
       model: resolvedModel,
-      // Codex delivers this via thread/start's `developerInstructions` (see codex-manager.ts).
-      // Redundant-but-harmless for Claude/Grok/OpenCode, which already receive the persona via
-      // their own argv/config paths (appendSystemPrompt above, OpenCode's config file below).
-      systemPrompt: systemPromptFor(config, terminal.type),
+      // Codex delivers this via thread/start's `developerInstructions` (see codex-manager.ts) — the
+      // ONLY per-thread prompt channel it has, so it must carry the persona AND the peer/tools
+      // block (structuredMcp.systemPrompt: roster, own id, secrets/tools note), exactly like the
+      // OpenCode join above. A per-thread developerInstructions also supersedes the app-server's
+      // global `-c developer_instructions` note, so leaving the block out would drop it. Only the
+      // Codex manager reads this field; Claude/Grok/OpenCode get theirs via argv/config paths.
+      systemPrompt: [systemPromptFor(config, terminal.type), structuredMcp?.systemPrompt].filter(Boolean).join('\n\n') || undefined,
       // A codex COORDINATOR must run `on-request` + `read-only` (NOT the manager's default
       // `workspace-write`) so the Task 5 enforcement membrane actually fires: under
       // `workspace-write`, an in-workspace repo write / `git commit` / `git push` runs WITHOUT
@@ -2150,8 +2162,13 @@ export class SessionService {
       // (terminal.type)), so a codex coordinator's memory dir is ~/.codex, not ~/.claude — Task 7).
       // Every other codex thread (agents, role runs) — and every non-codex harness, which
       // ignores these fields entirely — keeps today's manager-construction defaults.
+      // …and it must have the shared Codex app-server to itself: that child's argv/env carry the
+      // FIRST spawner's `dispatch` MCP identity, so sharing it would let the coordinator act as
+      // another thread (or another thread act as the coordinator). The manager refuses the spawn
+      // while any other Codex thread is live, and every other Codex spawn while this one is —
+      // the M3 block, until per-thread MCP identity lands (see StructuredSpawnOpts.exclusiveConnection).
       ...(codexCoordinator
-        ? { approvalPolicy: 'on-request' as const, sandbox: 'read-only' as const }
+        ? { approvalPolicy: 'on-request' as const, sandbox: 'read-only' as const, exclusiveConnection: true }
         : {}),
       env: { [TERMINAL_ID_ENV_VAR]: terminal.id, ...(opencodeEnv ?? {}) },
     });
@@ -2215,36 +2232,39 @@ export class SessionService {
    * restart. They aren't `working`, so this kicker correctly skips them — reviving
    * them needs a different path (re-surface the question), not a mid-task nudge.
    *
-   * CLAUDE-ONLY BY DESIGN: `terminalsDb.listWorkingStructured` scopes this whole
-   * mechanism to `type = 'claude-code'` (see its doc comment) because the idempotency
-   * check above needs a local transcript to tail, which Codex/Grok/OpenCode
-   * coordinators don't have. A Codex coordinator is therefore never proactively
-   * boot-kicked — it relies on `ensureStructuredAlive` (revive-on-open), which every
-   * real entry point already calls before talking to a coordinator (opening it,
-   * `notifyCoordinatorOfAgent`, `sendStructuredMessage`). Pinned in
-   * coordinator-restart.test.ts.
+   * CLAUDE + CODEX: `terminalsDb.listWorkingStructured` scopes this to the harnesses with a
+   * local record of the turn for the idempotency check — the claude JSONL transcript
+   * (transcriptTailStatus) and the Codex rollout (codexRolloutTailStatus). Grok/OpenCode have
+   * none, so they are never proactively boot-kicked and rely on `ensureStructuredAlive`
+   * (revive-on-open). Pinned in coordinator-restart.test.ts.
    */
   async kickstartInterruptedAgents(settleMs: number = KICKSTART_SETTLE_MS): Promise<{ kicked: string[]; skipped: string[] }> {
     const kicked: string[] = [];
     const skipped: string[] = [];
-    if (!this.structuredManagerFor('claude-code')) return { kicked, skipped };
+    if (!this.structuredManagerFor('claude-code') && !this.structuredManagerFor('codex')) return { kicked, skipped };
 
     // (a) Settle: let any burst of save writes from the shutdown coalesce before we read status.
     if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
 
-    // (b) Enumerate every non-archived claude-code terminal left `working` across all sessions.
+    // (b) Enumerate every non-archived claude-code/codex terminal left `working` across all sessions.
     const rows = terminalsDb.listWorkingStructured(this.db);
     for (const row of rows) {
+      if (!this.structuredManagerFor(row.type)) { skipped.push(row.id); continue; }
       let config: Record<string, any> = {};
       try { config = JSON.parse(row.config || '{}'); } catch { skipped.push(row.id); continue; }
       // Structured overseer threads only: the coordinator and its typed agents.
       if (config.transport !== 'structured') { skipped.push(row.id); continue; }
       if (config.role !== 'coordinator' && config.role !== 'agent') { skipped.push(row.id); continue; }
 
-      // (c) Idempotency. Compare against the transcript, which advances as the thread works.
+      // (c) Idempotency. Compare against the thread's own record of the turn, which advances as
+      // it works: the claude transcript, or the Codex rollout (keyed by the thread id).
       const session = sessionsDb.getById(this.db, row.session_id);
       const workDir = row.working_dir || session?.working_dir || null;
-      const tail = (workDir && row.external_id) ? transcriptTailStatus(workDir, row.external_id) : null;
+      const tail = !row.external_id
+        ? null
+        : row.type === 'codex'
+          ? codexRolloutTailStatus(row.external_id)
+          : (workDir ? transcriptTailStatus(workDir, row.external_id) : null);
 
       // Already kicked on a prior boot and nothing new happened since → don't re-prompt.
       const kickedAt = typeof config.kickedAt === 'string' ? Date.parse(config.kickedAt) : NaN;

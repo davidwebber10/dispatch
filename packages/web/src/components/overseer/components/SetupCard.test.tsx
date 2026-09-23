@@ -113,4 +113,36 @@ describe('ControlPlaneSetupCard', () => {
     expect(screen.getByText('6 Astra')).toBeInTheDocument();
     expect(screen.queryByText('Sonnet')).not.toBeInTheDocument();
   });
+  // M3 block (review N5): Codex threads share one app-server and so one Dispatch MCP identity,
+  // so a Codex coordinator cannot run Codex workers yet. The daemon refuses the combination; the
+  // card must not offer it.
+  it('a Codex coordinator removes Codex from the Workers strip and moves a Codex worker pick back to Claude', async () => {
+    useOverseer.setState({ setupSelection: { workerHarness: 'codex', model: 'sonnet', coordinatorHarness: 'claude-code' } });
+    render(<ControlPlaneSetupCard />);
+    await waitFor(() => expect(api.getHarnessCapabilities).toHaveBeenCalled());
+    fireEvent.click(within(screen.getByTestId('coordinator-strip')).getByRole('button', { name: /Codex/ }));
+    await waitFor(() => expect(useOverseer.getState().setupSelection.workerHarness).toBe('claude-code'));
+    const workers = within(screen.getByTestId('workers-strip'));
+    expect(workers.queryByText('Codex')).not.toBeInTheDocument();
+    expect(workers.getByText(/Codex workers/i)).toBeInTheDocument();
+  });
+
+  // L2: the seed marks Codex coordinator-capable before the probe answers; if the probe then says
+  // it is not (e.g. DISPATCH_CODEX_PRETTY=0), a Codex pick must not linger invisibly and fail Start.
+  it('resets a stale Codex coordinator pick when the probe reports Codex cannot coordinate', async () => {
+    (api.getHarnessCapabilities as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(
+      AGENT_CAPS.map((h) => ({ ...h, capabilities: { ...h.capabilities, coordinator: h.id === 'claude' } })),
+    );
+    useOverseer.setState({ setupSelection: { workerHarness: 'claude-code', model: '', coordinatorHarness: 'codex' } });
+    render(<ControlPlaneSetupCard />);
+    await waitFor(() => expect(useOverseer.getState().setupSelection.coordinatorHarness).toBe('claude-code'));
+    expect(useOverseer.getState().setupSelection.model).toBe('sonnet');
+  });
+
+  it('shows the Start failure under the button', async () => {
+    useOverseer.setState({ setupError: 'Could not start the coordinator.' });
+    render(<ControlPlaneSetupCard />);
+    await waitFor(() => expect(api.getHarnessCapabilities).toHaveBeenCalled());
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not start the coordinator.');
+  });
 });

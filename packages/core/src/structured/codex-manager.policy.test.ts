@@ -286,3 +286,65 @@ it('an ApplyPatch that MOVES a memory file onto a repo path is DENIED end-to-end
   const approvalResponse = await waitForLogEntry(logPath, (e) => e.response === 'item/fileChange/requestApproval');
   expect(approvalResponse.result).toEqual({ decision: 'decline' });
 });
+
+// L1 (independent review of PR #47): after a policy decline, Codex still sends item/completed
+// (status 'declined', no output) for the same tool. The chat pairs results by tool_use_id with
+// LAST-wins, so that empty result used to replace the deny reason. The reason must survive.
+it('the deny reason survives Codex\'s own declined item/completed for the same tool', async () => {
+  spawnFake(m, 't1', { toolPolicy: denyGitPush });
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  const idle = waitForManagerEvent(m, 'idle', 't1');
+  m.sendMessage('t1', 'exec git push');
+  await idle;
+  const results = m.getEvents('t1')
+    .filter((e: any) => e.type === 'user' && e.message?.content?.[0]?.type === 'tool_result' && e.message.content[0].tool_use_id === 'cmd-1')
+    .map((e: any) => e.message.content[0]);
+  expect(results.length).toBeGreaterThan(1); // the synthetic deny + Codex's own declined completion
+  const last = results[results.length - 1];
+  expect(last.content).toBe('ground rule: no git push without a human');
+  expect(last.is_error).toBe(true);
+});
+
+it('a permissions self-escalation deny renders as a paired Permissions tool call, not an orphan result', async () => {
+  spawnFake(m, 't1', { toolPolicy: () => ({ allow: true as const }) });
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  m.sendMessage('t1', 'escalate my sandbox');
+  await waitForEvent(m, 't1', (e) => e.type === 'user' && e.message?.content?.[0]?.tool_use_id === 'perm-1');
+  const events = m.getEvents('t1') as any[];
+  const useIdx = events.findIndex((e) => e.type === 'assistant' && e.message?.content?.some((b: any) => b.type === 'tool_use' && b.id === 'perm-1' && b.name === 'Permissions'));
+  const resIdx = events.findIndex((e) => e.type === 'user' && e.message?.content?.[0]?.tool_use_id === 'perm-1');
+  expect(useIdx).toBeGreaterThanOrEqual(0);
+  expect(useIdx).toBeLessThan(resIdx);
+});
+
+// MCP tool calls under on-request (live-verified, codex-cli 0.156.1): the approval arrives as an
+// `mcpServer/elicitation/request`. Unhandled, it was answered with an error → "user rejected MCP
+// tool call", so a Codex coordinator could not call spawn_agent at all.
+it('a governed coordinator\'s MCP tool call (spawn_agent) is approved on the wire, not rejected', async () => {
+  const logPath = makeFakeLogPath();
+  spawnFake(m, 't1', { toolPolicy: makeCoordinatorPolicy(coordinatorMemoryDirFor('codex'), { commandsEscalate: true }), env: { CODEX_FAKE_LOG: logPath } });
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  m.sendMessage('t1', 'mcp dispatch spawn_agent');
+  const resp = await waitForLogEntry(logPath, (e) => e.response === 'mcpServer/elicitation/request');
+  expect(resp.result).toEqual({ action: 'accept', content: {}, _meta: null });
+  const result = await waitForEvent(m, 't1', (e) => e.type === 'user' && e.message?.content?.[0]?.tool_use_id === 'mcp-1');
+  expect(result.message.content[0].is_error).toBeFalsy();
+});
+
+it('a supervised (escalate) thread surfaces an MCP tool call as a pending approval for the human', async () => {
+  spawnFake(m, 't1', { escalate: true });
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  const perm = waitForManagerEvent(m, 'permission', 't1');
+  m.sendMessage('t1', 'mcp dispatch report_status');
+  const [pending] = await perm;
+  expect(pending.toolName).toBe('mcp__dispatch__report_status');
+});
+
+it('a REAL elicitation (not a tool approval) is still refused — Dispatch cannot fill in a form', async () => {
+  const logPath = makeFakeLogPath();
+  spawnFake(m, 't1', { env: { CODEX_FAKE_LOG: logPath } });
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  m.sendMessage('t1', 'elicit');
+  const resp = await waitForLogEntry(logPath, (e) => e.response === 'mcpServer/elicitation/request');
+  expect(resp.result).toHaveProperty('error');
+});

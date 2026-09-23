@@ -4,9 +4,10 @@
 // TOP-LEVEL, camelCase `developerInstructions` param on `thread/start` — the OpenAI-documented
 // `settings.developer_instructions` spelling is silently ignored by codex-cli (verified live on
 // codex-cli 0.155.1). `thread/resume` is ALSO sent `developerInstructions` when the session has
-// a `systemPrompt` — deliberately reinforcing, not just restoring: rather than gamble on the
-// CLI retaining the persona across a resume/compaction/crash-recovery, we resend it every time.
-// Sending it again is idempotent and safe; silently losing the coordinator's persona is not.
+// a `systemPrompt`, but that resend is NOT load-bearing: live-verified on codex-cli 0.156.1, a
+// resume ignores it, and the persona survives because the thread's own history carries the one
+// given at thread/start (codex-persona.contract.test.ts pins both facts against the real binary).
+// These tests only prove what the manager SENDS.
 //
 // Reuses the existing fake-codex-app-server.mjs harness (see codex-manager.test.ts) rather than
 // a live `codex` process. The fake is extended (behind an opt-in env var so other tests are
@@ -81,7 +82,7 @@ it('omits developerInstructions from thread/start when no systemPrompt is set', 
   expect(sent.params.developerInstructions).toBeUndefined();
 });
 
-it('ALSO carries developerInstructions on thread/resume when systemPrompt is set (persona durability)', async () => {
+it('ALSO carries developerInstructions on thread/resume when systemPrompt is set (harmless resend; not load-bearing)', async () => {
   m.spawn('t1', {
     command: process.execPath,
     args: [fake],

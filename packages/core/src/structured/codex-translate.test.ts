@@ -135,6 +135,65 @@ describe('CodexTranslator — approvals (the escalate/auto-allow membrane input)
     expect(a.pending.input.changes[0].diff).toBe('hi\n');
   });
 
+  // N4 (independent review of PR #47): codex-cli 0.156 sends `item/fileChange/patchUpdated`
+  // { itemId, changes } when a patch's change list changes after item/started. The approval must
+  // be checked against the LATEST list — a stale item/started list could omit a repo path.
+  it('fileChange approval uses the change list from the latest item/fileChange/patchUpdated, not the stale item/started one', () => {
+    const t = new CodexTranslator();
+    t.translate({ method: 'item/started', params: { threadId: 'th', turnId: 'tu', item: { type: 'fileChange', id: 'fc-9', changes: [{ path: '/home/u/.codex/dispatch-coordinator/a.md', kind: { type: 'add' }, diff: 'a\n' }], status: 'inProgress' } } } as any);
+    const upd = t.translate({ method: 'item/fileChange/patchUpdated', params: { threadId: 'th', turnId: 'tu', itemId: 'fc-9', changes: [
+      { path: '/home/u/.codex/dispatch-coordinator/a.md', kind: { type: 'add' }, diff: 'a\n' },
+      { path: '/repo/src/x.ts', kind: { type: 'update', move_path: null }, diff: 'x\n' },
+    ] } } as any);
+    expect(upd).toEqual([]); // bookkeeping only — nothing rendered
+    const out = t.translate({ method: 'item/fileChange/requestApproval', id: 41, params: { threadId: 'th', turnId: 'tu', itemId: 'fc-9', startedAtMs: 1 } } as any);
+    const a = out[0] as any;
+    expect(a.pending.input.changes.map((c: any) => c.path)).toEqual(['/home/u/.codex/dispatch-coordinator/a.md', '/repo/src/x.ts']);
+  });
+
+  it('a patchUpdated for an item never seen still caches its changes for the approval', () => {
+    const t = new CodexTranslator();
+    t.translate({ method: 'item/fileChange/patchUpdated', params: { threadId: 'th', turnId: 'tu', itemId: 'fc-10', changes: [{ path: '/repo/y.ts', kind: { type: 'add' }, diff: 'y\n' }] } } as any);
+    const out = t.translate({ method: 'item/fileChange/requestApproval', id: 42, params: { threadId: 'th', turnId: 'tu', itemId: 'fc-10', startedAtMs: 1 } } as any);
+    expect((out[0] as any).pending.input.changes.map((c: any) => c.path)).toEqual(['/repo/y.ts']);
+  });
+
+  // Live-verified on codex-cli 0.156.1: under approvalPolicy 'on-request', EVERY MCP tool call is
+  // gated behind an `mcpServer/elicitation/request` (_meta.codex_approval_kind 'mcp_tool_call'),
+  // sent after item/started for the mcpToolCall. Answering it with an error = "user rejected MCP
+  // tool call" — which is how a Codex coordinator lost spawn_agent entirely.
+  it('an MCP tool-call elicitation → an approval named mcp__<server>__<tool>, paired to the in-progress mcpToolCall item', () => {
+    const t = new CodexTranslator();
+    t.translate({ method: 'item/started', params: { threadId: 'th', turnId: 'tu', item: { type: 'mcpToolCall', id: 'exec-1', server: 'dispatch', tool: 'spawn_agent', status: 'inProgress', arguments: { agentType: 'implementer' } } } } as any);
+    const out = t.translate({ method: 'mcpServer/elicitation/request', id: 51, params: { threadId: 'th', turnId: 'tu', serverName: 'dispatch', mode: 'form', _meta: { codex_approval_kind: 'mcp_tool_call', tool_params: { agentType: 'implementer' } }, message: 'Allow the dispatch MCP server to run tool "spawn_agent"?', requestedSchema: { type: 'object', properties: {} } } } as any);
+    expect(out).toHaveLength(1);
+    const a = out[0] as any;
+    expect(a.kind).toBe('approval');
+    expect(a.method).toBe('mcpServer/elicitation/request');
+    expect(a.pending.toolName).toBe('mcp__dispatch__spawn_agent');
+    expect(a.pending.toolUseId).toBe('exec-1');
+    expect(a.pending.input).toEqual({ agentType: 'implementer' });
+    expect(a.alwaysSurface).toBe(false);
+    expect(a.autoApprove).toEqual({ action: 'accept', content: {}, _meta: null });
+  });
+
+  it('an MCP tool-call elicitation with no matching item falls back to the tool named in the message', () => {
+    const t = new CodexTranslator();
+    const out = t.translate({ method: 'mcpServer/elicitation/request', id: 52, params: { threadId: 'th', turnId: 'tu', serverName: 'probe', mode: 'form', _meta: { codex_approval_kind: 'mcp_tool_call', tool_params: {} }, message: 'Allow the probe MCP server to run tool "ping"?', requestedSchema: { type: 'object', properties: {} } } } as any);
+    expect((out[0] as any).pending.toolName).toBe('mcp__probe__ping');
+  });
+
+  it('a REAL MCP elicitation (a form asking for data) is not an approval — nothing to auto-answer', () => {
+    const t = new CodexTranslator();
+    const out = t.translate({ method: 'mcpServer/elicitation/request', id: 53, params: { threadId: 'th', turnId: 'tu', serverName: 'x', mode: 'form', _meta: null, message: 'What is your email?', requestedSchema: { type: 'object', properties: { email: { type: 'string' } } } } } as any);
+    expect(out).toEqual([]);
+  });
+
+  it('buildApprovalResponse maps an MCP tool-call decision to the elicitation envelope', () => {
+    expect(buildApprovalResponse('mcpServer/elicitation/request', { behavior: 'allow' }, null)).toEqual({ action: 'accept', content: {}, _meta: null });
+    expect(buildApprovalResponse('mcpServer/elicitation/request', { behavior: 'deny', message: 'no' }, null)).toEqual({ action: 'decline', content: null, _meta: null });
+  });
+
   it('commandExecution approval → Shell pending + accept', () => {
     const t = new CodexTranslator();
     const frame = { method: 'item/commandExecution/requestApproval', id: 7, params: { itemId: 'exec-1', command: 'rm -rf /tmp/x', cwd: '/tmp' } };

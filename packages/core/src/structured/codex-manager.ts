@@ -160,10 +160,9 @@ interface CodexSession {
   model?: string;
   cwd: string;
   resumeId?: string;
-  /** The coordinator's persona, sent as `developerInstructions` on BOTH `thread/start` and
-   *  `thread/resume` (see StructuredSpawnOpts.systemPrompt). Resent on resume deliberately —
-   *  rather than trust the CLI to retain it across a resume/compaction/crash recovery, we
-   *  reinforce it every time; resending is idempotent, and a lost persona is not safe. */
+  /** The thread's persona (+ peer/tools block), sent as `developerInstructions` on `thread/start`
+   *  (see StructuredSpawnOpts.systemPrompt). Also resent on `thread/resume`, but codex-cli 0.156.1
+   *  ignores it there — a resumed thread keeps the persona from its own history (see startThread). */
   systemPrompt?: string;
   /** Optional per-session tool policy consulted before the escalate/auto-allow membrane; a
    *  deny is written straight back to Codex (no pending, no human involvement) — same
@@ -176,6 +175,12 @@ interface CodexSession {
    *  app-server child restarts. */
   approvalPolicy?: 'untrusted' | 'on-request' | 'never';
   sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+  /** True when this thread must have the shared app-server to itself (see
+   *  StructuredSpawnOpts.exclusiveConnection) — while it is live, every other spawn is refused. */
+  exclusive: boolean;
+  /** toolUseId → the policy reason a governed thread's approval was declined with, until Codex's
+   *  own completion of that item arrives (see declineWithReason / withDenyReason). */
+  deniedReasons: Map<string, string>;
   /** Resolves once thread/start|resume has assigned a threadId; sends chain on it. */
   ready: Promise<void>;
   /**
@@ -228,7 +233,26 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
   setDefaultEnv(env: Record<string, string>): void { this.defaultEnv = env; }
 
   spawn(terminalId: string, opts: StructuredSpawnOpts): number {
+    // M3 block: the shared app-server's argv/env carry the FIRST spawner's `dispatch` MCP identity,
+    // so a thread that must keep its own identity (a coordinator) may not share it — refuse BEFORE
+    // touching any state, in both directions. A thread re-spawning ITSELF is not "another" thread.
+    const others = [...this.sessions.values()].filter((s) => s.terminalId !== terminalId);
+    if (opts.exclusiveConnection && others.length > 0) {
+      throw new Error(
+        'A Codex coordinator needs the Codex app-server to itself (Codex threads share one MCP identity — M3, not yet fixed). ' +
+        'Stop the other Codex Pretty threads first, or run this coordinator on Claude.',
+      );
+    }
+    if (others.some((s) => s.exclusive)) {
+      throw new Error(
+        'A Codex coordinator is running, and Codex Pretty threads cannot share its app-server yet (one shared MCP identity — M3, not yet fixed). ' +
+        'Use another harness (or Codex CLI transport) for this thread.',
+      );
+    }
     if (this.sessions.has(terminalId)) this.kill(terminalId);
+    // An exclusive spawn never inherits a connection some earlier spawn created (kill() above
+    // closes it once the last thread is gone; this also covers a connection left with no threads).
+    if (opts.exclusiveConnection && this.conn) { this.conn.close(); this.conn = undefined; }
     const conn = this.ensureConnection(opts);
     const session: CodexSession = {
       terminalId,
@@ -245,6 +269,8 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
       toolPolicy: opts.toolPolicy,
       approvalPolicy: opts.approvalPolicy,
       sandbox: opts.sandbox,
+      exclusive: opts.exclusiveConnection === true,
+      deniedReasons: new Map(),
       ready: Promise.resolve(),
     };
     if (opts.seedEvents?.length) {
@@ -289,10 +315,12 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
         // back to the manager-wide default (see CodexSession.approvalPolicy/sandbox doc comment).
         approvalPolicy: session.approvalPolicy ?? this.approvalPolicy,
         sandbox: session.sandbox ?? this.sandbox,
-        // Reinforce the persona on resume too, not just on a fresh thread/start. Resume,
-        // compaction, and crash recovery are all points where a governed coordinator could
-        // silently lose its persona if the CLI doesn't retain it — resending is idempotent
-        // and harmless, while losing the persona on a coordinator thread is not.
+        ...governedReviewer(session),
+        // Resent for completeness, but NOT load-bearing: live-verified on codex-cli 0.156.1,
+        // thread/resume accepts developerInstructions yet does not apply it to an existing
+        // thread. The persona given at thread/start lives in the thread's own history, and THAT
+        // is what survives a resume / crash recovery (codex-persona.contract.test.ts pins both).
+        // Consequence: a persona CHANGE only reaches a thread started fresh.
         ...(session.systemPrompt ? { developerInstructions: session.systemPrompt } : {}),
       });
       this.bindThread(session, res?.thread?.id ?? session.resumeId, res?.model);
@@ -303,6 +331,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
         model: session.model ?? null,
         approvalPolicy: session.approvalPolicy ?? this.approvalPolicy,
         sandbox: session.sandbox ?? this.sandbox,
+        ...governedReviewer(session),
         // TOP-LEVEL, camelCase — NOT `settings.developer_instructions` (the OpenAI-documented
         // spelling is silently ignored by codex-cli; verified live on codex-cli 0.155.1).
         ...(session.systemPrompt ? { developerInstructions: session.systemPrompt } : {}),
@@ -404,7 +433,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     for (const action of actions) {
       switch (action.kind) {
         case 'event':
-          this.pushEvent(session, action.event);
+          this.pushEvent(session, this.withDenyReason(session, action.event));
           break;
         case 'session':
           if (!session.sessionId) { session.sessionId = action.sessionId; this.emit('session', session.terminalId, action.sessionId); }
@@ -481,12 +510,8 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     // before the escalate/auto-allow membrane ever sees it. No pending, no human involvement,
     // same in-turn-decline contract as a policy deny below.
     if (session.toolPolicy && action.method === 'item/permissions/requestApproval') {
-      const message = 'Control Plane policy: a coordinator cannot change its own sandbox or approval permissions — spawn an implementer agent for work that needs elevated access.';
-      this.conn?.respond(action.requestId, buildApprovalResponse(action.method, { behavior: 'deny', message }, action.pending));
-      this.pushEvent(session, {
-        type: 'user',
-        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: action.pending.toolUseId, content: message, is_error: true }] },
-      });
+      // Generic wording: this guard covers EVERY governed thread (coordinator or role run).
+      this.declineWithReason(session, action, 'Dispatch policy: a governed thread cannot change its own sandbox or approval permissions — hand work that needs elevated access to an agent or a human.', { pairToolUse: true });
       return;
     }
     // AskUserQuestion's Codex analogue can't be auto-answered with a real decision — same
@@ -495,15 +520,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
       const adapted = adaptForPolicy('codex', { toolName: action.pending.toolName, input: action.pending.input });
       const verdict = session.toolPolicy(adapted.toolName, adapted.input);
       if (!verdict.allow) {
-        // Codex's decline envelope carries no message field (see buildApprovalResponse), so
-        // Codex itself never learns WHY — inject the policy's message as a synthetic tool_result
-        // into the ring (paired to the tool_use by toolUseId, same shape itemCompleted emits)
-        // so the coordinator/transcript sees the reason. No pending, no 'permission' emit.
-        this.conn?.respond(action.requestId, buildApprovalResponse(action.method, { behavior: 'deny', message: verdict.message }, action.pending));
-        this.pushEvent(session, {
-          type: 'user',
-          message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: action.pending.toolUseId, content: verdict.message, is_error: true }] },
-        });
+        this.declineWithReason(session, action, verdict.message, { pairToolUse: false });
         return;
       }
     }
@@ -514,6 +531,48 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     } else {
       this.conn?.respond(action.requestId, action.autoApprove);
     }
+  }
+
+  /**
+   * Answer an approval with a policy decline, in-turn: no pending, no 'permission' emit, no human.
+   * Codex's decline envelope carries no message field (see buildApprovalResponse), so Codex never
+   * learns WHY — inject the reason as a synthetic tool_result paired to the tool_use by toolUseId,
+   * so the coordinator/transcript sees it. Codex later completes the same item itself (status
+   * 'declined', no output), and the chat pairs results LAST-wins, so the reason is remembered and
+   * re-applied to that completion too (see applyActions). `pairToolUse` emits the tool_use first
+   * for a request with no tool item of its own (a permissions escalation), so the result is never
+   * an orphan row.
+   */
+  private declineWithReason(
+    session: CodexSession,
+    action: Extract<TranslatedAction, { kind: 'approval' }>,
+    message: string,
+    opts: { pairToolUse: boolean },
+  ): void {
+    this.conn?.respond(action.requestId, buildApprovalResponse(action.method, { behavior: 'deny', message }, action.pending));
+    const toolUseId = action.pending.toolUseId;
+    if (opts.pairToolUse) {
+      this.pushEvent(session, {
+        type: 'assistant',
+        message: { role: 'assistant', content: [{ type: 'tool_use', id: toolUseId, name: action.pending.toolName, input: action.pending.input }] },
+      });
+    }
+    if (toolUseId) session.deniedReasons.set(toolUseId, message);
+    this.pushEvent(session, {
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: message, is_error: true }] },
+    });
+  }
+
+  /** Re-apply a remembered policy-deny reason to Codex's own later tool_result for the same
+   *  tool (its declined completion has no output), so the reason is what the chat keeps. */
+  private withDenyReason(session: CodexSession, event: unknown): unknown {
+    const block = (event as any)?.type === 'user' ? (event as any).message?.content?.[0] : undefined;
+    if (!block || block.type !== 'tool_result') return event;
+    const reason = session.deniedReasons.get(block.tool_use_id);
+    if (reason === undefined) return event;
+    session.deniedReasons.delete(block.tool_use_id);
+    return { ...(event as any), message: { ...(event as any).message, content: [{ ...block, content: reason, is_error: true }] } };
   }
 
   private pushEvent(session: CodexSession, event: unknown): void {
@@ -624,6 +683,18 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
   }
 
   killAll(): void { for (const id of [...this.sessions.keys()]) this.kill(id); }
+}
+
+/**
+ * A governed thread (any toolPolicy — a coordinator or a role run) pins Codex's approval reviewer
+ * to `user`, i.e. the client: Dispatch. Otherwise `approvals_reviewer = "auto_review"` (or
+ * `"guardian_subagent"`) in the user's config.toml would let Codex answer a sandbox escape with its
+ * OWN reviewer, and the request would never reach handleApproval — the membrane would be skipped.
+ * An ungoverned thread keeps whatever the user's Codex config says. Live-verified on codex-cli
+ * 0.156.1: thread/start accepts `approvalsReviewer: 'user'` and echoes it back.
+ */
+function governedReviewer(session: CodexSession): { approvalsReviewer?: 'user' } {
+  return session.toolPolicy ? { approvalsReviewer: 'user' } : {};
 }
 
 /** Map a Claude turn payload (string or content blocks) to Codex UserInput[]. */

@@ -135,6 +135,7 @@ interface OverseerState {
   ensuring: boolean; // a find-or-create coordinator request is in flight
   setupNeeded: boolean; // ensureForProject peeked and found no live coordinator — the inline setup card should show instead of auto-creating one
   setupSelection: { workerHarness: string; model: string; coordinatorHarness: string }; // the setup card's current harness/model choice, consumed by startCoordinator
+  setupError: string | null; // the setup card's last Start failed (create rejected); shown on the card, cleared on the next attempt
   resolved: string[]; // optimistically dismissed need ids
   pendingByTerminal: Record<string, PendingPermission | null>; // fetched escalations (the membrane), keyed by agent terminal id
   archivedByProject: Record<string, Terminal[]>; // archived (complete_agent'd) terminals per project; surfaced as done outcomes
@@ -225,6 +226,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   ensuring: false,
   setupNeeded: false,
   setupSelection: { workerHarness: 'claude-code', model: 'sonnet', coordinatorHarness: 'claude-code' },
+  setupError: null,
   resolved: [],
   pendingByTerminal: {},
   archivedByProject: {},
@@ -460,13 +462,16 @@ export const useOverseer = create<OverseerState>((set, get) => ({
     // stale and no longer overwrites the coordinator this call is about to set. See
     // ensureGeneration's doc comment.
     const myGen = ++ensureGeneration;
-    set({ ensuring: true });
+    set({ ensuring: true, setupError: null });
     try {
       const { terminalId } = await api.ensureOverseerCoordinator(sessionId, { coordinatorHarness, model, workerHarness });
       if (get().coordinatorProject !== sessionId || ensureGeneration !== myGen) return; // project switched, or superseded, mid-flight
       set({ coordinatorId: terminalId, setupNeeded: false, ensuring: false });
     } catch {
-      if (get().coordinatorProject === sessionId && ensureGeneration === myGen) set({ ensuring: false });
+      // Say so on the card — a Start that silently does nothing looks like a dead button.
+      if (get().coordinatorProject === sessionId && ensureGeneration === myGen) {
+        set({ ensuring: false, setupError: 'Could not start the coordinator — try again, or pick another harness.' });
+      }
     }
   },
 

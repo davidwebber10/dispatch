@@ -1,4 +1,4 @@
-import type { Harness } from '../lib/harnesses';
+import type { harnessCapabilities } from '../../../core/src/providers/capabilities';
 import { apiPath } from '../lib/basePath';
 import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, OpencodeModel, OpencodeCatalogEntry } from './types';
 
@@ -32,13 +32,11 @@ const body = (data: unknown) => JSON.stringify(data);
 
 /**
  * A catalog harness plus what this daemon can actually do with it — the daemon's
- * `GET /api/setup/harnesses` shape (see `core/src/providers/capabilities.ts`). `coordinator`
- * (added for Control Plane Phase 2) marks a harness that may run as the Overseer COORDINATOR
- * itself, not just a worker — today only `claude-code` and `codex`.
+ * `GET /api/setup/harnesses` shape, taken straight from `core/src/providers/capabilities.ts`
+ * (type-only, so it can never drift from the server). `coordinator` marks a harness that may run
+ * as the Overseer COORDINATOR itself, not just a worker — today only `claude-code` and `codex`.
  */
-export type HarnessCapability = Harness & {
-  capabilities: { resume: boolean; branch: boolean; permissions: boolean; telemetry: { structured: boolean; pty: boolean }; coordinator: boolean };
-};
+export type HarnessCapability = ReturnType<typeof harnessCapabilities>[number];
 
 type QueryParams =
   | AnalyticsRange

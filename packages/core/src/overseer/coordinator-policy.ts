@@ -73,13 +73,12 @@ function extractWritePaths(inp: Record<string, unknown>): string[] {
  *  THROWS when a path component EXISTS but does not resolve — a dangling symlink or a symlink loop —
  *  rather than lexically re-appending past it (which would let `~/.codex/dangling -> /repo/x`
  *  resolve back "under" the memory dir). The caller (isUnder) fails closed on the throw. */
-function realResolve(p: string): string {
-  // Make the path absolute WITHOUT lexically collapsing `..`: path.resolve would fold `link/..`
-  // to nothing BEFORE symlinks resolve, hiding a `~/.codex/link/../escape` traversal (path.resolve
-  // drops `link` then `..` textually). So make relative paths absolute against cwd, but then walk
-  // the ORIGINAL segments — a `..` that follows a symlink stays in the prefix string and is
-  // resolved by realpathSync at the filesystem level, where it means "up from the link target".
-  const abs = path.isAbsolute(p) ? p : path.resolve(p);
+function realResolve(abs: string): string {
+  // Callers pass an ABSOLUTE path (isUnder denies a relative target before it gets here).
+  // Walk the ORIGINAL segments rather than path.resolve-ing them: path.resolve would fold `link/..`
+  // to nothing BEFORE symlinks resolve, hiding a `link/../escape` traversal. (isUnder also rejects
+  // any raw `..` segment outright, so this is a second line, not the only one.)
+  if (!path.isAbsolute(abs)) throw new Error(`coordinator-policy: not an absolute path ${abs}`);
   const segs = abs.split(path.sep);
   const tail: string[] = [];
   for (let i = segs.length; i > 0; i--) {
@@ -110,21 +109,25 @@ function realResolve(p: string): string {
   return abs; // nothing on the path existed — lexical absolute (won't be under an existing memoryDir)
 }
 
-/** True when `target` resolves to a path strictly inside `dir` (not `dir` itself). Resolves BOTH
- *  sides through `realResolve` first, so neither a traversal segment like `..` nor a symlinked
- *  ancestor can slip a path that only *textually* starts with `dir` past the containment check.
- *  Fails closed (returns false) when either side is unresolvable (dangling symlink / loop). */
-function isUnder(dir: string, target: string): boolean {
+/** True when `target` resolves to a path strictly inside the memory dir `rd` (not `rd` itself).
+ *  `rd` is the memory dir's REAL path, resolved once when the policy is built (null when it could
+ *  not be resolved — then nothing is under it). The target resolves through `realResolve`, so
+ *  neither a traversal segment nor a symlinked ancestor can slip a path that only *textually*
+ *  starts with the dir past the check. A RELATIVE target is denied: the harness would anchor it
+ *  to the thread's cwd, not the daemon's, so resolving it here would check the wrong file (and a
+ *  coordinator's memory path is always absolute anyway). Fails closed (false) when the target is
+ *  unresolvable (dangling symlink / loop / EACCES). */
+function isUnder(rd: string | null, target: string): boolean {
+  if (rd === null) return false;
+  if (!path.isAbsolute(target)) return false;
   // Reject ANY `..` segment in the raw target outright. After a symlink, `..` is resolved
   // differently by realpathSync (lexically, to the link's own parent) than by the kernel at write
   // time (to the link TARGET's parent), so `mem/link/../escape` can pass a realpath-based check yet
   // write OUTSIDE the memory dir. A coordinator's own memory path never needs `..`; deny it rather
   // than trust either resolution to agree with the eventual write.
   if (target.split(/[/\\]/).includes('..')) return false;
-  let rd: string;
   let rt: string;
   try {
-    rd = realResolve(dir);
     rt = realResolve(target);
   } catch {
     return false;
@@ -152,6 +155,11 @@ export function makeCoordinatorPolicy(
   opts: { commandsEscalate?: boolean } = {},
 ): (toolName: string, input: unknown) => PolicyDecision {
   const commandsEscalate = opts.commandsEscalate === true;
+  // Resolve the memory dir ONCE, here: a later swap of the dir (or an ancestor) for a symlink
+  // cannot widen what the policy allows, and no tool call re-walks it. Unresolvable → null →
+  // every file write is denied (fail closed).
+  let resolvedMemoryDir: string | null;
+  try { resolvedMemoryDir = realResolve(path.resolve(memoryDir)); } catch { resolvedMemoryDir = null; }
   return function coordinatorToolPolicy(toolName: string, input: unknown): PolicyDecision {
     const inp = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
     if (toolName === 'Agent' || toolName === 'Task' || toolName === 'Workflow') return { allow: false, message: AGENT_MSG };
@@ -159,7 +167,7 @@ export function makeCoordinatorPolicy(
       const targets = extractWritePaths(inp);
       // Fail closed unless EVERY change is verifiable (changesFullyCovered) AND every endpoint
       // resolves under the memory dir. A patch with an uncheckable change is denied whole.
-      if (targets.length > 0 && changesFullyCovered(inp) && targets.every((t) => isUnder(memoryDir, t))) return { allow: true };
+      if (targets.length > 0 && changesFullyCovered(inp) && targets.every((t) => isUnder(resolvedMemoryDir, t))) return { allow: true };
       return { allow: false, message: delegateMsg(memoryDir) };
     }
     if (toolName === 'Bash') {
@@ -182,20 +190,31 @@ export function makeCoordinatorPolicy(
   };
 }
 
-// The dirname (under the user's home) each harness's coordinator uses for its own memory/plans —
-// the one directory makeCoordinatorPolicy allows a coordinator to write to. Must name the same
-// directory as prompts.ts's COORDINATOR_MEMORY_LABEL, which is what the persona TELLS the model;
-// this is what the policy actually ENFORCES. Falls back to '.claude' for any harness with no
-// coordinator memory dir of its own yet (today: every harness besides claude-code and codex —
-// Phase 1 only ever creates claude-code coordinators, see service.ts's ensureCoordinator).
-const COORDINATOR_MEMORY_DIRNAME: Record<string, string> = {
+// The directory (relative to the user's home, POSIX-style) each harness's coordinator uses for its
+// own memory/plans — the ONE directory makeCoordinatorPolicy lets a coordinator write to. prompts.ts
+// derives the label the persona shows the model from this same map (coordinatorMemoryRelDir), so
+// what the model is TOLD and what the policy ENFORCES cannot drift apart.
+//
+// Codex gets a DEDICATED subdir, never the whole Codex home: ~/.codex also holds the CLI's own
+// config.toml (notify / mcp_servers run commands outside the sandbox), rules/*.rules (execpolicy
+// allow rules), the global AGENTS.md every Codex thread loads, skills, auth, and real git
+// worktrees — a coordinator allowed to write there could rewrite its own guard rails or a repo.
+// Claude keeps ~/.claude (Claude Code's own auto-memory lives in ~/.claude/projects/*/memory), and
+// its coordinator has no OS sandbox to escape anyway (Bash runs under a denylist, not a sandbox).
+// Falls back to '.claude' for any harness with no coordinator memory dir of its own.
+const COORDINATOR_MEMORY_REL_DIR: Record<string, string> = {
   'claude-code': '.claude',
-  codex: '.codex',
+  codex: '.codex/dispatch-coordinator',
 };
+
+/** The per-harness coordinator memory dir, relative to the user's home (POSIX separators). */
+export function coordinatorMemoryRelDir(harness: string): string {
+  return COORDINATOR_MEMORY_REL_DIR[harness] ?? '.claude';
+}
 
 /** The per-harness coordinator memory dir, resolved to an absolute path under the user's home. */
 export function coordinatorMemoryDirFor(harness: string): string {
-  return path.join(os.homedir(), COORDINATOR_MEMORY_DIRNAME[harness] ?? '.claude');
+  return path.join(os.homedir(), ...coordinatorMemoryRelDir(harness).split('/'));
 }
 
 /** Back-compat default: the Claude Code coordinator's memory dir. */

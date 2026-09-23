@@ -116,3 +116,35 @@ describe('coordinator PTY-bypass guard (B2)', () => {
     expect(JSON.parse(t.config || '{}').transport).toBe('structured'); // config untouched
   });
 });
+
+// N2 (independent review of PR #47): the guard lived only in spawnTerminal, but the revive path —
+// ensureStructuredAlive, called on ws connect / notifyCoordinatorOfAgent / sendStructuredMessage /
+// ensureCoordinator — calls spawnStructured DIRECTLY. A coordinator row on a non-capable harness
+// (reachable via PATCH /terminals/:id, which replaces config wholesale, or a queued create whose
+// start was refused) must not revive ungoverned through that door either.
+describe('coordinator guard on the structured REVIVE path (N2)', () => {
+  it('ensureStructuredAlive refuses to revive a coordinator on a non-capable harness', () => {
+    const grok = new FakeStructured();
+    svc.setGrokStructuredManager(grok);
+    seed('tg', { type: 'grok', config: { role: 'coordinator', transport: 'structured' } });
+    expect(svc.ensureStructuredAlive('tg')).toBe(false);
+    expect(grok.spawns).toEqual([]);
+  });
+
+  it('a queued coordinator whose start was refused cannot be revived afterwards', () => {
+    const grok = new FakeStructured();
+    svc.setGrokStructuredManager(grok);
+    seed('tq', { type: 'grok', config: { role: 'coordinator', transport: 'structured', queued: true, queuedTask: 'x' } });
+    expect(() => svc.startQueuedTerminal('tq')).toThrow(/coordinator-capable/i);
+    expect(svc.ensureStructuredAlive('tq')).toBe(false);
+    expect(grok.spawns).toEqual([]);
+  });
+
+  it('a governed codex coordinator still revives through ensureStructuredAlive (no false refusal)', () => {
+    const codex = new FakeStructured();
+    svc.setCodexStructuredManager(codex);
+    seed('tc', { type: 'codex', config: { role: 'coordinator', transport: 'structured' } });
+    expect(svc.ensureStructuredAlive('tc')).toBe(true);
+    expect(codex.spawns).toEqual(['tc']);
+  });
+});

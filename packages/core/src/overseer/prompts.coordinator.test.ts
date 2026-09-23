@@ -9,9 +9,10 @@ describe('buildCoordinatorPrompt', () => {
     expect(buildCoordinatorPrompt({ harness: 'claude-code' })).toBe(COORDINATOR_PROMPT);
   });
 
-  it('the codex variant names ~/.codex as the memory root and never mentions ~/.claude', () => {
+  it('the codex variant names its dedicated memory subdir (never the bare Codex home) and never mentions ~/.claude', () => {
     const p = buildCoordinatorPrompt({ harness: 'codex' });
-    expect(p).toContain('~/.codex');
+    expect(p).toContain('~/.codex/dispatch-coordinator');
+    expect(p).not.toMatch(/~\/\.codex(?!\/dispatch-coordinator)/);
     expect(p).not.toContain('~/.claude');
   });
 

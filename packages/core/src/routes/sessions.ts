@@ -10,6 +10,11 @@ import { resolveWorker } from '../overseer/worker-matrix.js';
 import { harnessCapabilities } from '../providers/capabilities.js';
 import { detectProvider } from '../setup/detect.js';
 
+/** Why a Codex coordinator cannot run Codex workers yet (review finding M3 — shared app-server
+ *  MCP identity). One string so the setup route and worker-defaults say the same thing. */
+const CODEX_UNDER_CODEX_REASON =
+  'A Codex coordinator cannot run Codex workers yet: Codex threads share one app-server and so one Dispatch MCP identity (M3, not yet fixed). Pick another worker harness.';
+
 export function createSessionsRouter(sessionService: SessionService, broadcaster: EventBroadcaster | undefined, db: Database.Database): Router {
   const router = Router();
 
@@ -88,6 +93,12 @@ export function createSessionsRouter(sessionService: SessionService, broadcaster
         }
         opts.coordinatorHarness = body.coordinatorHarness as import('../providers/agent-types.js').AgentType;
       }
+      // M3 block: Codex threads share one app-server and so one `dispatch` MCP identity, so a
+      // Codex coordinator cannot run Codex workers until per-thread identity lands (the Codex
+      // manager refuses the spawn anyway — reject the combination up front with a clear reason).
+      if (opts.coordinatorHarness === 'codex' && opts.workerHarness === 'codex') {
+        return res.status(400).json({ error: CODEX_UNDER_CODEX_REASON });
+      }
       const terminal = sessionService.ensureCoordinator(req.params.id, opts);
       broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: req.params.id });
       res.json({ terminalId: terminal.id });
@@ -125,6 +136,12 @@ export function createSessionsRouter(sessionService: SessionService, broadcaster
       matrix: readOverseerWorkers(db),
       sessionDefault: typeof sessionDefault === 'string' && isAgentType(sessionDefault) ? sessionDefault : undefined,
     });
+    // M3 block: a Codex coordinator owns the Codex app-server exclusively (see codex-manager's
+    // exclusiveConnection), so a Codex worker under it would be refused at spawn — say so here,
+    // where agency-mcp's spawn_agent/queue_agent turns `available: false` into the model-facing reason.
+    if (resolved.harness === 'codex' && coordinator?.type === 'codex') {
+      return res.json({ ...resolved, available: false, reason: CODEX_UNDER_CODEX_REASON });
+    }
     const cap = harnessCapabilities().find((h) => h.type === resolved.harness);
     const structurallyAvailable = !!cap && cap.modes.length > 0;
     if (!structurallyAvailable) {
