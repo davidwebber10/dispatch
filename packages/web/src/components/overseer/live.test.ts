@@ -1,14 +1,14 @@
 // Overseer membrane — escalation Need derivation (the real approve/deny/answer cards).
 import { describe, it, expect } from 'vitest';
-import { convItemsToStream, groupByMission, mapStatus, needsFromThreads, terminalToAgentThread } from './live';
+import { convItemsToStream, groupByMission, isStructuredWorker, mapStatus, needsFromThreads, terminalToAgentThread } from './live';
 import type { ConvItem, PendingPermission, Terminal } from '../../api/types';
 import { AGENT_TYPE } from './types';
 
-function term(id: string, config: Record<string, unknown>, status = 'needs_input'): Terminal {
+function term(id: string, config: Record<string, unknown>, status = 'needs_input', type: Terminal['type'] = 'claude-code'): Terminal {
   return {
     id,
     sessionId: 's',
-    type: 'claude-code',
+    type,
     label: id,
     pid: null,
     externalId: null,
@@ -21,8 +21,8 @@ function term(id: string, config: Record<string, unknown>, status = 'needs_input
   };
 }
 
-const agent = (id: string, agentType = 'implementer', mission?: string) =>
-  term(id, { transport: 'structured', role: 'agent', agentType, ...(mission ? { mission } : {}) });
+const agent = (id: string, agentType = 'implementer', mission?: string, type: Terminal['type'] = 'claude-code') =>
+  term(id, { transport: 'structured', role: 'agent', agentType, ...(mission ? { mission } : {}) }, 'needs_input', type);
 
 const waiting = { threadStatus: 'needs_input' };
 
@@ -95,6 +95,28 @@ describe('scheduled status — dormant wake-scheduler threads (not done, not wai
     expect(missions[0].threads[0].isScheduled).toBe(true);
     expect(missions[0].queued).toHaveLength(0);
     expect(missions[0].outcomes).toHaveLength(0);
+  });
+});
+
+// Phase 2 straggler: isStructuredWorker rejected every worker whose terminal `type` wasn't
+// 'claude-code', so a Codex/Grok/OpenCode worker (now spawnable via the Control Plane
+// selector — see packages/core/src/overseer/worker-payload.ts, `type: input.resolved.harness`)
+// silently vanished from the Overseer rail and archived outcomes.
+describe('non-Claude structured workers (Control Plane Phase 2 selector)', () => {
+  it('isStructuredWorker recognizes a codex-type worker, not just claude-code', () => {
+    const codexWorker = agent('cx1', 'implementer', undefined, 'codex');
+    expect(isStructuredWorker(codexWorker)).toBe(true);
+  });
+
+  it('groupByMission surfaces a codex worker in the rail alongside claude workers', () => {
+    const missions = groupByMission([agent('cx2', 'implementer', 'Payments', 'codex')], { cx2: { threadStatus: 'working' } });
+    expect(missions).toHaveLength(1);
+    expect(missions[0].threads.map((t) => t.key)).toEqual(['cx2']);
+  });
+
+  it('still excludes an unstructured type entirely (e.g. a plain shell) even with agent-shaped config', () => {
+    const shellLike = agent('sh1', 'implementer', undefined, 'shell');
+    expect(isStructuredWorker(shellLike)).toBe(false);
   });
 });
 
