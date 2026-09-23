@@ -83,6 +83,22 @@ describe('claude-code provider', () => {
 });
 
 describe('codex provider', () => {
+  // M3: every Codex Pretty thread shares ONE `codex app-server`, and its argv belongs to whichever
+  // thread spawned it first. So the argv must carry NO per-thread identity — the per-thread MCP
+  // servers (dispatch identity, secrets) ride each thread's own thread/start `config` instead
+  // (see SessionService.spawnStructured / CodexStructuredSessionManager.startThread).
+  it('buildStructuredCommand starts an identity-free app-server: no MCP or developer_instructions args', () => {
+    const cmd = codexProvider.buildStructuredCommand!({
+      workDir: '/tmp',
+      secretsMcp: {
+        claudeConfigPath: null,
+        codexArgs: ['-c', 'mcp_servers.dispatch.env.DISPATCH_TERMINAL="t1"', '-c', 'developer_instructions="note"'],
+        systemPrompt: 'note',
+      },
+    });
+    expect(cmd).toEqual({ command: 'codex', args: ['app-server'] });
+  });
+
   it('builds new command with full permissions (the analogue of Claude --dangerously-skip-permissions)', () => {
     const cmd = codexProvider.buildNewCommand({ workDir: '/tmp' });
     expect(cmd.command).toBe('codex');

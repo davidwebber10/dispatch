@@ -2162,15 +2162,17 @@ export class SessionService {
       // (terminal.type)), so a codex coordinator's memory dir is ~/.codex, not ~/.claude — Task 7).
       // Every other codex thread (agents, role runs) — and every non-codex harness, which
       // ignores these fields entirely — keeps today's manager-construction defaults.
-      // …and it must have the shared Codex app-server to itself: that child's argv/env carry the
-      // FIRST spawner's `dispatch` MCP identity, so sharing it would let the coordinator act as
-      // another thread (or another thread act as the coordinator). The manager refuses the spawn
-      // while any other Codex thread is live, and every other Codex spawn while this one is —
-      // the M3 block, until per-thread MCP identity lands (see StructuredSpawnOpts.exclusiveConnection).
       ...(codexCoordinator
-        ? { approvalPolicy: 'on-request' as const, sandbox: 'read-only' as const, exclusiveConnection: true }
+        ? { approvalPolicy: 'on-request' as const, sandbox: 'read-only' as const }
         : {}),
-      env: { [TERMINAL_ID_ENV_VAR]: terminal.id, ...(opencodeEnv ?? {}) },
+      // Codex: every Pretty thread shares ONE app-server, whose argv/env belong to whichever
+      // thread spawned it first — so nothing thread-specific may ride them (M3). The thread's own
+      // MCP servers (its `dispatch` identity) and its terminal id for shell commands (the
+      // browser-auth shim) ride its thread/start + thread/resume `config` instead.
+      ...(terminal.type === 'codex'
+        ? { threadConfig: { ...(structuredMcp?.codexThreadConfig ?? {}), [`shell_environment_policy.set.${TERMINAL_ID_ENV_VAR}`]: terminal.id } }
+        : {}),
+      env: terminal.type === 'codex' ? {} : { [TERMINAL_ID_ENV_VAR]: terminal.id, ...(opencodeEnv ?? {}) },
     });
     terminalsDb.updatePid(this.db, terminal.id, pid);
   }

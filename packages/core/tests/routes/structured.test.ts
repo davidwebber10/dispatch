@@ -1213,29 +1213,33 @@ it('a non-coordinator codex terminal keeps today\'s default approvalPolicy/sandb
   }
 });
 
-// --- M3 block (review N5): a Codex coordinator never shares the Codex app-server -------------
+// --- M3 fix: every Codex thread carries its OWN dispatch identity on its thread/start config ----
 
-it('a codex coordinator cannot start while another Codex Pretty thread is live, and vice versa (M3 block)', async () => {
-  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-m3-block-'));
+it('a codex coordinator and a plain Codex Pretty thread both start, each with its OWN dispatch identity (M3 fix)', async () => {
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-m3-fix-'));
+  const logPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'codex-m3-log-')), 'requests.jsonl');
+  const prevLog = process.env.CODEX_FAKE_LOG;
+  process.env.CODEX_FAKE_LOG = logPath;
   const a = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fakeCodex] } });
   try {
-    const s = await request(a).post('/api/sessions').send({ provider: 'codex', workingDir: dir, name: 'codex-m3-block' });
-    // A plain Codex Pretty thread first …
+    const s = await request(a).post('/api/sessions').send({ provider: 'codex', workingDir: dir, name: 'codex-m3-fix' });
     const plain = await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'codex', config: { transport: 'structured' } });
     expect(plain.status).toBe(201);
-    // … so a Codex coordinator is refused (it would inherit the plain thread's MCP identity).
     const coord = await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'codex', config: { transport: 'structured', role: 'coordinator' } });
-    expect(coord.status).toBe(400);
-    expect(coord.body.error).toMatch(/M3/);
+    expect(coord.status).toBe(201); // no longer refused — the two no longer share an identity
+    await new Promise((r) => setTimeout(r, 400));
 
-    // Once the plain thread is gone, the coordinator starts — and then blocks other Codex Pretty threads.
-    (a as any)._sessionService?.structuredManagerFor('codex')?.kill(plain.body.id);
-    const coord2 = await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'codex', config: { transport: 'structured', role: 'coordinator' } });
-    expect(coord2.status).toBe(201);
-    const plain2 = await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'codex', config: { transport: 'structured' } });
-    expect(plain2.status).toBe(400);
-    expect(plain2.body.error).toMatch(/M3/);
+    const starts = readLoggedRequests(logPath, 'thread/start').map((e) => e.params.config ?? {});
+    expect(starts).toHaveLength(2);
+    const identity = (c: any) => c['mcp_servers.dispatch']?.env?.DISPATCH_TERMINAL;
+    expect(starts.map(identity)).toEqual([plain.body.id, coord.body.id]);
+    for (const [i, id] of [plain.body.id, coord.body.id].entries()) {
+      expect(starts[i]['mcp_servers.dispatch'].env.DISPATCH_SESSION).toBe(s.body.id);
+      // Shell commands (the browser-auth shim) see the thread's own id too, not the first spawner's.
+      expect(starts[i]['shell_environment_policy.set.DISPATCH_TERMINAL_ID']).toBe(id);
+    }
   } finally {
+    if (prevLog === undefined) delete process.env.CODEX_FAKE_LOG; else process.env.CODEX_FAKE_LOG = prevLog;
     (a as any)._sessionService?.structuredManagerFor('codex')?.killAll();
     fs.rmSync(cfgDir, { recursive: true, force: true });
   }

@@ -89,18 +89,6 @@ export function ControlPlaneSetupCard(): JSX.Element {
     return providers?.find((p) => p.name === provider)?.installed !== false;
   }, [enabled, providers, providerFor]);
 
-  // M3 block: Codex threads share one app-server and so one Dispatch MCP identity, so a Codex
-  // coordinator cannot run Codex workers yet (the daemon refuses the pair). Don't offer it: drop
-  // Codex from the Workers strip while Codex coordinates, and move a Codex worker pick to Claude.
-  const codexCoordinates = setupSelection.coordinatorHarness === 'codex';
-  const workerHarnesses = useMemo(
-    () => (codexCoordinates ? AGENT_HARNESSES.filter((h) => h.id !== 'codex') : AGENT_HARNESSES),
-    [codexCoordinates],
-  );
-  useEffect(() => {
-    if (codexCoordinates && setupSelection.workerHarness === 'codex') setSetupSelection({ workerHarness: 'claude-code' });
-  }, [codexCoordinates, setupSelection.workerHarness, setSetupSelection]);
-
   const selectedCatalogId = CATALOG_ID[setupSelection.workerHarness] ?? 'claude';
 
   // The harnesses eligible to BE the coordinator (Claude + Codex today) — narrower than
@@ -160,17 +148,12 @@ export function ControlPlaneSetupCard(): JSX.Element {
           Workers
         </span>
         <HarnessStrip
-          harnesses={workerHarnesses}
+          harnesses={AGENT_HARNESSES}
           value={selectedCatalogId}
           onSelect={(id) => setSetupSelection({ workerHarness: WIRE[id] ?? id })}
           isAvailable={isAvailable}
           mobile={isMobile}
         />
-        {codexCoordinates && (
-          <span style={{ fontSize: isMobile ? 12.5 : 11.5, color: 'var(--color-text-tertiary)' }}>
-            Codex workers can't run under a Codex coordinator yet.
-          </span>
-        )}
       </div>
 
       <div data-testid="coordinator-strip" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

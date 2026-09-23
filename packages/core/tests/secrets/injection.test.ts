@@ -6,5 +6,5 @@ it('getServerSpec is null when Doppler is not connected', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sec-'));
   const svc = new SecretsService(dir);
   expect(svc.getServerSpec()).toBeNull();
-  expect(svc.getInjection()).toEqual({ claudeConfigPath: null, codexArgs: [], systemPrompt: null });
+  expect(svc.getInjection()).toEqual({ claudeConfigPath: null, codexArgs: [], systemPrompt: null, codexThreadConfig: {} });
 });

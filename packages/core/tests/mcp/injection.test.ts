@@ -36,7 +36,7 @@ describe('composeInjection', () => {
 
   it('returns nulls/[] when there are no specs', () => {
     const r = composeInjection([], { configPath, prompts: [] });
-    expect(r).toEqual({ claudeConfigPath: null, codexArgs: [], systemPrompt: null });
+    expect(r).toEqual({ claudeConfigPath: null, codexArgs: [], systemPrompt: null, codexThreadConfig: {} });
   });
 
   it('merges multiple servers into one Claude config + Codex args', () => {
@@ -62,5 +62,21 @@ describe('composeInjection', () => {
     expect(r.codexArgs).toContain('mcp_servers.fs.env.ROOT="/tmp"');
     const cfg = JSON.parse(fs.readFileSync(r.claudeConfigPath!, 'utf-8'));
     expect(cfg.mcpServers.fs.env).toEqual({ ROOT: '/tmp' });
+  });
+
+  // M3: the Codex app-server is shared, so per-thread MCP identity cannot ride its argv. Each spec
+  // becomes a per-thread `config` entry for thread/start + thread/resume, keyed by a DOTTED path so
+  // it merges with (never replaces) the user's own config.toml mcp_servers — live-verified on
+  // codex-cli 0.156.1, same env / env_vars rules as the -c args.
+  it('codexThreadConfig carries every MCP server as a dotted per-thread config entry', () => {
+    const cfg = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'inj-')), 'mcp.json');
+    const r = composeInjection([
+      { name: 'dispatch', command: 'node', args: ['a.js'], env: { DISPATCH_TERMINAL: 't1', DISPATCH_SPAWN_DEPTH: '1' } },
+      { name: 'doppler', command: 'node', args: ['d.js'], envVars: ['DOPPLER_TOKEN'], env: { IGNORED: 'x' } },
+    ], { configPath: cfg, prompts: [] });
+    expect(r.codexThreadConfig).toEqual({
+      'mcp_servers.dispatch': { command: 'node', args: ['a.js'], env: { DISPATCH_TERMINAL: 't1', DISPATCH_SPAWN_DEPTH: '1' } },
+      'mcp_servers.doppler': { command: 'node', args: ['d.js'], env_vars: ['DOPPLER_TOKEN'] },
+    });
   });
 });

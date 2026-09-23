@@ -40,10 +40,10 @@ class CapturingClaudeManager extends StructuredSessionManager {
 }
 
 class CapturingCodexManager extends CodexStructuredSessionManager {
-  calls: { terminalId: string; command: string; args: string[]; env?: Record<string, string> }[] = [];
+  calls: { terminalId: string; command: string; args: string[]; env?: Record<string, string>; threadConfig?: Record<string, any> }[] = [];
   override isAlive(): boolean { return false; }
-  override spawn(terminalId: string, opts: { command: string; args: string[]; env?: Record<string, string> }): number {
-    this.calls.push({ terminalId, command: opts.command, args: opts.args, env: opts.env });
+  override spawn(terminalId: string, opts: { command: string; args: string[]; env?: Record<string, string>; threadConfig?: Record<string, unknown> }): number {
+    this.calls.push({ terminalId, command: opts.command, args: opts.args, env: opts.env, threadConfig: opts.threadConfig as Record<string, any> });
     return 998;
   }
 }
@@ -111,20 +111,25 @@ describe('agency MCP: caller identity + standard injection path', () => {
     expect(peerBlock.toLowerCase()).toContain('no other threads');
   });
 
-  it('a coordinator (codex, structured) rides the SAME standard path — codexArgs carry the dispatch server', () => {
+  // M3: the Codex app-server is SHARED, so its argv must carry no per-thread identity; the dispatch
+  // server (with THIS thread's identity) rides the thread's own thread/start config instead.
+  it('a coordinator (codex, structured) gets the dispatch server on ITS thread config, never the shared app-server argv', () => {
     const configPath = path.join(tmpDir, 'mcp-codex-coord.json');
     const { svc } = makeService(configPath);
     const manager = new CapturingCodexManager();
     svc.setCodexStructuredManager(manager);
 
-    svc.createTerminal('s1', 'codex', 'Overseer', false, undefined, undefined, {
+    const terminal = svc.createTerminal('s1', 'codex', 'Overseer', false, undefined, undefined, {
       transport: 'structured',
       role: 'coordinator',
     });
 
     expect(manager.calls).toHaveLength(1);
-    const args = manager.calls[0].args;
-    expect(args).toContain('mcp_servers.dispatch.command="node"');
+    expect(manager.calls[0].args).toEqual(['app-server']);
+    const dispatch = manager.calls[0].threadConfig?.['mcp_servers.dispatch'];
+    expect(dispatch.command).toBe('node');
+    expect(dispatch.env.DISPATCH_TERMINAL).toBe(terminal.id);
+    expect(dispatch.env.DISPATCH_SESSION).toBe('s1');
   });
 
   it('Task 8 ungate: a typed AGENT (role: agent, not coordinator) thread now ALSO gets the dispatch server', () => {
@@ -182,19 +187,19 @@ describe('agency MCP: caller identity + standard injection path', () => {
     expect(peerBlock).toContain('list_threads');
   });
 
-  it('Task 8 ungate: a PLAIN codex thread (no config.role) gets the dispatch server via codexArgs', () => {
+  it('Task 8 ungate: a PLAIN codex thread (no config.role) gets the dispatch server on its own thread config', () => {
     const configPath = path.join(tmpDir, 'mcp-plain-codex.json');
     const { svc } = makeService(configPath);
     const manager = new CapturingCodexManager();
     svc.setCodexStructuredManager(manager);
 
-    svc.createTerminal('s1', 'codex', 'Scratch', false, undefined, undefined, {
+    const terminal = svc.createTerminal('s1', 'codex', 'Scratch', false, undefined, undefined, {
       transport: 'structured',
     });
 
     expect(manager.calls).toHaveLength(1);
-    const args = manager.calls[0].args;
-    expect(args).toContain('mcp_servers.dispatch.command="node"');
+    expect(manager.calls[0].args).toEqual(['app-server']);
+    expect(manager.calls[0].threadConfig?.['mcp_servers.dispatch']?.env?.DISPATCH_TERMINAL).toBe(terminal.id);
   });
 
   it('Task 8 ungate: a shell thread receives NO dispatch server and no peer prompt (nothing to inject into)', () => {

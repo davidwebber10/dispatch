@@ -175,9 +175,10 @@ interface CodexSession {
    *  app-server child restarts. */
   approvalPolicy?: 'untrusted' | 'on-request' | 'never';
   sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
-  /** True when this thread must have the shared app-server to itself (see
-   *  StructuredSpawnOpts.exclusiveConnection) — while it is live, every other spawn is refused. */
-  exclusive: boolean;
+  /** Per-thread config overrides (StructuredSpawnOpts.threadConfig) — the thread's own MCP
+   *  identity. Sent on thread/start AND thread/resume, because crash recovery resumes every live
+   *  thread on a FRESH app-server, which must start this thread's MCP servers again. */
+  threadConfig?: Record<string, unknown>;
   /** toolUseId → the policy reason a governed thread's approval was declined with, until Codex's
    *  own completion of that item arrives (see declineWithReason / withDenyReason). */
   deniedReasons: Map<string, string>;
@@ -233,26 +234,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
   setDefaultEnv(env: Record<string, string>): void { this.defaultEnv = env; }
 
   spawn(terminalId: string, opts: StructuredSpawnOpts): number {
-    // M3 block: the shared app-server's argv/env carry the FIRST spawner's `dispatch` MCP identity,
-    // so a thread that must keep its own identity (a coordinator) may not share it — refuse BEFORE
-    // touching any state, in both directions. A thread re-spawning ITSELF is not "another" thread.
-    const others = [...this.sessions.values()].filter((s) => s.terminalId !== terminalId);
-    if (opts.exclusiveConnection && others.length > 0) {
-      throw new Error(
-        'A Codex coordinator needs the Codex app-server to itself (Codex threads share one MCP identity — M3, not yet fixed). ' +
-        'Stop the other Codex Pretty threads first, or run this coordinator on Claude.',
-      );
-    }
-    if (others.some((s) => s.exclusive)) {
-      throw new Error(
-        'A Codex coordinator is running, and Codex Pretty threads cannot share its app-server yet (one shared MCP identity — M3, not yet fixed). ' +
-        'Use another harness (or Codex CLI transport) for this thread.',
-      );
-    }
     if (this.sessions.has(terminalId)) this.kill(terminalId);
-    // An exclusive spawn never inherits a connection some earlier spawn created (kill() above
-    // closes it once the last thread is gone; this also covers a connection left with no threads).
-    if (opts.exclusiveConnection && this.conn) { this.conn.close(); this.conn = undefined; }
     const conn = this.ensureConnection(opts);
     const session: CodexSession = {
       terminalId,
@@ -269,7 +251,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
       toolPolicy: opts.toolPolicy,
       approvalPolicy: opts.approvalPolicy,
       sandbox: opts.sandbox,
-      exclusive: opts.exclusiveConnection === true,
+      threadConfig: opts.threadConfig,
       deniedReasons: new Map(),
       ready: Promise.resolve(),
     };
@@ -285,7 +267,9 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     return conn.pid;
   }
 
-  /** Lazily create the ONE shared app-server connection (first spawn wins its command/env). */
+  /** Lazily create the ONE shared app-server connection (first spawn wins its command/env — which
+   *  is why nothing thread-specific may ride them: each thread's own MCP identity travels in its
+   *  thread/start + thread/resume `config` instead; see CodexSession.threadConfig). */
   private ensureConnection(opts: StructuredSpawnOpts): CodexConnection {
     if (this.conn?.alive) return this.conn;
     const env = { ...process.env, ...this.defaultEnv, ...opts.env } as Record<string, string>;
@@ -316,6 +300,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
         approvalPolicy: session.approvalPolicy ?? this.approvalPolicy,
         sandbox: session.sandbox ?? this.sandbox,
         ...governedReviewer(session),
+        ...threadConfigParam(session),
         // Resent for completeness, but NOT load-bearing: live-verified on codex-cli 0.156.1,
         // thread/resume accepts developerInstructions yet does not apply it to an existing
         // thread. The persona given at thread/start lives in the thread's own history, and THAT
@@ -332,6 +317,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
         approvalPolicy: session.approvalPolicy ?? this.approvalPolicy,
         sandbox: session.sandbox ?? this.sandbox,
         ...governedReviewer(session),
+        ...threadConfigParam(session),
         // TOP-LEVEL, camelCase — NOT `settings.developer_instructions` (the OpenAI-documented
         // spelling is silently ignored by codex-cli; verified live on codex-cli 0.155.1).
         ...(session.systemPrompt ? { developerInstructions: session.systemPrompt } : {}),
@@ -695,6 +681,11 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
  */
 function governedReviewer(session: CodexSession): { approvalsReviewer?: 'user' } {
   return session.toolPolicy ? { approvalsReviewer: 'user' } : {};
+}
+
+/** The thread's own `config` overrides (its MCP identity), or nothing when it has none. */
+function threadConfigParam(session: CodexSession): { config?: Record<string, unknown> } {
+  return session.threadConfig && Object.keys(session.threadConfig).length ? { config: session.threadConfig } : {};
 }
 
 /** Map a Claude turn payload (string or content blocks) to Codex UserInput[]. */

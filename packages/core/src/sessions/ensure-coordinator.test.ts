@@ -70,14 +70,13 @@ describe('POST /overseer/coordinator coordinatorHarness validation', () => {
     expect(ensureCoordinator).not.toHaveBeenCalled();
   });
 
-  it('rejects a codex coordinator with codex workers (M3 block — they would share one MCP identity) with 400', async () => {
-    const ensureCoordinator = vi.fn();
+  it('accepts a codex coordinator with codex workers (M3 fixed: each Codex thread has its own identity)', async () => {
+    const ensureCoordinator = vi.fn().mockReturnValue({ id: 't1' });
     const res = await request(app({ ensureCoordinator }))
       .post('/api/sessions/s1/overseer/coordinator')
       .send({ coordinatorHarness: 'codex', workerHarness: 'codex' });
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/M3/);
-    expect(ensureCoordinator).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(ensureCoordinator).toHaveBeenCalledWith('s1', { coordinatorHarness: 'codex', workerHarness: 'codex' });
   });
 
   it('empty body still creates claude-code (no coordinatorHarness forwarded)', async () => {

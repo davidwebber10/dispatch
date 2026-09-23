@@ -113,18 +113,18 @@ describe('ControlPlaneSetupCard', () => {
     expect(screen.getByText('6 Astra')).toBeInTheDocument();
     expect(screen.queryByText('Sonnet')).not.toBeInTheDocument();
   });
-  // M3 block (review N5): Codex threads share one app-server and so one Dispatch MCP identity,
-  // so a Codex coordinator cannot run Codex workers yet. The daemon refuses the combination; the
-  // card must not offer it.
-  it('a Codex coordinator removes Codex from the Workers strip and moves a Codex worker pick back to Claude', async () => {
+  // M3 is fixed (each Codex thread carries its own Dispatch MCP identity), so a Codex coordinator
+  // can run Codex workers: the card must keep offering them.
+  it('a Codex coordinator keeps Codex in the Workers strip and keeps a Codex worker pick', async () => {
     useOverseer.setState({ setupSelection: { workerHarness: 'codex', model: 'sonnet', coordinatorHarness: 'claude-code' } });
     render(<ControlPlaneSetupCard />);
     await waitFor(() => expect(api.getHarnessCapabilities).toHaveBeenCalled());
     fireEvent.click(within(screen.getByTestId('coordinator-strip')).getByRole('button', { name: /Codex/ }));
-    await waitFor(() => expect(useOverseer.getState().setupSelection.workerHarness).toBe('claude-code'));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(useOverseer.getState().setupSelection.workerHarness).toBe('codex');
     const workers = within(screen.getByTestId('workers-strip'));
-    expect(workers.queryByText('Codex')).not.toBeInTheDocument();
-    expect(workers.getByText(/Codex workers/i)).toBeInTheDocument();
+    expect(workers.getByText('Codex')).toBeInTheDocument();
+    expect(workers.queryByText(/Codex workers/i)).not.toBeInTheDocument();
   });
 
   // L2: the seed marks Codex coordinator-capable before the probe answers; if the probe then says

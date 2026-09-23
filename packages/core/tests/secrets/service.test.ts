@@ -34,7 +34,7 @@ describe('SecretsService', () => {
     const s = svc();
     expect(s.status()).toEqual({ connected: false, project: null, config: null, enabled: true, readOnly: false });
     expect(s.getSpawnEnv()).toEqual({});
-    expect(s.getInjection()).toEqual({ claudeConfigPath: null, codexArgs: [], systemPrompt: null });
+    expect(s.getInjection()).toEqual({ claudeConfigPath: null, codexArgs: [], systemPrompt: null, codexThreadConfig: {} });
   });
 
   it('provides a Doppler system-prompt instruction (with project/config) when connected', async () => {

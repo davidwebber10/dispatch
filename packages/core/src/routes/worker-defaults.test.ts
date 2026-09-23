@@ -32,8 +32,8 @@ function setup() {
   return { db, app: a };
 }
 
-describe('worker-defaults under a Codex coordinator (M3 block, review N5)', () => {
-  it('reports a codex worker unavailable — it could not share the Codex coordinator\'s app-server', async () => {
+describe('worker-defaults under a Codex coordinator (M3 fixed)', () => {
+  it('keeps a codex worker available under a Codex coordinator', async () => {
     const { db, app } = setup();
     sessionsDb.create(db, { id: 'm1', provider: 'codex', name: 'm3', workingDir: '/tmp/m3' });
     terminalsDb.create(db, { id: 'c1', sessionId: 'm1', type: 'codex', label: 'Overseer', config: { transport: 'structured', role: 'coordinator' } });
@@ -41,18 +41,7 @@ describe('worker-defaults under a Codex coordinator (M3 block, review N5)', () =
     const res = await request(app).get('/api/sessions/m1/overseer/worker-defaults?agentType=implementer&harness=codex');
 
     expect(res.status).toBe(200);
-    expect(res.body.available).toBe(false);
-    expect(res.body.reason).toMatch(/M3/);
-  });
-
-  it('keeps a non-codex worker available under a Codex coordinator', async () => {
-    const { db, app } = setup();
-    sessionsDb.create(db, { id: 'm2', provider: 'codex', name: 'm3b', workingDir: '/tmp/m3b' });
-    terminalsDb.create(db, { id: 'c2', sessionId: 'm2', type: 'codex', label: 'Overseer', config: { transport: 'structured', role: 'coordinator' } });
-
-    const res = await request(app).get('/api/sessions/m2/overseer/worker-defaults?agentType=implementer&harness=claude-code');
-
-    expect(res.status).toBe(200);
+    expect(res.body.harness).toBe('codex');
     expect(res.body.available).toBe(true);
   });
 });

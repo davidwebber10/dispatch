@@ -121,14 +121,15 @@ export interface StructuredSpawnOpts {
   approvalPolicy?: 'untrusted' | 'on-request' | 'never';
   sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
   /**
-   * Codex only: this thread must have the shared `codex app-server` child to itself. That child's
-   * argv/env carry the `dispatch` MCP identity (DISPATCH_TERMINAL / DISPATCH_SESSION /
-   * DISPATCH_SPAWN_DEPTH) of whichever thread spawned it FIRST, so a thread sharing it acts under
-   * someone else's identity (review finding M3). Until per-thread identity lands, a COORDINATOR
-   * sets this: its spawn is refused while any other Codex thread is live, and every other Codex
-   * spawn is refused while it is live. Ignored by every other harness's manager.
+   * Codex only: per-thread `config` overrides sent on BOTH thread/start and thread/resume — above
+   * all the thread's own MCP servers (the `dispatch` identity: DISPATCH_TERMINAL / DISPATCH_SESSION
+   * / DISPATCH_SPAWN_DEPTH). The shared app-server's argv/env belong to whichever thread spawned it
+   * first, so per-thread identity must ride here (review finding M3). Keys are dotted config paths
+   * (e.g. `mcp_servers.dispatch`), which MERGE with the user's config.toml. Live-verified on
+   * codex-cli 0.156.1: each thread gets its own MCP server process with its own env, a thread
+   * config wins over an app-server `-c`, and thread/resume applies it. Ignored by other managers.
    */
-  exclusiveConnection?: boolean;
+  threadConfig?: Record<string, unknown>;
 }
 
 /** A permission decision written back to a blocked structured session. */

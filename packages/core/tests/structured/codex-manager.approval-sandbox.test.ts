@@ -156,3 +156,41 @@ it('an ungoverned thread (no toolPolicy) leaves the reviewer to the user\'s own 
   const [sent] = readLogged('thread/start');
   expect(sent.params).not.toHaveProperty('approvalsReviewer');
 });
+
+// M3 FIX: the shared app-server's argv/env belong to whichever thread spawned it first, so each
+// thread's own MCP servers (the dispatch identity) ride ITS thread/start `config` — and its
+// thread/resume `config` too, since crash recovery resumes every thread on a FRESH app-server.
+// Live-verified on codex-cli 0.156.1: each thread then gets its own MCP server process with its
+// own env; a thread config wins over an app-server `-c`; resume applies config.
+const cfgFor = (id: string) => ({ 'mcp_servers.dispatch': { command: 'node', args: ['agency.js'], env: { DISPATCH_TERMINAL: id } } });
+
+it('sends the spawn\'s per-thread config on thread/start', async () => {
+  m.spawn('t1', { command: process.execPath, args: [fake], workDir: process.cwd(), threadConfig: cfgFor('t1'), env: { CODEX_FAKE_LOG: logPath } });
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  const [sent] = readLogged('thread/start');
+  expect(sent.params.config).toEqual(cfgFor('t1'));
+});
+
+it('re-sends the per-thread config on thread/resume', async () => {
+  m.spawn('t1', { command: process.execPath, args: [fake], workDir: process.cwd(), threadConfig: cfgFor('t1'), resumeId: 'thread-existing-9', env: { CODEX_FAKE_LOG: logPath } });
+  await waitForEvent(m, 't1', (e) => e.type === 'assistant' && e.message?.content?.[0]?.text === 'earlier answer');
+  const [sent] = readLogged('thread/resume');
+  expect(sent.params.config).toEqual(cfgFor('t1'));
+});
+
+it('two threads on ONE shared app-server each send their OWN identity config', async () => {
+  const pid1 = m.spawn('t1', { command: process.execPath, args: [fake], workDir: process.cwd(), threadConfig: cfgFor('t1'), env: { CODEX_FAKE_LOG: logPath } });
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  const pid2 = m.spawn('t2', { command: process.execPath, args: [fake], workDir: process.cwd(), threadConfig: cfgFor('t2') });
+  expect(pid2).toBe(pid1); // one shared app-server …
+  await new Promise((r) => setTimeout(r, 300));
+  const starts = readLogged('thread/start').map((e) => e.params.config?.['mcp_servers.dispatch']?.env?.DISPATCH_TERMINAL);
+  expect(starts).toEqual(['t1', 't2']); // … but each thread carries its own identity
+});
+
+it('omits config entirely when the spawn has none', async () => {
+  m.spawn('t1', { command: process.execPath, args: [fake], workDir: process.cwd(), env: { CODEX_FAKE_LOG: logPath } });
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  const [sent] = readLogged('thread/start');
+  expect(sent.params).not.toHaveProperty('config');
+});
