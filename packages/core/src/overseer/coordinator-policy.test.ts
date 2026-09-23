@@ -202,6 +202,43 @@ describe('makeCoordinatorPolicy symlink containment — M1', () => {
   });
 });
 
+describe('makeCoordinatorPolicy dangling symlink / loop — M1 residual (F1)', () => {
+  it('denies a write whose target is a DANGLING symlink pointing outside the memory dir', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'covdang-'));
+    try {
+      const mem = path.join(tmp, 'mem');
+      fs.mkdirSync(mem);
+      // mem/plan.md -> tmp/outside/absent.ts (the destination does NOT exist)
+      fs.symlinkSync(path.join(tmp, 'outside', 'absent.ts'), path.join(mem, 'plan.md'));
+      const policy = makeCoordinatorPolicy(mem);
+      expect(policy('Write', { file_path: path.join(mem, 'plan.md') }).allow).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('denies a write through a DANGLING symlinked ancestor', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'covdang2-'));
+    try {
+      const mem = path.join(tmp, 'mem');
+      fs.mkdirSync(mem);
+      fs.symlinkSync(path.join(tmp, 'gone'), path.join(mem, 'dir')); // mem/dir -> tmp/gone (absent)
+      const policy = makeCoordinatorPolicy(mem);
+      expect(policy('Write', { file_path: path.join(mem, 'dir', 'x.md') }).allow).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('makeCoordinatorPolicy unverifiable change — F3', () => {
+  it('denies a patch when any change entry has neither a path nor a dest', () => {
+    const dir = path.join(os.homedir(), '.codex');
+    const policy = makeCoordinatorPolicy(dir);
+    expect(policy('Write', { changes: [{ path: path.join(dir, 'a.md') }, { kind: 'update' }] }).allow).toBe(false);
+  });
+});
+
 describe('makeCoordinatorPolicy ApplyPatch move destination — M2', () => {
   it('denies a change whose move destination leaves the memory dir', () => {
     const dir = path.join(os.homedir(), '.codex');

@@ -69,7 +69,10 @@ function extractWritePaths(inp: Record<string, unknown>): string[] {
 
 /** Resolve `p` following symlinks as far as it exists on disk, then re-append the not-yet-existing
  *  tail. A new file's parent dir usually exists even when the file does not, so this catches a
- *  symlinked ancestor (e.g. `~/.codex/link -> /repo`) that a purely lexical resolve would miss. */
+ *  symlinked ancestor (e.g. `~/.codex/link -> /repo`) that a purely lexical resolve would miss.
+ *  THROWS when a path component EXISTS but does not resolve — a dangling symlink or a symlink loop —
+ *  rather than lexically re-appending past it (which would let `~/.codex/dangling -> /repo/x`
+ *  resolve back "under" the memory dir). The caller (isUnder) fails closed on the throw. */
 function realResolve(p: string): string {
   let cur = path.resolve(p);
   const tail: string[] = [];
@@ -78,6 +81,12 @@ function realResolve(p: string): string {
       const real = fs.realpathSync(cur);
       return tail.length ? path.join(real, ...tail.slice().reverse()) : real;
     } catch {
+      // Does this component exist on disk (as a symlink/file/dir) even though realpath failed?
+      // If so it's a dangling link or a loop — unresolvable, fail closed. `lstatSync` does not
+      // follow the final symlink, so it succeeds for a dangling link where `realpathSync` threw.
+      let componentExists = true;
+      try { fs.lstatSync(cur); } catch { componentExists = false; }
+      if (componentExists) throw new Error(`coordinator-policy: unresolvable path component ${cur}`);
       const parent = path.dirname(cur);
       if (parent === cur) return path.resolve(p); // nothing on the path existed — fall back to lexical
       tail.push(path.basename(cur));
@@ -88,10 +97,31 @@ function realResolve(p: string): string {
 
 /** True when `target` resolves to a path strictly inside `dir` (not `dir` itself). Resolves BOTH
  *  sides through `realResolve` first, so neither a traversal segment like `..` nor a symlinked
- *  ancestor can slip a path that only *textually* starts with `dir` past the containment check. */
+ *  ancestor can slip a path that only *textually* starts with `dir` past the containment check.
+ *  Fails closed (returns false) when either side is unresolvable (dangling symlink / loop). */
 function isUnder(dir: string, target: string): boolean {
-  const rel = path.relative(realResolve(dir), realResolve(target));
+  let rd: string;
+  let rt: string;
+  try {
+    rd = realResolve(dir);
+    rt = realResolve(target);
+  } catch {
+    return false;
+  }
+  const rel = path.relative(rd, rt);
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+/** True when every entry of a `changes` array yields at least one string endpoint (source `path`
+ *  or move `dest`). A change with neither is unverifiable — the membrane must fail closed rather
+ *  than silently ignore it while approving the rest of the patch. */
+function changesFullyCovered(inp: Record<string, unknown>): boolean {
+  if (!Array.isArray(inp.changes)) return true;
+  return inp.changes.every((c) => {
+    if (!c || typeof c !== 'object') return false;
+    const change = c as Record<string, unknown>;
+    return typeof change.path === 'string' || typeof change.dest === 'string';
+  });
 }
 
 /** Builds the ground rules for a coordinator thread's own tool use, scoped to `memoryDir` —
@@ -106,7 +136,9 @@ export function makeCoordinatorPolicy(
     if (toolName === 'Agent' || toolName === 'Task' || toolName === 'Workflow') return { allow: false, message: AGENT_MSG };
     if (FILE_TOOLS.has(toolName)) {
       const targets = extractWritePaths(inp);
-      if (targets.length > 0 && targets.every((t) => isUnder(memoryDir, t))) return { allow: true };
+      // Fail closed unless EVERY change is verifiable (changesFullyCovered) AND every endpoint
+      // resolves under the memory dir. A patch with an uncheckable change is denied whole.
+      if (targets.length > 0 && changesFullyCovered(inp) && targets.every((t) => isUnder(memoryDir, t))) return { allow: true };
       return { allow: false, message: delegateMsg(memoryDir) };
     }
     if (toolName === 'Bash') {

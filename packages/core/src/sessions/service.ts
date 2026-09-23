@@ -1877,6 +1877,18 @@ export class SessionService {
       }
     } else {
       const provider = getProvider(terminal.type);
+      // A coordinator's persona AND its enforcement membrane (coordinatorToolPolicy) live ONLY in
+      // the structured manager's can_use_tool / handleApproval path. If we cannot spawn it
+      // structured (e.g. DISPATCH_CODEX_PRETTY=0 leaves no codex manager registered), we must NOT
+      // fall through to the PTY path below — that adds --dangerously-bypass-approvals-and-sandbox
+      // and drops both the persona and the membrane, so the coordinator would run UNGOVERNED. Fail
+      // closed HERE, before composeInjection writes a per-thread MCP file, so a refused spawn leaves
+      // nothing behind; relaunchTerminal/createTerminal catch this and surface the error.
+      if (config.role === 'coordinator' && !(config.transport === 'structured' && this.structuredManagerFor(terminal.type))) {
+        throw new Error(
+          `refusing to spawn coordinator ${terminal.id} (${terminal.type}) without governed structured transport`,
+        );
+      }
       const specs: McpServerSpec[] = [];
       const prompts: string[] = [];
       const sec = this.secretsServerSpec?.();
@@ -1896,17 +1908,6 @@ export class SessionService {
         // and backfills prior history on resume.
         this.spawnStructured(terminal, config, workDir);
         return; // structured path complete — skip PTY spawn + session-id capture
-      }
-      // A coordinator's persona AND its enforcement membrane (coordinatorToolPolicy) live ONLY in
-      // the structured manager's can_use_tool / handleApproval path. If we cannot spawn it
-      // structured (e.g. DISPATCH_CODEX_PRETTY=0 leaves no codex manager registered), we must NOT
-      // fall through to the PTY path below — that path adds --dangerously-bypass-approvals-and-sandbox
-      // and drops both the persona and the membrane, so the coordinator would run UNGOVERNED. Fail
-      // closed: relaunchTerminal catches this and marks the terminal `error`.
-      if (config.role === 'coordinator') {
-        throw new Error(
-          `refusing to spawn coordinator ${terminal.id} (${terminal.type}) without governed structured transport`,
-        );
       }
       let cmd: { command: string; args: string[] };
       if (runnerPrompt !== undefined) {
@@ -2079,12 +2080,17 @@ export class SessionService {
     // roleAuthority is untyped at this call site (config: Record<string, any>); role-policy.ts
     // itself validates it and fails closed to 'observe' for anything it doesn't recognize, so the
     // `as never` cast here is safe — it defers validation, not skips it.
+    // ONE invariant, TWO consumers: a Codex coordinator runs the governed read-only + on-request
+    // sandbox (below), and BECAUSE of that every surfaced command approval is a sandbox-escape
+    // request the membrane must deny wholesale (commandsEscalate). Keying both off this single const
+    // keeps them from drifting apart — if a future change moves a Codex coordinator off read-only,
+    // both the sandbox override and the command-deny must change together.
+    const codexCoordinator = terminal.type === 'codex' && config.role === 'coordinator';
     const toolPolicy =
       config.role === 'coordinator'
-        ? // A Codex coordinator runs read-only + on-request, so every surfaced COMMAND approval is a
-          // sandbox-escape request the membrane must deny wholesale (commandsEscalate). A Claude
-          // coordinator has no sandbox — its Bash 'allow' just runs — so it keeps the denylist.
-          makeCoordinatorPolicy(coordinatorMemoryDirFor(terminal.type), { commandsEscalate: terminal.type === 'codex' })
+        ? // A Claude coordinator has no sandbox — its Bash 'allow' just runs — so it keeps the
+          // denylist (commandsEscalate false). A Codex coordinator denies every escalated command.
+          makeCoordinatorPolicy(coordinatorMemoryDirFor(terminal.type), { commandsEscalate: codexCoordinator })
         : typeof config.roleAuthority === 'string'
           ? roleToolPolicy(config.roleAuthority as never)
           : undefined;
@@ -2137,7 +2143,7 @@ export class SessionService {
       // (terminal.type)), so a codex coordinator's memory dir is ~/.codex, not ~/.claude — Task 7).
       // Every other codex thread (agents, role runs) — and every non-codex harness, which
       // ignores these fields entirely — keeps today's manager-construction defaults.
-      ...(terminal.type === 'codex' && config.role === 'coordinator'
+      ...(codexCoordinator
         ? { approvalPolicy: 'on-request' as const, sandbox: 'read-only' as const }
         : {}),
       env: { [TERMINAL_ID_ENV_VAR]: terminal.id, ...(opencodeEnv ?? {}) },
