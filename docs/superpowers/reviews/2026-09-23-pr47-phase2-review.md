@@ -157,3 +157,48 @@ rejection, worker-defaults check, hidden Codex workers) is removed.
 workers selected) and a plain Codex Pretty thread ran side by side on one bare `codex app-server`;
 each had its own `agency-mcp` process with its own `DISPATCH_TERMINAL`; in a real turn each thread's
 shell saw its own `DISPATCH_TERMINAL_ID` and `list_threads` marked its own row `isSelf`.
+
+## Third GPT-6 Astra review (2026-09-23, head 3829772) + remediation
+
+A static `gpt-6-astra` review (`codex exec`, read-only) of the whole branch confirmed every
+earlier finding closed except T1 and T2 (both "Partly") and raised five new ones. Each was
+checked in code and, where possible, live, then fixed test-first.
+
+- **1 — Blocker: `message_thread` / `message_agent` could type into a `shell` tab.** A shell
+  tab has no agent, so `sendThreadMessage` wrote the text plus a carriage return into the PTY and
+  the shell RAN it — with the daemon user's rights, outside the coordinator's sandbox. Fix:
+  `sendThreadMessage` refuses a `shell` target for every caller. Live: HTTP 400, no file written;
+  a live Codex coordinator's `message_thread` to a shell tab got the refusal.
+- **2 — High: the coordinator policy allowed every MCP tool.** An ordinary MCP server runs in its
+  own process OUTSIDE the Codex sandbox (live: from a `read-only` thread, a local stdio server's
+  tool wrote a file outside the workspace). Fix, **Codex coordinator only** (owner decision): the
+  policy takes `allowedMcpServers: ['dispatch']` and declines every other server's tool; the
+  Codex persona says so. Live: the same server's tool was declined with the policy message and
+  did not run. **Correction:** Astra's example and my first check named Codex's `node_repl` as a
+  sandbox escape. That is wrong. Codex runs `node_repl` INSIDE the thread's sandbox (a write from
+  it failed with `EPERM`) and asks no approval for it, so it never reaches the policy.
+- **3 — Medium: a second terminal could resume a live Codex thread.** codex-cli 0.156.1 accepts a
+  second `thread/resume` of a loaded thread (live-verified), and `bindThread` then routed that
+  thread's approvals to the NEWER terminal, which has no coordinator policy. Fix: the Codex
+  manager refuses a spawn that resumes a thread another live session owns (the owner itself may
+  respawn); `bindThread` refuses as a backstop. Live: HTTP 400 "already open", no orphan row.
+- **4 — Medium: a graceful restart lost the interrupted turn (T1 only partly fixed).** Both
+  structured managers emit `exit` synchronously from `kill()`, so the SIGTERM cleanup settled a
+  mid-turn row to `waiting` before `db.close()`, and the boot kickstart (which lists `working`
+  rows) never saw it. A second cause surfaced in the live check: on SIGTERM the Codex app-server
+  writes `turn_aborted`, which the kickstart read as a deliberate Stop. Fix:
+  `SessionService.shutdownPreservingInterruptedTurns` wraps the managers' `killAll`, writes
+  `working` back onto the overseer threads that were mid-turn, and stamps `interruptedAt`; the
+  kickstart treats a Codex `turn_aborted` on a stamped thread as the cut-off turn, and consumes the
+  stamp on every row it visits (kicked or skipped), so a stamp never goes stale. Live (with the real rollouts visible): SIGTERM mid-turn → row `working` + stamp, rollout
+  ends `turn_aborted` → reboot → `Kickstart: resumed 1` → the coordinator finished its task. The
+  Claude path shares the synchronous-exit cause (code-confirmed, not live-tested); its transcript
+  check already reads a killed turn as not completed.
+- **5 — Medium: the live persona test counted a timeout as a pass (T2 only partly fixed).**
+  **Correction:** the earlier line above ("cannot pass on a timeout") was wrong — the soft-skip
+  did `return`, which vitest counts as a pass. Fix: `ctx.skip()`, a recorded skip. Live: with a
+  1 ms turn timeout, all four tests report skipped, not passed.
+
+**Verification:** core 2034 passed / 4 skipped (the opt-in live persona tests), core + web `tsc`
+clean. One core test (`ensure-coordinator.test.ts`, unchanged) failed once under full-suite load
+and passed alone and on the re-run.

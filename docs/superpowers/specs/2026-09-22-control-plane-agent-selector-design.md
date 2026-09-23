@@ -134,7 +134,9 @@ coordinator.
 > `AGENTS.md`, skills, auth, and real git worktrees (review finding N1). It pins
 > `approvalsReviewer: 'user'`. Every Codex thread carries its OWN Dispatch MCP identity on its
 > `thread/start` / `thread/resume` `config` — the shared app-server starts identity-free (M3
-> fix). See `docs/superpowers/reviews/2026-09-23-pr47-phase2-review.md`.
+> fix). It may call only the `dispatch` MCP server's tools: an ordinary MCP server runs outside
+> the Codex sandbox (third GPT-6 Astra review, finding 2). One Codex thread has one live Dispatch
+> owner (finding 3). See `docs/superpowers/reviews/2026-09-23-pr47-phase2-review.md`.
 
 ### Verified findings (live probe, 2026-09-22)
 
