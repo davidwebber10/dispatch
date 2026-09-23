@@ -25,7 +25,7 @@ import { platform } from '../platform/index.js';
 import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.js';
 import { resolveSpawnModel, isClaudeTierAlias } from '../overseer/spawn-model.js';
 import { COORDINATOR_DISALLOWED_TOOLS, coordinatorMemoryDirFor, makeCoordinatorPolicy } from '../overseer/coordinator-policy.js';
-import { roleToolPolicy } from '../roles/role-policy.js';
+import { ROLE_DISALLOWED_TOOLS, roleToolPolicy } from '../roles/role-policy.js';
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
 import { resolveTranscriptPath } from './transcript-path.js';
 import { randomUUID } from 'crypto';
@@ -68,6 +68,15 @@ const KICKSTART_CONTINUE_PROMPT =
 /** The boot kickstart resumes only structured overseer threads: the coordinator and its typed agents. */
 function isKickstartCandidate(config: Record<string, any>): boolean {
   return config.transport === 'structured' && (config.role === 'coordinator' || config.role === 'agent');
+}
+
+/** Tools stripped from a structured Claude thread's toolset at spawn (--disallowedTools): the
+ *  coordinator's native orchestration, and a role run's Dispatch delegation/steering tools. The
+ *  membrane policy denies both too; stripping means the model never sees them. */
+export function disallowedToolsFor(config: Record<string, any>): string[] | undefined {
+  if (config.role === 'coordinator') return [...COORDINATOR_DISALLOWED_TOOLS];
+  if (typeof config.roleAuthority === 'string') return [...ROLE_DISALLOWED_TOOLS];
+  return undefined;
 }
 
 /** The MCP server name every eligible thread gets its Dispatch (agency) tools under. */
@@ -2073,7 +2082,7 @@ export class SessionService {
       // spawn: the CLI auto-approves those tools without a can_use_tool request, so the
       // membrane's coordinatorToolPolicy deny (below) never reaches them. Removal from the
       // toolset is the enforcement; the policy deny remains as a backstop.
-      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config, terminal.type), resumeSessionId, model: resolvedModel, grokPluginDir, disallowedTools: config.role === 'coordinator' ? COORDINATOR_DISALLOWED_TOOLS : undefined });
+      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config, terminal.type), resumeSessionId, model: resolvedModel, grokPluginDir, disallowedTools: disallowedToolsFor(config) });
       if (!built) throw new Error('structured transport not supported for this provider');
       sc = built;
     }

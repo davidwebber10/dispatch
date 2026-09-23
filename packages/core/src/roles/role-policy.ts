@@ -16,6 +16,27 @@ const AGENT_MSG =
   'Role policy: role runners never spawn native subagents (Agent/Task) — do the work directly ' +
   "and record what you could not finish in this run's report.";
 
+// The Dispatch agency MCP reaches every Claude thread, role runs included (peer-threads design,
+// 2026-07-19: "full agency for every thread"). A role REPORTS: it never delegates or steers. A
+// child from spawn_agent/queue_agent runs with NO policy, so delegation would do exactly what §5
+// denies at every level; message_thread/answer_agent would steer a live thread instead. An
+// ALLOWLIST (read, report, watch), so a Dispatch tool added later is denied until someone decides.
+const DISPATCH_MCP_PREFIX = 'mcp__dispatch__';
+const ROLE_DISPATCH_TOOLS_ALLOWED = new Set([
+  'list_threads', 'read_thread', 'list_agents', 'read_agent', 'list_missions',
+  'report_status', 'post_image', 'watch_thread', 'unwatch_thread', 'list_watches',
+]);
+/** The known Dispatch delegation/steering tools, stripped from a role run at spawn
+ *  (--disallowedTools, see sessions/service.ts disallowedToolsFor) so the model never sees them.
+ *  The policy below denies them too, plus any Dispatch tool not on the allowlist. */
+export const ROLE_DISALLOWED_TOOLS: readonly string[] = [
+  'spawn_agent', 'queue_agent', 'start_agent', 'message_thread', 'message_agent', 'answer_agent', 'complete_agent',
+].map((t) => `${DISPATCH_MCP_PREFIX}${t}`);
+
+const DELEGATE_MSG =
+  'Role policy: role runs never spawn, queue, message, answer, or archive other threads — do the ' +
+  "work within your own authority and put anything you could not do in this run's report.";
+
 const observeOnlyMsg = (action: string) =>
   `Role policy: this role has authority: observe — report it instead of ${action}; an ` +
   'observe-only role never mutates anything.';
@@ -319,6 +340,16 @@ export function roleToolPolicy(authority: RoleAuthority): (toolName: string, inp
 
   return function rolePolicy(toolName: string, input: unknown): PolicyDecision {
     if (toolName === 'Agent' || toolName === 'Task') return { allow: false, message: AGENT_MSG };
+
+    if (toolName.startsWith(DISPATCH_MCP_PREFIX)) {
+      if (ROLE_DISPATCH_TOOLS_ALLOWED.has(toolName.slice(DISPATCH_MCP_PREFIX.length))) return { allow: true };
+      return { allow: false, message: DELEGATE_MSG };
+    }
+    // Any other MCP server's tool can change data outside the repo (secrets, email, tickets, a
+    // store) — observe never mutates anything, and it cannot tell a read tool from a write one.
+    if (toolName.startsWith('mcp__') && effective === 'observe') {
+      return { allow: false, message: observeOnlyMsg('calling a tool from another MCP server') };
+    }
 
     if (FILE_TOOLS.has(toolName)) {
       if (effective === 'observe') return { allow: false, message: observeOnlyMsg('writing a file') };

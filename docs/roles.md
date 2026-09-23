@@ -127,6 +127,16 @@ remote and branch (an ambiguous target), any explicit push to a branch matching
 denied), `gh release`, package publishes, `dispatch update`/`dispatch release`, and
 `terraform apply`/`terraform destroy`.
 
+**Dispatch tools.** A role reports; it never delegates or steers. At every level a role
+run may use only the read, report, and watch tools of the `dispatch` MCP server
+(`list_threads`, `read_thread`, `list_agents`, `read_agent`, `list_missions`,
+`report_status`, `post_image`, `watch_thread`, `unwatch_thread`, `list_watches`). It
+cannot spawn, queue, start, message, answer, or archive another thread: an agent it
+spawned would run with no role policy at all. Those tools are removed from a role run's
+toolset at spawn, and the membrane denies them, and any Dispatch tool added later, as a
+backstop. An `observe` role also cannot call a tool from any other MCP server (secrets,
+email, tickets, a store), because such a tool can change data outside the repo.
+
 **Main and production mutations are explicit human approval only — always.** A role's
 authority level never overrides that; GitHub branch protection on `main` remains the
 backstop underneath the policy either way.
