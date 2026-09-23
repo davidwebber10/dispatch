@@ -6,7 +6,7 @@
 export type PendingApproval = { toolName: string; input: unknown };
 
 type CodexShellInput = { command?: unknown };
-type CodexChange = { path?: unknown };
+type CodexChange = { path?: unknown; dest?: unknown };
 type CodexApplyPatchInput = { file_path?: unknown; changes?: unknown };
 
 function adaptCodex(pending: PendingApproval): PendingApproval {
@@ -20,12 +20,15 @@ function adaptCodex(pending: PendingApproval): PendingApproval {
   if (pending.toolName === 'ApplyPatch') {
     const { file_path, changes } = inp as CodexApplyPatchInput;
     const changeList = Array.isArray(changes) ? (changes as CodexChange[]) : [];
-    const paths = changeList.map((c) => ({ path: c?.path }));
+    // Carry BOTH endpoints of each change: the source `path` and a move/rename `dest`. Dropping
+    // `dest` here would let a patch that renames a memory-dir file onto a repo path slip the
+    // containment check (see coordinator-policy.extractWritePaths).
+    const paths = changeList.map((c) => ({ path: c?.path, dest: c?.dest }));
     const firstPath = paths[0]?.path;
     return {
       toolName: 'Write',
       // `file_path` keeps back-compat with single-file callers; `changes` carries every path
-      // in the patch so a multi-file ApplyPatch can be fully checked downstream (see Task 4).
+      // (source + move destination) so a multi-file ApplyPatch can be fully checked downstream.
       input: { file_path: file_path ?? firstPath, changes: paths },
     };
   }

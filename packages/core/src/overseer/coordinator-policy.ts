@@ -3,6 +3,7 @@
 // to doing; this policy is consulted by the structured manager's can_use_tool membrane on every tool
 // call, so the rule holds at turn 900 exactly as at turn 1. Deny messages teach: each one names the
 // delegation the coordinator should do instead, so a denial redirects rather than dead-ends.
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -49,25 +50,57 @@ const BLOCKED_BASH: readonly RegExp[] = [
  *  or (for the Codex ApplyPatch→Write adaptation) every `path` in a `changes` array. */
 function extractWritePaths(inp: Record<string, unknown>): string[] {
   if (Array.isArray(inp.changes)) {
-    return inp.changes
-      .map((change) => (change && typeof change === 'object' ? (change as Record<string, unknown>).path : undefined))
-      .filter((v): v is string => typeof v === 'string');
+    const out: string[] = [];
+    for (const change of inp.changes) {
+      if (change && typeof change === 'object') {
+        const c = change as Record<string, unknown>;
+        // Both endpoints of a change count: the source `path` AND a move/rename `dest`. A patch
+        // whose source sits in the memory dir but whose destination is a repo file must be denied,
+        // so the destination has to be checked too (see codex-translate.ts's fileChange mapping).
+        if (typeof c.path === 'string') out.push(c.path);
+        if (typeof c.dest === 'string') out.push(c.dest);
+      }
+    }
+    return out;
   }
   const single = [inp.file_path, inp.notebook_path].find((v): v is string => typeof v === 'string');
   return single !== undefined ? [single] : [];
 }
 
-/** True when `target` resolves to a path strictly inside `dir` (not `dir` itself). Resolves
- *  both sides with `path.resolve` first, so a traversal segment like `..` can't slip a path
- *  that only *textually* starts with `dir` past a raw string-prefix check. */
+/** Resolve `p` following symlinks as far as it exists on disk, then re-append the not-yet-existing
+ *  tail. A new file's parent dir usually exists even when the file does not, so this catches a
+ *  symlinked ancestor (e.g. `~/.codex/link -> /repo`) that a purely lexical resolve would miss. */
+function realResolve(p: string): string {
+  let cur = path.resolve(p);
+  const tail: string[] = [];
+  for (;;) {
+    try {
+      const real = fs.realpathSync(cur);
+      return tail.length ? path.join(real, ...tail.slice().reverse()) : real;
+    } catch {
+      const parent = path.dirname(cur);
+      if (parent === cur) return path.resolve(p); // nothing on the path existed — fall back to lexical
+      tail.push(path.basename(cur));
+      cur = parent;
+    }
+  }
+}
+
+/** True when `target` resolves to a path strictly inside `dir` (not `dir` itself). Resolves BOTH
+ *  sides through `realResolve` first, so neither a traversal segment like `..` nor a symlinked
+ *  ancestor can slip a path that only *textually* starts with `dir` past the containment check. */
 function isUnder(dir: string, target: string): boolean {
-  const rel = path.relative(path.resolve(dir), path.resolve(target));
+  const rel = path.relative(realResolve(dir), realResolve(target));
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
 /** Builds the ground rules for a coordinator thread's own tool use, scoped to `memoryDir` —
  *  the one directory a coordinator may write to (its own memory/plans). Pure — no I/O, no state. */
-export function makeCoordinatorPolicy(memoryDir: string): (toolName: string, input: unknown) => PolicyDecision {
+export function makeCoordinatorPolicy(
+  memoryDir: string,
+  opts: { commandsEscalate?: boolean } = {},
+): (toolName: string, input: unknown) => PolicyDecision {
+  const commandsEscalate = opts.commandsEscalate === true;
   return function coordinatorToolPolicy(toolName: string, input: unknown): PolicyDecision {
     const inp = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
     if (toolName === 'Agent' || toolName === 'Task' || toolName === 'Workflow') return { allow: false, message: AGENT_MSG };
@@ -77,9 +110,17 @@ export function makeCoordinatorPolicy(memoryDir: string): (toolName: string, inp
       return { allow: false, message: delegateMsg(memoryDir) };
     }
     if (toolName === 'Bash') {
-      // Fail closed: a non-string (or empty) command isn't inspectable against BLOCKED_BASH,
-      // so coercing it to '' and falling through to allow would let an uninspectable command
-      // run ungoverned. Deny instead of guessing.
+      // A read-only-sandbox coordinator (Codex: sandbox 'read-only' + 'on-request') only ever
+      // surfaces a COMMAND approval when the command needs to ESCAPE the sandbox — a write or a
+      // network call. Pure reads run silently under the sandbox and never reach the membrane. The
+      // coordinator never needs an escalated command: it writes its memory through ApplyPatch (the
+      // FILE_TOOLS path above) and ships through implementer agents. So deny EVERY escalated command
+      // — a denylist would wave `printf > repo/f`, `tee`, `sed -i`, `node -e fs.writeFileSync`,
+      // `ln -s`, `cp`, … straight through. Fail closed.
+      if (commandsEscalate) return { allow: false, message: SHIP_MSG };
+      // A no-sandbox coordinator (Claude) has no escalation gate — Bash 'allow' just runs the
+      // command — so keep the shipped denylist (git commit/push, gh pr merge, publish, …).
+      // Fail closed on a non-string/empty command: it isn't inspectable against BLOCKED_BASH.
       if (typeof inp.command !== 'string' || inp.command === '') return { allow: false, message: SHIP_MSG };
       if (BLOCKED_BASH.some((re) => re.test(inp.command as string))) return { allow: false, message: SHIP_MSG };
       return { allow: true };

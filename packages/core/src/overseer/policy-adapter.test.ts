@@ -51,4 +51,16 @@ describe('adaptForPolicy', () => {
     const pending = { toolName: 'Whatever', input: { a: 1 } };
     expect(adaptForPolicy('some-future-harness', pending)).toEqual(pending);
   });
+
+  it('carries an ApplyPatch move/rename destination through to the Write paths (M2)', () => {
+    const pending = {
+      toolName: 'ApplyPatch',
+      input: { changes: [{ path: '/home/u/.codex/a.md', dest: '/repo/src/x.ts', kind: 'update' }] },
+    };
+    const out = adaptForPolicy('codex', pending);
+    const changes = (out.input as { changes: Array<{ path?: string; dest?: string }> }).changes;
+    const endpoints = changes.flatMap((c) => [c.path, c.dest]).filter(Boolean);
+    expect(endpoints).toContain('/repo/src/x.ts');
+    expect(endpoints).toContain('/home/u/.codex/a.md');
+  });
 });

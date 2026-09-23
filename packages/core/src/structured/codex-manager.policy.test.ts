@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CodexStructuredSessionManager } from './codex-manager.js';
-import { makeCoordinatorPolicy } from '../overseer/coordinator-policy.js';
+import { makeCoordinatorPolicy, coordinatorMemoryDirFor } from '../overseer/coordinator-policy.js';
 
 const fake = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -260,4 +260,29 @@ it('an all-memory-path ApplyPatch is ALLOWED (accept on the wire)', async () => 
 
   const approvalResponse = await waitForLogEntry(logPath, (e) => e.response === 'item/fileChange/requestApproval');
   expect(approvalResponse.result).toEqual({ decision: 'accept' });
+});
+
+it('an ApplyPatch that MOVES a memory file onto a repo path is DENIED end-to-end (M2, decline on the wire)', async () => {
+  const memoryDir = path.join(os.tmpdir(), `coordinator-memory-${process.pid}-${Date.now()}-move`);
+  const policy = makeCoordinatorPolicy(memoryDir);
+  const logPath = makeFakeLogPath();
+  spawnFake(m, 't1', { toolPolicy: policy, env: { CODEX_FAKE_LOG: logPath } });
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  let surfaced = false;
+  m.on('permission', (eid: string) => { if (eid === 't1') surfaced = true; });
+
+  const src = path.join(memoryDir, 'a.md');            // source inside the memory dir
+  const dest = path.join(process.cwd(), 'ESCAPED.ts'); // destination in the repo
+  m.sendMessage('t1', `patchmove ${src}>${dest}`);
+
+  const denyResult = await waitForEvent(
+    m, 't1',
+    (e) => e.type === 'user' && e.message?.content?.[0]?.type === 'tool_result' && e.message.content[0].is_error === true,
+  );
+  expect(denyResult.message.content[0].tool_use_id).toBe('fc-2');
+  expect(surfaced).toBe(false);
+  expect(m.getPending('t1')).toBeNull();
+
+  const approvalResponse = await waitForLogEntry(logPath, (e) => e.response === 'item/fileChange/requestApproval');
+  expect(approvalResponse.result).toEqual({ decision: 'decline' });
 });

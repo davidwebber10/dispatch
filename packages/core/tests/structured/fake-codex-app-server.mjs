@@ -125,6 +125,10 @@ rl.on('line', (line) => {
     // paths (Fix 3: multi-file ApplyPatch policy tests need deterministic, caller-chosen paths,
     // unlike the single hardcoded /tmp/hello.txt the plain `approve` trigger below sends).
     const patchMatch = text.match(/^patch (.+)$/i);
+    // `patchmove <src>><dest>` — a fileChange whose change is a rename/move: the source `path`
+    // plus a `kind.move_path` destination. Exercises the M2 containment path (a move whose
+    // DESTINATION escapes the memory dir must be denied even when the source is inside it).
+    const patchMoveMatch = text.match(/^patchmove (.+?)>(.+)$/i);
     if (execMatch) {
       // A shell command that requires approval (Task 5 policy tests): item/started carries the
       // command, then the ServerRequest fires and we WAIT for the client's decision (accept,
@@ -149,6 +153,15 @@ rl.on('line', (line) => {
       pendingApprovalThreadIds.set(reqId, tid);
       pendingApprovalMeta.set(reqId, { method: 'item/permissions/requestApproval', itemType: 'permissions', itemId: 'perm-1' });
       send({ jsonrpc: '2.0', id: reqId, method: 'item/permissions/requestApproval', params: { threadId: tid, turnId: TURN, itemId: 'perm-1', permissions: { network: true, sandbox: 'danger-full-access' }, cwd: '/tmp', reason: null } });
+    } else if (patchMoveMatch) {
+      const src = patchMoveMatch[1].trim();
+      const dest = patchMoveMatch[2].trim();
+      const changes = [{ path: src, kind: { type: 'update', move_path: dest }, diff: 'diff-0\n' }];
+      notify('item/started', { threadId: tid, turnId: TURN, item: { type: 'fileChange', id: 'fc-2', changes, status: 'inProgress' }, startedAtMs: 3 });
+      const reqId = serverReqId++;
+      pendingApprovalThreadIds.set(reqId, tid);
+      pendingApprovalMeta.set(reqId, { method: 'item/fileChange/requestApproval', itemType: 'fileChange', itemId: 'fc-2', changes });
+      send({ jsonrpc: '2.0', id: reqId, method: 'item/fileChange/requestApproval', params: { threadId: tid, turnId: TURN, itemId: 'fc-2', startedAtMs: 3, reason: null, grantRoot: null } });
     } else if (patchMatch) {
       const paths = patchMatch[1].split(',').map((p) => p.trim()).filter(Boolean);
       const changes = paths.map((p, i) => ({ path: p, kind: { type: 'update' }, diff: `diff-${i}\n` }));

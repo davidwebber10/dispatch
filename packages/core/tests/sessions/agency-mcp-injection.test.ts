@@ -211,21 +211,16 @@ describe('agency MCP: caller identity + standard injection path', () => {
     expect(fs.existsSync(threadCfgPath)).toBe(false);
   });
 
-  it('a coordinator on the PTY (non-structured) spawn path also gets caller identity', () => {
+  it('a coordinator with no governed structured transport FAILS to start — never falls to the ungoverned PTY path (B2)', () => {
     const configPath = path.join(tmpDir, 'mcp-pty-coord.json');
-    const { svc, pty } = makeService(configPath);
+    const { svc, pty } = makeService(configPath); // no structured manager registered
 
-    // externalId set -> resume path -> skips best-effort async session-id capture.
-    const terminal = svc.createTerminal('s1', 'claude-code', 'Overseer', false, undefined, 'ext-coord', {
-      role: 'coordinator',
-    });
-
-    expect(pty.calls.find((c) => c.command === 'claude')).toBeTruthy();
-    const threadCfgPath = path.join(path.dirname(configPath), `thread-${terminal.id}.mcp.json`);
-    const written = JSON.parse(fs.readFileSync(threadCfgPath, 'utf8'));
-    expect(written.mcpServers.dispatch).toBeTruthy();
-    expect(written.mcpServers.dispatch.env.DISPATCH_TERMINAL).toBe(terminal.id);
-    expect(written.mcpServers.dispatch.env.DISPATCH_SESSION).toBe('s1');
+    // A coordinator's persona + membrane live only in the structured manager. With none
+    // available, spawnTerminal must fail closed rather than PTY-spawn it ungoverned.
+    expect(() =>
+      svc.createTerminal('s1', 'claude-code', 'Overseer', false, undefined, 'ext-coord', { role: 'coordinator' }),
+    ).toThrow(/coordinator .* governed structured/i);
+    expect(pty.calls.find((c) => c.command === 'claude')).toBeFalsy(); // never PTY-spawned
   });
 
   it('a coordinator (codex) never gets the config-file treatment: no stray coordinator-<id>.mcp.json is written', () => {

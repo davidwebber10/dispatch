@@ -390,7 +390,7 @@ export class CodexTranslator {
       case 'item/fileChange/requestApproval': {
         const changes = Array.isArray(cached?.changes) ? cached.changes : [];
         const first = changes[0]?.path;
-        pending = { requestId: itemId, toolName: 'ApplyPatch', toolUseId: itemId, input: { ...(first ? { file_path: first } : {}), reason: params.reason ?? undefined, changes: changes.map((c: any) => ({ path: c.path, kind: c.kind?.type ?? c.kind, diff: c.diff })) } };
+        pending = { requestId: itemId, toolName: 'ApplyPatch', toolUseId: itemId, input: { ...(first ? { file_path: first } : {}), reason: params.reason ?? undefined, changes: changes.map((c: any) => ({ path: c.path, dest: c.kind?.move_path ?? c.kind?.dest ?? c.move_path ?? undefined, kind: c.kind?.type ?? c.kind, diff: c.diff })) } };
         autoApprove = { decision: 'accept' };
         break;
       }

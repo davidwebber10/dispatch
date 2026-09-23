@@ -1561,6 +1561,12 @@ export class SessionService {
 
     let config: Record<string, any> = {};
     try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
+    // A coordinator's persona + enforcement membrane live only in the structured (Pretty)
+    // transport; the PTY path runs ungoverned. Refuse to switch a coordinator to PTY (reject
+    // BEFORE any teardown, so the thread is left intact) — see spawnTerminal's fail-closed guard.
+    if (target === 'pty' && config.role === 'coordinator') {
+      throw transportError(409, 'A coordinator must stay on Pretty transport — it cannot run as a PTY thread');
+    }
     const current: 'structured' | 'pty' = config.transport === 'structured' ? 'structured' : 'pty';
     if (current === target) return terminalsDb.rowToTerminal(terminal); // already there — idempotent
 
@@ -1891,6 +1897,17 @@ export class SessionService {
         this.spawnStructured(terminal, config, workDir);
         return; // structured path complete — skip PTY spawn + session-id capture
       }
+      // A coordinator's persona AND its enforcement membrane (coordinatorToolPolicy) live ONLY in
+      // the structured manager's can_use_tool / handleApproval path. If we cannot spawn it
+      // structured (e.g. DISPATCH_CODEX_PRETTY=0 leaves no codex manager registered), we must NOT
+      // fall through to the PTY path below — that path adds --dangerously-bypass-approvals-and-sandbox
+      // and drops both the persona and the membrane, so the coordinator would run UNGOVERNED. Fail
+      // closed: relaunchTerminal catches this and marks the terminal `error`.
+      if (config.role === 'coordinator') {
+        throw new Error(
+          `refusing to spawn coordinator ${terminal.id} (${terminal.type}) without governed structured transport`,
+        );
+      }
       let cmd: { command: string; args: string[] };
       if (runnerPrompt !== undefined) {
         // Runner launches emit their own structured stream-json; no hooks needed.
@@ -2064,7 +2081,10 @@ export class SessionService {
     // `as never` cast here is safe — it defers validation, not skips it.
     const toolPolicy =
       config.role === 'coordinator'
-        ? makeCoordinatorPolicy(coordinatorMemoryDirFor(terminal.type))
+        ? // A Codex coordinator runs read-only + on-request, so every surfaced COMMAND approval is a
+          // sandbox-escape request the membrane must deny wholesale (commandsEscalate). A Claude
+          // coordinator has no sandbox — its Bash 'allow' just runs — so it keeps the denylist.
+          makeCoordinatorPolicy(coordinatorMemoryDirFor(terminal.type), { commandsEscalate: terminal.type === 'codex' })
         : typeof config.roleAuthority === 'string'
           ? roleToolPolicy(config.roleAuthority as never)
           : undefined;

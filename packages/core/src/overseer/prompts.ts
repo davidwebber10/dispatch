@@ -105,6 +105,13 @@ const COORDINATOR_MEMORY_LABEL: Record<string, string> = {
   codex: '~/.codex',
 };
 
+/** The prompt-facing memory-root LABEL for a harness (e.g. '~/.codex'), or undefined if this
+ *  harness has no coordinator variant yet. Exposed so a test can assert it names the same
+ *  directory the enforcement policy uses (coordinator-policy.ts's coordinatorMemoryDirFor). */
+export function coordinatorMemoryLabelFor(harness: string): string | undefined {
+  return COORDINATOR_MEMORY_LABEL[harness];
+}
+
 // Harness-specific gap this note closes: the Claude membrane's tool-call denial delivers OUR
 // message text straight to the model, so the generic "spawn the right agent instead of
 // retrying" sentence above is enough. A Codex coordinator instead runs read-only/on-request

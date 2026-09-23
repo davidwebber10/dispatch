@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -155,5 +156,62 @@ describe('coordinatorMemoryDirFor', () => {
 
   it('falls back to ~/.claude for an unrecognized harness', () => {
     expect(coordinatorMemoryDirFor('grok')).toBe(path.join(os.homedir(), '.claude'));
+  });
+});
+
+describe('makeCoordinatorPolicy commandsEscalate (Codex read-only) — B1', () => {
+  const dir = path.join(os.homedir(), '.codex');
+
+  it('denies every escalated shell command (writes, interpreters, symlink, cp — and even a read)', () => {
+    const policy = makeCoordinatorPolicy(dir, { commandsEscalate: true });
+    expect(policy('Bash', { command: 'printf x > /repo/src/index.ts' }).allow).toBe(false);
+    expect(policy('Bash', { command: 'node -e "require(\'fs\').writeFileSync(\'/repo/a\',\'x\')"' }).allow).toBe(false);
+    expect(policy('Bash', { command: 'ln -s /repo /Users/x/.codex/link' }).allow).toBe(false);
+    expect(policy('Bash', { command: 'cp /tmp/x /repo/x' }).allow).toBe(false);
+    // Reads never surface under a read-only sandbox, so a surfaced read is anomalous — deny defensively.
+    expect(policy('Bash', { command: 'ls -la' }).allow).toBe(false);
+  });
+
+  it('still allows a memory-dir ApplyPatch/Write', () => {
+    const policy = makeCoordinatorPolicy(dir, { commandsEscalate: true });
+    expect(policy('Write', { file_path: path.join(dir, 'notes.md') })).toEqual({ allow: true });
+  });
+
+  it('leaves the Claude denylist behavior unchanged when commandsEscalate is false', () => {
+    const policy = makeCoordinatorPolicy(path.join(os.homedir(), '.claude'));
+    expect(policy('Bash', { command: 'ls -la' })).toEqual({ allow: true });
+    expect(policy('Bash', { command: 'git commit -m x' }).allow).toBe(false);
+  });
+});
+
+describe('makeCoordinatorPolicy symlink containment — M1', () => {
+  it('rejects a write that reaches outside the memory dir through a symlinked ancestor', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'covpol-'));
+    try {
+      const mem = path.join(tmp, 'mem');
+      fs.mkdirSync(mem);
+      const outside = path.join(tmp, 'outside');
+      fs.mkdirSync(outside);
+      fs.symlinkSync(outside, path.join(mem, 'link')); // mem/link -> outside
+      const policy = makeCoordinatorPolicy(mem);
+      expect(policy('Write', { file_path: path.join(mem, 'link', 'escaped.md') }).allow).toBe(false);
+      expect(policy('Write', { file_path: path.join(mem, 'ok.md') })).toEqual({ allow: true });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('makeCoordinatorPolicy ApplyPatch move destination — M2', () => {
+  it('denies a change whose move destination leaves the memory dir', () => {
+    const dir = path.join(os.homedir(), '.codex');
+    const policy = makeCoordinatorPolicy(dir);
+    expect(policy('Write', { changes: [{ path: path.join(dir, 'a.md'), dest: '/repo/src/x.ts' }] }).allow).toBe(false);
+  });
+
+  it('allows a change whose source and destination both stay under the memory dir', () => {
+    const dir = path.join(os.homedir(), '.codex');
+    const policy = makeCoordinatorPolicy(dir);
+    expect(policy('Write', { changes: [{ path: path.join(dir, 'a.md'), dest: path.join(dir, 'b.md') }] })).toEqual({ allow: true });
   });
 });

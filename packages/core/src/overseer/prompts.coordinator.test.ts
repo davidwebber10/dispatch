@@ -1,5 +1,8 @@
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { COORDINATOR_PROMPT, buildCoordinatorPrompt } from './prompts.js';
+import { COORDINATOR_PROMPT, buildCoordinatorPrompt, coordinatorMemoryLabelFor } from './prompts.js';
+import { coordinatorMemoryDirFor } from './coordinator-policy.js';
 
 describe('buildCoordinatorPrompt', () => {
   it('the claude-code variant is byte-identical to the original COORDINATOR_PROMPT constant', () => {
@@ -38,5 +41,17 @@ describe('buildCoordinatorPrompt', () => {
 
   it('an unrecognized harness falls back to the claude-code variant', () => {
     expect(buildCoordinatorPrompt({ harness: 'grok' })).toBe(COORDINATOR_PROMPT);
+  });
+
+  // T3: the prompt LABEL (what the model is told) and the enforced DIR (what the policy allows)
+  // are two separate maps. They must name the same directory per harness, or the coordinator is
+  // told to write somewhere the membrane then denies (or vice versa). This test ties them.
+  it('the enforced memory dir matches the prompt memory label for every coordinator harness', () => {
+    for (const h of ['claude-code', 'codex'] as const) {
+      const label = coordinatorMemoryLabelFor(h);
+      expect(label).toBeDefined();
+      const expanded = path.join(os.homedir(), (label as string).replace(/^~[/]?/, ''));
+      expect(coordinatorMemoryDirFor(h)).toBe(expanded);
+    }
   });
 });
