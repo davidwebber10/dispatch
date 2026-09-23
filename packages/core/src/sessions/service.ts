@@ -2097,6 +2097,19 @@ export class SessionService {
       // Redundant-but-harmless for Claude/Grok/OpenCode, which already receive the persona via
       // their own argv/config paths (appendSystemPrompt above, OpenCode's config file below).
       systemPrompt: systemPromptFor(config),
+      // A codex COORDINATOR must run `on-request` + `read-only` (NOT the manager's default
+      // `workspace-write`) so the Task 5 enforcement membrane actually fires: under
+      // `workspace-write`, an in-workspace repo write / `git commit` / `git push` runs WITHOUT
+      // ever surfacing an approval, so handleApproval's toolPolicy gate (coordinatorToolPolicy)
+      // never sees exactly the actions it must deny. Read-only + on-request instead surfaces
+      // EVERY write/command needing write or network as an approval for the policy to gate —
+      // repo writes and git commit/push get denied, and (once Task 7 wires the coordinator's
+      // memory dir into coordinatorToolPolicy) its own memory writes get allowed. Every other
+      // codex thread (agents, role runs) — and every non-codex harness, which ignores these
+      // fields entirely — keeps today's manager-construction defaults.
+      ...(terminal.type === 'codex' && config.role === 'coordinator'
+        ? { approvalPolicy: 'on-request' as const, sandbox: 'read-only' as const }
+        : {}),
       env: { [TERMINAL_ID_ENV_VAR]: terminal.id, ...(opencodeEnv ?? {}) },
     });
     terminalsDb.updatePid(this.db, terminal.id, pid);

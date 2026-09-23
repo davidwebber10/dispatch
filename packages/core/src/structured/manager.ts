@@ -106,6 +106,20 @@ export interface StructuredSpawnOpts {
    * persona via their own existing paths and ignore this field.
    */
   systemPrompt?: string;
+  /**
+   * Per-spawn override of Codex's approval/sandbox pair (see codex-manager.ts's
+   * CodexManagerOptions, which sets the manager-wide construction-time default every spawn
+   * falls back to when this is omitted). Lets one specific thread pin its own ask-policy — e.g.
+   * a COORDINATOR thread must run `'on-request'` + `'read-only'` so the enforcement membrane
+   * (handleApproval's toolPolicy gate) actually fires on every write/command needing write or
+   * network: under `'workspace-write'` an in-workspace repo write/`git commit` runs WITHOUT ever
+   * surfacing an approval, so the membrane would never see exactly the actions it must block.
+   * Wire literals verified live against the installed `codex app-server` (codex-cli 0.155.1) and
+   * against its own `generate-ts` protocol bindings (AskForApproval / SandboxMode) — see
+   * codex-manager.approval-sandbox.test.ts. Ignored by every other harness's manager.
+   */
+  approvalPolicy?: 'untrusted' | 'on-request' | 'never';
+  sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
 }
 
 /** A permission decision written back to a blocked structured session. */

@@ -168,6 +168,13 @@ interface CodexSession {
    *  deny is written straight back to Codex (no pending, no human involvement) — same
    *  contract as the Claude manager's Session.toolPolicy (see manager.ts). */
   toolPolicy?: (toolName: string, input: unknown) => { allow: true } | { allow: false; message: string };
+  /** Per-spawn override of the manager-wide approval/sandbox default (see StructuredSpawnOpts
+   *  and CodexManagerOptions) — undefined falls back to `this.approvalPolicy`/`this.sandbox`.
+   *  Carried on BOTH a fresh `thread/start` and a crash-recovery `thread/resume` so a governed
+   *  (e.g. coordinator) thread never silently reverts to the manager default after the shared
+   *  app-server child restarts. */
+  approvalPolicy?: 'untrusted' | 'on-request' | 'never';
+  sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
   /** Resolves once thread/start|resume has assigned a threadId; sends chain on it. */
   ready: Promise<void>;
   /**
@@ -179,9 +186,23 @@ interface CodexSession {
   declared?: StatusDeclaration;
 }
 
-/** Approval policy + sandbox the manager starts every thread with. Defaults are permissive
- *  enough for real work (workspace writes allowed) while still routing escalations through the
- *  membrane; the E2E harness passes `read-only` to force an approval deterministically. */
+/** Approval policy + sandbox the manager starts every thread with, UNLESS a spawn overrides them
+ *  per-thread (see StructuredSpawnOpts.approvalPolicy/sandbox, consulted in startThread below —
+ *  e.g. service.ts pins a codex COORDINATOR thread to `'on-request'`/`'read-only'` regardless of
+ *  this manager-wide default, so the Task 5 enforcement membrane actually fires on it). Defaults
+ *  are permissive enough for real work (workspace writes allowed) while still routing
+ *  escalations through the membrane; the E2E harness passes `read-only` to force an approval
+ *  deterministically.
+ *
+ *  Wire literals verified against the REAL installed `codex app-server` (codex-cli 0.155.1):
+ *  live probe (thread/start accepted `approvalPolicy: 'on-request'` + `sandbox: 'read-only'`,
+ *  and a `git commit` under that pair surfaced a real `item/commandExecution/requestApproval`
+ *  ServerRequest before the read-only sandbox itself blocked the write) AND `codex app-server
+ *  generate-ts`'s own protocol bindings (`AskForApproval` = `'untrusted' | 'on-request' |
+ *  { granular: {...} } | 'never'`; `SandboxMode` = `'read-only' | 'workspace-write' |
+ *  'danger-full-access'`) — both confirm the literals below (including `'untrusted'`, which an
+ *  earlier task brief mistakenly flagged for renaming to a camelCase form the CLI does not
+ *  actually accept) are exactly right; nothing here needed correcting. */
 export interface CodexManagerOptions {
   approvalPolicy?: 'untrusted' | 'on-request' | 'never';
   sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
@@ -221,6 +242,8 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
       resumeId: opts.resumeId,
       systemPrompt: opts.systemPrompt,
       toolPolicy: opts.toolPolicy,
+      approvalPolicy: opts.approvalPolicy,
+      sandbox: opts.sandbox,
       ready: Promise.resolve(),
     };
     if (opts.seedEvents?.length) {
@@ -256,15 +279,24 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
   private async startThread(session: CodexSession, conn: CodexConnection): Promise<void> {
     await conn.ready;
     if (session.resumeId) {
-      const res = await conn.request('thread/resume', { threadId: session.resumeId, cwd: session.cwd, model: session.model ?? null });
+      const res = await conn.request('thread/resume', {
+        threadId: session.resumeId,
+        cwd: session.cwd,
+        model: session.model ?? null,
+        // Carry a governed thread's per-spawn override through crash recovery too — otherwise a
+        // coordinator resumed after the shared app-server child restarts would silently fall
+        // back to the manager-wide default (see CodexSession.approvalPolicy/sandbox doc comment).
+        approvalPolicy: session.approvalPolicy ?? this.approvalPolicy,
+        sandbox: session.sandbox ?? this.sandbox,
+      });
       this.bindThread(session, res?.thread?.id ?? session.resumeId, res?.model);
       await this.backfill(session, conn, res?.thread?.turns).catch(() => { /* backfill is best-effort */ });
     } else {
       const res = await conn.request('thread/start', {
         cwd: session.cwd,
         model: session.model ?? null,
-        approvalPolicy: this.approvalPolicy,
-        sandbox: this.sandbox,
+        approvalPolicy: session.approvalPolicy ?? this.approvalPolicy,
+        sandbox: session.sandbox ?? this.sandbox,
         // TOP-LEVEL, camelCase — NOT `settings.developer_instructions` (the OpenAI-documented
         // spelling is silently ignored by codex-cli; verified live on codex-cli 0.155.1).
         ...(session.systemPrompt ? { developerInstructions: session.systemPrompt } : {}),

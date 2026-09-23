@@ -1148,3 +1148,67 @@ it('a Codex turn that completes with NO agentMessage persists an EMPTY outcome s
     fs.rmSync(cfgDir, { recursive: true, force: true });
   }
 });
+
+// --- Task 6: codex coordinator spawns on-request/read-only so the membrane fires ----------
+
+/** Reads the fake app-server's opt-in request log (see fake-codex-app-server.mjs's logRequest),
+ *  same helper shape as codex-manager.systemprompt.test.ts, but exercised end-to-end through the
+ *  real `/api/sessions` + `/terminals` routes (SessionService.spawnStructured), not the manager
+ *  directly — proving the `config.role === 'coordinator'` branch in service.ts actually reaches
+ *  the wire, not just codex-manager.ts's own per-spawn plumbing (see
+ *  codex-manager.approval-sandbox.test.ts for that unit-level proof). */
+function readLoggedRequests(logPath: string, method: string): any[] {
+  if (!fs.existsSync(logPath)) return [];
+  return fs
+    .readFileSync(logPath, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+    .filter((entry) => entry.method === method);
+}
+
+it('a coordinator-role codex terminal spawns with approvalPolicy "on-request" + sandbox "read-only" on thread/start', async () => {
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-coord-policy-'));
+  const logPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'codex-coord-log-')), 'requests.jsonl');
+  const prevLog = process.env.CODEX_FAKE_LOG;
+  process.env.CODEX_FAKE_LOG = logPath;
+  const a = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fakeCodex] } });
+  try {
+    const s = await request(a).post('/api/sessions').send({ provider: 'codex', workingDir: dir, name: 'codex-coord-policy' });
+    const t = await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'codex', config: { transport: 'structured', role: 'coordinator' } });
+    const id = t.body.id;
+    await pollExternalId(db, id, 'thread-fake-1');
+
+    const [sent] = readLoggedRequests(logPath, 'thread/start');
+    expect(sent).toBeDefined();
+    expect(sent.params.approvalPolicy).toBe('on-request');
+    expect(sent.params.sandbox).toBe('read-only');
+  } finally {
+    if (prevLog === undefined) delete process.env.CODEX_FAKE_LOG; else process.env.CODEX_FAKE_LOG = prevLog;
+    (a as any)._sessionService?.structuredManagerFor('codex')?.killAll();
+    fs.rmSync(cfgDir, { recursive: true, force: true });
+  }
+});
+
+it('a non-coordinator codex terminal keeps today\'s default approvalPolicy/sandbox on thread/start', async () => {
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-noncoord-policy-'));
+  const logPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'codex-noncoord-log-')), 'requests.jsonl');
+  const prevLog = process.env.CODEX_FAKE_LOG;
+  process.env.CODEX_FAKE_LOG = logPath;
+  const a = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fakeCodex] } });
+  try {
+    const s = await request(a).post('/api/sessions').send({ provider: 'codex', workingDir: dir, name: 'codex-noncoord-policy' });
+    const t = await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'codex', config: { transport: 'structured' } });
+    const id = t.body.id;
+    await pollExternalId(db, id, 'thread-fake-1');
+
+    const [sent] = readLoggedRequests(logPath, 'thread/start');
+    expect(sent).toBeDefined();
+    expect(sent.params.approvalPolicy).toBe('on-request'); // manager default, unchanged
+    expect(sent.params.sandbox).toBe('workspace-write'); // manager default, unchanged
+  } finally {
+    if (prevLog === undefined) delete process.env.CODEX_FAKE_LOG; else process.env.CODEX_FAKE_LOG = prevLog;
+    (a as any)._sessionService?.structuredManagerFor('codex')?.killAll();
+    fs.rmSync(cfgDir, { recursive: true, force: true });
+  }
+});
