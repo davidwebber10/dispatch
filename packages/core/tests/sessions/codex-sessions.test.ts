@@ -147,7 +147,7 @@ describe('codexRolloutTailStatus', () => {
   it('reports an interrupted turn (last marker task_started) as NOT completed, with the file mtime', () => {
     const full = writeRollout(root, '2026/09/23/rollout-2026-09-23T10-00-00-th-1.jsonl', [meta, ev('task_started'), ev('task_complete'), ev('task_started'), ev('item_completed'), ev('token_count')], 1_700_000_000_000);
     const st = codexRolloutTailStatus('th-1', root);
-    expect(st).toEqual({ mtimeMs: fs.statSync(full).mtimeMs, completed: false });
+    expect(st).toEqual({ mtimeMs: fs.statSync(full).mtimeMs, completed: false, aborted: false });
   });
 
   it('reports a finished turn (last marker task_complete) as completed', () => {
@@ -158,6 +158,16 @@ describe('codexRolloutTailStatus', () => {
   it('treats a user-aborted turn (turn_aborted) as settled, not interrupted', () => {
     writeRollout(root, '2026/09/23/rollout-2026-09-23T10-00-00-th-3.jsonl', [meta, ev('task_started'), ev('turn_aborted')]);
     expect(codexRolloutTailStatus('th-3', root)?.completed).toBe(true);
+  });
+
+  // Codex ALSO writes turn_aborted when its app-server is SIGTERMed mid-turn (live-verified on
+  // codex-cli 0.156.1) — i.e. on every graceful Dispatch shutdown. The caller needs to tell the two
+  // apart, so the tail reports an abort separately from a completion.
+  it('flags a trailing turn_aborted as aborted, and a task_complete as not', () => {
+    writeRollout(root, '2026/09/23/rollout-2026-09-23T10-00-00-th-4.jsonl', [meta, ev('task_started'), ev('turn_aborted')]);
+    writeRollout(root, '2026/09/23/rollout-2026-09-23T10-00-00-th-5.jsonl', [meta, ev('task_started'), ev('task_complete')]);
+    expect(codexRolloutTailStatus('th-4', root)?.aborted).toBe(true);
+    expect(codexRolloutTailStatus('th-5', root)?.aborted).toBe(false);
   });
 
   it('returns null when the thread has no rollout', () => {

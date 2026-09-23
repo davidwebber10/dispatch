@@ -150,4 +150,15 @@ describe('sendThreadMessage — transport dispatch', () => {
   it('throws for an unknown thread', () => {
     expect(() => svc.sendThreadMessage('nope', 'hi')).toThrow(/not found/i);
   });
+
+  // GPT-6 Astra review of PR #47, finding 1: a shell tab has no agent behind it, so a peer
+  // "message" typed into it RUNS AS A COMMAND — with the daemon user's full rights, outside a
+  // coordinator's sandbox. message_thread / message_agent / spawn_agent all land here.
+  it('refuses to type a message into a shell tab (it would run as a command)', () => {
+    seed('t1', { type: 'shell', config: {} });
+    pty.alive.add('t1');
+
+    expect(() => svc.sendThreadMessage('t1', 'printf pwned > /repo/file', 'coordinator')).toThrow(/shell/i);
+    expect(pty.writes).toHaveLength(0);
+  });
 });

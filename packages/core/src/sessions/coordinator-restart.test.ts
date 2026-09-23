@@ -144,12 +144,12 @@ describe('Codex coordinator resume does not hit the claude-only readSessionBackf
 });
 
 /** Write a Codex rollout for `threadId` under the (mocked) home, whose last turn marker is `last`. */
-function writeCodexRollout(threadId: string, last: 'task_started' | 'task_complete') {
+function writeCodexRollout(threadId: string, last: 'task_started' | 'task_complete' | 'turn_aborted') {
   const d = path.join(home, '.codex', 'sessions', '2026', '09', '23');
   fs.mkdirSync(d, { recursive: true });
   const ev = (type: string) => JSON.stringify({ type: 'event_msg', payload: { type } });
   const lines = [JSON.stringify({ type: 'session_meta', payload: { id: threadId } }), ev('task_started'), ev('item_completed')];
-  if (last === 'task_complete') lines.push(ev('task_complete'));
+  if (last !== 'task_started') lines.push(ev(last));
   const full = path.join(d, `rollout-2026-09-23T10-00-00-${threadId}.jsonl`);
   fs.writeFileSync(full, lines.join('\n') + '\n');
   return full;
@@ -224,5 +224,100 @@ describe('boot kickstart covers Codex coordinators too (review T1), gated on the
     expect(result.kicked).toEqual(['cc']);
     expect(claudeStructured.sent).toHaveLength(1);
     expect(claudeStructured.sent[0].id).toBe('cc');
+  });
+});
+
+// GPT-6 Astra review of PR #47, finding 4: the daemon's SIGTERM cleanup kills every manager, and
+// each kill emits `exit` SYNCHRONOUSLY (both the Claude and the Codex manager) — the status service
+// then settles the row to `waiting` before db.close(). listWorkingStructured only finds `working`
+// rows, so the boot kickstart never saw a turn a graceful restart cut off. The shutdown helper
+// restores exactly the rows the kickstart would act on. (The real-wiring proof is in
+// tests/routes/structured.test.ts; here `stopAll` stands in for the exit-driven settle.)
+describe('shutdownPreservingInterruptedTurns (Astra finding 4)', () => {
+  function seedThread(id: string, type: string, config: Record<string, unknown>, status: string) {
+    terminalsDb.create(db, { id, sessionId: 's1', type, label: id, workingDir: WORKDIR_PROJ(), externalId: `${id}-ext`, config });
+    terminalsDb.updateStatus(db, id, status);
+  }
+  const settleAll = () => {
+    for (const r of db.prepare('SELECT id FROM terminals').all() as { id: string }[]) terminalsDb.updateStatus(db, r.id, 'waiting');
+  };
+
+  it('restores every mid-turn overseer thread (both harnesses) after the managers settle them', () => {
+    seedThread('cc', 'claude-code', { transport: 'structured', role: 'coordinator' }, 'working');
+    seedThread('cx', 'codex', { transport: 'structured', role: 'coordinator' }, 'working');
+    seedThread('ag', 'codex', { transport: 'structured', role: 'agent', agentType: 'implementer' }, 'working');
+
+    const restored = svc.shutdownPreservingInterruptedTurns(settleAll);
+
+    expect(restored.sort()).toEqual(['ag', 'cc', 'cx']);
+    for (const id of ['cc', 'cx', 'ag']) expect(terminalsDb.getById(db, id)?.status).toBe('working');
+  });
+
+  it('leaves rows the kickstart would never resume settled: plain threads, PTY threads, idle threads', () => {
+    seedThread('plain', 'codex', { transport: 'structured' }, 'working');
+    seedThread('pty', 'claude-code', { role: 'coordinator' }, 'working');
+    seedThread('idle', 'codex', { transport: 'structured', role: 'coordinator' }, 'waiting');
+
+    const restored = svc.shutdownPreservingInterruptedTurns(settleAll);
+
+    expect(restored).toEqual([]);
+    for (const id of ['plain', 'pty', 'idle']) expect(terminalsDb.getById(db, id)?.status).toBe('waiting');
+  });
+
+  it('stamps each restored row with interruptedAt, so the next boot knows the shutdown cut it off', () => {
+    seedThread('cx', 'codex', { transport: 'structured', role: 'coordinator' }, 'working');
+    seedThread('plain', 'codex', { transport: 'structured' }, 'working');
+
+    svc.shutdownPreservingInterruptedTurns(settleAll);
+
+    expect(typeof JSON.parse(terminalsDb.getById(db, 'cx')!.config || '{}').interruptedAt).toBe('string');
+    expect(JSON.parse(terminalsDb.getById(db, 'plain')!.config || '{}').interruptedAt).toBeUndefined();
+  });
+
+  // Live-verified (codex-cli 0.156.1): SIGTERM makes the app-server abort the in-flight turn and
+  // write `turn_aborted` — which alone reads as "settled". For a thread the shutdown interrupted,
+  // it is the cut-off turn itself.
+  it('a Codex coordinator the shutdown interrupted is kicked although Codex wrote turn_aborted on the way down', async () => {
+    writeCodexRollout('codex-sigterm-1', 'turn_aborted');
+    terminalsDb.create(db, { id: 'cx', sessionId: 's1', type: 'codex', label: 'cx', workingDir: WORKDIR_PROJ(), externalId: 'codex-sigterm-1', config: { transport: 'structured', role: 'coordinator' } });
+    terminalsDb.updateStatus(db, 'cx', 'working');
+    svc.shutdownPreservingInterruptedTurns(settleAll);
+
+    const result = await svc.kickstartInterruptedAgents(0);
+
+    expect(result.kicked).toEqual(['cx']);
+    const cfg = JSON.parse(terminalsDb.getById(db, 'cx')!.config || '{}');
+    expect(cfg.interruptedAt).toBeUndefined(); // consumed by the kick
+    expect(typeof cfg.kickedAt).toBe('string');
+  });
+
+  it('a stamped row the kickstart SKIPS (its turn completed) still drops the stamp, so it cannot go stale', async () => {
+    writeCodexRollout('codex-done-1', 'task_complete');
+    terminalsDb.create(db, { id: 'cx', sessionId: 's1', type: 'codex', label: 'cx', workingDir: WORKDIR_PROJ(), externalId: 'codex-done-1', config: { transport: 'structured', role: 'coordinator', interruptedAt: new Date().toISOString() } });
+    terminalsDb.updateStatus(db, 'cx', 'working');
+
+    const result = await svc.kickstartInterruptedAgents(0);
+
+    expect(result.skipped).toContain('cx');
+    expect(JSON.parse(terminalsDb.getById(db, 'cx')!.config || '{}').interruptedAt).toBeUndefined();
+  });
+
+  it('a Codex coordinator whose rollout ends in turn_aborted WITHOUT a shutdown stamp stays settled (the user stopped it)', async () => {
+    writeCodexRollout('codex-stopped-1', 'turn_aborted');
+    seedCoordinator('cx', 'codex', { externalId: 'codex-stopped-1', status: 'working' });
+
+    const result = await svc.kickstartInterruptedAgents(0);
+
+    expect(result.skipped).toContain('cx');
+    expect(codexStructured.sent).toEqual([]);
+  });
+
+  it('a restored row is picked up by the next boot kickstart', async () => {
+    seedThread('cc', 'claude-code', { transport: 'structured', role: 'coordinator' }, 'working');
+    svc.shutdownPreservingInterruptedTurns(settleAll);
+
+    const result = await svc.kickstartInterruptedAgents(0);
+
+    expect(result.kicked).toEqual(['cc']);
   });
 });

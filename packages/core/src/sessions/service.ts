@@ -65,6 +65,14 @@ const KICKSTART_CONTINUE_PROMPT =
   '⚙️ Dispatch restarted and interrupted you mid-task — re-read your last steps above and continue your ' +
   'mission from where you left off. If you had already finished, briefly say so instead of redoing work.';
 
+/** The boot kickstart resumes only structured overseer threads: the coordinator and its typed agents. */
+function isKickstartCandidate(config: Record<string, any>): boolean {
+  return config.transport === 'structured' && (config.role === 'coordinator' || config.role === 'agent');
+}
+
+/** The MCP server name every eligible thread gets its Dispatch (agency) tools under. */
+const AGENCY_MCP_SERVER = 'dispatch';
+
 /**
  * The one-file recovery decision, pure for testability: adopt the project dir's single
  * transcript ONLY when it could plausibly belong to this terminal — i.e. it was born at or
@@ -1014,6 +1022,12 @@ export class SessionService {
   ): { transport: 'structured' | 'pty'; droppedNonText: boolean } {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) throw new Error('Thread not found');
+    // A shell tab has no agent to read a message: text typed into it RUNS AS A COMMAND, with the
+    // daemon user's full rights and outside any coordinator's sandbox. message_thread,
+    // message_agent, and spawn_agent all arrive here, so refuse it for every caller.
+    if (terminal.type === 'shell') {
+      throw new Error('cannot message a shell tab: it has no agent, so the text would run as a command');
+    }
 
     if (this.isStructuredTerminal(terminal)) {
       this.sendStructuredMessage(terminalId, content, source);
@@ -2100,13 +2114,17 @@ export class SessionService {
     // sandbox (below), and BECAUSE of that every surfaced command approval is a sandbox-escape
     // request the membrane must deny wholesale (commandsEscalate). Keying both off this single const
     // keeps them from drifting apart — if a future change moves a Codex coordinator off read-only,
-    // both the sandbox override and the command-deny must change together.
+    // both the sandbox override and the command-deny must change together. The same holds for MCP:
+    // an MCP tool runs outside the sandbox, so a sandboxed coordinator may call only Dispatch's own.
     const codexCoordinator = terminal.type === 'codex' && config.role === 'coordinator';
     const toolPolicy =
       config.role === 'coordinator'
         ? // A Claude coordinator has no sandbox — its Bash 'allow' just runs — so it keeps the
-          // denylist (commandsEscalate false). A Codex coordinator denies every escalated command.
-          makeCoordinatorPolicy(coordinatorMemoryDirFor(terminal.type), { commandsEscalate: codexCoordinator })
+          // denylist (commandsEscalate false) and its MCP tools. A Codex coordinator denies every
+          // escalated command and every MCP tool but Dispatch's own.
+          makeCoordinatorPolicy(coordinatorMemoryDirFor(terminal.type), codexCoordinator
+            ? { commandsEscalate: true, allowedMcpServers: [AGENCY_MCP_SERVER] }
+            : { commandsEscalate: false })
         : typeof config.roleAuthority === 'string'
           ? roleToolPolicy(config.roleAuthority as never)
           : undefined;
@@ -2255,8 +2273,15 @@ export class SessionService {
       let config: Record<string, any> = {};
       try { config = JSON.parse(row.config || '{}'); } catch { skipped.push(row.id); continue; }
       // Structured overseer threads only: the coordinator and its typed agents.
-      if (config.transport !== 'structured') { skipped.push(row.id); continue; }
-      if (config.role !== 'coordinator' && config.role !== 'agent') { skipped.push(row.id); continue; }
+      if (!isKickstartCandidate(config)) { skipped.push(row.id); continue; }
+
+      // The shutdown's interruptedAt stamp (see shutdownPreservingInterruptedTurns) is good for
+      // THIS boot only: consume it whether the row is kicked or skipped, so it never goes stale.
+      const interruptedByShutdown = typeof config.interruptedAt === 'string';
+      if (config.interruptedAt !== undefined) {
+        delete config.interruptedAt;
+        terminalsDb.updateConfig(this.db, row.id, config);
+      }
 
       // (c) Idempotency. Compare against the thread's own record of the turn, which advances as
       // it works: the claude transcript, or the Codex rollout (keyed by the thread id).
@@ -2273,7 +2298,11 @@ export class SessionService {
       if (!Number.isNaN(kickedAt) && (!tail || tail.mtimeMs <= kickedAt)) { skipped.push(row.id); continue; }
 
       // The turn actually completed (shutdown race left it stale-working) → nothing to resume.
-      if (tail?.completed) { skipped.push(row.id); continue; }
+      // Except a Codex `turn_aborted` on a thread the last graceful shutdown interrupted
+      // (interruptedAt, stamped by shutdownPreservingInterruptedTurns): Codex writes that marker
+      // when its app-server gets SIGTERM mid-turn, so there it IS the cut-off turn, not a Stop.
+      const cutByShutdown = interruptedByShutdown && !!tail && 'aborted' in tail && tail.aborted;
+      if (tail?.completed && !cutByShutdown) { skipped.push(row.id); continue; }
 
       // (d) Kick (revive + re-prompt) and stamp so a later restart won't double-kick.
       try {
@@ -2286,6 +2315,38 @@ export class SessionService {
       }
     }
     return { kicked, skipped };
+  }
+
+  /**
+   * The shutdown half of the boot kickstart. Runs `stopAll` (the daemon's manager killAll calls),
+   * then writes `working` back onto every overseer thread that was mid-turn before it, and stamps
+   * it `interruptedAt`, so the next boot's kickstartInterruptedAgents finds it and knows the
+   * shutdown cut its turn (see the Codex `turn_aborted` case there). Returns the restored ids.
+   *
+   * Needed because both structured managers emit `exit` SYNCHRONOUSLY from kill(): the status
+   * service settles the row to `waiting` right there, before the daemon's db.close() — so without
+   * this, a graceful restart (`dispatch restart` / `update`, SIGTERM) dropped the interrupted turn.
+   * Everything else about the exit (roles close-out, pid clear) still happens.
+   */
+  shutdownPreservingInterruptedTurns(stopAll: () => void): string[] {
+    const interrupted = terminalsDb.listWorkingStructured(this.db)
+      .filter((row) => {
+        try { return isKickstartCandidate(JSON.parse(row.config || '{}')); } catch { return false; }
+      })
+      .map((row) => row.id);
+    stopAll();
+    const interruptedAt = new Date().toISOString();
+    for (const id of interrupted) {
+      terminalsDb.updateStatus(this.db, id, 'working');
+      // Re-read: the kill's own exit handling may have written config (e.g. a turn outcome).
+      // The stamp tells the kickstart this thread's turn was cut off by the shutdown — Codex
+      // records that as `turn_aborted`, which otherwise reads as a deliberate Stop.
+      try {
+        const config = JSON.parse(terminalsDb.getById(this.db, id)?.config || '{}');
+        terminalsDb.updateConfig(this.db, id, { ...config, interruptedAt });
+      } catch { /* best effort: the row stays `working`, which alone kicks a task_started tail */ }
+    }
+    return interrupted;
   }
 
   /**
@@ -2341,7 +2402,7 @@ export class SessionService {
   private agencyServerSpec(terminalId: string, sessionId: string, spawnDepth: number): McpServerSpec {
     const agencyPath = fileURLToPath(new URL('../overseer/agency-mcp.js', import.meta.url));
     return {
-      name: 'dispatch',
+      name: AGENCY_MCP_SERVER,
       command: 'node',
       args: [agencyPath],
       env: {

@@ -40,6 +40,12 @@ describe('buildCoordinatorPrompt', () => {
     expect(p).toContain('spawn_agent instead');
   });
 
+  it('the codex variant says only the dispatch MCP tools are available (Astra finding 2)', () => {
+    const p = buildCoordinatorPrompt({ harness: 'codex' });
+    expect(p).toContain('Use only your "dispatch" MCP tools');
+    expect(COORDINATOR_PROMPT).not.toContain('Use only your "dispatch" MCP tools'); // Claude keeps its MCP tools
+  });
+
   it('an unrecognized harness falls back to the claude-code variant', () => {
     expect(buildCoordinatorPrompt({ harness: 'grok' })).toBe(COORDINATOR_PROMPT);
   });

@@ -195,6 +195,37 @@ describe('makeCoordinatorPolicy commandsEscalate (Codex read-only) — B1', () =
   });
 });
 
+// GPT-6 Astra review of PR #47, finding 2: an ordinary MCP tool runs in its server's own process,
+// OUTSIDE the Codex sandbox — the user's config.toml servers (databricks, …) and Dispatch's
+// integrations alike. A sandboxed coordinator may therefore call only the servers it is explicitly
+// allowed (Dispatch's own); everything else is delegated.
+describe('makeCoordinatorPolicy allowedMcpServers (Codex coordinator) — Astra finding 2', () => {
+  const dir = coordinatorMemoryDirFor('codex');
+  const policy = makeCoordinatorPolicy(dir, { commandsEscalate: true, allowedMcpServers: ['dispatch'] });
+
+  it("allows Dispatch's own MCP tools", () => {
+    expect(policy('mcp__dispatch__spawn_agent', { agentType: 'implementer' })).toEqual({ allow: true });
+    expect(policy('mcp__dispatch__report_status', { state: 'done' })).toEqual({ allow: true });
+  });
+
+  it('denies a tool from any other MCP server, with a delegate message', () => {
+    for (const name of ['mcp__databricks__execute_sql', 'mcp__doppler__doppler_set_secret', 'mcp__computer-use__click']) {
+      const d = policy(name, {});
+      expect(d.allow).toBe(false);
+      if (!d.allow) expect(d.message).toContain('spawn_agent');
+    }
+  });
+
+  it('does not allow a server whose name only starts with "dispatch"', () => {
+    expect(policy('mcp__dispatchx__run', {}).allow).toBe(false);
+  });
+
+  it('leaves MCP tools allowed when no allowlist is set (the Claude coordinator)', () => {
+    const claude = makeCoordinatorPolicy(path.join(os.homedir(), '.claude'));
+    expect(claude('mcp__databricks__execute_sql', {})).toEqual({ allow: true });
+  });
+});
+
 describe('makeCoordinatorPolicy symlink containment — M1', () => {
   it('rejects a write that reaches outside the memory dir through a symlinked ancestor', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'covpol-'));

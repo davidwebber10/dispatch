@@ -194,3 +194,36 @@ it('omits config entirely when the spawn has none', async () => {
   const [sent] = readLogged('thread/start');
   expect(sent.params).not.toHaveProperty('config');
 });
+
+// GPT-6 Astra review of PR #47, finding 3. Live-verified on codex-cli 0.156.1: the app-server
+// ACCEPTS a second thread/resume of a thread that is already loaded (the live thread keeps its
+// sandbox). bindThread would then point that thread's routing — its approvals included — at the
+// NEWER terminal, which has none of the owner's toolPolicy. One native thread, one live owner.
+const spawnOpts = (extra: Record<string, unknown> = {}) => ({ command: process.execPath, args: [fake], workDir: process.cwd(), ...extra });
+
+it('refuses a second terminal that resumes a thread another live terminal started', async () => {
+  m.spawn('coord', spawnOpts({ toolPolicy: allowAll, env: { CODEX_FAKE_LOG: logPath } }));
+  await waitForEvent(m, 'coord', (e) => e.type === 'system' && e.subtype === 'init');
+  expect(() => m.spawn('intruder', spawnOpts({ resumeId: 'thread-fake-1' }))).toThrow(/already open/i);
+  expect(m.isAlive('intruder')).toBe(false);
+  expect(readLogged('thread/resume')).toHaveLength(0); // the refused spawn never reached the wire
+});
+
+it('refuses the duplicate while the owner\'s own resume is still in flight', () => {
+  m.spawn('coord', spawnOpts({ toolPolicy: allowAll, resumeId: 'thread-existing-9' }));
+  expect(() => m.spawn('intruder', spawnOpts({ resumeId: 'thread-existing-9' }))).toThrow(/already open/i);
+  expect(m.isAlive('coord')).toBe(true); // the refusal leaves the owner untouched
+});
+
+it('lets the SAME terminal respawn onto its own thread (a revive)', async () => {
+  m.spawn('coord', spawnOpts({ toolPolicy: allowAll, resumeId: 'thread-existing-9' }));
+  await waitForEvent(m, 'coord', (e) => e.type === 'assistant' && e.message?.content?.[0]?.text === 'earlier answer');
+  expect(() => m.spawn('coord', spawnOpts({ toolPolicy: allowAll, resumeId: 'thread-existing-9' }))).not.toThrow();
+});
+
+it('lets another terminal resume the thread once its owner is gone', async () => {
+  m.spawn('coord', spawnOpts({ toolPolicy: allowAll, resumeId: 'thread-existing-9' }));
+  await waitForEvent(m, 'coord', (e) => e.type === 'assistant' && e.message?.content?.[0]?.text === 'earlier answer');
+  m.kill('coord');
+  expect(() => m.spawn('next', spawnOpts({ resumeId: 'thread-existing-9' }))).not.toThrow();
+});

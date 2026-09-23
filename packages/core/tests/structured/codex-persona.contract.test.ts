@@ -19,7 +19,9 @@
 // `DISPATCH_LIVE_CODEX=1` (and Codex installed AND signed in — see packages/core/src/setup/detect.ts).
 // Also tolerates a live auth failure (e.g. an expired token the cheap sign-in probe didn't catch) or
 // a turn that never completes by skipping rather than failing hard — this test's job is to catch a
-// protocol regression, not to enforce that the machine running it is logged in.
+// protocol regression, not to enforce that the machine running it is logged in. The skip is a
+// RECORDED one (`ctx.skip()`): an early `return` would count as a PASS with nothing asserted
+// (GPT-6 Astra review of PR #47, finding 5).
 //
 // Only the AGENT'S REPLY text counts as evidence (item/completed agentMessage + agentMessage
 // deltas) — never reasoning, which can quote the instruction without following it (review T2).
@@ -235,12 +237,12 @@ async function runResumeCanaryTurn(startExtra: Record<string, unknown>, resumeEx
 describe.skipIf(skipReason !== '')(`Codex persona injection (live contract)${skipReason ? ` [skipped: ${skipReason}]` : ''}`, () => {
   it(
     'reaches the model via top-level developerInstructions on thread/start',
-    async () => {
+    async (ctx) => {
       let reply: string;
       try {
         reply = await runCanaryTurn({ developerInstructions: CANARY });
       } catch (err) {
-        if (isSoftSkipFailure(err)) return; // skip: live auth/spawn/turn-failure hiccup
+        if (isSoftSkipFailure(err)) return ctx.skip(); // a RECORDED skip, never a silent pass
         throw err;
       }
       expect(reply).toMatch(/MELON/);
@@ -252,12 +254,12 @@ describe.skipIf(skipReason !== '')(`Codex persona injection (live contract)${ski
   // lives in the thread's own history, so a resume from a FRESH app-server keeps it.
   it(
     'a persona given at thread/start survives a thread/resume from a fresh app-server',
-    async () => {
+    async (ctx) => {
       let reply: string;
       try {
         reply = await runResumeCanaryTurn({ developerInstructions: CANARY }, {});
       } catch (err) {
-        if (isSoftSkipFailure(err)) return; // skip: live auth/spawn/turn-failure hiccup
+        if (isSoftSkipFailure(err)) return ctx.skip(); // a RECORDED skip, never a silent pass
         throw err;
       }
       expect(reply).toMatch(/MELON/);
@@ -271,12 +273,12 @@ describe.skipIf(skipReason !== '')(`Codex persona injection (live contract)${ski
   // failing, Codex began honoring it: revisit codex-manager.ts's resume comment.
   it(
     'developerInstructions on thread/resume does NOT change an existing thread\'s persona (documents the limit)',
-    async () => {
+    async (ctx) => {
       let reply: string;
       try {
         reply = await runResumeCanaryTurn({}, { developerInstructions: CANARY });
       } catch (err) {
-        if (isSoftSkipFailure(err)) return; // skip: live auth/spawn/turn-failure hiccup
+        if (isSoftSkipFailure(err)) return ctx.skip(); // a RECORDED skip, never a silent pass
         throw err;
       }
       expect(reply.trim().length).toBeGreaterThan(0);
@@ -291,12 +293,12 @@ describe.skipIf(skipReason !== '')(`Codex persona injection (live contract)${ski
   // non-empty reply, so a timeout can never pass it vacuously.
   it(
     'does NOT reach the model via settings.developer_instructions (documents the silent drop)',
-    async () => {
+    async (ctx) => {
       let reply: string;
       try {
         reply = await runCanaryTurn({ settings: { developer_instructions: CANARY } });
       } catch (err) {
-        if (isSoftSkipFailure(err)) return; // skip: live auth/spawn/turn-failure hiccup
+        if (isSoftSkipFailure(err)) return ctx.skip(); // a RECORDED skip, never a silent pass
         throw err;
       }
       expect(reply.trim().length).toBeGreaterThan(0);

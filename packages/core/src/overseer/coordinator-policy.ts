@@ -25,6 +25,12 @@ const SHIP_MSG =
 const AGENT_MSG =
   'Control Plane policy: use spawn_agent (the dispatch MCP tool) instead of a native subagent, so the ' +
   'work is typed, visible in the Control Plane rail, and reviewable.';
+function mcpMsg(allowed: readonly string[]): string {
+  return (
+    `Control Plane policy: this coordinator may call only the ${allowed.map((s) => `"${s}"`).join(', ')} MCP ` +
+    'tools. Other MCP servers run outside your sandbox — spawn an agent (spawn_agent) for work that needs them.'
+  );
+}
 
 // Native orchestration tools stripped from a coordinator's toolset at spawn time via
 // --disallowedTools. The CLI auto-approves these without a can_use_tool request, so the
@@ -149,12 +155,22 @@ function changesFullyCovered(inp: Record<string, unknown>): boolean {
 }
 
 /** Builds the ground rules for a coordinator thread's own tool use, scoped to `memoryDir` —
- *  the one directory a coordinator may write to (its own memory/plans). Pure — no I/O, no state. */
+ *  the one directory a coordinator may write to (its own memory/plans). Pure — no I/O, no state.
+ *
+ *  `allowedMcpServers`, when set, is the only MCP servers whose tools (`mcp__<server>__<tool>`)
+ *  the coordinator may call. An ordinary MCP server runs in its own process OUTSIDE the Codex
+ *  sandbox (live-verified on codex-cli 0.156.1: a stdio server's tool wrote a file from a
+ *  `read-only` thread), so for a sandboxed coordinator every other server — the user's
+ *  config.toml servers (databricks, …) and Dispatch's integrations alike — is a way around the
+ *  sandbox. (Codex's own `node_repl` is the exception: Codex runs it INSIDE the thread's sandbox —
+ *  a write fails with EPERM — and asks no approval for it, so its calls never reach this policy.)
+ *  Unset (the Claude coordinator, which has no sandbox to get around), MCP tools stay allowed. */
 export function makeCoordinatorPolicy(
   memoryDir: string,
-  opts: { commandsEscalate?: boolean } = {},
+  opts: { commandsEscalate?: boolean; allowedMcpServers?: readonly string[] } = {},
 ): (toolName: string, input: unknown) => PolicyDecision {
   const commandsEscalate = opts.commandsEscalate === true;
+  const allowedMcpServers = opts.allowedMcpServers;
   // Resolve the memory dir ONCE, here: a later swap of the dir (or an ancestor) for a symlink
   // cannot widen what the policy allows, and no tool call re-walks it. Unresolvable → null →
   // every file write is denied (fail closed).
@@ -185,6 +201,13 @@ export function makeCoordinatorPolicy(
       if (typeof inp.command !== 'string' || inp.command === '') return { allow: false, message: SHIP_MSG };
       if (BLOCKED_BASH.some((re) => re.test(inp.command as string))) return { allow: false, message: SHIP_MSG };
       return { allow: true };
+    }
+    // Server names come from Dispatch or the user's own config.toml — a coordinator cannot write
+    // either (its memory dir excludes the Codex config), so matching the `mcp__<server>__` prefix
+    // is enough.
+    if (allowedMcpServers && toolName.startsWith('mcp__')) {
+      if (allowedMcpServers.some((s) => toolName.startsWith(`mcp__${s}__`))) return { allow: true };
+      return { allow: false, message: mcpMsg(allowedMcpServers) };
     }
     return { allow: true };
   };

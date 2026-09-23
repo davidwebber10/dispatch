@@ -234,6 +234,17 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
   setDefaultEnv(env: Record<string, string>): void { this.defaultEnv = env; }
 
   spawn(terminalId: string, opts: StructuredSpawnOpts): number {
+    // One native thread, one live owner. codex-cli (0.156.1, live-verified) ACCEPTS a second
+    // thread/resume of a thread that is already loaded, and bindThread would then route that
+    // thread's notifications AND approvals to the newer terminal — which carries none of the
+    // owner's toolPolicy (a coordinator's membrane, bypassed). Checked before anything changes, so
+    // a refusal leaves the owner untouched; the owner itself may respawn (a revive).
+    if (opts.resumeId) {
+      const owner = this.ownerOf(opts.resumeId);
+      if (owner && owner !== terminalId) {
+        throw new Error(`Codex thread ${opts.resumeId} is already open in another Dispatch thread — close that one first`);
+      }
+    }
     if (this.sessions.has(terminalId)) this.kill(terminalId);
     const conn = this.ensureConnection(opts);
     const session: CodexSession = {
@@ -328,7 +339,20 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     }
   }
 
+  /** The terminal of the live session that owns `threadId` — bound to it, or resuming it. */
+  private ownerOf(threadId: string): string | undefined {
+    for (const s of this.sessions.values()) {
+      if (s.threadId === threadId || s.resumeId === threadId) return s.terminalId;
+    }
+    return undefined;
+  }
+
   private bindThread(session: CodexSession, threadId: string, model?: string): void {
+    // Backstop for spawn()'s ownership check: never re-point a thread another live session owns.
+    const owner = this.threadToTerminal.get(threadId);
+    if (owner && owner !== session.terminalId && this.sessions.has(owner)) {
+      throw new Error(`Codex thread ${threadId} is already open in another Dispatch thread`);
+    }
     session.threadId = threadId;
     if (model) session.model = model;
     this.threadToTerminal.set(threadId, session.terminalId);

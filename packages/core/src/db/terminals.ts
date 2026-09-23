@@ -126,8 +126,9 @@ export function listQueuedDependents(db: Database.Database, agentId: string): Te
 /**
  * Cross-session lookup for the boot kickstart: every non-archived claude-code
  * terminal left in `status='working'`. At boot that status is the interrupted
- * signal — a thread that died mid-turn (clean shutdown skips the settle-to-waiting
- * write, and clearStalePids only touches sessions). The caller filters to
+ * signal — a thread that died mid-turn (a crash never settles it; a graceful
+ * shutdown's manager kills DO settle it, so SessionService.shutdownPreservingInterruptedTurns
+ * writes `working` back; clearStalePids only touches sessions). The caller filters to
  * structured overseer threads and applies idempotency.
  *
  * Scoped to the harnesses whose idempotency check has a local record of the turn to read:

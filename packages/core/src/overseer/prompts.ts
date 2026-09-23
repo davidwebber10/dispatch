@@ -121,7 +121,8 @@ const CODEX_DECLINE_GUIDANCE =
   ' On this harness specifically: if a repo-write or ship-shaped command comes back DECLINED ' +
   '(the sandbox/approval layer may surface only a bare decline, with none of the explanatory ' +
   'text above), do not retry it or try to work around it — immediately delegate the task via ' +
-  'spawn_agent instead.';
+  'spawn_agent instead. Use only your "dispatch" MCP tools: other MCP servers can act outside ' +
+  'your sandbox, so their tools are declined — delegate work that needs them.';
 
 /**
  * Build the coordinator persona for a given harness.

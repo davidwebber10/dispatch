@@ -1268,3 +1268,113 @@ it('a codex coordinator gets the peer prompt (its own id + roster) alongside its
     fs.rmSync(cfgDir, { recursive: true, force: true });
   }
 });
+
+// --- GPT-6 Astra review of PR #47 (findings 2, 3, 4), end-to-end through the real routes ---------
+
+/** One isolated app on the fake Codex app-server, with its request/response log. */
+async function withCodexApp(name: string, fn: (a: any, sessionId: string, logPath: string) => Promise<void>): Promise<void> {
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), `${name}-`));
+  const logPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), `${name}-log-`)), 'requests.jsonl');
+  const prevLog = process.env.CODEX_FAKE_LOG;
+  process.env.CODEX_FAKE_LOG = logPath;
+  const a = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fakeCodex] } });
+  try {
+    const s = await request(a).post('/api/sessions').send({ provider: 'codex', workingDir: dir, name });
+    await fn(a, s.body.id, logPath);
+  } finally {
+    if (prevLog === undefined) delete process.env.CODEX_FAKE_LOG; else process.env.CODEX_FAKE_LOG = prevLog;
+    (a as any)._sessionService?.structuredManagerFor('codex')?.killAll();
+    fs.rmSync(cfgDir, { recursive: true, force: true });
+  }
+}
+
+/** Waits until the fake has logged `count` answers of `method` (our responses to its requests). */
+async function pollLoggedResponses(logPath: string, method: string, count: number, timeoutMs = 3000): Promise<any[]> {
+  const start = Date.now();
+  let got: any[] = [];
+  while (Date.now() - start < timeoutMs) {
+    got = fs.existsSync(logPath)
+      ? fs.readFileSync(logPath, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((e) => e.response === method)
+      : [];
+    if (got.length >= count) return got;
+    await sleep(25);
+  }
+  throw new Error(`timeout waiting for ${count} logged ${method} response(s) (got ${got.length})`);
+}
+
+// Finding 2: an MCP tool runs OUTSIDE the Codex sandbox, so a Codex coordinator may call only
+// Dispatch's own tools. This proves service.ts hands the allowlist to the real policy.
+it('a codex coordinator: a non-Dispatch MCP tool is declined on the wire, a dispatch tool is accepted (Astra finding 2)', async () => {
+  await withCodexApp('codex-coord-mcp', async (a, sid, logPath) => {
+    const t = await request(a).post(`/api/sessions/${sid}/terminals`).send({ type: 'codex', config: { transport: 'structured', role: 'coordinator' } });
+    await pollExternalId(db, t.body.id, 'thread-fake-1');
+
+    await request(a).post(`/api/terminals/${t.body.id}/message`).send({ text: 'mcp databricks execute_sql' });
+    const [denied] = await pollLoggedResponses(logPath, 'mcpServer/elicitation/request', 1);
+    expect(denied.result.action).toBe('decline');
+    await pollStatus(t.body.id, 'waiting');
+
+    await request(a).post(`/api/terminals/${t.body.id}/message`).send({ text: 'mcp dispatch list_threads' });
+    const [, allowed] = await pollLoggedResponses(logPath, 'mcpServer/elicitation/request', 2);
+    expect(allowed.result.action).toBe('accept');
+  });
+});
+
+it('a plain codex thread keeps its MCP tools (the allowlist is coordinator-only)', async () => {
+  await withCodexApp('codex-plain-mcp', async (a, sid, logPath) => {
+    const t = await request(a).post(`/api/sessions/${sid}/terminals`).send({ type: 'codex', config: { transport: 'structured' } });
+    await pollExternalId(db, t.body.id, 'thread-fake-1');
+    await request(a).post(`/api/terminals/${t.body.id}/message`).send({ text: 'mcp databricks execute_sql' });
+    const [resp] = await pollLoggedResponses(logPath, 'mcpServer/elicitation/request', 1);
+    expect(resp.result.action).toBe('accept');
+  });
+});
+
+// Finding 3: codex-cli ACCEPTS a second thread/resume of a thread that is already loaded (live-
+// verified, 0.156.1), and the manager would then route that thread's approvals to the NEWER
+// terminal — one without the coordinator's policy. A thread has one live owner.
+it('refuses a second thread that resumes the live codex coordinator\'s own thread (Astra finding 3)', async () => {
+  await withCodexApp('codex-dup-resume', async (a, sid, logPath) => {
+    const coord = await request(a).post(`/api/sessions/${sid}/terminals`).send({ type: 'codex', config: { transport: 'structured', role: 'coordinator' } });
+    await pollExternalId(db, coord.body.id, 'thread-fake-1');
+
+    const dup = await request(a).post(`/api/sessions/${sid}/terminals`).send({ type: 'codex', externalId: 'thread-fake-1', config: { transport: 'structured' } });
+    expect(dup.status).toBe(400);
+    expect(dup.body.error).toMatch(/already open/i);
+    expect(terminalsDb.listBySession(db, sid).map((r) => r.id)).toEqual([coord.body.id]); // no orphan row
+    expect(readLoggedRequests(logPath, 'thread/resume')).toHaveLength(0); // never reached the wire
+  });
+});
+
+// Finding 4: on SIGTERM the daemon's cleanup kills every manager, and each kill emits `exit`
+// synchronously — which settled a mid-turn row to `waiting` before db.close(). The boot kickstart
+// looks only for `working` rows, so a graceful restart silently dropped the interrupted turn.
+it('a graceful shutdown keeps a mid-turn codex coordinator "working" for the boot kickstart (Astra finding 4)', async () => {
+  await withCodexApp('codex-shutdown-coord', async (a, sid) => {
+    const t = await request(a).post(`/api/sessions/${sid}/terminals`).send({ type: 'codex', config: { transport: 'structured', role: 'coordinator' } });
+    await pollExternalId(db, t.body.id, 'thread-fake-1');
+    await request(a).post(`/api/terminals/${t.body.id}/message`).send({ text: 'hang' });
+    await pollStatus(t.body.id, 'working');
+
+    const svc = (a as any)._sessionService;
+    svc.shutdownPreservingInterruptedTurns(() => svc.structuredManagerFor('codex').killAll());
+
+    expect(svc.structuredManagerFor('codex').isAlive(t.body.id)).toBe(false);
+    expect(terminalsDb.getById(db, t.body.id)?.status).toBe('working');
+  });
+});
+
+it('a graceful shutdown still settles a mid-turn PLAIN codex thread (the kickstart never resumes it)', async () => {
+  await withCodexApp('codex-shutdown-plain', async (a, sid) => {
+    const t = await request(a).post(`/api/sessions/${sid}/terminals`).send({ type: 'codex', config: { transport: 'structured' } });
+    await pollExternalId(db, t.body.id, 'thread-fake-1');
+    await request(a).post(`/api/terminals/${t.body.id}/message`).send({ text: 'hang' });
+    await pollStatus(t.body.id, 'working');
+
+    const svc = (a as any)._sessionService;
+    svc.shutdownPreservingInterruptedTurns(() => svc.structuredManagerFor('codex').killAll());
+
+    // The kill's own exit event settled it — the same write that used to hide a coordinator.
+    expect(terminalsDb.getById(db, t.body.id)?.status).toBe('waiting');
+  });
+});

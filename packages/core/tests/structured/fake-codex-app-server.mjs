@@ -108,6 +108,9 @@ rl.on('line', (line) => {
     respond(msg.id, { turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'inProgress' } });
     const text = (msg.params?.input ?? []).filter((i) => i.type === 'text').map((i) => i.text).join(' ');
     notify('turn/started', { threadId: tid, turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'inProgress' } });
+    // `hang` — a turn that starts and never ends: the thread stays `working` until it is killed
+    // (a daemon shutdown mid-turn).
+    if (/^hang$/i.test(text)) return;
     if (/no agent message/i.test(text)) {
       // A turn that ends with NO completed agentMessage at all (a failed turn, an interrupt
       // before any prose, a tool-only turn) — turn/completed still fires, but the translator
