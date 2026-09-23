@@ -34,7 +34,7 @@ beforeEach(() => {
     coordinatorId: null,
     ensuring: false,
     setupNeeded: false,
-    setupSelection: { workerHarness: 'claude-code', model: 'sonnet' },
+    setupSelection: { workerHarness: 'claude-code', model: 'sonnet', coordinatorHarness: 'claude-code' },
   } as never);
 });
 
@@ -80,15 +80,29 @@ describe('startCoordinator — create with the setup selection', () => {
     useOverseer.setState({
       coordinatorProject: 'proj-1',
       setupNeeded: true,
-      setupSelection: { workerHarness: 'codex', model: 'gpt-5' },
+      setupSelection: { workerHarness: 'codex', model: 'gpt-5', coordinatorHarness: 'claude-code' },
     } as never);
     const ensure = vi.spyOn(api, 'ensureOverseerCoordinator').mockResolvedValue({ terminalId: 'coord-new' });
 
     await useOverseer.getState().startCoordinator('proj-1');
 
-    expect(ensure).toHaveBeenCalledWith('proj-1', { model: 'gpt-5', workerHarness: 'codex' });
+    expect(ensure).toHaveBeenCalledWith('proj-1', { coordinatorHarness: 'claude-code', model: 'gpt-5', workerHarness: 'codex' });
     expect(useOverseer.getState().coordinatorId).toBe('coord-new');
     expect(useOverseer.getState().setupNeeded).toBe(false);
+  });
+
+  it('sends coordinatorHarness: "codex" when the setup card selected a Codex coordinator', async () => {
+    useOverseer.setState({
+      coordinatorProject: 'proj-1',
+      setupNeeded: true,
+      setupSelection: { workerHarness: 'claude-code', model: '', coordinatorHarness: 'codex' },
+    } as never);
+    const ensure = vi.spyOn(api, 'ensureOverseerCoordinator').mockResolvedValue({ terminalId: 'coord-codex' });
+
+    await useOverseer.getState().startCoordinator('proj-1');
+
+    expect(ensure).toHaveBeenCalledWith('proj-1', { coordinatorHarness: 'codex', model: '', workerHarness: 'claude-code' });
+    expect(useOverseer.getState().coordinatorId).toBe('coord-codex');
   });
 });
 
@@ -138,7 +152,7 @@ describe('sendDirective — starts the coordinator first when none exists and se
       coordinatorProject: 'proj-1',
       coordinatorId: null,
       setupNeeded: true,
-      setupSelection: { workerHarness: 'claude-code', model: 'sonnet' },
+      setupSelection: { workerHarness: 'claude-code', model: 'sonnet', coordinatorHarness: 'claude-code' },
       composerImagesByProject: {},
     } as never);
     vi.spyOn(api, 'ensureOverseerCoordinator').mockResolvedValue({ terminalId: 'coord-live' });
@@ -157,7 +171,7 @@ describe('sendDirective — mid-flight guards on the first-directive (setup) pat
       coordinatorProject: 'proj-1',
       coordinatorId: null,
       setupNeeded: true,
-      setupSelection: { workerHarness: 'claude-code', model: 'sonnet' },
+      setupSelection: { workerHarness: 'claude-code', model: 'sonnet', coordinatorHarness: 'claude-code' },
       composerImagesByProject: {},
       sendError: null,
     } as never);
@@ -177,7 +191,7 @@ describe('sendDirective — mid-flight guards on the first-directive (setup) pat
       coordinatorProject: 'proj-1',
       coordinatorId: null,
       setupNeeded: true,
-      setupSelection: { workerHarness: 'claude-code', model: 'sonnet' },
+      setupSelection: { workerHarness: 'claude-code', model: 'sonnet', coordinatorHarness: 'claude-code' },
       composerImagesByProject: {},
       sendError: null,
     } as never);
