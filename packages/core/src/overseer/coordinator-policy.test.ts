@@ -1,7 +1,12 @@
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { COORDINATOR_DISALLOWED_TOOLS, coordinatorToolPolicy, makeCoordinatorPolicy } from './coordinator-policy.js';
+import {
+  COORDINATOR_DISALLOWED_TOOLS,
+  coordinatorMemoryDirFor,
+  coordinatorToolPolicy,
+  makeCoordinatorPolicy,
+} from './coordinator-policy.js';
 
 const memoryFile = path.join(os.homedir(), '.claude', 'projects', '-x', 'memory', 'MEMORY.md');
 
@@ -122,5 +127,26 @@ describe('makeCoordinatorPolicy', () => {
   it('denies a write targeting the memory dir root itself (not a real write target)', () => {
     const policy = makeCoordinatorPolicy('/home/x/.codex');
     expect(policy('Write', { file_path: '/home/x/.codex' }).allow).toBe(false);
+  });
+});
+
+describe('coordinatorMemoryDirFor', () => {
+  it('resolves the claude-code coordinator memory dir to ~/.claude', () => {
+    expect(coordinatorMemoryDirFor('claude-code')).toBe(path.join(os.homedir(), '.claude'));
+  });
+
+  it('resolves the codex coordinator memory dir to ~/.codex', () => {
+    expect(coordinatorMemoryDirFor('codex')).toBe(path.join(os.homedir(), '.codex'));
+  });
+
+  it('a codex coordinator policy allows a write under ~/.codex, denies one under ~/.claude, and denies a repo path', () => {
+    const policy = makeCoordinatorPolicy(coordinatorMemoryDirFor('codex'));
+    expect(policy('Write', { file_path: path.join(os.homedir(), '.codex', 'memory', 'MEMORY.md') })).toEqual({ allow: true });
+    expect(policy('Write', { file_path: path.join(os.homedir(), '.claude', 'memory', 'MEMORY.md') }).allow).toBe(false);
+    expect(policy('Edit', { file_path: '/Users/x/Developer/Projects/repo/src/app.ts' }).allow).toBe(false);
+  });
+
+  it('falls back to ~/.claude for an unrecognized harness', () => {
+    expect(coordinatorMemoryDirFor('grok')).toBe(path.join(os.homedir(), '.claude'));
   });
 });

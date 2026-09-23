@@ -36,6 +36,14 @@ describe('resolveSpawnModel', () => {
   it('codex ignores an explicit Claude tier alias and falls through (undefined — codex has no harness default here)', () => {
     expect(resolveSpawnModel({ harness: 'codex', config: { model: 'opus' } })).toBeUndefined();
   });
+
+  // Task 7: MODEL_FOR_TYPE.coordinator = 'sonnet' must never leak to a codex coordinator —
+  // resolveSpawnModel only consults MODEL_FOR_TYPE (via modelFor) on the claude-code branch,
+  // so a codex coordinator with no explicit model falls through to undefined, letting the
+  // codex CLI apply its own configured default rather than an alias meaningless to it.
+  it('a codex coordinator with no explicit model never gets the claude sonnet tier', () => {
+    expect(resolveSpawnModel({ harness: 'codex', config: { role: 'coordinator' } })).toBeUndefined();
+  });
 });
 
 describe('isClaudeTierAlias', () => {

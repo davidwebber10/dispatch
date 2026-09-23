@@ -97,6 +97,83 @@ export const COORDINATOR_PROMPT =
   'Resist it — delegation IS the job. If you catch yourself editing repo files or running ship commands, ' +
   'stop and spawn an agent.';
 
+/** Coordinator memory-root label shown IN THE PROMPT TEXT for a given harness — a display
+ *  string, not a resolved path (see coordinator-policy.ts's coordinatorMemoryDirFor for the
+ *  actual absolute path the enforcement policy uses; the two must name the same directory). */
+const COORDINATOR_MEMORY_LABEL: Record<string, string> = {
+  'claude-code': '~/.claude',
+  codex: '~/.codex',
+};
+
+// Harness-specific gap this note closes: the Claude membrane's tool-call denial delivers OUR
+// message text straight to the model, so the generic "spawn the right agent instead of
+// retrying" sentence above is enough. A Codex coordinator instead runs read-only/on-request
+// (see service.ts's spawnStructured) and hits the approval layer's own decline, which may
+// reach the model as a bare rejection with none of our explanatory text — so the persona
+// itself has to carry the redirect instead of relying on the deny message to teach it.
+const CODEX_DECLINE_GUIDANCE =
+  ' On this harness specifically: if a repo-write or ship-shaped command comes back DECLINED ' +
+  '(the sandbox/approval layer may surface only a bare decline, with none of the explanatory ' +
+  'text above), do not retry it or try to work around it — immediately delegate the task via ' +
+  'spawn_agent instead.';
+
+/**
+ * Build the coordinator persona for a given harness.
+ *
+ * The claude-code variant is byte-identical to the original `COORDINATOR_PROMPT` constant
+ * (pinned by a test in prompts.coordinator.test.ts) — nothing about today's behavior changes.
+ *
+ * Every other harness (today: codex) gets a derived variant: the memory-root line names that
+ * harness's own dir instead of ~/.claude, and the Claude-only opus/sonnet/fable tier-teaching
+ * (meaningless — or actively wrong — as a `--model` value on another CLI) is replaced with
+ * harness-neutral wording. It also gains CODEX_DECLINE_GUIDANCE, since a Codex coordinator's
+ * approval denials don't carry our text to the model the way the Claude membrane's do.
+ */
+export function buildCoordinatorPrompt(opts: { harness: string }): string {
+  if (opts.harness === 'claude-code') return COORDINATOR_PROMPT;
+
+  const memoryLabel = COORDINATOR_MEMORY_LABEL[opts.harness];
+  if (!memoryLabel) return COORDINATOR_PROMPT; // no known variant for this harness yet — safest default
+
+  let out = COORDINATOR_PROMPT.replaceAll('~/.claude', memoryLabel);
+
+  // Drop the Claude-alias tier-teaching in the spawn_agent tools list for harness-neutral wording.
+  const tierStart = out.indexOf('Each type defaults to a sensible model tier ');
+  const tierEndMarker = 'only to override that default when a task is unusually easy or hard for its role.\n';
+  const tierEnd = out.indexOf(tierEndMarker);
+  if (tierStart !== -1 && tierEnd !== -1) {
+    out =
+      out.slice(0, tierStart) +
+      "Each agent type has a sensible default model; pass `model` with an id appropriate to the " +
+      'worker\'s harness only to override that default when a task is unusually easy or hard for its role.\n' +
+      out.slice(tierEnd + tierEndMarker.length);
+  }
+
+  // Same swap in the MODEL ECONOMY paragraph — keep the concrete examples, drop the alias names.
+  const econLeadIn = 'MODEL ECONOMY: the per-type default model is often too big for the task. ';
+  const econLeadIdx = out.indexOf(econLeadIn);
+  const econMidMarker = 'status checks and "did last night';
+  const econMidIdx = out.indexOf(econMidMarker);
+  if (econLeadIdx !== -1 && econMidIdx !== -1) {
+    out =
+      out.slice(0, econLeadIdx + econLeadIn.length) +
+      "Pass `model` with a smaller/cheaper model id appropriate to the worker's harness when you spawn: " +
+      out.slice(econMidIdx);
+  }
+  out = out.replace(
+    'the opus defaults for genuine investigation, planning, and judgment.',
+    'the stronger default models for genuine investigation, planning, and judgment.',
+  );
+
+  // Teach the redirect directly, right after the generic denial sentence it supplements.
+  out = out.replace(
+    'when you hit a denial, spawn the right agent instead of retrying.\n\n',
+    'when you hit a denial, spawn the right agent instead of retrying.' + CODEX_DECLINE_GUIDANCE + '\n\n',
+  );
+
+  return out;
+}
+
 /**
  * Peer/watch context injected into every eligible thread's system prompt — every
  * claude-code/codex thread (plain, agent, or coordinator alike; see
@@ -243,13 +320,22 @@ function isAgentType(v: unknown): v is AgentType {
 
 /**
  * Resolve the persona system prompt for a thread's config:
- *   - coordinator role → COORDINATOR_PROMPT
+ *   - coordinator role → buildCoordinatorPrompt({ harness }) (defaults to the claude-code
+ *     variant — i.e. today's COORDINATOR_PROMPT — when the caller has no harness to pass,
+ *     e.g. a config-only test)
  *   - a known agentType → that worker's persona
  *   - otherwise → undefined (a plain structured thread, no persona injected)
+ *
+ * `harness` rides as a separate parameter rather than a `config` field: config is the
+ * terminal's persisted JSON blob (no `type` column in it), while the harness is the
+ * terminal row's own `type` — known at the call site in service.ts, not on config.
  */
-export function systemPromptFor(config: OverseerThreadConfig | null | undefined): string | undefined {
+export function systemPromptFor(
+  config: OverseerThreadConfig | null | undefined,
+  harness: string = 'claude-code',
+): string | undefined {
   if (!config) return undefined;
-  if (config.role === 'coordinator') return COORDINATOR_PROMPT;
+  if (config.role === 'coordinator') return buildCoordinatorPrompt({ harness });
   if (isAgentType(config.agentType)) return AGENT_PROMPTS[config.agentType];
   return undefined;
 }

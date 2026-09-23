@@ -85,5 +85,21 @@ export function makeCoordinatorPolicy(memoryDir: string): (toolName: string, inp
   };
 }
 
+// The dirname (under the user's home) each harness's coordinator uses for its own memory/plans —
+// the one directory makeCoordinatorPolicy allows a coordinator to write to. Must name the same
+// directory as prompts.ts's COORDINATOR_MEMORY_LABEL, which is what the persona TELLS the model;
+// this is what the policy actually ENFORCES. Falls back to '.claude' for any harness with no
+// coordinator memory dir of its own yet (today: every harness besides claude-code and codex —
+// Phase 1 only ever creates claude-code coordinators, see service.ts's ensureCoordinator).
+const COORDINATOR_MEMORY_DIRNAME: Record<string, string> = {
+  'claude-code': '.claude',
+  codex: '.codex',
+};
+
+/** The per-harness coordinator memory dir, resolved to an absolute path under the user's home. */
+export function coordinatorMemoryDirFor(harness: string): string {
+  return path.join(os.homedir(), COORDINATOR_MEMORY_DIRNAME[harness] ?? '.claude');
+}
+
 /** Back-compat default: the Claude Code coordinator's memory dir. */
-export const coordinatorToolPolicy = makeCoordinatorPolicy(path.join(os.homedir(), '.claude'));
+export const coordinatorToolPolicy = makeCoordinatorPolicy(coordinatorMemoryDirFor('claude-code'));

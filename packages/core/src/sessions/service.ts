@@ -24,7 +24,7 @@ import { findCodexRolloutPath } from './codex-sessions.js';
 import { platform } from '../platform/index.js';
 import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.js';
 import { resolveSpawnModel, isClaudeTierAlias } from '../overseer/spawn-model.js';
-import { COORDINATOR_DISALLOWED_TOOLS, coordinatorToolPolicy } from '../overseer/coordinator-policy.js';
+import { COORDINATOR_DISALLOWED_TOOLS, coordinatorMemoryDirFor, makeCoordinatorPolicy } from '../overseer/coordinator-policy.js';
 import { roleToolPolicy } from '../roles/role-policy.js';
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
 import { resolveTranscriptPath } from './transcript-path.js';
@@ -2019,7 +2019,7 @@ export class SessionService {
       // spawn: the CLI auto-approves those tools without a can_use_tool request, so the
       // membrane's coordinatorToolPolicy deny (below) never reaches them. Removal from the
       // toolset is the enforcement; the policy deny remains as a backstop.
-      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config), resumeSessionId, model: resolvedModel, grokPluginDir, disallowedTools: config.role === 'coordinator' ? COORDINATOR_DISALLOWED_TOOLS : undefined });
+      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config, terminal.type), resumeSessionId, model: resolvedModel, grokPluginDir, disallowedTools: config.role === 'coordinator' ? COORDINATOR_DISALLOWED_TOOLS : undefined });
       if (!built) throw new Error('structured transport not supported for this provider');
       sc = built;
     }
@@ -2055,7 +2055,7 @@ export class SessionService {
     // `as never` cast here is safe — it defers validation, not skips it.
     const toolPolicy =
       config.role === 'coordinator'
-        ? coordinatorToolPolicy
+        ? makeCoordinatorPolicy(coordinatorMemoryDirFor(terminal.type))
         : typeof config.roleAuthority === 'string'
           ? roleToolPolicy(config.roleAuthority as never)
           : undefined;
@@ -2075,7 +2075,7 @@ export class SessionService {
           dir: path.join(this.statusContext.hooksDir, 'opencode-homes', terminal.id),
           model: resolvedModel,
           escalate,
-          systemPrompt: [systemPromptFor(config), structuredMcp?.systemPrompt].filter(Boolean).join('\n\n') || undefined,
+          systemPrompt: [systemPromptFor(config, terminal.type), structuredMcp?.systemPrompt].filter(Boolean).join('\n\n') || undefined,
           mcpServers,
         });
         opencodeEnv = { OPENCODE_CONFIG: cfgPath };
@@ -2096,17 +2096,18 @@ export class SessionService {
       // Codex delivers this via thread/start's `developerInstructions` (see codex-manager.ts).
       // Redundant-but-harmless for Claude/Grok/OpenCode, which already receive the persona via
       // their own argv/config paths (appendSystemPrompt above, OpenCode's config file below).
-      systemPrompt: systemPromptFor(config),
+      systemPrompt: systemPromptFor(config, terminal.type),
       // A codex COORDINATOR must run `on-request` + `read-only` (NOT the manager's default
       // `workspace-write`) so the Task 5 enforcement membrane actually fires: under
       // `workspace-write`, an in-workspace repo write / `git commit` / `git push` runs WITHOUT
       // ever surfacing an approval, so handleApproval's toolPolicy gate (coordinatorToolPolicy)
       // never sees exactly the actions it must deny. Read-only + on-request instead surfaces
       // EVERY write/command needing write or network as an approval for the policy to gate —
-      // repo writes and git commit/push get denied, and (once Task 7 wires the coordinator's
-      // memory dir into coordinatorToolPolicy) its own memory writes get allowed. Every other
-      // codex thread (agents, role runs) — and every non-codex harness, which ignores these
-      // fields entirely — keeps today's manager-construction defaults.
+      // repo writes and git commit/push get denied, and its own memory writes get allowed
+      // (toolPolicy above is built per-harness via makeCoordinatorPolicy(coordinatorMemoryDirFor
+      // (terminal.type)), so a codex coordinator's memory dir is ~/.codex, not ~/.claude — Task 7).
+      // Every other codex thread (agents, role runs) — and every non-codex harness, which
+      // ignores these fields entirely — keeps today's manager-construction defaults.
       ...(terminal.type === 'codex' && config.role === 'coordinator'
         ? { approvalPolicy: 'on-request' as const, sandbox: 'read-only' as const }
         : {}),
