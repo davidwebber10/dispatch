@@ -101,10 +101,9 @@ Decision above says "plus the test gaps".
 - **N4 (Medium):** `item/fileChange/patchUpdated` was ignored, so the policy could check a stale
   change list. Fix: the translator keeps the cached change list current.
 - **N5 (M3 made reachable):** the setup card offered Codex coordinator + Codex workers, which
-  share one app-server MCP identity. **Blocked, not fixed** (owner decision): the Codex manager's
-  `exclusiveConnection` refuses a Codex coordinator while any other Codex Pretty thread is live and
-  vice versa; the setup route rejects the Codex+Codex pair; `worker-defaults` reports Codex workers
-  unavailable under a Codex coordinator; the card hides them. Per-thread identity = follow-up.
+  share one app-server MCP identity. First BLOCKED (exclusive app-server for a Codex coordinator),
+  then — by owner decision, because a blocked Codex coordinator had little value — **FIXED** (see
+  "M3 fix" below) and the block removed.
 - **N6 (Medium):** Codex threads never got the peer/tools prompt, and a per-thread persona dropped
   the global tools note. Fix: `developerInstructions` = persona + peer/tools block.
 - **T1:** boot kickstart now covers Codex, gated on the rollout (`codexRolloutTailStatus`:
@@ -132,3 +131,29 @@ Decision above says "plus the test gaps".
 **Left as-is, by judgment:** the Overseer rail showing plain Grok/OpenCode Pretty threads matches
 how plain Pretty Claude threads already show. `~/.claude` stays the Claude coordinator's memory
 root — its Bash runs under a denylist, not a sandbox, so it is not a containment boundary.
+
+## M3 fix (2026-09-23)
+
+**Problem:** every Codex Pretty thread shares ONE `codex app-server`, and its argv/env belonged to
+whichever thread spawned it first — including the `dispatch` MCP identity (`DISPATCH_TERMINAL` /
+`DISPATCH_SESSION` / `DISPATCH_SPAWN_DEPTH`) and `DISPATCH_TERMINAL_ID` for shell commands. So a
+second Codex thread's `report_status` / `complete_agent` / `spawn_agent` acted as the first thread.
+This was not coordinator-only: two Codex WORKERS under a Claude coordinator (shipped in Phase 1)
+share the same way.
+
+**Live facts (codex-cli 0.156.1) the fix rests on:** (1) a `thread/start` `config` with
+`mcp_servers.<name>` starts a SEPARATE MCP server process for that thread, with that thread's env,
+on one shared app-server; (2) a thread `config` wins over an app-server `-c`; (3) `thread/resume`
+on a fresh app-server applies `config` (unlike `developerInstructions`); (4) nested and dotted
+`config` keys MERGE with the user's `config.toml` (the user's own MCP servers still start).
+
+**Fix:** the app-server now starts identity-free (`codex app-server`, no `-c` args, no
+thread env). Each thread's MCP servers ride its own `thread/start` + `thread/resume` `config` as
+dotted `mcp_servers.<name>` entries (`composeInjection().codexThreadConfig`), plus
+`shell_environment_policy.set.DISPATCH_TERMINAL_ID`. The M3 block (exclusive app-server, route
+rejection, worker-defaults check, hidden Codex workers) is removed.
+
+**Verified live** in an isolated daemon (fake HOME, port 3999): a Codex coordinator (with Codex
+workers selected) and a plain Codex Pretty thread ran side by side on one bare `codex app-server`;
+each had its own `agency-mcp` process with its own `DISPATCH_TERMINAL`; in a real turn each thread's
+shell saw its own `DISPATCH_TERMINAL_ID` and `list_threads` marked its own row `isSelf`.

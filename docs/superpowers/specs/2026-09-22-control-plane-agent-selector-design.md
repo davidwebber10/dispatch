@@ -132,8 +132,9 @@ coordinator.
 > Its memory dir is the DEDICATED `~/.codex/dispatch-coordinator`, never the whole
 > `~/.codex` — that home also holds Codex's own `config.toml`, `rules/`, global
 > `AGENTS.md`, skills, auth, and real git worktrees (review finding N1). It pins
-> `approvalsReviewer: 'user'` and needs the Codex app-server to itself until per-thread
-> MCP identity lands (M3 block). See `docs/superpowers/reviews/2026-09-23-pr47-phase2-review.md`.
+> `approvalsReviewer: 'user'`. Every Codex thread carries its OWN Dispatch MCP identity on its
+> `thread/start` / `thread/resume` `config` — the shared app-server starts identity-free (M3
+> fix). See `docs/superpowers/reviews/2026-09-23-pr47-phase2-review.md`.
 
 ### Verified findings (live probe, 2026-09-22)
 
