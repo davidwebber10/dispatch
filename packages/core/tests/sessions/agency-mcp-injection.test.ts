@@ -219,7 +219,7 @@ describe('agency MCP: caller identity + standard injection path', () => {
     // available, spawnTerminal must fail closed rather than PTY-spawn it ungoverned.
     expect(() =>
       svc.createTerminal('s1', 'claude-code', 'Overseer', false, undefined, 'ext-coord', { role: 'coordinator' }),
-    ).toThrow(/coordinator .* governed structured/i);
+    ).toThrow(/coordinator-capable structured/i);
     expect(pty.calls.find((c) => c.command === 'claude')).toBeFalsy(); // never PTY-spawned
   });
 

@@ -7,7 +7,11 @@ import { getProvider } from './registry.js';
  * policy + a per-harness memory dir — see coordinator-policy.ts / spawn-model.ts) are met by
  * exactly these two today. Grok and OpenCode are workers only.
  */
-const COORDINATOR_CAPABLE_HARNESSES = new Set(['claude-code', 'codex']);
+// The harnesses whose structured managers actually enforce the coordinator membrane (toolPolicy):
+// Claude Code (stream-json can_use_tool) and Codex (app-server handleApproval). Grok/OpenCode (ACP)
+// do NOT consume toolPolicy, so a coordinator on them would run ungoverned — spawnTerminal fails
+// closed for any coordinator whose harness is not in this set (see service.ts).
+export const COORDINATOR_CAPABLE_HARNESSES = new Set(['claude-code', 'codex']);
 
 /** Describe what this daemon can run; UI choices and server validation use this together. */
 export function harnessCapabilities() {

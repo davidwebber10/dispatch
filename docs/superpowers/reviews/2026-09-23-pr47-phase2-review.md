@@ -51,5 +51,24 @@ self-escalation deny; fail-closed on non-string Bash and empty patch paths; adap
 names match the translator; unrecognized approval methods fail closed.
 
 ## Decision
-Jason chose: fix B1, B2, M1, M2, M3, plus the test gaps. Plan:
+Jason chose: fix B1, B2, M1, M2, plus the test gaps; M3 deferred to a separate PR. Plan:
 `docs/superpowers/plans/2026-09-23-pr47-phase2-remediation.md`.
+
+## Remediation + second review pass (2026-09-23)
+B1/B2/M1/M2 fixed (commit 007e413) + a fable adversarial review hardening pass (F1–F4, commit
+3378687). A SECOND GPT-6 Astra verification pass then confirmed B1 and M2 sound, and found three
+more real gaps — all fixed:
+- **Astra-V1 (B2 too narrow):** the guard checked only structured-manager presence, so a
+  coordinator on a NON-capable harness (grok/opencode ACP ignore toolPolicy) or a `shell`
+  coordinator (bypassed the else-branch) could run ungoverned. Fix: the guard now also requires
+  `COORDINATOR_CAPABLE_HARNESSES.has(type)` and runs at the TOP of spawnTerminal (before the shell
+  branch). `COORDINATOR_CAPABLE_HARNESSES` is now exported from capabilities.ts.
+- **Astra-V2 (M1 `..`-after-symlink):** `path.resolve`/`realpathSync` collapse `link/..` lexically
+  (to the link's own parent), but the kernel follows the link target then `..` at write time — a
+  `mem/link/../escape` could pass containment yet write outside. Fix: isUnder rejects ANY raw `..`
+  segment outright (a coordinator memory path never needs one).
+- **Astra-V3 (realResolve failed open):** a non-ENOENT lstat/realpath error (EACCES, ELOOP, EIO)
+  was treated as "absent" and re-appended lexically. Fix: realResolve walks original segments and
+  fails closed on any non-ENOENT error (tested via a symlink loop → ELOOP).
+
+Final: core 1976/1976, web 1219/1219, both tsc clean.

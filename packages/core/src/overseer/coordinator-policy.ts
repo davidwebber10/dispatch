@@ -74,25 +74,40 @@ function extractWritePaths(inp: Record<string, unknown>): string[] {
  *  rather than lexically re-appending past it (which would let `~/.codex/dangling -> /repo/x`
  *  resolve back "under" the memory dir). The caller (isUnder) fails closed on the throw. */
 function realResolve(p: string): string {
-  let cur = path.resolve(p);
+  // Make the path absolute WITHOUT lexically collapsing `..`: path.resolve would fold `link/..`
+  // to nothing BEFORE symlinks resolve, hiding a `~/.codex/link/../escape` traversal (path.resolve
+  // drops `link` then `..` textually). So make relative paths absolute against cwd, but then walk
+  // the ORIGINAL segments — a `..` that follows a symlink stays in the prefix string and is
+  // resolved by realpathSync at the filesystem level, where it means "up from the link target".
+  const abs = path.isAbsolute(p) ? p : path.resolve(p);
+  const segs = abs.split(path.sep);
   const tail: string[] = [];
-  for (;;) {
+  for (let i = segs.length; i > 0; i--) {
+    const prefix = segs.slice(0, i).join(path.sep) || path.sep;
     try {
-      const real = fs.realpathSync(cur);
+      const real = fs.realpathSync(prefix);
       return tail.length ? path.join(real, ...tail.slice().reverse()) : real;
-    } catch {
-      // Does this component exist on disk (as a symlink/file/dir) even though realpath failed?
-      // If so it's a dangling link or a loop — unresolvable, fail closed. `lstatSync` does not
-      // follow the final symlink, so it succeeds for a dangling link where `realpathSync` threw.
-      let componentExists = true;
-      try { fs.lstatSync(cur); } catch { componentExists = false; }
-      if (componentExists) throw new Error(`coordinator-policy: unresolvable path component ${cur}`);
-      const parent = path.dirname(cur);
-      if (parent === cur) return path.resolve(p); // nothing on the path existed — fall back to lexical
-      tail.push(path.basename(cur));
-      cur = parent;
+    } catch (realErr: unknown) {
+      // Only a clean ENOENT ("this prefix does not exist yet") lets us keep walking up. Any other
+      // realpath error — EACCES, ELOOP (symlink loop), EIO, ENOTDIR — is NOT safely resolvable, so
+      // fail closed rather than reconstruct an unchecked lexical path.
+      if ((realErr as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+        throw new Error(`coordinator-policy: unresolvable path (${(realErr as NodeJS.ErrnoException)?.code ?? 'unknown'}) ${prefix}`);
+      }
+      // ENOENT from realpath: does this exact prefix still EXIST on disk? A dangling symlink is
+      // ENOENT to realpath but present to lstat (which does not follow the final link). If it
+      // exists, it is dangling/unresolvable — fail closed instead of re-appending past it.
+      let exists = false;
+      let lstatErr: unknown = null;
+      try { fs.lstatSync(prefix); exists = true; } catch (e) { lstatErr = e; }
+      if (exists) throw new Error(`coordinator-policy: unresolvable path component ${prefix}`);
+      if ((lstatErr as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+        throw new Error(`coordinator-policy: unstattable path (${(lstatErr as NodeJS.ErrnoException)?.code ?? 'unknown'}) ${prefix}`);
+      }
+      tail.push(segs[i - 1]); // truly absent → keep walking up
     }
   }
+  return abs; // nothing on the path existed — lexical absolute (won't be under an existing memoryDir)
 }
 
 /** True when `target` resolves to a path strictly inside `dir` (not `dir` itself). Resolves BOTH
@@ -100,6 +115,12 @@ function realResolve(p: string): string {
  *  ancestor can slip a path that only *textually* starts with `dir` past the containment check.
  *  Fails closed (returns false) when either side is unresolvable (dangling symlink / loop). */
 function isUnder(dir: string, target: string): boolean {
+  // Reject ANY `..` segment in the raw target outright. After a symlink, `..` is resolved
+  // differently by realpathSync (lexically, to the link's own parent) than by the kernel at write
+  // time (to the link TARGET's parent), so `mem/link/../escape` can pass a realpath-based check yet
+  // write OUTSIDE the memory dir. A coordinator's own memory path never needs `..`; deny it rather
+  // than trust either resolution to agree with the eventual write.
+  if (target.split(/[/\\]/).includes('..')) return false;
   let rd: string;
   let rt: string;
   try {

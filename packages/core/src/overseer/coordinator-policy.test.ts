@@ -229,6 +229,38 @@ describe('makeCoordinatorPolicy dangling symlink / loop — M1 residual (F1)', (
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it('denies a `..` traversal that follows a symlink out of the memory dir (Astra verify #2)', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'covsymdd-'));
+    try {
+      const mem = path.join(tmp, 'mem');
+      fs.mkdirSync(mem);
+      const outsideDir = path.join(tmp, 'repo', 'subdir');
+      fs.mkdirSync(outsideDir, { recursive: true });
+      fs.symlinkSync(outsideDir, path.join(mem, 'link')); // mem/link -> tmp/repo/subdir (exists)
+      const policy = makeCoordinatorPolicy(mem);
+      // Build the path by raw concatenation — path.join would collapse the `..` lexically before
+      // the policy ever sees it. On disk mem/link/../victim.ts resolves to tmp/repo/victim.ts,
+      // OUTSIDE mem. A lexical path.resolve would wrongly fold it to mem/victim.ts and allow it.
+      const attack = `${mem}${path.sep}link${path.sep}..${path.sep}victim.ts`;
+      expect(policy('Write', { file_path: attack }).allow).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed on a symlink LOOP (non-ENOENT realpath error, Astra verify #3)', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'covloop-'));
+    try {
+      const mem = path.join(tmp, 'mem');
+      fs.mkdirSync(mem);
+      fs.symlinkSync(path.join(mem, 'loop'), path.join(mem, 'loop')); // mem/loop -> mem/loop (ELOOP)
+      const policy = makeCoordinatorPolicy(mem);
+      expect(policy('Write', { file_path: path.join(mem, 'loop', 'x.md') }).allow).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('makeCoordinatorPolicy unverifiable change — F3', () => {

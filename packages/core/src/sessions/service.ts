@@ -30,6 +30,7 @@ import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, find
 import { resolveTranscriptPath } from './transcript-path.js';
 import { randomUUID } from 'crypto';
 import { isAgentType, type AgentType } from '../providers/agent-types.js';
+import { COORDINATOR_CAPABLE_HARNESSES } from '../providers/capabilities.js';
 import { writeGrokHome, type McpServerEntry } from '../providers/grok-home.js';
 import { writeOpencodeConfig } from '../providers/opencode-config.js';
 import { OPENCODE_DEFAULT_MODEL } from '../providers/opencode.js';
@@ -1855,6 +1856,24 @@ export class SessionService {
     const runnerPrompt: string | undefined =
       config.runner && typeof config.runnerPrompt === 'string' ? config.runnerPrompt : undefined;
 
+    // A coordinator's persona AND its enforcement membrane (coordinatorToolPolicy) are honored ONLY
+    // by a coordinator-CAPABLE harness's structured manager (claude-code / codex — see
+    // COORDINATOR_CAPABLE_HARNESSES; Grok/OpenCode ACP ignore toolPolicy, and a `shell` never has a
+    // membrane at all). Fail closed for ANY coordinator that is not a capable harness running
+    // governed structured transport — otherwise it would spawn ungoverned (a raw PTY with
+    // --dangerously-bypass-approvals-and-sandbox, or an ACP thread that never consults the policy).
+    // Checked HERE, before the shell branch and before composeInjection writes a per-thread MCP file,
+    // so a refused spawn leaves nothing behind; callers (createTerminal/relaunchTerminal/restore/ws)
+    // catch this and surface the error.
+    if (
+      config.role === 'coordinator' &&
+      !(COORDINATOR_CAPABLE_HARNESSES.has(terminal.type) && config.transport === 'structured' && this.structuredManagerFor(terminal.type))
+    ) {
+      throw new Error(
+        `refusing to spawn coordinator ${terminal.id} (${terminal.type}) without a governed coordinator-capable structured transport`,
+      );
+    }
+
     let command: string;
     let args: string[];
     /** Set when this provider names its own session — persisted only after a live pid. */
@@ -1877,18 +1896,6 @@ export class SessionService {
       }
     } else {
       const provider = getProvider(terminal.type);
-      // A coordinator's persona AND its enforcement membrane (coordinatorToolPolicy) live ONLY in
-      // the structured manager's can_use_tool / handleApproval path. If we cannot spawn it
-      // structured (e.g. DISPATCH_CODEX_PRETTY=0 leaves no codex manager registered), we must NOT
-      // fall through to the PTY path below — that adds --dangerously-bypass-approvals-and-sandbox
-      // and drops both the persona and the membrane, so the coordinator would run UNGOVERNED. Fail
-      // closed HERE, before composeInjection writes a per-thread MCP file, so a refused spawn leaves
-      // nothing behind; relaunchTerminal/createTerminal catch this and surface the error.
-      if (config.role === 'coordinator' && !(config.transport === 'structured' && this.structuredManagerFor(terminal.type))) {
-        throw new Error(
-          `refusing to spawn coordinator ${terminal.id} (${terminal.type}) without governed structured transport`,
-        );
-      }
       const specs: McpServerSpec[] = [];
       const prompts: string[] = [];
       const sec = this.secretsServerSpec?.();

@@ -77,7 +77,7 @@ afterEach(() => {
 describe('coordinator PTY-bypass guard (B2)', () => {
   it('spawnTerminal throws for a coordinator when no governed structured transport exists', () => {
     seed('t1', { type: 'codex', config: { role: 'coordinator', transport: 'structured' } });
-    expect(() => (svc as any).spawnTerminal('t1')).toThrow(/coordinator .* governed structured/i);
+    expect(() => (svc as any).spawnTerminal('t1')).toThrow(/coordinator-capable structured/i);
     expect(pty.spawns).toEqual([]); // never fell through to the ungoverned PTY path
   });
 
@@ -93,6 +93,20 @@ describe('coordinator PTY-bypass guard (B2)', () => {
     seed('t2', { type: 'codex', config: { transport: 'structured' } }); // no role
     (svc as any).spawnTerminal('t2');
     expect(pty.spawns).toEqual(['t2']); // ordinary threads keep the PTY fallback
+  });
+
+  it('refuses a coordinator on a NON-capable harness (grok/opencode ACP ignore toolPolicy) (Astra verify #1)', () => {
+    // Grok (ACP) is not in COORDINATOR_CAPABLE_HARNESSES — its manager never consults toolPolicy —
+    // so a grok coordinator must be refused regardless of any manager registration.
+    seed('tg', { type: 'grok', config: { role: 'coordinator', transport: 'structured' } });
+    expect(() => (svc as any).spawnTerminal('tg')).toThrow(/coordinator .* coordinator-capable/i);
+    expect(pty.spawns).toEqual([]);
+  });
+
+  it('refuses a shell coordinator (bypassed the old else-branch guard)', () => {
+    seed('ts', { type: 'shell', config: { role: 'coordinator' } });
+    expect(() => (svc as any).spawnTerminal('ts')).toThrow(/coordinator .* coordinator-capable/i);
+    expect(pty.spawns).toEqual([]);
   });
 
   it('switchTransport refuses to move a coordinator to PTY (409, thread left intact)', async () => {
