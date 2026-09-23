@@ -1683,14 +1683,20 @@ export class SessionService {
    * coordinator already exists, else spawns a new one labelled "Overseer" via the
    * normal createTerminal path. Idempotent (one per project).
    *
-   * `opts` (model, workerHarness) apply ONLY on create. They are ignored when an
-   * existing coordinator is found: the setup card that supplies these options
-   * only shows when no coordinator exists yet, so in the normal flow they don't
-   * arrive on a find-existing call. A cross-client race (two callers hitting this
-   * at once) CAN still deliver opts alongside a find-existing outcome — that is
-   * fine, since ignoring them here is the intended behavior either way.
+   * `opts` (model, workerHarness, coordinatorHarness) apply ONLY on create. They are ignored
+   * when an existing coordinator is found: the setup card that supplies these options only
+   * shows when no coordinator exists yet, so in the normal flow they don't arrive on a
+   * find-existing call. A cross-client race (two callers hitting this at once) CAN still
+   * deliver opts alongside a find-existing outcome — that is fine, since ignoring them here
+   * is the intended behavior either way.
+   *
+   * `coordinatorHarness` picks WHICH harness backs the coordinator itself (defaults to
+   * claude-code, Phase 1's only option) — distinct from `workerHarness`, which picks the
+   * default harness for AGENTS the coordinator spawns. The route validates it against the
+   * `coordinator` capability (see providers/capabilities.ts) before this is ever called, so
+   * by the time it lands here it is trusted.
    */
-  ensureCoordinator(sessionId: string, opts: { model?: string; workerHarness?: AgentType } = {}): terminalsDb.Terminal {
+  ensureCoordinator(sessionId: string, opts: { model?: string; workerHarness?: AgentType; coordinatorHarness?: AgentType } = {}): terminalsDb.Terminal {
     const session = sessionsDb.getById(this.db, sessionId);
     if (!session) throw new Error('Session not found');
 
@@ -1705,7 +1711,7 @@ export class SessionService {
 
     return this.createTerminal(
       sessionId,
-      'claude-code',
+      opts.coordinatorHarness ?? 'claude-code',
       'Overseer',
       undefined,
       undefined,

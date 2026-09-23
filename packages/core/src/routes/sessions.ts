@@ -72,13 +72,21 @@ export function createSessionsRouter(sessionService: SessionService, broadcaster
   const ensureCoordinator = (req: import('express').Request, res: import('express').Response) => {
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
-      const opts: { model?: string; workerHarness?: import('../providers/agent-types.js').AgentType } = {};
+      const opts: { model?: string; workerHarness?: import('../providers/agent-types.js').AgentType; coordinatorHarness?: import('../providers/agent-types.js').AgentType } = {};
       if (typeof body.model === 'string' && body.model.trim()) opts.model = body.model.trim();
       if (body.workerHarness !== undefined) {
         if (typeof body.workerHarness !== 'string' || !isAgentType(body.workerHarness)) {
           return res.status(400).json({ error: 'workerHarness must be one of the agent harness types' });
         }
         opts.workerHarness = body.workerHarness;
+      }
+      if (body.coordinatorHarness !== undefined) {
+        const coordinatorCapable = typeof body.coordinatorHarness === 'string' && isAgentType(body.coordinatorHarness)
+          && harnessCapabilities().find((h) => h.type === body.coordinatorHarness)?.capabilities.coordinator === true;
+        if (!coordinatorCapable) {
+          return res.status(400).json({ error: 'coordinatorHarness must be an agent harness type with coordinator capability (claude-code or codex)' });
+        }
+        opts.coordinatorHarness = body.coordinatorHarness as import('../providers/agent-types.js').AgentType;
       }
       const terminal = sessionService.ensureCoordinator(req.params.id, opts);
       broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: req.params.id });
