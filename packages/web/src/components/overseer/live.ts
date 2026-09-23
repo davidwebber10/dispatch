@@ -25,6 +25,11 @@ import {
   type StreamMessage,
   type ThreadStatus,
 } from './types';
+// The wire harness types (claude-code/codex/grok/opencode) — mirrors the daemon's
+// isAgentType (packages/core/src/providers/agent-types.ts). Aliased: this module already
+// has its own AGENT_TYPES (the role enum: planner/implementer/…) for a different axis
+// (what KIND of agent), while this one is which CLI backs the terminal.
+import { AGENT_TYPES as HARNESS_TYPES } from '../../lib/harnesses';
 
 /** Per-terminal live status (mirrors stores/threadStatus.ThreadStatus). */
 export interface LiveStatus {
@@ -95,7 +100,7 @@ function lastActiveMs(t: Terminal): number {
  * isManagedWorker, which additionally rejects archived rows.
  */
 export function isStructuredWorker(t: Terminal): boolean {
-  if (t.type !== 'claude-code') return false;
+  if (!HARNESS_TYPES.includes(t.type)) return false;
   const c = t.config ?? {};
   return c.transport === 'structured' && c.role !== 'coordinator';
 }

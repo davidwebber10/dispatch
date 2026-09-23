@@ -17,4 +17,19 @@ describe('harness capability registry', () => {
     expect(harnessCapabilities().find(h => h.type === 'grok')).toMatchObject({ capabilities: { telemetry: { pty: false }, resume: false } });
     expect(harnessCapabilities().find(h => h.type === 'claude-code')).toMatchObject({ capabilities: { telemetry: { pty: true }, resume: true } });
   });
+  it('flags coordinator capability true only for claude-code and codex', () => {
+    const byType = Object.fromEntries(harnessCapabilities().map(h => [h.type, h.capabilities.coordinator]));
+    expect(byType['claude-code']).toBe(true);
+    expect(byType['codex']).toBe(true);
+    expect(byType['grok']).toBe(false);
+    expect(byType['opencode']).toBe(false);
+    expect(byType['shell']).toBe(false);
+  });
+  it('denies coordinator capability when the harness structured transport is disabled, even for codex', () => {
+    vi.stubEnv('DISPATCH_CODEX_PRETTY', '0');
+    const byType = Object.fromEntries(harnessCapabilities().map(h => [h.type, h.capabilities.coordinator]));
+    expect(byType['codex']).toBe(false);
+    // claude-code has no disable knob, so it stays structured and coordinator-capable.
+    expect(byType['claude-code']).toBe(true);
+  });
 });

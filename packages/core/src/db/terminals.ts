@@ -126,13 +126,21 @@ export function listQueuedDependents(db: Database.Database, agentId: string): Te
 /**
  * Cross-session lookup for the boot kickstart: every non-archived claude-code
  * terminal left in `status='working'`. At boot that status is the interrupted
- * signal — a thread that died mid-turn (clean shutdown skips the settle-to-waiting
- * write, and clearStalePids only touches sessions). The caller filters to
+ * signal — a thread that died mid-turn (a crash never settles it; a graceful
+ * shutdown's manager kills DO settle it, so SessionService.shutdownPreservingInterruptedTurns
+ * writes `working` back; clearStalePids only touches sessions). The caller filters to
  * structured overseer threads and applies idempotency.
+ *
+ * Scoped to the harnesses whose idempotency check has a local record of the turn to read:
+ * claude-code (its JSONL transcript — transcriptTailStatus) and codex (its rollout file —
+ * codexRolloutTailStatus). Grok/OpenCode have no such local record, so there is no safe way to
+ * tell "already kicked, nothing new happened" from "still genuinely stuck" for them; they are
+ * left out of the proactive boot nudge and rely on `SessionService.ensureStructuredAlive`
+ * (revive-on-open). See coordinator-restart.test.ts.
  */
 export function listWorkingStructured(db: Database.Database): TerminalRow[] {
   return db.prepare(
-    "SELECT * FROM terminals WHERE status = 'working' AND archived_at IS NULL AND type = 'claude-code'",
+    "SELECT * FROM terminals WHERE status = 'working' AND archived_at IS NULL AND type IN ('claude-code', 'codex')",
   ).all() as TerminalRow[];
 }
 

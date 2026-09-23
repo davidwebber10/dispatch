@@ -11,6 +11,9 @@ export interface SecretsMcpInjection {
   claudeConfigPath?: string | null;
   codexArgs?: string[];
   systemPrompt?: string | null;
+  /** Codex STRUCTURED only: the same MCP servers as per-thread thread/start `config` entries
+   *  (see composeInjection) — the shared app-server's argv cannot carry per-thread identity. */
+  codexThreadConfig?: Record<string, unknown>;
 }
 
 /**

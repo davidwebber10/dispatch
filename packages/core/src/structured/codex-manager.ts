@@ -27,6 +27,7 @@ import type {
   StatusDeclaration,
 } from './manager.js';
 import { CodexTranslator, buildApprovalResponse, type ApprovalMethod, type TranslatedAction } from './codex-translate.js';
+import { adaptForPolicy } from '../overseer/policy-adapter.js';
 
 const MAX_EVENTS = 5000;
 
@@ -159,6 +160,28 @@ interface CodexSession {
   model?: string;
   cwd: string;
   resumeId?: string;
+  /** The thread's persona (+ peer/tools block), sent as `developerInstructions` on `thread/start`
+   *  (see StructuredSpawnOpts.systemPrompt). Also resent on `thread/resume`, but codex-cli 0.156.1
+   *  ignores it there — a resumed thread keeps the persona from its own history (see startThread). */
+  systemPrompt?: string;
+  /** Optional per-session tool policy consulted before the escalate/auto-allow membrane; a
+   *  deny is written straight back to Codex (no pending, no human involvement) — same
+   *  contract as the Claude manager's Session.toolPolicy (see manager.ts). */
+  toolPolicy?: (toolName: string, input: unknown) => { allow: true } | { allow: false; message: string };
+  /** Per-spawn override of the manager-wide approval/sandbox default (see StructuredSpawnOpts
+   *  and CodexManagerOptions) — undefined falls back to `this.approvalPolicy`/`this.sandbox`.
+   *  Carried on BOTH a fresh `thread/start` and a crash-recovery `thread/resume` so a governed
+   *  (e.g. coordinator) thread never silently reverts to the manager default after the shared
+   *  app-server child restarts. */
+  approvalPolicy?: 'untrusted' | 'on-request' | 'never';
+  sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+  /** Per-thread config overrides (StructuredSpawnOpts.threadConfig) — the thread's own MCP
+   *  identity. Sent on thread/start AND thread/resume, because crash recovery resumes every live
+   *  thread on a FRESH app-server, which must start this thread's MCP servers again. */
+  threadConfig?: Record<string, unknown>;
+  /** toolUseId → the policy reason a governed thread's approval was declined with, until Codex's
+   *  own completion of that item arrives (see declineWithReason / withDenyReason). */
+  deniedReasons: Map<string, string>;
   /** Resolves once thread/start|resume has assigned a threadId; sends chain on it. */
   ready: Promise<void>;
   /**
@@ -170,9 +193,23 @@ interface CodexSession {
   declared?: StatusDeclaration;
 }
 
-/** Approval policy + sandbox the manager starts every thread with. Defaults are permissive
- *  enough for real work (workspace writes allowed) while still routing escalations through the
- *  membrane; the E2E harness passes `read-only` to force an approval deterministically. */
+/** Approval policy + sandbox the manager starts every thread with, UNLESS a spawn overrides them
+ *  per-thread (see StructuredSpawnOpts.approvalPolicy/sandbox, consulted in startThread below —
+ *  e.g. service.ts pins a codex COORDINATOR thread to `'on-request'`/`'read-only'` regardless of
+ *  this manager-wide default, so the Task 5 enforcement membrane actually fires on it). Defaults
+ *  are permissive enough for real work (workspace writes allowed) while still routing
+ *  escalations through the membrane; the E2E harness passes `read-only` to force an approval
+ *  deterministically.
+ *
+ *  Wire literals verified against the REAL installed `codex app-server` (codex-cli 0.155.1):
+ *  live probe (thread/start accepted `approvalPolicy: 'on-request'` + `sandbox: 'read-only'`,
+ *  and a `git commit` under that pair surfaced a real `item/commandExecution/requestApproval`
+ *  ServerRequest before the read-only sandbox itself blocked the write) AND `codex app-server
+ *  generate-ts`'s own protocol bindings (`AskForApproval` = `'untrusted' | 'on-request' |
+ *  { granular: {...} } | 'never'`; `SandboxMode` = `'read-only' | 'workspace-write' |
+ *  'danger-full-access'`) — both confirm the literals below (including `'untrusted'`, which an
+ *  earlier task brief mistakenly flagged for renaming to a camelCase form the CLI does not
+ *  actually accept) are exactly right; nothing here needed correcting. */
 export interface CodexManagerOptions {
   approvalPolicy?: 'untrusted' | 'on-request' | 'never';
   sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
@@ -197,6 +234,17 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
   setDefaultEnv(env: Record<string, string>): void { this.defaultEnv = env; }
 
   spawn(terminalId: string, opts: StructuredSpawnOpts): number {
+    // One native thread, one live owner. codex-cli (0.156.1, live-verified) ACCEPTS a second
+    // thread/resume of a thread that is already loaded, and bindThread would then route that
+    // thread's notifications AND approvals to the newer terminal — which carries none of the
+    // owner's toolPolicy (a coordinator's membrane, bypassed). Checked before anything changes, so
+    // a refusal leaves the owner untouched; the owner itself may respawn (a revive).
+    if (opts.resumeId) {
+      const owner = this.ownerOf(opts.resumeId);
+      if (owner && owner !== terminalId) {
+        throw new Error(`Codex thread ${opts.resumeId} is already open in another Dispatch thread — close that one first`);
+      }
+    }
     if (this.sessions.has(terminalId)) this.kill(terminalId);
     const conn = this.ensureConnection(opts);
     const session: CodexSession = {
@@ -210,6 +258,12 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
       cwd: opts.workDir,
       model: opts.model,
       resumeId: opts.resumeId,
+      systemPrompt: opts.systemPrompt,
+      toolPolicy: opts.toolPolicy,
+      approvalPolicy: opts.approvalPolicy,
+      sandbox: opts.sandbox,
+      threadConfig: opts.threadConfig,
+      deniedReasons: new Map(),
       ready: Promise.resolve(),
     };
     if (opts.seedEvents?.length) {
@@ -224,7 +278,9 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     return conn.pid;
   }
 
-  /** Lazily create the ONE shared app-server connection (first spawn wins its command/env). */
+  /** Lazily create the ONE shared app-server connection (first spawn wins its command/env — which
+   *  is why nothing thread-specific may ride them: each thread's own MCP identity travels in its
+   *  thread/start + thread/resume `config` instead; see CodexSession.threadConfig). */
   private ensureConnection(opts: StructuredSpawnOpts): CodexConnection {
     if (this.conn?.alive) return this.conn;
     const env = { ...process.env, ...this.defaultEnv, ...opts.env } as Record<string, string>;
@@ -245,15 +301,37 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
   private async startThread(session: CodexSession, conn: CodexConnection): Promise<void> {
     await conn.ready;
     if (session.resumeId) {
-      const res = await conn.request('thread/resume', { threadId: session.resumeId, cwd: session.cwd, model: session.model ?? null });
+      const res = await conn.request('thread/resume', {
+        threadId: session.resumeId,
+        cwd: session.cwd,
+        model: session.model ?? null,
+        // Carry a governed thread's per-spawn override through crash recovery too — otherwise a
+        // coordinator resumed after the shared app-server child restarts would silently fall
+        // back to the manager-wide default (see CodexSession.approvalPolicy/sandbox doc comment).
+        approvalPolicy: session.approvalPolicy ?? this.approvalPolicy,
+        sandbox: session.sandbox ?? this.sandbox,
+        ...governedReviewer(session),
+        ...threadConfigParam(session),
+        // Resent for completeness, but NOT load-bearing: live-verified on codex-cli 0.156.1,
+        // thread/resume accepts developerInstructions yet does not apply it to an existing
+        // thread. The persona given at thread/start lives in the thread's own history, and THAT
+        // is what survives a resume / crash recovery (codex-persona.contract.test.ts pins both).
+        // Consequence: a persona CHANGE only reaches a thread started fresh.
+        ...(session.systemPrompt ? { developerInstructions: session.systemPrompt } : {}),
+      });
       this.bindThread(session, res?.thread?.id ?? session.resumeId, res?.model);
       await this.backfill(session, conn, res?.thread?.turns).catch(() => { /* backfill is best-effort */ });
     } else {
       const res = await conn.request('thread/start', {
         cwd: session.cwd,
         model: session.model ?? null,
-        approvalPolicy: this.approvalPolicy,
-        sandbox: this.sandbox,
+        approvalPolicy: session.approvalPolicy ?? this.approvalPolicy,
+        sandbox: session.sandbox ?? this.sandbox,
+        ...governedReviewer(session),
+        ...threadConfigParam(session),
+        // TOP-LEVEL, camelCase — NOT `settings.developer_instructions` (the OpenAI-documented
+        // spelling is silently ignored by codex-cli; verified live on codex-cli 0.155.1).
+        ...(session.systemPrompt ? { developerInstructions: session.systemPrompt } : {}),
       });
       const threadId = res?.thread?.id;
       if (typeof threadId !== 'string' || !threadId) throw new Error('thread/start returned no threadId');
@@ -261,7 +339,20 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     }
   }
 
+  /** The terminal of the live session that owns `threadId` — bound to it, or resuming it. */
+  private ownerOf(threadId: string): string | undefined {
+    for (const s of this.sessions.values()) {
+      if (s.threadId === threadId || s.resumeId === threadId) return s.terminalId;
+    }
+    return undefined;
+  }
+
   private bindThread(session: CodexSession, threadId: string, model?: string): void {
+    // Backstop for spawn()'s ownership check: never re-point a thread another live session owns.
+    const owner = this.threadToTerminal.get(threadId);
+    if (owner && owner !== session.terminalId && this.sessions.has(owner)) {
+      throw new Error(`Codex thread ${threadId} is already open in another Dispatch thread`);
+    }
     session.threadId = threadId;
     if (model) session.model = model;
     this.threadToTerminal.set(threadId, session.terminalId);
@@ -352,7 +443,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     for (const action of actions) {
       switch (action.kind) {
         case 'event':
-          this.pushEvent(session, action.event);
+          this.pushEvent(session, this.withDenyReason(session, action.event));
           break;
         case 'session':
           if (!session.sessionId) { session.sessionId = action.sessionId; this.emit('session', session.terminalId, action.sessionId); }
@@ -412,10 +503,37 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     }
   }
 
-  /** The escalate/auto-allow membrane (identical policy to the Claude manager): surface a gated
-   *  approval as a pending Need when supervised (or it's the always-surface AskUserQuestion
-   *  analogue), else auto-approve it so an autonomous thread never blocks. */
+  /** The escalate/auto-allow membrane (identical policy to the Claude manager): consult the
+   *  session's toolPolicy first (a deny answers the ServerRequest immediately — no pending, no
+   *  human involvement, same as the Claude manager's can_use_tool deny path); otherwise surface
+   *  a gated approval as a pending Need when supervised (or it's the always-surface
+   *  AskUserQuestion analogue), else auto-approve it so an autonomous thread never blocks. */
   private handleApproval(session: CodexSession, action: Extract<TranslatedAction, { kind: 'approval' }>): void {
+    // A governed (coordinator) thread must NEVER be allowed to grant itself expanded sandbox
+    // permissions: `item/permissions/requestApproval` is Codex's own self-escalation surface —
+    // the model asking to widen ITS OWN approval/sandbox — and `coordinatorToolPolicy` has no
+    // opinion on the unmapped 'Permissions' tool name (adaptForPolicy passes it through
+    // unchanged, and the policy's default branch is `allow: true`), so left to the policy below
+    // this would auto-grant exactly what the model asked for. This check is therefore a
+    // hardcoded deny whenever ANY toolPolicy is set — governed means never self-escalate,
+    // independent of what the policy itself would say — decided before the policy consult and
+    // before the escalate/auto-allow membrane ever sees it. No pending, no human involvement,
+    // same in-turn-decline contract as a policy deny below.
+    if (session.toolPolicy && action.method === 'item/permissions/requestApproval') {
+      // Generic wording: this guard covers EVERY governed thread (coordinator or role run).
+      this.declineWithReason(session, action, 'Dispatch policy: a governed thread cannot change its own sandbox or approval permissions — hand work that needs elevated access to an agent or a human.', { pairToolUse: true });
+      return;
+    }
+    // AskUserQuestion's Codex analogue can't be auto-answered with a real decision — same
+    // exemption the Claude manager gives AskUserQuestion — so it never runs through the policy.
+    if (!action.alwaysSurface && session.toolPolicy) {
+      const adapted = adaptForPolicy('codex', { toolName: action.pending.toolName, input: action.pending.input });
+      const verdict = session.toolPolicy(adapted.toolName, adapted.input);
+      if (!verdict.allow) {
+        this.declineWithReason(session, action, verdict.message, { pairToolUse: false });
+        return;
+      }
+    }
     if (session.escalate || action.alwaysSurface) {
       session.pending = action.pending;
       session.pendingApproval = { method: action.method, requestId: action.requestId };
@@ -423,6 +541,48 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     } else {
       this.conn?.respond(action.requestId, action.autoApprove);
     }
+  }
+
+  /**
+   * Answer an approval with a policy decline, in-turn: no pending, no 'permission' emit, no human.
+   * Codex's decline envelope carries no message field (see buildApprovalResponse), so Codex never
+   * learns WHY — inject the reason as a synthetic tool_result paired to the tool_use by toolUseId,
+   * so the coordinator/transcript sees it. Codex later completes the same item itself (status
+   * 'declined', no output), and the chat pairs results LAST-wins, so the reason is remembered and
+   * re-applied to that completion too (see applyActions). `pairToolUse` emits the tool_use first
+   * for a request with no tool item of its own (a permissions escalation), so the result is never
+   * an orphan row.
+   */
+  private declineWithReason(
+    session: CodexSession,
+    action: Extract<TranslatedAction, { kind: 'approval' }>,
+    message: string,
+    opts: { pairToolUse: boolean },
+  ): void {
+    this.conn?.respond(action.requestId, buildApprovalResponse(action.method, { behavior: 'deny', message }, action.pending));
+    const toolUseId = action.pending.toolUseId;
+    if (opts.pairToolUse) {
+      this.pushEvent(session, {
+        type: 'assistant',
+        message: { role: 'assistant', content: [{ type: 'tool_use', id: toolUseId, name: action.pending.toolName, input: action.pending.input }] },
+      });
+    }
+    if (toolUseId) session.deniedReasons.set(toolUseId, message);
+    this.pushEvent(session, {
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: message, is_error: true }] },
+    });
+  }
+
+  /** Re-apply a remembered policy-deny reason to Codex's own later tool_result for the same
+   *  tool (its declined completion has no output), so the reason is what the chat keeps. */
+  private withDenyReason(session: CodexSession, event: unknown): unknown {
+    const block = (event as any)?.type === 'user' ? (event as any).message?.content?.[0] : undefined;
+    if (!block || block.type !== 'tool_result') return event;
+    const reason = session.deniedReasons.get(block.tool_use_id);
+    if (reason === undefined) return event;
+    session.deniedReasons.delete(block.tool_use_id);
+    return { ...(event as any), message: { ...(event as any).message, content: [{ ...block, content: reason, is_error: true }] } };
   }
 
   private pushEvent(session: CodexSession, event: unknown): void {
@@ -533,6 +693,23 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
   }
 
   killAll(): void { for (const id of [...this.sessions.keys()]) this.kill(id); }
+}
+
+/**
+ * A governed thread (any toolPolicy — a coordinator or a role run) pins Codex's approval reviewer
+ * to `user`, i.e. the client: Dispatch. Otherwise `approvals_reviewer = "auto_review"` (or
+ * `"guardian_subagent"`) in the user's config.toml would let Codex answer a sandbox escape with its
+ * OWN reviewer, and the request would never reach handleApproval — the membrane would be skipped.
+ * An ungoverned thread keeps whatever the user's Codex config says. Live-verified on codex-cli
+ * 0.156.1: thread/start accepts `approvalsReviewer: 'user'` and echoes it back.
+ */
+function governedReviewer(session: CodexSession): { approvalsReviewer?: 'user' } {
+  return session.toolPolicy ? { approvalsReviewer: 'user' } : {};
+}
+
+/** The thread's own `config` overrides (its MCP identity), or nothing when it has none. */
+function threadConfigParam(session: CodexSession): { config?: Record<string, unknown> } {
+  return session.threadConfig && Object.keys(session.threadConfig).length ? { config: session.threadConfig } : {};
 }
 
 /** Map a Claude turn payload (string or content blocks) to Codex UserInput[]. */

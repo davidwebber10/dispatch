@@ -20,16 +20,17 @@ import type { StatusHooksInjection } from '../providers/types.js';
 import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
 import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript.js';
 import { parseCodexRollout } from '../conversation/codex-transcript.js';
-import { findCodexRolloutPath } from './codex-sessions.js';
+import { findCodexRolloutPath, codexRolloutTailStatus } from './codex-sessions.js';
 import { platform } from '../platform/index.js';
 import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.js';
 import { resolveSpawnModel, isClaudeTierAlias } from '../overseer/spawn-model.js';
-import { COORDINATOR_DISALLOWED_TOOLS, coordinatorToolPolicy } from '../overseer/coordinator-policy.js';
+import { COORDINATOR_DISALLOWED_TOOLS, coordinatorMemoryDirFor, makeCoordinatorPolicy } from '../overseer/coordinator-policy.js';
 import { roleToolPolicy } from '../roles/role-policy.js';
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
 import { resolveTranscriptPath } from './transcript-path.js';
 import { randomUUID } from 'crypto';
 import { isAgentType, type AgentType } from '../providers/agent-types.js';
+import { COORDINATOR_CAPABLE_HARNESSES } from '../providers/capabilities.js';
 import { writeGrokHome, type McpServerEntry } from '../providers/grok-home.js';
 import { writeOpencodeConfig } from '../providers/opencode-config.js';
 import { OPENCODE_DEFAULT_MODEL } from '../providers/opencode.js';
@@ -63,6 +64,14 @@ function transportError(status: number, message: string): Error & { status: numb
 const KICKSTART_CONTINUE_PROMPT =
   '⚙️ Dispatch restarted and interrupted you mid-task — re-read your last steps above and continue your ' +
   'mission from where you left off. If you had already finished, briefly say so instead of redoing work.';
+
+/** The boot kickstart resumes only structured overseer threads: the coordinator and its typed agents. */
+function isKickstartCandidate(config: Record<string, any>): boolean {
+  return config.transport === 'structured' && (config.role === 'coordinator' || config.role === 'agent');
+}
+
+/** The MCP server name every eligible thread gets its Dispatch (agency) tools under. */
+const AGENCY_MCP_SERVER = 'dispatch';
 
 /**
  * The one-file recovery decision, pure for testability: adopt the project dir's single
@@ -1013,6 +1022,12 @@ export class SessionService {
   ): { transport: 'structured' | 'pty'; droppedNonText: boolean } {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) throw new Error('Thread not found');
+    // A shell tab has no agent to read a message: text typed into it RUNS AS A COMMAND, with the
+    // daemon user's full rights and outside any coordinator's sandbox. message_thread,
+    // message_agent, and spawn_agent all arrive here, so refuse it for every caller.
+    if (terminal.type === 'shell') {
+      throw new Error('cannot message a shell tab: it has no agent, so the text would run as a command');
+    }
 
     if (this.isStructuredTerminal(terminal)) {
       this.sendStructuredMessage(terminalId, content, source);
@@ -1561,6 +1576,12 @@ export class SessionService {
 
     let config: Record<string, any> = {};
     try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
+    // A coordinator's persona + enforcement membrane live only in the structured (Pretty)
+    // transport; the PTY path runs ungoverned. Refuse to switch a coordinator to PTY (reject
+    // BEFORE any teardown, so the thread is left intact) — see spawnTerminal's fail-closed guard.
+    if (target === 'pty' && config.role === 'coordinator') {
+      throw transportError(409, 'A coordinator must stay on Pretty transport — it cannot run as a PTY thread');
+    }
     const current: 'structured' | 'pty' = config.transport === 'structured' ? 'structured' : 'pty';
     if (current === target) return terminalsDb.rowToTerminal(terminal); // already there — idempotent
 
@@ -1683,14 +1704,20 @@ export class SessionService {
    * coordinator already exists, else spawns a new one labelled "Overseer" via the
    * normal createTerminal path. Idempotent (one per project).
    *
-   * `opts` (model, workerHarness) apply ONLY on create. They are ignored when an
-   * existing coordinator is found: the setup card that supplies these options
-   * only shows when no coordinator exists yet, so in the normal flow they don't
-   * arrive on a find-existing call. A cross-client race (two callers hitting this
-   * at once) CAN still deliver opts alongside a find-existing outcome — that is
-   * fine, since ignoring them here is the intended behavior either way.
+   * `opts` (model, workerHarness, coordinatorHarness) apply ONLY on create. They are ignored
+   * when an existing coordinator is found: the setup card that supplies these options only
+   * shows when no coordinator exists yet, so in the normal flow they don't arrive on a
+   * find-existing call. A cross-client race (two callers hitting this at once) CAN still
+   * deliver opts alongside a find-existing outcome — that is fine, since ignoring them here
+   * is the intended behavior either way.
+   *
+   * `coordinatorHarness` picks WHICH harness backs the coordinator itself (defaults to
+   * claude-code, Phase 1's only option) — distinct from `workerHarness`, which picks the
+   * default harness for AGENTS the coordinator spawns. The route validates it against the
+   * `coordinator` capability (see providers/capabilities.ts) before this is ever called, so
+   * by the time it lands here it is trusted.
    */
-  ensureCoordinator(sessionId: string, opts: { model?: string; workerHarness?: AgentType } = {}): terminalsDb.Terminal {
+  ensureCoordinator(sessionId: string, opts: { model?: string; workerHarness?: AgentType; coordinatorHarness?: AgentType } = {}): terminalsDb.Terminal {
     const session = sessionsDb.getById(this.db, sessionId);
     if (!session) throw new Error('Session not found');
 
@@ -1705,7 +1732,7 @@ export class SessionService {
 
     return this.createTerminal(
       sessionId,
-      'claude-code',
+      opts.coordinatorHarness ?? 'claude-code',
       'Overseer',
       undefined,
       undefined,
@@ -1843,6 +1870,12 @@ export class SessionService {
     const runnerPrompt: string | undefined =
       config.runner && typeof config.runnerPrompt === 'string' ? config.runnerPrompt : undefined;
 
+    // Fail closed for a coordinator that cannot run governed — see assertCoordinatorGoverned.
+    // Checked HERE, before the shell branch and before composeInjection writes a per-thread MCP file,
+    // so a refused spawn leaves nothing behind; callers (createTerminal/relaunchTerminal/restore/ws)
+    // catch this and surface the error. spawnStructured re-checks it for the revive path.
+    this.assertCoordinatorGoverned(terminal, config);
+
     let command: string;
     let args: string[];
     /** Set when this provider names its own session — persisted only after a live pid. */
@@ -1940,7 +1973,28 @@ export class SessionService {
    * conversation) and backfills the ring with prior history so the View isn't blank
    * after a daemon restart. Idempotent: a no-op when the thread is already alive.
    */
+  /**
+   * A coordinator's persona AND its enforcement membrane (coordinatorToolPolicy) are honored ONLY
+   * by a coordinator-CAPABLE harness's structured manager (claude-code / codex — see
+   * COORDINATOR_CAPABLE_HARNESSES; Grok/OpenCode ACP ignore toolPolicy, and a `shell` never has a
+   * membrane at all). Throws for ANY coordinator that is not a capable harness running governed
+   * structured transport — otherwise it would spawn ungoverned (a raw PTY with
+   * --dangerously-bypass-approvals-and-sandbox, or an ACP thread that never consults the policy).
+   *
+   * Called from BOTH spawn doors: spawnTerminal (create / relaunch / restore / ws) and
+   * spawnStructured itself, because the revive path (ensureStructuredAlive) enters
+   * spawnStructured directly — a guard on only one door is no guard (review finding N2).
+   */
+  private assertCoordinatorGoverned(terminal: terminalsDb.TerminalRow, config: Record<string, any>): void {
+    if (config.role !== 'coordinator') return;
+    if (COORDINATOR_CAPABLE_HARNESSES.has(terminal.type) && config.transport === 'structured' && this.structuredManagerFor(terminal.type)) return;
+    throw new Error(
+      `refusing to spawn coordinator ${terminal.id} (${terminal.type}) without a governed coordinator-capable structured transport`,
+    );
+  }
+
   private spawnStructured(terminal: terminalsDb.TerminalRow, config: Record<string, any>, workDir: string): void {
+    this.assertCoordinatorGoverned(terminal, config);
     const manager = this.structuredManagerFor(terminal.type);
     if (!manager) throw new Error('structured transport not supported for this provider');
     if (manager.isAlive(terminal.id)) return; // already running — don't double-spawn
@@ -2019,14 +2073,17 @@ export class SessionService {
       // spawn: the CLI auto-approves those tools without a can_use_tool request, so the
       // membrane's coordinatorToolPolicy deny (below) never reaches them. Removal from the
       // toolset is the enforcement; the policy deny remains as a backstop.
-      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config), resumeSessionId, model: resolvedModel, grokPluginDir, disallowedTools: config.role === 'coordinator' ? COORDINATOR_DISALLOWED_TOOLS : undefined });
+      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config, terminal.type), resumeSessionId, model: resolvedModel, grokPluginDir, disallowedTools: config.role === 'coordinator' ? COORDINATOR_DISALLOWED_TOOLS : undefined });
       if (!built) throw new Error('structured transport not supported for this provider');
       sc = built;
     }
 
     // On resume, restore prior conversation from the claude transcript JSONL. Claude-only:
     // the Codex manager has no Claude transcript to read — it backfills its own history from
-    // `thread/resume`/`thread/read` (see CodexStructuredSessionManager.backfill).
+    // `thread/resume`/`thread/read` (see CodexStructuredSessionManager.backfill), driven by
+    // the `resumeId` field passed to manager.spawn below (set regardless of harness). Pinned
+    // in coordinator-restart.test.ts: a Codex resume carries `resumeId` and no seedEvents,
+    // even when a same-named claude transcript exists on disk.
     const rawSeedEvents = resumeSessionId && terminal.type === 'claude-code' ? readSessionBackfill(workDir, resumeSessionId) : undefined;
     // Merge back any durably-stored `source` tags (see db/message-source.ts) — the
     // transcript itself carries none, so a revived thread would otherwise lose the "via
@@ -2053,9 +2110,21 @@ export class SessionService {
     // roleAuthority is untyped at this call site (config: Record<string, any>); role-policy.ts
     // itself validates it and fails closed to 'observe' for anything it doesn't recognize, so the
     // `as never` cast here is safe — it defers validation, not skips it.
+    // ONE invariant, TWO consumers: a Codex coordinator runs the governed read-only + on-request
+    // sandbox (below), and BECAUSE of that every surfaced command approval is a sandbox-escape
+    // request the membrane must deny wholesale (commandsEscalate). Keying both off this single const
+    // keeps them from drifting apart — if a future change moves a Codex coordinator off read-only,
+    // both the sandbox override and the command-deny must change together. The same holds for MCP:
+    // an MCP tool runs outside the sandbox, so a sandboxed coordinator may call only Dispatch's own.
+    const codexCoordinator = terminal.type === 'codex' && config.role === 'coordinator';
     const toolPolicy =
       config.role === 'coordinator'
-        ? coordinatorToolPolicy
+        ? // A Claude coordinator has no sandbox — its Bash 'allow' just runs — so it keeps the
+          // denylist (commandsEscalate false) and its MCP tools. A Codex coordinator denies every
+          // escalated command and every MCP tool but Dispatch's own.
+          makeCoordinatorPolicy(coordinatorMemoryDirFor(terminal.type), codexCoordinator
+            ? { commandsEscalate: true, allowedMcpServers: [AGENCY_MCP_SERVER] }
+            : { commandsEscalate: false })
         : typeof config.roleAuthority === 'string'
           ? roleToolPolicy(config.roleAuthority as never)
           : undefined;
@@ -2075,7 +2144,7 @@ export class SessionService {
           dir: path.join(this.statusContext.hooksDir, 'opencode-homes', terminal.id),
           model: resolvedModel,
           escalate,
-          systemPrompt: [systemPromptFor(config), structuredMcp?.systemPrompt].filter(Boolean).join('\n\n') || undefined,
+          systemPrompt: [systemPromptFor(config, terminal.type), structuredMcp?.systemPrompt].filter(Boolean).join('\n\n') || undefined,
           mcpServers,
         });
         opencodeEnv = { OPENCODE_CONFIG: cfgPath };
@@ -2093,7 +2162,35 @@ export class SessionService {
       // ignores these); shared on the interface so this one call drives either manager.
       resumeId: resumeSessionId,
       model: resolvedModel,
-      env: { [TERMINAL_ID_ENV_VAR]: terminal.id, ...(opencodeEnv ?? {}) },
+      // Codex delivers this via thread/start's `developerInstructions` (see codex-manager.ts) — the
+      // ONLY per-thread prompt channel it has, so it must carry the persona AND the peer/tools
+      // block (structuredMcp.systemPrompt: roster, own id, secrets/tools note), exactly like the
+      // OpenCode join above. A per-thread developerInstructions also supersedes the app-server's
+      // global `-c developer_instructions` note, so leaving the block out would drop it. Only the
+      // Codex manager reads this field; Claude/Grok/OpenCode get theirs via argv/config paths.
+      systemPrompt: [systemPromptFor(config, terminal.type), structuredMcp?.systemPrompt].filter(Boolean).join('\n\n') || undefined,
+      // A codex COORDINATOR must run `on-request` + `read-only` (NOT the manager's default
+      // `workspace-write`) so the Task 5 enforcement membrane actually fires: under
+      // `workspace-write`, an in-workspace repo write / `git commit` / `git push` runs WITHOUT
+      // ever surfacing an approval, so handleApproval's toolPolicy gate (coordinatorToolPolicy)
+      // never sees exactly the actions it must deny. Read-only + on-request instead surfaces
+      // EVERY write/command needing write or network as an approval for the policy to gate —
+      // repo writes and git commit/push get denied, and its own memory writes get allowed
+      // (toolPolicy above is built per-harness via makeCoordinatorPolicy(coordinatorMemoryDirFor
+      // (terminal.type)), so a codex coordinator's memory dir is ~/.codex, not ~/.claude — Task 7).
+      // Every other codex thread (agents, role runs) — and every non-codex harness, which
+      // ignores these fields entirely — keeps today's manager-construction defaults.
+      ...(codexCoordinator
+        ? { approvalPolicy: 'on-request' as const, sandbox: 'read-only' as const }
+        : {}),
+      // Codex: every Pretty thread shares ONE app-server, whose argv/env belong to whichever
+      // thread spawned it first — so nothing thread-specific may ride them (M3). The thread's own
+      // MCP servers (its `dispatch` identity) and its terminal id for shell commands (the
+      // browser-auth shim) ride its thread/start + thread/resume `config` instead.
+      ...(terminal.type === 'codex'
+        ? { threadConfig: { ...(structuredMcp?.codexThreadConfig ?? {}), [`shell_environment_policy.set.${TERMINAL_ID_ENV_VAR}`]: terminal.id } }
+        : {}),
+      env: terminal.type === 'codex' ? {} : { [TERMINAL_ID_ENV_VAR]: terminal.id, ...(opencodeEnv ?? {}) },
     });
     terminalsDb.updatePid(this.db, terminal.id, pid);
   }
@@ -2154,35 +2251,58 @@ export class SessionService {
    * DEFERRED (follow-up): `needs_input` agents lose their in-memory pending on
    * restart. They aren't `working`, so this kicker correctly skips them — reviving
    * them needs a different path (re-surface the question), not a mid-task nudge.
+   *
+   * CLAUDE + CODEX: `terminalsDb.listWorkingStructured` scopes this to the harnesses with a
+   * local record of the turn for the idempotency check — the claude JSONL transcript
+   * (transcriptTailStatus) and the Codex rollout (codexRolloutTailStatus). Grok/OpenCode have
+   * none, so they are never proactively boot-kicked and rely on `ensureStructuredAlive`
+   * (revive-on-open). Pinned in coordinator-restart.test.ts.
    */
   async kickstartInterruptedAgents(settleMs: number = KICKSTART_SETTLE_MS): Promise<{ kicked: string[]; skipped: string[] }> {
     const kicked: string[] = [];
     const skipped: string[] = [];
-    if (!this.structuredManagerFor('claude-code')) return { kicked, skipped };
+    if (!this.structuredManagerFor('claude-code') && !this.structuredManagerFor('codex')) return { kicked, skipped };
 
     // (a) Settle: let any burst of save writes from the shutdown coalesce before we read status.
     if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
 
-    // (b) Enumerate every non-archived claude-code terminal left `working` across all sessions.
+    // (b) Enumerate every non-archived claude-code/codex terminal left `working` across all sessions.
     const rows = terminalsDb.listWorkingStructured(this.db);
     for (const row of rows) {
+      if (!this.structuredManagerFor(row.type)) { skipped.push(row.id); continue; }
       let config: Record<string, any> = {};
       try { config = JSON.parse(row.config || '{}'); } catch { skipped.push(row.id); continue; }
       // Structured overseer threads only: the coordinator and its typed agents.
-      if (config.transport !== 'structured') { skipped.push(row.id); continue; }
-      if (config.role !== 'coordinator' && config.role !== 'agent') { skipped.push(row.id); continue; }
+      if (!isKickstartCandidate(config)) { skipped.push(row.id); continue; }
 
-      // (c) Idempotency. Compare against the transcript, which advances as the thread works.
+      // The shutdown's interruptedAt stamp (see shutdownPreservingInterruptedTurns) is good for
+      // THIS boot only: consume it whether the row is kicked or skipped, so it never goes stale.
+      const interruptedByShutdown = typeof config.interruptedAt === 'string';
+      if (config.interruptedAt !== undefined) {
+        delete config.interruptedAt;
+        terminalsDb.updateConfig(this.db, row.id, config);
+      }
+
+      // (c) Idempotency. Compare against the thread's own record of the turn, which advances as
+      // it works: the claude transcript, or the Codex rollout (keyed by the thread id).
       const session = sessionsDb.getById(this.db, row.session_id);
       const workDir = row.working_dir || session?.working_dir || null;
-      const tail = (workDir && row.external_id) ? transcriptTailStatus(workDir, row.external_id) : null;
+      const tail = !row.external_id
+        ? null
+        : row.type === 'codex'
+          ? codexRolloutTailStatus(row.external_id)
+          : (workDir ? transcriptTailStatus(workDir, row.external_id) : null);
 
       // Already kicked on a prior boot and nothing new happened since → don't re-prompt.
       const kickedAt = typeof config.kickedAt === 'string' ? Date.parse(config.kickedAt) : NaN;
       if (!Number.isNaN(kickedAt) && (!tail || tail.mtimeMs <= kickedAt)) { skipped.push(row.id); continue; }
 
       // The turn actually completed (shutdown race left it stale-working) → nothing to resume.
-      if (tail?.completed) { skipped.push(row.id); continue; }
+      // Except a Codex `turn_aborted` on a thread the last graceful shutdown interrupted
+      // (interruptedAt, stamped by shutdownPreservingInterruptedTurns): Codex writes that marker
+      // when its app-server gets SIGTERM mid-turn, so there it IS the cut-off turn, not a Stop.
+      const cutByShutdown = interruptedByShutdown && !!tail && 'aborted' in tail && tail.aborted;
+      if (tail?.completed && !cutByShutdown) { skipped.push(row.id); continue; }
 
       // (d) Kick (revive + re-prompt) and stamp so a later restart won't double-kick.
       try {
@@ -2195,6 +2315,38 @@ export class SessionService {
       }
     }
     return { kicked, skipped };
+  }
+
+  /**
+   * The shutdown half of the boot kickstart. Runs `stopAll` (the daemon's manager killAll calls),
+   * then writes `working` back onto every overseer thread that was mid-turn before it, and stamps
+   * it `interruptedAt`, so the next boot's kickstartInterruptedAgents finds it and knows the
+   * shutdown cut its turn (see the Codex `turn_aborted` case there). Returns the restored ids.
+   *
+   * Needed because both structured managers emit `exit` SYNCHRONOUSLY from kill(): the status
+   * service settles the row to `waiting` right there, before the daemon's db.close() — so without
+   * this, a graceful restart (`dispatch restart` / `update`, SIGTERM) dropped the interrupted turn.
+   * Everything else about the exit (roles close-out, pid clear) still happens.
+   */
+  shutdownPreservingInterruptedTurns(stopAll: () => void): string[] {
+    const interrupted = terminalsDb.listWorkingStructured(this.db)
+      .filter((row) => {
+        try { return isKickstartCandidate(JSON.parse(row.config || '{}')); } catch { return false; }
+      })
+      .map((row) => row.id);
+    stopAll();
+    const interruptedAt = new Date().toISOString();
+    for (const id of interrupted) {
+      terminalsDb.updateStatus(this.db, id, 'working');
+      // Re-read: the kill's own exit handling may have written config (e.g. a turn outcome).
+      // The stamp tells the kickstart this thread's turn was cut off by the shutdown — Codex
+      // records that as `turn_aborted`, which otherwise reads as a deliberate Stop.
+      try {
+        const config = JSON.parse(terminalsDb.getById(this.db, id)?.config || '{}');
+        terminalsDb.updateConfig(this.db, id, { ...config, interruptedAt });
+      } catch { /* best effort: the row stays `working`, which alone kicks a task_started tail */ }
+    }
+    return interrupted;
   }
 
   /**
@@ -2250,7 +2402,7 @@ export class SessionService {
   private agencyServerSpec(terminalId: string, sessionId: string, spawnDepth: number): McpServerSpec {
     const agencyPath = fileURLToPath(new URL('../overseer/agency-mcp.js', import.meta.url));
     return {
-      name: 'dispatch',
+      name: AGENCY_MCP_SERVER,
       command: 'node',
       args: [agencyPath],
       env: {

@@ -1148,3 +1148,233 @@ it('a Codex turn that completes with NO agentMessage persists an EMPTY outcome s
     fs.rmSync(cfgDir, { recursive: true, force: true });
   }
 });
+
+// --- Task 6: codex coordinator spawns on-request/read-only so the membrane fires ----------
+
+/** Reads the fake app-server's opt-in request log (see fake-codex-app-server.mjs's logRequest),
+ *  same helper shape as codex-manager.systemprompt.test.ts, but exercised end-to-end through the
+ *  real `/api/sessions` + `/terminals` routes (SessionService.spawnStructured), not the manager
+ *  directly — proving the `config.role === 'coordinator'` branch in service.ts actually reaches
+ *  the wire, not just codex-manager.ts's own per-spawn plumbing (see
+ *  codex-manager.approval-sandbox.test.ts for that unit-level proof). */
+function readLoggedRequests(logPath: string, method: string): any[] {
+  if (!fs.existsSync(logPath)) return [];
+  return fs
+    .readFileSync(logPath, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+    .filter((entry) => entry.method === method);
+}
+
+it('a coordinator-role codex terminal spawns with approvalPolicy "on-request" + sandbox "read-only" on thread/start', async () => {
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-coord-policy-'));
+  const logPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'codex-coord-log-')), 'requests.jsonl');
+  const prevLog = process.env.CODEX_FAKE_LOG;
+  process.env.CODEX_FAKE_LOG = logPath;
+  const a = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fakeCodex] } });
+  try {
+    const s = await request(a).post('/api/sessions').send({ provider: 'codex', workingDir: dir, name: 'codex-coord-policy' });
+    const t = await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'codex', config: { transport: 'structured', role: 'coordinator' } });
+    const id = t.body.id;
+    await pollExternalId(db, id, 'thread-fake-1');
+
+    const [sent] = readLoggedRequests(logPath, 'thread/start');
+    expect(sent).toBeDefined();
+    expect(sent.params.approvalPolicy).toBe('on-request');
+    expect(sent.params.sandbox).toBe('read-only');
+  } finally {
+    if (prevLog === undefined) delete process.env.CODEX_FAKE_LOG; else process.env.CODEX_FAKE_LOG = prevLog;
+    (a as any)._sessionService?.structuredManagerFor('codex')?.killAll();
+    fs.rmSync(cfgDir, { recursive: true, force: true });
+  }
+});
+
+it('a non-coordinator codex terminal keeps today\'s default approvalPolicy/sandbox on thread/start', async () => {
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-noncoord-policy-'));
+  const logPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'codex-noncoord-log-')), 'requests.jsonl');
+  const prevLog = process.env.CODEX_FAKE_LOG;
+  process.env.CODEX_FAKE_LOG = logPath;
+  const a = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fakeCodex] } });
+  try {
+    const s = await request(a).post('/api/sessions').send({ provider: 'codex', workingDir: dir, name: 'codex-noncoord-policy' });
+    const t = await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'codex', config: { transport: 'structured' } });
+    const id = t.body.id;
+    await pollExternalId(db, id, 'thread-fake-1');
+
+    const [sent] = readLoggedRequests(logPath, 'thread/start');
+    expect(sent).toBeDefined();
+    expect(sent.params.approvalPolicy).toBe('on-request'); // manager default, unchanged
+    expect(sent.params.sandbox).toBe('workspace-write'); // manager default, unchanged
+  } finally {
+    if (prevLog === undefined) delete process.env.CODEX_FAKE_LOG; else process.env.CODEX_FAKE_LOG = prevLog;
+    (a as any)._sessionService?.structuredManagerFor('codex')?.killAll();
+    fs.rmSync(cfgDir, { recursive: true, force: true });
+  }
+});
+
+// --- M3 fix: every Codex thread carries its OWN dispatch identity on its thread/start config ----
+
+it('a codex coordinator and a plain Codex Pretty thread both start, each with its OWN dispatch identity (M3 fix)', async () => {
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-m3-fix-'));
+  const logPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'codex-m3-log-')), 'requests.jsonl');
+  const prevLog = process.env.CODEX_FAKE_LOG;
+  process.env.CODEX_FAKE_LOG = logPath;
+  const a = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fakeCodex] } });
+  try {
+    const s = await request(a).post('/api/sessions').send({ provider: 'codex', workingDir: dir, name: 'codex-m3-fix' });
+    const plain = await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'codex', config: { transport: 'structured' } });
+    expect(plain.status).toBe(201);
+    const coord = await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'codex', config: { transport: 'structured', role: 'coordinator' } });
+    expect(coord.status).toBe(201); // no longer refused — the two no longer share an identity
+    await new Promise((r) => setTimeout(r, 400));
+
+    const starts = readLoggedRequests(logPath, 'thread/start').map((e) => e.params.config ?? {});
+    expect(starts).toHaveLength(2);
+    const identity = (c: any) => c['mcp_servers.dispatch']?.env?.DISPATCH_TERMINAL;
+    expect(starts.map(identity)).toEqual([plain.body.id, coord.body.id]);
+    for (const [i, id] of [plain.body.id, coord.body.id].entries()) {
+      expect(starts[i]['mcp_servers.dispatch'].env.DISPATCH_SESSION).toBe(s.body.id);
+      // Shell commands (the browser-auth shim) see the thread's own id too, not the first spawner's.
+      expect(starts[i]['shell_environment_policy.set.DISPATCH_TERMINAL_ID']).toBe(id);
+    }
+  } finally {
+    if (prevLog === undefined) delete process.env.CODEX_FAKE_LOG; else process.env.CODEX_FAKE_LOG = prevLog;
+    (a as any)._sessionService?.structuredManagerFor('codex')?.killAll();
+    fs.rmSync(cfgDir, { recursive: true, force: true });
+  }
+});
+
+// --- N6: a Codex thread's developerInstructions carry the peer/tools prompt, not just the persona --
+
+it('a codex coordinator gets the peer prompt (its own id + roster) alongside its persona via thread/start developerInstructions', async () => {
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-peer-prompt-'));
+  const logPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'codex-peer-log-')), 'requests.jsonl');
+  const prevLog = process.env.CODEX_FAKE_LOG;
+  process.env.CODEX_FAKE_LOG = logPath;
+  const a = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fakeCodex] } });
+  try {
+    const s = await request(a).post('/api/sessions').send({ provider: 'codex', workingDir: dir, name: 'codex-peer-prompt' });
+    const t = await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'codex', config: { transport: 'structured', role: 'coordinator' } });
+    await pollExternalId(db, t.body.id, 'thread-fake-1');
+    const [sent] = readLoggedRequests(logPath, 'thread/start');
+    const di: string = sent.params.developerInstructions ?? '';
+    expect(di).toContain('You are Control Plane'); // the coordinator persona …
+    expect(di).toContain(t.body.id);                // … AND the peer prompt (it names the thread's own id)
+    expect(di).toContain('list_threads');
+  } finally {
+    if (prevLog === undefined) delete process.env.CODEX_FAKE_LOG; else process.env.CODEX_FAKE_LOG = prevLog;
+    (a as any)._sessionService?.structuredManagerFor('codex')?.killAll();
+    fs.rmSync(cfgDir, { recursive: true, force: true });
+  }
+});
+
+// --- GPT-6 Astra review of PR #47 (findings 2, 3, 4), end-to-end through the real routes ---------
+
+/** One isolated app on the fake Codex app-server, with its request/response log. */
+async function withCodexApp(name: string, fn: (a: any, sessionId: string, logPath: string) => Promise<void>): Promise<void> {
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), `${name}-`));
+  const logPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), `${name}-log-`)), 'requests.jsonl');
+  const prevLog = process.env.CODEX_FAKE_LOG;
+  process.env.CODEX_FAKE_LOG = logPath;
+  const a = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fakeCodex] } });
+  try {
+    const s = await request(a).post('/api/sessions').send({ provider: 'codex', workingDir: dir, name });
+    await fn(a, s.body.id, logPath);
+  } finally {
+    if (prevLog === undefined) delete process.env.CODEX_FAKE_LOG; else process.env.CODEX_FAKE_LOG = prevLog;
+    (a as any)._sessionService?.structuredManagerFor('codex')?.killAll();
+    fs.rmSync(cfgDir, { recursive: true, force: true });
+  }
+}
+
+/** Waits until the fake has logged `count` answers of `method` (our responses to its requests). */
+async function pollLoggedResponses(logPath: string, method: string, count: number, timeoutMs = 3000): Promise<any[]> {
+  const start = Date.now();
+  let got: any[] = [];
+  while (Date.now() - start < timeoutMs) {
+    got = fs.existsSync(logPath)
+      ? fs.readFileSync(logPath, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((e) => e.response === method)
+      : [];
+    if (got.length >= count) return got;
+    await sleep(25);
+  }
+  throw new Error(`timeout waiting for ${count} logged ${method} response(s) (got ${got.length})`);
+}
+
+// Finding 2: an MCP tool runs OUTSIDE the Codex sandbox, so a Codex coordinator may call only
+// Dispatch's own tools. This proves service.ts hands the allowlist to the real policy.
+it('a codex coordinator: a non-Dispatch MCP tool is declined on the wire, a dispatch tool is accepted (Astra finding 2)', async () => {
+  await withCodexApp('codex-coord-mcp', async (a, sid, logPath) => {
+    const t = await request(a).post(`/api/sessions/${sid}/terminals`).send({ type: 'codex', config: { transport: 'structured', role: 'coordinator' } });
+    await pollExternalId(db, t.body.id, 'thread-fake-1');
+
+    await request(a).post(`/api/terminals/${t.body.id}/message`).send({ text: 'mcp databricks execute_sql' });
+    const [denied] = await pollLoggedResponses(logPath, 'mcpServer/elicitation/request', 1);
+    expect(denied.result.action).toBe('decline');
+    await pollStatus(t.body.id, 'waiting');
+
+    await request(a).post(`/api/terminals/${t.body.id}/message`).send({ text: 'mcp dispatch list_threads' });
+    const [, allowed] = await pollLoggedResponses(logPath, 'mcpServer/elicitation/request', 2);
+    expect(allowed.result.action).toBe('accept');
+  });
+});
+
+it('a plain codex thread keeps its MCP tools (the allowlist is coordinator-only)', async () => {
+  await withCodexApp('codex-plain-mcp', async (a, sid, logPath) => {
+    const t = await request(a).post(`/api/sessions/${sid}/terminals`).send({ type: 'codex', config: { transport: 'structured' } });
+    await pollExternalId(db, t.body.id, 'thread-fake-1');
+    await request(a).post(`/api/terminals/${t.body.id}/message`).send({ text: 'mcp databricks execute_sql' });
+    const [resp] = await pollLoggedResponses(logPath, 'mcpServer/elicitation/request', 1);
+    expect(resp.result.action).toBe('accept');
+  });
+});
+
+// Finding 3: codex-cli ACCEPTS a second thread/resume of a thread that is already loaded (live-
+// verified, 0.156.1), and the manager would then route that thread's approvals to the NEWER
+// terminal — one without the coordinator's policy. A thread has one live owner.
+it('refuses a second thread that resumes the live codex coordinator\'s own thread (Astra finding 3)', async () => {
+  await withCodexApp('codex-dup-resume', async (a, sid, logPath) => {
+    const coord = await request(a).post(`/api/sessions/${sid}/terminals`).send({ type: 'codex', config: { transport: 'structured', role: 'coordinator' } });
+    await pollExternalId(db, coord.body.id, 'thread-fake-1');
+
+    const dup = await request(a).post(`/api/sessions/${sid}/terminals`).send({ type: 'codex', externalId: 'thread-fake-1', config: { transport: 'structured' } });
+    expect(dup.status).toBe(400);
+    expect(dup.body.error).toMatch(/already open/i);
+    expect(terminalsDb.listBySession(db, sid).map((r) => r.id)).toEqual([coord.body.id]); // no orphan row
+    expect(readLoggedRequests(logPath, 'thread/resume')).toHaveLength(0); // never reached the wire
+  });
+});
+
+// Finding 4: on SIGTERM the daemon's cleanup kills every manager, and each kill emits `exit`
+// synchronously — which settled a mid-turn row to `waiting` before db.close(). The boot kickstart
+// looks only for `working` rows, so a graceful restart silently dropped the interrupted turn.
+it('a graceful shutdown keeps a mid-turn codex coordinator "working" for the boot kickstart (Astra finding 4)', async () => {
+  await withCodexApp('codex-shutdown-coord', async (a, sid) => {
+    const t = await request(a).post(`/api/sessions/${sid}/terminals`).send({ type: 'codex', config: { transport: 'structured', role: 'coordinator' } });
+    await pollExternalId(db, t.body.id, 'thread-fake-1');
+    await request(a).post(`/api/terminals/${t.body.id}/message`).send({ text: 'hang' });
+    await pollStatus(t.body.id, 'working');
+
+    const svc = (a as any)._sessionService;
+    svc.shutdownPreservingInterruptedTurns(() => svc.structuredManagerFor('codex').killAll());
+
+    expect(svc.structuredManagerFor('codex').isAlive(t.body.id)).toBe(false);
+    expect(terminalsDb.getById(db, t.body.id)?.status).toBe('working');
+  });
+});
+
+it('a graceful shutdown still settles a mid-turn PLAIN codex thread (the kickstart never resumes it)', async () => {
+  await withCodexApp('codex-shutdown-plain', async (a, sid) => {
+    const t = await request(a).post(`/api/sessions/${sid}/terminals`).send({ type: 'codex', config: { transport: 'structured' } });
+    await pollExternalId(db, t.body.id, 'thread-fake-1');
+    await request(a).post(`/api/terminals/${t.body.id}/message`).send({ text: 'hang' });
+    await pollStatus(t.body.id, 'working');
+
+    const svc = (a as any)._sessionService;
+    svc.shutdownPreservingInterruptedTurns(() => svc.structuredManagerFor('codex').killAll());
+
+    // The kill's own exit event settled it — the same write that used to hide a coordinator.
+    expect(terminalsDb.getById(db, t.body.id)?.status).toBe('waiting');
+  });
+});

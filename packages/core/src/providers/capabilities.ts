@@ -1,10 +1,22 @@
 import { HARNESSES } from './catalog.js';
 import { getProvider } from './registry.js';
 
+/**
+ * Harnesses that may run as the Overseer COORDINATOR (not just a worker). A small allowlist
+ * rather than a derived rule: the requirements (native-tool stripping + a coordinator tool
+ * policy + a per-harness memory dir — see coordinator-policy.ts / spawn-model.ts) are met by
+ * exactly these two today. Grok and OpenCode are workers only.
+ */
+// The harnesses whose structured managers actually enforce the coordinator membrane (toolPolicy):
+// Claude Code (stream-json can_use_tool) and Codex (app-server handleApproval). Grok/OpenCode (ACP)
+// do NOT consume toolPolicy, so a coordinator on them would run ungoverned — spawnTerminal fails
+// closed for any coordinator whose harness is not in this set (see service.ts).
+export const COORDINATOR_CAPABLE_HARNESSES = new Set(['claude-code', 'codex']);
+
 /** Describe what this daemon can run; UI choices and server validation use this together. */
 export function harnessCapabilities() {
   return HARNESSES.map(h => {
-    if (h.type === 'shell') return { ...h, capabilities: { resume: false, branch: false, permissions: false, telemetry: { structured: false, pty: false } } };
+    if (h.type === 'shell') return { ...h, capabilities: { resume: false, branch: false, permissions: false, telemetry: { structured: false, pty: false }, coordinator: false } };
     const provider = getProvider(h.type);
     const structured = !provider.structured.disabledBy || process.env[provider.structured.disabledBy] !== '0';
     const modes = h.modes.filter(mode => mode !== 'pretty' || structured);
@@ -14,6 +26,11 @@ export function harnessCapabilities() {
         branch: !!provider.buildBranchCommand,
         permissions: structured,
         telemetry: { structured, pty: provider.telemetry.ptyCapture !== null },
+        // Requires structured transport too: with structured off, the PTY path is the only
+        // one available, and it has no persona/membrane (see coordinator-policy.ts) — a
+        // coordinator there would run ungoverned. Reuse `structured` computed above rather
+        // than re-deriving it (a second derivation could silently drift out of sync).
+        coordinator: structured && COORDINATOR_CAPABLE_HARNESSES.has(h.type),
       } };
   });
 }

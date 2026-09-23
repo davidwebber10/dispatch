@@ -116,54 +116,117 @@ harness pass-through and the availability guard, and web tests for the card
 (shows only when empty + no coordinator; first directive carries the
 selection; existing coordinator never shows it).
 
-## Phase 2 — non-Claude coordinators (separate release)
+## Phase 2 — Codex coordinator, with harness-agnostic plumbing (separate release)
 
-1. **Port the membrane.** `toolPolicy` consultation moves into the shared
-   approval path of `CodexStructuredSessionManager` and
-   `GrokStructuredSessionManager` (both ACP dialects). A per-harness tool-name
-   normalization map feeds `coordinator-policy.ts` (`shell`/`apply_patch`/ACP
-   `write`/`execute` → the policy's categories).
-2. **Capability flag.** `harnessCapabilities()` gains `coordinator: boolean`,
-   true only where the policy-consulting membrane exists. The setup card gains
-   a Coordinator harness row listing only capable harnesses; Claude stays the
-   default.
-3. **Codex first.** The blocker is in OUR provider, not the CLI: `codex.ts`
-   `buildStructuredCommand` discards `appendSystemPrompt`. The injection
-   channel is DOCUMENTED, not just observed in a local binary:
-   - App-server protocol: `thread/start` takes
-     `settings.developer_instructions` (custom instructions), plus
-     `sandboxPolicy` and `approvalPolicy` —
-     https://learn.chatgpt.com/docs/app-server.md
-   - Config reference: `developer_instructions` = "Additional developer
-     instructions injected into the session (optional)" —
-     https://learn.chatgpt.com/docs/config-file/config-reference.md
-   Primary channel: `thread/start` `settings.developer_instructions` (in the
-   protocol we already speak, per-thread, no argv). Fallback: the
-   `developer_instructions` config key. Hard requirement, motivated by
-   openai/codex#11004 (the Codex App silently drops the config-key variant —
-   the channel varies by client): our harness contract test MUST verify the
-   persona actually lands — send a canary instruction through the channel and
-   assert its effect in the reply. No silent-drop path ships.
-   Codex upside: `sandboxPolicy: readOnly` enforces below the membrane at the
-   OS level — enforcement Claude does not have. Note the docs deprecations:
-   `approval_policy "untrusted"` is documented as unsupported (the app-server
-   doc lists `never | unlessTrusted | onRequest`); our `codex-manager.ts`
-   type union still says `'untrusted'` and gets corrected in this work.
-4. **Prompts and models.** Per-harness coordinator model map (real model ids,
-   never Claude aliases); prompt variants drop the `~/.claude` memory
-   instruction and Claude tier teaching on non-Claude harnesses (memory path
-   becomes harness-appropriate, e.g. `~/.codex`), and the policy's allowed
-   write path follows it.
-5. **Known trade, accepted:** no non-Claude harness has a `--disallowedTools`
-   equivalent, so spawn-time tool stripping does not exist there. The ported
-   membrane (plus the Codex sandbox) is the enforcement. Grok/OpenCode ship
-   only after their membranes actually consult the policy.
+Scope decided 2026-09-22: **enable Codex as a coordinator harness now**; build
+the harness-agnostic plumbing so Grok/OpenCode are a cheap follow-up, but do
+NOT enable them (a `coordinator` capability flag gates the UI to Claude +
+Codex). Enforcement for Codex: **the ported membrane plus a `workspace-write`
+sandbox** (not read-only) — the coordinator must write its own `~/.codex`
+memory, and the membrane denies the dangerous calls, mirroring the Claude
+coordinator.
+
+> **As built (2026-09-23, supersedes the paragraph above):** the Codex coordinator runs
+> `read-only` + `on-request` (plan correction 750447d), so every write or network call
+> surfaces as an approval the membrane gates; every escalated shell command is denied.
+> Its memory dir is the DEDICATED `~/.codex/dispatch-coordinator`, never the whole
+> `~/.codex` — that home also holds Codex's own `config.toml`, `rules/`, global
+> `AGENTS.md`, skills, auth, and real git worktrees (review finding N1). It pins
+> `approvalsReviewer: 'user'`. Every Codex thread carries its OWN Dispatch MCP identity on its
+> `thread/start` / `thread/resume` `config` — the shared app-server starts identity-free (M3
+> fix). It may call only the `dispatch` MCP server's tools: an ordinary MCP server runs outside
+> the Codex sandbox (third GPT-6 Astra review, finding 2). One Codex thread has one live Dispatch
+> owner (finding 3). See `docs/superpowers/reviews/2026-09-23-pr47-phase2-review.md`.
+
+### Verified findings (live probe, 2026-09-22)
+
+Probed a real `codex app-server` (`codex-cli 0.155.1`, `gpt-6-astra`):
+
+- **The documented persona channel does NOT work.** `thread/start` with
+  `settings.developer_instructions` (the spelling in the app-server docs) is
+  **silently ignored** — the canary never appeared. This is exactly
+  openai/codex#11004's silent-drop, and it means the spec's earlier "primary
+  channel" was wrong.
+- **The working channel is `developerInstructions`** — camelCase, top-level on
+  `thread/start`. The canary (`MELON …`) came back honored. This is what the
+  implementation MUST use; the `developer_instructions` config key is the
+  documented fallback. The canary contract test stays mandatory — it is what
+  caught the wrong spelling.
+- Handshake confirmed: `initialize` → `initialized` notification → `thread/start`
+  `{ cwd, model, approvalPolicy, sandbox, developerInstructions }`. Turns run
+  async (`turn/start` returns immediately; wait for `turn/completed`).
+
+### Work items
+
+1. **Persona reaches Codex.** Add `systemPrompt?: string` to
+   `StructuredSpawnOpts` (`manager.ts`), thread it from `service.ts`'s
+   `manager.spawn` call (today only argv-based `appendSystemPrompt` exists, which
+   Codex drops). `codex-manager.ts` `startThread` sends it as `thread/start`
+   `developerInstructions`. Claude/Grok/OpenCode keep their existing prompt
+   paths unchanged. **Contract test (mandatory):** a canary instruction sent
+   through the channel must be observable in the model's reply — no silent-drop
+   path ships.
+2. **Port the membrane, harness-agnostically.** `toolPolicy` (already passed to
+   every manager, silently ignored by Codex/ACP today) becomes consumed. Add a
+   per-harness tool-name adapter that normalizes a manager's native approval
+   into the shape `coordinator-policy` expects:
+   - Codex: `Shell` → `{ command }` (already carries `command`); `ApplyPatch` →
+     `{ file_path, changes[].path }` (check ALL change paths, not just the
+     first).
+   - The adapter is an interface with a Codex implementation now and a
+     documented Grok/OpenCode stub (ACP `kind`+`title`+`rawInput`+`locations[]`)
+     that is NOT wired to an enabled coordinator.
+   Codex `handleApproval` consults the policy before its escalate/auto-allow
+   branch and, on deny, responds `decline`. Codex's decline envelope carries no
+   message — inject the policy's instructive text as a synthetic tool-result
+   event so the coordinator can redirect.
+3. **Codex asks, so the membrane can fire.** Coordinator spawns run
+   `approvalPolicy: 'on-request'` + `sandbox: 'workspace-write'` so repo-write
+   and command approvals actually reach `handleApproval`. Also correct the
+   `codex-manager.ts` approvalPolicy type union: `'untrusted'` is documented as
+   unsupported; the app-server accepts `never | unlessTrusted | onRequest`.
+4. **Coordinator harness is selectable.** `ensureCoordinator` accepts a
+   `coordinatorHarness` (default `claude-code`); the route validates it against
+   the `coordinator` capability. `harnessCapabilities()` gains
+   `coordinator: boolean`, true only where persona + policy-consuming membrane
+   + resume/backfill all exist — today that is `claude-code` and (after this
+   work) `codex`. The setup card gains a Coordinator harness strip filtered by
+   that flag; Claude stays default.
+5. **Prompts and models, parameterized.** Convert `COORDINATOR_PROMPT` to
+   `buildCoordinatorPrompt({ harness })`: the memory-root line and the Claude
+   tier-teaching become harness-appropriate (Codex → `~/.codex/dispatch-coordinator`, no
+   sonnet/opus/fable vocabulary). The policy's allowed write path follows the
+   harness memory root (`coordinator-policy` takes a memory-dir parameter). A
+   per-harness coordinator model default (Codex gets a real model id, never a
+   Claude alias); `store.ts`'s `'sonnet'` default only applies to a Claude
+   coordinator.
+6. **Codex coordinator survives restart.** Confirm `thread/resume` backfill
+   (`codex-manager` already has it) restores a Codex coordinator's history, and
+   the boot-kickstart idempotency check (claude-transcript-backed today) does
+   not permanently skip a Codex coordinator.
+7. **Web stragglers (Phase-1 misses that will read as Phase-2 bugs):** widen
+   `live.ts` `isStructuredWorker` (claude-only today, so Codex/Grok/OpenCode
+   workers never appear in the Overseer rail); audit `ProjectCard`/
+   `PinnedThreadsView` `structuredClaude` gates and `typeIcons` for the
+   coordinator row.
+
+### Known trade, accepted
+
+No non-Claude harness has a `--disallowedTools` equivalent, so spawn-time tool
+stripping of native orchestration tools does not exist for a Codex coordinator.
+The ported membrane is the enforcement. (Codex's native tools are `Shell`/
+`ApplyPatch`/MCP, not an `Agent`/`Task` spawner, so the drift the
+`--disallowedTools` fix addressed does not apply the same way.) Grok/OpenCode
+remain worker-only until their ACP membranes consult the policy and gain a
+question-escalation channel — tracked as a future phase, not this one.
 
 ## References (Codex, Phase 2)
 
 - App-server protocol: https://learn.chatgpt.com/docs/app-server.md
   (redirect target of https://developers.openai.com/codex — the docs live
-  under learn.chatgpt.com as of 2026-09)
+  under learn.chatgpt.com as of 2026-09). NOTE: the doc's
+  `settings.developer_instructions` spelling was verified NON-functional on
+  codex-cli 0.155.1; use top-level `developerInstructions`.
 - Config reference: https://learn.chatgpt.com/docs/config-file/config-reference.md
 - Sandboxing: https://learn.chatgpt.com/docs/sandboxing.md
 - Known injection gap by client: https://github.com/openai/codex/issues/11004

@@ -99,6 +99,37 @@ export interface StructuredSpawnOpts {
    */
   resumeId?: string;
   model?: string;
+  /**
+   * Persona/system prompt for harnesses that inject it out-of-band rather than via argv, e.g.
+   * Codex's `thread/start` `developerInstructions` param. Argv-based harnesses (Claude
+   * `--append-system-prompt`, Grok `--rules`, OpenCode's config file) already receive the
+   * persona via their own existing paths and ignore this field.
+   */
+  systemPrompt?: string;
+  /**
+   * Per-spawn override of Codex's approval/sandbox pair (see codex-manager.ts's
+   * CodexManagerOptions, which sets the manager-wide construction-time default every spawn
+   * falls back to when this is omitted). Lets one specific thread pin its own ask-policy — e.g.
+   * a COORDINATOR thread must run `'on-request'` + `'read-only'` so the enforcement membrane
+   * (handleApproval's toolPolicy gate) actually fires on every write/command needing write or
+   * network: under `'workspace-write'` an in-workspace repo write/`git commit` runs WITHOUT ever
+   * surfacing an approval, so the membrane would never see exactly the actions it must block.
+   * Wire literals verified live against the installed `codex app-server` (codex-cli 0.155.1) and
+   * against its own `generate-ts` protocol bindings (AskForApproval / SandboxMode) — see
+   * codex-manager.approval-sandbox.test.ts. Ignored by every other harness's manager.
+   */
+  approvalPolicy?: 'untrusted' | 'on-request' | 'never';
+  sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+  /**
+   * Codex only: per-thread `config` overrides sent on BOTH thread/start and thread/resume — above
+   * all the thread's own MCP servers (the `dispatch` identity: DISPATCH_TERMINAL / DISPATCH_SESSION
+   * / DISPATCH_SPAWN_DEPTH). The shared app-server's argv/env belong to whichever thread spawned it
+   * first, so per-thread identity must ride here (review finding M3). Keys are dotted config paths
+   * (e.g. `mcp_servers.dispatch`), which MERGE with the user's config.toml. Live-verified on
+   * codex-cli 0.156.1: each thread gets its own MCP server process with its own env, a thread
+   * config wins over an app-server `-c`, and thread/resume applies it. Ignored by other managers.
+   */
+  threadConfig?: Record<string, unknown>;
 }
 
 /** A permission decision written back to a blocked structured session. */

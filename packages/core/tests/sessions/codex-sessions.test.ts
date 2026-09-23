@@ -2,7 +2,7 @@ import { describe, it, test, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { listRecentCodexSessions, findCodexRolloutPath } from '../../src/sessions/codex-sessions.js';
+import { listRecentCodexSessions, findCodexRolloutPath, codexRolloutTailStatus } from '../../src/sessions/codex-sessions.js';
 
 function writeRollout(root: string, rel: string, lines: any[], mtimeMs?: number) {
   const full = path.join(root, rel);
@@ -131,5 +131,46 @@ describe('findCodexRolloutPath', () => {
     write('2026/07/30', 'rollout-2026-07-30T10-00-00-dup-session.jsonl');
     const newer = write('2026/08/01', 'rollout-2026-08-01T10-00-00-dup-session.jsonl');
     expect(findCodexRolloutPath('dup-session', root)).toBe(newer);
+  });
+});
+
+// T1 (review of PR #47): the Codex analogue of cc-sessions' transcriptTailStatus, so boot recovery
+// can tell a turn the daemon killed mid-flight (last marker task_started) from one that finished
+// (task_complete) or that the user stopped on purpose (turn_aborted).
+describe('codexRolloutTailStatus', () => {
+  let root: string;
+  beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'codextail-')); });
+  afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
+  const ev = (type: string) => ({ type: 'event_msg', payload: { type } });
+  const meta = { type: 'session_meta', payload: { id: 'th-1' } };
+
+  it('reports an interrupted turn (last marker task_started) as NOT completed, with the file mtime', () => {
+    const full = writeRollout(root, '2026/09/23/rollout-2026-09-23T10-00-00-th-1.jsonl', [meta, ev('task_started'), ev('task_complete'), ev('task_started'), ev('item_completed'), ev('token_count')], 1_700_000_000_000);
+    const st = codexRolloutTailStatus('th-1', root);
+    expect(st).toEqual({ mtimeMs: fs.statSync(full).mtimeMs, completed: false, aborted: false });
+  });
+
+  it('reports a finished turn (last marker task_complete) as completed', () => {
+    writeRollout(root, '2026/09/23/rollout-2026-09-23T10-00-00-th-2.jsonl', [meta, ev('task_started'), ev('item_completed'), ev('task_complete'), ev('token_count')]);
+    expect(codexRolloutTailStatus('th-2', root)?.completed).toBe(true);
+  });
+
+  it('treats a user-aborted turn (turn_aborted) as settled, not interrupted', () => {
+    writeRollout(root, '2026/09/23/rollout-2026-09-23T10-00-00-th-3.jsonl', [meta, ev('task_started'), ev('turn_aborted')]);
+    expect(codexRolloutTailStatus('th-3', root)?.completed).toBe(true);
+  });
+
+  // Codex ALSO writes turn_aborted when its app-server is SIGTERMed mid-turn (live-verified on
+  // codex-cli 0.156.1) — i.e. on every graceful Dispatch shutdown. The caller needs to tell the two
+  // apart, so the tail reports an abort separately from a completion.
+  it('flags a trailing turn_aborted as aborted, and a task_complete as not', () => {
+    writeRollout(root, '2026/09/23/rollout-2026-09-23T10-00-00-th-4.jsonl', [meta, ev('task_started'), ev('turn_aborted')]);
+    writeRollout(root, '2026/09/23/rollout-2026-09-23T10-00-00-th-5.jsonl', [meta, ev('task_started'), ev('task_complete')]);
+    expect(codexRolloutTailStatus('th-4', root)?.aborted).toBe(true);
+    expect(codexRolloutTailStatus('th-5', root)?.aborted).toBe(false);
+  });
+
+  it('returns null when the thread has no rollout', () => {
+    expect(codexRolloutTailStatus('missing', root)).toBeNull();
   });
 });

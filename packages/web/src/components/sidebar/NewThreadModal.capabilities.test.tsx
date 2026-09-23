@@ -14,7 +14,7 @@ vi.mock('../../api/client', () => ({ api: {
 it('uses the running server capabilities for offered transports and submitted config', async () => {
   vi.mocked(api.getHarnessCapabilities).mockResolvedValue(HARNESSES.map(h => ({ ...h,
     modes: h.type === 'codex' ? ['cli'] : h.type === 'opencode' ? [] : h.modes,
-    capabilities: { resume: false, branch: false, permissions: false, telemetry: { structured: false, pty: false } },
+    capabilities: { resume: false, branch: false, permissions: false, telemetry: { structured: false, pty: false }, coordinator: h.type === 'claude-code' || h.type === 'codex' },
   })));
   vi.spyOn(useTabs.getState(),'loadTabs').mockResolvedValue(undefined);
   render(<NewThreadModal sessionId="p" onClose={() => {}} onCreated={() => {}} />);
@@ -28,7 +28,7 @@ it('uses the running server capabilities for offered transports and submitted co
 it('uses daemon-owned OpenCode models with the running server capabilities', async () => {
   vi.mocked(api.createTerminal).mockClear();
   vi.mocked(api.getHarnessCapabilities).mockResolvedValue(HARNESSES.map(h => ({ ...h,
-    capabilities: { resume: false, branch: false, permissions: true, telemetry: { structured: true, pty: false } },
+    capabilities: { resume: false, branch: false, permissions: true, telemetry: { structured: true, pty: false }, coordinator: h.type === 'claude-code' || h.type === 'codex' },
   })));
   vi.mocked(api.getHarnessSettings).mockResolvedValue({ settings: {},
     opencodeKey: { secret: 'OPENROUTER_API_KEY', present: true },

@@ -1,0 +1,204 @@
+# PR #47 (Control Plane Phase 2 — Codex coordinator) — review findings
+
+**Date:** 2026-09-23. **Reviewers:** GPT-6 Astra (`codex exec -m gpt-6-astra`, read-only)
+and a Claude Opus 4.8 subagent (Opus 5.5 is NOT available in this environment; the
+subagent self-reported `claude-opus-4-8`). Both traced real code paths, not the diff alone.
+The two reviewers converged on the same top blockers; each finding below was then
+confirmed directly in the code.
+
+## Blockers (both reviewers; code-confirmed)
+
+- **B1 — Bash policy is a blocklist, so arbitrary write commands pass.**
+  `coordinator-policy.ts` `BLOCKED_BASH` denies only a small regex list. Every other
+  command returns `{ allow: true }`. Under `read-only` + `on-request`, an approved
+  command runs escalated OUTSIDE the sandbox, so `printf > /repo/f`, `tee`, `sed -i`,
+  `cp`, `node -e fs.writeFileSync`, `ln -s` all write the repo. Defeats the
+  "repo writes denied" guarantee. Inherited from the Claude coordinator policy.
+
+- **B2 — The `coordinator` capability gate is create-only.** `capabilities.ts` gates on
+  `structured && …`, but only the create route checks it. `service.ts` falls through to a
+  PTY spawn when `structuredManagerFor('codex')` is undefined (e.g. `DISPATCH_CODEX_PRETTY=0`).
+  The PTY command adds `--dangerously-bypass-approvals-and-sandbox` and drops the persona.
+  Restart / WebSocket relaunch / transport-switch do not re-check the capability. A Codex
+  coordinator can revive ungoverned.
+
+## High / Medium (one reviewer; code-confirmed)
+
+- **M1 — Symlinks escape memory containment.** `isUnder` uses `path.resolve`/`path.relative`,
+  not `fs.realpathSync`; it does not follow symlinks. Chains with B1 (`ln -s` allowed).
+- **M2 — ApplyPatch move/rename destination dropped.** `codex-translate.ts` reduces each
+  change to `{ path, kind: string, diff }`, discarding a rename destination. `extractWritePaths`
+  checks only the source `path`. A patch whose source is in `~/.codex` but destination is a
+  repo file passes containment.
+- **M3 — Shared app-server connection leaks MCP identity.** `ensureConnection` is
+  first-spawn-wins for `command/args/cwd/env`; later Codex threads reuse the first thread's
+  env (`DISPATCH_SESSION`/`DISPATCH_TERMINAL`), so a second coordinator's `spawn_agent` /
+  `report_status` targets the first thread's project/terminal. Governance (sandbox/approval)
+  DOES ride per-thread correctly.
+
+## Lower (tests / robustness)
+
+- **T1** — Restart resumes the Codex thread but never sends a continuation turn.
+- **T2** — Persona canary test matches `MELON` anywhere in reasoning; resume test only
+  checks params reached the fake server. Both can pass without observed persona-following.
+- **T3** — Prompt memory label and enforced dir are two maps with no cross-check test.
+- **T4** — No end-to-end deny test of an ApplyPatch repo write through the real coordinator
+  policy in the manager.
+
+## Validated sound by both reviewers
+Persona re-send on resume; per-thread sandbox/approval (no governance leak); categorical
+self-escalation deny; fail-closed on non-string Bash and empty patch paths; adapter field
+names match the translator; unrecognized approval methods fail closed.
+
+## Decision
+Jason chose: fix B1, B2, M1, M2, plus the test gaps; M3 deferred to a separate PR. Plan:
+`docs/superpowers/plans/2026-09-23-pr47-phase2-remediation.md`.
+
+## Remediation + second review pass (2026-09-23)
+B1/B2/M1/M2 fixed (commit 007e413) + a fable adversarial review hardening pass (F1–F4, commit
+3378687). A SECOND GPT-6 Astra verification pass then confirmed B1 and M2 sound, and found three
+more real gaps — all fixed:
+- **Astra-V1 (B2 too narrow):** the guard checked only structured-manager presence, so a
+  coordinator on a NON-capable harness (grok/opencode ACP ignore toolPolicy) or a `shell`
+  coordinator (bypassed the else-branch) could run ungoverned. Fix: the guard now also requires
+  `COORDINATOR_CAPABLE_HARNESSES.has(type)` and runs at the TOP of spawnTerminal (before the shell
+  branch). `COORDINATOR_CAPABLE_HARNESSES` is now exported from capabilities.ts.
+- **Astra-V2 (M1 `..`-after-symlink):** `path.resolve`/`realpathSync` collapse `link/..` lexically
+  (to the link's own parent), but the kernel follows the link target then `..` at write time — a
+  `mem/link/../escape` could pass containment yet write outside. Fix: isUnder rejects ANY raw `..`
+  segment outright (a coordinator memory path never needs one).
+- **Astra-V3 (realResolve failed open):** a non-ENOENT lstat/realpath error (EACCES, ELOOP, EIO)
+  was treated as "absent" and re-appended lexically. Fix: realResolve walks original segments and
+  fails closed on any non-ENOENT error (tested via a symlink loop → ELOOP).
+
+Final: core 1976/1976, web 1219/1219, both tsc clean.
+
+## Independent review (Claude Opus 5.5, 2026-09-23, head 994b30e) + remediation
+
+A separate review (own reading + a `/code-review xhigh` agent + live probes against the installed
+`codex-cli 0.156.1` and its `generate-ts` bindings) re-checked every finding above.
+
+**Earlier findings:** B1, M1, M2, T3, T4, F1–F4, Astra-V2/V3 confirmed fixed (M2's
+`kind.move_path` matches the 0.156.1 `PatchChangeKind` exactly). **B2 / Astra-V1 were only half
+fixed**, and **T1/T2 were never fixed** — the remediation plan scoped only T3+T4, although the
+Decision above says "plus the test gaps".
+
+**New findings — all fixed in this pass unless noted:**
+- **N1 (High, probe-confirmed):** the Codex coordinator memory dir was ALL of `~/.codex`, so the
+  policy auto-approved ApplyPatch writes to `config.toml` (`notify` / `mcp_servers` run commands
+  outside the sandbox), `rules/*.rules` (execpolicy allow rules), the global `AGENTS.md`, skills,
+  and the real git worktrees in `~/.codex/worktrees/`. Coordinators have `escalate=false`, so no
+  human saw them. Fix: dedicated `~/.codex/dispatch-coordinator`; the prompt label is now DERIVED
+  from the policy's own map (no second map to drift); the memory dir is resolved once at policy
+  build; relative targets are denied.
+- **N2 (High, probe-confirmed):** the coordinator guard lived only in `spawnTerminal`;
+  `ensureStructuredAlive` → `spawnStructured` skipped it, so a Grok coordinator (reachable via
+  `PATCH /terminals/:id` or a refused queued start) revived ungoverned. Fix:
+  `assertCoordinatorGoverned` runs on both doors.
+- **N3 (Medium):** governed Codex threads did not pin `approvalsReviewer`; `auto_review` /
+  `guardian_subagent` in config.toml would answer escalations inside Codex, skipping the membrane.
+  Fix: `approvalsReviewer: 'user'` on thread/start + thread/resume (live-verified accepted).
+- **N4 (Medium):** `item/fileChange/patchUpdated` was ignored, so the policy could check a stale
+  change list. Fix: the translator keeps the cached change list current.
+- **N5 (M3 made reachable):** the setup card offered Codex coordinator + Codex workers, which
+  share one app-server MCP identity. First BLOCKED (exclusive app-server for a Codex coordinator),
+  then — by owner decision, because a blocked Codex coordinator had little value — **FIXED** (see
+  "M3 fix" below) and the block removed.
+- **N6 (Medium):** Codex threads never got the peer/tools prompt, and a per-thread persona dropped
+  the global tools note. Fix: `developerInstructions` = persona + peer/tools block.
+- **T1:** boot kickstart now covers Codex, gated on the rollout (`codexRolloutTailStatus`:
+  `task_started` last = cut off; `task_complete` / `turn_aborted` = settled).
+- **T2:** the live contract test is now opt-in (`DISPATCH_LIVE_CODEX=1`; it runs billed turns),
+  counts only the agent's REPLY text, and cannot pass on a timeout. Its new resume cases found a
+  **wrong earlier claim**: codex-cli 0.156.1 does NOT apply `developerInstructions` on
+  `thread/resume`. The persona survives a resume because the thread's own history carries the one
+  given at thread/start; a persona CHANGE only reaches a fresh thread. Comments corrected.
+- **N7 (Blocker, found by a live probe during this pass):** under `approvalPolicy: 'on-request'`
+  (the Codex manager's default for EVERY Codex Pretty thread, on `main` too, and the coordinator's
+  pinned policy), codex-cli 0.156.1 gates every MCP tool call behind an
+  `mcpServer/elicitation/request` (`_meta.codex_approval_kind: 'mcp_tool_call'`), sent after
+  `item/started` for the `mcpToolCall`. Dispatch answered it with an error → "user rejected MCP
+  tool call": a Codex coordinator could not call `spawn_agent` / `report_status` at all, and no
+  Codex Pretty thread could use any MCP tool. Fix: the translator maps a tool-call elicitation to
+  an approval named `mcp__<server>__<tool>` (paired to the in-progress item), so the membrane
+  decides like any other tool; `accept` = `{ action: 'accept', content: {}, _meta: null }`
+  (live-verified: the tool then runs). A real elicitation form is still refused.
+- **Low:** the deny reason now survives Codex's own declined `item/completed` (the chat is
+  last-wins), and a permissions deny renders as a paired tool call; the setup card resets a stale
+  coordinator pick and shows a Start failure; the permissions-deny message is harness-generic;
+  the web `HarnessCapability` type is derived from core.
+
+**Left as-is, by judgment:** the Overseer rail showing plain Grok/OpenCode Pretty threads matches
+how plain Pretty Claude threads already show. `~/.claude` stays the Claude coordinator's memory
+root — its Bash runs under a denylist, not a sandbox, so it is not a containment boundary.
+
+## M3 fix (2026-09-23)
+
+**Problem:** every Codex Pretty thread shares ONE `codex app-server`, and its argv/env belonged to
+whichever thread spawned it first — including the `dispatch` MCP identity (`DISPATCH_TERMINAL` /
+`DISPATCH_SESSION` / `DISPATCH_SPAWN_DEPTH`) and `DISPATCH_TERMINAL_ID` for shell commands. So a
+second Codex thread's `report_status` / `complete_agent` / `spawn_agent` acted as the first thread.
+This was not coordinator-only: two Codex WORKERS under a Claude coordinator (shipped in Phase 1)
+share the same way.
+
+**Live facts (codex-cli 0.156.1) the fix rests on:** (1) a `thread/start` `config` with
+`mcp_servers.<name>` starts a SEPARATE MCP server process for that thread, with that thread's env,
+on one shared app-server; (2) a thread `config` wins over an app-server `-c`; (3) `thread/resume`
+on a fresh app-server applies `config` (unlike `developerInstructions`); (4) nested and dotted
+`config` keys MERGE with the user's `config.toml` (the user's own MCP servers still start).
+
+**Fix:** the app-server now starts identity-free (`codex app-server`, no `-c` args, no
+thread env). Each thread's MCP servers ride its own `thread/start` + `thread/resume` `config` as
+dotted `mcp_servers.<name>` entries (`composeInjection().codexThreadConfig`), plus
+`shell_environment_policy.set.DISPATCH_TERMINAL_ID`. The M3 block (exclusive app-server, route
+rejection, worker-defaults check, hidden Codex workers) is removed.
+
+**Verified live** in an isolated daemon (fake HOME, port 3999): a Codex coordinator (with Codex
+workers selected) and a plain Codex Pretty thread ran side by side on one bare `codex app-server`;
+each had its own `agency-mcp` process with its own `DISPATCH_TERMINAL`; in a real turn each thread's
+shell saw its own `DISPATCH_TERMINAL_ID` and `list_threads` marked its own row `isSelf`.
+
+## Third GPT-6 Astra review (2026-09-23, head 3829772) + remediation
+
+A static `gpt-6-astra` review (`codex exec`, read-only) of the whole branch confirmed every
+earlier finding closed except T1 and T2 (both "Partly") and raised five new ones. Each was
+checked in code and, where possible, live, then fixed test-first.
+
+- **1 — Blocker: `message_thread` / `message_agent` could type into a `shell` tab.** A shell
+  tab has no agent, so `sendThreadMessage` wrote the text plus a carriage return into the PTY and
+  the shell RAN it — with the daemon user's rights, outside the coordinator's sandbox. Fix:
+  `sendThreadMessage` refuses a `shell` target for every caller. Live: HTTP 400, no file written;
+  a live Codex coordinator's `message_thread` to a shell tab got the refusal.
+- **2 — High: the coordinator policy allowed every MCP tool.** An ordinary MCP server runs in its
+  own process OUTSIDE the Codex sandbox (live: from a `read-only` thread, a local stdio server's
+  tool wrote a file outside the workspace). Fix, **Codex coordinator only** (owner decision): the
+  policy takes `allowedMcpServers: ['dispatch']` and declines every other server's tool; the
+  Codex persona says so. Live: the same server's tool was declined with the policy message and
+  did not run. **Correction:** Astra's example and my first check named Codex's `node_repl` as a
+  sandbox escape. That is wrong. Codex runs `node_repl` INSIDE the thread's sandbox (a write from
+  it failed with `EPERM`) and asks no approval for it, so it never reaches the policy.
+- **3 — Medium: a second terminal could resume a live Codex thread.** codex-cli 0.156.1 accepts a
+  second `thread/resume` of a loaded thread (live-verified), and `bindThread` then routed that
+  thread's approvals to the NEWER terminal, which has no coordinator policy. Fix: the Codex
+  manager refuses a spawn that resumes a thread another live session owns (the owner itself may
+  respawn); `bindThread` refuses as a backstop. Live: HTTP 400 "already open", no orphan row.
+- **4 — Medium: a graceful restart lost the interrupted turn (T1 only partly fixed).** Both
+  structured managers emit `exit` synchronously from `kill()`, so the SIGTERM cleanup settled a
+  mid-turn row to `waiting` before `db.close()`, and the boot kickstart (which lists `working`
+  rows) never saw it. A second cause surfaced in the live check: on SIGTERM the Codex app-server
+  writes `turn_aborted`, which the kickstart read as a deliberate Stop. Fix:
+  `SessionService.shutdownPreservingInterruptedTurns` wraps the managers' `killAll`, writes
+  `working` back onto the overseer threads that were mid-turn, and stamps `interruptedAt`; the
+  kickstart treats a Codex `turn_aborted` on a stamped thread as the cut-off turn, and consumes the
+  stamp on every row it visits (kicked or skipped), so a stamp never goes stale. Live (with the real rollouts visible): SIGTERM mid-turn → row `working` + stamp, rollout
+  ends `turn_aborted` → reboot → `Kickstart: resumed 1` → the coordinator finished its task. The
+  Claude path shares the synchronous-exit cause (code-confirmed, not live-tested); its transcript
+  check already reads a killed turn as not completed.
+- **5 — Medium: the live persona test counted a timeout as a pass (T2 only partly fixed).**
+  **Correction:** the earlier line above ("cannot pass on a timeout") was wrong — the soft-skip
+  did `return`, which vitest counts as a pass. Fix: `ctx.skip()`, a recorded skip. Live: with a
+  1 ms turn timeout, all four tests report skipped, not passed.
+
+**Verification:** core 2034 passed / 4 skipped (the opt-in live persona tests), core + web `tsc`
+clean. One core test (`ensure-coordinator.test.ts`, unchanged) failed once under full-suite load
+and passed alone and on the re-run.

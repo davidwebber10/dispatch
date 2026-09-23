@@ -1,7 +1,8 @@
 // The inline control-plane setup card — spec: when ensureForProject peeks a project and
 // finds no live coordinator (store's `setupNeeded`), the Overseer shows this instead of
-// silently auto-creating one, so the user picks the worker harness the coordinator will
-// spawn agents with, and the coordinator's own model, before anything starts running.
+// silently auto-creating one, so the user picks the harness the coordinator ITSELF runs on
+// (Phase 2), the worker harness it spawns agents with, and its own model, before anything
+// starts running.
 //
 // Self-contained: reads the store itself (no props), so both ConversationStream (desktop +
 // mobile — they share the one component, see Stream.tsx's doc comment) mount it bare.
@@ -10,9 +11,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { HarnessStrip } from '../../common/HarnessStrip';
 import { SearchSelect } from '../../common/SearchSelect';
 import { Spinner } from '../../common/Spinner';
-import { api } from '../../../api/client';
+import { api, type HarnessCapability } from '../../../api/client';
 import type { ProviderName, ProviderStatus } from '../../../api/types';
-import { HARNESSES, type Harness } from '../../../lib/harnesses';
+import { HARNESSES } from '../../../lib/harnesses';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { useProjects } from '../../../stores/projects';
 import { useOverseer } from '../store';
@@ -34,9 +35,20 @@ const CATALOG_ID: Record<string, string> = Object.fromEntries(Object.entries(WIR
 // coordinator's workers are agents; a shell has nothing for it to hand off to).
 const AGENT_HARNESSES = HARNESSES.filter((h) => h.id !== 'terminal').map((h) => ({ id: h.id, label: h.label }));
 
-// The coordinator's own model list — always Claude Code's (Control Plane IS a Claude Code
-// coordinator; only the WORKERS it spawns vary by harness).
-const COORDINATOR_MODELS = HARNESSES.find((h) => h.id === 'claude')!.models;
+// Seed for `enabled` before the real capability probe answers — every pill selectable (see
+// that effect's doc comment), with `coordinator` guessed from today's fixed allowlist
+// (providers/capabilities.ts's COORDINATOR_CAPABLE_HARNESSES) so the Coordinator strip never
+// flashes all four harnesses before narrowing to Claude + Codex.
+const SEED_CAPABILITIES: HarnessCapability[] = HARNESSES.map((h) => ({
+  ...h,
+  capabilities: { resume: false, branch: false, permissions: false, telemetry: { structured: false, pty: false }, coordinator: h.id === 'claude' || h.id === 'codex' },
+}));
+
+// Per-coordinator-harness default model, applied when the user switches the Coordinator strip:
+// Claude keeps its historical "sonnet" pin; a harness absent here (e.g. Codex) falls back to
+// "" (SearchSelect's "Default"), which ensureOverseerCoordinator's server side reads as "let
+// the daemon pick its own default" (falsy `opts.model` is omitted — see ensureCoordinator).
+const COORDINATOR_DEFAULT_MODEL: Record<string, string> = { claude: 'sonnet' };
 
 export function ControlPlaneSetupCard(): JSX.Element {
   const isMobile = useIsMobile();
@@ -45,11 +57,13 @@ export function ControlPlaneSetupCard(): JSX.Element {
   const coordinatorProject = useOverseer((s) => s.coordinatorProject);
   const startCoordinator = useOverseer((s) => s.startCoordinator);
   const ensuring = useOverseer((s) => s.ensuring);
+  const setupError = useOverseer((s) => s.setupError);
 
-  // Availability (CLI installed / enabled on this box): seed with the full catalog (every
-  // pill selectable) so a slow probe never blocks the card, then replace with the daemon's
-  // actual enabled list once it answers — mirrors NewThreadModal's seed-then-replace.
-  const [enabled, setEnabled] = useState<Harness[]>(HARNESSES);
+  // Availability (CLI installed / enabled on this box) + coordinator eligibility: seed with
+  // the full catalog (every pill selectable) so a slow probe never blocks the card, then
+  // replace with the daemon's actual capability list once it answers — mirrors NewThreadModal's
+  // seed-then-replace.
+  const [enabled, setEnabled] = useState<HarnessCapability[]>(SEED_CAPABILITIES);
   useEffect(() => {
     let live = true;
     api.getHarnessCapabilities?.().then((items) => {
@@ -76,10 +90,27 @@ export function ControlPlaneSetupCard(): JSX.Element {
   }, [enabled, providers, providerFor]);
 
   const selectedCatalogId = CATALOG_ID[setupSelection.workerHarness] ?? 'claude';
-  const modelOptions = useMemo(
-    () => COORDINATOR_MODELS.map((o) => ({ value: o.model ?? '', label: o.label })),
-    [],
+
+  // The harnesses eligible to BE the coordinator (Claude + Codex today) — narrower than
+  // AGENT_HARNESSES (the Workers strip's full agent list): grok/opencode are workers only,
+  // so they're filtered OUT entirely here rather than merely dimmed.
+  const coordinatorHarnesses = useMemo(
+    () => enabled.filter((h) => h.capabilities.coordinator).map((h) => ({ id: h.id, label: h.label })),
+    [enabled],
   );
+  const selectedCoordinatorCatalogId = CATALOG_ID[setupSelection.coordinatorHarness] ?? 'claude';
+  // The seed guesses Codex can coordinate before the probe answers; if the probe then drops the
+  // current pick from the strip, fall back to the first harness it does offer (with that
+  // harness's default model) — otherwise the invisible stale pick makes Start fail.
+  useEffect(() => {
+    if (!coordinatorHarnesses.length || coordinatorHarnesses.some((h) => h.id === selectedCoordinatorCatalogId)) return;
+    const first = coordinatorHarnesses[0].id;
+    setSetupSelection({ coordinatorHarness: WIRE[first] ?? first, model: COORDINATOR_DEFAULT_MODEL[first] ?? '' });
+  }, [coordinatorHarnesses, selectedCoordinatorCatalogId, setSetupSelection]);
+  const modelOptions = useMemo(() => {
+    const models = HARNESSES.find((h) => h.id === selectedCoordinatorCatalogId)?.models ?? [];
+    return models.map((o) => ({ value: o.model ?? '', label: o.label }));
+  }, [selectedCoordinatorCatalogId]);
 
   const sessionId = coordinatorProject ?? useProjects.getState().activeId;
 
@@ -104,7 +135,7 @@ export function ControlPlaneSetupCard(): JSX.Element {
         </div>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div data-testid="workers-strip" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <span
           style={{
             fontSize: isMobile ? 12.5 : 11,
@@ -120,6 +151,30 @@ export function ControlPlaneSetupCard(): JSX.Element {
           harnesses={AGENT_HARNESSES}
           value={selectedCatalogId}
           onSelect={(id) => setSetupSelection({ workerHarness: WIRE[id] ?? id })}
+          isAvailable={isAvailable}
+          mobile={isMobile}
+        />
+      </div>
+
+      <div data-testid="coordinator-strip" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <span
+          style={{
+            fontSize: isMobile ? 12.5 : 11,
+            fontWeight: 600,
+            letterSpacing: '.04em',
+            textTransform: 'uppercase',
+            color: 'var(--color-text-tertiary)',
+          }}
+        >
+          Coordinator
+        </span>
+        <HarnessStrip
+          harnesses={coordinatorHarnesses}
+          value={selectedCoordinatorCatalogId}
+          onSelect={(id) => {
+            const wire = WIRE[id] ?? id;
+            setSetupSelection({ coordinatorHarness: wire, model: COORDINATOR_DEFAULT_MODEL[id] ?? '' });
+          }}
           isAvailable={isAvailable}
           mobile={isMobile}
         />
@@ -161,6 +216,11 @@ export function ControlPlaneSetupCard(): JSX.Element {
       >
         {ensuring ? (<><Spinner size={13} /> Starting…</>) : 'Start'}
       </button>
+      {setupError && (
+        <div role="alert" style={{ fontSize: isMobile ? 13 : 12, color: 'var(--color-status-red)' }}>
+          {setupError}
+        </div>
+      )}
     </div>
   );
 }

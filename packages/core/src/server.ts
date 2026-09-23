@@ -815,8 +815,12 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     boxHeartbeat.stop();
     threadAutoNamer.dispose();
     ptyManager.killAll();
-    structuredManager.killAll();
-    for (const manager of extraManagers.values()) manager.killAll();
+    // Each manager kill settles its thread to `waiting` synchronously; keep the mid-turn overseer
+    // threads `working` so the next boot's kickstart resumes them.
+    sessionService.shutdownPreservingInterruptedTurns(() => {
+      structuredManager.killAll();
+      for (const manager of extraManagers.values()) manager.killAll();
+    });
     eventsWss.close();
     terminalWss.close();
     structuredWss.close();

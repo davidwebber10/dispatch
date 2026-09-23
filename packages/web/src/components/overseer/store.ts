@@ -134,7 +134,8 @@ interface OverseerState {
   sendError: string | null; // last directive send that FAILED (POST rejected); surfaced inline, cleared on next send
   ensuring: boolean; // a find-or-create coordinator request is in flight
   setupNeeded: boolean; // ensureForProject peeked and found no live coordinator — the inline setup card should show instead of auto-creating one
-  setupSelection: { workerHarness: string; model: string }; // the setup card's current harness/model choice, consumed by startCoordinator
+  setupSelection: { workerHarness: string; model: string; coordinatorHarness: string }; // the setup card's current harness/model choice, consumed by startCoordinator
+  setupError: string | null; // the setup card's last Start failed (create rejected); shown on the card, cleared on the next attempt
   resolved: string[]; // optimistically dismissed need ids
   pendingByTerminal: Record<string, PendingPermission | null>; // fetched escalations (the membrane), keyed by agent terminal id
   archivedByProject: Record<string, Terminal[]>; // archived (complete_agent'd) terminals per project; surfaced as done outcomes
@@ -164,8 +165,8 @@ interface OverseerState {
   closeWorkerLightbox: () => void;
   ensureForProject: (sessionId: string | null) => void;
   /** Update the setup card's staged harness/model choice (patched, not replaced). */
-  setSetupSelection: (patch: Partial<{ workerHarness: string; model: string }>) => void;
-  /** Create the coordinator with the setup card's current selection (model + workerHarness),
+  setSetupSelection: (patch: Partial<{ workerHarness: string; model: string; coordinatorHarness: string }>) => void;
+  /** Create the coordinator with the setup card's current selection (coordinatorHarness + model + workerHarness),
    *  then clear `setupNeeded` and load the fresh `coordinatorId`. Called from the setup card's
    *  own "Start" action, and from `sendDirective` when the user types before the card is submitted. */
   startCoordinator: (sessionId: string) => Promise<void>;
@@ -224,7 +225,8 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   sendError: null,
   ensuring: false,
   setupNeeded: false,
-  setupSelection: { workerHarness: 'claude-code', model: 'sonnet' },
+  setupSelection: { workerHarness: 'claude-code', model: 'sonnet', coordinatorHarness: 'claude-code' },
+  setupError: null,
   resolved: [],
   pendingByTerminal: {},
   archivedByProject: {},
@@ -454,19 +456,22 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   setSetupSelection: (patch) => set((s) => ({ setupSelection: { ...s.setupSelection, ...patch } })),
 
   startCoordinator: async (sessionId) => {
-    const { workerHarness, model } = get().setupSelection;
+    const { workerHarness, model, coordinatorHarness } = get().setupSelection;
     // This create is the new authoritative run for the project — bump the generation so a
     // still-in-flight peek (ensureForProject) that resumes afterward recognises itself as
     // stale and no longer overwrites the coordinator this call is about to set. See
     // ensureGeneration's doc comment.
     const myGen = ++ensureGeneration;
-    set({ ensuring: true });
+    set({ ensuring: true, setupError: null });
     try {
-      const { terminalId } = await api.ensureOverseerCoordinator(sessionId, { model, workerHarness });
+      const { terminalId } = await api.ensureOverseerCoordinator(sessionId, { coordinatorHarness, model, workerHarness });
       if (get().coordinatorProject !== sessionId || ensureGeneration !== myGen) return; // project switched, or superseded, mid-flight
       set({ coordinatorId: terminalId, setupNeeded: false, ensuring: false });
     } catch {
-      if (get().coordinatorProject === sessionId && ensureGeneration === myGen) set({ ensuring: false });
+      // Say so on the card — a Start that silently does nothing looks like a dead button.
+      if (get().coordinatorProject === sessionId && ensureGeneration === myGen) {
+        set({ ensuring: false, setupError: 'Could not start the coordinator — try again, or pick another harness.' });
+      }
     }
   },
 

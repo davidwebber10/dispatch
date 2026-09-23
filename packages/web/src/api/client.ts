@@ -1,4 +1,4 @@
-import type { Harness } from '../lib/harnesses';
+import type { harnessCapabilities } from '../../../core/src/providers/capabilities';
 import { apiPath } from '../lib/basePath';
 import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, OpencodeModel, OpencodeCatalogEntry } from './types';
 
@@ -29,6 +29,14 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 const body = (data: unknown) => JSON.stringify(data);
+
+/**
+ * A catalog harness plus what this daemon can actually do with it — the daemon's
+ * `GET /api/setup/harnesses` shape, taken straight from `core/src/providers/capabilities.ts`
+ * (type-only, so it can never drift from the server). `coordinator` marks a harness that may run
+ * as the Overseer COORDINATOR itself, not just a worker — today only `claude-code` and `codex`.
+ */
+export type HarnessCapability = ReturnType<typeof harnessCapabilities>[number];
 
 type QueryParams =
   | AnalyticsRange
@@ -83,7 +91,7 @@ export const api = {
   // is sent as `{ content }` so an attached image travels as a real content block.
   // `source: 'user'` tags this as a direct human send (the single chokepoint every
   // composer funnels through), distinct from the coordinator's own agency-mcp sends.
-  getHarnessCapabilities: () => req<(Harness & { capabilities: { resume: boolean; branch: boolean; permissions: boolean; telemetry: { structured: boolean; pty: boolean } } })[]>('/api/setup/harnesses'),
+  getHarnessCapabilities: () => req<HarnessCapability[]>('/api/setup/harnesses'),
   sendStructuredMessage: (id: string, content: string | ContentBlock[]) =>
     req<void>(`/api/terminals/${id}/message`, { method: 'POST', body: body({ ...(typeof content === 'string' ? { text: content } : { content }), source: 'user' }) }),
   // The membrane: the gated tool/question a structured AGENT thread is blocked on (or null).
@@ -106,7 +114,9 @@ export const api = {
     req<Terminal>(`/api/terminals/${terminalId}/transport`, { method: 'POST', body: body({ transport }) }),
   // Overseer: find-or-create this project's coordinator thread (idempotent) → { terminalId }.
   // opts apply only when this call CREATES the coordinator (setup card / first directive).
-  ensureOverseerCoordinator: (sessionId: string, opts?: { model?: string; workerHarness?: string }) =>
+  // `coordinatorHarness` picks which harness backs the coordinator itself (Phase 2); absent
+  // defaults server-side to claude-code.
+  ensureOverseerCoordinator: (sessionId: string, opts?: { model?: string; workerHarness?: string; coordinatorHarness?: string }) =>
     req<{ terminalId: string }>(`/api/sessions/${sessionId}/overseer/coordinator`, { method: 'POST', ...(opts && Object.keys(opts).length ? { body: body(opts) } : {}) }),
   // The Control Plane worker matrix (per-agent-type harness/model) — plumbing, no UI yet.
   putOverseerWorkers: (patch: { byType: Record<string, { harness?: string; model?: string } | null> }) =>
