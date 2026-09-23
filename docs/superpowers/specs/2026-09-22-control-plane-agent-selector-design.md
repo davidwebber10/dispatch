@@ -126,6 +126,15 @@ sandbox** (not read-only) — the coordinator must write its own `~/.codex`
 memory, and the membrane denies the dangerous calls, mirroring the Claude
 coordinator.
 
+> **As built (2026-09-23, supersedes the paragraph above):** the Codex coordinator runs
+> `read-only` + `on-request` (plan correction 750447d), so every write or network call
+> surfaces as an approval the membrane gates; every escalated shell command is denied.
+> Its memory dir is the DEDICATED `~/.codex/dispatch-coordinator`, never the whole
+> `~/.codex` — that home also holds Codex's own `config.toml`, `rules/`, global
+> `AGENTS.md`, skills, auth, and real git worktrees (review finding N1). It pins
+> `approvalsReviewer: 'user'` and needs the Codex app-server to itself until per-thread
+> MCP identity lands (M3 block). See `docs/superpowers/reviews/2026-09-23-pr47-phase2-review.md`.
+
 ### Verified findings (live probe, 2026-09-22)
 
 Probed a real `codex app-server` (`codex-cli 0.155.1`, `gpt-6-astra`):
@@ -182,7 +191,7 @@ Probed a real `codex app-server` (`codex-cli 0.155.1`, `gpt-6-astra`):
    that flag; Claude stays default.
 5. **Prompts and models, parameterized.** Convert `COORDINATOR_PROMPT` to
    `buildCoordinatorPrompt({ harness })`: the memory-root line and the Claude
-   tier-teaching become harness-appropriate (Codex → `~/.codex`, no
+   tier-teaching become harness-appropriate (Codex → `~/.codex/dispatch-coordinator`, no
    sonnet/opus/fable vocabulary). The policy's allowed write path follows the
    harness memory root (`coordinator-policy` takes a memory-dir parameter). A
    per-harness coordinator model default (Codex gets a real model id, never a
