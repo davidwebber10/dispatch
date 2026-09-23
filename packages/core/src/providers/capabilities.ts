@@ -22,7 +22,11 @@ export function harnessCapabilities() {
         branch: !!provider.buildBranchCommand,
         permissions: structured,
         telemetry: { structured, pty: provider.telemetry.ptyCapture !== null },
-        coordinator: COORDINATOR_CAPABLE_HARNESSES.has(h.type),
+        // Requires structured transport too: with structured off, the PTY path is the only
+        // one available, and it has no persona/membrane (see coordinator-policy.ts) — a
+        // coordinator there would run ungoverned. Reuse `structured` computed above rather
+        // than re-deriving it (a second derivation could silently drift out of sync).
+        coordinator: structured && COORDINATOR_CAPABLE_HARNESSES.has(h.type),
       } };
   });
 }

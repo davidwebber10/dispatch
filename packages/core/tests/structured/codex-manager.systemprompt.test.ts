@@ -3,8 +3,10 @@
 // A Codex coordinator's persona (system prompt) must reach the model via the app-server's
 // TOP-LEVEL, camelCase `developerInstructions` param on `thread/start` — the OpenAI-documented
 // `settings.developer_instructions` spelling is silently ignored by codex-cli (verified live on
-// codex-cli 0.155.1). `thread/resume` restores an existing thread that already has its
-// instructions, so it must NOT carry the field.
+// codex-cli 0.155.1). `thread/resume` is ALSO sent `developerInstructions` when the session has
+// a `systemPrompt` — deliberately reinforcing, not just restoring: rather than gamble on the
+// CLI retaining the persona across a resume/compaction/crash-recovery, we resend it every time.
+// Sending it again is idempotent and safe; silently losing the coordinator's persona is not.
 //
 // Reuses the existing fake-codex-app-server.mjs harness (see codex-manager.test.ts) rather than
 // a live `codex` process. The fake is extended (behind an opt-in env var so other tests are
@@ -79,7 +81,7 @@ it('omits developerInstructions from thread/start when no systemPrompt is set', 
   expect(sent.params.developerInstructions).toBeUndefined();
 });
 
-it('does NOT carry developerInstructions on thread/resume', async () => {
+it('ALSO carries developerInstructions on thread/resume when systemPrompt is set (persona durability)', async () => {
   m.spawn('t1', {
     command: process.execPath,
     args: [fake],
@@ -92,6 +94,21 @@ it('does NOT carry developerInstructions on thread/resume', async () => {
 
   const [sent] = readLogged('thread/resume');
   expect(sent).toBeDefined();
-  expect(sent.params.developerInstructions).toBeUndefined();
+  expect(sent.params.developerInstructions).toBe('CANARY-PERSONA');
   expect(readLogged('thread/start')).toHaveLength(0);
+});
+
+it('omits developerInstructions from thread/resume when no systemPrompt is set', async () => {
+  m.spawn('t1', {
+    command: process.execPath,
+    args: [fake],
+    workDir: process.cwd(),
+    resumeId: 'thread-existing-9',
+    env: { CODEX_FAKE_LOG: logPath },
+  });
+  await waitForEvent(m, 't1', (e) => e.type === 'assistant' && e.message?.content?.[0]?.text === 'earlier answer');
+
+  const [sent] = readLogged('thread/resume');
+  expect(sent).toBeDefined();
+  expect(sent.params.developerInstructions).toBeUndefined();
 });

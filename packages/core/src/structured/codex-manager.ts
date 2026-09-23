@@ -160,9 +160,10 @@ interface CodexSession {
   model?: string;
   cwd: string;
   resumeId?: string;
-  /** Persona for a FRESH thread only — sent as `thread/start`'s `developerInstructions` param
-   *  (see StructuredSpawnOpts.systemPrompt). A `thread/resume` restores a thread that already
-   *  has its instructions, so it must never carry this. */
+  /** The coordinator's persona, sent as `developerInstructions` on BOTH `thread/start` and
+   *  `thread/resume` (see StructuredSpawnOpts.systemPrompt). Resent on resume deliberately —
+   *  rather than trust the CLI to retain it across a resume/compaction/crash recovery, we
+   *  reinforce it every time; resending is idempotent, and a lost persona is not safe. */
   systemPrompt?: string;
   /** Optional per-session tool policy consulted before the escalate/auto-allow membrane; a
    *  deny is written straight back to Codex (no pending, no human involvement) — same
@@ -288,6 +289,11 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
         // back to the manager-wide default (see CodexSession.approvalPolicy/sandbox doc comment).
         approvalPolicy: session.approvalPolicy ?? this.approvalPolicy,
         sandbox: session.sandbox ?? this.sandbox,
+        // Reinforce the persona on resume too, not just on a fresh thread/start. Resume,
+        // compaction, and crash recovery are all points where a governed coordinator could
+        // silently lose its persona if the CLI doesn't retain it — resending is idempotent
+        // and harmless, while losing the persona on a coordinator thread is not.
+        ...(session.systemPrompt ? { developerInstructions: session.systemPrompt } : {}),
       });
       this.bindThread(session, res?.thread?.id ?? session.resumeId, res?.model);
       await this.backfill(session, conn, res?.thread?.turns).catch(() => { /* backfill is best-effort */ });

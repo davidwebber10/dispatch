@@ -42,6 +42,13 @@ describe('coordinatorToolPolicy', () => {
     }
   });
 
+  it('denies Bash when command is not a non-empty string (fail closed, not coerce-to-empty-allow)', () => {
+    expect(coordinatorToolPolicy('Bash', { command: undefined }).allow).toBe(false);
+    expect(coordinatorToolPolicy('Bash', { command: 42 }).allow).toBe(false);
+    expect(coordinatorToolPolicy('Bash', { command: '' }).allow).toBe(false);
+    expect(coordinatorToolPolicy('Bash', {}).allow).toBe(false);
+  });
+
   it('allows read-only Bash', () => {
     for (const cmd of ['git status', 'git log --oneline -5', 'ls -la', 'rg -n pattern src/', 'gh pr checks 12', 'gh pr view 12']) {
       expect(coordinatorToolPolicy('Bash', { command: cmd }).allow, cmd).toBe(true);

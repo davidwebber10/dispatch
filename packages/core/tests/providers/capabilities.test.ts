@@ -25,4 +25,11 @@ describe('harness capability registry', () => {
     expect(byType['opencode']).toBe(false);
     expect(byType['shell']).toBe(false);
   });
+  it('denies coordinator capability when the harness structured transport is disabled, even for codex', () => {
+    vi.stubEnv('DISPATCH_CODEX_PRETTY', '0');
+    const byType = Object.fromEntries(harnessCapabilities().map(h => [h.type, h.capabilities.coordinator]));
+    expect(byType['codex']).toBe(false);
+    // claude-code has no disable knob, so it stays structured and coordinator-capable.
+    expect(byType['claude-code']).toBe(true);
+  });
 });

@@ -77,8 +77,11 @@ export function makeCoordinatorPolicy(memoryDir: string): (toolName: string, inp
       return { allow: false, message: delegateMsg(memoryDir) };
     }
     if (toolName === 'Bash') {
-      const cmd = typeof inp.command === 'string' ? inp.command : '';
-      if (BLOCKED_BASH.some((re) => re.test(cmd))) return { allow: false, message: SHIP_MSG };
+      // Fail closed: a non-string (or empty) command isn't inspectable against BLOCKED_BASH,
+      // so coercing it to '' and falling through to allow would let an uninspectable command
+      // run ungoverned. Deny instead of guessing.
+      if (typeof inp.command !== 'string' || inp.command === '') return { allow: false, message: SHIP_MSG };
+      if (BLOCKED_BASH.some((re) => re.test(inp.command as string))) return { allow: false, message: SHIP_MSG };
       return { allow: true };
     }
     return { allow: true };
