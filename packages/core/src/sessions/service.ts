@@ -2032,7 +2032,10 @@ export class SessionService {
 
     // On resume, restore prior conversation from the claude transcript JSONL. Claude-only:
     // the Codex manager has no Claude transcript to read — it backfills its own history from
-    // `thread/resume`/`thread/read` (see CodexStructuredSessionManager.backfill).
+    // `thread/resume`/`thread/read` (see CodexStructuredSessionManager.backfill), driven by
+    // the `resumeId` field passed to manager.spawn below (set regardless of harness). Pinned
+    // in coordinator-restart.test.ts: a Codex resume carries `resumeId` and no seedEvents,
+    // even when a same-named claude transcript exists on disk.
     const rawSeedEvents = resumeSessionId && terminal.type === 'claude-code' ? readSessionBackfill(workDir, resumeSessionId) : undefined;
     // Merge back any durably-stored `source` tags (see db/message-source.ts) — the
     // transcript itself carries none, so a revived thread would otherwise lose the "via
@@ -2178,6 +2181,15 @@ export class SessionService {
    * DEFERRED (follow-up): `needs_input` agents lose their in-memory pending on
    * restart. They aren't `working`, so this kicker correctly skips them — reviving
    * them needs a different path (re-surface the question), not a mid-task nudge.
+   *
+   * CLAUDE-ONLY BY DESIGN: `terminalsDb.listWorkingStructured` scopes this whole
+   * mechanism to `type = 'claude-code'` (see its doc comment) because the idempotency
+   * check above needs a local transcript to tail, which Codex/Grok/OpenCode
+   * coordinators don't have. A Codex coordinator is therefore never proactively
+   * boot-kicked — it relies on `ensureStructuredAlive` (revive-on-open), which every
+   * real entry point already calls before talking to a coordinator (opening it,
+   * `notifyCoordinatorOfAgent`, `sendStructuredMessage`). Pinned in
+   * coordinator-restart.test.ts.
    */
   async kickstartInterruptedAgents(settleMs: number = KICKSTART_SETTLE_MS): Promise<{ kicked: string[]; skipped: string[] }> {
     const kicked: string[] = [];

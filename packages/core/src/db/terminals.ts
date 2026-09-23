@@ -129,6 +129,16 @@ export function listQueuedDependents(db: Database.Database, agentId: string): Te
  * signal — a thread that died mid-turn (clean shutdown skips the settle-to-waiting
  * write, and clearStalePids only touches sessions). The caller filters to
  * structured overseer threads and applies idempotency.
+ *
+ * `type = 'claude-code'` is deliberate, not an oversight: the caller's idempotency
+ * check (transcriptTailStatus) reads the claude JSONL transcript, which has no
+ * equivalent for Codex/Grok/OpenCode coordinators — there is no local file to tail,
+ * so there is no safe way to tell "already kicked, nothing new happened" from
+ * "still genuinely stuck" for them. Rather than guess, those harnesses are left out
+ * of the proactive boot nudge entirely; they aren't wedged, because every real path
+ * that talks to a coordinator (opening it, an agent escalating up, sending it a
+ * message) already revives it first via the harness-agnostic
+ * `SessionService.ensureStructuredAlive`. See coordinator-restart.test.ts.
  */
 export function listWorkingStructured(db: Database.Database): TerminalRow[] {
   return db.prepare(
