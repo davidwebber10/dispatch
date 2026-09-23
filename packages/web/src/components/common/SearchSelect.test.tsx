@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { act, render, screen, fireEvent, within } from '@testing-library/react';
 import { SearchSelect } from './SearchSelect';
 
 const OPTS = [
@@ -13,6 +13,8 @@ function setup(value = '', onChange = vi.fn()) {
   render(<SearchSelect value={value} options={OPTS} onChange={onChange} ariaLabel="Model" />);
   return { onChange, trigger: screen.getByRole('combobox', { name: 'Model' }) };
 }
+
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('SearchSelect', () => {
   it('reads like a select: the trigger shows the current label and is closed by default', () => {
@@ -72,20 +74,65 @@ describe('SearchSelect', () => {
     document.removeEventListener('keydown', docEsc);
   });
 
-  it('an outside mousedown closes it', () => {
+  it('an outside pointer press closes it', () => {
     const { trigger } = setup();
     fireEvent.click(trigger);
-    fireEvent.mouseDown(document.body);
+    fireEvent.pointerDown(document.body);
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
   });
 
-  it('keeps the options open while scrolling inside, but closes on page scroll', () => {
+  it('keeps the options open through list scroll, page scroll, and window resize', () => {
     const { trigger } = setup();
     fireEvent.click(trigger);
     fireEvent.scroll(screen.getByRole('listbox'));
     expect(screen.getByRole('listbox')).toBeInTheDocument();
     fireEvent.scroll(window);
+    fireEvent.resize(window);
+    expect(screen.getByRole('listbox')).toBeInTheDocument();
+  });
+
+  it('opens on mobile without raising the keyboard, and lets the user search and select', () => {
+    const onChange = vi.fn();
+    render(<SearchSelect value="" options={OPTS} onChange={onChange} ariaLabel="Model" size="lg" />);
+    fireEvent.click(screen.getByRole('combobox', { name: 'Model' }));
+    const search = screen.getByRole('textbox', { name: 'Search model' });
+    expect(search).not.toHaveFocus();
+    fireEvent.pointerDown(search, { pointerType: 'touch' });
+    fireEvent.focus(search);
+    fireEvent.resize(window);
+    fireEvent.scroll(document);
+    fireEvent.change(search, { target: { value: 'GLM' } });
+    fireEvent.click(screen.getByRole('option', { name: /GLM/ }));
+    expect(onChange).toHaveBeenCalledWith('glm');
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+  });
+
+  it('keeps the popup within the visible viewport when the keyboard opens and pans', () => {
+    const viewport = Object.assign(new EventTarget(), { width: 390, height: 844, offsetTop: 0, offsetLeft: 0 });
+    vi.stubGlobal('visualViewport', viewport);
+    vi.stubGlobal('innerHeight', 844);
+    const { trigger } = setup();
+    vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({ top: 600, bottom: 640, left: 180, right: 360, width: 180, height: 40, x: 180, y: 600, toJSON() {} });
+    fireEvent.click(trigger);
+    const popup = screen.getByRole('listbox').parentElement!;
+    viewport.height = 340;
+    viewport.offsetTop = 120;
+    act(() => {
+      viewport.dispatchEvent(new Event('resize'));
+      viewport.dispatchEvent(new Event('scroll'));
+    });
+    expect(screen.getByRole('listbox')).toBeInTheDocument();
+    const bottomEdge = window.innerHeight - parseFloat(popup.style.bottom);
+    expect(bottomEdge).toBeLessThanOrEqual(452);
+    expect(bottomEdge - parseFloat(popup.style.maxHeight)).toBeGreaterThanOrEqual(128);
+    fireEvent.pointerDown(document.body, { pointerType: 'touch' });
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+  });
+
+  it('still focuses search when opened with a keyboard on the mobile layout', () => {
+    render(<SearchSelect value="" options={OPTS} onChange={() => {}} ariaLabel="Model" size="lg" />);
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Model' }), { key: 'ArrowDown' });
+    expect(screen.getByRole('textbox', { name: 'Search model' })).toHaveFocus();
   });
 
   it('a disabled select never opens', () => {
