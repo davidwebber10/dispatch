@@ -1064,7 +1064,8 @@ export class SessionService {
    * `agentTerminalId`, if any: an agent never bothers the human directly — its questions and
    * lifecycle events surface to its project's coordinator (Dispatch), which decides what to do
    * (answer, ask the human itself, re-plan). Returns true when a live coordinator received the
-   * note; false when the thread isn't a typed agent or the project has no coordinator.
+   * note; false when the thread isn't a typed agent, is a scheduled role run, or the project has
+   * no coordinator.
    */
   private notifyCoordinatorOfAgent(agentTerminalId: string, note: string): boolean {
     const agent = terminalsDb.getById(this.db, agentTerminalId);
@@ -1072,6 +1073,11 @@ export class SessionService {
     let cfg: Record<string, any> = {};
     try { cfg = JSON.parse(agent.config || '{}'); } catch { /* default {} */ }
     if (cfg.role !== 'agent') return false; // only agents escalate UP; coordinators/plain → human
+    // A scheduled role run is a role: 'agent' thread in its project's session, but no coordinator
+    // supervises it (roles design §3: "No agent supervises an agent"): it reports to its own log
+    // and the digest, and its questions go to the human. Without this, every role run would wake
+    // (and revive) the coordinator with an invitation to spawn a follow-up.
+    if (typeof cfg.roleRun === 'string' && cfg.roleRun) return false;
     const coordinator = terminalsDb.listBySession(this.db, agent.session_id)
       .map(terminalsDb.rowToTerminal)
       .find((t) => isAgentType(t.type) && !t.archivedAt && t.id !== agentTerminalId && t.config?.role === 'coordinator');

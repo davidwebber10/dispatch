@@ -13,8 +13,13 @@ export type PolicyDecision = { allow: true } | { allow: false; message: string }
 const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 
 const AGENT_MSG =
-  'Role policy: role runners never spawn native subagents (Agent/Task) — do the work directly ' +
+  'Role policy: role runners never spawn native subagents (Agent/Task/Workflow) — do the work directly ' +
   "and record what you could not finish in this run's report.";
+
+// The CLI auto-approves these without a can_use_tool request, so the deny below never fires for
+// them — only the spawn-time strip (ROLE_DISALLOWED_TOOLS) reaches the model. Same as the
+// coordinator's COORDINATOR_DISALLOWED_TOOLS; the policy deny stays as the backstop.
+const NATIVE_ORCHESTRATION_TOOLS = ['Agent', 'Task', 'Workflow'];
 
 // The Dispatch agency MCP reaches every Claude thread, role runs included (peer-threads design,
 // 2026-07-19: "full agency for every thread"). A role REPORTS: it never delegates or steers. A
@@ -26,12 +31,14 @@ const ROLE_DISPATCH_TOOLS_ALLOWED = new Set([
   'list_threads', 'read_thread', 'list_agents', 'read_agent', 'list_missions',
   'report_status', 'post_image', 'watch_thread', 'unwatch_thread', 'list_watches',
 ]);
-/** The known Dispatch delegation/steering tools, stripped from a role run at spawn
- *  (--disallowedTools, see sessions/service.ts disallowedToolsFor) so the model never sees them.
- *  The policy below denies them too, plus any Dispatch tool not on the allowlist. */
+/** The native orchestration tools and the known Dispatch delegation/steering tools, stripped from
+ *  a role run at spawn (--disallowedTools, see sessions/service.ts disallowedToolsFor) so the model
+ *  never sees them. The policy below denies them too, plus any Dispatch tool not on the allowlist. */
 export const ROLE_DISALLOWED_TOOLS: readonly string[] = [
-  'spawn_agent', 'queue_agent', 'start_agent', 'message_thread', 'message_agent', 'answer_agent', 'complete_agent',
-].map((t) => `${DISPATCH_MCP_PREFIX}${t}`);
+  ...NATIVE_ORCHESTRATION_TOOLS,
+  ...['spawn_agent', 'queue_agent', 'start_agent', 'message_thread', 'message_agent', 'answer_agent', 'complete_agent']
+    .map((t) => `${DISPATCH_MCP_PREFIX}${t}`),
+];
 
 const DELEGATE_MSG =
   'Role policy: role runs never spawn, queue, message, answer, or archive other threads — do the ' +
@@ -339,7 +346,7 @@ export function roleToolPolicy(authority: RoleAuthority): (toolName: string, inp
   const effective: RoleAuthority = (ROLE_AUTHORITIES as readonly string[]).includes(authority) ? authority : 'observe';
 
   return function rolePolicy(toolName: string, input: unknown): PolicyDecision {
-    if (toolName === 'Agent' || toolName === 'Task') return { allow: false, message: AGENT_MSG };
+    if (NATIVE_ORCHESTRATION_TOOLS.includes(toolName)) return { allow: false, message: AGENT_MSG };
 
     if (toolName.startsWith(DISPATCH_MCP_PREFIX)) {
       if (ROLE_DISPATCH_TOOLS_ALLOWED.has(toolName.slice(DISPATCH_MCP_PREFIX.length))) return { allow: true };

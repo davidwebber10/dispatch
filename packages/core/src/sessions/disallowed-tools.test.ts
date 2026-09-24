@@ -10,9 +10,12 @@ describe('disallowedToolsFor', () => {
     expect(disallowedToolsFor({ role: 'coordinator' })).toEqual(COORDINATOR_DISALLOWED_TOOLS);
   });
 
-  it('strips the Dispatch delegation and steering tools from a role run', () => {
+  it('strips native orchestration and the Dispatch delegation and steering tools from a role run', () => {
     expect(disallowedToolsFor({ role: 'agent', roleAuthority: 'observe' })).toEqual(ROLE_DISALLOWED_TOOLS);
     expect(disallowedToolsFor({ role: 'agent', roleAuthority: 'stage' })).toEqual(ROLE_DISALLOWED_TOOLS);
+    expect(disallowedToolsFor({ role: 'agent', roleAuthority: 'stage' })).toEqual(
+      expect.arrayContaining(['Agent', 'Task', 'Workflow', 'mcp__dispatch__spawn_agent']),
+    );
   });
 
   it('strips nothing from a plain thread or a coordinator-spawned agent', () => {

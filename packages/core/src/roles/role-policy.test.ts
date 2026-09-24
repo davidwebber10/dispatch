@@ -63,12 +63,13 @@ describe('roleToolPolicy — rules that hold at every authority', () => {
     }
   });
 
-  it('denies native subagents (Agent/Task) at every level, pointing at doing the work directly', () => {
+  it('denies native subagents (Agent/Task/Workflow) at every level, pointing at doing the work directly', () => {
     for (const [name, policy] of levels) {
       const d = policy('Agent', { prompt: 'go research' });
       expect(d.allow, name).toBe(false);
       if (!d.allow) expect(d.message).toContain('subagent');
       expect(policy('Task', {}).allow, name).toBe(false);
+      expect(policy('Workflow', {}).allow, name).toBe(false);
     }
   });
 
@@ -405,7 +406,11 @@ describe('roleToolPolicy — Dispatch MCP tools (roles never delegate or steer)'
     expect(stageDeploy('mcp__databricks__execute_sql', {})).toEqual({ allow: true });
   });
 
-  it('exports the spawn-time strip list: exactly the denied Dispatch tools', () => {
-    expect([...ROLE_DISALLOWED_TOOLS].sort()).toEqual(denied.map((t) => `mcp__dispatch__${t}`).sort());
+  it('exports the spawn-time strip list: the native orchestration tools and the denied Dispatch tools', () => {
+    // The CLI auto-approves Agent/Task/Workflow without a can_use_tool request, so only the
+    // spawn-time strip keeps them from a role run (as COORDINATOR_DISALLOWED_TOOLS does).
+    expect([...ROLE_DISALLOWED_TOOLS].sort()).toEqual(
+      ['Agent', 'Task', 'Workflow', ...denied.map((t) => `mcp__dispatch__${t}`)].sort(),
+    );
   });
 });
