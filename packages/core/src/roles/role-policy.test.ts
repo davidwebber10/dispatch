@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { roleToolPolicy } from './role-policy.js';
+import { ROLE_DISALLOWED_TOOLS, roleToolPolicy } from './role-policy.js';
 
 const observe = roleToolPolicy('observe');
 const stage = roleToolPolicy('stage');
@@ -63,12 +63,13 @@ describe('roleToolPolicy — rules that hold at every authority', () => {
     }
   });
 
-  it('denies native subagents (Agent/Task) at every level, pointing at doing the work directly', () => {
+  it('denies native subagents (Agent/Task/Workflow) at every level, pointing at doing the work directly', () => {
     for (const [name, policy] of levels) {
       const d = policy('Agent', { prompt: 'go research' });
       expect(d.allow, name).toBe(false);
       if (!d.allow) expect(d.message).toContain('subagent');
       expect(policy('Task', {}).allow, name).toBe(false);
+      expect(policy('Workflow', {}).allow, name).toBe(false);
     }
   });
 
@@ -355,5 +356,61 @@ describe("roleToolPolicy — git's dst-disambiguation of an unprefixed heads/<na
 
   it('still allows tags/main — a tag named main is not branch main', () => {
     expect(stage('Bash', { command: 'git push origin tags/main' }).allow).toBe(true);
+  });
+});
+
+// Scheduled roles got the full Dispatch agency MCP from the peer-threads design (2026-07-19, "full
+// agency for every thread"), and this policy allowed every non-Bash, non-file tool. So any role —
+// observe or stage — could spawn_agent an implementer that runs with NO policy and do what §5 denies
+// at every level (gh pr merge, push to main, gh release, …), or steer a live thread with
+// message_thread. Roles report; they never delegate or steer. Read, report, and watch tools stay.
+describe('roleToolPolicy — Dispatch MCP tools (roles never delegate or steer)', () => {
+  const levels: Array<[string, ReturnType<typeof roleToolPolicy>]> = [
+    ['observe', observe],
+    ['stage', stage],
+    ['stage-deploy', stageDeploy],
+  ];
+  const denied = ['spawn_agent', 'queue_agent', 'start_agent', 'message_thread', 'message_agent', 'answer_agent', 'complete_agent'];
+  const allowed = ['list_threads', 'read_thread', 'list_agents', 'read_agent', 'list_missions', 'report_status', 'post_image', 'watch_thread', 'unwatch_thread', 'list_watches'];
+
+  it('denies every delegation and steering tool at every level, and says to report instead', () => {
+    for (const [level, policy] of levels) {
+      for (const tool of denied) {
+        const d = policy(`mcp__dispatch__${tool}`, {});
+        expect(d.allow, `${level} ${tool}`).toBe(false);
+        if (!d.allow) expect(d.message).toMatch(/report/i);
+      }
+    }
+  });
+
+  it('allows the read, report, and watch tools at every level', () => {
+    for (const [level, policy] of levels) {
+      for (const tool of allowed) expect(policy(`mcp__dispatch__${tool}`, {}), `${level} ${tool}`).toEqual({ allow: true });
+    }
+  });
+
+  it('fails closed on a Dispatch tool it does not know (a future tool is denied until reviewed)', () => {
+    for (const [, policy] of levels) expect(policy('mcp__dispatch__some_new_tool', {}).allow).toBe(false);
+  });
+
+  it('observe denies every MCP tool from any other server (they can change data)', () => {
+    for (const tool of ['mcp__doppler__doppler_set_secret', 'mcp__claude_ai_Gmail__send_message', 'mcp__databricks__execute_sql']) {
+      const d = observe(tool, {});
+      expect(d.allow, tool).toBe(false);
+      if (!d.allow) expect(d.message).toMatch(/observe/);
+    }
+  });
+
+  it('stage and stage-deploy keep other MCP servers (unchanged)', () => {
+    expect(stage('mcp__doppler__doppler_get_secret', {})).toEqual({ allow: true });
+    expect(stageDeploy('mcp__databricks__execute_sql', {})).toEqual({ allow: true });
+  });
+
+  it('exports the spawn-time strip list: the native orchestration tools and the denied Dispatch tools', () => {
+    // The CLI auto-approves Agent/Task/Workflow without a can_use_tool request, so only the
+    // spawn-time strip keeps them from a role run (as COORDINATOR_DISALLOWED_TOOLS does).
+    expect([...ROLE_DISALLOWED_TOOLS].sort()).toEqual(
+      ['Agent', 'Task', 'Workflow', ...denied.map((t) => `mcp__dispatch__${t}`)].sort(),
+    );
   });
 });

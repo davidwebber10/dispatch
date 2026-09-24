@@ -105,9 +105,17 @@ make the edit for you. There is no "approve" button that lets a role edit itself
 
 ## 5. Authority levels
 
-Each role declares an `authority` level in its frontmatter. The level is enforced at
-the tool-call membrane — the same mechanism that already gates the coordinator's own
-tool use — not just written as a soft rule in the brief.
+Each role declares an `authority` level in its frontmatter. The daemon checks every
+tool call against that level at the tool-call membrane — the same mechanism that
+already gates the coordinator's own tool use — so the level is more than a soft rule
+in the brief.
+
+The membrane is a **drift guard, not a sandbox**. It stops a role that wanders past its
+brief from taking the obvious action: a denied call returns a message that says what
+to do instead. It does not contain a role that sets out to get around it. A role's
+`Bash` runs as your user, the policy matches known command forms only, and the local
+Dispatch API has no request auth by default. GitHub branch protection on `main` stays
+the real wall for anything that must never happen.
 
 | Level | May do | Never |
 |---|---|---|
@@ -126,6 +134,19 @@ remote and branch (an ambiguous target), any explicit push to a branch matching
 `environment=production` (or omitting `environment=` — ambiguous is treated as
 denied), `gh release`, package publishes, `dispatch update`/`dispatch release`, and
 `terraform apply`/`terraform destroy`.
+
+**Dispatch tools.** A role reports; it never delegates or steers. At every level a role
+run may use only the read, report, and watch tools of the `dispatch` MCP server
+(`list_threads`, `read_thread`, `list_agents`, `read_agent`, `list_missions`,
+`report_status`, `post_image`, `watch_thread`, `unwatch_thread`, `list_watches`). It
+cannot spawn, queue, start, message, answer, or archive another thread: an agent it
+spawned would run with no role policy at all. Those tools, and Claude's native subagent
+tools (`Agent`, `Task`, `Workflow`), are removed from a role run's toolset at spawn, and
+the membrane denies them, and any Dispatch tool added later, as a backstop. An `observe`
+role also cannot call a tool from any other MCP server (secrets, email, tickets, a
+store), because such a tool can change data outside the repo. At `stage` and
+`stage-deploy` a role keeps your other MCP servers; if one can write to production,
+the brief must say how the role may use it.
 
 **Main and production mutations are explicit human approval only — always.** A role's
 authority level never overrides that; GitHub branch protection on `main` remains the
@@ -158,7 +179,10 @@ never opens to a read error before the first run lands).
 
 ## 7. Supervision (automatic, daemon-side)
 
-No agent supervises another agent — this is deterministic bookkeeping in the daemon:
+No agent supervises another agent — this is deterministic bookkeeping in the daemon.
+A role run never reports to its project's coordinator: its completion, a `needs_you`,
+or a question does not wake the coordinator. The run's report goes to `log.jsonl` and
+the digest, and a question it asks waits for you.
 
 - A failed, errored, or wall-clock-capped run retries **once**, fresh.
 - A second failure the same night is recorded as failed; the next morning's digest
