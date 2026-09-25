@@ -36,6 +36,12 @@ export function FileEditorTab({ terminal }: { terminal: Terminal }) {
   const [dirty, setDirty] = useState(() => hasDraft(terminal.id));
   const [loaded, setLoaded] = useState(() => hasDraft(terminal.id) || fileCache.has(ck));
   const [mode, setMode] = useState<'edit' | 'view'>(rich ? 'view' : 'edit');
+  // Non-null when the last read failed (ENOENT for a deleted scratch file, EISDIR,
+  // 403, …). With no draft and no cache, rendering an EDITABLE empty buffer for a
+  // failed read is a trap: it looks like an empty file, and saving it would create
+  // one. Bump `retry` to refetch.
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
 
   // The one funnel for every edit, from every view (CodeMirror + CsvGrid), so the two paths
   // cannot drift: state for this render, draft so the edit survives unmount, dirty for the UI
@@ -69,10 +75,10 @@ export function FileEditorTab({ terminal }: { terminal: Terminal }) {
     let on = true;
     if (!fileCache.has(ck)) setLoaded(false); // only show the empty state when nothing is cached
     api.readFile(terminal.sessionId, path)
-      .then((r) => { if (on) { fileCache.set(ck, r.content); setContent(r.content); setLoaded(true); } })
-      .catch(() => { if (on) setLoaded(true); });
+      .then((r) => { if (on) { fileCache.set(ck, r.content); setContent(r.content); setLoaded(true); setLoadError(null); } })
+      .catch((err: any) => { if (on) { setLoadError(err?.message ?? String(err)); setLoaded(true); } });
     return () => { on = false; };
-  }, [terminal.sessionId, terminal.id, path, ck]);
+  }, [terminal.sessionId, terminal.id, path, ck, retry]);
 
   // Mount CodeMirror in edit mode (and code files); recreate only on file/mode change, not per keystroke.
   useEffect(() => {
@@ -103,11 +109,18 @@ export function FileEditorTab({ terminal }: { terminal: Terminal }) {
     setDirty(false);
   }, [terminal.sessionId, terminal.id, path, content, ck]);
 
+  // A rejected save must be SEEN, not just preserved: the draft survives (save()
+  // clears it only on success), but without this the tab silently stays dirty —
+  // e.g. writes to paths outside the working dir are refused with a 403.
+  const trySave = useCallback(() => {
+    save().catch((err: any) => window.alert(`Save failed: ${err?.message ?? err}`));
+  }, [save]);
+
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); void save(); } };
+    const onKey = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); trySave(); } };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [save]);
+  }, [trySave]);
 
   // Publish dirtiness to the tabs store — closeTab() reads it to guard the close button.
   // Deliberately NO unmount cleanup: TabHost unmounts a tab merely because it went to the
@@ -134,9 +147,18 @@ export function FileEditorTab({ terminal }: { terminal: Terminal }) {
             {tab('view')}{tab('edit')}
           </div>
         )}
-        <button onClick={() => void save()} disabled={!dirty} style={{ marginLeft: 'auto', height: 26, padding: '0 12px', background: dirty ? 'var(--color-accent)' : 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 7, color: dirty ? '#08240F' : 'var(--color-text-secondary)', fontWeight: 600, fontSize: 12 }}>Save</button>
+        <button onClick={trySave} disabled={!dirty} style={{ marginLeft: 'auto', height: 26, padding: '0 12px', background: dirty ? 'var(--color-accent)' : 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 7, color: dirty ? '#08240F' : 'var(--color-text-secondary)', fontWeight: 600, fontSize: 12 }}>Save</button>
       </div>
-      {csv && mode === 'view'
+      {loadError && !dirty && !fileCache.has(ck)
+        ? <div style={{ padding: 16, color: 'var(--color-text-secondary)', font: '400 12px var(--font-mono)', display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-start' }}>
+            <span>This file could not be read. It may have been deleted, or it is not a regular file.</span>
+            <span style={{ color: 'var(--color-text-tertiary)' }}>{loadError}</span>
+            <button onClick={() => setRetry((n) => n + 1)}
+              style={{ padding: '4px 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 7, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 12 }}>
+              Retry
+            </button>
+          </div>
+        : csv && mode === 'view'
         ? <CsvGrid content={content} path={path} onChange={applyEdit} />
         : md && mode === 'view'
           ? <div
