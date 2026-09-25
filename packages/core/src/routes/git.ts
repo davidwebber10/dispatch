@@ -33,6 +33,22 @@ export function parsePorcelainZ(out: string): GitChangedFile[] {
   return files;
 }
 
+/**
+ * Porcelain reports an untracked DIRECTORY as one collapsed `dir/` record with no
+ * per-file rows. A directory is not a thing the Files pane can open (clicking one
+ * used to yield an empty editor), so the status route expands each such record into
+ * the real files beneath it (`git ls-files --others` output, NUL-separated). The
+ * per-file records inherit '?'. Order: tracked records first, then the expansions.
+ */
+export function expandUntrackedDirs(files: GitChangedFile[], lsFilesOut: string): GitChangedFile[] {
+  const kept = files.filter((f) => !f.path.endsWith('/'));
+  const seen = new Set(kept.map((f) => f.path));
+  for (const p of lsFilesOut.split('\0')) {
+    if (p && !seen.has(p)) { kept.push({ path: p, status: '?' }); seen.add(p); }
+  }
+  return kept;
+}
+
 export function createGitRouter(db: Database.Database): Router {
   const router = Router({ mergeParams: true });
 
@@ -72,7 +88,18 @@ export function createGitRouter(db: Database.Database): Router {
           { timeout: 5000, maxBuffer: 4 * 1024 * 1024 },
           (err, stdout) => {
             if (err) return res.json({ branch, files: [] });
-            res.json({ branch, files: parsePorcelainZ(stdout) });
+            const files = parsePorcelainZ(stdout);
+            const dirs = files.filter((f) => f.path.endsWith('/')).map((f) => f.path);
+            if (dirs.length === 0) return res.json({ branch, files });
+            execFile(
+              'git',
+              ['-C', session.workingDir, 'ls-files', '--others', '--exclude-standard', '-z', '--', ...dirs],
+              { timeout: 5000, maxBuffer: 4 * 1024 * 1024 },
+              (lsErr, lsOut) => {
+                // Expansion is best-effort decoration; on failure keep the raw records.
+                res.json({ branch, files: lsErr ? files : expandUntrackedDirs(files, lsOut) });
+              },
+            );
           },
         );
       },

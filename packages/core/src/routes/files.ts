@@ -18,10 +18,6 @@ const UPLOAD_TMP_DIR = '/tmp/commandcenter-uploads';
 const FLAT_CAP = 20000;
 const FLAT_SKIP = new Set(['.git', 'node_modules', 'dist', 'build', '.next', '__pycache__']);
 
-function isHiddenRelPath(p: string): boolean {
-  return p.split(/[\\/]/).some((seg) => seg.startsWith('.') && seg !== '.' && seg !== '..');
-}
-
 function hasSkippedSegment(p: string): boolean {
   return p.split(/[\\/]/).some((seg) => FLAT_SKIP.has(seg));
 }
@@ -146,9 +142,11 @@ export function createFilesRouter(db: Database.Database): Router {
 
   // GET /api/sessions/:id/files/flat — every file path under the working dir, for search.
   // Inside a git repo the base set is `git ls-files` (tracked + untracked-but-not-ignored).
-  // Hidden paths the Files tree can show (`.env`, `.dispatch/…`) are often gitignored, so
-  // we merge those back in — still skipping node_modules / nested worktrees so they cannot
-  // blow the cap. Outside git it falls back to a bounded fs walk.
+  // Gitignored paths the Files tree can still show are merged back in: hidden ones
+  // (`.env`, `.dispatch/…`) and plain ignored files (a `.git/info/exclude`d scratchpad/
+  // is the recommended way to keep agent scratch files out of commits, and it must stay
+  // searchable). node_modules-class dirs and nested worktrees are still skipped so they
+  // cannot blow the cap. Outside git it falls back to a bounded fs walk.
   router.get('/flat', async (req, res) => {
     const session = (req as any).session;
     try {
@@ -158,7 +156,7 @@ export function createFilesRouter(db: Database.Database): Router {
         const seen = new Set(files);
         const gitCache = new Map<string, boolean>();
         for (const p of ignored) {
-          if (seen.has(p) || !isHiddenRelPath(p) || hasSkippedSegment(p)) continue;
+          if (seen.has(p) || hasSkippedSegment(p)) continue;
           if (underNestedGit(session.workingDir, p, gitCache)) continue;
           files.push(p);
           seen.add(p);
