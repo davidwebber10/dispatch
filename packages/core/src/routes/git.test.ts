@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parsePorcelainZ } from './git.js';
+import { expandUntrackedDirs, parsePorcelainZ } from './git.js';
 
 // Records come straight from `git status --porcelain -z`: NUL-terminated,
 // paths verbatim (no quoting), and a rename carries the OLD path as an extra field.
@@ -31,5 +31,31 @@ describe('parsePorcelainZ', () => {
 
   it('returns [] for empty output', () => {
     expect(parsePorcelainZ('')).toEqual([]);
+  });
+});
+
+describe('expandUntrackedDirs', () => {
+  it('replaces dir/ records with the files ls-files reports beneath them', () => {
+    const files = parsePorcelainZ(z(' M src/app.ts', '?? scratchpad/'));
+    const out = expandUntrackedDirs(files, 'scratchpad/a.csv\0scratchpad/sub/b.txt\0');
+    expect(out).toEqual([
+      { path: 'src/app.ts', status: 'M' },
+      { path: 'scratchpad/a.csv', status: '?' },
+      { path: 'scratchpad/sub/b.txt', status: '?' },
+    ]);
+  });
+
+  it('does not duplicate a file porcelain already listed individually', () => {
+    const files = parsePorcelainZ(z('?? loose.txt', '?? scratchpad/'));
+    const out = expandUntrackedDirs(files, 'loose.txt\0scratchpad/a.csv\0');
+    expect(out).toEqual([
+      { path: 'loose.txt', status: '?' },
+      { path: 'scratchpad/a.csv', status: '?' },
+    ]);
+  });
+
+  it('drops an empty dir record when ls-files returns nothing for it', () => {
+    const files = parsePorcelainZ(z('?? scratchpad/'));
+    expect(expandUntrackedDirs(files, '')).toEqual([]);
   });
 });
