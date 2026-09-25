@@ -24,6 +24,14 @@ vi.mock('@xterm/xterm', () => {
     dataHandler: ((d: string) => void) | null = null;
     private scrollHandlers: Array<() => void> = [];
     constructor() { instances.push(this); }
+    // Clipboard surface for the custom key handler (Ctrl+C copy / Ctrl+V release):
+    // tests place a selection with `selection` and drive `keyHandler` directly.
+    selection = '';
+    keyHandler: ((ev: KeyboardEvent) => boolean) | null = null;
+    attachCustomKeyEventHandler(cb: (ev: KeyboardEvent) => boolean) { this.keyHandler = cb; }
+    hasSelection() { return this.selection.length > 0; }
+    getSelection() { return this.selection; }
+    clearSelection() { this.selection = ''; }
     loadAddon() {}
     open() {}
     focus() {}
@@ -98,6 +106,37 @@ test('mounts the terminal and wires the socket for replayed output', async () =>
   await waitFor(() => expect(api.getTerminal).toHaveBeenCalledWith('t1'));
   // The socket's onData is wired through to the terminal without throwing.
   expect(() => onData('hello-from-pty')).not.toThrow();
+});
+
+// ---- clipboard: Ctrl+C copies a selection instead of interrupting, Ctrl+V is released ----
+
+const kbd = (key: string, mods: Partial<KeyboardEvent> = {}) =>
+  ({ type: 'keydown', key, ctrlKey: false, altKey: false, metaKey: false, shiftKey: false, preventDefault: () => {}, ...mods }) as unknown as KeyboardEvent;
+
+test('Ctrl+C with a selection is consumed (copy, not SIGINT); without one it stays SIGINT', async () => {
+  const { factory } = makeSocketFactory();
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(instances).toHaveLength(1));
+  const term = instances[0];
+
+  term.selection = 'SELECT * FROM orders';
+  expect(term.keyHandler(kbd('c', { ctrlKey: true }))).toBe(false);
+
+  term.selection = '';
+  expect(term.keyHandler(kbd('c', { ctrlKey: true }))).toBe(true);
+});
+
+test('Ctrl+V and Ctrl+Shift+V are released to the browser; other keys pass through', async () => {
+  const { factory } = makeSocketFactory();
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(instances).toHaveLength(1));
+  const term = instances[0];
+
+  expect(term.keyHandler(kbd('v', { ctrlKey: true }))).toBe(false);
+  expect(term.keyHandler(kbd('V', { ctrlKey: true, shiftKey: true }))).toBe(false);
+  expect(term.keyHandler(kbd('c', { ctrlKey: true, shiftKey: true }))).toBe(true); // DevTools' key, not ours
+  expect(term.keyHandler(kbd('a'))).toBe(true);
+  expect(term.keyHandler(kbd('v', { ctrlKey: true, altKey: true }))).toBe(true);
 });
 
 // ---- initial replay size: mobile small, desktop unchanged ----
