@@ -11,6 +11,7 @@ import type { Terminal } from '../../api/types';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { ThreadAskBanner } from './ThreadAskBanner';
 import { useDraft } from '../../hooks/useDraft';
+import { copyText } from '../../lib/clipboard';
 import { useSettings } from '../../stores/settings';
 import { useDictation } from '../../hooks/useDictation';
 import { DictationControl } from '../dictation/DictationControl';
@@ -160,6 +161,29 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     const term = new XTerm({ fontFamily: 'JetBrains Mono, monospace', fontSize: s0.fontSize, theme: { background: '#1E1E1E' }, scrollback: s0.scrollback, convertEol: true, cursorBlink: true });
     const fit = new FitAddon();
     term.loadAddon(fit);
+
+    // Windows/Linux clipboard. Stock xterm turns Ctrl+C / Ctrl+V into control bytes
+    // before the browser can act, which reads as "copy paste is broken" to anyone
+    // off a Mac. Ctrl+C with an active selection copies it instead of interrupting
+    // (Windows Terminal / VS Code behavior); with no selection it stays SIGINT.
+    // Ctrl+V and Ctrl+Shift+V are released to the browser (return false, no
+    // preventDefault): the native paste lands in xterm's own paste listener, a path
+    // that works even over plain http where navigator.clipboard does not exist.
+    // Macs keep stock behavior — Cmd+C/Cmd+V never enter xterm's key handler.
+    if (!/Mac|iP(hone|ad|od)/.test(navigator.platform ?? '')) {
+      term.attachCustomKeyEventHandler((ev) => {
+        if (ev.type !== 'keydown' || !ev.ctrlKey || ev.altKey || ev.metaKey) return true;
+        if (!ev.shiftKey && (ev.key === 'c' || ev.key === 'C') && term.hasSelection()) {
+          ev.preventDefault();
+          // copyText's insecure-context fallback focuses an off-screen textarea;
+          // refocus the terminal afterwards so the next keystroke still lands here.
+          void copyText(term.getSelection()).catch(() => {}).then(() => term.focus());
+          return false;
+        }
+        if (ev.key === 'v' || ev.key === 'V') return false;
+        return true;
+      });
+    }
     termRef.current = term;
     if (hostRef.current) { try { term.open(hostRef.current); } catch { /* jsdom */ } }
 
