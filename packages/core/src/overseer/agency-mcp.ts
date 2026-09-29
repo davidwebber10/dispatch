@@ -71,6 +71,15 @@ function selfSpawnDepth(): number {
  */
 const pairRateLimiter = new PairRateLimiter();
 
+/** spawn_agent/queue_agent `harness` arg. It must say that `model` never picks the harness: a
+ *  coordinator that passed model "gpt-6-astra" alone got claude-code workers that could not run. */
+const HARNESS_ARG_DESCRIPTION =
+  'Optional harness (agent CLI) for this worker. Omit to use the configured default: ' +
+  'the per-agent-type worker matrix, else the session default the user picked, else claude-code. ' +
+  'The model never picks the harness: pass harness with any non-Claude model ' +
+  '(e.g. harness "codex" with model "gpt-6-astra"). Otherwise override only when the task clearly ' +
+  'benefits from a specific harness.';
+
 /** The tools the coordinator can call. */
 export const TOOLS = [
   {
@@ -110,10 +119,7 @@ export const TOOLS = [
         harness: {
           type: 'string',
           enum: ['claude-code', 'codex', 'grok', 'opencode'],
-          description:
-            'Optional harness (agent CLI) for this worker. Omit to use the configured default: ' +
-            'the per-agent-type worker matrix, else the session default the user picked, else claude-code. ' +
-            'Only override when the task clearly benefits from a specific harness.',
+          description: HARNESS_ARG_DESCRIPTION,
         },
       },
       required: ['agentType', 'task'],
@@ -166,10 +172,7 @@ export const TOOLS = [
         harness: {
           type: 'string',
           enum: ['claude-code', 'codex', 'grok', 'opencode'],
-          description:
-            'Optional harness (agent CLI) for this worker. Omit to use the configured default: ' +
-            'the per-agent-type worker matrix, else the session default the user picked, else claude-code. ' +
-            'Only override when the task clearly benefits from a specific harness.',
+          description: HARNESS_ARG_DESCRIPTION,
         },
       },
       required: ['agentType', 'task'],

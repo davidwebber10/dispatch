@@ -51,4 +51,38 @@ describe('buildWorkerCreateBody', () => {
       })).not.toThrow();
     });
   });
+
+  describe('non-Claude model on claude-code guard', () => {
+    // The reverse of the tier-alias guard. The model never picks the harness: a coordinator that
+    // passes model "gpt-6-astra" without harness "codex" lands on claude-code, and the Claude CLI
+    // then fails with "There's an issue with the selected model". Fail at spawn instead, before a
+    // thread exists, and name the harness that runs the model.
+    for (const model of ['gpt-6-astra', 'GPT-6-Astra', 'gpt-5.6-sol', 'o3']) {
+      it(`throws when explicit model '${model}' targets claude-code, and names codex`, () => {
+        expect(() => buildWorkerCreateBody({
+          agentType: 'researcher', label: 'r', resolved: { harness: 'claude-code' }, explicitModel: model, spawnDepth: 1,
+        })).toThrow(`model '${model}' is not a Claude model, so claude-code cannot run it — the model never picks the harness; pass harness 'codex' with it`);
+      });
+    }
+
+    it('names grok for a grok model', () => {
+      expect(() => buildWorkerCreateBody({
+        agentType: 'researcher', label: 'r', resolved: { harness: 'claude-code' }, explicitModel: 'grok-4.5', spawnDepth: 1,
+      })).toThrow(/pass harness 'grok' with it/);
+    });
+
+    it('throws when the RESOLVED (non-explicit) model is a GPT model on claude-code', () => {
+      expect(() => buildWorkerCreateBody({
+        agentType: 'researcher', label: 'r', resolved: { harness: 'claude-code', model: 'gpt-6-astra' }, spawnDepth: 1,
+      })).toThrow(/not a Claude model/);
+    });
+
+    it('a Claude alias, a full Claude id, or no model is fine on claude-code', () => {
+      for (const explicitModel of ['opus', 'claude-opus-4-8', 'claude-sonnet-5', undefined]) {
+        expect(() => buildWorkerCreateBody({
+          agentType: 'researcher', label: 'r', resolved: { harness: 'claude-code' }, explicitModel, spawnDepth: 1,
+        })).not.toThrow();
+      }
+    });
+  });
 });

@@ -9,6 +9,16 @@ export function isClaudeTierAlias(model: string): boolean {
   return CLAUDE_TIER_ALIASES.has(model);
 }
 
+/** The harness that runs a model id the claude CLI cannot (gpt-* / o3-style → codex, grok-* →
+ *  grok), or undefined for anything else — a Claude alias, a full Claude id, or an id we cannot
+ *  place. Case-insensitive: a coordinator once wrote "GPT-6-Astra". */
+export function nonClaudeModelHarness(model: string): 'codex' | 'grok' | undefined {
+  const m = model.trim().toLowerCase();
+  if (/^(gpt-|o\d)/.test(m)) return 'codex';
+  if (m.startsWith('grok-')) return 'grok';
+  return undefined;
+}
+
 /**
  * The spawn-time model for a structured thread, harness-aware. MODEL_FOR_TYPE's
  * Claude aliases (sonnet/opus/fable) are meaningful ONLY to the claude CLI — every

@@ -46,6 +46,18 @@ describe('buildCoordinatorPrompt', () => {
     expect(COORDINATOR_PROMPT).not.toContain('Use only your "dispatch" MCP tools'); // Claude keeps its MCP tools
   });
 
+  // A coordinator that lost the tool schema to a context compaction still has this prompt. It
+  // spawned gpt-6-astra reviewers with model alone, and they landed on claude-code (2026-09-29).
+  it('every variant documents harness in the spawn_agent and queue_agent signatures', () => {
+    for (const h of ['claude-code', 'codex']) {
+      const p = buildCoordinatorPrompt({ harness: h });
+      expect(p).toContain('spawn_agent({ agentType, name?, task, mission?, model?, harness? })');
+      expect(p).toContain('queue_agent({ agentType, name?, task, mission?, dependsOn?, model?, harness? })');
+      expect(p).toContain('The model never picks the harness');
+      expect(p).toContain('harness: "codex", model: "gpt-6-astra"');
+    }
+  });
+
   it('an unrecognized harness falls back to the claude-code variant', () => {
     expect(buildCoordinatorPrompt({ harness: 'grok' })).toBe(COORDINATOR_PROMPT);
   });

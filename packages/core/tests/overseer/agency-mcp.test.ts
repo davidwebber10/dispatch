@@ -263,6 +263,24 @@ describe('agency-mcp', () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
+    it('spawn_agent refuses a GPT model that resolved onto claude-code (no harness passed), before any thread exists', async () => {
+      const fetchMock = vi.fn().mockResolvedValueOnce(workerDefaultsOk());
+      global.fetch = fetchMock as any;
+
+      const out = await callTool('spawn_agent', { agentType: 'researcher', task: 'x', model: 'gpt-6-astra' });
+
+      expect(out.isError).toBe(true);
+      expect(out.content[0].text).toContain("pass harness 'codex' with it");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('spawn_agent and queue_agent schemas say the model never picks the harness', async () => {
+      for (const name of ['spawn_agent', 'queue_agent']) {
+        const tool = TOOLS.find((t: any) => t.name === name) as any;
+        expect(tool.inputSchema.properties.harness.description).toContain('The model never picks the harness');
+      }
+    });
+
     it('queue_agent throws when the server reports the resolved (non-explicit) harness unavailable', async () => {
       const fetchMock = vi.fn()
         .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ harness: 'claude-code', available: false, reason: 'claude-code CLI is not installed on this server' }) });
