@@ -109,7 +109,7 @@ A token total is input + output + cache read + cache create, the same as Usage.
 |---|---|---|
 | AGENTS STARTED PER DAY · BY TYPE | Stacked columns, 4 series | Agents created per local day, by agent type series. |
 | TOKENS PER DAY · CONTROL PLANE VS AGENTS | Stacked columns, 2 series | Token totals per local day, for `usage_turns.role` `coordinator` and `agent`. |
-| MESSAGES PER DAY | 2 lines | "You → Control Plane": `message_source.source = 'user'` on a coordinator thread. "Control Plane → agents": `message_source.source = 'coordinator'`, which includes the task that starts each agent. The Project and Provider filters use the thread that receives the message. The caption shows the two totals. The view shows no average. |
+| MESSAGES PER DAY | 2 lines | "You → Control Plane": `message_source.source = 'user'` on a coordinator thread. "Control Plane → agents": `message_source.source = 'coordinator'` on an agent thread (not a role run), which includes the task that starts each agent. `message_thread` also tags peer messages `coordinator`, so the agent check is what scopes this series. The Project and Provider filters use the thread that receives the message. The caption shows the two totals. The view shows no average. |
 | MISSIONS COMPLETED PER WEEK | Columns, 1 series | Completed missions per local week, by completion time. A week that overlaps the last 7 days gets a hatched band labeled "still settling · 7-day idle rule", because rule B cannot complete a mission in that time yet. |
 
 All four charts use a continuous day or week axis. A day with no data is an empty column or a
@@ -117,7 +117,7 @@ zero point, not a skipped label.
 
 ### 6.3 Tables
 
-**BY PROJECT.** One row for each project that has a coordinator. Columns: Project, Sessions,
+**BY PROJECT.** One row for each project with a session in the range or any activity in the range. Columns: Project, Sessions,
 Active days, Started in range, Completed in range, Agents, CP token share. The rows with activity
 in the range come first, ordered by agents. The other rows fold into one muted footer row, for
 example "10 more projects · 10 sessions · no activity in range". The sessions column adds up to the
@@ -144,6 +144,8 @@ The view uses the existing validated palette in `chartTheme.ts`. It adds no new 
   "Control Plane → agents" in the messages chart.
 - The other series in those two charts ("Agents", "You → Control Plane") use the neutral
   `#6b6b73`.
+- `MISSIONS COMPLETED PER WEEK` is one series. It uses the Control Plane pink, because a mission
+  is the Control Plane's unit of work. Blue would read as "implementer".
 - Status colors are never a series color.
 
 ## 7. Architecture
@@ -157,6 +159,8 @@ The view uses the existing validated palette in `chartTheme.ts`. It adds no new 
 
 ```ts
 interface ControlPlaneAnalytics {
+  days: string[];  // every local day in the range, oldest first: the continuous chart axis
+  weeks: string[]; // every local Monday in the range, oldest first
   summary: {
     sessions: number; sessionsActive: number; sessionsNew: number;
     activeDays: number; missionsStarted: number; missionsCompleted: number;
@@ -180,9 +184,12 @@ interface ControlPlaneAnalytics {
 }
 ```
 
-- **Mission metrics are computed in TypeScript** from one query that returns the mission rows
-  (about 50 today). This keeps rule B in one function instead of in several SQL strings. The day
-  series and the token sums stay in SQL.
+- **Coordinators, agents, and missions are computed in TypeScript** from one `terminals` scan per
+  request (about 1,300 rows). `config` is parsed with `JSON.parse`, the same as the rest of core.
+  This keeps rule B in one function instead of in several SQL strings. The token, day, and message
+  sums stay in SQL.
+- **The payload types** live in `packages/core/src/analytics/control-plane-types.ts`, a file with
+  no imports. The web client re-exports them from `api/types.ts`, so the two sides cannot drift.
 - **New route: `GET /api/analytics/control-plane`** in `routes/analytics.ts`. It takes the same
   `from`, `to`, `projectId`, and `provider` parameters and the same parse as the other routes.
 - **Size:** the data is about 1,200 agent rows and a few thousand turns. One request per refresh is
