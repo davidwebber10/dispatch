@@ -156,13 +156,15 @@ export const TOKENS = 'u.input_tokens + u.output_tokens + u.cache_read_tokens + 
 /**
  * WHERE clause for Control Plane usage: closed coordinator and agent turns in the range, with the
  * project and provider filters. The query must `LEFT JOIN terminals t ON t.id = u.terminal_id`,
- * so the clause can drop the turns of scheduled role runs.
+ * so the clause can drop the turns of scheduled role runs and the turns whose thread no longer
+ * exists (an archived project deletes its threads but keeps its usage_turns).
  */
 export function usageWhere(r: CpRange): { sql: string; params: unknown[] } {
   const parts = [
     'u.ended_at IS NOT NULL',
     "u.role IN ('coordinator', 'agent')",
-    "(t.id IS NULL OR (CASE WHEN json_valid(t.config) THEN json_extract(t.config, '$.roleRun') END) IS NULL)",
+    't.id IS NOT NULL',
+    "(CASE WHEN json_valid(t.config) THEN json_extract(t.config, '$.roleRun') END) IS NULL",
   ];
   const params: unknown[] = [];
   if (r.from) { parts.push('u.started_at >= ?'); params.push(r.from); }
@@ -385,7 +387,7 @@ export function cpTables(db: Database.Database, r: CpRange, s: Scope): TablePart
     if (!row) {
       const u = usage.get(pid);
       row = {
-        projectId: pid, name: nameOf(pid), sessions: 0, activeDays: u?.days ?? 0,
+        projectId: pid, name: nameOf(pid), active: false, sessions: 0, activeDays: u?.days ?? 0,
         missionsStarted: 0, missionsCompleted: 0, agents: 0,
         controlPlaneTokens: u?.cp ?? 0, agentTokens: u?.agents ?? 0,
       };
@@ -400,8 +402,24 @@ export function cpTables(db: Database.Database, r: CpRange, s: Scope): TablePart
   }
   for (const a of s.cliAgents) if (inRange(a.createdAt, r)) project(a.sessionId).agents += 1;
   for (const pid of usage.keys()) project(pid);
+
+  // A project is active when it has a usage row, an agent created or active in the range, a
+  // message landing on one of its threads, or a mission started or completed in the range.
+  for (const pid of usage.keys()) project(pid).active = true;
+  for (const a of s.cliAgents) {
+    if (inRange(a.createdAt, r) || inRange(a.lastAt, r)) project(a.sessionId).active = true;
+  }
+  const m = messageWhere(r);
+  const messageProjects = db.prepare(`
+    SELECT DISTINCT t.session_id AS pid FROM message_source ms JOIN terminals t ON t.id = ms.terminal_id WHERE ${m.sql}
+  `).all(...m.params) as { pid: string }[];
+  for (const { pid } of messageProjects) project(pid).active = true;
+  for (const row of projects.values()) {
+    if (row.missionsStarted > 0 || row.missionsCompleted > 0) row.active = true;
+  }
+
   const byProject = [...projects.values()]
-    .sort((a, b) => b.agents - a.agents || b.activeDays - a.activeDays || a.name.localeCompare(b.name));
+    .sort((a, b) => (Number(b.active) - Number(a.active)) || b.agents - a.agents || b.activeDays - a.activeDays || a.name.localeCompare(b.name));
 
   // BY AGENT TYPE: agents created in the range, and their turns in the range.
   const turnStats = new Map((db.prepare(`

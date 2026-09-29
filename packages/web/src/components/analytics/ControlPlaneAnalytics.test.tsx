@@ -25,7 +25,7 @@ describe('ControlPlaneAnalytics', () => {
     expect(screen.getByText('days with a Control Plane turn')).toBeTruthy();
     expect(screen.getByText('437')).toBeTruthy();
     expect(screen.getByText('27%')).toBeTruthy();
-    expect(screen.getByText('1.6B of 6.1B Control Plane and agent tokens')).toBeTruthy();
+    expect(screen.getByText('1.6B of 6.1B recorded Control Plane and agent tokens')).toBeTruthy();
     expect(screen.getByLabelText('No working or queued agent, and no activity for 7 days.')).toBeTruthy();
   });
 

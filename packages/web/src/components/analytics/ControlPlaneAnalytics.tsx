@@ -69,8 +69,7 @@ function weekEnd(week: string): string {
 
 const share = (cp: number, agents: number) => (cp + agents > 0 ? `${Math.round((100 * cp) / (cp + agents))}%` : '—');
 
-const isActive = (r: ControlPlaneProjectRow) =>
-  r.agents + r.activeDays + r.missionsStarted + r.missionsCompleted + r.controlPlaneTokens + r.agentTokens > 0;
+const isActive = (r: ControlPlaneProjectRow) => r.active;
 
 export function ControlPlaneAnalytics({ from, projectId, provider }: { from?: string; projectId: string; provider: string }) {
   const isMobile = useIsMobile();
@@ -144,7 +143,7 @@ export function ControlPlaneAnalytics({ from, projectId, provider }: { from?: st
           label="CONTROL PLANE TOKEN SHARE"
           value={tokenTotal > 0 ? share(summary.controlPlaneTokens, summary.agentTokens) : '—'}
           caption={tokenTotal > 0
-            ? `${fmtTokens(summary.controlPlaneTokens)} of ${fmtTokens(tokenTotal)} Control Plane and agent tokens${since}`
+            ? `${fmtTokens(summary.controlPlaneTokens)} of ${fmtTokens(tokenTotal)} recorded Control Plane and agent tokens${since}`
             : `no recorded tokens${since}`}
         />
       </div>

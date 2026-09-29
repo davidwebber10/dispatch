@@ -27,6 +27,9 @@ export interface ControlPlaneSummary {
 export interface ControlPlaneProjectRow {
   projectId: string;
   name: string;
+  /** True when the project had Control Plane activity in the range: a coordinator or agent turn,
+   *  an agent created or active, a message, or a mission started or completed. */
+  active: boolean;
   sessions: number;
   activeDays: number;
   missionsStarted: number;

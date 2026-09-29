@@ -193,6 +193,17 @@ describe('tokens', () => {
     // The provider filter reaches the token sums too.
     expect(summarize({ from: ago(30), provider: 'codex' }).agentTokens).toBe(0);
   });
+
+  it('drops turns whose thread no longer exists, as after a project archive', () => {
+    coordinator('c1', 'p1', ago(60));
+    turn('t1', 'c1', 'p1', 'coordinator', ago(2), 300);
+    turn('t2', 'gone-agent', 'p1', 'agent', ago(2), 5000);
+    turn('t3', 'gone-coordinator', 'p1', 'coordinator', ago(2), 70);
+    const s = summarize({ from: ago(30) });
+    expect(s.controlPlaneTokens).toBe(300);
+    expect(s.agentTokens).toBe(0);
+    expect(s.sessionsActive).toBe(1);
+  });
 });
 
 describe('series', () => {
@@ -301,6 +312,24 @@ describe('tables', () => {
     });
     expect(out.byProject[1]).toMatchObject({ name: 'Project Two', sessions: 1, agents: 0, activeDays: 0 });
     expect(out.byProject.reduce((n, p) => n + p.sessions, 0)).toBe(out.summary.sessions);
+  });
+
+  it('marks a project active when an agent was active in the range, with no start or turn in it', () => {
+    coordinator('c1', 'p1', ago(60));
+    coordinator('c2', 'p2', ago(60));
+    agent('a1', 'p1', 'implementer', ago(40), { mission: 'M', lastActivity: ago(1) });
+    const out = controlPlaneAnalytics(d, { from: ago(30) }, NOW);
+    expect(out.byProject[0]).toMatchObject({ projectId: 'p1', active: true, agents: 0 });
+    expect(out.byProject.find((p) => p.projectId === 'p2')).toMatchObject({ active: false });
+  });
+
+  it('marks a project active on messages alone', () => {
+    coordinator('c1', 'p1', ago(60));
+    coordinator('c2', 'p2', ago(60));
+    message('c2', 'user', ago(2));
+    const out = controlPlaneAnalytics(d, { from: ago(30) }, NOW);
+    expect(out.byProject.find((p) => p.projectId === 'p2')).toMatchObject({ active: true });
+    expect(out.byProject.find((p) => p.projectId === 'p1')).toMatchObject({ active: false });
   });
 
   it('builds one row per agent type with tokens, the mean turn time, and the CLI mix', () => {

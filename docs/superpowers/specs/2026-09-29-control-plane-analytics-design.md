@@ -99,7 +99,7 @@ All filters are server-side, the same as Usage. `from` and `to` bound a half-ope
 | MISSIONS STARTED | Missions whose first activity is in the range. | — |
 | MISSIONS COMPLETED | Completed missions whose completion time is in the range. | Info icon. Tooltip: "No working or queued agent, and no activity for 7 days." |
 | AGENTS STARTED | Agents created in the range. | — |
-| CONTROL PLANE TOKEN SHARE | Coordinator tokens ÷ (coordinator + agent tokens), from `usage_turns` in the range. | "`X` of `Y` Control Plane and agent tokens" |
+| CONTROL PLANE TOKEN SHARE | Coordinator tokens ÷ (coordinator + agent tokens), from `usage_turns` in the range. | "`X` of `Y` recorded Control Plane and agent tokens" |
 
 A token total is input + output + cache read + cache create, the same as Usage.
 
@@ -118,15 +118,17 @@ zero point, not a skipped label.
 ### 6.3 Tables
 
 **BY PROJECT.** One row for each project with a session in the range or any activity in the range. Columns: Project, Sessions,
-Active days, Started in range, Completed in range, Agents, CP token share. The rows with activity
-in the range come first, ordered by agents. The other rows fold into one muted footer row, for
-example "10 more projects · 10 sessions · no activity in range". The sessions column adds up to the
-SESSIONS tile.
+Active days, Started in range, Completed in range, Agents, CP token share. Core returns `active: true`
+when the project had Control Plane activity in the range: a coordinator or agent turn, an agent
+created or active, a message, or a mission started or completed. Active rows come first; the rest
+fold into the footer. The rows with activity in the range come first, ordered by agents. The other
+rows fold into one muted footer row, for example "10 more projects · 10 sessions · no activity in
+range". The sessions column adds up to the SESSIONS tile.
 
 **BY AGENT TYPE.** One row for each `agentType` of the agents created in the range. Columns: Type,
-Agents, Avg turn, Tokens, CLI mix (for example "codex 19 · claude-code 11"). Avg turn is the mean
-`usage_turns.duration_ms` of those agents' turns in the range. It shows "—" when there are no
-turns with a duration.
+Agents, Avg turn, Tokens, CLI mix (for example "codex 19 · claude-code 11"). Avg turn uses the Usage
+view's duration rule: `duration_ms`, or `ended_at − started_at` for older turns that have no
+`duration_ms`, over those agents' turns in the range. It shows "—" when no turn has a duration.
 
 **MISSIONS · ACTIVE IN RANGE.** Missions with any agent created, or any agent last activity, in the
 range. The newest last activity comes first. The limit is 50 rows. Columns: Mission, Project,
@@ -172,7 +174,7 @@ interface ControlPlaneAnalytics {
   missionsCompletedByWeek: { week: string; value: number }[]; // week = local Monday, YYYY-MM-DD
   settlingSince: string; // now − 7 days (ISO); the UI hatches weeks that overlap it
   byProject: {
-    projectId: string; name: string; sessions: number; activeDays: number;
+    projectId: string; name: string; active: boolean; sessions: number; activeDays: number;
     missionsStarted: number; missionsCompleted: number; agents: number;
     controlPlaneTokens: number; agentTokens: number;
   }[];
@@ -263,8 +265,14 @@ Web (`ControlPlaneAnalytics.test.tsx`, `AnalyticsView.test.tsx`):
   as a group. On 2026-09-29, 11 of 715 archived agents on the owner's Mac were archived more than
   7 days after their last activity, so the effect is small. Removing `archived_at` from the rule
   would hurt the 56 archived agents that have no `last_activity_at`.
-- An archived project's threads are deleted, so its sessions, missions, and agents leave the
-  Control Plane view. "Archived rows count" applies to archived threads, not archived projects.
+- An archived project's threads are deleted, so its sessions, missions, agents, and tokens leave the
+  Control Plane view (a turn counts only while its thread exists). "Archived rows count" applies to
+  archived threads, not archived projects.
+- Token numbers count recorded usage only. A turn that reported no usage counts as zero, the same
+  data as the Usage view's coverage notes; the token-share caption says "recorded" for this reason.
+- The Provider list comes from recorded usage, so a CLI appears in it after its first recorded turn.
+- The screen assumes that the browser and the daemon share a time zone: the daemon buckets days and
+  weeks in its local time, and the browser computes the range start and the settling band in its own.
 
 ## 11. Follow-up work (not in this feature)
 

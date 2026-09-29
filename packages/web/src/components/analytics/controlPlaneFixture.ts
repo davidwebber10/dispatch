@@ -23,9 +23,9 @@ export const CP_FIXTURE: ControlPlaneAnalytics = {
   missionsCompletedByWeek: [{ week: '2026-09-21', value: 3 }],
   settlingSince: '2026-09-22T12:00:00.000Z',
   byProject: [
-    { projectId: 'p1', name: 'PW Legacy', sessions: 1, activeDays: 14, missionsStarted: 3, missionsCompleted: 3, agents: 146, controlPlaneTokens: 190, agentTokens: 810 },
-    { projectId: 'p2', name: 'Sandbox', sessions: 1, activeDays: 0, missionsStarted: 0, missionsCompleted: 0, agents: 0, controlPlaneTokens: 0, agentTokens: 0 },
-    { projectId: 'p3', name: 'Dispatch', sessions: 2, activeDays: 0, missionsStarted: 0, missionsCompleted: 0, agents: 0, controlPlaneTokens: 0, agentTokens: 0 },
+    { projectId: 'p1', name: 'PW Legacy', active: true, sessions: 1, activeDays: 14, missionsStarted: 3, missionsCompleted: 3, agents: 146, controlPlaneTokens: 190, agentTokens: 810 },
+    { projectId: 'p2', name: 'Sandbox', active: false, sessions: 1, activeDays: 0, missionsStarted: 0, missionsCompleted: 0, agents: 0, controlPlaneTokens: 0, agentTokens: 0 },
+    { projectId: 'p3', name: 'Dispatch', active: false, sessions: 2, activeDays: 0, missionsStarted: 0, missionsCompleted: 0, agents: 0, controlPlaneTokens: 0, agentTokens: 0 },
   ],
   byType: [
     { agentType: 'code-reviewer', agents: 30, avgTurnSeconds: 255, tokens: 81_000_000, cli: { codex: 19, 'claude-code': 11 } },
