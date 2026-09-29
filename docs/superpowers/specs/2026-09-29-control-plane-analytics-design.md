@@ -94,8 +94,8 @@ All filters are server-side, the same as Usage. `from` and `to` bound a half-ope
 
 | Tile | Value | Caption |
 |---|---|---|
-| SESSIONS | Coordinators that existed in the range: `created_at < to` and (`archived_at` is null or `archived_at >= from`). | "`A` active · `N` new in range". `A` = coordinators with at least one `usage_turns` row in the range. `N` = coordinators created in the range. |
-| ACTIVE DAYS | Distinct local days with a coordinator turn (`usage_turns.role = 'coordinator'`) in the range. | "days with a Control Plane turn" |
+| SESSIONS | Coordinators that existed in the range: `created_at < to` and (`archived_at` is null or `archived_at >= from`). | "`A` active · `N` new in range". `A` = coordinators with at least one closed `usage_turns` row in the range. `N` = coordinators created in the range. |
+| ACTIVE DAYS | Distinct local days with a closed coordinator turn (`usage_turns.role = 'coordinator'`) in the range. | "days with a Control Plane turn" |
 | MISSIONS STARTED | Missions whose first activity is in the range. | — |
 | MISSIONS COMPLETED | Completed missions whose completion time is in the range. | Info icon. Tooltip: "No working or queued agent, and no activity for 7 days." |
 | AGENTS STARTED | Agents created in the range. | — |

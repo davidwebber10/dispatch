@@ -360,6 +360,15 @@ describe('tables', () => {
     expect(controlPlaneAnalytics(d, { from: ago(30) }, NOW).missions).toHaveLength(50);
   });
 
+  it('marks the project of every mission the missions table lists as active, under a provider filter too', () => {
+    coordinator('c1', 'p1', ago(60));
+    agent('a1', 'p1', 'implementer', ago(40), { mission: 'Mixed', lastActivity: ago(1) });
+    agent('a2', 'p1', 'code-reviewer', ago(40), { mission: 'Mixed', cli: 'codex' });
+    const out = controlPlaneAnalytics(d, { from: ago(7), provider: 'codex' }, NOW);
+    expect(out.missions.map((m) => m.mission)).toEqual(['Mixed']);
+    expect(out.byProject.find((p) => p.projectId === 'p1')).toMatchObject({ active: true });
+  });
+
   it('returns every block of the payload', () => {
     expect(Object.keys(controlPlaneAnalytics(d, {}, NOW)).sort()).toEqual([
       'agentsByDay', 'byProject', 'byType', 'days', 'messagesByDay', 'missions',

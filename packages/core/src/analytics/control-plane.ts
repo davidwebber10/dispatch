@@ -404,7 +404,10 @@ export function cpTables(db: Database.Database, r: CpRange, s: Scope): TablePart
   for (const pid of usage.keys()) project(pid);
 
   // A project is active when it has a usage row, an agent created or active in the range, a
-  // message landing on one of its threads, or a mission started or completed in the range.
+  // message landing on one of its threads, a mission started or completed in the range, or a
+  // mission the missions table lists (spec §5: any of the mission's agents, not just cliAgents).
+  const missionInRange = (mission: Mission) =>
+    mission.agents.some((a) => inRange(a.createdAt, r) || inRange(a.lastAt, r));
   for (const pid of usage.keys()) project(pid).active = true;
   for (const a of s.cliAgents) {
     if (inRange(a.createdAt, r) || inRange(a.lastAt, r)) project(a.sessionId).active = true;
@@ -416,6 +419,9 @@ export function cpTables(db: Database.Database, r: CpRange, s: Scope): TablePart
   for (const { pid } of messageProjects) project(pid).active = true;
   for (const row of projects.values()) {
     if (row.missionsStarted > 0 || row.missionsCompleted > 0) row.active = true;
+  }
+  for (const mission of s.missions) {
+    if (missionInRange(mission)) project(mission.sessionId).active = true;
   }
 
   const byProject = [...projects.values()]
@@ -454,7 +460,7 @@ export function cpTables(db: Database.Database, r: CpRange, s: Scope): TablePart
 
   // MISSIONS · ACTIVE IN RANGE: the values describe the whole mission, not only the range.
   const missions: ControlPlaneMissionRow[] = s.missions
-    .filter((mission) => mission.agents.some((a) => inRange(a.createdAt, r) || inRange(a.lastAt, r)))
+    .filter(missionInRange)
     .sort((a, b) => b.lastAt.localeCompare(a.lastAt) || a.name.localeCompare(b.name))
     .slice(0, MISSION_ROWS)
     .map((mission) => ({
