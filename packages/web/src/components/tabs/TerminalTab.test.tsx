@@ -162,6 +162,9 @@ test('a failed copy says so instead of silently eating the keystroke', async () 
 
 test('after a copy, focus returns to the terminal only if nothing else took it', async () => {
   const term = await mountTerm();
+  // Mount focuses the terminal on the next animation frame. Let that land first, or under a
+  // loaded suite it fires mid-test and is counted as the copy's refocus.
+  await waitFor(() => expect(term.focusCalls).toBeGreaterThan(0));
   const other = document.createElement('input');
   document.body.appendChild(other);
   try {
