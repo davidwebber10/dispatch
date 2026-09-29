@@ -1,8 +1,20 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
+
+const { copyTextMock } = vi.hoisted(() => ({ copyTextMock: vi.fn((_t: string) => Promise.resolve()) }));
+vi.mock('../../lib/clipboard', async (orig) => ({ ...(await orig<typeof import('../../lib/clipboard')>()), copyText: copyTextMock }));
+
 import { CsvGrid } from './CsvGrid';
 
 const CSV = 'name,qty\napples,3\npears,5\n';
+
+/** The keyboard target: the grid's focusable scroll container. */
+const gridOf = (container: HTMLElement) => container.querySelector('[tabindex="0"]') as HTMLElement;
+/** The <td> for doc cell (r, c), r >= 1. Column 0 of each rendered row is the gutter. */
+const cellOf = (container: HTMLElement, r: number, c: number) => {
+  const tr = Array.from(container.querySelectorAll('tbody tr')).find((row) => row.firstElementChild?.textContent === String(r));
+  return tr!.children[c + 1] as HTMLElement;
+};
 
 describe('CsvGrid', () => {
   it('renders the header and the cells', () => {
@@ -155,7 +167,114 @@ describe('CsvGrid', () => {
       // far more rows than VIEWPORT_GUESS=600 would (~42 rows incl. header/gutter overhead).
       expect(screen.getAllByRole('row').length).toBeGreaterThan(60);
     } finally {
+      // clientHeight lives on Element.prototype, so there is usually no own descriptor to put
+      // back: delete the stub, or every later test in this file sees a 2000px viewport.
       if (original) Object.defineProperty(HTMLElement.prototype, 'clientHeight', original);
+      else delete (HTMLElement.prototype as { clientHeight?: number }).clientHeight;
     }
+  });
+
+  describe('selection', () => {
+    beforeEach(() => { copyTextMock.mockReset(); copyTextMock.mockImplementation(() => Promise.resolve()); });
+
+    it('Ctrl+C copies the selected rectangle as TSV, quoting cells that would split', async () => {
+      const content = 'name,qty\n"a\tb",3\n"x\ny","say ""hi"""\n';
+      const { container } = render(<CsvGrid content={content} path="d.csv" onChange={() => {}} />);
+      fireEvent.mouseDown(cellOf(container, 1, 0));
+      fireEvent.mouseDown(cellOf(container, 2, 1), { shiftKey: true });
+      await act(async () => { fireEvent.keyDown(gridOf(container), { key: 'c', ctrlKey: true }); });
+      expect(copyTextMock).toHaveBeenCalledWith('"a\tb"\t3\n"x\ny"\t"say ""hi"""');
+    });
+
+    it('a mousedown inside the open editor leaves it open and does not block the caret', () => {
+      const onChange = vi.fn();
+      render(<CsvGrid content={CSV} path="d.csv" onChange={onChange} />);
+      fireEvent.doubleClick(screen.getByText('apples'));
+      const input = screen.getByRole('textbox');
+
+      const notPrevented = fireEvent.mouseDown(input);
+      expect(notPrevented).toBe(true);
+      expect(screen.getByRole('textbox')).toBe(input);
+      expect(document.activeElement).toBe(input);
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it('Escape in the editor gives focus back to the grid, so the grid keys keep working', () => {
+      const { container } = render(<CsvGrid content={CSV} path="d.csv" onChange={() => {}} />);
+      fireEvent.doubleClick(screen.getByText('apples'));
+      fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Escape' });
+      expect(document.activeElement).toBe(gridOf(container));
+    });
+
+    it('Enter on the last row commits and gives focus back to the grid', () => {
+      const onChange = vi.fn();
+      const { container } = render(<CsvGrid content={CSV} path="d.csv" onChange={onChange} />);
+      fireEvent.doubleClick(screen.getByText('pears'));
+      const input = screen.getByRole('textbox');
+      fireEvent.change(input, { target: { value: 'plums' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+      expect(onChange).toHaveBeenCalledWith('name,qty\napples,3\nplums,5\n');
+      expect(document.activeElement).toBe(gridOf(container));
+    });
+
+    it('Enter on a focused row scrolled out of the rendered window opens its editor', () => {
+      const big = 'a,b\n' + Array.from({ length: 300 }, (_, i) => `v${i},${i}`).join('\n') + '\n';
+      const { container } = render(<CsvGrid content={big} path="d.csv" onChange={() => {}} />);
+      const grid = gridOf(container);
+      fireEvent.mouseDown(screen.getByText('v4'));             // doc row 5
+      fireEvent.scroll(grid, { target: { scrollTop: 5000 } });  // row 5 leaves the window
+      expect(screen.queryByText('v4')).toBeNull();
+
+      fireEvent.keyDown(grid, { key: 'Enter' });
+      expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe('v4');
+    });
+
+    it('Enter in the editor advances into a row below the rendered window', () => {
+      const big = 'a,b\n' + Array.from({ length: 300 }, (_, i) => `v${i},${i}`).join('\n') + '\n';
+      render(<CsvGrid content={big} path="d.csv" onChange={() => {}} />);
+      expect(screen.queryByText('v20')).toBeNull();           // doc row 21: past the first window
+      fireEvent.doubleClick(screen.getByText('v19'));          // doc row 20: the last one rendered
+      fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+      expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe('v20');
+    });
+
+    it('keys from the Delete row button are not taken over by the grid', () => {
+      render(<CsvGrid content={CSV} path="d.csv" onChange={() => {}} />);
+      fireEvent.mouseDown(screen.getByText('apples'));
+      const del = screen.getAllByTitle('Delete row')[0];
+      const notPrevented = fireEvent.keyDown(del, { key: 'Enter' });
+      expect(notPrevented).toBe(true);
+      expect(screen.queryByRole('textbox')).toBeNull();
+    });
+
+    it('drops a selection the doc no longer covers', () => {
+      const { rerender } = render(<CsvGrid content={CSV} path="d.csv" onChange={() => {}} />);
+      fireEvent.mouseDown(screen.getByText('pears'));
+      expect(screen.getByText(/row 2/)).toBeInTheDocument();
+
+      rerender(<CsvGrid content={'name,qty\napples,3\n'} path="d.csv" onChange={() => {}} />);
+      expect(screen.queryByText(/Ctrl\+C copies/)).toBeNull();
+    });
+
+    it('ArrowDown in an empty file never selects row -1', () => {
+      const { container } = render(<CsvGrid content="" path="d.csv" onChange={() => {}} />);
+      fireEvent.mouseDown(container.querySelector('thead th:nth-child(2)')!);
+      fireEvent.keyDown(gridOf(container), { key: 'ArrowDown' });
+      expect(screen.queryByText(/row -1/)).toBeNull();
+    });
+
+    it('after a copy, focus returns to the grid if the clipboard fallback took it', async () => {
+      // copyText's insecure-context fallback focuses an off-screen textarea, then removes it.
+      copyTextMock.mockImplementation(async () => {
+        const ta = document.createElement('textarea');
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.remove();
+      });
+      const { container } = render(<CsvGrid content={CSV} path="d.csv" onChange={() => {}} />);
+      fireEvent.mouseDown(screen.getByText('apples'));
+      await act(async () => { fireEvent.keyDown(gridOf(container), { key: 'c', ctrlKey: true }); });
+      expect(document.activeElement).toBe(gridOf(container));
+    });
   });
 });
