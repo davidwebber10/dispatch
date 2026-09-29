@@ -24,9 +24,18 @@ vi.mock('@xterm/xterm', () => {
     dataHandler: ((d: string) => void) | null = null;
     private scrollHandlers: Array<() => void> = [];
     constructor() { instances.push(this); }
+    // Clipboard surface for the custom key handler (Ctrl+C copy / Ctrl+V release):
+    // tests place a selection with `selection` and drive `keyHandler` directly.
+    selection = '';
+    keyHandler: ((ev: KeyboardEvent) => boolean) | null = null;
+    attachCustomKeyEventHandler(cb: (ev: KeyboardEvent) => boolean) { this.keyHandler = cb; }
+    hasSelection() { return this.selection.length > 0; }
+    getSelection() { return this.selection; }
+    clearSelection() { this.selection = ''; }
     loadAddon() {}
     open() {}
-    focus() {}
+    focusCalls = 0;
+    focus() { this.focusCalls++; }
     dispose() {}
     // Captures the component's term.onData((d) => sock.send(d)) registration so
     // tests can simulate a keystroke and see which socket it was routed to.
@@ -53,6 +62,9 @@ vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }));
 
 const { isMobileMock } = vi.hoisted(() => ({ isMobileMock: vi.fn(() => false) }));
 vi.mock('../../hooks/useIsMobile', () => ({ useIsMobile: isMobileMock }));
+
+const { copyTextMock } = vi.hoisted(() => ({ copyTextMock: vi.fn((_t: string) => Promise.resolve()) }));
+vi.mock('../../lib/clipboard', async (orig) => ({ ...(await orig<typeof import('../../lib/clipboard')>()), copyText: copyTextMock }));
 
 import { TerminalTab } from './TerminalTab';
 import { api } from '../../api/client';
@@ -98,6 +110,100 @@ test('mounts the terminal and wires the socket for replayed output', async () =>
   await waitFor(() => expect(api.getTerminal).toHaveBeenCalledWith('t1'));
   // The socket's onData is wired through to the terminal without throwing.
   expect(() => onData('hello-from-pty')).not.toThrow();
+});
+
+// ---- clipboard: Ctrl+C copies a selection instead of interrupting, Ctrl+V is released ----
+
+// keyCode defaults to the Latin letter's code — the field xterm maps Ctrl+letter by.
+const kbd = (key: string, mods: Partial<KeyboardEvent> = {}) =>
+  ({ type: 'keydown', key, keyCode: key.toUpperCase().charCodeAt(0), ctrlKey: false, altKey: false, metaKey: false, shiftKey: false, preventDefault: vi.fn(), ...mods }) as unknown as KeyboardEvent;
+
+async function mountTerm() {
+  const { factory } = makeSocketFactory();
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(instances).toHaveLength(1));
+  return instances[0];
+}
+
+test('Ctrl+C with a selection copies it and clears it, so the next Ctrl+C is SIGINT again', async () => {
+  copyTextMock.mockClear();
+  const term = await mountTerm();
+
+  term.selection = 'SELECT * FROM orders';
+  const ev = kbd('c', { ctrlKey: true });
+  expect(term.keyHandler(ev)).toBe(false);
+  expect(ev.preventDefault).toHaveBeenCalled();
+  expect(copyTextMock).toHaveBeenCalledWith('SELECT * FROM orders');
+  // xterm clears a selection only on user input or a click. Left in place, every later
+  // Ctrl+C would copy again and a runaway process could never be interrupted.
+  expect(term.hasSelection()).toBe(false);
+  expect(term.keyHandler(kbd('c', { ctrlKey: true }))).toBe(true);
+});
+
+test('Ctrl+C and Ctrl+V match by keyCode, so non-Latin layouts get them too', async () => {
+  copyTextMock.mockClear();
+  const term = await mountTerm();
+
+  term.selection = 'x';
+  expect(term.keyHandler(kbd('с', { ctrlKey: true, keyCode: 67 }))).toBe(false); // Cyrillic es
+  expect(copyTextMock).toHaveBeenCalledWith('x');
+  expect(term.keyHandler(kbd('м', { ctrlKey: true, keyCode: 86 }))).toBe(false); // Cyrillic em
+});
+
+test('a failed copy says so instead of silently eating the keystroke', async () => {
+  const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+  copyTextMock.mockRejectedValueOnce(new Error('the browser refused the copy'));
+  const term = await mountTerm();
+
+  term.selection = 'x';
+  term.keyHandler(kbd('c', { ctrlKey: true }));
+  await waitFor(() => expect(alert).toHaveBeenCalledWith(expect.stringContaining('the browser refused the copy')));
+});
+
+test('after a copy, focus returns to the terminal only if nothing else took it', async () => {
+  const term = await mountTerm();
+  // Mount focuses the terminal on the next animation frame. Let that land first, or under a
+  // loaded suite it fires mid-test and is counted as the copy's refocus.
+  await waitFor(() => expect(term.focusCalls).toBeGreaterThan(0));
+  const other = document.createElement('input');
+  document.body.appendChild(other);
+  try {
+    // The user moved to another field while the clipboard write was pending: leave them there.
+    let release!: () => void;
+    copyTextMock.mockImplementationOnce(() => new Promise<void>((r) => { release = r; }));
+    term.selection = 'x';
+    term.keyHandler(kbd('c', { ctrlKey: true }));
+    other.focus();
+    const before = term.focusCalls;
+    await act(async () => { release(); await tick(); });
+    expect(term.focusCalls).toBe(before);
+
+    // The insecure-context fallback focused (then removed) its own textarea, so focus fell
+    // to <body>: hand it back to the terminal.
+    other.blur();
+    term.selection = 'y';
+    term.keyHandler(kbd('c', { ctrlKey: true }));
+    await act(async () => { await tick(); });
+    expect(term.focusCalls).toBe(before + 1);
+  } finally {
+    other.remove();
+  }
+});
+
+test('Macs keep stock xterm keys: no custom key handler is attached', async () => {
+  vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
+  const term = await mountTerm();
+  expect(term.keyHandler).toBeNull();
+});
+
+test('Ctrl+V and Ctrl+Shift+V are released to the browser; other keys pass through', async () => {
+  const term = await mountTerm();
+
+  expect(term.keyHandler(kbd('v', { ctrlKey: true }))).toBe(false);
+  expect(term.keyHandler(kbd('V', { ctrlKey: true, shiftKey: true }))).toBe(false);
+  expect(term.keyHandler(kbd('c', { ctrlKey: true, shiftKey: true }))).toBe(true); // DevTools' key, not ours
+  expect(term.keyHandler(kbd('a'))).toBe(true);
+  expect(term.keyHandler(kbd('v', { ctrlKey: true, altKey: true }))).toBe(true);
 });
 
 // ---- initial replay size: mobile small, desktop unchanged ----

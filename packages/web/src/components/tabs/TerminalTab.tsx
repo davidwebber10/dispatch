@@ -11,6 +11,8 @@ import type { Terminal } from '../../api/types';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { ThreadAskBanner } from './ThreadAskBanner';
 import { useDraft } from '../../hooks/useDraft';
+import { copyText } from '../../lib/clipboard';
+import { isMacLike } from '../../lib/hostkeys';
 import { useSettings } from '../../stores/settings';
 import { useDictation } from '../../hooks/useDictation';
 import { DictationControl } from '../dictation/DictationControl';
@@ -160,6 +162,38 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     const term = new XTerm({ fontFamily: 'JetBrains Mono, monospace', fontSize: s0.fontSize, theme: { background: '#1E1E1E' }, scrollback: s0.scrollback, convertEol: true, cursorBlink: true });
     const fit = new FitAddon();
     term.loadAddon(fit);
+
+    // Windows/Linux clipboard. Stock xterm turns Ctrl+C / Ctrl+V into control bytes
+    // before the browser can act, which reads as "copy paste is broken" to anyone
+    // off a Mac. Ctrl+C with an active selection copies it instead of interrupting
+    // (Windows Terminal / VS Code behavior); with no selection it stays SIGINT.
+    // Ctrl+V and Ctrl+Shift+V are released to the browser (return false, no
+    // preventDefault): the native paste lands in xterm's own paste listener, a path
+    // that works even over plain http where navigator.clipboard does not exist.
+    // Macs keep stock behavior — Cmd+C/Cmd+V never enter xterm's key handler.
+    // Keys match by keyCode (67 = C, 86 = V), the field xterm itself maps Ctrl+letter
+    // by, so a Cyrillic or Greek layout gets the same behavior as a Latin one.
+    if (!isMacLike()) {
+      term.attachCustomKeyEventHandler((ev) => {
+        if (ev.type !== 'keydown' || !ev.ctrlKey || ev.altKey || ev.metaKey) return true;
+        if (!ev.shiftKey && ev.keyCode === 67 && term.hasSelection()) {
+          ev.preventDefault();
+          const text = term.getSelection();
+          // xterm drops a selection only on typed input or a click. Left in place, every
+          // later Ctrl+C would copy again and a runaway process could never be interrupted.
+          term.clearSelection();
+          // copyText's insecure-context fallback focuses an off-screen textarea and removes
+          // it, which drops focus to <body>. Take focus back only then — never from an
+          // element the user moved to while the write was pending.
+          copyText(text)
+            .catch((err) => window.alert(`Copy failed: ${err?.message ?? err}`))
+            .finally(() => { if (!document.activeElement || document.activeElement === document.body) term.focus(); });
+          return false;
+        }
+        if (ev.keyCode === 86) return false;
+        return true;
+      });
+    }
     termRef.current = term;
     if (hostRef.current) { try { term.open(hostRef.current); } catch { /* jsdom */ } }
 
