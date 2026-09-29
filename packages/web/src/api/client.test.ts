@@ -39,6 +39,16 @@ test('throws on non-ok responses', async () => {
   await expect(api.listSessions()).rejects.toThrow(/500/);
 });
 
+test('a non-ok error carries the server\'s { error } text, so the UI can say what went wrong', async () => {
+  mockJson({ error: 'ENOENT: no such file or directory' }, 404);
+  await expect(api.readFile('s1', 'gone.txt')).rejects.toThrow(/failed: 404.*ENOENT: no such file or directory/);
+});
+
+test('a non-ok response without a JSON body still throws the status', async () => {
+  (fetch as any).mockResolvedValueOnce({ ok: false, status: 502, json: async () => { throw new SyntaxError('not json'); } });
+  await expect(api.listSessions()).rejects.toThrow(/failed: 502$/);
+});
+
 test('writeFile PUTs content to the sandboxed write route', async () => {
   mockJson({ ok: true, path: 'a.txt' });
   await api.writeFile('s1', 'a.txt', 'hello');
