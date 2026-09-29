@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { ControlPlaneSummary, MissionStatus } from './control-plane-types.js';
+import type { AgentSeriesKey, ControlPlaneAnalytics, ControlPlaneSummary, MissionStatus } from './control-plane-types.js';
 
 /**
  * Control Plane analytics — docs/superpowers/specs/2026-09-29-control-plane-analytics-design.md.
@@ -191,5 +191,157 @@ export function cpSummary(db: Database.Database, r: CpRange, s: Scope): ControlP
     agentsStarted: s.cliAgents.filter((a) => inRange(a.createdAt, r)).length,
     controlPlaneTokens: usage.cp,
     agentTokens: usage.agents,
+  };
+}
+
+/* ------------------------------------------------------------ local days */
+
+function dayString(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+function parseDay(day: string): Date {
+  const [y, m, d] = day.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function addDays(day: string, n: number): string {
+  const d = parseDay(day);
+  d.setDate(d.getDate() + n);
+  return dayString(d);
+}
+
+/** The local day (YYYY-MM-DD) of an instant: the same bucket as SQLite `date(x, 'localtime')`. */
+export function localDay(iso: string): string {
+  return dayString(new Date(iso));
+}
+
+/** The Monday on or before a local day. */
+export function localMonday(day: string): string {
+  return addDays(day, -((parseDay(day).getDay() + 6) % 7));
+}
+
+/** Whole local days from one day to another. Rounded, so a DST change cannot make it fractional. */
+export function daysBetween(first: string, last: string): number {
+  return Math.round((parseDay(last).getTime() - parseDay(first).getTime()) / (24 * 60 * 60 * 1000));
+}
+
+/** Every `step`-th day from `first` to `last`, inclusive. Capped, so a bad range cannot run long. */
+function daySpan(first: string, last: string, step = 1): string[] {
+  const out: string[] = [];
+  for (let d = first; d <= last && out.length < 5000; d = addDays(d, step)) out.push(d);
+  return out;
+}
+
+/* ---------------------------------------------------------------- series */
+
+/** Spec section 4: four agent-type series; `review` holds the ordinary reviewer and both gates. */
+export function agentSeriesKey(agentType: string | null): AgentSeriesKey | null {
+  switch (agentType) {
+    case 'implementer':
+    case 'researcher':
+    case 'planner':
+      return agentType;
+    case 'reviewer':
+    case 'design-reviewer':
+    case 'code-reviewer':
+      return 'review';
+    default:
+      return null;
+  }
+}
+
+/**
+ * WHERE clause for messages (aliases `ms`, and `t` for the thread that RECEIVES the message).
+ * "You → Control Plane" is a user message on a coordinator. "Control Plane → agents" is a
+ * coordinator-sourced message on an agent: the spawn task and message_agent. message_thread also
+ * tags peer messages 'coordinator', so the agent check is what scopes this series.
+ */
+function messageWhere(r: CpRange): { sql: string; params: unknown[] } {
+  const role = "(CASE WHEN json_valid(t.config) THEN json_extract(t.config, '$.role') END)";
+  const roleRun = "(CASE WHEN json_valid(t.config) THEN json_extract(t.config, '$.roleRun') END)";
+  const parts = [
+    `((ms.source = 'user' AND ${role} = 'coordinator') OR (ms.source = 'coordinator' AND ${role} = 'agent' AND ${roleRun} IS NULL))`,
+  ];
+  const params: unknown[] = [];
+  if (r.from) { parts.push('ms.created_at >= ?'); params.push(r.from); }
+  if (r.to) { parts.push('ms.created_at < ?'); params.push(r.to); }
+  if (r.projectId) { parts.push('t.session_id = ?'); params.push(r.projectId); }
+  if (r.provider) { parts.push('t.type = ?'); params.push(r.provider); }
+  return { sql: parts.join(' AND '), params };
+}
+
+type SeriesPart = Pick<ControlPlaneAnalytics,
+  'days' | 'weeks' | 'agentsByDay' | 'tokensByDay' | 'messagesByDay' | 'missionsCompletedByWeek' | 'settlingSince'>;
+
+export function cpSeries(db: Database.Database, r: CpRange, s: Scope): SeriesPart {
+  const byDayKey = (a: { day: string; key: string }, b: { day: string; key: string }) =>
+    a.day.localeCompare(b.day) || a.key.localeCompare(b.key);
+
+  const agentPoints = new Map<string, ControlPlaneAnalytics['agentsByDay'][number]>();
+  for (const a of s.cliAgents) {
+    if (!inRange(a.createdAt, r)) continue;
+    const key = agentSeriesKey(a.agentType);
+    if (!key) continue;
+    const day = localDay(a.createdAt);
+    const id = `${day}|${key}`;
+    const point = agentPoints.get(id) ?? { day, key, value: 0 };
+    point.value += 1;
+    if (key === 'review') point.reviewGates = (point.reviewGates ?? 0) + (REVIEW_GATES.has(a.agentType as string) ? 1 : 0);
+    agentPoints.set(id, point);
+  }
+  const agentsByDay = [...agentPoints.values()].sort(byDayKey);
+
+  const w = usageWhere(r);
+  const tokensByDay = db.prepare(`
+    SELECT date(u.started_at, 'localtime') AS day,
+           CASE WHEN u.role = 'coordinator' THEN 'control-plane' ELSE 'agents' END AS key,
+           COALESCE(SUM(${TOKENS}), 0) AS value
+    FROM usage_turns u LEFT JOIN terminals t ON t.id = u.terminal_id
+    WHERE ${w.sql}
+    GROUP BY day, key ORDER BY day, key
+  `).all(...w.params) as ControlPlaneAnalytics['tokensByDay'];
+
+  const m = messageWhere(r);
+  const messagesByDay = db.prepare(`
+    SELECT date(ms.created_at, 'localtime') AS day,
+           CASE WHEN ms.source = 'user' THEN 'you' ELSE 'control-plane' END AS key,
+           COUNT(*) AS value
+    FROM message_source ms JOIN terminals t ON t.id = ms.terminal_id
+    WHERE ${m.sql}
+    GROUP BY day, key ORDER BY day, key
+  `).all(...m.params) as ControlPlaneAnalytics['messagesByDay'];
+
+  const weekCounts = new Map<string, number>();
+  for (const mission of s.missions) {
+    if (mission.status !== 'completed' || !inRange(mission.lastAt, r)) continue;
+    const week = localMonday(localDay(mission.lastAt));
+    weekCounts.set(week, (weekCounts.get(week) ?? 0) + 1);
+  }
+  const missionsCompletedByWeek = [...weekCounts]
+    .map(([week, value]) => ({ week, value }))
+    .sort((a, b) => a.week.localeCompare(b.week));
+
+  // The continuous axis runs from the range start (for "All time": the first day with data) to
+  // today or the range end, whichever is earlier. `to` is exclusive.
+  const endMs = Math.min(s.now.getTime(), r.to ? Date.parse(r.to) - 1 : Infinity);
+  const lastDay = localDay(new Date(endMs).toISOString());
+  const dataDays = [...agentsByDay, ...tokensByDay, ...messagesByDay].map((p) => p.day)
+    .concat(missionsCompletedByWeek.map((p) => p.week));
+  const firstDay = r.from
+    ? localDay(r.from)
+    : dataDays.reduce<string | null>((min, x) => (min === null || x < min ? x : min), null);
+  const days = firstDay && firstDay <= lastDay ? daySpan(firstDay, lastDay) : [];
+  const weeks = days.length ? daySpan(localMonday(days[0]), localMonday(lastDay), 7) : [];
+
+  return {
+    days,
+    weeks,
+    agentsByDay,
+    tokensByDay,
+    messagesByDay,
+    missionsCompletedByWeek,
+    settlingSince: new Date(s.now.getTime() - MISSION_IDLE_MS).toISOString(),
   };
 }

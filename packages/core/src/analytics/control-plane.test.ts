@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema.js';
 import * as usageDb from '../db/usage.js';
-import { cpSummary, loadScope, missionState, MISSION_IDLE_MS, type CpRange } from './control-plane.js';
+import { cpSeries, cpSummary, loadScope, missionState, MISSION_IDLE_MS, type CpRange } from './control-plane.js';
 
 const NOW = new Date('2026-09-29T12:00:00.000Z'); // a Tuesday
 const DAY = 24 * 60 * 60 * 1000;
@@ -56,6 +56,13 @@ function turn(id: string, terminalId: string, projectId: string, role: 'coordina
 }
 
 const summarize = (r: CpRange) => cpSummary(d, r, loadScope(d, r, NOW));
+const series = (r: CpRange) => cpSeries(d, r, loadScope(d, r, NOW));
+
+let uuid = 0;
+function message(terminalId: string, source: string, createdAt: string) {
+  d.prepare('INSERT INTO message_source (terminal_id, uuid, source, created_at) VALUES (?, ?, ?, ?)')
+    .run(terminalId, `u${uuid++}`, source, createdAt);
+}
 
 beforeEach(() => {
   d = new Database(':memory:');
@@ -176,5 +183,78 @@ describe('tokens', () => {
     expect(s.agentTokens).toBe(900);
     // The provider filter reaches the token sums too.
     expect(summarize({ from: ago(30), provider: 'codex' }).agentTokens).toBe(0);
+  });
+});
+
+describe('series', () => {
+  it('buckets agents by local day and folds the reviewer types into review, counting gates', () => {
+    agent('a1', 'p1', 'implementer', '2026-09-27T10:00:00.000Z');
+    agent('a2', 'p1', 'code-reviewer', '2026-09-27T11:00:00.000Z', { cli: 'codex' });
+    agent('a3', 'p1', 'reviewer', '2026-09-27T12:00:00.000Z');
+    agent('a4', 'p1', 'design-reviewer', '2026-09-28T09:00:00.000Z');
+    expect(series({ from: ago(30) }).agentsByDay).toEqual([
+      { day: '2026-09-27', key: 'implementer', value: 1 },
+      { day: '2026-09-27', key: 'review', value: 2, reviewGates: 1 },
+      { day: '2026-09-28', key: 'review', value: 1, reviewGates: 1 },
+    ]);
+  });
+
+  it('sums tokens per day for the Control Plane and for agents', () => {
+    coordinator('c1', 'p1', ago(60));
+    agent('a1', 'p1', 'implementer', ago(5));
+    turn('t1', 'c1', 'p1', 'coordinator', '2026-09-27T10:00:00.000Z', 100);
+    turn('t2', 'c1', 'p1', 'coordinator', '2026-09-27T11:00:00.000Z', 50);
+    turn('t3', 'a1', 'p1', 'agent', '2026-09-27T12:00:00.000Z', 400);
+    expect(series({ from: ago(30) }).tokensByDay).toEqual([
+      { day: '2026-09-27', key: 'agents', value: 400 },
+      { day: '2026-09-27', key: 'control-plane', value: 150 },
+    ]);
+  });
+
+  it('counts your messages to a coordinator and coordinator messages to agents, nothing else', () => {
+    coordinator('c1', 'p1', ago(60));
+    agent('a1', 'p1', 'implementer', ago(5));
+    thread({ id: 'plain', project: 'p1', created: ago(5), config: { transport: 'structured' } });
+    message('c1', 'user', '2026-09-27T10:00:00.000Z');
+    message('c1', 'user', '2026-09-27T11:00:00.000Z');
+    message('a1', 'coordinator', '2026-09-27T12:00:00.000Z');
+    message('a1', 'user', '2026-09-27T12:30:00.000Z');        // you → an agent: not counted
+    message('plain', 'coordinator', '2026-09-27T13:00:00.000Z'); // a peer message: not counted
+    expect(series({ from: ago(30) }).messagesByDay).toEqual([
+      { day: '2026-09-27', key: 'control-plane', value: 1 },
+      { day: '2026-09-27', key: 'you', value: 2 },
+    ]);
+  });
+
+  it('counts completed missions per local Monday week, by completion time', () => {
+    // 2026-09-14 and 2026-09-21 are Mondays; 2026-09-20 is a Sunday.
+    agent('a1', 'p1', 'implementer', '2026-09-10T10:00:00.000Z', { mission: 'A', lastActivity: '2026-09-15T10:00:00.000Z' });
+    agent('a2', 'p1', 'implementer', '2026-09-10T10:00:00.000Z', { mission: 'B', lastActivity: '2026-09-20T23:00:00.000Z' });
+    agent('a3', 'p1', 'implementer', '2026-09-10T10:00:00.000Z', { mission: 'C', lastActivity: '2026-09-21T01:00:00.000Z' });
+    expect(series({ from: ago(30) }).missionsCompletedByWeek).toEqual([
+      { week: '2026-09-14', value: 2 },
+      { week: '2026-09-21', value: 1 },
+    ]);
+  });
+
+  it('returns a continuous day axis from the range start to today, and Monday weeks', () => {
+    const out = series({ from: '2026-09-26T00:00:00.000Z' });
+    expect(out.days).toEqual(['2026-09-26', '2026-09-27', '2026-09-28', '2026-09-29']);
+    expect(out.weeks).toEqual(['2026-09-21', '2026-09-28']);
+  });
+
+  it('starts an all-time axis at the first day with data, and is empty with no data', () => {
+    expect(series({}).days).toEqual([]);
+    agent('a1', 'p1', 'implementer', '2026-09-27T10:00:00.000Z');
+    expect(series({}).days).toEqual(['2026-09-27', '2026-09-28', '2026-09-29']);
+  });
+
+  it('ends the axis at the range end when the range ends before today', () => {
+    expect(series({ from: '2026-09-01T00:00:00.000Z', to: '2026-09-03T00:00:00.000Z' }).days)
+      .toEqual(['2026-09-01', '2026-09-02']);
+  });
+
+  it('marks the settling window as the 7 days before now', () => {
+    expect(series({}).settlingSince).toBe('2026-09-22T12:00:00.000Z');
   });
 });
