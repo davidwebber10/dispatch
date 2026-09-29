@@ -220,4 +220,49 @@ describe('FileEditorTab', () => {
     expect(await screen.findByText('apples')).toBeInTheDocument();
     expect(screen.queryByText('● unsaved')).toBeNull();
   });
+
+  // ---- failed reads and saves ----
+  // Unique paths: the module-level file cache would otherwise hide the error panel.
+
+  const ERR = /could not be read/;
+
+  it('Cmd+S in the read-error state writes nothing (no empty file over a real one)', async () => {
+    vi.spyOn(api, 'readFile').mockRejectedValue(new Error('GET … failed: 502'));
+    render(<FileEditorTab terminal={tab('err/gone-1.txt')} />);
+    expect(await screen.findByText(ERR)).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 's', metaKey: true });
+    await act(async () => {});
+    expect(api.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('Cmd+S on a clean tab writes nothing', async () => {
+    vi.spyOn(api, 'readFile').mockResolvedValue({ content: 'hello', path: 'err/clean.ts' });
+    render(<FileEditorTab terminal={tab('err/clean.ts')} />);
+    await waitFor(() => expect(codeMirrorState.capturedDoc).toBe('hello'));
+
+    fireEvent.keyDown(window, { key: 's', metaKey: true });
+    await act(async () => {});
+    expect(api.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('Retry clears the error while the new read runs', async () => {
+    const read = vi.spyOn(api, 'readFile').mockRejectedValueOnce(new Error('GET … failed: 404'));
+    render(<FileEditorTab terminal={tab('err/gone-2.txt')} />);
+    expect(await screen.findByText(ERR)).toBeInTheDocument();
+
+    read.mockReturnValueOnce(new Promise(() => {})); // still in flight
+    fireEvent.click(screen.getByText('Retry'));
+    await waitFor(() => expect(screen.queryByText(ERR)).toBeNull());
+  });
+
+  it('a tab reused for another file does not keep the previous file\'s error', async () => {
+    const read = vi.spyOn(api, 'readFile').mockRejectedValueOnce(new Error('GET … failed: 404'));
+    const { rerender } = render(<FileEditorTab terminal={tab('err/gone-3.txt')} />);
+    expect(await screen.findByText(ERR)).toBeInTheDocument();
+
+    read.mockReturnValueOnce(new Promise(() => {}));
+    rerender(<FileEditorTab terminal={{ ...tab('err/other.txt'), id: 't2' } as Terminal} />);
+    await waitFor(() => expect(screen.queryByText(ERR)).toBeNull());
+  });
 });

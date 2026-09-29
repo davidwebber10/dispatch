@@ -22,7 +22,13 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,
     body: init?.body,
   });
-  if (!res.ok) throw new Error(`${init?.method ?? 'GET'} ${path} failed: ${res.status}`);
+  if (!res.ok) {
+    // Carry the server's { error } text when there is one: a bare "failed: 404" cannot tell
+    // a deleted file from a directory or a refused path.
+    let detail = '';
+    try { const b = await res.json(); if (typeof b?.error === 'string') detail = b.error; } catch { /* not JSON */ }
+    throw new Error(`${init?.method ?? 'GET'} ${path} failed: ${res.status}${detail ? ` — ${detail}` : ''}`);
+  }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }

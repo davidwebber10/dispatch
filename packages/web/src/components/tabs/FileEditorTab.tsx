@@ -69,6 +69,9 @@ export function FileEditorTab({ terminal }: { terminal: Terminal }) {
   }, [md, mode, content, loaded, terminal.id]);
 
   useEffect(() => {
+    // A new read (Retry, or this component reused for another file) starts clean: the old
+    // error must not linger over the loading state or over a different file.
+    setLoadError(null);
     // An unsaved draft outranks the file on disk. Without this early return, coming back to a
     // tab you edited would refetch the server's copy straight over the top of your work.
     if (hasDraft(terminal.id)) { setLoaded(true); return; }
@@ -112,9 +115,13 @@ export function FileEditorTab({ terminal }: { terminal: Terminal }) {
   // A rejected save must be SEEN, not just preserved: the draft survives (save()
   // clears it only on success), but without this the tab silently stays dirty —
   // e.g. writes to paths outside the working dir are refused with a 403.
+  // A clean tab has nothing to write — and after a failed read its buffer is EMPTY, so a
+  // write would cut the real file to zero bytes. The Save button is disabled then, but
+  // Cmd+S is a window listener that reaches every mounted editor, so guard it here.
   const trySave = useCallback(() => {
+    if (!dirty) return;
     save().catch((err: any) => window.alert(`Save failed: ${err?.message ?? err}`));
-  }, [save]);
+  }, [save, dirty]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); trySave(); } };

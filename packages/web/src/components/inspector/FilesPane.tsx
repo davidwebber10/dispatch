@@ -205,8 +205,9 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
     return m;
   }, [children]);
 
-  // Untracked directories arrive from porcelain as one `dir/` record with no per-file rows;
-  // files under them inherit the '?' through this prefix list.
+  // The status route runs porcelain with -uall, so untracked files arrive one record each.
+  // A `dir/` record still arrives for an untracked nested repo (porcelain never descends
+  // into one); files under it inherit its '?' through this prefix list.
   const changedDirPrefixes = useMemo(
     () => Object.keys(git.changed).filter((p) => p.endsWith('/')),
     [git.changed],
