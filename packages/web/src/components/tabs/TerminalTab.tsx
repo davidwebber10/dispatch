@@ -12,6 +12,7 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import { ThreadAskBanner } from './ThreadAskBanner';
 import { useDraft } from '../../hooks/useDraft';
 import { copyText } from '../../lib/clipboard';
+import { isMacLike } from '../../lib/hostkeys';
 import { useSettings } from '../../stores/settings';
 import { useDictation } from '../../hooks/useDictation';
 import { DictationControl } from '../dictation/DictationControl';
@@ -170,17 +171,26 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     // preventDefault): the native paste lands in xterm's own paste listener, a path
     // that works even over plain http where navigator.clipboard does not exist.
     // Macs keep stock behavior — Cmd+C/Cmd+V never enter xterm's key handler.
-    if (!/Mac|iP(hone|ad|od)/.test(navigator.platform ?? '')) {
+    // Keys match by keyCode (67 = C, 86 = V), the field xterm itself maps Ctrl+letter
+    // by, so a Cyrillic or Greek layout gets the same behavior as a Latin one.
+    if (!isMacLike()) {
       term.attachCustomKeyEventHandler((ev) => {
         if (ev.type !== 'keydown' || !ev.ctrlKey || ev.altKey || ev.metaKey) return true;
-        if (!ev.shiftKey && (ev.key === 'c' || ev.key === 'C') && term.hasSelection()) {
+        if (!ev.shiftKey && ev.keyCode === 67 && term.hasSelection()) {
           ev.preventDefault();
-          // copyText's insecure-context fallback focuses an off-screen textarea;
-          // refocus the terminal afterwards so the next keystroke still lands here.
-          void copyText(term.getSelection()).catch(() => {}).then(() => term.focus());
+          const text = term.getSelection();
+          // xterm drops a selection only on typed input or a click. Left in place, every
+          // later Ctrl+C would copy again and a runaway process could never be interrupted.
+          term.clearSelection();
+          // copyText's insecure-context fallback focuses an off-screen textarea and removes
+          // it, which drops focus to <body>. Take focus back only then — never from an
+          // element the user moved to while the write was pending.
+          copyText(text)
+            .catch((err) => window.alert(`Copy failed: ${err?.message ?? err}`))
+            .finally(() => { if (!document.activeElement || document.activeElement === document.body) term.focus(); });
           return false;
         }
-        if (ev.key === 'v' || ev.key === 'V') return false;
+        if (ev.keyCode === 86) return false;
         return true;
       });
     }
