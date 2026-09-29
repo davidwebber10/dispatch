@@ -84,4 +84,10 @@ describe('ControlPlaneAnalytics', () => {
     render(<ControlPlaneAnalytics from={FROM} projectId="" provider="" />);
     await waitFor(() => expect(screen.getAllByText('No Control Plane activity in this range.')).toHaveLength(3));
   });
+
+  it('says no mission completed instead of drawing zero bars', async () => {
+    stub({ ...CP_FIXTURE, missionsCompletedByWeek: [] });
+    render(<ControlPlaneAnalytics from={FROM} projectId="" provider="" />);
+    await waitFor(() => expect(screen.getByText('No missions completed in this range.')).toBeTruthy());
+  });
 });

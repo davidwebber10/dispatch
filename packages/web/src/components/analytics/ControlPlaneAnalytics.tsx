@@ -27,6 +27,7 @@ const AGENT_SERIES: { key: AgentSeriesKey; color: string }[] = [
 /** Pink always means the Control Plane in this view. The other series in a pair is neutral. */
 const CONTROL_PLANE = SERIES[4];
 const NO_ACTIVITY = 'No Control Plane activity in this range.';
+const NO_COMPLETIONS = 'No missions completed in this range.';
 const COMPLETED_INFO = 'No working or queued agent, and no activity for 7 days.';
 
 type Row = Record<string, string | number>;
@@ -214,7 +215,7 @@ export function ControlPlaneAnalytics({ from, projectId, provider }: { from?: st
       {/* 4. Missions completed per week, and the project table. */}
       <div style={pair}>
         <Block title="MISSIONS COMPLETED PER WEEK" note="weeks start on Monday">
-          {rows.weekly.length === 0 ? <NoData height={chartH} message={NO_ACTIVITY} /> : (
+          {data.missionsCompletedByWeek.length === 0 ? <NoData height={chartH} message={NO_COMPLETIONS} /> : (
             <ResponsiveContainer width="100%" height={chartH} minHeight={chartH}>
               <BarChart data={rows.weekly} margin={margin}>
                 <defs>
@@ -296,8 +297,8 @@ function ProjectTable({ rows }: { rows: ControlPlaneProjectRow[] }) {
       head={['Project', 'Sessions', 'Active days', 'Started in range', 'Completed in range', 'Agents', 'CP token share']}
       align={['left', 'right', 'right', 'right', 'right', 'right', 'right']}
       rows={active.map((r) => [
-        r.name, r.sessions, r.activeDays, r.missionsStarted, r.missionsCompleted, r.agents.toLocaleString(),
-        share(r.controlPlaneTokens, r.agentTokens),
+        r.name, r.sessions.toLocaleString(), r.activeDays.toLocaleString(), r.missionsStarted.toLocaleString(),
+        r.missionsCompleted.toLocaleString(), r.agents.toLocaleString(), share(r.controlPlaneTokens, r.agentTokens),
       ])}
       footer={idle.length > 0
         ? `${idle.length} more ${idle.length === 1 ? 'project' : 'projects'} · ${idleSessions} ${idleSessions === 1 ? 'session' : 'sessions'} · no activity in range`
