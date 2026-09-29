@@ -317,7 +317,7 @@ function Table({ head, align, rows, footer }: {
         <thead>
           <tr>
             {head.map((h, i) => (
-              <th key={h} style={{ ...cell, ...labelStyle, textAlign: align[i], fontWeight: 500 }}>{h.toUpperCase()}</th>
+              <th key={h} style={{ ...cell, ...labelStyle, textAlign: align[i], fontWeight: 500, whiteSpace: 'normal', verticalAlign: 'bottom' }}>{h.toUpperCase()}</th>
             ))}
           </tr>
         </thead>
