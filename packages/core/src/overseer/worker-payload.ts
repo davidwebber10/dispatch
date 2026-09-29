@@ -1,4 +1,4 @@
-import { isClaudeTierAlias } from './spawn-model.js';
+import { isClaudeTierAlias, nonClaudeModelHarness } from './spawn-model.js';
 
 /**
  * The terminals-create body for a Control Plane worker. Extracted pure so the wire
@@ -17,6 +17,13 @@ export function buildWorkerCreateBody(input: {
   // arrive as an explicit override or as the already-resolved model (matrix/session default).
   if (input.resolved.harness !== 'claude-code' && isClaudeTierAlias(model)) {
     throw new Error(`model '${model}' is a Claude tier alias — not valid for harness '${input.resolved.harness}'; pass that harness's own model id or omit model`);
+  }
+  // The reverse: the model never picks the harness, so a GPT/Grok model with no harness arg
+  // resolves onto claude-code and the Claude CLI fails at its first turn. Refuse it here, before
+  // a thread exists, and name the harness that runs it.
+  const owner = input.resolved.harness === 'claude-code' && model ? nonClaudeModelHarness(model) : undefined;
+  if (owner) {
+    throw new Error(`model '${model}' is not a Claude model, so claude-code cannot run it — the model never picks the harness; pass harness '${owner}' with it`);
   }
   return {
     type: input.resolved.harness,
