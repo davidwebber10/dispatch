@@ -99,4 +99,27 @@ describe('analytics routes', () => {
       expect((await call).status).toBe(404);
     }
   });
+
+  it('GET /control-plane returns the Control Plane payload and applies the filters', async () => {
+    const t = '2026-08-10T10:00:00.000Z';
+    d.prepare(`INSERT INTO sessions (id, provider, name, working_dir, created_at, updated_at, last_activity_at)
+               VALUES ('proj1', 'claude-code', 'One', '/tmp', ?, ?, ?), ('proj2', 'claude-code', 'Two', '/tmp', ?, ?, ?)`)
+      .run(t, t, t, t, t, t);
+    d.prepare(`INSERT INTO terminals (id, session_id, type, label, status, created_at, config)
+               VALUES ('c1', 'proj1', 'claude-code', 'Overseer', 'waiting', ?, ?), ('c2', 'proj2', 'codex', 'Overseer', 'waiting', ?, ?)`)
+      .run(t, JSON.stringify({ role: 'coordinator' }), t, JSON.stringify({ role: 'coordinator' }));
+
+    const all = await request(app(d)).get('/api/analytics/control-plane');
+    expect(all.status).toBe(200);
+    expect(Object.keys(all.body).sort()).toEqual([
+      'agentsByDay', 'byProject', 'byType', 'days', 'messagesByDay', 'missions',
+      'missionsCompletedByWeek', 'settlingSince', 'summary', 'tokensByDay', 'weeks',
+    ]);
+    expect(all.body.summary.sessions).toBe(2);
+
+    const get = async (q: string) => (await request(app(d)).get(`/api/analytics/control-plane?${q}`)).body.summary.sessions;
+    expect(await get('projectId=proj2')).toBe(1);
+    expect(await get('provider=codex')).toBe(1);
+    expect(await get('to=2026-08-01T00:00:00.000Z')).toBe(0);
+  });
 });

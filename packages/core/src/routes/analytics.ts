@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type Database from 'better-sqlite3';
 import * as appState from '../db/app-state.js';
 import { summary, series, top, records } from '../analytics/queries.js';
+import { controlPlaneAnalytics } from '../analytics/control-plane.js';
 import type { Metric, GroupBy, Dimension } from '../analytics/queries.js';
 
 const METRICS: ReadonlySet<string> = new Set(['tokens', 'outputTokens', 'turns', 'duration']);
@@ -64,6 +65,12 @@ export function createAnalyticsRouter(db: Database.Database): Router {
 
   router.get('/records', (_req, res) => {
     res.json(records(db));
+  });
+
+  // The Control Plane view (spec 2026-09-29-control-plane-analytics-design.md): one payload per
+  // refresh. The same filters as the Usage routes; every value is a bound parameter.
+  router.get('/control-plane', (req, res) => {
+    res.json(controlPlaneAnalytics(db, range(req.query)));
   });
 
   // When measurement began — the honest floor under every chart. The old
