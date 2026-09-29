@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart,
-  ResponsiveContainer, Tooltip, XAxis, YAxis,
+  ResponsiveContainer, XAxis, YAxis,
 } from 'recharts';
 import { api } from '../../api/client';
 import { useAnalyticsFeed } from '../../stores/analytics';
@@ -9,66 +9,13 @@ import { useProjects } from '../../stores/projects';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { formatCost } from '../../lib/agentStats';
 import { makeSeriesScale, OUTCOME_COLOR, OTHER, SERIES, resolveChartTheme } from './chartTheme';
+import {
+  Block, Kpi, NoData, chartTooltip, fmtDay, fmtSeconds, fmtTokens, inputStyle, labelStyle,
+  localDayString, muted, normKey, panel, startOfLocalDay, type ChartTheme,
+} from './parts';
 import type {
   AnalyticsPoint, AnalyticsRecords, AnalyticsSummary, AnalyticsTopRow,
 } from '../../api/types';
-
-/* ------------------------------------------------------------------ styles */
-
-const panel: React.CSSProperties = {
-  background: 'var(--color-elevated)', border: '1px solid var(--color-border)',
-  borderRadius: 12, padding: 14, minWidth: 0,
-};
-const labelStyle: React.CSSProperties = {
-  font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)',
-};
-const inputStyle: React.CSSProperties = {
-  height: 28, padding: '0 8px', background: 'var(--color-elevated)',
-  border: '1px solid var(--color-border)', borderRadius: 7,
-  color: 'var(--color-text-primary)', fontSize: 12,
-};
-const ghost: React.CSSProperties = {
-  height: 30, padding: '0 14px', background: 'var(--color-elevated)',
-  border: '1px solid #2C2C32', borderRadius: 7, color: 'var(--color-text-primary)',
-  fontSize: 12, cursor: 'pointer',
-};
-const muted: React.CSSProperties = { color: 'var(--color-text-tertiary)', fontSize: 12.5 };
-
-/* ------------------------------------------------------------- formatting */
-
-const COMPACT = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 });
-
-function fmtTokens(n: number | null | undefined): string {
-  if (n == null) return '—';
-  return n < 1000 ? String(n) : COMPACT.format(n);
-}
-
-function fmtSeconds(s: number): string {
-  if (s < 60) return `${Math.round(s)}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ${Math.round(s % 60)}s`;
-  return `${Math.floor(m / 60)}h ${m % 60}m`;
-}
-
-function fmtDay(iso: string): string {
-  // 'YYYY-MM-DD' from the query layer, already bucketed in local time.
-  return iso.length >= 10 ? iso.slice(5) : iso;
-}
-
-function localDayString(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
-
-function startOfLocalDay(daysAgo: number): Date {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  d.setDate(d.getDate() - daysAgo);
-  return d;
-}
-
-/** Empty model/outcome keys are real rows with an unknown key, not missing rows. */
-function normKey(k: string): string { return k === '' ? 'unknown' : k; }
 
 /* ------------------------------------------------------------------- data */
 
@@ -150,67 +97,6 @@ function calendarStart(): Date {
   const d = startOfLocalDay(CALENDAR_DAYS - 1);
   d.setDate(d.getDate() - d.getDay());
   return d;
-}
-
-/* ------------------------------------------------------------- small parts */
-
-function Kpi({ label, value, title, badge, badgeTitle }: {
-  label: string; value: string; title?: string; badge?: string; badgeTitle?: string;
-}) {
-  return (
-    <div style={panel} title={title}>
-      <div style={labelStyle}>{label}</div>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 6 }}>
-        <span style={{ fontSize: 21, fontWeight: 600, color: 'var(--color-text-primary)' }}>{value}</span>
-        {badge && (
-          <span
-            title={badgeTitle}
-            style={{
-              font: '500 9.5px var(--font-mono)', letterSpacing: '.6px', color: 'var(--color-text-tertiary)',
-              border: '1px solid var(--color-border)', borderRadius: 5, padding: '1px 5px', cursor: 'help',
-            }}
-          >{badge}</span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function Block({ title, note, children, style }: {
-  title: string; note?: string; children: React.ReactNode; style?: React.CSSProperties;
-}) {
-  return (
-    <div style={{ ...panel, ...style }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-        <div style={labelStyle}>{title}</div>
-        {note && <div style={{ font: '400 10px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{note}</div>}
-      </div>
-      <div style={{ marginTop: 12 }}>{children}</div>
-    </div>
-  );
-}
-
-function NoData({ height, message = 'No turns in this range.' }: { height: number; message?: string }) {
-  return <div style={{ ...muted, height, display: 'flex', alignItems: 'center' }}>{message}</div>;
-}
-
-/**
- * One tooltip, styled once. Every chart gets a tooltip; only the value formatter
- * differs, so that is the only thing this takes.
- */
-function chartTooltip(
-  theme: { text: string; muted: string; grid: string; surface: string },
-  formatter?: (v: unknown, name: unknown) => [string, string],
-) {
-  return (
-    <Tooltip
-      cursor={{ fill: 'rgba(255,255,255,0.04)' }}
-      contentStyle={{ background: theme.surface, border: `1px solid ${theme.grid}`, borderRadius: 8, fontSize: 12 }}
-      labelStyle={{ color: theme.muted }}
-      itemStyle={{ color: theme.text }}
-      formatter={formatter}
-    />
-  );
 }
 
 /* -------------------------------------------------------------- the view */
@@ -670,7 +556,7 @@ function Record({ label, value }: { label: string; value: string }) {
 function RankedBars({ rows, color, theme, height }: {
   rows: AnalyticsTopRow[];
   color: (key: string) => string;
-  theme: { text: string; muted: string; grid: string; surface: string };
+  theme: ChartTheme;
   height: number;
 }) {
   if (rows.length === 0) return <NoData height={height} />;
