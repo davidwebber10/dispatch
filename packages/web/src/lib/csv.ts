@@ -198,6 +198,17 @@ export function serializeCsv(doc: CsvDoc): string {
   return (doc.bom ? BOM : '') + body;
 }
 
+/**
+ * Cell rows → TSV for the clipboard, the format Excel and Sheets paste as cells. A cell holding a
+ * tab, a line break, or a quote is wrapped in quotes with inner quotes doubled — the form both
+ * read back as ONE cell. Unlike quoteField, commas stay bare: they cannot split a TSV cell, and a
+ * paste into plain text should read clean.
+ */
+export function toTsv(rows: string[][]): string {
+  const q = (v: string) => (/[\t\n\r"]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+  return rows.map((r) => r.map(q).join('\t')).join('\n');
+}
+
 /** Setting `raw` to null is what marks a row "rewrite me" — every other row stays byte-identical. */
 export function editCell(doc: CsvDoc, row: number, col: number, value: string): CsvDoc {
   const rows = doc.rows.slice();

@@ -1,6 +1,7 @@
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Plus, TrashSimple } from '@phosphor-icons/react';
-import { parseCsv, serializeCsv, editCell, insertRow, deleteRow, columnCount, type CsvDoc } from '../../lib/csv';
+import { parseCsv, serializeCsv, editCell, insertRow, deleteRow, columnCount, toTsv, type CsvDoc } from '../../lib/csv';
+import { copyText } from '../../lib/clipboard';
 
 const ROW_H = 28;                // fixed row height — what makes windowing arithmetic possible
 const OVERSCAN = 10;
@@ -24,6 +25,9 @@ const GUTTER: React.CSSProperties = {
   background: 'var(--color-pane)', position: 'sticky', left: 0, width: 52, maxWidth: 52,
 };
 
+/** A cell coordinate in doc.rows space: r indexes doc.rows (0 is the header), c the column. */
+interface Cell { r: number; c: number }
+
 /**
  * `path` is not decoration: parseCsv reads the extension to force a tab delimiter for a `.tsv`.
  * Without it a TSV whose cells contain commas (which is exactly WHY you'd pick TSV) is detected as
@@ -36,6 +40,17 @@ export function CsvGrid({ content, path, onChange }: { content: string; path: st
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(VIEWPORT_GUESS);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // Spreadsheet-style selection: click focuses a cell, Shift-click / drag extends a
+  // rectangle, arrows move, Ctrl/Cmd+C copies the rectangle as TSV (pastes into
+  // Excel/Sheets with cells intact). Coordinates live in doc.rows space, NOT the DOM:
+  // the windowed renderer only mounts visible rows, and copy must read the whole doc.
+  const [sel, setSel] = useState<{ anchor: Cell; focus: Cell } | null>(null);
+  const dragging = useRef(false);
+  useEffect(() => {
+    const up = () => { dragging.current = false; };
+    window.addEventListener('mouseup', up);
+    return () => window.removeEventListener('mouseup', up);
+  }, []);
 
   // Measure the real viewport before first paint (no flash of a wrong window), and keep it
   // correct as the pane is resized — VIEWPORT_GUESS is only ever the pre-measurement value.
@@ -69,6 +84,27 @@ export function CsvGrid({ content, path, onChange }: { content: string; path: st
     }
   }, [content, path]);
 
+  // Drop a selection the doc no longer covers (a Delete row, an edit in Raw): stale
+  // coordinates would copy nothing, or open an editor on a row that is not there.
+  // Row 0 (the header) always renders, even for an empty file.
+  const maxRow = Math.max(0, (parsed.doc?.rows.length ?? 0) - 1);
+  const colCount = parsed.doc ? Math.max(1, columnCount(parsed.doc)) : 1;
+  useEffect(() => {
+    setSel((s) => (s && (Math.max(s.anchor.r, s.focus.r) > maxRow || Math.max(s.anchor.c, s.focus.c) >= colCount) ? null : s));
+  }, [maxRow, colCount]);
+
+  // A keyboard close of the editor (Escape, or Enter/Tab with nowhere to advance) unmounts the
+  // focused input, and focus would fall to <body> — where the grid's keys never arrive. Hand it
+  // back to the grid once the input is gone. A blur-commit is NOT flagged: that focus went
+  // somewhere on purpose.
+  const refocusGrid = useRef(false);
+  useEffect(() => {
+    if (!editing && refocusGrid.current) {
+      refocusGrid.current = false;
+      scrollRef.current?.focus({ preventScroll: true });
+    }
+  }, [editing]);
+
   // Never render a grid over a file we failed to parse — an edit through a wrong parse
   // would silently corrupt the user's data. Raw mode is still right there.
   if (!parsed.doc) {
@@ -88,8 +124,13 @@ export function CsvGrid({ content, path, onChange }: { content: string; path: st
   }
 
   function startEdit(row: number, col: number) {
+    // The row may be outside the render window (Enter on a focused row the user scrolled away
+    // from, or Enter advancing past the last mounted row). Bring it in first, or `editing`
+    // targets an unmounted row: no input appears, and the grid ignores every key meanwhile.
+    ensureVisible(row);
     setEditing({ row, col });
     setDraft(doc.rows[row]?.cells[col] ?? '');
+    setSel({ anchor: { r: row, c: col }, focus: { r: row, c: col } });
   }
 
   function commitEdit(advance: 'down' | 'right' | null) {
@@ -98,12 +139,109 @@ export function CsvGrid({ content, path, onChange }: { content: string; path: st
     if (draft !== (doc.rows[row]?.cells[col] ?? '')) commit(editCell(doc, row, col, draft));
     setEditing(null);
     if (advance === 'down' && row + 1 < doc.rows.length) startEdit(row + 1, col);
-    if (advance === 'right' && col + 1 < cols) startEdit(row, col + 1);
+    else if (advance === 'right' && col + 1 < cols) startEdit(row, col + 1);
+    else if (advance) refocusGrid.current = true;
   }
 
-  const cols = Math.max(1, columnCount(doc));
+  function cancelEdit() {
+    refocusGrid.current = true;
+    setEditing(null);
+  }
+
+  const cols = colCount;
   const header = doc.rows[0];
   const dataCount = Math.max(0, doc.rows.length - 1);
+
+  const rect = sel
+    ? {
+        r0: Math.min(sel.anchor.r, sel.focus.r), r1: Math.max(sel.anchor.r, sel.focus.r),
+        c0: Math.min(sel.anchor.c, sel.focus.c), c1: Math.max(sel.anchor.c, sel.focus.c),
+      }
+    : null;
+  const inSel = (r: number, c: number) =>
+    !!rect && r >= rect.r0 && r <= rect.r1 && c >= rect.c0 && c <= rect.c1;
+  const isFocus = (r: number, c: number) => !!sel && sel.focus.r === r && sel.focus.c === c;
+
+  function cellMouseDown(ev: React.MouseEvent, r: number, c: number) {
+    if (ev.button !== 0) return;
+    // The open editor lives INSIDE this cell: its mousedowns (placing the caret, selecting
+    // text) bubble up here and must reach the input untouched, or the input blurs and commits.
+    if (editing && editing.row === r && editing.col === c) return;
+    // Replace native text selection with the cell rectangle (and keep a mousedown
+    // from blurring the grid, which would kill the keyboard shortcuts).
+    ev.preventDefault();
+    scrollRef.current?.focus();
+    dragging.current = true;
+    setSel((prev) => (ev.shiftKey && prev ? { anchor: prev.anchor, focus: { r, c } } : { anchor: { r, c }, focus: { r, c } }));
+  }
+
+  function cellMouseEnter(r: number, c: number) {
+    if (dragging.current) setSel((prev) => (prev ? { anchor: prev.anchor, focus: { r, c } } : prev));
+  }
+
+  async function copySelection() {
+    if (!rect) return;
+    const rows: string[][] = [];
+    for (let r = rect.r0; r <= rect.r1; r++) {
+      const row: string[] = [];
+      for (let c = rect.c0; c <= rect.c1; c++) row.push(doc.rows[r]?.cells[c] ?? '');
+      rows.push(row);
+    }
+    try { await copyText(toTsv(rows)); }
+    catch { window.alert('Copy failed — the clipboard is unavailable.'); }
+    finally {
+      // copyText's insecure-context fallback focuses an off-screen textarea and removes it,
+      // dropping focus to <body>. Take it back then, never from an element the user chose.
+      if (!document.activeElement || document.activeElement === document.body) scrollRef.current?.focus({ preventScroll: true });
+    }
+  }
+
+  /** Keep the focused cell inside the scroll window (header row is sticky, skip it). */
+  function ensureVisible(r: number) {
+    const el = scrollRef.current;
+    if (!el || r === 0) return;
+    const top = ROW_H + (r - 1) * ROW_H; // content y of the row (thead occupies the first ROW_H)
+    if (top < el.scrollTop + ROW_H) el.scrollTop = top - ROW_H;
+    else if (top + ROW_H > el.scrollTop + el.clientHeight) el.scrollTop = top + ROW_H - el.clientHeight;
+    // Move the render window now, not on the async scroll event: a caller may need the row
+    // mounted in this same update (Enter must find its row to put the editor in).
+    setScrollTop(el.scrollTop);
+  }
+
+  function gridKeyDown(ev: React.KeyboardEvent) {
+    // Only keys aimed at the grid itself. Keys bubbling from inside it — the Delete row
+    // buttons, the cell input — keep their own meaning (Enter on a button activates it).
+    if (ev.target !== ev.currentTarget) return;
+    if (editing) return; // the cell input owns the keyboard, including native copy
+    if ((ev.ctrlKey || ev.metaKey) && (ev.key === 'c' || ev.key === 'C')) {
+      if (rect) { ev.preventDefault(); void copySelection(); }
+      return;
+    }
+    if (!sel) return;
+    const move: Record<string, [number, number]> = {
+      ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1],
+    };
+    const d = move[ev.key];
+    if (d) {
+      ev.preventDefault();
+      const r = Math.min(Math.max(sel.focus.r + d[0], 0), maxRow);
+      const c = Math.min(Math.max(sel.focus.c + d[1], 0), cols - 1);
+      setSel(ev.shiftKey ? { anchor: sel.anchor, focus: { r, c } } : { anchor: { r, c }, focus: { r, c } });
+      ensureVisible(r);
+      return;
+    }
+    if (ev.key === 'Enter') { ev.preventDefault(); startEdit(sel.focus.r, sel.focus.c); }
+    else if (ev.key === 'Escape') setSel(null);
+  }
+
+  /** Selection decoration for a cell, layered over the base TD/TH style. */
+  function selStyle(r: number, c: number): React.CSSProperties {
+    if (!inSel(r, c)) return {};
+    return {
+      background: '#33333c',
+      ...(isFocus(r, c) ? { boxShadow: 'inset 0 0 0 1.5px var(--color-accent)' } : {}),
+    };
+  }
 
   // Windowing: only the visible slice of data rows is in the DOM. A 100k-row CSV would
   // otherwise put 100k <tr> nodes on the page and lock the tab.
@@ -117,17 +255,20 @@ export function CsvGrid({ content, path, onChange }: { content: string; path: st
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       <div
         ref={scrollRef}
+        tabIndex={0}
+        onKeyDown={gridKeyDown}
         onScroll={(e) => { setScrollTop(e.currentTarget.scrollTop); setViewportH(e.currentTarget.clientHeight); }}
-        style={{ flex: 1, minHeight: 0, overflow: 'auto' }}
+        style={{ flex: 1, minHeight: 0, overflow: 'auto', outline: 'none' }}
       >
         <table style={{ borderCollapse: 'collapse', font: '400 11.5px var(--font-mono)', minWidth: '100%' }}>
           <thead>
             <tr>
               <th style={{ ...TH, ...GUTTER, position: 'sticky', top: 0, left: 0, zIndex: 2 }} />
               {Array.from({ length: cols }, (_, c) => (
-                <th key={c} style={TH} onDoubleClick={() => startEdit(0, c)}>
+                <th key={c} style={{ ...TH, ...selStyle(0, c) }} onDoubleClick={() => startEdit(0, c)}
+                  onMouseDown={(ev) => cellMouseDown(ev, 0, c)} onMouseEnter={() => cellMouseEnter(0, c)}>
                   {editing && editing.row === 0 && editing.col === c
-                    ? <CellInput draft={draft} setDraft={setDraft} onCommit={commitEdit} onCancel={() => setEditing(null)} />
+                    ? <CellInput draft={draft} setDraft={setDraft} onCommit={commitEdit} onCancel={cancelEdit} />
                     : (header?.cells[c] ?? '')}
                 </th>
               ))}
@@ -151,9 +292,10 @@ export function CsvGrid({ content, path, onChange }: { content: string; path: st
                 <tr key={ri}>
                   <td style={GUTTER}>{ri}</td>
                   {Array.from({ length: cols }, (_, c) => (
-                    <td key={c} style={TD} title={doc.rows[ri]?.cells[c] ?? ''} onDoubleClick={() => startEdit(ri, c)}>
+                    <td key={c} style={{ ...TD, ...selStyle(ri, c) }} title={doc.rows[ri]?.cells[c] ?? ''} onDoubleClick={() => startEdit(ri, c)}
+                      onMouseDown={(ev) => cellMouseDown(ev, ri, c)} onMouseEnter={() => cellMouseEnter(ri, c)}>
                       {editing && editing.row === ri && editing.col === c
-                        ? <CellInput draft={draft} setDraft={setDraft} onCommit={commitEdit} onCancel={() => setEditing(null)} />
+                        ? <CellInput draft={draft} setDraft={setDraft} onCommit={commitEdit} onCancel={cancelEdit} />
                         : (doc.rows[ri]?.cells[c] ?? '')}
                     </td>
                   ))}
@@ -186,6 +328,14 @@ export function CsvGrid({ content, path, onChange }: { content: string; path: st
           <Plus size={12} /> Add row
         </button>
         <span>{dataCount} rows × {cols} columns</span>
+        {sel && (
+          <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)' }}>
+            {sel.focus.r === 0 ? 'header' : `row ${sel.focus.r}`} · {header?.cells[sel.focus.c] || `col ${sel.focus.c + 1}`}
+            {rect && (rect.r0 !== rect.r1 || rect.c0 !== rect.c1)
+              ? ` · ${(rect.r1 - rect.r0 + 1) * (rect.c1 - rect.c0 + 1)} cells`
+              : ''} · Ctrl+C copies
+          </span>
+        )}
       </div>
     </div>
   );

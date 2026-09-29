@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { parseCsv, serializeCsv, editCell, insertRow, deleteRow, columnCount } from './csv';
+import { parseCsv, serializeCsv, editCell, insertRow, deleteRow, columnCount, toTsv } from './csv';
+
+describe('toTsv (grid copy → clipboard)', () => {
+  it('joins cells with tabs and rows with newlines, leaving plain cells bare', () => {
+    expect(toTsv([['a', 'b, c'], ['1', '2']])).toBe('a\tb, c\n1\t2');
+  });
+
+  it('quotes a cell holding a tab, a line break, or a quote, so Excel and Sheets paste ONE cell', () => {
+    expect(toTsv([['a\tb', 'x\ny', 'say "hi"', 'cr\r']])).toBe('"a\tb"\t"x\ny"\t"say ""hi"""\t"cr\r"');
+  });
+});
 
 /** The load-bearing property: parse then serialize must return the input untouched. */
 describe('round-trip fidelity', () => {
