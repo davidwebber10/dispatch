@@ -80,6 +80,33 @@ describe('file routes', () => {
       expect(files).not.toContain('node_modules/.bin/cli');
       expect(files).not.toContain('.claude/worktrees/x/clone.ts');
     });
+
+    it('includes an excluded scratch folder, but not ignored venv / build-output folders', async () => {
+      // A `.git/info/exclude`d scratchpad must stay searchable. Ignored virtualenvs and
+      // build output can hold tens of thousands of files, which would fill the 20k cap
+      // and push the scratch files out.
+      execFileSync('git', ['init', '-b', 'main'], { cwd: tmpDir });
+      fs.appendFileSync(path.join(tmpDir, '.git', 'info', 'exclude'), 'scratchpad/\n');
+      fs.writeFileSync(path.join(tmpDir, '.gitignore'), ['venv/', '.venv/', 'target/', 'coverage/', ''].join('\n'));
+      const put = (rel: string) => {
+        fs.mkdirSync(path.dirname(path.join(tmpDir, rel)), { recursive: true });
+        fs.writeFileSync(path.join(tmpDir, rel), 'x\n');
+      };
+      put('scratchpad/notes.md');
+      put('venv/lib/site.py');
+      put('.venv/lib/site.py');
+      put('target/debug/app');
+      put('coverage/lcov.info');
+
+      const res = await request(app).get('/api/sessions/s1/files/flat');
+      expect(res.status).toBe(200);
+      const files: string[] = res.body.files;
+      expect(files).toContain('scratchpad/notes.md');
+      expect(files).not.toContain('venv/lib/site.py');
+      expect(files).not.toContain('.venv/lib/site.py');
+      expect(files).not.toContain('target/debug/app');
+      expect(files).not.toContain('coverage/lcov.info');
+    });
   });
 
   it('reads a file', async () => {

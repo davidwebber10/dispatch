@@ -16,7 +16,10 @@ const MAX_REVEAL_PATHS = 256;
 const UPLOAD_TMP_DIR = '/tmp/commandcenter-uploads';
 
 const FLAT_CAP = 20000;
-const FLAT_SKIP = new Set(['.git', 'node_modules', 'dist', 'build', '.next', '__pycache__']);
+// Dependency and build-output dirs: huge, never what a search is for. Now that plain
+// (not only hidden) ignored paths merge into the index, the ignored virtualenvs and
+// build trees would otherwise fill the cap ahead of the files people want.
+const FLAT_SKIP = new Set(['.git', 'node_modules', 'dist', 'build', '.next', '__pycache__', 'venv', '.venv', 'target', 'coverage']);
 
 function hasSkippedSegment(p: string): boolean {
   return p.split(/[\\/]/).some((seg) => FLAT_SKIP.has(seg));
@@ -155,13 +158,17 @@ export function createFilesRouter(db: Database.Database): Router {
         const ignored = await gitLsFiles(session.workingDir, ['--others', '--ignored', '--exclude-standard']) ?? [];
         const seen = new Set(files);
         const gitCache = new Map<string, boolean>();
+        let truncated = files.length > FLAT_CAP;
         for (const p of ignored) {
           if (seen.has(p) || hasSkippedSegment(p)) continue;
           if (underNestedGit(session.workingDir, p, gitCache)) continue;
+          // Stop at the cap: past it every path is sliced off anyway, and underNestedGit's
+          // synchronous stats would only keep blocking the event loop.
+          if (files.length >= FLAT_CAP) { truncated = true; break; }
           files.push(p);
           seen.add(p);
         }
-        return res.json({ files: files.slice(0, FLAT_CAP), truncated: files.length > FLAT_CAP });
+        return res.json({ files: files.slice(0, FLAT_CAP), truncated });
       }
       // Non-git fallback: breadth-limited walk.
       const out: string[] = [];
