@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { AnalyticsView } from './AnalyticsView';
+import { AnalyticsView, loadAnalyticsTab } from './AnalyticsView';
 import { api } from '../../api/client';
 import { useAnalyticsFeed } from '../../stores/analytics';
+import { CP_FIXTURE } from './controlPlaneFixture';
 
 const EMPTY = {
   turns: 0, threads: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0,
@@ -65,7 +66,11 @@ function mockFetch(overrides: { summary?: Record<string, unknown>; providers?: s
 }
 
 describe('AnalyticsView', () => {
-  beforeEach(() => { vi.restoreAllMocks(); useAnalyticsFeed.setState({ rev: 0 }); });
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    useAnalyticsFeed.setState({ rev: 0 });
+    localStorage.removeItem('dispatch:analytics-view');
+  });
   afterEach(() => { vi.unstubAllGlobals(); });
 
   it('explains an empty table instead of showing zeroes as if they were measured', async () => {
@@ -275,5 +280,56 @@ describe('AnalyticsView', () => {
     stub({ ...EMPTY, turns: 3, totalTokens: 400 }, [{ day: localDay(), key: '', value: 42 }]);
     render(<AnalyticsView />);
     await waitFor(() => expect(screen.getByText(/AVG TURN DURATION · SECONDS/i)).toBeTruthy());
+  });
+});
+
+describe('AnalyticsView · the view switch', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    useAnalyticsFeed.setState({ rev: 0 });
+    localStorage.removeItem('dispatch:analytics-view');
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('opens Usage on a first visit', async () => {
+    stub({ ...EMPTY, turns: 3, totalTokens: 10 });
+    render(<AnalyticsView />);
+    await waitFor(() => expect(screen.getByText('TOTAL TOKENS')).toBeTruthy());
+    expect(screen.getByRole('button', { name: 'Usage' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Control Plane' }).getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('switches to Control Plane, keeps every filter, and remembers the choice', async () => {
+    stub({ ...EMPTY, turns: 3, totalTokens: 10 }, [{ day: localDay(), key: 'codex', value: 5 }]);
+    const cp = vi.spyOn(api, 'analyticsControlPlane').mockResolvedValue(CP_FIXTURE);
+    render(<AnalyticsView />);
+
+    const provider = await screen.findByLabelText(/provider/i);
+    await waitFor(() => expect(provider.textContent).toMatch(/codex/));
+    fireEvent.change(provider, { target: { value: 'codex' } });
+    fireEvent.change(screen.getByLabelText('Range'), { target: { value: '7' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Control Plane' }));
+
+    await waitFor(() => expect(screen.getByText('AGENTS STARTED')).toBeTruthy());
+    expect(cp).toHaveBeenLastCalledWith(expect.objectContaining({ provider: 'codex', from: expect.any(String) }));
+    expect((screen.getByLabelText(/provider/i) as HTMLSelectElement).value).toBe('codex');
+    expect((screen.getByLabelText('Range') as HTMLSelectElement).value).toBe('7');
+    expect(localStorage.getItem('dispatch:analytics-view')).toBe('control-plane');
+    expect(screen.queryByText('TOTAL TOKENS')).toBeNull();
+  });
+
+  it('reopens the view the reader chose last', async () => {
+    localStorage.setItem('dispatch:analytics-view', 'control-plane');
+    stub();
+    vi.spyOn(api, 'analyticsControlPlane').mockResolvedValue(CP_FIXTURE);
+    render(<AnalyticsView />);
+    await waitFor(() => expect(screen.getByText('AGENTS STARTED')).toBeTruthy());
+    expect(screen.getByRole('button', { name: 'Control Plane' }).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('falls back to Usage for an unknown stored view', () => {
+    localStorage.setItem('dispatch:analytics-view', 'nonsense');
+    expect(loadAnalyticsTab()).toBe('usage');
   });
 });
