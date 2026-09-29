@@ -13,5 +13,6 @@ describe('Kpi', () => {
     expect(screen.getByText('since Aug 15')).toBeTruthy();
     expect(screen.getByLabelText('No working or queued agent, and no activity for 7 days.').getAttribute('title'))
       .toBe('No working or queued agent, and no activity for 7 days.');
+    expect(screen.getByLabelText('No working or queued agent, and no activity for 7 days.').getAttribute('tabindex')).toBe('0');
   });
 });

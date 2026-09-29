@@ -170,6 +170,13 @@ describe('missions (rule B)', () => {
     expect(missions.map((m) => m.name)).toEqual(['Mixed']);
     expect(missions[0].agents).toHaveLength(2);
   });
+
+  it('counts one mission as both started and completed when both fall in the range', () => {
+    agent('a1', 'p1', 'implementer', ago(25), { mission: 'Quick', lastActivity: ago(20) });
+    const s = summarize({ from: ago(30) });
+    expect(s.missionsStarted).toBe(1);
+    expect(s.missionsCompleted).toBe(1);
+  });
 });
 
 describe('tokens', () => {
@@ -258,6 +265,25 @@ describe('series', () => {
 
   it('marks the settling window as the 7 days before now', () => {
     expect(series({}).settlingSince).toBe('2026-09-22T12:00:00.000Z');
+  });
+
+  it('does not throw on an unparseable range end', () => {
+    expect(() => controlPlaneAnalytics(d, { to: 'not-a-date' }, NOW)).not.toThrow();
+  });
+
+  it('applies the project and provider filters to messages through the receiving thread', () => {
+    coordinator('c1', 'p1', ago(60));
+    coordinator('c2', 'p2', ago(60));
+    agent('a2', 'p2', 'code-reviewer', ago(5), { cli: 'codex' });
+    message('c1', 'user', '2026-09-27T10:00:00.000Z');
+    message('c2', 'user', '2026-09-27T11:00:00.000Z');
+    message('a2', 'coordinator', '2026-09-27T12:00:00.000Z');
+    expect(series({ from: ago(30), projectId: 'p1' }).messagesByDay).toEqual([
+      { day: '2026-09-27', key: 'you', value: 1 },
+    ]);
+    expect(series({ from: ago(30), provider: 'codex' }).messagesByDay).toEqual([
+      { day: '2026-09-27', key: 'control-plane', value: 1 },
+    ]);
   });
 });
 

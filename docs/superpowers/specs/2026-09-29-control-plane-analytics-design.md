@@ -255,6 +255,16 @@ Web (`ControlPlaneAnalytics.test.tsx`, `AnalyticsView.test.tsx`):
 - The token metrics start at the analytics tracking start (2026-08-15 on this Mac). The message
   metrics start on 2026-07-02. Sessions, missions, and agents have data from June.
 - A mission name typed two ways ("Delta sync" and "Delta Sync") counts as two missions.
+- The messages chart covers Claude Code threads only. Only the Claude structured manager records
+  message sources today; Codex and Grok threads record none, so a Codex filter shows zero messages.
+  The block note says so. Recording sources for the other harnesses is follow-up work.
+- An archive stamps `archived_at`, which counts as agent activity. A user who archives old agent
+  threads long after their work ended opens those missions again, and they complete 7 days later
+  as a group. On 2026-09-29, 11 of 715 archived agents on the owner's Mac were archived more than
+  7 days after their last activity, so the effect is small. Removing `archived_at` from the rule
+  would hurt the 56 archived agents that have no `last_activity_at`.
+- An archived project's threads are deleted, so its sessions, missions, and agents leave the
+  Control Plane view. "Archived rows count" applies to archived threads, not archived projects.
 
 ## 11. Follow-up work (not in this feature)
 

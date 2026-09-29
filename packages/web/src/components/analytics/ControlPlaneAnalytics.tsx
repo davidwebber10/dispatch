@@ -194,7 +194,7 @@ export function ControlPlaneAnalytics({ from, projectId, provider }: { from?: st
         </Block>
         <Block
           title="MESSAGES PER DAY"
-          note={`${total(data.messagesByDay, 'you').toLocaleString()} from you · ${total(data.messagesByDay, 'control-plane').toLocaleString()} to agents`}
+          note={`${total(data.messagesByDay, 'you').toLocaleString()} from you · ${total(data.messagesByDay, 'control-plane').toLocaleString()} to agents · Claude Code threads only`}
         >
           {data.messagesByDay.length === 0 ? <NoData height={chartH} message={NO_ACTIVITY} /> : (
             <ResponsiveContainer width="100%" height={chartH} minHeight={chartH}>

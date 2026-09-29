@@ -328,7 +328,8 @@ export function cpSeries(db: Database.Database, r: CpRange, s: Scope): SeriesPar
 
   // The continuous axis runs from the range start (for "All time": the first day with data) to
   // today or the range end, whichever is earlier. `to` is exclusive.
-  const endMs = Math.min(s.now.getTime(), r.to ? Date.parse(r.to) - 1 : Infinity);
+  const toMs = r.to ? Date.parse(r.to) : NaN;
+  const endMs = Math.min(s.now.getTime(), Number.isNaN(toMs) ? Infinity : toMs - 1);
   const lastDay = localDay(new Date(endMs).toISOString());
   const dataDays = [...agentsByDay, ...tokensByDay, ...messagesByDay].map((p) => p.day)
     .concat(missionsCompletedByWeek.map((p) => p.week));

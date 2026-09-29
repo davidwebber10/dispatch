@@ -73,7 +73,7 @@ export function Kpi({ label, value, title, badge, badgeTitle, caption, info }: {
     <div style={panel} title={title}>
       <div style={labelStyle}>
         {label}
-        {info && <span aria-label={info} title={info} style={{ float: 'right', cursor: 'help', letterSpacing: 0 }}>ⓘ</span>}
+        {info && <span aria-label={info} title={info} tabIndex={0} style={{ float: 'right', cursor: 'help', letterSpacing: 0 }}>ⓘ</span>}
       </div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 6 }}>
         <span style={{ fontSize: 21, fontWeight: 600, color: 'var(--color-text-primary)' }}>{value}</span>

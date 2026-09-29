@@ -68,7 +68,7 @@ describe('ControlPlaneAnalytics', () => {
   it('shows the message totals in the block note, not an average', async () => {
     stub();
     render(<ControlPlaneAnalytics from={FROM} projectId="" provider="" />);
-    await waitFor(() => expect(screen.getByText('30 from you · 25 to agents')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('30 from you · 25 to agents · Claude Code threads only')).toBeTruthy());
   });
 
   it('fetches again when the daemon reports new data', async () => {
