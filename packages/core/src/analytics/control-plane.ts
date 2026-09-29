@@ -1,5 +1,8 @@
 import type Database from 'better-sqlite3';
-import type { AgentSeriesKey, ControlPlaneAnalytics, ControlPlaneSummary, MissionStatus } from './control-plane-types.js';
+import type {
+  AgentSeriesKey, ControlPlaneAnalytics, ControlPlaneMissionRow, ControlPlaneProjectRow,
+  ControlPlaneSummary, ControlPlaneTypeRow, MissionStatus,
+} from './control-plane-types.js';
 
 /**
  * Control Plane analytics — docs/superpowers/specs/2026-09-29-control-plane-analytics-design.md.
@@ -344,4 +347,114 @@ export function cpSeries(db: Database.Database, r: CpRange, s: Scope): SeriesPar
     missionsCompletedByWeek,
     settlingSince: new Date(s.now.getTime() - MISSION_IDLE_MS).toISOString(),
   };
+}
+
+/* ---------------------------------------------------------------- tables */
+
+const MISSION_ROWS = 50;
+
+/** SQL (alias `u`): a turn's duration in seconds, or NULL when it has none. The Usage view's rule. */
+const DURATION = `CASE WHEN u.ended_at > u.started_at AND (u.telemetry_version = 0 OR u.duration_ms IS NOT NULL)
+  THEN CASE WHEN u.telemetry_version = 1 THEN u.duration_ms / 1000.0
+            ELSE (julianday(u.ended_at) - julianday(u.started_at)) * 86400.0 END END`;
+
+type TablePart = Pick<ControlPlaneAnalytics, 'byProject' | 'byType' | 'missions'>;
+
+export function cpTables(db: Database.Database, r: CpRange, s: Scope): TablePart {
+  const names = new Map(
+    (db.prepare('SELECT id, name FROM sessions').all() as { id: string; name: string }[]).map((x) => [x.id, x.name]),
+  );
+  const nameOf = (id: string) => names.get(id) ?? id;
+  const w = usageWhere(r);
+
+  // BY PROJECT: a row for each project with a session in the range or any activity in it.
+  const usage = new Map((db.prepare(`
+    SELECT u.project_id AS pid,
+           COALESCE(SUM(CASE WHEN u.role = 'coordinator' THEN ${TOKENS} END), 0) AS cp,
+           COALESCE(SUM(CASE WHEN u.role = 'agent' THEN ${TOKENS} END), 0) AS agents,
+           COUNT(DISTINCT CASE WHEN u.role = 'coordinator' THEN date(u.started_at, 'localtime') END) AS days
+    FROM usage_turns u LEFT JOIN terminals t ON t.id = u.terminal_id
+    WHERE ${w.sql}
+    GROUP BY u.project_id
+  `).all(...w.params) as { pid: string; cp: number; agents: number; days: number }[]).map((x) => [x.pid, x]));
+
+  const projects = new Map<string, ControlPlaneProjectRow>();
+  const project = (pid: string): ControlPlaneProjectRow => {
+    let row = projects.get(pid);
+    if (!row) {
+      const u = usage.get(pid);
+      row = {
+        projectId: pid, name: nameOf(pid), sessions: 0, activeDays: u?.days ?? 0,
+        missionsStarted: 0, missionsCompleted: 0, agents: 0,
+        controlPlaneTokens: u?.cp ?? 0, agentTokens: u?.agents ?? 0,
+      };
+      projects.set(pid, row);
+    }
+    return row;
+  };
+  for (const c of s.coordinators) if (existedInRange(c, r)) project(c.sessionId).sessions += 1;
+  for (const mission of s.missions) {
+    if (inRange(mission.firstAt, r)) project(mission.sessionId).missionsStarted += 1;
+    if (mission.status === 'completed' && inRange(mission.lastAt, r)) project(mission.sessionId).missionsCompleted += 1;
+  }
+  for (const a of s.cliAgents) if (inRange(a.createdAt, r)) project(a.sessionId).agents += 1;
+  for (const pid of usage.keys()) project(pid);
+  const byProject = [...projects.values()]
+    .sort((a, b) => b.agents - a.agents || b.activeDays - a.activeDays || a.name.localeCompare(b.name));
+
+  // BY AGENT TYPE: agents created in the range, and their turns in the range.
+  const turnStats = new Map((db.prepare(`
+    SELECT u.terminal_id AS id, COALESCE(SUM(${TOKENS}), 0) AS tokens,
+           SUM(${DURATION}) AS seconds, COUNT(${DURATION}) AS timed
+    FROM usage_turns u LEFT JOIN terminals t ON t.id = u.terminal_id
+    WHERE ${w.sql} AND u.role = 'agent'
+    GROUP BY u.terminal_id
+  `).all(...w.params) as { id: string; tokens: number; seconds: number | null; timed: number }[]).map((x) => [x.id, x]));
+
+  const types = new Map<string, ControlPlaneTypeRow & { seconds: number; timed: number }>();
+  for (const a of s.cliAgents) {
+    if (!inRange(a.createdAt, r)) continue;
+    const key = a.agentType ?? 'unknown';
+    let row = types.get(key);
+    if (!row) {
+      row = { agentType: key, agents: 0, avgTurnSeconds: null, tokens: 0, cli: {}, seconds: 0, timed: 0 };
+      types.set(key, row);
+    }
+    row.agents += 1;
+    row.cli[a.cli] = (row.cli[a.cli] ?? 0) + 1;
+    const stats = turnStats.get(a.id);
+    if (stats) {
+      row.tokens += stats.tokens;
+      row.seconds += stats.seconds ?? 0;
+      row.timed += stats.timed;
+    }
+  }
+  const byType: ControlPlaneTypeRow[] = [...types.values()]
+    .map(({ seconds, timed, ...row }) => ({ ...row, avgTurnSeconds: timed > 0 ? Math.round(seconds / timed) : null }))
+    .sort((a, b) => b.agents - a.agents || a.agentType.localeCompare(b.agentType));
+
+  // MISSIONS · ACTIVE IN RANGE: the values describe the whole mission, not only the range.
+  const missions: ControlPlaneMissionRow[] = s.missions
+    .filter((mission) => mission.agents.some((a) => inRange(a.createdAt, r) || inRange(a.lastAt, r)))
+    .sort((a, b) => b.lastAt.localeCompare(a.lastAt) || a.name.localeCompare(b.name))
+    .slice(0, MISSION_ROWS)
+    .map((mission) => ({
+      projectId: mission.sessionId,
+      projectName: nameOf(mission.sessionId),
+      mission: mission.name,
+      agents: mission.agents.length,
+      reviewGates: mission.agents.filter((a) => REVIEW_GATES.has(a.agentType ?? '')).length,
+      firstAt: mission.firstAt,
+      lastAt: mission.lastAt,
+      lengthDays: daysBetween(localDay(mission.firstAt), localDay(mission.lastAt)) + 1,
+      status: mission.status,
+    }));
+
+  return { byProject, byType, missions };
+}
+
+/** The whole payload for GET /api/analytics/control-plane. `now` is a parameter for tests. */
+export function controlPlaneAnalytics(db: Database.Database, r: CpRange, now: Date = new Date()): ControlPlaneAnalytics {
+  const s = loadScope(db, r, now);
+  return { summary: cpSummary(db, r, s), ...cpSeries(db, r, s), ...cpTables(db, r, s) };
 }

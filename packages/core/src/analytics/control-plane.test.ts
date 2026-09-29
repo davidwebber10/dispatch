@@ -5,7 +5,9 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema.js';
 import * as usageDb from '../db/usage.js';
-import { cpSeries, cpSummary, loadScope, missionState, MISSION_IDLE_MS, type CpRange } from './control-plane.js';
+import {
+  controlPlaneAnalytics, cpSeries, cpSummary, loadScope, missionState, MISSION_IDLE_MS, type CpRange,
+} from './control-plane.js';
 
 const NOW = new Date('2026-09-29T12:00:00.000Z'); // a Tuesday
 const DAY = 24 * 60 * 60 * 1000;
@@ -256,5 +258,57 @@ describe('series', () => {
 
   it('marks the settling window as the 7 days before now', () => {
     expect(series({}).settlingSince).toBe('2026-09-22T12:00:00.000Z');
+  });
+});
+
+describe('tables', () => {
+  it('builds one row per project, and the sessions column adds up to the tile', () => {
+    coordinator('c1', 'p1', ago(60));
+    coordinator('c2', 'p2', ago(60));
+    agent('a1', 'p1', 'implementer', ago(3), { mission: 'M' });
+    turn('t1', 'c1', 'p1', 'coordinator', ago(3), 100);
+    turn('t2', 'a1', 'p1', 'agent', ago(3), 300);
+    const out = controlPlaneAnalytics(d, { from: ago(30) }, NOW);
+    expect(out.byProject.map((p) => p.projectId)).toEqual(['p1', 'p2']);
+    expect(out.byProject[0]).toMatchObject({
+      name: 'Project One', sessions: 1, activeDays: 1, missionsStarted: 1, agents: 1, controlPlaneTokens: 100, agentTokens: 300,
+    });
+    expect(out.byProject[1]).toMatchObject({ name: 'Project Two', sessions: 1, agents: 0, activeDays: 0 });
+    expect(out.byProject.reduce((n, p) => n + p.sessions, 0)).toBe(out.summary.sessions);
+  });
+
+  it('builds one row per agent type with tokens, the mean turn time, and the CLI mix', () => {
+    agent('a1', 'p1', 'code-reviewer', ago(3), { cli: 'codex' });
+    agent('a2', 'p1', 'code-reviewer', ago(3));
+    agent('a3', 'p1', 'implementer', ago(3));
+    turn('t1', 'a1', 'p1', 'agent', ago(3), 100, { seconds: 20, provider: 'codex' });
+    turn('t2', 'a2', 'p1', 'agent', ago(3), 50, { seconds: 40 });
+    expect(controlPlaneAnalytics(d, { from: ago(30) }, NOW).byType).toEqual([
+      { agentType: 'code-reviewer', agents: 2, avgTurnSeconds: 30, tokens: 150, cli: { codex: 1, 'claude-code': 1 } },
+      { agentType: 'implementer', agents: 1, avgTurnSeconds: null, tokens: 0, cli: { 'claude-code': 1 } },
+    ]);
+  });
+
+  it('lists the missions active in the range, newest first, with whole-mission values', () => {
+    agent('a1', 'p1', 'implementer', ago(60), { mission: 'Long' });
+    agent('a2', 'p1', 'code-reviewer', ago(2), { mission: 'Long' });
+    agent('a3', 'p1', 'implementer', ago(50), { mission: 'Out of range' });
+    agent('a4', 'p2', 'implementer', ago(10), { mission: 'Done', lastActivity: ago(9) });
+    const out = controlPlaneAnalytics(d, { from: ago(30) }, NOW);
+    expect(out.missions.map((m) => m.mission)).toEqual(['Long', 'Done']);
+    expect(out.missions[0]).toMatchObject({ projectName: 'Project One', agents: 2, reviewGates: 1, lengthDays: 59, status: 'active' });
+    expect(out.missions[1]).toMatchObject({ projectName: 'Project Two', status: 'completed', lengthDays: 2 });
+  });
+
+  it('limits the missions table to 50 rows', () => {
+    for (let i = 0; i < 55; i += 1) agent(`a${i}`, 'p1', 'implementer', ago(2), { mission: `M${i}` });
+    expect(controlPlaneAnalytics(d, { from: ago(30) }, NOW).missions).toHaveLength(50);
+  });
+
+  it('returns every block of the payload', () => {
+    expect(Object.keys(controlPlaneAnalytics(d, {}, NOW)).sort()).toEqual([
+      'agentsByDay', 'byProject', 'byType', 'days', 'messagesByDay', 'missions',
+      'missionsCompletedByWeek', 'settlingSince', 'summary', 'tokensByDay', 'weeks',
+    ]);
   });
 });
