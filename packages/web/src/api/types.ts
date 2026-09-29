@@ -417,3 +417,10 @@ export interface AnalyticsRecords {
 export interface AnalyticsTracking {
   trackingStartedAt: string;
 }
+
+// Control Plane analytics. The payload type lives in core, in a file with no imports, so the
+// daemon and the client share one definition.
+export type {
+  AgentSeriesKey, ControlPlaneAnalytics, ControlPlaneMissionRow, ControlPlaneProjectRow,
+  ControlPlaneSummary, ControlPlaneTypeRow, MissionStatus,
+} from '../../../core/src/analytics/control-plane-types';
