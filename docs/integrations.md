@@ -45,6 +45,8 @@ GITHUB_TOKEN=${GITHUB_PAT}                 # an env value (remote or local)
 - **Where the value goes:** only into the MCP server process's environment. It is never in
   a command line (an EDR agent can log every process's argv), a config file, `dispatch.db`,
   a log line, or the agent's own shell environment.
+- **Logs and bad values:** the launcher redacts resolved values from the server's stderr,
+  and refuses to start a server when a value has a NUL byte (or a CR/LF, in a header).
 - **Literal values keep today's path.** An env value without a ref goes to the harness
   exactly as before (the per-thread config file for Claude Code; for a Codex CLI thread that
   path is a `-c` flag on its command line). A literal header value is always on the

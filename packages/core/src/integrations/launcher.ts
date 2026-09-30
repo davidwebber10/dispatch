@@ -19,9 +19,14 @@
  *           0.14.3: substituteEnvVars, applied to every --header), so each resolved
  *           NAME=value goes into its env instead.
  *
+ * Nothing the launcher writes can carry a value: a value with a NUL (or CR/LF, for a header)
+ * is refused before the spawn, a spawn error prints only its code, and the server's stderr —
+ * which the harness keeps in its logs — is piped through with every value [redacted].
+ *
  * Imports stay light (no server, no db): this starts once per server per thread.
  */
 import { spawn as nodeSpawn } from 'child_process';
+import type { Readable } from 'stream';
 import { SecretsService, type DopplerStatus } from '../secrets/service.js';
 import { findSecretRefs, refsIn, substituteSecretRefs } from './secret-refs.js';
 
@@ -69,12 +74,13 @@ export function launcherArgs(launcherPath: string, secretsDir: string, spec: Lau
   return [launcherPath, '--secrets-dir', secretsDir, '--spec', encodeLaunchSpec(spec)];
 }
 
-function parseArgv(argv: string[]): { secretsDir: string; spec: LaunchSpec } {
+/** The parsed argv, or a fixed problem string (never exception text) for the stderr line. */
+function parseArgv(argv: string[]): { secretsDir: string; spec: LaunchSpec } | string {
   const valueOf = (flag: string) => { const i = argv.indexOf(flag); return i >= 0 ? argv[i + 1] ?? '' : ''; };
   const secretsDir = valueOf('--secrets-dir');
   const encoded = valueOf('--spec');
-  if (!secretsDir || !encoded) throw new Error('usage: launcher --secrets-dir <dir> --spec <base64url JSON>');
-  return { secretsDir, spec: decodeLaunchSpec(encoded) };
+  if (!secretsDir || !encoded) return 'usage: launcher --secrets-dir <dir> --spec <base64url JSON>';
+  try { return { secretsDir, spec: decodeLaunchSpec(encoded) }; } catch { return 'invalid --spec'; }
 }
 
 /** Templates + resolved values → the child. Pure; no value is ever placed in `args`. */
@@ -91,6 +97,11 @@ export function buildLaunch(spec: LaunchSpec, values: Record<string, string>): L
   };
 }
 
+/** The start of every stderr line about one integration, kept to one line. */
+function label(spec: LaunchSpec): string {
+  return `dispatch integration "${String(spec.name ?? '').replace(/[\r\n\0]/g, ' ')}"`;
+}
+
 /** One line naming the missing refs and the Doppler project/config. Never a value. */
 function missingLine(spec: LaunchSpec, missing: string[], st: DopplerStatus | null): string {
   const refs = missing.map((n) => '${' + n + '}').join(', ');
@@ -98,45 +109,119 @@ function missingLine(spec: LaunchSpec, missing: string[], st: DopplerStatus | nu
   const why = !st?.connected ? `not set in the environment, and Doppler${where} is not connected`
     : !st.enabled ? `not set in the environment, and Doppler${where} is turned off`
     : `not set in Doppler${where} or the environment`;
-  return `dispatch integration "${String(spec.name ?? '').replace(/[\r\n]/g, ' ')}": cannot resolve ${refs}: ${why}`;
+  return `${label(spec)}: cannot resolve ${refs}: ${why}`;
+}
+
+/**
+ * Values that would break the spawn or a header, named by ref or env key, never quoted.
+ * Checked BEFORE spawning: Node's own error for a NUL in env (ERR_INVALID_ARG_VALUE) quotes
+ * the value. A header value also cannot hold CR or LF.
+ */
+function unsafeValues(spec: LaunchSpec, values: Record<string, string>): string[] {
+  const problems: string[] = [];
+  const headerRefs = new Set(spec.type === 'remote' ? Object.values(spec.headers ?? {}).flatMap((v) => refsIn(String(v))) : []);
+  for (const [name, v] of Object.entries(values)) {
+    if (headerRefs.has(name) && /[\r\n\0]/.test(v)) problems.push('${' + name + '} has a CR, LF or NUL, which a header value cannot hold');
+    else if (v.includes('\0')) problems.push('${' + name + '} has a NUL byte');
+  }
+  // A NUL typed into the template itself isn't secret, but spawn's error would quote the whole substituted value.
+  for (const [k, v] of Object.entries(spec.env ?? {})) if (String(v).includes('\0')) problems.push(`env ${k} has a NUL byte`);
+  return problems;
+}
+
+/**
+ * Values shorter than this are not redacted: a 1–3 character value ("1", "dev") would mangle
+ * unrelated output while hiding almost nothing.
+ */
+const MIN_REDACT = 4;
+
+/** Replaces every resolved value in one line of the server's stderr with [redacted]. */
+function redactor(values: string[]): (line: string) => string {
+  const targets = new Set<string>();
+  for (const v of values) {
+    targets.add(v);
+    // Redaction runs line by line, so a multi-line value (a PEM key) is also matched one line at a time.
+    for (const part of v.split(/\r?\n/)) targets.add(part);
+  }
+  const list = [...targets].filter((t) => t.length >= MIN_REDACT).sort((a, b) => b.length - a.length);
+  return (line) => list.reduce((out, t) => out.split(t).join('[redacted]'), line);
+}
+
+/** Line-buffer a stream through `redact` into `write`; returns a flush for a partial last line. */
+function pipeRedacted(stream: Readable, redact: (line: string) => string, write: (line: string) => void): () => void {
+  let pending = '';
+  stream.setEncoding('utf8');
+  stream.on('data', (chunk: string) => {
+    pending += chunk;
+    for (let nl = pending.indexOf('\n'); nl >= 0; nl = pending.indexOf('\n')) {
+      write(redact(pending.slice(0, nl)));
+      pending = pending.slice(nl + 1);
+    }
+  });
+  return () => { if (pending) write(redact(pending)); pending = ''; };
+}
+
+/** A spawn error's message can quote env values; only its code (ENOENT, EACCES, …) and the command template are safe. */
+function startFailure(spec: LaunchSpec, command: string, e: unknown): string {
+  const code = (e as NodeJS.ErrnoException | null)?.code;
+  return `${label(spec)}: could not start ${command}: ${typeof code === 'string' && /^[A-Z0-9_]+$/.test(code) ? code : 'spawn failed'}`;
 }
 
 const FORWARDED = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
 
-function runChild(plan: LaunchPlan, spec: LaunchSpec, baseEnv: NodeJS.ProcessEnv, spawn: typeof nodeSpawn, stderr: (line: string) => void): Promise<LauncherExit> {
+function runChild(plan: LaunchPlan, spec: LaunchSpec, baseEnv: NodeJS.ProcessEnv, spawn: typeof nodeSpawn, stderr: (line: string) => void, redact: (line: string) => string): Promise<LauncherExit> {
   return new Promise((resolve) => {
     let child: ReturnType<typeof nodeSpawn>;
     try {
-      child = spawn(plan.command, plan.args, { stdio: 'inherit', env: { ...baseEnv, ...plan.env } });
+      // stdin and stdout are the MCP channel and pass through untouched. stderr is piped only
+      // to redact it: mcp-remote logs fatal errors (a header error can quote the header), and
+      // the harness keeps MCP stderr in its logs.
+      child = spawn(plan.command, plan.args, { stdio: ['inherit', 'inherit', 'pipe'], env: { ...baseEnv, ...plan.env } });
     } catch (e) {
-      stderr(`dispatch integration "${spec.name ?? ''}": could not start ${plan.command}: ${(e as Error).message}`);
+      stderr(startFailure(spec, plan.command, e));
       resolve({ code: 1, signal: null });
       return;
     }
     const forward = (signal: NodeJS.Signals) => { try { child.kill(signal); } catch { /* already gone */ } };
     for (const s of FORWARDED) process.on(s, forward);
+    let exited: LauncherExit | null = null;
+    let drained = !child.stderr;
     let settled = false;
-    const finish = (code: number | null, signal: NodeJS.Signals | null) => {
-      if (settled) return;
+    const settle = () => {
+      if (settled || !exited || !drained) return;
       settled = true;
       for (const s of FORWARDED) process.off(s, forward);
-      resolve({ code, signal });
+      resolve(exited);
     };
-    child.on('exit', finish);
+    let flush = () => {};
+    const drain = () => { if (drained) return; flush(); drained = true; settle(); };
+    if (child.stderr) {
+      flush = pipeRedacted(child.stderr, redact, stderr);
+      child.stderr.on('end', drain);
+      child.stderr.on('error', drain);
+    }
+    child.on('exit', (code, signal) => {
+      exited = { code, signal };
+      // A grandchild that outlives the server can hold stderr open; don't wait on it forever.
+      if (!drained) setTimeout(drain, 1000).unref();
+      settle();
+    });
     child.on('error', (e) => {
-      stderr(`dispatch integration "${spec.name ?? ''}": could not start ${plan.command}: ${e.message}`);
-      finish(127, null);
+      stderr(startFailure(spec, plan.command, e));
+      exited ??= { code: 127, signal: null };
+      drain();
+      settle();
     });
   });
 }
 
-/** Resolve the spec's refs, then run the server until it exits. Exit 1 (nothing spawned) when a ref can't be resolved. */
+/** Resolve the spec's refs, then run the server until it exits. Exit 1 (nothing spawned) when a ref can't be resolved or is unsafe. */
 export async function runLauncher(argv: string[], deps: LauncherDeps = {}): Promise<LauncherExit> {
   const env = deps.env ?? process.env;
   const stderr = deps.stderr ?? ((line: string) => { process.stderr.write(line + '\n'); });
-  let parsed: { secretsDir: string; spec: LaunchSpec };
-  try { parsed = parseArgv(argv); } catch (e) {
-    stderr(`dispatch integration launcher: ${(e as Error).message}`);
+  const parsed = parseArgv(argv);
+  if (typeof parsed === 'string') {
+    stderr(`dispatch integration launcher: ${parsed}`);
     return { code: 1, signal: null };
   }
   const { secretsDir, spec } = parsed;
@@ -165,8 +250,13 @@ export async function runLauncher(argv: string[], deps: LauncherDeps = {}): Prom
     stderr(missingLine(spec, missing, status));
     return { code: 1, signal: null };
   }
+  const unsafe = unsafeValues(spec, values);
+  if (unsafe.length) {
+    stderr(`${label(spec)}: refusing to start: ${unsafe.join('; ')}`);
+    return { code: 1, signal: null };
+  }
 
-  return runChild(buildLaunch(spec, values), spec, env, deps.spawn ?? nodeSpawn, stderr);
+  return runChild(buildLaunch(spec, values), spec, env, deps.spawn ?? nodeSpawn, stderr, redactor(Object.values(values)));
 }
 
 // Run only as the entry point (`node dist/integrations/launcher.js`), not when imported.

@@ -4,6 +4,7 @@ import { spawn, type SpawnOptions } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath, pathToFileURL } from 'url';
 import {
   encodeLaunchSpec, decodeLaunchSpec, launcherArgs, buildLaunch, runLauncher,
   type LaunchSpec, type SecretSource,
@@ -26,18 +27,28 @@ function doppler(opts: { connected?: boolean; enabled?: boolean; secrets?: Recor
   return { source, getSecret };
 }
 
-/** A spawn stand-in: records what would run, then exits the "child" with `code`. */
-function fakeSpawn(code = 0) {
-  const calls: { command: string; args: string[]; env: Record<string, string | undefined> }[] = [];
+/**
+ * A spawn stand-in: records what would run, then exits the "child" with `code` — or, with
+ * `fail`, throws `fail.throws` synchronously or emits `fail.error` the way a real spawn does.
+ */
+function fakeSpawn(code = 0, fail: { throws?: Error; error?: Error } = {}) {
+  const calls: { command: string; args: string[]; env: Record<string, string | undefined>; stdio: unknown }[] = [];
   const children: (EventEmitter & { kill: ReturnType<typeof vi.fn> })[] = [];
-  const spawn = vi.fn((command: string, args: string[], opts: { env: Record<string, string | undefined> }) => {
-    calls.push({ command, args, env: opts.env });
+  const spawn = vi.fn((command: string, args: string[], opts: { env: Record<string, string | undefined>; stdio: unknown }) => {
+    if (fail.throws) throw fail.throws;
+    calls.push({ command, args, env: opts.env, stdio: opts.stdio });
     const child = Object.assign(new EventEmitter(), { kill: vi.fn() });
     children.push(child);
-    if (code >= 0) setImmediate(() => child.emit('exit', code, null));
+    if (fail.error) setImmediate(() => child.emit('error', fail.error));
+    else if (code >= 0) setImmediate(() => child.emit('exit', code, null));
     return child;
   });
   return { spawn, calls, children };
+}
+
+/** An error shaped like Node's, whose message quotes a value (as ERR_INVALID_ARG_VALUE's does). */
+function errorQuoting(value: string, code: string): Error {
+  return Object.assign(new Error(`The argument 'options.env['KEY']' ... Received '${value}'`), { code });
 }
 
 const argvFor = (spec: LaunchSpec) => launcherArgs('/x/launcher.js', '/x/secrets', spec).slice(1);
@@ -199,6 +210,58 @@ describe('runLauncher', () => {
     expect(await done).toEqual({ code: null, signal: 'SIGTERM' });
     expect(process.listeners('SIGTERM').filter((l) => !before.has(l))).toEqual([]);
   });
+
+  it('keeps stdin and stdout inherited (the MCP channel) and pipes only stderr', async () => {
+    const { source } = doppler({ secrets: { GH_PAT: DOPPLER_VALUE } });
+    const fake = fakeSpawn(0);
+    await runLauncher(argvFor(STDIO), { secrets: () => source, env: {}, stderr: write, spawn: fake.spawn as never });
+    expect(fake.calls[0].stdio).toEqual(['inherit', 'inherit', 'pipe']);
+  });
+});
+
+describe('runLauncher never writes a resolved value to stderr', () => {
+  const SENSITIVE = 'fake-sensitive-value';
+  let stderr: string[];
+  const write = (line: string) => { stderr.push(line); };
+  beforeEach(() => { stderr = []; });
+
+  it.each([['CR', '\r'], ['LF', '\n'], ['NUL', '\x00']])('refuses a header value with %s, naming only the ref', async (_label, ch) => {
+    const { source } = doppler({ secrets: { LINEAR_TOKEN: `${SENSITIVE}${ch}X-Injected: 1` } });
+    const fake = fakeSpawn(0);
+    const res = await runLauncher(argvFor(REMOTE), { secrets: () => source, env: {}, stderr: write, spawn: fake.spawn as never });
+    expect(res.code).toBe(1);
+    expect(fake.spawn).not.toHaveBeenCalled();
+    expect(stderr).toHaveLength(1);
+    expect(stderr[0]).toContain('${LINEAR_TOKEN}');
+    expect(stderr.join('\n')).not.toContain(SENSITIVE);
+  });
+
+  it('allows a line break in a stdio env value (only a header cannot hold one)', async () => {
+    const { source } = doppler({ secrets: { GH_PAT: `${SENSITIVE}\nline-two` } });
+    const fake = fakeSpawn(0);
+    const res = await runLauncher(argvFor(STDIO), { secrets: () => source, env: {}, stderr: write, spawn: fake.spawn as never });
+    expect(res.code).toBe(0);
+    expect(fake.calls[0].env.GITHUB_TOKEN).toBe(`${SENSITIVE}\nline-two`);
+  });
+
+  it('a spawn "error" event prints its code and the command, never its message', async () => {
+    const fake = fakeSpawn(0, { error: errorQuoting(SENSITIVE, 'ENOENT') });
+    const { source } = doppler({ secrets: { GH_PAT: SENSITIVE } });
+    const res = await runLauncher(argvFor(STDIO), { secrets: () => source, env: {}, stderr: write, spawn: fake.spawn as never });
+    expect(res.code).toBe(127);
+    expect(stderr).toHaveLength(1);
+    expect(stderr[0]).toMatch(/could not start npx: ENOENT$/);
+    expect(stderr.join('\n')).not.toContain(SENSITIVE);
+  });
+
+  it('a synchronous spawn throw prints its code and the command, never its message', async () => {
+    const fake = fakeSpawn(0, { throws: errorQuoting(SENSITIVE, 'ERR_INVALID_ARG_VALUE') });
+    const { source } = doppler({ secrets: { GH_PAT: SENSITIVE } });
+    const res = await runLauncher(argvFor(STDIO), { secrets: () => source, env: {}, stderr: write, spawn: fake.spawn as never });
+    expect(res.code).toBe(1);
+    expect(stderr[0]).toMatch(/could not start npx: ERR_INVALID_ARG_VALUE$/);
+    expect(stderr.join('\n')).not.toContain(SENSITIVE);
+  });
 });
 
 describe('runLauncher with a real child and a real SecretsService', () => {
@@ -223,19 +286,70 @@ describe('runLauncher with a real child and a real SecretsService', () => {
     }
   });
 
+  /** The real spawn, with the child's cwd pinned inside the sandbox. */
+  const inSandbox = (cmd: string, args: string[], opts: SpawnOptions) => spawn(cmd, args, { ...opts, cwd: workDir });
+  /** A stdio spec that runs `code` under this node, with KEY = the value of ${API_KEY}. The value never appears in `code`. */
+  const nodeSpec = (code: string): LaunchSpec => ({ name: 'probe', type: 'stdio', command: process.execPath, args: ['-e', code], env: { KEY: '${API_KEY}' } });
+  const argvIn = (spec: LaunchSpec) => launcherArgs('/x/launcher.js', secretsDir, spec).slice(1);
+
   it('the stdio server sees the Doppler value in its env and the launcher returns its exit code', async () => {
     const client = { verify: async () => true, getSecret: async (_p: string, _c: string, n: string) => (n === 'API_KEY' ? DOPPLER_VALUE : null) } as never;
     await new SecretsService(secretsDir, () => client).setConnection({ token: 'fake-token', project: 'acme', config: 'dev' });
     // The child reports the value's LENGTH as its exit code, so the value itself stays out of this argv too.
-    const spec: LaunchSpec = {
-      name: 'probe', type: 'stdio', command: process.execPath,
-      args: ['-e', 'process.exit((process.env.KEY ?? "").length)'],
-      env: { KEY: '${API_KEY}' },
-    };
-    const inSandbox = ((cmd: string, args: string[], opts: SpawnOptions) => spawn(cmd, args, { ...opts, cwd: workDir })) as never;
-    const res = await runLauncher(launcherArgs('/x/launcher.js', secretsDir, spec).slice(1), {
-      secrets: (d) => new SecretsService(d, () => client), env: process.env, stderr: () => {}, spawn: inSandbox,
+    const res = await runLauncher(argvIn(nodeSpec('process.exit((process.env.KEY ?? "").length)')), {
+      secrets: (d) => new SecretsService(d, () => client), env: process.env, stderr: () => {}, spawn: inSandbox as never,
     });
     expect(res).toEqual({ code: DOPPLER_VALUE.length, signal: null });
+  });
+
+  it('refuses a value with a NUL byte before spawning, naming only the ref', async () => {
+    // The real spawn throws ERR_INVALID_ARG_VALUE for a NUL in env, and its message quotes the value.
+    const SENSITIVE = 'fake-sensitive-value';
+    const spawnSpy = vi.fn(inSandbox);
+    const stderr: string[] = [];
+    const res = await runLauncher(argvIn(nodeSpec('process.exit(0)')), {
+      secrets: () => doppler({ secrets: { API_KEY: `${SENSITIVE}\x00` } }).source, env: {}, stderr: (l) => { stderr.push(l); }, spawn: spawnSpy as never,
+    });
+    expect(res).toEqual({ code: 1, signal: null });
+    expect(spawnSpy).not.toHaveBeenCalled();
+    expect(stderr).toHaveLength(1);
+    expect(stderr[0]).toContain('${API_KEY}');
+    expect(stderr.join('\n')).not.toContain(SENSITIVE);
+  });
+
+  it('redacts resolved values from the server stderr, across chunk splits, and flushes a partial last line', async () => {
+    const lines: string[] = [];
+    const code = [
+      'const v = process.env.KEY;',
+      'process.stderr.write("tok=" + v.slice(0, 5));',
+      'setTimeout(() => { process.stderr.write(v.slice(5) + " end\\n"); process.stderr.write("partial " + v); }, 100);',
+    ].join(' ');
+    const res = await runLauncher(argvIn(nodeSpec(code)), {
+      secrets: () => doppler({ secrets: { API_KEY: DOPPLER_VALUE } }).source, env: process.env, stderr: (l) => { lines.push(l); }, spawn: inSandbox as never,
+    });
+    expect(res).toEqual({ code: 0, signal: null });
+    expect(lines).toEqual(['tok=[redacted] end', 'partial [redacted]']);
+  });
+
+  it('end to end: the server stdout bytes pass through unchanged, and its stderr comes out redacted', async () => {
+    // The real entry point as its own process (tsx's loader, no build), so its stdout can be captured.
+    const coreDir = fileURLToPath(new URL('../..', import.meta.url));
+    const loader = pathToFileURL(path.join(coreDir, 'node_modules/tsx/dist/loader.mjs')).href;
+    const launcherTs = path.join(coreDir, 'src/integrations/launcher.ts');
+    const BYTES = [0x7b, 0x22, 0x61, 0x22, 0x7d, 0x0a, 0x00, 0xff, 0x0d, 0x0a];
+    const spec: LaunchSpec = { ...nodeSpec(`process.stdout.write(Buffer.from(${JSON.stringify(BYTES)})); process.stderr.write("key=" + process.env.KEY + "\\n");`), env: { KEY: '${FAKE_REF}' } };
+    // No Doppler connection in the sandbox secrets dir, so the value comes from the env fallback (no network).
+    const env: NodeJS.ProcessEnv = { ...process.env, FAKE_REF: ENV_VALUE };
+    delete env.DOPPLER_TOKEN;
+    const p = spawn(process.execPath, ['--import', loader, launcherTs, ...argvIn(spec)], { cwd: workDir, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const out: Buffer[] = [];
+    let err = '';
+    p.stdout!.on('data', (b: Buffer) => out.push(b));
+    p.stderr!.on('data', (b: Buffer) => { err += b.toString('utf8'); });
+    const exitCode = await new Promise<number | null>((resolve) => p.on('close', (c) => resolve(c)));
+    expect(exitCode).toBe(0);
+    expect(Buffer.concat(out)).toEqual(Buffer.from(BYTES));
+    expect(err).toContain('key=[redacted]\n');
+    expect(err).not.toContain(ENV_VALUE);
   });
 });
