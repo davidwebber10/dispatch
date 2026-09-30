@@ -13,6 +13,17 @@ export function validateEntry(e: unknown): e is ToolEntry {
   if (t.kind !== 'binary' && t.kind !== 'npm' && t.kind !== 'script') return false;
   if (!Array.isArray(t.bins) || !t.bins.every((b) => typeof b === 'string')) return false;
   if (t.platforms !== undefined && (!Array.isArray(t.platforms) || !t.platforms.every((p) => typeof p === 'string'))) return false;
+  if (t.authCheck !== undefined && !validAuthCheck(t.authCheck)) return false;
+  return true;
+}
+
+function validAuthCheck(c: unknown): boolean {
+  if (!c || typeof c !== 'object' || Array.isArray(c)) return false;
+  const a = c as Record<string, unknown>;
+  if ((a.args === undefined) === (a.shell === undefined)) return false; // exactly one of the two
+  if (a.args !== undefined && (!Array.isArray(a.args) || !a.args.every((x) => typeof x === 'string'))) return false;
+  if (a.shell !== undefined && typeof a.shell !== 'string') return false;
+  if (a.timeoutMs !== undefined && (typeof a.timeoutMs !== 'number' || !Number.isFinite(a.timeoutMs) || a.timeoutMs <= 0)) return false;
   return true;
 }
 

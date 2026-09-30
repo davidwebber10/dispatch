@@ -1,4 +1,8 @@
 export interface ToolBinaryAsset { url: string; sha256?: string; archive?: 'tar.gz' | 'zip' | 'none'; binPath?: string; }
+/** How to ask a CLI whether it can sign in: exactly one of `args` (run the entry's first bin
+ *  with them) or `shell` (run via `/bin/sh -c`). Exit 0 means authenticated. Output is always
+ *  discarded — some of these commands print tokens or account ids. */
+export interface ToolAuthCheck { args?: string[]; shell?: string; timeoutMs?: number; }
 export interface ToolEntry {
   name: string;
   description: string;
@@ -9,6 +13,7 @@ export interface ToolEntry {
   bins: string[];
   authEnv?: string[];
   envAlias?: Record<string, string>; // CLI-expected var -> source env var name
+  authCheck?: ToolAuthCheck;
   docs?: string;
   /** OS families this recipe supports, e.g. ['darwin'] — same vocabulary as the OS prefix of
    *  toolPlatformKey() ('darwin' | 'linux'). Omitted means "all platforms". Recipes that shell

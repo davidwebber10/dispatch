@@ -6,7 +6,12 @@ import type { ToolStatus } from './types.js';
 export { getToolsSpawnEnv } from './spawnEnv.js';
 export { awarenessNote } from './awareness.js';
 
-export function toolStatuses(opts?: { base?: string; env?: Record<string, string | undefined> }): ToolStatus[] {
+/**
+ * `env` should be the env a thread spawns with (ToolAuthProber.threadEnv), and `checks` the
+ * prober's cached authCheck results. authed = the authEnv vars are set OR the check passed;
+ * with no check result yet, the env rule alone decides.
+ */
+export function toolStatuses(opts?: { base?: string; env?: Record<string, string | undefined>; checks?: Record<string, boolean> }): ToolStatus[] {
   const env = opts?.env ?? process.env;
   const p = toolPaths(opts?.base);
   const family = hostOsFamily();
@@ -14,7 +19,9 @@ export function toolStatuses(opts?: { base?: string; env?: Record<string, string
     .filter((e) => !e.platforms || e.platforms.includes(family))
     .map((e) => {
       const installed = e.bins.every((b) => fs.existsSync(path.join(p.bin, b)));
-      const authed = !e.authEnv?.length ? true : e.authEnv.every((k) => !!(env[k] || (e.envAlias && Object.entries(e.envAlias).some(([w, s]) => w === k && env[s]))));
+      const envAuthed = !e.authEnv?.length ? true : e.authEnv.every((k) => !!(env[k] || (e.envAlias && Object.entries(e.envAlias).some(([w, s]) => w === k && env[s]))));
+      const checked = e.authCheck ? opts?.checks?.[e.name] : undefined;
+      const authed = checked === undefined ? envAuthed : checked || (!!e.authEnv?.length && envAuthed);
       return { name: e.name, description: e.description, kind: e.kind, installed, authed, docs: e.docs };
     });
 }
