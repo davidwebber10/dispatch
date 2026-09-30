@@ -24,8 +24,11 @@ afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
 // curl writes an empty pkg (or, when asked, fails the way `curl -f` does); pkgutil lays out the
 // aws-cli payload the way AWSCLIV2.pkg expands and records where; mktemp makes dirs only inside the
 // sandbox (macOS mktemp ignores TMPDIR, so a bare `mktemp -d` goes to sandbox/tmp); mv, when asked,
-// refuses to move the new payload.
-async function installAwsWithStubs(opts: { curlFails?: boolean; payloadWorks?: boolean; payloadMoveFails?: boolean } = {}): Promise<void> {
+// refuses to move the new payload (…/aws-cli) or the old copy back (…/old), or sends the recipe
+// SIGTERM right after it moves the old copy aside (…/opt/aws), i.e. between the two renames.
+async function installAwsWithStubs(opts: {
+  curlFails?: boolean; payloadWorks?: boolean; payloadMoveFails?: boolean; restoreFails?: boolean; termAfterBackup?: boolean;
+} = {}): Promise<void> {
   const stubs = path.join(root, 'stubs');
   fs.mkdirSync(stubs, { recursive: true });
   fs.mkdirSync(path.join(sandbox, 'tmp'), { recursive: true });
@@ -38,7 +41,11 @@ async function installAwsWithStubs(opts: { curlFails?: boolean; payloadWorks?: b
     `printf '#!/bin/sh\\n' > "$d/aws_completer"`,
     'chmod +x "$d/aws" "$d/aws_completer"');
   stub('mktemp', `t="\${2:-${sandbox}/tmp/tmp.XXXXXX}"; case "$t" in "${sandbox}"/*XXXXXX) ;; *) exit 1 ;; esac`, 'd="${t%XXXXXX}$$"; mkdir "$d"; echo "$d"');
-  if (opts.payloadMoveFails) stub('mv', 'case "$1" in */aws-cli) exit 1 ;; esac', 'exec /bin/mv "$@"');
+  stub('mv',
+    ...(opts.payloadMoveFails ? ['case "$1" in */aws-cli) exit 1 ;; esac'] : []),
+    ...(opts.restoreFails ? ['case "$1" in */old) exit 1 ;; esac'] : []),
+    ...(opts.termAfterBackup ? ['case "$1" in */opt/aws) /bin/mv "$@"; kill -TERM "$PPID"; exit 0 ;; esac'] : []),
+    'exec /bin/mv "$@"');
   vi.stubEnv('PATH', `${stubs}${path.delimiter}${process.env.PATH}`);
   try {
     expect(execFileSync('/bin/sh', ['-c', 'command -v curl'], { encoding: 'utf8' }).trim()).toBe(path.join(stubs, 'curl')); // never the network
@@ -125,11 +132,45 @@ describe('manifest', () => {
     expect(fs.readdirSync(p.opt)).toEqual(['aws']);
   });
 
-  it('aws recipe removes stage dirs that a killed install left behind, and only its own', async () => {
+  it('aws recipe removes aws stage dirs older than an hour, and keeps a fresh one (a concurrent install)', async () => {
     const p = toolPaths(base);
-    for (const d of ['.aws-stage.killed1', '.aws-stage.killed2/old', '.other-stage.keep']) fs.mkdirSync(path.join(p.opt, d), { recursive: true });
+    for (const d of ['.aws-stage.stale/x', '.aws-stage.fresh/x', '.other-stage.keep']) fs.mkdirSync(path.join(p.opt, d), { recursive: true });
+    const twoHoursAgo = new Date(Date.now() - 2 * 3600_000);
+    for (const d of ['.aws-stage.stale', '.other-stage.keep']) fs.utimesSync(path.join(p.opt, d), twoHoursAgo, twoHoursAgo);
     await installAwsWithStubs();
-    expect(fs.readdirSync(p.opt).sort()).toEqual(['.other-stage.keep', 'aws']);
+    expect(fs.readdirSync(p.opt).sort()).toEqual(['.aws-stage.fresh', '.other-stage.keep', 'aws']);
+  });
+
+  it('aws recipe first moves back an old copy that a SIGKILL between the renames left in a stage dir', async () => {
+    // opt/aws is gone and the old copy sits in .aws-stage.*/old. Recovery runs before the download,
+    // so even a failed download leaves the working copy in place.
+    const p = toolPaths(base);
+    seedWorkingAws();
+    fs.mkdirSync(path.join(p.opt, '.aws-stage.killed'));
+    fs.renameSync(path.join(p.opt, 'aws'), path.join(p.opt, '.aws-stage.killed', 'old'));
+    await expect(installAwsWithStubs({ curlFails: true })).rejects.toThrow();
+    expect(execFileSync(path.join(p.bin, 'aws'), { encoding: 'utf8' })).toContain('aws-cli/1 old');
+    expect(fs.existsSync(path.join(p.opt, 'aws', 'old-only'))).toBe(true);
+    expect(fs.existsSync(path.join(p.opt, '.aws-stage.killed', 'old'))).toBe(false);
+  });
+
+  it('aws recipe puts the old copy back when SIGTERM lands between the two renames', async () => {
+    const p = toolPaths(base);
+    seedWorkingAws();
+    await expect(installAwsWithStubs({ termAfterBackup: true })).rejects.toThrow();
+    expect(execFileSync(path.join(p.bin, 'aws'), { encoding: 'utf8' })).toContain('aws-cli/1 old');
+    expect(fs.existsSync(path.join(p.opt, 'aws', 'old-only'))).toBe(true);
+    expect(fs.readdirSync(p.opt)).toEqual(['aws']);
+  });
+
+  it('aws recipe keeps the stage dir, with the old copy in it, when it cannot put the old copy back', async () => {
+    const p = toolPaths(base);
+    seedWorkingAws();
+    await expect(installAwsWithStubs({ payloadMoveFails: true, restoreFails: true })).rejects.toThrow();
+    expect(fs.existsSync(path.join(p.opt, 'aws'))).toBe(false);
+    const stages = fs.readdirSync(p.opt).filter((f) => f.startsWith('.aws-stage.'));
+    expect(stages).toHaveLength(1);
+    expect(fs.existsSync(path.join(p.opt, stages[0], 'old', 'old-only'))).toBe(true); // left for recovery, not deleted
   });
 
   it('aws recipe fails on a failed download, removes its stage dir, and leaves the working copy alone', async () => {
