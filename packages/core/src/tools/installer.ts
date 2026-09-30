@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import { execFileSync, execSync } from 'node:child_process';
 import { toolPaths, hostPlatformKey, hostOsFamily, type ToolPaths } from './paths.js';
 import type { ToolEntry } from './types.js';
-import { loadManifest } from './manifest.js';
+import { loadManifest, loadBundledManifest } from './manifest.js';
 
 export type Downloader = (url: string) => Promise<Buffer>;
 export type Exec = (cmd: string, args: string[], opts?: { env?: Record<string, string>; cwd?: string }) => void;
@@ -88,10 +88,21 @@ export async function installTool(entry: ToolEntry, opts: { base?: string; downl
   // script
   if (!entry.script) throw new Error(`${entry.name}: missing script spec`);
   // Bins that exist prove little (the old aws recipe left a link whose payload $TMPDIR purged), so
-  // skip only when the recorded recipe fingerprint matches: a changed recipe or a legacy `{}` reinstalls.
-  const fingerprint = crypto.createHash('sha256').update(entry.script.install).digest('hex');
-  if (installed[entry.name]?.script === fingerprint && entry.bins.every((b) => fs.existsSync(path.join(p.bin, b)))) return;
-  execSync(entry.script.install, { stdio: 'inherit', env: { ...process.env, TOOLS_PREFIX: p.dir, TOOLS_BIN: p.bin } });
+  // skip only when the recorded recipe fingerprint matches; a changed recipe reinstalls.
+  const recipe = entry.script.install;
+  const fingerprint = crypto.createHash('sha256').update(recipe).digest('hex');
+  const record = installed[entry.name];
+  const binsPresent = entry.bins.every((b) => fs.existsSync(path.join(p.bin, b)));
+  if (record?.script === fingerprint && binsPresent) return;
+  // A legacy `{}` record (from before fingerprints) with its bins present reruns only a bundled
+  // recipe; a user recipe is adopted as-is, since rerunning one that is not idempotent fails every update.
+  if (record && record.script === undefined && binsPresent
+    && !loadBundledManifest().some((d) => d.name === entry.name && d.script?.install === recipe)) {
+    installed[entry.name] = { script: fingerprint };
+    writeInstalled(p, installed);
+    return;
+  }
+  execSync(recipe, { stdio: 'inherit', env: { ...process.env, TOOLS_PREFIX: p.dir, TOOLS_BIN: p.bin } });
   for (const b of entry.bins) if (!fs.existsSync(path.join(p.bin, b))) throw new Error(`${entry.name}: script did not produce ${b}`);
   installed[entry.name] = { script: fingerprint };
   writeInstalled(p, installed);

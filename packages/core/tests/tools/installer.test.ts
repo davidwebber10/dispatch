@@ -7,11 +7,21 @@ import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { installTool, uninstallTool, readInstalled } from '../../src/tools/installer.js';
 import { toolPaths, hostPlatformKey } from '../../src/tools/paths.js';
+import { loadManifest } from '../../src/tools/manifest.js';
 import type { ToolEntry } from '../../src/tools/types.js';
 
+// Recipes and uninstalls run inside root/sandbox/tools: a `..` that escapes the tools dir still
+// lands in this test's own temp dir, and the user manifest (sandbox/tools.json) is private to it.
+let root: string;
+let sandbox: string;
 let base: string;
-beforeEach(() => { base = fs.mkdtempSync(path.join(os.tmpdir(), 'tools-i-')); });
-afterEach(() => { fs.rmSync(base, { recursive: true, force: true }); });
+beforeEach(() => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'tools-i-'));
+  sandbox = path.join(root, 'sandbox');
+  base = path.join(sandbox, 'tools');
+  fs.mkdirSync(base, { recursive: true });
+});
+afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
 
 const plat = hostPlatformKey();
 
@@ -38,8 +48,8 @@ it('binary: sha256 mismatch aborts and installs nothing', async () => {
 
 it('binary (tar.gz): extracts binPath into bin/', async () => {
   // build a real tar.gz fixture with the system tar
-  const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'stg-'));
-  fs.mkdirSync(path.join(stage, 'pkg'));
+  const stage = path.join(root, 'stg');
+  fs.mkdirSync(path.join(stage, 'pkg'), { recursive: true });
   fs.writeFileSync(path.join(stage, 'pkg', 'rg'), '#!/bin/sh\necho rg\n');
   const tgz = path.join(stage, 'a.tar.gz');
   execFileSync('tar', ['-czf', tgz, '-C', stage, 'pkg']);
@@ -47,7 +57,6 @@ it('binary (tar.gz): extracts binPath into bin/', async () => {
   const entry: ToolEntry = { name: 'ripgrep', description: 'd', kind: 'binary', bins: ['rg'], binary: { [plat]: { url: 'https://x/rg.tgz', archive: 'tar.gz', binPath: 'pkg/rg' } } };
   await installTool(entry, { base, download: async () => buf });
   expect(fs.existsSync(path.join(toolPaths(base).bin, 'rg'))).toBe(true);
-  fs.rmSync(stage, { recursive: true, force: true });
 });
 
 it('script kind: runs the install script with TOOLS_BIN set', async () => {
@@ -57,7 +66,7 @@ it('script kind: runs the install script with TOOLS_BIN set', async () => {
 });
 
 it('uninstallTool: removes the correct bin when tool name differs from binary name (e.g. ripgrep→rg)', () => {
-  // Use the plain temp base — loadManifest will read the default bundle which has ripgrep with bins:['rg']
+  // No user manifest in the sandbox — loadManifest will read the default bundle which has ripgrep with bins:['rg']
   const p = toolPaths(base);
   fs.mkdirSync(p.bin, { recursive: true });
   // Write a fake executable at bin/rg (as if ripgrep were installed)
@@ -91,16 +100,14 @@ it('uninstallTool: removes opt/<name> and every bin link into it, not only entry
 });
 
 it('uninstallTool: a name that is not a plain tool name never removes anything outside opt/', () => {
-  // Nest the tools dir two levels down so a regression that follows `../..` out of opt/ still
-  // lands inside this test's own temp dir, never the shared $TMPDIR.
-  const tools = path.join(base, 'home', 'tools');
-  const p = toolPaths(tools);
+  // `../..` from opt/ is the sandbox dir, so a regression stays inside this test's temp dir.
+  const p = toolPaths(base);
   fs.mkdirSync(p.bin, { recursive: true });
-  fs.writeFileSync(path.join(base, 'home', 'canary'), 'x');
+  fs.writeFileSync(path.join(sandbox, 'canary'), 'x');
   fs.writeFileSync(path.join(p.bin, 'jq'), 'x');
   fs.symlinkSync(path.join(p.pkgs, 'node_modules', '.bin', 'shopify'), path.join(p.bin, 'shopify')); // an npm link into the tools dir
-  for (const name of ['..', '../..', '.', '']) uninstallTool(name, tools);
-  expect(fs.existsSync(path.join(base, 'home', 'canary'))).toBe(true);
+  for (const name of ['..', '../..', '.', '']) uninstallTool(name, base);
+  expect(fs.existsSync(path.join(sandbox, 'canary'))).toBe(true);
   expect(fs.readdirSync(p.bin).sort()).toEqual(['jq', 'shopify']);
 });
 
@@ -138,7 +145,7 @@ it('script kind: idempotent — second call is a no-op when binary already prese
   expect(lines).toHaveLength(1); // script ran exactly once
 });
 
-it('script kind: a changed recipe reinstalls even though the bins are still present', async () => {
+it('script kind: a changed user recipe reinstalls even though the bins are still present', async () => {
   const counter = path.join(base, 'runs');
   const recipe = (tag: string): ToolEntry => ({
     name: 'demo', description: 'd', kind: 'script', bins: ['demo'],
@@ -149,17 +156,33 @@ it('script kind: a changed recipe reinstalls even though the bins are still pres
   expect(fs.readFileSync(counter, 'utf8').trim().split('\n')).toEqual(['v1', 'v2']);
 });
 
-it('script kind: a legacy installed.json entry with no recipe fingerprint reinstalls', async () => {
-  // Installs before the fingerprint recorded `{}` — e.g. the aws that linked into a purged $TMPDIR.
+it('script kind: a legacy record ({}) of a user tool whose bins exist is adopted without a run', async () => {
+  // Installs before the fingerprint recorded `{}`. Rerunning a user recipe that is not idempotent
+  // would fail every `dispatch update`, so its fingerprint is recorded instead. (The bundled aws
+  // reruns; see manifest.test.ts.)
   const p = toolPaths(base);
   fs.mkdirSync(p.bin, { recursive: true });
   fs.writeFileSync(path.join(p.bin, 'demo'), '#!/bin/sh\n', { mode: 0o755 });
+  fs.mkdirSync(path.join(base, 'demo')); // what the first run left
   fs.writeFileSync(p.installed, JSON.stringify({ demo: {} }));
   const counter = path.join(base, 'runs');
-  const entry: ToolEntry = { name: 'demo', description: 'd', kind: 'script', bins: ['demo'], script: { install: `echo x >> "${counter}"` } };
+  const entry: ToolEntry = { name: 'demo', description: 'd', kind: 'script', bins: ['demo'], script: { install: `set -e; echo x >> "${counter}"; mkdir "$TOOLS_PREFIX/demo"` } };
   await installTool(entry, { base });
-  expect(fs.readFileSync(counter, 'utf8').trim().split('\n')).toHaveLength(1);
+  expect(fs.existsSync(counter)).toBe(false); // never ran
   expect(readInstalled(base).demo).toEqual({ script: crypto.createHash('sha256').update(entry.script!.install).digest('hex') });
-  await installTool(entry, { base }); // now fingerprinted: skipped
-  expect(fs.readFileSync(counter, 'utf8').trim().split('\n')).toHaveLength(1);
+});
+
+it('script kind: a user override of a bundled tool with its own recipe counts as a user tool', async () => {
+  const p = toolPaths(base);
+  const counter = path.join(base, 'runs');
+  fs.writeFileSync(path.join(sandbox, 'tools.json'), JSON.stringify({ tools: [
+    { name: 'aws', description: 'my aws', kind: 'script', bins: ['aws'], script: { install: `echo x >> "${counter}"` } },
+  ] }));
+  fs.mkdirSync(p.bin, { recursive: true });
+  fs.writeFileSync(path.join(p.bin, 'aws'), '#!/bin/sh\n', { mode: 0o755 });
+  fs.writeFileSync(p.installed, JSON.stringify({ aws: {} }));
+  const entry = loadManifest(base).find((e) => e.name === 'aws')!;
+  await installTool(entry, { base });
+  expect(fs.existsSync(counter)).toBe(false);
+  expect(readInstalled(base).aws.script).toMatch(/^[0-9a-f]{64}$/);
 });

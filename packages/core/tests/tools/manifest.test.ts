@@ -4,15 +4,57 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { loadManifest, validateEntry } from '../../src/tools/manifest.js';
-import { installTool } from '../../src/tools/installer.js';
+import { installTool, readInstalled } from '../../src/tools/installer.js';
+import { toolPaths } from '../../src/tools/paths.js';
 
+// Recipes run inside root/sandbox/tools: a `..` that escapes the tools dir still lands in this
+// test's own temp dir, and the user manifest (sandbox/tools.json) is private to it.
 let root: string;
+let sandbox: string;
 let base: string;
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'tools-'));
-  base = path.join(root, 'tools');
+  sandbox = path.join(root, 'sandbox');
+  base = path.join(sandbox, 'tools');
+  fs.mkdirSync(sandbox);
 });
 afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
+
+// Runs the real aws recipe offline, on any OS, and only inside the sandbox. Stubs go first on PATH:
+// curl writes an empty pkg; pkgutil lays out the aws-cli payload the way AWSCLIV2.pkg expands and
+// records where; mktemp makes dirs only inside the sandbox (macOS mktemp ignores TMPDIR, so a bare
+// `mktemp -d` goes to sandbox/tmp); mv, when asked, refuses to move the new payload.
+async function installAwsWithStubs(opts: { payloadWorks?: boolean; payloadMoveFails?: boolean } = {}): Promise<void> {
+  const stubs = path.join(root, 'stubs');
+  fs.mkdirSync(stubs, { recursive: true });
+  fs.mkdirSync(path.join(sandbox, 'tmp'), { recursive: true });
+  const stub = (name: string, ...lines: string[]) => fs.writeFileSync(path.join(stubs, name), ['#!/bin/sh', ...lines, ''].join('\n'), { mode: 0o755 });
+  stub('curl', 'while [ $# -gt 0 ]; do if [ "$1" = -o ]; then : > "$2"; fi; shift; done');
+  stub('pkgutil',
+    `echo "$3" > "${root}/pkgutil-dest"`,
+    'd="$3/aws-cli.pkg/Payload/aws-cli"; mkdir -p "$d"',
+    `printf '#!/bin/sh\\necho aws-cli/2 stub\\nexit ${opts.payloadWorks === false ? 1 : 0}\\n' > "$d/aws"`,
+    `printf '#!/bin/sh\\n' > "$d/aws_completer"`,
+    'chmod +x "$d/aws" "$d/aws_completer"');
+  stub('mktemp', `t="\${2:-${sandbox}/tmp/tmp.XXXXXX}"; case "$t" in "${sandbox}"/*XXXXXX) ;; *) exit 1 ;; esac`, 'd="${t%XXXXXX}$$"; mkdir "$d"; echo "$d"');
+  if (opts.payloadMoveFails) stub('mv', 'case "$1" in */aws-cli) exit 1 ;; esac', 'exec /bin/mv "$@"');
+  vi.stubEnv('PATH', `${stubs}${path.delimiter}${process.env.PATH}`);
+  try {
+    expect(execFileSync('/bin/sh', ['-c', 'command -v curl'], { encoding: 'utf8' }).trim()).toBe(path.join(stubs, 'curl')); // never the network
+    const aws = loadManifest(base).find((e) => e.name === 'aws')!;
+    await installTool({ ...aws, platforms: undefined }, { base }); // the stubs stand in for macOS pkgutil on any host
+  } finally { vi.unstubAllEnvs(); }
+}
+
+// A working aws from an earlier install: opt/aws with a marker only the old copy has, linked from bin.
+function seedWorkingAws(): void {
+  const p = toolPaths(base);
+  fs.mkdirSync(path.join(p.opt, 'aws'), { recursive: true });
+  fs.writeFileSync(path.join(p.opt, 'aws', 'aws'), '#!/bin/sh\necho aws-cli/1 old\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(p.opt, 'aws', 'old-only'), 'x');
+  fs.mkdirSync(p.bin, { recursive: true });
+  fs.symlinkSync(path.join(p.opt, 'aws', 'aws'), path.join(p.bin, 'aws'));
+}
 
 describe('manifest', () => {
   it('returns the default bundle when no user file', () => {
@@ -24,7 +66,7 @@ describe('manifest', () => {
   });
 
   it('merges user entries and overrides by name', () => {
-    fs.writeFileSync(path.join(root, 'tools.json'), JSON.stringify({
+    fs.writeFileSync(path.join(sandbox, 'tools.json'), JSON.stringify({
       tools: [
         { name: 'mytool', description: 'mine', kind: 'binary', bins: ['mytool'], binary: { 'darwin-arm64': { url: 'https://x/mytool', archive: 'none' } } },
         { name: 'jq', description: 'overridden jq', kind: 'binary', bins: ['jq'], binary: { 'darwin-arm64': { url: 'https://x/jq', archive: 'none' } } },
@@ -36,7 +78,7 @@ describe('manifest', () => {
   });
 
   it('drops invalid user entries', () => {
-    fs.writeFileSync(path.join(root, 'tools.json'), JSON.stringify({
+    fs.writeFileSync(path.join(sandbox, 'tools.json'), JSON.stringify({
       tools: [{ name: 'bad' /* missing kind/bins */ }, 'nope'],
     }));
     const m = loadManifest(base);
@@ -56,35 +98,54 @@ describe('manifest', () => {
     expect(aws!.platforms).toEqual(['darwin']);
   });
 
-  it('aws recipe unpacks into $TOOLS_PREFIX/opt/aws, so no link points into its mktemp dir (macOS purges $TMPDIR)', async () => {
-    // Run the real recipe offline and on any OS: stub curl (writes an empty pkg), pkgutil (lays out
-    // the aws-cli payload dir the way AWSCLIV2.pkg expands) and mktemp (macOS mktemp ignores TMPDIR,
-    // so this is how the recipe's temp dir lands in ours) first on PATH.
-    const stubs = path.join(root, 'stubs');
-    const tmp = path.join(root, 'tmp');
-    fs.mkdirSync(stubs); fs.mkdirSync(tmp);
-    fs.writeFileSync(path.join(stubs, 'curl'), '#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ "$1" = -o ]; then : > "$2"; fi; shift; done\n', { mode: 0o755 });
-    fs.writeFileSync(path.join(stubs, 'mktemp'), `#!/bin/sh\nd="${tmp}/tmp.$$"; mkdir "$d"; echo "$d"\n`, { mode: 0o755 });
-    fs.writeFileSync(path.join(stubs, 'pkgutil'), [
-      '#!/bin/sh',
-      'd="$3/aws-cli.pkg/Payload/aws-cli"; mkdir -p "$d"',
-      `printf '#!/bin/sh\\necho stub-aws\\n' > "$d/aws"; printf '#!/bin/sh\\n' > "$d/aws_completer"; chmod +x "$d/aws" "$d/aws_completer"`,
-    ].join('\n'), { mode: 0o755 });
-    const stale = path.join(base, 'opt', 'aws', 'stale');
-    fs.mkdirSync(path.dirname(stale), { recursive: true });
-    fs.writeFileSync(stale, 'x');
-    vi.stubEnv('PATH', `${stubs}${path.delimiter}${process.env.PATH}`);
-    try {
-      expect(execFileSync('/bin/sh', ['-c', 'command -v curl'], { encoding: 'utf8' }).trim()).toBe(path.join(stubs, 'curl')); // never the network
-      const aws = loadManifest(base).find((e) => e.name === 'aws')!;
-      await installTool({ ...aws, platforms: undefined }, { base });
-    } finally { vi.unstubAllEnvs(); }
+  it('aws recipe stages under $TOOLS_PREFIX/opt and swaps the payload into opt/aws (macOS purges $TMPDIR)', async () => {
+    const p = toolPaths(base);
+    seedWorkingAws();
+    await installAwsWithStubs();
+    const dest = fs.readFileSync(path.join(root, 'pkgutil-dest'), 'utf8').trim();
+    expect(path.dirname(path.dirname(dest))).toBe(p.opt); // expanded on the destination filesystem
+    expect(path.basename(path.dirname(dest))).toMatch(/^\.aws-stage\./);
     for (const b of ['aws', 'aws_completer']) {
-      expect(fs.readlinkSync(path.join(base, 'bin', b))).toBe(path.join(base, 'opt', 'aws', b));
+      expect(fs.readlinkSync(path.join(p.bin, b))).toBe(path.join(p.opt, 'aws', b));
     }
-    expect(execFileSync(path.join(base, 'bin', 'aws'), { encoding: 'utf8' })).toContain('stub-aws');
-    expect(fs.existsSync(stale)).toBe(false); // an old copy is replaced, not merged into
-    expect(fs.readdirSync(tmp)).toEqual([]); // the trap removed the mktemp dir
+    expect(execFileSync(path.join(p.bin, 'aws'), { encoding: 'utf8' })).toContain('aws-cli/2 stub');
+    expect(fs.existsSync(path.join(p.opt, 'aws', 'old-only'))).toBe(false); // the old copy is replaced, not merged into
+    expect(fs.readdirSync(p.opt)).toEqual(['aws']); // the trap removed the stage dir and the old copy in it
+    expect(fs.readdirSync(path.join(sandbox, 'tmp'))).toEqual([]); // nothing staged in $TMPDIR
+  });
+
+  it('aws recipe keeps the working copy when the new payload fails `aws --version`', async () => {
+    const p = toolPaths(base);
+    seedWorkingAws();
+    await expect(installAwsWithStubs({ payloadWorks: false })).rejects.toThrow();
+    expect(execFileSync(path.join(p.bin, 'aws'), { encoding: 'utf8' })).toContain('aws-cli/1 old');
+    expect(fs.existsSync(path.join(p.opt, 'aws', 'old-only'))).toBe(true);
+    expect(fs.readdirSync(p.opt)).toEqual(['aws']);
+  });
+
+  it('aws recipe puts the old copy back and fails when the new payload cannot be renamed into place', async () => {
+    const p = toolPaths(base);
+    seedWorkingAws();
+    await expect(installAwsWithStubs({ payloadMoveFails: true })).rejects.toThrow();
+    expect(execFileSync(path.join(p.bin, 'aws'), { encoding: 'utf8' })).toContain('aws-cli/1 old');
+    expect(fs.existsSync(path.join(p.opt, 'aws', 'old-only'))).toBe(true);
+    expect(fs.readdirSync(p.opt)).toEqual(['aws']);
+  });
+
+  it('a legacy aws record ({}) whose bins still exist reruns the bundled recipe (the purged-$TMPDIR install)', async () => {
+    const p = toolPaths(base);
+    const purged = path.join(sandbox, 'purged-tmp', 'aws-cli'); // stands in for the old mktemp payload
+    fs.mkdirSync(purged, { recursive: true });
+    fs.writeFileSync(path.join(purged, 'aws'), '#!/bin/sh\nexit 1\n', { mode: 0o755 }); // the file survived; its python did not
+    fs.mkdirSync(p.bin, { recursive: true });
+    fs.symlinkSync(path.join(purged, 'aws'), path.join(p.bin, 'aws'));
+    fs.symlinkSync(path.join(purged, 'aws_completer'), path.join(p.bin, 'aws_completer')); // dangling
+    fs.writeFileSync(p.installed, JSON.stringify({ aws: {} }));
+    await installAwsWithStubs();
+    for (const b of ['aws', 'aws_completer']) {
+      expect(fs.readlinkSync(path.join(p.bin, b))).toBe(path.join(p.opt, 'aws', b));
+    }
+    expect(readInstalled(base).aws.script).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it('every binary tool has linux-x64 and linux-arm64 assets with a 64-char sha256', () => {
