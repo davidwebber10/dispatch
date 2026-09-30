@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import { PassThrough } from 'stream';
 import {
   encodeLaunchSpec, decodeLaunchSpec, launcherArgs, buildLaunch, runLauncher, redactor, pipeRedacted,
+  integrationLogPath, openIntegrationLog,
   type LaunchSpec, type SecretSource,
 } from '../../src/integrations/launcher.js';
 import { SecretsService } from '../../src/secrets/service.js';
@@ -15,6 +16,27 @@ import { SecretsService } from '../../src/secrets/service.js';
 // Fake values only. Each test asserts none of them reach argv or the stderr line.
 const DOPPLER_VALUE = 'fake-doppler-value-123';
 const ENV_VALUE = 'fake-env-value-456';
+
+/**
+ * A nested temp sandbox per test: <mkdtemp>/secrets and <mkdtemp>/work. Only that mkdtemp,
+ * checked to sit directly in the temp dir, is ever removed.
+ */
+function sandboxEach(): { root: string; secretsDir: string; workDir: string } {
+  const sb = { root: '', secretsDir: '', workDir: '' };
+  beforeEach(() => {
+    sb.root = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-launcher-'));
+    sb.secretsDir = path.join(sb.root, 'secrets');
+    sb.workDir = path.join(sb.root, 'work');
+    fs.mkdirSync(sb.secretsDir);
+    fs.mkdirSync(sb.workDir);
+  });
+  afterEach(() => {
+    if (path.dirname(sb.root) === path.resolve(os.tmpdir()) && path.basename(sb.root).startsWith('dispatch-launcher-')) {
+      fs.rmSync(sb.root, { recursive: true, force: true });
+    }
+  });
+  return sb;
+}
 
 function doppler(opts: { connected?: boolean; enabled?: boolean; secrets?: Record<string, string>; throws?: boolean } = {}) {
   const getSecret = vi.fn(async (name: string) => {
@@ -241,34 +263,101 @@ describe('redactor', () => {
 describe('pipeRedacted', () => {
   function pipe(values: string[]) {
     const stream = new PassThrough();
-    const lines: string[] = [];
-    const flush = pipeRedacted(stream, redactor(values), (l) => { lines.push(l); });
-    return { stream, lines, flush };
+    const out: string[] = [];
+    const flush = pipeRedacted(stream, redactor(values), (text) => { out.push(text); });
+    return { stream, out, flush };
   }
   const tick = () => new Promise((r) => setImmediate(r));
 
   it('treats a lone \\r as a line end, so \\r-only progress output flushes', async () => {
-    const { stream, lines } = pipe([DOPPLER_VALUE]);
+    const { stream, out } = pipe([DOPPLER_VALUE]);
     stream.write(`10%\r50%\r${DOPPLER_VALUE}\rdone\n`);
     await tick();
-    expect(lines).toEqual(['10%', '50%', '[redacted]', 'done']);
+    expect(out.join('')).toBe('10%\n50%\n[redacted]\ndone\n');
   });
 
   it('a \\r\\n split across two chunks is one line end, not two', async () => {
-    const { stream, lines } = pipe([DOPPLER_VALUE]);
+    const { stream, out } = pipe([DOPPLER_VALUE]);
     stream.write('first\r');
     await tick();
     stream.write('\nsecond\n');
     await tick();
-    expect(lines).toEqual(['first', 'second']);
+    expect(out.join('')).toBe('first\nsecond\n');
   });
 
   it('flush writes a partial last line, dropping a trailing \\r', async () => {
-    const { stream, lines, flush } = pipe([DOPPLER_VALUE]);
+    const { stream, out, flush } = pipe([DOPPLER_VALUE]);
     stream.write(`tail ${DOPPLER_VALUE}\r`);
     await tick();
     flush();
-    expect(lines).toEqual(['tail [redacted]']);
+    expect(out.join('')).toBe('tail [redacted]\n');
+  });
+
+  it('holds at most 64 Ki characters of an unterminated line, writing the rest through in pieces', async () => {
+    const { stream, out, flush } = pipe([DOPPLER_VALUE]);
+    const BIG = 'z'.repeat(300 * 1024);
+    for (let i = 0; i < BIG.length; i += 16 * 1024) { stream.write(BIG.slice(i, i + 16 * 1024)); await tick(); }
+    expect(BIG.length - out.join('').length).toBeLessThanOrEqual(64 * 1024);
+    expect(Math.max(...out.map((s) => s.length))).toBeLessThanOrEqual(64 * 1024);
+    flush();
+    expect(out.join('')).toBe(BIG + '\n');
+  });
+});
+
+describe('integration log file', () => {
+  const sb = sandboxEach();
+
+  it('lives at <secretsDir>/logs/integrations/<name>.log, the name reduced to [A-Za-z0-9_-]', () => {
+    const dir = path.join(sb.secretsDir, 'logs', 'integrations');
+    expect(integrationLogPath(sb.secretsDir, 'linear')).toBe(path.join(dir, 'linear.log'));
+    expect(integrationLogPath(sb.secretsDir, '../../etc/x y')).toBe(path.join(dir, '______etc_x_y.log'));
+    expect(integrationLogPath(sb.secretsDir, '')).toBe(path.join(dir, 'integration.log'));
+  });
+
+  it('creates the dir 0700 and the file 0600', () => {
+    const file = integrationLogPath(sb.secretsDir, 'linear');
+    const log = openIntegrationLog(file);
+    log.write('hello\n');
+    log.close();
+    expect(fs.statSync(path.dirname(file)).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    expect(fs.readFileSync(file, 'utf8')).toBe('hello\n');
+  });
+
+  it('tightens an existing looser dir and file, and appends', () => {
+    const file = integrationLogPath(sb.secretsDir, 'linear');
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o755 });
+    fs.chmodSync(path.dirname(file), 0o755);
+    fs.writeFileSync(file, 'old\n', { mode: 0o644 });
+    fs.chmodSync(file, 0o644);
+    const log = openIntegrationLog(file);
+    log.write('new\n');
+    log.close();
+    expect(fs.statSync(path.dirname(file)).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    expect(fs.readFileSync(file, 'utf8')).toBe('old\nnew\n');
+  });
+
+  it('rotates once to .log.1 at startup when the file is past the cap', () => {
+    const file = integrationLogPath(sb.secretsDir, 'linear');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, 'x'.repeat(2000), { mode: 0o600 });
+    const log = openIntegrationLog(file, 1000);
+    log.write('fresh\n');
+    log.close();
+    expect(fs.readFileSync(`${file}.1`, 'utf8')).toBe('x'.repeat(2000));
+    expect(fs.readFileSync(file, 'utf8')).toBe('fresh\n');
+  });
+
+  it('rotates once to .log.1 when it grows past the cap while running', () => {
+    const file = integrationLogPath(sb.secretsDir, 'linear');
+    const log = openIntegrationLog(file, 1000);
+    for (let i = 0; i < 30; i++) log.write(`${String(i).padStart(3, '0')} ${'w'.repeat(95)}\n`); // 100 bytes each
+    log.close();
+    expect(fs.statSync(file).size).toBeLessThanOrEqual(1000);
+    expect(fs.statSync(`${file}.1`).size).toBeGreaterThan(1000);
+    expect(fs.statSync(`${file}.1`).mode & 0o777).toBe(0o600);
+    expect(fs.existsSync(`${file}.2`)).toBe(false);
   });
 });
 
@@ -318,36 +407,21 @@ describe('runLauncher never writes a resolved value to stderr', () => {
 });
 
 describe('runLauncher with a real child and a real SecretsService', () => {
-  // Nested sandbox: the secrets dir and the child's cwd are subdirs of this test's own
-  // mkdtemp, and only that mkdtemp (checked to sit directly in the temp dir) is removed.
+  const sb = sandboxEach();
   const savedToken = process.env.DOPPLER_TOKEN;
-  let sandbox: string;
-  let secretsDir: string;
-  let workDir: string;
-  beforeEach(() => {
-    sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-launcher-'));
-    secretsDir = path.join(sandbox, 'secrets');
-    workDir = path.join(sandbox, 'work');
-    fs.mkdirSync(secretsDir);
-    fs.mkdirSync(workDir);
-    delete process.env.DOPPLER_TOKEN;
-  });
-  afterEach(() => {
-    if (savedToken !== undefined) process.env.DOPPLER_TOKEN = savedToken;
-    if (path.dirname(sandbox) === path.resolve(os.tmpdir()) && path.basename(sandbox).startsWith('dispatch-launcher-')) {
-      fs.rmSync(sandbox, { recursive: true, force: true });
-    }
-  });
+  beforeEach(() => { delete process.env.DOPPLER_TOKEN; });
+  afterEach(() => { if (savedToken !== undefined) process.env.DOPPLER_TOKEN = savedToken; });
 
   /** The real spawn, with the child's cwd pinned inside the sandbox. */
-  const inSandbox = (cmd: string, args: string[], opts: SpawnOptions) => spawn(cmd, args, { ...opts, cwd: workDir });
+  const inSandbox = (cmd: string, args: string[], opts: SpawnOptions) => spawn(cmd, args, { ...opts, cwd: sb.workDir });
   /** A stdio spec that runs `code` under this node, with KEY = the value of ${API_KEY}. The value never appears in `code`. */
   const nodeSpec = (code: string): LaunchSpec => ({ name: 'probe', type: 'stdio', command: process.execPath, args: ['-e', code], env: { KEY: '${API_KEY}' } });
-  const argvIn = (spec: LaunchSpec) => launcherArgs('/x/launcher.js', secretsDir, spec).slice(1);
+  const argvIn = (spec: LaunchSpec) => launcherArgs('/x/launcher.js', sb.secretsDir, spec).slice(1);
+  const logFile = () => integrationLogPath(sb.secretsDir, 'probe');
 
   it('the stdio server sees the Doppler value in its env and the launcher returns its exit code', async () => {
     const client = { verify: async () => true, getSecret: async (_p: string, _c: string, n: string) => (n === 'API_KEY' ? DOPPLER_VALUE : null) } as never;
-    await new SecretsService(secretsDir, () => client).setConnection({ token: 'fake-token', project: 'acme', config: 'dev' });
+    await new SecretsService(sb.secretsDir, () => client).setConnection({ token: 'fake-token', project: 'acme', config: 'dev' });
     // The child reports the value's LENGTH as its exit code, so the value itself stays out of this argv too.
     const res = await runLauncher(argvIn(nodeSpec('process.exit((process.env.KEY ?? "").length)')), {
       secrets: (d) => new SecretsService(d, () => client), env: process.env, stderr: () => {}, spawn: inSandbox as never,
@@ -370,7 +444,7 @@ describe('runLauncher with a real child and a real SecretsService', () => {
     expect(stderr.join('\n')).not.toContain(SENSITIVE);
   });
 
-  it('redacts resolved values from the server stderr, across chunk splits, and flushes a partial last line', async () => {
+  it('sends the server stderr to its 0600 log, redacted, and nothing to the harness on a clean exit', async () => {
     const lines: string[] = [];
     const code = [
       'const v = process.env.KEY;',
@@ -381,7 +455,38 @@ describe('runLauncher with a real child and a real SecretsService', () => {
       secrets: () => doppler({ secrets: { API_KEY: DOPPLER_VALUE } }).source, env: process.env, stderr: (l) => { lines.push(l); }, spawn: inSandbox as never,
     });
     expect(res).toEqual({ code: 0, signal: null });
-    expect(lines).toEqual(['tok=[redacted] end', 'partial [redacted]']);
+    expect(lines).toEqual([]);
+    expect(fs.statSync(path.dirname(logFile())).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(logFile()).mode & 0o777).toBe(0o600);
+    const log = fs.readFileSync(logFile(), 'utf8');
+    expect(log).toContain('tok=[redacted] end\npartial [redacted]\n');
+    expect(log).not.toContain(DOPPLER_VALUE);
+  });
+
+  it('the harness never sees a value (inspect-escaped, 3 characters, or in a long unterminated line); a failure gets one fixed line', async () => {
+    // util.inspect escapes \x01 and, with all three quote kinds present, the quotes too: no filter can enumerate that.
+    const ESCAPED = 'fake\x01"quoted`back\'tick-value';
+    const SHORT = '~~^'; // under the redaction minimum, and no character mkdtemp puts in the log path
+    const spec: LaunchSpec = {
+      ...nodeSpec([
+        'console.error({ token: process.env.A });',
+        'process.stderr.write("short=" + process.env.B + "\\n");',
+        'process.stderr.write(("y".repeat(1000) + process.env.A).repeat(200));',
+        'process.exitCode = 2;',
+      ].join(' ')),
+      env: { A: '${ESCAPED_REF}', B: '${SHORT_REF}' },
+    };
+    const lines: string[] = [];
+    const res = await runLauncher(argvIn(spec), {
+      secrets: () => doppler({ secrets: { ESCAPED_REF: ESCAPED, SHORT_REF: SHORT } }).source, env: process.env, stderr: (l) => { lines.push(l); }, spawn: inSandbox as never,
+    });
+    expect(res).toEqual({ code: 2, signal: null });
+    expect(lines).toEqual([`dispatch integration "probe": exited with code 2; its stderr is in ${logFile()}`]);
+    for (const leak of [ESCAPED, SHORT, 'quoted', 'tick-value', 'y'.repeat(50)]) expect(lines.join('\n')).not.toContain(leak);
+    // The log is the restricted channel: it holds the output, partly redacted, which is why it is 0600.
+    const log = fs.readFileSync(logFile(), 'utf8');
+    expect(log).toContain(`short=${SHORT}\n`);
+    expect(log).toContain('[redacted]');
   });
 
   /**
@@ -394,11 +499,10 @@ describe('runLauncher with a real child and a real SecretsService', () => {
     const loader = pathToFileURL(path.join(coreDir, 'node_modules/tsx/dist/loader.mjs')).href;
     const env: NodeJS.ProcessEnv = { ...process.env, API_KEY: ENV_VALUE };
     delete env.DOPPLER_TOKEN;
-    return spawn(process.execPath, ['--import', loader, path.join(coreDir, 'src/integrations/launcher.ts'), ...argvIn(spec)], { cwd: workDir, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    return spawn(process.execPath, ['--import', loader, path.join(coreDir, 'src/integrations/launcher.ts'), ...argvIn(spec)], { cwd: sb.workDir, env, stdio: ['ignore', 'pipe', 'pipe'] });
   }
 
-  it('end to end: a slow stderr reader still gets every line, including the last, and the exit code', async () => {
-    // Enough output to fill the pipe while the "harness" isn't reading; the last line is the one that matters.
+  it('end to end: a slow stderr reader still gets the final fixed line, and the log gets every server line', async () => {
     const LINES = 4000;
     const p = startEntry(nodeSpec(`const pad = "x".repeat(100); for (let i = 0; i < ${LINES}; i++) process.stderr.write("line " + i + " " + pad + "\\n"); process.stderr.write("FATAL last line\\n"); process.exitCode = 3;`));
     const closed = new Promise<number | null>((resolve) => p.on('close', (c) => resolve(c)));
@@ -411,12 +515,14 @@ describe('runLauncher with a real child and a real SecretsService', () => {
     await new Promise((r) => setTimeout(r, 1500));
     p.stderr!.resume();
     expect(await closed).toBe(3);
-    const lines = err.split('\n').filter((l) => l.startsWith('line ') || l.startsWith('FATAL'));
-    expect(lines).toHaveLength(LINES + 1);
-    expect(lines.at(-1)).toBe('FATAL last line');
+    expect(err.trim().split('\n').at(-1)).toBe(`dispatch integration "probe": exited with code 3; its stderr is in ${logFile()}`);
+    expect(err).not.toContain('line 0 ');
+    const log = fs.readFileSync(logFile(), 'utf8');
+    expect(log.split('\n').filter((l) => l.startsWith('line '))).toHaveLength(LINES);
+    expect(log).toContain('FATAL last line\n');
   });
 
-  it('end to end: the server stdout bytes pass through unchanged, and its stderr comes out redacted', async () => {
+  it('end to end: the server stdout bytes pass through unchanged, and its stderr goes only to the log', async () => {
     const BYTES = [0x7b, 0x22, 0x61, 0x22, 0x7d, 0x0a, 0x00, 0xff, 0x0d, 0x0a];
     const p = startEntry(nodeSpec(`process.stdout.write(Buffer.from(${JSON.stringify(BYTES)})); process.stderr.write("key=" + process.env.KEY + "\\n");`));
     const out: Buffer[] = [];
@@ -426,7 +532,8 @@ describe('runLauncher with a real child and a real SecretsService', () => {
     const exitCode = await new Promise<number | null>((resolve) => p.on('close', (c) => resolve(c)));
     expect(exitCode).toBe(0);
     expect(Buffer.concat(out)).toEqual(Buffer.from(BYTES));
-    expect(err).toContain('key=[redacted]\n');
+    expect(err).not.toContain('key=');
     expect(err).not.toContain(ENV_VALUE);
+    expect(fs.readFileSync(logFile(), 'utf8')).toContain('key=[redacted]\n');
   });
 });

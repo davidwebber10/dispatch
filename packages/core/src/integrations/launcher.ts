@@ -19,14 +19,21 @@
  *           0.14.3: substituteEnvVars, applied to every --header), so each resolved
  *           NAME=value goes into its env instead.
  *
- * Nothing the launcher writes can carry a value: a value with a NUL (or CR/LF, for a header)
- * is refused before the spawn, a spawn error prints only its code, and the server's stderr —
- * which the harness keeps in its logs — is piped through with every value [redacted].
- * A detached grandchild that outlives the server can get EPIPE on stderr after the 1 s drain.
+ * Nothing the launcher writes to its own stderr (which the harness keeps in its logs) can
+ * carry a value: only fixed lines — nothing on a clean run; a missing ref, an unsafe value (a
+ * NUL, or CR/LF in a header, refused before the spawn), a spawn error's code, or "exited with
+ * code N; its stderr is in <path>". The server's stderr never reaches the harness: a server
+ * can print a value in forms no filter can enumerate (util.inspect escapes, a 1–3 character
+ * value). It goes to <secretsDir>/logs/integrations/<name>.log (dir 0700, file 0600, rotated
+ * once at ~1 MiB), redacted there too as defense in depth; the file can still hold other
+ * encodings of a value, which is why it is 0600. A detached grandchild that outlives the
+ * server can get EPIPE on stderr after the 1 s drain.
  *
  * Imports stay light (no server, no db): this starts once per server per thread.
  */
 import { spawn as nodeSpawn } from 'child_process';
+import fs from 'fs';
+import path from 'path';
 import type { Readable } from 'stream';
 import { SecretsService, type DopplerStatus } from '../secrets/service.js';
 import { findSecretRefs, refsIn, substituteSecretRefs } from './secret-refs.js';
@@ -52,6 +59,7 @@ export interface LauncherDeps {
   /** Opens the Doppler connection the daemon saved in --secrets-dir. */
   secrets?: (secretsDir: string) => SecretSource;
   env?: NodeJS.ProcessEnv;
+  /** The launcher's own stderr, which the harness logs: fixed lines only. */
   stderr?: (line: string) => void;
   spawn?: typeof nodeSpawn;
 }
@@ -153,12 +161,17 @@ export function redactor(values: string[]): (line: string) => string {
   return (line) => list.reduce((out, t) => out.split(t).join('[redacted]'), line);
 }
 
+/** The most of an unterminated line held between chunks (characters); the rest is written through. */
+const MAX_PENDING = 64 * 1024;
+
 /**
- * Line-buffer a stream through `redact` into `write`; returns a flush for a partial last line.
- * A line ends at \n, \r\n, or a lone \r (progress output, which would otherwise never flush).
- * A \r that ends a chunk waits for the next one, which may bring its \n.
+ * Line-buffer a stream through `redact` into `write` (text, with its \n); returns a flush for a
+ * partial last line. A line ends at \n, \r\n, or a lone \r (progress output, which would
+ * otherwise never flush). A \r that ends a chunk waits for the next one, which may bring its
+ * \n. An unterminated line past MAX_PENDING is written through in pieces, so memory stays
+ * bounded; a value split across two pieces is not redacted, which the 0600 log file accepts.
  */
-export function pipeRedacted(stream: Readable, redact: (line: string) => string, write: (line: string) => void): () => void {
+export function pipeRedacted(stream: Readable, redact: (line: string) => string, write: (text: string) => void): () => void {
   let pending = '';
   stream.setEncoding('utf8');
   stream.on('data', (chunk: string) => {
@@ -166,29 +179,89 @@ export function pipeRedacted(stream: Readable, redact: (line: string) => string,
     const eol = /\r\n|\n|\r(?!$)/g;
     let start = 0;
     for (let m = eol.exec(pending); m; m = eol.exec(pending)) {
-      write(redact(pending.slice(start, m.index)));
+      write(redact(pending.slice(start, m.index)) + '\n');
       start = m.index + m[0].length;
     }
     pending = pending.slice(start);
+    while (pending.length > MAX_PENDING) {
+      write(redact(pending.slice(0, MAX_PENDING)));
+      pending = pending.slice(MAX_PENDING);
+    }
   });
-  return () => { if (pending) write(redact(pending.replace(/\r$/, ''))); pending = ''; };
+  return () => { if (pending) write(redact(pending.replace(/\r$/, '')) + '\n'); pending = ''; };
 }
 
-/** A spawn error's message can quote env values; only its code (ENOENT, EACCES, …) and the command template are safe. */
-function startFailure(spec: LaunchSpec, command: string, e: unknown): string {
+/** About where a server's log rotates, once, to `<name>.log.1`. */
+const LOG_CAP = 1024 * 1024;
+
+/** Where a server's stderr goes: `<secretsDir>/logs/integrations/<name>.log`, the name reduced to [A-Za-z0-9_-]. */
+export function integrationLogPath(secretsDir: string, name: string | undefined): string {
+  const safe = String(name ?? '').replace(/[^A-Za-z0-9_-]/g, '_') || 'integration';
+  return path.join(secretsDir, 'logs', 'integrations', `${safe}.log`);
+}
+
+/**
+ * An append-only log in a 0700 dir, file 0600 (both tightened if they already exist). It
+ * rotates once to `.1` at open and whenever it grows past `cap`; each thread runs its own
+ * launcher, so several may append to one file, and a rotation moves the file only if it is
+ * still the one this launcher has open. Write errors are dropped: a full disk must never stop
+ * the server.
+ */
+export function openIntegrationLog(file: string, cap = LOG_CAP): { write: (text: string) => void; close: () => void } {
+  const dir = path.dirname(file);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(dir, 0o700);
+  let fd = -1;
+  const open = () => {
+    fd = fs.openSync(file, 'a', 0o600);
+    fs.fchmodSync(fd, 0o600);
+  };
+  const rotate = () => {
+    try {
+      const mine = fs.fstatSync(fd);
+      const atPath = fs.statSync(file);
+      if (mine.ino === atPath.ino && mine.dev === atPath.dev) fs.renameSync(file, `${file}.1`);
+    } catch { /* already moved by another launcher — just reopen */ }
+    try { fs.closeSync(fd); } catch { /* ignore */ }
+    fd = -1;
+    open();
+  };
+  try { if (fs.statSync(file).size > cap) fs.renameSync(file, `${file}.1`); } catch { /* no log yet */ }
+  open();
+  return {
+    write: (text) => {
+      if (fd < 0) return;
+      try {
+        fs.writeSync(fd, text);
+        if (fs.fstatSync(fd).size > cap) rotate();
+      } catch { /* dropped */ }
+    },
+    close: () => { try { fs.closeSync(fd); } catch { /* ignore */ } fd = -1; },
+  };
+}
+
+/** An error's code (ENOENT, EACCES, …) — its message can quote env values, so it is never printed. */
+function errorCode(e: unknown): string {
   const code = (e as NodeJS.ErrnoException | null)?.code;
-  return `${label(spec)}: could not start ${command}: ${typeof code === 'string' && /^[A-Z0-9_]+$/.test(code) ? code : 'spawn failed'}`;
+  return typeof code === 'string' && /^[A-Z0-9_]+$/.test(code) ? code : 'failed';
+}
+
+function startFailure(spec: LaunchSpec, command: string, e: unknown): string {
+  return `${label(spec)}: could not start ${command}: ${errorCode(e)}`;
+}
+
+function describeExit(x: LauncherExit): string {
+  return x.signal ? `exited on signal ${x.signal}` : `exited with code ${x.code}`;
 }
 
 const FORWARDED = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
 
-function runChild(plan: LaunchPlan, spec: LaunchSpec, baseEnv: NodeJS.ProcessEnv, spawn: typeof nodeSpawn, stderr: (line: string) => void, redact: (line: string) => string): Promise<LauncherExit> {
+function runChild(plan: LaunchPlan, spec: LaunchSpec, secretsDir: string, baseEnv: NodeJS.ProcessEnv, spawn: typeof nodeSpawn, stderr: (line: string) => void, redact: (line: string) => string): Promise<LauncherExit> {
   return new Promise((resolve) => {
     let child: ReturnType<typeof nodeSpawn>;
     try {
-      // stdin and stdout are the MCP channel and pass through untouched. stderr is piped only
-      // to redact it: mcp-remote logs fatal errors (a header error can quote the header), and
-      // the harness keeps MCP stderr in its logs.
+      // stdin and stdout are the MCP channel and pass through untouched. stderr goes to the
+      // integration's own 0600 log, never to the harness (which keeps MCP stderr in its logs).
       child = spawn(plan.command, plan.args, { stdio: ['inherit', 'inherit', 'pipe'], env: { ...baseEnv, ...plan.env } });
     } catch (e) {
       stderr(startFailure(spec, plan.command, e));
@@ -197,19 +270,34 @@ function runChild(plan: LaunchPlan, spec: LaunchSpec, baseEnv: NodeJS.ProcessEnv
     }
     const forward = (signal: NodeJS.Signals) => { try { child.kill(signal); } catch { /* already gone */ } };
     for (const s of FORWARDED) process.on(s, forward);
+    const logFile = integrationLogPath(secretsDir, spec.name);
+    let log: ReturnType<typeof openIntegrationLog> | null = null;
     let exited: LauncherExit | null = null;
+    let startFailed = false;
     let drained = !child.stderr;
     let settled = false;
     const settle = () => {
       if (settled || !exited || !drained) return;
       settled = true;
       for (const s of FORWARDED) process.off(s, forward);
+      log?.write(`--- ${new Date().toISOString()} pid ${process.pid}: ${describeExit(exited)} ---\n`);
+      log?.close();
+      // The harness hears only this fixed line, and only when the server did not exit cleanly.
+      if (!startFailed && (exited.code !== 0 || exited.signal)) {
+        stderr(`${label(spec)}: ${describeExit(exited)}${log ? `; its stderr is in ${logFile}` : ''}`);
+      }
       resolve(exited);
     };
     let flush = () => {};
     const drain = () => { if (drained) return; flush(); drained = true; settle(); };
     if (child.stderr) {
-      flush = pipeRedacted(child.stderr, redact, stderr);
+      try {
+        log = openIntegrationLog(logFile);
+        log.write(`--- ${new Date().toISOString()} pid ${process.pid}: started ---\n`);
+      } catch (e) {
+        stderr(`${label(spec)}: could not open its log ${logFile} (${errorCode(e)}); its stderr is discarded`);
+      }
+      flush = pipeRedacted(child.stderr, redact, (text) => log?.write(text));
       child.stderr.on('end', drain);
       child.stderr.on('error', drain);
     }
@@ -221,7 +309,7 @@ function runChild(plan: LaunchPlan, spec: LaunchSpec, baseEnv: NodeJS.ProcessEnv
     });
     child.on('error', (e) => {
       stderr(startFailure(spec, plan.command, e));
-      exited ??= { code: 127, signal: null };
+      if (!exited) { startFailed = true; exited = { code: 127, signal: null }; }
       drain();
       settle();
     });
@@ -269,13 +357,13 @@ export async function runLauncher(argv: string[], deps: LauncherDeps = {}): Prom
     return { code: 1, signal: null };
   }
 
-  return runChild(buildLaunch(spec, values), spec, env, deps.spawn ?? nodeSpawn, stderr, redactor(Object.values(values)));
+  return runChild(buildLaunch(spec, values), spec, secretsDir, env, deps.spawn ?? nodeSpawn, stderr, redactor(Object.values(values)));
 }
 
 /**
  * End the launcher once its stderr queue has reached the pipe. On macOS a pipe write is async,
- * so process.exit() or a self-kill would drop queued lines when the harness reads slowly —
- * often the server's last, fatal line. An empty write's callback runs after every earlier
+ * so process.exit() or a self-kill would drop a queued line when the harness reads slowly —
+ * such as the "exited with code N" line. An empty write's callback runs after every earlier
  * write; the fallback stops a harness that never reads from holding us open forever.
  */
 function afterStderrFlush(end: () => void): void {

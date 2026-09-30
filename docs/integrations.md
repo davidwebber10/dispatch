@@ -45,10 +45,19 @@ GITHUB_TOKEN=${GITHUB_PAT}                 # an env value (remote or local)
 - **Where the value goes:** only into the MCP server process's environment. It is never in
   a command line (an EDR agent can log every process's argv), a config file, `dispatch.db`,
   a log line, or the agent's own shell environment.
-- **Logs and bad values:** the launcher redacts resolved values from the server's stderr,
-  and refuses to start a server when a value has a NUL byte (or a CR/LF, in a header).
-  Redaction covers the verbatim and JSON-escaped forms of values of 4+ characters, not
-  other transformations (base64, URL-encoding, a partial value).
+- **Where the server's stderr goes:** to its own log,
+  `~/.dispatch/logs/integrations/<name>.log` (folder `0700`, file `0600`, rotated once to
+  `<name>.log.1` at about 1 MiB), never to the CLI. The CLI keeps MCP stderr in its own logs,
+  and a server can print a value in forms no filter can catch (an object dump with escapes,
+  a 1–3 character value). The log redacts the verbatim and JSON-escaped forms of values of
+  4+ characters, but it can still hold other encodings of a value, which is why it is `0600`.
+  Every thread runs its own copy of the server, so lines from several threads can mix in one
+  log; `--- … pid N: started ---` and `exited` markers separate the runs.
+- **What the CLI's MCP log gets:** fixed lines only. Nothing on a normal run;
+  `dispatch integration "<name>": exited with code N; its stderr is in <path>` when the
+  server fails; and the lines for a missing ref, a spawn error (its code only), or a bad value.
+- **Bad values:** the launcher refuses to start a server when a value has a NUL byte (or a
+  CR/LF, in a header).
 - **Literal values keep today's path.** An env value without a ref goes to the harness
   exactly as before (the per-thread config file for Claude Code; for a Codex CLI thread that
   path is a `-c` flag on its command line). A literal header value is always on the
