@@ -2,6 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { DopplerError, type DopplerClient } from './doppler-client.js';
 import { secretNames } from './secret-names.js';
+import { secretSummary } from './secret-summary.js';
 import { writeConfirmation } from './write-confirmation.js';
 
 export interface ToolOptions {
@@ -45,7 +46,7 @@ export function registerTools(server: McpServer, doppler: DopplerClient, opts: T
     {
       description:
         'List the names of all secrets in a Doppler config. Values are not returned; ' +
-        'use doppler_get_secret to read one value.',
+        'use doppler_get_secret to check one secret.',
       inputSchema: {
         project: z.string().optional(),
         config: z.string().optional(),
@@ -68,16 +69,28 @@ export function registerTools(server: McpServer, doppler: DopplerClient, opts: T
   server.registerTool(
     'doppler_get_secret',
     {
-      description: 'Get a single secret by name from a Doppler config.',
+      description:
+        'Check one secret in a Doppler config: whether it exists, its length, and its type. ' +
+        'The value is not returned unless reveal is true, and a returned value stays in this ' +
+        'conversation. To USE a secret, run the command with ' +
+        '`doppler run --project <p> --config <c> -- <command>` so the value goes into that ' +
+        "process's environment instead. Set reveal: true only when the user asks to see the value.",
       inputSchema: {
         name: z.string(),
         project: z.string().optional(),
         config: z.string().optional(),
+        reveal: z.boolean().optional(),
       },
     },
-    async ({ name, project, config }) => {
+    async ({ name, project, config, reveal }) => {
       try {
-        return ok(await doppler.read(`/v3/configs/config/secret?${qs(project, config, { name })}`));
+        const body = await doppler.read(`/v3/configs/config/secret?${qs(project, config, { name })}`);
+        return ok({
+          project: project ?? opts.project,
+          config: config ?? opts.config,
+          name,
+          ...secretSummary(body, reveal === true),
+        });
       } catch (e) {
         return fail(e);
       }

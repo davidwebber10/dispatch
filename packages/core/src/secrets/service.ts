@@ -223,7 +223,8 @@ export class SecretsService {
       `so the value goes into the process env instead of this transcript. The command must read the secret from its ` +
       `own environment (a tool that reads an env var, or a config that references it); never expand \`$NAME\` into ` +
       `a command argument or inside \`sh -c\`, because every process's arguments are visible on this machine. ` +
-      `Call doppler_get_secret (it reads one secret's value) only when you need the value itself. ` +
+      `doppler_get_secret checks whether a secret exists; it returns the value only with reveal: true, which you ` +
+      `set only when the user asks to see the value. ` +
       (c.readOnly ? '' : `Store new secrets with doppler_set_secret. `) +
       `Never hardcode secrets, write them to .env files, or commit them to the repo.`;
     return c.readOnly
