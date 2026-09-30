@@ -27,9 +27,11 @@ afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
 // refuses to move the new payload (…/aws-cli) or the old copy back (…/old), or acts right after the
 // recipe moves the old copy aside (…/opt/aws): sends it SIGTERM, or moves the copy straight back the
 // way a second installer's recovery would; or creates opt/aws just before the new payload's rename.
+// rm, when given a pid, kills that process (and waits until it is gone) as the prune pass removes
+// the .aws-stage.0first dir, which sorts first: so that owner is alive for recovery, dead for prune.
 async function installAwsWithStubs(opts: {
   curlFails?: boolean; payloadWorks?: boolean; payloadMoveFails?: boolean; restoreFails?: boolean;
-  termAfterBackup?: boolean; backupStolen?: boolean; optCreatedAtRename?: boolean;
+  termAfterBackup?: boolean; backupStolen?: boolean; optCreatedAtRename?: boolean; killAtPrune?: number;
 } = {}): Promise<void> {
   const stubs = path.join(root, 'stubs');
   fs.mkdirSync(stubs, { recursive: true });
@@ -50,6 +52,9 @@ async function installAwsWithStubs(opts: {
     ...(opts.backupStolen ? ['case "$1" in */opt/aws) /bin/mv "$@"; /bin/mv "$2" "$1"; exit 0 ;; esac'] : []),
     ...(opts.optCreatedAtRename ? ['case "$1" in */aws-cli) mkdir -p "$2" ;; esac'] : []),
     'exec /bin/mv "$@"');
+  if (opts.killAtPrune) stub('rm',
+    `case "$*" in *.aws-stage.0first*) kill ${opts.killAtPrune}; i=0; while kill -0 ${opts.killAtPrune} 2>/dev/null && [ $i -lt 100 ]; do sleep 0.05; i=$((i+1)); done ;; esac`,
+    'exec /bin/rm "$@"');
   vi.stubEnv('PATH', `${stubs}${path.delimiter}${process.env.PATH}`);
   try {
     expect(execFileSync('/bin/sh', ['-c', 'command -v curl'], { encoding: 'utf8' }).trim()).toBe(path.join(stubs, 'curl')); // never the network
@@ -223,6 +228,29 @@ describe('manifest', () => {
     expect(stages).toHaveLength(1);
     expect(fs.existsSync(path.join(p.opt, stages[0], 'old', 'old-only'))).toBe(true); // kept for recovery
     expect(fs.existsSync(path.join(p.opt, '.aws.lock'))).toBe(false);
+  });
+
+  it('aws recipe recovers, rather than prunes, the only copy when its owner dies between the recovery and prune passes', async () => {
+    // Install A holds opt/aws in its stage's old/ and is alive while this install's recovery pass
+    // looks (so it is skipped), then dies before the prune pass. The download then fails, so the
+    // only copy left must be the one prune moved back.
+    const p = toolPaths(base);
+    // A double-forked sleep: launchd/init reaps it once killed, so `kill -0` sees it gone even while
+    // this test process sits blocked in execSync.
+    const owner = Number(execFileSync('/bin/sh', ['-c', 'sleep 30 </dev/null >/dev/null 2>&1 & echo $!'], { cwd: sandbox, encoding: 'utf8' }).trim());
+    expect(owner).toBeGreaterThan(1); // the rm stub runs `kill <owner>`: never 0 (our group) or 1
+    const stageA = `.aws-stage.${owner}.aaaaaa`;
+    try {
+      seedWorkingAws();
+      fs.mkdirSync(path.join(p.opt, stageA));
+      fs.renameSync(path.join(p.opt, 'aws'), path.join(p.opt, stageA, 'old'));
+      fs.mkdirSync(path.join(p.opt, '.aws-stage.0first'));
+      lockAws(spawnSync('true').pid!); // the stale lock this install takes over
+      await expect(installAwsWithStubs({ curlFails: true, killAtPrune: owner })).rejects.toThrow();
+    } finally { try { process.kill(owner); } catch { /* already gone */ } }
+    expect(execFileSync(path.join(p.bin, 'aws'), { encoding: 'utf8' })).toContain('aws-cli/1 old');
+    expect(fs.existsSync(path.join(p.opt, 'aws', 'old-only'))).toBe(true);
+    expect(fs.readdirSync(p.opt)).toEqual(['aws']);
   });
 
   it('aws recipe first moves back an old copy that a SIGKILL between the renames left in a stage dir', async () => {
