@@ -165,28 +165,31 @@ export function redactor(values: string[]): (line: string) => string {
 const MAX_PENDING = 64 * 1024;
 
 /**
- * Line-buffer a stream through `redact` into `write` (text, with its \n); returns a flush for a
- * partial last line. A line ends at \n, \r\n, or a lone \r (progress output, which would
- * otherwise never flush). A \r that ends a chunk waits for the next one, which may bring its
- * \n. An unterminated line past MAX_PENDING is written through in pieces, so memory stays
- * bounded; a value split across two pieces is not redacted, which the 0600 log file accepts.
+ * Line-buffer a stream through `redact` into `write` (one batch of text, lines ending in \n, per
+ * chunk); returns a flush for a partial last line. A line ends at \n, \r\n, or a lone \r
+ * (progress output, which would otherwise never flush). A \r that ends a chunk waits for the
+ * next one, which may bring its \n. An unterminated line past MAX_PENDING is written through in
+ * pieces, so memory stays bounded; a value split across two pieces is not redacted, which the
+ * 0600 log file accepts.
  */
 export function pipeRedacted(stream: Readable, redact: (line: string) => string, write: (text: string) => void): () => void {
   let pending = '';
   stream.setEncoding('utf8');
   stream.on('data', (chunk: string) => {
     pending += chunk;
+    let out = '';
     const eol = /\r\n|\n|\r(?!$)/g;
     let start = 0;
     for (let m = eol.exec(pending); m; m = eol.exec(pending)) {
-      write(redact(pending.slice(start, m.index)) + '\n');
+      out += redact(pending.slice(start, m.index)) + '\n';
       start = m.index + m[0].length;
     }
     pending = pending.slice(start);
     while (pending.length > MAX_PENDING) {
-      write(redact(pending.slice(0, MAX_PENDING)));
+      out += redact(pending.slice(0, MAX_PENDING));
       pending = pending.slice(MAX_PENDING);
     }
+    if (out) write(out);
   });
   return () => { if (pending) write(redact(pending.replace(/\r$/, '')) + '\n'); pending = ''; };
 }
@@ -200,43 +203,106 @@ export function integrationLogPath(secretsDir: string, name: string | undefined)
   return path.join(secretsDir, 'logs', 'integrations', `${safe}.log`);
 }
 
+/** A rotation lock older than this is stale whatever its pid says (pid reuse, a crash before the pid was written). */
+const LOCK_STALE_MS = 30_000;
+
+function lockIsStale(lock: string): boolean {
+  try {
+    const pid = Number(fs.readFileSync(path.join(lock, 'pid'), 'utf8'));
+    if (Number.isInteger(pid) && pid > 0) {
+      try { process.kill(pid, 0); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ESRCH') return true; }
+    }
+  } catch { /* no pid yet: the holder may still be writing it */ }
+  try { return Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS; } catch { return false; }
+}
+
 /**
- * An append-only log in a 0700 dir, file 0600 (both tightened if they already exist). It
- * rotates once to `.1` at open and whenever it grows past `cap`; each thread runs its own
- * launcher, so several may append to one file, and a rotation moves the file only if it is
- * still the one this launcher has open. Write errors are dropped: a full disk must never stop
- * the server.
+ * Take the cross-process rotation lock: an atomic mkdir that holds our pid. A stale lock is
+ * renamed away before it is removed, so of two launchers taking it over, only one wins.
  */
-export function openIntegrationLog(file: string, cap = LOG_CAP): { write: (text: string) => void; close: () => void } {
+function tryLock(lock: string): boolean {
+  try {
+    fs.mkdirSync(lock, { mode: 0o700 });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'EEXIST' || !lockIsStale(lock)) return false;
+    const away = `${lock}.stale-${process.pid}-${Date.now()}`;
+    try { fs.renameSync(lock, away); } catch { return false; }
+    try { fs.rmSync(away, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { fs.mkdirSync(lock, { mode: 0o700 }); } catch { return false; }
+  }
+  try { fs.writeFileSync(path.join(lock, 'pid'), String(process.pid), { mode: 0o600 }); } catch { /* the age check still covers it */ }
+  return true;
+}
+
+function unlock(lock: string): void {
+  try { fs.rmSync(lock, { recursive: true, force: true }); } catch { /* ignore */ }
+}
+
+/**
+ * An append-only log in a 0700 dir, file 0600 (both tightened if they already exist, before any
+ * rename). Each thread runs its own launcher, so several may append to one file:
+ *   - before each write batch the descriptor is checked against the file now at the path, and
+ *     reopened if another launcher rotated it away (once or twice), so no line lands in an
+ *     unlinked file;
+ *   - rotation (once, to `.1`, at open and whenever the file grows past `cap`) runs under a
+ *     cross-process lock (`<name>.log.lock`) and re-checks the size under it, so a second
+ *     rotation can never move a new file over the populated backup.
+ * Write errors are dropped: a full disk must never stop the server.
+ */
+export function openIntegrationLog(
+  file: string,
+  cap = LOG_CAP,
+  /** Test seam: `beforeRename` runs inside a rotation, between its size check and its rename. */
+  hooks: { beforeRename?: () => void } = {},
+): { write: (text: string) => void; close: () => void } {
   const dir = path.dirname(file);
+  const lock = `${file}.lock`;
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   fs.chmodSync(dir, 0o700);
   let fd = -1;
-  const open = () => {
+  let closed = false;
+  const current = () => {
+    let atPath: fs.Stats | null = null;
+    try { atPath = fs.statSync(file); } catch { /* rotated away: the open below recreates it */ }
+    if (fd >= 0) {
+      const mine = fs.fstatSync(fd);
+      if (atPath && mine.ino === atPath.ino && mine.dev === atPath.dev) return;
+      try { fs.closeSync(fd); } catch { /* ignore */ }
+      fd = -1;
+    }
     fd = fs.openSync(file, 'a', 0o600);
     fs.fchmodSync(fd, 0o600);
   };
-  const rotate = () => {
+  const rotateIfOver = () => {
+    if (!tryLock(lock)) return; // another launcher is rotating; our next write reopens its new file
     try {
-      const mine = fs.fstatSync(fd);
-      const atPath = fs.statSync(file);
-      if (mine.ino === atPath.ino && mine.dev === atPath.dev) fs.renameSync(file, `${file}.1`);
-    } catch { /* already moved by another launcher — just reopen */ }
-    try { fs.closeSync(fd); } catch { /* ignore */ }
-    fd = -1;
-    open();
+      if (fs.statSync(file).size > cap) {
+        fs.chmodSync(file, 0o600);
+        hooks.beforeRename?.();
+        fs.renameSync(file, `${file}.1`);
+        fs.chmodSync(`${file}.1`, 0o600);
+      }
+    } catch { /* already gone: nothing to rotate */ } finally {
+      unlock(lock);
+    }
   };
-  try { if (fs.statSync(file).size > cap) fs.renameSync(file, `${file}.1`); } catch { /* no log yet */ }
-  open();
+  try { fs.chmodSync(file, 0o600); } catch { /* no log yet */ }
+  try { if (fs.statSync(file).size > cap) rotateIfOver(); } catch { /* no log yet */ }
+  current();
   return {
     write: (text) => {
-      if (fd < 0) return;
+      if (closed) return;
       try {
+        current();
         fs.writeSync(fd, text);
-        if (fs.fstatSync(fd).size > cap) rotate();
+        if (fs.fstatSync(fd).size > cap) rotateIfOver();
       } catch { /* dropped */ }
     },
-    close: () => { try { fs.closeSync(fd); } catch { /* ignore */ } fd = -1; },
+    close: () => {
+      closed = true;
+      try { fs.closeSync(fd); } catch { /* ignore */ }
+      fd = -1;
+    },
   };
 }
 

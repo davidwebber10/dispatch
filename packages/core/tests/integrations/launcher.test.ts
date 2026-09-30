@@ -349,6 +349,74 @@ describe('integration log file', () => {
     expect(fs.readFileSync(file, 'utf8')).toBe('fresh\n');
   });
 
+  it('startup rotation tightens an oversized 0644 log before moving it, so .log.1 is 0600', () => {
+    const file = integrationLogPath(sb.secretsDir, 'linear');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, 'x'.repeat(2000), { mode: 0o644 });
+    fs.chmodSync(file, 0o644);
+    openIntegrationLog(file, 1000).close();
+    expect(fs.statSync(`${file}.1`).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+  });
+
+  /** Everything the two named logs hold. */
+  const bothLogs = (file: string) => [file, `${file}.1`].map((f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '')).join('');
+  const line100 = (tag: string) => `${tag.padEnd(99, '.')}\n`;
+
+  it('a quiet writer whose file was rotated away twice reopens before writing, so its line is not lost', () => {
+    const file = integrationLogPath(sb.secretsDir, 'linear');
+    const quiet = openIntegrationLog(file, 1000);
+    quiet.write('quiet start\n');
+    const busy = openIntegrationLog(file, 1000);
+    for (let i = 0; i < 25; i++) busy.write(line100(`busy ${i}`)); // rotates twice
+    quiet.write('quiet FATAL line\n');
+    quiet.close();
+    busy.close();
+    expect(bothLogs(file)).toContain('quiet FATAL line\n');
+  });
+
+  it('rotation is serialized: a second rotation during the first cannot move a new file over the populated backup', () => {
+    const file = integrationLogPath(sb.secretsDir, 'linear');
+    let b: ReturnType<typeof openIntegrationLog> | null = null;
+    let raced = false;
+    // A's rotation has checked the size; before it renames, B writes past the cap and tries to rotate too.
+    const a = openIntegrationLog(file, 1000, { beforeRename: () => { if (!raced) { raced = true; b!.write(line100('B during A rotation').repeat(11)); } } });
+    b = openIntegrationLog(file, 1000);
+    a.write(line100('A populated').repeat(11));
+    a.write('A after\n');
+    b.write('B after\n');
+    a.close();
+    b.close();
+    expect(raced).toBe(true);
+    const backup = fs.readFileSync(`${file}.1`, 'utf8');
+    expect(backup).toContain('A populated');
+    expect(backup).toContain('B during A rotation');
+    expect(fs.readFileSync(file, 'utf8')).toBe('A after\nB after\n');
+    expect(fs.existsSync(`${file}.lock`)).toBe(false);
+  });
+
+  it('takes over a stale rotation lock (dead pid) and removes it after rotating', () => {
+    const file = integrationLogPath(sb.secretsDir, 'linear');
+    fs.mkdirSync(`${file}.lock`, { recursive: true });
+    fs.writeFileSync(path.join(`${file}.lock`, 'pid'), '4194305'); // above the largest pid Linux or macOS can assign: never alive
+    const log = openIntegrationLog(file, 1000);
+    log.write(line100('fill').repeat(11));
+    log.close();
+    expect(fs.readFileSync(`${file}.1`, 'utf8')).toContain('fill');
+    expect(fs.existsSync(`${file}.lock`)).toBe(false);
+  });
+
+  it('leaves a live rotation lock alone and skips that rotation', () => {
+    const file = integrationLogPath(sb.secretsDir, 'linear');
+    fs.mkdirSync(`${file}.lock`, { recursive: true });
+    fs.writeFileSync(path.join(`${file}.lock`, 'pid'), String(process.pid));
+    const log = openIntegrationLog(file, 1000);
+    log.write(line100('fill').repeat(11));
+    log.close();
+    expect(fs.existsSync(`${file}.1`)).toBe(false);
+    expect(fs.readFileSync(path.join(`${file}.lock`, 'pid'), 'utf8')).toBe(String(process.pid));
+  });
+
   it('rotates once to .log.1 when it grows past the cap while running', () => {
     const file = integrationLogPath(sb.secretsDir, 'linear');
     const log = openIntegrationLog(file, 1000);
