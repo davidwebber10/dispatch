@@ -9,8 +9,12 @@ const desc: React.CSSProperties = { fontSize: 12.5, color: 'var(--color-text-sec
 const colHead: React.CSSProperties = { font: '600 9.5px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
 const grid = 'minmax(230px,1.2fr) 130px 160px minmax(120px,0.5fr)';
 
-type Bucket = 'needs-auth' | 'ready' | 'missing';
-const bucketOf = (t: ToolStatus): Bucket => (!t.installed ? 'missing' : t.authed ? 'ready' : 'needs-auth');
+type Bucket = 'needs-auth' | 'unchecked' | 'ready' | 'missing';
+const bucketOf = (t: ToolStatus): Bucket => {
+  if (!t.installed) return 'missing';
+  const state = t.authState ?? (t.authed ? 'ok' : 'needed'); // older daemons send only `authed`
+  return state === 'ok' ? 'ready' : state === 'unknown' ? 'unchecked' : 'needs-auth';
+};
 
 // When the daemon last ran each CLI's sign-in check (it caches the answer for a few minutes).
 function checkedLabel(iso: string | null): string {
@@ -24,7 +28,9 @@ function StatusCell({ bucket }: { bucket: Bucket }) {
     ? ['var(--color-accent)', 'var(--color-text-secondary)', 'installed · authed']
     : bucket === 'needs-auth'
       ? ['var(--color-status-red)', 'var(--color-status-red)', 'needs auth']
-      : ['#4a4a52', 'var(--color-text-tertiary)', 'not installed'];
+      : bucket === 'unchecked'
+        ? ['var(--color-text-tertiary)', 'var(--color-text-secondary)', "couldn't check"]
+        : ['#4a4a52', 'var(--color-text-tertiary)', 'not installed'];
   return (
     <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
       <span style={{ width: 6, height: 6, borderRadius: '50%', background: dot }} />
@@ -54,6 +60,7 @@ export function ToolsSection() {
   const matched = query ? tools.filter((t) => t.name.toLowerCase().includes(query.toLowerCase()) || t.description.toLowerCase().includes(query.toLowerCase())) : tools;
   const ready = matched.filter((t) => bucketOf(t) === 'ready');
   const needsAuth = matched.filter((t) => bucketOf(t) === 'needs-auth');
+  const unchecked = matched.filter((t) => bucketOf(t) === 'unchecked');
   const missing = matched.filter((t) => bucketOf(t) === 'missing');
   const needsAuthTotal = tools.filter((t) => bucketOf(t) === 'needs-auth').length;
 
@@ -86,6 +93,7 @@ export function ToolsSection() {
 
   const groups: { key: Bucket; label: string; tone: 'accent' | 'red' | 'neutral'; hint: string; items: ToolStatus[] }[] = [
     { key: 'needs-auth', label: 'NEEDS AUTH', tone: 'red', hint: 'Installed, but the agent cannot use them yet', items: needsAuth },
+    { key: 'unchecked', label: "COULDN'T CHECK", tone: 'neutral', hint: 'The sign-in check gave no answer — try Check again', items: unchecked },
     { key: 'ready', label: 'READY', tone: 'accent', hint: 'Available in every thread', items: ready },
     { key: 'missing', label: 'MISSING', tone: 'neutral', hint: 'Not found on PATH', items: missing },
   ];

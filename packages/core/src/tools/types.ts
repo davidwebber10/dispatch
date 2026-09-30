@@ -24,12 +24,17 @@ export interface ToolEntry {
    *  other platforms yet should be gated here rather than failing at install time. */
   platforms?: string[];
 }
+/** 'needed' = sign-in is missing or failed; 'unknown' = it has a check that gave no answer
+ *  (or has not run yet) and no auth env to go by. */
+export type ToolAuthState = 'ok' | 'needed' | 'unknown';
 export interface ToolStatus {
   name: string;
   description: string;
   kind: ToolEntry['kind'];
   installed: boolean;
   version?: string;
+  /** authState === 'ok'; kept for older clients. */
   authed: boolean;
+  authState: ToolAuthState;
   docs?: string;
 }

@@ -60,11 +60,15 @@ interface CachedRun { results: Record<string, AuthCheckOutcome>; checkedAtMs: nu
  *
  * The cache belongs to the env it was checked with (a fingerprint of it, so an equal env from
  * a fresh refreshPtyEnv keeps it). Once the thread env changes — a Doppler disconnect, a new
- * secret — the old answer is dropped, and a run that started under the old env never publishes.
+ * secret — the old answer is dropped. A generation counter, bumped by every env change and
+ * every run start, lets only the newest run publish: an older run cannot overwrite a newer
+ * answer, even one for the same env (A → B → A).
  */
 export class ToolAuthProber {
   private cached: CachedRun | null = null;
-  private inFlight: { envKey: string; promise: Promise<ToolAuthSnapshot> } | null = null;
+  private inFlight: { envKey: string; generation: number; promise: Promise<ToolAuthSnapshot> } | null = null;
+  private generation = 0;
+  private lastEnvKey: string | null = null;
   private spawnEnv: Record<string, string> = {};
   private readonly base?: string;
   private readonly env?: Record<string, string | undefined>;
@@ -85,7 +89,11 @@ export class ToolAuthProber {
   }
 
   /** The spawn env threads get (refreshPtyEnv in server.ts); the latest one wins. */
-  setSpawnEnv(env: Record<string, string>): void { this.spawnEnv = env; }
+  setSpawnEnv(env: Record<string, string>): void {
+    this.spawnEnv = env;
+    const envKey = fingerprint(this.threadEnv());
+    if (envKey !== this.lastEnvKey) { this.lastEnvKey = envKey; this.generation++; }
+  }
 
   threadEnv(): Record<string, string> {
     const out: Record<string, string> = {};
@@ -104,16 +112,18 @@ export class ToolAuthProber {
   }
 
   /**
-   * Re-run every check. Callers share a run only when it checks the env they see now — a
-   * "Check again" after an env change starts its own. Never throws.
+   * Re-run every check. Callers share a run only while it is still the newest and checks the
+   * env they see now — a "Check again" after an env change starts its own. Never throws.
    */
   refresh(): Promise<ToolAuthSnapshot> {
     const env = this.threadEnv();
     const envKey = fingerprint(env);
-    if (this.inFlight?.envKey === envKey) return this.inFlight.promise;
-    const promise: Promise<ToolAuthSnapshot> = this.runAll(env, envKey)
+    const f = this.inFlight;
+    if (f && f.generation === this.generation && f.envKey === envKey) return f.promise;
+    const generation = ++this.generation;
+    const promise: Promise<ToolAuthSnapshot> = this.runAll(env, envKey, generation)
       .finally(() => { if (this.inFlight?.promise === promise) this.inFlight = null; });
-    this.inFlight = { envKey, promise };
+    this.inFlight = { envKey, generation, promise };
     return promise;
   }
 
@@ -122,7 +132,7 @@ export class ToolAuthProber {
     return this.cached && this.cached.envKey === fingerprint(this.threadEnv()) ? this.cached : null;
   }
 
-  private async runAll(env: Record<string, string>, envKey: string): Promise<ToolAuthSnapshot> {
+  private async runAll(env: Record<string, string>, envKey: string, generation: number): Promise<ToolAuthSnapshot> {
     try {
       const p = toolPaths(this.base);
       const family = hostOsFamily();
@@ -132,9 +142,9 @@ export class ToolAuthProber {
       const outcomes = await Promise.all(entries.map((e) => this.check(e, p.bin, env)));
       const results: Record<string, AuthCheckOutcome> = {};
       entries.forEach((e, i) => { results[e.name] = outcomes[i]; });
-      // The env moved on while this ran: the answer is for credentials threads no longer get.
-      // Leave the cache stale; the next read re-checks.
-      if (fingerprint(this.threadEnv()) === envKey) this.cached = { results, checkedAtMs: this.now(), envKey };
+      // Publish only as the newest run, under the env it checked. Otherwise the env moved on
+      // or a newer run owns the answer: leave the cache alone.
+      if (generation === this.generation && fingerprint(this.threadEnv()) === envKey) this.cached = { results, checkedAtMs: this.now(), envKey };
     } catch { /* keep the last answer */ }
     return this.snapshot();
   }

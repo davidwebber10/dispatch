@@ -80,13 +80,14 @@ describe('GET /api/tools with an auth prober', () => {
     expect(run).toHaveBeenCalledTimes(2);
   });
 
-  it('a failed check wins over the auth env; an unknown one falls back to the thread env', async () => {
+  it('serves authState: a failed check wins over the auth env; an unknown one falls back to the thread env', async () => {
+    const state = async (url: string) => { const t = fakecli(await request(rapp).get(url)); return [t.authState, t.authed]; };
     prober.setSpawnEnv({ FAKECLI_TOKEN: 'expired-token' });
     run.mockImplementation(async () => 'failed');
-    expect(fakecli(await request(rapp).get('/api/tools')).authed).toBe(false);
+    expect(await state('/api/tools')).toEqual(['needed', false]);
     run.mockImplementation(async () => 'unknown');
-    expect(fakecli(await request(rapp).get('/api/tools?refresh=1')).authed).toBe(true);
+    expect(await state('/api/tools?refresh=1')).toEqual(['ok', true]);
     prober.setSpawnEnv({}); // judged against the thread env, not the daemon's
-    expect(fakecli(await request(rapp).get('/api/tools')).authed).toBe(false);
+    expect(await state('/api/tools')).toEqual(['unknown', false]);
   });
 });

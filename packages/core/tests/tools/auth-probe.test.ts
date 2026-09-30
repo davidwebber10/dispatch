@@ -185,6 +185,29 @@ describe('ToolAuthProber when the thread env changes', () => {
     expect(prober.snapshot()).toEqual({ results: { alpha: 'failed' }, checkedAt: new Date(1_000_005).toISOString() });
     expect(calls).toHaveLength(2);
   });
+
+  it('A→B→A: only the newest run publishes, even when an older run checked the same env', async () => {
+    const calls: { token?: string; release: (o: AuthCheckOutcome) => void }[] = [];
+    const run: AuthCheckRunner = (_c, _a, { env }) => new Promise((r) => { calls.push({ token: env.DOPPLER_TOKEN, release: r }); });
+    let now = 1_000_000;
+    const prober = new ToolAuthProber({ base, env: { PATH: SYS_PATH }, run, now: () => now });
+    prober.setSpawnEnv({ DOPPLER_TOKEN: 'dp.st.a' });
+    const first = prober.refresh();
+    prober.setSpawnEnv({ DOPPLER_TOKEN: 'dp.st.b' });
+    const middle = prober.refresh();
+    prober.setSpawnEnv({ DOPPLER_TOKEN: 'dp.st.a' }); // back to A
+    const newest = prober.refresh(); // must not join `first`: the env changed since it started
+    await vi.waitFor(() => expect(calls).toHaveLength(3));
+    expect(calls.map((c) => c.token)).toEqual(['dp.st.a', 'dp.st.b', 'dp.st.a']);
+    now += 7;
+    calls[2].release('failed');
+    expect((await newest).results).toEqual({ alpha: 'failed' });
+    now += 100;
+    calls[0].release('ok'); // the oldest A run ends last, with a fresher clock
+    calls[1].release('ok');
+    await Promise.all([first, middle]);
+    expect(prober.snapshot()).toEqual({ results: { alpha: 'failed' }, checkedAt: new Date(1_000_007).toISOString() });
+  });
 });
 
 describe('ToolAuthProber (default runner, fake scripts)', () => {
@@ -239,7 +262,8 @@ describe('the default aws check (fake aws on PATH)', () => {
   // The fake answers only with instance metadata off, one attempt, and short per-attempt
   // timeouts. `sts get-caller-identity` succeeds only for FAKE_AWS_OK ('default' is the default
   // chain); every call sleeps FAKE_AWS_SLEEP seconds; FAKE_AWS_SLOW sleeps 2 s, then writes
-  // FAKE_AWS_MARK. FAKE_AWS_LOG gets a '+' when a call starts and a '-' when it ends.
+  // FAKE_AWS_MARK; the names in FAKE_AWS_HANG hang for 30 s (credential resolution that no
+  // socket timeout bounds). FAKE_AWS_LOG gets a '+' when a call starts and a '-' when it ends.
   const FAKE_AWS = [
     '[ "$AWS_EC2_METADATA_DISABLED" = "true" ] && [ "$AWS_MAX_ATTEMPTS" = "1" ] || exit 9',
     'if [ "$1 $2" = "configure list-profiles" ]; then printf "%s\\n" "$FAKE_AWS_PROFILES"; exit 0; fi',
@@ -255,6 +279,7 @@ describe('the default aws check (fake aws on PATH)', () => {
     'done',
     '[ -n "$ct" ] && [ "$ct" -le 5 ] && [ -n "$rt" ] && [ "$rt" -le 10 ] || exit 8',
     '[ -z "$FAKE_AWS_LOG" ] || echo + >> "$FAKE_AWS_LOG"',
+    'case " $FAKE_AWS_HANG " in *" $prof "*) sleep 30 ;; esac',
     'sleep "${FAKE_AWS_SLEEP:-0}"',
     'if [ "$prof" = "$FAKE_AWS_SLOW" ]; then sleep 2; touch "$FAKE_AWS_MARK"; fi',
     '[ -z "$FAKE_AWS_LOG" ] || echo - >> "$FAKE_AWS_LOG"',
@@ -299,6 +324,22 @@ describe('the default aws check (fake aws on PATH)', () => {
     expect(Date.now() - t0).toBeLessThan(1500); // did not wait for the slow 'dev' call
     await sleep(2300);
     expect(fs.existsSync(mark)).toBe(false);
+  });
+
+  it('refills a slot as soon as a call ends: a hung early call does not hold back the rest', async () => {
+    const profiles = Array.from({ length: 9 }, (_, i) => `p${i}`).join('\n');
+    const t0 = Date.now();
+    // The default chain hangs; p0–p2 fail fast; the valid profile is the 7th candidate.
+    expect(await probeAws({ FAKE_AWS_PROFILES: profiles, FAKE_AWS_HANG: 'default', FAKE_AWS_OK: 'p5' })).toBe('ok');
+    expect(Date.now() - t0).toBeLessThan(4000); // well before the hung call's watchdog (~6 s)
+  });
+
+  it('a wall-clock watchdog ends each call, so hung calls in every slot still let a later profile run', async () => {
+    // All four first slots hang. Only the per-call watchdog can free a slot for p3 inside the
+    // 15 s deadline — CLI socket timeouts do not bound credential resolution.
+    const t0 = Date.now();
+    expect(await probeAws({ FAKE_AWS_PROFILES: 'p0\np1\np2\np3', FAKE_AWS_HANG: 'default p0 p1 p2', FAKE_AWS_OK: 'p3' })).toBe('ok');
+    expect(Date.now() - t0).toBeLessThan(12_000);
   });
 
   it('a scan that cannot finish inside the deadline is unknown, not failed', async () => {

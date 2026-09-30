@@ -74,6 +74,30 @@ test('a failed re-check says so and keeps the last list', async () => {
   expect(screen.getByRole('button', { name: 'Check again' })).toBeEnabled();
 });
 
+test('a sign-in that could not be checked is a neutral "couldn\'t check", not "needs auth"', async () => {
+  vi.spyOn(api, 'getTools').mockResolvedValue({ tools: [
+    { name: 'gh', description: 'GitHub CLI', kind: 'binary', installed: true, authed: false, authState: 'needed' },
+    { name: 'aws', description: 'AWS CLI', kind: 'script', installed: true, authed: false, authState: 'unknown' },
+  ], checkedAt: null });
+  render(<ToolsSection />);
+  await waitFor(() => expect(screen.getByText('aws')).toBeInTheDocument());
+  expect(screen.getByText("COULDN'T CHECK")).toBeInTheDocument();
+  expect(screen.getByText('needs auth').getAttribute('style')).toContain('status-red'); // red is detectable here
+  expect(screen.getByText("couldn't check").getAttribute('style')).not.toContain('status-red');
+  expect(screen.getByText(/2 tools · 1 need auth/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /Needs auth 1/ }));
+  expect(screen.getByText('gh')).toBeInTheDocument();
+  expect(screen.queryByText('aws')).not.toBeInTheDocument();
+});
+
+test('without authState (an older daemon), authed alone decides', async () => {
+  vi.spyOn(api, 'getTools').mockResolvedValue(TOOLS);
+  render(<ToolsSection />);
+  await waitFor(() => expect(screen.getByText('gh')).toBeInTheDocument());
+  expect(screen.getByText('needs auth')).toBeInTheDocument();
+  expect(screen.queryByText("couldn't check")).not.toBeInTheDocument();
+});
+
 test('segmented filter narrows to one status group', async () => {
   vi.spyOn(api, 'getTools').mockResolvedValue(TOOLS);
   render(<ToolsSection />);

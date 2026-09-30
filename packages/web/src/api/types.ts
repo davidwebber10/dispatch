@@ -358,7 +358,8 @@ export interface DopplerSecret { name: string; value: string }
 export interface DopplerProject { id: string; slug: string; name: string }
 export interface DopplerConfig { name: string; environment: string }
 
-export interface ToolStatus { name: string; description: string; kind: 'binary' | 'npm' | 'script'; installed: boolean; version?: string; authed: boolean; docs?: string }
+/** `authState` 'unknown' = the sign-in check gave no answer (e.g. timed out). Older daemons send only `authed`. */
+export interface ToolStatus { name: string; description: string; kind: 'binary' | 'npm' | 'script'; installed: boolean; version?: string; authed: boolean; authState?: 'ok' | 'needed' | 'unknown'; docs?: string }
 /** GET /api/tools. `checkedAt` is when the CLI auth checks last ran (null until the first run). */
 export interface ToolsResponse { tools: ToolStatus[]; checkedAt: string | null }
 

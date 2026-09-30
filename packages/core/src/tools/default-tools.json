@@ -86,7 +86,7 @@
       "kind": "script",
       "bins": ["aws"],
       "authEnv": ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
-      "authCheck": { "shell": "export AWS_EC2_METADATA_DISABLED=true AWS_MAX_ATTEMPTS=1; trap 'exit 0' USR1; check() { aws sts get-caller-identity --cli-connect-timeout 3 --cli-read-timeout 5 \"$@\" && kill -s USR1 $$; }; check & n=1; IFS='\n'; set -f; set -- $(aws configure list-profiles); for p in \"$@\"; do if [ $n -ge 4 ]; then wait; n=0; fi; check --profile \"$p\" & n=$((n+1)); done; wait; exit 1" },
+      "authCheck": { "shell": "export AWS_EC2_METADATA_DISABLED=true AWS_MAX_ATTEMPTS=1; trap 'exit 0' USR1; check() { aws sts get-caller-identity --cli-connect-timeout 3 --cli-read-timeout 5 \"$@\" & a=$!; (sleep 6; kill $a) & w=$!; wait $a && kill -s USR1 $$; kill $w; }; check & live=$!; IFS='\n'; set -f; set -- $(aws configure list-profiles); unset IFS; for p in \"$@\"; do while :; do n=0; still=; for q in $live; do if kill -0 $q; then n=$((n+1)); still=\"$still $q\"; fi; done; live=$still; [ $n -lt 4 ] && break; sleep 0.2 || sleep 1; done; check --profile \"$p\" & live=\"$live $!\"; done; wait; exit 1" },
       "platforms": ["darwin"],
       "script": {
         "install": "set -e; tmp=$(mktemp -d); curl -fsSL \"https://awscli.amazonaws.com/AWSCLIV2.pkg\" -o \"$tmp/awscli.pkg\"; pkgutil --expand-full \"$tmp/awscli.pkg\" \"$tmp/x\"; PFX=$(find \"$tmp/x\" -type d -name 'aws-cli' | head -1); ln -sf \"$PFX/aws\" \"$TOOLS_BIN/aws\"; ln -sf \"$PFX/aws_completer\" \"$TOOLS_BIN/aws_completer\" 2>/dev/null || true"
