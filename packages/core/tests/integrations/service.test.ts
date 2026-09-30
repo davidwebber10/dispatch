@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { initSchema } from '../../src/db/schema.js';
 import { IntegrationsService } from '../../src/integrations/service.js';
+import { decodeLaunchSpec } from '../../src/integrations/launcher.js';
+import type { McpServerSpec } from '../../src/mcp/injection.js';
 
 function svc() { const d = new Database(':memory:'); initSchema(d); return new IntegrationsService(d); }
 
@@ -37,10 +39,78 @@ describe('IntegrationsService', () => {
     expect(s.getServerSpecs()).toEqual([{ name: 'linear', command: 'npx', args: ['-y', 'mcp-remote', 'https://mcp.linear.app/sse', '--header', 'Authorization:${LINEAR}'] }]);
   });
 
+  it('getServerSpecs keeps a ${VAR} stdio env as-is without a launcher', () => {
+    s.add({ type: 'stdio', name: 'gh', command: 'npx', args: ['-y', 'gh-mcp'], env: { GITHUB_TOKEN: '${GH_PAT}' } });
+    expect(s.getServerSpecs()).toEqual([{ name: 'gh', command: 'npx', args: ['-y', 'gh-mcp'], env: { GITHUB_TOKEN: '${GH_PAT}' } }]);
+  });
+
   it('getServerSpecs skips disabled rows', () => {
     const i = s.add({ type: 'stdio', name: 'fs', command: 'x' });
     s.setEnabled(i.id, false);
     expect(s.getServerSpecs()).toEqual([]);
+  });
+
+  describe('with a launcher configured', () => {
+    const launcher = { nodePath: '/usr/bin/node', launcherPath: '/app/dist/integrations/launcher.js', secretsDir: '/home/u/.dispatch' };
+    let l: IntegrationsService;
+    beforeEach(() => { const d = new Database(':memory:'); initSchema(d); l = new IntegrationsService(d, launcher); });
+
+    /** The launcher argv shape, with the spec decoded back to its templates. */
+    function unwrap(spec: McpServerSpec) {
+      expect(spec.command).toBe(launcher.nodePath);
+      expect(spec.args.slice(0, 4)).toEqual([launcher.launcherPath, '--secrets-dir', launcher.secretsDir, '--spec']);
+      expect(spec.args).toHaveLength(5);
+      return decodeLaunchSpec(spec.args[4]);
+    }
+
+    it('wraps a remote integration with a header ref; no ${...} left for a CLI to expand', () => {
+      l.add({ type: 'remote', name: 'linear', url: 'https://mcp.linear.app/sse', headers: { Authorization: 'Bearer ${LINEAR_TOKEN}' } });
+      const [spec] = l.getServerSpecs();
+      expect(spec.name).toBe('linear');
+      expect(spec.env).toBeUndefined();
+      expect(spec.args.join(' ')).not.toContain('${');
+      expect(unwrap(spec)).toEqual({ name: 'linear', type: 'remote', url: 'https://mcp.linear.app/sse', headers: { Authorization: 'Bearer ${LINEAR_TOKEN}' }, env: {} });
+    });
+
+    it('wraps a stdio integration with an env ref; a ref-only env moves wholly into the launcher spec', () => {
+      l.add({ type: 'stdio', name: 'gh', command: 'npx', args: ['-y', 'gh-mcp'], env: { GITHUB_TOKEN: '${GH_PAT}' } });
+      const [spec] = l.getServerSpecs();
+      expect(spec.env).toBeUndefined();
+      expect(unwrap(spec)).toEqual({ name: 'gh', type: 'stdio', command: 'npx', args: ['-y', 'gh-mcp'], env: { GITHUB_TOKEN: '${GH_PAT}' } });
+    });
+
+    it('keeps a literal env value out of argv: it stays on the spec env (today\'s path), only the ref goes into --spec', () => {
+      const LITERAL = 'fake-literal-secret-789';
+      l.add({ type: 'stdio', name: 'mixed', command: 'npx', args: ['-y', 'mixed-mcp'], env: { API_KEY: LITERAL, OTHER: '${X}' } });
+      const [spec] = l.getServerSpecs();
+      expect(spec.env).toEqual({ API_KEY: LITERAL });
+      const decoded = unwrap(spec);
+      expect(decoded.env).toEqual({ OTHER: '${X}' });
+      expect(spec.args.join(' ')).not.toContain(LITERAL);
+      expect(JSON.stringify(decoded)).not.toContain(LITERAL);
+    });
+
+    it('remote: a literal env value stays on the spec env next to a header ref', () => {
+      l.add({ type: 'remote', name: 'linear', url: 'https://mcp.linear.app/sse', headers: { Authorization: 'Bearer ${LINEAR_TOKEN}' }, env: { NODE_EXTRA_CA_CERTS: '/etc/ca.pem' } });
+      const [spec] = l.getServerSpecs();
+      expect(spec.env).toEqual({ NODE_EXTRA_CA_CERTS: '/etc/ca.pem' });
+      expect(unwrap(spec).env).toEqual({});
+      expect(JSON.stringify(unwrap(spec))).not.toContain('/etc/ca.pem');
+    });
+
+    it('keeps today\'s exact spec for integrations without refs', () => {
+      l.add({ type: 'stdio', name: 'fs', command: 'npx', args: ['-y', 'server-fs'], env: { ROOT: '/tmp' } });
+      l.add({ type: 'remote', name: 'open', url: 'https://mcp.example.com/sse', headers: { 'X-Team': 'eng' } });
+      expect(l.getServerSpecs()).toEqual([
+        { name: 'fs', command: 'npx', args: ['-y', 'server-fs'], env: { ROOT: '/tmp' } },
+        { name: 'open', command: 'npx', args: ['-y', 'mcp-remote', 'https://mcp.example.com/sse', '--header', 'X-Team:eng'] },
+      ]);
+    });
+
+    it('does not wrap for a ${VAR} in args or url alone (those are never resolved)', () => {
+      l.add({ type: 'stdio', name: 'argref', command: 'npx', args: ['--token', '${IN_ARGS}'] });
+      expect(l.getServerSpecs()).toEqual([{ name: 'argref', command: 'npx', args: ['--token', '${IN_ARGS}'] }]);
+    });
   });
 
   it('export omits id/timestamps; import replays and skips existing names', () => {
