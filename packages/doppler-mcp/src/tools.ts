@@ -1,6 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import type { DopplerClient } from './doppler-client.js';
+import { DopplerError, type DopplerClient } from './doppler-client.js';
 import { secretNames } from './secret-names.js';
 import { writeConfirmation } from './write-confirmation.js';
 
@@ -16,8 +16,14 @@ const ok = (data: unknown) => ({
   content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
 });
 
+// Only a DopplerError's text is ours. Any other exception (fetch, a body read) can quote the
+// token or a body — Node's fetch puts an invalid header value in its message — so it gets a
+// fixed text instead.
 const fail = (e: unknown) => ({
-  content: [{ type: 'text' as const, text: String(e instanceof Error ? e.message : e) }],
+  content: [{
+    type: 'text' as const,
+    text: e instanceof DopplerError ? e.message : 'Doppler request failed (network or client error)',
+  }],
   isError: true,
 });
 
@@ -96,8 +102,7 @@ export function registerTools(server: McpServer, doppler: DopplerClient, opts: T
     async ({ name, value, project, config }) => {
       const target = { project: project ?? opts.project, config: config ?? opts.config, name };
       try {
-        // The value is passed again so an error that quotes it can be redacted.
-        await doppler.write({ project: target.project, config: target.config, secrets: { [name]: value } }, value);
+        await doppler.write({ project: target.project, config: target.config, secrets: { [name]: value } });
         return ok(writeConfirmation('updated', target));
       } catch (e) {
         return fail(e);

@@ -1,16 +1,22 @@
 #!/usr/bin/env node
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { createDopplerClient } from './doppler-client.js';
+import { createDopplerClient, usableToken } from './doppler-client.js';
 import { registerTools } from './tools.js';
 
-const TOKEN = process.env.DOPPLER_TOKEN;
+const RAW_TOKEN = process.env.DOPPLER_TOKEN;
 const PROJECT = process.env.DOPPLER_PROJECT;
 const CONFIG = process.env.DOPPLER_CONFIG;
 const READ_ONLY = process.env.DOPPLER_READ_ONLY === '1';
 
-if (!TOKEN) {
+if (!RAW_TOKEN) {
   console.error('DOPPLER_TOKEN is required');
+  process.exit(1);
+}
+const TOKEN = usableToken(RAW_TOKEN);
+if (!TOKEN) {
+  // Never print the token itself.
+  console.error('DOPPLER_TOKEN is not usable: it is blank, or it contains a CR, LF, or NUL character');
   process.exit(1);
 }
 
