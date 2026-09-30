@@ -47,7 +47,7 @@ import { withShimPath } from './auth/shim.js';
 import { createToolsRouter } from './routes/tools.js';
 import { getToolsSpawnEnv, toolStatuses, awarenessNote } from './tools/status.js';
 import { SecretsService } from './secrets/service.js';
-import { IntegrationsService } from './integrations/service.js';
+import { IntegrationsService, type IntegrationLauncher } from './integrations/service.js';
 import { createEventsRouter } from './routes/events.js';
 import { createIntegrationsRouter } from './routes/integrations.js';
 import { PushService } from './push/service.js';
@@ -128,6 +128,17 @@ function wirePtyUsageCapture(
 /** Repo root, derived the same way as the webDist fallback below (works from both src/ in dev and dist/ once built, since both sit at the same depth under packages/core). */
 function resolveRepoRoot(): string {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+}
+
+/**
+ * The integration launcher (integrations/launcher.ts) for integrations with `${NAME}` refs,
+ * reading the Doppler connection saved in `secretsDir` — the SecretsService's own dir. Null
+ * when the compiled launcher.js isn't there (a tsx dev run), so those integrations keep
+ * their plain spec rather than point a harness at a missing file.
+ */
+function integrationLauncher(secretsDir: string): IntegrationLauncher | null {
+  const launcherPath = fileURLToPath(new URL('./integrations/launcher.js', import.meta.url));
+  return fs.existsSync(launcherPath) ? { nodePath: process.execPath, launcherPath, secretsDir } : null;
 }
 
 /**
@@ -306,7 +317,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const rolesService = new RolesService({ db, agentService, sessionService, pushService });
   agentService.setRoleRunner(rolesService);
   const secretsService = options.secretsService ?? new SecretsService(dispatchDir);
-  const integrationsService = new IntegrationsService(db);
+  const integrationsService = new IntegrationsService(db, integrationLauncher(dispatchDir));
   sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
   sessionService.setIntegrationsSpecs(() => integrationsService.getServerSpecs());
   sessionService.setToolsAwareness(() => awarenessNote(toolStatuses({ base: toolsBase })));
@@ -489,7 +500,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Doppler secrets: token-backed connection + per-spawn injection (DOPPLER_* env +
   // an MCP server) so Claude Code / Codex agents can add & retrieve secrets.
   const secretsService = new SecretsService(dataDir);
-  const integrationsService = new IntegrationsService(db);
+  const integrationsService = new IntegrationsService(db, integrationLauncher(dataDir));
   // Terminal-free Claude login (design doc §11.2). Its token is injected below in
   // refreshPtyEnv, so a box authenticated mid-session takes effect on the next spawn
   // without a daemon restart.

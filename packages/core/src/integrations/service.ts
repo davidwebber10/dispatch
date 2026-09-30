@@ -3,6 +3,11 @@ import type Database from 'better-sqlite3';
 import * as integrationsDb from '../db/integrations.js';
 import type { Integration } from '../db/integrations.js';
 import type { McpServerSpec } from '../mcp/injection.js';
+import { findSecretRefs } from './secret-refs.js';
+import { launcherArgs, type LaunchSpec } from './launcher.js';
+
+/** Where the integration launcher lives and which Doppler connection it reads (see launcher.ts). */
+export interface IntegrationLauncher { nodePath: string; launcherPath: string; secretsDir: string }
 
 export type AddIntegrationInput =
   | { type: 'remote'; name: string; url: string; headers?: Record<string, string>; env?: Record<string, string> }
@@ -14,7 +19,7 @@ export interface IntegrationsExport { version: 1; integrations: ExportedIntegrat
 const NAME_RE = /^[a-zA-Z0-9_-]+$/;
 
 export class IntegrationsService {
-  constructor(private db: Database.Database) {}
+  constructor(private db: Database.Database, private launcher: IntegrationLauncher | null = null) {}
 
   /** Returns an error string if the input is invalid, else null. */
   static validate(input: any): string | null {
@@ -53,7 +58,12 @@ export class IntegrationsService {
 
   setEnabled(id: string, enabled: boolean): Integration | null { return integrationsDb.setEnabled(this.db, id, enabled); }
 
-  /** Resolve every enabled integration to an McpServerSpec for composeInjection. */
+  /**
+   * Resolve every enabled integration to an McpServerSpec for composeInjection. One with
+   * `${NAME}` refs in a header or env value runs through the launcher (when configured),
+   * which resolves them from Doppler inside the server's own process; the spec carries
+   * templates only, and no `env`, since each harness treats `${...}` in env differently.
+   */
   getServerSpecs(): McpServerSpec[] {
     const specs: McpServerSpec[] = [];
     try {
@@ -62,16 +72,25 @@ export class IntegrationsService {
         try {
           if (i.type === 'stdio') {
             if (!i.command) continue;
-            specs.push({ name: i.name, command: i.command, args: i.args, ...(Object.keys(i.env).length ? { env: i.env } : {}) });
+            specs.push(this.launched(i) ?? { name: i.name, command: i.command, args: i.args, ...(Object.keys(i.env).length ? { env: i.env } : {}) });
           } else {
             if (!i.url) continue;
             const headerArgs = Object.entries(i.headers).flatMap(([k, v]) => ['--header', `${k}:${v}`]);
-            specs.push({ name: i.name, command: 'npx', args: ['-y', 'mcp-remote', i.url, ...headerArgs], ...(Object.keys(i.env).length ? { env: i.env } : {}) });
+            specs.push(this.launched(i) ?? { name: i.name, command: 'npx', args: ['-y', 'mcp-remote', i.url, ...headerArgs], ...(Object.keys(i.env).length ? { env: i.env } : {}) });
           }
         } catch { /* skip a malformed row rather than break a spawn */ }
       }
     } catch { /* DB-level failure — return whatever we collected; never break a spawn */ }
     return specs;
+  }
+
+  /** The launcher spec for an integration with secret refs; null (plain spec) without refs or a launcher. */
+  private launched(i: Integration): McpServerSpec | null {
+    if (!this.launcher || !findSecretRefs(i).length) return null;
+    const tpl: LaunchSpec = i.type === 'stdio'
+      ? { name: i.name, type: 'stdio', command: i.command, args: i.args, env: i.env }
+      : { name: i.name, type: 'remote', url: i.url, headers: i.headers, env: i.env };
+    return { name: i.name, command: this.launcher.nodePath, args: launcherArgs(this.launcher.launcherPath, this.launcher.secretsDir, tpl) };
   }
 
   export(): IntegrationsExport {
