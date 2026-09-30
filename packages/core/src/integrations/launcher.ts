@@ -22,6 +22,7 @@
  * Nothing the launcher writes can carry a value: a value with a NUL (or CR/LF, for a header)
  * is refused before the spawn, a spawn error prints only its code, and the server's stderr —
  * which the harness keeps in its logs — is piped through with every value [redacted].
+ * A detached grandchild that outlives the server can get EPIPE on stderr after the 1 s drain.
  *
  * Imports stay light (no server, no db): this starts once per server per thread.
  */
@@ -135,30 +136,42 @@ function unsafeValues(spec: LaunchSpec, values: Record<string, string>): string[
  */
 const MIN_REDACT = 4;
 
-/** Replaces every resolved value in one line of the server's stderr with [redacted]. */
-function redactor(values: string[]): (line: string) => string {
-  const targets = new Set<string>();
+/**
+ * Replaces every resolved value in one line of the server's stderr with [redacted]: its
+ * verbatim form and its JSON-escaped form (a server that logs JSON). Not other transformations.
+ */
+export function redactor(values: string[]): (line: string) => string {
+  const raw = new Set<string>();
   for (const v of values) {
-    targets.add(v);
+    raw.add(v);
     // Redaction runs line by line, so a multi-line value (a PEM key) is also matched one line at a time.
-    for (const part of v.split(/\r?\n/)) targets.add(part);
+    for (const part of v.split(/\r\n|\r|\n/)) raw.add(part);
   }
+  const targets = new Set<string>();
+  for (const t of raw) { targets.add(t); targets.add(JSON.stringify(t).slice(1, -1)); }
   const list = [...targets].filter((t) => t.length >= MIN_REDACT).sort((a, b) => b.length - a.length);
   return (line) => list.reduce((out, t) => out.split(t).join('[redacted]'), line);
 }
 
-/** Line-buffer a stream through `redact` into `write`; returns a flush for a partial last line. */
-function pipeRedacted(stream: Readable, redact: (line: string) => string, write: (line: string) => void): () => void {
+/**
+ * Line-buffer a stream through `redact` into `write`; returns a flush for a partial last line.
+ * A line ends at \n, \r\n, or a lone \r (progress output, which would otherwise never flush).
+ * A \r that ends a chunk waits for the next one, which may bring its \n.
+ */
+export function pipeRedacted(stream: Readable, redact: (line: string) => string, write: (line: string) => void): () => void {
   let pending = '';
   stream.setEncoding('utf8');
   stream.on('data', (chunk: string) => {
     pending += chunk;
-    for (let nl = pending.indexOf('\n'); nl >= 0; nl = pending.indexOf('\n')) {
-      write(redact(pending.slice(0, nl)));
-      pending = pending.slice(nl + 1);
+    const eol = /\r\n|\n|\r(?!$)/g;
+    let start = 0;
+    for (let m = eol.exec(pending); m; m = eol.exec(pending)) {
+      write(redact(pending.slice(start, m.index)));
+      start = m.index + m[0].length;
     }
+    pending = pending.slice(start);
   });
-  return () => { if (pending) write(redact(pending)); pending = ''; };
+  return () => { if (pending) write(redact(pending.replace(/\r$/, ''))); pending = ''; };
 }
 
 /** A spawn error's message can quote env values; only its code (ENOENT, EACCES, …) and the command template are safe. */
@@ -259,9 +272,22 @@ export async function runLauncher(argv: string[], deps: LauncherDeps = {}): Prom
   return runChild(buildLaunch(spec, values), spec, env, deps.spawn ?? nodeSpawn, stderr, redactor(Object.values(values)));
 }
 
+/**
+ * End the launcher once its stderr queue has reached the pipe. On macOS a pipe write is async,
+ * so process.exit() or a self-kill would drop queued lines when the harness reads slowly —
+ * often the server's last, fatal line. An empty write's callback runs after every earlier
+ * write; the fallback stops a harness that never reads from holding us open forever.
+ */
+function afterStderrFlush(end: () => void): void {
+  let ended = false;
+  const once = () => { if (!ended) { ended = true; end(); } };
+  setTimeout(once, 5000).unref();
+  process.stderr.write('', once);
+}
+
 // Run only as the entry point (`node dist/integrations/launcher.js`), not when imported.
 if (process.argv[1] && /integrations[\\/]launcher\.(js|mjs|ts)$/.test(process.argv[1])) {
-  void runLauncher(process.argv.slice(2)).then(({ code, signal }) => {
+  void runLauncher(process.argv.slice(2)).then(({ code, signal }) => afterStderrFlush(() => {
     if (signal) {
       // Our forwarding handlers are gone, so this ends us the same way the child ended.
       process.exitCode = 1;
@@ -269,5 +295,5 @@ if (process.argv[1] && /integrations[\\/]launcher\.(js|mjs|ts)$/.test(process.ar
       return;
     }
     process.exit(code ?? 1);
-  });
+  }));
 }

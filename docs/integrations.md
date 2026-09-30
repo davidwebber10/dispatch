@@ -47,6 +47,8 @@ GITHUB_TOKEN=${GITHUB_PAT}                 # an env value (remote or local)
   a log line, or the agent's own shell environment.
 - **Logs and bad values:** the launcher redacts resolved values from the server's stderr,
   and refuses to start a server when a value has a NUL byte (or a CR/LF, in a header).
+  Redaction covers the verbatim and JSON-escaped forms of values of 4+ characters, not
+  other transformations (base64, URL-encoding, a partial value).
 - **Literal values keep today's path.** An env value without a ref goes to the harness
   exactly as before (the per-thread config file for Claude Code; for a Codex CLI thread that
   path is a `-c` flag on its command line). A literal header value is always on the

@@ -5,8 +5,9 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
+import { PassThrough } from 'stream';
 import {
-  encodeLaunchSpec, decodeLaunchSpec, launcherArgs, buildLaunch, runLauncher,
+  encodeLaunchSpec, decodeLaunchSpec, launcherArgs, buildLaunch, runLauncher, redactor, pipeRedacted,
   type LaunchSpec, type SecretSource,
 } from '../../src/integrations/launcher.js';
 import { SecretsService } from '../../src/secrets/service.js';
@@ -219,6 +220,58 @@ describe('runLauncher', () => {
   });
 });
 
+describe('redactor', () => {
+  it('replaces the verbatim and the JSON-escaped form of each value', () => {
+    const v = 'fake"quoted\\value';
+    const redact = redactor([v]);
+    expect(redact(`raw=${v}`)).toBe('raw=[redacted]');
+    expect(redact(JSON.stringify({ token: v }))).toBe('{"token":"[redacted]"}');
+  });
+
+  it('matches each line of a multi-line value, split on \\n, \\r\\n or \\r', () => {
+    const redact = redactor(['first-line\r\nsecond-line\rthird-line']);
+    expect(['first-line', 'second-line', 'third-line'].map(redact)).toEqual(['[redacted]', '[redacted]', '[redacted]']);
+  });
+
+  it('leaves values shorter than 4 characters alone', () => {
+    expect(redactor(['dev'])('dev server started')).toBe('dev server started');
+  });
+});
+
+describe('pipeRedacted', () => {
+  function pipe(values: string[]) {
+    const stream = new PassThrough();
+    const lines: string[] = [];
+    const flush = pipeRedacted(stream, redactor(values), (l) => { lines.push(l); });
+    return { stream, lines, flush };
+  }
+  const tick = () => new Promise((r) => setImmediate(r));
+
+  it('treats a lone \\r as a line end, so \\r-only progress output flushes', async () => {
+    const { stream, lines } = pipe([DOPPLER_VALUE]);
+    stream.write(`10%\r50%\r${DOPPLER_VALUE}\rdone\n`);
+    await tick();
+    expect(lines).toEqual(['10%', '50%', '[redacted]', 'done']);
+  });
+
+  it('a \\r\\n split across two chunks is one line end, not two', async () => {
+    const { stream, lines } = pipe([DOPPLER_VALUE]);
+    stream.write('first\r');
+    await tick();
+    stream.write('\nsecond\n');
+    await tick();
+    expect(lines).toEqual(['first', 'second']);
+  });
+
+  it('flush writes a partial last line, dropping a trailing \\r', async () => {
+    const { stream, lines, flush } = pipe([DOPPLER_VALUE]);
+    stream.write(`tail ${DOPPLER_VALUE}\r`);
+    await tick();
+    flush();
+    expect(lines).toEqual(['tail [redacted]']);
+  });
+});
+
 describe('runLauncher never writes a resolved value to stderr', () => {
   const SENSITIVE = 'fake-sensitive-value';
   let stderr: string[];
@@ -331,17 +384,41 @@ describe('runLauncher with a real child and a real SecretsService', () => {
     expect(lines).toEqual(['tok=[redacted] end', 'partial [redacted]']);
   });
 
-  it('end to end: the server stdout bytes pass through unchanged, and its stderr comes out redacted', async () => {
-    // The real entry point as its own process (tsx's loader, no build), so its stdout can be captured.
+  /**
+   * The real entry point as its own process (tsx's loader, no build), cwd in the sandbox, so its
+   * stdout and stderr can be captured. The sandbox secrets dir has no Doppler connection, so
+   * ${API_KEY} comes from the env fallback (no network).
+   */
+  function startEntry(spec: LaunchSpec) {
     const coreDir = fileURLToPath(new URL('../..', import.meta.url));
     const loader = pathToFileURL(path.join(coreDir, 'node_modules/tsx/dist/loader.mjs')).href;
-    const launcherTs = path.join(coreDir, 'src/integrations/launcher.ts');
-    const BYTES = [0x7b, 0x22, 0x61, 0x22, 0x7d, 0x0a, 0x00, 0xff, 0x0d, 0x0a];
-    const spec: LaunchSpec = { ...nodeSpec(`process.stdout.write(Buffer.from(${JSON.stringify(BYTES)})); process.stderr.write("key=" + process.env.KEY + "\\n");`), env: { KEY: '${FAKE_REF}' } };
-    // No Doppler connection in the sandbox secrets dir, so the value comes from the env fallback (no network).
-    const env: NodeJS.ProcessEnv = { ...process.env, FAKE_REF: ENV_VALUE };
+    const env: NodeJS.ProcessEnv = { ...process.env, API_KEY: ENV_VALUE };
     delete env.DOPPLER_TOKEN;
-    const p = spawn(process.execPath, ['--import', loader, launcherTs, ...argvIn(spec)], { cwd: workDir, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    return spawn(process.execPath, ['--import', loader, path.join(coreDir, 'src/integrations/launcher.ts'), ...argvIn(spec)], { cwd: workDir, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  }
+
+  it('end to end: a slow stderr reader still gets every line, including the last, and the exit code', async () => {
+    // Enough output to fill the pipe while the "harness" isn't reading; the last line is the one that matters.
+    const LINES = 4000;
+    const p = startEntry(nodeSpec(`const pad = "x".repeat(100); for (let i = 0; i < ${LINES}; i++) process.stderr.write("line " + i + " " + pad + "\\n"); process.stderr.write("FATAL last line\\n"); process.exitCode = 3;`));
+    const closed = new Promise<number | null>((resolve) => p.on('close', (c) => resolve(c)));
+    p.stdout!.resume();
+    // Listen now, then pause: an unlistened stdio stream is resumed (and drained) by Node when the child exits.
+    let err = '';
+    p.stderr!.setEncoding('utf8');
+    p.stderr!.on('data', (s: string) => { err += s; });
+    p.stderr!.pause();
+    await new Promise((r) => setTimeout(r, 1500));
+    p.stderr!.resume();
+    expect(await closed).toBe(3);
+    const lines = err.split('\n').filter((l) => l.startsWith('line ') || l.startsWith('FATAL'));
+    expect(lines).toHaveLength(LINES + 1);
+    expect(lines.at(-1)).toBe('FATAL last line');
+  });
+
+  it('end to end: the server stdout bytes pass through unchanged, and its stderr comes out redacted', async () => {
+    const BYTES = [0x7b, 0x22, 0x61, 0x22, 0x7d, 0x0a, 0x00, 0xff, 0x0d, 0x0a];
+    const p = startEntry(nodeSpec(`process.stdout.write(Buffer.from(${JSON.stringify(BYTES)})); process.stderr.write("key=" + process.env.KEY + "\\n");`));
     const out: Buffer[] = [];
     let err = '';
     p.stdout!.on('data', (b: Buffer) => out.push(b));
