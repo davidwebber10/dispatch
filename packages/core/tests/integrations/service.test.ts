@@ -72,11 +72,30 @@ describe('IntegrationsService', () => {
       expect(unwrap(spec)).toEqual({ name: 'linear', type: 'remote', url: 'https://mcp.linear.app/sse', headers: { Authorization: 'Bearer ${LINEAR_TOKEN}' }, env: {} });
     });
 
-    it('wraps a stdio integration with an env ref; the spec moves its env templates into the launcher', () => {
-      l.add({ type: 'stdio', name: 'gh', command: 'npx', args: ['-y', 'gh-mcp'], env: { GITHUB_TOKEN: '${GH_PAT}', ROOT: '/tmp' } });
+    it('wraps a stdio integration with an env ref; a ref-only env moves wholly into the launcher spec', () => {
+      l.add({ type: 'stdio', name: 'gh', command: 'npx', args: ['-y', 'gh-mcp'], env: { GITHUB_TOKEN: '${GH_PAT}' } });
       const [spec] = l.getServerSpecs();
       expect(spec.env).toBeUndefined();
-      expect(unwrap(spec)).toEqual({ name: 'gh', type: 'stdio', command: 'npx', args: ['-y', 'gh-mcp'], env: { GITHUB_TOKEN: '${GH_PAT}', ROOT: '/tmp' } });
+      expect(unwrap(spec)).toEqual({ name: 'gh', type: 'stdio', command: 'npx', args: ['-y', 'gh-mcp'], env: { GITHUB_TOKEN: '${GH_PAT}' } });
+    });
+
+    it('keeps a literal env value out of argv: it stays on the spec env (today\'s path), only the ref goes into --spec', () => {
+      const LITERAL = 'fake-literal-secret-789';
+      l.add({ type: 'stdio', name: 'mixed', command: 'npx', args: ['-y', 'mixed-mcp'], env: { API_KEY: LITERAL, OTHER: '${X}' } });
+      const [spec] = l.getServerSpecs();
+      expect(spec.env).toEqual({ API_KEY: LITERAL });
+      const decoded = unwrap(spec);
+      expect(decoded.env).toEqual({ OTHER: '${X}' });
+      expect(spec.args.join(' ')).not.toContain(LITERAL);
+      expect(JSON.stringify(decoded)).not.toContain(LITERAL);
+    });
+
+    it('remote: a literal env value stays on the spec env next to a header ref', () => {
+      l.add({ type: 'remote', name: 'linear', url: 'https://mcp.linear.app/sse', headers: { Authorization: 'Bearer ${LINEAR_TOKEN}' }, env: { NODE_EXTRA_CA_CERTS: '/etc/ca.pem' } });
+      const [spec] = l.getServerSpecs();
+      expect(spec.env).toEqual({ NODE_EXTRA_CA_CERTS: '/etc/ca.pem' });
+      expect(unwrap(spec).env).toEqual({});
+      expect(JSON.stringify(unwrap(spec))).not.toContain('/etc/ca.pem');
     });
 
     it('keeps today\'s exact spec for integrations without refs', () => {

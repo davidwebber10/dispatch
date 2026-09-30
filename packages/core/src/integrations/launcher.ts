@@ -5,14 +5,15 @@
  *
  *   node dist/integrations/launcher.js --secrets-dir <dir> --spec <base64url JSON>
  *
- * The spec carries the integration's templates only, never a value. At start-up the
- * launcher resolves each ref — Doppler first (when connected and enabled), then its own
- * env — and spawns the real server with the values in THAT child's env and nowhere else:
- * not argv (an EDR agent logs every process's argv), not a config file, not dispatch.db,
- * not the agent's own shell env. Base64 also stops Claude Code from expanding `${...}` in
- * --mcp-config args on its own.
+ * The spec carries the integration's templates only, never a value — and only the env
+ * entries that hold a ref; literal env entries reach the launcher through the harness's
+ * usual spec `env` and pass to the child by inheritance. At start-up the launcher resolves
+ * each ref — Doppler first (when connected and enabled), then its own env — and spawns the
+ * real server with the values in THAT child's env and nowhere else: not argv (an EDR agent
+ * logs every process's argv), not a config file, not dispatch.db, not the agent's own shell
+ * env. Base64 also stops Claude Code from expanding `${...}` in --mcp-config args on its own.
  *
- *   stdio   command + args; env = inherited + the integration env with refs substituted
+ *   stdio   command + args; env = inherited + the spec's env entries with refs substituted
  *   remote  npx -y mcp-remote <url> --header K:<template>, the template LITERAL in argv.
  *           mcp-remote substitutes `${NAME}` in header values from its own env (verified in
  *           0.14.3: substituteEnvVars, applied to every --header), so each resolved

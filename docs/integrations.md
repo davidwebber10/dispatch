@@ -45,12 +45,18 @@ GITHUB_TOKEN=${GITHUB_PAT}                 # an env value (remote or local)
 - **Where the value goes:** only into the MCP server process's environment. It is never in
   a command line (an EDR agent can log every process's argv), a config file, `dispatch.db`,
   a log line, or the agent's own shell environment.
+- **Literal values keep today's path.** An env value without a ref goes to the harness
+  exactly as before (the per-thread config file for Claude Code; for a Codex CLI thread that
+  path is a `-c` flag on its command line). A literal header value is always on the
+  `mcp-remote` command line. So write every secret as `${NAME}`, never as a literal.
 
 How it works: an integration with a ref runs as
 `node dist/integrations/launcher.js --secrets-dir <dir> --spec <base64 JSON>`. The spec holds
-the templates only. The launcher resolves each ref, then starts the real server with the
-values in that server's environment. For a remote server the header template stays literal
-on the `mcp-remote` command line, and `mcp-remote` fills in `${NAME}` from its environment.
+the templates only: the URL, command, args, headers, and the env entries that contain a ref.
+Base64 is an encoding, not a protection, so nothing secret goes into it. The launcher
+resolves each ref, then starts the real server with the values in that server's
+environment. For a remote server the header template stays literal on the `mcp-remote`
+command line, and `mcp-remote` fills in `${NAME}` from its environment.
 
 An integration without refs runs exactly as it did before. A Doppler change takes effect
 the next time the server starts. The launcher is part of the built daemon (`dist/`); under

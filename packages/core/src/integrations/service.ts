@@ -3,7 +3,7 @@ import type Database from 'better-sqlite3';
 import * as integrationsDb from '../db/integrations.js';
 import type { Integration } from '../db/integrations.js';
 import type { McpServerSpec } from '../mcp/injection.js';
-import { findSecretRefs } from './secret-refs.js';
+import { findSecretRefs, refsIn } from './secret-refs.js';
 import { launcherArgs, type LaunchSpec } from './launcher.js';
 
 /** Where the integration launcher lives and which Doppler connection it reads (see launcher.ts). */
@@ -61,8 +61,9 @@ export class IntegrationsService {
   /**
    * Resolve every enabled integration to an McpServerSpec for composeInjection. One with
    * `${NAME}` refs in a header or env value runs through the launcher (when configured),
-   * which resolves them from Doppler inside the server's own process; the spec carries
-   * templates only, and no `env`, since each harness treats `${...}` in env differently.
+   * which resolves them from Doppler inside the server's own process. Env entries with a
+   * ref go to the launcher as templates, never as spec `env`, since each harness treats
+   * `${...}` in env differently; literal env entries keep today's spec `env` path.
    */
   getServerSpecs(): McpServerSpec[] {
     const specs: McpServerSpec[] = [];
@@ -84,13 +85,23 @@ export class IntegrationsService {
     return specs;
   }
 
-  /** The launcher spec for an integration with secret refs; null (plain spec) without refs or a launcher. */
+  /**
+   * The launcher spec for an integration with secret refs; null (plain spec) without refs or a launcher.
+   * Only env entries WITH a ref ride the --spec (argv). Literal entries stay on the spec's `env`, the
+   * same path a plain spec uses, and reach the server by inheritance through the launcher.
+   */
   private launched(i: Integration): McpServerSpec | null {
     if (!this.launcher || !findSecretRefs(i).length) return null;
+    const refEnv: Record<string, string> = {};
+    const literalEnv: Record<string, string> = {};
+    for (const [k, v] of Object.entries(i.env)) (refsIn(String(v)).length ? refEnv : literalEnv)[k] = v;
     const tpl: LaunchSpec = i.type === 'stdio'
-      ? { name: i.name, type: 'stdio', command: i.command, args: i.args, env: i.env }
-      : { name: i.name, type: 'remote', url: i.url, headers: i.headers, env: i.env };
-    return { name: i.name, command: this.launcher.nodePath, args: launcherArgs(this.launcher.launcherPath, this.launcher.secretsDir, tpl) };
+      ? { name: i.name, type: 'stdio', command: i.command, args: i.args, env: refEnv }
+      : { name: i.name, type: 'remote', url: i.url, headers: i.headers, env: refEnv };
+    return {
+      name: i.name, command: this.launcher.nodePath, args: launcherArgs(this.launcher.launcherPath, this.launcher.secretsDir, tpl),
+      ...(Object.keys(literalEnv).length ? { env: literalEnv } : {}),
+    };
   }
 
   export(): IntegrationsExport {
