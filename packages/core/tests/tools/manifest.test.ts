@@ -21,15 +21,16 @@ beforeEach(() => {
 afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
 
 // Runs the real aws recipe offline, on any OS, and only inside the sandbox. Stubs go first on PATH:
-// curl writes an empty pkg; pkgutil lays out the aws-cli payload the way AWSCLIV2.pkg expands and
-// records where; mktemp makes dirs only inside the sandbox (macOS mktemp ignores TMPDIR, so a bare
-// `mktemp -d` goes to sandbox/tmp); mv, when asked, refuses to move the new payload.
-async function installAwsWithStubs(opts: { payloadWorks?: boolean; payloadMoveFails?: boolean } = {}): Promise<void> {
+// curl writes an empty pkg (or, when asked, fails the way `curl -f` does); pkgutil lays out the
+// aws-cli payload the way AWSCLIV2.pkg expands and records where; mktemp makes dirs only inside the
+// sandbox (macOS mktemp ignores TMPDIR, so a bare `mktemp -d` goes to sandbox/tmp); mv, when asked,
+// refuses to move the new payload.
+async function installAwsWithStubs(opts: { curlFails?: boolean; payloadWorks?: boolean; payloadMoveFails?: boolean } = {}): Promise<void> {
   const stubs = path.join(root, 'stubs');
   fs.mkdirSync(stubs, { recursive: true });
   fs.mkdirSync(path.join(sandbox, 'tmp'), { recursive: true });
   const stub = (name: string, ...lines: string[]) => fs.writeFileSync(path.join(stubs, name), ['#!/bin/sh', ...lines, ''].join('\n'), { mode: 0o755 });
-  stub('curl', 'while [ $# -gt 0 ]; do if [ "$1" = -o ]; then : > "$2"; fi; shift; done');
+  stub('curl', opts.curlFails ? 'exit 22' : 'while [ $# -gt 0 ]; do if [ "$1" = -o ]; then : > "$2"; fi; shift; done');
   stub('pkgutil',
     `echo "$3" > "${root}/pkgutil-dest"`,
     'd="$3/aws-cli.pkg/Payload/aws-cli"; mkdir -p "$d"',
@@ -112,6 +113,32 @@ describe('manifest', () => {
     expect(fs.existsSync(path.join(p.opt, 'aws', 'old-only'))).toBe(false); // the old copy is replaced, not merged into
     expect(fs.readdirSync(p.opt)).toEqual(['aws']); // the trap removed the stage dir and the old copy in it
     expect(fs.readdirSync(path.join(sandbox, 'tmp'))).toEqual([]); // nothing staged in $TMPDIR
+  });
+
+  it('aws recipe replaces a dangling symlink at opt/aws instead of failing on it', async () => {
+    const p = toolPaths(base);
+    fs.mkdirSync(p.opt, { recursive: true });
+    fs.symlinkSync(path.join(sandbox, 'gone'), path.join(p.opt, 'aws'));
+    await installAwsWithStubs();
+    expect(fs.lstatSync(path.join(p.opt, 'aws')).isDirectory()).toBe(true);
+    expect(execFileSync(path.join(p.bin, 'aws'), { encoding: 'utf8' })).toContain('aws-cli/2 stub');
+    expect(fs.readdirSync(p.opt)).toEqual(['aws']);
+  });
+
+  it('aws recipe removes stage dirs that a killed install left behind, and only its own', async () => {
+    const p = toolPaths(base);
+    for (const d of ['.aws-stage.killed1', '.aws-stage.killed2/old', '.other-stage.keep']) fs.mkdirSync(path.join(p.opt, d), { recursive: true });
+    await installAwsWithStubs();
+    expect(fs.readdirSync(p.opt).sort()).toEqual(['.other-stage.keep', 'aws']);
+  });
+
+  it('aws recipe fails on a failed download, removes its stage dir, and leaves the working copy alone', async () => {
+    const p = toolPaths(base);
+    seedWorkingAws();
+    await expect(installAwsWithStubs({ curlFails: true })).rejects.toThrow();
+    expect(execFileSync(path.join(p.bin, 'aws'), { encoding: 'utf8' })).toContain('aws-cli/1 old');
+    expect(fs.existsSync(path.join(p.opt, 'aws', 'old-only'))).toBe(true);
+    expect(fs.readdirSync(p.opt)).toEqual(['aws']);
   });
 
   it('aws recipe keeps the working copy when the new payload fails `aws --version`', async () => {

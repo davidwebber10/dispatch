@@ -99,6 +99,13 @@ it('uninstallTool: removes opt/<name> and every bin link into it, not only entry
   expect(readInstalled(base).demo).toBeUndefined();
 });
 
+it('uninstallTool: also removes opt/.<name>-stage.* dirs that a killed install left, not another tool\'s', () => {
+  const p = toolPaths(base);
+  for (const d of ['demo', '.demo-stage.a1/old', '.demo-stage.b2', 'demo-other', '.demo-other-stage.c3']) fs.mkdirSync(path.join(p.opt, d), { recursive: true });
+  uninstallTool('demo', base);
+  expect(fs.readdirSync(p.opt).sort()).toEqual(['.demo-other-stage.c3', 'demo-other']);
+});
+
 it('uninstallTool: a name that is not a plain tool name never removes anything outside opt/', () => {
   // `../..` from opt/ is the sandbox dir, so a regression stays inside this test's temp dir.
   const p = toolPaths(base);

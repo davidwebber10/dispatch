@@ -116,8 +116,9 @@ export function uninstallTool(name: string, base?: string): void {
     try { fs.rmSync(path.join(p.bin, b), { force: true }); } catch { /* ignore */ }
   }
   // A script recipe's payload lives in opt/<name>; drop it and every bin link into it, which also
-  // catches extras the recipe linked beyond entry.bins (aws_completer). Only for a plain name:
-  // `..` or `a/b` would aim the recursive rm outside opt/.
+  // catches extras the recipe linked beyond entry.bins (aws_completer), plus any opt/.<name>-stage.*
+  // dir a killed install left. Only for a plain name: `..` or `a/b` would aim the recursive rm
+  // outside opt/.
   const opt = path.join(p.opt, name);
   if (path.dirname(opt) === p.opt) {
     let links: string[] = [];
@@ -131,6 +132,9 @@ export function uninstallTool(name: string, base?: string): void {
       } catch { /* ignore */ }
     }
     fs.rmSync(opt, { recursive: true, force: true });
+    let staged: string[] = [];
+    try { staged = fs.readdirSync(p.opt).filter((f) => f.startsWith(`.${name}-stage.`)); } catch { /* no opt dir */ }
+    for (const f of staged) fs.rmSync(path.join(p.opt, f), { recursive: true, force: true });
   }
   delete installed[name];
   writeInstalled(p, installed);
