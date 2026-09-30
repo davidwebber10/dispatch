@@ -2,6 +2,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { secretNames } from './secret-names.js';
 
 const TOKEN = process.env.DOPPLER_TOKEN;
 const PROJECT = process.env.DOPPLER_PROJECT;
@@ -53,7 +54,9 @@ const server = new McpServer({ name: 'doppler', version: '0.1.0' });
 server.registerTool(
   'doppler_list_secrets',
   {
-    description: 'List all secrets in a Doppler config.',
+    description:
+      'List the names of all secrets in a Doppler config. Values are not returned; ' +
+      'use doppler_get_secret to read one value.',
     inputSchema: {
       project: z.string().optional(),
       config: z.string().optional(),
@@ -61,7 +64,12 @@ server.registerTool(
   },
   async ({ project, config }) => {
     try {
-      return ok(await doppler(`/v3/configs/config/secrets?${qs(project, config)}`));
+      const body = await doppler(`/v3/configs/config/secrets?${qs(project, config)}`);
+      return ok({
+        project: project ?? PROJECT,
+        config: config ?? CONFIG,
+        names: secretNames(body),
+      });
     } catch (e) {
       return fail(e);
     }

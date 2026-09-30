@@ -46,6 +46,14 @@ describe('SecretsService', () => {
     expect(sp).toContain('dev');
   });
 
+  it('tells agents the list tool gives names only and the get tool reads one value', async () => {
+    const s = svc(true);
+    await s.setConnection({ token: 'dp.sa.x', project: 'dispatch', config: 'dev' });
+    const sp = s.getInjection().systemPrompt!;
+    expect(sp).toMatch(/doppler_list_secrets lists[^.]*names only/);
+    expect(sp).toMatch(/doppler_get_secret reads one[^.]*value/);
+  });
+
   it('has no system prompt when disconnected', () => {
     expect(svc().getInjection().systemPrompt).toBeNull();
   });
