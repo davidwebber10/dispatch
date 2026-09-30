@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { installTool, uninstallTool, readInstalled } from '../../src/tools/installer.js';
 import { toolPaths, hostPlatformKey } from '../../src/tools/paths.js';
 import { loadManifest } from '../../src/tools/manifest.js';
@@ -104,6 +104,33 @@ it('uninstallTool: also removes opt/.<name>-stage.* dirs that a killed install l
   for (const d of ['demo', '.demo-stage.a1/old', '.demo-stage.b2', 'demo-other', '.demo-other-stage.c3']) fs.mkdirSync(path.join(p.opt, d), { recursive: true });
   uninstallTool('demo', base);
   expect(fs.readdirSync(p.opt).sort()).toEqual(['.demo-other-stage.c3', 'demo-other']);
+});
+
+it('uninstallTool: refuses, and removes nothing, while an install holds opt/.<name>.lock', () => {
+  const p = toolPaths(base);
+  fs.mkdirSync(path.join(p.opt, 'demo'), { recursive: true });
+  fs.mkdirSync(p.bin, { recursive: true });
+  fs.symlinkSync(path.join(p.opt, 'demo', 'demo'), path.join(p.bin, 'demo'));
+  fs.writeFileSync(p.installed, JSON.stringify({ demo: { script: 'x' } }));
+  const owner = spawn('sleep', ['30'], { cwd: sandbox, stdio: 'ignore' });
+  try {
+    fs.mkdirSync(path.join(p.opt, '.demo.lock'));
+    fs.writeFileSync(path.join(p.opt, '.demo.lock', 'pid'), String(owner.pid));
+    expect(() => uninstallTool('demo', base)).toThrow(/install is running/);
+    expect(fs.readFileSync(path.join(p.opt, '.demo.lock', 'pid'), 'utf8')).toBe(String(owner.pid));
+  } finally { owner.kill(); }
+  expect(fs.existsSync(path.join(p.opt, 'demo'))).toBe(true);
+  expect(fs.lstatSync(path.join(p.bin, 'demo')).isSymbolicLink()).toBe(true);
+  expect(readInstalled(base).demo).toEqual({ script: 'x' });
+});
+
+it('uninstallTool: takes over a lock whose owner is gone, and releases it', () => {
+  const p = toolPaths(base);
+  fs.mkdirSync(path.join(p.opt, 'demo'), { recursive: true });
+  fs.mkdirSync(path.join(p.opt, '.demo.lock'));
+  fs.writeFileSync(path.join(p.opt, '.demo.lock', 'pid'), String(spawnSync('true').pid)); // that process has exited
+  uninstallTool('demo', base);
+  expect(fs.readdirSync(p.opt)).toEqual([]);
 });
 
 it('uninstallTool: a name that is not a plain tool name never removes anything outside opt/', () => {

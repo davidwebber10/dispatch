@@ -108,34 +108,66 @@ export async function installTool(entry: ToolEntry, opts: { base?: string; downl
   writeInstalled(p, installed);
 }
 
+function pidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false; // 0 and negatives would signal a process group
+  try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; }
+}
+
+// The lock a script recipe takes (the aws recipe: opt/.aws.lock holding its shell's pid). mkdir is
+// atomic; a lock whose owner is gone is taken over, once.
+function takeToolLock(lock: string): boolean {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try { fs.mkdirSync(lock); fs.writeFileSync(path.join(lock, 'pid'), String(process.pid)); return true; }
+    catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e; }
+    let pid = NaN;
+    try { pid = Number(fs.readFileSync(path.join(lock, 'pid'), 'utf8').trim()); } catch { /* no pid yet */ }
+    if (pidAlive(pid)) return false;
+    fs.rmSync(lock, { recursive: true, force: true });
+  }
+  return false;
+}
+function releaseToolLock(lock: string): void {
+  try { if (fs.readFileSync(path.join(lock, 'pid'), 'utf8').trim() === String(process.pid)) fs.rmSync(lock, { recursive: true, force: true }); }
+  catch { /* not ours */ }
+}
+
 export function uninstallTool(name: string, base?: string): void {
   const p = toolPaths(base);
   const installed = readInstalled(base);
   const entry = loadManifest(base).find((e) => e.name === name);
-  for (const b of (entry?.bins ?? [name])) {
-    try { fs.rmSync(path.join(p.bin, b), { force: true }); } catch { /* ignore */ }
-  }
   // A script recipe's payload lives in opt/<name>; drop it and every bin link into it, which also
   // catches extras the recipe linked beyond entry.bins (aws_completer), plus any opt/.<name>-stage.*
   // dir a killed install left. Only for a plain name: `..` or `a/b` would aim the recursive rm
-  // outside opt/.
+  // outside opt/. Hold the recipe's lock throughout, so an install in flight keeps its payload.
   const opt = path.join(p.opt, name);
-  if (path.dirname(opt) === p.opt) {
-    let links: string[] = [];
-    try { links = fs.readdirSync(p.bin); } catch { /* no bin dir */ }
-    for (const f of links) {
-      const link = path.join(p.bin, f);
-      try {
-        if (!fs.lstatSync(link).isSymbolicLink()) continue;
-        const target = path.resolve(p.bin, fs.readlinkSync(link));
-        if (target === opt || target.startsWith(opt + path.sep)) fs.rmSync(link, { force: true });
-      } catch { /* ignore */ }
-    }
-    fs.rmSync(opt, { recursive: true, force: true });
-    let staged: string[] = [];
-    try { staged = fs.readdirSync(p.opt).filter((f) => f.startsWith(`.${name}-stage.`)); } catch { /* no opt dir */ }
-    for (const f of staged) fs.rmSync(path.join(p.opt, f), { recursive: true, force: true });
+  const plain = path.dirname(opt) === p.opt;
+  const lock = path.join(p.opt, `.${name}.lock`);
+  if (plain) {
+    fs.mkdirSync(p.opt, { recursive: true });
+    if (!takeToolLock(lock)) throw new Error(`${name}: an install is running; try again when it ends`);
   }
-  delete installed[name];
-  writeInstalled(p, installed);
+  try {
+    for (const b of (entry?.bins ?? [name])) {
+      try { fs.rmSync(path.join(p.bin, b), { force: true }); } catch { /* ignore */ }
+    }
+    if (plain) {
+      let links: string[] = [];
+      try { links = fs.readdirSync(p.bin); } catch { /* no bin dir */ }
+      for (const f of links) {
+        const link = path.join(p.bin, f);
+        try {
+          if (!fs.lstatSync(link).isSymbolicLink()) continue;
+          const target = path.resolve(p.bin, fs.readlinkSync(link));
+          if (target === opt || target.startsWith(opt + path.sep)) fs.rmSync(link, { force: true });
+        } catch { /* ignore */ }
+      }
+      fs.rmSync(opt, { recursive: true, force: true });
+      const staged = fs.readdirSync(p.opt).filter((f) => f.startsWith(`.${name}-stage.`));
+      for (const f of staged) fs.rmSync(path.join(p.opt, f), { recursive: true, force: true });
+    }
+    delete installed[name];
+    writeInstalled(p, installed);
+  } finally {
+    if (plain) releaseToolLock(lock);
+  }
 }

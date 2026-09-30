@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { loadManifest, validateEntry } from '../../src/tools/manifest.js';
 import { installTool, readInstalled } from '../../src/tools/installer.js';
 import { toolPaths } from '../../src/tools/paths.js';
@@ -24,10 +24,12 @@ afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
 // curl writes an empty pkg (or, when asked, fails the way `curl -f` does); pkgutil lays out the
 // aws-cli payload the way AWSCLIV2.pkg expands and records where; mktemp makes dirs only inside the
 // sandbox (macOS mktemp ignores TMPDIR, so a bare `mktemp -d` goes to sandbox/tmp); mv, when asked,
-// refuses to move the new payload (…/aws-cli) or the old copy back (…/old), or sends the recipe
-// SIGTERM right after it moves the old copy aside (…/opt/aws), i.e. between the two renames.
+// refuses to move the new payload (…/aws-cli) or the old copy back (…/old), or acts right after the
+// recipe moves the old copy aside (…/opt/aws): sends it SIGTERM, or moves the copy straight back the
+// way a second installer's recovery would; or creates opt/aws just before the new payload's rename.
 async function installAwsWithStubs(opts: {
-  curlFails?: boolean; payloadWorks?: boolean; payloadMoveFails?: boolean; restoreFails?: boolean; termAfterBackup?: boolean;
+  curlFails?: boolean; payloadWorks?: boolean; payloadMoveFails?: boolean; restoreFails?: boolean;
+  termAfterBackup?: boolean; backupStolen?: boolean; optCreatedAtRename?: boolean;
 } = {}): Promise<void> {
   const stubs = path.join(root, 'stubs');
   fs.mkdirSync(stubs, { recursive: true });
@@ -45,6 +47,8 @@ async function installAwsWithStubs(opts: {
     ...(opts.payloadMoveFails ? ['case "$1" in */aws-cli) exit 1 ;; esac'] : []),
     ...(opts.restoreFails ? ['case "$1" in */old) exit 1 ;; esac'] : []),
     ...(opts.termAfterBackup ? ['case "$1" in */opt/aws) /bin/mv "$@"; kill -TERM "$PPID"; exit 0 ;; esac'] : []),
+    ...(opts.backupStolen ? ['case "$1" in */opt/aws) /bin/mv "$@"; /bin/mv "$2" "$1"; exit 0 ;; esac'] : []),
+    ...(opts.optCreatedAtRename ? ['case "$1" in */aws-cli) mkdir -p "$2" ;; esac'] : []),
     'exec /bin/mv "$@"');
   vi.stubEnv('PATH', `${stubs}${path.delimiter}${process.env.PATH}`);
   try {
@@ -52,6 +56,13 @@ async function installAwsWithStubs(opts: {
     const aws = loadManifest(base).find((e) => e.name === 'aws')!;
     await installTool({ ...aws, platforms: undefined }, { base }); // the stubs stand in for macOS pkgutil on any host
   } finally { vi.unstubAllEnvs(); }
+}
+
+// The recipe's lock, as another installer (pid) would hold it.
+function lockAws(pid: number): void {
+  const lock = path.join(toolPaths(base).opt, '.aws.lock');
+  fs.mkdirSync(lock, { recursive: true });
+  fs.writeFileSync(path.join(lock, 'pid'), String(pid));
 }
 
 // A working aws from an earlier install: opt/aws with a marker only the old copy has, linked from bin.
@@ -132,13 +143,61 @@ describe('manifest', () => {
     expect(fs.readdirSync(p.opt)).toEqual(['aws']);
   });
 
-  it('aws recipe removes aws stage dirs older than an hour, and keeps a fresh one (a concurrent install)', async () => {
+  it('aws recipe, holding its lock, removes every leftover aws stage dir, fresh or old, and not another tool\'s', async () => {
     const p = toolPaths(base);
     for (const d of ['.aws-stage.stale/x', '.aws-stage.fresh/x', '.other-stage.keep']) fs.mkdirSync(path.join(p.opt, d), { recursive: true });
     const twoHoursAgo = new Date(Date.now() - 2 * 3600_000);
-    for (const d of ['.aws-stage.stale', '.other-stage.keep']) fs.utimesSync(path.join(p.opt, d), twoHoursAgo, twoHoursAgo);
+    fs.utimesSync(path.join(p.opt, '.aws-stage.stale'), twoHoursAgo, twoHoursAgo);
     await installAwsWithStubs();
-    expect(fs.readdirSync(p.opt).sort()).toEqual(['.aws-stage.fresh', '.other-stage.keep', 'aws']);
+    expect(fs.readdirSync(p.opt).sort()).toEqual(['.other-stage.keep', 'aws']); // and the lock is released
+  });
+
+  it('aws recipe exits non-zero without touching opt/aws while another installer holds the lock', async () => {
+    const p = toolPaths(base);
+    seedWorkingAws();
+    const owner = spawn('sleep', ['30'], { cwd: sandbox, stdio: 'ignore' });
+    try {
+      lockAws(owner.pid!);
+      await expect(installAwsWithStubs()).rejects.toThrow();
+      expect(fs.readFileSync(path.join(p.opt, '.aws.lock', 'pid'), 'utf8')).toBe(String(owner.pid)); // not taken, not released
+    } finally { owner.kill(); }
+    expect(execFileSync(path.join(p.bin, 'aws'), { encoding: 'utf8' })).toContain('aws-cli/1 old');
+    expect(fs.existsSync(path.join(p.opt, 'aws', 'old-only'))).toBe(true);
+    expect(fs.existsSync(path.join(root, 'pkgutil-dest'))).toBe(false); // never got as far as the download
+    expect(fs.readdirSync(p.opt).sort()).toEqual(['.aws.lock', 'aws']);
+  });
+
+  it('aws recipe takes over a lock whose owner is gone', async () => {
+    const p = toolPaths(base);
+    seedWorkingAws();
+    lockAws(spawnSync('true').pid!); // that process has exited
+    await installAwsWithStubs();
+    expect(execFileSync(path.join(p.bin, 'aws'), { encoding: 'utf8' })).toContain('aws-cli/2 stub');
+    expect(fs.readdirSync(p.opt)).toEqual(['aws']); // and released it
+  });
+
+  it('aws recipe fails, and does not nest the payload, when opt/aws comes back after it moved the old copy aside', async () => {
+    // A second installer that ignores the lock moves our backup straight back (the round-3 race):
+    // `mv "$PFX" "$OPT"` would put the new payload at opt/aws/aws-cli and still exit 0.
+    const p = toolPaths(base);
+    seedWorkingAws();
+    await expect(installAwsWithStubs({ backupStolen: true })).rejects.toThrow();
+    expect(fs.existsSync(path.join(p.opt, 'aws', 'aws-cli'))).toBe(false);
+    expect(execFileSync(path.join(p.bin, 'aws'), { encoding: 'utf8' })).toContain('aws-cli/1 old');
+    expect(readInstalled(base).aws).toBeUndefined(); // no fingerprint, so the next update retries
+    expect(fs.readdirSync(p.opt)).toEqual(['aws']);
+  });
+
+  it('aws recipe fails, and keeps the old copy, when the new payload does not land at opt/aws', async () => {
+    // opt/aws appears between the check and the rename, so mv nests the payload inside it.
+    const p = toolPaths(base);
+    seedWorkingAws();
+    await expect(installAwsWithStubs({ optCreatedAtRename: true })).rejects.toThrow();
+    expect(readInstalled(base).aws).toBeUndefined();
+    const stages = fs.readdirSync(p.opt).filter((f) => f.startsWith('.aws-stage.'));
+    expect(stages).toHaveLength(1);
+    expect(fs.existsSync(path.join(p.opt, stages[0], 'old', 'old-only'))).toBe(true); // kept for recovery
+    expect(fs.existsSync(path.join(p.opt, '.aws.lock'))).toBe(false);
   });
 
   it('aws recipe first moves back an old copy that a SIGKILL between the renames left in a stage dir', async () => {
