@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../api/client';
-import type { ToolStatus } from '../../api/types';
+import type { ToolStatus, ToolsResponse } from '../../api/types';
 import { useIsMobile } from '../../hooks/useIsMobile';
-import { pageLabel, summaryLine, miniChip, codeChip, GroupHeader, HoverRow, SearchInput, FilterSegments } from './ui';
+import { timeAgo } from '../../lib/time';
+import { pageLabel, summaryLine, ghostBtn, miniChip, codeChip, GroupHeader, HoverRow, SearchInput, FilterSegments } from './ui';
 
 const desc: React.CSSProperties = { fontSize: 12.5, color: 'var(--color-text-secondary)' };
 const colHead: React.CSSProperties = { font: '600 9.5px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
@@ -10,6 +11,13 @@ const grid = 'minmax(230px,1.2fr) 130px 160px minmax(120px,0.5fr)';
 
 type Bucket = 'needs-auth' | 'ready' | 'missing';
 const bucketOf = (t: ToolStatus): Bucket => (!t.installed ? 'missing' : t.authed ? 'ready' : 'needs-auth');
+
+// When the daemon last ran each CLI's sign-in check (it caches the answer for a few minutes).
+function checkedLabel(iso: string | null): string {
+  if (!iso) return 'not checked yet';
+  const ago = timeAgo(iso);
+  return ago === 'now' ? 'checked just now' : `checked ${ago} ago`;
+}
 
 function StatusCell({ bucket }: { bucket: Bucket }) {
   const [dot, text, label] = bucket === 'ready'
@@ -31,9 +39,17 @@ export function ToolsSection() {
   const [err, setErr] = useState('');
   const [query, setQuery] = useState('');
   const [seg, setSeg] = useState<'all' | 'ready' | 'needs-auth'>('all');
+  const [checkedAt, setCheckedAt] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+  const apply = (r: ToolsResponse) => { setTools(r.tools); setCheckedAt(r.checkedAt); setErr(''); };
   useEffect(() => { (async () => {
-    try { setTools((await api.getTools()).tools); } catch { setErr('Could not reach Dispatch.'); }
+    try { apply(await api.getTools()); } catch { setErr('Could not reach Dispatch.'); }
   })(); }, []);
+  const checkAgain = async () => {
+    setChecking(true);
+    try { apply(await api.getTools({ refresh: true })); } catch { setErr('Could not reach Dispatch.'); }
+    finally { setChecking(false); }
+  };
 
   const matched = query ? tools.filter((t) => t.name.toLowerCase().includes(query.toLowerCase()) || t.description.toLowerCase().includes(query.toLowerCase())) : tools;
   const ready = matched.filter((t) => bucketOf(t) === 'ready');
@@ -77,7 +93,15 @@ export function ToolsSection() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <span style={pageLabel}>TOOLS (CLI)</span>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <span style={pageLabel}>TOOLS (CLI)</span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={summaryLine} title={checkedAt ? new Date(checkedAt).toLocaleString() : undefined}>{checkedLabel(checkedAt)}</span>
+          <button style={{ ...ghostBtn, ...(checking ? { opacity: 0.6, cursor: 'default' } : {}) }} disabled={checking} onClick={() => void checkAgain()}>
+            {checking ? 'Checking…' : 'Check again'}
+          </button>
+        </span>
+      </div>
       <div style={desc}>
         CLIs bundled with Dispatch and available to the agent in every thread. Add your own in <code style={codeChip}>~/.dispatch/tools.json</code>, then run <code style={codeChip}>dispatch tools install</code>.
       </div>

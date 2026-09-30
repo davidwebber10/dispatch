@@ -359,6 +359,8 @@ export interface DopplerProject { id: string; slug: string; name: string }
 export interface DopplerConfig { name: string; environment: string }
 
 export interface ToolStatus { name: string; description: string; kind: 'binary' | 'npm' | 'script'; installed: boolean; version?: string; authed: boolean; docs?: string }
+/** GET /api/tools. `checkedAt` is when the CLI auth checks last ran (null until the first run). */
+export interface ToolsResponse { tools: ToolStatus[]; checkedAt: string | null }
 
 export interface Integration { id: string; name: string; type: 'stdio' | 'remote'; command: string | null; args: string[]; url: string | null; headers: Record<string, string>; env: Record<string, string>; enabled: boolean; createdAt: string; updatedAt: string }
 export type AddIntegrationInput =

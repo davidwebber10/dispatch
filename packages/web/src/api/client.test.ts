@@ -73,6 +73,16 @@ test('sendFileReference defaults to agent-context mode', async () => {
   }));
 });
 
+test('getTools GETs /api/tools, adding ?refresh=1 only when asked to re-run the auth checks', async () => {
+  mockJson({ tools: [], checkedAt: null });
+  await api.getTools();
+  expect(fetch).toHaveBeenLastCalledWith('/api/tools', expect.objectContaining({ method: 'GET' }));
+  mockJson({ tools: [], checkedAt: '2026-09-30T12:00:00.000Z' });
+  const res = await api.getTools({ refresh: true });
+  expect(fetch).toHaveBeenLastCalledWith('/api/tools?refresh=1', expect.objectContaining({ method: 'GET' }));
+  expect(res.checkedAt).toBe('2026-09-30T12:00:00.000Z');
+});
+
 test('getScrollbackSize GETs the scrollback route and returns totalBytes', async () => {
   mockJson({ totalBytes: 4_123_456 });
   const size = await api.getScrollbackSize('t1');

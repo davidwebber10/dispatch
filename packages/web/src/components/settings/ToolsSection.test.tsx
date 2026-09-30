@@ -9,7 +9,7 @@ const TOOLS = { tools: [
   { name: 'jq', description: 'JSON processor', kind: 'binary' as const, installed: true, authed: true },
   { name: 'gh', description: 'GitHub CLI', kind: 'binary' as const, installed: true, authed: false },
   { name: 'aws', description: 'AWS CLI', kind: 'script' as const, installed: false, authed: false },
-] };
+], checkedAt: null as string | null };
 
 test('lists tools with installed + auth badges', async () => {
   vi.spyOn(api, 'getTools').mockResolvedValue(TOOLS);
@@ -31,6 +31,47 @@ test('groups tools by status: ready / needs auth / missing', async () => {
   expect(screen.getByText('installed · authed')).toBeInTheDocument();
   expect(screen.getByText('not installed')).toBeInTheDocument();
   expect(screen.getByText(/3 tools · 1 need auth/)).toBeInTheDocument();
+});
+
+test('shows when the auth checks last ran, and "Check again" re-runs them', async () => {
+  const threeMinAgo = new Date(Date.now() - 3 * 60_000).toISOString();
+  const signedIn = { tools: TOOLS.tools.map((t) => (t.name === 'gh' ? { ...t, authed: true } : t)), checkedAt: new Date().toISOString() };
+  const spy = vi.spyOn(api, 'getTools')
+    .mockResolvedValueOnce({ ...TOOLS, checkedAt: threeMinAgo })
+    .mockResolvedValueOnce(signedIn);
+  render(<ToolsSection />);
+  await waitFor(() => expect(screen.getByText('checked 3m ago')).toBeInTheDocument());
+  expect(spy).toHaveBeenNthCalledWith(1); // the page load serves the cache
+  expect(screen.getByText('NEEDS AUTH')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+  await waitFor(() => expect(screen.getByText('checked just now')).toBeInTheDocument());
+  expect(spy).toHaveBeenNthCalledWith(2, { refresh: true });
+  expect(screen.queryByText('NEEDS AUTH')).not.toBeInTheDocument(); // gh is ready now
+});
+
+test('"Check again" is disabled while a check runs', async () => {
+  let release!: (v: typeof TOOLS) => void;
+  vi.spyOn(api, 'getTools')
+    .mockResolvedValueOnce(TOOLS)
+    .mockImplementationOnce(() => new Promise((r) => { release = r; }));
+  render(<ToolsSection />);
+  await waitFor(() => expect(screen.getByText('not checked yet')).toBeInTheDocument());
+  fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+  expect(screen.getByRole('button', { name: 'Checking…' })).toBeDisabled();
+  release({ ...TOOLS, checkedAt: new Date().toISOString() });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Check again' })).toBeEnabled());
+});
+
+test('a failed re-check says so and keeps the last list', async () => {
+  vi.spyOn(api, 'getTools')
+    .mockResolvedValueOnce(TOOLS)
+    .mockRejectedValueOnce(new Error('GET /api/tools failed: 500'));
+  render(<ToolsSection />);
+  await waitFor(() => expect(screen.getByText('jq')).toBeInTheDocument());
+  fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+  await waitFor(() => expect(screen.getByText('Could not reach Dispatch.')).toBeInTheDocument());
+  expect(screen.getByText('jq')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Check again' })).toBeEnabled();
 });
 
 test('segmented filter narrows to one status group', async () => {
