@@ -217,9 +217,11 @@ export class SecretsService {
     const c = this.read();
     const base =
       `This workspace uses Doppler for secrets management (project "${c.project}", config "${c.config}"). ` +
-      `A "doppler" MCP server is available to you. When you need an API key, token, password, or other secret, ` +
-      `retrieve it with the Doppler MCP tools: doppler_list_secrets lists the secret names only (no values), and ` +
-      `doppler_get_secret reads one secret's value by name. Store new secrets with doppler_set_secret. ` +
+      `A "doppler" MCP server is available to you; doppler_list_secrets lists the secret names only (no values). ` +
+      `When a command needs an API key, token, password, or other secret, prefer ` +
+      `\`doppler run --project ${c.project} --config ${c.config} -- <command>\` (DOPPLER_TOKEN is already set), ` +
+      `so the value goes into the process env instead of this transcript. Call doppler_get_secret (it reads one ` +
+      `secret's value) only when you need the value itself. Store new secrets with doppler_set_secret. ` +
       `Never hardcode secrets, write them to .env files, or commit them to the repo.`;
     return c.readOnly
       ? `${base} Secrets are read-only here: retrieve them but do not create, modify, or delete.`

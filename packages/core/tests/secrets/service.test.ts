@@ -46,12 +46,13 @@ describe('SecretsService', () => {
     expect(sp).toContain('dev');
   });
 
-  it('tells agents the list tool gives names only and the get tool reads one value', async () => {
+  it('keeps values out of the transcript: names-only list, doppler run first, get only for the value itself', async () => {
     const s = svc(true);
     await s.setConnection({ token: 'dp.sa.x', project: 'dispatch', config: 'dev' });
     const sp = s.getInjection().systemPrompt!;
     expect(sp).toMatch(/doppler_list_secrets lists[^.]*names only/);
-    expect(sp).toMatch(/doppler_get_secret reads one[^.]*value/);
+    expect(sp).toContain('prefer `doppler run --project dispatch --config dev -- <command>`');
+    expect(sp).toMatch(/doppler_get_secret[^.]*only when you need the value itself/);
   });
 
   it('has no system prompt when disconnected', () => {

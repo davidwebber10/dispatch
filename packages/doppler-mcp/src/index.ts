@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { z } from 'zod';
-import { secretNames } from './secret-names.js';
-import { writeConfirmation } from './write-confirmation.js';
+import { createDopplerClient } from './doppler-client.js';
+import { registerTools } from './tools.js';
 
 const TOKEN = process.env.DOPPLER_TOKEN;
 const PROJECT = process.env.DOPPLER_PROJECT;
@@ -15,147 +14,8 @@ if (!TOKEN) {
   process.exit(1);
 }
 
-async function doppler(path: string, init: RequestInit = {}): Promise<any> {
-  const res = await fetch(`https://api.doppler.com${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${TOKEN}`,
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-      ...(init.headers || {}),
-    },
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`Doppler ${res.status}: ${text}`);
-  return text ? JSON.parse(text) : {};
-}
-
-const ok = (data: unknown) => ({
-  content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
-});
-
-const fail = (e: unknown) => ({
-  content: [{ type: 'text' as const, text: String(e instanceof Error ? e.message : e) }],
-  isError: true,
-});
-
-const qs = (
-  p: string | undefined,
-  c: string | undefined,
-  extra: Record<string, string> = {},
-) =>
-  new URLSearchParams({
-    project: p ?? PROJECT ?? '',
-    config: c ?? CONFIG ?? '',
-    ...extra,
-  }).toString();
-
 const server = new McpServer({ name: 'doppler', version: '0.1.0' });
-
-server.registerTool(
-  'doppler_list_secrets',
-  {
-    description:
-      'List the names of all secrets in a Doppler config. Values are not returned; ' +
-      'use doppler_get_secret to read one value.',
-    inputSchema: {
-      project: z.string().optional(),
-      config: z.string().optional(),
-    },
-  },
-  async ({ project, config }) => {
-    try {
-      const body = await doppler(`/v3/configs/config/secrets/names?${qs(project, config)}`);
-      return ok({
-        project: project ?? PROJECT,
-        config: config ?? CONFIG,
-        names: secretNames(body),
-      });
-    } catch (e) {
-      return fail(e);
-    }
-  },
-);
-
-server.registerTool(
-  'doppler_get_secret',
-  {
-    description: 'Get a single secret by name from a Doppler config.',
-    inputSchema: {
-      name: z.string(),
-      project: z.string().optional(),
-      config: z.string().optional(),
-    },
-  },
-  async ({ name, project, config }) => {
-    try {
-      return ok(await doppler(`/v3/configs/config/secret?${qs(project, config, { name })}`));
-    } catch (e) {
-      return fail(e);
-    }
-  },
-);
-
-if (!READ_ONLY) {
-  server.registerTool(
-    'doppler_set_secret',
-    {
-      description:
-        'Set (create or update) a secret in a Doppler config. The value is not echoed back; ' +
-        'the result only confirms which secret was updated.',
-      inputSchema: {
-        name: z.string(),
-        value: z.string(),
-        project: z.string().optional(),
-        config: z.string().optional(),
-      },
-    },
-    async ({ name, value, project, config }) => {
-      try {
-        await doppler('/v3/configs/config/secrets', {
-          method: 'POST',
-          body: JSON.stringify({
-            project: project ?? PROJECT,
-            config: config ?? CONFIG,
-            secrets: { [name]: value },
-          }),
-        });
-        return ok(writeConfirmation('updated', { project: project ?? PROJECT, config: config ?? CONFIG, name }));
-      } catch (e) {
-        return fail(e);
-      }
-    },
-  );
-
-  server.registerTool(
-    'doppler_delete_secret',
-    {
-      description:
-        'Delete a secret from a Doppler config. No values are echoed back; ' +
-        'the result only confirms which secret was deleted.',
-      inputSchema: {
-        name: z.string(),
-        project: z.string().optional(),
-        config: z.string().optional(),
-      },
-    },
-    async ({ name, project, config }) => {
-      try {
-        await doppler('/v3/configs/config/secrets', {
-          method: 'POST',
-          body: JSON.stringify({
-            project: project ?? PROJECT,
-            config: config ?? CONFIG,
-            secrets: { [name]: null },
-          }),
-        });
-        return ok(writeConfirmation('deleted', { project: project ?? PROJECT, config: config ?? CONFIG, name }));
-      } catch (e) {
-        return fail(e);
-      }
-    },
-  );
-}
+registerTools(server, createDopplerClient(TOKEN), { project: PROJECT, config: CONFIG, readOnly: READ_ONLY });
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
