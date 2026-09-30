@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../api/client';
 import type { Integration, AddIntegrationInput, IntegrationsExport } from '../../api/types';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { useSecrets } from '../../stores/secrets';
 import { pageLabel, summaryLine, ghostBtn, miniChip, fieldInput, solidBtn, GroupHeader, HoverRow, FilterSegments, Sheet, Divider } from './ui';
 
 const sub: React.CSSProperties = { fontSize: 11.5, color: 'var(--color-text-tertiary)' };
@@ -34,11 +35,17 @@ export function IntegrationsSection() {
   const [env, setEnv] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const doppler = useSecrets((s) => s.status);
+
   const reload = useCallback(async () => {
     try { setList((await api.listIntegrations()).integrations); }
     catch { setErr('Could not reach Dispatch.'); }
   }, []);
   useEffect(() => { void reload(); }, [reload]);
+  // Status only: the store's loadStatus() would also pull every secret value into the page.
+  useEffect(() => { api.getSecretsStatus().then((status) => useSecrets.setState({ status })).catch(() => {}); }, []);
+  const dopplerOn = !!doppler?.connected && doppler.enabled;
+  const dopplerWhere = doppler?.project && doppler?.config ? ` (${doppler.project}/${doppler.config})` : '';
 
   const canAdd = !busy && /^[a-zA-Z0-9_-]+$/.test(name.trim()) && (advanced ? !!command.trim() : /^https?:\/\//.test(url.trim()));
   const active = list.filter((i) => i.enabled);
@@ -128,7 +135,16 @@ export function IntegrationsSection() {
           <input ref={fileRef} type="file" accept="application/json" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void doImport(f); e.target.value = ''; }} />
         </span>
       </div>
-      <div style={desc}>MCP servers shared across Claude &amp; Codex. Secrets come from Doppler (servers inherit your session env).</div>
+      <div style={desc}>MCP servers added to every agent thread (Claude Code, Codex, Grok, OpenCode).</div>
+      <div style={desc}>
+        {'Write ${NAME} in a header or env value. '}
+        {`Dispatch reads NAME from Doppler${dopplerWhere} when the server starts; the value never appears in a command line or a config file.`}
+      </div>
+      {doppler && !dopplerOn && (
+        <div style={{ fontSize: 11.5, color: 'var(--color-status-yellow)' }}>
+          {doppler.connected ? 'Doppler is turned off' : 'Doppler is not connected'}{', so ${NAME} will not resolve from it. Connect it under Secrets.'}
+        </div>
+      )}
       <div style={summaryLine}>{list.length} server{list.length === 1 ? '' : 's'} · {active.length} on</div>
 
       {list.length === 0 && <div style={sub}>No integrations yet. Add one below.</div>}
