@@ -239,10 +239,18 @@ export function openIntegrationLog(file: string, cap = LOG_CAP): { write: (text:
   };
   let fd = create();
   let size = 0;
+  // Only close() ends the log. "No descriptor right now" (a rotation whose recreate failed, as
+  // on a full disk) is retried on the next write: reopen the active path, append, never truncate.
+  let closed = false;
   return {
     write: (text) => {
-      if (fd < 0) return;
+      if (closed) return;
       try {
+        if (fd < 0) {
+          fd = fs.openSync(file, 'a', 0o600);
+          fs.fchmodSync(fd, 0o600);
+          size = fs.fstatSync(fd).size;
+        }
         size += fs.writeSync(fd, text);
         if (size > cap) {
           fs.closeSync(fd);
@@ -252,9 +260,10 @@ export function openIntegrationLog(file: string, cap = LOG_CAP): { write: (text:
           fd = create();
           size = 0;
         }
-      } catch { /* dropped */ }
+      } catch { /* this batch is dropped; the next write tries again */ }
     },
     close: () => {
+      closed = true;
       try { if (fd >= 0) fs.closeSync(fd); } catch { /* ignore */ }
       fd = -1;
     },

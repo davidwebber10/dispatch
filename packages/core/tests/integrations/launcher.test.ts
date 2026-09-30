@@ -363,6 +363,37 @@ describe('integration log file', () => {
     expect(fs.readFileSync(`${file}.1`, 'utf8')).toContain('fill');
   });
 
+  it('recovers from a one-shot recreate failure during rotation: a later write reopens the active path (0600); close() stops writes', () => {
+    const file = integrationLogPath(sb.secretsDir, 'linear');
+    const log = openIntegrationLog(file, 1000);
+    // The next open (rotation's recreate of the active path) fails once, as on a full disk.
+    const openSpy = vi.spyOn(fs, 'openSync').mockImplementationOnce(() => { throw Object.assign(new Error('no space'), { code: 'ENOSPC' }); });
+    try {
+      log.write('r'.repeat(1001)); // crosses the cap: rename to .1, then the recreate fails
+      expect(openSpy).toHaveBeenCalled();
+      expect(fs.existsSync(file)).toBe(false);
+      log.write('FATAL after disk recovered\n');
+    } finally {
+      openSpy.mockRestore();
+    }
+    expect(fs.readFileSync(file, 'utf8')).toBe('FATAL after disk recovered\n');
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    expect(fs.readFileSync(`${file}.1`, 'utf8')).toBe('r'.repeat(1001));
+    log.close();
+    log.write('after close\n');
+    expect(fs.readFileSync(file, 'utf8')).toBe('FATAL after disk recovered\n');
+  });
+
+  it('close() stops writes even when there is no descriptor at that moment', () => {
+    const file = integrationLogPath(sb.secretsDir, 'linear');
+    const log = openIntegrationLog(file, 1000);
+    const openSpy = vi.spyOn(fs, 'openSync').mockImplementationOnce(() => { throw Object.assign(new Error('no space'), { code: 'ENOSPC' }); });
+    try { log.write('r'.repeat(1001)); } finally { openSpy.mockRestore(); }
+    log.close();
+    log.write('after close\n');
+    expect(fs.existsSync(file)).toBe(false);
+  });
+
   describe('pruneIntegrationLogs', () => {
     const DAY = 24 * 60 * 60 * 1000;
     /** Create a log file with a given age (ms) and mode. */
