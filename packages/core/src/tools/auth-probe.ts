@@ -1,14 +1,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { spawn, type ChildProcess } from 'child_process'; // unprefixed: see setup/install.ts
 import { toolPaths, hostOsFamily } from './paths.js';
 import { loadManifest } from './manifest.js';
-import type { ToolEntry } from './types.js';
+import type { ToolEntry, AuthCheckOutcome } from './types.js';
 
-/** Runs one auth check. Resolves true only on exit 0, and never exposes what the check printed. */
-export type AuthCheckRunner = (cmd: string, args: string[], opts: { env: Record<string, string>; signal: AbortSignal; cwd?: string }) => Promise<boolean>;
+export type { AuthCheckOutcome } from './types.js';
 
-export interface ToolAuthSnapshot { results: Record<string, boolean>; checkedAt: string | null; }
+/** Runs one auth check and reports how it ended — never what it printed. */
+export type AuthCheckRunner = (cmd: string, args: string[], opts: { env: Record<string, string>; signal: AbortSignal; cwd?: string }) => Promise<AuthCheckOutcome>;
+
+export interface ToolAuthSnapshot { results: Record<string, AuthCheckOutcome>; checkedAt: string | null; }
 
 export interface ToolAuthProberOptions {
   base?: string;
@@ -26,20 +29,27 @@ export interface ToolAuthProberOptions {
  * Default runner. All three streams are 'ignore': nothing a check prints is read, logged, or
  * returned (these commands print account ids, and some print tokens), and stdin at EOF makes a
  * CLI that wants to prompt fail fast instead of hanging. Detached, so the check leads its own
- * process group and an abort kills a shell check's children too, not just /bin/sh.
+ * process group: an abort kills a shell check's children too, not just /bin/sh, and whatever a
+ * check leaves running when it exits (the aws scan stops at its first success) is killed then.
  */
 export const runQuiet: AuthCheckRunner = (cmd, args, { env, signal, cwd }) => new Promise((resolve) => {
+  const detached = process.platform !== 'win32';
   let child: ChildProcess;
-  try { child = spawn(cmd, args, { env, cwd, stdio: 'ignore', detached: process.platform !== 'win32' }); }
-  catch { resolve(false); return; }
+  try { child = spawn(cmd, args, { env, cwd, stdio: 'ignore', detached }); }
+  catch { resolve('unknown'); return; }
   const kill = () => {
     try { process.kill(-child.pid!, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* already gone */ } }
   };
-  const settle = (ok: boolean) => { signal.removeEventListener('abort', kill); resolve(ok); };
+  const settle = (o: AuthCheckOutcome) => { signal.removeEventListener('abort', kill); resolve(o); };
   if (signal.aborted) kill(); else signal.addEventListener('abort', kill, { once: true });
-  child.on('error', () => settle(false));
-  child.on('exit', (code) => settle(code === 0));
+  child.on('error', () => settle('unknown'));
+  child.on('exit', (code) => {
+    if (detached) { try { process.kill(-child.pid!, 'SIGKILL'); } catch { /* nothing left in the group */ } }
+    settle(code === 0 ? 'ok' : code === null ? 'unknown' : 'failed'); // null: ended by a signal
+  });
 });
+
+interface CachedRun { results: Record<string, AuthCheckOutcome>; checkedAtMs: number; envKey: string; }
 
 /**
  * Whether each installed CLI can actually sign in from a thread. The daemon's own env is not
@@ -47,11 +57,14 @@ export const runQuiet: AuthCheckRunner = (cmd, args, { env, signal, cwd }) => ne
  * Secrets env, and most CLIs keep their login in a keyring or config file anyway. So each
  * entry's `authCheck` runs with the THREAD env, and the answer is cached — awarenessNote is
  * sync and can only ever read the cache.
+ *
+ * The cache belongs to the env it was checked with (a fingerprint of it, so an equal env from
+ * a fresh refreshPtyEnv keeps it). Once the thread env changes — a Doppler disconnect, a new
+ * secret — the old answer is dropped, and a run that started under the old env never publishes.
  */
 export class ToolAuthProber {
-  private state: ToolAuthSnapshot = { results: {}, checkedAt: null };
-  private checkedAtMs: number | null = null;
-  private inFlight: Promise<ToolAuthSnapshot> | null = null;
+  private cached: CachedRun | null = null;
+  private inFlight: { envKey: string; promise: Promise<ToolAuthSnapshot> } | null = null;
   private spawnEnv: Record<string, string> = {};
   private readonly base?: string;
   private readonly env?: Record<string, string | undefined>;
@@ -80,45 +93,71 @@ export class ToolAuthProber {
     return out;
   }
 
-  snapshot(): ToolAuthSnapshot { return { results: { ...this.state.results }, checkedAt: this.state.checkedAt }; }
-
-  isStale(): boolean { return this.checkedAtMs === null || this.now() - this.checkedAtMs > this.ttlMs; }
-
-  /** Re-run every check. Concurrent callers share one run. Never throws. */
-  refresh(): Promise<ToolAuthSnapshot> {
-    if (!this.inFlight) this.inFlight = this.runAll().finally(() => { this.inFlight = null; });
-    return this.inFlight;
+  snapshot(): ToolAuthSnapshot {
+    const c = this.current();
+    return c ? { results: { ...c.results }, checkedAt: new Date(c.checkedAtMs).toISOString() } : { results: {}, checkedAt: null };
   }
 
-  private async runAll(): Promise<ToolAuthSnapshot> {
+  isStale(): boolean {
+    const c = this.current();
+    return !c || this.now() - c.checkedAtMs > this.ttlMs;
+  }
+
+  /**
+   * Re-run every check. Callers share a run only when it checks the env they see now — a
+   * "Check again" after an env change starts its own. Never throws.
+   */
+  refresh(): Promise<ToolAuthSnapshot> {
+    const env = this.threadEnv();
+    const envKey = fingerprint(env);
+    if (this.inFlight?.envKey === envKey) return this.inFlight.promise;
+    const promise: Promise<ToolAuthSnapshot> = this.runAll(env, envKey)
+      .finally(() => { if (this.inFlight?.promise === promise) this.inFlight = null; });
+    this.inFlight = { envKey, promise };
+    return promise;
+  }
+
+  /** The cached run, if it was checked with the thread env as it is now. */
+  private current(): CachedRun | null {
+    return this.cached && this.cached.envKey === fingerprint(this.threadEnv()) ? this.cached : null;
+  }
+
+  private async runAll(env: Record<string, string>, envKey: string): Promise<ToolAuthSnapshot> {
     try {
       const p = toolPaths(this.base);
       const family = hostOsFamily();
-      const env = this.threadEnv();
       const entries = loadManifest(this.base).filter((e) => e.authCheck
         && (!e.platforms || e.platforms.includes(family))
         && e.bins.every((b) => fs.existsSync(path.join(p.bin, b))));
-      const oks = await Promise.all(entries.map((e) => this.check(e, p.bin, env)));
-      const results: Record<string, boolean> = {};
-      entries.forEach((e, i) => { results[e.name] = oks[i]; });
-      this.checkedAtMs = this.now();
-      this.state = { results, checkedAt: new Date(this.checkedAtMs).toISOString() };
+      const outcomes = await Promise.all(entries.map((e) => this.check(e, p.bin, env)));
+      const results: Record<string, AuthCheckOutcome> = {};
+      entries.forEach((e, i) => { results[e.name] = outcomes[i]; });
+      // The env moved on while this ran: the answer is for credentials threads no longer get.
+      // Leave the cache stale; the next read re-checks.
+      if (fingerprint(this.threadEnv()) === envKey) this.cached = { results, checkedAtMs: this.now(), envKey };
     } catch { /* keep the last answer */ }
     return this.snapshot();
   }
 
-  /** One check, raced against its timeout. A timeout aborts the run and counts as not authed. */
-  private check(e: ToolEntry, binDir: string, env: Record<string, string>): Promise<boolean> {
+  /** One check, raced against its timeout. A timeout aborts the run and is 'unknown'. */
+  private check(e: ToolEntry, binDir: string, env: Record<string, string>): Promise<AuthCheckOutcome> {
     const c = e.authCheck!;
     const [cmd, args] = c.shell !== undefined ? ['/bin/sh', ['-c', c.shell]] : [path.join(binDir, e.bins[0]), c.args ?? []];
     const ac = new AbortController();
     let timer: NodeJS.Timeout | undefined;
-    const timedOut = new Promise<boolean>((resolve) => {
-      timer = setTimeout(() => { ac.abort(); resolve(false); }, c.timeoutMs ?? this.timeoutMs);
+    const timedOut = new Promise<AuthCheckOutcome>((resolve) => {
+      timer = setTimeout(() => { ac.abort(); resolve('unknown'); }, c.timeoutMs ?? this.timeoutMs);
     });
     const ran = Promise.resolve()
       .then(() => this.run(cmd, args, { env, signal: ac.signal, cwd: this.cwd }))
-      .then((ok) => ok === true, () => false);
+      .then((o): AuthCheckOutcome => (o === 'ok' || o === 'failed' ? o : 'unknown'), (): AuthCheckOutcome => 'unknown');
     return Promise.race([ran, timedOut]).finally(() => clearTimeout(timer));
   }
+}
+
+/** A stable digest of an env, so an equal env rebuilt as a new object still matches. */
+function fingerprint(env: Record<string, string>): string {
+  const h = crypto.createHash('sha256');
+  for (const k of Object.keys(env).sort()) h.update(`${k}\0${env[k]}\0`);
+  return h.digest('hex');
 }

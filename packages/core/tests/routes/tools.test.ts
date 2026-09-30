@@ -46,7 +46,7 @@ describe('GET /api/tools with an auth prober', () => {
     ] }));
     fs.mkdirSync(toolPaths(base).bin, { recursive: true });
     fs.writeFileSync(path.join(toolPaths(base).bin, 'fakecli'), '#!/bin/sh\n'); fs.chmodSync(path.join(toolPaths(base).bin, 'fakecli'), 0o755);
-    run = vi.fn<AuthCheckRunner>(async () => true);
+    run = vi.fn<AuthCheckRunner>(async () => 'ok');
     prober = new ToolAuthProber({ base, env: {}, run });
     rapp = express().use('/api/tools', createToolsRouter({ base, prober }));
   });
@@ -64,17 +64,29 @@ describe('GET /api/tools with an auth prober', () => {
 
   it('?refresh=1 re-runs the checks even when the cache is fresh', async () => {
     await request(rapp).get('/api/tools');
-    run.mockImplementation(async () => false);
+    run.mockImplementation(async () => 'failed');
     const res = await request(rapp).get('/api/tools?refresh=1');
     expect(run).toHaveBeenCalledTimes(2);
     expect(fakecli(res).authed).toBe(false);
     expect(typeof res.body.checkedAt).toBe('string');
   });
 
-  it('judges the auth env against the thread env, not the daemon env', async () => {
-    run.mockImplementation(async () => false);
+  it('a change in the thread env makes the next load re-run the checks', async () => {
+    await request(rapp).get('/api/tools');
+    await request(rapp).get('/api/tools');
+    expect(run).toHaveBeenCalledTimes(1);
+    prober.setSpawnEnv({ FAKECLI_TOKEN: 'fake-token' }); // e.g. saved in Settings → Secrets
+    await request(rapp).get('/api/tools');
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it('a failed check wins over the auth env; an unknown one falls back to the thread env', async () => {
+    prober.setSpawnEnv({ FAKECLI_TOKEN: 'expired-token' });
+    run.mockImplementation(async () => 'failed');
     expect(fakecli(await request(rapp).get('/api/tools')).authed).toBe(false);
-    prober.setSpawnEnv({ FAKECLI_TOKEN: 'fake-token' }); // e.g. from Settings → Secrets
-    expect(fakecli(await request(rapp).get('/api/tools')).authed).toBe(true);
+    run.mockImplementation(async () => 'unknown');
+    expect(fakecli(await request(rapp).get('/api/tools?refresh=1')).authed).toBe(true);
+    prober.setSpawnEnv({}); // judged against the thread env, not the daemon's
+    expect(fakecli(await request(rapp).get('/api/tools')).authed).toBe(false);
   });
 });

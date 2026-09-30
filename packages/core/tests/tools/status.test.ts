@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { toolStatuses, getToolsSpawnEnv, awarenessNote } from '../../src/tools/status.js';
 import { toolPaths, hostOsFamily } from '../../src/tools/paths.js';
+import type { AuthCheckOutcome } from '../../src/tools/auth-probe.js';
 
 let root: string;
 let base: string;
@@ -51,8 +52,8 @@ it('awarenessNote is empty when nothing installed', () => {
   expect(awarenessNote([{ name: 'x', description: 'd', kind: 'binary', installed: false, authed: false }])).toBe('');
 });
 
-describe('authed merges the env rule with the cached auth check', () => {
-  const statusOf = (name: string, env: Record<string, string>, checks?: Record<string, boolean>) =>
+describe('authed: a completed auth check decides; otherwise the env rule does', () => {
+  const statusOf = (name: string, env: Record<string, string>, checks?: Record<string, AuthCheckOutcome>) =>
     toolStatuses({ base, env, checks }).find((s) => s.name === name)!.authed;
   beforeEach(() => {
     fs.writeFileSync(path.join(root, 'tools.json'), JSON.stringify({ tools: [
@@ -63,14 +64,17 @@ describe('authed merges the env rule with the cached auth check', () => {
   });
 
   it('a passed check marks the tool authed even with no auth env (keyring / config-file logins)', () => {
-    expect(statusOf('gh', {}, { gh: true })).toBe(true);
+    expect(statusOf('gh', {}, { gh: 'ok' })).toBe(true);
   });
-  it('the auth env still counts when the check fails', () => {
-    expect(statusOf('gh', { GH_TOKEN: 'fake' }, { gh: false })).toBe(true);
-    expect(statusOf('gh', { GITHUB_TOKEN: 'fake' }, { gh: false })).toBe(true); // via envAlias
+  it('a failed check is not authed, even with the auth env set (the check ran WITH that env)', () => {
+    expect(statusOf('gh', {}, { gh: 'failed' })).toBe(false);
+    expect(statusOf('gh', { GH_TOKEN: 'expired' }, { gh: 'failed' })).toBe(false);
+    expect(statusOf('gh', { GITHUB_TOKEN: 'expired' }, { gh: 'failed' })).toBe(false); // via envAlias
   });
-  it('a failed check with no auth env is not authed', () => {
-    expect(statusOf('gh', {}, { gh: false })).toBe(false);
+  it('an unknown check (timeout, spawn error) falls back to the env rule', () => {
+    expect(statusOf('gh', {}, { gh: 'unknown' })).toBe(false);
+    expect(statusOf('gh', { GH_TOKEN: 'fake' }, { gh: 'unknown' })).toBe(true);
+    expect(statusOf('gh', { GITHUB_TOKEN: 'fake' }, { gh: 'unknown' })).toBe(true);
   });
   it('with no check result yet, the env rule decides', () => {
     expect(statusOf('gh', {})).toBe(false);
@@ -78,20 +82,20 @@ describe('authed merges the env rule with the cached auth check', () => {
     expect(statusOf('dbx', {}, {})).toBe(true); // no authEnv: the env rule has nothing to require
   });
   it('a check-only entry follows its check result', () => {
-    expect(statusOf('dbx', {}, { dbx: false })).toBe(false);
-    expect(statusOf('dbx', {}, { dbx: true })).toBe(true);
+    expect(statusOf('dbx', {}, { dbx: 'failed' })).toBe(false);
+    expect(statusOf('dbx', {}, { dbx: 'ok' })).toBe(true);
   });
   it('an entry with neither authEnv nor authCheck stays authed, whatever the cache holds', () => {
-    expect(statusOf('jq', {}, { jq: false })).toBe(true);
+    expect(statusOf('jq', {}, { jq: 'failed' })).toBe(true);
   });
 
   it('the awareness note follows the check, not the daemon env', () => {
     fs.mkdirSync(toolPaths(base).bin, { recursive: true });
     fs.writeFileSync(path.join(toolPaths(base).bin, 'gh'), '#!/bin/sh\n'); fs.chmodSync(path.join(toolPaths(base).bin, 'gh'), 0o755);
-    const signedIn = awarenessNote(toolStatuses({ base, env: {}, checks: { gh: true } }));
+    const signedIn = awarenessNote(toolStatuses({ base, env: {}, checks: { gh: 'ok' } }));
     expect(signedIn).toContain('`gh` — GitHub CLI');
     expect(signedIn.toLowerCase()).not.toContain('not authenticated');
-    const signedOut = awarenessNote(toolStatuses({ base, env: {}, checks: { gh: false } }));
+    const signedOut = awarenessNote(toolStatuses({ base, env: { GH_TOKEN: 'expired' }, checks: { gh: 'failed' } }));
     expect(signedOut).toContain('`gh` — GitHub CLI (not authenticated');
   });
 });

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { ToolAuthProber, type AuthCheckRunner } from '../../src/tools/auth-probe.js';
+import { ToolAuthProber, type AuthCheckRunner, type AuthCheckOutcome } from '../../src/tools/auth-probe.js';
 import { loadManifest } from '../../src/tools/manifest.js';
 import { getToolsSpawnEnv } from '../../src/tools/spawnEnv.js';
 import { toolPaths } from '../../src/tools/paths.js';
@@ -26,6 +26,7 @@ function installBin(name: string, body = 'exit 0') {
   fs.chmodSync(f, 0o755);
 }
 const entry = (name: string, authCheck?: unknown) => ({ name, description: name, kind: 'binary', bins: [name], ...(authCheck ? { authCheck } : {}) });
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // Everything (manifest, fake bins, the spawned checks' cwd) lives in a subdir of a fresh
 // mkdtemp sandbox; only that sandbox is ever deleted.
@@ -39,11 +40,11 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); fs.rmSync(sandbox, { recursive: true, force: true }); });
 
 describe('ToolAuthProber (injected runner)', () => {
-  it('checks each installed tool with an authCheck, in parallel, and maps the result to authed', async () => {
+  it('checks each installed tool with an authCheck, in parallel, and records each outcome', async () => {
     writeManifest([entry('alpha', { args: ['whoami'] }), entry('beta', { shell: 'beta ping' }), entry('plain'), entry('absent', { args: ['x'] })]);
     installBin('alpha'); installBin('beta'); installBin('plain'); // 'absent' is not installed
     const calls: { cmd: string; args: string[] }[] = [];
-    const pending: ((ok: boolean) => void)[] = [];
+    const pending: ((o: AuthCheckOutcome) => void)[] = [];
     const run: AuthCheckRunner = (cmd, args) => { calls.push({ cmd, args }); return new Promise((r) => pending.push(r)); };
     const prober = new ToolAuthProber({ base, env: {}, run });
     const done = prober.refresh();
@@ -51,27 +52,27 @@ describe('ToolAuthProber (injected runner)', () => {
     expect(calls).toContainEqual({ cmd: path.join(bin, 'alpha'), args: ['whoami'] });
     expect(calls).toContainEqual({ cmd: '/bin/sh', args: ['-c', 'beta ping'] });
     const alphaFirst = calls[0].cmd.endsWith('alpha');
-    pending[alphaFirst ? 0 : 1](true);
-    pending[alphaFirst ? 1 : 0](false);
+    pending[alphaFirst ? 0 : 1]('ok');
+    pending[alphaFirst ? 1 : 0]('failed');
     const snap = await done;
-    expect(snap.results).toEqual({ alpha: true, beta: false });
+    expect(snap.results).toEqual({ alpha: 'ok', beta: 'failed' });
     expect(Number.isNaN(Date.parse(snap.checkedAt!))).toBe(false);
     expect(prober.snapshot()).toEqual(snap);
   });
 
-  it('counts a rejecting, throwing, or non-true runner as not authed, and never throws', async () => {
+  it('a rejecting, throwing, or junk-returning runner is unknown, and refresh never throws', async () => {
     writeManifest([entry('a', { args: ['x'] }), entry('b', { args: ['x'] }), entry('c', { args: ['x'] })]);
     for (const n of ['a', 'b', 'c']) installBin(n);
     const run: AuthCheckRunner = (cmd) => {
       if (cmd.endsWith('/a')) return Promise.reject(new Error('boom'));
       if (cmd.endsWith('/b')) throw new Error('sync boom');
-      return Promise.resolve('yes' as unknown as boolean);
+      return Promise.resolve(true as unknown as AuthCheckOutcome);
     };
     const snap = await new ToolAuthProber({ base, env: {}, run }).refresh();
-    expect(snap.results).toEqual({ a: false, b: false, c: false });
+    expect(snap.results).toEqual({ a: 'unknown', b: 'unknown', c: 'unknown' });
   });
 
-  it('a check that outlives its timeout counts as not authed and is aborted', async () => {
+  it('a check that outlives its timeout is unknown and is aborted', async () => {
     writeManifest([entry('slow', { args: ['x'] }), entry('quick', { args: ['x'], timeoutMs: 20 })]);
     installBin('slow'); installBin('quick');
     const aborted: string[] = [];
@@ -81,7 +82,7 @@ describe('ToolAuthProber (injected runner)', () => {
     const t0 = Date.now();
     const snap = await new ToolAuthProber({ base, env: {}, run, timeoutMs: 40 }).refresh();
     expect(Date.now() - t0).toBeLessThan(2000);
-    expect(snap.results).toEqual({ slow: false, quick: false });
+    expect(snap.results).toEqual({ slow: 'unknown', quick: 'unknown' });
     expect(aborted.sort()).toEqual(['quick', 'slow']);
   });
 
@@ -89,7 +90,7 @@ describe('ToolAuthProber (injected runner)', () => {
     writeManifest([entry('alpha', { args: ['x'] })]);
     installBin('alpha');
     let now = 1_000_000;
-    const run = vi.fn<AuthCheckRunner>(async () => true);
+    const run = vi.fn<AuthCheckRunner>(async () => 'ok');
     const prober = new ToolAuthProber({ base, env: {}, run, ttlMs: 1000, now: () => now });
     expect(prober.isStale()).toBe(true);
     expect(prober.snapshot()).toEqual({ results: {}, checkedAt: null });
@@ -99,23 +100,23 @@ describe('ToolAuthProber (injected runner)', () => {
     expect(prober.isStale()).toBe(false);
     now += 1;
     expect(prober.isStale()).toBe(true);
-    expect(prober.snapshot().results).toEqual({ alpha: true }); // stale results still serve
+    expect(prober.snapshot().results).toEqual({ alpha: 'ok' }); // stale results still serve
   });
 
   it('dedupes concurrent refreshes into one run', async () => {
     writeManifest([entry('alpha', { args: ['x'] })]);
     installBin('alpha');
-    let release!: (ok: boolean) => void;
+    let release!: (o: AuthCheckOutcome) => void;
     const run = vi.fn<AuthCheckRunner>(() => new Promise((r) => { release = r; }));
     const prober = new ToolAuthProber({ base, env: {}, run });
     const one = prober.refresh();
     const two = prober.refresh();
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-    release(true);
+    release('ok');
     expect(await one).toEqual(await two);
     expect(run).toHaveBeenCalledTimes(1);
-    run.mockImplementation(async () => false);
-    expect((await prober.refresh()).results).toEqual({ alpha: false }); // a later refresh runs again
+    run.mockImplementation(async () => 'failed');
+    expect((await prober.refresh()).results).toEqual({ alpha: 'failed' }); // a later refresh runs again
     expect(run).toHaveBeenCalledTimes(2);
   });
 
@@ -123,7 +124,7 @@ describe('ToolAuthProber (injected runner)', () => {
     writeManifest([entry('alpha', { args: ['x'] })]);
     installBin('alpha');
     const seen: { env: Record<string, string>; cwd?: string }[] = [];
-    const run: AuthCheckRunner = async (_c, _a, { env, cwd }) => { seen.push({ env, cwd }); return true; };
+    const run: AuthCheckRunner = async (_c, _a, { env, cwd }) => { seen.push({ env, cwd }); return 'ok'; };
     const prober = new ToolAuthProber({ base, env: { HOME: '/home/fake', PATH: SYS_PATH, UNSET: undefined }, run, cwd: root });
     prober.setSpawnEnv({ PATH: `${bin}:${SYS_PATH}`, DOPPLER_TOKEN: 'dp.st.fake' });
     await prober.refresh();
@@ -133,13 +134,69 @@ describe('ToolAuthProber (injected runner)', () => {
   });
 });
 
+describe('ToolAuthProber when the thread env changes', () => {
+  beforeEach(() => { writeManifest([entry('alpha', { args: ['x'] })]); installBin('alpha'); });
+
+  it('a changed env invalidates the cache (e.g. a Doppler disconnect); the same values again do not', async () => {
+    const run = vi.fn<AuthCheckRunner>(async () => 'ok');
+    const prober = new ToolAuthProber({ base, env: { PATH: SYS_PATH }, run });
+    prober.setSpawnEnv({ DOPPLER_TOKEN: 'dp.st.fake' });
+    await prober.refresh();
+    prober.setSpawnEnv({ DOPPLER_TOKEN: 'dp.st.fake' }); // a new object with the same values
+    expect(prober.isStale()).toBe(false);
+    expect(prober.snapshot().results).toEqual({ alpha: 'ok' });
+    prober.setSpawnEnv({}); // disconnected
+    expect(prober.isStale()).toBe(true);
+    expect(prober.snapshot()).toEqual({ results: {}, checkedAt: null });
+  });
+
+  it('a run that started under an older env does not publish its result', async () => {
+    let release!: (o: AuthCheckOutcome) => void;
+    const run = vi.fn<AuthCheckRunner>(() => new Promise((r) => { release = r; }));
+    const prober = new ToolAuthProber({ base, env: { PATH: SYS_PATH }, run });
+    prober.setSpawnEnv({ DOPPLER_TOKEN: 'dp.st.old' });
+    const p = prober.refresh();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    prober.setSpawnEnv({});
+    release('ok');
+    await p;
+    expect(prober.snapshot()).toEqual({ results: {}, checkedAt: null });
+    expect(prober.isStale()).toBe(true);
+  });
+
+  it('a refresh after an env change starts its own run, and the older run cannot overwrite it', async () => {
+    const calls: { token?: string; release: (o: AuthCheckOutcome) => void }[] = [];
+    const run: AuthCheckRunner = (_c, _a, { env }) => new Promise((r) => { calls.push({ token: env.DOPPLER_TOKEN, release: r }); });
+    let now = 1_000_000;
+    const prober = new ToolAuthProber({ base, env: { PATH: SYS_PATH }, run, now: () => now });
+    prober.setSpawnEnv({ DOPPLER_TOKEN: 'dp.st.old' });
+    const oldRun = prober.refresh();
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    prober.setSpawnEnv({ DOPPLER_TOKEN: 'dp.st.new' });
+    const checkAgain = prober.refresh(); // must not join the run that started under the old env
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+    expect(calls[1].token).toBe('dp.st.new');
+    expect(prober.refresh()).toBe(checkAgain); // same env: this one does join
+    now += 5;
+    calls[1].release('failed');
+    expect((await checkAgain).results).toEqual({ alpha: 'failed' });
+    calls[0].release('ok');
+    await oldRun;
+    expect(prober.snapshot()).toEqual({ results: { alpha: 'failed' }, checkedAt: new Date(1_000_005).toISOString() });
+    expect(calls).toHaveLength(2);
+  });
+});
+
 describe('ToolAuthProber (default runner, fake scripts)', () => {
-  it('maps exit 0 to authed; a non-zero exit, a missing command, or a spawn error to not authed', async () => {
-    writeManifest([entry('ok', { args: ['x'] }), entry('bad', { args: ['x'] }), entry('gone', { shell: `${root}/does-not-exist` }), entry('noexec', { args: ['x'] })]);
-    installBin('ok', 'exit 0'); installBin('bad', 'exit 3'); installBin('gone'); installBin('noexec');
+  it('exit 0 is ok; a non-zero exit (a missing command too) is failed; a spawn error or a signal is unknown', async () => {
+    writeManifest([
+      entry('ok', { args: ['x'] }), entry('bad', { args: ['x'] }), entry('gone', { shell: `${root}/does-not-exist` }),
+      entry('noexec', { args: ['x'] }), entry('killed', { args: ['x'] }),
+    ]);
+    installBin('ok', 'exit 0'); installBin('bad', 'exit 3'); installBin('gone'); installBin('noexec'); installBin('killed', 'kill -9 $$');
     fs.chmodSync(path.join(bin, 'noexec'), 0o644); // spawn fails with EACCES
     const snap = await new ToolAuthProber({ base, env: { PATH: SYS_PATH }, cwd: root }).refresh();
-    expect(snap.results).toEqual({ ok: true, bad: false, gone: false, noexec: false });
+    expect(snap.results).toEqual({ ok: 'ok', bad: 'failed', gone: 'failed', noexec: 'unknown', killed: 'unknown' });
   });
 
   it('never surfaces what a check prints', async () => {
@@ -150,7 +207,7 @@ describe('ToolAuthProber (default runner, fake scripts)', () => {
     const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((m) => vi.spyOn(console, m));
     const prober = new ToolAuthProber({ base, env: { PATH: SYS_PATH }, cwd: root });
     const snap = await prober.refresh();
-    expect(snap.results).toEqual({ loud: true, loudfail: false });
+    expect(snap.results).toEqual({ loud: 'ok', loudfail: 'failed' });
     expect(JSON.stringify(snap)).not.toContain(SECRET);
     expect(JSON.stringify(prober.snapshot())).not.toContain(SECRET);
     for (const s of spies) expect(JSON.stringify(s.mock.calls)).not.toContain(SECRET);
@@ -162,35 +219,89 @@ describe('ToolAuthProber (default runner, fake scripts)', () => {
     writeManifest([entry('hang', { shell: `/bin/sh -c 'sleep 1; touch "${mark}"'; true`, timeoutMs: 150 })]);
     installBin('hang');
     const snap = await new ToolAuthProber({ base, env: { PATH: SYS_PATH }, cwd: root }).refresh();
-    expect(snap.results).toEqual({ hang: false });
-    await new Promise((r) => setTimeout(r, 1500));
+    expect(snap.results).toEqual({ hang: 'unknown' });
+    await sleep(1500);
+    expect(fs.existsSync(mark)).toBe(false);
+  });
+
+  it('nothing a check started outlives it once it exits', async () => {
+    const mark = path.join(root, 'survived');
+    writeManifest([entry('leaky', { shell: `(sleep 1; touch "${mark}") & exit 0` })]);
+    installBin('leaky');
+    const snap = await new ToolAuthProber({ base, env: { PATH: SYS_PATH }, cwd: root }).refresh();
+    expect(snap.results).toEqual({ leaky: 'ok' });
+    await sleep(1500);
     expect(fs.existsSync(mark)).toBe(false);
   });
 });
 
 describe('the default aws check (fake aws on PATH)', () => {
-  // The fake refuses to answer unless instance metadata is disabled, then succeeds only for
-  // what FAKE_AWS_OK names: 'default' for the default chain, or a profile name.
+  // The fake answers only with instance metadata off, one attempt, and short per-attempt
+  // timeouts. `sts get-caller-identity` succeeds only for FAKE_AWS_OK ('default' is the default
+  // chain); every call sleeps FAKE_AWS_SLEEP seconds; FAKE_AWS_SLOW sleeps 2 s, then writes
+  // FAKE_AWS_MARK. FAKE_AWS_LOG gets a '+' when a call starts and a '-' when it ends.
   const FAKE_AWS = [
-    '[ "$AWS_EC2_METADATA_DISABLED" = "true" ] || exit 9',
-    'case "$*" in',
-    '  "configure list-profiles") printf "dev\\nprod\\n" ;;',
-    '  "sts get-caller-identity") [ "$FAKE_AWS_OK" = "default" ] || exit 255; echo "{\\"Account\\":\\"000000000000\\"}" ;;',
-    '  "sts get-caller-identity --profile "*) [ "$FAKE_AWS_OK" = "$4" ] || exit 255 ;;',
-    '  *) exit 2 ;;',
-    'esac',
+    '[ "$AWS_EC2_METADATA_DISABLED" = "true" ] && [ "$AWS_MAX_ATTEMPTS" = "1" ] || exit 9',
+    'if [ "$1 $2" = "configure list-profiles" ]; then printf "%s\\n" "$FAKE_AWS_PROFILES"; exit 0; fi',
+    '[ "$1 $2" = "sts get-caller-identity" ] || exit 2',
+    'shift 2; prof=default; ct=; rt=',
+    'while [ $# -gt 0 ]; do',
+    '  case "$1" in',
+    '    --profile) prof=$2; shift 2 ;;',
+    '    --cli-connect-timeout) ct=$2; shift 2 ;;',
+    '    --cli-read-timeout) rt=$2; shift 2 ;;',
+    '    *) exit 2 ;;',
+    '  esac',
+    'done',
+    '[ -n "$ct" ] && [ "$ct" -le 5 ] && [ -n "$rt" ] && [ "$rt" -le 10 ] || exit 8',
+    '[ -z "$FAKE_AWS_LOG" ] || echo + >> "$FAKE_AWS_LOG"',
+    'sleep "${FAKE_AWS_SLEEP:-0}"',
+    'if [ "$prof" = "$FAKE_AWS_SLOW" ]; then sleep 2; touch "$FAKE_AWS_MARK"; fi',
+    '[ -z "$FAKE_AWS_LOG" ] || echo - >> "$FAKE_AWS_LOG"',
+    '[ "$prof" = "$FAKE_AWS_OK" ] || exit 255',
+    'echo "{\\"Account\\":\\"000000000000\\"}"',
   ].join('\n');
 
-  async function probeAws(fakeOk: string): Promise<boolean | undefined> {
+  async function probeAws(fake: Record<string, string>, opts: { timeoutMs?: number } = {}): Promise<AuthCheckOutcome | undefined> {
     const aws = loadManifest(base).find((e) => e.name === 'aws')!;
     writeManifest([{ ...aws, platforms: undefined }]); // run on any host; the check itself is unchanged
     installBin('aws', FAKE_AWS);
-    const prober = new ToolAuthProber({ base, env: { PATH: SYS_PATH }, cwd: root });
-    prober.setSpawnEnv({ ...getToolsSpawnEnv({ base, env: { PATH: SYS_PATH } }), FAKE_AWS_OK: fakeOk });
+    const prober = new ToolAuthProber({ base, env: { PATH: SYS_PATH }, cwd: root, timeoutMs: opts.timeoutMs });
+    prober.setSpawnEnv({ ...getToolsSpawnEnv({ base, env: { PATH: SYS_PATH } }), FAKE_AWS_PROFILES: 'dev\nprod', ...fake });
     return (await prober.refresh()).results.aws;
   }
 
-  it('passes on the default credential chain', async () => { expect(await probeAws('default')).toBe(true); });
-  it('falls back to any listed profile', async () => { expect(await probeAws('prod')).toBe(true); });
-  it('fails when neither the default chain nor any profile works', async () => { expect(await probeAws('none')).toBe(false); });
+  it('passes on the default credential chain', async () => { expect(await probeAws({ FAKE_AWS_OK: 'default' })).toBe('ok'); });
+  it('falls back to any listed profile', async () => { expect(await probeAws({ FAKE_AWS_OK: 'prod' })).toBe('ok'); });
+  it('fails when neither the default chain nor any profile works', async () => { expect(await probeAws({ FAKE_AWS_OK: 'none' })).toBe('failed'); });
+
+  it('passes each profile name as one argument, never as shell code', async () => {
+    const odd = 'my team; touch INJECTED *';
+    expect(await probeAws({ FAKE_AWS_PROFILES: `dev\n${odd}`, FAKE_AWS_OK: odd })).toBe('ok');
+    expect(fs.existsSync(path.join(root, 'INJECTED'))).toBe(false);
+  });
+
+  it('tries profiles in parallel, but at most four calls at once', async () => {
+    const log = path.join(root, 'aws.log');
+    const profiles = Array.from({ length: 9 }, (_, i) => `p${i}`).join('\n');
+    expect(await probeAws({ FAKE_AWS_PROFILES: profiles, FAKE_AWS_OK: 'none', FAKE_AWS_SLEEP: '0.3', FAKE_AWS_LOG: log })).toBe('failed');
+    let running = 0; let peak = 0;
+    for (const c of fs.readFileSync(log, 'utf8').split('\n').filter(Boolean)) { running += c === '+' ? 1 : -1; peak = Math.max(peak, running); }
+    expect(running).toBe(0);
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(4);
+  });
+
+  it('succeeds as soon as one profile works, and leaves no call running', async () => {
+    const mark = path.join(root, 'slow-call-finished');
+    const t0 = Date.now();
+    expect(await probeAws({ FAKE_AWS_OK: 'prod', FAKE_AWS_SLOW: 'dev', FAKE_AWS_MARK: mark })).toBe('ok');
+    expect(Date.now() - t0).toBeLessThan(1500); // did not wait for the slow 'dev' call
+    await sleep(2300);
+    expect(fs.existsSync(mark)).toBe(false);
+  });
+
+  it('a scan that cannot finish inside the deadline is unknown, not failed', async () => {
+    expect(await probeAws({ FAKE_AWS_OK: 'none', FAKE_AWS_SLEEP: '2' }, { timeoutMs: 300 })).toBe('unknown');
+  });
 });
