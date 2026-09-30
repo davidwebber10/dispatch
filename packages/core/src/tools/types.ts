@@ -1,8 +1,10 @@
 export interface ToolBinaryAsset { url: string; sha256?: string; archive?: 'tar.gz' | 'zip' | 'none'; binPath?: string; }
 /** How to ask a CLI whether it can sign in: exactly one of `args` (run the entry's first bin
  *  with them) or `shell` (run via `/bin/sh -c`). Exit 0 means authenticated. Output is always
- *  discarded — some of these commands print tokens or account ids. */
-export interface ToolAuthCheck { args?: string[]; shell?: string; timeoutMs?: number; }
+ *  discarded — some of these commands print tokens or account ids. `unknownExitCodes` are
+ *  exits that mean "could not tell" (e.g. 124: the check's own time limit hit) rather than
+ *  "not signed in". */
+export interface ToolAuthCheck { args?: string[]; shell?: string; timeoutMs?: number; unknownExitCodes?: number[]; }
 /** An authCheck run: 'ok' = exit 0, 'failed' = a non-zero exit, 'unknown' = it never gave an
  *  answer (timeout, spawn error, killed by a signal). */
 export type AuthCheckOutcome = 'ok' | 'failed' | 'unknown';

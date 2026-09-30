@@ -24,6 +24,8 @@ function validAuthCheck(c: unknown): boolean {
   if (a.args !== undefined && (!Array.isArray(a.args) || !a.args.every((x) => typeof x === 'string'))) return false;
   if (a.shell !== undefined && typeof a.shell !== 'string') return false;
   if (a.timeoutMs !== undefined && (typeof a.timeoutMs !== 'number' || !Number.isFinite(a.timeoutMs) || a.timeoutMs <= 0)) return false;
+  if (a.unknownExitCodes !== undefined && (!Array.isArray(a.unknownExitCodes)
+    || !a.unknownExitCodes.every((x) => Number.isInteger(x) && x >= 1 && x <= 255))) return false;
   return true;
 }
 

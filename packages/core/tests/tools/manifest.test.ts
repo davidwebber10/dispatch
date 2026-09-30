@@ -62,6 +62,18 @@ describe('manifest', () => {
     expect(validateEntry({ ...base, authCheck: { args: ['a'], timeoutMs: '5000' } })).toBe(false);
   });
 
+  it('validateEntry accepts unknownExitCodes as a list of exit codes 1–255', () => {
+    const base = { name: 'x', description: 'd', kind: 'binary', bins: ['x'] };
+    const withCodes = (unknownExitCodes: unknown) => validateEntry({ ...base, authCheck: { shell: 'x', unknownExitCodes } });
+    expect(withCodes([124])).toBe(true);
+    expect(withCodes([124, 125])).toBe(true);
+    expect(withCodes(124)).toBe(false);
+    expect(withCodes(['124'])).toBe(false);
+    expect(withCodes([1.5])).toBe(false);
+    expect(withCodes([0])).toBe(false); // exit 0 is always "ok"
+    expect(withCodes([256])).toBe(false);
+  });
+
   it('the default bundle carries real auth checks for gh, doppler, databricks and aws', () => {
     const m = loadManifest(base);
     const check = (n: string) => m.find((e) => e.name === n)!.authCheck;
@@ -73,6 +85,7 @@ describe('manifest', () => {
     expect(aws.shell).toContain('AWS_EC2_METADATA_DISABLED=true');
     expect(aws.shell).toContain('aws sts get-caller-identity');
     expect(aws.shell).toContain('aws configure list-profiles');
+    expect(aws.unknownExitCodes).toEqual([124]); // the scan exits 124 when a call timed out and none succeeded
     expect(check('jq')).toBeUndefined();
   });
 

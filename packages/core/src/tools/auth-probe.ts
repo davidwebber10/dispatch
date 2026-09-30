@@ -8,8 +8,9 @@ import type { ToolEntry, AuthCheckOutcome } from './types.js';
 
 export type { AuthCheckOutcome } from './types.js';
 
-/** Runs one auth check and reports how it ended — never what it printed. */
-export type AuthCheckRunner = (cmd: string, args: string[], opts: { env: Record<string, string>; signal: AbortSignal; cwd?: string }) => Promise<AuthCheckOutcome>;
+/** Runs one auth check and reports how it ended — never what it printed. An exit code in
+ *  `unknownExitCodes` means the check could not tell, so it is 'unknown', not 'failed'. */
+export type AuthCheckRunner = (cmd: string, args: string[], opts: { env: Record<string, string>; signal: AbortSignal; cwd?: string; unknownExitCodes?: number[] }) => Promise<AuthCheckOutcome>;
 
 export interface ToolAuthSnapshot { results: Record<string, AuthCheckOutcome>; checkedAt: string | null; }
 
@@ -32,7 +33,7 @@ export interface ToolAuthProberOptions {
  * process group: an abort kills a shell check's children too, not just /bin/sh, and whatever a
  * check leaves running when it exits (the aws scan stops at its first success) is killed then.
  */
-export const runQuiet: AuthCheckRunner = (cmd, args, { env, signal, cwd }) => new Promise((resolve) => {
+export const runQuiet: AuthCheckRunner = (cmd, args, { env, signal, cwd, unknownExitCodes }) => new Promise((resolve) => {
   const detached = process.platform !== 'win32';
   let child: ChildProcess;
   try { child = spawn(cmd, args, { env, cwd, stdio: 'ignore', detached }); }
@@ -45,7 +46,8 @@ export const runQuiet: AuthCheckRunner = (cmd, args, { env, signal, cwd }) => ne
   child.on('error', () => settle('unknown'));
   child.on('exit', (code) => {
     if (detached) { try { process.kill(-child.pid!, 'SIGKILL'); } catch { /* nothing left in the group */ } }
-    settle(code === 0 ? 'ok' : code === null ? 'unknown' : 'failed'); // null: ended by a signal
+    // code null = ended by a signal; unknownExitCodes = the check itself says it could not tell
+    settle(code === 0 ? 'ok' : code === null || unknownExitCodes?.includes(code) ? 'unknown' : 'failed');
   });
 });
 
@@ -159,7 +161,7 @@ export class ToolAuthProber {
       timer = setTimeout(() => { ac.abort(); resolve('unknown'); }, c.timeoutMs ?? this.timeoutMs);
     });
     const ran = Promise.resolve()
-      .then(() => this.run(cmd, args, { env, signal: ac.signal, cwd: this.cwd }))
+      .then(() => this.run(cmd, args, { env, signal: ac.signal, cwd: this.cwd, unknownExitCodes: c.unknownExitCodes }))
       .then((o): AuthCheckOutcome => (o === 'ok' || o === 'failed' ? o : 'unknown'), (): AuthCheckOutcome => 'unknown');
     return Promise.race([ran, timedOut]).finally(() => clearTimeout(timer));
   }

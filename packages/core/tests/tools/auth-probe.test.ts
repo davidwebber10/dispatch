@@ -6,6 +6,7 @@ import { ToolAuthProber, type AuthCheckRunner, type AuthCheckOutcome } from '../
 import { loadManifest } from '../../src/tools/manifest.js';
 import { getToolsSpawnEnv } from '../../src/tools/spawnEnv.js';
 import { toolPaths } from '../../src/tools/paths.js';
+import { toolStatuses } from '../../src/tools/status.js';
 
 // Every check here runs either an injected runner or a fake script in a temp dir — never a
 // real gh/doppler/databricks/aws binary.
@@ -120,16 +121,16 @@ describe('ToolAuthProber (injected runner)', () => {
     expect(run).toHaveBeenCalledTimes(2);
   });
 
-  it('runs every check with the thread env: the base env overlaid with the latest spawn env', async () => {
-    writeManifest([entry('alpha', { args: ['x'] })]);
+  it('runs every check with the thread env (the base env overlaid with the latest spawn env) and its unknownExitCodes', async () => {
+    writeManifest([entry('alpha', { args: ['x'], unknownExitCodes: [124] })]);
     installBin('alpha');
-    const seen: { env: Record<string, string>; cwd?: string }[] = [];
-    const run: AuthCheckRunner = async (_c, _a, { env, cwd }) => { seen.push({ env, cwd }); return 'ok'; };
+    const seen: { env: Record<string, string>; cwd?: string; unknownExitCodes?: number[] }[] = [];
+    const run: AuthCheckRunner = async (_c, _a, { env, cwd, unknownExitCodes }) => { seen.push({ env, cwd, unknownExitCodes }); return 'ok'; };
     const prober = new ToolAuthProber({ base, env: { HOME: '/home/fake', PATH: SYS_PATH, UNSET: undefined }, run, cwd: root });
     prober.setSpawnEnv({ PATH: `${bin}:${SYS_PATH}`, DOPPLER_TOKEN: 'dp.st.fake' });
     await prober.refresh();
     const want = { HOME: '/home/fake', PATH: `${bin}:${SYS_PATH}`, DOPPLER_TOKEN: 'dp.st.fake' };
-    expect(seen[0]).toEqual({ env: want, cwd: root });
+    expect(seen[0]).toEqual({ env: want, cwd: root, unknownExitCodes: [124] });
     expect(prober.threadEnv()).toEqual(want);
   });
 });
@@ -222,6 +223,17 @@ describe('ToolAuthProber (default runner, fake scripts)', () => {
     expect(snap.results).toEqual({ ok: 'ok', bad: 'failed', gone: 'failed', noexec: 'unknown', killed: 'unknown' });
   });
 
+  it("an exit code listed in the check's unknownExitCodes is unknown; any other non-zero exit is failed", async () => {
+    writeManifest([
+      entry('timedout', { args: ['x'], unknownExitCodes: [124] }),
+      entry('plain124', { args: ['x'] }),
+      entry('realfail', { args: ['x'], unknownExitCodes: [124] }),
+    ]);
+    installBin('timedout', 'exit 124'); installBin('plain124', 'exit 124'); installBin('realfail', 'exit 1');
+    const snap = await new ToolAuthProber({ base, env: { PATH: SYS_PATH }, cwd: root }).refresh();
+    expect(snap.results).toEqual({ timedout: 'unknown', plain124: 'failed', realfail: 'failed' });
+  });
+
   it('never surfaces what a check prints', async () => {
     const SECRET = 'FAKE-SECRET-4f1c9e';
     writeManifest([entry('loud', { args: ['x'] }), entry('loudfail', { args: ['x'] })]);
@@ -287,14 +299,16 @@ describe('the default aws check (fake aws on PATH)', () => {
     'echo "{\\"Account\\":\\"000000000000\\"}"',
   ].join('\n');
 
-  async function probeAws(fake: Record<string, string>, opts: { timeoutMs?: number } = {}): Promise<AuthCheckOutcome | undefined> {
+  async function awsProber(fake: Record<string, string>, opts: { timeoutMs?: number } = {}): Promise<ToolAuthProber> {
     const aws = loadManifest(base).find((e) => e.name === 'aws')!;
     writeManifest([{ ...aws, platforms: undefined }]); // run on any host; the check itself is unchanged
     installBin('aws', FAKE_AWS);
     const prober = new ToolAuthProber({ base, env: { PATH: SYS_PATH }, cwd: root, timeoutMs: opts.timeoutMs });
     prober.setSpawnEnv({ ...getToolsSpawnEnv({ base, env: { PATH: SYS_PATH } }), FAKE_AWS_PROFILES: 'dev\nprod', ...fake });
-    return (await prober.refresh()).results.aws;
+    return prober;
   }
+  const probeAws = async (fake: Record<string, string>, opts: { timeoutMs?: number } = {}): Promise<AuthCheckOutcome | undefined> =>
+    (await (await awsProber(fake, opts)).refresh()).results.aws;
 
   it('passes on the default credential chain', async () => { expect(await probeAws({ FAKE_AWS_OK: 'default' })).toBe('ok'); });
   it('falls back to any listed profile', async () => { expect(await probeAws({ FAKE_AWS_OK: 'prod' })).toBe('ok'); });
@@ -340,6 +354,20 @@ describe('the default aws check (fake aws on PATH)', () => {
     const t0 = Date.now();
     expect(await probeAws({ FAKE_AWS_PROFILES: 'p0\np1\np2\np3', FAKE_AWS_HANG: 'default p0 p1 p2', FAKE_AWS_OK: 'p3' })).toBe('ok');
     expect(Date.now() - t0).toBeLessThan(12_000);
+  });
+
+  it('a call ended by its watchdog, with nothing else succeeding, is unknown — not "needs auth"', async () => {
+    // The review's case: no named profiles, and a default chain slower than the 6 s watchdog.
+    const prober = await awsProber({ FAKE_AWS_PROFILES: '', FAKE_AWS_HANG: 'default', FAKE_AWS_OK: 'none' });
+    const snap = await prober.refresh();
+    expect(snap.results.aws).toBe('unknown');
+    const aws = toolStatuses({ base, env: prober.threadEnv(), checks: snap.results }).find((t) => t.name === 'aws')!;
+    expect(aws.authState).toBe('unknown'); // no env credentials either
+  });
+
+  it('a timed-out call counts even when the scan collects it mid-way, before the last profiles fail', async () => {
+    // Four hung calls fill every slot; their watchdogs free the slots for p3 and p4, which fail.
+    expect(await probeAws({ FAKE_AWS_PROFILES: 'p0\np1\np2\np3\np4', FAKE_AWS_HANG: 'default p0 p1 p2', FAKE_AWS_OK: 'none' })).toBe('unknown');
   });
 
   it('a scan that cannot finish inside the deadline is unknown, not failed', async () => {
