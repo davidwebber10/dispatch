@@ -55,15 +55,29 @@ describe('SecretsService', () => {
     expect(sp).toMatch(/doppler_get_secret[^.]*only when you need the value itself/);
   });
 
+  // `doppler run -- curl -H "Bearer $API_KEY"` expands in the outer shell (empty), and the
+  // `sh -c '…$API_KEY…'` retry puts the value in the child's argv, which the owner's EDR logs.
+  it('warns that the command must read the secret from its env, never from its arguments', async () => {
+    const s = svc(true);
+    await s.setConnection({ token: 'dp.sa.x', project: 'dispatch', config: 'dev' });
+    const sp = s.getInjection().systemPrompt!;
+    expect(sp).toContain('The command must read the secret from its own environment');
+    expect(sp).toContain('never expand `$NAME` into a command argument or inside `sh -c`');
+    expect(sp).toContain("every process's arguments are visible on this machine");
+  });
+
   it('has no system prompt when disconnected', () => {
     expect(svc().getInjection().systemPrompt).toBeNull();
   });
 
-  it('notes read-only mode in the system prompt', async () => {
+  it('notes read-only mode in the system prompt, and drops the store instruction', async () => {
     const s = svc(true);
     await s.setConnection({ token: 'dp.sa.x', project: 'dispatch', config: 'dev' });
+    expect(s.getInjection().systemPrompt).toContain('Store new secrets with doppler_set_secret');
     await s.setConnection({ token: '', readOnly: true });
-    expect(s.getInjection().systemPrompt).toMatch(/read-only|do not (create|modify)/i);
+    const sp = s.getInjection().systemPrompt!;
+    expect(sp).toMatch(/read-only|do not (create|modify)/i);
+    expect(sp).not.toContain('doppler_set_secret');
   });
 
   it('verifies + stores a token (0600) but stays disconnected until project+config', async () => {

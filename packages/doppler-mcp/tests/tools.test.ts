@@ -11,14 +11,19 @@ import { registerTools } from '../src/tools.js';
 // the truncated excerpt a JSON.parse error quotes (`"<html>fake"...`).
 const LEAK = /fake/;
 
-// Answers every request with the same status and body, and records the URLs asked for.
+// Answers every request with the same status and body, and records each request's URL,
+// method, and parsed JSON body.
 function fakeFetch(status: number, body: string) {
-  const urls: string[] = [];
-  const fetchFn: FetchLike = async (url) => {
-    urls.push(url);
+  const requests: { url: string; method: string; body?: unknown }[] = [];
+  const fetchFn: FetchLike = async (url, init) => {
+    requests.push({
+      url,
+      method: init.method ?? 'GET',
+      body: typeof init.body === 'string' ? JSON.parse(init.body) : undefined,
+    });
     return new Response(body, { status });
   };
-  return { fetchFn, urls };
+  return { fetchFn, requests };
 }
 
 async function call(fetchFn: FetchLike, tool: string, args: Record<string, unknown> = {}) {
@@ -99,12 +104,46 @@ describe('doppler tools: an upstream body never reaches the result', () => {
   });
 });
 
-describe('doppler_list_secrets', () => {
-  test('asks the names endpoint and returns the names sorted', async () => {
-    const { fetchFn, urls } = fakeFetch(200, JSON.stringify({ names: ['ZETA', 'ALPHA'], success: true }));
+describe('doppler tools: the requests they send', () => {
+  test('list asks the names endpoint and returns the names sorted', async () => {
+    const { fetchFn, requests } = fakeFetch(200, JSON.stringify({ names: ['ZETA', 'ALPHA'], success: true }));
     const { result, text } = await call(fetchFn, 'doppler_list_secrets');
-    expect(urls).toEqual(['https://api.doppler.com/v3/configs/config/secrets/names?project=dispatch&config=dev']);
+    expect(requests).toEqual([
+      { url: 'https://api.doppler.com/v3/configs/config/secrets/names?project=dispatch&config=dev', method: 'GET' },
+    ]);
     expect(result.isError).toBeFalsy();
     expect(JSON.parse(text)).toEqual({ project: 'dispatch', config: 'dev', names: ['ALPHA', 'ZETA'] });
+  });
+
+  test('get asks for one secret by project, config, and name', async () => {
+    const { fetchFn, requests } = fakeFetch(200, JSON.stringify({ name: 'API_KEY', value: { raw: 'x' } }));
+    await call(fetchFn, 'doppler_get_secret', { name: 'API_KEY' });
+    expect(requests).toEqual([
+      { url: 'https://api.doppler.com/v3/configs/config/secret?project=dispatch&config=dev&name=API_KEY', method: 'GET' },
+    ]);
+  });
+
+  test('set posts the one name and its value', async () => {
+    const { fetchFn, requests } = fakeFetch(200, '{"success":true}');
+    await call(fetchFn, 'doppler_set_secret', SET_ARGS);
+    expect(requests).toEqual([
+      {
+        url: 'https://api.doppler.com/v3/configs/config/secrets',
+        method: 'POST',
+        body: { project: 'dispatch', config: 'dev', secrets: { API_KEY: 'fake-sent-value' } },
+      },
+    ]);
+  });
+
+  test('delete posts the one name with a null value', async () => {
+    const { fetchFn, requests } = fakeFetch(200, '{"success":true}');
+    await call(fetchFn, 'doppler_delete_secret', { name: 'API_KEY' });
+    expect(requests).toEqual([
+      {
+        url: 'https://api.doppler.com/v3/configs/config/secrets',
+        method: 'POST',
+        body: { project: 'dispatch', config: 'dev', secrets: { API_KEY: null } },
+      },
+    ]);
   });
 });
