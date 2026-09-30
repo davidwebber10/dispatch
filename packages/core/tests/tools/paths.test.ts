@@ -9,6 +9,7 @@ describe('tool paths', () => {
     const p = toolPaths();
     expect(p.dir).toBe(path.join(os.homedir(), '.dispatch', 'tools'));
     expect(p.bin).toBe(path.join(p.dir, 'bin'));
+    expect(p.opt).toBe(path.join(p.dir, 'opt'));
     expect(p.installed).toBe(path.join(p.dir, 'installed.json'));
     expect(p.userManifest).toBe(path.join(os.homedir(), '.dispatch', 'tools.json'));
   });

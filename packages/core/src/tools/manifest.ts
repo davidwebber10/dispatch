@@ -18,14 +18,19 @@ export function validateEntry(e: unknown): e is ToolEntry {
 
 function readJson(file: string): any { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } }
 
-export function loadManifest(base?: string): ToolEntry[] {
-  const p = toolPaths(base);
+/** The bundled default-tools.json entries alone, before the user's tools.json overrides them. */
+export function loadBundledManifest(): ToolEntry[] {
   const def = readJson(path.join(here, 'default-tools.json'));
   const defaults: unknown[] = Array.isArray(def?.tools) ? def.tools : [];
+  return defaults.filter(validateEntry);
+}
+
+export function loadManifest(base?: string): ToolEntry[] {
+  const p = toolPaths(base);
   const user = readJson(p.userManifest);
   const extras: unknown[] = Array.isArray(user?.tools) ? user.tools : [];
   const byName = new Map<string, ToolEntry>();
-  for (const e of defaults) if (validateEntry(e)) byName.set(e.name, e);
+  for (const e of loadBundledManifest()) byName.set(e.name, e);
   for (const e of extras) if (validateEntry(e)) byName.set(e.name, e); // user overrides/extends
   return [...byName.values()];
 }

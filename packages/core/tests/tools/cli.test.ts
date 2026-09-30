@@ -18,12 +18,17 @@ vi.mock('../../src/tools/installer.js', async (importOriginal) => {
 
 import { runToolsCli } from '../../src/tools/cli.js';
 
+// Installs and uninstalls run inside root/sandbox/tools, so a `..` that escapes the tools dir
+// still lands in this test's own temp dir; the user manifest is sandbox/tools.json.
 let root: string;
+let sandbox: string;
 let base: string;
 beforeEach(async () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'tools-cli-'));
-  base = path.join(root, 'tools');
-  fs.writeFileSync(path.join(root, 'tools.json'), JSON.stringify({ tools: [
+  sandbox = path.join(root, 'sandbox');
+  base = path.join(sandbox, 'tools');
+  fs.mkdirSync(sandbox);
+  fs.writeFileSync(path.join(sandbox, 'tools.json'), JSON.stringify({ tools: [
     { name: 'demo', description: 'demo tool', kind: 'binary', bins: ['demo'], binary: { 'darwin-arm64': { url: 'https://x/demo', archive: 'none' }, 'darwin-x64': { url: 'https://x/demo', archive: 'none' } } },
   ] }));
   const actual = await vi.importActual<typeof import('../../src/tools/installer.js')>('../../src/tools/installer.js');
@@ -48,7 +53,7 @@ it('uninstall removes a placed bin', async () => {
 it('install (bulk): skips a platform-gated entry without attempting install or failing the batch', async () => {
   const family = hostOsFamily();
   const otherFamily = family === 'darwin' ? 'linux' : 'darwin';
-  fs.writeFileSync(path.join(root, 'tools.json'), JSON.stringify({ tools: [
+  fs.writeFileSync(path.join(sandbox, 'tools.json'), JSON.stringify({ tools: [
     { name: 'demo', description: 'demo tool', kind: 'binary', bins: ['demo'], binary: { 'darwin-arm64': { url: 'https://x/demo', archive: 'none' }, 'darwin-x64': { url: 'https://x/demo', archive: 'none' } } },
     { name: 'gated', description: 'gated tool', kind: 'script', bins: ['gated'], platforms: [otherFamily], script: { install: `printf '#!/bin/sh\\n' > "$TOOLS_BIN/gated"; chmod +x "$TOOLS_BIN/gated"` } },
   ] }));
@@ -66,7 +71,7 @@ it('install (bulk): skips a platform-gated entry without attempting install or f
 it('install (single, named): a platform-gated tool still fails with the installer\'s throw, not a silent skip', async () => {
   const family = hostOsFamily();
   const otherFamily = family === 'darwin' ? 'linux' : 'darwin';
-  fs.writeFileSync(path.join(root, 'tools.json'), JSON.stringify({ tools: [
+  fs.writeFileSync(path.join(sandbox, 'tools.json'), JSON.stringify({ tools: [
     { name: 'gated', description: 'gated tool', kind: 'script', bins: ['gated'], platforms: [otherFamily], script: { install: `printf '#!/bin/sh\\n' > "$TOOLS_BIN/gated"; chmod +x "$TOOLS_BIN/gated"` } },
   ] }));
   const err = vi.spyOn(console, 'error').mockImplementation(() => {});

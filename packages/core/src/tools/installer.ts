@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import { execFileSync, execSync } from 'node:child_process';
 import { toolPaths, hostPlatformKey, hostOsFamily, type ToolPaths } from './paths.js';
 import type { ToolEntry } from './types.js';
-import { loadManifest } from './manifest.js';
+import { loadManifest, loadBundledManifest } from './manifest.js';
 
 export type Downloader = (url: string) => Promise<Buffer>;
 export type Exec = (cmd: string, args: string[], opts?: { env?: Record<string, string>; cwd?: string }) => void;
@@ -17,10 +17,10 @@ const defaultDownload: Downloader = async (url) => {
 };
 const defaultExec: Exec = (cmd, args, opts) => { execFileSync(cmd, args, { stdio: 'inherit', env: { ...process.env, ...opts?.env }, cwd: opts?.cwd }); };
 
-export function readInstalled(base?: string): Record<string, { version?: string; sha?: string }> {
+export function readInstalled(base?: string): Record<string, { version?: string; sha?: string; script?: string }> {
   try { return JSON.parse(fs.readFileSync(toolPaths(base).installed, 'utf8')); } catch { return {}; }
 }
-function writeInstalled(p: ToolPaths, data: Record<string, { version?: string; sha?: string }>): void {
+function writeInstalled(p: ToolPaths, data: Record<string, { version?: string; sha?: string; script?: string }>): void {
   fs.mkdirSync(p.dir, { recursive: true });
   fs.writeFileSync(p.installed, JSON.stringify(data, null, 2));
 }
@@ -87,20 +87,95 @@ export async function installTool(entry: ToolEntry, opts: { base?: string; downl
 
   // script
   if (!entry.script) throw new Error(`${entry.name}: missing script spec`);
-  if (installed[entry.name] && entry.bins.every((b) => fs.existsSync(path.join(p.bin, b)))) return;
-  execSync(entry.script.install, { stdio: 'inherit', env: { ...process.env, TOOLS_PREFIX: p.dir, TOOLS_BIN: p.bin } });
+  // Bins that exist prove little (the old aws recipe left a link whose payload $TMPDIR purged), so
+  // skip only when the recorded recipe fingerprint matches; a changed recipe reinstalls.
+  const recipe = entry.script.install;
+  const fingerprint = crypto.createHash('sha256').update(recipe).digest('hex');
+  const record = installed[entry.name];
+  const binsPresent = entry.bins.every((b) => fs.existsSync(path.join(p.bin, b)));
+  if (record?.script === fingerprint && binsPresent) return;
+  // A legacy `{}` record (from before fingerprints) with its bins present reruns only a bundled
+  // recipe; a user recipe is adopted as-is, since rerunning one that is not idempotent fails every update.
+  if (record && record.script === undefined && binsPresent
+    && !loadBundledManifest().some((d) => d.name === entry.name && d.script?.install === recipe)) {
+    installed[entry.name] = { script: fingerprint };
+    writeInstalled(p, installed);
+    return;
+  }
+  execSync(recipe, { stdio: 'inherit', env: { ...process.env, TOOLS_PREFIX: p.dir, TOOLS_BIN: p.bin } });
   for (const b of entry.bins) if (!fs.existsSync(path.join(p.bin, b))) throw new Error(`${entry.name}: script did not produce ${b}`);
-  installed[entry.name] = {};
+  installed[entry.name] = { script: fingerprint };
   writeInstalled(p, installed);
+}
+
+function pidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false; // 0 and negatives would signal a process group
+  try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; }
+}
+
+// The lock a script recipe takes (the aws recipe: opt/.aws.lock holding its shell's pid). mkdir is
+// atomic; a lock whose owner is gone is taken over, once. The lock is advisory: a double takeover of
+// a stale lock can still make one install fail, but it can no longer delete another install's stage.
+function takeToolLock(lock: string): boolean {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try { fs.mkdirSync(lock); fs.writeFileSync(path.join(lock, 'pid'), String(process.pid)); return true; }
+    catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e; }
+    let pid = NaN;
+    try { pid = Number(fs.readFileSync(path.join(lock, 'pid'), 'utf8').trim()); } catch { /* no pid yet */ }
+    if (pidAlive(pid)) return false;
+    fs.rmSync(lock, { recursive: true, force: true });
+  }
+  return false;
+}
+function releaseToolLock(lock: string): void {
+  try { if (fs.readFileSync(path.join(lock, 'pid'), 'utf8').trim() === String(process.pid)) fs.rmSync(lock, { recursive: true, force: true }); }
+  catch { /* not ours */ }
+}
+
+// Stage dirs are named .<name>-stage.<owner pid>.<random>, and a live owner's stage is never removed,
+// lock or no lock. A name without a pid (the older format) has no live owner.
+function stageOwnerAlive(dir: string, name: string): boolean {
+  const m = /^([1-9]\d*)\.[^.]+$/.exec(dir.slice(`.${name}-stage.`.length));
+  return !!m && pidAlive(Number(m[1]));
 }
 
 export function uninstallTool(name: string, base?: string): void {
   const p = toolPaths(base);
   const installed = readInstalled(base);
   const entry = loadManifest(base).find((e) => e.name === name);
-  for (const b of (entry?.bins ?? [name])) {
-    try { fs.rmSync(path.join(p.bin, b), { force: true }); } catch { /* ignore */ }
+  // A script recipe's payload lives in opt/<name>; drop it and every bin link into it, which also
+  // catches extras the recipe linked beyond entry.bins (aws_completer), plus any opt/.<name>-stage.*
+  // dir a killed install left. Only for a plain name: `..` or `a/b` would aim the recursive rm
+  // outside opt/. Hold the recipe's lock throughout, so an install in flight keeps its payload.
+  const opt = path.join(p.opt, name);
+  const plain = path.dirname(opt) === p.opt;
+  const lock = path.join(p.opt, `.${name}.lock`);
+  if (plain) {
+    fs.mkdirSync(p.opt, { recursive: true });
+    if (!takeToolLock(lock)) throw new Error(`${name}: an install is running; try again when it ends`);
   }
-  delete installed[name];
-  writeInstalled(p, installed);
+  try {
+    for (const b of (entry?.bins ?? [name])) {
+      try { fs.rmSync(path.join(p.bin, b), { force: true }); } catch { /* ignore */ }
+    }
+    if (plain) {
+      let links: string[] = [];
+      try { links = fs.readdirSync(p.bin); } catch { /* no bin dir */ }
+      for (const f of links) {
+        const link = path.join(p.bin, f);
+        try {
+          if (!fs.lstatSync(link).isSymbolicLink()) continue;
+          const target = path.resolve(p.bin, fs.readlinkSync(link));
+          if (target === opt || target.startsWith(opt + path.sep)) fs.rmSync(link, { force: true });
+        } catch { /* ignore */ }
+      }
+      fs.rmSync(opt, { recursive: true, force: true });
+      const staged = fs.readdirSync(p.opt).filter((f) => f.startsWith(`.${name}-stage.`) && !stageOwnerAlive(f, name));
+      for (const f of staged) fs.rmSync(path.join(p.opt, f), { recursive: true, force: true });
+    }
+    delete installed[name];
+    writeInstalled(p, installed);
+  } finally {
+    if (plain) releaseToolLock(lock);
+  }
 }
