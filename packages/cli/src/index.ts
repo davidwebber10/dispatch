@@ -565,16 +565,23 @@ async function main(): Promise<void> {
   }
 }
 
-// Detect direct execution in ESM
-const isMain = (() => {
+/**
+ * Detect direct execution in ESM: was node started on the module at `moduleUrl`?
+ * Compare REAL paths. Node resolves symlinks for import.meta.url but leaves argv[1] as
+ * typed, so a checkout behind a symlink (macOS `/tmp` → `/private/tmp`, a symlinked
+ * projects folder) failed a plain string compare, and every `dispatch <cmd>` silently
+ * exited 0 without running.
+ */
+export function isMainModule(argv1: string | undefined, moduleUrl: string): boolean {
+  if (!argv1) return false;
   try {
     const { fileURLToPath } = require('url') as typeof import('url');
-    return process.argv[1] === fileURLToPath(import.meta.url);
+    return fs.realpathSync(argv1) === fs.realpathSync(fileURLToPath(moduleUrl));
   } catch {
     return false;
   }
-})();
+}
 
-if (isMain) {
+if (isMainModule(process.argv[1], import.meta.url)) {
   main().catch((err) => { console.error(err); process.exit(1); });
 }
