@@ -123,7 +123,7 @@ describe('manifest', () => {
     await installAwsWithStubs();
     const dest = fs.readFileSync(path.join(root, 'pkgutil-dest'), 'utf8').trim();
     expect(path.dirname(path.dirname(dest))).toBe(p.opt); // expanded on the destination filesystem
-    expect(path.basename(path.dirname(dest))).toMatch(/^\.aws-stage\./);
+    expect(path.basename(path.dirname(dest))).toMatch(/^\.aws-stage\.[1-9]\d*\.[^.]+$/); // .aws-stage.<owner pid>.<random>
     for (const b of ['aws', 'aws_completer']) {
       expect(fs.readlinkSync(path.join(p.bin, b))).toBe(path.join(p.opt, 'aws', b));
     }
@@ -143,13 +143,38 @@ describe('manifest', () => {
     expect(fs.readdirSync(p.opt)).toEqual(['aws']);
   });
 
-  it('aws recipe, holding its lock, removes every leftover aws stage dir, fresh or old, and not another tool\'s', async () => {
+  it('aws recipe prunes stage dirs whose owner is gone or unnamed (older format), never a live owner\'s', async () => {
     const p = toolPaths(base);
-    for (const d of ['.aws-stage.stale/x', '.aws-stage.fresh/x', '.other-stage.keep']) fs.mkdirSync(path.join(p.opt, d), { recursive: true });
-    const twoHoursAgo = new Date(Date.now() - 2 * 3600_000);
-    fs.utimesSync(path.join(p.opt, '.aws-stage.stale'), twoHoursAgo, twoHoursAgo);
-    await installAwsWithStubs();
-    expect(fs.readdirSync(p.opt).sort()).toEqual(['.other-stage.keep', 'aws']); // and the lock is released
+    const dead = spawnSync('true').pid!; // that process has exited
+    const owner = spawn('sleep', ['30'], { cwd: sandbox, stdio: 'ignore' });
+    const live = `.aws-stage.${owner.pid}.def456`;
+    try {
+      for (const d of ['.aws-stage.fresh/x', `.aws-stage.${dead}.abc123/x`, `${live}/x`, '.other-stage.keep']) fs.mkdirSync(path.join(p.opt, d), { recursive: true });
+      await installAwsWithStubs();
+      expect(fs.readdirSync(p.opt).sort()).toEqual([live, '.other-stage.keep', 'aws'].sort()); // and the lock is released
+    } finally { owner.kill(); }
+  });
+
+  it('aws recipe, after taking over a stale lock, leaves a live installer\'s stage and backup alone and recovers a dead one\'s', async () => {
+    // A double takeover: install A still runs (a live pid in its stage name) with opt/aws moved into
+    // its stage. This install must not take A's old/ (even though it is the newest) nor prune A's stage.
+    const p = toolPaths(base);
+    const dead = spawnSync('true').pid!;
+    const owner = spawn('sleep', ['30'], { cwd: sandbox, stdio: 'ignore' });
+    const live = `.aws-stage.${owner.pid}.bbbbbb`;
+    try {
+      lockAws(dead);
+      for (const [d, copy] of [[`.aws-stage.${dead}.aaaaaa`, 'dead-copy'], [live, 'live-copy']]) {
+        fs.mkdirSync(path.join(p.opt, d, 'old'), { recursive: true });
+        fs.writeFileSync(path.join(p.opt, d, 'old', 'which'), copy);
+      }
+      const hourAgo = new Date(Date.now() - 3600_000);
+      fs.utimesSync(path.join(p.opt, `.aws-stage.${dead}.aaaaaa`, 'old'), hourAgo, hourAgo);
+      await expect(installAwsWithStubs({ curlFails: true })).rejects.toThrow(); // recovery and prune run before the download
+      expect(fs.readFileSync(path.join(p.opt, 'aws', 'which'), 'utf8')).toBe('dead-copy');
+      expect(fs.readFileSync(path.join(p.opt, live, 'old', 'which'), 'utf8')).toBe('live-copy');
+      expect(fs.readdirSync(p.opt).sort()).toEqual([live, 'aws'].sort()); // the dead stage is pruned, the lock released
+    } finally { owner.kill(); }
   });
 
   it('aws recipe exits non-zero without touching opt/aws while another installer holds the lock', async () => {

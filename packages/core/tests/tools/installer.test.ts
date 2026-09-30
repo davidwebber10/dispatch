@@ -99,11 +99,18 @@ it('uninstallTool: removes opt/<name> and every bin link into it, not only entry
   expect(readInstalled(base).demo).toBeUndefined();
 });
 
-it('uninstallTool: also removes opt/.<name>-stage.* dirs that a killed install left, not another tool\'s', () => {
+it('uninstallTool: also removes opt/.<name>-stage.* dirs a dead or unnamed owner left, not a live owner\'s or another tool\'s', () => {
   const p = toolPaths(base);
-  for (const d of ['demo', '.demo-stage.a1/old', '.demo-stage.b2', 'demo-other', '.demo-other-stage.c3']) fs.mkdirSync(path.join(p.opt, d), { recursive: true });
-  uninstallTool('demo', base);
-  expect(fs.readdirSync(p.opt).sort()).toEqual(['.demo-other-stage.c3', 'demo-other']);
+  const dead = spawnSync('true').pid!; // that process has exited
+  const owner = spawn('sleep', ['30'], { cwd: sandbox, stdio: 'ignore' });
+  const live = `.demo-stage.${owner.pid}.d4`;
+  try {
+    for (const d of ['demo', '.demo-stage.a1/old', '.demo-stage.b2', `.demo-stage.${dead}.c3`, live, 'demo-other', '.demo-other-stage.c3']) {
+      fs.mkdirSync(path.join(p.opt, d), { recursive: true });
+    }
+    uninstallTool('demo', base);
+    expect(fs.readdirSync(p.opt).sort()).toEqual([live, '.demo-other-stage.c3', 'demo-other'].sort());
+  } finally { owner.kill(); }
 });
 
 it('uninstallTool: refuses, and removes nothing, while an install holds opt/.<name>.lock', () => {

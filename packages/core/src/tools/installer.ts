@@ -114,7 +114,8 @@ function pidAlive(pid: number): boolean {
 }
 
 // The lock a script recipe takes (the aws recipe: opt/.aws.lock holding its shell's pid). mkdir is
-// atomic; a lock whose owner is gone is taken over, once.
+// atomic; a lock whose owner is gone is taken over, once. The lock is advisory: a double takeover of
+// a stale lock can still make one install fail, but it can no longer delete another install's stage.
 function takeToolLock(lock: string): boolean {
   for (let attempt = 0; attempt < 2; attempt++) {
     try { fs.mkdirSync(lock); fs.writeFileSync(path.join(lock, 'pid'), String(process.pid)); return true; }
@@ -129,6 +130,13 @@ function takeToolLock(lock: string): boolean {
 function releaseToolLock(lock: string): void {
   try { if (fs.readFileSync(path.join(lock, 'pid'), 'utf8').trim() === String(process.pid)) fs.rmSync(lock, { recursive: true, force: true }); }
   catch { /* not ours */ }
+}
+
+// Stage dirs are named .<name>-stage.<owner pid>.<random>, and a live owner's stage is never removed,
+// lock or no lock. A name without a pid (the older format) has no live owner.
+function stageOwnerAlive(dir: string, name: string): boolean {
+  const m = /^([1-9]\d*)\.[^.]+$/.exec(dir.slice(`.${name}-stage.`.length));
+  return !!m && pidAlive(Number(m[1]));
 }
 
 export function uninstallTool(name: string, base?: string): void {
@@ -162,7 +170,7 @@ export function uninstallTool(name: string, base?: string): void {
         } catch { /* ignore */ }
       }
       fs.rmSync(opt, { recursive: true, force: true });
-      const staged = fs.readdirSync(p.opt).filter((f) => f.startsWith(`.${name}-stage.`));
+      const staged = fs.readdirSync(p.opt).filter((f) => f.startsWith(`.${name}-stage.`) && !stageOwnerAlive(f, name));
       for (const f of staged) fs.rmSync(path.join(p.opt, f), { recursive: true, force: true });
     }
     delete installed[name];
