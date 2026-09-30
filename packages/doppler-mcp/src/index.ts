@@ -3,6 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { secretNames } from './secret-names.js';
+import { writeConfirmation } from './write-confirmation.js';
 
 const TOKEN = process.env.DOPPLER_TOKEN;
 const PROJECT = process.env.DOPPLER_PROJECT;
@@ -64,7 +65,7 @@ server.registerTool(
   },
   async ({ project, config }) => {
     try {
-      const body = await doppler(`/v3/configs/config/secrets?${qs(project, config)}`);
+      const body = await doppler(`/v3/configs/config/secrets/names?${qs(project, config)}`);
       return ok({
         project: project ?? PROJECT,
         config: config ?? CONFIG,
@@ -99,7 +100,9 @@ if (!READ_ONLY) {
   server.registerTool(
     'doppler_set_secret',
     {
-      description: 'Set (create or update) a secret in a Doppler config.',
+      description:
+        'Set (create or update) a secret in a Doppler config. The value is not echoed back; ' +
+        'the result only confirms which secret was updated.',
       inputSchema: {
         name: z.string(),
         value: z.string(),
@@ -109,16 +112,15 @@ if (!READ_ONLY) {
     },
     async ({ name, value, project, config }) => {
       try {
-        return ok(
-          await doppler('/v3/configs/config/secrets', {
-            method: 'POST',
-            body: JSON.stringify({
-              project: project ?? PROJECT,
-              config: config ?? CONFIG,
-              secrets: { [name]: value },
-            }),
+        await doppler('/v3/configs/config/secrets', {
+          method: 'POST',
+          body: JSON.stringify({
+            project: project ?? PROJECT,
+            config: config ?? CONFIG,
+            secrets: { [name]: value },
           }),
-        );
+        });
+        return ok(writeConfirmation('updated', { project: project ?? PROJECT, config: config ?? CONFIG, name }));
       } catch (e) {
         return fail(e);
       }
@@ -128,7 +130,9 @@ if (!READ_ONLY) {
   server.registerTool(
     'doppler_delete_secret',
     {
-      description: 'Delete a secret from a Doppler config.',
+      description:
+        'Delete a secret from a Doppler config. No values are echoed back; ' +
+        'the result only confirms which secret was deleted.',
       inputSchema: {
         name: z.string(),
         project: z.string().optional(),
@@ -137,16 +141,15 @@ if (!READ_ONLY) {
     },
     async ({ name, project, config }) => {
       try {
-        return ok(
-          await doppler('/v3/configs/config/secrets', {
-            method: 'POST',
-            body: JSON.stringify({
-              project: project ?? PROJECT,
-              config: config ?? CONFIG,
-              secrets: { [name]: null },
-            }),
+        await doppler('/v3/configs/config/secrets', {
+          method: 'POST',
+          body: JSON.stringify({
+            project: project ?? PROJECT,
+            config: config ?? CONFIG,
+            secrets: { [name]: null },
           }),
-        );
+        });
+        return ok(writeConfirmation('deleted', { project: project ?? PROJECT, config: config ?? CONFIG, name }));
       } catch (e) {
         return fail(e);
       }
