@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import { PassThrough } from 'stream';
 import {
   encodeLaunchSpec, decodeLaunchSpec, launcherArgs, buildLaunch, runLauncher, redactor, pipeRedacted,
-  integrationLogPath, openIntegrationLog,
+  integrationLogPath, openIntegrationLog, pruneIntegrationLogs,
   type LaunchSpec, type SecretSource,
 } from '../../src/integrations/launcher.js';
 import { SecretsService } from '../../src/secrets/service.js';
@@ -307,125 +307,127 @@ describe('pipeRedacted', () => {
 describe('integration log file', () => {
   const sb = sandboxEach();
 
-  it('lives at <secretsDir>/logs/integrations/<name>.log, the name reduced to [A-Za-z0-9_-]', () => {
-    const dir = path.join(sb.secretsDir, 'logs', 'integrations');
-    expect(integrationLogPath(sb.secretsDir, 'linear')).toBe(path.join(dir, 'linear.log'));
-    expect(integrationLogPath(sb.secretsDir, '../../etc/x y')).toBe(path.join(dir, '______etc_x_y.log'));
-    expect(integrationLogPath(sb.secretsDir, '')).toBe(path.join(dir, 'integration.log'));
+  // Pids above the largest one Linux or macOS can assign (2^22): never alive.
+  const DEAD = (i: number) => 4194305 + i;
+  const logDir = () => path.join(sb.secretsDir, 'logs', 'integrations');
+  const line100 = (tag: string) => `${tag.padEnd(99, '.')}\n`;
+
+  it('lives at <secretsDir>/logs/integrations/<name>.<pid>.log, the name reduced to [A-Za-z0-9_-]', () => {
+    expect(integrationLogPath(sb.secretsDir, 'linear')).toBe(path.join(logDir(), `linear.${process.pid}.log`));
+    expect(integrationLogPath(sb.secretsDir, 'linear', 42)).toBe(path.join(logDir(), 'linear.42.log'));
+    expect(integrationLogPath(sb.secretsDir, '../../etc/x y', 42)).toBe(path.join(logDir(), '______etc_x_y.42.log'));
+    expect(integrationLogPath(sb.secretsDir, '', 42)).toBe(path.join(logDir(), 'integration.42.log'));
   });
 
-  it('creates the dir 0700 and the file 0600', () => {
+  it('creates the dir 0700 (tightening a looser one) and a new file 0600', () => {
+    fs.mkdirSync(logDir(), { recursive: true, mode: 0o755 });
+    fs.chmodSync(logDir(), 0o755);
     const file = integrationLogPath(sb.secretsDir, 'linear');
     const log = openIntegrationLog(file);
     log.write('hello\n');
     log.close();
-    expect(fs.statSync(path.dirname(file)).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(logDir()).mode & 0o777).toBe(0o700);
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
     expect(fs.readFileSync(file, 'utf8')).toBe('hello\n');
   });
 
-  it('tightens an existing looser dir and file, and appends', () => {
+  it('replaces a leftover file at its own path (an earlier process with the same pid) with a fresh 0600 one', () => {
     const file = integrationLogPath(sb.secretsDir, 'linear');
-    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o755 });
-    fs.chmodSync(path.dirname(file), 0o755);
-    fs.writeFileSync(file, 'old\n', { mode: 0o644 });
-    fs.chmodSync(file, 0o644);
+    fs.mkdirSync(logDir(), { recursive: true });
+    fs.writeFileSync(file, 'old run\n', { mode: 0o644 });
     const log = openIntegrationLog(file);
-    log.write('new\n');
+    log.write('new run\n');
     log.close();
-    expect(fs.statSync(path.dirname(file)).mode & 0o777).toBe(0o700);
-    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
-    expect(fs.readFileSync(file, 'utf8')).toBe('old\nnew\n');
-  });
-
-  it('rotates once to .log.1 at startup when the file is past the cap', () => {
-    const file = integrationLogPath(sb.secretsDir, 'linear');
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, 'x'.repeat(2000), { mode: 0o600 });
-    const log = openIntegrationLog(file, 1000);
-    log.write('fresh\n');
-    log.close();
-    expect(fs.readFileSync(`${file}.1`, 'utf8')).toBe('x'.repeat(2000));
-    expect(fs.readFileSync(file, 'utf8')).toBe('fresh\n');
-  });
-
-  it('startup rotation tightens an oversized 0644 log before moving it, so .log.1 is 0600', () => {
-    const file = integrationLogPath(sb.secretsDir, 'linear');
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, 'x'.repeat(2000), { mode: 0o644 });
-    fs.chmodSync(file, 0o644);
-    openIntegrationLog(file, 1000).close();
-    expect(fs.statSync(`${file}.1`).mode & 0o777).toBe(0o600);
+    expect(fs.readFileSync(file, 'utf8')).toBe('new run\n');
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
   });
 
-  /** Everything the two named logs hold. */
-  const bothLogs = (file: string) => [file, `${file}.1`].map((f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '')).join('');
-  const line100 = (tag: string) => `${tag.padEnd(99, '.')}\n`;
-
-  it('a quiet writer whose file was rotated away twice reopens before writing, so its line is not lost', () => {
-    const file = integrationLogPath(sb.secretsDir, 'linear');
-    const quiet = openIntegrationLog(file, 1000);
-    quiet.write('quiet start\n');
-    const busy = openIntegrationLog(file, 1000);
-    for (let i = 0; i < 25; i++) busy.write(line100(`busy ${i}`)); // rotates twice
-    quiet.write('quiet FATAL line\n');
-    quiet.close();
-    busy.close();
-    expect(bothLogs(file)).toContain('quiet FATAL line\n');
-  });
-
-  it('rotation is serialized: a second rotation during the first cannot move a new file over the populated backup', () => {
-    const file = integrationLogPath(sb.secretsDir, 'linear');
-    let b: ReturnType<typeof openIntegrationLog> | null = null;
-    let raced = false;
-    // A's rotation has checked the size; before it renames, B writes past the cap and tries to rotate too.
-    const a = openIntegrationLog(file, 1000, { beforeRename: () => { if (!raced) { raced = true; b!.write(line100('B during A rotation').repeat(11)); } } });
-    b = openIntegrationLog(file, 1000);
-    a.write(line100('A populated').repeat(11));
-    a.write('A after\n');
-    b.write('B after\n');
-    a.close();
-    b.close();
-    expect(raced).toBe(true);
-    const backup = fs.readFileSync(`${file}.1`, 'utf8');
-    expect(backup).toContain('A populated');
-    expect(backup).toContain('B during A rotation');
-    expect(fs.readFileSync(file, 'utf8')).toBe('A after\nB after\n');
-    expect(fs.existsSync(`${file}.lock`)).toBe(false);
-  });
-
-  it('takes over a stale rotation lock (dead pid) and removes it after rotating', () => {
-    const file = integrationLogPath(sb.secretsDir, 'linear');
-    fs.mkdirSync(`${file}.lock`, { recursive: true });
-    fs.writeFileSync(path.join(`${file}.lock`, 'pid'), '4194305'); // above the largest pid Linux or macOS can assign: never alive
-    const log = openIntegrationLog(file, 1000);
-    log.write(line100('fill').repeat(11));
-    log.close();
-    expect(fs.readFileSync(`${file}.1`, 'utf8')).toContain('fill');
-    expect(fs.existsSync(`${file}.lock`)).toBe(false);
-  });
-
-  it('leaves a live rotation lock alone and skips that rotation', () => {
-    const file = integrationLogPath(sb.secretsDir, 'linear');
-    fs.mkdirSync(`${file}.lock`, { recursive: true });
-    fs.writeFileSync(path.join(`${file}.lock`, 'pid'), String(process.pid));
-    const log = openIntegrationLog(file, 1000);
-    log.write(line100('fill').repeat(11));
-    log.close();
-    expect(fs.existsSync(`${file}.1`)).toBe(false);
-    expect(fs.readFileSync(path.join(`${file}.lock`, 'pid'), 'utf8')).toBe(String(process.pid));
-  });
-
-  it('rotates once to .log.1 when it grows past the cap while running', () => {
+  it('rotates once to .log.1 (0600) past the cap and reopens the active path at once', () => {
     const file = integrationLogPath(sb.secretsDir, 'linear');
     const log = openIntegrationLog(file, 1000);
-    for (let i = 0; i < 30; i++) log.write(`${String(i).padStart(3, '0')} ${'w'.repeat(95)}\n`); // 100 bytes each
+    for (let i = 0; i < 30; i++) log.write(line100(`line ${i}`));
     log.close();
     expect(fs.statSync(file).size).toBeLessThanOrEqual(1000);
     expect(fs.statSync(`${file}.1`).size).toBeGreaterThan(1000);
     expect(fs.statSync(`${file}.1`).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
     expect(fs.existsSync(`${file}.2`)).toBe(false);
+  });
+
+  it('closing right after a rotating write leaves the active path present (the path the harness line names)', () => {
+    const file = integrationLogPath(sb.secretsDir, 'linear');
+    const log = openIntegrationLog(file, 1000);
+    log.write(line100('fill').repeat(11)); // this write crosses the cap and rotates
+    log.close();
+    expect(fs.existsSync(file)).toBe(true);
+    expect(fs.readFileSync(`${file}.1`, 'utf8')).toContain('fill');
+  });
+
+  describe('pruneIntegrationLogs', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    /** Create a log file with a given age (ms) and mode. */
+    function make(name: string, ageMs: number, mode = 0o600): string {
+      const f = path.join(logDir(), name);
+      fs.mkdirSync(logDir(), { recursive: true });
+      fs.writeFileSync(f, `${name}\n`, { mode });
+      fs.chmodSync(f, mode);
+      const t = (Date.now() - ageMs) / 1000;
+      fs.utimesSync(f, t, t);
+      return f;
+    }
+    const exists = (name: string) => fs.existsSync(path.join(logDir(), name));
+    const modeOf = (name: string) => fs.statSync(path.join(logDir(), name)).mode & 0o777;
+
+    it('keeps live-pid files and the 5 newest dead runs; deletes older dead runs and the old shared files', () => {
+      make(`linear.${process.pid}.log`, 10 * DAY); // live: never touched, however old
+      for (let i = 1; i <= 7; i++) make(`linear.${DEAD(i)}.log`, i * 60_000); // dead runs, newest first
+      make(`linear.${DEAD(6)}.log.1`, 6 * 60_000);
+      make('linear.log', 60_000); // the shared log of earlier builds: abandoned
+      make('linear.log.1', 60_000);
+      pruneIntegrationLogs(sb.secretsDir, 'linear');
+      expect(exists(`linear.${process.pid}.log`)).toBe(true);
+      for (let i = 1; i <= 5; i++) expect(exists(`linear.${DEAD(i)}.log`)).toBe(true);
+      expect(exists(`linear.${DEAD(6)}.log`)).toBe(false);
+      expect(exists(`linear.${DEAD(6)}.log.1`)).toBe(false);
+      expect(exists(`linear.${DEAD(7)}.log`)).toBe(false);
+      expect(exists('linear.log')).toBe(false);
+      expect(exists('linear.log.1')).toBe(false);
+    });
+
+    it('deletes a dead run older than 7 days even when it is among the newest 5', () => {
+      make(`linear.${DEAD(1)}.log`, 60_000);
+      make(`linear.${DEAD(2)}.log`, 8 * DAY);
+      make(`linear.${DEAD(2)}.log.1`, 8 * DAY);
+      pruneIntegrationLogs(sb.secretsDir, 'linear');
+      expect(exists(`linear.${DEAD(1)}.log`)).toBe(true);
+      expect(exists(`linear.${DEAD(2)}.log`)).toBe(false);
+      expect(exists(`linear.${DEAD(2)}.log.1`)).toBe(false);
+    });
+
+    it('tightens a kept 0644 file (an old backup) to 0600', () => {
+      make(`linear.${DEAD(1)}.log`, 60_000, 0o644);
+      make(`linear.${DEAD(1)}.log.1`, 60_000, 0o644);
+      pruneIntegrationLogs(sb.secretsDir, 'linear');
+      expect(modeOf(`linear.${DEAD(1)}.log`)).toBe(0o600);
+      expect(modeOf(`linear.${DEAD(1)}.log.1`)).toBe(0o600);
+    });
+
+    it('parses names strictly: other integrations and unrelated files are never touched', () => {
+      const others = [
+        `other.${DEAD(1)}.log`, `linear-2.${DEAD(1)}.log`, `linear.abc.log`, `linear.${DEAD(1)}.log.2`,
+        `linear.${DEAD(1)}.txt`, `linear.${DEAD(1)}.log.lock`, 'linear.log.bak', 'notes.md',
+      ];
+      for (const n of others) make(n, 30 * DAY, 0o644);
+      pruneIntegrationLogs(sb.secretsDir, 'linear');
+      for (const n of others) {
+        expect(exists(n)).toBe(true);
+        expect(modeOf(n)).toBe(0o644);
+      }
+    });
+
+    it('is a no-op without a log dir', () => {
+      expect(() => pruneIntegrationLogs(sb.secretsDir, 'linear')).not.toThrow();
+    });
   });
 });
 
@@ -583,11 +585,27 @@ describe('runLauncher with a real child and a real SecretsService', () => {
     await new Promise((r) => setTimeout(r, 1500));
     p.stderr!.resume();
     expect(await closed).toBe(3);
-    expect(err.trim().split('\n').at(-1)).toBe(`dispatch integration "probe": exited with code 3; its stderr is in ${logFile()}`);
+    // The launcher runs in the spawned node process itself, so its log is named by that pid.
+    const file = integrationLogPath(sb.secretsDir, 'probe', p.pid);
+    expect(err.trim().split('\n').at(-1)).toBe(`dispatch integration "probe": exited with code 3; its stderr is in ${file}`);
     expect(err).not.toContain('line 0 ');
-    const log = fs.readFileSync(logFile(), 'utf8');
+    const log = fs.readFileSync(file, 'utf8');
     expect(log.split('\n').filter((l) => l.startsWith('line '))).toHaveLength(LINES);
     expect(log).toContain('FATAL last line\n');
+  });
+
+  it('end to end: two launchers of one integration run at once, and each log file holds only its own lines', async () => {
+    const tagged = (tag: string) => startEntry(nodeSpec(`for (let i = 0; i < 500; i++) process.stderr.write("${tag} " + i + "\\n");`));
+    const a = tagged('from-A');
+    const b = tagged('from-B');
+    const done = (p: ReturnType<typeof startEntry>) => new Promise<number | null>((resolve) => { p.stdout!.resume(); p.stderr!.resume(); p.on('close', (c) => resolve(c)); });
+    expect(await Promise.all([done(a), done(b)])).toEqual([0, 0]);
+    const logA = fs.readFileSync(integrationLogPath(sb.secretsDir, 'probe', a.pid), 'utf8');
+    const logB = fs.readFileSync(integrationLogPath(sb.secretsDir, 'probe', b.pid), 'utf8');
+    expect(logA.split('\n').filter((l) => l.startsWith('from-A '))).toHaveLength(500);
+    expect(logB.split('\n').filter((l) => l.startsWith('from-B '))).toHaveLength(500);
+    expect(logA).not.toContain('from-B');
+    expect(logB).not.toContain('from-A');
   });
 
   it('end to end: the server stdout bytes pass through unchanged, and its stderr goes only to the log', async () => {
@@ -602,6 +620,6 @@ describe('runLauncher with a real child and a real SecretsService', () => {
     expect(Buffer.concat(out)).toEqual(Buffer.from(BYTES));
     expect(err).not.toContain('key=');
     expect(err).not.toContain(ENV_VALUE);
-    expect(fs.readFileSync(logFile(), 'utf8')).toContain('key=[redacted]\n');
+    expect(fs.readFileSync(integrationLogPath(sb.secretsDir, 'probe', p.pid), 'utf8')).toContain('key=[redacted]\n');
   });
 });

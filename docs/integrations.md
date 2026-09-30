@@ -45,14 +45,18 @@ GITHUB_TOKEN=${GITHUB_PAT}                 # an env value (remote or local)
 - **Where the value goes:** only into the MCP server process's environment. It is never in
   a command line (an EDR agent can log every process's argv), a config file, `dispatch.db`,
   a log line, or the agent's own shell environment.
-- **Where the server's stderr goes:** to its own log,
-  `~/.dispatch/logs/integrations/<name>.log` (folder `0700`, file `0600`, rotated once to
-  `<name>.log.1` at about 1 MiB), never to the CLI. The CLI keeps MCP stderr in its own logs,
-  and a server can print a value in forms no filter can catch (an object dump with escapes,
-  a 1–3 character value). The log redacts the verbatim and JSON-escaped forms of values of
+- **Where the server's stderr goes:** to a log file, never to the CLI. The CLI keeps MCP
+  stderr in its own logs, and a server can print a value in forms no filter can catch (an
+  object dump with escapes, a 1–3 character value). Every thread runs its own copy of the
+  server, and each copy writes its own file,
+  `~/.dispatch/logs/integrations/<name>.<pid>.log` (`<pid>` is the launcher's), so no file
+  is shared. The folder is `0700` and the file `0600`; at about 1 MiB it rotates once to
+  `<name>.<pid>.log.1`. The log redacts the verbatim and JSON-escaped forms of values of
   4+ characters, but it can still hold other encodings of a value, which is why it is `0600`.
-  Every thread runs its own copy of the server, so lines from several threads can mix in one
-  log; `--- … pid N: started ---` and `exited` markers separate the runs.
+- **Log retention:** each time a server starts, Dispatch prunes that integration's logs. It
+  never touches the log of a launcher that is still running. Of the finished ones, it keeps
+  the 5 newest and deletes the rest, and it deletes any finished one older than 7 days. It
+  also sets kept files to `0600` and deletes the single shared `<name>.log` of earlier builds.
 - **What the CLI's MCP log gets:** fixed lines only. Nothing on a normal run;
   `dispatch integration "<name>": exited with code N; its stderr is in <path>` when the
   server fails; and the lines for a missing ref, a spawn error (its code only), or a bad value.

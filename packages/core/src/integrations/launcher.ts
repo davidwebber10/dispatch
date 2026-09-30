@@ -24,9 +24,11 @@
  * NUL, or CR/LF in a header, refused before the spawn), a spawn error's code, or "exited with
  * code N; its stderr is in <path>". The server's stderr never reaches the harness: a server
  * can print a value in forms no filter can enumerate (util.inspect escapes, a 1–3 character
- * value). It goes to <secretsDir>/logs/integrations/<name>.log (dir 0700, file 0600, rotated
- * once at ~1 MiB), redacted there too as defense in depth; the file can still hold other
- * encodings of a value, which is why it is 0600. A detached grandchild that outlives the
+ * value). It goes to this launcher's own file, <secretsDir>/logs/integrations/<name>.<pid>.log
+ * (dir 0700, file 0600, rotated once at ~1 MiB; no file is shared between launchers), redacted
+ * there too as defense in depth; the file can still hold other encodings of a value, which is
+ * why it is 0600. At start the launcher prunes dead launchers' logs of the same integration
+ * (keeps the 5 newest runs, none older than 7 days). A detached grandchild that outlives the
  * server can get EPIPE on stderr after the 1 s drain.
  *
  * Imports stay light (no server, no db): this starts once per server per thread.
@@ -194,116 +196,112 @@ export function pipeRedacted(stream: Readable, redact: (line: string) => string,
   return () => { if (pending) write(redact(pending.replace(/\r$/, '')) + '\n'); pending = ''; };
 }
 
-/** About where a server's log rotates, once, to `<name>.log.1`. */
+/** About where a launcher's log rotates, once, to `<name>.<pid>.log.1`. */
 const LOG_CAP = 1024 * 1024;
+/** Retention per integration: dead launchers' runs kept, and the age past which a dead run goes regardless. */
+const KEEP_DEAD_RUNS = 5;
+const MAX_DEAD_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** Where a server's stderr goes: `<secretsDir>/logs/integrations/<name>.log`, the name reduced to [A-Za-z0-9_-]. */
-export function integrationLogPath(secretsDir: string, name: string | undefined): string {
-  const safe = String(name ?? '').replace(/[^A-Za-z0-9_-]/g, '_') || 'integration';
-  return path.join(secretsDir, 'logs', 'integrations', `${safe}.log`);
-}
-
-/** A rotation lock older than this is stale whatever its pid says (pid reuse, a crash before the pid was written). */
-const LOCK_STALE_MS = 30_000;
-
-function lockIsStale(lock: string): boolean {
-  try {
-    const pid = Number(fs.readFileSync(path.join(lock, 'pid'), 'utf8'));
-    if (Number.isInteger(pid) && pid > 0) {
-      try { process.kill(pid, 0); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ESRCH') return true; }
-    }
-  } catch { /* no pid yet: the holder may still be writing it */ }
-  try { return Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS; } catch { return false; }
+function safeLogName(name: string | undefined): string {
+  return String(name ?? '').replace(/[^A-Za-z0-9_-]/g, '_') || 'integration';
 }
 
 /**
- * Take the cross-process rotation lock: an atomic mkdir that holds our pid. A stale lock is
- * renamed away before it is removed, so of two launchers taking it over, only one wins.
+ * Where one launcher writes its server's stderr: `<secretsDir>/logs/integrations/<name>.<pid>.log`,
+ * the name reduced to [A-Za-z0-9_-]. One file per launcher (so per thread): nothing is shared.
  */
-function tryLock(lock: string): boolean {
-  try {
-    fs.mkdirSync(lock, { mode: 0o700 });
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== 'EEXIST' || !lockIsStale(lock)) return false;
-    const away = `${lock}.stale-${process.pid}-${Date.now()}`;
-    try { fs.renameSync(lock, away); } catch { return false; }
-    try { fs.rmSync(away, { recursive: true, force: true }); } catch { /* ignore */ }
-    try { fs.mkdirSync(lock, { mode: 0o700 }); } catch { return false; }
-  }
-  try { fs.writeFileSync(path.join(lock, 'pid'), String(process.pid), { mode: 0o600 }); } catch { /* the age check still covers it */ }
-  return true;
-}
-
-function unlock(lock: string): void {
-  try { fs.rmSync(lock, { recursive: true, force: true }); } catch { /* ignore */ }
+export function integrationLogPath(secretsDir: string, name: string | undefined, pid = process.pid): string {
+  return path.join(secretsDir, 'logs', 'integrations', `${safeLogName(name)}.${pid}.log`);
 }
 
 /**
- * An append-only log in a 0700 dir, file 0600 (both tightened if they already exist, before any
- * rename). Each thread runs its own launcher, so several may append to one file:
- *   - before each write batch the descriptor is checked against the file now at the path, and
- *     reopened if another launcher rotated it away (once or twice), so no line lands in an
- *     unlinked file;
- *   - rotation (once, to `.1`, at open and whenever the file grows past `cap`) runs under a
- *     cross-process lock (`<name>.log.lock`) and re-checks the size under it, so a second
- *     rotation can never move a new file over the populated backup.
- * Write errors are dropped: a full disk must never stop the server.
+ * This launcher's own log, dir 0700 and file 0600, created with O_EXCL (a leftover at the path is
+ * from an earlier process that had our pid, so it is replaced). Only this launcher writes it, so
+ * rotation needs no lock: past `cap` it renames to `.1` (0600) and reopens the active path at
+ * once, so the path the harness line names always exists. Write errors are dropped: a full disk
+ * must never stop the server.
  */
-export function openIntegrationLog(
-  file: string,
-  cap = LOG_CAP,
-  /** Test seam: `beforeRename` runs inside a rotation, between its size check and its rename. */
-  hooks: { beforeRename?: () => void } = {},
-): { write: (text: string) => void; close: () => void } {
+export function openIntegrationLog(file: string, cap = LOG_CAP): { write: (text: string) => void; close: () => void } {
   const dir = path.dirname(file);
-  const lock = `${file}.lock`;
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   fs.chmodSync(dir, 0o700);
-  let fd = -1;
-  let closed = false;
-  const current = () => {
-    let atPath: fs.Stats | null = null;
-    try { atPath = fs.statSync(file); } catch { /* rotated away: the open below recreates it */ }
-    if (fd >= 0) {
-      const mine = fs.fstatSync(fd);
-      if (atPath && mine.ino === atPath.ino && mine.dev === atPath.dev) return;
-      try { fs.closeSync(fd); } catch { /* ignore */ }
-      fd = -1;
-    }
-    fd = fs.openSync(file, 'a', 0o600);
-    fs.fchmodSync(fd, 0o600);
-  };
-  const rotateIfOver = () => {
-    if (!tryLock(lock)) return; // another launcher is rotating; our next write reopens its new file
+  const create = (): number => {
+    let fd: number;
     try {
-      if (fs.statSync(file).size > cap) {
-        fs.chmodSync(file, 0o600);
-        hooks.beforeRename?.();
-        fs.renameSync(file, `${file}.1`);
-        fs.chmodSync(`${file}.1`, 0o600);
-      }
-    } catch { /* already gone: nothing to rotate */ } finally {
-      unlock(lock);
+      fd = fs.openSync(file, 'wx', 0o600);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+      fs.unlinkSync(file);
+      fd = fs.openSync(file, 'wx', 0o600);
     }
+    fs.fchmodSync(fd, 0o600);
+    return fd;
   };
-  try { fs.chmodSync(file, 0o600); } catch { /* no log yet */ }
-  try { if (fs.statSync(file).size > cap) rotateIfOver(); } catch { /* no log yet */ }
-  current();
+  let fd = create();
+  let size = 0;
   return {
     write: (text) => {
-      if (closed) return;
+      if (fd < 0) return;
       try {
-        current();
-        fs.writeSync(fd, text);
-        if (fs.fstatSync(fd).size > cap) rotateIfOver();
+        size += fs.writeSync(fd, text);
+        if (size > cap) {
+          fs.closeSync(fd);
+          fd = -1;
+          fs.renameSync(file, `${file}.1`);
+          fs.chmodSync(`${file}.1`, 0o600);
+          fd = create();
+          size = 0;
+        }
       } catch { /* dropped */ }
     },
     close: () => {
-      closed = true;
-      try { fs.closeSync(fd); } catch { /* ignore */ }
+      try { if (fd >= 0) fs.closeSync(fd); } catch { /* ignore */ }
       fd = -1;
     },
   };
+}
+
+function pidAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; }
+}
+
+/**
+ * Retention, run when a launcher starts (best effort: it never throws). For this integration
+ * only, with names parsed strictly (`<name>.<pid>.log` and `<name>.<pid>.log.1`; anything else,
+ * and anything not a plain file, is skipped): a log whose pid is alive is never touched; of the
+ * dead launchers' runs (a run's `.log` and `.log.1` together) the 5 newest by mtime are kept, and
+ * any run older than 7 days is deleted. Kept files are tightened to 0600. The shared
+ * `<name>.log` / `<name>.log.1` of earlier builds are abandoned and deleted.
+ */
+export function pruneIntegrationLogs(secretsDir: string, name: string | undefined, now = Date.now()): void {
+  const dir = path.join(secretsDir, 'logs', 'integrations');
+  const safe = safeLogName(name);
+  let entries: string[];
+  try { entries = fs.readdirSync(dir); } catch { return; }
+  const own = new RegExp(`^${safe}\\.(\\d+)\\.log(\\.1)?$`);
+  const legacy = new Set([`${safe}.log`, `${safe}.log.1`]);
+  const runs = new Map<number, { files: string[]; newest: number }>();
+  for (const entry of entries) {
+    const file = path.join(dir, entry);
+    let st: fs.Stats;
+    try { st = fs.lstatSync(file); } catch { continue; }
+    if (!st.isFile()) continue;
+    if (legacy.has(entry)) { try { fs.unlinkSync(file); } catch { /* ignore */ } continue; }
+    const m = own.exec(entry);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    if (pidAlive(pid)) continue;
+    const run = runs.get(pid) ?? { files: [], newest: 0 };
+    run.files.push(file);
+    run.newest = Math.max(run.newest, st.mtimeMs);
+    runs.set(pid, run);
+  }
+  [...runs.values()].sort((a, b) => b.newest - a.newest).forEach((run, i) => {
+    const drop = i >= KEEP_DEAD_RUNS || now - run.newest > MAX_DEAD_AGE_MS;
+    for (const file of run.files) {
+      try { if (drop) fs.unlinkSync(file); else fs.chmodSync(file, 0o600); } catch { /* ignore */ }
+    }
+  });
 }
 
 /** An error's code (ENOENT, EACCES, …) — its message can quote env values, so it is never printed. */
@@ -357,6 +355,7 @@ function runChild(plan: LaunchPlan, spec: LaunchSpec, secretsDir: string, baseEn
     let flush = () => {};
     const drain = () => { if (drained) return; flush(); drained = true; settle(); };
     if (child.stderr) {
+      try { pruneIntegrationLogs(secretsDir, spec.name); } catch { /* retention is best effort */ }
       try {
         log = openIntegrationLog(logFile);
         log.write(`--- ${new Date().toISOString()} pid ${process.pid}: started ---\n`);
