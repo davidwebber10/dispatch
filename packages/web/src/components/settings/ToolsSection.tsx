@@ -1,22 +1,36 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../api/client';
-import type { ToolStatus } from '../../api/types';
+import type { ToolStatus, ToolsResponse } from '../../api/types';
 import { useIsMobile } from '../../hooks/useIsMobile';
-import { pageLabel, summaryLine, miniChip, codeChip, GroupHeader, HoverRow, SearchInput, FilterSegments } from './ui';
+import { timeAgo } from '../../lib/time';
+import { pageLabel, summaryLine, ghostBtn, miniChip, codeChip, GroupHeader, HoverRow, SearchInput, FilterSegments } from './ui';
 
 const desc: React.CSSProperties = { fontSize: 12.5, color: 'var(--color-text-secondary)' };
 const colHead: React.CSSProperties = { font: '600 9.5px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
 const grid = 'minmax(230px,1.2fr) 130px 160px minmax(120px,0.5fr)';
 
-type Bucket = 'needs-auth' | 'ready' | 'missing';
-const bucketOf = (t: ToolStatus): Bucket => (!t.installed ? 'missing' : t.authed ? 'ready' : 'needs-auth');
+type Bucket = 'needs-auth' | 'unchecked' | 'ready' | 'missing';
+const bucketOf = (t: ToolStatus): Bucket => {
+  if (!t.installed) return 'missing';
+  const state = t.authState ?? (t.authed ? 'ok' : 'needed'); // older daemons send only `authed`
+  return state === 'ok' ? 'ready' : state === 'unknown' ? 'unchecked' : 'needs-auth';
+};
+
+// When the daemon last ran each CLI's sign-in check (it caches the answer for a few minutes).
+function checkedLabel(iso: string | null): string {
+  if (!iso) return 'not checked yet';
+  const ago = timeAgo(iso);
+  return ago === 'now' ? 'checked just now' : `checked ${ago} ago`;
+}
 
 function StatusCell({ bucket }: { bucket: Bucket }) {
   const [dot, text, label] = bucket === 'ready'
     ? ['var(--color-accent)', 'var(--color-text-secondary)', 'installed · authed']
     : bucket === 'needs-auth'
       ? ['var(--color-status-red)', 'var(--color-status-red)', 'needs auth']
-      : ['#4a4a52', 'var(--color-text-tertiary)', 'not installed'];
+      : bucket === 'unchecked'
+        ? ['var(--color-text-tertiary)', 'var(--color-text-secondary)', "couldn't check"]
+        : ['#4a4a52', 'var(--color-text-tertiary)', 'not installed'];
   return (
     <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
       <span style={{ width: 6, height: 6, borderRadius: '50%', background: dot }} />
@@ -31,13 +45,22 @@ export function ToolsSection() {
   const [err, setErr] = useState('');
   const [query, setQuery] = useState('');
   const [seg, setSeg] = useState<'all' | 'ready' | 'needs-auth'>('all');
+  const [checkedAt, setCheckedAt] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+  const apply = (r: ToolsResponse) => { setTools(r.tools); setCheckedAt(r.checkedAt); setErr(''); };
   useEffect(() => { (async () => {
-    try { setTools((await api.getTools()).tools); } catch { setErr('Could not reach Dispatch.'); }
+    try { apply(await api.getTools()); } catch { setErr('Could not reach Dispatch.'); }
   })(); }, []);
+  const checkAgain = async () => {
+    setChecking(true);
+    try { apply(await api.getTools({ refresh: true })); } catch { setErr('Could not reach Dispatch.'); }
+    finally { setChecking(false); }
+  };
 
   const matched = query ? tools.filter((t) => t.name.toLowerCase().includes(query.toLowerCase()) || t.description.toLowerCase().includes(query.toLowerCase())) : tools;
   const ready = matched.filter((t) => bucketOf(t) === 'ready');
   const needsAuth = matched.filter((t) => bucketOf(t) === 'needs-auth');
+  const unchecked = matched.filter((t) => bucketOf(t) === 'unchecked');
   const missing = matched.filter((t) => bucketOf(t) === 'missing');
   const needsAuthTotal = tools.filter((t) => bucketOf(t) === 'needs-auth').length;
 
@@ -70,6 +93,7 @@ export function ToolsSection() {
 
   const groups: { key: Bucket; label: string; tone: 'accent' | 'red' | 'neutral'; hint: string; items: ToolStatus[] }[] = [
     { key: 'needs-auth', label: 'NEEDS AUTH', tone: 'red', hint: 'Installed, but the agent cannot use them yet', items: needsAuth },
+    { key: 'unchecked', label: "COULDN'T CHECK", tone: 'neutral', hint: 'The sign-in check gave no answer — try Check again', items: unchecked },
     { key: 'ready', label: 'READY', tone: 'accent', hint: 'Available in every thread', items: ready },
     { key: 'missing', label: 'MISSING', tone: 'neutral', hint: 'Not found on PATH', items: missing },
   ];
@@ -77,7 +101,15 @@ export function ToolsSection() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <span style={pageLabel}>TOOLS (CLI)</span>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <span style={pageLabel}>TOOLS (CLI)</span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={summaryLine} title={checkedAt ? new Date(checkedAt).toLocaleString() : undefined}>{checkedLabel(checkedAt)}</span>
+          <button style={{ ...ghostBtn, ...(checking ? { opacity: 0.6, cursor: 'default' } : {}) }} disabled={checking} onClick={() => void checkAgain()}>
+            {checking ? 'Checking…' : 'Check again'}
+          </button>
+        </span>
+      </div>
       <div style={desc}>
         CLIs bundled with Dispatch and available to the agent in every thread. Add your own in <code style={codeChip}>~/.dispatch/tools.json</code>, then run <code style={codeChip}>dispatch tools install</code>.
       </div>

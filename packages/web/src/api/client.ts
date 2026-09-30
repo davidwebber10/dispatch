@@ -1,6 +1,6 @@
 import type { harnessCapabilities } from '../../../core/src/providers/capabilities';
 import { apiPath } from '../lib/basePath';
-import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolStatus, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry } from './types';
+import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry } from './types';
 
 /**
  * A content block for a structured `user` turn (mirrors the daemon's wire shape). A
@@ -261,8 +261,8 @@ export const api = {
   setSecret: (input: { name: string; value: string }) => req<DopplerSecret>('/api/secrets', { method: 'POST', body: body(input) }),
   deleteSecret: (name: string) => req<void>(`/api/secrets/${encodeURIComponent(name)}`, { method: 'DELETE' }),
 
-  // Tools (bundled CLIs)
-  getTools: () => req<{ tools: ToolStatus[] }>('/api/tools'),
+  // Tools (bundled CLIs). `refresh` re-runs the auth checks instead of serving the cached answer.
+  getTools: (opts?: { refresh?: boolean }) => req<ToolsResponse>(opts?.refresh ? '/api/tools?refresh=1' : '/api/tools'),
 
   // Integrations (own MCP catalog)
   listIntegrations: () => req<{ integrations: Integration[] }>('/api/integrations'),

@@ -115,6 +115,48 @@ describe('manifest', () => {
     expect(validateEntry(null)).toBe(false);
   });
 
+  it('validateEntry accepts an authCheck with args or shell, and rejects a malformed one', () => {
+    const base = { name: 'x', description: 'd', kind: 'binary', bins: ['x'] };
+    expect(validateEntry({ ...base, authCheck: { args: ['auth', 'status'] } })).toBe(true);
+    expect(validateEntry({ ...base, authCheck: { shell: 'x whoami', timeoutMs: 5000 } })).toBe(true);
+    expect(validateEntry({ ...base, authCheck: 'x auth status' })).toBe(false);
+    expect(validateEntry({ ...base, authCheck: null })).toBe(false);
+    expect(validateEntry({ ...base, authCheck: {} })).toBe(false); // neither args nor shell
+    expect(validateEntry({ ...base, authCheck: { args: ['a'], shell: 'b' } })).toBe(false); // both
+    expect(validateEntry({ ...base, authCheck: { args: 'auth status' } })).toBe(false);
+    expect(validateEntry({ ...base, authCheck: { args: ['auth', 1] } })).toBe(false);
+    expect(validateEntry({ ...base, authCheck: { shell: 42 } })).toBe(false);
+    expect(validateEntry({ ...base, authCheck: { args: ['a'], timeoutMs: 0 } })).toBe(false);
+    expect(validateEntry({ ...base, authCheck: { args: ['a'], timeoutMs: '5000' } })).toBe(false);
+  });
+
+  it('validateEntry accepts unknownExitCodes as a list of exit codes 1–255', () => {
+    const base = { name: 'x', description: 'd', kind: 'binary', bins: ['x'] };
+    const withCodes = (unknownExitCodes: unknown) => validateEntry({ ...base, authCheck: { shell: 'x', unknownExitCodes } });
+    expect(withCodes([124])).toBe(true);
+    expect(withCodes([124, 125])).toBe(true);
+    expect(withCodes(124)).toBe(false);
+    expect(withCodes(['124'])).toBe(false);
+    expect(withCodes([1.5])).toBe(false);
+    expect(withCodes([0])).toBe(false); // exit 0 is always "ok"
+    expect(withCodes([256])).toBe(false);
+  });
+
+  it('the default bundle carries real auth checks for gh, doppler, databricks and aws', () => {
+    const m = loadManifest(base);
+    const check = (n: string) => m.find((e) => e.name === n)!.authCheck;
+    expect(check('gh')).toEqual({ args: ['auth', 'status'] });
+    expect(check('doppler')).toEqual({ args: ['me', '--json'] });
+    expect(check('databricks')).toEqual({ args: ['current-user', 'me', '-o', 'json'] });
+    const aws = check('aws')!;
+    expect(aws.args).toBeUndefined();
+    expect(aws.shell).toContain('AWS_EC2_METADATA_DISABLED=true');
+    expect(aws.shell).toContain('aws sts get-caller-identity');
+    expect(aws.shell).toContain('aws configure list-profiles');
+    expect(aws.unknownExitCodes).toEqual([124]); // the scan exits 124 when a call timed out and none succeeded
+    expect(check('jq')).toBeUndefined();
+  });
+
   it('aws is darwin-gated (its script recipe shells out to macOS-only pkgutil, no Linux variant yet)', () => {
     const m = loadManifest(base);
     const aws = m.find((e) => e.name === 'aws');

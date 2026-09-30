@@ -46,6 +46,7 @@ import { createSetupRouter } from './routes/setup.js';
 import { withShimPath } from './auth/shim.js';
 import { createToolsRouter } from './routes/tools.js';
 import { getToolsSpawnEnv, toolStatuses, awarenessNote } from './tools/status.js';
+import { ToolAuthProber } from './tools/auth-probe.js';
 import { SecretsService } from './secrets/service.js';
 import { IntegrationsService } from './integrations/service.js';
 import { createEventsRouter } from './routes/events.js';
@@ -309,7 +310,10 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const integrationsService = new IntegrationsService(db);
   sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
   sessionService.setIntegrationsSpecs(() => integrationsService.getServerSpecs());
-  sessionService.setToolsAwareness(() => awarenessNote(toolStatuses({ base: toolsBase })));
+  // Unlike startServer, no refresh at boot or behind a spawn: tests spawn sessions through this
+  // app and toolsBase can be the real ~/.dispatch/tools. Checks run only from GET /api/tools.
+  const toolsAuth = new ToolAuthProber({ base: toolsBase });
+  sessionService.setToolsAwareness(() => awarenessNote(toolStatuses({ base: toolsBase, env: toolsAuth.threadEnv(), checks: toolsAuth.snapshot().results })));
   if (options.structuredCommand) sessionService.setStructuredCommandOverride(options.structuredCommand);
   // Wakes watchers on peer status edges (see sessions/watch-dispatcher.ts) — wired as an
   // optional StatusService dependency, same shape as onActivity below.
@@ -346,7 +350,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   app.use('/api/state', createStateRouter(db));
   app.use('/api/integrations', createIntegrationsRouter(integrationsService));
   app.use('/api/push', createPushRouter(pushService));
-  app.use('/api/tools', createToolsRouter({ base: toolsBase }));
+  app.use('/api/tools', createToolsRouter({ base: toolsBase, prober: toolsAuth }));
   app.use('/api/update', createUpdateRouter(broadcaster, resolveRepoRoot(), db));
   app.use('/api/appearance', createAppearanceRouter(dispatchDir));
   app.use('/api/watches', createWatchesRouter(db));
@@ -497,6 +501,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Tools brokered by OS, resolved per spawn (design §4.2.1).
   const osConnections = new OsConnectionsProvider();
   const toolsBase = path.join(dataDir, 'tools');
+  // Whether each bundled CLI can really sign in from a thread: runs its authCheck with the
+  // thread spawn env (kept current by refreshPtyEnv below), not this daemon's bare env.
+  const toolsAuth = new ToolAuthProber({ base: toolsBase });
   // Install the auto-namer's key resolver (declared above, next to the namer):
   // the OpenCode/OpenRouter key by its CONFIGURED Doppler name, resolved fresh
   // per naming attempt so key changes apply without a restart. null (not throw)
@@ -507,7 +514,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   };
   sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
   sessionService.setIntegrationsSpecs(() => [...integrationsService.getServerSpecs(), ...osConnections.getServerSpecs()]);
-  sessionService.setToolsAwareness(() => awarenessNote(toolStatuses({ base: toolsBase })));
+  sessionService.setToolsAwareness(() => {
+    // Sync, so it can only serve the cache; a stale one is refreshed behind this spawn.
+    if (toolsAuth.isStale()) void toolsAuth.refresh();
+    return awarenessNote(toolStatuses({ base: toolsBase, env: toolsAuth.threadEnv(), checks: toolsAuth.snapshot().results }));
+  });
   let effectiveShimEnv = browserShimEnv;
   // Resolve the OpenCode/OpenRouter key from Doppler BY CONFIGURED NAME (settings/harness-
   // settings.ts) and layer it onto the opencode children's env as OPENROUTER_API_KEY.
@@ -542,6 +553,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     // browser-auth relay silently does nothing. On a hosted box that relay is the ONLY
     // route an OAuth URL has to the person signing in: there is no local browser.
     spawnEnv.PATH = withShimPath(dataDir, spawnEnv.PATH);
+    toolsAuth.setSpawnEnv(spawnEnv);
     ptyManager.setDefaultEnv(spawnEnv);
     structuredManager.setDefaultEnv(spawnEnv);
     // The ACP children (Grok, OpenCode) run real tools directly (no app-server
@@ -635,7 +647,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.use('/api/state', createStateRouter(db));
   app.use('/api/integrations', createIntegrationsRouter(integrationsService));
   app.use('/api/push', createPushRouter(pushService));
-  app.use('/api/tools', createToolsRouter({ base: toolsBase }));
+  app.use('/api/tools', createToolsRouter({ base: toolsBase, prober: toolsAuth }));
   const repoRoot = resolveRepoRoot();
   app.use('/api/update', createUpdateRouter(broadcaster, repoRoot, db));
   app.use('/api/appearance', createAppearanceRouter(dataDir));
@@ -763,6 +775,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       console.log(`OS tools: ${s.servers.length} server(s), reachable=${s.reachable}`);
     }
   });
+  // First CLI auth-check pass, now the thread spawn env is final (the port fallback above can
+  // still change it). Non-blocking; the Tools page and the awareness note read its cache.
+  void toolsAuth.refresh();
 
   // Per-box state projection for the OS control plane (design §4.4.5). Deliberately
   // not load-bearing for lifecycle — boxes are always-on, so a bad reading here

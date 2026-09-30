@@ -33,6 +33,7 @@
       "bins": ["gh"],
       "authEnv": ["GH_TOKEN"],
       "envAlias": { "GH_TOKEN": "GITHUB_TOKEN" },
+      "authCheck": { "args": ["auth", "status"] },
       "binary": {
         "darwin-arm64": { "url": "https://github.com/cli/cli/releases/download/v2.95.0/gh_2.95.0_macOS_arm64.zip", "archive": "zip", "binPath": "gh_2.95.0_macOS_arm64/bin/gh", "sha256": "3677f9c27965825f9c7d50395473c134edaea4b484373ef6b25de653570a0489" },
         "darwin-x64":   { "url": "https://github.com/cli/cli/releases/download/v2.95.0/gh_2.95.0_macOS_amd64.zip", "archive": "zip", "binPath": "gh_2.95.0_macOS_amd64/bin/gh", "sha256": "985707e9ac60c95ed51cddd808c338b481abe69fffa77e9d6547c3750045f77e" },
@@ -47,6 +48,7 @@
       "kind": "binary",
       "bins": ["doppler"],
       "authEnv": ["DOPPLER_TOKEN"],
+      "authCheck": { "args": ["me", "--json"] },
       "binary": {
         "darwin-arm64": { "url": "https://github.com/DopplerHQ/cli/releases/download/3.76.0/doppler_3.76.0_macOS_arm64.tar.gz", "archive": "tar.gz", "binPath": "doppler", "sha256": "f8a546d4b177255816f3b1262347bb643b0bcb8cf82d5859e5426c11f56636dc" },
         "darwin-x64":   { "url": "https://github.com/DopplerHQ/cli/releases/download/3.76.0/doppler_3.76.0_macOS_amd64.tar.gz", "archive": "tar.gz", "binPath": "doppler", "sha256": "1a70842d5de95232c5bae732721058690c748db5e5c7510e828116392e9f0682" },
@@ -61,6 +63,7 @@
       "kind": "binary",
       "bins": ["databricks"],
       "authEnv": ["DATABRICKS_HOST", "DATABRICKS_TOKEN"],
+      "authCheck": { "args": ["current-user", "me", "-o", "json"] },
       "binary": {
         "darwin-arm64": { "url": "https://github.com/databricks/cli/releases/download/v1.5.0/databricks_cli_1.5.0_darwin_arm64.tar.gz", "archive": "tar.gz", "binPath": "databricks", "sha256": "41ccc456d609f628413b231c467bb53fb066ecab2e96df492a4df98361e5f001" },
         "darwin-x64":   { "url": "https://github.com/databricks/cli/releases/download/v1.5.0/databricks_cli_1.5.0_darwin_amd64.tar.gz", "archive": "tar.gz", "binPath": "databricks", "sha256": "f3ea3bf46303650722e0ee47caba03e786d41a2c8b9129d34e03c0272cda0fcc" },
@@ -83,6 +86,7 @@
       "kind": "script",
       "bins": ["aws"],
       "authEnv": ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
+      "authCheck": { "shell": "export AWS_EC2_METADATA_DISABLED=true AWS_MAX_ATTEMPTS=1; trap 'exit 0' USR1; check() { aws sts get-caller-identity --cli-connect-timeout 3 --cli-read-timeout 5 \"$@\" & a=$!; (sleep 6; kill $a) & w=$!; wait $a; s=$?; kill $w; [ $s -ne 0 ] || kill -s USR1 $$; [ $s -le 128 ] || [ $s -gt 192 ] || exit 124; }; reap() { wait $1; [ $? -ne 124 ] || to=1; }; to=; check & live=$!; IFS='\n'; set -f; set -- $(aws configure list-profiles); unset IFS; for p in \"$@\"; do while :; do n=0; still=; for q in $live; do if kill -0 $q; then n=$((n+1)); still=\"$still $q\"; else reap $q; fi; done; live=$still; [ $n -lt 4 ] && break; sleep 0.2 || sleep 1; done; check --profile \"$p\" & live=\"$live $!\"; done; for q in $live; do reap $q; done; [ -z \"$to\" ] || exit 124; exit 1", "unknownExitCodes": [124] },
       "platforms": ["darwin"],
       "script": {
         "install": "set -e; [ -n \"$TOOLS_PREFIX\" ]; OPT=\"$TOOLS_PREFIX/opt/aws\"; LOCK=\"$TOOLS_PREFIX/opt/.aws.lock\"; stage=; ok=; mkdir -p \"$TOOLS_PREFIX/opt\"; owner_alive() { p=${1##*/.aws-stage.}; case \"$p\" in *.*) p=${p%%.*} ;; *) return 1 ;; esac; case \"$p\" in ''|0*|*[!0-9]*) return 1 ;; esac; [ \"$p\" != \"$$\" ] && kill -0 \"$p\" 2>/dev/null; }; finish() { if [ -n \"$stage\" ]; then if [ -z \"$ok\" ] && { [ -e \"$stage/old\" ] || [ -L \"$stage/old\" ]; }; then if [ ! -e \"$OPT\" ] && [ ! -L \"$OPT\" ] && mv \"$stage/old\" \"$OPT\"; then rm -rf \"$stage\"; else echo \"aws: the previous install is in $stage/old; move it to $OPT\" >&2; fi; else rm -rf \"$stage\"; fi; fi; if [ \"$(cat \"$LOCK/pid\" 2>/dev/null)\" = \"$$\" ]; then rm -rf \"$LOCK\"; fi; }; trap finish EXIT; trap 'exit 143' HUP INT TERM; if ! mkdir \"$LOCK\" 2>/dev/null; then pid=$(cat \"$LOCK/pid\" 2>/dev/null || true); if [ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null; then echo 'aws: another aws install is running' >&2; exit 1; fi; rm -rf \"$LOCK\"; if ! mkdir \"$LOCK\" 2>/dev/null; then echo 'aws: another aws install is running' >&2; exit 1; fi; fi; echo $$ > \"$LOCK/pid\"; if [ ! -e \"$OPT\" ] && [ ! -L \"$OPT\" ]; then ls -dt \"$TOOLS_PREFIX\"/opt/.aws-stage.*/old 2>/dev/null | while IFS= read -r o; do if ! owner_alive \"${o%/old}\"; then mv \"$o\" \"$OPT\"; break; fi; done; fi; for s in \"$TOOLS_PREFIX\"/opt/.aws-stage.*; do if [ -e \"$s\" ] && ! owner_alive \"$s\"; then if { [ -e \"$s/old\" ] || [ -L \"$s/old\" ]; } && [ ! -e \"$OPT\" ] && [ ! -L \"$OPT\" ]; then mv \"$s/old\" \"$OPT\"; fi; rm -rf \"$s\"; fi; done; stage=$(mktemp -d \"$TOOLS_PREFIX/opt/.aws-stage.$$.XXXXXX\"); curl -fsSL \"https://awscli.amazonaws.com/AWSCLIV2.pkg\" -o \"$stage/awscli.pkg\"; pkgutil --expand-full \"$stage/awscli.pkg\" \"$stage/x\"; PFX=$(find \"$stage/x\" -type d -name 'aws-cli' | head -1); [ -d \"$PFX\" ]; [ -x \"$PFX/aws\" ]; \"$PFX/aws\" --version; ino=$(ls -di \"$PFX\" | awk '{print $1}'); if [ -e \"$OPT\" ] || [ -L \"$OPT\" ]; then mv \"$OPT\" \"$stage/old\"; fi; if [ -e \"$OPT\" ] || [ -L \"$OPT\" ]; then echo \"aws: $OPT came back during the install; not installing over it\" >&2; exit 1; fi; mv \"$PFX\" \"$OPT\"; if [ \"$(ls -di \"$OPT\" | awk '{print $1}')\" != \"$ino\" ]; then echo \"aws: the new payload did not land at $OPT\" >&2; exit 1; fi; \"$OPT/aws\" --version >/dev/null; ok=1; ln -sf \"$OPT/aws\" \"$TOOLS_BIN/aws\"; ln -sf \"$OPT/aws_completer\" \"$TOOLS_BIN/aws_completer\" 2>/dev/null || true"
