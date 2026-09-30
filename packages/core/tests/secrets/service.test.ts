@@ -46,13 +46,14 @@ describe('SecretsService', () => {
     expect(sp).toContain('dev');
   });
 
-  it('keeps values out of the transcript: names-only list, doppler run first, get only for the value itself', async () => {
+  it('keeps values out of the transcript: names-only list, doppler run first, get reveals only when asked', async () => {
     const s = svc(true);
     await s.setConnection({ token: 'dp.sa.x', project: 'dispatch', config: 'dev' });
     const sp = s.getInjection().systemPrompt!;
     expect(sp).toMatch(/doppler_list_secrets lists[^.]*names only/);
     expect(sp).toContain('prefer `doppler run --project dispatch --config dev -- <command>`');
-    expect(sp).toMatch(/doppler_get_secret[^.]*only when you need the value itself/);
+    expect(sp).toMatch(/doppler_get_secret checks whether a secret exists[^.]*reveal: true[^.]*only when the user asks to see the value/);
+    expect(sp).not.toMatch(/only when you need the value itself/);
   });
 
   // `doppler run -- curl -H "Bearer $API_KEY"` expands in the outer shell (empty), and the

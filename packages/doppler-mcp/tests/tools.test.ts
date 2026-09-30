@@ -152,6 +152,78 @@ describe('doppler tools: no exception text reaches the result', () => {
   });
 });
 
+// The live API's answer for one secret. A missing name still answers 200, with nulls.
+const SECRET_BODY = JSON.stringify({
+  name: 'API_KEY',
+  value: {
+    raw: 'fake-raw-${OTHER}', computed: 'fake-computed', note: 'fake-note',
+    rawVisibility: 'masked', computedVisibility: 'masked',
+    rawValueType: { type: 'string' }, computedValueType: { type: 'string' },
+  },
+  success: true,
+});
+const MISSING_BODY = JSON.stringify({
+  name: 'API_KEY',
+  value: {
+    raw: null, computed: null, note: null, rawVisibility: null, computedVisibility: null,
+    rawValueType: null, computedValueType: null,
+  },
+  success: true,
+});
+
+describe('doppler_get_secret: facts by default, the value only on reveal', () => {
+  test('without reveal it says the secret exists, with its length and type, and no value', async () => {
+    const { result, text } = await call(fakeFetch(200, SECRET_BODY).fetchFn, 'doppler_get_secret', { name: 'API_KEY' });
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(text)).toEqual({
+      project: 'dispatch', config: 'dev', name: 'API_KEY', exists: true, length: 'fake-computed'.length, type: 'string',
+    });
+    expect(JSON.stringify(result)).not.toMatch(LEAK);
+  });
+
+  test('reveal: false is the same as no reveal', async () => {
+    const { text } = await call(fakeFetch(200, SECRET_BODY).fetchFn, 'doppler_get_secret', { name: 'API_KEY', reveal: false });
+    expect(text).not.toMatch(LEAK);
+    expect(JSON.parse(text).exists).toBe(true);
+  });
+
+  test('a missing secret (200 with nulls) is exists: false, not an error', async () => {
+    for (const reveal of [false, true]) {
+      const { result, text } = await call(fakeFetch(200, MISSING_BODY).fetchFn, 'doppler_get_secret', { name: 'API_KEY', reveal });
+      expect(result.isError).toBeFalsy();
+      expect(JSON.parse(text)).toEqual({ project: 'dispatch', config: 'dev', name: 'API_KEY', exists: false });
+    }
+  });
+
+  test('reveal: true returns the computed value only — not the raw template or the note', async () => {
+    const { result, text } = await call(fakeFetch(200, SECRET_BODY).fetchFn, 'doppler_get_secret', { name: 'API_KEY', reveal: true });
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(text)).toEqual({ project: 'dispatch', config: 'dev', name: 'API_KEY', exists: true, value: 'fake-computed' });
+    expect(text).not.toMatch(/fake-raw|fake-note/);
+  });
+
+  test('an empty secret exists with length 0', async () => {
+    const body = JSON.stringify({ name: 'API_KEY', value: { raw: '', computed: '', computedValueType: { type: 'string' } } });
+    const { text } = await call(fakeFetch(200, body).fetchFn, 'doppler_get_secret', { name: 'API_KEY' });
+    expect(JSON.parse(text)).toEqual({ project: 'dispatch', config: 'dev', name: 'API_KEY', exists: true, length: 0, type: 'string' });
+  });
+
+  test('the description tells the agent to prefer doppler run and to reveal only when asked', async () => {
+    const server = new McpServer({ name: 'doppler', version: '0.1.0' });
+    registerTools(server, createDopplerClient('fake-token', fakeFetch(200, '{}').fetchFn), { project: 'dispatch', config: 'dev', readOnly: false });
+    const client = new Client({ name: 'test', version: '0.0.0' });
+    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverSide), client.connect(clientSide)]);
+    const { tools } = await client.listTools();
+    await client.close();
+    const get = tools.find((t) => t.name === 'doppler_get_secret')!;
+    expect(get.description).toMatch(/doppler run/);
+    expect(get.description).toMatch(/reveal/);
+    expect(get.description).toMatch(/only when the user asks/);
+    expect(Object.keys((get.inputSchema as { properties: object }).properties)).toContain('reveal');
+  });
+});
+
 describe('doppler tools: the requests they send', () => {
   test('list asks the names endpoint and returns the names sorted', async () => {
     const { fetchFn, requests } = fakeFetch(200, JSON.stringify({ names: ['ZETA', 'ALPHA'], success: true }));
