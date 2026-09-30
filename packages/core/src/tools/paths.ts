@@ -2,7 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { platform } from '../platform/index.js';
 
-export interface ToolPaths { dir: string; bin: string; cache: string; pkgs: string; installed: string; userManifest: string; }
+export interface ToolPaths { dir: string; bin: string; cache: string; pkgs: string; opt: string; installed: string; userManifest: string; }
 
 export function toolPaths(base?: string): ToolPaths {
   const dir = base ?? path.join(os.homedir(), '.dispatch', 'tools');
@@ -11,6 +11,7 @@ export function toolPaths(base?: string): ToolPaths {
     bin: path.join(dir, 'bin'),
     cache: path.join(dir, 'cache'),
     pkgs: path.join(dir, 'pkgs'),
+    opt: path.join(dir, 'opt'), // durable payload dirs for script recipes: opt/<tool name>
     installed: path.join(dir, 'installed.json'),
     userManifest: path.join(path.dirname(dir), 'tools.json'),
   };

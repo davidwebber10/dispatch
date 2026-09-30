@@ -17,10 +17,10 @@ const defaultDownload: Downloader = async (url) => {
 };
 const defaultExec: Exec = (cmd, args, opts) => { execFileSync(cmd, args, { stdio: 'inherit', env: { ...process.env, ...opts?.env }, cwd: opts?.cwd }); };
 
-export function readInstalled(base?: string): Record<string, { version?: string; sha?: string }> {
+export function readInstalled(base?: string): Record<string, { version?: string; sha?: string; script?: string }> {
   try { return JSON.parse(fs.readFileSync(toolPaths(base).installed, 'utf8')); } catch { return {}; }
 }
-function writeInstalled(p: ToolPaths, data: Record<string, { version?: string; sha?: string }>): void {
+function writeInstalled(p: ToolPaths, data: Record<string, { version?: string; sha?: string; script?: string }>): void {
   fs.mkdirSync(p.dir, { recursive: true });
   fs.writeFileSync(p.installed, JSON.stringify(data, null, 2));
 }
@@ -87,10 +87,13 @@ export async function installTool(entry: ToolEntry, opts: { base?: string; downl
 
   // script
   if (!entry.script) throw new Error(`${entry.name}: missing script spec`);
-  if (installed[entry.name] && entry.bins.every((b) => fs.existsSync(path.join(p.bin, b)))) return;
+  // Bins that exist prove little (the old aws recipe left a link whose payload $TMPDIR purged), so
+  // skip only when the recorded recipe fingerprint matches: a changed recipe or a legacy `{}` reinstalls.
+  const fingerprint = crypto.createHash('sha256').update(entry.script.install).digest('hex');
+  if (installed[entry.name]?.script === fingerprint && entry.bins.every((b) => fs.existsSync(path.join(p.bin, b)))) return;
   execSync(entry.script.install, { stdio: 'inherit', env: { ...process.env, TOOLS_PREFIX: p.dir, TOOLS_BIN: p.bin } });
   for (const b of entry.bins) if (!fs.existsSync(path.join(p.bin, b))) throw new Error(`${entry.name}: script did not produce ${b}`);
-  installed[entry.name] = {};
+  installed[entry.name] = { script: fingerprint };
   writeInstalled(p, installed);
 }
 
@@ -100,6 +103,23 @@ export function uninstallTool(name: string, base?: string): void {
   const entry = loadManifest(base).find((e) => e.name === name);
   for (const b of (entry?.bins ?? [name])) {
     try { fs.rmSync(path.join(p.bin, b), { force: true }); } catch { /* ignore */ }
+  }
+  // A script recipe's payload lives in opt/<name>; drop it and every bin link into it, which also
+  // catches extras the recipe linked beyond entry.bins (aws_completer). Only for a plain name:
+  // `..` or `a/b` would aim the recursive rm outside opt/.
+  const opt = path.join(p.opt, name);
+  if (path.dirname(opt) === p.opt) {
+    let links: string[] = [];
+    try { links = fs.readdirSync(p.bin); } catch { /* no bin dir */ }
+    for (const f of links) {
+      const link = path.join(p.bin, f);
+      try {
+        if (!fs.lstatSync(link).isSymbolicLink()) continue;
+        const target = path.resolve(p.bin, fs.readlinkSync(link));
+        if (target === opt || target.startsWith(opt + path.sep)) fs.rmSync(link, { force: true });
+      } catch { /* ignore */ }
+    }
+    fs.rmSync(opt, { recursive: true, force: true });
   }
   delete installed[name];
   writeInstalled(p, installed);

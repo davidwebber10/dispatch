@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { loadManifest, validateEntry } from '../../src/tools/manifest.js';
+import { installTool } from '../../src/tools/installer.js';
 
 let root: string;
 let base: string;
@@ -52,6 +54,37 @@ describe('manifest', () => {
     const aws = m.find((e) => e.name === 'aws');
     expect(aws).toBeTruthy();
     expect(aws!.platforms).toEqual(['darwin']);
+  });
+
+  it('aws recipe unpacks into $TOOLS_PREFIX/opt/aws, so no link points into its mktemp dir (macOS purges $TMPDIR)', async () => {
+    // Run the real recipe offline and on any OS: stub curl (writes an empty pkg), pkgutil (lays out
+    // the aws-cli payload dir the way AWSCLIV2.pkg expands) and mktemp (macOS mktemp ignores TMPDIR,
+    // so this is how the recipe's temp dir lands in ours) first on PATH.
+    const stubs = path.join(root, 'stubs');
+    const tmp = path.join(root, 'tmp');
+    fs.mkdirSync(stubs); fs.mkdirSync(tmp);
+    fs.writeFileSync(path.join(stubs, 'curl'), '#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ "$1" = -o ]; then : > "$2"; fi; shift; done\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(stubs, 'mktemp'), `#!/bin/sh\nd="${tmp}/tmp.$$"; mkdir "$d"; echo "$d"\n`, { mode: 0o755 });
+    fs.writeFileSync(path.join(stubs, 'pkgutil'), [
+      '#!/bin/sh',
+      'd="$3/aws-cli.pkg/Payload/aws-cli"; mkdir -p "$d"',
+      `printf '#!/bin/sh\\necho stub-aws\\n' > "$d/aws"; printf '#!/bin/sh\\n' > "$d/aws_completer"; chmod +x "$d/aws" "$d/aws_completer"`,
+    ].join('\n'), { mode: 0o755 });
+    const stale = path.join(base, 'opt', 'aws', 'stale');
+    fs.mkdirSync(path.dirname(stale), { recursive: true });
+    fs.writeFileSync(stale, 'x');
+    vi.stubEnv('PATH', `${stubs}${path.delimiter}${process.env.PATH}`);
+    try {
+      expect(execFileSync('/bin/sh', ['-c', 'command -v curl'], { encoding: 'utf8' }).trim()).toBe(path.join(stubs, 'curl')); // never the network
+      const aws = loadManifest(base).find((e) => e.name === 'aws')!;
+      await installTool({ ...aws, platforms: undefined }, { base });
+    } finally { vi.unstubAllEnvs(); }
+    for (const b of ['aws', 'aws_completer']) {
+      expect(fs.readlinkSync(path.join(base, 'bin', b))).toBe(path.join(base, 'opt', 'aws', b));
+    }
+    expect(execFileSync(path.join(base, 'bin', 'aws'), { encoding: 'utf8' })).toContain('stub-aws');
+    expect(fs.existsSync(stale)).toBe(false); // an old copy is replaced, not merged into
+    expect(fs.readdirSync(tmp)).toEqual([]); // the trap removed the mktemp dir
   });
 
   it('every binary tool has linux-x64 and linux-arm64 assets with a 64-char sha256', () => {
