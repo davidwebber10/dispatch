@@ -12,7 +12,7 @@ Spec: `docs/superpowers/specs/2026-10-05-overseer-structured-recap-design.md` (i
 
 ## Global Constraints
 
-- Work only in the worktree `/Users/jdetamore/Developer/Projects/dispatch/.claude/worktrees/overseer-recap` (branch `docs/overseer-structured-recap`). It has no `node_modules` yet: run `pnpm install` once at the worktree root before Task 1.
+- Work only in the worktree `.claude/worktrees/overseer-recap` at the repo root (branch `feat/overseer-structured-recap`). It has no `node_modules` yet: run `pnpm install` once at the worktree root before Task 1.
 - Line numbers in this plan refer to the files as they are before Task 1. Earlier tasks shift them, so always find the place by the quoted text.
 - Run tests from inside a package: `cd packages/core && npx vitest run <path>` and `cd packages/web && npx vitest run <path>`. Never run vitest from the repo root (it breaks the web tests).
 - Typecheck core with `cd packages/core && npx tsc --noEmit -p .` (this also checks `src/**/*.test.ts`; files under `packages/core/tests/` are not typechecked). Typecheck web with `cd packages/web && npx tsc -b`. Do not run the web `vite build`.
