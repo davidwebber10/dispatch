@@ -260,4 +260,43 @@ function initializeSchema(db: Database.Database): void {
     prompt TEXT NOT NULL
   )`));
   migrate(db, '004-lifecycle-runtime', () => initRuntimeSchema(db));
+  // Overseer structured recap (spec 2026-10-05): the message log and the decision ledger.
+  // A migrate() step, not the legacy column list above, so it reaches existing databases too.
+  migrate(db, '005-coordinator-messages-and-ledger', () => db.exec(`
+    CREATE TABLE IF NOT EXISTS coordinator_messages (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      terminal_id TEXT NOT NULL,
+      sent_at     TEXT NOT NULL,
+      source      TEXT NOT NULL,
+      text        TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_coordinator_messages_terminal ON coordinator_messages(terminal_id, sent_at);
+    CREATE TABLE IF NOT EXISTS ledger_items (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id       TEXT NOT NULL,
+      seq              INTEGER NOT NULL,
+      kind             TEXT NOT NULL,
+      text             TEXT NOT NULL,
+      author           TEXT NOT NULL,
+      recommendation   TEXT,
+      options          TEXT,
+      blocks           TEXT,
+      mission          TEXT,
+      status           TEXT NOT NULL DEFAULT 'open',
+      quote            TEXT,
+      quote_message_id INTEGER,
+      quote_at         TEXT,
+      reading          TEXT,
+      reason           TEXT,
+      supersedes       INTEGER,
+      origin           TEXT NOT NULL DEFAULT 'live',
+      created_at       TEXT NOT NULL,
+      updated_at       TEXT NOT NULL,
+      UNIQUE (session_id, seq)
+    );
+    CREATE TRIGGER IF NOT EXISTS ledger_items_text_immutable
+      BEFORE UPDATE OF text ON ledger_items
+      WHEN NEW.text IS NOT OLD.text
+      BEGIN SELECT RAISE(ABORT, 'ledger item text never changes'); END;
+  `));
 }

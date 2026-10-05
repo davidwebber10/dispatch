@@ -98,8 +98,10 @@ export const api = {
   // `source: 'user'` tags this as a direct human send (the single chokepoint every
   // composer funnels through), distinct from the coordinator's own agency-mcp sends.
   getHarnessCapabilities: () => req<HarnessCapability[]>('/api/setup/harnesses'),
-  sendStructuredMessage: (id: string, content: string | ContentBlock[]) =>
-    req<void>(`/api/terminals/${id}/message`, { method: 'POST', body: body({ ...(typeof content === 'string' ? { text: content } : { content }), source: 'user' }) }),
+  // `canned: true` marks fixed text a card click sent (the need-card acknowledgement): the
+  // daemon logs it as 'canned', so it can never count as the user's own words in the ledger.
+  sendStructuredMessage: (id: string, content: string | ContentBlock[], opts?: { canned?: boolean }) =>
+    req<void>(`/api/terminals/${id}/message`, { method: 'POST', body: body({ ...(typeof content === 'string' ? { text: content } : { content }), source: 'user', ...(opts?.canned ? { canned: true } : {}) }) }),
   // The membrane: the gated tool/question a structured AGENT thread is blocked on (or null).
   getPermission: (terminalId: string) => req<PendingPermission | null>(`/api/terminals/${terminalId}/permission`),
   // Resolve it: allow (optionally with an AskUserQuestion answers map) or deny (with a message).

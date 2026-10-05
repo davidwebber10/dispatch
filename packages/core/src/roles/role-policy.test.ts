@@ -389,6 +389,14 @@ describe('roleToolPolicy — Dispatch MCP tools (roles never delegate or steer)'
     }
   });
 
+  it('denies the decision-ledger tools to a role run (they are not on the allowlist)', () => {
+    for (const [level, policy] of levels) {
+      for (const tool of ['ledger_add', 'ledger_resolve', 'ledger_note', 'ledger_list', 'ledger_import']) {
+        expect(policy(`mcp__dispatch__${tool}`, {}).allow, `${level} ${tool}`).toBe(false);
+      }
+    }
+  });
+
   it('fails closed on a Dispatch tool it does not know (a future tool is denied until reviewed)', () => {
     for (const [, policy] of levels) expect(policy('mcp__dispatch__some_new_tool', {}).allow).toBe(false);
   });

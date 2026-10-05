@@ -121,8 +121,11 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // only — never forwarded to the CLI); a bare 'user' send to a typed agent also notifies its
   // coordinator, since that's the one path where a human message could silently override
   // what the coordinator thinks it told the agent to do.
+  // Optional `canned: true` marks fixed text that a card click sent (the need-card
+  // acknowledgement). It changes only the overseer message log ('canned', never 'user'),
+  // so a ledger quote can never match it; `source` and the "via Dispatch" badge are unchanged.
   router.post('/terminals/:terminalId/message', (req, res) => {
-    const { text, content, source } = req.body ?? {};
+    const { text, content, source, canned } = req.body ?? {};
     const payload = content !== undefined ? content : text;
     const ok = typeof payload === 'string' ? payload.length > 0 : Array.isArray(payload) && payload.length > 0;
     if (!ok) return res.status(400).json({ error: 'text (string) or content (string | block[]) is required' });
@@ -130,7 +133,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       // Transport-agnostic: a Pretty thread takes it over its structured channel, a CLI/PTY
       // thread gets it typed into its TUI. Before this, a PTY target threw "no structured
       // session for terminal" — which is why one thread could only message a Pretty peer.
-      const sent = sessionService.sendThreadMessage(req.params.terminalId, payload, source);
+      const sent = sessionService.sendThreadMessage(req.params.terminalId, payload, source, canned === true ? 'canned' : undefined);
       if (source === 'user') sessionService.noteUserPrompt(req.params.terminalId, payload);
       if (source === 'user') sessionService.noteUserMessageToAgent(req.params.terminalId, payload); // tell the coordinator
       // A structured send flips to working off its own stream events; a PTY write has no such

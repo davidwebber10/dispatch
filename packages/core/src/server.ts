@@ -64,6 +64,7 @@ import { CodexStructuredSessionManager } from './structured/codex-manager.js';
 import { GrokStructuredSessionManager } from './structured/grok-manager.js';
 import { startPtyTimingLoop } from './sessions/status.js';
 import { startAutoArchiveLoop } from './sessions/auto-archive.js';
+import { startInterimRecapLoop } from './sessions/interim-recap.js';
 import { TerminalMonitor } from './terminal-monitor.js';
 import { ThreadAutoNamer } from './sessions/thread-auto-namer.js';
 import { platform } from './platform/index.js';
@@ -71,6 +72,8 @@ import { startUpdateCheckLoop } from './update/checker.js';
 import { createUpdateRouter } from './routes/update.js';
 import { createAppearanceRouter, customIconHandler } from './routes/appearance.js';
 import { createWatchesRouter } from './routes/watches.js';
+import { createLedgerRouter } from './routes/ledger.js';
+import { LedgerService } from './overseer/ledger-service.js';
 import { WatchDispatcher } from './sessions/watch-dispatcher.js';
 import { createAnalyticsRouter, trackingStartedAt } from './routes/analytics.js';
 
@@ -345,6 +348,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   // Mount routes
   app.use('/api/sessions', createSessionsRouter(sessionService, broadcaster, db));
   app.use('/api', createTerminalsRouter(sessionService, undefined, statusService));
+  app.use('/api', createLedgerRouter(new LedgerService(db)));
   app.use('/api/events', createEventsRouter(statusService));
   app.use('/api/agents', createAgentsRouter(agentService));
   app.use('/api/roles', createRolesRouter(rolesService));
@@ -641,6 +645,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Mount routes
   app.use('/api/sessions', createSessionsRouter(sessionService, broadcaster, db));
   app.use('/api', createTerminalsRouter(sessionService, broadcaster, statusService));
+  app.use('/api', createLedgerRouter(new LedgerService(db)));
   app.use('/api/events', createEventsRouter(statusService));
   app.use('/api/agents', createAgentsRouter(agentService));
   app.use('/api/roles', createRolesRouter(rolesService));
@@ -829,6 +834,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // deadline. Cheap: a full scan of a small table (terminals) once a minute — no
   // index backs this, but the table stays small enough that it doesn't matter.
   const autoArchiveInterval = startAutoArchiveLoop(db, sessionService, broadcaster);
+  // Interim recap sweep (structured-recap spec, Unit 5): one notice to an overseer whose
+  // agents still work 20 minutes after a busy Finished notice. The due time is in the DB.
+  const interimRecapInterval = startInterimRecapLoop(db, sessionService);
 
   // Graceful shutdown
   const cleanup = () => {
@@ -837,6 +845,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     clearInterval(updateCheckInterval);
     clearInterval(agentSchedulerInterval);
     clearInterval(autoArchiveInterval);
+    clearInterval(interimRecapInterval);
     clearInterval(heartbeat);
     boxHeartbeat.stop();
     threadAutoNamer.dispose();
