@@ -134,7 +134,7 @@ describe('the user\'s answer to the overseer\'s own question card', () => {
     structured.pendings.set(id, { requestId: 'r1', toolName: 'AskUserQuestion', input: { questions: QUESTIONS }, questions: QUESTIONS });
   };
 
-  it('is logged as user, one line per question, and a quote from it resolves an item', () => {
+  it('is logged as user, one row per question with the answer only, and a quote from it resolves an item', () => {
     const ledger = new LedgerService(db, { clock: () => Date.parse('2026-10-05T16:00:00.000Z') });
     ledger.add('s1', 'coord', { kind: 'decide', text: 'Which store goes first?' });
     ask('coord');
@@ -143,14 +143,34 @@ describe('the user\'s answer to the overseer\'s own question card', () => {
       // The web keys answers by question text: a free-text "Other" answer, and a multi-select joined with ", ".
       answers: { 'Which store goes first?': 'A, but only the first store', 'Which checks run?': 'Lint, Tests' },
     })).toBe(true);
-    expect(log()).toEqual([{ source: 'user', text: 'Store: A, but only the first store\nChecks: Lint, Tests' }]);
+    expect(log()).toEqual([
+      { source: 'user', text: 'A, but only the first store' },
+      { source: 'user', text: 'Lint, Tests' },
+    ]);
     expect(ledger.resolve('s1', 'coord', { id: 'N1', status: 'answered', quote: 'A, but only the first store' }).status).toBe('answered');
   });
 
   it('accepts answers keyed by header, and logs only the questions that have an answer', () => {
     ask('coord');
     svc.answerPermission('coord', '', { decision: 'allow', answers: { Store: 'B' } });
-    expect(log()).toEqual([{ source: 'user', text: 'Store: B' }]);
+    expect(log()).toEqual([{ source: 'user', text: 'B' }]);
+  });
+
+  // The overseer writes the header and the question; only the answer is the user's. A header must
+  // never become quotable evidence, and an "ok" answer is a leading ok of its own message.
+  it('never logs the overseer-written header, so a header word cannot approve anything', () => {
+    const ledger = new LedgerService(db, { clock: () => Date.parse('2026-10-05T16:00:00.000Z') });
+    ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR 7 into main?' });
+    ledger.add('s1', 'coord', { kind: 'decide', text: 'Which store goes first?' });
+    const qs = [
+      { header: 'Merge', question: 'Merge PR 7 now?', options: [{ label: 'yes' }, { label: 'no' }] },
+      { header: 'Store', question: 'Which store goes first?', options: [{ label: 'ok' }, { label: 'B' }] },
+    ];
+    structured.pendings.set('coord', { requestId: 'r1', toolName: 'AskUserQuestion', input: { questions: qs }, questions: qs });
+    svc.answerPermission('coord', 'r1', { decision: 'allow', answers: { 'Merge PR 7 now?': 'no', 'Which store goes first?': 'ok' } });
+    expect(log()).toEqual([{ source: 'user', text: 'no' }, { source: 'user', text: 'ok' }]);
+    expect(() => ledger.resolve('s1', 'coord', { id: 'N1', status: 'answered', quote: 'Merge' })).toThrow(/Quote not found/);
+    expect(() => ledger.resolve('s1', 'coord', { id: 'N2', status: 'answered', quote: 'ok' })).toThrow(/An 'ok' at the start/);
   });
 
   it('is not logged for an ordinary tool permission, a deny, or a delivery that failed', () => {

@@ -1601,21 +1601,21 @@ export class SessionService {
   /**
    * The user's answer to the overseer's OWN question card (AskUserQuestion) is the user's words,
    * but it never passes through sendStructuredMessage, so log it here (structured-recap spec,
-   * Unit 1): one `user` row, one line per answered question, `<header>: <answer>`. A multi-select
-   * answer arrives joined with ", "; a free-text "Other" answer is kept verbatim.
-   * logCoordinatorMessage skips any thread that is not a coordinator and never throws.
+   * Unit 1): one `user` row PER answered question, holding the answer ONLY. The overseer writes
+   * the header and the question, so neither may become quotable evidence (a header "Merge" with
+   * the answer "no" must not approve a merge), and each answer is its own message, so an "ok"
+   * answer is a leading ok of that message. A multi-select answer arrives joined with ", "; a
+   * free-text "Other" answer is kept verbatim. logCoordinatorMessage skips any thread that is not
+   * a coordinator and never throws.
    */
   private logQuestionCardAnswer(terminalId: string, questions: any[] | undefined, answers: Record<string, unknown>): void {
     try {
-      const lines: string[] = [];
       for (const q of Array.isArray(questions) ? questions : []) {
         const value = typeof q?.question === 'string' ? answers[q.question] : undefined;
         const answer = Array.isArray(value) ? value.map(String).join(', ') : typeof value === 'string' ? value : '';
         if (!answer.trim()) continue;
-        const header = typeof q?.header === 'string' && q.header.trim() ? q.header.trim() : String(q.question);
-        lines.push(`${header}: ${answer}`);
+        this.logCoordinatorMessage(terminalId, answer, 'user');
       }
-      if (lines.length) this.logCoordinatorMessage(terminalId, lines.join('\n'), 'user');
     } catch (err) {
       console.error(`coordinator message log: question-card answer not logged for ${terminalId}`, err); // the answer is already delivered
     }

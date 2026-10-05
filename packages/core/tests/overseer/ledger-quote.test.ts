@@ -86,9 +86,18 @@ describe('findQuote — word edges', () => {
     expect(r.ok && r.quote).toBe('merge');
   });
 
-  it('the edge rule applies only on a side where the quote has a letter or digit', () => {
-    const r = findQuote('N12:', [msg('N12:yes', 1)], { after: null });
-    expect(r.ok && r.quote).toBe('N12:');
+  it('the edge rule applies on both sides, even when the quote ends in punctuation', () => {
+    expect(findQuote('N12:', [msg('N12:yes', 1)], { after: null })).toEqual(NOT_FOUND);
+    expect(findQuote(':yes', [msg('N12:yes', 1)], { after: null })).toEqual(NOT_FOUND);
+    const r = findQuote('N12:yes', [msg('N12:yes', 1)], { after: null });
+    expect(r.ok && r.quote).toBe('N12:yes');
+  });
+
+  it('the edge rule reads whole characters, so an astral letter or digit next to a match counts', () => {
+    expect(findQuote('merge', [msg('merge\u{1D7D9} now', 1)], { after: null })).toEqual(NOT_FOUND); // 𝟙, a math digit
+    expect(findQuote('merge', [msg('\u{1D400}merge now', 1)], { after: null })).toEqual(NOT_FOUND); // 𝐀, a math letter
+    const r = findQuote('merge', [msg('\u{1F680} merge now', 1)], { after: null }); // an emoji is not a word character
+    expect(r.ok && r.quote).toBe('merge');
   });
 
   // Word edges are checked first, on the message: "k" in "ok" and "kay" in "okay" are parts of
@@ -99,9 +108,17 @@ describe('findQuote — word edges', () => {
   });
 
   it('a match that starts inside the leading ok span starts after it; nothing left is ok_only', () => {
-    expect(findQuote('.', [msg('ok.', 1)], { after: null })).toEqual({ ok: false, reason: 'ok_only' });
-    const r = findQuote(', merge N12', [msg('ok, merge N12', 1)], { after: null });
+    expect(findQuote('ok.', [msg('ok.', 1)], { after: null })).toEqual({ ok: false, reason: 'ok_only' });
+    const r = findQuote('ok, merge N12', [msg('ok, merge N12', 1)], { after: null });
     expect(r.ok && r.quote).toBe('merge N12');
+    // Inside the span, but at a word edge (after punctuation): it still starts after the span.
+    const p = findQuote(', merge N12', [msg('ok,, merge N12', 1)], { after: null });
+    expect(p.ok && p.quote).toBe('merge N12');
+  });
+
+  it('a match that starts right after the ok-word letters starts inside a word, so it fails', () => {
+    expect(findQuote('.', [msg('ok.', 1)], { after: null })).toEqual(NOT_FOUND);
+    expect(findQuote(', merge N12', [msg('ok, merge N12', 1)], { after: null })).toEqual(NOT_FOUND);
   });
 
   it('the ok span is measured on the message, not on the quote', () => {

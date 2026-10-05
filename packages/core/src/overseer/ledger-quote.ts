@@ -7,10 +7,11 @@
  * - With `after`, only messages sent strictly after that time count.
  * - The earliest matching message wins.
  * - Word edges: a match counts only when it does not start or end inside a word of the message.
- *   Where the quote's first (or last) character is a letter or digit, the message character just
- *   before (or after) the match must not be one. So "N1" is not in "N12: yes" and "merge" is not
- *   in "emerged" or "merged". This check comes first, so part of an ok-word ("k" from "ok", "kay"
- *   from "okay") fails as `not_found`.
+ *   The message character just before the match and the one just after it must not be a letter
+ *   or digit, whatever the quote's own first and last characters are, and a surrogate pair counts
+ *   as one character. So "N1" is not in "N12: yes", "merge" is not in "emerged" or "merged", and
+ *   "N12:" is not in "N12:yes". This check comes first, so part of an ok-word ("k" from "ok",
+ *   "kay" from "okay", "." from "ok.") fails as `not_found`.
  * - The leading ok span is measured on the MESSAGE: an ok-word (ok, okay, k, kk — any case) at
  *   its start, then any punctuation and spaces. A match that starts inside that span starts after
  *   it. If nothing remains, the check fails as `ok_only`. An "ok" in the middle of a message is
@@ -37,9 +38,23 @@ const OK_PREFIX = /^(?:okay|ok|kk|k)(?![\p{L}\p{N}])[\s\p{P}]*/u;
 const WORD_CHAR = /^[\p{L}\p{N}]$/u;
 const HAS_WORD_CHAR = /[\p{L}\p{N}]/u;
 
-/** True when the character at `i` exists and is a letter or digit. Works on UTF-16 units, so an
- *  astral character reads as not-a-word-character (no ID or action word uses one). */
-const isWordAt = (s: string, i: number): boolean => i >= 0 && i < s.length && WORD_CHAR.test(s[i]);
+/** True when the whole character (code point) that ends just before index `i` is a letter or
+ *  digit. Reads a surrogate pair as one character, so an astral letter or digit counts. */
+function isWordBefore(s: string, i: number): boolean {
+  if (i <= 0) return false;
+  let j = i - 1;
+  const low = s.charCodeAt(j);
+  if (low >= 0xdc00 && low <= 0xdfff && j > 0) {
+    const high = s.charCodeAt(j - 1);
+    if (high >= 0xd800 && high <= 0xdbff) j -= 1;
+  }
+  return WORD_CHAR.test(String.fromCodePoint(s.codePointAt(j)!));
+}
+
+/** True when the whole character (code point) that starts at index `i` is a letter or digit. */
+function isWordAfter(s: string, i: number): boolean {
+  return i < s.length && WORD_CHAR.test(String.fromCodePoint(s.codePointAt(i)!));
+}
 
 /** Lower-cased text with each run of white space collapsed to one space, plus, for every
  *  output character, the index of the original character it came from. */
@@ -72,8 +87,6 @@ export function findQuote(quote: string, messages: readonly QuoteCandidate[], op
   const candidates = messages
     .filter((m) => m.source === 'user' && (opts.after === null || m.sentAt > opts.after))
     .sort((a, b) => (a.sentAt === b.sentAt ? a.id - b.id : a.sentAt < b.sentAt ? -1 : 1));
-  const edgeAtStart = isWordAt(needle, 0);
-  const edgeAtEnd = isWordAt(needle, needle.length - 1);
   let sawOkOnly = false;
   for (const msg of candidates) {
     const { norm, map } = normalizeWithMap(msg.text);
@@ -82,8 +95,8 @@ export function findQuote(quote: string, messages: readonly QuoteCandidate[], op
     const okEnd = okSpan ? lead + okSpan[0].length : lead; // the ok span is [lead, okEnd)
     for (let at = norm.indexOf(needle); at !== -1; at = norm.indexOf(needle, at + 1)) {
       const end = at + needle.length;
-      if (edgeAtStart && isWordAt(norm, at - 1)) continue; // starts inside a word
-      if (edgeAtEnd && isWordAt(norm, end)) continue; // ends inside a word
+      if (isWordBefore(norm, at)) continue; // starts inside a word
+      if (isWordAfter(norm, end)) continue; // ends inside a word
       const inOkSpan = at < okEnd;
       const start = inOkSpan ? okEnd : at;
       if (start >= end) { sawOkOnly = true; continue; }
