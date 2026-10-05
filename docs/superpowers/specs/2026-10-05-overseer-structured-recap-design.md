@@ -33,6 +33,10 @@ messages that the user really sent.
    a release or a deploy. Only the words after it can answer an item. The daemon
    enforces the mechanical part (Unit 2, rule 6), and the persona carries the
    rest (Unit 6).
+5. **A `go` item needs a named approval** (proposed in this thread; user,
+   2026-10-05: "yes, include #12"). A `go` item (merge, deploy, release) becomes
+   `answered` only when the quote contains the item ID or an action word. A bare
+   "yes" does not approve a `go` item. The daemon enforces it (Unit 2, rule 7).
 
 Defaults that the user did not object to: one ledger per project, IDs `N1`, `N2`, …
 that never repeat; a new decision goes to the user at once in a short message;
@@ -155,6 +159,13 @@ Rules that the daemon enforces:
    - The stored quote is the words that remain.
    - The same rule applies to every status that needs a quote, and to `statement`
      items.
+7. **A `go` item needs a named approval** (decision 5). To set a `go` item to
+   `answered`, the quote (after rule 6) must contain the item ID, such as `N12`,
+   or one of these action words: `merge`, `deploy`, `release`, `push`, `restart`,
+   `update`. The match ignores case and must be a whole word. If it fails, the
+   check fails with: "A go item needs its ID or the action word in the user's
+   answer. A bare yes is not enough. Ask the user." `parked` on a `go` item does
+   not need this.
 
 Labels in every rendered line:
 
@@ -372,6 +383,8 @@ Constraints:
   - A leading ok-word is removed. "ok", "OK.", "okay, " and "k" alone fail. "ok,
     merge N12" stores "merge N12". An "ok" in the middle of a message is not
     removed.
+  - A `go` item: "yes" fails; "yes, merge it" and "N12: yes" pass; "emerged"
+    does not count as "merge".
 - **Renderer:** labels, ages, the order of the sections, imported items.
 - **Batch state:**
   - Just-promoted dependents count as working.
