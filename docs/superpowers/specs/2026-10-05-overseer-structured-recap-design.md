@@ -103,9 +103,12 @@ Purpose: a record of every message that reaches an overseer, with the sender.
   - A send with no `source` is `daemon`.
   - A write failure is logged and does not block the send.
   - The user's answer to the overseer's own question card (`AskUserQuestion`) is
-    also logged as `user`, one line per question: `<header>: <answer>`. It does not
-    pass through `sendStructuredMessage`, so the answer path logs it. Answers to
-    ordinary tool permissions are not logged. (Added after code review.)
+    also logged as `user`: one row per answered question, with the answer only.
+    The overseer writes the header and the question, so they are never logged as
+    the user's words. Each answer is its own message, so an "ok" answer is a
+    leading "ok". It does not pass through `sendStructuredMessage`, so the answer
+    path logs it. Answers to ordinary tool permissions are not logged. (Added after
+    code review.)
 - **Web change:** the canned "need" acknowledgement (`overseer/store.ts` ~342)
   sends a `canned` marker. The route stores it as `canned`, not `user`.
 - **Migration:** `migrate(db, '005-coordinator-messages-and-ledger', …)` in
@@ -143,9 +146,11 @@ Rules that the daemon enforces:
    message in this overseer's log.
    - The match ignores case and runs of white space.
    - The match must start and end at word edges in the message: no letter or digit
-     directly before or after it. So `N1` does not match inside `N12`, and `merge`
-     does not match inside `merged`. A quote with no letter or digit fails.
-     (Added after code review.)
+     directly before or after it, whatever the quote's own first and last
+     characters are. A surrogate pair counts as one character. So `N1` does not
+     match inside `N12`, `merge` does not match inside `merged`, and `N12:` does
+     not match inside `N12:yes`. A quote with no letter or digit fails. (Added
+     after code review.)
    - For `answered` and `parked`, the message must come after the item's
      `created_at`.
    - A `canned`, `coordinator` or `daemon` message never matches. Agent notices,
@@ -393,6 +398,14 @@ Constraints:
   them unchanged; the phase 2 card removes this step.
 - An overseer that still runs keeps its old persona until its process restarts.
   The persona is rebuilt at each spawn and resume, so a daemon restart applies it.
+- Interim recap delivery is "at least once" in two rare cases, found in review
+  round 2 and accepted:
+  - If the database write that clears the due time fails after a delivered
+    notice, the next sweep sends the notice again.
+  - A Codex overseer receives messages asynchronously, so a late delivery failure
+    cannot stop the due time from clearing. That notice is then lost.
+- The daemon cannot check what a clicked card option means. A clicked option label
+  counts as the user's words, the same as a typed answer.
 
 ## Tests
 
