@@ -102,6 +102,10 @@ Purpose: a record of every message that reaches an overseer, with the sender.
   function.
   - A send with no `source` is `daemon`.
   - A write failure is logged and does not block the send.
+  - The user's answer to the overseer's own question card (`AskUserQuestion`) is
+    also logged as `user`, one line per question: `<header>: <answer>`. It does not
+    pass through `sendStructuredMessage`, so the answer path logs it. Answers to
+    ordinary tool permissions are not logged. (Added after code review.)
 - **Web change:** the canned "need" acknowledgement (`overseer/store.ts` ~342)
   sends a `canned` marker. The route stores it as `canned`, not `user`.
 - **Migration:** `migrate(db, '005-coordinator-messages-and-ledger', …)` in
@@ -138,6 +142,10 @@ Rules that the daemon enforces:
    `parked`, or to create a `statement`, the quote must match part of one `user`
    message in this overseer's log.
    - The match ignores case and runs of white space.
+   - The match must start and end at word edges in the message: no letter or digit
+     directly before or after it. So `N1` does not match inside `N12`, and `merge`
+     does not match inside `merged`. A quote with no letter or digit fails.
+     (Added after code review.)
    - For `answered` and `parked`, the message must come after the item's
      `created_at`.
    - A `canned`, `coordinator` or `daemon` message never matches. Agent notices,
@@ -149,11 +157,14 @@ Rules that the daemon enforces:
 4. **The overseer can close its own item without a quote only as `withdrawn`,**
    with a reason. The next recap shows it once: "Withdrawn by overseer: …".
 5. **`imported` items are shown as "Imported, not checked".** They become checked
-   when the user confirms them and the overseer records that quote.
+   when the user confirms them and the overseer records that quote. A `withdrawn`
+   or `superseded` item is always closed, imported or not. A withdrawn imported
+   item shows the withdrawal and its reason. (Added after code review.)
 6. **A leading "ok" never counts** (decision 4).
-   - When the quote starts at the beginning of the message, the daemon removes a
-     leading ok-word from the quote: `ok`, `okay`, `k` or `kk`, in any case, with
-     any punctuation and spaces after it.
+   - The daemon finds a leading ok-word at the start of the message: `ok`,
+     `okay`, `k` or `kk`, in any case, with any punctuation and spaces after it.
+     A match that starts inside that span starts after it. So the quote `k` from
+     the message `ok` fails.
    - If nothing remains, the check fails with: "An 'ok' at the start of a message
      is not an answer. Ask the user."
    - The stored quote is the words that remain.
@@ -261,6 +272,11 @@ depend on one.
 
 The Finished notice drops "or report back to the user".
 
+A Direct message notice counts its own agent as working, unless that agent waits
+on a question; then it counts as waiting on the overseer. If the batch computation
+fails, the notice still goes out, without the Batch line. (Added after code
+review.)
+
 ### Unit 5 — Interim recap after 20 minutes
 
 - **Start:** when a Finished notice goes out with agents still working and no
@@ -269,13 +285,19 @@ The Finished notice drops "or report back to the user".
 - **Stop:** a settled notice, or `ledger_list({ forRecap: true })`, clears it.
 - **Check:** a 60-second sweep with an injectable `now`, after the auto-archive
   sweep pattern. The due time is in the database, so a daemon restart keeps it.
-- **Fire:** if agents still work at the due time, the daemon sends one Interim
-  recap notice and clears the timer:
+- **Fire:** if agents still work or are queued at the due time (the same "busy"
+  rule as the Batch line), the daemon sends one Interim recap notice:
 
   ```text
   🕒 Interim recap due: agent turns finished 20 minutes ago, and 2 agents
   still work. Post the recap now and mark it "interim". Then keep holding.
   ```
+
+  When only queued agents remain, the count reads `1 agent is queued` (or
+  `2 agents are queued`); when both, `2 agents still work and 1 agent is queued`.
+- **Delivery:** the daemon clears the due time only after the notice reaches the
+  overseer, or when the batch is no longer busy. A failed delivery stays due, and
+  the next sweep tries again. (Both points added after code review.)
 
 - The Interim recap prefix must differ from the Finished, Question and Stopped
   prefixes. If it does not, the web shows it as the wrong notice type.
@@ -313,7 +335,9 @@ Replace the WATCH paragraph and add a REPORTING paragraph. Content:
 - If your context starts with a continuation summary, call `ledger_list` before you
   answer.
 - End each turn with `report_status`: `needs_you` when open `go` or `decide` items
-  exist, otherwise `done`.
+  exist; `blocked` while your agents still work and nothing needs the user;
+  otherwise `done`. This matches the peer prompt, which teaches `blocked` for
+  waiting on another agent. (Changed after code review.)
 
 Constraints:
 
