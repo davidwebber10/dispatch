@@ -26,7 +26,7 @@ const CONTRACT = [
   'Do not save a proposal as a standing rule in memory before the user approves it. When you save a rule, include the user’s quote.',
   'After 3 days with no answer, ask once whether to keep or park an item.',
   'If your context starts with a continuation summary, call ledger_list before you answer.',
-  'End each turn with report_status: needs_you when open go or decide items exist, otherwise done.',
+  'End each turn with report_status: needs_you when open go or decide items exist; blocked while your agents still work and nothing needs the user; otherwise done.',
   'For a go item, ask the user to answer with its ID or the action word (for example "N12: merge"); a bare "yes" fails the daemon check.',
 ];
 

@@ -38,6 +38,12 @@ describe('computeBatchState', () => {
     expect(computeBatchState(db, 's1', { justStarted: ['dep'] }, () => false).working.map((a) => a.id)).toEqual(['dep']);
   });
 
+  it('a pending question beats the just-started override: that agent waits on the overseer', () => {
+    agent('dm', 'working');
+    const state = computeBatchState(db, 's1', { justStarted: ['dm'] }, (id) => id === 'dm');
+    expect(state).toEqual({ working: [], queued: [], waiting: [{ id: 'dm', label: 'DM' }] });
+  });
+
   it('leaves out excluded ids, role runs, archived agents, the coordinator and plain threads', () => {
     agent('self', 'working');
     agent('role', 'working', { roleRun: 'nightly-check' });

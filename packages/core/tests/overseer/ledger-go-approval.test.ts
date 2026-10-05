@@ -8,7 +8,7 @@ import * as terminalsDb from '../../src/db/terminals.js';
 import * as ledgerDb from '../../src/db/ledger.js';
 import * as messagesDb from '../../src/db/coordinator-messages.js';
 import { GO_APPROVAL_ERROR, namesGoApproval } from '../../src/overseer/ledger-quote.js';
-import { LedgerService, LedgerError } from '../../src/overseer/ledger-service.js';
+import { LedgerService, LedgerError, quoteNotFoundAfterError } from '../../src/overseer/ledger-service.js';
 
 describe('namesGoApproval', () => {
   it('"yes" fails; "yes, merge it" and "N12: yes" pass; "emerged" does not count as "merge"', () => {
@@ -69,6 +69,18 @@ describe('ledger_resolve on a go item', () => {
     says('ok, merge it', 1);
     ledger.resolve('s1', 'coord', { id: 'N1', status: 'answered', quote: 'ok, merge it' });
     expect(ledgerDb.getBySeq(db, 's1', 1)!.quote).toBe('merge it');
+  });
+
+  it('"N1" quoted from "N12: yes" is not found: the quote check respects word edges', () => {
+    says('N12: yes', 1);
+    expect(status422(() => ledger.resolve('s1', 'coord', { id: 'N1', status: 'answered', quote: 'N1' }))).toBe(quoteNotFoundAfterError(1));
+    expect(ledgerDb.getBySeq(db, 's1', 1)!.status).toBe('open');
+  });
+
+  it('"merge" quoted from "the branches emerged fine" is not found', () => {
+    says('the branches emerged fine', 1);
+    expect(status422(() => ledger.resolve('s1', 'coord', { id: 'N1', status: 'answered', quote: 'merge' }))).toBe(quoteNotFoundAfterError(1));
+    expect(ledgerDb.getBySeq(db, 's1', 1)!.status).toBe('open');
   });
 
   it('parking a go item needs no named approval', () => {

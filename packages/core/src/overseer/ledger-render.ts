@@ -49,20 +49,22 @@ export function isUnchecked(item: LedgerItem): boolean {
 }
 
 function attribution(item: LedgerItem, stamp: string): string[] {
-  if (isUnchecked(item)) return ['  Imported, not checked'];
+  const imported = isUnchecked(item) ? ['  Imported, not checked'] : [];
   switch (item.status) {
+    // A closed item shows its terminal status and reason first, imported or not.
+    case 'withdrawn':
+      return [`  Withdrawn by overseer: ${item.reason ?? ''}`, ...imported];
+    case 'superseded':
+      return ['  Superseded, not approved', ...imported];
     case 'open':
-      return [`  Proposed by ${item.author}, not approved`];
+      return imported.length ? imported : [`  Proposed by ${item.author}, not approved`];
     case 'answered':
+      if (imported.length) return imported;
       if (item.kind === 'go' || item.kind === 'decide') return [`  You approved: "${item.text}" → "${item.quote}"${stamp}`];
       if (item.kind === 'do') return [`  You said: "${item.quote}"${stamp}`];
       return []; // a statement carries its quote on the first line
     case 'parked':
-      return [`  Parked by you: "${item.quote}"${stamp}`];
-    case 'withdrawn':
-      return [`  Withdrawn by overseer: ${item.reason ?? ''}`];
-    case 'superseded':
-      return ['  Superseded, not approved'];
+      return imported.length ? imported : [`  Parked by you: "${item.quote}"${stamp}`];
   }
 }
 

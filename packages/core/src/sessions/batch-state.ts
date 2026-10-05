@@ -21,7 +21,8 @@ export interface BatchState {
 export interface BatchOptions {
   /** Agents to leave out (the notice's own subject). */
   exclude?: readonly string[];
-  /** Agents that count as working whatever their status reads (dependents promoted this instant). */
+  /** Agents that count as working whatever their status reads (dependents promoted this instant,
+   *  the subject of a direct message), unless a question is pending — then they wait on the overseer. */
   justStarted?: readonly string[];
 }
 
@@ -46,7 +47,9 @@ export function computeBatchState(
     if (cfg.role !== 'agent') continue;
     if (typeof cfg.roleRun === 'string' && cfg.roleRun) continue;
     const ref = { id: row.id, label: row.label || 'agent' };
-    if (justStarted.has(row.id)) { state.working.push(ref); continue; }
+    // A pending question beats the "just started" override: an agent paused on a question
+    // (for example one the user just messaged directly) waits on the overseer.
+    if (justStarted.has(row.id)) { (hasPending(row.id) ? state.waiting : state.working).push(ref); continue; }
     switch (row.status) {
       case 'working': (hasPending(row.id) ? state.waiting : state.working).push(ref); break;
       case 'scheduled': state.working.push(ref); break;

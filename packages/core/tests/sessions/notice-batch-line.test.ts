@@ -1,6 +1,8 @@
 // Every agent notice ends with the Batch line (structured-recap spec, Unit 4).
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { EventEmitter } from 'events';
 import Database from 'better-sqlite3';
+import type { IStructuredManager } from '../../src/structured/manager.js';
 import { initSchema } from '../../src/db/schema.js';
 import * as sessionsDb from '../../src/db/sessions.js';
 import * as terminalsDb from '../../src/db/terminals.js';
@@ -44,6 +46,8 @@ function makeService() {
 
 const QUESTION = { toolName: 'AskUserQuestion', questions: [{ header: 'Fix', question: 'Stage the fix?', options: ['yes', 'no'] }] };
 
+afterEach(() => { vi.restoreAllMocks(); });
+
 const fire = {
   finished: (svc: SessionService) => svc.noteAgentCompletion('a'),
   blocked: (svc: SessionService) => svc.noteAgentNeedsHelp('a', 'which branch?'),
@@ -73,6 +77,40 @@ describe('Batch line on agent notices', () => {
     const text = String(sent.mock.calls[0][1]);
     expect(text.startsWith('💬 The user just sent your agent "Subject"')).toBe(true);
     expect(text).toContain('Batch: still working — 1 agent ("Subject").');
+  });
+
+  it('direct message to an agent paused on a question: it counts as waiting on you, not working', () => {
+    const { db, svc, sent } = makeService();
+    terminalsDb.updateStatus(db, 'a', 'working');
+    // The real lookup: the structured manager holds the agent's pending question.
+    const manager = Object.assign(new EventEmitter(), {
+      getPending: (id: string) => (id === 'a' ? { requestId: 'r1', toolName: 'AskUserQuestion', input: {}, questions: QUESTION.questions } : null),
+    });
+    svc.setStructuredManager(manager as unknown as IStructuredManager);
+    svc.noteUserMessageToAgent('a', 'use the staging bucket');
+    const text = String(sent.mock.calls[0][1]);
+    expect(text).toContain('Batch: no other agent is working or queued.\nStill 1 agent waiting on you ("Subject").');
+    expect(text).not.toContain('Batch: still working');
+  });
+
+  it('a failed batch computation never drops the notice: it goes out without the Batch line', () => {
+    const { svc, sent } = makeService();
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(svc, 'batchState').mockImplementation(() => { throw new Error('db is closing'); });
+    svc.noteAgentCompletion('a');
+    const text = String(sent.mock.calls[0][1]);
+    expect(text).toContain('just finished a turn');
+    expect(text).not.toContain('Batch:');
+    expect(err).toHaveBeenCalled();
+  });
+
+  it('a failed open-items lookup never drops the notice either', () => {
+    const { db, svc, sent } = makeService();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    db.exec('DROP TABLE ledger_items'); // listOpenSeqs now throws
+    svc.noteAgentNeedsHelp('a', 'which branch?');
+    expect(sent).toHaveBeenCalledTimes(1);
+    expect(String(sent.mock.calls[0][1])).not.toContain('Batch:');
   });
 
   it('finished: a dependent promoted this instant counts as working although it reads waiting', () => {

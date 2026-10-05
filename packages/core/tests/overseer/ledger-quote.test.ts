@@ -65,3 +65,60 @@ describe('findQuote', () => {
     expect(findQuote('   ', [msg('anything', 1)], { after: null })).toEqual({ ok: false, reason: 'not_found' });
   });
 });
+
+describe('findQuote — word edges', () => {
+  const NOT_FOUND = { ok: false, reason: 'not_found' };
+
+  it('a quote that ends inside a word does not match: "N1" is not in "N12: yes"', () => {
+    expect(findQuote('N1', [msg('N12: yes', 1)], { after: null })).toEqual(NOT_FOUND);
+  });
+
+  it('a quote that starts inside a word does not match: "merge" is not in "emerged"', () => {
+    expect(findQuote('merge', [msg('the branches emerged fine', 1)], { after: null })).toEqual(NOT_FOUND);
+  });
+
+  it('a quote that ends inside a word does not match: "merge" is not in "merged"', () => {
+    expect(findQuote('merge', [msg('already merged', 1)], { after: null })).toEqual(NOT_FOUND);
+  });
+
+  it('a later whole-word match still counts after a rejected part-word match', () => {
+    const r = findQuote('merge', [msg('emerged, so merge it', 1)], { after: null });
+    expect(r.ok && r.quote).toBe('merge');
+  });
+
+  it('the edge rule applies only on a side where the quote has a letter or digit', () => {
+    const r = findQuote('N12:', [msg('N12:yes', 1)], { after: null });
+    expect(r.ok && r.quote).toBe('N12:');
+  });
+
+  // Word edges are checked first, on the message: "k" in "ok" and "kay" in "okay" are parts of
+  // a word, so they fail as not_found (they never reach the ok-word rule).
+  it('part of the ok-word is not a quote: "k" from "ok", "kay" from "okay"', () => {
+    expect(findQuote('k', [msg('ok', 1)], { after: null })).toEqual(NOT_FOUND);
+    expect(findQuote('kay', [msg('okay', 1)], { after: null })).toEqual(NOT_FOUND);
+  });
+
+  it('a match that starts inside the leading ok span starts after it; nothing left is ok_only', () => {
+    expect(findQuote('.', [msg('ok.', 1)], { after: null })).toEqual({ ok: false, reason: 'ok_only' });
+    const r = findQuote(', merge N12', [msg('ok, merge N12', 1)], { after: null });
+    expect(r.ok && r.quote).toBe('merge N12');
+  });
+
+  it('the ok span is measured on the message, not on the quote', () => {
+    // The quote starts with "ok" but the message does not: nothing is removed.
+    const r = findQuote('ok then', [msg('ok then', 1)], { after: null });
+    expect(r).toEqual({ ok: true, messageId: expect.any(Number), sentAt: expect.any(String), quote: 'then' });
+    const mid = findQuote('ok then', [msg('fine, ok then', 1)], { after: null });
+    expect(mid.ok && mid.quote).toBe('ok then');
+  });
+
+  it('a quote with no letter or digit never counts', () => {
+    expect(findQuote('.', [msg('fine.', 1)], { after: null })).toEqual(NOT_FOUND);
+    expect(findQuote('!!', [msg('do it!!', 1)], { after: null })).toEqual(NOT_FOUND);
+  });
+
+  it('runs of white space in the message match one space in the quote, and the user\'s spacing is stored', () => {
+    const r = findQuote('A, but only', [msg('A,\n\n  but   only', 1)], { after: null });
+    expect(r.ok && r.quote).toBe('A,\n\n  but   only');
+  });
+});

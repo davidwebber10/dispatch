@@ -11,7 +11,8 @@ import * as sessionsDb from '../../src/db/sessions.js';
 import * as terminalsDb from '../../src/db/terminals.js';
 import * as messagesDb from '../../src/db/coordinator-messages.js';
 import { SessionService } from '../../src/sessions/service.js';
-import type { IStructuredManager } from '../../src/structured/manager.js';
+import type { IStructuredManager, PendingPermission } from '../../src/structured/manager.js';
+import { LedgerService } from '../../src/overseer/ledger-service.js';
 
 class FakePty extends EventEmitter {
   isAlive() { return false; }
@@ -24,15 +25,24 @@ class FakePty extends EventEmitter {
 class FakeStructured extends EventEmitter implements IStructuredManager {
   live = new Set<string>();
   sent: { id: string; content: unknown; source?: string }[] = [];
+  pendings = new Map<string, PendingPermission>();
+  answered: { id: string; decision: unknown }[] = [];
+  /** False: the answer is not delivered (no matching pending in the real manager). */
+  deliver = true;
   setDefaultEnv() {}
   spawn(id: string) { this.live.add(id); return 1; }
   sendMessage(id: string, content: unknown, source?: any) { this.sent.push({ id, content, source }); }
-  answerPermission() { return false; }
+  answerPermission(id: string, _requestId: string, decision: unknown) {
+    if (!this.deliver || !this.pendings.has(id)) return false;
+    this.pendings.delete(id);
+    this.answered.push({ id, decision });
+    return true;
+  }
   setEscalate() { return false; }
   interrupt() { return true; }
   compact() {}
   noteDeclaredStatus() {}
-  getPending() { return null; }
+  getPending(id: string) { return this.pendings.get(id) ?? null; }
   getSessionId() { return undefined; }
   getEvents() { return []; }
   getEventsTail() { return []; }
@@ -98,11 +108,74 @@ describe('overseer message log', () => {
     expect(messagesDb.listForTerminal(db, 'agent')).toEqual([]);
   });
 
+  it('mid-turn: a user send and then a daemon notice are both logged, each with its own source', () => {
+    svc.sendThreadMessage('coord', 'check the staging bucket', 'user');
+    svc.noteAgentCompletion('agent'); // a notice arrives while the overseer's turn still runs
+    expect(log().map((m) => m.source)).toEqual(['user', 'daemon']);
+    expect(log()[0].text).toBe('check the staging bucket');
+    expect(log()[1].text.startsWith('✅ Your agent "worker" [agentId agent] just finished a turn.')).toBe(true);
+  });
+
   it('a failed log write is reported and does not block the send', () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     db.exec('DROP TABLE coordinator_messages');
     expect(() => svc.sendStructuredMessage('coord', 'still delivered', 'user')).not.toThrow();
     expect(structured.sent.map((s) => s.content)).toEqual(['still delivered']);
+    expect(err).toHaveBeenCalled();
+  });
+});
+
+describe('the user\'s answer to the overseer\'s own question card', () => {
+  const QUESTIONS = [
+    { header: 'Store', question: 'Which store goes first?', options: [{ label: 'A' }, { label: 'B' }] },
+    { header: 'Checks', question: 'Which checks run?', multiSelect: true, options: [{ label: 'Lint' }, { label: 'Tests' }] },
+  ];
+  const ask = (id: string) => {
+    structured.pendings.set(id, { requestId: 'r1', toolName: 'AskUserQuestion', input: { questions: QUESTIONS }, questions: QUESTIONS });
+  };
+
+  it('is logged as user, one line per question, and a quote from it resolves an item', () => {
+    const ledger = new LedgerService(db, { clock: () => Date.parse('2026-10-05T16:00:00.000Z') });
+    ledger.add('s1', 'coord', { kind: 'decide', text: 'Which store goes first?' });
+    ask('coord');
+    expect(svc.answerPermission('coord', 'r1', {
+      decision: 'allow',
+      // The web keys answers by question text: a free-text "Other" answer, and a multi-select joined with ", ".
+      answers: { 'Which store goes first?': 'A, but only the first store', 'Which checks run?': 'Lint, Tests' },
+    })).toBe(true);
+    expect(log()).toEqual([{ source: 'user', text: 'Store: A, but only the first store\nChecks: Lint, Tests' }]);
+    expect(ledger.resolve('s1', 'coord', { id: 'N1', status: 'answered', quote: 'A, but only the first store' }).status).toBe('answered');
+  });
+
+  it('accepts answers keyed by header, and logs only the questions that have an answer', () => {
+    ask('coord');
+    svc.answerPermission('coord', '', { decision: 'allow', answers: { Store: 'B' } });
+    expect(log()).toEqual([{ source: 'user', text: 'Store: B' }]);
+  });
+
+  it('is not logged for an ordinary tool permission, a deny, or a delivery that failed', () => {
+    structured.pendings.set('coord', { requestId: 'r1', toolName: 'Bash', input: { command: 'ls' } });
+    svc.answerPermission('coord', 'r1', { decision: 'allow' });
+    ask('coord');
+    svc.answerPermission('coord', 'r1', { decision: 'deny', message: 'no' });
+    ask('coord');
+    structured.deliver = false;
+    expect(svc.answerPermission('coord', 'r1', { decision: 'allow', answers: { Store: 'A' } })).toBe(false);
+    expect(log()).toEqual([]);
+  });
+
+  it('is not logged for a thread that is not a coordinator', () => {
+    ask('agent');
+    svc.answerPermission('agent', 'r1', { decision: 'allow', answers: { Store: 'A' } });
+    expect(messagesDb.listForTerminal(db, 'agent')).toEqual([]);
+  });
+
+  it('a failed log write is reported and never blocks the answer', () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    db.exec('DROP TABLE coordinator_messages');
+    ask('coord');
+    expect(svc.answerPermission('coord', 'r1', { decision: 'allow', answers: { Store: 'A' } })).toBe(true);
+    expect(structured.answered).toHaveLength(1);
     expect(err).toHaveBeenCalled();
   });
 });

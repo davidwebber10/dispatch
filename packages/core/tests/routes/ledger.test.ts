@@ -39,6 +39,49 @@ describe('ledger routes', () => {
     expect(again.body).toEqual({ error: 'N1 is already answered.', status: 'answered' });
   });
 
+  it('every ledger route refuses a caller that is not the overseer: 403 with the fixed text, nothing changes', async () => {
+    await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'decide', text: 'Which store?' }).expect(201);
+    messagesDb.append(db, { terminalId: 'coord', source: 'user', text: 'never on Fridays', sentAt: new Date(Date.now() + 1000).toISOString() });
+    // Valid bodies, so only the caller check can refuse them.
+    const routes: [string, Record<string, unknown>][] = [
+      ['ledger', { kind: 'go', text: 'Merge PR #12.' }],
+      ['ledger/list', { forRecap: true }],
+      ['ledger/note', { quote: 'never on Fridays' }],
+      ['ledger/import', { items: [{ kind: 'do', text: 'Check staging.' }] }],
+      ['ledger/handoff', { ids: ['N1'] }],
+      ['ledger/N1/resolve', { status: 'withdrawn', reason: 'moot' }],
+    ];
+    for (const caller of ['agent', undefined]) {
+      for (const [route, body] of routes) {
+        const res = await request(app).post(`/api/sessions/${sid}/${route}`).send({ ...body, caller });
+        expect(res.status, `${route} as ${caller}`).toBe(403);
+        expect(res.body, `${route} as ${caller}`).toEqual({ error: "Only the project's overseer can change the ledger." });
+      }
+    }
+    const list = await request(app).post(`/api/sessions/${sid}/ledger/list`).send({ caller: 'coord' }).expect(200);
+    expect(list.body.openIds).toEqual(['N1']);
+    expect(JSON.parse(terminalsDb.getById(db, 'coord')!.config!).lastRecapAt).toBeUndefined();
+  });
+
+  it('list stamps lastRecapAt only for forRecap: true (a boolean), never for "yes"', async () => {
+    await request(app).post(`/api/sessions/${sid}/ledger/list`).send({ caller: 'coord', forRecap: 'yes' }).expect(200);
+    expect(JSON.parse(terminalsDb.getById(db, 'coord')!.config!).lastRecapAt).toBeUndefined();
+    await request(app).post(`/api/sessions/${sid}/ledger/list`).send({ caller: 'coord', forRecap: true }).expect(200);
+    expect(JSON.parse(terminalsDb.getById(db, 'coord')!.config!).lastRecapAt).toEqual(expect.any(String));
+  });
+
+  it('add with supersedes: the old open item becomes superseded and the new line shows the original question', async () => {
+    for (const text of ['Merge PR #1.', 'Merge PR #2.', 'Set the first store to Draft?']) {
+      await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'decide', text }).expect(201);
+    }
+    const wider = await request(app).post(`/api/sessions/${sid}/ledger`)
+      .send({ caller: 'coord', kind: 'decide', text: 'Also set the second store to Draft?', supersedes: 'N3' }).expect(201);
+    expect(wider.body.id).toBe('N4');
+    expect(wider.body.line).toContain('\n  Original question (N3): "Set the first store to Draft?"');
+    const list = await request(app).post(`/api/sessions/${sid}/ledger/list`).send({ caller: 'coord' }).expect(200);
+    expect(list.body.openIds).toEqual(['N1', 'N2', 'N4']);
+  });
+
   it('list, note, import and handoff answer on their routes', async () => {
     await request(app).post(`/api/sessions/${sid}/ledger/import`).send({ caller: 'coord', items: [{ kind: 'do', text: 'Check staging.' }] }).expect(201);
     const list = await request(app).post(`/api/sessions/${sid}/ledger/list`).send({ caller: 'coord', forRecap: true }).expect(200);

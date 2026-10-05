@@ -71,6 +71,21 @@ describe('add', () => {
     });
   });
 
+  it('supersedes: the old open item becomes superseded; the new line shows the original question', () => {
+    ledger.add('s1', 'coord', { kind: 'decide', text: 'Use library A?' });
+    ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR #12.' });
+    ledger.add('s1', 'coord', { kind: 'decide', text: 'Set the first store to Draft?' });
+    const out = ledger.add('s1', 'coord', { kind: 'decide', text: 'Also set the second store to Draft?', supersedes: 'N3' });
+    expect(out).toEqual({
+      id: 'N4',
+      line: 'N4 [Decide] Also set the second store to Draft? (open 0m)\n' +
+        '  Original question (N3): "Set the first store to Draft?"\n' +
+        '  Proposed by overseer, not approved',
+    });
+    expect(ledgerDb.getBySeq(db, 's1', 3)!.status).toBe('superseded');
+    expect(ledgerDb.listOpenSeqs(db, 's1')).toEqual([1, 2, 4]);
+  });
+
   it('rejects a bad kind, missing text, and an unknown supersedes ID', () => {
     expectLedgerError(() => ledger.add('s1', 'coord', { kind: 'statement', text: 'x' }), 400);
     expectLedgerError(() => ledger.add('s1', 'coord', { kind: 'go', text: '  ' }), 400);
@@ -174,6 +189,35 @@ describe('import', () => {
     const confirmed = ledger.resolve('s1', 'coord', { id: 'N2', status: 'answered', quote: 'library A' });
     expect(confirmed.line).toContain('You approved: "Use library A?" → "library A"');
     expectLedgerError(() => ledger.resolve('s1', 'coord', { id: 'N2', status: 'answered', quote: 'library A' }), 409);
+  });
+
+  it('a withdrawn imported item is closed: it cannot be resolved again, and it renders the withdrawal', () => {
+    ledger.importItems('s1', 'coord', [{ kind: 'decide', text: 'Use library A?', status: 'answered' }]);
+    const out = ledger.resolve('s1', 'coord', { id: 'N1', status: 'withdrawn', reason: 'the import was wrong' });
+    expect(out.line).toBe('N1 [Decide] Use library A?\n  Withdrawn by overseer: the import was wrong\n  Imported, not checked');
+    userSays('library A', 2);
+    for (const status of ['answered', 'parked']) {
+      const e = expectLedgerError(() => ledger.resolve('s1', 'coord', { id: 'N1', status, quote: 'library A' }), 409, 'N1 is already withdrawn.');
+      expect(e.body).toEqual({ status: 'withdrawn' });
+    }
+    expectLedgerError(() => ledger.resolve('s1', 'coord', { id: 'N1', status: 'withdrawn', reason: 'again' }), 409);
+    expect(ledgerDb.getBySeq(db, 's1', 1)).toMatchObject({ status: 'withdrawn', reason: 'the import was wrong', quote: null });
+  });
+
+  it('a superseded imported item is closed', () => {
+    ledger.importItems('s1', 'coord', [{ kind: 'decide', text: 'Set the first store to Draft?' }]);
+    ledger.add('s1', 'coord', { kind: 'decide', text: 'Also set the second store to Draft?', supersedes: 'N1' });
+    expect(ledgerDb.getBySeq(db, 's1', 1)!.status).toBe('superseded');
+    userSays('yes, the first store', 2);
+    expectLedgerError(() => ledger.resolve('s1', 'coord', { id: 'N1', status: 'answered', quote: 'the first store' }), 409, 'N1 is already superseded.');
+    expectLedgerError(() => ledger.resolve('s1', 'coord', { id: 'N1', status: 'withdrawn', reason: 'moot' }), 409, 'N1 is already superseded.');
+  });
+
+  it('an unchecked imported parked item can still be confirmed once', () => {
+    ledger.importItems('s1', 'coord', [{ kind: 'decide', text: 'Rename the CLI?', status: 'parked' }]);
+    userSays('park the rename', 2);
+    expect(ledger.resolve('s1', 'coord', { id: 'N1', status: 'parked', quote: 'park the rename' }).status).toBe('parked');
+    expectLedgerError(() => ledger.resolve('s1', 'coord', { id: 'N1', status: 'parked', quote: 'park the rename' }), 409);
   });
 
   it('rejects an empty list or a bad item, and creates nothing', () => {

@@ -7,7 +7,8 @@
  * 3. Item text never changes; a wider scope is a new item with `supersedes`.
  * 4. Without a quote, the overseer can close an item only as `withdrawn`, with a reason.
  * 5. Imported items stay "Imported, not checked" until the user confirms one and the overseer
- *    records that quote — so an unchecked imported item can be resolved once more.
+ *    records that quote — so an unchecked imported `answered` or `parked` item can be resolved
+ *    once more. A `withdrawn` or `superseded` item is always closed, imported or not (409).
  * 6. A leading "ok" never counts (see ledger-quote.ts).
  */
 import type Database from 'better-sqlite3';
@@ -127,7 +128,10 @@ export class LedgerService {
       throw new LedgerError(400, "status must be 'answered', 'parked' or 'withdrawn'");
     }
     const item = this.requireItem(sessionId, input.id);
-    if (item.status !== 'open' && !isUnchecked(item)) {
+    // Rule 5: only an unchecked imported answered/parked item can be resolved once more;
+    // withdrawn and superseded are always closed, imported or not.
+    const confirmable = isUnchecked(item) && (item.status === 'answered' || item.status === 'parked');
+    if (item.status !== 'open' && !confirmable) {
       throw new LedgerError(409, `N${item.seq} is already ${item.status}.`, { status: item.status });
     }
     const reading = str(input.reading);

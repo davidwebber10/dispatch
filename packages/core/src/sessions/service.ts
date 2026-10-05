@@ -1124,19 +1124,28 @@ export class SessionService {
       .find((t) => isAgentType(t.type) && !t.archivedAt && t.id !== agentTerminalId && t.config?.role === 'coordinator');
     if (!coordinator) return false;
     // The Batch line (structured-recap spec, Unit 4). A direct message starts the subject's
-    // turn, so it counts as working; every other notice leaves its subject out.
-    const batch = this.batchState(
-      agent.session_id,
-      opts.kind === 'direct-message'
-        ? { justStarted: [...(opts.justStarted ?? []), agentTerminalId] }
-        : { exclude: [agentTerminalId], justStarted: opts.justStarted },
-    );
-    const footer = formatBatchFooter(batch, ledgerDb.listOpenSeqs(this.db, agent.session_id));
+    // turn, so it counts as working (unless it waits on a question); every other notice leaves
+    // its subject out. A failure here never drops the notice: it goes out without the line,
+    // and the interim timer is left as it is.
+    let batch: BatchState | null = null;
+    let message = note;
+    try {
+      const state = this.batchState(
+        agent.session_id,
+        opts.kind === 'direct-message'
+          ? { justStarted: [...(opts.justStarted ?? []), agentTerminalId] }
+          : { exclude: [agentTerminalId], justStarted: opts.justStarted },
+      );
+      message = `${note}\n\n${formatBatchFooter(state, ledgerDb.listOpenSeqs(this.db, agent.session_id))}`;
+      batch = state;
+    } catch (err) {
+      console.error(`batch line: failed for agent ${agentTerminalId}; the notice goes out without it`, err);
+    }
     try {
       this.ensureStructuredAlive(coordinator.id); // a daemon restart may have killed it
-      this.sendStructuredMessage(coordinator.id, `${note}\n\n${footer}`);
+      this.sendStructuredMessage(coordinator.id, message);
     } catch { return false; }
-    this.updateInterimTimer(coordinator.id, opts.kind, isBusy(batch));
+    if (batch) this.updateInterimTimer(coordinator.id, opts.kind, isBusy(batch));
     return true;
   }
 
@@ -1154,11 +1163,11 @@ export class SessionService {
     }
   }
 
-  /** Send the one Interim recap notice. Revives the overseer first, as notices do. */
-  sendInterimRecapNotice(coordinatorId: string, workingCount: number): boolean {
+  /** Send the one Interim recap notice. Revives the overseer first, as notices do. False when it was not delivered. */
+  sendInterimRecapNotice(coordinatorId: string, workingCount: number, queuedCount = 0): boolean {
     try {
       this.ensureStructuredAlive(coordinatorId);
-      this.sendStructuredMessage(coordinatorId, formatInterimNotice(workingCount));
+      this.sendStructuredMessage(coordinatorId, formatInterimNotice(workingCount, queuedCount));
       return true;
     } catch { return false; }
   }
@@ -1580,9 +1589,36 @@ export class SessionService {
         ...(pending.questions ? { questions: pending.questions } : {}),
         ...(remappedAnswers && Object.keys(remappedAnswers).length ? { answers: remappedAnswers } : {}),
       };
-      return manager.answerPermission(terminalId, requestId || pending.requestId, { behavior: 'allow', updatedInput });
+      const delivered = manager.answerPermission(terminalId, requestId || pending.requestId, { behavior: 'allow', updatedInput });
+      if (delivered && pending.toolName === 'AskUserQuestion' && remappedAnswers) {
+        this.logQuestionCardAnswer(terminalId, pending.questions, remappedAnswers);
+      }
+      return delivered;
     }
     return manager.answerPermission(terminalId, requestId || pending.requestId, { behavior: 'deny', message: opts.message || 'Denied' });
+  }
+
+  /**
+   * The user's answer to the overseer's OWN question card (AskUserQuestion) is the user's words,
+   * but it never passes through sendStructuredMessage, so log it here (structured-recap spec,
+   * Unit 1): one `user` row, one line per answered question, `<header>: <answer>`. A multi-select
+   * answer arrives joined with ", "; a free-text "Other" answer is kept verbatim.
+   * logCoordinatorMessage skips any thread that is not a coordinator and never throws.
+   */
+  private logQuestionCardAnswer(terminalId: string, questions: any[] | undefined, answers: Record<string, unknown>): void {
+    try {
+      const lines: string[] = [];
+      for (const q of Array.isArray(questions) ? questions : []) {
+        const value = typeof q?.question === 'string' ? answers[q.question] : undefined;
+        const answer = Array.isArray(value) ? value.map(String).join(', ') : typeof value === 'string' ? value : '';
+        if (!answer.trim()) continue;
+        const header = typeof q?.header === 'string' && q.header.trim() ? q.header.trim() : String(q.question);
+        lines.push(`${header}: ${answer}`);
+      }
+      if (lines.length) this.logCoordinatorMessage(terminalId, lines.join('\n'), 'user');
+    } catch (err) {
+      console.error(`coordinator message log: question-card answer not logged for ${terminalId}`, err); // the answer is already delivered
+    }
   }
 
   /**

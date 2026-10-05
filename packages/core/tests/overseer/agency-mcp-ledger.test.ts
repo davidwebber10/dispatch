@@ -67,6 +67,25 @@ describe('agency-mcp ledger tools', () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ caller: 'coord-1', forRecap: true });
   });
 
+  it('each of the five ledger tools surfaces the daemon\'s overseer-only refusal (403) as is', async () => {
+    const denied = "Only the project's overseer can change the ledger.";
+    const calls: [string, Record<string, unknown>][] = [
+      ['ledger_add', { kind: 'go', text: 'Merge PR #12.' }],
+      ['ledger_resolve', { id: 'N1', status: 'withdrawn', reason: 'moot' }],
+      ['ledger_note', { quote: 'never on Fridays' }],
+      ['ledger_list', { forRecap: true }],
+      ['ledger_import', { items: [{ kind: 'do', text: 'Check staging.' }] }],
+    ];
+    for (const [tool, args] of calls) {
+      const fetchMock = vi.fn().mockResolvedValueOnce(fail(403, denied));
+      global.fetch = fetchMock as any;
+      const out = await callTool(tool, args);
+      expect(fetchMock, tool).toHaveBeenCalledTimes(1);
+      expect(out.isError, tool).toBe(true);
+      expect(out.content, tool).toEqual([{ type: 'text', text: `Error: ${denied}` }]);
+    }
+  });
+
   it('a ledger tool fails clearly without a caller identity and never calls the daemon', async () => {
     delete process.env.DISPATCH_TERMINAL;
     const fetchMock = vi.fn();

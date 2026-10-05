@@ -59,6 +59,15 @@ describe('renderItem — the labels', () => {
     expect(renderItem(item({ origin: 'imported', kind: 'statement', status: 'answered', text: 'keep prices' }), ctx)).toBe('N1 [Statement] keep prices\n  Imported, not checked');
   });
 
+  it('a withdrawn or superseded imported item shows its terminal status first, then "Imported, not checked"', () => {
+    expect(renderItem(item({ origin: 'imported', status: 'withdrawn', reason: 'the import was wrong' }), ctx)).toBe(
+      'N1 [Decide] Which store goes first?\n  Withdrawn by overseer: the import was wrong\n  Imported, not checked',
+    );
+    expect(renderItem(item({ origin: 'imported', status: 'superseded' }), ctx)).toBe(
+      'N1 [Decide] Which store goes first?\n  Superseded, not approved\n  Imported, not checked',
+    );
+  });
+
   it('withdrawn, parked, and a superseding item that shows the original question', () => {
     expect(renderItem(item({ status: 'withdrawn', reason: 'the agent found a built-in option' }), ctx))
       .toBe('N1 [Decide] Which store goes first?\n  Withdrawn by overseer: the agent found a built-in option');

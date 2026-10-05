@@ -10,7 +10,7 @@ import * as terminalsDb from '../../src/db/terminals.js';
 import { SessionService } from '../../src/sessions/service.js';
 import { PTYManager } from '../../src/pty/manager.js';
 import { LedgerService } from '../../src/overseer/ledger-service.js';
-import { formatInterimNotice, interimRecapTick, nextInterimConfig, INTERIM_RECAP_MS } from '../../src/sessions/interim-recap.js';
+import { formatInterimNotice, interimRecapTick, nextInterimConfig, startInterimRecapLoop, INTERIM_RECAP_MS } from '../../src/sessions/interim-recap.js';
 
 class NoopPty extends PTYManager {
   override spawn(): number { return 1; }
@@ -58,6 +58,29 @@ describe('formatInterimNotice', () => {
     expect(formatInterimNotice(2)).toBe(
       '🕒 Interim recap due: agent turns finished 20 minutes ago, and 2 agents\n' +
       'still work. Post the recap now and mark it "interim". Then keep holding.',
+    );
+    expect(formatInterimNotice(1, 0)).toBe(
+      '🕒 Interim recap due: agent turns finished 20 minutes ago, and 1 agent\n' +
+      'still works. Post the recap now and mark it "interim". Then keep holding.',
+    );
+  });
+
+  it('counts queued agents when only queued agents remain, and both when both do', () => {
+    expect(formatInterimNotice(0, 1)).toBe(
+      '🕒 Interim recap due: agent turns finished 20 minutes ago, and 1 agent\n' +
+      'is queued. Post the recap now and mark it "interim". Then keep holding.',
+    );
+    expect(formatInterimNotice(0, 2)).toBe(
+      '🕒 Interim recap due: agent turns finished 20 minutes ago, and 2 agents\n' +
+      'are queued. Post the recap now and mark it "interim". Then keep holding.',
+    );
+    expect(formatInterimNotice(2, 1)).toBe(
+      '🕒 Interim recap due: agent turns finished 20 minutes ago, and 2 agents\n' +
+      'still work and 1 agent is queued. Post the recap now and mark it "interim". Then keep holding.',
+    );
+    expect(formatInterimNotice(1, 2)).toBe(
+      '🕒 Interim recap due: agent turns finished 20 minutes ago, and 1 agent\n' +
+      'still works and 2 agents are queued. Post the recap now and mark it "interim". Then keep holding.',
     );
   });
 });
@@ -122,6 +145,56 @@ describe('interim recap timer', () => {
     expect(due(db)).toBeUndefined();
   });
 
+  it('fires when only queued agents remain: busy means working or queued', () => {
+    const { db, svc, sent } = open();
+    svc.noteAgentCompletion('a');
+    sent.mockClear();
+    terminalsDb.updateStatus(db, 'b', 'queued');
+    expect(interimRecapTick(db, svc, T0 + INTERIM_RECAP_MS)).toEqual(['coord']);
+    expect(sent.mock.calls).toEqual([['coord', formatInterimNotice(0, 1)]]);
+    expect(due(db)).toBeUndefined();
+  });
+
+  it('a failed delivery stays due and the next sweep retries; exactly one notice is delivered', () => {
+    const { db, svc, sent } = open();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    svc.noteAgentCompletion('a');
+    sent.mockClear();
+    let delivered = 0;
+    sent.mockImplementationOnce(() => { throw new Error('no structured session for terminal'); })
+      .mockImplementation(() => { delivered++; });
+    expect(interimRecapTick(db, svc, T0 + INTERIM_RECAP_MS)).toEqual([]);
+    expect(due(db)).toBe(DUE); // kept: the next sweep tries again
+    expect(interimRecapTick(db, svc, T0 + INTERIM_RECAP_MS + 60_000)).toEqual(['coord']);
+    expect(due(db)).toBeUndefined();
+    expect(interimRecapTick(db, svc, T0 + INTERIM_RECAP_MS + 120_000)).toEqual([]);
+    expect(delivered).toBe(1);
+  });
+
+  it('a send that returns false also stays due', () => {
+    const { db, svc } = open();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    svc.noteAgentCompletion('a');
+    vi.spyOn(svc, 'sendInterimRecapNotice').mockReturnValue(false);
+    expect(interimRecapTick(db, svc, T0 + INTERIM_RECAP_MS)).toEqual([]);
+    expect(due(db)).toBe(DUE);
+  });
+
+  it('ignores a non-coordinator row that carries interimDueAt', () => {
+    const { db, svc, sent } = open();
+    terminalsDb.updateConfig(db, 'a', { role: 'agent', interimDueAt: DUE });
+    expect(interimRecapTick(db, svc, T0 + INTERIM_RECAP_MS)).toEqual([]);
+    expect(sent).not.toHaveBeenCalled();
+    expect(JSON.parse(terminalsDb.getById(db, 'a')!.config!).interimDueAt).toBe(DUE);
+  });
+
+  it('arms the timer only after the Finished notice reached the overseer', () => {
+    const { db, svc, sent } = open();
+    sent.mockImplementation(() => { throw new Error('no structured session for terminal'); });
+    svc.noteAgentCompletion('a');
+    expect(due(db)).toBeUndefined();
+  });
+
   it('survives a daemon restart: the due time is in the database', () => {
     const first = open();
     first.svc.noteAgentCompletion('a');
@@ -131,5 +204,27 @@ describe('interim recap timer', () => {
     expect(interimRecapTick(second.db, second.svc, T0 + INTERIM_RECAP_MS)).toEqual(['coord']);
     expect(second.sent).toHaveBeenCalledWith('coord', formatInterimNotice(1));
     second.db.close();
+  });
+});
+
+describe('startInterimRecapLoop — the production sweep', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('sweeps on its interval with the real clock, and stops when cleared', () => {
+    vi.useFakeTimers({ now: T0, toFake: ['setInterval', 'clearInterval', 'Date'] });
+    const { db, svc, sent } = open();
+    svc.clock = () => Date.now();
+    svc.noteAgentCompletion('a');
+    sent.mockClear();
+    const loop = startInterimRecapLoop(db, svc, 60_000);
+    vi.advanceTimersByTime(INTERIM_RECAP_MS - 60_000);
+    expect(sent).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(60_000);
+    expect(sent.mock.calls).toEqual([['coord', formatInterimNotice(1)]]);
+    clearInterval(loop);
+    terminalsDb.updateConfig(db, 'coord', { role: 'coordinator', interimDueAt: new Date(Date.now()).toISOString() });
+    vi.advanceTimersByTime(5 * 60_000);
+    expect(sent).toHaveBeenCalledTimes(1);
+    db.close();
   });
 });

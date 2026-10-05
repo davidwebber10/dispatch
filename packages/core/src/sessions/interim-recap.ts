@@ -6,25 +6,53 @@
  * Stop:  a settled notice, or ledger_list({ forRecap: true }) (ledger-service.ts), clears it.
  * Check: a 60-second sweep (the auto-archive pattern). The due time lives in the database, so
  *        a daemon restart keeps it.
- * Fire:  at the due time, if agents still work, one Interim recap notice; the timer clears
- *        either way, so it fires once.
+ * Fire:  at the due time, if the batch is busy (agents work or are queued — the Batch line's
+ *        rule), one Interim recap notice. The timer clears only after the notice reached the
+ *        overseer, or when the batch is no longer busy; a failed delivery stays due, and the
+ *        next sweep retries. So it fires once per successful delivery.
  */
 import type Database from 'better-sqlite3';
 import * as terminalsDb from '../db/terminals.js';
 import { INTERIM_DUE_KEY } from '../overseer/ledger-service.js';
-import type { BatchState, NoticeKind } from './batch-state.js';
+import { isBusy, type BatchState, type NoticeKind } from './batch-state.js';
 import type { SessionService } from './service.js';
 
 export const INTERIM_RECAP_MS = 20 * 60_000;
 const DEFAULT_INTERVAL_MS = 60_000;
 
-/** The Interim recap notice. Its 🕒 prefix differs from every other notice prefix. */
-export function formatInterimNotice(workingCount: number): string {
-  const n = workingCount;
+const agents = (n: number) => `${n} agent${n === 1 ? '' : 's'}`;
+
+/**
+ * The Interim recap notice. Its 🕒 prefix differs from every other notice prefix. The line
+ * breaks after the first count ("and 2 agents" / "still work."), as in the spec text.
+ */
+export function formatInterimNotice(workingCount: number, queuedCount = 0): string {
+  const queued = (n: number) => `${n === 1 ? 'is' : 'are'} queued`;
+  let count: string;
+  let rest: string;
+  if (workingCount > 0) {
+    count = agents(workingCount);
+    rest = `still work${workingCount === 1 ? 's' : ''}`;
+    if (queuedCount > 0) rest += ` and ${agents(queuedCount)} ${queued(queuedCount)}`;
+  } else {
+    count = agents(queuedCount);
+    rest = queued(queuedCount);
+  }
   return (
-    `🕒 Interim recap due: agent turns finished ${INTERIM_RECAP_MS / 60_000} minutes ago, and ${n} agent${n === 1 ? '' : 's'}\n` +
-    `still work${n === 1 ? 's' : ''}. Post the recap now and mark it "interim". Then keep holding.`
+    `🕒 Interim recap due: agent turns finished ${INTERIM_RECAP_MS / 60_000} minutes ago, and ${count}\n` +
+    `${rest}. Post the recap now and mark it "interim". Then keep holding.`
   );
+}
+
+/** Remove the due time from a coordinator's CURRENT config (re-read, so nothing else is lost). */
+function clearDue(db: Database.Database, terminalId: string): void {
+  const row = terminalsDb.getById(db, terminalId);
+  if (!row) return;
+  const cfg = terminalsDb.rowToTerminal(row).config;
+  if (!(INTERIM_DUE_KEY in cfg)) return;
+  const next = { ...cfg };
+  delete next[INTERIM_DUE_KEY];
+  terminalsDb.updateConfig(db, terminalId, next);
 }
 
 /**
@@ -70,12 +98,14 @@ export function interimRecapTick(
       if (cfg.role !== 'coordinator' || typeof cfg[INTERIM_DUE_KEY] !== 'string') continue;
       const due = Date.parse(cfg[INTERIM_DUE_KEY]);
       if (Number.isFinite(due) && now < due) continue;
-      // Clear first: the timer fires once, even if the send below fails.
-      const next = { ...cfg };
-      delete next[INTERIM_DUE_KEY];
-      terminalsDb.updateConfig(db, row.id, next);
       const state: BatchState = sessionService.batchState(row.session_id);
-      if (state.working.length > 0 && sessionService.sendInterimRecapNotice(row.id, state.working.length)) fired.push(row.id);
+      if (!isBusy(state)) { clearDue(db, row.id); continue; } // settled: nothing to report
+      if (sessionService.sendInterimRecapNotice(row.id, state.working.length, state.queued.length)) {
+        clearDue(db, row.id); // delivered: it fires once
+        fired.push(row.id);
+      } else {
+        console.error(`interim recap: delivery to ${row.id} failed; the next sweep retries`);
+      }
     } catch (err) {
       console.error(`interim recap: failed for terminal ${row.id}`, err);
     }

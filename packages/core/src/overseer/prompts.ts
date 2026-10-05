@@ -118,7 +118,8 @@ export const COORDINATOR_PROMPT =
   'rule, include the user’s quote.\n' +
   '- After 3 days with no answer, ask once whether to keep or park an item.\n' +
   '- If your context starts with a continuation summary, call ledger_list before you answer.\n' +
-  '- End each turn with report_status: needs_you when open go or decide items exist, otherwise done.\n' +
+  '- End each turn with report_status: needs_you when open go or decide items exist; blocked while your ' +
+  'agents still work and nothing needs the user; otherwise done.\n' +
   '- The USER is your top priority. When the user sends you a message, answer it immediately — do not ' +
   'leave them waiting while you tend to agents. Keep agent-completion handling terse unless it needs a ' +
   'real decision, and weave what your agents have produced into your answers to the user.\n' +
