@@ -22,6 +22,13 @@ export interface CatalogEntry {
   alias: boolean;
   /** For an alias: the concrete id it resolves to today. */
   aliasTarget?: string;
+  /**
+   * False when no endpoint for this model accepts a tool list (`supported_parameters` lacks
+   * `tools`). Every agent harness sends tools on every request, so such a model only runs
+   * chat-only — see settings/model-capabilities.ts. A row without the field counts as
+   * tool-capable: that is today's behavior, and the request fails loudly if it is wrong.
+   */
+  tools: boolean;
 }
 
 /** The subset of OpenRouter's `/models` row shape this module reads. */
@@ -31,6 +38,7 @@ interface RawModel {
   context_length?: unknown;
   created?: unknown;
   alias_target?: { slug?: unknown } | null;
+  supported_parameters?: unknown;
 }
 
 /** `openrouter/<id>` — how OpenCode addresses an OpenRouter model. */
@@ -48,6 +56,7 @@ export function normalizeCatalog(raw: unknown): CatalogEntry[] {
     if (row.id.endsWith(':batch')) continue;
     const name = typeof row.name === 'string' && row.name ? row.name : row.id;
     const aliasTarget = typeof row.alias_target?.slug === 'string' ? row.alias_target.slug : undefined;
+    const params = Array.isArray(row.supported_parameters) ? row.supported_parameters : null;
     out.push({
       id: toOpencodeId(row.id),
       label: name.replace(/^[^:]+:\s*/, ''),
@@ -56,6 +65,7 @@ export function normalizeCatalog(raw: unknown): CatalogEntry[] {
       created: typeof row.created === 'number' ? row.created : 0,
       alias: row.id.startsWith('~'),
       ...(aliasTarget ? { aliasTarget } : {}),
+      tools: params ? params.includes('tools') : true,
     });
   }
   return out;
@@ -86,6 +96,9 @@ export async function loadCatalog(fetchImpl: typeof fetch = fetch, now = Date.no
   cache = { at: now, entries };
   return entries;
 }
+
+/** Whatever is cached right now (fresh or stale), without fetching; null when never loaded. */
+export function peekCatalog(): CatalogEntry[] | null { return cache?.entries ?? null; }
 
 /** Test seam. */
 export function resetCatalogCache(): void { cache = null; }

@@ -5,6 +5,7 @@ import { isPtyType } from '../db/terminals.js';
 import { TAB_ONLY_TYPES, THREAD_TYPES } from '../providers/agent-types.js';
 import type { EventBroadcaster } from '../ws/events.js';
 import type { StatusService } from '../status/service.js';
+import { modelSupportsTools } from '../settings/model-capabilities.js';
 
 const VALID_TYPES: readonly string[] = [...THREAD_TYPES, ...TAB_ONLY_TYPES];
 
@@ -24,9 +25,18 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // POST /api/sessions/:id/terminals — create a new tab. When `queued:true` (with
   // `task`), the structured thread is persisted as status='queued' WITHOUT spawning
   // its process — POST /api/terminals/:id/start promotes it later.
-  router.post('/sessions/:id/terminals', (req, res) => {
+  router.post('/sessions/:id/terminals', async (req, res) => {
     try {
       const { type, label, skipPermissions, workingDir, externalId, config, queued, task } = req.body;
+      // Pin the tool-support verdict for a picked OpenCode model HERE, where awaiting a
+      // catalog is possible — the synchronous spawn path can only read caches. A model with
+      // no tool-capable endpoint then spawns chat-only instead of failing its first turn
+      // (see settings/model-capabilities.ts). An unknown model or a catalog outage pins
+      // nothing, leaving the spawn path's cached fallback to decide.
+      if (type === 'opencode' && config && typeof config.model === 'string' && config.toolsDisabled === undefined) {
+        const supports = await modelSupportsTools(config.model);
+        if (!supports) config.toolsDisabled = true;
+      }
       const capability = harnessCapabilities().find(h => h.type === type);
       const requestedMode = config?.transport === 'structured' ? 'pretty' : config?.transport === 'pty' ? 'cli' : undefined;
       if (capability && !config?.signIn && (!capability.modes.length || requestedMode && !capability.modes.includes(requestedMode))) {
