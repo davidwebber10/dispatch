@@ -65,6 +65,10 @@ function attribution(item: LedgerItem, stamp: string): string[] {
       return []; // a statement carries its quote on the first line
     case 'parked':
       return imported.length ? imported : [`  Parked by you: "${item.quote}"${stamp}`];
+    case 'proposed':
+      return [`  Proposed by ${item.author}, not yet triaged`];
+    case 'decided_by_overseer':
+      return [`  Decided by overseer: ${item.decidedChoice ?? ''}. Reason: ${item.reason ?? ''}`];
   }
 }
 
@@ -84,7 +88,7 @@ export function renderItem(item: LedgerItem, ctx: RenderContext): string {
     if (original) lines.push(`  Original question (N${original.seq}): "${original.text}"`);
   }
   if (item.recommendation) lines.push(`  Recommendation: ${item.recommendation}`);
-  if (item.options && item.options.length) lines.push(`  Options: ${item.options.join(' | ')}`);
+  if (item.options && item.options.length) lines.push(`  Options: ${item.options.map((o) => o.label).join(' | ')}`);
   if (item.blocks) lines.push(`  Blocks: ${item.blocks}`);
   lines.push(...attribution(item, stamp));
   if (item.reading) lines.push(`  I read this as: ${item.reading}`);

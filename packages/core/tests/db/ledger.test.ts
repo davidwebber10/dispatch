@@ -45,10 +45,11 @@ describe('ledger db', () => {
   });
 
   it('stores every field and reads options back as an array', () => {
-    const item = add('s1', 'Which store first?', { recommendation: 'A', options: ['A', 'B'], blocks: 'the import agent', mission: 'Stores' });
+    const options = [{ label: 'A', effect: 'a' }, { label: 'B', effect: 'b' }];
+    const item = add('s1', 'Which store first?', { recommendation: 'A', options, blocks: 'the import agent', mission: 'Stores' });
     expect(item).toMatchObject({
       sessionId: 's1', seq: 1, kind: 'decide', text: 'Which store first?', author: 'overseer',
-      recommendation: 'A', options: ['A', 'B'], blocks: 'the import agent', mission: 'Stores',
+      recommendation: 'A', options, blocks: 'the import agent', mission: 'Stores',
       status: 'open', quote: null, origin: 'live', supersedes: null, createdAt: T0, updatedAt: T0,
     });
     expect(ledgerDb.getBySeq(db, 's1', 1)).toEqual(item);
@@ -87,5 +88,110 @@ describe('ledger db', () => {
     expect(ledgerDb.listBySession(db, 's1').map((i) => i.seq)).toEqual([1, 2, 3]);
     expect(ledgerDb.listOpenSeqs(db, 's1')).toEqual([1, 3]);
     expect(ledgerDb.listOpenSeqs(db, 's2')).toEqual([]);
+  });
+});
+
+// Decision cards (spec 2026-10-06, Unit 1).
+const OLD_005_COLUMNS = ['id', 'session_id', 'seq', 'kind', 'text', 'author', 'recommendation', 'options', 'blocks', 'mission',
+  'status', 'quote', 'quote_message_id', 'quote_at', 'reading', 'reason', 'supersedes', 'origin', 'created_at', 'updated_at'];
+
+/** A database as #62 left it: migration 005 applied, 006 not yet. */
+function db005(): Database.Database {
+  const db = new Database(':memory:');
+  initSchema(db);
+  db.exec('DROP TRIGGER ledger_items_text_immutable; DROP TABLE ledger_items');
+  db.exec(`CREATE TABLE ledger_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL,
+      text TEXT NOT NULL, author TEXT NOT NULL, recommendation TEXT, options TEXT, blocks TEXT, mission TEXT,
+      status TEXT NOT NULL DEFAULT 'open', quote TEXT, quote_message_id INTEGER, quote_at TEXT, reading TEXT,
+      reason TEXT, supersedes INTEGER, origin TEXT NOT NULL DEFAULT 'live', created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL, UNIQUE (session_id, seq));
+    CREATE TRIGGER ledger_items_text_immutable BEFORE UPDATE OF text ON ledger_items
+      WHEN NEW.text IS NOT OLD.text BEGIN SELECT RAISE(ABORT, 'ledger item text never changes'); END;`);
+  db.exec("DELETE FROM schema_migrations WHERE id = '006-ledger-decision-cards'");
+  return db;
+}
+
+describe('006 migration', () => {
+  it('adds the card columns and records the migration id; 005 stays as it was', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const cols = (db.pragma('table_info(ledger_items)') as { name: string }[]).map((c) => c.name);
+    expect(cols).toEqual(expect.arrayContaining([
+      ...OLD_005_COLUMNS, 'context', 'recommendation_why', 'default_text', 'source_kind', 'source_ref', 'source_section',
+      'source_id', 'overseer_note', 'on_default_since', 'agent_terminal_id', 'agent_decision_id', 'decided_choice',
+      'decided_at', 'policy', 'sent_at',
+    ]));
+    expect(db.prepare('SELECT 1 FROM schema_migrations WHERE id = ?').get('006-ledger-decision-cards')).toBeTruthy();
+  });
+
+  it('reaches an existing #62 database: old rows keep their data, read plain-string options, and count as sent', () => {
+    const db = db005();
+    db.prepare(`INSERT INTO ledger_items (session_id, seq, kind, text, author, recommendation, options, status, created_at, updated_at)
+      VALUES ('s1', 1, 'decide', 'Which store goes first?', 'overseer', 'A', '["A","B"]', 'open', ?, ?)`).run(T0, T0);
+    initSchema(db); // the next boot of a #62 database
+    const item = ledgerDb.getBySeq(db, 's1', 1)!;
+    expect(item).toMatchObject({
+      text: 'Which store goes first?', recommendation: 'A', status: 'open',
+      options: [{ label: 'A', effect: '' }, { label: 'B', effect: '' }],
+      context: null, defaultText: null, sourceKind: null, policy: false, sentAt: T0,
+    });
+    // The text trigger survives the migration.
+    expect(() => db.prepare("UPDATE ledger_items SET text = 'x' WHERE seq = 1").run()).toThrow(/never changes/);
+  });
+});
+
+describe('ledger db — card fields', () => {
+  let db: Database.Database;
+  beforeEach(() => { db = new Database(':memory:'); initSchema(db); });
+
+  it('stores every card field and reads options back as { label, effect }', () => {
+    const item = ledgerDb.create(db, {
+      sessionId: 's1', kind: 'decide', text: 'How many clean nights before live mode?', author: 'Readiness planner',
+      context: 'The new sync runs in shadow mode.',
+      options: [{ label: 'A. 5 nights', effect: 'Covers one weekend.' }, { label: 'B. 10 nights', effect: 'Covers two weekends.' }],
+      recommendation: 'A. 5 nights', recommendationWhy: 'The weekend pattern is the known risk.',
+      defaultText: 'Nothing switches.', sourceKind: 'agent', sourceRef: 'Readiness planner',
+      sourceSection: 'docs/plans/readiness.md#Owner decisions', sourceId: 'LR-6', overseerNote: 'Check the dates.',
+      agentTerminalId: 'agent-1', agentDecisionId: 'LR-6', status: 'proposed', now: T0,
+    });
+    expect(item).toMatchObject({
+      status: 'proposed', context: 'The new sync runs in shadow mode.',
+      options: [{ label: 'A. 5 nights', effect: 'Covers one weekend.' }, { label: 'B. 10 nights', effect: 'Covers two weekends.' }],
+      recommendation: 'A. 5 nights', recommendationWhy: 'The weekend pattern is the known risk.', defaultText: 'Nothing switches.',
+      sourceKind: 'agent', sourceRef: 'Readiness planner', sourceSection: 'docs/plans/readiness.md#Owner decisions', sourceId: 'LR-6',
+      overseerNote: 'Check the dates.', agentTerminalId: 'agent-1', agentDecisionId: 'LR-6',
+      onDefaultSince: null, decidedChoice: null, decidedAt: null, policy: false,
+      sentAt: null, // a proposed item has not been sent to the user
+    });
+    expect(ledgerDb.getBySeq(db, 's1', 1)).toEqual(item);
+  });
+
+  it('an item created open counts as sent at its creation; a policy statement keeps policy', () => {
+    expect(ledgerDb.create(db, { sessionId: 's1', kind: 'go', text: 'Merge PR #12.', author: 'overseer', now: T0 }).sentAt).toBe(T0);
+    const rule = ledgerDb.create(db, { sessionId: 's1', kind: 'statement', text: 'never on Fridays', author: 'you', status: 'answered', policy: true, now: T0 });
+    expect(rule.policy).toBe(true);
+  });
+
+  it('a malformed options value reads as none; mixed shapes are normalized', () => {
+    ledgerDb.create(db, { sessionId: 's1', kind: 'decide', text: 'a', author: 'overseer', now: T0 });
+    db.prepare("UPDATE ledger_items SET options = 'not json' WHERE seq = 1").run();
+    expect(ledgerDb.getBySeq(db, 's1', 1)!.options).toBeNull();
+    db.prepare(`UPDATE ledger_items SET options = '["A", {"label":"B","effect":"b"}, {"nope":1}]' WHERE seq = 1`).run();
+    expect(ledgerDb.getBySeq(db, 's1', 1)!.options).toEqual([{ label: 'A', effect: '' }, { label: 'B', effect: 'b' }]);
+  });
+
+  it('listProposedSeqs returns only proposed items; listOpenSeqs leaves them out', () => {
+    ledgerDb.create(db, { sessionId: 's1', kind: 'decide', text: 'a', author: 'overseer', now: T0 });
+    ledgerDb.create(db, { sessionId: 's1', kind: 'decide', text: 'b', author: 'planner', status: 'proposed', now: T0 });
+    ledgerDb.create(db, { sessionId: 's1', kind: 'decide', text: 'c', author: 'planner', status: 'proposed', now: T0 });
+    expect(ledgerDb.listOpenSeqs(db, 's1')).toEqual([1]);
+    expect(ledgerDb.listProposedSeqs(db, 's1')).toEqual([2, 3]);
+  });
+
+  it('a new item that supersedes a PROPOSED item marks the old one superseded', () => {
+    ledgerDb.create(db, { sessionId: 's1', kind: 'decide', text: 'old question', author: 'planner', status: 'proposed', now: T0 });
+    ledgerDb.create(db, { sessionId: 's1', kind: 'decide', text: 'new question', author: 'planner', status: 'proposed', supersedes: 1, now: T0 });
+    expect(ledgerDb.getBySeq(db, 's1', 1)!.status).toBe('superseded');
   });
 });

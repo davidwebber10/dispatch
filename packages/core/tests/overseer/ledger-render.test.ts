@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { LedgerItem } from '../../src/db/ledger.js';
+import { parseOptions, type LedgerItem } from '../../src/db/ledger.js';
 import { formatAge, formatStamp, renderItem, renderLedgerSections, renderHandoffBlock } from '../../src/overseer/ledger-render.js';
 
 const NOW = Date.parse('2026-10-05T18:51:00.000Z'); // a Monday
@@ -12,6 +12,9 @@ function item(over: Partial<LedgerItem>): LedgerItem {
     recommendation: null, options: null, blocks: null, mission: null, status: 'open',
     quote: null, quoteMessageId: null, quoteAt: null, reading: null, reason: null, supersedes: null,
     origin: 'live', createdAt: '2026-10-05T16:00:00.000Z', updatedAt: '2026-10-05T16:00:00.000Z',
+    context: null, recommendationWhy: null, defaultText: null, sourceKind: null, sourceRef: null,
+    sourceSection: null, sourceId: null, overseerNote: null, onDefaultSince: null, agentTerminalId: null,
+    agentDecisionId: null, decidedChoice: null, decidedAt: null, policy: false, sentAt: '2026-10-05T16:00:00.000Z',
     ...over,
   };
 }
@@ -30,8 +33,26 @@ describe('formatStamp / formatAge', () => {
 });
 
 describe('renderItem — the labels', () => {
+  it('an old #62 row (plain-string options, no card fields) still renders as before', () => {
+    const old = item({ recommendation: 'the first store', options: parseOptions('["A","B"]'), blocks: 'the import agent' });
+    expect(renderItem(old, ctx)).toBe(
+      'N1 [Decide] Which store goes first? (open 2h)\n' +
+      '  Recommendation: the first store\n' +
+      '  Options: A | B\n' +
+      '  Blocks: the import agent\n' +
+      '  Proposed by overseer, not approved',
+    );
+  });
+
+  it('a proposed item and an item the overseer decided itself', () => {
+    expect(renderItem(item({ status: 'proposed', author: 'Readiness planner' }), ctx))
+      .toBe('N1 [Decide] Which store goes first?\n  Proposed by Readiness planner, not yet triaged');
+    expect(renderItem(item({ status: 'decided_by_overseer', decidedChoice: 'the first store', reason: 'it has the fewest products' }), ctx))
+      .toBe('N1 [Decide] Which store goes first?\n  Decided by overseer: the first store. Reason: it has the fewest products');
+  });
+
   it('an open item: kind, text, age, details, and "Proposed by …, not approved"', () => {
-    expect(renderItem(item({ recommendation: 'the first store', options: ['A', 'B'], blocks: 'the import agent' }), ctx)).toBe(
+    expect(renderItem(item({ recommendation: 'the first store', options: [{ label: 'A', effect: 'a' }, { label: 'B', effect: 'b' }], blocks: 'the import agent' }), ctx)).toBe(
       'N1 [Decide] Which store goes first? (open 2h)\n' +
       '  Recommendation: the first store\n' +
       '  Options: A | B\n' +

@@ -45,10 +45,19 @@ export function parseLedgerId(raw: unknown): number | null {
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
 
-function strList(v: unknown, field: string): string[] | undefined {
+/** Options in either shape: plain strings (#62) or `{ label, effect }`. A string reads as a label with no effect. */
+function optionList(v: unknown, field: string): ledgerDb.LedgerOption[] | undefined {
   if (v === undefined || v === null) return undefined;
-  if (!Array.isArray(v) || v.some((x) => typeof x !== 'string')) throw new LedgerError(400, `${field} must be an array of strings`);
-  const list = v.map((x: string) => x.trim()).filter(Boolean);
+  const bad = () => new LedgerError(400, `${field} must be an array of { label, effect } objects`);
+  if (!Array.isArray(v)) throw bad();
+  const list: ledgerDb.LedgerOption[] = [];
+  for (const x of v) {
+    if (typeof x === 'string') { if (x.trim()) list.push({ label: x.trim(), effect: '' }); continue; }
+    if (!x || typeof x !== 'object') throw bad();
+    const label = typeof (x as any).label === 'string' ? (x as any).label.trim() : '';
+    const effect = typeof (x as any).effect === 'string' ? (x as any).effect.trim() : '';
+    list.push({ label, effect });
+  }
   return list.length ? list : undefined;
 }
 
@@ -112,7 +121,7 @@ export class LedgerService {
       text,
       author: str(input.author) ?? 'overseer',
       recommendation: str(input.recommendation),
-      options: strList(input.options, 'options'),
+      options: optionList(input.options, 'options'),
       blocks: str(input.blocks),
       mission: str(input.mission),
       supersedes,
@@ -211,7 +220,7 @@ export class LedgerService {
         text,
         author: kind === 'statement' ? 'you' : (str(it.author) ?? 'overseer'),
         recommendation: str(it.recommendation),
-        options: strList(it.options, `items[${i}].options`),
+        options: optionList(it.options, `items[${i}].options`),
         blocks: str(it.blocks),
         mission: str(it.mission),
         reading: str(it.reading),
