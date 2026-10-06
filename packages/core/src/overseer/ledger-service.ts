@@ -21,10 +21,13 @@ import * as sessionsDb from '../db/sessions.js';
 import * as ledgerDb from '../db/ledger.js';
 import * as messagesDb from '../db/coordinator-messages.js';
 import { findQuote, GO_APPROVAL_ERROR, namesGoApproval, OK_ONLY_ERROR } from './ledger-quote.js';
-import { isUnchecked, renderCard, renderHandoffBlock, renderItem, renderLedgerSections, type RenderContext } from './ledger-render.js';
+import {
+  isUnchecked, renderCard, renderDefaultLine, renderHandoffBlock, renderItem, renderLedgerSections, renderOverseerDecisionLine,
+  type RenderContext,
+} from './ledger-render.js';
 import {
   cardFieldsError, findProjectPath, gitWorktrees, holdsSeveralDecisions, isIssueRef, missingCardFields,
-  ONE_DECISION_ERROR, sourceComplete, sourceMissingError, type CardFieldsInput,
+  ONE_DECISION_ERROR, ONLY_USER_ERROR, onlyUserCanDecide, sourceComplete, sourceMissingError, type CardFieldsInput,
 } from './ledger-checks.js';
 
 export const NOT_OVERSEER_ERROR = "Only the project's overseer can change the ledger.";
@@ -245,7 +248,11 @@ export class LedgerService {
     // Rule 5: only an unchecked imported answered/parked item can be resolved once more;
     // withdrawn and superseded are always closed, imported or not.
     const confirmable = isUnchecked(item) && (item.status === 'answered' || item.status === 'parked');
-    if (item.status !== 'open' && !confirmable) {
+    // Decision cards, Unit 4: a reversal sets an overseer's own decision to answered, with the
+    // user's checked quote from after the decision. A proposed item can be closed like an open one.
+    const reversal = item.status === 'decided_by_overseer' && status === 'answered';
+    const live = item.status === 'open' || item.status === 'proposed';
+    if (!live && !confirmable && !reversal) {
       throw new LedgerError(409, `N${item.seq} is already ${item.status}.`, { status: item.status });
     }
     const reading = str(input.reading);
@@ -257,7 +264,8 @@ export class LedgerService {
     }
     const quote = str(input.quote);
     if (!quote) throw new LedgerError(400, 'quote is required for answered and parked');
-    const match = findQuote(quote, this.userMessages(overseer.id, item.createdAt), { after: item.createdAt });
+    const after = reversal ? (item.decidedAt ?? item.createdAt) : item.createdAt;
+    const match = findQuote(quote, this.userMessages(overseer.id, after), { after });
     if (!match.ok) throw new LedgerError(422, match.reason === 'ok_only' ? OK_ONLY_ERROR : quoteNotFoundAfterError(item.seq));
     // Rule 7: a go item becomes answered only on a named approval. Parking it needs no name.
     if (item.kind === 'go' && status === 'answered' && !namesGoApproval(match.quote, item.seq)) {
@@ -267,6 +275,54 @@ export class LedgerService {
       status, quote: match.quote, quoteMessageId: match.messageId, quoteAt: match.sentAt, reading, now: this.nowIso(),
     })!;
     return { id: `N${item.seq}`, status, line: renderItem(updated, this.ctx(sessionId)) };
+  }
+
+  // --- decision cards, Unit 4: triage and the card tools ----------------------------------------
+
+  /** ledger_add_from_agent: a proposed item goes to the user (status open), the agent's text word for word. */
+  addFromAgent(sessionId: string, caller: unknown, input: Record<string, unknown>): { id: string; status: 'open' } {
+    this.assertOverseer(sessionId, caller);
+    const item = this.requireItem(sessionId, input.id);
+    if (item.status !== 'proposed') throw new LedgerError(409, `N${item.seq} is already ${item.status}.`, { status: item.status });
+    ledgerDb.markSent(this.db, sessionId, item.seq, { note: str(input.note), now: this.nowIso() });
+    return { id: `N${item.seq}`, status: 'open' };
+  }
+
+  /** ledger_decide_self: a low-level call by the overseer. Unit 2 rule 4 limits it to items only it may decide. */
+  decideSelf(sessionId: string, caller: unknown, input: Record<string, unknown>): { id: string; status: 'decided_by_overseer'; line: string } {
+    this.assertOverseer(sessionId, caller);
+    const item = this.requireItem(sessionId, input.id);
+    if (onlyUserCanDecide(item)) throw new LedgerError(422, ONLY_USER_ERROR);
+    if (item.status !== 'proposed') throw new LedgerError(409, `N${item.seq} is already ${item.status}.`, { status: item.status });
+    const choice = str(input.choice);
+    const reason = str(input.reason);
+    if (!choice || !reason) throw new LedgerError(400, 'choice and reason are required');
+    const updated = ledgerDb.markDecidedByOverseer(this.db, sessionId, item.seq, { choice, reason, now: this.nowIso() })!;
+    return { id: `N${item.seq}`, status: 'decided_by_overseer', line: renderOverseerDecisionLine(updated) };
+  }
+
+  /** ledger_mark_default: work now runs on the default of an open decision. It stays open. */
+  markDefault(sessionId: string, caller: unknown, input: Record<string, unknown>): { id: string; line: string } {
+    this.assertOverseer(sessionId, caller);
+    const item = this.requireItem(sessionId, input.id);
+    if (item.kind !== 'go' && item.kind !== 'decide') throw new LedgerError(400, 'only a go or decide item has a default');
+    if (item.status !== 'open') throw new LedgerError(409, `N${item.seq} is already ${item.status}.`, { status: item.status });
+    const updated = ledgerDb.markOnDefault(this.db, sessionId, item.seq, this.nowIso())!;
+    return { id: `N${item.seq}`, line: renderDefaultLine(updated, { timeZone: this.timeZone }) };
+  }
+
+  /** ledger_show: the full cards of the given items, or of every open decision. */
+  show(sessionId: string, caller: unknown, input: Record<string, unknown>): { text: string } {
+    this.assertOverseer(sessionId, caller);
+    const ctx = this.ctx(sessionId);
+    const render = (i: ledgerDb.LedgerItem) => (i.kind === 'go' || i.kind === 'decide' ? renderCard(i, ctx) : renderItem(i, ctx));
+    if (input.all === true) {
+      const open = ledgerDb.listBySession(this.db, sessionId).filter((i) => i.status === 'open' && (i.kind === 'go' || i.kind === 'decide'));
+      return { text: open.length ? open.map(render).join('\n\n') : 'No open decisions.' };
+    }
+    const raw = typeof input.ids === 'string' ? [input.ids] : input.ids;
+    if (!Array.isArray(raw) || raw.length === 0) throw new LedgerError(400, 'pass ids (e.g. ["N17"]) or all: true');
+    return { text: raw.map((id) => render(this.requireItem(sessionId, id))).join('\n\n') };
   }
 
   note(sessionId: string, caller: unknown, input: Record<string, unknown>): { id: string; line: string } {

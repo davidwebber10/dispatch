@@ -5,6 +5,7 @@ import { initSchema } from '../../src/db/schema.js';
 import { createApp } from '../../src/server.js';
 import * as terminalsDb from '../../src/db/terminals.js';
 import * as messagesDb from '../../src/db/coordinator-messages.js';
+import * as ledgerDb from '../../src/db/ledger.js';
 import { DECIDE_CARD, GO_CARD } from '../overseer/card-fixtures.js';
 
 describe('ledger routes', () => {
@@ -64,6 +65,10 @@ describe('ledger routes', () => {
       ['ledger/import', { items: [{ kind: 'do', text: 'Check staging.' }] }],
       ['ledger/handoff', { ids: ['N1'] }],
       ['ledger/N1/resolve', { status: 'withdrawn', reason: 'moot' }],
+      ['ledger/show', { all: true }],
+      ['ledger/N1/add-from-agent', { note: 'x' }],
+      ['ledger/N1/decide-self', { choice: 'A', reason: 'x' }],
+      ['ledger/N1/mark-default', {}],
     ];
     for (const caller of ['agent', undefined]) {
       for (const [route, body] of routes) {
@@ -104,5 +109,22 @@ describe('ledger routes', () => {
     await request(app).post(`/api/sessions/${sid}/ledger/note`).send({ caller: 'coord', quote: 'never on Fridays' }).expect(422);
     const handoff = await request(app).post(`/api/sessions/${sid}/ledger/handoff`).send({ caller: 'coord', ids: ['N1'] }).expect(200);
     expect(handoff.body.block.startsWith('Owner decisions (verbatim, from the ledger):\n- N1 [Do] Check staging.')).toBe(true);
+  });
+
+  it('decision cards: add-from-agent, decide-self, mark-default and show answer on their routes', async () => {
+    for (const text of ['How many nights?', 'Which day?']) {
+      ledgerDb.create(db, { sessionId: sid, kind: 'decide', text, author: 'planner', status: 'proposed', ...{ context: DECIDE_CARD.context, defaultText: DECIDE_CARD.default } });
+    }
+    const sent = await request(app).post(`/api/sessions/${sid}/ledger/N1/add-from-agent`).send({ caller: 'coord', note: 'Mind the freeze.' }).expect(200);
+    expect(sent.body).toEqual({ id: 'N1', status: 'open' });
+    const decided = await request(app).post(`/api/sessions/${sid}/ledger/N2/decide-self`).send({ caller: 'coord', choice: 'Monday', reason: 'quiet day' }).expect(200);
+    expect(decided.body.status).toBe('decided_by_overseer');
+    const protectedItem = await request(app).post(`/api/sessions/${sid}/ledger/N1/decide-self`).send({ caller: 'coord', choice: 'x', reason: 'y' }).expect(422);
+    expect(protectedItem.body.error).toBe('Only the user can decide this item.');
+    const onDefault = await request(app).post(`/api/sessions/${sid}/ledger/N1/mark-default`).send({ caller: 'coord' }).expect(200);
+    expect(onDefault.body.line).toContain('Running on the default');
+    const shown = await request(app).post(`/api/sessions/${sid}/ledger/show`).send({ caller: 'coord', ids: ['N1'] }).expect(200);
+    expect(shown.body.text.startsWith('**N1 · Decide:** How many nights?')).toBe(true);
+    expect(shown.body.text).toContain("**Overseer's note:** Mind the freeze.");
   });
 });

@@ -253,6 +253,29 @@ export interface StatusPatch {
   now?: string;
 }
 
+/** Triage: a proposed item reaches the user now (status open), with the overseer's optional note. */
+export function markSent(db: Database.Database, sessionId: string, seq: number, opts: { note?: string | null; now: string }): LedgerItem | null {
+  db.prepare(`UPDATE ledger_items SET status = 'open', sent_at = ?, overseer_note = COALESCE(?, overseer_note), updated_at = ?
+    WHERE session_id = ? AND seq = ?`).run(opts.now, opts.note ?? null, opts.now, sessionId, seq);
+  return getBySeq(db, sessionId, seq);
+}
+
+/** Triage: the overseer decides the item itself. */
+export function markDecidedByOverseer(
+  db: Database.Database, sessionId: string, seq: number, opts: { choice: string; reason: string; now: string },
+): LedgerItem | null {
+  db.prepare(`UPDATE ledger_items SET status = 'decided_by_overseer', decided_choice = ?, reason = ?, decided_at = ?, updated_at = ?
+    WHERE session_id = ? AND seq = ?`).run(opts.choice, opts.reason, opts.now, opts.now, sessionId, seq);
+  return getBySeq(db, sessionId, seq);
+}
+
+/** Work now runs on the item's default. The first start date stays. */
+export function markOnDefault(db: Database.Database, sessionId: string, seq: number, now: string): LedgerItem | null {
+  db.prepare(`UPDATE ledger_items SET on_default_since = COALESCE(on_default_since, ?), updated_at = ?
+    WHERE session_id = ? AND seq = ?`).run(now, now, sessionId, seq);
+  return getBySeq(db, sessionId, seq);
+}
+
 /** Change an item's status. Fields left out of the patch keep their stored value. Never touches `text`. */
 export function updateStatus(db: Database.Database, sessionId: string, seq: number, patch: StatusPatch): LedgerItem | null {
   db.prepare(`UPDATE ledger_items SET status = ?,

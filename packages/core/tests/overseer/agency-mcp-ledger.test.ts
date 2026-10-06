@@ -67,7 +67,7 @@ describe('agency-mcp ledger tools', () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ caller: 'coord-1', forRecap: true });
   });
 
-  it('each of the five ledger tools surfaces the daemon\'s overseer-only refusal (403) as is', async () => {
+  it('each of the nine ledger tools surfaces the daemon\'s overseer-only refusal (403) as is', async () => {
     const denied = "Only the project's overseer can change the ledger.";
     const calls: [string, Record<string, unknown>][] = [
       ['ledger_add', { kind: 'go', text: 'Merge PR #12.' }],
@@ -75,6 +75,10 @@ describe('agency-mcp ledger tools', () => {
       ['ledger_note', { quote: 'never on Fridays' }],
       ['ledger_list', { forRecap: true }],
       ['ledger_import', { items: [{ kind: 'do', text: 'Check staging.' }] }],
+      ['ledger_add_from_agent', { id: 'N1' }],
+      ['ledger_decide_self', { id: 'N1', choice: 'A', reason: 'x' }],
+      ['ledger_mark_default', { id: 'N1' }],
+      ['ledger_show', { all: true }],
     ];
     for (const [tool, args] of calls) {
       const fetchMock = vi.fn().mockResolvedValueOnce(fail(403, denied));
@@ -143,5 +147,60 @@ describe('agency-mcp ledger tools', () => {
       const tool = TOOLS.find((t) => t.name === name)! as any;
       expect(tool.inputSchema.properties.ledgerIds.type).toBe('array');
     }
+  });
+
+  // Decision cards (spec 2026-10-06, Unit 4).
+  it('ledger_add_from_agent, ledger_decide_self and ledger_mark_default POST to their item routes with the caller', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(ok({ id: 'N30', status: 'open' }))
+      .mockResolvedValueOnce(ok({ id: 'N31', status: 'decided_by_overseer', line: '- **N31 · Decided by overseer:** …' }))
+      .mockResolvedValueOnce(ok({ id: 'N9', line: '- **N9 · Decide:** …' }));
+    global.fetch = fetchMock as any;
+    expect(JSON.parse(((await callTool('ledger_add_from_agent', { id: 'N30', note: 'Mind the freeze.' })).content[0] as any).text)).toEqual({ id: 'N30', status: 'open' });
+    await callTool('ledger_decide_self', { id: 'N31', choice: 'the existing helper', reason: 'it covers this case' });
+    await callTool('ledger_mark_default', { id: 'N9' });
+    expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([
+      'http://localhost:9999/api/sessions/sess-1/ledger/N30/add-from-agent',
+      'http://localhost:9999/api/sessions/sess-1/ledger/N31/decide-self',
+      'http://localhost:9999/api/sessions/sess-1/ledger/N9/mark-default',
+    ]);
+    expect(fetchMock.mock.calls.map((c) => JSON.parse(c[1].body))).toEqual([
+      { note: 'Mind the freeze.', caller: 'coord-1' },
+      { choice: 'the existing helper', reason: 'it covers this case', caller: 'coord-1' },
+      { caller: 'coord-1' },
+    ]);
+  });
+
+  it('ledger_decide_self surfaces the protected-item refusal as is', async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce(fail(422, 'Only the user can decide this item.')) as any;
+    const out = await callTool('ledger_decide_self', { id: 'N12', choice: 'merge', reason: 'green' });
+    expect(out).toEqual({ content: [{ type: 'text', text: 'Error: Only the user can decide this item.' }], isError: true });
+  });
+
+  it('ledger_show returns the rendered cards themselves, not a JSON string', async () => {
+    const text = '**N17 · Decide:** Keep the old tag check?\n\nHolds up: nothing · Open 2 days';
+    const fetchMock = vi.fn().mockResolvedValueOnce(ok({ text }));
+    global.fetch = fetchMock as any;
+    expect((await callTool('ledger_show', { ids: ['N17'] })).content).toEqual([{ type: 'text', text }]);
+    expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/sessions/sess-1/ledger/show');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ caller: 'coord-1', ids: ['N17'] });
+  });
+
+  it('the new tools check their required arguments before calling the daemon', async () => {
+    const fetchMock = vi.fn();
+    global.fetch = fetchMock as any;
+    for (const [tool, args] of [['ledger_add_from_agent', {}], ['ledger_decide_self', { id: 'N1', choice: 'A' }], ['ledger_mark_default', {}], ['ledger_show', {}]] as const) {
+      expect((await callTool(tool, args)).isError, tool).toBe(true);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('ledger_add declares the card fields; ledger_note declares policy; ledger_import items take the card fields', () => {
+    const props = (name: string) => (TOOLS.find((t) => t.name === name)! as any).inputSchema.properties;
+    expect(Object.keys(props('ledger_add'))).toEqual(expect.arrayContaining(['context', 'options', 'recommendation', 'why', 'default', 'source', 'note']));
+    expect(props('ledger_add').options.items.properties).toEqual({ label: expect.any(Object), effect: expect.any(Object) });
+    expect(props('ledger_add').source.properties.kind.enum).toEqual(['plan', 'doc', 'agent', 'pr', 'issue', 'user', 'overseer']);
+    expect(props('ledger_note').policy.type).toBe('boolean');
+    expect(Object.keys(props('ledger_import').items.items.properties)).toEqual(expect.arrayContaining(['context', 'options', 'why', 'default', 'source']));
   });
 });

@@ -11,7 +11,8 @@ import * as messagesDb from '../../src/db/coordinator-messages.js';
 import { LedgerService, LedgerError, NOT_OVERSEER_ERROR, parseLedgerId, quoteNotFoundAfterError, QUOTE_NOT_FOUND_STATEMENT_ERROR } from '../../src/overseer/ledger-service.js';
 import { OK_ONLY_ERROR } from '../../src/overseer/ledger-quote.js';
 import { renderCard } from '../../src/overseer/ledger-render.js';
-import { DECIDE_CARD, GO_CARD } from './card-fixtures.js';
+import { DECIDE_CARD, GO_CARD, LR6 } from './card-fixtures.js';
+import { ONLY_USER_ERROR } from '../../src/overseer/ledger-checks.js';
 
 const T0 = Date.parse('2026-10-05T16:00:00.000Z');
 const min = (n: number) => new Date(T0 + n * 60_000).toISOString();
@@ -357,5 +358,131 @@ describe('handoff', () => {
       'Owner decisions (verbatim, from the ledger):\n- N1 [Decide] Use library A?\n  Recommendation: A. 5 nights\n  Options: A. 5 nights | B. 10 nights\n  You approved: "Use library A?" → "A" (Mon 16:01)',
     );
     expectLedgerError(() => ledger.handoff('s1', 'coord', ['N1', 'N5']), 404, 'Unknown ledger item: N5');
+  });
+});
+
+// Decision cards, Unit 4: the triage tools and the reversal.
+describe('triage tools', () => {
+  const AGENT = { id: 'agent', label: 'worker', mission: null };
+  /** N1 and N2 proposed by the agent; returns nothing. */
+  const propose = () => {
+    ledger.captureAgentBlock('s1', AGENT, [LR6, { ...LR6, id: 'LR-7', question: 'Which day does the switch happen?' }]);
+  };
+
+  it('ledger_add_from_agent: the agent\'s text stays word for word; the note becomes the overseer\'s note; the item is sent now', () => {
+    propose();
+    now = T0 + 5 * 60_000;
+    expect(ledger.addFromAgent('s1', 'coord', { id: 'N1', note: 'The agent did not know about the holiday freeze.' })).toEqual({ id: 'N1', status: 'open' });
+    const item = ledgerDb.getBySeq(db, 's1', 1)!;
+    expect(item).toMatchObject({
+      status: 'open', text: LR6.question, context: LR6.context, options: LR6.options, recommendation: LR6.recommendation,
+      recommendationWhy: LR6.why, defaultText: LR6.default, overseerNote: 'The agent did not know about the holiday freeze.', sentAt: min(5),
+    });
+    expect(renderCard(item, { now, timeZone: 'UTC' })).toContain("**Overseer's note:** The agent did not know about the holiday freeze.");
+    expect(ledger.addFromAgent('s1', 'coord', { id: 'N2' })).toEqual({ id: 'N2', status: 'open' });
+    expect(ledgerDb.getBySeq(db, 's1', 2)!.overseerNote).toBeNull();
+    expectLedgerError(() => ledger.addFromAgent('s1', 'coord', { id: 'N1' }), 409, 'N1 is already open.');
+    expectLedgerError(() => ledger.addFromAgent('s1', 'coord', { id: 'N9' }), 404);
+  });
+
+  it('ledger_decide_self: records the choice and the reason; the recap shows it once', () => {
+    propose();
+    const out = ledger.decideSelf('s1', 'coord', { id: 'N2', choice: 'Monday', reason: 'it avoids the weekend peak' });
+    expect(out).toEqual({
+      id: 'N2', status: 'decided_by_overseer',
+      line: '- **N2 · Decided by overseer:** Which day does the switch happen? → Monday. Reason: it avoids the weekend peak. (Reply "reverse N2" to change it.)',
+    });
+    expect(ledgerDb.getBySeq(db, 's1', 2)).toMatchObject({ status: 'decided_by_overseer', decidedChoice: 'Monday', reason: 'it avoids the weekend peak', decidedAt: min(0), sentAt: null });
+    const recap = ledger.list('s1', 'coord', { forRecap: true }).text;
+    expect(recap).toContain('Decided since the last recap:\n- **N2 · Decided by overseer:** Which day does the switch happen? → Monday.');
+    expect(recap).toContain('Overseer decisions in the last 7 days: 1. Reversed by you: 0.');
+    now = T0 + 60_000;
+    expect(ledger.list('s1', 'coord').text).not.toContain('N2 · Decided by overseer'); // shown once
+    expectLedgerError(() => ledger.decideSelf('s1', 'coord', { id: 'N1', choice: 'A. 5 nights' }), 400);
+    expectLedgerError(() => ledger.decideSelf('s1', 'coord', { id: 'N1', reason: 'x' }), 400);
+  });
+
+  it('ledger_decide_self refuses a go item, a user-sourced item, and an item already sent to the user', () => {
+    const go = { id: 'G1', kind: 'go', question: 'Merge the sync PR?', context: 'The sync PR is reviewed and green.', default: 'Nothing happens.' };
+    ledger.captureAgentBlock('s1', AGENT, [go]); // N1: a proposed go item
+    expectLedgerError(() => ledger.decideSelf('s1', 'coord', { id: 'N1', choice: 'merge', reason: 'green' }), 422, 'Only the user can decide this item.');
+    userSays('we should switch to live mode soon', 1);
+    ledgerDb.create(db, { sessionId: 's1', kind: 'decide', text: 'Switch when?', author: 'overseer', status: 'proposed', sourceKind: 'user', sourceRef: 'switch to live mode soon' }); // N2
+    expectLedgerError(() => ledger.decideSelf('s1', 'coord', { id: 'N2', choice: 'now', reason: 'x' }), 422, ONLY_USER_ERROR);
+    ledger.add('s1', 'coord', { kind: 'decide', text: 'Which store goes first?', ...DECIDE_CARD }); // N3, sent at once
+    expectLedgerError(() => ledger.decideSelf('s1', 'coord', { id: 'N3', choice: 'A. 5 nights', reason: 'x' }), 422, ONLY_USER_ERROR);
+    propose(); // N4, N5
+    ledger.addFromAgent('s1', 'coord', { id: 'N4' }); // sent to the user by triage
+    expectLedgerError(() => ledger.decideSelf('s1', 'coord', { id: 'N4', choice: 'A. 5 nights', reason: 'x' }), 422, ONLY_USER_ERROR);
+    ledger.decideSelf('s1', 'coord', { id: 'N5', choice: 'Monday', reason: 'x' });
+    expectLedgerError(() => ledger.decideSelf('s1', 'coord', { id: 'N5', choice: 'Tuesday', reason: 'y' }), 409, 'N5 is already decided_by_overseer.');
+    expect(ledgerDb.getBySeq(db, 's1', 5)!.decidedChoice).toBe('Monday');
+  });
+
+  it('a reversal: ledger_resolve to answered on an overseer decision, with the user\'s checked quote; the count line counts it', () => {
+    propose();
+    ledger.decideSelf('s1', 'coord', { id: 'N2', choice: 'Monday', reason: 'it avoids the weekend peak' });
+    userSays('switch on a Tuesday', -1); // before the decision: never counts
+    expectLedgerError(() => ledger.resolve('s1', 'coord', { id: 'N2', status: 'answered', quote: 'switch on a Tuesday' }), 422, quoteNotFoundAfterError(2));
+    userSays('reverse N2, use Tuesday', 3);
+    now = T0 + 4 * 60_000;
+    const out = ledger.resolve('s1', 'coord', { id: 'N2', status: 'answered', quote: 'reverse N2, use Tuesday' });
+    expect(out.status).toBe('answered');
+    expect(ledgerDb.getBySeq(db, 's1', 2)).toMatchObject({ status: 'answered', quote: 'reverse N2, use Tuesday', decidedChoice: 'Monday' });
+    expect(ledger.list('s1', 'coord').text).toContain('Overseer decisions in the last 7 days: 1. Reversed by you: 1.');
+    // Only answered reverses an overseer decision; parking or withdrawing it is not a thing.
+    ledger.decideSelf('s1', 'coord', { id: 'N1', choice: 'A. 5 nights', reason: 'x' });
+    userSays('park N1', 5);
+    expectLedgerError(() => ledger.resolve('s1', 'coord', { id: 'N1', status: 'parked', quote: 'park N1' }), 409, 'N1 is already decided_by_overseer.');
+  });
+
+  it('ledger_mark_default: the item stays open and moves to "Running on defaults"', () => {
+    ledger.add('s1', 'coord', { kind: 'decide', text: 'Abort when duplicates pass 1%?', ...DECIDE_CARD, default: 'abort above 1%' });
+    const out = ledger.markDefault('s1', 'coord', { id: 'N1' });
+    expect(out).toEqual({ id: 'N1', line: '- **N1 · Decide:** Abort when duplicates pass 1%? Running on the default "abort above 1%" since Oct 5. Recommended: A. 5 nights. (type `show N1`)' });
+    expect(ledgerDb.getBySeq(db, 's1', 1)).toMatchObject({ status: 'open', onDefaultSince: min(0) });
+    now = T0 + 86_400_000;
+    ledger.markDefault('s1', 'coord', { id: 'N1' }); // again: the start date stays
+    expect(ledgerDb.getBySeq(db, 's1', 1)!.onDefaultSince).toBe(min(0));
+    const recap = ledger.list('s1', 'coord').text;
+    expect(recap).toContain('Needs you now:\n- none');
+    expect(recap).toContain('Running on defaults:\n- **N1 · Decide:** Abort when duplicates pass 1%?');
+    expect(ledger.list('s1', 'coord').openIds).toEqual(['N1']);
+    ledger.add('s1', 'coord', { kind: 'do', text: 'Check staging.' });
+    expectLedgerError(() => ledger.markDefault('s1', 'coord', { id: 'N2' }), 400);
+    userSays('abort above 1% is fine', 2000);
+    ledger.resolve('s1', 'coord', { id: 'N1', status: 'answered', quote: 'abort above 1% is fine' });
+    expectLedgerError(() => ledger.markDefault('s1', 'coord', { id: 'N1' }), 409, 'N1 is already answered.');
+  });
+
+  it('ledger_show: full cards for one, several, and all open decisions', () => {
+    ledger.add('s1', 'coord', { kind: 'decide', text: 'Which store goes first?', ...DECIDE_CARD });
+    ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR #12?', ...GO_CARD });
+    ledger.add('s1', 'coord', { kind: 'do', text: 'Check staging.' });
+    propose(); // N4, N5: proposed, not open
+    const card = (seq: number) => renderCard(ledgerDb.getBySeq(db, 's1', seq)!, { now, timeZone: 'UTC', lookup: (s) => ledgerDb.getBySeq(db, 's1', s) });
+    expect(ledger.show('s1', 'coord', { ids: ['N2'] })).toEqual({ text: card(2) });
+    expect(ledger.show('s1', 'coord', { ids: 'N1' })).toEqual({ text: card(1) });
+    expect(ledger.show('s1', 'coord', { ids: ['N1', 'N4'] }).text).toBe(`${card(1)}\n\n${card(4)}`);
+    expect(ledger.show('s1', 'coord', { ids: ['N3'] }).text).toBe('N3 [Do] Check staging. (open 0m)\n  Proposed by overseer, not approved');
+    expect(ledger.show('s1', 'coord', { all: true }).text).toBe(`${card(1)}\n\n${card(2)}`);
+    expectLedgerError(() => ledger.show('s1', 'coord', {}), 400);
+    expectLedgerError(() => ledger.show('s1', 'coord', { ids: ['N9'] }), 404);
+    ledger.markDefault('s1', 'coord', { id: 'N1' });
+    expect(ledger.show('s1', 'coord', { all: true }).text).toContain('Running on the default since Oct 5'); // still open: still shown
+  });
+
+  it('ledger_show all with no open decision', () => {
+    expect(ledger.show('s1', 'coord', { all: true })).toEqual({ text: 'No open decisions.' });
+  });
+
+  it('every triage tool is overseer only', () => {
+    propose();
+    for (const run of [
+      () => ledger.addFromAgent('s1', 'agent', { id: 'N1' }),
+      () => ledger.decideSelf('s1', 'agent', { id: 'N1', choice: 'x', reason: 'y' }),
+      () => ledger.markDefault('s1', 'agent', { id: 'N1' }),
+      () => ledger.show('s1', 'agent', { all: true }),
+    ]) expectLedgerError(run, 403, NOT_OVERSEER_ERROR);
   });
 });

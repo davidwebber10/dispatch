@@ -88,6 +88,42 @@ const LEDGER_IDS_ARG_DESCRIPTION =
 
 const LEDGER_IDS_SCHEMA = { type: 'array', items: { type: 'string' }, description: LEDGER_IDS_ARG_DESCRIPTION } as const;
 
+/** The decision-card fields of ledger_add and ledger_import (decision cards spec 2026-10-06, Unit 1). */
+const CARD_FIELDS_SCHEMA = {
+  context: { type: 'string', description: 'Go/decide: what the user needs to know to decide, 20 to 800 characters.' },
+  options: {
+    type: 'array',
+    items: {
+      type: 'object',
+      properties: {
+        label: { type: 'string', description: 'The option, e.g. "A. 5 nights".' },
+        effect: { type: 'string', description: 'What happens if the user picks it.' },
+      },
+      required: ['label', 'effect'],
+    },
+    description: 'Decide: at least 2 options. Go: optional.',
+  },
+  recommendation: { type: 'string', description: 'When options exist: exactly one of the option labels.' },
+  why: { type: 'string', description: 'When options exist: the reason for the recommendation.' },
+  default: { type: 'string', description: 'Go/decide: what happens if the user does not answer. "Nothing happens" is valid.' },
+  source: {
+    type: 'object',
+    properties: {
+      kind: { type: 'string', enum: ['plan', 'doc', 'agent', 'pr', 'issue', 'user', 'overseer'] },
+      ref: {
+        type: 'string',
+        description: 'plan/doc: a path relative to the project (it must exist); agent: its label or ID; ' +
+          'pr/issue: "#123"; user: the user\'s exact words; overseer: not needed.',
+      },
+      section: { type: 'string', description: 'Optional: the section inside the source.' },
+      id: { type: 'string', description: 'Optional: the source\'s own ID, e.g. "LR-6" (a cross-reference only).' },
+    },
+    required: ['kind'],
+    description: 'Go/decide: where the decision comes from. The daemon checks that it exists.',
+  },
+  note: { type: 'string', description: 'Optional: your own note, shown as "Overseer\'s note".' },
+} as const;
+
 /** The tools the coordinator can call. */
 export const TOOLS = [
   {
@@ -417,16 +453,19 @@ export const TOOLS = [
     description:
       'Overseer only. Record an item that needs the user in the decision ledger: kind "go" (a merge, ' +
       'deploy or release approval), "decide" (a choice) or "do" (a manual step for the user). Every ' +
-      'question to the user goes here first. Returns { id, line }: post `line` to the user as is. The ' +
+      'question to the user goes here first. A go or decide item is a full decision card: it needs ' +
+      '`context`, `default` and `source`; a decide item also needs at least 2 `options` ({ label, effect }) ' +
+      'with a `recommendation` (one of the labels) and `why`. One decision per item: never a range of plan ' +
+      'IDs. The daemon checks every field and the source, and returns 422 with the missing fields. Returns ' +
+      '{ id, line }: `line` is the card (a do item: its line); post it to the user exactly as it is. The ' +
       'item text never changes; for a wider scope, add a new item with `supersedes`.',
     inputSchema: {
       type: 'object',
       properties: {
         kind: { type: 'string', enum: ['go', 'decide', 'do'], description: 'go = merge/deploy/release approval, decide = a choice, do = a manual step for the user.' },
-        text: { type: 'string', description: 'The item as the user will see it. It never changes after creation.' },
-        recommendation: { type: 'string', description: 'Optional: what you recommend.' },
-        options: { type: 'array', items: { type: 'string' }, description: 'Optional: the choices, for a decide item.' },
-        blocks: { type: 'string', description: 'Optional: what this item holds up.' },
+        text: { type: 'string', description: 'The question as the user will see it: one decision, never a plan ID alone or a range. It never changes after creation.' },
+        ...CARD_FIELDS_SCHEMA,
+        blocks: { type: 'string', description: 'Optional: what this item holds up (shown as "Holds up").' },
         mission: { type: 'string', description: 'Optional mission name this item belongs to.' },
         author: { type: 'string', description: 'Optional: who proposed it, "overseer" (the default) or an agent label.' },
         supersedes: { type: 'string', description: 'Optional: the ID (e.g. "N3") of an older item that this item replaces or widens.' },
@@ -440,7 +479,8 @@ export const TOOLS = [
       'Overseer only. Close a ledger item. "answered" and "parked" need `quote`: the user\'s exact words, ' +
       'which the daemon checks against the messages the user sent you after the item was created. ' +
       '"withdrawn" needs `reason`. An "ok" at the start of a message is never an answer. If the check ' +
-      'fails, do not record the item: ask the user.',
+      'fails, do not record the item: ask the user. To reverse a decision you made yourself ' +
+      '(ledger_decide_self) when the user says "reverse N21", set it to "answered" with the user\'s words.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -458,13 +498,18 @@ export const TOOLS = [
     description:
       'Overseer only. Record a statement the user made (a rule, a preference, a fact) with the user\'s ' +
       'exact words as `quote`; the daemon checks the words against the user\'s messages to you. Add ' +
-      '`reading` when you apply it more widely than the words say.',
+      '`reading` when you apply it more widely than the words say. Pass policy: true for a project rule.',
     inputSchema: {
       type: 'object',
       properties: {
         quote: { type: 'string', description: "The user's exact words." },
         reading: { type: 'string', description: 'Optional "I read this as: …" line.' },
         mission: { type: 'string', description: 'Optional mission name this statement belongs to.' },
+        policy: {
+          type: 'boolean',
+          description: 'True when the user states a project rule (for example which decisions you may make ' +
+            'yourself). It shows under "Project rules (your words)" in every recap and overrides the default tiers.',
+        },
       },
       required: ['quote'],
     },
@@ -472,9 +517,11 @@ export const TOOLS = [
   {
     name: 'ledger_list',
     description:
-      'Overseer only. The rendered ledger part of a recap: Needs you now, Your tests and actions, Decided ' +
-      'since the last recap, Parked. Paste these lines as is. Pass forRecap: true when you post the recap: ' +
-      'it marks the recap as posted and clears the interim recap timer.',
+      'Overseer only. The rendered ledger part of a recap: Project rules (your words), Needs you now (full ' +
+      'cards for new decisions plus the top 5, one line for the rest), Running on defaults, Your tests and ' +
+      'actions, Decided since the last recap, Not yet triaged, Parked, and the count line. Paste it as is. ' +
+      'Pass forRecap: true when you post the recap: it marks the recap as posted and clears the interim ' +
+      'recap timer.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -487,7 +534,8 @@ export const TOOLS = [
     description:
       'Overseer only. Use once, at rollout: load the open items and earlier decisions from your current ' +
       'context. They show as "Imported, not checked" until the user confirms one and you record the quote ' +
-      'with ledger_resolve.',
+      'with ledger_resolve. A go or decide item needs the same card fields as ledger_add. For a large ' +
+      'plan, have a planner agent turn its decision list into an owner-decisions block instead.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -500,8 +548,7 @@ export const TOOLS = [
               text: { type: 'string' },
               status: { type: 'string', enum: ['open', 'answered', 'parked'] },
               author: { type: 'string' },
-              recommendation: { type: 'string' },
-              options: { type: 'array', items: { type: 'string' } },
+              ...CARD_FIELDS_SCHEMA,
               blocks: { type: 'string' },
               mission: { type: 'string' },
               reading: { type: 'string' },
@@ -512,6 +559,62 @@ export const TOOLS = [
         },
       },
       required: ['items'],
+    },
+  },
+  // --- decision cards (spec 2026-10-06, Unit 4): triage and the card tools ---
+  {
+    name: 'ledger_add_from_agent',
+    description:
+      'Overseer only. Triage: send a proposed decision (from an agent\'s owner-decisions block) to the ' +
+      'user. The agent\'s text stays word for word; `note` becomes the card\'s "Overseer\'s note" — use it ' +
+      'for what the agent did not know. The user sees it in the next recap; do not post it now.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The proposed item ID, e.g. "N30".' },
+        note: { type: 'string', description: 'Optional: your own note, shown under its own label on the card.' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'ledger_decide_self',
+    description:
+      'Overseer only. Triage: decide a low-level proposed decision yourself, with the reason. It shows in ' +
+      'the next recap as "Decided by overseer", and the user can reverse it. The daemon refuses a go item, ' +
+      'an item sourced from the user, and any item already sent to the user: "Only the user can decide this item."',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The proposed item ID, e.g. "N32".' },
+        choice: { type: 'string', description: 'What you decided, e.g. the option label.' },
+        reason: { type: 'string', description: 'Why, in one sentence.' },
+      },
+      required: ['id', 'choice', 'reason'],
+    },
+  },
+  {
+    name: 'ledger_mark_default',
+    description:
+      'Overseer only. Work now runs on the default of an open decision. The item stays open (the user can ' +
+      'still answer it) and moves to "Running on defaults" with the start date.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: 'The open item ID, e.g. "N9".' } },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'ledger_show',
+    description:
+      'Overseer only. The full cards, rendered by the daemon: for `ids`, or for every open decision with ' +
+      'all: true. Use it when the user types "show N17" or "show all", and post the cards exactly as they are.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ids: { type: 'array', items: { type: 'string' }, description: 'The item IDs, e.g. ["N17"].' },
+        all: { type: 'boolean', description: 'True for every open decision.' },
+      },
     },
   },
 ] as const;
@@ -926,6 +1029,34 @@ async function ledgerImport(args: { items?: unknown }): Promise<{ ids: string[] 
   return ledgerRequest('/import', { caller: requireSelf('use the ledger'), items: args.items });
 }
 
+async function ledgerAddFromAgent(args: Record<string, unknown>): Promise<{ id: string; status: string }> {
+  if (!args?.id) throw new Error('id is required');
+  const { id, ...rest } = args;
+  return ledgerRequest(`/${encodeURIComponent(String(id))}/add-from-agent`, { ...rest, caller: requireSelf('use the ledger') });
+}
+
+async function ledgerDecideSelf(args: Record<string, unknown>): Promise<{ id: string; status: string; line: string }> {
+  if (!args?.id) throw new Error('id is required');
+  if (!args?.choice) throw new Error('choice is required');
+  if (!args?.reason) throw new Error('reason is required');
+  const { id, ...rest } = args;
+  return ledgerRequest(`/${encodeURIComponent(String(id))}/decide-self`, { ...rest, caller: requireSelf('use the ledger') });
+}
+
+async function ledgerMarkDefault(args: Record<string, unknown>): Promise<{ id: string; line: string }> {
+  if (!args?.id) throw new Error('id is required');
+  return ledgerRequest(`/${encodeURIComponent(String(args.id))}/mark-default`, { caller: requireSelf('use the ledger') });
+}
+
+/** Returns the rendered cards themselves (not JSON), so the overseer can post them as is. */
+async function ledgerShow(args: { ids?: unknown; all?: unknown }): Promise<string> {
+  const all = args?.all === true;
+  const ids = Array.isArray(args?.ids) ? args.ids : typeof args?.ids === 'string' ? [args.ids] : [];
+  if (!all && ids.length === 0) throw new Error('pass ids (e.g. ["N17"]) or all: true');
+  const data = await ledgerRequest('/show', { caller: requireSelf('use the ledger'), ...(all ? { all: true } : { ids }) });
+  return String(data?.text ?? '');
+}
+
 // --- post_image (surface a picture inline in the coordinator thread) -------
 
 /** Extension → MIME for the images the byte route serves; the gate that keeps this read-image-only. */
@@ -1005,6 +1136,11 @@ export async function callTool(
       case 'ledger_resolve': result = await ledgerResolve(args ?? {}); break;
       case 'ledger_note': result = await ledgerNote(args ?? {}); break;
       case 'ledger_import': result = await ledgerImport(args ?? {}); break;
+      case 'ledger_add_from_agent': result = await ledgerAddFromAgent(args ?? {}); break;
+      case 'ledger_decide_self': result = await ledgerDecideSelf(args ?? {}); break;
+      case 'ledger_mark_default': result = await ledgerMarkDefault(args ?? {}); break;
+      // ledger_show's result IS the cards to post — return them as is, not as a JSON string.
+      case 'ledger_show': return { content: [{ type: 'text', text: await ledgerShow(args ?? {}) }] };
       // ledger_list's result IS the text to paste — return it as is, not as a JSON string.
       case 'ledger_list': return { content: [{ type: 'text', text: await ledgerList(args ?? {}) }] };
       // post_image's result IS the content block (an image, not JSON text) — return it directly.
