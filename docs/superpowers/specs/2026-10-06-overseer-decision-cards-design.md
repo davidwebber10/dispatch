@@ -112,12 +112,20 @@ failed check returns 422 with a fixed text and changes nothing.
 1. **Required fields** for `decide` and `go` (Unit 1). Text:
    `A decision card needs: <missing fields>. Add them and try again.`
 2. **One decision per card.** The question must not hold a range of plan IDs, such
-   as `LR-1..LR-26`, `D1 to D9`, `D2-D6` or `Q1–Q6`, and must not name 3 or more
-   plan-style IDs. Text: `One decision per card. Add each decision on its own.`
+   as `LR-1..LR-26`, `D1 to D9`, `D1 TO D9`, `D2-D6`, `Q1–Q6`, `PLAN-1 to PLAN-9`
+   or `D1000 to D1009`, and must not name 3 or more plan-style IDs that share the
+   same letter prefix (such as `D1, D3 and D4`). Text:
+   `One decision per card. Add each decision on its own.`
+   - "From X to Y" is a change, not a range: `Move backups from S3 to R2?` and
+     `Move the overseer from GPT-4 to GPT-5?` pass.
+   - IDs with different prefixes pass: `S3, EC2 and R2`.
+   - A pattern cannot separate every product name from a plan ID. The persona rule
+     "one decision per card" covers the cases that the check misses. (Changed after
+     code review.)
 3. **Real sources.**
    - `plan` and `doc`: `source_ref` is a relative path that exists inside the
      project's working directory, including its git worktrees, and does not escape
-     it.
+     it. An absolute path is refused.
    - `agent`: an agent thread of this project, by label or ID.
    - `pr` and `issue`: the form `#123`. The daemon does not call GitHub.
    - `user`: needs a checked quote, as in #62.
@@ -160,6 +168,16 @@ block. No block when there are none.
 
 - **When:** at the end of the agent's turn, the daemon reads the agent's final
   message (the full text, not the 600-character summary that notices use).
+  - The same read works for Claude and Codex agents. A Codex agent streams its
+    text in pieces, so the daemon uses the complete message text of the turn.
+  - Text from the agent's own sub-agents is not part of its report.
+- **Only a top-level block counts.** A block inside another code block, or indented
+  as code, is an example, not a block. The last top-level block wins.
+- **Size limits.** A block over 64 KB, or with more than 50 entries, is a broken
+  block (the notice line below names the reason). No items change.
+- **Agent entries cannot set** `blocks`, `author`, `status`, `policy`,
+  `supersedes` or the sent time. The overseer sets "Holds up" at triage.
+  (The four points above were added after code review.)
 - **Each valid entry becomes a `proposed` item** with its own N-ID. The source is
   `agent` (the agent's label), with `where.path` as the section reference and `id`
   as `source_id`.
@@ -176,11 +194,17 @@ block. No block when there are none.
 ### Unit 4 — Tools
 
 New:
-- `ledger_add_from_agent({ id, note? })` — sends a `proposed` item to the user
-  (status `open`). The agent's text stays word for word; `note` becomes the
-  "Overseer's note".
+- `ledger_add_from_agent({ id, note?, blocks? })` — sends a `proposed` item to the
+  user (status `open`). The agent's text stays word for word; `note` becomes the
+  "Overseer's note", and `blocks` the "Holds up" field.
 - `ledger_decide_self({ id, choice, reason })` — a low-level call by the overseer
-  (status `decided_by_overseer`). Unit 2, rule 4 limits it.
+  on a proposed item (status `decided_by_overseer`). Unit 2, rule 4 limits it.
+- `ledger_decide_self({ choice, reason, …card fields })`, without `id` — records a
+  low-level call that did not come from an agent block, such as an answer to an
+  agent's live question. It creates a `decide` item that is already decided and
+  was never sent to the user. The card checks apply, and a `user` source is
+  refused. (Added after code review: without it, the overseer could not record its
+  own decisions.)
 - `ledger_mark_default({ id })` — work now runs on the default of an open item.
   The item stays open and moves to "Running on defaults".
 - `ledger_show({ ids? , all? })` — full cards, rendered by the daemon.
@@ -247,6 +271,12 @@ and ends with ``**Answer with:** `N12: merge` `` (the named-approval rule of #62
 - **N9 · Decide:** Abort when duplicates pass 1%? Running on the default "abort above 1%" since Oct 1. Recommended: keep. (type `show N9`)
 - **N21 · Decided by overseer:** Which retry helper? → the existing one. Reason: it already covers this case. (Reply "reverse N21" to change it.)
 ```
+
+Added after code review:
+- A reversal reads `You reversed the overseer's choice "<choice>": "<quote>" (<time>)`,
+  not "You approved".
+- An imported item keeps its "Imported, not checked" label in every form,
+  including the "Running on defaults" line.
 
 ### Unit 6 — The Batch line
 
