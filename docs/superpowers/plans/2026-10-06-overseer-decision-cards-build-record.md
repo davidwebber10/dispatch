@@ -92,6 +92,13 @@ Decisions in this round:
 - `ledger_decide_self` without `id` refuses `kind: "go"` with "Only the user can decide this item." (rule 4), instead of turning it into a `decide` item. Any other `kind` becomes `decide`.
 - Known limits of the one-decision check: "Approve from D1 to D9?" passes; "Upgrade the API V1 to V2?", "Q3-Q4" and "GPT-4, GPT-5 or GPT-6" fail.
 
+## Review round 2
+
+GPT-6-astra rechecked the round-1 fixes: every round-1 finding was fixed. It found two new defects, fixed in `66d0053` with a failing test first. Round 2 is the last review round, so these fixes had no third review.
+
+- **Medium, failed ACP turns:** on Grok and OpenCode, a rejected `session/prompt` left the turn's texts in `GrokTranslator`, so a later turn returned the failed turn's owner-decisions block as its own. `GrokTranslator.abortTurn` drops all per-turn state, and `GrokStructuredSessionManager` calls it on a rejected prompt. Tested at the translator level and against the fake ACP agent (a prose block, a tool call, an RPC error, then a normal turn).
+- **Low, CRLF byte count:** the 64 KB limit counted the LF-joined body, so CRLF padding slipped past it. It now counts the original text of the block without its final line end. The test pads 40,000 CRLF lines (80 KB as sent, 40 KB normalized).
+
 ## Test counts (final)
 
 - Core: 226 files passed, 1 skipped; 2488 tests passed, 4 skipped (baseline before this work: 2379).
@@ -99,3 +106,4 @@ Decisions in this round:
 - Typecheck: `packages/core` and `packages/web` clean.
 - One full core run had a "socket hang up" in `tests/routes/structured.test.ts` ("a coordinator spawn folds the dispatch agency server into its --mcp-config"). The other full run passed, and the file alone passed 3 of 3 runs. It is the known load flake of that file, in a different case than the Codex one.
 - After review round 1: core 226 files passed, 1 skipped; 2516 tests passed, 4 skipped. Web: 150 files, 1284 tests passed (no web change). Both typechecks clean. One of two full core runs had `read ECONNRESET` in `tests/routes/structured.test.ts` ("an agent question escalates UP to the project coordinator"); the file alone passed 3 of 3 runs, and the second full run passed.
+- After review round 2: core 226 files passed, 1 skipped; 2519 tests passed, 4 skipped. Web: 150 files, 1284 tests passed. Both typechecks clean. `/verify` on an isolated daemon (fake HOME, port 3999): a full decide card renders with a blank line between fields and the option table (201); missing fields, a range question, a source path that escapes the project, and `ledger_decide_self` on a `go` item each return 422 with the spec's text; "Move backups from S3 to R2?" passes (201); `ledger_decide_self` without `id` records the overseer's own decision (201); the recap sections render in order.
