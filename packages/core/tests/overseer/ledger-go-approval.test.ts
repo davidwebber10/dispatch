@@ -9,6 +9,7 @@ import * as ledgerDb from '../../src/db/ledger.js';
 import * as messagesDb from '../../src/db/coordinator-messages.js';
 import { GO_APPROVAL_ERROR, namesGoApproval } from '../../src/overseer/ledger-quote.js';
 import { LedgerService, LedgerError, quoteNotFoundAfterError } from '../../src/overseer/ledger-service.js';
+import { DECIDE_CARD, GO_CARD } from './card-fixtures.js';
 
 describe('namesGoApproval', () => {
   it('"yes" fails; "yes, merge it" and "N12: yes" pass; "emerged" does not count as "merge"', () => {
@@ -43,7 +44,7 @@ describe('ledger_resolve on a go item', () => {
     sessionsDb.create(db, { id: 's1', provider: 'claude-code', name: 'p', workingDir: '/tmp' });
     terminalsDb.create(db, { id: 'coord', sessionId: 's1', type: 'claude-code', label: 'Control Plane', config: { role: 'coordinator' } });
     ledger = new LedgerService(db, { clock: () => T0, timeZone: 'UTC' });
-    ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR #12.' });
+    ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR #12.', ...GO_CARD });
   });
 
   const says = (text: string, minute: number) =>
@@ -89,7 +90,7 @@ describe('ledger_resolve on a go item', () => {
   });
 
   it('a decide item still accepts a bare "yes"', () => {
-    ledger.add('s1', 'coord', { kind: 'decide', text: 'Use library A?' });
+    ledger.add('s1', 'coord', { kind: 'decide', text: 'Use library A?', ...DECIDE_CARD });
     says('yes', 1);
     expect(ledger.resolve('s1', 'coord', { id: 'N2', status: 'answered', quote: 'yes' }).status).toBe('answered');
   });

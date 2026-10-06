@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { initSchema } from '../../src/db/schema.js';
 import { createApp } from '../../src/server.js';
 import * as messagesDb from '../../src/db/coordinator-messages.js';
+import { DECIDE_CARD, GO_CARD } from '../overseer/card-fixtures.js';
 
 const fake = path.join(path.dirname(fileURLToPath(import.meta.url)), '../structured/fake-claude.mjs');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -64,7 +65,7 @@ describe('overseer ledger — end to end', () => {
   });
 
   it('a quote resolves end to end against the user\'s real message', async () => {
-    const add = await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: coordId, kind: 'decide', text: 'Which store goes first?', options: ['A', 'B'] }).expect(201);
+    const add = await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: coordId, kind: 'decide', text: 'Which store goes first?', ...DECIDE_CARD }).expect(201);
     expect(add.body.id).toBe('N1');
     await sleep(5); // the answer must come strictly after the item
     await request(app).post(`/api/terminals/${coordId}/message`).send({ text: 'N1: A, but only for the first store', source: 'user' }).expect(204);
@@ -76,7 +77,7 @@ describe('overseer ledger — end to end', () => {
   });
 
   it('an "ok"-only answer, a canned click, and a non-overseer caller all fail', async () => {
-    await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: coordId, kind: 'decide', text: 'Use library A?' }).expect(201);
+    await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: coordId, kind: 'decide', text: 'Use library A?', ...DECIDE_CARD }).expect(201);
     await sleep(5);
     await request(app).post(`/api/terminals/${coordId}/message`).send({ text: 'ok', source: 'user' }).expect(204);
     await request(app).post(`/api/terminals/${coordId}/message`).send({ text: '“Use A” — got it.', source: 'user', canned: true }).expect(204);

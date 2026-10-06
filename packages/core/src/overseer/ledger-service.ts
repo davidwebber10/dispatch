@@ -10,13 +10,22 @@
  *    records that quote — so an unchecked imported `answered` or `parked` item can be resolved
  *    once more. A `withdrawn` or `superseded` item is always closed, imported or not (409).
  * 6. A leading "ok" never counts (see ledger-quote.ts).
+ *
+ * Decision cards (spec 2026-10-06, Unit 2): `add`, `importItems` and the agent-block path apply
+ * the same card checks (ledger-checks.ts) — required fields, one decision per card, real sources —
+ * and a project rule (`note` with `policy`) needs the user's checked words.
  */
 import type Database from 'better-sqlite3';
 import * as terminalsDb from '../db/terminals.js';
+import * as sessionsDb from '../db/sessions.js';
 import * as ledgerDb from '../db/ledger.js';
 import * as messagesDb from '../db/coordinator-messages.js';
 import { findQuote, GO_APPROVAL_ERROR, namesGoApproval, OK_ONLY_ERROR } from './ledger-quote.js';
 import { isUnchecked, renderHandoffBlock, renderItem, renderLedgerSections, type RenderContext } from './ledger-render.js';
+import {
+  cardFieldsError, findProjectPath, gitWorktrees, holdsSeveralDecisions, isIssueRef, missingCardFields,
+  ONE_DECISION_ERROR, sourceComplete, sourceMissingError, type CardFieldsInput,
+} from './ledger-checks.js';
 
 export const NOT_OVERSEER_ERROR = "Only the project's overseer can change the ledger.";
 export const QUOTE_NOT_FOUND_STATEMENT_ERROR = "Quote not found in the user's messages to you. Do not record it. Ask the user.";
@@ -61,6 +70,11 @@ function optionList(v: unknown, field: string): ledgerDb.LedgerOption[] | undefi
   return list.length ? list : undefined;
 }
 
+/** The card fields of a checked item, ready for ledgerDb.create. */
+export type CardFields = Pick<ledgerDb.CreateLedgerInput,
+  'context' | 'options' | 'recommendation' | 'recommendationWhy' | 'defaultText' | 'sourceKind' | 'sourceRef'
+  | 'sourceSection' | 'sourceId' | 'overseerNote'>;
+
 const OPEN_KINDS = new Set(['go', 'decide', 'do']);
 const IMPORT_KINDS = new Set(['go', 'decide', 'do', 'statement']);
 const IMPORT_STATUSES = new Set(['open', 'answered', 'parked']);
@@ -68,10 +82,15 @@ const IMPORT_STATUSES = new Set(['open', 'answered', 'parked']);
 export class LedgerService {
   private readonly clock: () => number;
   private readonly timeZone?: string;
+  private readonly listWorktrees: (dir: string) => string[];
 
-  constructor(private readonly db: Database.Database, opts: { clock?: () => number; timeZone?: string } = {}) {
+  constructor(
+    private readonly db: Database.Database,
+    opts: { clock?: () => number; timeZone?: string; listWorktrees?: (dir: string) => string[] } = {},
+  ) {
     this.clock = opts.clock ?? (() => Date.now());
     this.timeZone = opts.timeZone;
+    this.listWorktrees = opts.listWorktrees ?? gitWorktrees;
   }
 
   private nowIso(): string {
@@ -105,8 +124,92 @@ export class LedgerService {
     return messagesDb.listUserMessages(this.db, overseerId, after);
   }
 
+  /** The project's working directory and its git worktrees: where a plan or doc source may live. */
+  private projectRoots(sessionId: string): string[] {
+    const dir = sessionsDb.getById(this.db, sessionId)?.working_dir;
+    if (!dir) return [];
+    return [dir, ...this.listWorktrees(dir).filter((w) => w !== dir)];
+  }
+
+  /** An agent thread of this project (archived ones included), by ID or label. */
+  private findAgent(sessionId: string, ref: string): { id: string; label: string } | null {
+    const rows = this.db.prepare('SELECT id, label, config FROM terminals WHERE session_id = ?').all(sessionId) as
+      { id: string; label: string | null; config: string | null }[];
+    for (const r of rows) {
+      let cfg: Record<string, any> = {};
+      try { cfg = JSON.parse(r.config || '{}'); } catch { /* default {} */ }
+      if (cfg.role !== 'agent') continue;
+      if (r.id === ref || (r.label ?? '') === ref) return { id: r.id, label: r.label || ref };
+    }
+    return null;
+  }
+
+  /**
+   * The card checks of Unit 2 (rules 1 to 3) for one item. Throws a 422 with the fixed text on the
+   * first failed check (`body` rides along in the error body); otherwise returns the stored fields.
+   * `overseerId` is the overseer whose user messages a `user` source is checked against.
+   */
+  checkCard(
+    sessionId: string,
+    overseerId: string | null,
+    kind: ledgerDb.LedgerKind,
+    question: string,
+    input: CardFieldsInput & { note?: unknown },
+    body: Record<string, unknown> = {},
+  ): CardFields {
+    const fail = (message: string) => new LedgerError(422, message, body);
+    const isCard = kind === 'decide' || kind === 'go';
+    if (isCard) {
+      const missing = missingCardFields(kind, input);
+      if (missing.length) throw fail(cardFieldsError(missing));
+      if (holdsSeveralDecisions(question)) throw fail(ONE_DECISION_ERROR);
+    }
+    const fields: CardFields = {
+      context: str(input.context),
+      options: optionList(input.options, 'options'),
+      recommendation: str(input.recommendation),
+      recommendationWhy: str(input.why),
+      defaultText: str(input.default),
+      overseerNote: str(input.note),
+    };
+    if (input.source === undefined || input.source === null) return fields;
+    if (!sourceComplete(input.source)) throw fail(cardFieldsError(['source']));
+    const src = input.source as Record<string, unknown>;
+    const sourceKind = src.kind as ledgerDb.LedgerSourceKind;
+    const ref = str(src.ref) ?? '';
+    let sourceRef: string | undefined = ref || undefined;
+    switch (sourceKind) {
+      case 'plan':
+      case 'doc': {
+        const found = findProjectPath(ref, this.projectRoots(sessionId));
+        if (!found) throw fail(sourceMissingError(ref));
+        sourceRef = found;
+        break;
+      }
+      case 'agent': {
+        const agent = this.findAgent(sessionId, ref);
+        if (!agent) throw fail(sourceMissingError(ref));
+        sourceRef = agent.label;
+        break;
+      }
+      case 'pr':
+      case 'issue':
+        if (!isIssueRef(ref)) throw fail(sourceMissingError(ref));
+        break;
+      case 'user': {
+        const match = findQuote(ref, overseerId ? this.userMessages(overseerId, null) : [], { after: null });
+        if (!match.ok) throw fail(match.reason === 'ok_only' ? OK_ONLY_ERROR : QUOTE_NOT_FOUND_STATEMENT_ERROR);
+        sourceRef = match.quote;
+        break;
+      }
+      case 'overseer':
+        break;
+    }
+    return { ...fields, sourceKind, sourceRef, sourceSection: str(src.section), sourceId: str(src.id) };
+  }
+
   add(sessionId: string, caller: unknown, input: Record<string, unknown>): { id: string; line: string } {
-    this.assertOverseer(sessionId, caller);
+    const overseer = this.assertOverseer(sessionId, caller);
     const kind = input.kind;
     if (typeof kind !== 'string' || !OPEN_KINDS.has(kind)) throw new LedgerError(400, "kind must be 'go', 'decide' or 'do'");
     const text = str(input.text);
@@ -115,13 +218,13 @@ export class LedgerService {
     if (input.supersedes !== undefined && input.supersedes !== null && input.supersedes !== '') {
       supersedes = this.requireItem(sessionId, input.supersedes).seq;
     }
+    const card = this.checkCard(sessionId, overseer.id, kind as ledgerDb.LedgerKind, text, input);
     const item = ledgerDb.create(this.db, {
       sessionId,
       kind: kind as ledgerDb.LedgerKind,
       text,
       author: str(input.author) ?? 'overseer',
-      recommendation: str(input.recommendation),
-      options: optionList(input.options, 'options'),
+      ...card,
       blocks: str(input.blocks),
       mission: str(input.mission),
       supersedes,
@@ -181,6 +284,8 @@ export class LedgerService {
       quoteMessageId: match.messageId,
       quoteAt: match.sentAt,
       reading: str(input.reading),
+      // Unit 2 rule 5: a project rule exists only as a statement with the user's checked words.
+      policy: input.policy === true,
       now: this.nowIso(),
     });
     return { id: `N${item.seq}`, line: renderItem(item, this.ctx(sessionId)) };
@@ -204,7 +309,7 @@ export class LedgerService {
 
   /** One-time load of open items and earlier decisions from the overseer's context. */
   importItems(sessionId: string, caller: unknown, rawItems: unknown): { ids: string[] } {
-    this.assertOverseer(sessionId, caller);
+    const overseer = this.assertOverseer(sessionId, caller);
     if (!Array.isArray(rawItems) || rawItems.length === 0) throw new LedgerError(400, 'items must be a non-empty array');
     const inputs = rawItems.map((raw, i): ledgerDb.CreateLedgerInput => {
       const it = (raw ?? {}) as Record<string, unknown>;
@@ -214,12 +319,17 @@ export class LedgerService {
       if (!text) throw new LedgerError(400, `items[${i}].text is required`);
       const status = it.status === undefined ? (kind === 'statement' ? 'answered' : 'open') : it.status;
       if (typeof status !== 'string' || !IMPORT_STATUSES.has(status)) throw new LedgerError(400, `items[${i}].status must be 'open', 'answered' or 'parked'`);
+      // Unit 2 rule 5: an imported statement has no checked quote, so it can never be a project rule.
+      if (it.policy !== undefined && it.policy !== false) {
+        throw new LedgerError(400, `items[${i}].policy is not allowed: a project rule needs the user's checked words (ledger_note with policy: true)`);
+      }
+      const card = this.checkCard(sessionId, overseer.id, kind as ledgerDb.LedgerKind, text, it, { item: i });
       return {
         sessionId,
         kind: kind as ledgerDb.LedgerKind,
         text,
         author: kind === 'statement' ? 'you' : (str(it.author) ?? 'overseer'),
-        recommendation: str(it.recommendation),
+        ...card,
         options: optionList(it.options, `items[${i}].options`),
         blocks: str(it.blocks),
         mission: str(it.mission),
