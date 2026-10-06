@@ -262,6 +262,12 @@ function OpencodeModelList({ models, defaultModel, onSave, onReset }: {
                   <span style={{ fontSize: 12.5, color: 'var(--color-text-primary)' }}>
                     {r.label}
                     {r.alias && <span style={{ marginLeft: 6, font: '600 9.5px var(--font-mono)', letterSpacing: '.05em', color: 'var(--color-accent)' }}>LATEST</span>}
+                    {r.tools === false && (
+                      // No endpoint takes a tool list, so Dispatch runs it with every tool off: it can
+                      // chat, but not run commands, touch files, or reach the peer tools.
+                      <span title="No tool calling: the thread can chat but cannot run commands, edit files, or use peer tools."
+                        style={{ marginLeft: 6, font: '600 9.5px var(--font-mono)', letterSpacing: '.05em', color: 'var(--color-status-yellow)' }}>CHAT ONLY</span>
+                    )}
                   </span>
                   <span style={mono}>{shortId(r.id)}{r.aliasTarget ? ` → ${r.aliasTarget}` : ''}{r.contextLength ? ` · ${formatContext(r.contextLength)}` : ''}</span>
                 </span>

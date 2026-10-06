@@ -40,6 +40,7 @@ import { createGitRouter } from './routes/git.js';
 import { createSecretsRouter } from './routes/secrets.js';
 import { createHarnessSettingsRouter } from './routes/harness-settings.js';
 import { opencodeKeySecretName } from './settings/harness-settings.js';
+import { warmModelCapabilities } from './settings/model-capabilities.js';
 import { createTranscribeRouter } from './routes/transcribe.js';
 import { TranscriptionService } from './transcription/service.js';
 import { createSetupRouter } from './routes/setup.js';
@@ -778,6 +779,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   });
 
   console.log(`Dispatch server listening on port ${port}`);
+
+  // Same idea for model capabilities: the spawn path is sync and reads caches only, so load
+  // the OpenRouter and models.dev catalogs once now. A chat-only model resumed right after
+  // boot then gets its tools turned off instead of failing its first turn.
+  void warmModelCapabilities();
 
   // Prime the brokered-tool cache so the FIRST spawn after boot already has tools
   // (getServerSpecs is sync, so it can only ever serve a cached answer).
