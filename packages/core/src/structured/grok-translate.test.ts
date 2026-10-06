@@ -154,6 +154,18 @@ describe('GrokTranslator — ACP session/update → Claude-shaped stream', () =>
     expect(kinds(out)).not.toContain('needs-help');
   });
 
+  it('the complete texts of the last ended turn: each closed prose block in full, in order (owner-decisions capture)', () => {
+    const t = new GrokTranslator();
+    const done = JSON.parse(JSON.stringify(fx.agentMsgChunk1));
+    done.params.update.content.text = 'Done.';
+    for (const f of [fx.agentMsgChunk1, fx.agentMsgChunk2, fx.toolCall, done]) t.translate(f as any);
+    expect(t.lastTurnTexts()).toEqual([]); // the turn is still running
+    t.translate(fx.turnCompleted as any);
+    expect(t.lastTurnTexts()).toEqual(['PROBE-OK', 'Done.']);
+    t.translate(fx.turnCompleted as any); // a turn with no prose
+    expect(t.lastTurnTexts()).toEqual([]);
+  });
+
   it('idle carries the completed prose as `summary` so a real outcome line persists', () => {
     const t = new GrokTranslator();
     t.translate(fx.agentMsgChunk1 as any);

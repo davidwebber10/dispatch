@@ -1,6 +1,8 @@
 // The owner-decisions block in an agent's report (decision cards spec 2026-10-06, Unit 3).
 import { describe, it, expect } from 'vitest';
-import { parseOwnerDecisionsBlock, formatOwnerDecisionsNotice, formatSeqList } from '../../src/overseer/owner-decisions.js';
+import {
+  parseOwnerDecisionsBlock, formatOwnerDecisionsNotice, formatSeqList, MAX_BLOCK_BYTES, MAX_BLOCK_ENTRIES,
+} from '../../src/overseer/owner-decisions.js';
 
 const block = (body: string, fence = '```') => `Report text.\n\n${fence}owner-decisions\n${body}\n${fence}\n`;
 
@@ -29,6 +31,25 @@ describe('parseOwnerDecisionsBlock', () => {
     });
   });
 
+  it('a quoted example is content, not a block: the spec\'s own form (a four-backtick text fence around it)', () => {
+    const quoted = 'Use this form:\n\n````text\n```owner-decisions\n[{"id":"LR-6"}]\n```\n````\n\nDone.';
+    expect(parseOwnerDecisionsBlock(quoted)).toEqual({ kind: 'none' });
+    // A tilde fence of 3 does not close a backtick fence, and a shorter fence does not close a longer one.
+    expect(parseOwnerDecisionsBlock('~~~~md\n~~~\n```owner-decisions\n[{"id":"A"}]\n```\n~~~~\n')).toEqual({ kind: 'none' });
+    expect(parseOwnerDecisionsBlock('`````\n````\n```owner-decisions\n[{"id":"A"}]\n```\n`````\n')).toEqual({ kind: 'none' });
+  });
+
+  it('a block indented 4 or more spaces is content (an indented code block)', () => {
+    expect(parseOwnerDecisionsBlock('Example:\n\n    ```owner-decisions\n    [{"id":"A"}]\n    ```\n')).toEqual({ kind: 'none' });
+    expect(parseOwnerDecisionsBlock('   ```owner-decisions\n[{"id":"A"}]\n   ```\n')).toEqual({ kind: 'ok', entries: [{ id: 'A' }] });
+  });
+
+  it('a real top-level block after a quoted one is still found; the last top-level block wins', () => {
+    const quoted = '````text\n```owner-decisions\n[{"id":"QUOTED"}]\n```\n````';
+    expect(parseOwnerDecisionsBlock(`${quoted}\n\n${block('[{"id":"REAL"}]')}`)).toEqual({ kind: 'ok', entries: [{ id: 'REAL' }] });
+    expect(parseOwnerDecisionsBlock(`${block('[{"id":"REAL"}]')}\n${quoted}\n`)).toEqual({ kind: 'ok', entries: [{ id: 'REAL' }] });
+  });
+
   it('a broken block: no closing fence, bad JSON, not an array', () => {
     expect(parseOwnerDecisionsBlock('Report.\n```owner-decisions\n[{"id":"A"}]')).toEqual({ kind: 'broken', reason: 'the block has no closing fence' });
     const bad = parseOwnerDecisionsBlock(block('[{"id": "A",}]'));
@@ -36,6 +57,21 @@ describe('parseOwnerDecisionsBlock', () => {
     expect((bad as any).reason).toMatch(/^it is not valid JSON \(.+\)$/);
     expect((bad as any).reason).not.toMatch(/\.\)$/);
     expect(parseOwnerDecisionsBlock(block('{"id":"A"}'))).toEqual({ kind: 'broken', reason: 'it is not a JSON array' });
+  });
+
+  it('size limits: 50 entries and 64 KB of text pass; one more entry or one more byte is a broken block', () => {
+    const entries = (n: number) => JSON.stringify(Array.from({ length: n }, (_, i) => ({ id: `D${i + 1}` })));
+    expect(MAX_BLOCK_ENTRIES).toBe(50);
+    expect(MAX_BLOCK_BYTES).toBe(64 * 1024);
+    expect((parseOwnerDecisionsBlock(block(entries(50))) as any).entries).toHaveLength(50);
+    expect(parseOwnerDecisionsBlock(block(entries(73)))).toEqual({ kind: 'broken', reason: 'the block has 73 entries; the limit is 50' });
+    expect(parseOwnerDecisionsBlock(block(entries(51)))).toEqual({ kind: 'broken', reason: 'the block has 51 entries; the limit is 50' });
+    // A body of exactly 64 KB: a JSON array whose one string fills the rest. "é" is 2 bytes in UTF-8.
+    const body = (bytes: number) => { const head = '[{"id":"A","context":"'; const tail = '"}]'; return head + 'x'.repeat(bytes - head.length - tail.length) + tail; };
+    expect(parseOwnerDecisionsBlock(block(body(MAX_BLOCK_BYTES))).kind).toBe('ok');
+    expect(parseOwnerDecisionsBlock(block(body(MAX_BLOCK_BYTES + 1)))).toEqual({ kind: 'broken', reason: 'the block has 65537 bytes of text; the limit is 65536 (64 KB)' });
+    // Bytes, not characters: 65536 characters with one 2-byte "é" are 65537 bytes.
+    expect(parseOwnerDecisionsBlock(block(body(MAX_BLOCK_BYTES).replace('x', 'é')))).toEqual({ kind: 'broken', reason: 'the block has 65537 bytes of text; the limit is 65536 (64 KB)' });
   });
 });
 

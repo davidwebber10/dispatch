@@ -5,7 +5,8 @@
  * and the user's messages.
  *
  * 1. Required fields for `decide` and `go`.
- * 2. One decision per card: no range of plan IDs, and not 3 or more plan-style IDs, in the question.
+ * 2. One decision per card: no range of plan IDs, and not 3 or more plan-style IDs with the same
+ *    prefix, in the question.
  * 3. Real sources: a plan/doc path exists inside the project (or one of its git worktrees) and does
  *    not escape it; an agent is a thread of this project; a PR/issue is `#123`; a user source is a
  *    checked quote; `overseer` is always allowed.
@@ -61,12 +62,14 @@ export function missingCardFields(kind: LedgerKind, input: CardFieldsInput): str
   if (context.length < CONTEXT_MIN || context.length > CONTEXT_MAX) missing.push(F_CONTEXT);
 
   const raw = input.options;
-  const given = Array.isArray(raw) && raw.length > 0;
+  // Omitted (undefined, null or []) is not the same as malformed (any other value that is not a
+  // list of complete { label, effect } objects): a go card may omit its options, never send bad ones.
+  const omitted = raw === undefined || raw === null || (Array.isArray(raw) && raw.length === 0);
   let options: { label: string; effect: string }[] = [];
   if (kind === 'decide') {
-    if (!given || raw.length < 2 || !optionsComplete(raw)) missing.push(F_OPTIONS_DECIDE);
+    if (!Array.isArray(raw) || raw.length < 2 || !optionsComplete(raw)) missing.push(F_OPTIONS_DECIDE);
     else options = raw;
-  } else if (given) {
+  } else if (!omitted) {
     if (!optionsComplete(raw)) missing.push(F_OPTIONS_GO);
     else options = raw;
   }
@@ -90,20 +93,49 @@ export function sourceComplete(source: unknown): boolean {
 
 // --- rule 2 -------------------------------------------------------------------------------------
 
-/** A plan-style ID: 1 to 3 capital letters, an optional hyphen, 1 to 3 digits (LR-6, D1, Q12). */
-const PLAN_ID = '[A-Z]{1,3}-?\\d{1,3}';
+/*
+ * A plan-style ID: 1 to 6 capital letters (its prefix), an optional hyphen, 1 to 5 digits:
+ * LR-6, D1, Q12, PLAN-1, D1000. "LR-6" and "LR6" share the prefix "LR".
+ *
+ * A regex cannot separate every product name from a plan ID: "GPT-4", "UTF-8", "S3" and "EC2"
+ * have the same shape as "LR-6". Three rules keep the false positives low:
+ *   - a range needs the same prefix at both ends, or a bare number at the end ("LR-1 to 26");
+ *   - "from X to Y" is a change, not a range ("Move backups from S3 to R2?");
+ *   - a list counts only when 3 or more IDs share one prefix ("D1, D3 and D4", not "S3, EC2 and R2").
+ * Known limits: "Approve from D1 to D9?" passes; "Upgrade the API V1 to V2?", "Q3-Q4" and a list
+ * such as "GPT-4, GPT-5 or GPT-6" fail.
+ */
+const PLAN_ID = '([A-Z]{1,6})-?(\\d{1,5})';
 const EDGE_BEFORE = '(?<![\\p{L}\\p{N}-])';
 const EDGE_AFTER = '(?![\\p{L}\\p{N}])';
 const ID_RE = new RegExp(`${EDGE_BEFORE}${PLAN_ID}${EDGE_AFTER}`, 'gu');
-const RANGE_RE = new RegExp(
-  `${EDGE_BEFORE}${PLAN_ID}\\s*(?:\\.{2,3}|…|-|–|—|\\bto\\b|\\bthrough\\b|\\bthru\\b)\\s*(?:${PLAN_ID}|\\d{1,3})${EDGE_AFTER}`,
-  'u',
-);
+/** "to", "TO", "To": the range words in any case, while the ID letters stay capitals. */
+const anyCase = (word: string) => [...word].map((c) => `[${c.toUpperCase()}${c}]`).join('');
+const RANGE_WORD = ['to', 'through', 'thru'].map(anyCase).join('|');
+const RANGE_SRC =
+  `${EDGE_BEFORE}${PLAN_ID}(?:\\s*(?:\\.{2,3}|…|-|–|—)\\s*|\\s+(${RANGE_WORD})\\s+)(?:([A-Z]{1,6})-?)?\\d{1,5}${EDGE_AFTER}`;
+const FROM_BEFORE = /(?:^|[^\p{L}\p{N}])from\s+$/iu;
 
-/** Rule 2: the question holds a range of plan IDs (LR-1..LR-26, D1 to D9, D2-D6, Q1–Q6) or names 3+ of them. */
+/**
+ * Rule 2: the question holds a range of plan IDs (LR-1..LR-26, D1 to D9, D2-D6, Q1–Q6) or names
+ * 3 or more plan IDs with the same prefix.
+ */
 export function holdsSeveralDecisions(question: string): boolean {
-  if (RANGE_RE.test(question)) return true;
-  return new Set(question.match(ID_RE) ?? []).size >= 3;
+  const range = new RegExp(RANGE_SRC, 'gu');
+  for (let m = range.exec(question); m; m = range.exec(question)) {
+    const [, prefix, , word, endPrefix] = m;
+    const change = word?.toLowerCase() === 'to' && FROM_BEFORE.test(question.slice(0, m.index));
+    if (!change && (endPrefix === undefined || endPrefix === prefix)) return true;
+    range.lastIndex = m.index + 1; // the end of a skipped match may start a real range
+  }
+  const byPrefix = new Map<string, Set<string>>();
+  for (const [, prefix, digits] of question.matchAll(ID_RE)) {
+    const ids = byPrefix.get(prefix) ?? new Set<string>();
+    ids.add(digits);
+    byPrefix.set(prefix, ids);
+    if (ids.size >= 3) return true;
+  }
+  return false;
 }
 
 // --- rule 3 -------------------------------------------------------------------------------------
@@ -111,12 +143,13 @@ export function holdsSeveralDecisions(question: string): boolean {
 const escapes = (rel: string) => rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
 
 /**
- * Rule 3 for `plan` and `doc`: the path, relative (or absolute but inside), names an existing file
- * or directory under one of the roots, and neither the path nor a symlink on it leads outside that
- * root. Returns the path relative to the root that holds it, with forward slashes, or null.
+ * Rule 3 for `plan` and `doc`: the path is relative (the spec; an absolute path fails before any
+ * lookup), names an existing file or directory under one of the roots, and neither the path nor a
+ * symlink on it leads outside that root. Returns the path relative to the root that holds it,
+ * with forward slashes, or null.
  */
 export function findProjectPath(ref: string, roots: readonly string[]): string | null {
-  if (!ref.trim()) return null;
+  if (!ref.trim() || path.isAbsolute(ref)) return null;
   for (const root of roots) {
     const base = path.resolve(root);
     const target = path.resolve(base, ref);

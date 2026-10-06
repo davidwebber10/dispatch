@@ -279,18 +279,29 @@ export class LedgerService {
 
   // --- decision cards, Unit 4: triage and the card tools ----------------------------------------
 
-  /** ledger_add_from_agent: a proposed item goes to the user (status open), the agent's text word for word. */
+  /**
+   * ledger_add_from_agent: a proposed item goes to the user (status open), the agent's text word
+   * for word. `note` becomes the overseer's note; `blocks` says what the item holds up (the
+   * overseer knows that; the agent block cannot set it).
+   */
   addFromAgent(sessionId: string, caller: unknown, input: Record<string, unknown>): { id: string; status: 'open' } {
     this.assertOverseer(sessionId, caller);
     const item = this.requireItem(sessionId, input.id);
     if (item.status !== 'proposed') throw new LedgerError(409, `N${item.seq} is already ${item.status}.`, { status: item.status });
-    ledgerDb.markSent(this.db, sessionId, item.seq, { note: str(input.note), now: this.nowIso() });
+    ledgerDb.markSent(this.db, sessionId, item.seq, { note: str(input.note), blocks: str(input.blocks), now: this.nowIso() });
     return { id: `N${item.seq}`, status: 'open' };
   }
 
-  /** ledger_decide_self: a low-level call by the overseer. Unit 2 rule 4 limits it to items only it may decide. */
+  /**
+   * ledger_decide_self: a low-level call by the overseer. With `id`, it decides a proposed item;
+   * Unit 2 rule 4 limits it to items only it may decide. Without `id`, it records a new decision
+   * that is already decided — the overseer's own low-level call that no agent proposed: always a
+   * `decide` item (a `go` kind and a `user` source are the user's), with the same card checks as
+   * ledger_add, never sent to the user (`sent_at` NULL), `decided_at` now.
+   */
   decideSelf(sessionId: string, caller: unknown, input: Record<string, unknown>): { id: string; status: 'decided_by_overseer'; line: string } {
-    this.assertOverseer(sessionId, caller);
+    const overseer = this.assertOverseer(sessionId, caller);
+    if (input.id === undefined || input.id === null || input.id === '') return this.recordOwnDecision(sessionId, overseer.id, input);
     const item = this.requireItem(sessionId, input.id);
     if (onlyUserCanDecide(item)) throw new LedgerError(422, ONLY_USER_ERROR);
     if (item.status !== 'proposed') throw new LedgerError(409, `N${item.seq} is already ${item.status}.`, { status: item.status });
@@ -299,6 +310,32 @@ export class LedgerService {
     if (!choice || !reason) throw new LedgerError(400, 'choice and reason are required');
     const updated = ledgerDb.markDecidedByOverseer(this.db, sessionId, item.seq, { choice, reason, now: this.nowIso() })!;
     return { id: `N${item.seq}`, status: 'decided_by_overseer', line: renderOverseerDecisionLine(updated) };
+  }
+
+  /** decideSelf without `id`: a new item, created already decided. Nothing is created when a check fails. */
+  private recordOwnDecision(sessionId: string, overseerId: string, input: Record<string, unknown>): { id: string; status: 'decided_by_overseer'; line: string } {
+    // Rule 4: a go item and an item sourced from the user stay with the user.
+    const source = input.source as Record<string, unknown> | undefined;
+    if (input.kind === 'go' || (source && typeof source === 'object' && source.kind === 'user')) throw new LedgerError(422, ONLY_USER_ERROR);
+    const text = str(input.text);
+    if (!text) throw new LedgerError(400, 'text is required to record a decision of your own (or pass the id of a proposed item)');
+    const choice = str(input.choice);
+    const reason = str(input.reason);
+    if (!choice || !reason) throw new LedgerError(400, 'choice and reason are required');
+    const card = this.checkCard(sessionId, overseerId, 'decide', text, input);
+    const item = ledgerDb.create(this.db, {
+      sessionId,
+      kind: 'decide',
+      text,
+      author: 'overseer',
+      ...card,
+      mission: str(input.mission),
+      status: 'decided_by_overseer',
+      decidedChoice: choice,
+      reason,
+      now: this.nowIso(),
+    });
+    return { id: `N${item.seq}`, status: 'decided_by_overseer', line: renderOverseerDecisionLine(item) };
   }
 
   /** ledger_mark_default: work now runs on the default of an open decision. It stays open. */
@@ -453,7 +490,9 @@ export class LedgerService {
           author: agent.label,
           ...card,
           sourceRef: agent.label,
-          blocks: str(e.blocks),
+          // No `blocks` from the entry: an agent must not lift its own item into the top 5. The
+          // overseer sets it at triage (ledger_add_from_agent). Author, status, policy, supersedes,
+          // sent_at and origin come from the daemon only.
           mission: agent.mission,
           status: 'proposed',
           agentTerminalId: agent.id,

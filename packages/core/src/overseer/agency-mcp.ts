@@ -573,6 +573,7 @@ export const TOOLS = [
       properties: {
         id: { type: 'string', description: 'The proposed item ID, e.g. "N30".' },
         note: { type: 'string', description: 'Optional: your own note, shown under its own label on the card.' },
+        blocks: { type: 'string', description: 'Optional: what this decision holds up (shown as "Holds up"; it ranks the card first).' },
       },
       required: ['id'],
     },
@@ -580,17 +581,24 @@ export const TOOLS = [
   {
     name: 'ledger_decide_self',
     description:
-      'Overseer only. Triage: decide a low-level proposed decision yourself, with the reason. It shows in ' +
-      'the next recap as "Decided by overseer", and the user can reverse it. The daemon refuses a go item, ' +
-      'an item sourced from the user, and any item already sent to the user: "Only the user can decide this item."',
+      'Overseer only. Record a low-level decision you make yourself, with the reason. It shows in the next ' +
+      'recap as "Decided by overseer", and the user can reverse it. Two uses: (1) triage — pass `id` to decide ' +
+      'a proposed decision from an agent\'s owner-decisions block; (2) your own call that no agent proposed — ' +
+      'leave out `id` and pass `text` (the question) with the card fields of a decide item (context, options ' +
+      'with effects, recommendation, why, default, source); it is recorded as already decided. The daemon ' +
+      'refuses a go item, an item sourced from the user, and any item already sent to the user: "Only the ' +
+      'user can decide this item."',
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'string', description: 'The proposed item ID, e.g. "N32".' },
+        id: { type: 'string', description: 'Triage: the proposed item ID, e.g. "N32". Leave it out to record a new decision of your own.' },
+        text: { type: 'string', description: 'A new decision of your own (no id): the question, one decision, never a plan ID alone or a range.' },
+        ...CARD_FIELDS_SCHEMA,
         choice: { type: 'string', description: 'What you decided, e.g. the option label.' },
         reason: { type: 'string', description: 'Why, in one sentence.' },
+        mission: { type: 'string', description: 'Optional (new decision only): the mission name it belongs to.' },
       },
-      required: ['id', 'choice', 'reason'],
+      required: ['choice', 'reason'],
     },
   },
   {
@@ -1035,12 +1043,14 @@ async function ledgerAddFromAgent(args: Record<string, unknown>): Promise<{ id: 
   return ledgerRequest(`/${encodeURIComponent(String(id))}/add-from-agent`, { ...rest, caller: requireSelf('use the ledger') });
 }
 
+/** With `id`: decide a proposed item. Without it: record a new decision of your own (`text` plus the card fields). */
 async function ledgerDecideSelf(args: Record<string, unknown>): Promise<{ id: string; status: string; line: string }> {
-  if (!args?.id) throw new Error('id is required');
+  if (!args?.id && !args?.text) throw new Error('pass id (a proposed item) or text (a new decision of your own)');
   if (!args?.choice) throw new Error('choice is required');
   if (!args?.reason) throw new Error('reason is required');
-  const { id, ...rest } = args;
-  return ledgerRequest(`/${encodeURIComponent(String(id))}/decide-self`, { ...rest, caller: requireSelf('use the ledger') });
+  const { id, ...rest } = args ?? {};
+  const suffix = id ? `/${encodeURIComponent(String(id))}/decide-self` : '/decide-self';
+  return ledgerRequest(suffix, { ...rest, caller: requireSelf('use the ledger') });
 }
 
 async function ledgerMarkDefault(args: Record<string, unknown>): Promise<{ id: string; line: string }> {

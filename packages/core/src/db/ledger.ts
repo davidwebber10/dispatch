@@ -180,7 +180,10 @@ export interface CreateLedgerInput {
   agentTerminalId?: string | null;
   agentDecisionId?: string | null;
   policy?: boolean;
-  /** ISO time for created_at/updated_at (and sent_at, unless the item is proposed). Defaults to now. */
+  /** For an item the overseer decides as it creates it (status `decided_by_overseer`): its choice and reason. */
+  decidedChoice?: string | null;
+  reason?: string | null;
+  /** ISO time for created_at/updated_at (and sent_at or decided_at, as the status says). Defaults to now. */
   now?: string;
 }
 
@@ -188,11 +191,13 @@ export interface CreateLedgerInput {
  * Create an item with the next per-project `seq` (MAX + 1 — rows are never deleted, so an ID
  * never repeats). When `supersedes` names an item that is still open or proposed, that item
  * becomes `superseded` in the same transaction; an answered or parked item keeps its status.
- * Every item except a `proposed` one reaches the user now, so `sent_at` is its creation time.
+ * Every item reaches the user now, so `sent_at` is its creation time — except a `proposed` item
+ * (not yet triaged) and a `decided_by_overseer` one (never sent; `decided_at` is its creation time).
  */
 export function create(db: Database.Database, input: CreateLedgerInput): LedgerItem {
   const now = input.now ?? new Date().toISOString();
   const status = input.status ?? 'open';
+  const decided = status === 'decided_by_overseer';
   return db.transaction((): LedgerItem => {
     const { next } = db.prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM ledger_items WHERE session_id = ?')
       .get(input.sessionId) as { next: number };
@@ -200,18 +205,19 @@ export function create(db: Database.Database, input: CreateLedgerInput): LedgerI
       (session_id, seq, kind, text, author, recommendation, options, blocks, mission, status,
        quote, quote_message_id, quote_at, reading, reason, supersedes, origin, created_at, updated_at,
        context, recommendation_why, default_text, source_kind, source_ref, source_section, source_id,
-       overseer_note, agent_terminal_id, agent_decision_id, policy, sent_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+       overseer_note, agent_terminal_id, agent_decision_id, policy, sent_at, decided_choice, decided_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       input.sessionId, next, input.kind, input.text, input.author,
       input.recommendation ?? null,
       input.options && input.options.length ? JSON.stringify(input.options) : null,
       input.blocks ?? null, input.mission ?? null, status,
       input.quote ?? null, input.quoteMessageId ?? null, input.quoteAt ?? null, input.reading ?? null,
-      input.supersedes ?? null, input.origin ?? 'live', now, now,
+      input.reason ?? null, input.supersedes ?? null, input.origin ?? 'live', now, now,
       input.context ?? null, input.recommendationWhy ?? null, input.defaultText ?? null,
       input.sourceKind ?? null, input.sourceRef ?? null, input.sourceSection ?? null, input.sourceId ?? null,
       input.overseerNote ?? null, input.agentTerminalId ?? null, input.agentDecisionId ?? null,
-      input.policy ? 1 : 0, status === 'proposed' ? null : now,
+      input.policy ? 1 : 0, status === 'proposed' || decided ? null : now,
+      decided ? input.decidedChoice ?? null : null, decided ? now : null,
     );
     if (input.supersedes !== undefined && input.supersedes !== null) {
       db.prepare("UPDATE ledger_items SET status = 'superseded', updated_at = ? WHERE session_id = ? AND seq = ? AND status IN ('open', 'proposed')")
@@ -253,10 +259,13 @@ export interface StatusPatch {
   now?: string;
 }
 
-/** Triage: a proposed item reaches the user now (status open), with the overseer's optional note. */
-export function markSent(db: Database.Database, sessionId: string, seq: number, opts: { note?: string | null; now: string }): LedgerItem | null {
-  db.prepare(`UPDATE ledger_items SET status = 'open', sent_at = ?, overseer_note = COALESCE(?, overseer_note), updated_at = ?
-    WHERE session_id = ? AND seq = ?`).run(opts.now, opts.note ?? null, opts.now, sessionId, seq);
+/** Triage: a proposed item reaches the user now (status open), with the overseer's optional note and "holds up". */
+export function markSent(
+  db: Database.Database, sessionId: string, seq: number, opts: { note?: string | null; blocks?: string | null; now: string },
+): LedgerItem | null {
+  db.prepare(`UPDATE ledger_items SET status = 'open', sent_at = ?, overseer_note = COALESCE(?, overseer_note),
+      blocks = COALESCE(?, blocks), updated_at = ?
+    WHERE session_id = ? AND seq = ?`).run(opts.now, opts.note ?? null, opts.blocks ?? null, opts.now, sessionId, seq);
   return getBySeq(db, sessionId, seq);
 }
 

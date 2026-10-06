@@ -675,6 +675,8 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
   getPending(terminalId: string): PendingPermission | null { return this.sessions.get(terminalId)?.pending ?? null; }
   getSessionId(terminalId: string): string | undefined { return this.sessions.get(terminalId)?.sessionId; }
   getEvents(terminalId: string): unknown[] { return [...(this.sessions.get(terminalId)?.events ?? [])]; }
+  /** The last ended turn's own texts (IStructuredManager.getTurnTexts): the completed agentMessage items, not the ring's deltas. */
+  getTurnTexts(terminalId: string): string[] | null { return this.sessions.get(terminalId)?.translator.lastTurnTexts() ?? null; }
   getEventsTail(terminalId: string, n: number): unknown[] {
     const events = this.sessions.get(terminalId)?.events ?? [];
     return n >= events.length ? [...events] : events.slice(events.length - n);

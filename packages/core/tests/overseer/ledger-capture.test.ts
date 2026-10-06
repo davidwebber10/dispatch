@@ -99,6 +99,20 @@ describe('captureAgentBlock', () => {
     expect(ledgerDb.getBySeq(db, 's1', 2)).toMatchObject({ status: 'proposed', supersedes: null });
   });
 
+  it('an entry cannot set blocks, author, status, policy, supersedes, sent_at or origin: the daemon sets them', () => {
+    ledgerDb.create(db, { sessionId: 's1', kind: 'decide', text: 'An open question of the overseer?', author: 'overseer', now: new Date(T0).toISOString() }); // N1, open
+    const out = ledger.captureAgentBlock('s1', AGENT, [{
+      ...LR6, blocks: 'the release', author: 'you', status: 'open', policy: true, supersedes: 'N1', sent_at: '2026-01-01T00:00:00.000Z',
+      sentAt: '2026-01-01T00:00:00.000Z', origin: 'imported', decided_choice: 'A. 5 nights', reason: 'x',
+    }]);
+    expect(out.created).toEqual([2]);
+    expect(ledgerDb.getBySeq(db, 's1', 2)).toMatchObject({
+      blocks: null, author: 'Readiness planner', status: 'proposed', policy: false, supersedes: null, sentAt: null, origin: 'live',
+      decidedChoice: null, decidedAt: null, reason: null,
+    });
+    expect(ledgerDb.getBySeq(db, 's1', 1)!.status).toBe('open'); // not superseded by the entry
+  });
+
   it('the same id from another agent is a separate decision', () => {
     terminalsDb.create(db, { id: 'researcher-1', sessionId: 's1', type: 'claude-code', label: 'Map researcher', config: { role: 'agent' } });
     ledger.captureAgentBlock('s1', AGENT, [LR6]);

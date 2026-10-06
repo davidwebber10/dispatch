@@ -24,9 +24,10 @@ const OVERSEER = [
   'A rule from the user → ledger_note with policy: true.',
   // Own decisions.
   'When you add a decide or go item yourself, fill every required field',
+  'A low-level call of your own that no agent proposed: record it with ledger_decide_self without an id (text, the card fields, choice and reason). Do not ledger_add it first: ledger_add sends it to the user, and then only the user can decide it.',
   // Tools.
-  'ledger_add_from_agent({ id, note? })',
-  'ledger_decide_self({ id, choice, reason })',
+  'ledger_add_from_agent({ id, note?, blocks? })',
+  'ledger_decide_self({ id?, text?, context?, options?, recommendation?, why?, default?, source?, choice, reason })',
   'ledger_mark_default({ id })',
   'ledger_show({ ids?, all? })',
   'ledger_note({ quote, reading?, mission?, policy? })',

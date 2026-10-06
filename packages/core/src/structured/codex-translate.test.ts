@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { CodexTranslator, buildApprovalResponse, type TranslatedAction } from './codex-translate.js';
 import * as fx from './codex-frames.fixture.js';
+import { turnTextsFromEvents } from './manager.js';
 
 /** Only the `event` payloads (drops session/busy/idle/approval control actions). */
 function events(actions: TranslatedAction[]): any[] {
@@ -115,6 +116,39 @@ describe('CodexTranslator — server → Claude-shaped stream', () => {
     const usage = (fx.tokenUsage as any).params.tokenUsage.last;
     expect(out[0]).toMatchObject({ type: 'assistant', message: { content: [], usage: { cache_read_input_tokens: usage.cachedInputTokens, output_tokens: usage.outputTokens } } });
     expect(out[0].message.usage.input_tokens).toBe(usage.inputTokens - usage.cachedInputTokens);
+  });
+});
+
+// The complete texts of the last turn, for the owner-decisions capture (decision cards, Unit 3):
+// on Codex the ring holds only deltas, and the full text arrives with each agentMessage item/completed.
+describe('CodexTranslator — the complete texts of the last turn', () => {
+  /** Another completed agentMessage of the same turn: the real frame, with its own item id and text. */
+  const agentMsg = (id: string, text: string) => ({
+    ...fx.agentMsgCompleted, params: { ...fx.agentMsgCompleted.params, item: { ...fx.agentMsgCompleted.params.item, id, text } },
+  });
+  const REPORT = 'The plan is ready.\n\n```owner-decisions\n[{"id":"LR-6"}]\n```';
+
+  it('every completed agentMessage of the turn, in order and in full; the ring holds no whole text', () => {
+    const t = new CodexTranslator();
+    const ring = [
+      fx.threadStarted, fx.turnStarted, fx.userMessageStarted, fx.agentMsgStarted, fx.agentMsgDelta1, fx.agentMsgDelta2,
+      fx.agentMsgCompleted, fx.cmdStarted, fx.cmdCompleted, agentMsg('msg_2', REPORT), fx.tokenUsage, fx.turnCompleted,
+    ].flatMap((f) => events(t.translate(f as any)));
+    expect(t.lastTurnTexts()).toEqual([fx.agentMsgCompleted.params.item.text, REPORT]);
+    // Why the Claude ring walk cannot serve Codex: the ring has deltas and tools, never a whole text.
+    expect(turnTextsFromEvents(ring)).toEqual([]);
+  });
+
+  it('the last ENDED turn: a running turn does not replace it; the next end does; a turn with no message gives []', () => {
+    const t = new CodexTranslator();
+    for (const f of [fx.turnStarted, agentMsg('m1', 'first'), fx.turnCompleted]) t.translate(f as any);
+    t.translate(fx.turnStarted as any);
+    t.translate(agentMsg('m2', 'second') as any);
+    expect(t.lastTurnTexts()).toEqual(['first']);
+    t.translate(fx.turnCompleted as any);
+    expect(t.lastTurnTexts()).toEqual(['second']);
+    for (const f of [fx.turnStarted, fx.cmdStarted, fx.cmdCompleted, fx.turnCompleted]) t.translate(f as any);
+    expect(t.lastTurnTexts()).toEqual([]);
   });
 });
 

@@ -59,6 +59,16 @@ describe('rule 1 — required fields for decide and go', () => {
     expect(missingCardFields('go', { ...GO_CARD, options: [{ label: 'merge now' }] })).toEqual(['options (each { label, effect })']);
   });
 
+  it('go options that are given but malformed count as missing; omitted ones do not', () => {
+    for (const options of ['bad', { label: 'merge now', effect: 'ships today' }, 7, true, ['merge now']]) {
+      expect(missingCardFields('go', { ...GO_CARD, options }), JSON.stringify(options)).toEqual(['options (each { label, effect })']);
+    }
+    for (const options of [undefined, null, []]) {
+      expect(missingCardFields('go', { ...GO_CARD, options }), JSON.stringify(options)).toEqual([]);
+    }
+    expect(missingCardFields('decide', { ...DECIDE_CARD, options: 'bad' })).toEqual(['options (at least 2, each { label, effect })']);
+  });
+
   it('the recommendation must equal one option label', () => {
     expect(missingCardFields('decide', { ...DECIDE_CARD, recommendation: 'A' })).toEqual(['recommendation (one of the option labels)']);
   });
@@ -84,9 +94,27 @@ describe('rule 2 — one decision per card', () => {
     }
   });
 
-  it('refuses 3 or more plan-style IDs', () => {
-    expect(holdsSeveralDecisions('Do D1, D4 and Q2 the same way?')).toBe(true);
+  it('refuses a range case-insensitively, and with longer IDs', () => {
+    for (const q of ['Accept D1 TO D9?', 'Accept PLAN-1 to PLAN-9?', 'Accept D1000 to D1009?', 'Ship LR-3 THROUGH LR-5?']) {
+      expect(holdsSeveralDecisions(q), q).toBe(true);
+    }
+  });
+
+  it('a "from X to Y" question is a change, not a range', () => {
+    for (const q of ['Move the overseer from GPT-4 to GPT-5?', 'Move backups from S3 to R2?', 'Switch the export from UTF-8 to UTF-16?']) {
+      expect(holdsSeveralDecisions(q), q).toBe(false);
+    }
+  });
+
+  it('refuses 3 or more plan-style IDs that share the same letter prefix', () => {
+    expect(holdsSeveralDecisions('Do D1, D3 and D4 the same way?')).toBe(true);
     expect(holdsSeveralDecisions('Keep LR-12, LR-14 and LR-20?')).toBe(true);
+    expect(holdsSeveralDecisions('Keep LR-12, LR14 and LR-20?')).toBe(true); // the hyphen does not change the prefix
+  });
+
+  it('3 IDs with different prefixes pass (product names such as S3, EC2 and R2)', () => {
+    expect(holdsSeveralDecisions('Keep S3, EC2 and R2 in the backup plan?')).toBe(false);
+    expect(holdsSeveralDecisions('Do D1, D4 and Q2 the same way?')).toBe(false);
   });
 
   it('a single LR-6 passes, and so do two IDs and plain questions', () => {
@@ -119,8 +147,8 @@ describe('rule 3 — a plan or doc path exists inside the project', () => {
     expect(findProjectPath('./docs/plans/../plans/readiness.md', [root])).toBe('docs/plans/readiness.md');
   });
 
-  it('accepts an absolute path inside the project, refuses one outside it', () => {
-    expect(findProjectPath(path.join(root, 'docs/plans/readiness.md'), [root])).toBe('docs/plans/readiness.md');
+  it('refuses an absolute path, inside the project or outside it (the spec needs a relative path)', () => {
+    expect(findProjectPath(path.join(root, 'docs/plans/readiness.md'), [root])).toBeNull();
     expect(findProjectPath(path.join(outside, 'secret.md'), [root])).toBeNull();
   });
 

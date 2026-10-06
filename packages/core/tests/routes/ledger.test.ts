@@ -127,4 +127,16 @@ describe('ledger routes', () => {
     expect(shown.body.text.startsWith('**N1 · Decide:** How many nights?')).toBe(true);
     expect(shown.body.text).toContain("**Overseer's note:** Mind the freeze.");
   });
+
+  it('decide-self without an item ID creates an item that is already decided (201); its checks are 422s', async () => {
+    const own = {
+      text: 'Which retry helper?', ...DECIDE_CARD, choice: 'A. 5 nights', reason: 'it covers one weekend',
+    };
+    const created = await request(app).post(`/api/sessions/${sid}/ledger/decide-self`).send({ caller: 'coord', ...own }).expect(201);
+    expect(created.body).toMatchObject({ id: 'N1', status: 'decided_by_overseer' });
+    expect(ledgerDb.getBySeq(db, sid, 1)).toMatchObject({ status: 'decided_by_overseer', sentAt: null, decidedChoice: 'A. 5 nights' });
+    const go = await request(app).post(`/api/sessions/${sid}/ledger/decide-self`).send({ caller: 'coord', ...own, kind: 'go' }).expect(422);
+    expect(go.body.error).toBe('Only the user can decide this item.');
+    await request(app).post(`/api/sessions/${sid}/ledger/decide-self`).send({ caller: 'agent', ...own }).expect(403);
+  });
 });

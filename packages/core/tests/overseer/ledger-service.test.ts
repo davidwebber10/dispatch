@@ -135,6 +135,15 @@ describe('card checks (decision cards, Unit 2)', () => {
     expect(ledgerDb.listBySession(db, 'p')).toEqual([]);
   });
 
+  it('rule 1: malformed go options are a 422 with the card text, not a 400', () => {
+    for (const options of ['bad', { label: 'merge', effect: 'ships' }]) {
+      expectLedgerError(() => addP({ options }, 'go'), 422, 'A decision card needs: options (each { label, effect }). Add them and try again.');
+      expectLedgerError(() => ledger.importItems('p', 'pcoord', [{ kind: 'go', text: 'Merge it?', ...GO_CARD, options }]), 422,
+        'A decision card needs: options (each { label, effect }). Add them and try again.');
+    }
+    expect(ledgerDb.listBySession(db, 'p')).toEqual([]);
+  });
+
   it('rule 1: a do item needs no card fields', () => {
     expect(ledger.add('p', 'pcoord', { kind: 'do', text: 'Check the banner on staging.' }).id).toBe('N1');
   });
@@ -159,6 +168,14 @@ describe('card checks (decision cards, Unit 2)', () => {
       expectLedgerError(() => addP({ source: { kind: 'doc', ref: escape } }), 422, `The source does not exist in this project: ${escape}.`);
       expectLedgerError(() => addP({ source: { kind: 'doc', ref: path.join(outside, 'x.md') } }), 422);
     } finally { fs.rmSync(outside, { recursive: true, force: true }); }
+  });
+
+  it('rule 3: an absolute plan or doc path fails, even inside the project', () => {
+    const inside = path.join(project, 'docs/plans/readiness.md');
+    for (const kind of ['plan', 'doc']) {
+      expectLedgerError(() => addP({ source: { kind, ref: inside } }), 422, `The source does not exist in this project: ${inside}.`);
+    }
+    expect(ledgerDb.listBySession(db, 'p')).toEqual([]);
   });
 
   it('rule 3: an agent source is an agent thread of this project, by label or ID; the item stores its label', () => {
@@ -385,6 +402,23 @@ describe('triage tools', () => {
     expectLedgerError(() => ledger.addFromAgent('s1', 'coord', { id: 'N9' }), 404);
   });
 
+  it('ledger_add_from_agent takes blocks: the overseer says what the item holds up, and the card ranks first', () => {
+    propose(); // N1, N2
+    ledger.add('s1', 'coord', { kind: 'decide', text: 'Which store goes first?', ...DECIDE_CARD }); // N3, sent first
+    now = T0 + 5 * 60_000;
+    ledger.addFromAgent('s1', 'coord', { id: 'N2', blocks: 'the switch to live mode' });
+    ledger.addFromAgent('s1', 'coord', { id: 'N1' });
+    expect(ledgerDb.getBySeq(db, 's1', 2)!.blocks).toBe('the switch to live mode');
+    expect(ledgerDb.getBySeq(db, 's1', 1)!.blocks).toBeNull();
+    ledger.list('s1', 'coord', { forRecap: true });
+    for (let i = 0; i < 6; i++) ledger.add('s1', 'coord', { kind: 'decide', text: `Old question ${i}?`, ...DECIDE_CARD });
+    now = T0 + 10 * 60_000;
+    ledger.list('s1', 'coord', { forRecap: true }); // now nothing is new: the top 5 rank by "holds up work", then age
+    const cards = [...ledger.list('s1', 'coord').text.matchAll(/^\*\*N(\d+) · Decide:\*\*/gm)].map((m) => Number(m[1]));
+    expect(cards[0]).toBe(2);
+    expect(renderCard(ledgerDb.getBySeq(db, 's1', 2)!, { now, timeZone: 'UTC' })).toContain('Holds up: the switch to live mode · Open 5 minutes');
+  });
+
   it('ledger_decide_self: records the choice and the reason; the recap shows it once', () => {
     propose();
     const out = ledger.decideSelf('s1', 'coord', { id: 'N2', choice: 'Monday', reason: 'it avoids the weekend peak' });
@@ -420,20 +454,83 @@ describe('triage tools', () => {
   });
 
   it('a reversal: ledger_resolve to answered on an overseer decision, with the user\'s checked quote; the count line counts it', () => {
-    propose();
-    ledger.decideSelf('s1', 'coord', { id: 'N2', choice: 'Monday', reason: 'it avoids the weekend peak' });
-    userSays('switch on a Tuesday', -1); // before the decision: never counts
+    propose(); // created at minute 0
+    userSays('switch on a Tuesday', 1); // after the item was created, but before the decision: never counts
+    now = T0 + 2 * 60_000;
+    ledger.decideSelf('s1', 'coord', { id: 'N2', choice: 'Monday', reason: 'it avoids the weekend peak' }); // decided at minute 2
+    expect(ledgerDb.getBySeq(db, 's1', 2)).toMatchObject({ createdAt: min(0), decidedAt: min(2) });
     expectLedgerError(() => ledger.resolve('s1', 'coord', { id: 'N2', status: 'answered', quote: 'switch on a Tuesday' }), 422, quoteNotFoundAfterError(2));
     userSays('reverse N2, use Tuesday', 3);
     now = T0 + 4 * 60_000;
     const out = ledger.resolve('s1', 'coord', { id: 'N2', status: 'answered', quote: 'reverse N2, use Tuesday' });
     expect(out.status).toBe('answered');
+    expect(out.line.split('\n').pop()).toBe('  You reversed the overseer\'s choice "Monday": "reverse N2, use Tuesday" (Mon 16:03)');
     expect(ledgerDb.getBySeq(db, 's1', 2)).toMatchObject({ status: 'answered', quote: 'reverse N2, use Tuesday', decidedChoice: 'Monday' });
     expect(ledger.list('s1', 'coord').text).toContain('Overseer decisions in the last 7 days: 1. Reversed by you: 1.');
     // Only answered reverses an overseer decision; parking or withdrawing it is not a thing.
     ledger.decideSelf('s1', 'coord', { id: 'N1', choice: 'A. 5 nights', reason: 'x' });
     userSays('park N1', 5);
     expectLedgerError(() => ledger.resolve('s1', 'coord', { id: 'N1', status: 'parked', quote: 'park N1' }), 409, 'N1 is already decided_by_overseer.');
+  });
+
+  /** A low-level decision the overseer records itself (ledger_decide_self without an id). */
+  const OWN = {
+    text: 'Which retry helper?',
+    context: 'The sync retries failed writes. Two helpers can do it; both meet the plan.',
+    options: [
+      { label: 'the existing helper', effect: 'No new code; it already covers this case.' },
+      { label: 'a new helper', effect: 'About 80 lines of new code and tests.' },
+    ],
+    recommendation: 'the existing helper',
+    why: 'It already covers this case.',
+    default: 'The agent uses the existing helper.',
+    source: { kind: 'overseer' },
+    choice: 'the existing helper',
+    reason: 'it already covers this case',
+  };
+
+  it('ledger_decide_self without an id: a new item, already decided; the recap and the count show it; the user can reverse it', () => {
+    now = T0 + 60_000;
+    const out = ledger.decideSelf('s1', 'coord', OWN);
+    expect(out).toEqual({
+      id: 'N1', status: 'decided_by_overseer',
+      line: '- **N1 · Decided by overseer:** Which retry helper? → the existing helper. Reason: it already covers this case. (Reply "reverse N1" to change it.)',
+    });
+    expect(ledgerDb.getBySeq(db, 's1', 1)).toMatchObject({
+      kind: 'decide', status: 'decided_by_overseer', author: 'overseer', text: 'Which retry helper?', context: OWN.context,
+      options: OWN.options, recommendation: OWN.recommendation, recommendationWhy: OWN.why, defaultText: OWN.default,
+      sourceKind: 'overseer', decidedChoice: 'the existing helper', reason: 'it already covers this case',
+      createdAt: min(1), decidedAt: min(1), sentAt: null,
+    });
+    const recap = ledger.list('s1', 'coord', { forRecap: true }).text;
+    expect(recap).toContain('Needs you now:\n- none');
+    expect(recap).toContain('Decided since the last recap:\n- **N1 · Decided by overseer:** Which retry helper? → the existing helper.');
+    expect(recap).toContain('Overseer decisions in the last 7 days: 1. Reversed by you: 0.');
+
+    userSays('reverse N1, write a new helper', 3);
+    now = T0 + 4 * 60_000;
+    const reversed = ledger.resolve('s1', 'coord', { id: 'N1', status: 'answered', quote: 'reverse N1, write a new helper' });
+    expect(reversed.line.split('\n').pop()).toBe('  You reversed the overseer\'s choice "the existing helper": "reverse N1, write a new helper" (Mon 16:03)');
+    const next = ledger.list('s1', 'coord').text;
+    expect(next).toContain('Overseer decisions in the last 7 days: 1. Reversed by you: 1.');
+    expect(next).toContain('Decided since the last recap:\n- N1 [Decide] Which retry helper?');
+  });
+
+  it('ledger_decide_self without an id: forces decide, runs the card checks, and refuses a go kind and a user source', () => {
+    expectLedgerError(() => ledger.decideSelf('s1', 'coord', { ...OWN, kind: 'go' }), 422, ONLY_USER_ERROR);
+    userSays('use the existing helper', 1);
+    expectLedgerError(() => ledger.decideSelf('s1', 'coord', { ...OWN, source: { kind: 'user', ref: 'use the existing helper' } }), 422, ONLY_USER_ERROR);
+    const { why: _w, ...noWhy } = OWN;
+    expectLedgerError(() => ledger.decideSelf('s1', 'coord', noWhy), 422, 'A decision card needs: why. Add them and try again.');
+    expectLedgerError(() => ledger.decideSelf('s1', 'coord', { ...OWN, text: 'Keep D1 to D9 as they are?' }), 422, 'One decision per card. Add each decision on its own.');
+    expectLedgerError(() => ledger.decideSelf('s1', 'coord', { ...OWN, source: { kind: 'pr', ref: 'twelve' } }), 422, 'The source does not exist in this project: twelve.');
+    expectLedgerError(() => ledger.decideSelf('s1', 'coord', { ...OWN, text: ' ' }), 400);
+    expectLedgerError(() => ledger.decideSelf('s1', 'coord', { ...OWN, choice: '' }), 400);
+    expectLedgerError(() => ledger.decideSelf('s1', 'coord', { ...OWN, reason: undefined }), 400);
+    expectLedgerError(() => ledger.decideSelf('s1', 'agent', OWN), 403, NOT_OVERSEER_ERROR);
+    expect(ledgerDb.listBySession(db, 's1')).toEqual([]);
+    expect(ledger.decideSelf('s1', 'coord', { ...OWN, kind: 'do' }).id).toBe('N1'); // any other kind is a decide
+    expect(ledgerDb.getBySeq(db, 's1', 1)!.kind).toBe('decide');
   });
 
   it('ledger_mark_default: the item stays open and moves to "Running on defaults"', () => {

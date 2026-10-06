@@ -1,7 +1,7 @@
 // The decision card, the one-line forms and the recap sections (decision cards spec 2026-10-06, Unit 5).
 import { describe, it, expect } from 'vitest';
 import { parseOptions, type LedgerItem } from '../../src/db/ledger.js';
-import { renderCard, renderOneLine, renderDefaultLine, renderOverseerDecisionLine, renderCountLine, renderLedgerSections } from '../../src/overseer/ledger-render.js';
+import { renderCard, renderItem, renderOneLine, renderDefaultLine, renderOverseerDecisionLine, renderCountLine, renderLedgerSections } from '../../src/overseer/ledger-render.js';
 
 const DAY = 86_400_000;
 const NOW = Date.parse('2026-10-06T18:00:00.000Z');
@@ -130,6 +130,20 @@ describe('the one-line forms', () => {
     const n9 = item({ seq: 9, text: 'Abort when duplicates pass 1%?', defaultText: 'abort above 1%', recommendation: 'keep', onDefaultSince: '2026-10-01T09:00:00.000Z' });
     expect(renderDefaultLine(n9, ctx)).toBe('- **N9 · Decide:** Abort when duplicates pass 1%? Running on the default "abort above 1%" since Oct 1. Recommended: keep. (type `show N9`)');
     expect(renderDefaultLine({ ...n9, defaultText: 'Abort above 1%.' }, ctx)).toContain('Running on the default "Abort above 1%" since Oct 1.');
+    // An imported item keeps its label here too, as in the Needs you now line.
+    expect(renderDefaultLine({ ...n9, origin: 'imported' }, ctx)).toBe('- **N9 · Decide:** Abort when duplicates pass 1%? Running on the default "abort above 1%" since Oct 1. Recommended: keep. Imported, not checked. (type `show N9`)');
+  });
+
+  it('a reversal reads as one, not as an approval', () => {
+    const reversed = item({
+      seq: 21, text: 'Which retry helper?', status: 'answered', decidedChoice: 'the existing one', reason: 'it covers this case',
+      decidedAt: ago(DAY), quote: 'reverse N21, use the new helper', quoteAt: '2026-10-06T16:51:00.000Z',
+    });
+    expect(renderItem(reversed, ctx).split('\n').pop()).toBe('  You reversed the overseer\'s choice "the existing one": "reverse N21, use the new helper" (Tue 16:51)');
+    expect(renderCard(reversed, ctx)).toContain('**Outcome:** You reversed the overseer\'s choice "the existing one": "reverse N21, use the new helper" (Tue 16:51)');
+    expect(renderItem(reversed, ctx)).not.toContain('You approved');
+    // The user's own answer still reads "You approved".
+    expect(renderItem(item({ status: 'answered', quote: 'A', quoteAt: '2026-10-06T16:51:00.000Z' }), ctx)).toContain('You approved: "Which store goes first?" → "A" (Tue 16:51)');
   });
 
   it('Decided by overseer', () => {

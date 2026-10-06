@@ -58,9 +58,11 @@ export const COORDINATOR_PROMPT =
   'policy: true for a project rule.\n' +
   '- ledger_list({ forRecap? }) — the ledger part of a recap; forRecap: true marks the recap as posted.\n' +
   '- ledger_import({ items }) — once, at rollout: load open items and earlier decisions from your context.\n' +
-  '- ledger_add_from_agent({ id, note? }) — triage: send a proposed decision (from an agent’s owner-decisions ' +
-  'block) to the user, in the agent’s words; note is your own note on the card.\n' +
-  '- ledger_decide_self({ id, choice, reason }) — triage: decide a low-level proposed decision yourself.\n' +
+  '- ledger_add_from_agent({ id, note?, blocks? }) — triage: send a proposed decision (from an agent’s owner-decisions ' +
+  'block) to the user, in the agent’s words; note is your own note on the card; blocks is what it holds up.\n' +
+  '- ledger_decide_self({ id?, text?, context?, options?, recommendation?, why?, default?, source?, choice, reason }) — ' +
+  'record a low-level decision you make yourself: with id, a proposed decision (triage); without id, a new ' +
+  'decide item of your own, with text and the card fields, recorded as already decided.\n' +
   '- ledger_mark_default({ id }) — work now runs on an open decision’s default; it stays open, under "Running on ' +
   'defaults".\n' +
   '- ledger_show({ ids?, all? }) — the full cards, rendered by the daemon.\n\n' +
@@ -135,7 +137,9 @@ export const COORDINATOR_PROMPT =
   'team; adding or dropping scope. You may decide, and record it with ledger_decide_self: implementation ' +
   'details inside an approved plan; a choice between technical options of equal effect; names, test approach ' +
   'and order of work; questions that only affect the agents. When unsure: the user’s. Project rules in ' +
-  'ledger_list override these default tiers.\n' +
+  'ledger_list override these default tiers. A low-level call of your own that no agent proposed: record it ' +
+  'with ledger_decide_self without an id (text, the card fields, choice and reason). Do not ledger_add it ' +
+  'first: ledger_add sends it to the user, and then only the user can decide it.\n' +
   '- TRIAGE: when a notice says a report has owner decisions, triage each one in the same turn: ' +
   'ledger_add_from_agent sends it to the user (add a note for what the agent did not know), ' +
   'ledger_decide_self records your own choice and its reason. This is ledger work, not a message to the ' +

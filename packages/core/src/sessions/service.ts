@@ -1399,26 +1399,14 @@ export class SessionService {
   /**
    * The texts of the agent's last turn, newest first, in FULL (not the 600-character summary that
    * notices use). The newest is the agent's final message; the earlier ones matter when the agent
-   * wrote its report, then called a tool (report_status) and said a last short line. The walk stops
-   * at the previous turn's `result`. Falls back to the transcript's last assistant text.
+   * wrote its report, then called a tool (report_status) and said a last short line. They come
+   * from the harness (IStructuredManager.getTurnTexts), so a Codex or Grok agent, whose ring holds
+   * only deltas, reads the same as a Claude one; a sub-agent's texts are never included. Falls
+   * back to the transcript's last assistant text when no harness runs the terminal.
    */
   private lastTurnTexts(terminalId: string): string[] {
-    const events = (this.structuredManagerForTerminal(terminalId)?.getEvents(terminalId) ?? []) as any[];
-    const texts: string[] = [];
-    let endSeen = false;
-    for (let i = events.length - 1; i >= 0; i--) {
-      const e = events[i];
-      if (e?.type === 'result') {
-        if (endSeen || texts.length) break; // the end of the turn before this one
-        endSeen = true;
-        continue;
-      }
-      if (e?.type === 'assistant' && Array.isArray(e.message?.content)) {
-        const text = e.message.content.filter((b: any) => b?.type === 'text').map((b: any) => b.text ?? '').join('').trim();
-        if (text) texts.push(text);
-      }
-    }
-    if (texts.length || events.length) return texts;
+    const live = this.structuredManagerForTerminal(terminalId)?.getTurnTexts(terminalId);
+    if (live) return [...live].reverse();
     const items = this.getConversation(terminalId, { limit: 50 }).items.filter((it) => it.kind === 'assistant' && it.text);
     return items.length ? [String(items[items.length - 1].text)] : [];
   }

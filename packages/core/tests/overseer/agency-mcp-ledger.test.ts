@@ -156,7 +156,7 @@ describe('agency-mcp ledger tools', () => {
       .mockResolvedValueOnce(ok({ id: 'N31', status: 'decided_by_overseer', line: '- **N31 · Decided by overseer:** …' }))
       .mockResolvedValueOnce(ok({ id: 'N9', line: '- **N9 · Decide:** …' }));
     global.fetch = fetchMock as any;
-    expect(JSON.parse(((await callTool('ledger_add_from_agent', { id: 'N30', note: 'Mind the freeze.' })).content[0] as any).text)).toEqual({ id: 'N30', status: 'open' });
+    expect(JSON.parse(((await callTool('ledger_add_from_agent', { id: 'N30', note: 'Mind the freeze.', blocks: 'the deploy' })).content[0] as any).text)).toEqual({ id: 'N30', status: 'open' });
     await callTool('ledger_decide_self', { id: 'N31', choice: 'the existing helper', reason: 'it covers this case' });
     await callTool('ledger_mark_default', { id: 'N9' });
     expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([
@@ -164,11 +164,33 @@ describe('agency-mcp ledger tools', () => {
       'http://localhost:9999/api/sessions/sess-1/ledger/N31/decide-self',
       'http://localhost:9999/api/sessions/sess-1/ledger/N9/mark-default',
     ]);
+    expect((TOOLS.find((t) => t.name === 'ledger_add_from_agent')! as any).inputSchema.properties.blocks.type).toBe('string');
     expect(fetchMock.mock.calls.map((c) => JSON.parse(c[1].body))).toEqual([
-      { note: 'Mind the freeze.', caller: 'coord-1' },
+      { note: 'Mind the freeze.', blocks: 'the deploy', caller: 'coord-1' },
       { choice: 'the existing helper', reason: 'it covers this case', caller: 'coord-1' },
       { caller: 'coord-1' },
     ]);
+  });
+
+  it('ledger_decide_self without an id records a new decision: it POSTs the card fields to /decide-self', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(ok({ id: 'N40', status: 'decided_by_overseer', line: '- **N40 · Decided by overseer:** …' }, 201));
+    global.fetch = fetchMock as any;
+    const args = { text: 'Which retry helper?', context: 'x'.repeat(30), choice: 'the existing helper', reason: 'it covers this case' };
+    const out = await callTool('ledger_decide_self', args);
+    expect(out.isError).toBeUndefined();
+    expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/sessions/sess-1/ledger/decide-self');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ ...args, caller: 'coord-1' });
+  });
+
+  it('ledger_decide_self takes either an id or the question text; the schema says so', async () => {
+    const fetchMock = vi.fn();
+    global.fetch = fetchMock as any;
+    expect((await callTool('ledger_decide_self', { choice: 'A', reason: 'x' })).isError).toBe(true); // neither id nor text
+    expect(fetchMock).not.toHaveBeenCalled();
+    const tool = TOOLS.find((t) => t.name === 'ledger_decide_self')! as any;
+    expect(tool.inputSchema.required).toEqual(['choice', 'reason']);
+    expect(Object.keys(tool.inputSchema.properties)).toEqual(expect.arrayContaining(['id', 'text', 'context', 'options', 'recommendation', 'why', 'default', 'source', 'choice', 'reason']));
+    expect(tool.inputSchema.properties.kind).toBeUndefined(); // always a decide item
   });
 
   it('ledger_decide_self surfaces the protected-item refusal as is', async () => {

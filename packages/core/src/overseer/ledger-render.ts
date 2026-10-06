@@ -5,6 +5,7 @@
  * Labels (exact):
  *   You said: "<quote>" (Mon 16:51)                    — a statement
  *   You approved: "<text>" → "<quote>" (Mon 16:51)     — answered on go/decide
+ *   You reversed the overseer's choice "<choice>": "<quote>" (Mon 16:51) — answered after ledger_decide_self
  *   Proposed by <author>, not approved                 — open
  *   I read this as: …                                  — its own line, only when reading is set
  *   Imported, not checked                              — imported, no checked quote yet
@@ -65,6 +66,8 @@ function attribution(item: LedgerItem, stamp: string): string[] {
       return imported.length ? imported : [`  Proposed by ${item.author}, not approved`];
     case 'answered':
       if (imported.length) return imported;
+      // A reversal: the user answered a decision the overseer had made itself (decided_at is set).
+      if (item.decidedAt !== null) return [`  You reversed the overseer's choice "${item.decidedChoice ?? ''}": "${item.quote}"${stamp}`];
       if (item.kind === 'go' || item.kind === 'decide') return [`  You approved: "${item.text}" → "${item.quote}"${stamp}`];
       if (item.kind === 'do') return [`  You said: "${item.quote}"${stamp}`];
       return []; // a statement carries its quote on the first line
@@ -243,7 +246,8 @@ export function renderDefaultLine(item: LedgerItem, ctx: { timeZone?: string }):
   const value = (item.defaultText ?? '').trim().replace(/\.$/, '');
   const since = item.onDefaultSince ? ` since ${formatDay(item.onDefaultSince, ctx.timeZone)}` : '';
   const rec = item.recommendation ? ` Recommended: ${sentence(item.recommendation)}` : '';
-  return `- ${title(item)} ${item.text} Running on the default${value ? ` "${value}"` : ''}${since}.${rec} ${showHint(item)}`;
+  const imported = isUnchecked(item) ? ' Imported, not checked.' : '';
+  return `- ${title(item)} ${item.text} Running on the default${value ? ` "${value}"` : ''}${since}.${rec}${imported} ${showHint(item)}`;
 }
 
 /** The one-line form of a decision the overseer made itself. */

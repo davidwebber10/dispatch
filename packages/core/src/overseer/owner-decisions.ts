@@ -26,32 +26,56 @@ export interface CaptureResult {
 
 export type CaptureOutcome = { kind: 'none' } | { kind: 'broken'; reason: string } | ({ kind: 'captured' } & CaptureResult);
 
-const OPEN_FENCE = /^[ \t]*(`{3,}|~{3,})[ \t]*owner-decisions[ \t]*$/;
+/** The size limits of one block. A larger block is a broken block: no item changes. */
+export const MAX_BLOCK_BYTES = 64 * 1024;
+export const MAX_BLOCK_ENTRIES = 50;
 
-/** Find the LAST owner-decisions block in a message and read its JSON array. */
+/** A fence line (CommonMark): 0 to 3 spaces, 3 or more backticks or tildes, then the info string. */
+const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+
+/**
+ * Find the LAST top-level owner-decisions block in a message and read its JSON array. The scan
+ * runs from the top and tracks open fences as CommonMark does: a fence closes only with the same
+ * character, at least as long, and nothing else on the line. So an owner-decisions fence inside
+ * another fence (a quoted example, such as the spec's four-backtick `text` fence) is content, and
+ * so is one indented 4 or more spaces (an indented code block). The size limits apply before the
+ * JSON is read.
+ */
 export function parseOwnerDecisionsBlock(text: string): BlockParse {
   const lines = text.split(/\r?\n/);
-  let open = -1;
-  let fence = '';
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const m = lines[i].match(OPEN_FENCE);
-    if (m) { open = i; fence = m[1]; break; }
+  let last: { body: number; end: number } | null = null; // `end` -1: the fence never closes
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(FENCE_LINE);
+    if (!m) continue;
+    const [, fence, info] = m;
+    if (fence[0] === '`' && info.includes('`')) continue; // not a fence: a backtick info string has no backtick
+    const close = new RegExp(`^ {0,3}${fence[0] === '`' ? '`' : '~'}{${fence.length},}[ \\t]*$`);
+    let end = -1;
+    for (let j = i + 1; j < lines.length; j++) {
+      if (close.test(lines[j])) { end = j; break; }
+    }
+    if (info.trim() === 'owner-decisions') last = { body: i + 1, end };
+    if (end === -1) break; // an unclosed fence runs to the end of the message
+    i = end;
   }
-  if (open === -1) return { kind: 'none' };
-  const close = new RegExp(`^[ \\t]*${fence[0] === '`' ? '`' : '~'}{${fence.length},}[ \\t]*$`);
-  let end = -1;
-  for (let i = open + 1; i < lines.length; i++) {
-    if (close.test(lines[i])) { end = i; break; }
+  if (!last) return { kind: 'none' };
+  if (last.end === -1) return { kind: 'broken', reason: 'the block has no closing fence' };
+  const body = lines.slice(last.body, last.end).join('\n');
+  const bytes = Buffer.byteLength(body, 'utf8');
+  if (bytes > MAX_BLOCK_BYTES) {
+    return { kind: 'broken', reason: `the block has ${bytes} bytes of text; the limit is ${MAX_BLOCK_BYTES} (64 KB)` };
   }
-  if (end === -1) return { kind: 'broken', reason: 'the block has no closing fence' };
   let parsed: unknown;
   try {
-    parsed = JSON.parse(lines.slice(open + 1, end).join('\n'));
+    parsed = JSON.parse(body);
   } catch (err: any) {
     const detail = String(err?.message ?? err).trim().replace(/\.$/, '');
     return { kind: 'broken', reason: `it is not valid JSON (${detail})` };
   }
   if (!Array.isArray(parsed)) return { kind: 'broken', reason: 'it is not a JSON array' };
+  if (parsed.length > MAX_BLOCK_ENTRIES) {
+    return { kind: 'broken', reason: `the block has ${parsed.length} entries; the limit is ${MAX_BLOCK_ENTRIES}` };
+  }
   return { kind: 'ok', entries: parsed };
 }
 
