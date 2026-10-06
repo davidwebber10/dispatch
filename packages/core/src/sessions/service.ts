@@ -1138,7 +1138,7 @@ export class SessionService {
           ? { justStarted: [...(opts.justStarted ?? []), agentTerminalId] }
           : { exclude: [agentTerminalId], justStarted: opts.justStarted },
       );
-      message = `${note}\n\n${formatBatchFooter(state, ledgerDb.listOpenSeqs(this.db, agent.session_id))}`;
+      message = `${note}\n\n${formatBatchFooter(state, ledgerDb.listOpenSeqs(this.db, agent.session_id), ledgerDb.listProposedSeqs(this.db, agent.session_id))}`;
       batch = state;
     } catch (err) {
       console.error(`batch line: failed for agent ${agentTerminalId}; the notice goes out without it`, err);

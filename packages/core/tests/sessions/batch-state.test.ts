@@ -95,4 +95,18 @@ describe('formatBatchFooter — the spec texts, verbatim', () => {
       '(ledger_list with forRecap, and list_agents).\n' +
       'Open ledger items: none.');
   });
+
+  // Decision cards, Unit 6: one more sentence when proposed items exist.
+  it('gains "Not yet triaged: …" when proposed items exist, busy or settled; nothing changes without them', () => {
+    const busy = { working: [{ id: 'b', label: 'Build X' }], queued: [], waiting: [] };
+    expect(formatBatchFooter(busy, [3], [30, 31]).endsWith('Open ledger items: N3.\nNot yet triaged: N30, N31.')).toBe(true);
+    expect(formatBatchFooter({ working: [], queued: [], waiting: [] }, [], [30])).toBe(
+      'Batch: no other agent is working or queued.\n' +
+      'If you start a next step now, write at most one line.\n' +
+      'If you start nothing, the batch has settled: post the recap now\n' +
+      '(ledger_list with forRecap, and list_agents).\n' +
+      'Open ledger items: none.\n' +
+      'Not yet triaged: N30.');
+    expect(formatBatchFooter(busy, [3], [])).toBe(formatBatchFooter(busy, [3]));
+  });
 });

@@ -69,9 +69,13 @@ export function isBusy(state: BatchState): boolean {
 const agents = (n: number) => `${n} agent${n === 1 ? '' : 's'}`;
 const labels = (refs: AgentRef[]) => refs.map((r) => `"${r.label}"`).join(', ');
 
-/** The Batch line block appended (after a blank line) to every agent notice. Texts from the spec, verbatim. */
-export function formatBatchFooter(state: BatchState, openSeqs: readonly number[]): string {
-  const open = `Open ledger items: ${openSeqs.length ? openSeqs.map((s) => `N${s}`).join(', ') : 'none'}.`;
+/**
+ * The Batch line block appended (after a blank line) to every agent notice. Texts from the spec,
+ * verbatim. Decision cards (Unit 6): when proposed items wait for triage, one more sentence names them.
+ */
+export function formatBatchFooter(state: BatchState, openSeqs: readonly number[], proposedSeqs: readonly number[] = []): string {
+  const open = `Open ledger items: ${openSeqs.length ? openSeqs.map((s) => `N${s}`).join(', ') : 'none'}.` +
+    (proposedSeqs.length ? `\nNot yet triaged: ${proposedSeqs.map((s) => `N${s}`).join(', ')}.` : '');
   const waiting = state.waiting.length ? `${agents(state.waiting.length)} waiting on you (${labels(state.waiting)})` : '';
   if (isBusy(state)) {
     const parts: string[] = [];
