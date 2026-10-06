@@ -393,6 +393,7 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
       result = await session.conn.request('session/prompt', { sessionId: session.sessionId, prompt: toPrompt(content) });
     } catch (err) {
       if (this.sessions.get(session.terminalId) !== session) return;
+      session.translator.abortTurn(); // the failed turn's prose must not join the next turn's texts
       this.pushEvent(session, { type: 'result', subtype: 'error', is_error: true, result: String(err) });
       session.turnActive = false;
       this.emit('failed', session.terminalId);

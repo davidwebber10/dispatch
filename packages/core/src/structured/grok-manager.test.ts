@@ -55,6 +55,19 @@ rl.on('line', (line) => {
       notify('_x.ai/session_notification', { sessionId, update: { sessionUpdate: 'turn_completed', stop_reason: 'end_turn', usage: {} } });
       return finish('end_turn');
     }
+    if (MODE === 'fail-then-ok') {
+      // Turn 1: prose, a tool call (closes the prose block), then the prompt RPC fails.
+      // Turn 2: a normal turn with its own prose.
+      global.prompts = (global.prompts || 0) + 1;
+      if (global.prompts === 1) {
+        notify('session/update', { sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'STALE-BLOCK' } } });
+        notify('session/update', { sessionId, update: { sessionUpdate: 'tool_call', toolCallId: 'call-1', title: 'read', kind: 'read', status: 'pending' } });
+        return write({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'boom' } });
+      }
+      notify('session/update', { sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Done.' } } });
+      notify('_x.ai/session_notification', { sessionId, update: { sessionUpdate: 'turn_completed', stop_reason: 'end_turn', usage: {} } });
+      return finish('end_turn');
+    }
     if (MODE === 'silent') {
       // A turn that ends with NO turn_completed notification — the prompt response is the
       // only boundary signal. (Also what a cancel looks like.)
@@ -122,6 +135,18 @@ describe('GrokStructuredSessionManager', () => {
     });
     const init: any = m.getEvents('t1').find((e: any) => e?.type === 'system' && e?.subtype === 'init');
     expect(init.model).toBe('grok-4.6');
+  });
+
+  it('a failed prompt does not leak its texts into the next turn (owner-decisions capture)', async () => {
+    const m = makeManager();
+    m.spawn('t1', spawnOpts({ env: { FAKE_MODE: 'fail-then-ok' } }));
+    const failed = until<void>((resolve) => m.on('failed', () => resolve()));
+    m.sendMessage('t1', 'first', 'user');
+    await failed;
+    const idle = until<void>((resolve) => m.on('idle', () => resolve()));
+    m.sendMessage('t1', 'second', 'user');
+    await idle;
+    expect(m.getTurnTexts('t1')).toEqual(['Done.']);
   });
 
   it('sendMessage → user echo + busy, streamed events, then idle with the turn summary', async () => {

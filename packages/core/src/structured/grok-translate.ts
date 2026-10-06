@@ -92,6 +92,24 @@ export class GrokTranslator {
   lastTurnTexts(): string[] {
     return [...this.endedTurnTexts];
   }
+
+  /**
+   * A turn that failed (the session/prompt RPC was rejected) never reaches finishTurn, so its
+   * per-turn state would survive into the next turn — and its prose, possibly an owner-decisions
+   * block, would be captured as part of that later turn. Drop it all, emitting nothing: the
+   * manager already surfaces the failure. The failed turn's texts are not "ended turn" texts
+   * either, so endedTurnTexts is cleared too.
+   */
+  abortTurn(): void {
+    this.turnTexts = [];
+    this.endedTurnTexts = [];
+    this.lastAgentText = '';
+    this.textAcc = '';
+    this.openBlock = null;
+    this.messageStarted = false;
+    this.nextBlockIndex = 0;
+    this.usageReportedThisTurn = false;
+  }
   /** tool_call ids whose tool_result has already been emitted (updates repeat per status). */
   private resultEmitted = new Set<string>();
   /** The ACP session's real model id (models.currentModelId), kept to stamp usage-bearing

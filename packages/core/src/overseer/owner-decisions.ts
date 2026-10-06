@@ -61,7 +61,13 @@ export function parseOwnerDecisionsBlock(text: string): BlockParse {
   if (!last) return { kind: 'none' };
   if (last.end === -1) return { kind: 'broken', reason: 'the block has no closing fence' };
   const body = lines.slice(last.body, last.end).join('\n');
-  const bytes = Buffer.byteLength(body, 'utf8');
+  // Count the ORIGINAL text, not the LF-joined copy: a CRLF line end is 2 bytes as sent, so
+  // normalizing first would let a CRLF-padded block slip past the limit. The raw lines keep
+  // their own terminators (the same line boundaries as `lines`); the body's final line end,
+  // before the closing fence, is not part of the body.
+  const rawLines = text.split(/(?<=\n)/);
+  const rawBody = rawLines.slice(last.body, last.end).join('').replace(/\r?\n$/, '');
+  const bytes = Buffer.byteLength(rawBody, 'utf8');
   if (bytes > MAX_BLOCK_BYTES) {
     return { kind: 'broken', reason: `the block has ${bytes} bytes of text; the limit is ${MAX_BLOCK_BYTES} (64 KB)` };
   }

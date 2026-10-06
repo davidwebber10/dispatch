@@ -73,6 +73,17 @@ describe('parseOwnerDecisionsBlock', () => {
     // Bytes, not characters: 65536 characters with one 2-byte "é" are 65537 bytes.
     expect(parseOwnerDecisionsBlock(block(body(MAX_BLOCK_BYTES).replace('x', 'é')))).toEqual({ kind: 'broken', reason: 'the block has 65537 bytes of text; the limit is 65536 (64 KB)' });
   });
+
+  it('the size limit counts the original text, so CRLF line ends count as 2 bytes each', () => {
+    // 40,000 CRLF padding lines: 40 KB after line ends are normalized, but 80 KB as sent.
+    const raw = '[\r\n' + '\r\n'.repeat(40_000) + '{"id":"A"}]';
+    const bytes = Buffer.byteLength(raw, 'utf8');
+    expect(bytes).toBeGreaterThan(MAX_BLOCK_BYTES);
+    expect(Buffer.byteLength(raw.replace(/\r\n/g, '\n'), 'utf8')).toBeLessThan(MAX_BLOCK_BYTES);
+    expect(parseOwnerDecisionsBlock(block(raw))).toEqual({ kind: 'broken', reason: `the block has ${bytes} bytes of text; the limit is 65536 (64 KB)` });
+    // The same padding with LF line ends stays under the limit and parses.
+    expect(parseOwnerDecisionsBlock(block(raw.replace(/\r\n/g, '\n'))).kind).toBe('ok');
+  });
 });
 
 describe('formatSeqList', () => {
