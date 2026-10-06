@@ -19,3 +19,19 @@ export const GO_CARD = {
   default: 'Nothing happens.',
   source: { kind: 'overseer' },
 } as const;
+
+/** A valid owner-decisions entry, as a planner writes it (the spec's example). */
+export const LR6 = {
+  id: 'LR-6',
+  kind: 'decide',
+  question: 'How many clean nights before live mode?',
+  context: 'The new sync runs in shadow mode. It computes changes but does not write them. Live mode lets it write. This sets how much clean history we need first.',
+  options: [
+    { label: 'A. 5 nights', effect: 'Live mode on Oct 14 at the earliest. Covers one weekend.' },
+    { label: 'B. 10 nights', effect: 'Oct 19. Covers two weekends.' },
+  ],
+  recommendation: 'A. 5 nights',
+  why: 'The weekend pattern is the known risk; 5 nights cover one weekend.',
+  default: 'Nothing switches; the shadow run continues.',
+  where: { path: 'docs/plans/readiness.md', section: 'Owner decisions' },
+};

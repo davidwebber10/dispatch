@@ -345,6 +345,72 @@ export class LedgerService {
     return { ids: created.map((i) => `N${i.seq}`) };
   }
 
+  /**
+   * Unit 3: the entries of an agent's owner-decisions block become `proposed` items, in the agent's
+   * own words. Each entry passes the same card checks as ledger_add (the source is the agent, with
+   * `where.path` and `where.section` as the place and `id` as the source ID); an entry that fails is
+   * skipped and reported by its id and the failed check. A repeat of the same id from the same agent
+   * with the same question changes nothing; with a changed question, the new item supersedes the old
+   * one while the old one is still proposed (after triage, it is a new item without a link).
+   * Daemon-internal: no caller check.
+   */
+  captureAgentBlock(
+    sessionId: string,
+    agent: { id: string; label: string; mission: string | null },
+    entries: readonly unknown[],
+  ): { created: number[]; skipped: { id: string; reason: string }[] } {
+    const created: number[] = [];
+    const skipped: { id: string; reason: string }[] = [];
+    const same = (a: string, b: string) => a.replace(/\s+/g, ' ').trim() === b.replace(/\s+/g, ' ').trim();
+    this.db.transaction(() => {
+      entries.forEach((raw, i) => {
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) { skipped.push({ id: `#${i + 1}`, reason: 'the entry is not an object' }); return; }
+        const e = raw as Record<string, unknown>;
+        const id = typeof e.id === 'string' || typeof e.id === 'number' ? String(e.id).trim() : '';
+        if (!id) { skipped.push({ id: `#${i + 1}`, reason: 'the entry has no id' }); return; }
+        const question = str(e.question);
+        if (!question) { skipped.push({ id, reason: 'the entry has no question' }); return; }
+        const kind = e.kind === undefined ? 'decide' : e.kind;
+        if (kind !== 'decide' && kind !== 'go') { skipped.push({ id, reason: "kind must be 'decide' or 'go'" }); return; }
+        const where = (e.where && typeof e.where === 'object' ? e.where : {}) as Record<string, unknown>;
+        const wherePath = str(where.path);
+        const whereSection = str(where.section);
+        const place = wherePath ? (whereSection ? `${wherePath}#${whereSection}` : wherePath) : (whereSection ? `#${whereSection}` : undefined);
+        let card: CardFields;
+        try {
+          card = this.checkCard(sessionId, null, kind, question, {
+            context: e.context, options: e.options, recommendation: e.recommendation, why: e.why, default: e.default,
+            source: { kind: 'agent', ref: agent.id, section: place, id },
+          });
+        } catch (err) {
+          if (err instanceof LedgerError) { skipped.push({ id, reason: err.message }); return; }
+          throw err;
+        }
+        const previous = this.db.prepare(`SELECT seq FROM ledger_items WHERE session_id = ? AND agent_terminal_id = ? AND agent_decision_id = ?
+          ORDER BY seq DESC LIMIT 1`).get(sessionId, agent.id, id) as { seq: number } | undefined;
+        const old = previous ? ledgerDb.getBySeq(this.db, sessionId, previous.seq) : null;
+        if (old && same(old.text, question)) return; // the same decision again: nothing changes
+        const item = ledgerDb.create(this.db, {
+          sessionId,
+          kind,
+          text: question,
+          author: agent.label,
+          ...card,
+          sourceRef: agent.label,
+          blocks: str(e.blocks),
+          mission: agent.mission,
+          status: 'proposed',
+          agentTerminalId: agent.id,
+          agentDecisionId: id,
+          supersedes: old && old.status === 'proposed' ? old.seq : null,
+          now: this.nowIso(),
+        });
+        created.push(item.seq);
+      });
+    })();
+    return { created, skipped };
+  }
+
   /** The "Owner decisions (verbatim, from the ledger)" block for an agent hand-off. */
   handoff(sessionId: string, caller: unknown, rawIds: unknown): { block: string } {
     this.assertOverseer(sessionId, caller);

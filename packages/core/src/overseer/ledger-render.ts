@@ -158,6 +158,7 @@ export function renderSource(item: LedgerItem): string | null {
         const hash = item.sourceSection.indexOf('#');
         const file = hash === -1 ? item.sourceSection : item.sourceSection.slice(0, hash);
         const part = hash === -1 ? '' : item.sourceSection.slice(hash + 1);
+        if (!file) return `agent "${ref}"${part ? `, section "${part}"` : ''}${id}`;
         const word = /plan/i.test(file) ? 'plan' : 'doc';
         return `${word} \`${file}\`${part ? `, section "${part}"` : ''}${id}, from agent "${ref}"`;
       }
