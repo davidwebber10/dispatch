@@ -97,5 +97,8 @@ export async function loadCatalog(fetchImpl: typeof fetch = fetch, now = Date.no
   return entries;
 }
 
+/** Whatever is cached right now (fresh or stale), without fetching; null when never loaded. */
+export function peekCatalog(): CatalogEntry[] | null { return cache?.entries ?? null; }
+
 /** Test seam. */
 export function resetCatalogCache(): void { cache = null; }

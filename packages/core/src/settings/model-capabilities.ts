@@ -1,4 +1,4 @@
-import { loadCatalog } from './openrouter-catalog.js';
+import { loadCatalog, peekCatalog } from './openrouter-catalog.js';
 
 /**
  * Does a model accept a tool list? Every agent harness Dispatch drives (Claude Code, Codex,
@@ -54,6 +54,35 @@ async function loadModelsDev(fetchImpl: typeof fetch, now: number): Promise<Mode
 
 /** Test seam. */
 export function resetModelsDevCache(): void { modelsDevCache = null; }
+
+/**
+ * The spawn path is synchronous (spawnTerminal → spawnStructured, many call sites), so it
+ * cannot await a catalog. This answers from whatever is cached — null when the needed
+ * catalog has not loaded yet — and kicks the load so the NEXT ask (or the boot-time
+ * warmModelCapabilities) has it. Callers treat null as "tools on" and must not persist it.
+ */
+export function modelSupportsToolsCached(modelId: string, fetchImpl: typeof fetch = fetch, now = Date.now()): boolean | null {
+  const slash = modelId.indexOf('/');
+  if (slash <= 0) return true;
+  const provider = modelId.slice(0, slash);
+  const id = modelId.slice(slash + 1);
+  if (provider === 'openrouter') {
+    const entries = peekCatalog();
+    if (!entries) { void modelSupportsTools(modelId, fetchImpl, now); return null; }
+    const entry = entries.find((e) => e.id === modelId);
+    return entry ? entry.tools : true;
+  }
+  if (!modelsDevCache) { void modelSupportsTools(modelId, fetchImpl, now); return null; }
+  return modelsDevCache.index[provider]?.[id] !== false;
+}
+
+/** Load both catalogs once (server boot). An outage is swallowed: lookups then fail open. */
+export async function warmModelCapabilities(fetchImpl: typeof fetch = fetch, now = Date.now()): Promise<void> {
+  await Promise.all([
+    loadCatalog(fetchImpl, now).catch(() => undefined),
+    loadModelsDev(fetchImpl, now).catch(() => undefined),
+  ]);
+}
 
 export async function modelSupportsTools(modelId: string, fetchImpl: typeof fetch = fetch, now = Date.now()): Promise<boolean> {
   const slash = modelId.indexOf('/');

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { modelSupportsTools, resetModelsDevCache, MODELS_DEV_URL } from './model-capabilities.js';
+import { modelSupportsTools, modelSupportsToolsCached, warmModelCapabilities, resetModelsDevCache, MODELS_DEV_URL } from './model-capabilities.js';
 import { OPENROUTER_CATALOG_URL, resetCatalogCache } from './openrouter-catalog.js';
 
 const openrouter = {
@@ -54,6 +54,25 @@ describe('modelSupportsTools', () => {
     const down = vi.fn(async () => ({ ok: false, status: 503, json: async () => ({}) })) as unknown as typeof fetch;
     expect(await modelSupportsTools('openrouter/cognitivecomputations/dolphin-mistral-24b-venice-edition', down)).toBe(true);
     expect(await modelSupportsTools('ollama/gemma3', down)).toBe(true);
+  });
+
+  it('answers synchronously from the caches once they are warm, and null (kicking a load) before', async () => {
+    const fetchImpl = fakeFetch();
+    // Cold: the spawn path cannot wait, so it gets "unknown" — and the kick fills the cache.
+    expect(modelSupportsToolsCached('openrouter/cognitivecomputations/dolphin-mistral-24b-venice-edition', fetchImpl)).toBeNull();
+    expect(modelSupportsToolsCached('ollama/gemma3', fetchImpl)).toBeNull();
+    await warmModelCapabilities(fetchImpl);
+    expect(modelSupportsToolsCached('openrouter/cognitivecomputations/dolphin-mistral-24b-venice-edition', fetchImpl)).toBe(false);
+    expect(modelSupportsToolsCached('openrouter/~z-ai/glm-latest', fetchImpl)).toBe(true);
+    expect(modelSupportsToolsCached('ollama/gemma3', fetchImpl)).toBe(false);
+    expect(modelSupportsToolsCached('ollama/unlisted', fetchImpl)).toBe(true);
+    expect(modelSupportsToolsCached('no-slash-at-all', fetchImpl)).toBe(true);
+  });
+
+  it('warmModelCapabilities swallows a catalog outage', async () => {
+    const down = vi.fn(async () => ({ ok: false, status: 503, json: async () => ({}) })) as unknown as typeof fetch;
+    await expect(warmModelCapabilities(down)).resolves.toBeUndefined();
+    expect(modelSupportsToolsCached('openrouter/anything', down)).toBeNull();
   });
 
   it('fetches models.dev once per hour', async () => {
