@@ -1,7 +1,7 @@
 # Overseer decision cards — design (follows the structured recap, PR #62)
 
-Date: 2026-10-06. **DRAFT — in review by the user, not approved.** Thread "Opus 5.5
-Xhigh Handle Business". This spec extends
+Date: 2026-10-06. Approved by the user on 2026-10-06 ("spec looks good to me").
+Thread "Opus 5.5 Xhigh Handle Business". This spec extends
 `docs/superpowers/specs/2026-10-05-overseer-structured-recap-design.md` and is built
 on top of its branch.
 
