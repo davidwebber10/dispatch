@@ -24,7 +24,7 @@ describe('ledger routes', () => {
   it('POST /ledger creates N1 (201); a non-overseer gets 403 with the fixed text', async () => {
     const ok = await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'go', text: 'Merge PR #12.', ...GO_CARD }).expect(201);
     expect(ok.body.id).toBe('N1');
-    expect(ok.body.line).toContain('N1 [Go] Merge PR #12.');
+    expect(ok.body.line.startsWith('**N1 · Go:** Merge PR #12.\n\n')).toBe(true); // the full card
     const denied = await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'agent', kind: 'go', text: 'x', ...GO_CARD }).expect(403);
     expect(denied.body.error).toBe("Only the project's overseer can change the ledger.");
   });
@@ -91,7 +91,7 @@ describe('ledger routes', () => {
     const wider = await request(app).post(`/api/sessions/${sid}/ledger`)
       .send({ caller: 'coord', kind: 'decide', text: 'Also set the second store to Draft?', ...DECIDE_CARD, supersedes: 'N3' }).expect(201);
     expect(wider.body.id).toBe('N4');
-    expect(wider.body.line).toContain('\n  Original question (N3): "Set the first store to Draft?"');
+    expect(wider.body.line).toContain('\n\n**Original question (N3):** "Set the first store to Draft?"\n\n');
     const list = await request(app).post(`/api/sessions/${sid}/ledger/list`).send({ caller: 'coord' }).expect(200);
     expect(list.body.openIds).toEqual(['N1', 'N2', 'N4']);
   });

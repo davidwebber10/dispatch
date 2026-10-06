@@ -10,6 +10,7 @@ import * as ledgerDb from '../../src/db/ledger.js';
 import * as messagesDb from '../../src/db/coordinator-messages.js';
 import { LedgerService, LedgerError, NOT_OVERSEER_ERROR, parseLedgerId, quoteNotFoundAfterError, QUOTE_NOT_FOUND_STATEMENT_ERROR } from '../../src/overseer/ledger-service.js';
 import { OK_ONLY_ERROR } from '../../src/overseer/ledger-quote.js';
+import { renderCard } from '../../src/overseer/ledger-render.js';
 import { DECIDE_CARD, GO_CARD } from './card-fixtures.js';
 
 const T0 = Date.parse('2026-10-05T16:00:00.000Z');
@@ -71,7 +72,9 @@ describe('add', () => {
   it('creates an open item with every card field and returns its ID and rendered line', () => {
     const out = ledger.add('s1', 'coord', { kind: 'decide', text: 'How many clean nights before live mode?', ...DECIDE_CARD, note: 'Check the dates.', blocks: 'the switch to live mode' });
     expect(out.id).toBe('N1');
-    expect(out.line).toContain('N1 [Decide] How many clean nights before live mode? (open 0m)\n  Recommendation: A. 5 nights\n  Options: A. 5 nights | B. 10 nights');
+    // The line to post is the full card (Unit 5): the overseer posts it exactly as rendered.
+    expect(out.line).toBe(renderCard(ledgerDb.getBySeq(db, 's1', 1)!, { now, timeZone: 'UTC' }));
+    expect(out.line.startsWith('**N1 · Decide:** How many clean nights before live mode?\n\nHolds up: the switch to live mode · Open 0 minutes · Source: overseer\n\n**Context:** ')).toBe(true);
     expect(ledgerDb.getBySeq(db, 's1', 1)).toMatchObject({
       status: 'open', context: DECIDE_CARD.context, options: DECIDE_CARD.options, recommendation: 'A. 5 nights',
       recommendationWhy: DECIDE_CARD.why, defaultText: DECIDE_CARD.default, sourceKind: 'overseer', sourceRef: null,
@@ -85,8 +88,8 @@ describe('add', () => {
     ledger.add('s1', 'coord', { kind: 'decide', text: 'Set the first store to Draft?', ...DECIDE_CARD });
     const out = ledger.add('s1', 'coord', { kind: 'decide', text: 'Also set the second store to Draft?', ...DECIDE_CARD, supersedes: 'N3' });
     expect(out.id).toBe('N4');
-    expect(out.line).toContain('N4 [Decide] Also set the second store to Draft? (open 0m)\n' +
-        '  Original question (N3): "Set the first store to Draft?"\n');
+    expect(out.line).toContain('**N4 · Decide:** Also set the second store to Draft?\n\n');
+    expect(out.line).toContain('\n\n**Original question (N3):** "Set the first store to Draft?"\n\n');
     expect(ledgerDb.getBySeq(db, 's1', 3)!.status).toBe('superseded');
     expect(ledgerDb.listOpenSeqs(db, 's1')).toEqual([1, 2, 4]);
   });
@@ -277,7 +280,7 @@ describe('list', () => {
     terminalsDb.updateConfig(db, 'coord', { role: 'coordinator', transport: 'structured', interimDueAt: min(20) });
     ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR #12.', ...GO_CARD });
     const plain = ledger.list('s1', 'coord');
-    expect(plain.text).toContain('Needs you now:\n- N1 [Go] Merge PR #12. (open 0m)');
+    expect(plain.text).toContain('Needs you now:\n\n**N1 · Go:** Merge PR #12.\n\nHolds up: nothing · Open 0 minutes · Source: overseer');
     expect(plain.openIds).toEqual(['N1']);
     expect(JSON.parse(terminalsDb.getById(db, 'coord')!.config!).interimDueAt).toBe(min(20)); // a plain list changes nothing
 

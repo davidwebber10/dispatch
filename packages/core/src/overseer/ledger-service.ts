@@ -21,7 +21,7 @@ import * as sessionsDb from '../db/sessions.js';
 import * as ledgerDb from '../db/ledger.js';
 import * as messagesDb from '../db/coordinator-messages.js';
 import { findQuote, GO_APPROVAL_ERROR, namesGoApproval, OK_ONLY_ERROR } from './ledger-quote.js';
-import { isUnchecked, renderHandoffBlock, renderItem, renderLedgerSections, type RenderContext } from './ledger-render.js';
+import { isUnchecked, renderCard, renderHandoffBlock, renderItem, renderLedgerSections, type RenderContext } from './ledger-render.js';
 import {
   cardFieldsError, findProjectPath, gitWorktrees, holdsSeveralDecisions, isIssueRef, missingCardFields,
   ONE_DECISION_ERROR, sourceComplete, sourceMissingError, type CardFieldsInput,
@@ -230,7 +230,9 @@ export class LedgerService {
       supersedes,
       now: this.nowIso(),
     });
-    return { id: `N${item.seq}`, line: renderItem(item, this.ctx(sessionId)) };
+    // A go or decide item goes to the user as its full card (Unit 5), a do item as its line.
+    const ctx = this.ctx(sessionId);
+    return { id: `N${item.seq}`, line: item.kind === 'do' ? renderItem(item, ctx) : renderCard(item, ctx) };
   }
 
   resolve(sessionId: string, caller: unknown, input: Record<string, unknown>): { id: string; status: string; line: string } {

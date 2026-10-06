@@ -113,11 +113,17 @@ describe('renderLedgerSections', () => {
     item({ seq: 5, kind: 'decide', text: 'Old question?', status: 'answered', quote: 'yes', quoteAt: '2026-10-04T10:00:00.000Z', updatedAt: '2026-10-04T10:00:00.000Z' }),
   ];
 
-  it('renders the four sections in order, with decided items only since the last recap', () => {
+  it('renders the #62 sections in order (now with cards), with decided items only since the last recap', () => {
     expect(renderLedgerSections(items, { now: NOW, lastRecapAt: '2026-10-05T12:00:00.000Z', timeZone: 'UTC' })).toBe(
       'Needs you now:\n' +
-      '- N1 [Go] Merge PR #12. (open 2h)\n' +
-      '  Proposed by overseer, not approved\n' +
+      '\n' +
+      '**N1 · Go:** Merge PR #12.\n' +
+      '\n' +
+      'Holds up: nothing · Open 2 hours\n' +
+      '\n' +
+      '**Answer with:** `N1: merge`\n' +
+      '\n' +
+      'Running on defaults:\n- none\n' +
       '\n' +
       'Your tests and actions:\n' +
       '- N2 [Do] Check the banner on staging. (open 2h)\n' +
@@ -127,9 +133,13 @@ describe('renderLedgerSections', () => {
       '- N3 [Decide] Use library A?\n' +
       '  You approved: "Use library A?" → "A" (Mon 16:51)\n' +
       '\n' +
+      'Not yet triaged:\n- none\n' +
+      '\n' +
       'Parked:\n' +
       '- N4 [Decide] Rename the CLI?\n' +
-      '  Parked by you: "later" (Mon 16:51)',
+      '  Parked by you: "later" (Mon 16:51)\n' +
+      '\n' +
+      'Overseer decisions in the last 7 days: 0. Reversed by you: 0.',
     );
   });
 
