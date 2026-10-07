@@ -168,6 +168,19 @@ export class CodexTranslator {
    * can never leak into the next turn's heuristic.
    */
   private lastAgentText = '';
+  /**
+   * The full text of every completed agentMessage of the running turn, in order (reset at
+   * turn/started), and of the last ENDED turn (set at turn/completed). An agent can write its
+   * report, call a tool (report_status), and say a last short line: all of them are here, which
+   * `lastAgentText` (the closing line only) cannot give. Read by lastTurnTexts.
+   */
+  private turnTexts: string[] = [];
+  private endedTurnTexts: string[] = [];
+
+  /** The complete agent texts of the last ended turn, oldest first (IStructuredManager.getTurnTexts). */
+  lastTurnTexts(): string[] {
+    return [...this.endedTurnTexts];
+  }
 
   /** Emit a Claude `system/init` carrying the model, so the chat header shows it (parity with
    *  Claude's system/init). Called by the manager once thread/start|resume resolves. */
@@ -215,6 +228,7 @@ export class CodexTranslator {
     this.nextBlockIndex = 0;
     this.msgBlock.clear();
     this.reasoningBlock.clear();
+    this.turnTexts = [];
     return [{ kind: 'busy' }];
   }
 
@@ -234,6 +248,8 @@ export class CodexTranslator {
     // Mirrors the Claude manager's `result` handler clearing session.declared/lastToolUse.
     const text = this.lastAgentText;
     this.lastAgentText = '';
+    this.endedTurnTexts = this.turnTexts;
+    this.turnTexts = [];
     // Always carry `summary`, even when text is '' (no completed agentMessage this turn — a
     // failed turn, an interrupt before any prose, a tool-only turn): its PRESENCE, not its
     // truthiness, is what tells server.ts's listener "Codex answered for this turn" (possibly
@@ -311,7 +327,10 @@ export class CodexTranslator {
   private itemCompleted(item: any): TranslatedAction[] {
     // Stash the closing prose BEFORE the id guard below — it's read at the turn boundary
     // regardless of whether this item is otherwise well-formed enough to render.
-    if (item?.type === 'agentMessage' && typeof item.text === 'string') this.lastAgentText = item.text;
+    if (item?.type === 'agentMessage' && typeof item.text === 'string') {
+      this.lastAgentText = item.text;
+      if (item.text.trim()) this.turnTexts.push(item.text);
+    }
     if (!item || typeof item.id !== 'string') return [];
     if (item.type === 'agentMessage') {
       // Close the streamed text block (harmless if never opened). Text itself already rendered

@@ -299,4 +299,27 @@ function initializeSchema(db: Database.Database): void {
       WHEN NEW.text IS NOT OLD.text
       BEGIN SELECT RAISE(ABORT, 'ledger item text never changes'); END;
   `));
+  // Overseer decision cards (spec 2026-10-06, Unit 1): the card fields, the agent link, the
+  // overseer's own choice and the project-rule flag. `sent_at` (when the item first reached the
+  // user) and `decided_at` (when the overseer decided it) carry the "new since the last recap",
+  // "oldest" and 7-day count rules; every #62 row was sent to the user when it was created.
+  migrate(db, '006-ledger-decision-cards', () => db.exec(`
+    ALTER TABLE ledger_items ADD COLUMN context TEXT;
+    ALTER TABLE ledger_items ADD COLUMN recommendation_why TEXT;
+    ALTER TABLE ledger_items ADD COLUMN default_text TEXT;
+    ALTER TABLE ledger_items ADD COLUMN source_kind TEXT;
+    ALTER TABLE ledger_items ADD COLUMN source_ref TEXT;
+    ALTER TABLE ledger_items ADD COLUMN source_section TEXT;
+    ALTER TABLE ledger_items ADD COLUMN source_id TEXT;
+    ALTER TABLE ledger_items ADD COLUMN overseer_note TEXT;
+    ALTER TABLE ledger_items ADD COLUMN on_default_since TEXT;
+    ALTER TABLE ledger_items ADD COLUMN agent_terminal_id TEXT;
+    ALTER TABLE ledger_items ADD COLUMN agent_decision_id TEXT;
+    ALTER TABLE ledger_items ADD COLUMN decided_choice TEXT;
+    ALTER TABLE ledger_items ADD COLUMN decided_at TEXT;
+    ALTER TABLE ledger_items ADD COLUMN policy INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE ledger_items ADD COLUMN sent_at TEXT;
+    UPDATE ledger_items SET sent_at = created_at WHERE sent_at IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_ledger_items_agent ON ledger_items(session_id, agent_terminal_id, agent_decision_id);
+  `));
 }

@@ -194,9 +194,39 @@ export interface IStructuredManager extends EventEmitter {
   getSessionId(terminalId: string): string | undefined;
   getEvents(terminalId: string): unknown[];
   getEventsTail(terminalId: string, n: number): unknown[];
+  /**
+   * The complete texts the agent itself wrote in its last ENDED turn, oldest first, in full —
+   * the one harness-independent way to read "what the agent just said" (the owner-decisions
+   * capture uses it). Each harness reads them where they are complete: Claude from the whole
+   * `assistant` messages in its ring (turnTextsFromEvents; a sub-agent's are left out), Codex
+   * from each completed agentMessage item, Grok/OpenCode from each closed prose block. The ring
+   * itself is not enough off Claude: it holds only streamed deltas there. null when this manager
+   * has no live session for the terminal.
+   */
+  getTurnTexts(terminalId: string): string[] | null;
   isAlive(terminalId: string): boolean;
   kill(terminalId: string): void;
   killAll(): void;
+}
+
+/**
+ * The texts of the last ended turn in a Claude-shaped ring, oldest first: every whole
+ * `assistant` text between the ring's last `result` and the `result` before it. Events with a
+ * `parent_tool_use_id` belong to a sub-agent (a Task/Agent call) and never count as the agent's
+ * own. A turn still running after the last `result` is not read.
+ */
+export function turnTextsFromEvents(events: readonly unknown[]): string[] {
+  let end = events.length - 1;
+  while (end >= 0 && (events[end] as any)?.type !== 'result') end--;
+  const texts: string[] = [];
+  for (let i = end - 1; i >= 0; i--) {
+    const e: any = events[i];
+    if (e?.type === 'result') break;
+    if (e?.type !== 'assistant' || e.parent_tool_use_id != null || !Array.isArray(e.message?.content)) continue;
+    const text = e.message.content.filter((b: any) => b?.type === 'text').map((b: any) => b.text ?? '').join('').trim();
+    if (text) texts.push(text);
+  }
+  return texts.reverse();
 }
 
 const MAX_EVENTS = 5000;
@@ -558,6 +588,12 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
   getSessionId(terminalId: string): string | undefined { return this.sessions.get(terminalId)?.sessionId; }
 
   getEvents(terminalId: string): unknown[] { return [...(this.sessions.get(terminalId)?.events ?? [])]; } // Fix 4: return copy
+
+  /** The last ended turn's own texts (IStructuredManager.getTurnTexts): Claude writes them whole into the ring. */
+  getTurnTexts(terminalId: string): string[] | null {
+    const session = this.sessions.get(terminalId);
+    return session ? turnTextsFromEvents(session.events) : null;
+  }
 
   /**
    * The most recent assistant text in this session's event ring — what the turn ended

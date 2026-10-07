@@ -5,6 +5,8 @@ import { initSchema } from '../../src/db/schema.js';
 import { createApp } from '../../src/server.js';
 import * as terminalsDb from '../../src/db/terminals.js';
 import * as messagesDb from '../../src/db/coordinator-messages.js';
+import * as ledgerDb from '../../src/db/ledger.js';
+import { DECIDE_CARD, GO_CARD } from '../overseer/card-fixtures.js';
 
 describe('ledger routes', () => {
   let app: any;
@@ -21,15 +23,28 @@ describe('ledger routes', () => {
   });
 
   it('POST /ledger creates N1 (201); a non-overseer gets 403 with the fixed text', async () => {
-    const ok = await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'go', text: 'Merge PR #12.' }).expect(201);
+    const ok = await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'go', text: 'Merge PR #12.', ...GO_CARD }).expect(201);
     expect(ok.body.id).toBe('N1');
-    expect(ok.body.line).toContain('N1 [Go] Merge PR #12.');
-    const denied = await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'agent', kind: 'go', text: 'x' }).expect(403);
+    expect(ok.body.line.startsWith('**N1 · Go:** Merge PR #12.\n\n')).toBe(true); // the full card
+    const denied = await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'agent', kind: 'go', text: 'x', ...GO_CARD }).expect(403);
     expect(denied.body.error).toBe("Only the project's overseer can change the ledger.");
   });
 
+  it('a card that fails a Unit 2 check is a 422 with the fixed text, and nothing is created', async () => {
+    const missing = await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'go', text: 'Merge PR #12.' }).expect(422);
+    expect(missing.body).toEqual({ error: 'A decision card needs: context (20 to 800 characters), default, source. Add them and try again.' });
+    const range = await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'decide', text: 'Approve LR-1..LR-26?', ...DECIDE_CARD }).expect(422);
+    expect(range.body.error).toBe('One decision per card. Add each decision on its own.');
+    const source = await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'go', text: 'Merge PR #12.', ...GO_CARD, source: { kind: 'pr', ref: 'twelve' } }).expect(422);
+    expect(source.body.error).toBe('The source does not exist in this project: twelve.');
+    const imported = await request(app).post(`/api/sessions/${sid}/ledger/import`).send({ caller: 'coord', items: [{ kind: 'go', text: 'Merge PR #9.' }] }).expect(422);
+    expect(imported.body).toEqual({ error: 'A decision card needs: context (20 to 800 characters), default, source. Add them and try again.', item: 0 });
+    const list = await request(app).post(`/api/sessions/${sid}/ledger/list`).send({ caller: 'coord' }).expect(200);
+    expect(list.body.openIds).toEqual([]);
+  });
+
   it('resolve: 404 unknown, 422 quote not found, 200 found, then 409 with the status', async () => {
-    await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'decide', text: 'Which store?' }).expect(201);
+    await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'decide', text: 'Which store?', ...DECIDE_CARD }).expect(201);
     await request(app).post(`/api/sessions/${sid}/ledger/N9/resolve`).send({ caller: 'coord', status: 'answered', quote: 'A' }).expect(404);
     const missing = await request(app).post(`/api/sessions/${sid}/ledger/N1/resolve`).send({ caller: 'coord', status: 'answered', quote: 'A' }).expect(422);
     expect(missing.body.error).toBe("Quote not found in the user's messages to you after N1 was created. Do not record it. Ask the user.");
@@ -40,16 +55,20 @@ describe('ledger routes', () => {
   });
 
   it('every ledger route refuses a caller that is not the overseer: 403 with the fixed text, nothing changes', async () => {
-    await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'decide', text: 'Which store?' }).expect(201);
+    await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'decide', text: 'Which store?', ...DECIDE_CARD }).expect(201);
     messagesDb.append(db, { terminalId: 'coord', source: 'user', text: 'never on Fridays', sentAt: new Date(Date.now() + 1000).toISOString() });
     // Valid bodies, so only the caller check can refuse them.
     const routes: [string, Record<string, unknown>][] = [
-      ['ledger', { kind: 'go', text: 'Merge PR #12.' }],
+      ['ledger', { kind: 'go', text: 'Merge PR #12.', ...GO_CARD }],
       ['ledger/list', { forRecap: true }],
       ['ledger/note', { quote: 'never on Fridays' }],
       ['ledger/import', { items: [{ kind: 'do', text: 'Check staging.' }] }],
       ['ledger/handoff', { ids: ['N1'] }],
       ['ledger/N1/resolve', { status: 'withdrawn', reason: 'moot' }],
+      ['ledger/show', { all: true }],
+      ['ledger/N1/add-from-agent', { note: 'x' }],
+      ['ledger/N1/decide-self', { choice: 'A', reason: 'x' }],
+      ['ledger/N1/mark-default', {}],
     ];
     for (const caller of ['agent', undefined]) {
       for (const [route, body] of routes) {
@@ -72,12 +91,12 @@ describe('ledger routes', () => {
 
   it('add with supersedes: the old open item becomes superseded and the new line shows the original question', async () => {
     for (const text of ['Merge PR #1.', 'Merge PR #2.', 'Set the first store to Draft?']) {
-      await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'decide', text }).expect(201);
+      await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'decide', text, ...DECIDE_CARD }).expect(201);
     }
     const wider = await request(app).post(`/api/sessions/${sid}/ledger`)
-      .send({ caller: 'coord', kind: 'decide', text: 'Also set the second store to Draft?', supersedes: 'N3' }).expect(201);
+      .send({ caller: 'coord', kind: 'decide', text: 'Also set the second store to Draft?', ...DECIDE_CARD, supersedes: 'N3' }).expect(201);
     expect(wider.body.id).toBe('N4');
-    expect(wider.body.line).toContain('\n  Original question (N3): "Set the first store to Draft?"');
+    expect(wider.body.line).toContain('\n\n**Original question (N3):** "Set the first store to Draft?"\n\n');
     const list = await request(app).post(`/api/sessions/${sid}/ledger/list`).send({ caller: 'coord' }).expect(200);
     expect(list.body.openIds).toEqual(['N1', 'N2', 'N4']);
   });
@@ -90,5 +109,34 @@ describe('ledger routes', () => {
     await request(app).post(`/api/sessions/${sid}/ledger/note`).send({ caller: 'coord', quote: 'never on Fridays' }).expect(422);
     const handoff = await request(app).post(`/api/sessions/${sid}/ledger/handoff`).send({ caller: 'coord', ids: ['N1'] }).expect(200);
     expect(handoff.body.block.startsWith('Owner decisions (verbatim, from the ledger):\n- N1 [Do] Check staging.')).toBe(true);
+  });
+
+  it('decision cards: add-from-agent, decide-self, mark-default and show answer on their routes', async () => {
+    for (const text of ['How many nights?', 'Which day?']) {
+      ledgerDb.create(db, { sessionId: sid, kind: 'decide', text, author: 'planner', status: 'proposed', ...{ context: DECIDE_CARD.context, defaultText: DECIDE_CARD.default } });
+    }
+    const sent = await request(app).post(`/api/sessions/${sid}/ledger/N1/add-from-agent`).send({ caller: 'coord', note: 'Mind the freeze.' }).expect(200);
+    expect(sent.body).toEqual({ id: 'N1', status: 'open' });
+    const decided = await request(app).post(`/api/sessions/${sid}/ledger/N2/decide-self`).send({ caller: 'coord', choice: 'Monday', reason: 'quiet day' }).expect(200);
+    expect(decided.body.status).toBe('decided_by_overseer');
+    const protectedItem = await request(app).post(`/api/sessions/${sid}/ledger/N1/decide-self`).send({ caller: 'coord', choice: 'x', reason: 'y' }).expect(422);
+    expect(protectedItem.body.error).toBe('Only the user can decide this item.');
+    const onDefault = await request(app).post(`/api/sessions/${sid}/ledger/N1/mark-default`).send({ caller: 'coord' }).expect(200);
+    expect(onDefault.body.line).toContain('Running on the default');
+    const shown = await request(app).post(`/api/sessions/${sid}/ledger/show`).send({ caller: 'coord', ids: ['N1'] }).expect(200);
+    expect(shown.body.text.startsWith('**N1 · Decide:** How many nights?')).toBe(true);
+    expect(shown.body.text).toContain("**Overseer's note:** Mind the freeze.");
+  });
+
+  it('decide-self without an item ID creates an item that is already decided (201); its checks are 422s', async () => {
+    const own = {
+      text: 'Which retry helper?', ...DECIDE_CARD, choice: 'A. 5 nights', reason: 'it covers one weekend',
+    };
+    const created = await request(app).post(`/api/sessions/${sid}/ledger/decide-self`).send({ caller: 'coord', ...own }).expect(201);
+    expect(created.body).toMatchObject({ id: 'N1', status: 'decided_by_overseer' });
+    expect(ledgerDb.getBySeq(db, sid, 1)).toMatchObject({ status: 'decided_by_overseer', sentAt: null, decidedChoice: 'A. 5 nights' });
+    const go = await request(app).post(`/api/sessions/${sid}/ledger/decide-self`).send({ caller: 'coord', ...own, kind: 'go' }).expect(422);
+    expect(go.body.error).toBe('Only the user can decide this item.');
+    await request(app).post(`/api/sessions/${sid}/ledger/decide-self`).send({ caller: 'agent', ...own }).expect(403);
   });
 });

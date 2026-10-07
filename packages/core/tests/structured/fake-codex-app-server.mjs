@@ -120,6 +120,29 @@ rl.on('line', (line) => {
       notify('turn/completed', { threadId: tid, turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'completed', durationMs: 3 } });
       return;
     }
+    // `report-file <path>` — an agent's report turn (decision cards): each string of the JSON
+    // array in <path> is one agentMessage, streamed as deltas and then completed with its full
+    // text, with a dispatch report_status mcpToolCall between two messages — the way a real
+    // agent writes its report, calls report_status, and says a last short line.
+    const reportMatch = text.match(/^report-file (.+)$/);
+    if (reportMatch) {
+      const messages = JSON.parse(fs.readFileSync(reportMatch[1].trim(), 'utf8'));
+      messages.forEach((agentText, i) => {
+        if (i > 0) {
+          const mcp = { type: 'mcpToolCall', id: `mcp-report-${i}`, server: 'dispatch', tool: 'report_status', arguments: { state: 'done' } };
+          notify('item/started', { threadId: tid, turnId: TURN, item: { ...mcp, status: 'inProgress' }, startedAtMs: 10 * i });
+          notify('item/completed', { threadId: tid, turnId: TURN, item: { ...mcp, status: 'completed', result: { content: [] } }, completedAtMs: 10 * i + 1 });
+        }
+        const id = `msg-report-${i}`;
+        const half = Math.ceil(agentText.length / 2);
+        notify('item/started', { threadId: tid, turnId: TURN, item: { type: 'agentMessage', id, text: '', phase: 'commentary', memoryCitation: null }, startedAtMs: 10 * i + 2 });
+        notify('item/agentMessage/delta', { threadId: tid, turnId: TURN, itemId: id, delta: agentText.slice(0, half) });
+        notify('item/agentMessage/delta', { threadId: tid, turnId: TURN, itemId: id, delta: agentText.slice(half) });
+        notify('item/completed', { threadId: tid, turnId: TURN, item: { type: 'agentMessage', id, text: agentText, phase: 'final_answer', memoryCitation: null }, completedAtMs: 10 * i + 3 });
+      });
+      notify('turn/completed', { threadId: tid, turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'completed', durationMs: 5 } });
+      return;
+    }
     // Stream an assistant message token-by-token. Default closing text is 'Hello world' (not a
     // question); a request containing "needs a decision" gets a closing question instead, so
     // tests can exercise the needs-help turn-end path end-to-end without a dedicated frame shape.

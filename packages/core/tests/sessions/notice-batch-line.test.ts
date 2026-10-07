@@ -133,4 +133,12 @@ describe('Batch line on agent notices', () => {
     expect(text).toContain('ingest the result, hand it to another agent, or spawn a follow-up.');
     expect(text).not.toContain('report back to the user');
   });
+
+  it('decision cards: every notice names the proposed items that wait for triage', () => {
+    const { db, svc, sent } = makeService();
+    ledgerDb.create(db, { sessionId: 's1', kind: 'decide', text: 'How many nights?', author: 'Build X', status: 'proposed' });
+    ledgerDb.create(db, { sessionId: 's1', kind: 'decide', text: 'Which day?', author: 'Build X', status: 'proposed' });
+    svc.noteAgentNeedsHelp('a', 'which branch?');
+    expect(String(sent.mock.calls[0][1]).endsWith('Open ledger items: N1.\nNot yet triaged: N2, N3.')).toBe(true);
+  });
 });

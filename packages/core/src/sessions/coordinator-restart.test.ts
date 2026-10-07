@@ -54,6 +54,7 @@ class FakeStructured extends EventEmitter implements IStructuredManager {
   getSessionId() { return undefined; }
   getEvents() { return []; }
   getEventsTail() { return []; }
+  getTurnTexts(): string[] | null { return null; }
   isAlive(id: string) { return this.live.has(id); }
   kill(id: string) { this.live.delete(id); this.emit('exit', id, 0); }
   killAll() { this.live.clear(); }

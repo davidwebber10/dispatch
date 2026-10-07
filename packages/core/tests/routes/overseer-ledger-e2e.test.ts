@@ -10,6 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { initSchema } from '../../src/db/schema.js';
 import { createApp } from '../../src/server.js';
 import * as messagesDb from '../../src/db/coordinator-messages.js';
+import { DECIDE_CARD, LR6 } from '../overseer/card-fixtures.js';
+import * as ledgerDb from '../../src/db/ledger.js';
 
 const fake = path.join(path.dirname(fileURLToPath(import.meta.url)), '../structured/fake-claude.mjs');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -63,8 +65,21 @@ describe('overseer ledger — end to end', () => {
     expect(messagesDb.listForTerminal(db, agentId)).toEqual([]); // only overseers are logged
   });
 
+  it('decision cards: an agent turn with an owner-decisions block creates proposed items, and the notice names them', async () => {
+    // The fake CLI echoes the message back as the agent's final text, so this IS the agent's report.
+    const report = `Plan is ready.\n\n${'Step detail. '.repeat(60)}\n\n\`\`\`owner-decisions\n${JSON.stringify([LR6], null, 2)}\n\`\`\``;
+    await request(app).post(`/api/terminals/${agentId}/message`).send({ text: report }).expect(204);
+    await until(() => messagesDb.listForTerminal(db, coordId).some((m) => m.source === 'daemon' && m.text.includes('owner decision')));
+
+    const notice = messagesDb.listForTerminal(db, coordId).find((m) => m.text.includes('owner decision'))!;
+    expect(notice.text).toContain('This report has 1 owner decision (N1). Triage each now: ledger_add_from_agent sends it to the user; ledger_decide_self records your own choice.');
+    expect(ledgerDb.getBySeq(db, sid, 1)).toMatchObject({ status: 'proposed', text: LR6.question, sourceKind: 'agent', sourceId: 'LR-6', agentTerminalId: agentId });
+    const list = await request(app).post(`/api/sessions/${sid}/ledger/list`).send({ caller: coordId }).expect(200);
+    expect(list.body.text).toMatch(/Not yet triaged:\n- 1 proposed decision from ".+" \(N1\)\./);
+  });
+
   it('a quote resolves end to end against the user\'s real message', async () => {
-    const add = await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: coordId, kind: 'decide', text: 'Which store goes first?', options: ['A', 'B'] }).expect(201);
+    const add = await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: coordId, kind: 'decide', text: 'Which store goes first?', ...DECIDE_CARD }).expect(201);
     expect(add.body.id).toBe('N1');
     await sleep(5); // the answer must come strictly after the item
     await request(app).post(`/api/terminals/${coordId}/message`).send({ text: 'N1: A, but only for the first store', source: 'user' }).expect(204);
@@ -76,7 +91,7 @@ describe('overseer ledger — end to end', () => {
   });
 
   it('an "ok"-only answer, a canned click, and a non-overseer caller all fail', async () => {
-    await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: coordId, kind: 'decide', text: 'Use library A?' }).expect(201);
+    await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: coordId, kind: 'decide', text: 'Use library A?', ...DECIDE_CARD }).expect(201);
     await sleep(5);
     await request(app).post(`/api/terminals/${coordId}/message`).send({ text: 'ok', source: 'user' }).expect(204);
     await request(app).post(`/api/terminals/${coordId}/message`).send({ text: '“Use A” — got it.', source: 'user', canned: true }).expect(204);

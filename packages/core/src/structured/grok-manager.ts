@@ -393,6 +393,7 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
       result = await session.conn.request('session/prompt', { sessionId: session.sessionId, prompt: toPrompt(content) });
     } catch (err) {
       if (this.sessions.get(session.terminalId) !== session) return;
+      session.translator.abortTurn(); // the failed turn's prose must not join the next turn's texts
       this.pushEvent(session, { type: 'result', subtype: 'error', is_error: true, result: String(err) });
       session.turnActive = false;
       this.emit('failed', session.terminalId);
@@ -460,6 +461,8 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
   getPending(terminalId: string): PendingPermission | null { return this.sessions.get(terminalId)?.pending ?? null; }
   getSessionId(terminalId: string): string | undefined { return this.sessions.get(terminalId)?.sessionId; }
   getEvents(terminalId: string): unknown[] { return [...(this.sessions.get(terminalId)?.events ?? [])]; }
+  /** The last ended turn's own texts (IStructuredManager.getTurnTexts): the closed prose blocks, not the ring's deltas. */
+  getTurnTexts(terminalId: string): string[] | null { return this.sessions.get(terminalId)?.translator.lastTurnTexts() ?? null; }
   getEventsTail(terminalId: string, n: number): unknown[] {
     const events = this.sessions.get(terminalId)?.events ?? [];
     return n >= events.length ? [...events] : events.slice(events.length - n);

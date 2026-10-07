@@ -80,6 +80,36 @@ export class GrokTranslator {
    * never leak into the next turn.
    */
   private lastAgentText = '';
+  /**
+   * Every closed prose block of the running turn, in full and in order, and of the last ENDED
+   * turn (set at the turn boundary) — the Grok analogue of CodexTranslator's turn texts, read by
+   * lastTurnTexts for the owner-decisions capture.
+   */
+  private turnTexts: string[] = [];
+  private endedTurnTexts: string[] = [];
+
+  /** The complete agent texts of the last ended turn, oldest first (IStructuredManager.getTurnTexts). */
+  lastTurnTexts(): string[] {
+    return [...this.endedTurnTexts];
+  }
+
+  /**
+   * A turn that failed (the session/prompt RPC was rejected) never reaches finishTurn, so its
+   * per-turn state would survive into the next turn — and its prose, possibly an owner-decisions
+   * block, would be captured as part of that later turn. Drop it all, emitting nothing: the
+   * manager already surfaces the failure. The failed turn's texts are not "ended turn" texts
+   * either, so endedTurnTexts is cleared too.
+   */
+  abortTurn(): void {
+    this.turnTexts = [];
+    this.endedTurnTexts = [];
+    this.lastAgentText = '';
+    this.textAcc = '';
+    this.openBlock = null;
+    this.messageStarted = false;
+    this.nextBlockIndex = 0;
+    this.usageReportedThisTurn = false;
+  }
   /** tool_call ids whose tool_result has already been emitted (updates repeat per status). */
   private resultEmitted = new Set<string>();
   /** The ACP session's real model id (models.currentModelId), kept to stamp usage-bearing
@@ -160,7 +190,10 @@ export class GrokTranslator {
   private closeOpenBlock(out: GrokAction[]): void {
     if (!this.openBlock) return;
     out.push({ kind: 'event', event: { type: 'stream_event', event: { type: 'content_block_stop', index: this.openBlock.index } } });
-    if (this.openBlock.kind === 'text' && this.textAcc.trim()) this.lastAgentText = this.textAcc;
+    if (this.openBlock.kind === 'text' && this.textAcc.trim()) {
+      this.lastAgentText = this.textAcc;
+      this.turnTexts.push(this.textAcc);
+    }
     this.textAcc = '';
     this.openBlock = null;
   }
@@ -315,6 +348,8 @@ export class GrokTranslator {
     // prior turn re-fire the heuristic (mirrors CodexTranslator.turnCompleted).
     const text = this.lastAgentText || this.textAcc;
     this.lastAgentText = '';
+    this.endedTurnTexts = this.turnTexts;
+    this.turnTexts = [];
     // Reset per-turn streaming bookkeeping for the next turn.
     this.messageStarted = false;
     this.nextBlockIndex = 0;

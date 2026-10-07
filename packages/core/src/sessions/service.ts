@@ -14,6 +14,8 @@ import * as watchesDb from '../db/watches.js';
 import * as coordinatorMessagesDb from '../db/coordinator-messages.js';
 import * as ledgerDb from '../db/ledger.js';
 import { computeBatchState, formatBatchFooter, isBusy, type BatchOptions, type BatchState, type NoticeKind } from './batch-state.js';
+import { LedgerService } from '../overseer/ledger-service.js';
+import { formatOwnerDecisionsNotice, parseOwnerDecisionsBlock, type BlockParse } from '../overseer/owner-decisions.js';
 import { formatInterimNotice, nextInterimConfig } from './interim-recap.js';
 import { getProvider } from '../providers/registry.js';
 import { PTYManager } from '../pty/manager.js';
@@ -1137,7 +1139,7 @@ export class SessionService {
           ? { justStarted: [...(opts.justStarted ?? []), agentTerminalId] }
           : { exclude: [agentTerminalId], justStarted: opts.justStarted },
       );
-      message = `${note}\n\n${formatBatchFooter(state, ledgerDb.listOpenSeqs(this.db, agent.session_id))}`;
+      message = `${note}\n\n${formatBatchFooter(state, ledgerDb.listOpenSeqs(this.db, agent.session_id), ledgerDb.listProposedSeqs(this.db, agent.session_id))}`;
       batch = state;
     } catch (err) {
       console.error(`batch line: failed for agent ${agentTerminalId}; the notice goes out without it`, err);
@@ -1374,14 +1376,58 @@ export class SessionService {
     this.persistAgentTokenUsage(agentTerminalId, agent, cfg);
     const mission = typeof cfg.mission === 'string' && cfg.mission.trim() ? cfg.mission.trim() : null;
     const summary = this.lastAssistantText(agentTerminalId);
+    // Decision cards, Unit 3: the agent's owner-decisions block becomes proposed ledger items. A
+    // scheduled role run reports to its own log, never to an overseer, so it is never read.
+    const isRoleRun = typeof cfg.roleRun === 'string' && !!cfg.roleRun;
+    const decisions = isRoleRun ? [] : this.captureOwnerDecisions(agent, mission);
     const note =
       `✅ Your agent "${agent.label || 'agent'}"${mission ? ` (mission "${mission}")` : ''} ` +
       `[agentId ${agentTerminalId}] just finished a turn.\n` +
       (summary ? `Its latest output: ${summary}\n\n` : '') +
       `Read its full work with read_agent({ agentId: "${agentTerminalId}" }), then decide the next step — ` +
       `ingest the result, hand it to another agent, or spawn a follow-up. Keep this ` +
-      `brief unless it needs action; the user's own messages are always your top priority.`;
+      `brief unless it needs action; the user's own messages are always your top priority.` +
+      (decisions.length ? `\n\n${decisions.join('\n')}` : '');
     this.notifyCoordinatorOfAgent(agentTerminalId, note, { kind: 'finished', justStarted: started });
+  }
+
+  private ledgerService?: LedgerService;
+  /** The decision ledger, on this service's clock (tests pin it). */
+  private get ledger(): LedgerService {
+    return (this.ledgerService ??= new LedgerService(this.db, { clock: () => this.clock() }));
+  }
+
+  /**
+   * The texts of the agent's last turn, newest first, in FULL (not the 600-character summary that
+   * notices use). The newest is the agent's final message; the earlier ones matter when the agent
+   * wrote its report, then called a tool (report_status) and said a last short line. They come
+   * from the harness (IStructuredManager.getTurnTexts), so a Codex or Grok agent, whose ring holds
+   * only deltas, reads the same as a Claude one; a sub-agent's texts are never included. Falls
+   * back to the transcript's last assistant text when no harness runs the terminal.
+   */
+  private lastTurnTexts(terminalId: string): string[] {
+    const live = this.structuredManagerForTerminal(terminalId)?.getTurnTexts(terminalId);
+    if (live) return [...live].reverse();
+    const items = this.getConversation(terminalId, { limit: 50 }).items.filter((it) => it.kind === 'assistant' && it.text);
+    return items.length ? [String(items[items.length - 1].text)] : [];
+  }
+
+  /** Read the owner-decisions block of the agent's last turn into the ledger; returns the notice lines. Never throws. */
+  private captureOwnerDecisions(agent: terminalsDb.TerminalRow, mission: string | null): string[] {
+    try {
+      let parsed: BlockParse = { kind: 'none' };
+      for (const text of this.lastTurnTexts(agent.id)) {
+        parsed = parseOwnerDecisionsBlock(text);
+        if (parsed.kind !== 'none') break;
+      }
+      if (parsed.kind === 'none') return [];
+      if (parsed.kind === 'broken') return formatOwnerDecisionsNotice(parsed);
+      const result = this.ledger.captureAgentBlock(agent.session_id, { id: agent.id, label: agent.label || 'agent', mission }, parsed.entries);
+      return formatOwnerDecisionsNotice({ kind: 'captured', ...result });
+    } catch (err) {
+      console.error(`owner decisions: capture failed for agent ${agent.id}; the notice goes out without it`, err);
+      return [];
+    }
   }
 
   /**

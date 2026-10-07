@@ -13,6 +13,7 @@ import * as messagesDb from '../../src/db/coordinator-messages.js';
 import { SessionService } from '../../src/sessions/service.js';
 import type { IStructuredManager, PendingPermission } from '../../src/structured/manager.js';
 import { LedgerService } from '../../src/overseer/ledger-service.js';
+import { DECIDE_CARD, GO_CARD } from '../overseer/card-fixtures.js';
 
 class FakePty extends EventEmitter {
   isAlive() { return false; }
@@ -46,6 +47,7 @@ class FakeStructured extends EventEmitter implements IStructuredManager {
   getSessionId() { return undefined; }
   getEvents() { return []; }
   getEventsTail() { return []; }
+  getTurnTexts(): string[] | null { return null; }
   isAlive(id: string) { return this.live.has(id); }
   kill(id: string) { this.live.delete(id); }
   killAll() { this.live.clear(); }
@@ -136,7 +138,7 @@ describe('the user\'s answer to the overseer\'s own question card', () => {
 
   it('is logged as user, one row per question with the answer only, and a quote from it resolves an item', () => {
     const ledger = new LedgerService(db, { clock: () => Date.parse('2026-10-05T16:00:00.000Z') });
-    ledger.add('s1', 'coord', { kind: 'decide', text: 'Which store goes first?' });
+    ledger.add('s1', 'coord', { kind: 'decide', text: 'Which store goes first?', ...DECIDE_CARD });
     ask('coord');
     expect(svc.answerPermission('coord', 'r1', {
       decision: 'allow',
@@ -160,8 +162,8 @@ describe('the user\'s answer to the overseer\'s own question card', () => {
   // never become quotable evidence, and an "ok" answer is a leading ok of its own message.
   it('never logs the overseer-written header, so a header word cannot approve anything', () => {
     const ledger = new LedgerService(db, { clock: () => Date.parse('2026-10-05T16:00:00.000Z') });
-    ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR 7 into main?' });
-    ledger.add('s1', 'coord', { kind: 'decide', text: 'Which store goes first?' });
+    ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR 7 into main?', ...GO_CARD });
+    ledger.add('s1', 'coord', { kind: 'decide', text: 'Which store goes first?', ...DECIDE_CARD });
     const qs = [
       { header: 'Merge', question: 'Merge PR 7 now?', options: [{ label: 'yes' }, { label: 'no' }] },
       { header: 'Store', question: 'Which store goes first?', options: [{ label: 'ok' }, { label: 'B' }] },
