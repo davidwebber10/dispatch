@@ -226,6 +226,35 @@ describe('the recap sections', () => {
     expect([...out.matchAll(/^\*\*N(\d+) · Decide:\*\*/gm)]).toHaveLength(7);
   });
 
+  // Amendment 2026-10-07: an import is a one-time load, not news. Imported decisions never count
+  // as new, so the first recap after an import shows the top 5 as cards and one line for the rest.
+  it('imported decisions never count as new: with no recap yet, 7 imports give the top 5 cards and 2 lines', () => {
+    const items = Array.from({ length: 7 }, (_, i) => item({ seq: i + 1, text: `Question ${i + 1}?`, origin: 'imported' }));
+    const out = renderLedgerSections(items, { now: NOW, lastRecapAt: null, timeZone: 'UTC' });
+    expect([...out.matchAll(/^\*\*N(\d+) · Decide:\*\*/gm)].map((m) => Number(m[1]))).toEqual([1, 2, 3, 4, 5]);
+    expect([...out.matchAll(/^- \*\*N(\d+) · Decide:\*\*/gm)].map((m) => Number(m[1]))).toEqual([6, 7]);
+  });
+
+  it('a decision imported after a recap is still not new', () => {
+    const items = [
+      ...Array.from({ length: 5 }, (_, i) => item({ seq: i + 1, text: `Question ${i + 1}?`, sentAt: ago((9 - i) * DAY) })),
+      item({ seq: 6, text: 'Question 6?', origin: 'imported', sentAt: ago(1_000) }), // imported after LAST
+    ];
+    const out = renderLedgerSections(items, { now: NOW, lastRecapAt: LAST, timeZone: 'UTC' });
+    expect([...out.matchAll(/^\*\*N(\d+) · Decide:\*\*/gm)].map((m) => Number(m[1]))).toEqual([1, 2, 3, 4, 5]);
+    expect([...out.matchAll(/^- \*\*N(\d+) · Decide:\*\*/gm)].map((m) => Number(m[1]))).toEqual([6]);
+  });
+
+  it('a live decision next to imports is still new and gets its card', () => {
+    const items = [
+      ...Array.from({ length: 7 }, (_, i) => item({ seq: i + 1, text: `Question ${i + 1}?`, origin: 'imported' })),
+      item({ seq: 8, text: 'Question 8?', origin: 'live' }),
+    ];
+    const out = renderLedgerSections(items, { now: NOW, lastRecapAt: null, timeZone: 'UTC' });
+    expect([...out.matchAll(/^\*\*N(\d+) · Decide:\*\*/gm)].map((m) => Number(m[1]))).toEqual([8, 1, 2, 3, 4, 5]);
+    expect([...out.matchAll(/^- \*\*N(\d+) · Decide:\*\*/gm)].map((m) => Number(m[1]))).toEqual([6, 7]);
+  });
+
   it('one proposed decision reads in the singular; groups follow the agents in seq order', () => {
     const items = [
       item({ seq: 1, status: 'proposed', author: 'B agent', sentAt: null }),
