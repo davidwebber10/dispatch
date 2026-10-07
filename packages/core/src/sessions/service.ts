@@ -30,7 +30,8 @@ import { findCodexRolloutPath, codexRolloutTailStatus } from './codex-sessions.j
 import { platform } from '../platform/index.js';
 import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.js';
 import { resolveSpawnModel, isClaudeTierAlias } from '../overseer/spawn-model.js';
-import { COORDINATOR_DISALLOWED_TOOLS, coordinatorMemoryDirFor, makeCoordinatorPolicy } from '../overseer/coordinator-policy.js';
+import { COORDINATOR_DISALLOWED_TOOLS, coordinatorMemoryFolders, makeCoordinatorPolicy } from '../overseer/coordinator-policy.js';
+import { claudeMemoryProjectDir, prepareOverseerMemory } from '../overseer/memory-scope.js';
 import { ROLE_DISALLOWED_TOOLS, roleToolPolicy } from '../roles/role-policy.js';
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
 import { resolveTranscriptPath } from './transcript-path.js';
@@ -140,6 +141,14 @@ export class SessionService {
   private structuredManagers = new Map<string, import('../structured/manager.js').IStructuredManager>();
   /** Override for structured command (test seam: lets tests spawn fake-claude instead of real claude). */
   private structuredCommandOverride?: { command: string; args: string[] };
+  /**
+   * The home folder that holds the Claude overseers' own memory folders (overseer memory scope
+   * spec 2026-10-07, Unit 1). startServer sets os.homedir(); tests set a fs.mkdtempSync folder.
+   * Unset → no memory folder is created, no note is copied and no --settings flag is passed, so a
+   * service a test builds without it never writes into a real home.
+   */
+  private overseerMemoryHome: string | null = null;
+  setOverseerMemoryHome(home: string): void { this.overseerMemoryHome = home; }
 
   constructor(
     private db: Database.Database,
@@ -2173,6 +2182,80 @@ export class SessionService {
     );
   }
 
+  /**
+   * The session ids (external_id) of every overseer of this project, archived ones included: the
+   * notes whose originSessionId is one of them are the overseer's own (the one-time copy, Unit 1).
+   */
+  private overseerSessionIds(sessionId: string): string[] {
+    const rows = [...terminalsDb.listBySession(this.db, sessionId), ...terminalsDb.listArchivedBySession(this.db, sessionId)];
+    return rows.filter((r) => {
+      let cfg: Record<string, any> = {};
+      try { cfg = JSON.parse(r.config || '{}'); } catch { /* default {} */ }
+      return cfg.role === 'coordinator' && !!r.external_id;
+    }).map((r) => r.external_id as string);
+  }
+
+  /**
+   * The memory folders of a coordinator start (overseer memory scope spec 2026-10-07, Units 1-2):
+   * its own, and the project's shared one, which follows the git repository of the working
+   * directory (claudeMemoryProjectDir). A folder that a symlink leads out of its memory root is
+   * null: it is left out of the write scope and the persona, and one error line names it. When
+   * git could not resolve the repository, the shared folder is null too (and sharedProjectDir:
+   * no copy, no marker), with one error line; the next start tries again (review round 2).
+   */
+  private coordinatorMemoryFoldersFor(
+    terminal: terminalsDb.TerminalRow,
+    workDir: string,
+  ): { own: string | null; shared: string | null; sharedProjectDir: string | null } {
+    const resolved = claudeMemoryProjectDir(workDir);
+    if (resolved.dir === null) {
+      console.error(
+        `[overseer-memory] ${terminal.id}: could not resolve the git repository of ${workDir} (${resolved.reason}); ` +
+        "the project's shared memory folder is left out of this start, and the next start tries again",
+      );
+    }
+    const { own, shared, refused } = coordinatorMemoryFolders(terminal.type, this.overseerMemoryHome ?? os.homedir(), workDir, resolved.dir);
+    if (refused.length) {
+      console.error(`[overseer-memory] ${terminal.id}: left out of the memory scope, because a symlink leads outside its memory root: ${refused.join(', ')}`);
+    }
+    return { own, shared, sharedProjectDir: resolved.dir };
+  }
+
+  /**
+   * A Claude overseer's own memory folder, created (and seeded once from the project's shared
+   * folder) before each start — spawn and resume alike. undefined for every other thread. Also
+   * undefined, with no --settings flag, when no memory home is set (logged: that overseer has no
+   * memory of its own) and when its own folder was left out of the scope (logged by
+   * coordinatorMemoryFoldersFor). A failed copy never stops the start: the folder is still passed,
+   * and the overseer starts with whatever the folder holds.
+   */
+  private overseerMemoryFor(
+    terminal: terminalsDb.TerminalRow,
+    config: Record<string, any>,
+    workDir: string,
+    folders: { own: string | null; sharedProjectDir: string | null } | null,
+  ): string | undefined {
+    if (config.role !== 'coordinator' || terminal.type !== 'claude-code' || !folders) return undefined;
+    const home = this.overseerMemoryHome;
+    if (!home) {
+      console.error(
+        `[overseer-memory] Claude overseer ${terminal.id} starts without its own memory folder: no memory home is set ` +
+        '(setOverseerMemoryHome), so it loads the project\'s shared memory as its own. No memory isolation.',
+      );
+      return undefined;
+    }
+    if (!folders.own) return undefined;
+    try {
+      const prepared = prepareOverseerMemory({
+        home, projectDir: workDir, sharedProjectDir: folders.sharedProjectDir, overseerSessionIds: this.overseerSessionIds(terminal.session_id),
+      });
+      return prepared.dir ?? undefined;
+    } catch (e) {
+      console.warn(`[overseer-memory] could not prepare the memory folder of ${terminal.id}: ${(e as Error)?.message ?? e}`);
+      return folders.own;
+    }
+  }
+
   private spawnStructured(terminal: terminalsDb.TerminalRow, config: Record<string, any>, workDir: string): void {
     this.assertCoordinatorGoverned(terminal, config);
     const manager = this.structuredManagerFor(terminal.type);
@@ -2218,6 +2301,19 @@ export class SessionService {
 
     const resumeSessionId = terminal.external_id || undefined;
 
+    // An overseer may write only to its own memory and to this project's shared memory folder
+    // (overseer memory scope spec 2026-10-07, Unit 2), and its persona names those exact folders
+    // (Unit 3). Without a memory home (an unwired test service) they are computed under
+    // os.homedir() — only resolved and named, never written.
+    const coordinatorFolders = config.role === 'coordinator' ? this.coordinatorMemoryFoldersFor(terminal, workDir) : null;
+    const coordinatorDirs = coordinatorFolders
+      ? [coordinatorFolders.own, coordinatorFolders.shared].filter((d): d is string => d !== null)
+      : null;
+    const persona = systemPromptFor(
+      config, terminal.type,
+      coordinatorFolders ? { memoryFolders: { own: coordinatorFolders.own, shared: coordinatorFolders.shared } } : {},
+    );
+
     // Resolve the model up front (harness-aware) and persist it into the terminal's config if it
     // wasn't already pinned there — so it survives a daemon-restart resume and is
     // returned to the frontend as part of the terminal row's config. OpenCode always
@@ -2253,7 +2349,9 @@ export class SessionService {
       // spawn: the CLI auto-approves those tools without a can_use_tool request, so the
       // membrane's coordinatorToolPolicy deny (below) never reaches them. Removal from the
       // toolset is the enforcement; the policy deny remains as a backstop.
-      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config, terminal.type), resumeSessionId, model: resolvedModel, grokPluginDir, disallowedTools: disallowedToolsFor(config) });
+      // A Claude overseer loads only its own memory folder (overseer memory scope spec, Unit 1).
+      const autoMemoryDirectory = this.overseerMemoryFor(terminal, config, workDir, coordinatorFolders);
+      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: persona, resumeSessionId, model: resolvedModel, grokPluginDir, disallowedTools: disallowedToolsFor(config), autoMemoryDirectory });
       if (!built) throw new Error('structured transport not supported for this provider');
       sc = built;
     }
@@ -2298,11 +2396,12 @@ export class SessionService {
     // an MCP tool runs outside the sandbox, so a sandboxed coordinator may call only Dispatch's own.
     const codexCoordinator = terminal.type === 'codex' && config.role === 'coordinator';
     const toolPolicy =
-      config.role === 'coordinator'
+      coordinatorDirs
         ? // A Claude coordinator has no sandbox — its Bash 'allow' just runs — so it keeps the
           // denylist (commandsEscalate false) and its MCP tools. A Codex coordinator denies every
-          // escalated command and every MCP tool but Dispatch's own.
-          makeCoordinatorPolicy(coordinatorMemoryDirFor(terminal.type), codexCoordinator
+          // escalated command and every MCP tool but Dispatch's own. Either may write only to its
+          // own memory and to this project's shared memory folder (coordinatorDirs, above).
+          makeCoordinatorPolicy(coordinatorDirs, codexCoordinator
             ? { commandsEscalate: true, allowedMcpServers: [AGENCY_MCP_SERVER] }
             : { commandsEscalate: false })
         : typeof config.roleAuthority === 'string'
@@ -2340,7 +2439,7 @@ export class SessionService {
           dir: path.join(this.statusContext.hooksDir, 'opencode-homes', terminal.id),
           model: resolvedModel,
           escalate,
-          systemPrompt: [systemPromptFor(config, terminal.type), toolsDisabled ? undefined : structuredMcp?.systemPrompt].filter(Boolean).join('\n\n') || undefined,
+          systemPrompt: [persona, toolsDisabled ? undefined : structuredMcp?.systemPrompt].filter(Boolean).join('\n\n') || undefined,
           mcpServers,
           toolsDisabled,
         });
@@ -2365,7 +2464,7 @@ export class SessionService {
       // OpenCode join above. A per-thread developerInstructions also supersedes the app-server's
       // global `-c developer_instructions` note, so leaving the block out would drop it. Only the
       // Codex manager reads this field; Claude/Grok/OpenCode get theirs via argv/config paths.
-      systemPrompt: [systemPromptFor(config, terminal.type), structuredMcp?.systemPrompt].filter(Boolean).join('\n\n') || undefined,
+      systemPrompt: [persona, structuredMcp?.systemPrompt].filter(Boolean).join('\n\n') || undefined,
       // A codex COORDINATOR must run `on-request` + `read-only` (NOT the manager's default
       // `workspace-write`) so the Task 5 enforcement membrane actually fires: under
       // `workspace-write`, an in-workspace repo write / `git commit` / `git push` runs WITHOUT
@@ -2373,8 +2472,9 @@ export class SessionService {
       // never sees exactly the actions it must deny. Read-only + on-request instead surfaces
       // EVERY write/command needing write or network as an approval for the policy to gate —
       // repo writes and git commit/push get denied, and its own memory writes get allowed
-      // (toolPolicy above is built per-harness via makeCoordinatorPolicy(coordinatorMemoryDirFor
-      // (terminal.type)), so a codex coordinator's memory dir is ~/.codex, not ~/.claude — Task 7).
+      // (toolPolicy above is built per-harness via makeCoordinatorPolicy(coordinatorWriteDirs(…)),
+      // so a codex coordinator writes to ~/.codex/dispatch-coordinator and the project's shared
+      // Claude memory folder — Task 7, overseer memory scope Unit 2).
       // Every other codex thread (agents, role runs) — and every non-codex harness, which
       // ignores these fields entirely — keeps today's manager-construction defaults.
       ...(codexCoordinator

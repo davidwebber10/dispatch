@@ -475,6 +475,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Determine actual server URL after port is known
   const sessionService = new SessionService(db, ptyManager, path.join(dataDir, 'mcp.json'));
   sessionService.setUserPromptListener((id, text) => threadAutoNamer.notifyPrompt(id, text));
+  // A Claude overseer loads only its own memory folder under this home (overseer memory scope
+  // spec 2026-10-07, Unit 1). Only the real daemon sets it; createApp (tests) leaves it unset.
+  sessionService.setOverseerMemoryHome(os.homedir());
   const agentService = new AgentService(db, sessionService, broadcaster, path.join(dataDir, 'runs'));
   // Built ahead of rolesService (moved up from its former spot below, alongside the other
   // *Pretty wiring) so it can be handed in as RolesService's optional push dep — backs the

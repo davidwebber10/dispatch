@@ -147,7 +147,7 @@ function shortLabel(label: string): string {
 /** A table cell: no pipe and no line break may leak out of it. */
 const cell = (s: string) => s.replace(/\r?\n+/g, ' ').replace(/\|/g, '\\|').trim();
 
-/** "plan `docs/plans/a.md`, section "Risks" (`D3`)", "agent "X"", "PR #12", …; null without a source. */
+/** "plan `docs/plans/a.md`, section "Risks" (`D3`)", "agent "X"", "your thread "Y"", "PR #12", …; null without a source. */
 export function renderSource(item: LedgerItem): string | null {
   const id = item.sourceId ? ` (\`${item.sourceId}\`)` : '';
   const ref = item.sourceRef ?? '';
@@ -167,6 +167,8 @@ export function renderSource(item: LedgerItem): string | null {
       }
       return `agent "${ref}"${item.sourceSection ? `, section "${item.sourceSection}"` : ''}${id}`;
     }
+    // One of the user's own threads (overseer memory scope spec 2026-10-07, Unit 4).
+    case 'thread': return `your thread "${ref}"${item.sourceSection ? `, section "${item.sourceSection}"` : ''}${id}`;
     case 'pr': return `PR ${ref}${id}`;
     case 'issue': return `issue ${ref}${id}`;
     case 'user': return `your words "${ref}"${id}`;
@@ -273,9 +275,29 @@ function proposedLines(items: LedgerItem[]): string[] {
 
 const listSection = (heading: string, lines: string[]) => `${heading}:\n${lines.length ? lines.join('\n') : '- none'}`;
 
+/** The project rules in force: the user's statements recorded with policy: true (ledger_note). */
+export function projectRules(items: LedgerItem[]): LedgerItem[] {
+  return items.filter((i) => i.kind === 'statement' && i.policy && i.status === 'answered');
+}
+
+/**
+ * The recap's one line for the project rules (overseer memory scope spec 2026-10-07, Unit 5):
+ * `Project rules: 13 in force (type "show rules").` The full list is renderRulesList.
+ */
+export function renderRulesLine(count: number): string {
+  return `Project rules: ${count} in force (type "show rules").`;
+}
+
+/** The full list of project rules, as "show rules" prints it; "No project rules." when there are none. */
+export function renderRulesList(items: LedgerItem[], ctx: RenderContext): string {
+  const rules = projectRules(items);
+  return rules.length ? listSection('Project rules (your words)', rules.map((i) => `- ${renderItem(i, ctx)}`)) : 'No project rules.';
+}
+
 /**
  * The ledger part of a recap, in this order:
- *   1. Project rules (your words) — only when rules exist.
+ *   1. Project rules — one line with their count, only when rules exist (overseer memory scope
+ *      spec 2026-10-07, Unit 5: the full list is renderRulesList, for the overseer's own use).
  *   2. Needs you now — full cards for every decision sent to the user since the last recap, plus
  *      the top 5 of the rest (first the ones that hold up work, then the oldest); one line for
  *      every other open decision. Decisions running on their default are not here.
@@ -294,8 +316,8 @@ export function renderLedgerSections(
   const since = (i: LedgerItem) => opts.lastRecapAt === null || i.updatedAt > opts.lastRecapAt;
   const out: string[] = [];
 
-  const rules = items.filter((i) => i.kind === 'statement' && i.policy && i.status === 'answered');
-  if (rules.length) out.push(listSection('Project rules (your words)', rules.map((i) => `- ${renderItem(i, ctx)}`)));
+  const rules = projectRules(items);
+  if (rules.length) out.push(renderRulesLine(rules.length));
 
   const open = items.filter((i) => i.status === 'open' && isCardKind(i) && !i.onDefaultSince);
   // An import is a one-time load, not news: an imported decision never counts as new, so the

@@ -111,6 +111,17 @@ describe('ledger routes', () => {
     expect(handoff.body.block.startsWith('Owner decisions (verbatim, from the ledger):\n- N1 [Do] Check staging.')).toBe(true);
   });
 
+  // Overseer memory scope (spec 2026-10-07), Unit 5: the rules are one line; the full list is a field.
+  it('list carries the rules line and the rules field; show answers rules: true', async () => {
+    messagesDb.append(db, { terminalId: 'coord', source: 'user', text: 'never deploy on Fridays', sentAt: new Date().toISOString() });
+    await request(app).post(`/api/sessions/${sid}/ledger/note`).send({ caller: 'coord', quote: 'never deploy on Fridays', policy: true }).expect(201);
+    const list = await request(app).post(`/api/sessions/${sid}/ledger/list`).send({ caller: 'coord' }).expect(200);
+    expect(list.body.text.startsWith('Project rules: 1 in force (type "show rules").')).toBe(true);
+    expect(list.body.rules).toEqual([expect.stringMatching(/^N1 You said: "never deploy on Fridays"/)]);
+    const shown = await request(app).post(`/api/sessions/${sid}/ledger/show`).send({ caller: 'coord', rules: true }).expect(200);
+    expect(shown.body.text.startsWith('Project rules (your words):\n- N1 You said: "never deploy on Fridays"')).toBe(true);
+  });
+
   it('decision cards: add-from-agent, decide-self, mark-default and show answer on their routes', async () => {
     for (const text of ['How many nights?', 'Which day?']) {
       ledgerDb.create(db, { sessionId: sid, kind: 'decide', text, author: 'planner', status: 'proposed', ...{ context: DECIDE_CARD.context, defaultText: DECIDE_CARD.default } });
