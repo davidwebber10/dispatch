@@ -87,6 +87,23 @@ describe('HarnessesSection — OpenCode model list', () => {
     expect(within(card).getByRole('list', { name: 'OpenCode models' })).toHaveTextContent('Grok Latest');
   });
 
+  it('marks a catalog model that has no tool-capable endpoint as chat only, and still lets it be added', async () => {
+    (api.searchOpencodeCatalog as any).mockResolvedValue([
+      { id: 'openrouter/cognitivecomputations/dolphin-mistral-24b-venice-edition', label: 'Uncensored', name: 'Venice: Uncensored', contextLength: 128000, created: 3, alias: false, tools: false },
+      { id: 'openrouter/~x-ai/grok-latest', label: 'Grok Latest', name: 'xAI: Grok Latest', contextLength: 500000, created: 2, alias: true, aliasTarget: 'x-ai/grok-4.6', tools: true },
+    ]);
+    render(<HarnessesSection />);
+    const card = await opencodeCard();
+    fireEvent.change(within(card).getByRole('textbox', { name: 'Add a model' }), { target: { value: 'venice' } });
+    const results = await within(card).findByRole('list', { name: 'Catalog results' });
+    expect((await within(results).findByText('Uncensored')).closest('li')).toHaveTextContent('CHAT ONLY');
+    expect(within(results).getByText('Grok Latest').closest('li')).not.toHaveTextContent('CHAT ONLY');
+    fireEvent.click(within(results).getByRole('button', { name: 'Add Uncensored' }));
+    await waitFor(() => expect(api.putHarnessSettings).toHaveBeenCalledWith({
+      opencode: { models: [...MODELS, { label: 'Uncensored', model: 'openrouter/cognitivecomputations/dolphin-mistral-24b-venice-edition' }] },
+    }));
+  });
+
   it('shows the catalog outage instead of an empty result', async () => {
     (api.searchOpencodeCatalog as any).mockRejectedValue(new Error('Could not reach the OpenRouter catalog: ENOTFOUND'));
     render(<HarnessesSection />);

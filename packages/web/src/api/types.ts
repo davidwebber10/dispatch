@@ -350,6 +350,8 @@ export interface HarnessSettingsResponse {
 /** A row of OpenRouter's catalog, as served by GET /api/settings/harnesses/opencode/catalog. */
 export interface OpencodeCatalogEntry {
   id: string; label: string; name: string; contextLength: number | null; created: number; alias: boolean; aliasTarget?: string;
+  /** False when no endpoint accepts a tool list: the thread runs chat-only (no shell, files, or peer tools). */
+  tools?: boolean;
 }
 
 // Secrets (Doppler) — mirrors core /api/secrets.

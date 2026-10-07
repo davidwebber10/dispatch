@@ -3,6 +3,12 @@ import express from 'express';
 import request from 'supertest';
 import { createTerminalsRouter } from './terminals.js';
 import type { SessionService } from '../sessions/service.js';
+import { modelSupportsTools } from '../settings/model-capabilities.js';
+
+// The create route consults the model catalogs; stubbed so no test reaches the network.
+vi.mock('../settings/model-capabilities.js', () => ({
+  modelSupportsTools: vi.fn(async (id: string) => !id.includes('dolphin')),
+}));
 
 function app(stub: Partial<SessionService>) {
   const a = express();
@@ -80,5 +86,41 @@ describe('POST /api/terminals/:id/board', () => {
   it('404s an unknown terminal', async () => {
     const res = await request(app({ setBoardState: vi.fn().mockReturnValue(false) })).post('/api/terminals/t1/board').send({ acknowledged: true });
     expect(res.status).toBe(404);
+  });
+});
+
+describe('POST /api/sessions/:id/terminals — OpenCode tool support', () => {
+  const CHAT_ONLY = 'openrouter/cognitivecomputations/dolphin-mistral-24b-venice-edition';
+  const created = (config: Record<string, unknown>) => ({ id: 't-new', session_id: 's1', type: 'opencode', config: JSON.stringify(config) });
+
+  it('pins toolsDisabled on a picked model that has no tool-capable endpoint', async () => {
+    const createTerminal = vi.fn((_s, _t, _l, _skip, _wd, _ext, config) => created(config));
+    const res = await request(app({ createTerminal: createTerminal as never }))
+      .post('/api/sessions/s1/terminals')
+      .send({ type: 'opencode', config: { transport: 'structured', model: CHAT_ONLY } });
+    expect(res.status).toBe(201);
+    expect(modelSupportsTools).toHaveBeenCalledWith(CHAT_ONLY);
+    expect(createTerminal.mock.calls[0][6]).toEqual({ transport: 'structured', model: CHAT_ONLY, toolsDisabled: true });
+  });
+
+  it('leaves a tool-capable model alone', async () => {
+    const createTerminal = vi.fn((_s, _t, _l, _skip, _wd, _ext, config) => created(config));
+    await request(app({ createTerminal: createTerminal as never }))
+      .post('/api/sessions/s1/terminals')
+      .send({ type: 'opencode', config: { transport: 'structured', model: 'openrouter/~z-ai/glm-latest' } });
+    expect(createTerminal.mock.calls[0][6]).toEqual({ transport: 'structured', model: 'openrouter/~z-ai/glm-latest' });
+  });
+
+  it('does not consult the catalog for another harness or an explicit verdict', async () => {
+    vi.mocked(modelSupportsTools).mockClear();
+    const createTerminal = vi.fn((_s, _t, _l, _skip, _wd, _ext, config) => created(config));
+    await request(app({ createTerminal: createTerminal as never }))
+      .post('/api/sessions/s1/terminals')
+      .send({ type: 'claude-code', config: { transport: 'structured', model: 'opus' } });
+    await request(app({ createTerminal: createTerminal as never }))
+      .post('/api/sessions/s1/terminals')
+      .send({ type: 'opencode', config: { transport: 'structured', model: CHAT_ONLY, toolsDisabled: false } });
+    expect(modelSupportsTools).not.toHaveBeenCalled();
+    expect(createTerminal.mock.calls[1][6]).toEqual({ transport: 'structured', model: CHAT_ONLY, toolsDisabled: false });
   });
 });

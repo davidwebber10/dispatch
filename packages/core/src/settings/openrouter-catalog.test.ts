@@ -3,11 +3,11 @@ import { normalizeCatalog, searchCatalog, loadCatalog, resetCatalogCache, type C
 
 const raw = {
   data: [
-    { id: '~x-ai/grok-latest', name: 'xAI: Grok Latest', context_length: 500000, created: 1751983360, alias_target: { slug: 'x-ai/grok-4.6' } },
+    { id: '~x-ai/grok-latest', name: 'xAI: Grok Latest', context_length: 500000, created: 1751983360, alias_target: { slug: 'x-ai/grok-4.6' }, supported_parameters: ['tools', 'tool_choice', 'temperature'] },
     { id: 'x-ai/grok-4.6', name: 'xAI: Grok 4.6', context_length: 500000, created: 1755000000 },
     { id: 'x-ai/grok-4.5', name: 'xAI: Grok 4.5', context_length: 500000, created: 1751980000 },
     { id: 'x-ai/grok-4.6:batch', name: 'xAI: Grok 4.6 (batch)', context_length: 500000, created: 1755000000 },
-    { id: 'qwen/qwen3.8-max-0902', name: 'Qwen: Qwen3.8 Max (0902)', context_length: 1000000, created: 1756900000 },
+    { id: 'qwen/qwen3.8-max-0902', name: 'Qwen: Qwen3.8 Max (0902)', context_length: 1000000, created: 1756900000, supported_parameters: ['temperature', 'top_p'] },
     { id: 42, name: 'broken row' },
     { id: 'mystery/no-name', created: 1 },
   ],
@@ -29,6 +29,15 @@ describe('normalizeCatalog', () => {
   it('tolerates a non-catalog payload', () => {
     expect(normalizeCatalog(null)).toEqual([]);
     expect(normalizeCatalog({ data: 'nope' })).toEqual([]);
+  });
+
+  it('reads tool support from supported_parameters, and assumes tools when the field is absent', () => {
+    const byId = Object.fromEntries(normalizeCatalog(raw).map((e) => [e.id, e]));
+    expect(byId['openrouter/~x-ai/grok-latest'].tools).toBe(true);
+    // The row lists parameters but not `tools`: a chat-only model.
+    expect(byId['openrouter/qwen/qwen3.8-max-0902'].tools).toBe(false);
+    // No supported_parameters at all: fail open — today's behavior, OpenCode sends tools.
+    expect(byId['openrouter/x-ai/grok-4.6'].tools).toBe(true);
   });
 });
 
