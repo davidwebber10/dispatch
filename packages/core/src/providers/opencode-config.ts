@@ -30,6 +30,17 @@ export interface OpencodeConfigSpec {
   escalate?: boolean;
   systemPrompt?: string;
   mcpServers?: Record<string, McpServerEntry>;
+  /**
+   * True when the model has no tool-capable endpoint (settings/model-capabilities.ts). The
+   * config then DENIES every tool (`permission: {"*": "deny"}` — built-ins and MCP alike)
+   * and skips the MCP block, so the request reaches the provider with no tool list and the
+   * thread runs chat-only. Verified live over `opencode acp` against OpenRouter 2026-10-06
+   * with cognitivecomputations/dolphin-mistral-24b-venice-edition: with any tool left on it
+   * fails with "No endpoints found that support tool use"; with this block it answers.
+   * NOT the deprecated `tools: {"*": false}`: the permission block wins over it, so the
+   * usual `bash: 'allow'` beside it re-enabled bash and the request still failed.
+   */
+  toolsDisabled?: boolean;
 }
 
 export function writeOpencodeConfig(spec: OpencodeConfigSpec): string {
@@ -39,7 +50,7 @@ export function writeOpencodeConfig(spec: OpencodeConfigSpec): string {
   const cfg: Record<string, unknown> = {
     $schema: 'https://opencode.ai/config.json',
     model: spec.model || OPENCODE_DEFAULT_MODEL,
-    permission: { edit: mode, bash: mode, webfetch: mode },
+    permission: spec.toolsDisabled ? { '*': 'deny' } : { edit: mode, bash: mode, webfetch: mode },
   };
 
   const rulesPath = path.join(spec.dir, 'rules.md');
@@ -51,7 +62,7 @@ export function writeOpencodeConfig(spec: OpencodeConfigSpec): string {
     fs.rmSync(rulesPath, { force: true });
   }
 
-  if (spec.mcpServers && Object.keys(spec.mcpServers).length > 0) {
+  if (!spec.toolsDisabled && spec.mcpServers && Object.keys(spec.mcpServers).length > 0) {
     const mcp: Record<string, unknown> = {};
     for (const [name, s] of Object.entries(spec.mcpServers)) {
       mcp[name] = {

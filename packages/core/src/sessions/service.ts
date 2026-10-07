@@ -39,6 +39,7 @@ import { isAgentType, type AgentType } from '../providers/agent-types.js';
 import { COORDINATOR_CAPABLE_HARNESSES } from '../providers/capabilities.js';
 import { writeGrokHome, type McpServerEntry } from '../providers/grok-home.js';
 import { writeOpencodeConfig } from '../providers/opencode-config.js';
+import { modelSupportsToolsCached } from '../settings/model-capabilities.js';
 import { OPENCODE_DEFAULT_MODEL } from '../providers/opencode.js';
 import { readHarnessSettings } from '../settings/harness-settings.js';
 import { TERMINAL_ID_ENV_VAR } from '../auth/shim.js';
@@ -2319,12 +2320,29 @@ export class SessionService {
         for (const spec of specs) {
           mcpServers[spec.name] = { command: spec.command, args: spec.args, ...(spec.env ? { env: spec.env } : {}) };
         }
+        // A model with no tool-capable endpoint (settings/model-capabilities.ts) runs
+        // chat-only: every tool off, no MCP, and no peer-tools block in the prompt (it
+        // would describe tools the model cannot call). The verdict is pinned in
+        // config.toolsDisabled on first sight so a resume never re-decides it; the create
+        // route pre-pins it for a picked model, and this is the fallback for a thread
+        // created without a pick. A cold cache (null) means "tools on" and is NOT pinned,
+        // so the next spawn re-asks once the kicked load has landed.
+        let toolsDisabled = typeof config.toolsDisabled === 'boolean' ? config.toolsDisabled : undefined;
+        if (toolsDisabled === undefined && resolvedModel) {
+          const supports = modelSupportsToolsCached(resolvedModel);
+          if (supports !== null) {
+            toolsDisabled = !supports;
+            config.toolsDisabled = toolsDisabled;
+            terminalsDb.updateConfig(this.db, terminal.id, config);
+          }
+        }
         const cfgPath = writeOpencodeConfig({
           dir: path.join(this.statusContext.hooksDir, 'opencode-homes', terminal.id),
           model: resolvedModel,
           escalate,
-          systemPrompt: [systemPromptFor(config, terminal.type), structuredMcp?.systemPrompt].filter(Boolean).join('\n\n') || undefined,
+          systemPrompt: [systemPromptFor(config, terminal.type), toolsDisabled ? undefined : structuredMcp?.systemPrompt].filter(Boolean).join('\n\n') || undefined,
           mcpServers,
+          toolsDisabled,
         });
         opencodeEnv = { OPENCODE_CONFIG: cfgPath };
       } catch { /* best-effort — a thread without injections still runs */ }
