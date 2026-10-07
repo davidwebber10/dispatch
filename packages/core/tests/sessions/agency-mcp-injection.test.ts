@@ -110,7 +110,7 @@ describe('agency MCP: caller identity + standard injection path', () => {
     expect(persona.startsWith(COORDINATOR_PROMPT)).toBe(true);
     expect(persona).toBe(buildCoordinatorPrompt({
       harness: 'claude-code',
-      memoryFolders: { own: overseerMemoryDir(os.homedir(), tmpDir), shared: sharedProjectMemoryDir(os.homedir(), claudeMemoryProjectDir(tmpDir)) },
+      memoryFolders: { own: overseerMemoryDir(os.homedir(), tmpDir), shared: sharedProjectMemoryDir(os.homedir(), claudeMemoryProjectDir(tmpDir).dir!) },
     }));
     // No peers exist yet at spawn time (this is the only terminal in the session) —
     // the roster renders the "no peers" line, not a dangling header.

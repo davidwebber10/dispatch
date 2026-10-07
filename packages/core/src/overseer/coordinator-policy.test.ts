@@ -223,6 +223,13 @@ describe('coordinatorWriteDirs — the memory scope (Unit 2)', () => {
     expect(coordinatorWriteDirs('codex', home, sub, PROJECT)).toEqual([path.join(home, '.codex', 'dispatch-coordinator'), sharedProjectMemoryDir(home, PROJECT)]);
   });
 
+  // Review round 2, fix 1: no repository folder (the git resolution failed) → no shared folder in the scope.
+  it('no repository folder: the shared folder is left out of the scope, and not listed as refused', () => {
+    expect(coordinatorMemoryFolders('claude-code', home, PROJECT, null)).toEqual({ own: overseerMemoryDir(home, PROJECT), shared: null, refused: [] });
+    expect(coordinatorWriteDirs('claude-code', home, PROJECT, null)).toEqual([overseerMemoryDir(home, PROJECT)]);
+    expect(coordinatorWriteDirs('codex', home, PROJECT, null)).toEqual([path.join(home, '.codex', 'dispatch-coordinator')]);
+  });
+
   // Review round 1, fix 2: a symlink must not widen the write scope.
   it('a folder that a symlink leads out of its memory root is left out of the scope', () => {
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'coord-scope-outside-'));

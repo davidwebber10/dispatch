@@ -251,6 +251,41 @@ describe('an overseer in a subfolder of a git repository', () => {
   });
 });
 
+// Review round 2, fixes 1-2: when git cannot resolve the repository (here a separate git dir),
+// the start defers the shared folder: own folder as usual, no shared folder, no copy, one line.
+describe('an overseer whose repository could not be resolved', () => {
+  beforeEach(() => svc.setOverseerMemoryHome(home));
+
+  it('gets its own folder; the shared folder is left out of the policy, the persona and the copy; one error line', () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const env = { ...process.env };
+    for (const k of Object.keys(env)) if (k.startsWith('GIT_')) delete env[k];
+    const sep = path.join(dir, 'sep');
+    execFileSync('git', ['init', '-q', `--separate-git-dir=${path.join(dir, 'gitdir')}`, sep], { cwd: dir, env, stdio: 'ignore' });
+    sessionsDb.create(db, { id: 's3', provider: 'claude-code', name: 'sep', workingDir: sep });
+    const shared = sharedProjectMemoryDir(home, sep);
+    fs.mkdirSync(shared, { recursive: true });
+    fs.writeFileSync(path.join(shared, 'old.md'), `---\nname: n\noriginSessionId: sess-old\n---\nbody\n`);
+    terminalsDb.create(db, { id: 'old3', sessionId: 's3', type: 'claude-code', label: 'Old CP', externalId: 'sess-old', config: { transport: 'structured', role: 'coordinator' } });
+    terminalsDb.archive(db, 'old3');
+
+    const t = svc.createTerminal('s3', 'claude-code', 'Control Plane', false, undefined, undefined, { transport: 'structured', role: 'coordinator' });
+
+    const own = overseerMemoryDir(home, sep);
+    expect(settingsOf(t.id)).toEqual({ autoMemoryDirectory: own });
+    expect(fs.readdirSync(own)).toEqual([]); // no copy, no marker
+    const policy = claude.spawnOpts[t.id].toolPolicy!;
+    expect(policy('Write', { file_path: path.join(own, 'MEMORY.md') }).allow).toBe(true);
+    expect(policy('Write', { file_path: path.join(shared, 'x.md') }).allow).toBe(false);
+    const args = claude.spawnOpts[t.id].args;
+    expect(args[args.lastIndexOf('--append-system-prompt') + 1]).not.toContain('shared memory folder:');
+    const lines = memoryErrors(err);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(t.id);
+    expect(lines[0]).toContain(sep);
+  });
+});
+
 // Review round 1, fix 2: a symlink that leads a folder out of its memory root.
 describe('a symlinked memory folder', () => {
   let outside: string;

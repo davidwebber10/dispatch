@@ -194,17 +194,20 @@ export function coordinatorMemoryDirFor(harness: string): string {
  * A Claude own folder that resolves (through symlinks) outside ~/.claude/dispatch-overseer, or a
  * shared folder that resolves outside ~/.claude/projects, is null and listed in `refused`: a
  * symlink must not widen what the policy allows (review round 1).
+ *
+ * `sharedProjectDir` is null when the git resolution failed (claudeMemoryProjectDir): then the
+ * shared folder is null and not listed in `refused`; the caller logs it (review round 2).
  */
 export function coordinatorMemoryFolders(
   harness: string,
   home: string,
   projectDir: string,
-  sharedProjectDir: string,
+  sharedProjectDir: string | null,
 ): { own: string | null; shared: string | null; refused: string[] } {
   const refused: string[] = [];
-  const shared = sharedProjectMemoryDir(home, sharedProjectDir);
-  const sharedOk = sharedMemoryFolderSafe(home, shared);
-  if (!sharedOk) refused.push(shared);
+  const shared = sharedProjectDir === null ? null : sharedProjectMemoryDir(home, sharedProjectDir);
+  const sharedOk = shared !== null && sharedMemoryFolderSafe(home, shared);
+  if (shared !== null && !sharedOk) refused.push(shared);
   let own: string | null;
   if (harness === 'codex') {
     own = path.join(home, ...coordinatorMemoryRelDir('codex').split('/'));
@@ -216,7 +219,7 @@ export function coordinatorMemoryFolders(
 }
 
 /** Every folder a coordinator may write to: the folders of coordinatorMemoryFolders that passed the checks. */
-export function coordinatorWriteDirs(harness: string, home: string, projectDir: string, sharedProjectDir: string): string[] {
+export function coordinatorWriteDirs(harness: string, home: string, projectDir: string, sharedProjectDir: string | null): string[] {
   const { own, shared } = coordinatorMemoryFolders(harness, home, projectDir, sharedProjectDir);
   return [own, shared].filter((dir): dir is string => dir !== null);
 }

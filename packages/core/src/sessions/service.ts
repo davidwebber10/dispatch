@@ -2199,15 +2199,26 @@ export class SessionService {
    * The memory folders of a coordinator start (overseer memory scope spec 2026-10-07, Units 1-2):
    * its own, and the project's shared one, which follows the git repository of the working
    * directory (claudeMemoryProjectDir). A folder that a symlink leads out of its memory root is
-   * null: it is left out of the write scope and the persona, and one error line names it.
+   * null: it is left out of the write scope and the persona, and one error line names it. When
+   * git could not resolve the repository, the shared folder is null too (and sharedProjectDir:
+   * no copy, no marker), with one error line; the next start tries again (review round 2).
    */
-  private coordinatorMemoryFoldersFor(terminal: terminalsDb.TerminalRow, workDir: string): { own: string | null; shared: string | null; sharedProjectDir: string } {
-    const sharedProjectDir = claudeMemoryProjectDir(workDir);
-    const { own, shared, refused } = coordinatorMemoryFolders(terminal.type, this.overseerMemoryHome ?? os.homedir(), workDir, sharedProjectDir);
+  private coordinatorMemoryFoldersFor(
+    terminal: terminalsDb.TerminalRow,
+    workDir: string,
+  ): { own: string | null; shared: string | null; sharedProjectDir: string | null } {
+    const resolved = claudeMemoryProjectDir(workDir);
+    if (resolved.dir === null) {
+      console.error(
+        `[overseer-memory] ${terminal.id}: could not resolve the git repository of ${workDir} (${resolved.reason}); ` +
+        "the project's shared memory folder is left out of this start, and the next start tries again",
+      );
+    }
+    const { own, shared, refused } = coordinatorMemoryFolders(terminal.type, this.overseerMemoryHome ?? os.homedir(), workDir, resolved.dir);
     if (refused.length) {
       console.error(`[overseer-memory] ${terminal.id}: left out of the memory scope, because a symlink leads outside its memory root: ${refused.join(', ')}`);
     }
-    return { own, shared, sharedProjectDir };
+    return { own, shared, sharedProjectDir: resolved.dir };
   }
 
   /**
@@ -2222,7 +2233,7 @@ export class SessionService {
     terminal: terminalsDb.TerminalRow,
     config: Record<string, any>,
     workDir: string,
-    folders: { own: string | null; sharedProjectDir: string } | null,
+    folders: { own: string | null; sharedProjectDir: string | null } | null,
   ): string | undefined {
     if (config.role !== 'coordinator' || terminal.type !== 'claude-code' || !folders) return undefined;
     const home = this.overseerMemoryHome;
