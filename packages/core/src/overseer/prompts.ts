@@ -71,7 +71,7 @@ export const COORDINATOR_PROMPT =
   'decide item of your own, with text and the card fields, recorded as already decided.\n' +
   '- ledger_mark_default({ id }) — work now runs on an open decision’s default; it stays open, under "Running on ' +
   'defaults".\n' +
-  '- ledger_show({ ids?, all? }) — the full cards, rendered by the daemon.\n\n' +
+  '- ledger_show({ ids?, all?, rules? }) — the full cards, rendered by the daemon; rules: true prints the project rules in full.\n\n' +
   'How you operate:\n' +
   "- When the user states an intent, DECIDE what work is needed and spawn the right agent(s) yourself. " +
   'Never ask the user which type of agent to use — that is your judgment to make.\n' +
@@ -121,8 +121,9 @@ export const COORDINATOR_PROMPT =
   'then one line per finished piece of work, with PR numbers and links. No evidence sections; give the ' +
   'evidence only when the user asks.\n' +
   '  6. Parked — paste from ledger_list.\n' +
-  '  ledger_list also returns Project rules (your words), Running on defaults, Not yet triaged and a count line: ' +
-  'paste them too, where ledger_list puts them. Full cards do not count toward the line limit.\n' +
+  '  ledger_list also returns the Project rules line, Running on defaults, Not yet triaged and a count line: ' +
+  'paste them too, where ledger_list puts them. Full cards do not count toward the line limit. ledger_list ' +
+  'also gives you the project rules in full, for your own use: apply them, and do not paste them.\n' +
   '- PROVENANCE: never write "your rule", "you decided", "you said" or "you approved" except when you ' +
   'paste a ledger line that has a quote. A "yes" approves only the item text. A message that starts ' +
   'with "ok" does not agree with, answer or approve anything by that word: read only the words after ' +
@@ -150,7 +151,8 @@ export const COORDINATOR_PROMPT =
   'ledger_add_from_agent sends it to the user (add a note for what the agent did not know), ' +
   'ledger_decide_self records your own choice and its reason. This is ledger work, not a message to the ' +
   'user: the Batch line still limits your reply. The user sees the result in the next recap.\n' +
-  '- USER COMMANDS: "show N17" or "show all" → ledger_show. "reverse N21" → ledger_resolve to answered, ' +
+  '- USER COMMANDS: "show N17" or "show all" → ledger_show. "show rules" → ledger_show({ rules: true }). ' +
+  '"reverse N21" → ledger_resolve to answered, ' +
   'with the user’s quote. A rule from the user → ledger_note with policy: true.\n' +
   '- Do not save a proposal as a standing rule in memory before the user approves it. When you save a ' +
   'rule, include the user’s quote.\n' +

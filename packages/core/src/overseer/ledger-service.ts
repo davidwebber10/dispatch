@@ -22,8 +22,8 @@ import * as ledgerDb from '../db/ledger.js';
 import * as messagesDb from '../db/coordinator-messages.js';
 import { findQuote, GO_APPROVAL_ERROR, namesGoApproval, OK_ONLY_ERROR } from './ledger-quote.js';
 import {
-  isUnchecked, renderCard, renderDefaultLine, renderHandoffBlock, renderItem, renderLedgerSections, renderOverseerDecisionLine,
-  type RenderContext,
+  isUnchecked, projectRules, renderCard, renderDefaultLine, renderHandoffBlock, renderItem, renderLedgerSections, renderOverseerDecisionLine,
+  renderRulesList, type RenderContext,
 } from './ledger-render.js';
 import {
   cardFieldsError, findProjectPath, gitWorktrees, holdsSeveralDecisions, isIssueRef, missingCardFields,
@@ -367,10 +367,11 @@ export class LedgerService {
     return { id: `N${item.seq}`, line: renderDefaultLine(updated, { timeZone: this.timeZone }) };
   }
 
-  /** ledger_show: the full cards of the given items, or of every open decision. */
+  /** ledger_show: the full cards of the given items, or of every open decision; `rules: true` prints the project rules ("show rules"). */
   show(sessionId: string, caller: unknown, input: Record<string, unknown>): { text: string } {
     this.assertOverseer(sessionId, caller);
     const ctx = this.ctx(sessionId);
+    if (input.rules === true) return { text: renderRulesList(ledgerDb.listBySession(this.db, sessionId), ctx) };
     const render = (i: ledgerDb.LedgerItem) => (i.kind === 'go' || i.kind === 'decide' ? renderCard(i, ctx) : renderItem(i, ctx));
     if (input.all === true) {
       const open = ledgerDb.listBySession(this.db, sessionId).filter((i) => i.status === 'open' && (i.kind === 'go' || i.kind === 'decide'));
@@ -405,8 +406,12 @@ export class LedgerService {
     return { id: `N${item.seq}`, line: renderItem(item, this.ctx(sessionId)) };
   }
 
-  /** The rendered ledger part of a recap. `forRecap` stamps lastRecapAt and clears the interim timer. */
-  list(sessionId: string, caller: unknown, opts: { forRecap?: boolean } = {}): { text: string; openIds: string[] } {
+  /**
+   * The rendered ledger part of a recap. `forRecap` stamps lastRecapAt and clears the interim timer.
+   * The recap shows the project rules as one line; `rules` holds each rule in full, for the
+   * overseer's own use (overseer memory scope spec 2026-10-07, Unit 5).
+   */
+  list(sessionId: string, caller: unknown, opts: { forRecap?: boolean } = {}): { text: string; openIds: string[]; rules: string[] } {
     const overseer = this.assertOverseer(sessionId, caller);
     let cfg: Record<string, any> = {};
     try { cfg = JSON.parse(overseer.config || '{}'); } catch { /* default {} */ }
@@ -418,7 +423,12 @@ export class LedgerService {
       delete cfg[INTERIM_DUE_KEY];
       terminalsDb.updateConfig(this.db, overseer.id, cfg);
     }
-    return { text, openIds: items.filter((i) => i.status === 'open').map((i) => `N${i.seq}`) };
+    const ctx = this.ctx(sessionId);
+    return {
+      text,
+      openIds: items.filter((i) => i.status === 'open').map((i) => `N${i.seq}`),
+      rules: projectRules(items).map((i) => renderItem(i, ctx)),
+    };
   }
 
   /** One-time load of open items and earlier decisions from the overseer's context. */

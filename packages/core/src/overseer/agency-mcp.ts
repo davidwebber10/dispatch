@@ -509,7 +509,8 @@ export const TOOLS = [
         policy: {
           type: 'boolean',
           description: 'True when the user states a project rule (for example which decisions you may make ' +
-            'yourself). It shows under "Project rules (your words)" in every recap and overrides the default tiers.',
+            'yourself). It counts in the "Project rules" line of every recap, ledger_show({ rules: true }) lists it ' +
+            'in full, and it overrides the default tiers.',
         },
       },
       required: ['quote'],
@@ -518,11 +519,12 @@ export const TOOLS = [
   {
     name: 'ledger_list',
     description:
-      'Overseer only. The rendered ledger part of a recap: Project rules (your words), Needs you now (full ' +
-      'cards for new decisions plus the top 5, one line for the rest), Running on defaults, Your tests and ' +
-      'actions, Decided since the last recap, Not yet triaged, Parked, and the count line. Paste it as is. ' +
-      'Pass forRecap: true when you post the recap: it marks the recap as posted and clears the interim ' +
-      'recap timer.',
+      'Overseer only. The rendered ledger part of a recap: the Project rules line ("Project rules: 13 in force ' +
+      '(type "show rules")."), Needs you now (full cards for new decisions plus the top 5, one line for the rest), ' +
+      'Running on defaults, Your tests and actions, Decided since the last recap, Not yet triaged, Parked, and ' +
+      'the count line. Paste it as is. When rules exist, a second block lists them in full for your own use: ' +
+      'apply them, and do not paste them. Pass forRecap: true when you post the recap: it marks the recap as ' +
+      'posted and clears the interim recap timer.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -617,12 +619,14 @@ export const TOOLS = [
     name: 'ledger_show',
     description:
       'Overseer only. The full cards, rendered by the daemon: for `ids`, or for every open decision with ' +
-      'all: true. Use it when the user types "show N17" or "show all", and post the cards exactly as they are.',
+      'all: true. Use it when the user types "show N17" or "show all", and post the cards exactly as they are. ' +
+      'rules: true prints the project rules in full: use it when the user types "show rules".',
     inputSchema: {
       type: 'object',
       properties: {
         ids: { type: 'array', items: { type: 'string' }, description: 'The item IDs, e.g. ["N17"].' },
         all: { type: 'boolean', description: 'True for every open decision.' },
+        rules: { type: 'boolean', description: 'True for the project rules in full ("show rules").' },
       },
     },
   },
@@ -1027,10 +1031,19 @@ async function ledgerNote(args: Record<string, unknown>): Promise<{ id: string; 
   return ledgerRequest('/note', { ...args, caller: requireSelf('use the ledger') });
 }
 
-/** Returns the rendered text itself (not JSON), so the overseer can paste it as is. */
-async function ledgerList(args: { forRecap?: boolean }): Promise<string> {
+/** The heading of ledger_list's second block: the project rules in full, never pasted (overseer memory scope, Unit 5). */
+export const RULES_FOR_OVERSEER = 'Project rules in force, for your own use: apply them, and do not paste them.';
+
+/**
+ * The rendered text itself (not JSON), so the overseer can paste it as is; plus, when rules exist, a
+ * second block with each rule in full for the overseer's own use.
+ */
+async function ledgerList(args: { forRecap?: boolean }): Promise<{ type: 'text'; text: string }[]> {
   const data = await ledgerRequest('/list', { caller: requireSelf('use the ledger'), forRecap: args?.forRecap === true });
-  return String(data?.text ?? '');
+  const blocks = [{ type: 'text' as const, text: String(data?.text ?? '') }];
+  const rules = Array.isArray(data?.rules) ? data.rules.filter((r: unknown): r is string => typeof r === 'string') : [];
+  if (rules.length) blocks.push({ type: 'text', text: [RULES_FOR_OVERSEER, ...rules.map((r: string) => `- ${r}`)].join('\n') });
+  return blocks;
 }
 
 async function ledgerImport(args: { items?: unknown }): Promise<{ ids: string[] }> {
@@ -1060,10 +1073,14 @@ async function ledgerMarkDefault(args: Record<string, unknown>): Promise<{ id: s
 }
 
 /** Returns the rendered cards themselves (not JSON), so the overseer can post them as is. */
-async function ledgerShow(args: { ids?: unknown; all?: unknown }): Promise<string> {
+async function ledgerShow(args: { ids?: unknown; all?: unknown; rules?: unknown }): Promise<string> {
+  if (args?.rules === true) {
+    const data = await ledgerRequest('/show', { caller: requireSelf('use the ledger'), rules: true });
+    return String(data?.text ?? '');
+  }
   const all = args?.all === true;
   const ids = Array.isArray(args?.ids) ? args.ids : typeof args?.ids === 'string' ? [args.ids] : [];
-  if (!all && ids.length === 0) throw new Error('pass ids (e.g. ["N17"]) or all: true');
+  if (!all && ids.length === 0) throw new Error('pass ids (e.g. ["N17"]), all: true, or rules: true');
   const data = await ledgerRequest('/show', { caller: requireSelf('use the ledger'), ...(all ? { all: true } : { ids }) });
   return String(data?.text ?? '');
 }
@@ -1152,8 +1169,9 @@ export async function callTool(
       case 'ledger_mark_default': result = await ledgerMarkDefault(args ?? {}); break;
       // ledger_show's result IS the cards to post — return them as is, not as a JSON string.
       case 'ledger_show': return { content: [{ type: 'text', text: await ledgerShow(args ?? {}) }] };
-      // ledger_list's result IS the text to paste — return it as is, not as a JSON string.
-      case 'ledger_list': return { content: [{ type: 'text', text: await ledgerList(args ?? {}) }] };
+      // ledger_list's result IS the text to paste — return it as is, not as a JSON string (plus the
+      // full rules in a second block, for the overseer's own use).
+      case 'ledger_list': return { content: await ledgerList(args ?? {}) };
       // post_image's result IS the content block (an image, not JSON text) — return it directly.
       case 'post_image': return { content: [await postImage(args ?? {})] };
       default: throw new Error(`Unknown tool: ${name}`);

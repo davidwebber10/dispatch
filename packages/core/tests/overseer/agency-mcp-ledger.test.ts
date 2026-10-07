@@ -67,6 +67,29 @@ describe('agency-mcp ledger tools', () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ caller: 'coord-1', forRecap: true });
   });
 
+  // Overseer memory scope (spec 2026-10-07), Unit 5.
+  it('ledger_list returns the full project rules in a second block, for the overseer\'s own use', async () => {
+    const text = 'Project rules: 2 in force (type "show rules").\n\nNeeds you now:\n- none';
+    const rules = ['N1 You said: "never deploy on Fridays" (Mon 16:01)', 'N2 You said: "always ask before a release" (Mon 16:02)'];
+    global.fetch = vi.fn().mockResolvedValueOnce(ok({ text, openIds: [], rules })) as any;
+    const out = await callTool('ledger_list', {});
+    expect(out.content).toEqual([
+      { type: 'text', text },
+      { type: 'text', text: `Project rules in force, for your own use: apply them, and do not paste them.\n- ${rules[0]}\n- ${rules[1]}` },
+    ]);
+  });
+
+  it('ledger_show({ rules: true }) asks the daemon for the full rules', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(ok({ text: 'Project rules (your words):\n- N1 You said: "x" (Mon 16:01)' }));
+    global.fetch = fetchMock as any;
+    const out = await callTool('ledger_show', { rules: true });
+    expect(out.content).toEqual([{ type: 'text', text: 'Project rules (your words):\n- N1 You said: "x" (Mon 16:01)' }]);
+    expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/sessions/sess-1/ledger/show');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ caller: 'coord-1', rules: true });
+    const props = (TOOLS.find((t) => t.name === 'ledger_show')! as any).inputSchema.properties;
+    expect(props.rules.type).toBe('boolean');
+  });
+
   it('each of the nine ledger tools surfaces the daemon\'s overseer-only refusal (403) as is', async () => {
     const denied = "Only the project's overseer can change the ledger.";
     const calls: [string, Record<string, unknown>][] = [

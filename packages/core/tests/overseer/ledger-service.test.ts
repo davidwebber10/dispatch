@@ -594,6 +594,28 @@ describe('triage tools', () => {
     expect(ledger.show('s1', 'coord', { all: true }).text).toContain('Running on the default since Oct 5'); // still open: still shown
   });
 
+  // Overseer memory scope (spec 2026-10-07), Unit 5: the rules are one line in the recap; the full
+  // list rides in a separate field and prints on "show rules".
+  it('ledger_list: the recap has the rules line; the rules field and ledger_show({ rules: true }) have the full list', () => {
+    expect(ledger.list('s1', 'coord').rules).toEqual([]);
+    expect(ledger.show('s1', 'coord', { rules: true })).toEqual({ text: 'No project rules.' });
+    userSays('never deploy on Fridays', 1);
+    userSays('always ask before a release', 2);
+    ledger.note('s1', 'coord', { quote: 'never deploy on Fridays', policy: true });
+    ledger.note('s1', 'coord', { quote: 'always ask before a release', policy: true });
+    // The first recap after a rule shows it once under "Decided since the last recap"; later recaps
+    // carry only the one line.
+    expect(ledger.list('s1', 'coord', { forRecap: true }).text).toContain('Decided since the last recap:\n- N1 You said: "never deploy on Fridays"');
+    now += 60_000;
+    const out = ledger.list('s1', 'coord');
+    expect(out.text.split('\n\n')[0]).toBe('Project rules: 2 in force (type "show rules").');
+    expect(out.text).not.toContain('never deploy on Fridays');
+    expect(out.rules).toEqual(['N1 You said: "never deploy on Fridays" (Mon 16:01)', 'N2 You said: "always ask before a release" (Mon 16:02)']);
+    expect(ledger.show('s1', 'coord', { rules: true }).text).toBe(
+      'Project rules (your words):\n- N1 You said: "never deploy on Fridays" (Mon 16:01)\n- N2 You said: "always ask before a release" (Mon 16:02)',
+    );
+  });
+
   it('ledger_show all with no open decision', () => {
     expect(ledger.show('s1', 'coord', { all: true })).toEqual({ text: 'No open decisions.' });
   });
