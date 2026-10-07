@@ -39,6 +39,11 @@ All by the user, 2026-10-06.
    recap.** The user first read this rule as "present each turn"; after the
    clarification ("oh that is triage not present. I misread it.") the rule stays:
    triage is ledger work in the same turn, not a message to the user.
+7. **Amendment 2026-10-07: an imported decision never counts as new** (user: "yes
+   start that fix"). The first rollout import put 52 items into one project's
+   ledger. Every import counted as new, so the first recap would have shown every
+   open decision as a full card. An import is a one-time load, not news: imported
+   decisions compete for the top 5 like older items and otherwise get one line.
 
 ## Evidence
 
@@ -226,7 +231,7 @@ The dispatch MCP grows from 22 to 26 tools.
    recap, plus the top 5: first the items that hold up work, then the oldest. Every
    other open decision gets one line.
    - "New" means sent to the user after the last recap: created as `open`, or
-     moved from `proposed` to `open`.
+     moved from `proposed` to `open`. An imported item is never new (decision 7).
    - "Holds up work" means the `blocks` field is set.
    - "Oldest" means the earliest time the item was sent to the user.
 3. **Running on defaults** — one line each, with the start date.

@@ -282,7 +282,8 @@ const listSection = (heading: string, lines: string[]) => `${heading}:\n${lines.
  *   3. Running on defaults.  4. Your tests and actions.
  *   5. Decided since the last recap — the user's answers, then the overseer's own decisions.
  *   6. Not yet triaged.  7. Parked.  8. The count line.
- * With no recap yet (`lastRecapAt` null), every open decision is new.
+ * With no recap yet (`lastRecapAt` null), every open decision is new — except an imported one,
+ * which never counts as new.
  */
 export function renderLedgerSections(
   items: LedgerItem[],
@@ -297,7 +298,11 @@ export function renderLedgerSections(
   if (rules.length) out.push(listSection('Project rules (your words)', rules.map((i) => `- ${renderItem(i, ctx)}`)));
 
   const open = items.filter((i) => i.status === 'open' && isCardKind(i) && !i.onDefaultSince);
-  const isNew = (i: LedgerItem) => opts.lastRecapAt === null || sentTime(i) > opts.lastRecapAt;
+  // An import is a one-time load, not news: an imported decision never counts as new, so the
+  // first recap after an import shows the top 5 as cards, not every imported decision
+  // (amendment 2026-10-07 to the decision cards spec).
+  const isNew = (i: LedgerItem) =>
+    i.origin !== 'imported' && (opts.lastRecapAt === null || sentTime(i) > opts.lastRecapAt);
   const rank = (a: LedgerItem, b: LedgerItem) =>
     Number(!a.blocks) - Number(!b.blocks) || sentTime(a).localeCompare(sentTime(b)) || a.seq - b.seq;
   const rest = open.filter((i) => !isNew(i)).sort(rank);
