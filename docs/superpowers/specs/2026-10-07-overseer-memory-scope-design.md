@@ -1,7 +1,7 @@
 # Overseer memory scope — design
 
-Date: 2026-10-07. **DRAFT — in review by the user, not approved.** Thread "Opus 5.5
-Xhigh Handle Business". Follows the decision cards spec
+Date: 2026-10-07. Approved by the user on 2026-10-07 ("spec is good to go. proceed to
+implementation"). Thread "Opus 5.5 Xhigh Handle Business". Follows the decision cards spec
 (`docs/superpowers/specs/2026-10-06-overseer-decision-cards-design.md`).
 
 ## Goal
