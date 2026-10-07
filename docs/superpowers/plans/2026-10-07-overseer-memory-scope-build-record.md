@@ -171,3 +171,10 @@ Findings of the GPT-6-astra round-2 review, fixed with TDD in one commit.
    as a note over 1 MB is. Git and the copy stay on the event loop (out of scope).
 
 Tests: core 231 files passed, 1 skipped; 2623 tests passed, 4 skipped. Both typechecks pass.
+
+## /verify (after review round 2)
+
+- **A real bug, found by driving the built module.** `/verify` ran `prepareOverseerMemory` from the built `dist` against a fake home, a temporary git repository, a subfolder and a worktree, with notes in the real frontmatter shape. Claude Code nests `originSessionId` under `metadata:`, indented by two spaces (all 25 notes in one real project folder use that shape). The parser accepted only an unindented key, so the copy found no overseer note and wrote the done marker: every overseer would have started with an empty memory. Both reviews and the unit tests missed it, because the tests used an unindented key. Fixed in `84fca4c` with a failing test first (the real nested shape, and a quoted, deeper-indented variant).
+- **After the fix:** the repository root, a subfolder and a worktree give the same shared folder; only the overseer's note and its index line are copied; the marker is written; a second start copies nothing; the shared files stay.
+- **On an isolated daemon (fake HOME, port 3999):** a `thread` source renders `Source: your thread "<label>"`; an `agent` source that names a user thread returns 422 with the "does not exist" text; `ledger_decide_self` on a `thread` source returns 422 "Only the user can decide this item."; the recap shows `Project rules: 2 in force (type "show rules").`; the `rules` field and `show rules` carry the full list. The daemon log had no errors.
+- **Final counts:** core 231 files passed, 1 skipped; 2624 tests passed, 4 skipped. Web 150 files, 1285 tests. Both typechecks clean.
