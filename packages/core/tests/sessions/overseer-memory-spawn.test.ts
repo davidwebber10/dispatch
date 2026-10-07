@@ -161,6 +161,29 @@ describe('the write scope of an overseer', () => {
   });
 });
 
+// Unit 3: the persona of a start names the exact folders the policy allows.
+describe('the persona of an overseer start', () => {
+  beforeEach(() => svc.setOverseerMemoryHome(home));
+  const line = (own: string) => `Your memory folder: ${own}. The project’s shared memory folder: ${sharedProjectMemoryDir(home, project)}.`;
+
+  it('Claude: the persona ends with its own folder and the shared folder', () => {
+    const t = create('Control Plane', { role: 'coordinator' });
+    const args = claude.spawnOpts[t.id].args;
+    const persona = args[args.lastIndexOf('--append-system-prompt') + 1];
+    expect(persona.endsWith(line(overseerMemoryDir(home, project)))).toBe(true);
+  });
+
+  it('Codex: the developer instructions name its folder and the shared Claude folder', () => {
+    const t = svc.createTerminal('s1', 'codex', 'Codex CP', false, undefined, undefined, { transport: 'structured', role: 'coordinator' });
+    expect(codex.spawnOpts[t.id].systemPrompt).toContain(line(path.join(home, '.codex', 'dispatch-coordinator')));
+  });
+
+  it('a plain thread gets no folder line', () => {
+    const t = create('Scratch', {});
+    expect(claude.spawnOpts[t.id].args.join('\n')).not.toContain('Your memory folder:');
+  });
+});
+
 it('without a memory home (tests, an unwired service) nothing is created and no --settings is passed', () => {
   const t = create('Control Plane', { role: 'coordinator' });
   expect(settingsOf(t.id)).toBeNull();

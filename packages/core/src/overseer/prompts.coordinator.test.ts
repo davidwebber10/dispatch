@@ -9,11 +9,14 @@ describe('buildCoordinatorPrompt', () => {
     expect(buildCoordinatorPrompt({ harness: 'claude-code' })).toBe(COORDINATOR_PROMPT);
   });
 
-  it('the codex variant names its dedicated memory subdir (never the bare Codex home) and never mentions ~/.claude', () => {
+  // Overseer memory scope (spec 2026-10-07): the Codex overseer may read and write the project's
+  // shared Claude folder (~/.claude/projects/…), so that is the only ~/.claude path it names.
+  it('the codex variant names its dedicated memory subdir (never the bare Codex home) and mentions ~/.claude only as the shared folder', () => {
     const p = buildCoordinatorPrompt({ harness: 'codex' });
     expect(p).toContain('~/.codex/dispatch-coordinator');
     expect(p).not.toMatch(/~\/\.codex(?!\/dispatch-coordinator)/);
-    expect(p).not.toContain('~/.claude');
+    expect(p).not.toContain('~/.claude/dispatch-overseer');
+    expect(p).not.toMatch(/~\/\.claude(?!\/projects)/);
   });
 
   it('the codex variant drops the Claude tier-alias teaching entirely', () => {

@@ -11,11 +11,16 @@
 
 import { coordinatorMemoryRelDir } from './coordinator-policy.js';
 
+/** The Claude overseer's memory root as the persona names it: '~/.claude/dispatch-overseer'. The Codex
+ *  variant swaps exactly this label for its own (buildCoordinatorPrompt), so it comes from the same
+ *  map the write policy uses and the two cannot drift apart. */
+const CLAUDE_MEMORY_LABEL = `~/${coordinatorMemoryRelDir('claude-code')}`;
+
 /** The one-per-project Overseer that converses with the user and delegates. */
 export const COORDINATOR_PROMPT =
   'You are Control Plane — a coordinator. Your job is ORCHESTRATION: typed agents do the work. ' +
   'You may inspect directly — read files and run read-only commands (git status/log, ls, quick greps) — ' +
-  'and you maintain your own memory files under ~/.claude. But you never modify a repository yourself: ' +
+  `and you keep your own memory and plans in your memory folder, under ${CLAUDE_MEMORY_LABEL}. But you never modify a repository yourself: ` +
   'edits, commits, pushes, PRs, merges, releases, and deploys are ALWAYS delegated to an implementer ' +
   'agent, and anything that ships (merge/deploy/release) additionally needs the human’s explicit go. ' +
   'This is enforced — repo writes, ship-shaped commands, and native subagents are denied at the tool ' +
@@ -148,6 +153,16 @@ export const COORDINATOR_PROMPT =
   'with the user’s quote. A rule from the user → ledger_note with policy: true.\n' +
   '- Do not save a proposal as a standing rule in memory before the user approves it. When you save a ' +
   'rule, include the user’s quote.\n' +
+  // Overseer memory scope (spec 2026-10-07, Unit 3): own memory, the shared folder, the origin.
+  `- MEMORY: Your memory is your own folder, under ${CLAUDE_MEMORY_LABEL}. It loads at each start. ` +
+  'The project’s shared memory folder, under ~/.claude/projects, holds notes from the user’s own threads, and ' +
+  'older notes of yours. It does not load by itself. Read it when the user asks, or when a task names or clearly ' +
+  'overlaps one of the user’s threads. read_thread shows a thread’s full history. If you cannot read the folder, ' +
+  'use read_thread and ask the user. Keep the origin: something you take from a thread is the thread’s, not ' +
+  'yours and not the user’s decision. Name the thread when you use it. A ledger item from a thread needs the ' +
+  'source kind "thread", and goes into the ledger only when the user says so. Write a shared note only when the ' +
+  'user’s threads must know something, such as a decision they must respect or a fact about the project. Start ' +
+  'it with "From the overseer:". One fact per note.\n' +
   '- After 3 days with no answer, ask once whether to keep or park an item.\n' +
   '- If your context starts with a continuation summary, call ledger_list before you answer.\n' +
   '- End each turn with report_status: needs_you when open go or decide items exist; blocked while your ' +
@@ -205,19 +220,34 @@ const CODEX_DECLINE_GUIDANCE =
  * The claude-code variant is byte-identical to the original `COORDINATOR_PROMPT` constant
  * (pinned by a test in prompts.coordinator.test.ts) — nothing about today's behavior changes.
  *
- * Every other harness (today: codex) gets a derived variant: the memory-root line names that
- * harness's own dir instead of ~/.claude, and the Claude-only opus/sonnet/fable tier-teaching
- * (meaningless — or actively wrong — as a `--model` value on another CLI) is replaced with
- * harness-neutral wording. It also gains CODEX_DECLINE_GUIDANCE, since a Codex coordinator's
- * approval denials don't carry our text to the model the way the Claude membrane's do.
+ * Every other harness (today: codex) gets a derived variant: the own-memory label names that
+ * harness's own dir instead of ~/.claude/dispatch-overseer (the shared folder under
+ * ~/.claude/projects stays: it is the Claude folder of the user's threads for every harness), and
+ * the Claude-only opus/sonnet/fable tier-teaching (meaningless — or actively wrong — as a `--model`
+ * value on another CLI) is replaced with harness-neutral wording. It also gains
+ * CODEX_DECLINE_GUIDANCE, since a Codex coordinator's approval denials don't carry our text to the
+ * model the way the Claude membrane's do.
+ *
+ * `memoryFolders` (the exact folders of this start, from coordinatorWriteDirs) adds one closing
+ * line with their paths, so the overseer knows where the shared folder of ITS project is.
  */
-export function buildCoordinatorPrompt(opts: { harness: string }): string {
-  if (opts.harness === 'claude-code') return COORDINATOR_PROMPT;
+export function buildCoordinatorPrompt(opts: { harness: string; memoryFolders?: MemoryFolders }): string {
+  const base = coordinatorPromptBase(opts.harness);
+  if (!opts.memoryFolders) return base;
+  const { own, shared } = opts.memoryFolders;
+  return `${base}\n\nYour memory folder: ${own}. The project’s shared memory folder: ${shared}.`;
+}
 
-  const memoryLabel = coordinatorMemoryLabelFor(opts.harness);
+/** The exact memory folders of one overseer start: its own, and the project's shared one. */
+export interface MemoryFolders { own: string; shared: string }
+
+function coordinatorPromptBase(harness: string): string {
+  if (harness === 'claude-code') return COORDINATOR_PROMPT;
+
+  const memoryLabel = coordinatorMemoryLabelFor(harness);
   if (!memoryLabel) return COORDINATOR_PROMPT; // no known variant for this harness yet — safest default
 
-  let out = COORDINATOR_PROMPT.replaceAll('~/.claude', memoryLabel);
+  let out = COORDINATOR_PROMPT.replaceAll(CLAUDE_MEMORY_LABEL, memoryLabel);
 
   // Drop the Claude-alias tier-teaching in the spawn_agent tools list for harness-neutral wording.
   const tierStart = out.indexOf('Each type defaults to a sensible model tier ');
@@ -438,9 +468,9 @@ function isAgentType(v: unknown): v is AgentType {
 
 /**
  * Resolve the persona system prompt for a thread's config:
- *   - coordinator role → buildCoordinatorPrompt({ harness }) (defaults to the claude-code
- *     variant — i.e. today's COORDINATOR_PROMPT — when the caller has no harness to pass,
- *     e.g. a config-only test)
+ *   - coordinator role → buildCoordinatorPrompt({ harness, memoryFolders }) (defaults to the
+ *     claude-code variant — i.e. today's COORDINATOR_PROMPT — when the caller has no harness to
+ *     pass, e.g. a config-only test; `memoryFolders` adds the exact folders of this start)
  *   - a known agentType → that worker's persona
  *   - otherwise → undefined (a plain structured thread, no persona injected)
  *
@@ -451,9 +481,10 @@ function isAgentType(v: unknown): v is AgentType {
 export function systemPromptFor(
   config: OverseerThreadConfig | null | undefined,
   harness: string = 'claude-code',
+  opts: { memoryFolders?: MemoryFolders } = {},
 ): string | undefined {
   if (!config) return undefined;
-  if (config.role === 'coordinator') return buildCoordinatorPrompt({ harness });
+  if (config.role === 'coordinator') return buildCoordinatorPrompt({ harness, memoryFolders: opts.memoryFolders });
   if (isAgentType(config.agentType)) return AGENT_PROMPTS[config.agentType];
   return undefined;
 }

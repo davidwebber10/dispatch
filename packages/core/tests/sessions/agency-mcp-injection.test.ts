@@ -9,7 +9,8 @@ import { SessionService } from '../../src/sessions/service.js';
 import { PTYManager } from '../../src/pty/manager.js';
 import { StructuredSessionManager } from '../../src/structured/manager.js';
 import { CodexStructuredSessionManager } from '../../src/structured/codex-manager.js';
-import { COORDINATOR_PROMPT } from '../../src/overseer/prompts.js';
+import { COORDINATOR_PROMPT, buildCoordinatorPrompt } from '../../src/overseer/prompts.js';
+import { overseerMemoryDir, sharedProjectMemoryDir } from '../../src/overseer/memory-scope.js';
 
 // Captures the argv handed to the PTY; all other PTY ops are safe no-ops
 // (mirrors injection-wiring.test.ts's CapturingPty).
@@ -105,7 +106,12 @@ describe('agency MCP: caller identity + standard injection path', () => {
     expect(peerBlock).toContain(terminal.label);
     expect(peerBlock).toContain(terminal.id);
     expect(peerBlock).toContain('list_threads');
-    expect(persona).toBe(COORDINATOR_PROMPT);
+    // The persona, plus the exact memory folders of this start (overseer memory scope, Unit 3).
+    expect(persona.startsWith(COORDINATOR_PROMPT)).toBe(true);
+    expect(persona).toBe(buildCoordinatorPrompt({
+      harness: 'claude-code',
+      memoryFolders: { own: overseerMemoryDir(os.homedir(), tmpDir), shared: sharedProjectMemoryDir(os.homedir(), tmpDir) },
+    }));
     // No peers exist yet at spawn time (this is the only terminal in the session) —
     // the roster renders the "no peers" line, not a dangling header.
     expect(peerBlock.toLowerCase()).toContain('no other threads');

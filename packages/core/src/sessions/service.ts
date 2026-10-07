@@ -2257,6 +2257,15 @@ export class SessionService {
 
     const resumeSessionId = terminal.external_id || undefined;
 
+    // An overseer may write only to its own memory and to this project's shared memory folder
+    // (overseer memory scope spec 2026-10-07, Unit 2), and its persona names those exact folders
+    // (Unit 3). Without a memory home (an unwired test service) they are computed under
+    // os.homedir() — only resolved and named, never written.
+    const coordinatorDirs = config.role === 'coordinator'
+      ? coordinatorWriteDirs(terminal.type, this.overseerMemoryHome ?? os.homedir(), workDir)
+      : null;
+    const persona = systemPromptFor(config, terminal.type, coordinatorDirs ? { memoryFolders: { own: coordinatorDirs[0], shared: coordinatorDirs[1] } } : {});
+
     // Resolve the model up front (harness-aware) and persist it into the terminal's config if it
     // wasn't already pinned there — so it survives a daemon-restart resume and is
     // returned to the frontend as part of the terminal row's config. OpenCode always
@@ -2294,7 +2303,7 @@ export class SessionService {
       // toolset is the enforcement; the policy deny remains as a backstop.
       // A Claude overseer loads only its own memory folder (overseer memory scope spec, Unit 1).
       const autoMemoryDirectory = this.overseerMemoryFor(terminal, config, workDir);
-      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config, terminal.type), resumeSessionId, model: resolvedModel, grokPluginDir, disallowedTools: disallowedToolsFor(config), autoMemoryDirectory });
+      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: persona, resumeSessionId, model: resolvedModel, grokPluginDir, disallowedTools: disallowedToolsFor(config), autoMemoryDirectory });
       if (!built) throw new Error('structured transport not supported for this provider');
       sc = built;
     }
@@ -2339,14 +2348,12 @@ export class SessionService {
     // an MCP tool runs outside the sandbox, so a sandboxed coordinator may call only Dispatch's own.
     const codexCoordinator = terminal.type === 'codex' && config.role === 'coordinator';
     const toolPolicy =
-      config.role === 'coordinator'
+      coordinatorDirs
         ? // A Claude coordinator has no sandbox — its Bash 'allow' just runs — so it keeps the
           // denylist (commandsEscalate false) and its MCP tools. A Codex coordinator denies every
           // escalated command and every MCP tool but Dispatch's own. Either may write only to its
-          // own memory and to this project's shared memory folder (overseer memory scope, Unit 2);
-          // without a memory home (an unwired test service) the folders are computed under
-          // os.homedir() — only resolved, never written.
-          makeCoordinatorPolicy(coordinatorWriteDirs(terminal.type, this.overseerMemoryHome ?? os.homedir(), workDir), codexCoordinator
+          // own memory and to this project's shared memory folder (coordinatorDirs, above).
+          makeCoordinatorPolicy(coordinatorDirs, codexCoordinator
             ? { commandsEscalate: true, allowedMcpServers: [AGENCY_MCP_SERVER] }
             : { commandsEscalate: false })
         : typeof config.roleAuthority === 'string'
@@ -2384,7 +2391,7 @@ export class SessionService {
           dir: path.join(this.statusContext.hooksDir, 'opencode-homes', terminal.id),
           model: resolvedModel,
           escalate,
-          systemPrompt: [systemPromptFor(config, terminal.type), toolsDisabled ? undefined : structuredMcp?.systemPrompt].filter(Boolean).join('\n\n') || undefined,
+          systemPrompt: [persona, toolsDisabled ? undefined : structuredMcp?.systemPrompt].filter(Boolean).join('\n\n') || undefined,
           mcpServers,
           toolsDisabled,
         });
@@ -2409,7 +2416,7 @@ export class SessionService {
       // OpenCode join above. A per-thread developerInstructions also supersedes the app-server's
       // global `-c developer_instructions` note, so leaving the block out would drop it. Only the
       // Codex manager reads this field; Claude/Grok/OpenCode get theirs via argv/config paths.
-      systemPrompt: [systemPromptFor(config, terminal.type), structuredMcp?.systemPrompt].filter(Boolean).join('\n\n') || undefined,
+      systemPrompt: [persona, structuredMcp?.systemPrompt].filter(Boolean).join('\n\n') || undefined,
       // A codex COORDINATOR must run `on-request` + `read-only` (NOT the manager's default
       // `workspace-write`) so the Task 5 enforcement membrane actually fires: under
       // `workspace-write`, an in-workspace repo write / `git commit` / `git push` runs WITHOUT
