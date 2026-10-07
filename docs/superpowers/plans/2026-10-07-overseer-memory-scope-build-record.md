@@ -92,3 +92,47 @@ instruction, no live test started Codex or Claude.
 - Typechecks: `packages/core` `tsc --noEmit` and `packages/web` `tsc -b` pass.
 - Every run used a private TMPDIR and HOME. The new tests use `fs.mkdtempSync` folders and mock
   `os.homedir` to them.
+
+## Review round 1
+
+Findings of the code review (Fable code-reviewer and GPT-6-astra), fixed with TDD in one commit.
+
+1. **The shared folder follows the git repository.** `claudeMemoryProjectDir(workDir)` runs
+   `git rev-parse --path-format=absolute --git-common-dir --show-toplevel` in the working directory
+   (argument array, 2 s timeout, `GIT_DIR` and its kin removed from the environment). The main
+   root is the parent of the common `.git` dir, so a subfolder and a worktree give the main
+   checkout. Outside a repository, or when git fails, it is the working directory. Both are
+   canonical (`fs.realpathSync.native`). When the common dir is not named `.git` (a submodule),
+   the top level is used; that case is not checked against Claude Code. The own folder stays
+   keyed by the working directory, as the spec says "encoded project dir" for it.
+2. **Symlinks.** The own folder must resolve inside `~/.claude/dispatch-overseer` and the shared
+   folder inside `~/.claude/projects`, through symlinks (`resolvesInside`, with `realResolve` and
+   `isUnder` moved unchanged from `coordinator-policy.ts` to `overseer/real-path.ts`, to avoid an
+   import cycle). A refused folder is left out of the policy and the persona line, and one
+   `console.error` line names it. A refused own folder also means no `--settings` flag: that
+   overseer starts as before this change. A refused shared folder means no copy and no marker. A
+   symlinked `~/.claude` itself is followed, as both roots resolve through it.
+3. **The copy can resume.** The marker comes only after a pass with no error. Without it, a start
+   copies only the missing notes (`wx`, never an overwrite) and adds only the missing index lines
+   to the own `MEMORY.md`. The old rule "a folder with any file is never seeded" is gone.
+4. **Bounds.** At most 8 KB is read to find the origin, a note over 1 MB is skipped (one log line
+   per start for all of them), and a start handles at most 500 notes. Notes open with
+   `O_NOFOLLOW` and `O_NONBLOCK`; an index line matches through a Set of note names. Decision: a
+   start that reaches 500 writes a cursor file `.dispatch-copy-cursor` (the last name handled) and
+   no marker, so the next start goes on after it. Reason: "per start" in the spec, and a retry
+   without a cursor would read the same 500 notes again at each start.
+5. **A missing home is not silent.** A Claude overseer that starts on the real command with no
+   memory home logs one `console.error` line. A test reads `startServer` in `server.ts` and fails
+   when the `setOverseerMemoryHome(os.homedir())` line is gone. The opt-in default is unchanged.
+6. **Codex persona.** The Codex variant says `Read it at each start.` instead of
+   `It loads at each start.` The replaced string is now the seventh pinned marker.
+7. **Index form `(./name.md)`:** now tested.
+8. **`ledger_decide_self` refuses a `thread` source**, with and without `id`, with
+   `Only the user can decide this item.` This replaces the Unit 4 decision above.
+
+Tests: core 231 files passed, 1 skipped; 2605 tests passed, 4 skipped. Web 150 files, 1285 tests.
+Both typechecks pass. Flakes seen, each in a test that starts no coordinator:
+`tests/routes/terminals.test.ts` (once in a full run; then 3 of 3 alone),
+`tests/routes/structured.test.ts` (once in a full run and once in 3 runs alone, the
+noteDeclaredStatus test on a plain thread; then 13 of 13) and `tests/routes/auth.test.ts` (once in
+a full run; then 5 of 5). The last full core run had no failure.
