@@ -43,6 +43,12 @@ overseers.
    Without the setting, the normal folder loaded.
 2. **Can a Codex overseer read a file in the Claude memory folder? Not checked.** The design
    below works either way (Unit 3).
+3. **Where Claude keeps a project's shared memory: confirmed in Claude Code's documentation**
+   (memory page, "Storage location"): "The `<project>` path is derived from the git repository,
+   so all worktrees and subdirectories within the same repo share one auto memory directory.
+   Outside a git repo, the project root is used instead." The worktree folders on the user's
+   machine under `~/.claude/projects` have no memory folder of their own, which agrees. (Added
+   after code review.)
 
 ## Design
 
@@ -58,6 +64,21 @@ overseers.
   project's shared memory folder whose `originSessionId` belongs to an overseer of this project
   (the current one or an archived one), and the matching lines of the shared `MEMORY.md` index.
   The shared copies stay where they are. Nothing is deleted.
+- **The shared folder follows the git repository** (Check 3): the daemon finds the main root of
+  the repository that holds the working directory, so a subfolder or a worktree gives the same
+  shared folder as the main checkout. Outside a git repository, it uses the working directory.
+  Both paths are resolved through symlinks first.
+- **Safety and limits** (added after code review):
+  - The resolved own folder must stay inside `~/.claude/dispatch-overseer`, and the resolved
+    shared folder inside `~/.claude/projects`. If a symlink leads elsewhere, the daemon skips
+    the setup and the copy, leaves that folder out of the write scope, and logs it.
+  - The copy can resume: the marker that ends it is written only after every note was handled
+    without an error. A later start copies only the notes that are still missing, and never
+    overwrites a file.
+  - The copy reads at most the first 8 KB of a note to find its origin, skips notes larger than
+    1 MB, and handles at most 500 notes per start.
+  - If an overseer starts without the home folder configured, the daemon logs it, because that
+    overseer has no separate memory.
 
 ### Unit 2 — Write scope
 
@@ -67,14 +88,16 @@ overseers.
 | Codex | `~/.codex/dispatch-coordinator` (as today), and this project's shared Claude memory folder | its own folder only |
 
 Every other path stays refused by the coordinator policy, which takes a list of folders
-instead of one.
+instead of one. The policy covers the file-writing tools. It does not cover a shell command
+that writes a file, the same as before this change (see Known limits).
 
 ### Unit 3 — The persona
 
 The overseer instructions gain one paragraph (both harnesses; the Codex variant keeps its own
 folder label, derived as today):
 
-- **Your memory** is your own folder. It loads at each start.
+- **Your memory** is your own folder. It loads at each start. (The Codex variant says "Read it
+  at each start.", because Codex does not load the folder by itself.)
 - **The project's shared memory folder** holds notes from the user's own threads, and older
   notes of yours. It does not load by itself. Read it when the user asks, or when a task names
   or clearly overlaps one of the user's threads. `read_thread` shows a thread's full history.
@@ -94,6 +117,9 @@ folder label, derived as today):
 - **`agent` means an agent:** an `agent` source must be a thread with the agent role. One of
   the user's own threads is refused there, with the existing text
   `The source does not exist in this project: <ref>.`
+- **The overseer cannot decide a thread's item itself:** `ledger_decide_self` refuses a
+  `thread` source with the existing text `Only the user can decide this item.` (Added after
+  code review.)
 
 ### Unit 5 — Project rules as one line
 
@@ -113,6 +139,10 @@ folder label, derived as today):
   user's Claude threads.
 - Check 2 is open. If a Codex overseer cannot read the Claude folder, it relies on
   `read_thread`.
+- The write scope covers file-writing tools only. A Claude overseer can still write a file with
+  a shell command, as before this change. Per the guardrail policy ("drift, not an adversary"),
+  this is documented, not fixed: the persona forbids repository writes, and the policy blocks
+  the ship commands.
 
 ## Tests
 
