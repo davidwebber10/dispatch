@@ -190,6 +190,26 @@ describe('noteOriginSessionId', () => {
     expect(noteOriginSessionId(`---\r\noriginSessionId: '${OVERSEER}'\r\n---\r\nx`)).toBe(OVERSEER);
   });
 
+  // Claude Code writes the key nested under `metadata:`, indented by two spaces. /verify found
+  // that the parser missed this real shape, so the copy found no overseer note and sealed itself.
+  it('reads originSessionId nested under metadata, as Claude Code writes it', () => {
+    const real = [
+      '---',
+      'name: some-note',
+      'description: "a one-line summary"',
+      'metadata:',
+      '  node_type: memory',
+      '  type: feedback',
+      `  originSessionId: ${OVERSEER}`,
+      '  modified: 2026-10-07T12:00:00.000Z',
+      '---',
+      '',
+      'The note body.',
+    ].join('\n');
+    expect(noteOriginSessionId(real)).toBe(OVERSEER);
+    expect(noteOriginSessionId(real.replace(`  originSessionId: ${OVERSEER}`, `    originSessionId: "${OVERSEER}"`))).toBe(OVERSEER);
+  });
+
   it('ignores a note without frontmatter, without the key, or with the key only in the body', () => {
     expect(noteOriginSessionId('no frontmatter at all')).toBeNull();
     expect(noteOriginSessionId(note(null, 'x'))).toBeNull();

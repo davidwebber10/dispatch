@@ -165,7 +165,8 @@ export function noteOriginSessionId(text: string): string | null {
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i];
     if (line.trim() === '---') return null; // end of the frontmatter
-    const m = line.match(/^originSessionId:\s*["']?([^"'\s]+)["']?\s*$/);
+    // Claude Code nests the key under `metadata:` (indented), so leading spaces are allowed.
+    const m = line.match(/^\s*originSessionId:\s*["']?([^"'\s]+)["']?\s*$/);
     if (m) return m[1];
   }
   return null;
