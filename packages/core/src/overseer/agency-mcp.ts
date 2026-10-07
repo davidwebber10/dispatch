@@ -589,7 +589,8 @@ export const TOOLS = [
       'a proposed decision from an agent\'s owner-decisions block; (2) your own call that no agent proposed — ' +
       'leave out `id` and pass `text` (the question) with the card fields of a decide item (context, options ' +
       'with effects, recommendation, why, default, source); it is recorded as already decided. The daemon ' +
-      'refuses a go item, an item sourced from the user, and any item already sent to the user: "Only the ' +
+      'refuses a go item, an item sourced from the user or one of the user\'s threads, and any item already ' +
+      'sent to the user: "Only the ' +
       'user can decide this item."',
     inputSchema: {
       type: 'object',

@@ -225,7 +225,8 @@ const CODEX_DECLINE_GUIDANCE =
  *
  * Every other harness (today: codex) gets a derived variant: the own-memory label names that
  * harness's own dir instead of ~/.claude/dispatch-overseer (the shared folder under
- * ~/.claude/projects stays: it is the Claude folder of the user's threads for every harness), and
+ * ~/.claude/projects stays: it is the Claude folder of the user's threads for every harness; and
+ * "It loads at each start." becomes "Read it at each start.", as Codex does not load it), and
  * the Claude-only opus/sonnet/fable tier-teaching (meaningless — or actively wrong — as a `--model`
  * value on another CLI) is replaced with harness-neutral wording. It also gains
  * CODEX_DECLINE_GUIDANCE, since a Codex coordinator's approval denials don't carry our text to the
@@ -236,13 +237,14 @@ const CODEX_DECLINE_GUIDANCE =
  */
 export function buildCoordinatorPrompt(opts: { harness: string; memoryFolders?: MemoryFolders }): string {
   const base = coordinatorPromptBase(opts.harness);
-  if (!opts.memoryFolders) return base;
-  const { own, shared } = opts.memoryFolders;
-  return `${base}\n\nYour memory folder: ${own}. The project’s shared memory folder: ${shared}.`;
+  const { own = null, shared = null } = opts.memoryFolders ?? {};
+  const line = [own && `Your memory folder: ${own}.`, shared && `The project’s shared memory folder: ${shared}.`].filter(Boolean).join(' ');
+  return line ? `${base}\n\n${line}` : base;
 }
 
-/** The exact memory folders of one overseer start: its own, and the project's shared one. */
-export interface MemoryFolders { own: string; shared: string }
+/** The exact memory folders of one overseer start: its own, and the project's shared one. null:
+ *  left out of the write scope (a symlink led outside its memory root), so not named. */
+export interface MemoryFolders { own: string | null; shared: string | null }
 
 function coordinatorPromptBase(harness: string): string {
   if (harness === 'claude-code') return COORDINATOR_PROMPT;
@@ -279,6 +281,9 @@ function coordinatorPromptBase(harness: string): string {
     'the opus defaults for genuine investigation, planning, and judgment.',
     'the stronger default models for genuine investigation, planning, and judgment.',
   );
+
+  // Claude Code loads its memory folder at each start; Codex does not, so the overseer reads it.
+  out = out.replace('It loads at each start. ', 'Read it at each start. ');
 
   // Teach the redirect directly, right after the generic denial sentence it supplements.
   out = out.replace(

@@ -30,8 +30,8 @@ import { findCodexRolloutPath, codexRolloutTailStatus } from './codex-sessions.j
 import { platform } from '../platform/index.js';
 import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.js';
 import { resolveSpawnModel, isClaudeTierAlias } from '../overseer/spawn-model.js';
-import { COORDINATOR_DISALLOWED_TOOLS, coordinatorWriteDirs, makeCoordinatorPolicy } from '../overseer/coordinator-policy.js';
-import { overseerMemoryDir, prepareOverseerMemory } from '../overseer/memory-scope.js';
+import { COORDINATOR_DISALLOWED_TOOLS, coordinatorMemoryFolders, makeCoordinatorPolicy } from '../overseer/coordinator-policy.js';
+import { claudeMemoryProjectDir, prepareOverseerMemory } from '../overseer/memory-scope.js';
 import { ROLE_DISALLOWED_TOOLS, roleToolPolicy } from '../roles/role-policy.js';
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
 import { resolveTranscriptPath } from './transcript-path.js';
@@ -2196,20 +2196,53 @@ export class SessionService {
   }
 
   /**
-   * A Claude overseer's own memory folder, created (and seeded once from the project's shared
-   * folder) before each start — spawn and resume alike. undefined for every other thread, and when
-   * no memory home is set. A failed copy never stops the start: the folder is still passed, and
-   * the overseer starts with whatever the folder holds.
+   * The memory folders of a coordinator start (overseer memory scope spec 2026-10-07, Units 1-2):
+   * its own, and the project's shared one, which follows the git repository of the working
+   * directory (claudeMemoryProjectDir). A folder that a symlink leads out of its memory root is
+   * null: it is left out of the write scope and the persona, and one error line names it.
    */
-  private overseerMemoryFor(terminal: terminalsDb.TerminalRow, config: Record<string, any>, workDir: string): string | undefined {
-    if (config.role !== 'coordinator' || terminal.type !== 'claude-code' || !this.overseerMemoryHome) return undefined;
+  private coordinatorMemoryFoldersFor(terminal: terminalsDb.TerminalRow, workDir: string): { own: string | null; shared: string | null; sharedProjectDir: string } {
+    const sharedProjectDir = claudeMemoryProjectDir(workDir);
+    const { own, shared, refused } = coordinatorMemoryFolders(terminal.type, this.overseerMemoryHome ?? os.homedir(), workDir, sharedProjectDir);
+    if (refused.length) {
+      console.error(`[overseer-memory] ${terminal.id}: left out of the memory scope, because a symlink leads outside its memory root: ${refused.join(', ')}`);
+    }
+    return { own, shared, sharedProjectDir };
+  }
+
+  /**
+   * A Claude overseer's own memory folder, created (and seeded once from the project's shared
+   * folder) before each start — spawn and resume alike. undefined for every other thread. Also
+   * undefined, with no --settings flag, when no memory home is set (logged: that overseer has no
+   * memory of its own) and when its own folder was left out of the scope (logged by
+   * coordinatorMemoryFoldersFor). A failed copy never stops the start: the folder is still passed,
+   * and the overseer starts with whatever the folder holds.
+   */
+  private overseerMemoryFor(
+    terminal: terminalsDb.TerminalRow,
+    config: Record<string, any>,
+    workDir: string,
+    folders: { own: string | null; sharedProjectDir: string } | null,
+  ): string | undefined {
+    if (config.role !== 'coordinator' || terminal.type !== 'claude-code' || !folders) return undefined;
     const home = this.overseerMemoryHome;
+    if (!home) {
+      console.error(
+        `[overseer-memory] Claude overseer ${terminal.id} starts without its own memory folder: no memory home is set ` +
+        '(setOverseerMemoryHome), so it loads the project\'s shared memory as its own. No memory isolation.',
+      );
+      return undefined;
+    }
+    if (!folders.own) return undefined;
     try {
-      prepareOverseerMemory({ home, projectDir: workDir, overseerSessionIds: this.overseerSessionIds(terminal.session_id) });
+      const prepared = prepareOverseerMemory({
+        home, projectDir: workDir, sharedProjectDir: folders.sharedProjectDir, overseerSessionIds: this.overseerSessionIds(terminal.session_id),
+      });
+      return prepared.dir ?? undefined;
     } catch (e) {
       console.warn(`[overseer-memory] could not prepare the memory folder of ${terminal.id}: ${(e as Error)?.message ?? e}`);
+      return folders.own;
     }
-    return overseerMemoryDir(home, workDir);
   }
 
   private spawnStructured(terminal: terminalsDb.TerminalRow, config: Record<string, any>, workDir: string): void {
@@ -2261,10 +2294,14 @@ export class SessionService {
     // (overseer memory scope spec 2026-10-07, Unit 2), and its persona names those exact folders
     // (Unit 3). Without a memory home (an unwired test service) they are computed under
     // os.homedir() — only resolved and named, never written.
-    const coordinatorDirs = config.role === 'coordinator'
-      ? coordinatorWriteDirs(terminal.type, this.overseerMemoryHome ?? os.homedir(), workDir)
+    const coordinatorFolders = config.role === 'coordinator' ? this.coordinatorMemoryFoldersFor(terminal, workDir) : null;
+    const coordinatorDirs = coordinatorFolders
+      ? [coordinatorFolders.own, coordinatorFolders.shared].filter((d): d is string => d !== null)
       : null;
-    const persona = systemPromptFor(config, terminal.type, coordinatorDirs ? { memoryFolders: { own: coordinatorDirs[0], shared: coordinatorDirs[1] } } : {});
+    const persona = systemPromptFor(
+      config, terminal.type,
+      coordinatorFolders ? { memoryFolders: { own: coordinatorFolders.own, shared: coordinatorFolders.shared } } : {},
+    );
 
     // Resolve the model up front (harness-aware) and persist it into the terminal's config if it
     // wasn't already pinned there — so it survives a daemon-restart resume and is
@@ -2302,7 +2339,7 @@ export class SessionService {
       // membrane's coordinatorToolPolicy deny (below) never reaches them. Removal from the
       // toolset is the enforcement; the policy deny remains as a backstop.
       // A Claude overseer loads only its own memory folder (overseer memory scope spec, Unit 1).
-      const autoMemoryDirectory = this.overseerMemoryFor(terminal, config, workDir);
+      const autoMemoryDirectory = this.overseerMemoryFor(terminal, config, workDir, coordinatorFolders);
       const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: persona, resumeSessionId, model: resolvedModel, grokPluginDir, disallowedTools: disallowedToolsFor(config), autoMemoryDirectory });
       if (!built) throw new Error('structured transport not supported for this provider');
       sc = built;

@@ -72,6 +72,7 @@ describe('buildCoordinatorPrompt', () => {
       'status checks and "did last night',
       'the opus defaults for genuine investigation, planning, and judgment.',
       'when you hit a denial, spawn the right agent instead of retrying.\n\n',
+      'It loads at each start. ', // overseer memory scope: Codex reads its folder itself
     ]) {
       expect(COORDINATOR_PROMPT, marker).toContain(marker);
     }
@@ -85,6 +86,8 @@ describe('buildCoordinatorPrompt', () => {
     expect(p).not.toContain('the opus defaults for genuine investigation');
     expect(p).toContain('the stronger default models for genuine investigation, planning, and judgment.');
     expect(p).toContain('spawn the right agent instead of retrying. On this harness specifically:');
+    expect(p).not.toContain('It loads at each start. ');
+    expect(p).toContain('Read it at each start. ');
   });
 
   it('an unrecognized harness falls back to the claude-code variant', () => {

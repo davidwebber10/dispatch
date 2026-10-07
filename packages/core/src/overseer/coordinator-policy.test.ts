@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   COORDINATOR_DISALLOWED_TOOLS,
   coordinatorMemoryDirFor,
+  coordinatorMemoryFolders,
   coordinatorWriteDirs,
   makeCoordinatorPolicy,
 } from './coordinator-policy.js';
@@ -12,7 +13,7 @@ import { overseerMemoryDir, sharedProjectMemoryDir } from './memory-scope.js';
 
 // A Claude coordinator's policy for project /x: its own folder and the shared folder (Unit 2 of the
 // overseer memory scope spec). The paths are only resolved, never written.
-const coordinatorToolPolicy = makeCoordinatorPolicy(coordinatorWriteDirs('claude-code', os.homedir(), '/x'));
+const coordinatorToolPolicy = makeCoordinatorPolicy(coordinatorWriteDirs('claude-code', os.homedir(), '/x', '/x'));
 const memoryFile = path.join(os.homedir(), '.claude', 'projects', '-x', 'memory', 'MEMORY.md');
 
 describe('coordinatorToolPolicy', () => {
@@ -111,7 +112,7 @@ describe('makeCoordinatorPolicy', () => {
   it('the delegate message names every folder the coordinator may write to', () => {
     const d = coordinatorToolPolicy('Write', { file_path: '/repo/src/app.ts' });
     expect(d.allow).toBe(false);
-    if (!d.allow) for (const dir of coordinatorWriteDirs('claude-code', os.homedir(), '/x')) expect(d.message).toContain(dir);
+    if (!d.allow) for (const dir of coordinatorWriteDirs('claude-code', os.homedir(), '/x', '/x')) expect(d.message).toContain(dir);
   });
 
   it('denies a file_path that traverses out of the memory dir via ..', () => {
@@ -183,15 +184,15 @@ describe('coordinatorWriteDirs — the memory scope (Unit 2)', () => {
   const write = (policy: ReturnType<typeof makeCoordinatorPolicy>, file: string) => policy('Write', { file_path: file }).allow;
 
   it("Claude: its own folder and this project's shared folder, nothing else", () => {
-    expect(coordinatorWriteDirs('claude-code', home, PROJECT)).toEqual([overseerMemoryDir(home, PROJECT), sharedProjectMemoryDir(home, PROJECT)]);
+    expect(coordinatorWriteDirs('claude-code', home, PROJECT, PROJECT)).toEqual([overseerMemoryDir(home, PROJECT), sharedProjectMemoryDir(home, PROJECT)]);
   });
 
   it("Codex: ~/.codex/dispatch-coordinator and this project's shared Claude folder", () => {
-    expect(coordinatorWriteDirs('codex', home, PROJECT)).toEqual([path.join(home, '.codex', 'dispatch-coordinator'), sharedProjectMemoryDir(home, PROJECT)]);
+    expect(coordinatorWriteDirs('codex', home, PROJECT, PROJECT)).toEqual([path.join(home, '.codex', 'dispatch-coordinator'), sharedProjectMemoryDir(home, PROJECT)]);
   });
 
   it("Claude policy: writes to its own folder and the project's shared folder pass", () => {
-    const policy = makeCoordinatorPolicy(coordinatorWriteDirs('claude-code', home, PROJECT));
+    const policy = makeCoordinatorPolicy(coordinatorWriteDirs('claude-code', home, PROJECT, PROJECT));
     expect(write(policy, path.join(overseerMemoryDir(home, PROJECT), 'MEMORY.md'))).toBe(true);
     expect(write(policy, path.join(sharedProjectMemoryDir(home, PROJECT), 'from-the-overseer.md'))).toBe(true);
     // One patch may touch both folders.
@@ -202,7 +203,7 @@ describe('coordinatorWriteDirs — the memory scope (Unit 2)', () => {
   });
 
   it("Claude policy: another project's memory folder and the rest of ~/.claude are refused", () => {
-    const policy = makeCoordinatorPolicy(coordinatorWriteDirs('claude-code', home, PROJECT));
+    const policy = makeCoordinatorPolicy(coordinatorWriteDirs('claude-code', home, PROJECT, PROJECT));
     for (const file of [
       path.join(sharedProjectMemoryDir(home, OTHER), 'MEMORY.md'),
       path.join(overseerMemoryDir(home, OTHER), 'MEMORY.md'),
@@ -214,8 +215,40 @@ describe('coordinatorWriteDirs — the memory scope (Unit 2)', () => {
     ]) expect(write(policy, file), file).toBe(false);
   });
 
+  // Review round 1, fix 1: Claude keys the shared folder by the git repository (the caller passes
+  // claudeMemoryProjectDir); the own folder stays keyed by the working directory.
+  it('the shared folder is keyed by the repository folder, the own folder by the working directory', () => {
+    const sub = `${PROJECT}/packages/core`;
+    expect(coordinatorWriteDirs('claude-code', home, sub, PROJECT)).toEqual([overseerMemoryDir(home, sub), sharedProjectMemoryDir(home, PROJECT)]);
+    expect(coordinatorWriteDirs('codex', home, sub, PROJECT)).toEqual([path.join(home, '.codex', 'dispatch-coordinator'), sharedProjectMemoryDir(home, PROJECT)]);
+  });
+
+  // Review round 1, fix 2: a symlink must not widen the write scope.
+  it('a folder that a symlink leads out of its memory root is left out of the scope', () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'coord-scope-outside-'));
+    try {
+      const own = overseerMemoryDir(home, PROJECT);
+      const shared = sharedProjectMemoryDir(home, PROJECT);
+      fs.mkdirSync(path.dirname(own), { recursive: true });
+      fs.symlinkSync(outside, own);
+      expect(coordinatorMemoryFolders('claude-code', home, PROJECT, PROJECT)).toEqual({ own: null, shared, refused: [own] });
+      const policy = makeCoordinatorPolicy(coordinatorWriteDirs('claude-code', home, PROJECT, PROJECT));
+      expect(write(policy, path.join(own, 'MEMORY.md'))).toBe(false);
+      expect(write(policy, path.join(outside, 'MEMORY.md'))).toBe(false);
+      expect(write(policy, path.join(shared, 'from-the-overseer.md'))).toBe(true);
+
+      fs.mkdirSync(path.dirname(shared), { recursive: true });
+      fs.symlinkSync(outside, shared);
+      expect(coordinatorMemoryFolders('claude-code', home, PROJECT, PROJECT)).toEqual({ own: null, shared: null, refused: [own, shared] });
+      expect(coordinatorWriteDirs('claude-code', home, PROJECT, PROJECT)).toEqual([]);
+      expect(coordinatorWriteDirs('codex', home, PROJECT, PROJECT)).toEqual([path.join(home, '.codex', 'dispatch-coordinator')]);
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
   it("Codex policy: its folder and the shared folder pass; the Claude overseer's folder and the rest are refused", () => {
-    const policy = makeCoordinatorPolicy(coordinatorWriteDirs('codex', home, PROJECT), { commandsEscalate: true });
+    const policy = makeCoordinatorPolicy(coordinatorWriteDirs('codex', home, PROJECT, PROJECT), { commandsEscalate: true });
     expect(write(policy, path.join(home, '.codex', 'dispatch-coordinator', 'MEMORY.md'))).toBe(true);
     expect(write(policy, path.join(sharedProjectMemoryDir(home, PROJECT), 'from-the-overseer.md'))).toBe(true);
     for (const file of [

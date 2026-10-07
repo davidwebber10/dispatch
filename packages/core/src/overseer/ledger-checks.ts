@@ -12,7 +12,8 @@
  *    threads of this project, neither an agent nor the overseer (overseer memory scope spec
  *    2026-10-07, Unit 4); a PR/issue is `#123`; a user source is a checked quote; `overseer` is
  *    always allowed.
- * 4. Only the user can decide a `go` item, a user-sourced item, or an item already sent to the user.
+ * 4. Only the user can decide a `go` item, an item sourced from the user or one of the user's threads,
+ *    or an item already sent to the user.
  * 5. A project rule needs the user's checked words (ledger_note).
  */
 import * as fs from 'node:fs';
@@ -189,7 +190,13 @@ export function isIssueRef(ref: string): boolean {
 
 // --- rule 4 -------------------------------------------------------------------------------------
 
-/** Rule 4: `ledger_decide_self` must refuse a go item, a user-sourced item, and an item already sent to the user. */
+/** The source kinds whose item is the user's to decide: the user's words, and one of the user's own
+ *  threads (overseer memory scope spec 2026-10-07, Unit 4). */
+export function isUserSourceKind(kind: unknown): boolean {
+  return kind === 'user' || kind === 'thread';
+}
+
+/** Rule 4: `ledger_decide_self` must refuse a go item, an item from the user or one of the user's threads, and an item already sent to the user. */
 export function onlyUserCanDecide(item: { kind: LedgerKind; sourceKind: LedgerSourceKind | null; sentAt: string | null }): boolean {
-  return item.kind === 'go' || item.sourceKind === 'user' || item.sentAt !== null;
+  return item.kind === 'go' || isUserSourceKind(item.sourceKind) || item.sentAt !== null;
 }

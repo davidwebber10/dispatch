@@ -10,7 +10,7 @@ import { PTYManager } from '../../src/pty/manager.js';
 import { StructuredSessionManager } from '../../src/structured/manager.js';
 import { CodexStructuredSessionManager } from '../../src/structured/codex-manager.js';
 import { COORDINATOR_PROMPT, buildCoordinatorPrompt } from '../../src/overseer/prompts.js';
-import { overseerMemoryDir, sharedProjectMemoryDir } from '../../src/overseer/memory-scope.js';
+import { claudeMemoryProjectDir, overseerMemoryDir, sharedProjectMemoryDir } from '../../src/overseer/memory-scope.js';
 
 // Captures the argv handed to the PTY; all other PTY ops are safe no-ops
 // (mirrors injection-wiring.test.ts's CapturingPty).
@@ -110,7 +110,7 @@ describe('agency MCP: caller identity + standard injection path', () => {
     expect(persona.startsWith(COORDINATOR_PROMPT)).toBe(true);
     expect(persona).toBe(buildCoordinatorPrompt({
       harness: 'claude-code',
-      memoryFolders: { own: overseerMemoryDir(os.homedir(), tmpDir), shared: sharedProjectMemoryDir(os.homedir(), tmpDir) },
+      memoryFolders: { own: overseerMemoryDir(os.homedir(), tmpDir), shared: sharedProjectMemoryDir(os.homedir(), claudeMemoryProjectDir(tmpDir)) },
     }));
     // No peers exist yet at spawn time (this is the only terminal in the session) —
     // the roster renders the "no peers" line, not a dangling header.

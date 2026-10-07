@@ -4,7 +4,6 @@ import { AGENT_PROMPTS, COORDINATOR_PROMPT, buildCoordinatorPrompt, coordinatorM
 
 const MEMORY_PARAGRAPH = [
   'Your memory is your own folder',
-  'It loads at each start.',
   'The project’s shared memory folder',
   'holds notes from the user’s own threads, and older notes of yours. It does not load by itself.',
   'Read it when the user asks, or when a task names or clearly overlaps one of the user’s threads.',
@@ -43,6 +42,14 @@ describe('overseer persona — memory scope', () => {
       const p = buildCoordinatorPrompt({ harness });
       for (const line of MEMORY_PARAGRAPH) expect(p, line).toContain(line);
       expect(p).toContain(`Your memory is your own folder, under ${coordinatorMemoryLabelFor(harness)}.`);
+      // Claude loads its memory folder by itself; Codex does not (spec Unit 3).
+      if (harness === 'codex') {
+        expect(p).toContain(`under ${coordinatorMemoryLabelFor(harness)}. Read it at each start. `);
+        expect(p).not.toContain('It loads at each start.');
+      } else {
+        expect(p).toContain(`under ${coordinatorMemoryLabelFor(harness)}. It loads at each start. `);
+        expect(p).not.toContain('Read it at each start.');
+      }
       expect(p).toContain('The project’s shared memory folder, under ~/.claude/projects,');
     });
   }
@@ -65,6 +72,18 @@ describe('overseer persona — memory scope', () => {
         `${buildCoordinatorPrompt({ harness })}\n\nYour memory folder: ${FOLDERS.own}. The project’s shared memory folder: ${FOLDERS.shared}.`,
       );
     }
+  });
+
+  // Review round 1, fix 2: a folder left out of the scope (a symlink led outside) is not named.
+  it('a folder left out of the scope is not named; with none, there is no folder line', () => {
+    const base = buildCoordinatorPrompt({ harness: 'claude-code' });
+    expect(buildCoordinatorPrompt({ harness: 'claude-code', memoryFolders: { own: null, shared: FOLDERS.shared } })).toBe(
+      `${base}\n\nThe project’s shared memory folder: ${FOLDERS.shared}.`,
+    );
+    expect(buildCoordinatorPrompt({ harness: 'claude-code', memoryFolders: { own: FOLDERS.own, shared: null } })).toBe(
+      `${base}\n\nYour memory folder: ${FOLDERS.own}.`,
+    );
+    expect(buildCoordinatorPrompt({ harness: 'claude-code', memoryFolders: { own: null, shared: null } })).toBe(base);
   });
 
   it('systemPromptFor passes the folders to a coordinator only', () => {

@@ -27,7 +27,7 @@ import {
 } from './ledger-render.js';
 import {
   cardFieldsError, findProjectPath, gitWorktrees, holdsSeveralDecisions, isIssueRef, missingCardFields,
-  ONE_DECISION_ERROR, ONLY_USER_ERROR, onlyUserCanDecide, sourceComplete, sourceMissingError, type CardFieldsInput,
+  isUserSourceKind, ONE_DECISION_ERROR, ONLY_USER_ERROR, onlyUserCanDecide, sourceComplete, sourceMissingError, type CardFieldsInput,
 } from './ledger-checks.js';
 
 export const NOT_OVERSEER_ERROR = "Only the project's overseer can change the ledger.";
@@ -315,7 +315,7 @@ export class LedgerService {
    * ledger_decide_self: a low-level call by the overseer. With `id`, it decides a proposed item;
    * Unit 2 rule 4 limits it to items only it may decide. Without `id`, it records a new decision
    * that is already decided — the overseer's own low-level call that no agent proposed: always a
-   * `decide` item (a `go` kind and a `user` source are the user's), with the same card checks as
+   * `decide` item (a `go` kind, a `user` source and a `thread` source are the user's), with the same card checks as
    * ledger_add, never sent to the user (`sent_at` NULL), `decided_at` now.
    */
   decideSelf(sessionId: string, caller: unknown, input: Record<string, unknown>): { id: string; status: 'decided_by_overseer'; line: string } {
@@ -333,9 +333,9 @@ export class LedgerService {
 
   /** decideSelf without `id`: a new item, created already decided. Nothing is created when a check fails. */
   private recordOwnDecision(sessionId: string, overseerId: string, input: Record<string, unknown>): { id: string; status: 'decided_by_overseer'; line: string } {
-    // Rule 4: a go item and an item sourced from the user stay with the user.
+    // Rule 4: a go item and an item sourced from the user or one of the user's threads stay with the user.
     const source = input.source as Record<string, unknown> | undefined;
-    if (input.kind === 'go' || (source && typeof source === 'object' && source.kind === 'user')) throw new LedgerError(422, ONLY_USER_ERROR);
+    if (input.kind === 'go' || (source && typeof source === 'object' && isUserSourceKind(source.kind))) throw new LedgerError(422, ONLY_USER_ERROR);
     const text = str(input.text);
     if (!text) throw new LedgerError(400, 'text is required to record a decision of your own (or pass the id of a proposed item)');
     const choice = str(input.choice);

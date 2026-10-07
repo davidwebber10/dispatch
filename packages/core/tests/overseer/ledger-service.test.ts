@@ -478,6 +478,13 @@ describe('triage tools', () => {
     expect(ledgerDb.getBySeq(db, 's1', 5)!.decidedChoice).toBe('Monday');
   });
 
+  // Overseer memory scope (spec 2026-10-07), Unit 4: a thread's item is the user's to decide.
+  it("ledger_decide_self refuses an item sourced from one of the user's threads", () => {
+    ledgerDb.create(db, { sessionId: 's1', kind: 'decide', text: 'Switch when?', author: 'overseer', status: 'proposed', sourceKind: 'thread', sourceRef: 'plain' }); // N1
+    expectLedgerError(() => ledger.decideSelf('s1', 'coord', { id: 'N1', choice: 'now', reason: 'x' }), 422, ONLY_USER_ERROR);
+    expect(ledgerDb.getBySeq(db, 's1', 1)!.status).toBe('proposed');
+  });
+
   it('a reversal: ledger_resolve to answered on an overseer decision, with the user\'s checked quote; the count line counts it', () => {
     propose(); // created at minute 0
     userSays('switch on a Tuesday', 1); // after the item was created, but before the decision: never counts
@@ -545,6 +552,7 @@ describe('triage tools', () => {
     expectLedgerError(() => ledger.decideSelf('s1', 'coord', { ...OWN, kind: 'go' }), 422, ONLY_USER_ERROR);
     userSays('use the existing helper', 1);
     expectLedgerError(() => ledger.decideSelf('s1', 'coord', { ...OWN, source: { kind: 'user', ref: 'use the existing helper' } }), 422, ONLY_USER_ERROR);
+    expectLedgerError(() => ledger.decideSelf('s1', 'coord', { ...OWN, source: { kind: 'thread', ref: 'plain' } }), 422, ONLY_USER_ERROR);
     const { why: _w, ...noWhy } = OWN;
     expectLedgerError(() => ledger.decideSelf('s1', 'coord', noWhy), 422, 'A decision card needs: why. Add them and try again.');
     expectLedgerError(() => ledger.decideSelf('s1', 'coord', { ...OWN, text: 'Keep D1 to D9 as they are?' }), 422, 'One decision per card. Add each decision on its own.');

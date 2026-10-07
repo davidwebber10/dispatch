@@ -3,10 +3,12 @@
 // to doing; this policy is consulted by the structured manager's can_use_tool membrane on every tool
 // call, so the rule holds at turn 900 exactly as at turn 1. Deny messages teach: each one names the
 // delegation the coordinator should do instead, so a denial redirects rather than dead-ends.
-import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { overseerMemoryDir, OVERSEER_MEMORY_ROOT_REL, sharedProjectMemoryDir } from './memory-scope.js';
+import {
+  overseerMemoryDir, OVERSEER_MEMORY_ROOT_REL, ownMemoryFolderSafe, sharedMemoryFolderSafe, sharedProjectMemoryDir,
+} from './memory-scope.js';
+import { isUnder, realResolve } from './real-path.js';
 
 export type PolicyDecision = { allow: true } | { allow: false; message: string };
 
@@ -73,75 +75,6 @@ function extractWritePaths(inp: Record<string, unknown>): string[] {
   }
   const single = [inp.file_path, inp.notebook_path].find((v): v is string => typeof v === 'string');
   return single !== undefined ? [single] : [];
-}
-
-/** Resolve `p` following symlinks as far as it exists on disk, then re-append the not-yet-existing
- *  tail. A new file's parent dir usually exists even when the file does not, so this catches a
- *  symlinked ancestor (e.g. `~/.codex/link -> /repo`) that a purely lexical resolve would miss.
- *  THROWS when a path component EXISTS but does not resolve — a dangling symlink or a symlink loop —
- *  rather than lexically re-appending past it (which would let `~/.codex/dangling -> /repo/x`
- *  resolve back "under" the memory dir). The caller (isUnder) fails closed on the throw. */
-function realResolve(abs: string): string {
-  // Callers pass an ABSOLUTE path (isUnder denies a relative target before it gets here).
-  // Walk the ORIGINAL segments rather than path.resolve-ing them: path.resolve would fold `link/..`
-  // to nothing BEFORE symlinks resolve, hiding a `link/../escape` traversal. (isUnder also rejects
-  // any raw `..` segment outright, so this is a second line, not the only one.)
-  if (!path.isAbsolute(abs)) throw new Error(`coordinator-policy: not an absolute path ${abs}`);
-  const segs = abs.split(path.sep);
-  const tail: string[] = [];
-  for (let i = segs.length; i > 0; i--) {
-    const prefix = segs.slice(0, i).join(path.sep) || path.sep;
-    try {
-      const real = fs.realpathSync(prefix);
-      return tail.length ? path.join(real, ...tail.slice().reverse()) : real;
-    } catch (realErr: unknown) {
-      // Only a clean ENOENT ("this prefix does not exist yet") lets us keep walking up. Any other
-      // realpath error — EACCES, ELOOP (symlink loop), EIO, ENOTDIR — is NOT safely resolvable, so
-      // fail closed rather than reconstruct an unchecked lexical path.
-      if ((realErr as NodeJS.ErrnoException)?.code !== 'ENOENT') {
-        throw new Error(`coordinator-policy: unresolvable path (${(realErr as NodeJS.ErrnoException)?.code ?? 'unknown'}) ${prefix}`);
-      }
-      // ENOENT from realpath: does this exact prefix still EXIST on disk? A dangling symlink is
-      // ENOENT to realpath but present to lstat (which does not follow the final link). If it
-      // exists, it is dangling/unresolvable — fail closed instead of re-appending past it.
-      let exists = false;
-      let lstatErr: unknown = null;
-      try { fs.lstatSync(prefix); exists = true; } catch (e) { lstatErr = e; }
-      if (exists) throw new Error(`coordinator-policy: unresolvable path component ${prefix}`);
-      if ((lstatErr as NodeJS.ErrnoException)?.code !== 'ENOENT') {
-        throw new Error(`coordinator-policy: unstattable path (${(lstatErr as NodeJS.ErrnoException)?.code ?? 'unknown'}) ${prefix}`);
-      }
-      tail.push(segs[i - 1]); // truly absent → keep walking up
-    }
-  }
-  return abs; // nothing on the path existed — lexical absolute (won't be under an existing memoryDir)
-}
-
-/** True when `target` resolves to a path strictly inside the memory dir `rd` (not `rd` itself).
- *  `rd` is a memory dir's REAL path, resolved once when the policy is built (null when it could
- *  not be resolved — then nothing is under it). The target resolves through `realResolve`, so
- *  neither a traversal segment nor a symlinked ancestor can slip a path that only *textually*
- *  starts with the dir past the check. A RELATIVE target is denied: the harness would anchor it
- *  to the thread's cwd, not the daemon's, so resolving it here would check the wrong file (and a
- *  coordinator's memory path is always absolute anyway). Fails closed (false) when the target is
- *  unresolvable (dangling symlink / loop / EACCES). */
-function isUnder(rd: string | null, target: string): boolean {
-  if (rd === null) return false;
-  if (!path.isAbsolute(target)) return false;
-  // Reject ANY `..` segment in the raw target outright. After a symlink, `..` is resolved
-  // differently by realpathSync (lexically, to the link's own parent) than by the kernel at write
-  // time (to the link TARGET's parent), so `mem/link/../escape` can pass a realpath-based check yet
-  // write OUTSIDE the memory dir. A coordinator's own memory path never needs `..`; deny it rather
-  // than trust either resolution to agree with the eventual write.
-  if (target.split(/[/\\]/).includes('..')) return false;
-  let rt: string;
-  try {
-    rt = realResolve(target);
-  } catch {
-    return false;
-  }
-  const rel = path.relative(rd, rt);
-  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
 /** True when every entry of a `changes` array yields at least one string endpoint (source `path`
@@ -250,14 +183,40 @@ export function coordinatorMemoryDirFor(harness: string): string {
 }
 
 /**
- * Every folder a coordinator of `projectDir` may write to (overseer memory scope spec 2026-10-07,
+ * The memory folders of a coordinator of `projectDir` (overseer memory scope spec 2026-10-07,
  * Unit 2), under the home folder `home`:
- *   - Claude: its own memory folder (memory-scope.ts) and this project's shared memory folder;
- *   - Codex: ~/.codex/dispatch-coordinator (as before) and this project's shared Claude folder.
+ *   - own: Claude → its own memory folder (memory-scope.ts, keyed by `projectDir`, the working
+ *     directory); Codex → ~/.codex/dispatch-coordinator (as before);
+ *   - shared: this project's shared Claude memory folder, keyed by `sharedProjectDir`
+ *     (claudeMemoryProjectDir of the working directory: the git repository's main root).
  * The shared folder is where a note for the user's own threads goes ("From the overseer:").
+ *
+ * A Claude own folder that resolves (through symlinks) outside ~/.claude/dispatch-overseer, or a
+ * shared folder that resolves outside ~/.claude/projects, is null and listed in `refused`: a
+ * symlink must not widen what the policy allows (review round 1).
  */
-export function coordinatorWriteDirs(harness: string, home: string, projectDir: string): string[] {
-  const shared = sharedProjectMemoryDir(home, projectDir);
-  if (harness === 'codex') return [path.join(home, ...coordinatorMemoryRelDir('codex').split('/')), shared];
-  return [overseerMemoryDir(home, projectDir), shared];
+export function coordinatorMemoryFolders(
+  harness: string,
+  home: string,
+  projectDir: string,
+  sharedProjectDir: string,
+): { own: string | null; shared: string | null; refused: string[] } {
+  const refused: string[] = [];
+  const shared = sharedProjectMemoryDir(home, sharedProjectDir);
+  const sharedOk = sharedMemoryFolderSafe(home, shared);
+  if (!sharedOk) refused.push(shared);
+  let own: string | null;
+  if (harness === 'codex') {
+    own = path.join(home, ...coordinatorMemoryRelDir('codex').split('/'));
+  } else {
+    own = overseerMemoryDir(home, projectDir);
+    if (!ownMemoryFolderSafe(home, own)) { refused.unshift(own); own = null; }
+  }
+  return { own, shared: sharedOk ? shared : null, refused };
+}
+
+/** Every folder a coordinator may write to: the folders of coordinatorMemoryFolders that passed the checks. */
+export function coordinatorWriteDirs(harness: string, home: string, projectDir: string, sharedProjectDir: string): string[] {
+  const { own, shared } = coordinatorMemoryFolders(harness, home, projectDir, sharedProjectDir);
+  return [own, shared].filter((dir): dir is string => dir !== null);
 }

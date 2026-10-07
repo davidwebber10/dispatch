@@ -3,6 +3,7 @@
 // agent do not; the folder is created and seeded once. Everything runs in a fs.mkdtempSync folder
 // (os.homedir is mocked to it too), and the test deletes only that folder.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { execFileSync } from 'child_process';
 import { EventEmitter } from 'events';
 import fs from 'fs';
 import os from 'os';
@@ -52,7 +53,8 @@ let claude: FakeStructured;
 let codex: FakeStructured;
 
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'overseer-memory-spawn-'));
+  // Canonical: outside a git repository the shared folder keys on the canonical working directory.
+  dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'overseer-memory-spawn-')));
   home = path.join(dir, 'home');
   project = path.join(dir, 'proj');
   fs.mkdirSync(home, { recursive: true });
@@ -184,8 +186,115 @@ describe('the persona of an overseer start', () => {
   });
 });
 
-it('without a memory home (tests, an unwired service) nothing is created and no --settings is passed', () => {
-  const t = create('Control Plane', { role: 'coordinator' });
-  expect(settingsOf(t.id)).toBeNull();
-  expect(fs.readdirSync(home)).toEqual([]);
+/** The console.error lines of the memory scope. */
+const memoryErrors = (spy: ReturnType<typeof vi.spyOn>) => spy.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith('[overseer-memory]'));
+
+// Review round 1, fix 5: a missing home must not pass silently.
+describe('without a memory home', () => {
+  it('nothing is created, no --settings is passed, and the start logs that the overseer has no memory of its own', () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const t = create('Control Plane', { role: 'coordinator' });
+    expect(settingsOf(t.id)).toBeNull();
+    expect(fs.readdirSync(home)).toEqual([]);
+    const lines = memoryErrors(err);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(t.id);
+    expect(lines[0]).toContain('without its own memory folder');
+  });
+
+  it('the test command seam and a plain thread log nothing', () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    create('Scratch', {});
+    svc.setStructuredCommandOverride({ command: 'node', args: ['-e', ''] });
+    create('Control Plane', { role: 'coordinator' });
+    expect(memoryErrors(err)).toEqual([]);
+  });
+
+  it('the daemon start sets the home: startServer calls setOverseerMemoryHome(os.homedir())', () => {
+    const src = fs.readFileSync(new URL('../../src/server.ts', import.meta.url), 'utf8');
+    const start = src.indexOf('export async function startServer(');
+    expect(start).toBeGreaterThan(-1);
+    const next = src.indexOf('\nexport ', start + 1);
+    const body = src.slice(start, next === -1 ? undefined : next);
+    expect(body).toMatch(/^\s*sessionService\.setOverseerMemoryHome\(os\.homedir\(\)\);/m);
+  });
+});
+
+// Review round 1, fix 1: the shared folder follows the git repository, the own folder the working directory.
+describe('an overseer in a subfolder of a git repository', () => {
+  beforeEach(() => svc.setOverseerMemoryHome(home));
+
+  it("gets the repository's shared folder: in the policy, the persona and the one-time copy", () => {
+    const repo = path.join(dir, 'repo');
+    const sub = path.join(repo, 'packages', 'core');
+    fs.mkdirSync(sub, { recursive: true });
+    const env = { ...process.env };
+    for (const k of Object.keys(env)) if (k.startsWith('GIT_')) delete env[k];
+    execFileSync('git', ['init', '-q'], { cwd: repo, env, stdio: 'ignore' });
+    sessionsDb.create(db, { id: 's2', provider: 'claude-code', name: 'repo', workingDir: sub });
+    const shared = sharedProjectMemoryDir(home, repo);
+    fs.mkdirSync(shared, { recursive: true });
+    fs.writeFileSync(path.join(shared, 'old.md'), `---\nname: n\noriginSessionId: sess-old\n---\nbody\n`);
+    terminalsDb.create(db, { id: 'old2', sessionId: 's2', type: 'claude-code', label: 'Old CP', externalId: 'sess-old', config: { transport: 'structured', role: 'coordinator' } });
+    terminalsDb.archive(db, 'old2');
+
+    const t = svc.createTerminal('s2', 'claude-code', 'Control Plane', false, undefined, undefined, { transport: 'structured', role: 'coordinator' });
+
+    const own = overseerMemoryDir(home, sub);
+    expect(settingsOf(t.id)).toEqual({ autoMemoryDirectory: own });
+    expect(fs.existsSync(path.join(own, 'old.md'))).toBe(true);
+    const policy = claude.spawnOpts[t.id].toolPolicy!;
+    expect(policy('Write', { file_path: path.join(shared, 'from-the-overseer.md') }).allow).toBe(true);
+    expect(policy('Write', { file_path: path.join(sharedProjectMemoryDir(home, sub), 'x.md') }).allow).toBe(false);
+    const args = claude.spawnOpts[t.id].args;
+    expect(args[args.lastIndexOf('--append-system-prompt') + 1]).toContain(`The project’s shared memory folder: ${shared}.`);
+  });
+});
+
+// Review round 1, fix 2: a symlink that leads a folder out of its memory root.
+describe('a symlinked memory folder', () => {
+  let outside: string;
+  beforeEach(() => {
+    svc.setOverseerMemoryHome(home);
+    outside = path.join(dir, 'outside');
+    fs.mkdirSync(outside);
+  });
+
+  it('own folder: no --settings, no setup, left out of the policy and the persona, one error line', () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const own = overseerMemoryDir(home, project);
+    fs.mkdirSync(path.dirname(own), { recursive: true });
+    fs.symlinkSync(outside, own);
+
+    const t = create('Control Plane', { role: 'coordinator' });
+
+    expect(settingsOf(t.id)).toBeNull();
+    expect(fs.readdirSync(outside)).toEqual([]);
+    expect(claude.spawnOpts[t.id].toolPolicy!('Write', { file_path: path.join(own, 'MEMORY.md') }).allow).toBe(false);
+    const args = claude.spawnOpts[t.id].args;
+    expect(args[args.lastIndexOf('--append-system-prompt') + 1]).not.toContain('Your memory folder:');
+    const lines = memoryErrors(err);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(own);
+  });
+
+  it('shared folder: nothing is copied, it is left out of the policy, one error line; the own folder still loads', () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const shared = sharedProjectMemoryDir(home, project);
+    fs.mkdirSync(path.dirname(shared), { recursive: true });
+    fs.symlinkSync(outside, shared);
+    fs.writeFileSync(path.join(outside, 'planted.md'), `---\nname: n\noriginSessionId: sess-old\n---\nbody\n`);
+    terminalsDb.create(db, { id: 'old', sessionId: 's1', type: 'claude-code', label: 'Old CP', externalId: 'sess-old', config: { transport: 'structured', role: 'coordinator' } });
+    terminalsDb.archive(db, 'old');
+
+    const t = create('Control Plane', { role: 'coordinator' });
+
+    const own = overseerMemoryDir(home, project);
+    expect(settingsOf(t.id)).toEqual({ autoMemoryDirectory: own });
+    expect(fs.readdirSync(own)).toEqual([]);
+    expect(claude.spawnOpts[t.id].toolPolicy!('Write', { file_path: path.join(shared, 'from-the-overseer.md') }).allow).toBe(false);
+    const lines = memoryErrors(err);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(shared);
+  });
 });
