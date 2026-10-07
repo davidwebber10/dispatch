@@ -11,6 +11,10 @@ import * as agentsDb from '../db/agents.js';
 import * as appState from '../db/app-state.js';
 import * as messageSourceDb from '../db/message-source.js';
 import * as watchesDb from '../db/watches.js';
+import * as coordinatorMessagesDb from '../db/coordinator-messages.js';
+import * as ledgerDb from '../db/ledger.js';
+import { computeBatchState, formatBatchFooter, isBusy, type BatchOptions, type BatchState, type NoticeKind } from './batch-state.js';
+import { formatInterimNotice, nextInterimConfig } from './interim-recap.js';
 import { getProvider } from '../providers/registry.js';
 import { PTYManager } from '../pty/manager.js';
 import type { Session, CreateSessionInput } from '../types.js';
@@ -129,6 +133,8 @@ export class SessionService {
   private statusContext: StatusContext | null = null;
   /** Supplies a tools-awareness note injected into the developer instructions; set by server wiring. */
   private toolsAwareness?: () => string | null;
+  /** The service's clock. Tests replace it to pin times (message log, interim recap timer). */
+  clock: () => number = () => Date.now();
   private structuredManagers = new Map<string, import('../structured/manager.js').IStructuredManager>();
   /** Override for structured command (test seam: lets tests spawn fake-claude instead of real claude). */
   private structuredCommandOverride?: { command: string; args: string[] };
@@ -994,13 +1000,47 @@ export class SessionService {
     terminalsDb.updatePid(this.db, terminalId, null);
   }
 
-  sendStructuredMessage(terminalId: string, content: string | import('../structured/manager.js').ContentBlock[], source?: import('../structured/manager.js').MessageSource): void {
+  sendStructuredMessage(
+    terminalId: string,
+    content: string | import('../structured/manager.js').ContentBlock[],
+    source?: import('../structured/manager.js').MessageSource,
+    logAs?: coordinatorMessagesDb.CoordinatorMessageSource,
+  ): void {
     // Lazily resume a thread that died on a daemon restart (resumes the same claude
     // conversation when an external_id was captured) before delivering the message.
     const manager = this.structuredManagerForTerminal(terminalId);
     if (!manager?.isAlive(terminalId)) this.ensureStructuredAlive(terminalId);
     if (!manager?.isAlive(terminalId)) throw new Error('no structured session for terminal');
     manager.sendMessage(terminalId, content, source);
+    this.logCoordinatorMessage(terminalId, content, logAs ?? (source === 'user' ? 'user' : source === 'coordinator' ? 'coordinator' : 'daemon'));
+  }
+
+  /**
+   * The overseer message log (structured-recap spec, Unit 1): every message that reaches a
+   * coordinator, with who sent it, so a ledger quote can be checked against the human's real
+   * words. Only coordinators are logged. Written AFTER manager.sendMessage returns; a failed
+   * write is logged and never blocks the send.
+   */
+  private logCoordinatorMessage(
+    terminalId: string,
+    content: string | import('../structured/manager.js').ContentBlock[],
+    source: coordinatorMessagesDb.CoordinatorMessageSource,
+  ): void {
+    try {
+      const row = terminalsDb.getById(this.db, terminalId);
+      if (!row) return;
+      let cfg: Record<string, any> = {};
+      try { cfg = JSON.parse(row.config || '{}'); } catch { /* default {} */ }
+      if (cfg.role !== 'coordinator') return;
+      coordinatorMessagesDb.append(this.db, {
+        terminalId,
+        source,
+        text: coordinatorMessagesDb.messageText(content),
+        sentAt: new Date(this.clock()).toISOString(),
+      });
+    } catch (err) {
+      console.error(`coordinator message log: write failed for ${terminalId}`, err);
+    }
   }
 
   /**
@@ -1029,6 +1069,7 @@ export class SessionService {
     terminalId: string,
     content: string | import('../structured/manager.js').ContentBlock[],
     source?: import('../structured/manager.js').MessageSource,
+    logAs?: coordinatorMessagesDb.CoordinatorMessageSource,
   ): { transport: 'structured' | 'pty'; droppedNonText: boolean } {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) throw new Error('Thread not found');
@@ -1040,7 +1081,7 @@ export class SessionService {
     }
 
     if (this.isStructuredTerminal(terminal)) {
-      this.sendStructuredMessage(terminalId, content, source);
+      this.sendStructuredMessage(terminalId, content, source, logAs);
       return { transport: 'structured', droppedNonText: false };
     }
 
@@ -1068,7 +1109,7 @@ export class SessionService {
    * note; false when the thread isn't a typed agent, is a scheduled role run, or the project has
    * no coordinator.
    */
-  private notifyCoordinatorOfAgent(agentTerminalId: string, note: string): boolean {
+  private notifyCoordinatorOfAgent(agentTerminalId: string, note: string, opts: { kind: NoticeKind; justStarted?: string[] }): boolean {
     const agent = terminalsDb.getById(this.db, agentTerminalId);
     if (!agent) return false;
     let cfg: Record<string, any> = {};
@@ -1083,11 +1124,58 @@ export class SessionService {
       .map(terminalsDb.rowToTerminal)
       .find((t) => isAgentType(t.type) && !t.archivedAt && t.id !== agentTerminalId && t.config?.role === 'coordinator');
     if (!coordinator) return false;
+    // The Batch line (structured-recap spec, Unit 4). A direct message starts the subject's
+    // turn, so it counts as working (unless it waits on a question); every other notice leaves
+    // its subject out. A failure here never drops the notice: it goes out without the line,
+    // and the interim timer is left as it is.
+    let batch: BatchState | null = null;
+    let message = note;
+    try {
+      const state = this.batchState(
+        agent.session_id,
+        opts.kind === 'direct-message'
+          ? { justStarted: [...(opts.justStarted ?? []), agentTerminalId] }
+          : { exclude: [agentTerminalId], justStarted: opts.justStarted },
+      );
+      message = `${note}\n\n${formatBatchFooter(state, ledgerDb.listOpenSeqs(this.db, agent.session_id))}`;
+      batch = state;
+    } catch (err) {
+      console.error(`batch line: failed for agent ${agentTerminalId}; the notice goes out without it`, err);
+    }
     try {
       this.ensureStructuredAlive(coordinator.id); // a daemon restart may have killed it
-      this.sendStructuredMessage(coordinator.id, note);
+      this.sendStructuredMessage(coordinator.id, message);
+    } catch { return false; }
+    if (batch) this.updateInterimTimer(coordinator.id, opts.kind, isBusy(batch));
+    return true;
+  }
+
+  /** Arm or clear the overseer's interim recap timer after a notice (see sessions/interim-recap.ts). */
+  private updateInterimTimer(coordinatorId: string, kind: NoticeKind, busy: boolean): void {
+    try {
+      const row = terminalsDb.getById(this.db, coordinatorId);
+      if (!row) return;
+      let cfg: Record<string, any> = {};
+      try { cfg = JSON.parse(row.config || '{}'); } catch { /* default {} */ }
+      const next = nextInterimConfig(cfg, { kind, busy, now: this.clock() });
+      if (next) terminalsDb.updateConfig(this.db, coordinatorId, next);
+    } catch (err) {
+      console.error(`interim recap: timer update failed for ${coordinatorId}`, err);
+    }
+  }
+
+  /** Send the one Interim recap notice. Revives the overseer first, as notices do. False when it was not delivered. */
+  sendInterimRecapNotice(coordinatorId: string, workingCount: number, queuedCount = 0): boolean {
+    try {
+      this.ensureStructuredAlive(coordinatorId);
+      this.sendStructuredMessage(coordinatorId, formatInterimNotice(workingCount, queuedCount));
       return true;
     } catch { return false; }
+  }
+
+  /** The overseer's agents in this project, sorted into working / queued / waiting on the overseer. */
+  batchState(sessionId: string, opts: BatchOptions = {}): BatchState {
+    return computeBatchState(this.db, sessionId, opts, (id) => this.getPendingPermission(id) !== null);
   }
 
   /** Format an agent's pending AskUserQuestion as a directive the coordinator can act on. */
@@ -1129,7 +1217,7 @@ export class SessionService {
     try { cfg = JSON.parse(agent.config || '{}'); } catch { /* default {} */ }
     const mission = typeof cfg.mission === 'string' && cfg.mission.trim() ? cfg.mission.trim() : null;
     const note = this.formatAgentQuestion(agentTerminalId, agent.label || 'agent', mission, pending.questions);
-    return this.notifyCoordinatorOfAgent(agentTerminalId, note);
+    return this.notifyCoordinatorOfAgent(agentTerminalId, note, { kind: 'question' });
   }
 
   /**
@@ -1149,7 +1237,7 @@ export class SessionService {
       `[agentId ${agentTerminalId}] while it was working. They likely want a change of direction or noticed ` +
       `something off. Check in with the user about why and adjust: re-spawn with new guidance, redirect the ` +
       `work, or stand down. Do not silently ignore this.`;
-    this.notifyCoordinatorOfAgent(agentTerminalId, note);
+    this.notifyCoordinatorOfAgent(agentTerminalId, note, { kind: 'stopped' });
   }
 
   /** Summarize a user-sent payload for a coordinator notice: a string's first line
@@ -1183,7 +1271,7 @@ export class SessionService {
       `[agentId ${agentTerminalId}] a message directly, not through you: "${summary}". This may change what you ` +
       `asked it to do. Read how it responds with read_agent and adjust — don't assume it's still following your ` +
       `original instructions.`;
-    this.notifyCoordinatorOfAgent(agentTerminalId, note);
+    this.notifyCoordinatorOfAgent(agentTerminalId, note, { kind: 'direct-message' });
   }
 
   /** The agent's most recent assistant text, pulled live from the structured event ring
@@ -1256,13 +1344,16 @@ export class SessionService {
    * Auto-start any agents queued with `dependsOn` pointing at this just-finished
    * terminal, feeding each the finished agent's output ahead of its parked task.
    */
-  private startQueuedDependents(finishedTerminalId: string): void {
+  private startQueuedDependents(finishedTerminalId: string): string[] {
+    const started: string[] = [];
     for (const dep of terminalsDb.listQueuedDependents(this.db, finishedTerminalId)) {
       let depConfig: Record<string, any> = {};
       try { depConfig = JSON.parse(dep.config || '{}'); } catch { /* default {} */ }
       const originalTask = typeof depConfig.queuedTask === 'string' ? depConfig.queuedTask : '';
-      this.startQueuedTerminal(dep.id, this.composeDependentTask(finishedTerminalId, originalTask));
+      if (this.startQueuedTerminal(dep.id, this.composeDependentTask(finishedTerminalId, originalTask))) started.push(dep.id);
     }
+    // Returned so the Finished notice counts them as working: they still read 'waiting' right now.
+    return started;
   }
 
   /**
@@ -1274,7 +1365,7 @@ export class SessionService {
    * coordinator notice below is agent-only / no-op for non-agents.
    */
   noteAgentCompletion(agentTerminalId: string): void {
-    this.startQueuedDependents(agentTerminalId);
+    const started = this.startQueuedDependents(agentTerminalId);
     const agent = terminalsDb.getById(this.db, agentTerminalId);
     if (!agent) return;
     let cfg: Record<string, any> = {};
@@ -1288,9 +1379,9 @@ export class SessionService {
       `[agentId ${agentTerminalId}] just finished a turn.\n` +
       (summary ? `Its latest output: ${summary}\n\n` : '') +
       `Read its full work with read_agent({ agentId: "${agentTerminalId}" }), then decide the next step — ` +
-      `ingest the result, hand it to another agent, spawn a follow-up, or report back to the user. Keep this ` +
+      `ingest the result, hand it to another agent, or spawn a follow-up. Keep this ` +
       `brief unless it needs action; the user's own messages are always your top priority.`;
-    this.notifyCoordinatorOfAgent(agentTerminalId, note);
+    this.notifyCoordinatorOfAgent(agentTerminalId, note, { kind: 'finished', justStarted: started });
   }
 
   /**
@@ -1313,7 +1404,7 @@ export class SessionService {
       `[agentId ${agentTerminalId}] is BLOCKED, waiting on you — it stopped its turn to ask:\n"${ask}"\n\n` +
       `It cannot proceed until you reply. Read the full context with read_agent({ agentId: "${agentTerminalId}" }), ` +
       `then answer via message_agent({ agentId: "${agentTerminalId}", text: "..." }).`;
-    this.notifyCoordinatorOfAgent(agentTerminalId, note);
+    this.notifyCoordinatorOfAgent(agentTerminalId, note, { kind: 'blocked' });
   }
 
   /**
@@ -1499,9 +1590,36 @@ export class SessionService {
         ...(pending.questions ? { questions: pending.questions } : {}),
         ...(remappedAnswers && Object.keys(remappedAnswers).length ? { answers: remappedAnswers } : {}),
       };
-      return manager.answerPermission(terminalId, requestId || pending.requestId, { behavior: 'allow', updatedInput });
+      const delivered = manager.answerPermission(terminalId, requestId || pending.requestId, { behavior: 'allow', updatedInput });
+      if (delivered && pending.toolName === 'AskUserQuestion' && remappedAnswers) {
+        this.logQuestionCardAnswer(terminalId, pending.questions, remappedAnswers);
+      }
+      return delivered;
     }
     return manager.answerPermission(terminalId, requestId || pending.requestId, { behavior: 'deny', message: opts.message || 'Denied' });
+  }
+
+  /**
+   * The user's answer to the overseer's OWN question card (AskUserQuestion) is the user's words,
+   * but it never passes through sendStructuredMessage, so log it here (structured-recap spec,
+   * Unit 1): one `user` row PER answered question, holding the answer ONLY. The overseer writes
+   * the header and the question, so neither may become quotable evidence (a header "Merge" with
+   * the answer "no" must not approve a merge), and each answer is its own message, so an "ok"
+   * answer is a leading ok of that message. A multi-select answer arrives joined with ", "; a
+   * free-text "Other" answer is kept verbatim. logCoordinatorMessage skips any thread that is not
+   * a coordinator and never throws.
+   */
+  private logQuestionCardAnswer(terminalId: string, questions: any[] | undefined, answers: Record<string, unknown>): void {
+    try {
+      for (const q of Array.isArray(questions) ? questions : []) {
+        const value = typeof q?.question === 'string' ? answers[q.question] : undefined;
+        const answer = Array.isArray(value) ? value.map(String).join(', ') : typeof value === 'string' ? value : '';
+        if (!answer.trim()) continue;
+        this.logCoordinatorMessage(terminalId, answer, 'user');
+      }
+    } catch (err) {
+      console.error(`coordinator message log: question-card answer not logged for ${terminalId}`, err); // the answer is already delivered
+    }
   }
 
   /**

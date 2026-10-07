@@ -339,7 +339,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       return;
     }
     const { coordinatorId } = get();
-    if (coordinatorId) api.sendStructuredMessage(coordinatorId, CANNED.needAck(label)).catch(() => {});
+    if (coordinatorId) api.sendStructuredMessage(coordinatorId, CANNED.needAck(label), { canned: true }).catch(() => {});
     set((s) => ({ resolved: [...s.resolved, id] }));
   },
 

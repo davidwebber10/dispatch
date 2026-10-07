@@ -80,6 +80,14 @@ const HARNESS_ARG_DESCRIPTION =
   '(e.g. harness "codex" with model "gpt-6-astra"). Otherwise override only when the task clearly ' +
   'benefits from a specific harness.';
 
+/** spawn_agent/queue_agent/message_agent `ledgerIds` arg (structured-recap spec, Unit 3 hand-offs). */
+const LEDGER_IDS_ARG_DESCRIPTION =
+  'Optional ledger item IDs (e.g. ["N7", "N12"]). The daemon appends a block "Owner decisions ' +
+  '(verbatim, from the ledger)" with those items\' rendered lines, so the agent gets the question and ' +
+  "the user's exact words, not a paraphrase. Overseer only.";
+
+const LEDGER_IDS_SCHEMA = { type: 'array', items: { type: 'string' }, description: LEDGER_IDS_ARG_DESCRIPTION } as const;
+
 /** The tools the coordinator can call. */
 export const TOOLS = [
   {
@@ -121,6 +129,7 @@ export const TOOLS = [
           enum: ['claude-code', 'codex', 'grok', 'opencode'],
           description: HARNESS_ARG_DESCRIPTION,
         },
+        ledgerIds: LEDGER_IDS_SCHEMA,
       },
       required: ['agentType', 'task'],
     },
@@ -174,6 +183,7 @@ export const TOOLS = [
           enum: ['claude-code', 'codex', 'grok', 'opencode'],
           description: HARNESS_ARG_DESCRIPTION,
         },
+        ledgerIds: LEDGER_IDS_SCHEMA,
       },
       required: ['agentType', 'task'],
     },
@@ -213,6 +223,7 @@ export const TOOLS = [
       properties: {
         agentId: { type: 'string', description: 'The agent thread id (from spawn_agent / list_agents).' },
         text: { type: 'string', description: 'The message to send to the agent.' },
+        ledgerIds: LEDGER_IDS_SCHEMA,
       },
       required: ['agentId', 'text'],
     },
@@ -400,6 +411,109 @@ export const TOOLS = [
       required: ['state', 'summary'],
     },
   },
+  // --- decision ledger (structured-recap spec, Unit 3): overseer only; the routes reject others ---
+  {
+    name: 'ledger_add',
+    description:
+      'Overseer only. Record an item that needs the user in the decision ledger: kind "go" (a merge, ' +
+      'deploy or release approval), "decide" (a choice) or "do" (a manual step for the user). Every ' +
+      'question to the user goes here first. Returns { id, line }: post `line` to the user as is. The ' +
+      'item text never changes; for a wider scope, add a new item with `supersedes`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['go', 'decide', 'do'], description: 'go = merge/deploy/release approval, decide = a choice, do = a manual step for the user.' },
+        text: { type: 'string', description: 'The item as the user will see it. It never changes after creation.' },
+        recommendation: { type: 'string', description: 'Optional: what you recommend.' },
+        options: { type: 'array', items: { type: 'string' }, description: 'Optional: the choices, for a decide item.' },
+        blocks: { type: 'string', description: 'Optional: what this item holds up.' },
+        mission: { type: 'string', description: 'Optional mission name this item belongs to.' },
+        author: { type: 'string', description: 'Optional: who proposed it, "overseer" (the default) or an agent label.' },
+        supersedes: { type: 'string', description: 'Optional: the ID (e.g. "N3") of an older item that this item replaces or widens.' },
+      },
+      required: ['kind', 'text'],
+    },
+  },
+  {
+    name: 'ledger_resolve',
+    description:
+      'Overseer only. Close a ledger item. "answered" and "parked" need `quote`: the user\'s exact words, ' +
+      'which the daemon checks against the messages the user sent you after the item was created. ' +
+      '"withdrawn" needs `reason`. An "ok" at the start of a message is never an answer. If the check ' +
+      'fails, do not record the item: ask the user.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The item ID, e.g. "N12".' },
+        status: { type: 'string', enum: ['answered', 'parked', 'withdrawn'], description: 'The new status.' },
+        quote: { type: 'string', description: "The user's exact words. Required for answered and parked." },
+        reading: { type: 'string', description: 'Optional "I read this as: …" line, when you apply the answer more widely than the words say.' },
+        reason: { type: 'string', description: 'Why you withdraw the item. Required for withdrawn.' },
+      },
+      required: ['id', 'status'],
+    },
+  },
+  {
+    name: 'ledger_note',
+    description:
+      'Overseer only. Record a statement the user made (a rule, a preference, a fact) with the user\'s ' +
+      'exact words as `quote`; the daemon checks the words against the user\'s messages to you. Add ' +
+      '`reading` when you apply it more widely than the words say.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        quote: { type: 'string', description: "The user's exact words." },
+        reading: { type: 'string', description: 'Optional "I read this as: …" line.' },
+        mission: { type: 'string', description: 'Optional mission name this statement belongs to.' },
+      },
+      required: ['quote'],
+    },
+  },
+  {
+    name: 'ledger_list',
+    description:
+      'Overseer only. The rendered ledger part of a recap: Needs you now, Your tests and actions, Decided ' +
+      'since the last recap, Parked. Paste these lines as is. Pass forRecap: true when you post the recap: ' +
+      'it marks the recap as posted and clears the interim recap timer.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        forRecap: { type: 'boolean', description: 'True when you are posting the recap now.' },
+      },
+    },
+  },
+  {
+    name: 'ledger_import',
+    description:
+      'Overseer only. Use once, at rollout: load the open items and earlier decisions from your current ' +
+      'context. They show as "Imported, not checked" until the user confirms one and you record the quote ' +
+      'with ledger_resolve.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        items: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              kind: { type: 'string', enum: ['go', 'decide', 'do', 'statement'] },
+              text: { type: 'string' },
+              status: { type: 'string', enum: ['open', 'answered', 'parked'] },
+              author: { type: 'string' },
+              recommendation: { type: 'string' },
+              options: { type: 'array', items: { type: 'string' } },
+              blocks: { type: 'string' },
+              mission: { type: 'string' },
+              reading: { type: 'string' },
+            },
+            required: ['kind', 'text'],
+          },
+          description: 'The items to import.',
+        },
+      },
+      required: ['items'],
+    },
+  },
 ] as const;
 
 // --- HTTP helper -----------------------------------------------------------
@@ -436,11 +550,13 @@ async function resolveWorkerDefaults(agentType: AgentType, harness: string): Pro
   return { harness: defaults.harness, model: defaults.model };
 }
 
-async function spawnAgent(args: { agentType: AgentType; name?: string; task: string; mission?: string; model?: string; harness?: string }): Promise<{ agentId: string; label: string; mission?: string }> {
+async function spawnAgent(args: { agentType: AgentType; name?: string; task: string; mission?: string; model?: string; harness?: string; ledgerIds?: string[] }): Promise<{ agentId: string; label: string; mission?: string }> {
   if (!args?.agentType) throw new Error('agentType is required');
   if (!args?.task) throw new Error('task is required');
   const depthCheck = checkSpawnDepth(selfSpawnDepth());
   if (!depthCheck.ok) throw new Error(depthCheck.reason);
+  // Before anything is created: an unknown ledger ID fails the spawn cleanly.
+  const task = await withLedgerBlock(args.task, args.ledgerIds);
   const label = args.name || `${args.agentType} agent`;
   const mission = typeof args.mission === 'string' ? args.mission.trim() : '';
   const model = typeof args.model === 'string' ? args.model.trim() : '';
@@ -453,7 +569,7 @@ async function spawnAgent(args: { agentType: AgentType; name?: string; task: str
     buildWorkerCreateBody({ agentType: args.agentType, label, resolved, explicitModel: model, mission, spawnDepth: childDepth }));
   const agentId: string | undefined = terminal?.id;
   if (!agentId) throw new Error('spawn did not return a terminal id');
-  await httpJson('POST', `${apiBase()}/api/terminals/${agentId}/message`, { text: args.task, source: 'coordinator' });
+  await httpJson('POST', `${apiBase()}/api/terminals/${agentId}/message`, { text: task, source: 'coordinator' });
   return { agentId, label, ...(mission ? { mission } : {}) };
 }
 
@@ -465,11 +581,12 @@ async function spawnAgent(args: { agentType: AgentType; name?: string; task: str
  * has. `dependsOn` rides inside `config` (opaque to the route) alongside the other agent markers.
  * Mirrors spawnAgent's args/mission handling.
  */
-async function queueAgent(args: { agentType: AgentType; name?: string; task: string; mission?: string; dependsOn?: string; model?: string; harness?: string }): Promise<{ agentId: string; label: string; mission?: string; queued: true }> {
+async function queueAgent(args: { agentType: AgentType; name?: string; task: string; mission?: string; dependsOn?: string; model?: string; harness?: string; ledgerIds?: string[] }): Promise<{ agentId: string; label: string; mission?: string; queued: true }> {
   if (!args?.agentType) throw new Error('agentType is required');
   if (!args?.task) throw new Error('task is required');
   const depthCheck = checkSpawnDepth(selfSpawnDepth());
   if (!depthCheck.ok) throw new Error(depthCheck.reason);
+  const task = await withLedgerBlock(args.task, args.ledgerIds);
   const label = args.name || `${args.agentType} agent`;
   const mission = typeof args.mission === 'string' ? args.mission.trim() : '';
   const dependsOn = typeof args.dependsOn === 'string' ? args.dependsOn.trim() : '';
@@ -480,7 +597,7 @@ async function queueAgent(args: { agentType: AgentType; name?: string; task: str
   const resolved = await resolveWorkerDefaults(args.agentType, harness);
 
   const terminal = await httpJson('POST', `${apiBase()}/api/sessions/${sessionId()}/terminals`,
-    buildWorkerCreateBody({ agentType: args.agentType, label, resolved, explicitModel: model, mission, spawnDepth: childDepth, queued: true, task: args.task, dependsOn }));
+    buildWorkerCreateBody({ agentType: args.agentType, label, resolved, explicitModel: model, mission, spawnDepth: childDepth, queued: true, task, dependsOn }));
   const agentId: string | undefined = terminal?.id;
   if (!agentId) throw new Error('queue did not return a terminal id');
   return { agentId, label, ...(mission ? { mission } : {}), queued: true };
@@ -526,7 +643,7 @@ async function listMissions(): Promise<Array<{ mission: string; live: number; to
   return Array.from(counts.values());
 }
 
-async function messageAgent(args: { agentId: string; text: string }): Promise<{ ok: true; agentId: string }> {
+async function messageAgent(args: { agentId: string; text: string; ledgerIds?: string[] }): Promise<{ ok: true; agentId: string }> {
   if (!args?.agentId) throw new Error('agentId is required');
   if (!args?.text) throw new Error('text is required');
   const self = selfTerminalId();
@@ -534,7 +651,8 @@ async function messageAgent(args: { agentId: string; text: string }): Promise<{ 
   if (!selfCheck.ok) throw new Error(selfCheck.reason);
   const rateCheck = pairRateLimiter.check(self, args.agentId);
   if (!rateCheck.ok) throw new Error(rateCheck.reason);
-  await httpJson('POST', `${apiBase()}/api/terminals/${args.agentId}/message`, { text: args.text, source: 'coordinator' });
+  const text = await withLedgerBlock(args.text, args.ledgerIds);
+  await httpJson('POST', `${apiBase()}/api/terminals/${args.agentId}/message`, { text, source: 'coordinator' });
   return { ok: true, agentId: args.agentId };
 }
 
@@ -754,6 +872,60 @@ async function reportStatus(args: { state: string; summary: string; ask?: string
   return { ok: true };
 }
 
+// --- decision ledger (structured-recap spec, Unit 3) -------------------------
+
+/**
+ * POST to a ledger route and surface the route's own `{ error }` text as the tool error, never
+ * httpJson's "<method> <url> -> <status>" wrapper: the quote-check failures are fixed sentences
+ * the overseer must read as is ("… Do not record it. Ask the user.").
+ */
+async function ledgerRequest(suffix: string, body: Record<string, unknown>): Promise<any> {
+  const url = `${apiBase()}/api/sessions/${sessionId()}/ledger${suffix}`;
+  const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const text = await res.text().catch(() => '');
+  let data: any = null;
+  if (text) { try { data = JSON.parse(text); } catch { data = null; } }
+  if (!res.ok) throw new Error(data?.error || `POST ${url} -> ${res.status} ${res.statusText}`);
+  return data;
+}
+
+/** Append the "Owner decisions (verbatim, from the ledger)" block for `ledgerIds`; unchanged (and no fetch) when there are none. */
+async function withLedgerBlock(text: string, ledgerIds: unknown): Promise<string> {
+  if (!Array.isArray(ledgerIds) || ledgerIds.length === 0) return text;
+  const caller = requireSelf('hand ledger items to an agent');
+  const data = await ledgerRequest('/handoff', { caller, ids: ledgerIds });
+  return `${text}\n\n${data.block}`;
+}
+
+async function ledgerAdd(args: Record<string, unknown>): Promise<{ id: string; line: string }> {
+  if (!args?.kind) throw new Error('kind is required');
+  if (!args?.text) throw new Error('text is required');
+  return ledgerRequest('', { ...args, caller: requireSelf('use the ledger') });
+}
+
+async function ledgerResolve(args: Record<string, unknown>): Promise<{ id: string; status: string; line: string }> {
+  if (!args?.id) throw new Error('id is required');
+  if (!args?.status) throw new Error('status is required');
+  const { id, ...rest } = args;
+  return ledgerRequest(`/${encodeURIComponent(String(id))}/resolve`, { ...rest, caller: requireSelf('use the ledger') });
+}
+
+async function ledgerNote(args: Record<string, unknown>): Promise<{ id: string; line: string }> {
+  if (!args?.quote) throw new Error('quote is required');
+  return ledgerRequest('/note', { ...args, caller: requireSelf('use the ledger') });
+}
+
+/** Returns the rendered text itself (not JSON), so the overseer can paste it as is. */
+async function ledgerList(args: { forRecap?: boolean }): Promise<string> {
+  const data = await ledgerRequest('/list', { caller: requireSelf('use the ledger'), forRecap: args?.forRecap === true });
+  return String(data?.text ?? '');
+}
+
+async function ledgerImport(args: { items?: unknown }): Promise<{ ids: string[] }> {
+  if (!Array.isArray(args?.items)) throw new Error('items is required');
+  return ledgerRequest('/import', { caller: requireSelf('use the ledger'), items: args.items });
+}
+
 // --- post_image (surface a picture inline in the coordinator thread) -------
 
 /** Extension → MIME for the images the byte route serves; the gate that keeps this read-image-only. */
@@ -829,6 +1001,12 @@ export async function callTool(
       case 'unwatch_thread': result = await unwatchThread(args ?? {}); break;
       case 'list_watches': result = await listWatches(); break;
       case 'report_status': result = await reportStatus(args ?? {}); break;
+      case 'ledger_add': result = await ledgerAdd(args ?? {}); break;
+      case 'ledger_resolve': result = await ledgerResolve(args ?? {}); break;
+      case 'ledger_note': result = await ledgerNote(args ?? {}); break;
+      case 'ledger_import': result = await ledgerImport(args ?? {}); break;
+      // ledger_list's result IS the text to paste — return it as is, not as a JSON string.
+      case 'ledger_list': return { content: [{ type: 'text', text: await ledgerList(args ?? {}) }] };
       // post_image's result IS the content block (an image, not JSON text) — return it directly.
       case 'post_image': return { content: [await postImage(args ?? {})] };
       default: throw new Error(`Unknown tool: ${name}`);

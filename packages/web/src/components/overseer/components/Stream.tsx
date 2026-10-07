@@ -23,7 +23,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
-import { Bell, CaretDoubleDown, ChatTeardropText, CheckCircle, WarningCircle } from '@phosphor-icons/react';
+import { Bell, CaretDoubleDown, ChatTeardropText, CheckCircle, Clock, PauseCircle, WarningCircle } from '@phosphor-icons/react';
 import { Icon } from '../atoms';
 import { AgentCard } from './AgentCard';
 import { ChatImage } from '../../ChatImage';
@@ -210,8 +210,11 @@ function ErrorMsg({ msg }: { msg: StreamMessage }) {
 // (packages/core/src/sessions/service.ts), we only reshape its PRESENTATION here.
 // Source templates:
 //   ✅ Your agent "<label>" […] just finished a turn.…             (noteAgentCompletion)
+//   ⏸️ Your agent "<label>" […] is BLOCKED, waiting on you …       (noteAgentNeedsHelp)
 //   🔔 Your agent "<label>" […] is PAUSED waiting on you …         (formatAgentQuestion)
 //   ⚠️ The user just <stopped|interrupted> your agent "<label>" …  (noteAgentLifecycle)
+//   🕒 Interim recap due: agent turns finished 20 minutes ago, …   (sessions/interim-recap.ts)
+// The five agent notices end with a daemon "Batch:" block; detection keys on the start only.
 //
 // 💬 (noteUserMessageToAgent — "the user just sent your agent … a message directly") is denser
 // (it carries the user's actual message, which is worth keeping legible) so it gets its own
@@ -256,6 +259,15 @@ function detectAgencyNotice(text: string): AgencyNotice | null {
   // ✅ finished a turn
   if (t.startsWith('✅') && /your agent|finished a turn/i.test(t)) {
     return { icon: CheckCircle, color: 'var(--acc)', summary: name ? `Agent "${name}" finished` : 'Agent finished a turn', agentId };
+  }
+  // ⏸️ blocked — the agent stopped its turn to ask (match the base ⏸ codepoint; the source
+  // carries a trailing VS16). Before this branch it fell through to a raw "You" bubble.
+  if (t.startsWith('⏸') && /your agent|is BLOCKED/i.test(t)) {
+    return { icon: PauseCircle, color: 'var(--yellow)', summary: name ? `Agent "${name}" is blocked, waiting on you` : 'Agent is blocked, waiting on you', agentId };
+  }
+  // 🕒 interim recap due — no agent subject (its only quoted word is "interim")
+  if (t.startsWith('🕒') && /interim recap due/i.test(t)) {
+    return { icon: Clock, color: 'var(--acc)', summary: 'Interim recap due', agentId: null };
   }
   // 🔔 paused / waiting on an answer
   if (t.startsWith('🔔') && /your agent|is PAUSED/i.test(t)) {

@@ -94,3 +94,19 @@ test('getScrollbackSize rejects on a 404 (unknown terminal), same as other termi
   mockJson({ error: 'Terminal not found' }, 404);
   await expect(api.getScrollbackSize('missing')).rejects.toThrow(/404/);
 });
+
+test('sendStructuredMessage keeps the plain human wire byte-identical', async () => {
+  (fetch as any).mockResolvedValueOnce({ ok: true, status: 204, json: async () => ({}) });
+  await api.sendStructuredMessage('t1', 'hello');
+  expect(fetch).toHaveBeenLastCalledWith('/api/terminals/t1/message', expect.objectContaining({
+    method: 'POST', body: JSON.stringify({ text: 'hello', source: 'user' }),
+  }));
+});
+
+test('sendStructuredMessage adds canned: true only when asked', async () => {
+  (fetch as any).mockResolvedValueOnce({ ok: true, status: 204, json: async () => ({}) });
+  await api.sendStructuredMessage('t1', 'got it', { canned: true });
+  expect(fetch).toHaveBeenLastCalledWith('/api/terminals/t1/message', expect.objectContaining({
+    method: 'POST', body: JSON.stringify({ text: 'got it', source: 'user', canned: true }),
+  }));
+});

@@ -51,11 +51,37 @@ describe('buildCoordinatorPrompt', () => {
   it('every variant documents harness in the spawn_agent and queue_agent signatures', () => {
     for (const h of ['claude-code', 'codex']) {
       const p = buildCoordinatorPrompt({ harness: h });
-      expect(p).toContain('spawn_agent({ agentType, name?, task, mission?, model?, harness? })');
-      expect(p).toContain('queue_agent({ agentType, name?, task, mission?, dependsOn?, model?, harness? })');
+      expect(p).toContain('spawn_agent({ agentType, name?, task, mission?, model?, harness?, ledgerIds? })');
+      expect(p).toContain('queue_agent({ agentType, name?, task, mission?, dependsOn?, model?, harness?, ledgerIds? })');
+      expect(p).toContain('message_agent({ agentId, text, ledgerIds? })');
       expect(p).toContain('The model never picks the harness');
       expect(p).toContain('harness: "codex", model: "gpt-6-astra"');
     }
+  });
+
+  // The codex variant is built with indexOf/replace on these exact strings. If an edit to
+  // COORDINATOR_PROMPT drops one, the codex replacement silently stops happening.
+  it('every string the codex variant replaces is still in COORDINATOR_PROMPT', () => {
+    for (const marker of [
+      'Each type defaults to a sensible model tier ',
+      'only to override that default when a task is unusually easy or hard for its role.\n',
+      'MODEL ECONOMY: the per-type default model is often too big for the task. ',
+      'status checks and "did last night',
+      'the opus defaults for genuine investigation, planning, and judgment.',
+      'when you hit a denial, spawn the right agent instead of retrying.\n\n',
+    ]) {
+      expect(COORDINATOR_PROMPT, marker).toContain(marker);
+    }
+  });
+
+  it('the codex variant differs from the claude variant at every replacement', () => {
+    const p = buildCoordinatorPrompt({ harness: 'codex' });
+    expect(p).not.toContain('Each type defaults to a sensible model tier ');
+    expect(p).toContain('Each agent type has a sensible default model');
+    expect(p).toContain("Pass `model` with a smaller/cheaper model id appropriate to the worker's harness when you spawn: status checks");
+    expect(p).not.toContain('the opus defaults for genuine investigation');
+    expect(p).toContain('the stronger default models for genuine investigation, planning, and judgment.');
+    expect(p).toContain('spawn the right agent instead of retrying. On this harness specifically:');
   });
 
   it('an unrecognized harness falls back to the claude-code variant', () => {
