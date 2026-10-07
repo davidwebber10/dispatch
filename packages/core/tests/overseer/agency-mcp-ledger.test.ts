@@ -221,7 +221,8 @@ describe('agency-mcp ledger tools', () => {
     const props = (name: string) => (TOOLS.find((t) => t.name === name)! as any).inputSchema.properties;
     expect(Object.keys(props('ledger_add'))).toEqual(expect.arrayContaining(['context', 'options', 'recommendation', 'why', 'default', 'source', 'note']));
     expect(props('ledger_add').options.items.properties).toEqual({ label: expect.any(Object), effect: expect.any(Object) });
-    expect(props('ledger_add').source.properties.kind.enum).toEqual(['plan', 'doc', 'agent', 'pr', 'issue', 'user', 'overseer']);
+    expect(props('ledger_add').source.properties.kind.enum).toEqual(['plan', 'doc', 'agent', 'thread', 'pr', 'issue', 'user', 'overseer']);
+    expect(props('ledger_add').source.properties.ref.description).toContain("thread: the label or ID of one of the user's own threads");
     expect(props('ledger_note').policy.type).toBe('boolean');
     expect(Object.keys(props('ledger_import').items.items.properties)).toEqual(expect.arrayContaining(['context', 'options', 'why', 'default', 'source']));
   });

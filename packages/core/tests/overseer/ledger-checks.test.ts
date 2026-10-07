@@ -75,7 +75,7 @@ describe('rule 1 — required fields for decide and go', () => {
 
   it('the source needs a known kind, and a ref for every kind but overseer', () => {
     expect(missingCardFields('go', { ...GO_CARD, source: { kind: 'wiki', ref: 'x' } })).toEqual(['source']);
-    for (const kind of ['plan', 'doc', 'agent', 'pr', 'issue', 'user']) {
+    for (const kind of ['plan', 'doc', 'agent', 'thread', 'pr', 'issue', 'user']) {
       expect(missingCardFields('go', { ...GO_CARD, source: { kind } }), kind).toEqual(['source']);
       expect(missingCardFields('go', { ...GO_CARD, source: { kind, ref: 'x' } }), kind).toEqual([]);
     }

@@ -55,7 +55,8 @@ export const COORDINATOR_PROMPT =
   'author?, supersedes? }) — record a go (merge/deploy/release approval), decide (a choice) or do (a manual step for ' +
   'the user) item. A go or decide item is a full decision card: context; options as { label, effect } (a decide item ' +
   'needs at least 2); the recommendation (one of the labels) and why; default (what happens without an answer); ' +
-  'source { kind, ref, section?, id? } (plan, doc, agent, pr, issue, user or overseer). Returns its ID and the card to ' +
+  'source { kind, ref, section?, id? } (plan, doc, agent, thread, pr, issue, user or overseer; thread is one of the ' +
+  'user’s own threads). Returns its ID and the card to ' +
   'post as is.\n' +
   '- ledger_resolve({ id, status, quote?, reading?, reason? }) — close an item: answered or parked with the ' +
   'user’s exact words as quote (the daemon checks them), or withdrawn with a reason.\n' +

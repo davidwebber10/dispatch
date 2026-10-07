@@ -134,17 +134,30 @@ export class LedgerService {
     return [dir, ...this.listWorktrees(dir).filter((w) => w !== dir)];
   }
 
-  /** An agent thread of this project (archived ones included), by ID or label. */
-  private findAgent(sessionId: string, ref: string): { id: string; label: string } | null {
+  /** A thread of this project (archived ones included), by ID or label, whose role passes `fits`. */
+  private findThreadWhere(sessionId: string, ref: string, fits: (role: unknown) => boolean): { id: string; label: string } | null {
     const rows = this.db.prepare('SELECT id, label, config FROM terminals WHERE session_id = ?').all(sessionId) as
       { id: string; label: string | null; config: string | null }[];
     for (const r of rows) {
       let cfg: Record<string, any> = {};
       try { cfg = JSON.parse(r.config || '{}'); } catch { /* default {} */ }
-      if (cfg.role !== 'agent') continue;
+      if (!fits(cfg.role)) continue;
       if (r.id === ref || (r.label ?? '') === ref) return { id: r.id, label: r.label || ref };
     }
     return null;
+  }
+
+  /** An agent thread of this project (archived ones included), by ID or label. Never one of the user's own threads. */
+  private findAgent(sessionId: string, ref: string): { id: string; label: string } | null {
+    return this.findThreadWhere(sessionId, ref, (role) => role === 'agent');
+  }
+
+  /**
+   * One of the user's own threads of this project (archived ones included), by ID or label: neither
+   * an agent nor the overseer (overseer memory scope spec 2026-10-07, Unit 4).
+   */
+  private findUserThread(sessionId: string, ref: string): { id: string; label: string } | null {
+    return this.findThreadWhere(sessionId, ref, (role) => role !== 'agent' && role !== 'coordinator');
   }
 
   /**
@@ -193,6 +206,12 @@ export class LedgerService {
         const agent = this.findAgent(sessionId, ref);
         if (!agent) throw fail(sourceMissingError(ref));
         sourceRef = agent.label;
+        break;
+      }
+      case 'thread': {
+        const thread = this.findUserThread(sessionId, ref);
+        if (!thread) throw fail(sourceMissingError(ref));
+        sourceRef = thread.label;
         break;
       }
       case 'pr':

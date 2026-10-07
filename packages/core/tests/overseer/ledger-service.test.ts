@@ -188,6 +188,31 @@ describe('card checks (decision cards, Unit 2)', () => {
     expectLedgerError(() => addP({ source: { kind: 'agent', ref: 'worker' } }), 422); // an agent of another project
   });
 
+  // Overseer memory scope (spec 2026-10-07), Unit 4: `thread` is one of the user's own threads;
+  // `agent` is an agent only.
+  it('a thread source is a thread of this project that is neither an agent nor the overseer, by label or ID; the item stores its label and renders it', () => {
+    const first = addP({ source: { kind: 'thread', ref: 'Scratch' } });
+    expect(first.id).toBe('N1');
+    expect(first.line).toContain(' · Source: your thread "Scratch"');
+    expect(addP({ source: { kind: 'thread', ref: 'pplain' } }).id).toBe('N2');
+    expect(ledgerDb.getBySeq(db, 'p', 2)).toMatchObject({ sourceKind: 'thread', sourceRef: 'Scratch' });
+    terminalsDb.archive(db, 'pplain'); // an archived thread still existed
+    expect(addP({ source: { kind: 'thread', ref: 'Scratch' } }).id).toBe('N3');
+  });
+
+  it("a thread source refuses another project's thread, an agent and the overseer", () => {
+    for (const ref of ['plain', 'Readiness planner', 'planner-1', 'Control Plane', 'pcoord']) {
+      expectLedgerError(() => addP({ source: { kind: 'thread', ref } }), 422, `The source does not exist in this project: ${ref}.`);
+    }
+    expect(ledgerDb.listBySession(db, 'p')).toEqual([]);
+  });
+
+  it("an agent source refuses one of the user's own threads, by label or ID", () => {
+    for (const ref of ['Scratch', 'pplain']) {
+      expectLedgerError(() => addP({ source: { kind: 'agent', ref } }), 422, `The source does not exist in this project: ${ref}.`);
+    }
+  });
+
   it('rule 3: a PR or issue source has the form #123', () => {
     expect(addP({ source: { kind: 'pr', ref: '#62' } }).id).toBe('N1');
     expect(addP({ source: { kind: 'issue', ref: '#7' } }).id).toBe('N2');

@@ -7,7 +7,7 @@ export type LedgerKind = 'go' | 'decide' | 'do' | 'statement';
  */
 export type LedgerStatus = 'open' | 'answered' | 'parked' | 'withdrawn' | 'superseded' | 'proposed' | 'decided_by_overseer';
 export type LedgerOrigin = 'live' | 'imported';
-export type LedgerSourceKind = 'plan' | 'doc' | 'agent' | 'pr' | 'issue' | 'user' | 'overseer';
+export type LedgerSourceKind = 'plan' | 'doc' | 'agent' | 'thread' | 'pr' | 'issue' | 'user' | 'overseer';
 
 /** One option of a decision card. A #62 row stores plain strings; they read back with an empty effect. */
 export interface LedgerOption { label: string; effect: string }

@@ -85,6 +85,14 @@ describe('the full card', () => {
     expect(src({ sourceKind: 'overseer' })).toMatch(/Source: overseer$/);
   });
 
+  // Overseer memory scope (spec 2026-10-07), Unit 4: a decision taken from one of the user's threads.
+  it('a thread source renders as the user\'s thread', () => {
+    const src = (over: Partial<LedgerItem>) => renderCard(item(over), ctx).split('\n\n')[1];
+    expect(src({ sourceKind: 'thread', sourceRef: 'Fix the login bug' })).toMatch(/ · Source: your thread "Fix the login bug"$/);
+    expect(src({ sourceKind: 'thread', sourceRef: 'Fix the login bug', sourceSection: 'the retry plan', sourceId: 'Q2' }))
+      .toMatch(/ · Source: your thread "Fix the login bug", section "the retry plan" \(`Q2`\)$/);
+  });
+
   it('an old #62 row (plain-string options, no card fields) still renders as a card', () => {
     const old = item({ seq: 3, recommendation: 'A', options: parseOptions('["A","B"]'), blocks: 'the import agent' });
     expect(renderCard(old, ctx)).toBe([

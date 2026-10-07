@@ -8,8 +8,10 @@
  * 2. One decision per card: no range of plan IDs, and not 3 or more plan-style IDs with the same
  *    prefix, in the question.
  * 3. Real sources: a plan/doc path exists inside the project (or one of its git worktrees) and does
- *    not escape it; an agent is a thread of this project; a PR/issue is `#123`; a user source is a
- *    checked quote; `overseer` is always allowed.
+ *    not escape it; an agent is an agent thread of this project; a thread is one of the user's own
+ *    threads of this project, neither an agent nor the overseer (overseer memory scope spec
+ *    2026-10-07, Unit 4); a PR/issue is `#123`; a user source is a checked quote; `overseer` is
+ *    always allowed.
  * 4. Only the user can decide a `go` item, a user-sourced item, or an item already sent to the user.
  * 5. A project rule needs the user's checked words (ledger_note).
  */
@@ -27,7 +29,7 @@ export function sourceMissingError(ref: string): string {
 }
 export const ONLY_USER_ERROR = 'Only the user can decide this item.';
 
-export const SOURCE_KINDS: readonly LedgerSourceKind[] = ['plan', 'doc', 'agent', 'pr', 'issue', 'user', 'overseer'];
+export const SOURCE_KINDS: readonly LedgerSourceKind[] = ['plan', 'doc', 'agent', 'thread', 'pr', 'issue', 'user', 'overseer'];
 
 export const CONTEXT_MIN = 20;
 export const CONTEXT_MAX = 800;

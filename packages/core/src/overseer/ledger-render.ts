@@ -147,7 +147,7 @@ function shortLabel(label: string): string {
 /** A table cell: no pipe and no line break may leak out of it. */
 const cell = (s: string) => s.replace(/\r?\n+/g, ' ').replace(/\|/g, '\\|').trim();
 
-/** "plan `docs/plans/a.md`, section "Risks" (`D3`)", "agent "X"", "PR #12", …; null without a source. */
+/** "plan `docs/plans/a.md`, section "Risks" (`D3`)", "agent "X"", "your thread "Y"", "PR #12", …; null without a source. */
 export function renderSource(item: LedgerItem): string | null {
   const id = item.sourceId ? ` (\`${item.sourceId}\`)` : '';
   const ref = item.sourceRef ?? '';
@@ -167,6 +167,8 @@ export function renderSource(item: LedgerItem): string | null {
       }
       return `agent "${ref}"${item.sourceSection ? `, section "${item.sourceSection}"` : ''}${id}`;
     }
+    // One of the user's own threads (overseer memory scope spec 2026-10-07, Unit 4).
+    case 'thread': return `your thread "${ref}"${item.sourceSection ? `, section "${item.sourceSection}"` : ''}${id}`;
     case 'pr': return `PR ${ref}${id}`;
     case 'issue': return `issue ${ref}${id}`;
     case 'user': return `your words "${ref}"${id}`;

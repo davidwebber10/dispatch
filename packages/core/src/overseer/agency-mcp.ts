@@ -109,10 +109,11 @@ const CARD_FIELDS_SCHEMA = {
   source: {
     type: 'object',
     properties: {
-      kind: { type: 'string', enum: ['plan', 'doc', 'agent', 'pr', 'issue', 'user', 'overseer'] },
+      kind: { type: 'string', enum: ['plan', 'doc', 'agent', 'thread', 'pr', 'issue', 'user', 'overseer'] },
       ref: {
         type: 'string',
         description: 'plan/doc: a path relative to the project (it must exist); agent: its label or ID; ' +
+          'thread: the label or ID of one of the user\'s own threads in this project (not an agent, not you); ' +
           'pr/issue: "#123"; user: the user\'s exact words; overseer: not needed.',
       },
       section: { type: 'string', description: 'Optional: the section inside the source.' },
