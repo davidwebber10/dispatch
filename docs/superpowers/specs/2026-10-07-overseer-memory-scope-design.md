@@ -79,6 +79,17 @@ overseers.
     1 MB, and handles at most 500 notes per start.
   - If an overseer starts without the home folder configured, the daemon logs it, because that
     overseer has no separate memory.
+  - Added after review round 2:
+    - If git cannot answer (a timeout, an unreadable folder, an error), or the repository has an
+      unusual layout (a git folder not named `.git`, such as a bare repository), the daemon
+      treats the shared folder as unknown: it skips the copy, does not end it, leaves the shared
+      folder out of the write scope, logs it, and tries again at the next start. Only a clear
+      "not a repository" answer falls back to the working directory. Paths keep every character.
+    - Both checks are anchored at the resolved `~/.claude`; `dispatch-overseer` and `projects`
+      must not be symlinks themselves. A relocated `~/.claude` stays allowed.
+    - A resume position is trusted only when it names an entry that exists in the shared folder
+      exactly; otherwise the copy starts again from the beginning.
+    - A start copies at most 16 MB of notes and reads at most 256 KB of each `MEMORY.md` index.
 
 ### Unit 2 — Write scope
 
@@ -143,6 +154,9 @@ folder label, derived as today):
   a shell command, as before this change. Per the guardrail policy ("drift, not an adversary"),
   this is documented, not fixed: the persona forbids repository writes, and the policy blocks
   the ship commands.
+- The git lookup (at most 2 seconds) and the copy run on the daemon's start path for an
+  overseer, not in the background. The caps above bound the copy; moving the work off the
+  start path is left for later.
 
 ## Tests
 
