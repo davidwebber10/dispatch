@@ -112,6 +112,9 @@ export interface SessionProvider {
    * servers, passed as `--plugin-dir` on the `grok agent` subcommand — the TRUSTED plugin
    * scope. The same plugin under GROK_HOME loads untrusted, which leaves its MCP tools
    * visible but uncallable (verified live).
+   * `autoMemoryDirectory` (Claude only) points the session's auto memory at that folder via
+   * `--settings {"autoMemoryDirectory": …}`: the overseer's own memory folder (overseer
+   * memory scope spec 2026-10-07, Unit 1). Omitted → the CLI's per-project memory folder.
    */
-  buildStructuredCommand?(args: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string; model?: string; grokPluginDir?: string; disallowedTools?: string[] }): { command: string; args: string[] };
+  buildStructuredCommand?(args: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string; model?: string; grokPluginDir?: string; disallowedTools?: string[]; autoMemoryDirectory?: string }): { command: string; args: string[] };
 }

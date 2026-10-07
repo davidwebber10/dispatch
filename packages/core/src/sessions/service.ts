@@ -31,6 +31,7 @@ import { platform } from '../platform/index.js';
 import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.js';
 import { resolveSpawnModel, isClaudeTierAlias } from '../overseer/spawn-model.js';
 import { COORDINATOR_DISALLOWED_TOOLS, coordinatorMemoryDirFor, makeCoordinatorPolicy } from '../overseer/coordinator-policy.js';
+import { overseerMemoryDir, prepareOverseerMemory } from '../overseer/memory-scope.js';
 import { ROLE_DISALLOWED_TOOLS, roleToolPolicy } from '../roles/role-policy.js';
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
 import { resolveTranscriptPath } from './transcript-path.js';
@@ -140,6 +141,14 @@ export class SessionService {
   private structuredManagers = new Map<string, import('../structured/manager.js').IStructuredManager>();
   /** Override for structured command (test seam: lets tests spawn fake-claude instead of real claude). */
   private structuredCommandOverride?: { command: string; args: string[] };
+  /**
+   * The home folder that holds the Claude overseers' own memory folders (overseer memory scope
+   * spec 2026-10-07, Unit 1). startServer sets os.homedir(); tests set a fs.mkdtempSync folder.
+   * Unset → no memory folder is created, no note is copied and no --settings flag is passed, so a
+   * service a test builds without it never writes into a real home.
+   */
+  private overseerMemoryHome: string | null = null;
+  setOverseerMemoryHome(home: string): void { this.overseerMemoryHome = home; }
 
   constructor(
     private db: Database.Database,
@@ -2173,6 +2182,36 @@ export class SessionService {
     );
   }
 
+  /**
+   * The session ids (external_id) of every overseer of this project, archived ones included: the
+   * notes whose originSessionId is one of them are the overseer's own (the one-time copy, Unit 1).
+   */
+  private overseerSessionIds(sessionId: string): string[] {
+    const rows = [...terminalsDb.listBySession(this.db, sessionId), ...terminalsDb.listArchivedBySession(this.db, sessionId)];
+    return rows.filter((r) => {
+      let cfg: Record<string, any> = {};
+      try { cfg = JSON.parse(r.config || '{}'); } catch { /* default {} */ }
+      return cfg.role === 'coordinator' && !!r.external_id;
+    }).map((r) => r.external_id as string);
+  }
+
+  /**
+   * A Claude overseer's own memory folder, created (and seeded once from the project's shared
+   * folder) before each start — spawn and resume alike. undefined for every other thread, and when
+   * no memory home is set. A failed copy never stops the start: the folder is still passed, and
+   * the overseer starts with whatever the folder holds.
+   */
+  private overseerMemoryFor(terminal: terminalsDb.TerminalRow, config: Record<string, any>, workDir: string): string | undefined {
+    if (config.role !== 'coordinator' || terminal.type !== 'claude-code' || !this.overseerMemoryHome) return undefined;
+    const home = this.overseerMemoryHome;
+    try {
+      prepareOverseerMemory({ home, projectDir: workDir, overseerSessionIds: this.overseerSessionIds(terminal.session_id) });
+    } catch (e) {
+      console.warn(`[overseer-memory] could not prepare the memory folder of ${terminal.id}: ${(e as Error)?.message ?? e}`);
+    }
+    return overseerMemoryDir(home, workDir);
+  }
+
   private spawnStructured(terminal: terminalsDb.TerminalRow, config: Record<string, any>, workDir: string): void {
     this.assertCoordinatorGoverned(terminal, config);
     const manager = this.structuredManagerFor(terminal.type);
@@ -2253,7 +2292,9 @@ export class SessionService {
       // spawn: the CLI auto-approves those tools without a can_use_tool request, so the
       // membrane's coordinatorToolPolicy deny (below) never reaches them. Removal from the
       // toolset is the enforcement; the policy deny remains as a backstop.
-      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config, terminal.type), resumeSessionId, model: resolvedModel, grokPluginDir, disallowedTools: disallowedToolsFor(config) });
+      // A Claude overseer loads only its own memory folder (overseer memory scope spec, Unit 1).
+      const autoMemoryDirectory = this.overseerMemoryFor(terminal, config, workDir);
+      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: systemPromptFor(config, terminal.type), resumeSessionId, model: resolvedModel, grokPluginDir, disallowedTools: disallowedToolsFor(config), autoMemoryDirectory });
       if (!built) throw new Error('structured transport not supported for this provider');
       sc = built;
     }
