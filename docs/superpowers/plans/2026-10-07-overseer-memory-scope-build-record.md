@@ -136,3 +136,38 @@ Both typechecks pass. Flakes seen, each in a test that starts no coordinator:
 `tests/routes/structured.test.ts` (once in a full run and once in 3 runs alone, the
 noteDeclaredStatus test on a plain thread; then 13 of 13) and `tests/routes/auth.test.ts` (once in
 a full run; then 5 of 5). The last full core run had no failure.
+
+## Review round 2
+
+Findings of the GPT-6-astra round-2 review, fixed with TDD in one commit.
+
+1. **A git failure is not "outside git".** `gitRoots` gives one of three results: `repo`,
+   `none` (only when git prints `fatal: not a git repository`, with `LC_ALL=C`), or `failed`
+   (a timeout, a missing or unreadable folder, a bare repository, any other error or output).
+   `claudeMemoryProjectDir` returns `{ dir: null, reason }` on `failed`. Then the start logs one
+   line, the shared folder is left out of the write scope and the persona, and
+   `prepareOverseerMemory` sets up the own folder but copies nothing and writes no marker. The
+   next start tries again. Decision: a folder that does not exist is `failed`, not `none`, as
+   git did not say so.
+2. **Unusual layouts and exact paths.** A common dir not named `.git` is `failed` (logged,
+   deferred). This now includes a submodule, which round 1 keyed on its top level. Reason: the
+   rule names every such layout, and Claude's folder for a submodule is not verified either.
+   Git's output loses only its one trailing newline; output that is not exact UTF-8 or not two
+   absolute paths is `failed`.
+3. **The cursor is exact and checked.** Only one trailing newline is stripped. The cursor counts
+   only when it is the exact name of a note in the current sorted list; otherwise the copy
+   starts at the beginning (one log line), and the marker comes only when every note was
+   handled. A cursor path that is a folder, a symlink, another file type or unreadable is
+   ignored (one log line), and the copy is not marked done while it stays. Known limit: with
+   more than 500 notes and such a cursor path, each start handles the first notes again.
+4. **Root symlinks are not trusted.** The anchor is the canonical `<home>/.claude`: the own folder
+   must resolve under `<canonical .claude>/dispatch-overseer` and the shared folder under
+   `<canonical .claude>/projects`, and neither root may be a symlink (`lstat`). A symlinked
+   `.claude` with real subfolders still works.
+5. **Less work on the start path.** A start copies at most 16 MB of note bytes; the rest goes on
+   at the next start through the cursor. The first note of a start always goes, so each start
+   moves on. A shared or own `MEMORY.md` over 256 KB is not read: its lines are not copied, and
+   the one size line names it. Decision: an index over the bound is skipped, not read in part,
+   as a note over 1 MB is. Git and the copy stay on the event loop (out of scope).
+
+Tests: core 231 files passed, 1 skipped; 2623 tests passed, 4 skipped. Both typechecks pass.
