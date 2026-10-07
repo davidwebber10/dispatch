@@ -30,7 +30,7 @@ import { findCodexRolloutPath, codexRolloutTailStatus } from './codex-sessions.j
 import { platform } from '../platform/index.js';
 import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.js';
 import { resolveSpawnModel, isClaudeTierAlias } from '../overseer/spawn-model.js';
-import { COORDINATOR_DISALLOWED_TOOLS, coordinatorMemoryDirFor, makeCoordinatorPolicy } from '../overseer/coordinator-policy.js';
+import { COORDINATOR_DISALLOWED_TOOLS, coordinatorWriteDirs, makeCoordinatorPolicy } from '../overseer/coordinator-policy.js';
 import { overseerMemoryDir, prepareOverseerMemory } from '../overseer/memory-scope.js';
 import { ROLE_DISALLOWED_TOOLS, roleToolPolicy } from '../roles/role-policy.js';
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
@@ -2342,8 +2342,11 @@ export class SessionService {
       config.role === 'coordinator'
         ? // A Claude coordinator has no sandbox — its Bash 'allow' just runs — so it keeps the
           // denylist (commandsEscalate false) and its MCP tools. A Codex coordinator denies every
-          // escalated command and every MCP tool but Dispatch's own.
-          makeCoordinatorPolicy(coordinatorMemoryDirFor(terminal.type), codexCoordinator
+          // escalated command and every MCP tool but Dispatch's own. Either may write only to its
+          // own memory and to this project's shared memory folder (overseer memory scope, Unit 2);
+          // without a memory home (an unwired test service) the folders are computed under
+          // os.homedir() — only resolved, never written.
+          makeCoordinatorPolicy(coordinatorWriteDirs(terminal.type, this.overseerMemoryHome ?? os.homedir(), workDir), codexCoordinator
             ? { commandsEscalate: true, allowedMcpServers: [AGENCY_MCP_SERVER] }
             : { commandsEscalate: false })
         : typeof config.roleAuthority === 'string'
@@ -2414,8 +2417,9 @@ export class SessionService {
       // never sees exactly the actions it must deny. Read-only + on-request instead surfaces
       // EVERY write/command needing write or network as an approval for the policy to gate —
       // repo writes and git commit/push get denied, and its own memory writes get allowed
-      // (toolPolicy above is built per-harness via makeCoordinatorPolicy(coordinatorMemoryDirFor
-      // (terminal.type)), so a codex coordinator's memory dir is ~/.codex, not ~/.claude — Task 7).
+      // (toolPolicy above is built per-harness via makeCoordinatorPolicy(coordinatorWriteDirs(…)),
+      // so a codex coordinator writes to ~/.codex/dispatch-coordinator and the project's shared
+      // Claude memory folder — Task 7, overseer memory scope Unit 2).
       // Every other codex thread (agents, role runs) — and every non-codex harness, which
       // ignores these fields entirely — keeps today's manager-construction defaults.
       ...(codexCoordinator

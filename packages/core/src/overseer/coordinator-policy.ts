@@ -6,15 +6,17 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { overseerMemoryDir, OVERSEER_MEMORY_ROOT_REL, sharedProjectMemoryDir } from './memory-scope.js';
 
 export type PolicyDecision = { allow: true } | { allow: false; message: string };
 
 const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 
-function delegateMsg(memoryDir: string): string {
+function delegateMsg(memoryDirs: readonly string[]): string {
   return (
     'Control Plane policy: coordinators never modify repo files themselves — spawn an implementer agent ' +
-    `(spawn_agent) for this change. (Writes under ${memoryDir} — your own memory and plans — are allowed.)`
+    `(spawn_agent) for this change. (Writes under ${memoryDirs.join(' and under ')} — your own memory and ` +
+    'plans, and the project’s shared memory — are allowed.)'
   );
 }
 const SHIP_MSG =
@@ -116,7 +118,7 @@ function realResolve(abs: string): string {
 }
 
 /** True when `target` resolves to a path strictly inside the memory dir `rd` (not `rd` itself).
- *  `rd` is the memory dir's REAL path, resolved once when the policy is built (null when it could
+ *  `rd` is a memory dir's REAL path, resolved once when the policy is built (null when it could
  *  not be resolved — then nothing is under it). The target resolves through `realResolve`, so
  *  neither a traversal segment nor a symlinked ancestor can slip a path that only *textually*
  *  starts with the dir past the check. A RELATIVE target is denied: the harness would anchor it
@@ -154,8 +156,10 @@ function changesFullyCovered(inp: Record<string, unknown>): boolean {
   });
 }
 
-/** Builds the ground rules for a coordinator thread's own tool use, scoped to `memoryDir` —
- *  the one directory a coordinator may write to (its own memory/plans). Pure — no I/O, no state.
+/** Builds the ground rules for a coordinator thread's own tool use, scoped to `memoryDirs` —
+ *  the only folders a coordinator may write to: its own memory/plans and the project's shared
+ *  memory folder (see coordinatorWriteDirs; overseer memory scope spec 2026-10-07, Unit 2). A write
+ *  passes when every path it touches is under one of them. Pure — no I/O, no state.
  *
  *  `allowedMcpServers`, when set, is the only MCP servers whose tools (`mcp__<server>__<tool>`)
  *  the coordinator may call. An ordinary MCP server runs in its own process OUTSIDE the Codex
@@ -166,25 +170,27 @@ function changesFullyCovered(inp: Record<string, unknown>): boolean {
  *  a write fails with EPERM — and asks no approval for it, so its calls never reach this policy.)
  *  Unset (the Claude coordinator, which has no sandbox to get around), MCP tools stay allowed. */
 export function makeCoordinatorPolicy(
-  memoryDir: string,
+  memoryDirs: readonly string[],
   opts: { commandsEscalate?: boolean; allowedMcpServers?: readonly string[] } = {},
 ): (toolName: string, input: unknown) => PolicyDecision {
   const commandsEscalate = opts.commandsEscalate === true;
   const allowedMcpServers = opts.allowedMcpServers;
-  // Resolve the memory dir ONCE, here: a later swap of the dir (or an ancestor) for a symlink
+  // Resolve each memory dir ONCE, here: a later swap of a dir (or an ancestor) for a symlink
   // cannot widen what the policy allows, and no tool call re-walks it. Unresolvable → null →
-  // every file write is denied (fail closed).
-  let resolvedMemoryDir: string | null;
-  try { resolvedMemoryDir = realResolve(path.resolve(memoryDir)); } catch { resolvedMemoryDir = null; }
+  // nothing is under that dir (fail closed).
+  const resolvedMemoryDirs = memoryDirs.map((dir): string | null => {
+    try { return realResolve(path.resolve(dir)); } catch { return null; }
+  });
+  const underMemory = (target: string) => resolvedMemoryDirs.some((rd) => isUnder(rd, target));
   return function coordinatorToolPolicy(toolName: string, input: unknown): PolicyDecision {
     const inp = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
     if (toolName === 'Agent' || toolName === 'Task' || toolName === 'Workflow') return { allow: false, message: AGENT_MSG };
     if (FILE_TOOLS.has(toolName)) {
       const targets = extractWritePaths(inp);
       // Fail closed unless EVERY change is verifiable (changesFullyCovered) AND every endpoint
-      // resolves under the memory dir. A patch with an uncheckable change is denied whole.
-      if (targets.length > 0 && changesFullyCovered(inp) && targets.every((t) => isUnder(resolvedMemoryDir, t))) return { allow: true };
-      return { allow: false, message: delegateMsg(memoryDir) };
+      // resolves under one of the memory dirs. A patch with an uncheckable change is denied whole.
+      if (targets.length > 0 && changesFullyCovered(inp) && targets.every(underMemory)) return { allow: true };
+      return { allow: false, message: delegateMsg(memoryDirs) };
     }
     if (toolName === 'Bash') {
       // A read-only-sandbox coordinator (Codex: sandbox 'read-only' + 'on-request') only ever
@@ -213,26 +219,29 @@ export function makeCoordinatorPolicy(
   };
 }
 
-// The directory (relative to the user's home, POSIX-style) each harness's coordinator uses for its
-// own memory/plans — the ONE directory makeCoordinatorPolicy lets a coordinator write to. prompts.ts
-// derives the label the persona shows the model from this same map (coordinatorMemoryRelDir), so
-// what the model is TOLD and what the policy ENFORCES cannot drift apart.
+// The directory (relative to the user's home, POSIX-style) that holds each harness's coordinator
+// memory. prompts.ts derives the label the persona shows the model from this same map
+// (coordinatorMemoryRelDir), so what the model is TOLD and what the policy ENFORCES cannot drift
+// apart: every folder coordinatorWriteDirs gives a coordinator for its own memory lies under it.
+//
+// Claude: the root of the overseers' own memory folders, one per project
+// (`<root>/<encoded project dir>/memory`, see memory-scope.ts). A Claude coordinator may write only
+// to its own project's folder under it, not the whole root and not the rest of ~/.claude (which
+// holds every other project's memory folder, the user's settings and CLAUDE.md).
 //
 // Codex gets a DEDICATED subdir, never the whole Codex home: ~/.codex also holds the CLI's own
 // config.toml (notify / mcp_servers run commands outside the sandbox), rules/*.rules (execpolicy
 // allow rules), the global AGENTS.md every Codex thread loads, skills, auth, and real git
 // worktrees — a coordinator allowed to write there could rewrite its own guard rails or a repo.
-// Claude keeps ~/.claude (Claude Code's own auto-memory lives in ~/.claude/projects/*/memory), and
-// its coordinator has no OS sandbox to escape anyway (Bash runs under a denylist, not a sandbox).
-// Falls back to '.claude' for any harness with no coordinator memory dir of its own.
+// Falls back to the Claude root for any harness with no coordinator memory dir of its own.
 const COORDINATOR_MEMORY_REL_DIR: Record<string, string> = {
-  'claude-code': '.claude',
+  'claude-code': OVERSEER_MEMORY_ROOT_REL,
   codex: '.codex/dispatch-coordinator',
 };
 
 /** The per-harness coordinator memory dir, relative to the user's home (POSIX separators). */
 export function coordinatorMemoryRelDir(harness: string): string {
-  return COORDINATOR_MEMORY_REL_DIR[harness] ?? '.claude';
+  return COORDINATOR_MEMORY_REL_DIR[harness] ?? OVERSEER_MEMORY_ROOT_REL;
 }
 
 /** The per-harness coordinator memory dir, resolved to an absolute path under the user's home. */
@@ -240,5 +249,15 @@ export function coordinatorMemoryDirFor(harness: string): string {
   return path.join(os.homedir(), ...coordinatorMemoryRelDir(harness).split('/'));
 }
 
-/** Back-compat default: the Claude Code coordinator's memory dir. */
-export const coordinatorToolPolicy = makeCoordinatorPolicy(coordinatorMemoryDirFor('claude-code'));
+/**
+ * Every folder a coordinator of `projectDir` may write to (overseer memory scope spec 2026-10-07,
+ * Unit 2), under the home folder `home`:
+ *   - Claude: its own memory folder (memory-scope.ts) and this project's shared memory folder;
+ *   - Codex: ~/.codex/dispatch-coordinator (as before) and this project's shared Claude folder.
+ * The shared folder is where a note for the user's own threads goes ("From the overseer:").
+ */
+export function coordinatorWriteDirs(harness: string, home: string, projectDir: string): string[] {
+  const shared = sharedProjectMemoryDir(home, projectDir);
+  if (harness === 'codex') return [path.join(home, ...coordinatorMemoryRelDir('codex').split('/')), shared];
+  return [overseerMemoryDir(home, projectDir), shared];
+}

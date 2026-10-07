@@ -136,6 +136,31 @@ describe('a Claude overseer start', () => {
   });
 });
 
+// Unit 2: the policy each overseer gets at the spawn site.
+describe('the write scope of an overseer', () => {
+  beforeEach(() => svc.setOverseerMemoryHome(home));
+  const writes = (policy: StructuredSpawnOpts['toolPolicy'], file: string) => policy!('Write', { file_path: file }).allow;
+  const other = '/Users/someone/Projects/other';
+
+  it("Claude: its own folder and this project's shared folder pass; another project and the rest of ~/.claude are refused", () => {
+    const t = create('Control Plane', { role: 'coordinator' });
+    const policy = claude.spawnOpts[t.id].toolPolicy;
+    expect(writes(policy, path.join(overseerMemoryDir(home, project), 'MEMORY.md'))).toBe(true);
+    expect(writes(policy, path.join(sharedProjectMemoryDir(home, project), 'from-the-overseer.md'))).toBe(true);
+    expect(writes(policy, path.join(sharedProjectMemoryDir(home, other), 'MEMORY.md'))).toBe(false);
+    expect(writes(policy, path.join(home, '.claude', 'settings.json'))).toBe(false);
+  });
+
+  it("Codex: its folder and this project's shared Claude folder pass; the Claude overseer's folder is refused", () => {
+    const t = svc.createTerminal('s1', 'codex', 'Codex CP', false, undefined, undefined, { transport: 'structured', role: 'coordinator' });
+    const policy = codex.spawnOpts[t.id].toolPolicy;
+    expect(writes(policy, path.join(home, '.codex', 'dispatch-coordinator', 'MEMORY.md'))).toBe(true);
+    expect(writes(policy, path.join(sharedProjectMemoryDir(home, project), 'from-the-overseer.md'))).toBe(true);
+    expect(writes(policy, path.join(overseerMemoryDir(home, project), 'MEMORY.md'))).toBe(false);
+    expect(writes(policy, path.join(home, '.codex', 'config.toml'))).toBe(false);
+  });
+});
+
 it('without a memory home (tests, an unwired service) nothing is created and no --settings is passed', () => {
   const t = create('Control Plane', { role: 'coordinator' });
   expect(settingsOf(t.id)).toBeNull();
