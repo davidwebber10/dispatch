@@ -54,6 +54,9 @@ Core (Units 1 to 5):
   count line always last. "Decisions" in the count line are the open decisions of "Needs you
   now"; items on a default are not counted. A statement reads `N1 · You said: "…"`.
 - `ledger_add` returns the one line for every kind, `do` included.
+- Each paste line puts the item text on one line and cuts it at about 150 characters with "…"
+  (at a word when one is near). The full text is on the card. Added in review round 1: a long do
+  item, a whole test procedure of 900 or more characters, made a very long recap line.
 - Persona: the TRIAGE bullet and the `ledger_add_from_agent` description still say the user sees
   a triaged item "in the next recap"; that stays true (the New lines). The daemon's Batch footer
   ("add it with ledger_add and post only that item") is unchanged: with the one-line result it
@@ -96,6 +99,53 @@ None from the spec's behavior. Two existing pins changed on purpose, as the spec
   `PanelToggle`, `store-draft`, `lib/ledgerRefs`, `LedgerChips`. Fixtures copy the shape of real
   rows with generic text.
 - Every core run used the suite's own temporary HOME per file. No flake was seen.
+
+## Review round 1
+
+Findings of the GPT review (fix-then-ship) and the Fable review (ship with lows). Each fix came
+with a failing test first.
+
+1. **The draft when storage fails (Medium).** `useDraft` keeps each draft in an in-memory map,
+   updated synchronously on every change; local storage is best-effort persistence only. The card
+   append (`appendToDraft`, renamed from `appendToStoredDraft`) appends to the in-memory value, so a
+   storage that throws never drops the text in the box. The test setup forgets the map before each
+   test, as a fresh page. Tests with a storage that throws on write, and on read and write.
+   `1bd393a`.
+2. **The popover after a project switch (Medium).** It shows only over its own project and closes
+   when the shown project changes. `58138da`.
+3. **Chips in URLs and paths; more code forms (Medium, Fable Low 2).** No chip when the number
+   touches `/`, a backslash, `-`, `#`, `=` or `&`; when a `.` or `?` is before it; when a `.` or `?`
+   after it has a letter or digit next; or when `://` follows it. This applies in plain text and in
+   rendered markdown (which still skips `code`, `pre` and links). Decision: a `.` or `?` after the
+   number counts only with a letter or digit next, not any non-space, so a sentence such as
+   "(see N14?)" keeps its chip; a file name or a query still loses it. The plain-text scanner now
+   treats as code: spans of any backtick run (an unmatched run is text), backtick and tilde fences
+   (closed by the same character, at least as long; else open to the end), and indented blocks
+   (4 spaces or a tab) after a blank line or at the start. `2ff95fd`.
+4. **Done on an expanded action (Low).** An open do item opened as a full card keeps its Done
+   control. `129412e`.
+5. **The overseer's reason (Low).** A card the overseer decided shows "Decided by overseer: B.
+   Reason: …" next to its choice, apart from the original recommendation's why. `129412e`.
+6. **Opened state per project (Fable Low 1).** `LedgerCard` renders an inner card keyed by
+   project, so the opened lines and each "more" reset on a switch. `58138da`.
+7. **An item on its default is not new (Fable Low 3).** `isNewForUser` leaves it out; the paste
+   block, the card's `isNew` and the interim check follow. `533dfbe`.
+8. **Imported items in "Decided:" (Fable Low 4).** The paste block leaves them out, as it does for
+   "New:". The card's own "Decided since the last recap" section is unchanged. `b2658ce`.
+9. **Chips made again on each reload (Fable Low 5).** `useLedgerChips` keys its object on the
+   project and each number's question, and keeps `onChip` stable through a ref; the markdown memo
+   holds across a reload that changes no question. `e1ea8d0`.
+10. **Long paste lines (coordinator).** Cut at about 150 characters, on one line (see the
+    decisions above). `b2658ce`.
+
+Tests after round 1: core 237 files passed, 1 skipped; 2677 tests passed, 4 skipped. Web 158
+files, 1351 tests. Both typechecks are clean and `pnpm build` passes.
+
+One unexplained failure: in a run of the core overseer tests together with
+`tests/routes/ledger.test.ts`, right after the item 8 and 10 change, the card route test
+"returns the sections as card items…" failed once, in 7 ms (not a timeout). Its message was not
+kept. It passed 3 of 3 alone, 12 of 12 in the same combined run, and in the full suite after round 1. The cause
+is not known; no code path of that test changed in that commit.
 
 ## Left for the next steps
 
