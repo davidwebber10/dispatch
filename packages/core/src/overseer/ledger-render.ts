@@ -394,6 +394,55 @@ export function renderLedgerSections(
   return out.join('\n\n');
 }
 
+// --- the pinned card (spec 2026-10-08, Unit 5): the recap is news ---------------------------
+
+/** "N60 · Go · Merge PR #12? — the full card is on the pinned card.": what ledger_add returns for the chat. */
+export function renderAddLine(item: LedgerItem): string {
+  return `N${item.seq} · ${KIND_LABEL[item.kind]} · ${item.text} — the full card is on the pinned card.`;
+}
+
+/** The answer part of a "Decided" line: the user's words, the overseer's choice, or the withdrawal reason. */
+function decidedOutcome(item: LedgerItem): string {
+  if (isUnchecked(item)) return 'Imported, not checked';
+  switch (item.status) {
+    case 'withdrawn': return `Withdrawn: ${item.reason ?? ''}`;
+    case 'decided_by_overseer': return `Decided by overseer: ${item.decidedChoice ?? ''}`;
+    default:
+      if (item.decidedAt !== null) return `You reversed the overseer's choice "${item.decidedChoice ?? ''}": "${item.quote ?? ''}"`;
+      return `Your answer: "${item.quote ?? ''}"`;
+  }
+}
+
+/** One "Decided" line. A statement is the user's own words, so it has no question. */
+function decidedLine(item: LedgerItem): string {
+  if (item.kind === 'statement' && !isUnchecked(item)) return `- N${item.seq} · You said: "${item.quote}"${item.policy ? ' · a project rule' : ''}`;
+  return `- N${item.seq} · ${KIND_LABEL[item.kind]} · ${item.text} · ${decidedOutcome(item)}`;
+}
+
+const count = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/**
+ * The part of ledger_list the overseer pastes into the recap, as is:
+ *   New: one line per new item (isNewForUser), with the recommendation when there is one.
+ *   Decided: one line per item decided since the last recap — the question and the answer.
+ *   The count line: "Needs you: 19 decisions, 8 actions — on the card."
+ * A group with no lines is left out; the count line is always there. Every line carries its
+ * question, so no ledger number stands alone. Blank lines between the groups keep markdown from
+ * joining a heading to the list above it.
+ */
+export function renderRecapPaste(items: LedgerItem[], opts: { now: number; lastRecapAt: string | null }): string {
+  const s = ledgerSections(items, opts);
+  const fresh = new Set(s.newSeqs);
+  const out: string[] = [];
+  const news = items.filter((i) => fresh.has(i.seq)).map((i) =>
+    `- N${i.seq} · ${KIND_LABEL[i.kind]} · ${i.text}${i.recommendation ? ` · Rec: ${i.recommendation}` : ''}`);
+  if (news.length) out.push(['New:', ...news].join('\n'));
+  if (s.decidedSince.length) out.push(['Decided:', ...s.decidedSince.map(decidedLine)].join('\n'));
+  const decisions = s.needsYou.cards.length + s.needsYou.lines.length;
+  out.push(`Needs you: ${count(decisions, 'decision')}, ${count(s.actions.length, 'action')} — on the card.`);
+  return out.join('\n\n');
+}
+
 /** The block the daemon appends to an agent hand-off for `ledgerIds`. */
 export function renderHandoffBlock(items: LedgerItem[], ctx: RenderContext): string {
   return [HANDOFF_HEADER, ...items.map((i) => `- ${renderItem(i, ctx)}`)].join('\n');

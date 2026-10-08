@@ -458,7 +458,8 @@ export const TOOLS = [
       '`context`, `default` and `source`; a decide item also needs at least 2 `options` ({ label, effect }) ' +
       'with a `recommendation` (one of the labels) and `why`. One decision per item: never a range of plan ' +
       'IDs. The daemon checks every field and the source, and returns 422 with the missing fields. Returns ' +
-      '{ id, line }: `line` is the card (a do item: its line); post it to the user exactly as it is. The ' +
+      '{ id, line }: `line` is one line with the ID and the question; post it to the user exactly as it is. ' +
+      'The user sees the full card on the pinned card (ledger_show prints it when the user asks). The ' +
       'item text never changes; for a wider scope, add a new item with `supersedes`.',
     inputSchema: {
       type: 'object',
@@ -519,11 +520,12 @@ export const TOOLS = [
   {
     name: 'ledger_list',
     description:
-      'Overseer only. The rendered ledger part of a recap: the Project rules line ("Project rules: 13 in force ' +
-      '(type "show rules")."), Needs you now (full cards for new decisions plus the top 5, one line for the rest), ' +
-      'Running on defaults, Your tests and actions, Decided since the last recap, Not yet triaged, Parked, and ' +
-      'the count line. Paste it as is. When rules exist, a second block lists them in full for your own use: ' +
-      'apply them, and do not paste them. Pass forRecap: true when you post the recap: it marks the recap as ' +
+      'Overseer only. The ledger part of a recap, in two blocks. "Paste this into the recap": the New lines ' +
+      '(items sent to the user since the last recap), the Decided lines (answered or decided since then) and the ' +
+      'count line ("Needs you: 19 decisions, 8 actions — on the card."); paste them as is. "For your own use — do ' +
+      'not paste": the full ledger (Needs you now, Running on defaults, Your tests and actions, Not yet triaged, ' +
+      'Parked) and, when rules exist, each project rule in full: apply the rules, and do not paste them. The user ' +
+      'sees the full ledger on the pinned card. Pass forRecap: true when you post the recap: it marks the recap as ' +
       'posted and clears the interim recap timer.',
     inputSchema: {
       type: 'object',
@@ -1032,19 +1034,25 @@ async function ledgerNote(args: Record<string, unknown>): Promise<{ id: string; 
   return ledgerRequest('/note', { ...args, caller: requireSelf('use the ledger') });
 }
 
-/** The heading of ledger_list's second block: the project rules in full, never pasted (overseer memory scope, Unit 5). */
+/** The headings of ledger_list's two blocks (pinned card spec 2026-10-08, Unit 5). */
+export const PASTE_HEADING = 'Paste this into the recap:';
+export const OWN_USE_HEADING = 'For your own use — do not paste:';
+/** The heading of the project rules in full, inside the own-use block (overseer memory scope, Unit 5). */
 export const RULES_FOR_OVERSEER = 'Project rules in force, for your own use: apply them, and do not paste them.';
 
 /**
- * The rendered text itself (not JSON), so the overseer can paste it as is; plus, when rules exist, a
- * second block with each rule in full for the overseer's own use.
+ * Two text blocks (not JSON): first the lines the overseer pastes into the recap as is, then the
+ * full ledger and, when rules exist, each rule in full — for the overseer's own use.
  */
 async function ledgerList(args: { forRecap?: boolean }): Promise<{ type: 'text'; text: string }[]> {
   const data = await ledgerRequest('/list', { caller: requireSelf('use the ledger'), forRecap: args?.forRecap === true });
-  const blocks = [{ type: 'text' as const, text: String(data?.text ?? '') }];
   const rules = Array.isArray(data?.rules) ? data.rules.filter((r: unknown): r is string => typeof r === 'string') : [];
-  if (rules.length) blocks.push({ type: 'text', text: [RULES_FOR_OVERSEER, ...rules.map((r: string) => `- ${r}`)].join('\n') });
-  return blocks;
+  const ownUse = [`${OWN_USE_HEADING}\n\n${String(data?.text ?? '')}`];
+  if (rules.length) ownUse.push([RULES_FOR_OVERSEER, ...rules.map((r: string) => `- ${r}`)].join('\n'));
+  return [
+    { type: 'text', text: `${PASTE_HEADING}\n\n${String(data?.paste ?? '')}` },
+    { type: 'text', text: ownUse.join('\n\n') },
+  ];
 }
 
 async function ledgerImport(args: { items?: unknown }): Promise<{ ids: string[] }> {
@@ -1170,8 +1178,8 @@ export async function callTool(
       case 'ledger_mark_default': result = await ledgerMarkDefault(args ?? {}); break;
       // ledger_show's result IS the cards to post — return them as is, not as a JSON string.
       case 'ledger_show': return { content: [{ type: 'text', text: await ledgerShow(args ?? {}) }] };
-      // ledger_list's result IS the text to paste — return it as is, not as a JSON string (plus the
-      // full rules in a second block, for the overseer's own use).
+      // ledger_list's result IS text — return it as is, not as a JSON string: the lines to paste,
+      // then the full ledger and rules for the overseer's own use.
       case 'ledger_list': return { content: await ledgerList(args ?? {}) };
       // post_image's result IS the content block (an image, not JSON text) — return it directly.
       case 'post_image': return { content: [await postImage(args ?? {})] };

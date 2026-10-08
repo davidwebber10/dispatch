@@ -22,8 +22,8 @@ import * as ledgerDb from '../db/ledger.js';
 import * as messagesDb from '../db/coordinator-messages.js';
 import { findQuote, GO_APPROVAL_ERROR, namesGoApproval, OK_ONLY_ERROR } from './ledger-quote.js';
 import {
-  isUnchecked, projectRules, renderCard, renderDefaultLine, renderHandoffBlock, renderItem, renderLedgerSections, renderOverseerDecisionLine,
-  renderRulesList, type RenderContext,
+  isUnchecked, projectRules, renderAddLine, renderCard, renderDefaultLine, renderHandoffBlock, renderItem, renderLedgerSections,
+  renderOverseerDecisionLine, renderRecapPaste, renderRulesList, type RenderContext,
 } from './ledger-render.js';
 import { buildLedgerCard, type LedgerCard } from './ledger-card.js';
 import {
@@ -269,9 +269,8 @@ export class LedgerService {
       now: this.nowIso(),
     });
     this.changed(sessionId);
-    // A go or decide item goes to the user as its full card (Unit 5), a do item as its line.
-    const ctx = this.ctx(sessionId);
-    return { id: `N${item.seq}`, line: item.kind === 'do' ? renderItem(item, ctx) : renderCard(item, ctx) };
+    // Pinned card spec 2026-10-08, Unit 5: the chat gets one line; the full card is on the pinned card.
+    return { id: `N${item.seq}`, line: renderAddLine(item) };
   }
 
   resolve(sessionId: string, caller: unknown, input: Record<string, unknown>): { id: string; status: string; line: string } {
@@ -431,16 +430,19 @@ export class LedgerService {
   }
 
   /**
-   * The rendered ledger part of a recap. `forRecap` stamps lastRecapAt and clears the interim timer.
-   * The recap shows the project rules as one line; `rules` holds each rule in full, for the
-   * overseer's own use (overseer memory scope spec 2026-10-07, Unit 5).
+   * The ledger part of a recap. `paste` is what the overseer pastes into the recap (pinned card spec
+   * 2026-10-08, Unit 5: the new items, the decided ones, the count line); `text` is the full ledger
+   * and `rules` each project rule in full, both for the overseer's own use (overseer memory scope
+   * spec 2026-10-07, Unit 5). Both are relative to the recap before this call. `forRecap` stamps
+   * lastRecapAt and clears the interim timer.
    */
-  list(sessionId: string, caller: unknown, opts: { forRecap?: boolean } = {}): { text: string; openIds: string[]; rules: string[] } {
+  list(sessionId: string, caller: unknown, opts: { forRecap?: boolean } = {}): { paste: string; text: string; openIds: string[]; rules: string[] } {
     const overseer = this.assertOverseer(sessionId, caller);
     let cfg: Record<string, any> = {};
     try { cfg = JSON.parse(overseer.config || '{}'); } catch { /* default {} */ }
     const lastRecapAt = typeof cfg[LAST_RECAP_KEY] === 'string' ? (cfg[LAST_RECAP_KEY] as string) : null;
     const items = ledgerDb.listBySession(this.db, sessionId);
+    const paste = renderRecapPaste(items, { now: this.clock(), lastRecapAt });
     const text = renderLedgerSections(items, { now: this.clock(), lastRecapAt, timeZone: this.timeZone });
     if (opts.forRecap) {
       cfg[LAST_RECAP_KEY] = this.nowIso();
@@ -450,6 +452,7 @@ export class LedgerService {
     }
     const ctx = this.ctx(sessionId);
     return {
+      paste,
       text,
       openIds: items.filter((i) => i.status === 'open').map((i) => `N${i.seq}`),
       rules: projectRules(items).map((i) => renderItem(i, ctx)),
