@@ -79,6 +79,15 @@ describe('renderRecapPaste — the part the overseer pastes into the recap', () 
     expect(out).toContain('- N2 · Decide · Use library B? · Imported, not checked');
   });
 
+  // Review round 1: an item marked to run on its default no longer waits on the user.
+  it('an item on a default is not New, even when it was sent after the last recap', () => {
+    const out = renderRecapPaste([
+      item({ seq: 1, text: 'Abort above 1%?', sentAt: ago(1_000), onDefaultSince: ago(500) }),
+      item({ seq: 2, kind: 'go', text: 'Merge PR #9?', sentAt: ago(1_000) }),
+    ], { now: NOW, lastRecapAt: LAST });
+    expect(out).toBe('New:\n- N2 · Go · Merge PR #9?\n\nNeeds you: 1 decision, 0 actions — on the card.');
+  });
+
   it('no line names a ledger number without its question', () => {
     const out = renderRecapPaste(items, { now: NOW, lastRecapAt: LAST });
     for (const line of out.split('\n').filter((l) => l.startsWith('- '))) expect(line).toMatch(/^- N\d+ · \S.{8,}/);

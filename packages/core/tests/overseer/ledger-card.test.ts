@@ -127,6 +127,11 @@ describe('buildLedgerCard', () => {
     expect(card.sections.needsYou.cards[0].isNew).toBe(false);
   });
 
+  it('an item on a default is not new on the card either (review round 1)', () => {
+    const card = buildLedgerCard([item({ seq: 1, sentAt: ago(1_000), onDefaultSince: ago(500) })], { now: NOW, lastRecapAt: LAST });
+    expect(card.sections.onDefaults[0].isNew).toBe(false);
+  });
+
   it('the sources in their plain forms; options of an old row read as an empty effect', () => {
     const src = (over: Partial<LedgerItem>) => buildLedgerCard([item(over)], { now: NOW, lastRecapAt: LAST }).sections.needsYou.cards[0].source;
     expect(src({ sourceKind: 'plan', sourceRef: 'docs/plans/a.md', sourceSection: 'Risks', sourceId: 'D3' }))

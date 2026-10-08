@@ -202,7 +202,7 @@ describe('interim recap timer', () => {
     expect(due(db)).toBe(new Date(T0 + 2 * INTERIM_RECAP_MS + 60_000).toISOString());
   });
 
-  it('only an item sent after the last recap counts; an imported, closed or older one does not', () => {
+  it('only an item sent after the last recap counts; an imported, closed, older or on-default one does not', () => {
     const { db, svc, sent } = open();
     terminalsDb.updateConfig(db, 'coord', { role: 'coordinator', lastRecapAt: new Date(T0 + 60_000).toISOString() });
     svc.noteAgentCompletion('a');
@@ -211,6 +211,8 @@ describe('interim recap timer', () => {
     sendItem(db, { origin: 'imported' }, T0 + 120_000);
     sendItem(db, { status: 'answered', quote: 'A' }, T0 + 120_000);
     sendItem(db, { status: 'proposed' }, T0 + 120_000); // not sent to the user yet
+    const onDefault = sendItem(db, {}, T0 + 120_000); // review round 1: runs on its default
+    ledgerDb.markOnDefault(db, 's1', onDefault.seq, new Date(T0 + 180_000).toISOString());
     expect(interimRecapTick(db, svc, T0 + INTERIM_RECAP_MS)).toEqual([]);
     expect(sent).not.toHaveBeenCalled();
     expect(due(db)).toBeUndefined();

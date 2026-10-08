@@ -54,13 +54,13 @@ describe('ledgerSections', () => {
     expect(s.counts).toEqual({ overseerDecisions: 1, reversed: 0 });
   });
 
-  it('new: every open go, decide or do item sent after the last recap, never an imported one', () => {
+  it('new: every open go, decide or do item sent after the last recap, never an imported one or one on a default', () => {
     const s = ledgerSections(ALL, { now: NOW, lastRecapAt: LAST });
     expect(s.newSeqs).toEqual([2, 11]);
     const imported = item({ seq: 12, kind: 'go', text: 'Deploy?', origin: 'imported', sentAt: ago(1_000) });
     expect(ledgerSections([...ALL, imported], { now: NOW, lastRecapAt: LAST }).newSeqs).toEqual([2, 11]);
-    // With no recap yet, every open item is new — except an imported one.
-    expect(ledgerSections([...ALL, imported], { now: NOW, lastRecapAt: null }).newSeqs).toEqual([2, 3, 4, 11]);
+    // With no recap yet, every open item is new — except an imported one and N3, which runs on its default.
+    expect(ledgerSections([...ALL, imported], { now: NOW, lastRecapAt: null }).newSeqs).toEqual([2, 4, 11]);
   });
 
   it('isNewForUser: open, not imported, sent after the last recap', () => {
@@ -69,6 +69,8 @@ describe('ledgerSections', () => {
     expect(isNewForUser(item({ sentAt: ago(2 * DAY) }), LAST)).toBe(false);
     expect(isNewForUser(item({ sentAt: ago(1_000), origin: 'imported' }), LAST)).toBe(false);
     expect(isNewForUser(item({ sentAt: ago(1_000), status: 'answered' }), LAST)).toBe(false);
+    // Review round 1: marked to run on its default before the recap, it no longer waits on the user.
+    expect(isNewForUser(item({ sentAt: ago(1_000), onDefaultSince: ago(500) }), LAST)).toBe(false);
     expect(isNewForUser(item({}), null)).toBe(true);
   });
 

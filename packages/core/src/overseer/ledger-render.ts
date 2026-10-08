@@ -304,9 +304,12 @@ export function renderRulesList(items: LedgerItem[], ctx: RenderContext): string
  * With no recap yet (`lastRecapAt` null), every open item is new. An import is a one-time load,
  * not news: an imported item never counts as new, so the first recap after an import shows the
  * top 5 as cards, not every imported decision (amendment 2026-10-07 to the decision cards spec).
+ * An item that runs on its default no longer waits on the user, so it is not new either: the
+ * paste block, the card and the interim check all leave it out (review round 1).
  */
 export function isNewForUser(item: LedgerItem, lastRecapAt: string | null): boolean {
-  return item.status === 'open' && item.origin !== 'imported' && (lastRecapAt === null || sentTime(item) > lastRecapAt);
+  return item.status === 'open' && item.origin !== 'imported' && !item.onDefaultSince
+    && (lastRecapAt === null || sentTime(item) > lastRecapAt);
 }
 
 /** The sections of a recap as data (pinned card spec 2026-10-08, Unit 1). Each list is in display order. */
