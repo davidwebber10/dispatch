@@ -6,8 +6,8 @@ import { inputSummary, editDiffStat, toolGlyph } from './ToolCall';
 // readable `key: value` pairs; non-JSON details pass through.
 describe('inputSummary', () => {
   it('renders a JSON object input as key: value pairs, salient keys first', () => {
-    const s = inputSummary({ toolInput: JSON.stringify({ limit: 5, query: 'polywood sales' }) });
-    expect(s).toBe('query: polywood sales · limit: 5');
+    const s = inputSummary({ toolInput: JSON.stringify({ limit: 5, query: 'acme sales' }) });
+    expect(s).toBe('query: acme sales · limit: 5');
   });
 
   it('passes a non-JSON detail (Bash command) through untouched', () => {

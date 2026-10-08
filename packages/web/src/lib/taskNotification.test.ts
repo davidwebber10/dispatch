@@ -6,7 +6,7 @@ import { parseTaskNotification, parseCommandEcho, classifyUserText } from './tas
 const REAL = `<task-notification>
 <task-id>bdjq1tq9y</task-id>
 <tool-use-id>toolu_018vsfoazWVuehxP39QUHHSo</tool-use-id>
-<output-file>/private/tmp/claude-501/-Users-davidwebber-Sites-explorer/7ff14008/tasks/bdjq1tq9y.output</output-file>
+<output-file>/private/tmp/claude-501/-Users-someone-Sites-explorer/7ff14008/tasks/bdjq1tq9y.output</output-file>
 <status>completed</status>
 <summary>Background command "Wait for the in-flight Agents deploy to finish" completed (exit code 0)</summary>
 </task-notification>`;

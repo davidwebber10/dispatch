@@ -38,7 +38,7 @@ describe('deriveThreadName', () => {
   });
   test('ignores injected AGENTS.md and environment setup before the user task', () => {
     const transcript = [
-      '# AGENTS.md instructions for /work/proj\n<INSTRUCTIONS>Polywood OS agents guide</INSTRUCTIONS>',
+      '# AGENTS.md instructions for /work/proj\n<INSTRUCTIONS>Acme OS agents guide</INSTRUCTIONS>',
       '<environment_context>setup</environment_context>',
       'Improve demand forecasting',
     ].map(text => JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } })).join('\n');

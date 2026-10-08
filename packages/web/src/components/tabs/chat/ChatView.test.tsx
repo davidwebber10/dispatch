@@ -519,7 +519,7 @@ describe('tool rows with no tool ids (REST-paged history)', () => {
     // a long command clipped "Bash" to "B…". It is now flexShrink: 0.
     const tool: ConvItem = {
       kind: 'tool', uuid: 't1', toolName: 'Bash',
-      toolDetail: 'cat /private/tmp/claude-501/-Users-davidwebber-Sites-explorer/7ff14008-0121-41f7-9dff-e6f82f1eace2/tasks/bdjq1tq9y.output',
+      toolDetail: 'cat /private/tmp/claude-501/-Users-someone-Sites-explorer/7ff14008-0121-41f7-9dff-e6f82f1eace2/tasks/bdjq1tq9y.output',
     };
     renderTimelineItems([tool, { kind: 'tool-result', uuid: 'r1', text: 'ok' }]);
     const name = screen.getByText('Bash');
