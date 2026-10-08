@@ -23,7 +23,7 @@ import { useTabs } from '../../stores/tabs';
 import { useThreadStatus } from '../../stores/threadStatus';
 import { useLedgerCardSync } from '../../stores/ledgerCard';
 import { useStructuredChat, type ApiRetry, type CompactResult } from '../tabs/chat/useStructuredChat';
-import { clearStoredDraft } from '../../hooks/useDraft';
+import { appendToStoredDraft, clearStoredDraft } from '../../hooks/useDraft';
 import type { PendingPermission, Terminal } from '../../api/types';
 import { AGENT_TYPES } from '../../lib/harnesses';
 import { CANNED, m } from './data';
@@ -101,6 +101,9 @@ interface OverseerState {
   // attachments (below) are still store-owned since they don't persist to localStorage,
   // but MUST be keyed per project for the same reason.
   composerImagesByProject: Record<string, ContentBlock[]>; // attached image blocks pending the next directive, per coordinator project
+  // The last answer a pinned-card click added to a project's draft (addToDraft): the Composer shows
+  // "Added … Press Enter to send" under the box for that project, and takes the focus once (`focus`).
+  draftHint: { project: string; text: string; focus: boolean } | null;
   mobileTab: MobileTab;
   workerLightboxId: string | null; // NEW: the worker terminal whose chat View is open
 
@@ -155,6 +158,14 @@ interface OverseerState {
   removeComposerImage: (index: number) => void;
   /** Send a directive with the given text (the Composer's own local draft) + any staged images. */
   sendDirective: (text: string) => void;
+  /**
+   * A click on the pinned decision card (pinned card spec 2026-10-08, Unit 8): append its answer
+   * ("N17: A") to the project's draft — never replace it — and point the user at the box. Nothing
+   * is sent: the user presses Enter, so the message stays the user's own.
+   */
+  addToDraft: (projectId: string, text: string) => void;
+  /** The Composer took the focus the last addToDraft asked for. */
+  draftFocused: () => void;
   needAction: (id: string, label: string) => void;
   doDelegate: () => void;
   /** Launch a QUEUED worker now (status='queued' → live), then refresh the rail. */
@@ -206,6 +217,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   delegateType: 'implementer',
   delegateText: '',
   composerImagesByProject: {},
+  draftHint: null,
   mobileTab: 'needs',
   workerLightboxId: null,
 
@@ -296,6 +308,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
     set((s) => ({
       composerImagesByProject: project ? { ...s.composerImagesByProject, [project]: [] } : s.composerImagesByProject,
       sendError: null,
+      draftHint: s.draftHint?.project === project ? null : s.draftHint,
     }));
     // Carry any attached image blocks through as a REAL content-block turn (images first,
     // then the caption text) so the coordinator SEES the picture; a text-only directive
@@ -312,6 +325,16 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       if (get().coordinatorId === id) set({ sendError: 'Failed to send message' });
     });
   },
+
+  addToDraft: (projectId, text) => {
+    // The draft itself is the Composer's useDraft(project) value in local storage, so the append
+    // lands whether or not the Composer is mounted (another tab, the mobile Work tab).
+    appendToStoredDraft(projectId, text);
+    // On mobile the box is on the Stream tab; on desktop mobileTab is not read.
+    set({ draftHint: { project: projectId, text, focus: true }, mobileTab: 'stream' });
+  },
+
+  draftFocused: () => set((s) => (s.draftHint?.focus ? { draftHint: { ...s.draftHint, focus: false } } : {})),
 
   needAction: (id, label) => {
     // The need id is the agent terminal id. When we have its fetched escalation,

@@ -18,6 +18,7 @@
 
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import { MonoLabel } from '../atoms';
+import { useOverseer } from '../store';
 import { useProjects } from '../../../stores/projects';
 import { useLedgerCard, useLedgerCardEntry, useLedgerFolds, type LedgerFold } from '../../../stores/ledgerCard';
 import { timeAgo } from '../../../lib/time';
@@ -212,8 +213,10 @@ function RulesLine({ card }: { card: Card }) {
   );
 }
 
-export function LedgerCard({ onAnswer }: { onAnswer?: (text: string) => void } = {}) {
+export function LedgerCard({ onAnswer: onAnswerProp }: { onAnswer?: (text: string) => void } = {}) {
   const projectId = useProjects((s) => s.activeId);
+  // By default a click adds its answer to this project's message box (store.addToDraft, Unit 8).
+  const onAnswer = onAnswerProp ?? ((text: string) => { if (projectId) useOverseer.getState().addToDraft(projectId, text); });
   const { card, error } = useLedgerCardEntry(projectId);
   // Lines and section rows the user opened as full cards.
   const [opened, setOpened] = useState<ReadonlySet<number>>(() => new Set());
