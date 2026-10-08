@@ -25,6 +25,7 @@ import {
   isUnchecked, projectRules, renderCard, renderDefaultLine, renderHandoffBlock, renderItem, renderLedgerSections, renderOverseerDecisionLine,
   renderRulesList, type RenderContext,
 } from './ledger-render.js';
+import { buildLedgerCard, type LedgerCard } from './ledger-card.js';
 import {
   cardFieldsError, findProjectPath, gitWorktrees, holdsSeveralDecisions, isIssueRef, missingCardFields,
   isUserSourceKind, ONE_DECISION_ERROR, ONLY_USER_ERROR, onlyUserCanDecide, sourceComplete, sourceMissingError, type CardFieldsInput,
@@ -429,6 +430,20 @@ export class LedgerService {
       openIds: items.filter((i) => i.status === 'open').map((i) => `N${i.seq}`),
       rules: projectRules(items).map((i) => renderItem(i, ctx)),
     };
+  }
+
+  /**
+   * The pinned card (pinned card spec 2026-10-08, Unit 2). Read-only: it never stamps lastRecapAt
+   * and never clears the interim timer, so a page load is never a recap. No caller check, like the
+   * routes that return conversations: the network is the gate. "New" is relative to the last recap
+   * of the project's live overseer; with none, nothing has been recapped yet.
+   */
+  card(sessionId: string): LedgerCard {
+    if (!sessionsDb.getById(this.db, sessionId)) throw new LedgerError(404, `Unknown project: ${sessionId}`);
+    const overseer = terminalsDb.listBySession(this.db, sessionId).map(terminalsDb.rowToTerminal) // not archived
+      .find((t) => t.config?.role === 'coordinator');
+    const lastRecapAt = typeof overseer?.config[LAST_RECAP_KEY] === 'string' ? (overseer.config[LAST_RECAP_KEY] as string) : null;
+    return buildLedgerCard(ledgerDb.listBySession(this.db, sessionId), { now: this.clock(), lastRecapAt });
   }
 
   /** One-time load of open items and earlier decisions from the overseer's context. */

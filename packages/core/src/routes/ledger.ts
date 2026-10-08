@@ -6,6 +6,8 @@ import { LedgerError, type LedgerService } from '../overseer/ledger-service.js';
  * terminal id that the dispatch MCP takes from DISPATCH_TERMINAL) and the service rejects any
  * caller that is not this project's overseer — the same trust level as the other agency routes.
  * `list` is a POST because `forRecap` changes the overseer's config.
+ * `card` (pinned card spec 2026-10-08, Unit 2) is the one GET: it only reads, and has no caller
+ * check, like the routes that return conversations — the web app reads it.
  */
 export function createLedgerRouter(ledger: LedgerService): Router {
   const router = Router();
@@ -19,6 +21,7 @@ export function createLedgerRouter(ledger: LedgerService): Router {
     }
   };
 
+  router.get('/sessions/:sessionId/ledger/card', handle(200, (req) => ledger.card(req.params.sessionId)));
   router.post('/sessions/:sessionId/ledger', handle(201, (req) => ledger.add(req.params.sessionId, req.body?.caller, req.body ?? {})));
   router.post('/sessions/:sessionId/ledger/list', handle(200, (req) => ledger.list(req.params.sessionId, req.body?.caller, { forRecap: req.body?.forRecap === true })));
   router.post('/sessions/:sessionId/ledger/note', handle(201, (req) => ledger.note(req.params.sessionId, req.body?.caller, req.body ?? {})));

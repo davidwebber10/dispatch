@@ -139,6 +139,60 @@ describe('ledger routes', () => {
     expect(shown.body.text).toContain("**Overseer's note:** Mind the freeze.");
   });
 
+  // Pinned card spec 2026-10-08, Unit 2: the read-only card route.
+  describe('GET /ledger/card', () => {
+    it('returns the sections as card items, the rules and the index; no caller is needed', async () => {
+      messagesDb.append(db, { terminalId: 'coord', source: 'user', text: 'never deploy on Fridays', sentAt: new Date().toISOString() });
+      await request(app).post(`/api/sessions/${sid}/ledger/note`).send({ caller: 'coord', quote: 'never deploy on Fridays', policy: true }).expect(201);
+      await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'decide', text: 'How many clean nights before live mode?', ...DECIDE_CARD }).expect(201);
+      await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'go', text: 'Merge PR #12?', ...GO_CARD }).expect(201);
+      await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'do', text: 'Check the banner on staging.' }).expect(201);
+      const res = await request(app).get(`/api/sessions/${sid}/ledger/card`).expect(200);
+      expect(Object.keys(res.body).sort()).toEqual(['index', 'lastRecapAt', 'rules', 'sections', 'updatedAt']);
+      expect(res.body.lastRecapAt).toBeNull();
+      expect(res.body.updatedAt).toEqual(expect.any(String));
+      const [decide, go] = res.body.sections.needsYou.cards;
+      expect(decide).toMatchObject({
+        seq: 2, kind: 'decide', status: 'open', text: 'How many clean nights before live mode?', isNew: true,
+        recommendation: 'A. 5 nights', default: DECIDE_CARD.default, source: { kind: 'overseer', ref: null, path: null, section: null, id: null },
+      });
+      expect(decide.options.map((o: { answerKey: string }) => o.answerKey)).toEqual(['A', 'B']);
+      expect(go).toMatchObject({ seq: 3, kind: 'go', options: [] });
+      expect(res.body.sections.actions.map((i: { seq: number }) => i.seq)).toEqual([4]);
+      expect(res.body.rules).toEqual([{ seq: 1, quote: 'never deploy on Fridays', reading: null }]);
+      expect(res.body.index.map((i: { seq: number }) => i.seq)).toEqual([1, 2, 3, 4]);
+    });
+
+    it('only reads: lastRecapAt and the interim timer stay as they are', async () => {
+      const cfg = { role: 'coordinator', lastRecapAt: '2026-10-08T10:00:00.000Z', interimDueAt: '2026-10-08T10:20:00.000Z' };
+      terminalsDb.updateConfig(db, 'coord', cfg);
+      await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'do', text: 'Check staging.' }).expect(201);
+      const before = ledgerDb.listBySession(db, sid);
+      const res = await request(app).get(`/api/sessions/${sid}/ledger/card`).expect(200);
+      expect(res.body.lastRecapAt).toBe('2026-10-08T10:00:00.000Z');
+      expect(JSON.parse(terminalsDb.getById(db, 'coord')!.config!)).toEqual(cfg);
+      expect(ledgerDb.listBySession(db, sid)).toEqual(before);
+    });
+
+    it('takes lastRecapAt from the live overseer, not an archived one', async () => {
+      terminalsDb.updateConfig(db, 'coord', { role: 'coordinator', lastRecapAt: '2026-10-08T10:00:00.000Z' });
+      terminalsDb.archive(db, 'coord');
+      terminalsDb.create(db, { id: 'coord2', sessionId: sid, type: 'claude-code', label: 'Control Plane', config: { role: 'coordinator' } });
+      expect((await request(app).get(`/api/sessions/${sid}/ledger/card`).expect(200)).body.lastRecapAt).toBeNull();
+    });
+
+    it('a project with no ledger returns empty sections; an unknown project is a 404', async () => {
+      const empty = await request(app).get(`/api/sessions/${sid}/ledger/card`).expect(200);
+      expect(empty.body).toEqual({
+        updatedAt: null, lastRecapAt: null,
+        sections: { rulesCount: 0, needsYou: { cards: [], lines: [] }, onDefaults: [], actions: [], decidedSince: [], untriaged: [], parked: [], counts: { overseerDecisions: 0, reversed: 0 } },
+        rules: [], index: [],
+      });
+      const missing = await request(app).get('/api/sessions/no-such-project/ledger/card').expect(404);
+      expect(missing.body).toEqual({ error: 'Unknown project: no-such-project' });
+    });
+  });
+
   it('decide-self without an item ID creates an item that is already decided (201); its checks are 422s', async () => {
     const own = {
       text: 'Which retry helper?', ...DECIDE_CARD, choice: 'A. 5 nights', reason: 'it covers one weekend',
