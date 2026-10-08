@@ -213,7 +213,7 @@ function ErrorMsg({ msg }: { msg: StreamMessage }) {
 //   ⏸️ Your agent "<label>" […] is BLOCKED, waiting on you …       (noteAgentNeedsHelp)
 //   🔔 Your agent "<label>" […] is PAUSED waiting on you …         (formatAgentQuestion)
 //   ⚠️ The user just <stopped|interrupted> your agent "<label>" …  (noteAgentLifecycle)
-//   🕒 Interim recap due: agent turns finished 20 minutes ago, …   (sessions/interim-recap.ts)
+//   🕒 Interim recap due: 2 new items wait on the user, …          (sessions/interim-recap.ts)
 // The five agent notices end with a daemon "Batch:" block; detection keys on the start only.
 //
 // 💬 (noteUserMessageToAgent — "the user just sent your agent … a message directly") is denser

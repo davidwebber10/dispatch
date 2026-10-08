@@ -1176,10 +1176,10 @@ export class SessionService {
   }
 
   /** Send the one Interim recap notice. Revives the overseer first, as notices do. False when it was not delivered. */
-  sendInterimRecapNotice(coordinatorId: string, workingCount: number, queuedCount = 0): boolean {
+  sendInterimRecapNotice(coordinatorId: string, newCount: number, workingCount: number, queuedCount = 0): boolean {
     try {
       this.ensureStructuredAlive(coordinatorId);
-      this.sendStructuredMessage(coordinatorId, formatInterimNotice(workingCount, queuedCount));
+      this.sendStructuredMessage(coordinatorId, formatInterimNotice(newCount, workingCount, queuedCount));
       return true;
     } catch { return false; }
   }

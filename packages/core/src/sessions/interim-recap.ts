@@ -7,13 +7,18 @@
  * Check: a 60-second sweep (the auto-archive pattern). The due time lives in the database, so
  *        a daemon restart keeps it.
  * Fire:  at the due time, if the batch is busy (agents work or are queued — the Batch line's
- *        rule), one Interim recap notice. The timer clears only after the notice reached the
- *        overseer, or when the batch is no longer busy; a failed delivery stays due, and the
- *        next sweep retries. So it fires once per successful delivery.
+ *        rule) AND something new waits on the user (pinned card spec 2026-10-08, Unit 4: an open
+ *        go, decide or do item sent after the last recap — isNewForUser), one Interim recap
+ *        notice. A finished agent alone does not fire it: with nothing new, the timer clears
+ *        without a notice, and the next Finished notice arms it again. The timer clears only
+ *        after the notice reached the overseer, or when the batch is no longer busy; a failed
+ *        delivery stays due, and the next sweep retries. So it fires once per successful delivery.
  */
 import type Database from 'better-sqlite3';
 import * as terminalsDb from '../db/terminals.js';
-import { INTERIM_DUE_KEY } from '../overseer/ledger-service.js';
+import * as ledgerDb from '../db/ledger.js';
+import { INTERIM_DUE_KEY, LAST_RECAP_KEY } from '../overseer/ledger-service.js';
+import { isNewForUser } from '../overseer/ledger-render.js';
 import { isBusy, type BatchState, type NoticeKind } from './batch-state.js';
 import type { SessionService } from './service.js';
 
@@ -23,10 +28,11 @@ const DEFAULT_INTERVAL_MS = 60_000;
 const agents = (n: number) => `${n} agent${n === 1 ? '' : 's'}`;
 
 /**
- * The Interim recap notice. Its 🕒 prefix differs from every other notice prefix. The line
- * breaks after the first count ("and 2 agents" / "still work."), as in the spec text.
+ * The Interim recap notice: new items wait on the user, so post the short recap. Its 🕒 prefix
+ * differs from every other notice prefix. The line breaks after the agent count ("and 2 agents" /
+ * "still work."), as in the structured-recap spec text.
  */
-export function formatInterimNotice(workingCount: number, queuedCount = 0): string {
+export function formatInterimNotice(newCount: number, workingCount: number, queuedCount = 0): string {
   const queued = (n: number) => `${n === 1 ? 'is' : 'are'} queued`;
   let count: string;
   let rest: string;
@@ -38,9 +44,10 @@ export function formatInterimNotice(workingCount: number, queuedCount = 0): stri
     count = agents(queuedCount);
     rest = queued(queuedCount);
   }
+  const waiting = `${newCount} new ${newCount === 1 ? 'item waits' : 'items wait'} on the user`;
   return (
-    `🕒 Interim recap due: agent turns finished ${INTERIM_RECAP_MS / 60_000} minutes ago, and ${count}\n` +
-    `${rest}. Post the recap now and mark it "interim". Then keep holding.`
+    `🕒 Interim recap due: ${waiting}, and ${count}\n` +
+    `${rest}. Post the short recap now and mark it "interim". Then keep holding.`
   );
 }
 
@@ -100,7 +107,10 @@ export function interimRecapTick(
       if (Number.isFinite(due) && now < due) continue;
       const state: BatchState = sessionService.batchState(row.session_id);
       if (!isBusy(state)) { clearDue(db, row.id); continue; } // settled: nothing to report
-      if (sessionService.sendInterimRecapNotice(row.id, state.working.length, state.queued.length)) {
+      const lastRecapAt = typeof cfg[LAST_RECAP_KEY] === 'string' ? (cfg[LAST_RECAP_KEY] as string) : null;
+      const newCount = ledgerDb.listBySession(db, row.session_id).filter((i) => isNewForUser(i, lastRecapAt)).length;
+      if (newCount === 0) { clearDue(db, row.id); continue; } // nothing new waits on the user
+      if (sessionService.sendInterimRecapNotice(row.id, newCount, state.working.length, state.queued.length)) {
         clearDue(db, row.id); // delivered: it fires once
         fired.push(row.id);
       } else {

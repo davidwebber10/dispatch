@@ -41,7 +41,7 @@ const NOTICES: Array<[string, string, string]> = [
   ['blocked', '⏸️ Your agent "Bob" (mission "Fix auth") [agentId term-1] is BLOCKED, waiting on you — it stopped its turn to ask:\n"Which branch?"\n\nIt cannot proceed until you reply.' + BATCH, 'Agent "Bob" is blocked, waiting on you'],
   ['question', '🔔 Your agent "Bob" (mission "Fix auth") is PAUSED waiting on you to answer a question (it cannot proceed until you do):\n  • [Fix] Stage the fix?\n\nanswer_agent({ agentId: "term-1", answers: { "Fix": "<chosen option>" } })' + BATCH, 'Agent "Bob" needs an answer'],
   ['stopped', '⚠️ The user just stopped your agent "Bob" (mission "Fix auth") [agentId term-1] while it was working. Do not silently ignore this.' + BATCH, 'You stopped agent "Bob"'],
-  ['interim', '🕒 Interim recap due: agent turns finished 20 minutes ago, and 2 agents\nstill work. Post the recap now and mark it "interim". Then keep holding.', 'Interim recap due'],
+  ['interim', '🕒 Interim recap due: 2 new items wait on the user, and 2 agents\nstill work. Post the short recap now and mark it "interim". Then keep holding.', 'Interim recap due'],
 ];
 
 describe('ConversationStream — agency notices with the Batch block', () => {
