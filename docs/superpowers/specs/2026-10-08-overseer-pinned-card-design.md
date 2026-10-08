@@ -1,7 +1,8 @@
 # Overseer pinned recap card — design
 
-Date: 2026-10-08. Status: design approved section by section by the user on 2026-10-08; this
-written spec waits for the user's review. Thread "Opus 5.5 Xhigh Handle Business". Phase 2,
+Date: 2026-10-08. Approved by the user on 2026-10-08 ("approved"), after the design was
+approved section by section; the approval includes the reading in decision 4. Thread
+"Opus 5.5 Xhigh Handle Business". Phase 2,
 item 1 of the overseer recap work. Follows
 `docs/superpowers/specs/2026-10-05-overseer-structured-recap-design.md` ("Phase 2"),
 `docs/superpowers/specs/2026-10-06-overseer-decision-cards-design.md` and
