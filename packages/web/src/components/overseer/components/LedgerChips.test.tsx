@@ -1,7 +1,7 @@
 // Ledger chips in the Control Plane chat (pinned card spec 2026-10-08, Unit 9): overseer replies,
 // the user's own messages, the agency notice pills and the report_status cards. A chip click opens
 // the item on the pinned card, or a small popover when the item is not on the card.
-import { render, screen, fireEvent, cleanup, within, act } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, within, act, renderHook } from '@testing-library/react';
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import { m } from '../data';
 import { useOverseer } from '../store';
@@ -10,7 +10,7 @@ import { useUI } from '../../../stores/ui';
 import { useLedgerCard, useLedgerFolds } from '../../../stores/ledgerCard';
 import { ConversationStream } from './Stream';
 import { LedgerCard } from './LedgerCard';
-import { LedgerRefPopover, openLedgerRef } from './LedgerChips';
+import { LedgerRefPopover, openLedgerRef, useLedgerChips } from './LedgerChips';
 import { FIXTURE } from '../ledger-fixture';
 import type { StreamMessage } from '../types';
 
@@ -118,5 +118,31 @@ describe('the popover and a project switch', () => {
     // A popover of another project, set while proj-2 shows, is not drawn.
     act(() => { useLedgerCard.getState().setPopover({ projectId: 'proj-1', seq: 40, x: 0, y: 0 }); });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+});
+
+// Review round 1: every ledger:changed reload makes a new card object; the chips (and so every
+// rendered message's markdown) must not be made again unless a number or a question changed.
+describe('useLedgerChips — stable across reloads', () => {
+  const reload = (card: typeof FIXTURE) => act(() => {
+    useLedgerCard.setState({ byProject: { 'proj-1': { card, loading: false, error: null, request: 2 } } });
+  });
+
+  it('keeps its identity when only statuses, answers or the update time changed', () => {
+    const { result } = renderHook(() => useLedgerChips());
+    const first = result.current;
+    expect(first?.index.get(14)?.text).toBe('How many clean nights before live mode?');
+    reload({ ...FIXTURE, updatedAt: new Date().toISOString(), index: FIXTURE.index.map((e) => (e.seq === 14 ? { ...e, status: 'answered', answer: 'N14: A' } : { ...e })) });
+    expect(result.current).toBe(first);
+  });
+
+  it('changes when a question or a number changes; the click still goes to the shown project', () => {
+    const { result } = renderHook(() => useLedgerChips());
+    const first = result.current;
+    reload({ ...FIXTURE, index: [...FIXTURE.index, { seq: 41, kind: 'do', status: 'open', text: 'Check the export file.', answer: null }] });
+    expect(result.current).not.toBe(first);
+    expect(result.current?.onChip).toBe(first?.onChip);
+    act(() => { result.current!.onChip(41, { x: 0, y: 0 }); });
+    expect(useLedgerCard.getState().popover).toMatchObject({ projectId: 'proj-1', seq: 41 });
   });
 });

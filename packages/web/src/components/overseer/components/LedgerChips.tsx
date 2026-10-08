@@ -8,7 +8,7 @@
 // desktop, the Work tab on mobile — or, for an item the card does not show (answered long ago), a
 // small popover with its question, status and answer.
 
-import { useEffect, useMemo, type KeyboardEvent, type MouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, type KeyboardEvent, type MouseEvent } from 'react';
 import { useProjects } from '../../../stores/projects';
 import { useUI } from '../../../stores/ui';
 import { useLedgerCard } from '../../../stores/ledgerCard';
@@ -35,18 +35,30 @@ export function openLedgerRef(projectId: string, seq: number, anchor: { x: numbe
   useLedgerCard.getState().setFocus({ projectId, seq });
 }
 
-/** The shown project's chip index and click handler, or undefined while its card has not loaded. */
+/**
+ * The shown project's chip index and click handler, or undefined while its card has not loaded.
+ * Every ledger:changed reload makes a new card object; this object changes only when a number or a
+ * question changes (what a chip shows), so the messages' markdown is not chipped again on each
+ * reload (review round 1). The click reads the project and the layout when it happens.
+ */
 export function useLedgerChips(): LedgerChips | undefined {
   const projectId = useProjects((s) => s.activeId);
   const card = useLedgerCard((s) => (projectId ? s.byProject[projectId]?.card ?? null : null));
   const mobile = useIsMobile();
-  return useMemo(() => {
-    if (!projectId || !card?.index.length) return undefined;
-    return {
-      index: new Map(card.index.map((e) => [e.seq, e] as const)),
-      onChip: (seq: number, anchor: { x: number; y: number }) => openLedgerRef(projectId, seq, anchor, { mobile }),
-    };
-  }, [projectId, card, mobile]);
+  const target = useRef({ projectId, mobile });
+  target.current = { projectId, mobile };
+  const onChip = useCallback((seq: number, anchor: { x: number; y: number }) => {
+    const { projectId: id, mobile: onMobile } = target.current;
+    if (id) openLedgerRef(id, seq, anchor, { mobile: onMobile });
+  }, []);
+  const content = projectId && card?.index.length ? `${projectId}\n${card.index.map((e) => `${e.seq}:${e.text}`).join('\n')}` : '';
+  const index = card?.index;
+  return useMemo(
+    () => (content && index ? { index: new Map(index.map((e) => [e.seq, e] as const)), onChip } : undefined),
+    // Keyed on the content, not the card object: `index` of a later reload with the same content is equal.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [content, onChip],
+  );
 }
 
 function LedgerChip({ entry, onChip }: { entry: LedgerIndexEntry; onChip: LedgerChips['onChip'] }) {
