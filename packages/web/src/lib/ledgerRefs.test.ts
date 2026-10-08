@@ -38,6 +38,36 @@ describe('splitLedgerRefs — plain text', () => {
     expect(splitLedgerRefs('```\nN12: merge\n```\nN12', known)).toEqual(['```\nN12: merge\n```\n', { seq: 12 }]);
   });
 
+  // Review round 1: a number in a URL or a path is part of the address, not a ledger number.
+  it('no chip in a URL or a path context', () => {
+    const none = [
+      'see https://example.com/N14 now', 'docs/plans/N12-design.md', 'C:\\work\\N12', 'page#N14', 'x?id=N14', 'a=N14&b=2',
+      'N14.md', 'N14/notes', 'N14-N16', 'N14://host', 'v1.N12', 'LR-N14', 'N12\\x',
+    ];
+    for (const text of none) expect(splitLedgerRefs(text, known), text).toEqual([text]);
+  });
+
+  it('a sentence around the number is no path: the chip stays', () => {
+    for (const text of ['Approve N14?', 'Done with N14.', 'N14: A', '(N14)', 'N14, then N12', 'N14?)', 'see N14...', 'N12 — merge it']) {
+      expect(splitLedgerRefs(text, known).some((p) => typeof p !== 'string'), text).toBe(true);
+    }
+  });
+
+  it('code spans of any backtick run, ~~~ fences and indented code blocks are code', () => {
+    expect(splitLedgerRefs('run ``show N14`` then N14', known)).toEqual(['run ``show N14`` then ', { seq: 14 }]);
+    expect(splitLedgerRefs('``a ` N14`` and N14', known)).toEqual(['``a ` N14`` and ', { seq: 14 }]);
+    expect(splitLedgerRefs('~~~\nN12: merge\n~~~\nN12', known)).toEqual(['~~~\nN12: merge\n~~~\n', { seq: 12 }]);
+    expect(splitLedgerRefs('````\n```\nN12\n````\nN12', known)).toEqual(['````\n```\nN12\n````\n', { seq: 12 }]);
+    expect(splitLedgerRefs('Run this:\n\n    show N14\n\tN12\n\nthen N14', known)).toEqual(['Run this:\n\n    show N14\n\tN12\n\nthen ', { seq: 14 }]);
+    // An unclosed fence runs to the end; an unmatched backtick is plain text.
+    expect(splitLedgerRefs('```\nN12 and N14', known)).toEqual(['```\nN12 and N14']);
+    expect(splitLedgerRefs('it costs 5` and N14', known)).toEqual(['it costs 5` and ', { seq: 14 }]);
+  });
+
+  it('an indented line inside a paragraph is no code block', () => {
+    expect(splitLedgerRefs('Answers:\n    N14: A', known)).toEqual(['Answers:\n    ', { seq: 14 }, ': A']);
+  });
+
   it('text without a known number is one string', () => {
     expect(splitLedgerRefs('nothing here', known)).toEqual(['nothing here']);
   });
@@ -74,6 +104,11 @@ describe('chipifyHtml — sanitized markdown', () => {
     expect(chip.textContent).toContain('<img src=x onerror=alert(1)>');
     expect(chip.getAttribute('title')).toBe(INDEX.get(7)!.text);
     expect(chipifyHtml('<p>N7</p>', INDEX)).toContain('&lt;img src=x onerror=alert(1)&gt;');
+  });
+
+  it('no chip in a path or URL in rendered text either', () => {
+    const div = chips('<p>See docs/plans/N12-design.md and https://example.com/N12, then N14.</p>');
+    expect([...div.querySelectorAll('[data-ledger-chip]')].map((c) => c.getAttribute('data-ledger-chip'))).toEqual(['14']);
   });
 
   it('html without a known number comes back unchanged', () => {
