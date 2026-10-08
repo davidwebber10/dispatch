@@ -75,10 +75,18 @@ export function LedgerChipText({ text, ledger }: { text: string; ledger?: Ledger
 
 const POPOVER_WIDTH = 300;
 
-/** The popover of a chip whose item is not on the card. Escape or a click outside closes it. */
+/**
+ * The popover of a chip whose item is not on the card. Escape, a click outside or a switch to
+ * another project closes it; it shows only over its own project.
+ */
 export function LedgerRefPopover() {
+  const activeId = useProjects((s) => s.activeId);
   const popover = useLedgerCard((s) => s.popover);
   const entry = useLedgerCard((s) => (s.popover ? s.byProject[s.popover.projectId]?.card?.index.find((e) => e.seq === s.popover!.seq) : undefined));
+  useEffect(() => {
+    const open = useLedgerCard.getState().popover;
+    if (open && open.projectId !== activeId) useLedgerCard.getState().setPopover(null);
+  }, [activeId]);
   useEffect(() => {
     if (!popover) return;
     const close = () => useLedgerCard.getState().setPopover(null);
@@ -88,7 +96,7 @@ export function LedgerRefPopover() {
     document.addEventListener('mousedown', onDown);
     return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('mousedown', onDown); };
   }, [popover]);
-  if (!popover || !entry) return null;
+  if (!popover || !entry || popover.projectId !== activeId) return null;
   const left = Math.max(8, Math.min(popover.x, window.innerWidth - POPOVER_WIDTH - 8));
   return (
     <div

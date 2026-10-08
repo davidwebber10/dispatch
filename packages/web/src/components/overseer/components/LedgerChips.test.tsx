@@ -104,3 +104,19 @@ describe('a chip click', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });
+
+// Review round 1: a project switch (Ctrl+Tab) must not leave one project's item over another.
+describe('the popover and a project switch', () => {
+  it('closes when the shown project changes, and never shows over another project', () => {
+    useLedgerCard.setState({ byProject: { 'proj-1': { card: FIXTURE, loading: false, error: null, request: 1 }, 'proj-2': { card: FIXTURE, loading: false, error: null, request: 1 } } });
+    act(() => { openLedgerRef('proj-1', 40, { x: 10, y: 10 }, { mobile: false }); });
+    render(<LedgerRefPopover />);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    act(() => { useProjects.setState({ activeId: 'proj-2' }); });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(useLedgerCard.getState().popover).toBeNull();
+    // A popover of another project, set while proj-2 shows, is not drawn.
+    act(() => { useLedgerCard.getState().setPopover({ projectId: 'proj-1', seq: 40, x: 0, y: 0 }); });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+});

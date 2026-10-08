@@ -216,8 +216,13 @@ function RulesLine({ card }: { card: Card }) {
   );
 }
 
-export function LedgerCard({ onAnswer: onAnswerProp }: { onAnswer?: (text: string) => void } = {}) {
+export function LedgerCard(props: { onAnswer?: (text: string) => void } = {}) {
   const projectId = useProjects((s) => s.activeId);
+  // Keyed by project: the lines opened as full cards and each "more" belong to one project.
+  return <ProjectLedgerCard key={projectId ?? ''} projectId={projectId} {...props} />;
+}
+
+function ProjectLedgerCard({ projectId, onAnswer: onAnswerProp }: { projectId: string | null; onAnswer?: (text: string) => void }) {
   // By default a click adds its answer to this project's message box (store.addToDraft, Unit 8).
   const onAnswer = onAnswerProp ?? ((text: string) => { if (projectId) useOverseer.getState().addToDraft(projectId, text); });
   const { card, error } = useLedgerCardEntry(projectId);

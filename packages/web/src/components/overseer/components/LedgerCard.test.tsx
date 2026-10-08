@@ -1,6 +1,6 @@
 // The pinned decision card (pinned card spec 2026-10-08, Unit 7), drawn from a fixture in the shape
 // of real ledger rows.
-import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, within, act } from '@testing-library/react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { LedgerCard } from './LedgerCard';
 import { useLedgerCard, useLedgerFolds, LEDGER_FOLDS_KEY } from '../../../stores/ledgerCard';
@@ -163,5 +163,22 @@ describe('LedgerCard — empty and failed', () => {
     render(<LedgerCard />);
     expect(screen.getByText('Could not load the decisions')).toBeInTheDocument();
     expect(fullCard(14)).not.toBeNull();
+  });
+});
+
+// Review round 1: what the user opened belongs to one project.
+describe('LedgerCard — a project switch', () => {
+  it('opened lines and "more" reset when the shown project changes', () => {
+    useLedgerCard.setState({ byProject: {
+      p1: { card: FIXTURE, loading: false, error: null, request: 1 },
+      p2: { card: FIXTURE, loading: false, error: null, request: 1 },
+    } });
+    render(<LedgerCard />);
+    fireEvent.click(screen.getByRole('button', { name: /N9 · Keep or drop the old tag check\?/ }));
+    fireEvent.click(within(fullCard(14)!).getByRole('button', { name: 'more' }));
+    expect(fullCard(9)).not.toBeNull();
+    act(() => { useProjects.setState({ activeId: 'p2' } as never); });
+    expect(fullCard(9)).toBeNull();
+    expect(within(fullCard(14)!).getByTestId('ledger-context')).toHaveAttribute('data-clamped', 'true');
   });
 });
