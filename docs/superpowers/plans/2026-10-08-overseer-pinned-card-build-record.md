@@ -147,8 +147,41 @@ One unexplained failure: in a run of the core overseer tests together with
 kept. It passed 3 of 3 alone, 12 of 12 in the same combined run, and in the full suite after round 1. The cause
 is not known; no code path of that test changed in that commit.
 
+## Review round 2 (GPT only; the last round)
+
+GPT: fix-then-ship, two Low findings, both in the plain-text chip scanner; the other round-1
+fixes are correct. Fixed test-first in `5b22fb7`:
+
+1. **An underscore after "?" or "." blocked the chip** (`_Approve N14?_`). Only a letter or a
+   digit after the "?" or "." makes an address now.
+2. **A line that starts with a code span was read as an unclosed fence** (a backtick, show N14,
+   three backticks, then N12): every number after it lost its chip. A backtick fence's opening
+   line may not hold another backtick (CommonMark), so that line is a span.
+
+Web after round 2: 158 files, 1352 tests; `tsc -b` clean.
+
+## Checks after the reviews
+
+- **Real-shaped data, the built code:** `renderLedgerSections` from main and from this branch
+  gave byte-identical text for four real project ledgers (44 to 77 items) at three recap times
+  each. Every real option got an `answerKey`. The longest paste block fell from 1,939 to 1,119
+  characters after the cut at about 150 characters.
+- **An isolated daemon** (fake HOME, port 3999, the branch build): 16 of 16 checks passed — the
+  card route writes nothing (overseer config unchanged, no `lastRecapAt`); imported items are
+  never new; one `ledger:changed` event per write and one for `ledger_list` with `forRecap`; none
+  for a refused (403) write; `ledger_add` returns one line; after a recap nothing is new; an
+  unknown project is a 404. (The daemon correctly refuses to spawn a coordinator on a shell; the
+  check marked a shell thread as the overseer in the fake database instead.)
+- **The route-test flake is not from this branch.** Full core suite, four runs each, one after
+  the other with nothing else running: main failed 1 of 4 (`tests/routes/watches.test.ts`, a
+  DELETE got 200 where 404 was expected), the branch failed 1 of 4 (`src/routes/files.test.ts`,
+  an upload got 401 where 200 was expected). Earlier, under extra load, two branch runs had a
+  "socket hang up" in a route test (ledger, watches). Each time a supertest request in a route
+  test got a status or a closed connection that its own app does not produce, as if it reached
+  another test's server. The cause is not proven. GPT found no code in this branch that closes a
+  connection, throws after a response or leaves a request without one. A follow-up can look at
+  how the route tests bind their ephemeral servers.
+
 ## Left for the next steps
 
-- The two code reviews, the run against an isolated daemon with real-shaped data (the route, the
-  event on a write, the interim rule, the card in a browser), and the PR, as the spec's "Build and
-  review" section orders them. This build started no daemon.
+- The PR, then the user's own yes for the merge, the release and the deploy.
