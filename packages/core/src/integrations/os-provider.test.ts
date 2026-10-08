@@ -2,7 +2,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { OsConnectionsProvider } from './os-provider.js';
 
 const OK = {
-  servers: [{ name: 'databricks', command: 'mcp-remote', args: ['https://mcp.polywood.tech/databricks'] }],
+  servers: [{ name: 'databricks', command: 'mcp-remote', args: ['https://mcp.example.com/databricks'] }],
   env: { DATABRICKS_TOKEN: 'short-lived' },
   systemPrompt: 'A databricks MCP server is available.',
   needsConsent: [{ id: 'google', label: 'Google', connectUrl: '/connections/google' }],

@@ -39,7 +39,7 @@ function fakeWsl(calls: string[][], gw = ROUTE) {
   return createWslPlatform({
     execFile: async (cmd, args) => {
       calls.push([cmd, ...args]);
-      if (cmd === 'wslpath') return { stdout: 'C:\\Users\\dw\\proj\\file.txt\n' };
+      if (cmd === 'wslpath') return { stdout: 'C:\\Users\\someone\\proj\\file.txt\n' };
       return { stdout: '' };
     },
     // Throws for unknown paths (matches real fs.readFileSync ENOENT behavior); only
@@ -58,7 +58,7 @@ test('reveal translates via wslpath and invokes explorer.exe /select', async () 
   await fakeWsl(calls).revealInFileManager(['/home/dw/proj/file.txt']);
   expect(calls).toEqual([
     ['wslpath', '-w', '/home/dw/proj/file.txt'],
-    ['explorer.exe', '/select,C:\\Users\\dw\\proj\\file.txt'],
+    ['explorer.exe', '/select,C:\\Users\\someone\\proj\\file.txt'],
   ]);
 });
 test('explorer.exe nonzero exit is swallowed (it exits 1 on success)', async () => {
