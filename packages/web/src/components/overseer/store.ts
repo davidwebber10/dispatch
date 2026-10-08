@@ -23,7 +23,7 @@ import { useTabs } from '../../stores/tabs';
 import { useThreadStatus } from '../../stores/threadStatus';
 import { useLedgerCardSync } from '../../stores/ledgerCard';
 import { useStructuredChat, type ApiRetry, type CompactResult } from '../tabs/chat/useStructuredChat';
-import { appendToStoredDraft, clearStoredDraft } from '../../hooks/useDraft';
+import { appendToDraft, clearStoredDraft } from '../../hooks/useDraft';
 import type { PendingPermission, Terminal } from '../../api/types';
 import { AGENT_TYPES } from '../../lib/harnesses';
 import { CANNED, m } from './data';
@@ -327,9 +327,10 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   },
 
   addToDraft: (projectId, text) => {
-    // The draft itself is the Composer's useDraft(project) value in local storage, so the append
-    // lands whether or not the Composer is mounted (another tab, the mobile Work tab).
-    appendToStoredDraft(projectId, text);
+    // The draft itself is the Composer's useDraft(project) value (the page's own copy, with local
+    // storage as a backup), so the append lands whether or not the Composer is mounted (another
+    // tab, the mobile Work tab), and never drops text that storage failed to keep.
+    appendToDraft(projectId, text);
     // On mobile the box is on the Stream tab; on desktop mobileTab is not read.
     set({ draftHint: { project: projectId, text, focus: true }, mobileTab: 'stream' });
   },

@@ -69,6 +69,15 @@ describe('the card and the composer', () => {
     expect(useOverseer.getState().draftHint).toBeNull();
   });
 
+  // Review round 1: the box's text is the page's own draft, not what storage holds.
+  it('with a storage that throws, a card click never drops the text in the box', () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('full', 'QuotaExceededError'); });
+    render(<><LedgerCard /><Composer /></>);
+    fireEvent.change(box(), { target: { value: 'my own words' } });
+    fireEvent.click(within(fullCard(14)).getByRole('button', { name: /^A\. 5 nights/ }));
+    expect(box().value).toBe('my own words, N14: A');
+  });
+
   it('the hint of another project never shows', () => {
     useOverseer.getState().addToDraft('p2', 'N3: B');
     render(<Composer />);
