@@ -258,11 +258,16 @@ export function renderOverseerDecisionLine(item: LedgerItem): string {
     `Reason: ${sentence(item.reason ?? '')} (Reply "reverse N${item.seq}" to change it.)`;
 }
 
+/** The overseer's own decisions of the last 7 days, and the reversals among them. */
+function overseerDecisionCounts(items: LedgerItem[], now: number): { overseerDecisions: number; reversed: number } {
+  const recent = items.filter((i) => i.decidedAt !== null && now - Date.parse(i.decidedAt) <= 7 * DAY_MS);
+  return { overseerDecisions: recent.length, reversed: recent.filter((i) => i.status === 'answered').length };
+}
+
 /** "Overseer decisions in the last 7 days: 6. Reversed by you: 1." — the reversals among those decisions. */
 export function renderCountLine(items: LedgerItem[], now: number): string {
-  const recent = items.filter((i) => i.decidedAt !== null && now - Date.parse(i.decidedAt) <= 7 * DAY_MS);
-  const reversed = recent.filter((i) => i.status === 'answered');
-  return `Overseer decisions in the last 7 days: ${recent.length}. Reversed by you: ${reversed.length}.`;
+  const { overseerDecisions, reversed } = overseerDecisionCounts(items, now);
+  return `Overseer decisions in the last 7 days: ${overseerDecisions}. Reversed by you: ${reversed}.`;
 }
 
 /** "- 4 proposed decisions from "Readiness planner" (N30, N31, N32, N33).", one line per agent. */
@@ -295,7 +300,64 @@ export function renderRulesList(items: LedgerItem[], ctx: RenderContext): string
 }
 
 /**
- * The ledger part of a recap, in this order:
+ * New for the user: an open item (go, decide or do) that reached the user after the last recap.
+ * With no recap yet (`lastRecapAt` null), every open item is new. An import is a one-time load,
+ * not news: an imported item never counts as new, so the first recap after an import shows the
+ * top 5 as cards, not every imported decision (amendment 2026-10-07 to the decision cards spec).
+ */
+export function isNewForUser(item: LedgerItem, lastRecapAt: string | null): boolean {
+  return item.status === 'open' && item.origin !== 'imported' && (lastRecapAt === null || sentTime(item) > lastRecapAt);
+}
+
+/** The sections of a recap as data (pinned card spec 2026-10-08, Unit 1). Each list is in display order. */
+export interface LedgerSections {
+  /** The project rules in force (the full list is projectRules). */
+  rulesCount: number;
+  /**
+   * Open go and decide items that do not run on a default: `cards` holds every new one, then the
+   * top 5 of the rest (first the ones that hold up work, then the oldest); `lines` holds the rest.
+   */
+  needsYou: { cards: LedgerItem[]; lines: LedgerItem[] };
+  onDefaults: LedgerItem[];
+  /** Open do items: the user's tests and actions. */
+  actions: LedgerItem[];
+  /** Answered or withdrawn since the last recap, then the overseer's own decisions since then. */
+  decidedSince: LedgerItem[];
+  /** Proposed by an agent, not yet triaged. */
+  untriaged: LedgerItem[];
+  parked: LedgerItem[];
+  /** What the count line prints. */
+  counts: { overseerDecisions: number; reversed: number };
+  /** The items that count as new (isNewForUser), in seq order. */
+  newSeqs: number[];
+}
+
+/** Pure: the caller passes the time and the items. */
+export function ledgerSections(items: LedgerItem[], opts: { now: number; lastRecapAt: string | null }): LedgerSections {
+  const since = (i: LedgerItem) => opts.lastRecapAt === null || i.updatedAt > opts.lastRecapAt;
+  const isNew = (i: LedgerItem) => isNewForUser(i, opts.lastRecapAt);
+  const open = items.filter((i) => i.status === 'open' && isCardKind(i) && !i.onDefaultSince);
+  const rank = (a: LedgerItem, b: LedgerItem) =>
+    Number(!a.blocks) - Number(!b.blocks) || sentTime(a).localeCompare(sentTime(b)) || a.seq - b.seq;
+  const rest = open.filter((i) => !isNew(i)).sort(rank);
+  return {
+    rulesCount: projectRules(items).length,
+    needsYou: { cards: [...open.filter(isNew), ...rest.slice(0, 5)], lines: rest.slice(5) },
+    onDefaults: items.filter((i) => i.status === 'open' && i.onDefaultSince),
+    actions: items.filter((i) => i.status === 'open' && i.kind === 'do'),
+    decidedSince: [
+      ...items.filter((i) => (i.status === 'answered' || i.status === 'withdrawn') && since(i)),
+      ...items.filter((i) => i.status === 'decided_by_overseer' && since(i)),
+    ],
+    untriaged: items.filter((i) => i.status === 'proposed'),
+    parked: items.filter((i) => i.status === 'parked'),
+    counts: overseerDecisionCounts(items, opts.now),
+    newSeqs: items.filter(isNew).map((i) => i.seq),
+  };
+}
+
+/**
+ * The ledger part of a recap: a text render of ledgerSections, in this order:
  *   1. Project rules — one line with their count, only when rules exist (overseer memory scope
  *      spec 2026-10-07, Unit 5: the full list is renderRulesList, for the overseer's own use).
  *   2. Needs you now — full cards for every decision sent to the user since the last recap, plus
@@ -304,8 +366,6 @@ export function renderRulesList(items: LedgerItem[], ctx: RenderContext): string
  *   3. Running on defaults.  4. Your tests and actions.
  *   5. Decided since the last recap — the user's answers, then the overseer's own decisions.
  *   6. Not yet triaged.  7. Parked.  8. The count line.
- * With no recap yet (`lastRecapAt` null), every open decision is new — except an imported one,
- * which never counts as new.
  */
 export function renderLedgerSections(
   items: LedgerItem[],
@@ -313,35 +373,23 @@ export function renderLedgerSections(
 ): string {
   const bySeq = new Map(items.map((i) => [i.seq, i] as const));
   const ctx: RenderContext = { now: opts.now, timeZone: opts.timeZone, lookup: (seq) => bySeq.get(seq) ?? null };
-  const since = (i: LedgerItem) => opts.lastRecapAt === null || i.updatedAt > opts.lastRecapAt;
+  const s = ledgerSections(items, opts);
   const out: string[] = [];
 
-  const rules = projectRules(items);
-  if (rules.length) out.push(renderRulesLine(rules.length));
+  if (s.rulesCount) out.push(renderRulesLine(s.rulesCount));
 
-  const open = items.filter((i) => i.status === 'open' && isCardKind(i) && !i.onDefaultSince);
-  // An import is a one-time load, not news: an imported decision never counts as new, so the
-  // first recap after an import shows the top 5 as cards, not every imported decision
-  // (amendment 2026-10-07 to the decision cards spec).
-  const isNew = (i: LedgerItem) =>
-    i.origin !== 'imported' && (opts.lastRecapAt === null || sentTime(i) > opts.lastRecapAt);
-  const rank = (a: LedgerItem, b: LedgerItem) =>
-    Number(!a.blocks) - Number(!b.blocks) || sentTime(a).localeCompare(sentTime(b)) || a.seq - b.seq;
-  const rest = open.filter((i) => !isNew(i)).sort(rank);
-  const cards = [...open.filter(isNew), ...rest.slice(0, 5)].map((i) => renderCard(i, ctx));
-  const lines = rest.slice(5).map(renderOneLine);
+  const cards = s.needsYou.cards.map((i) => renderCard(i, ctx));
+  const lines = s.needsYou.lines.map(renderOneLine);
   out.push(cards.length || lines.length
     ? ['Needs you now:', ...cards, ...(lines.length ? [lines.join('\n')] : [])].join('\n\n')
     : 'Needs you now:\n- none');
 
-  out.push(listSection('Running on defaults', items.filter((i) => i.status === 'open' && i.onDefaultSince).map((i) => renderDefaultLine(i, ctx))));
-  out.push(listSection('Your tests and actions', items.filter((i) => i.status === 'open' && i.kind === 'do').map((i) => `- ${renderItem(i, ctx)}`)));
-  out.push(listSection('Decided since the last recap', [
-    ...items.filter((i) => (i.status === 'answered' || i.status === 'withdrawn') && since(i)).map((i) => `- ${renderItem(i, ctx)}`),
-    ...items.filter((i) => i.status === 'decided_by_overseer' && since(i)).map(renderOverseerDecisionLine),
-  ]));
-  out.push(listSection('Not yet triaged', proposedLines(items.filter((i) => i.status === 'proposed'))));
-  out.push(listSection('Parked', items.filter((i) => i.status === 'parked').map((i) => `- ${renderItem(i, ctx)}`)));
+  out.push(listSection('Running on defaults', s.onDefaults.map((i) => renderDefaultLine(i, ctx))));
+  out.push(listSection('Your tests and actions', s.actions.map((i) => `- ${renderItem(i, ctx)}`)));
+  out.push(listSection('Decided since the last recap', s.decidedSince.map((i) =>
+    (i.status === 'decided_by_overseer' ? renderOverseerDecisionLine(i) : `- ${renderItem(i, ctx)}`))));
+  out.push(listSection('Not yet triaged', proposedLines(s.untriaged)));
+  out.push(listSection('Parked', s.parked.map((i) => `- ${renderItem(i, ctx)}`)));
   out.push(renderCountLine(items, opts.now));
   return out.join('\n\n');
 }
