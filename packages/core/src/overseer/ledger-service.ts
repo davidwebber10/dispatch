@@ -87,18 +87,33 @@ export class LedgerService {
   private readonly clock: () => number;
   private readonly timeZone?: string;
   private readonly listWorktrees: (dir: string) => string[];
+  private readonly onChange?: (sessionId: string) => void;
 
+  /**
+   * `onChange` (pinned card spec 2026-10-08, Unit 3) runs after every successful write, with the
+   * project; server.ts turns it into the `ledger:changed` event. Its failure never fails the write.
+   */
   constructor(
     private readonly db: Database.Database,
-    opts: { clock?: () => number; timeZone?: string; listWorktrees?: (dir: string) => string[] } = {},
+    opts: { clock?: () => number; timeZone?: string; listWorktrees?: (dir: string) => string[]; onChange?: (sessionId: string) => void } = {},
   ) {
     this.clock = opts.clock ?? (() => Date.now());
     this.timeZone = opts.timeZone;
     this.listWorktrees = opts.listWorktrees ?? gitWorktrees;
+    this.onChange = opts.onChange;
   }
 
   private nowIso(): string {
     return new Date(this.clock()).toISOString();
+  }
+
+  /** Tell the listener that the project's ledger changed. Never throws. */
+  private changed(sessionId: string): void {
+    try {
+      this.onChange?.(sessionId);
+    } catch (err) {
+      console.error(`ledger: the change listener failed for ${sessionId}; the write stands`, err);
+    }
   }
 
   private ctx(sessionId: string): RenderContext {
@@ -253,6 +268,7 @@ export class LedgerService {
       supersedes,
       now: this.nowIso(),
     });
+    this.changed(sessionId);
     // A go or decide item goes to the user as its full card (Unit 5), a do item as its line.
     const ctx = this.ctx(sessionId);
     return { id: `N${item.seq}`, line: item.kind === 'do' ? renderItem(item, ctx) : renderCard(item, ctx) };
@@ -280,6 +296,7 @@ export class LedgerService {
       const reason = str(input.reason);
       if (!reason) throw new LedgerError(400, 'reason is required to withdraw an item');
       const updated = ledgerDb.updateStatus(this.db, sessionId, item.seq, { status, reason, reading, now: this.nowIso() })!;
+      this.changed(sessionId);
       return { id: `N${item.seq}`, status, line: renderItem(updated, this.ctx(sessionId)) };
     }
     const quote = str(input.quote);
@@ -294,6 +311,7 @@ export class LedgerService {
     const updated = ledgerDb.updateStatus(this.db, sessionId, item.seq, {
       status, quote: match.quote, quoteMessageId: match.messageId, quoteAt: match.sentAt, reading, now: this.nowIso(),
     })!;
+    this.changed(sessionId);
     return { id: `N${item.seq}`, status, line: renderItem(updated, this.ctx(sessionId)) };
   }
 
@@ -309,6 +327,7 @@ export class LedgerService {
     const item = this.requireItem(sessionId, input.id);
     if (item.status !== 'proposed') throw new LedgerError(409, `N${item.seq} is already ${item.status}.`, { status: item.status });
     ledgerDb.markSent(this.db, sessionId, item.seq, { note: str(input.note), blocks: str(input.blocks), now: this.nowIso() });
+    this.changed(sessionId);
     return { id: `N${item.seq}`, status: 'open' };
   }
 
@@ -329,6 +348,7 @@ export class LedgerService {
     const reason = str(input.reason);
     if (!choice || !reason) throw new LedgerError(400, 'choice and reason are required');
     const updated = ledgerDb.markDecidedByOverseer(this.db, sessionId, item.seq, { choice, reason, now: this.nowIso() })!;
+    this.changed(sessionId);
     return { id: `N${item.seq}`, status: 'decided_by_overseer', line: renderOverseerDecisionLine(updated) };
   }
 
@@ -355,6 +375,7 @@ export class LedgerService {
       reason,
       now: this.nowIso(),
     });
+    this.changed(sessionId);
     return { id: `N${item.seq}`, status: 'decided_by_overseer', line: renderOverseerDecisionLine(item) };
   }
 
@@ -365,6 +386,7 @@ export class LedgerService {
     if (item.kind !== 'go' && item.kind !== 'decide') throw new LedgerError(400, 'only a go or decide item has a default');
     if (item.status !== 'open') throw new LedgerError(409, `N${item.seq} is already ${item.status}.`, { status: item.status });
     const updated = ledgerDb.markOnDefault(this.db, sessionId, item.seq, this.nowIso())!;
+    this.changed(sessionId);
     return { id: `N${item.seq}`, line: renderDefaultLine(updated, { timeZone: this.timeZone }) };
   }
 
@@ -404,6 +426,7 @@ export class LedgerService {
       policy: input.policy === true,
       now: this.nowIso(),
     });
+    this.changed(sessionId);
     return { id: `N${item.seq}`, line: renderItem(item, this.ctx(sessionId)) };
   }
 
@@ -423,6 +446,7 @@ export class LedgerService {
       cfg[LAST_RECAP_KEY] = this.nowIso();
       delete cfg[INTERIM_DUE_KEY];
       terminalsDb.updateConfig(this.db, overseer.id, cfg);
+      this.changed(sessionId); // a recap changes which items are new
     }
     const ctx = this.ctx(sessionId);
     return {
@@ -479,6 +503,7 @@ export class LedgerService {
       };
     });
     const created = this.db.transaction(() => inputs.map((input) => ledgerDb.create(this.db, input)))();
+    this.changed(sessionId);
     return { ids: created.map((i) => `N${i.seq}`) };
   }
 
@@ -547,6 +572,7 @@ export class LedgerService {
         created.push(item.seq);
       });
     })();
+    if (created.length) this.changed(sessionId);
     return { created, skipped };
   }
 

@@ -1401,9 +1401,12 @@ export class SessionService {
   }
 
   private ledgerService?: LedgerService;
+  private onLedgerChange?: (sessionId: string) => void;
+  /** Runs after every write of this service's ledger (the owner-decisions capture); set by the server wiring. */
+  setLedgerChangeListener(listener: (sessionId: string) => void): void { this.onLedgerChange = listener; }
   /** The decision ledger, on this service's clock (tests pin it). */
   private get ledger(): LedgerService {
-    return (this.ledgerService ??= new LedgerService(this.db, { clock: () => this.clock() }));
+    return (this.ledgerService ??= new LedgerService(this.db, { clock: () => this.clock(), onChange: (id) => this.onLedgerChange?.(id) }));
   }
 
   /**
