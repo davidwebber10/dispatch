@@ -1,7 +1,8 @@
 // Overseer — pure helpers for the pinned decision card (pinned card spec 2026-10-08, Units 7 and 8).
 // The daemon computes the sections (GET …/ledger/card); these only format what the card draws.
 
-import type { CardItem, CardOption, CardSource, LedgerCard } from '../../api/types';
+import type { CardItem, CardOption, CardSource, CardStatus, LedgerCard } from '../../api/types';
+import type { LedgerFold } from '../../stores/ledgerCard';
 
 /** The open decisions that need the user now: the full cards plus the one-line rest. */
 export function openDecisionCount(card: LedgerCard | null): number {
@@ -70,4 +71,22 @@ export function formatUpdated(iso: string, now: number = Date.now()): string {
   const d = new Date(iso);
   const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
   return d.toDateString() === new Date(now).toDateString() ? time : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}`;
+}
+
+export const STATUS_WORD: Record<CardStatus, string> = {
+  open: 'Open', answered: 'Answered', parked: 'Parked', withdrawn: 'Withdrawn', superseded: 'Superseded',
+  proposed: 'Not yet triaged', decided_by_overseer: 'Decided by overseer',
+};
+
+/**
+ * Where an item is on the card: a full card of Needs you now ('cards'), one of its lines ('lines'),
+ * or a folded section. Null when the card does not show it (answered long ago, superseded, …).
+ */
+export function ledgerSectionOf(card: LedgerCard, seq: number): 'cards' | 'lines' | Exclude<LedgerFold, 'rules'> | null {
+  const s = card.sections;
+  const has = (items: CardItem[]) => items.some((i) => i.seq === seq);
+  if (has(s.needsYou.cards)) return 'cards';
+  if (has(s.needsYou.lines)) return 'lines';
+  for (const fold of ['actions', 'onDefaults', 'decidedSince', 'untriaged', 'parked'] as const) if (has(s[fold])) return fold;
+  return null;
 }

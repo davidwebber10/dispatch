@@ -16,6 +16,7 @@
 //   - unknown   — neutral card labeled with the raw state, so a new state never silently borrows
 //                 another state's meaning.
 
+import type { ReactNode } from 'react';
 import { parseReportStatus } from './reportStatus';
 
 interface StateStyle {
@@ -53,7 +54,8 @@ const STATE_STYLES: Record<'done' | 'needs_you' | 'blocked', StateStyle> = {
   },
 };
 
-export function StatusNotice({ input }: { input?: string }) {
+/** `renderText` lets a surface draw the summary and the ask its own way (the Control Plane adds ledger chips). */
+export function StatusNotice({ input, renderText }: { input?: string; renderText?: (text: string) => ReactNode }) {
   const rs = parseReportStatus(input);
   if (!rs) return null;
 
@@ -103,10 +105,10 @@ export function StatusNotice({ input }: { input?: string }) {
         {style.meta && <span style={{ font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{style.meta}</span>}
       </div>
       {showSummary && (
-        <div style={{ fontSize: 13.5, lineHeight: 1.6, color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap', overflowWrap: 'break-word' }}>{rs.summary}</div>
+        <div style={{ fontSize: 13.5, lineHeight: 1.6, color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap', overflowWrap: 'break-word' }}>{renderText ? renderText(rs.summary!) : rs.summary}</div>
       )}
       {primary && (
-        <div style={{ fontSize: 14, lineHeight: 1.6, color: 'var(--color-text-primary)', whiteSpace: 'pre-wrap', overflowWrap: 'break-word' }}>{primary}</div>
+        <div style={{ fontSize: 14, lineHeight: 1.6, color: 'var(--color-text-primary)', whiteSpace: 'pre-wrap', overflowWrap: 'break-word' }}>{renderText ? renderText(primary) : primary}</div>
       )}
     </div>
   );

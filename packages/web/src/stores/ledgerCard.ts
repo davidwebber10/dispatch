@@ -26,6 +26,12 @@ export interface LedgerCardEntry {
 
 interface LedgerCardState {
   byProject: Record<string, LedgerCardEntry>;
+  /** A ledger chip asked the card to open this item (Unit 9); the card clears it once it did. */
+  focus: { projectId: string; seq: number } | null;
+  /** A ledger chip of an item that is not on the card: the small popover at the click (Unit 9). */
+  popover: { projectId: string; seq: number; x: number; y: number } | null;
+  setFocus: (focus: { projectId: string; seq: number } | null) => void;
+  setPopover: (popover: { projectId: string; seq: number; x: number; y: number } | null) => void;
   load: (projectId: string) => Promise<void>;
   /** `ledger:changed` → load that project again, if the screen has shown it. */
   applyEvent: (e: ServerEvent) => void;
@@ -41,6 +47,10 @@ export const useLedgerCard = create<LedgerCardState>((set, get) => {
     set((s) => ({ byProject: { ...s.byProject, [projectId]: { ...(s.byProject[projectId] ?? EMPTY), ...p } } }));
   return {
     byProject: {},
+    focus: null,
+    popover: null,
+    setFocus: (focus) => set({ focus }),
+    setPopover: (popover) => set({ popover }),
     load: async (projectId) => {
       const request = ++lastRequest;
       patch(projectId, { loading: true, request });

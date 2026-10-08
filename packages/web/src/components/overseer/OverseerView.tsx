@@ -12,6 +12,7 @@ import './tokens.css';
 import { ConversationStream } from './components/Stream';
 import { Composer } from './components/Composer';
 import { WorkerLightbox } from './components/WorkerLightbox';
+import { LedgerRefPopover } from './components/LedgerChips';
 
 export function OverseerView({ onBack }: { onBack?: () => void } = {}) {
   const isMobile = useIsMobile();
@@ -39,6 +40,7 @@ export function OverseerView({ onBack }: { onBack?: () => void } = {}) {
       </div>
 
       <WorkerLightbox />
+      <LedgerRefPopover />
     </div>
   );
 }

@@ -23,6 +23,7 @@ import { ConversationStream } from './components/Stream';
 import { Composer } from './components/Composer';
 import { OngoingWorkOverview } from './components/WorkRail';
 import { LedgerCard } from './components/LedgerCard';
+import { LedgerRefPopover } from './components/LedgerChips';
 import { ThreadDetail } from './components/ThreadDetail';
 import { WorkerLightbox } from './components/WorkerLightbox';
 
@@ -231,6 +232,7 @@ export function OverseerMobile({ onBack }: { onBack?: () => void }) {
       )}
 
       <WorkerLightbox />
+      <LedgerRefPopover />
     </div>
   );
 }

@@ -18,6 +18,10 @@
 //   • a Scroll-to-Bottom button appears when the reader scrolls up, and they aren't yanked down
 //   • StickToEndOnLoad re-sticks through the post-open backfill burst, re-arming per thread
 //
+// Ledger chips (pinned card spec 2026-10-08, Unit 9): overseer replies, the user's own messages,
+// the agency notice pills and the report_status cards draw each known ledger number as a chip with
+// its question. One useLedgerChips() in ConversationStream feeds every row through renderStream.
+//
 // No prop drilling — reads the store directly.
 // Desktop: flex:1 scroll (in the left conversation column). Mobile: fills the Stream tab.
 
@@ -38,6 +42,8 @@ import { openFileTab } from '../../../lib/openFileTab';
 import { useOverseer, useRenderVals } from '../store';
 import { useBootstrapOlderPages } from '../../../hooks/useBootstrapOlderPages';
 import { ControlPlaneSetupCard } from './SetupCard';
+import { LedgerChipText, useLedgerChips } from './LedgerChips';
+import type { LedgerChips } from '../../../lib/ledgerRefs';
 import type { StreamMessage } from '../types';
 
 // `.md-view`'s CSS consumes the GLOBAL `--color-*` tokens (defined on :root), which
@@ -66,7 +72,7 @@ function DispatchHeader({ time }: { time: string }) {
 // InsightText.tsx), so any ★ Insight blocks become tinted callouts here EXACTLY as they do
 // in the agent ChatView — the parsing/callout logic lives in one place, not per surface.
 
-function OverseerMsg({ msg, showHeader }: { msg: StreamMessage; showHeader: boolean }) {
+function OverseerMsg({ msg, showHeader, ledger }: { msg: StreamMessage; showHeader: boolean; ledger?: LedgerChips }) {
   if (!msg.text) return null; // parity with the agent AssistantText — no empty body
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 11 }}>
@@ -74,7 +80,7 @@ function OverseerMsg({ msg, showHeader }: { msg: StreamMessage; showHeader: bool
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0, flex: 1 }}>
         {showHeader && <DispatchHeader time={msg.time} />}
         {/* body — prose + ★ Insight callouts, scoped to the overseer token set */}
-        <InsightText source={msg.text} scheme="scoped" />
+        <InsightText source={msg.text} scheme="scoped" ledger={ledger} />
       </div>
     </div>
   );
@@ -128,7 +134,7 @@ function UserImageMsg({ msg }: { msg: StreamMessage }) {
 
 // ---- User message -----------------------------------------------------------
 
-function UserMsg({ msg }: { msg: StreamMessage }) {
+function UserMsg({ msg, ledger }: { msg: StreamMessage; ledger?: LedgerChips }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
       <div
@@ -161,7 +167,7 @@ function UserMsg({ msg }: { msg: StreamMessage }) {
             wordBreak: 'break-word',
           }}
         >
-          {msg.text}
+          <LedgerChipText text={msg.text} ledger={ledger} />
         </div>
       </div>
     </div>
@@ -282,7 +288,7 @@ function detectAgencyNotice(text: string): AgencyNotice | null {
   return null;
 }
 
-function AgencyNoticeMsg({ notice }: { notice: AgencyNotice }) {
+function AgencyNoticeMsg({ notice, ledger }: { notice: AgencyNotice; ledger?: LedgerChips }) {
   const NoticeIcon = notice.icon;
   const drillInto = useOverseer((s) => s.drillInto);
   const [hover, setHover] = useState(false);
@@ -313,7 +319,7 @@ function AgencyNoticeMsg({ notice }: { notice: AgencyNotice }) {
         }}
       >
         <NoticeIcon size={13} weight="fill" color={notice.color} style={{ flex: 'none' }} />
-        <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{notice.summary}</span>
+        <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}><LedgerChipText text={notice.summary} ledger={ledger} /></span>
       </span>
     </div>
   );
@@ -359,7 +365,7 @@ function detectDirectMessageNotice(text: string): DirectMessageNotice | null {
   };
 }
 
-function DirectMessageNoticeMsg({ notice }: { notice: DirectMessageNotice }) {
+function DirectMessageNoticeMsg({ notice, ledger }: { notice: DirectMessageNotice; ledger?: LedgerChips }) {
   const drillInto = useOverseer((s) => s.drillInto);
   const [hover, setHover] = useState(false);
   const clickable = !!notice.agentId;
@@ -416,7 +422,7 @@ function DirectMessageNoticeMsg({ notice }: { notice: DirectMessageNotice }) {
             wordBreak: 'break-word',
           }}
         >
-          “{notice.quote}”
+          “<LedgerChipText text={notice.quote} ledger={ledger} />”
         </div>
         {/* de-emphasized guidance — was the run-on sentence's tail, now a muted footnote */}
         <div style={{ fontSize: 10.5, color: 'var(--tt)', paddingLeft: 20 }}>
@@ -460,7 +466,7 @@ function NoteMsg({ msg }: { msg: StreamMessage }) {
 // tracks the previously RENDERED row so a skipped (empty) item doesn't suppress the next
 // real Dispatch header.
 
-function renderStream(stream: StreamMessage[], onViewFile?: (path: string) => void) {
+function renderStream(stream: StreamMessage[], onViewFile?: (path: string) => void, ledger?: LedgerChips) {
   const rows: React.ReactNode[] = [];
   let prevDispatch = false;
 
@@ -501,7 +507,7 @@ function renderStream(stream: StreamMessage[], onViewFile?: (path: string) => vo
       rows.push(
         <MessageScroller.Item key={msg.key} messageId={msg.key} style={{ display: 'flex' }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <StatusNotice input={msg.statusInput} />
+            <StatusNotice input={msg.statusInput} renderText={(text) => <LedgerChipText text={text} ledger={ledger} />} />
           </div>
         </MessageScroller.Item>,
       );
@@ -542,7 +548,7 @@ function renderStream(stream: StreamMessage[], onViewFile?: (path: string) => vo
       if (!msg.text) continue; // renders nothing — don't push, don't touch the run
       rows.push(
         <MessageScroller.Item key={msg.key} messageId={msg.key} style={{ display: 'flex', flexDirection: 'column' }}>
-          <OverseerMsg msg={msg} showHeader={!prevDispatch} />
+          <OverseerMsg msg={msg} showHeader={!prevDispatch} ledger={ledger} />
         </MessageScroller.Item>,
       );
       prevDispatch = true;
@@ -562,11 +568,11 @@ function renderStream(stream: StreamMessage[], onViewFile?: (path: string) => vo
       rows.push(
         <MessageScroller.Item key={msg.key} messageId={msg.key} style={{ display: 'flex', flexDirection: 'column' }}>
           {dmNotice ? (
-            <DirectMessageNoticeMsg notice={dmNotice} />
+            <DirectMessageNoticeMsg notice={dmNotice} ledger={ledger} />
           ) : notice ? (
-            <AgencyNoticeMsg notice={notice} />
+            <AgencyNoticeMsg notice={notice} ledger={ledger} />
           ) : (
-            <UserMsg msg={msg} />
+            <UserMsg msg={msg} ledger={ledger} />
           )}
         </MessageScroller.Item>,
       );
@@ -608,6 +614,8 @@ export function ConversationStream() {
   const coordinatorApiRetry = useOverseer((s) => s.coordinatorApiRetry);
   const coordinatorCompacting = useOverseer((s) => s.coordinatorCompacting);
   const coordinatorProject = useOverseer((s) => s.coordinatorProject);
+  // The shown project's ledger index for the chips — never another project's (see useLedgerChips).
+  const ledger = useLedgerChips();
   // "View file" from a machinery row: open (or reuse) the file tab in the project and
   // STAY PUT (Jason's call) — focus:false, so the Overseer is never navigated away from;
   // the tab waits on the Threads surface. Stable identity so renderStream isn't re-keyed.
@@ -665,7 +673,7 @@ export function ConversationStream() {
                   turns — without a tappable control, hasMore:true history is stranded. Gated on
                   projectMatches like every other coordinator read (the cross-tab bleed fix). */}
               <LoadEarlierButton show={projectMatches && coordinatorHasMore && !coordinatorLoadingOlder} onClick={coordinatorLoadOlder} />
-              {renderStream(stream, onViewFile)}
+              {renderStream(stream, onViewFile, ledger)}
               {/* The coordinator's OWN AskUserQuestion, rendered inline (mirrors the agent
                   ChatView). Answering unblocks its CLI, which is parked on stdin — without this
                   the "Open Dispatch" chat silently freezes (the question surfaces nowhere else,

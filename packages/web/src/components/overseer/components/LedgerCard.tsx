@@ -15,14 +15,17 @@
 // A click never sends anything: an option, the Approve row of a go item and the Done link of an
 // action hand their answer text ("N17: A", "N34: approve", "N55: done") to `onAnswer`, which adds
 // it to the message box; the user presses Enter.
+//
+// A ledger chip in the chat (Unit 9) sets the store's `focus`: the card unfolds the item's section,
+// opens it as a full card and scrolls to it, then clears the focus (so a remount does not repeat it).
 
-import { useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { MonoLabel } from '../atoms';
 import { useOverseer } from '../store';
 import { useProjects } from '../../../stores/projects';
 import { useLedgerCard, useLedgerCardEntry, useLedgerFolds, type LedgerFold } from '../../../stores/ledgerCard';
 import { timeAgo } from '../../../lib/time';
-import { answerText, formatCardSource, formatUpdated, openDecisionCount, outcomeText } from '../ledger';
+import { answerText, formatCardSource, formatUpdated, ledgerSectionOf, openDecisionCount, outcomeText } from '../ledger';
 import type { CardItem, CardOption, LedgerCard as Card } from '../../../api/types';
 
 const KIND: Record<CardItem['kind'], string> = { go: 'Go', decide: 'Decide', do: 'Do', statement: 'Statement' };
@@ -225,6 +228,27 @@ export function LedgerCard({ onAnswer: onAnswerProp }: { onAnswer?: (text: strin
     if (!next.delete(seq)) next.add(seq);
     return next;
   });
+
+  // A chip asked for an item: open it where it is, then scroll to it once it is drawn.
+  const focus = useLedgerCard((st) => st.focus);
+  const rootRef = useRef<HTMLElement>(null);
+  const [scrollTo, setScrollTo] = useState<number | null>(null);
+  useEffect(() => {
+    if (!focus || focus.projectId !== projectId || !card) return;
+    const where = ledgerSectionOf(card, focus.seq);
+    if (where && where !== 'cards') {
+      if (where !== 'lines') useLedgerFolds.getState().setOpen(where, true);
+      setOpened((cur) => new Set(cur).add(focus.seq));
+    }
+    setScrollTo(focus.seq);
+    useLedgerCard.getState().setFocus(null);
+  }, [focus, projectId, card]);
+  useEffect(() => {
+    if (scrollTo === null) return;
+    rootRef.current?.querySelector(`[data-ledger-seq="${scrollTo}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    setScrollTo(null);
+  }, [scrollTo]);
+
   if (!projectId) return null;
 
   // An item the user opened draws as a full card in place of its line.
@@ -237,6 +261,7 @@ export function LedgerCard({ onAnswer: onAnswerProp }: { onAnswer?: (text: strin
   const s = card?.sections;
   return (
     <section
+      ref={rootRef}
       data-testid="ledger-card"
       aria-label="Needs you"
       style={{ flex: '0 1 auto', maxHeight: '60%', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10, padding: '13px 16px', borderBottom: '1px solid var(--border)' }}
