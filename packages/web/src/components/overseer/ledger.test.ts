@@ -45,6 +45,9 @@ describe('outcomeText — what happened to an item', () => {
     expect(outcomeText(cardItem({ status: 'parked', quote: 'later' }))).toBe('Parked: "later"');
     expect(outcomeText(cardItem({ status: 'withdrawn', reason: 'moot' }))).toBe('Withdrawn: moot');
     expect(outcomeText(cardItem({ status: 'decided_by_overseer', choice: 'the existing one' }))).toBe('Decided by overseer: the existing one');
+    // Review round 1: the overseer's own reason sits next to its choice.
+    expect(outcomeText(cardItem({ status: 'decided_by_overseer', choice: 'the existing one.', reason: 'it covers this case' })))
+      .toBe('Decided by overseer: the existing one. Reason: it covers this case');
     expect(outcomeText(cardItem({ status: 'superseded' }))).toBe('Superseded');
     expect(outcomeText(cardItem({ status: 'proposed' }))).toBe('Not yet triaged');
   });

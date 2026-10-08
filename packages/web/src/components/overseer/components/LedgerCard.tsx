@@ -128,14 +128,15 @@ function FullCard({ item, onAnswer, onFold }: { item: CardItem; onAnswer?: (text
           {item.options.map((o) => <OptionRow key={o.label} item={item} option={o} onAnswer={onAnswer} />)}
         </div>
       )}
-      {item.kind === 'go' && item.status === 'open' && (
+      {/* A go item's Approve row; an open action keeps its Done control on the full card too. */}
+      {(item.kind === 'go' || item.kind === 'do') && item.status === 'open' && (
         <button
           type="button"
           title={`Add "${answerText(item)}" to the message box`}
           onClick={() => onAnswer?.(answerText(item))}
           style={{ textAlign: 'left', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: 'var(--tp)', padding: '6px 9px', borderRadius: 7, background: 'var(--accDim)', border: '1px solid var(--accLine)', cursor: 'pointer' }}
         >
-          Approve
+          {item.kind === 'go' ? 'Approve' : 'Done'}
         </button>
       )}
       {item.why && <Field label={item.recommendation ? `Why ${item.recommendation}:` : 'Why:'}>{item.why}</Field>}

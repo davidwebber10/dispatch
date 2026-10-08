@@ -110,6 +110,31 @@ describe('LedgerCard — a full card', () => {
   });
 });
 
+// Review round 1.
+describe('LedgerCard — an expanded card keeps its action, and shows the overseer\'s reason', () => {
+  it('an open do item opened as a full card keeps its Done control', () => {
+    const onAnswer = vi.fn();
+    useLedgerFolds.setState({ open: { actions: true } });
+    render(<LedgerCard onAnswer={onAnswer} />);
+    fireEvent.click(screen.getByRole('button', { name: /N20 · Check the banner on staging\./ }));
+    const card = within(fullCard(20)!);
+    fireEvent.click(card.getByRole('button', { name: 'Done' }));
+    expect(onAnswer.mock.calls).toEqual([['N20: done']]);
+  });
+
+  it('a card decided by the overseer shows its choice with its own reason, apart from the original why', () => {
+    useLedgerCard.setState({ byProject: { p1: { card: { ...FIXTURE, sections: { ...FIXTURE.sections, decidedSince: [{
+      ...FIXTURE.sections.decidedSince[2], why: 'The agent preferred the new helper.', recommendation: 'B. new helper',
+    }] } }, loading: false, error: null, request: 1 } } });
+    useLedgerFolds.setState({ open: { decidedSince: true } });
+    render(<LedgerCard />);
+    fireEvent.click(screen.getByRole('button', { name: /N4 · Which retry helper\?/ }));
+    const card = within(fullCard(4)!);
+    expect(card.getByText('Why B. new helper:')).toBeInTheDocument();
+    expect(card.getByText('Decided by overseer: the existing one. Reason: it covers this case')).toBeInTheDocument();
+  });
+});
+
 describe('LedgerCard — folding', () => {
   it('a section opens on click, and its fold state is kept in local storage', () => {
     const { unmount } = render(<LedgerCard />);

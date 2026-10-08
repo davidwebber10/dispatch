@@ -41,7 +41,8 @@ export function answerText(item: CardItem, option?: CardOption): string {
 
 /**
  * What happened to an item, for its line and its full card: the user's answer (or a reversal of the
- * overseer's own choice), the overseer's choice, the withdrawal reason, the default it runs on.
+ * overseer's own choice), the overseer's choice and its reason, the withdrawal reason, the default
+ * it runs on.
  * Null for an open item that waits on the user.
  */
 export function outcomeText(item: CardItem): string | null {
@@ -60,7 +61,8 @@ export function outcomeText(item: CardItem): string | null {
       return `Your answer: "${item.quote ?? ''}"`;
     case 'parked': return unchecked ? 'Parked, imported, not checked' : `Parked: "${item.quote ?? ''}"`;
     case 'withdrawn': return `Withdrawn: ${item.reason ?? ''}`;
-    case 'decided_by_overseer': return `Decided by overseer: ${item.choice ?? ''}`;
+    // The overseer's own reason sits next to its choice, apart from the original recommendation's why.
+    case 'decided_by_overseer': return `Decided by overseer: ${(item.choice ?? '').trim().replace(/\.$/, '')}${item.reason ? `. Reason: ${item.reason}` : ''}`;
     case 'superseded': return 'Superseded';
     case 'proposed': return 'Not yet triaged';
   }
