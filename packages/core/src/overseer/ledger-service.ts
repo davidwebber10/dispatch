@@ -22,9 +22,10 @@ import * as ledgerDb from '../db/ledger.js';
 import * as messagesDb from '../db/coordinator-messages.js';
 import { findQuote, GO_APPROVAL_ERROR, namesGoApproval, OK_ONLY_ERROR } from './ledger-quote.js';
 import {
-  isUnchecked, projectRules, renderCard, renderDefaultLine, renderHandoffBlock, renderItem, renderLedgerSections, renderOverseerDecisionLine,
-  renderRulesList, type RenderContext,
+  isUnchecked, projectRules, renderAddLine, renderCard, renderDefaultLine, renderHandoffBlock, renderItem, renderLedgerSections,
+  renderOverseerDecisionLine, renderRecapPaste, renderRulesList, type RenderContext,
 } from './ledger-render.js';
+import { buildLedgerCard, type LedgerCard } from './ledger-card.js';
 import {
   cardFieldsError, findProjectPath, gitWorktrees, holdsSeveralDecisions, isIssueRef, missingCardFields,
   isUserSourceKind, ONE_DECISION_ERROR, ONLY_USER_ERROR, onlyUserCanDecide, sourceComplete, sourceMissingError, type CardFieldsInput,
@@ -86,18 +87,33 @@ export class LedgerService {
   private readonly clock: () => number;
   private readonly timeZone?: string;
   private readonly listWorktrees: (dir: string) => string[];
+  private readonly onChange?: (sessionId: string) => void;
 
+  /**
+   * `onChange` (pinned card spec 2026-10-08, Unit 3) runs after every successful write, with the
+   * project; server.ts turns it into the `ledger:changed` event. Its failure never fails the write.
+   */
   constructor(
     private readonly db: Database.Database,
-    opts: { clock?: () => number; timeZone?: string; listWorktrees?: (dir: string) => string[] } = {},
+    opts: { clock?: () => number; timeZone?: string; listWorktrees?: (dir: string) => string[]; onChange?: (sessionId: string) => void } = {},
   ) {
     this.clock = opts.clock ?? (() => Date.now());
     this.timeZone = opts.timeZone;
     this.listWorktrees = opts.listWorktrees ?? gitWorktrees;
+    this.onChange = opts.onChange;
   }
 
   private nowIso(): string {
     return new Date(this.clock()).toISOString();
+  }
+
+  /** Tell the listener that the project's ledger changed. Never throws. */
+  private changed(sessionId: string): void {
+    try {
+      this.onChange?.(sessionId);
+    } catch (err) {
+      console.error(`ledger: the change listener failed for ${sessionId}; the write stands`, err);
+    }
   }
 
   private ctx(sessionId: string): RenderContext {
@@ -252,9 +268,9 @@ export class LedgerService {
       supersedes,
       now: this.nowIso(),
     });
-    // A go or decide item goes to the user as its full card (Unit 5), a do item as its line.
-    const ctx = this.ctx(sessionId);
-    return { id: `N${item.seq}`, line: item.kind === 'do' ? renderItem(item, ctx) : renderCard(item, ctx) };
+    this.changed(sessionId);
+    // Pinned card spec 2026-10-08, Unit 5: the chat gets one line; the full card is on the pinned card.
+    return { id: `N${item.seq}`, line: renderAddLine(item) };
   }
 
   resolve(sessionId: string, caller: unknown, input: Record<string, unknown>): { id: string; status: string; line: string } {
@@ -279,6 +295,7 @@ export class LedgerService {
       const reason = str(input.reason);
       if (!reason) throw new LedgerError(400, 'reason is required to withdraw an item');
       const updated = ledgerDb.updateStatus(this.db, sessionId, item.seq, { status, reason, reading, now: this.nowIso() })!;
+      this.changed(sessionId);
       return { id: `N${item.seq}`, status, line: renderItem(updated, this.ctx(sessionId)) };
     }
     const quote = str(input.quote);
@@ -293,6 +310,7 @@ export class LedgerService {
     const updated = ledgerDb.updateStatus(this.db, sessionId, item.seq, {
       status, quote: match.quote, quoteMessageId: match.messageId, quoteAt: match.sentAt, reading, now: this.nowIso(),
     })!;
+    this.changed(sessionId);
     return { id: `N${item.seq}`, status, line: renderItem(updated, this.ctx(sessionId)) };
   }
 
@@ -308,6 +326,7 @@ export class LedgerService {
     const item = this.requireItem(sessionId, input.id);
     if (item.status !== 'proposed') throw new LedgerError(409, `N${item.seq} is already ${item.status}.`, { status: item.status });
     ledgerDb.markSent(this.db, sessionId, item.seq, { note: str(input.note), blocks: str(input.blocks), now: this.nowIso() });
+    this.changed(sessionId);
     return { id: `N${item.seq}`, status: 'open' };
   }
 
@@ -328,6 +347,7 @@ export class LedgerService {
     const reason = str(input.reason);
     if (!choice || !reason) throw new LedgerError(400, 'choice and reason are required');
     const updated = ledgerDb.markDecidedByOverseer(this.db, sessionId, item.seq, { choice, reason, now: this.nowIso() })!;
+    this.changed(sessionId);
     return { id: `N${item.seq}`, status: 'decided_by_overseer', line: renderOverseerDecisionLine(updated) };
   }
 
@@ -354,6 +374,7 @@ export class LedgerService {
       reason,
       now: this.nowIso(),
     });
+    this.changed(sessionId);
     return { id: `N${item.seq}`, status: 'decided_by_overseer', line: renderOverseerDecisionLine(item) };
   }
 
@@ -364,6 +385,7 @@ export class LedgerService {
     if (item.kind !== 'go' && item.kind !== 'decide') throw new LedgerError(400, 'only a go or decide item has a default');
     if (item.status !== 'open') throw new LedgerError(409, `N${item.seq} is already ${item.status}.`, { status: item.status });
     const updated = ledgerDb.markOnDefault(this.db, sessionId, item.seq, this.nowIso())!;
+    this.changed(sessionId);
     return { id: `N${item.seq}`, line: renderDefaultLine(updated, { timeZone: this.timeZone }) };
   }
 
@@ -403,32 +425,52 @@ export class LedgerService {
       policy: input.policy === true,
       now: this.nowIso(),
     });
+    this.changed(sessionId);
     return { id: `N${item.seq}`, line: renderItem(item, this.ctx(sessionId)) };
   }
 
   /**
-   * The rendered ledger part of a recap. `forRecap` stamps lastRecapAt and clears the interim timer.
-   * The recap shows the project rules as one line; `rules` holds each rule in full, for the
-   * overseer's own use (overseer memory scope spec 2026-10-07, Unit 5).
+   * The ledger part of a recap. `paste` is what the overseer pastes into the recap (pinned card spec
+   * 2026-10-08, Unit 5: the new items, the decided ones, the count line); `text` is the full ledger
+   * and `rules` each project rule in full, both for the overseer's own use (overseer memory scope
+   * spec 2026-10-07, Unit 5). Both are relative to the recap before this call. `forRecap` stamps
+   * lastRecapAt and clears the interim timer.
    */
-  list(sessionId: string, caller: unknown, opts: { forRecap?: boolean } = {}): { text: string; openIds: string[]; rules: string[] } {
+  list(sessionId: string, caller: unknown, opts: { forRecap?: boolean } = {}): { paste: string; text: string; openIds: string[]; rules: string[] } {
     const overseer = this.assertOverseer(sessionId, caller);
     let cfg: Record<string, any> = {};
     try { cfg = JSON.parse(overseer.config || '{}'); } catch { /* default {} */ }
     const lastRecapAt = typeof cfg[LAST_RECAP_KEY] === 'string' ? (cfg[LAST_RECAP_KEY] as string) : null;
     const items = ledgerDb.listBySession(this.db, sessionId);
+    const paste = renderRecapPaste(items, { now: this.clock(), lastRecapAt });
     const text = renderLedgerSections(items, { now: this.clock(), lastRecapAt, timeZone: this.timeZone });
     if (opts.forRecap) {
       cfg[LAST_RECAP_KEY] = this.nowIso();
       delete cfg[INTERIM_DUE_KEY];
       terminalsDb.updateConfig(this.db, overseer.id, cfg);
+      this.changed(sessionId); // a recap changes which items are new
     }
     const ctx = this.ctx(sessionId);
     return {
+      paste,
       text,
       openIds: items.filter((i) => i.status === 'open').map((i) => `N${i.seq}`),
       rules: projectRules(items).map((i) => renderItem(i, ctx)),
     };
+  }
+
+  /**
+   * The pinned card (pinned card spec 2026-10-08, Unit 2). Read-only: it never stamps lastRecapAt
+   * and never clears the interim timer, so a page load is never a recap. No caller check, like the
+   * routes that return conversations: the network is the gate. "New" is relative to the last recap
+   * of the project's live overseer; with none, nothing has been recapped yet.
+   */
+  card(sessionId: string): LedgerCard {
+    if (!sessionsDb.getById(this.db, sessionId)) throw new LedgerError(404, `Unknown project: ${sessionId}`);
+    const overseer = terminalsDb.listBySession(this.db, sessionId).map(terminalsDb.rowToTerminal) // not archived
+      .find((t) => t.config?.role === 'coordinator');
+    const lastRecapAt = typeof overseer?.config[LAST_RECAP_KEY] === 'string' ? (overseer.config[LAST_RECAP_KEY] as string) : null;
+    return buildLedgerCard(ledgerDb.listBySession(this.db, sessionId), { now: this.clock(), lastRecapAt });
   }
 
   /** One-time load of open items and earlier decisions from the overseer's context. */
@@ -464,6 +506,7 @@ export class LedgerService {
       };
     });
     const created = this.db.transaction(() => inputs.map((input) => ledgerDb.create(this.db, input)))();
+    this.changed(sessionId);
     return { ids: created.map((i) => `N${i.seq}`) };
   }
 
@@ -532,6 +575,7 @@ export class LedgerService {
         created.push(item.seq);
       });
     })();
+    if (created.length) this.changed(sessionId);
     return { created, skipped };
   }
 

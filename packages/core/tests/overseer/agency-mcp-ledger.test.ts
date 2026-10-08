@@ -58,24 +58,30 @@ describe('agency-mcp ledger tools', () => {
     expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ caller: 'coord-1', items: [{ kind: 'go', text: 'Merge PR #9.' }] });
   });
 
-  it('ledger_list returns the rendered text itself, not a JSON string', async () => {
+  // Pinned card spec 2026-10-08, Unit 5: two parts — the lines to paste, and the rest for the overseer's own use.
+  it('ledger_list returns the paste block, then the full ledger for the overseer\'s own use, as text', async () => {
+    const paste = 'New:\n- N1 · Go · Merge PR #12?\n\nNeeds you: 1 decision, 0 actions — on the card.';
     const text = 'Needs you now:\n- none\n\nYour tests and actions:\n- none';
-    const fetchMock = vi.fn().mockResolvedValueOnce(ok({ text, openIds: [] }));
+    const fetchMock = vi.fn().mockResolvedValueOnce(ok({ paste, text, openIds: [] }));
     global.fetch = fetchMock as any;
     const out = await callTool('ledger_list', { forRecap: true });
-    expect(out.content).toEqual([{ type: 'text', text }]);
+    expect(out.content).toEqual([
+      { type: 'text', text: `Paste this into the recap:\n\n${paste}` },
+      { type: 'text', text: `For your own use — do not paste:\n\n${text}` },
+    ]);
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ caller: 'coord-1', forRecap: true });
   });
 
-  // Overseer memory scope (spec 2026-10-07), Unit 5.
-  it('ledger_list returns the full project rules in a second block, for the overseer\'s own use', async () => {
+  // Overseer memory scope (spec 2026-10-07), Unit 5: the full rules are for the overseer's own use.
+  it('ledger_list puts the full project rules in the own-use part', async () => {
+    const paste = 'Needs you: 0 decisions, 0 actions — on the card.';
     const text = 'Project rules: 2 in force (type "show rules").\n\nNeeds you now:\n- none';
     const rules = ['N1 You said: "never deploy on Fridays" (Mon 16:01)', 'N2 You said: "always ask before a release" (Mon 16:02)'];
-    global.fetch = vi.fn().mockResolvedValueOnce(ok({ text, openIds: [], rules })) as any;
+    global.fetch = vi.fn().mockResolvedValueOnce(ok({ paste, text, openIds: [], rules })) as any;
     const out = await callTool('ledger_list', {});
     expect(out.content).toEqual([
-      { type: 'text', text },
-      { type: 'text', text: `Project rules in force, for your own use: apply them, and do not paste them.\n- ${rules[0]}\n- ${rules[1]}` },
+      { type: 'text', text: `Paste this into the recap:\n\n${paste}` },
+      { type: 'text', text: `For your own use — do not paste:\n\n${text}\n\nProject rules in force, for your own use: apply them, and do not paste them.\n- ${rules[0]}\n- ${rules[1]}` },
     ]);
   });
 

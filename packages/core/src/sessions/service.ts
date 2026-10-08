@@ -1176,10 +1176,10 @@ export class SessionService {
   }
 
   /** Send the one Interim recap notice. Revives the overseer first, as notices do. False when it was not delivered. */
-  sendInterimRecapNotice(coordinatorId: string, workingCount: number, queuedCount = 0): boolean {
+  sendInterimRecapNotice(coordinatorId: string, newCount: number, workingCount: number, queuedCount = 0): boolean {
     try {
       this.ensureStructuredAlive(coordinatorId);
-      this.sendStructuredMessage(coordinatorId, formatInterimNotice(workingCount, queuedCount));
+      this.sendStructuredMessage(coordinatorId, formatInterimNotice(newCount, workingCount, queuedCount));
       return true;
     } catch { return false; }
   }
@@ -1401,9 +1401,12 @@ export class SessionService {
   }
 
   private ledgerService?: LedgerService;
+  private onLedgerChange?: (sessionId: string) => void;
+  /** Runs after every write of this service's ledger (the owner-decisions capture); set by the server wiring. */
+  setLedgerChangeListener(listener: (sessionId: string) => void): void { this.onLedgerChange = listener; }
   /** The decision ledger, on this service's clock (tests pin it). */
   private get ledger(): LedgerService {
-    return (this.ledgerService ??= new LedgerService(this.db, { clock: () => this.clock() }));
+    return (this.ledgerService ??= new LedgerService(this.db, { clock: () => this.clock(), onChange: (id) => this.onLedgerChange?.(id) }));
   }
 
   /**

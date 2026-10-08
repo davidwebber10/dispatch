@@ -6,9 +6,11 @@
 //   each project's Dispatch tab keeps its own draft (mirrors the agent ChatView's
 //   per-terminal draft). Store: composerImages, sendDirective(text), openDelegate.
 // Interactions: ⌘/Ctrl+Enter → sendDirective + clear draft; autosizing textarea (rows 1, max 120px).
+// A click on the pinned decision card appends its answer to the draft (store.addToDraft): the box
+//   takes the focus and a hint under it says what was added; the user presses Enter to send.
 // Mobile: shorter placeholder ("Fire a directive…"); hint row is omitted.
 
-import { useCallback, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import { Paperclip } from '@phosphor-icons/react';
 import { Icon } from '../atoms';
 import { useOverseer, useComposerImages, coordinatorMatchesView } from '../store';
@@ -108,6 +110,8 @@ export function Composer() {
   // every Dispatch tab (one per project) would share the SAME draft, leaking text
   // between unrelated projects. Mirrors the agent ChatView's per-terminal useDraft.
   const [composer, setComposer, clearComposer] = useDraft(coordinatorProject ?? '');
+  // The pinned card's "Added N17: A" hint, for this project only (store.addToDraft).
+  const draftHint = useOverseer((s) => (s.draftHint && s.draftHint.project === coordinatorProject ? s.draftHint : null));
   // Send/Stop key parity with the agent ChatView composer (see its stopMode doc):
   // Send needs a non-empty draft OR a staged image; over an EMPTY composer during an
   // in-flight turn the key becomes a Stop (graceful api.interrupt — the current turn
@@ -137,6 +141,12 @@ export function Composer() {
   });
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // A card click asks for the focus once; a later remount of the Composer does not take it again.
+  useEffect(() => {
+    if (!draftHint?.focus) return;
+    textareaRef.current?.focus();
+    useOverseer.getState().draftFocused();
+  }, [draftHint]);
   const [uploadNote, setUploadNote] = useState('');
   const [dragActive, setDragActive] = useState(false); // drives the drop-target visual cue
 
@@ -362,6 +372,13 @@ export function Composer() {
           <CoordinatorMenu terminalId={coordinatorId} sessionId={coordinatorProject} scheme="scoped" direction="up" />
         )}
       </div>
+
+      {/* what the last pinned-card click added — nothing is sent until the user presses Enter */}
+      {draftHint && (
+        <div style={{ maxWidth: 1200, margin: '6px auto 0', fontSize: 11.5, color: 'var(--ts)' }}>
+          Added {draftHint.text}. Press Enter to send, or keep adding.
+        </div>
+      )}
 
       {/* status row (always rendered, both mobile + desktop): context indicator left,
           primary-modifier "↵ send" keyboard hint right (desktop only) */}

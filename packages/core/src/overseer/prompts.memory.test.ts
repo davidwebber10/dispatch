@@ -18,10 +18,10 @@ const MEMORY_PARAGRAPH = [
 
 const FOLDERS = { own: '/h/.claude/dispatch-overseer/-p/memory', shared: '/h/.claude/projects/-p/memory' };
 
-// Unit 5: the rules are one line in the recap; the overseer applies the full list and does not paste it.
+// Unit 5: the overseer applies the full list of rules and does not paste it (since the pinned card
+// spec 2026-10-08, Unit 5, the rules are in ledger_list's own-use part).
 const RULES = [
-  'ledger_list also returns the Project rules line, Running on defaults, Not yet triaged and a count line',
-  'ledger_list also gives you the project rules in full, for your own use: apply them, and do not paste them.',
+  '"For your own use — do not paste" (the full ledger and the project rules: apply the rules, and do not paste them)',
   '"show rules" → ledger_show({ rules: true }).',
   'ledger_show({ ids?, all?, rules? })',
 ];

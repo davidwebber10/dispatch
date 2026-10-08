@@ -429,3 +429,9 @@ export type {
   AgentSeriesKey, ControlPlaneAnalytics, ControlPlaneMissionRow, ControlPlaneProjectRow,
   ControlPlaneSummary, ControlPlaneTypeRow, MissionStatus,
 } from '../../../core/src/analytics/control-plane-types';
+
+// The pinned card (pinned card spec 2026-10-08): the decision ledger of one project, as the daemon
+// computes it. The payload type lives in core, in a file with no imports, as above.
+export type {
+  CardItem, CardKind, CardOption, CardOrigin, CardSource, CardSourceKind, CardStatus, LedgerCard,
+} from '../../../core/src/overseer/ledger-card-types';

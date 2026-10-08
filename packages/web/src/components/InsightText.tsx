@@ -20,6 +20,7 @@
 import { useState } from 'react';
 import { Lightbulb } from '@phosphor-icons/react';
 import { Markdown } from './Markdown';
+import type { LedgerChips } from '../lib/ledgerRefs';
 
 // Opener: "★ Insight" + trailing dashes (box-drawing, em/en dash, hyphen), optionally wrapped
 // in backticks (Claude fences the delimiter lines as inline code, e.g. `★ Insight ───`).
@@ -67,7 +68,7 @@ const SCHEMES: Record<Scheme, Tokens> = {
   },
 };
 
-function InsightCallout({ content, tokens }: { content: string; tokens: Tokens }) {
+function InsightCallout({ content, tokens, ledger }: { content: string; tokens: Tokens; ledger?: LedgerChips }) {
   return (
     <div
       style={{
@@ -97,7 +98,7 @@ function InsightCallout({ content, tokens }: { content: string; tokens: Tokens }
       </div>
       {/* enclosed content — still markdown, so lists/code inside a callout render normally */}
       <div style={{ minWidth: 0 }}>
-        <Markdown source={content} />
+        <Markdown source={content} ledger={ledger} />
       </div>
     </div>
   );
@@ -145,9 +146,10 @@ function InsightRail({ content }: { content: string }) {
 /**
  * Render assistant text: prose through <Markdown>, any ★ Insight blocks lifted into tinted
  * callouts. `scheme` selects the token set (default 'scoped' for the coordinator surface);
- * `variant="rail"` (agent chat) swaps the callout for the clamped left-rail block.
+ * `variant="rail"` (agent chat) swaps the callout for the clamped left-rail block. `ledger` (the
+ * Control Plane) draws known ledger numbers as chips (see Markdown).
  */
-export function InsightText({ source, scheme = 'scoped', variant = 'callout' }: { source: string; scheme?: Scheme; variant?: 'callout' | 'rail' }) {
+export function InsightText({ source, scheme = 'scoped', variant = 'callout', ledger }: { source: string; scheme?: Scheme; variant?: 'callout' | 'rail'; ledger?: LedgerChips }) {
   const segs = splitInsights(source);
   if (segs.length === 0) return null; // all-blank body → nothing to render
   const tokens = SCHEMES[scheme];
@@ -155,9 +157,9 @@ export function InsightText({ source, scheme = 'scoped', variant = 'callout' }: 
     <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
       {segs.map((seg, i) =>
         seg.type === 'insight' ? (
-          variant === 'rail' ? <InsightRail key={i} content={seg.content} /> : <InsightCallout key={i} content={seg.content} tokens={tokens} />
+          variant === 'rail' ? <InsightRail key={i} content={seg.content} /> : <InsightCallout key={i} content={seg.content} tokens={tokens} ledger={ledger} />
         ) : (
-          <Markdown key={i} source={seg.content} />
+          <Markdown key={i} source={seg.content} ledger={ledger} />
         ),
       )}
     </div>
