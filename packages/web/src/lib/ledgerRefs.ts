@@ -17,7 +17,8 @@ export interface LedgerChips {
 
 /** A ledger number as a whole word. */
 const REF = /(?<![\p{L}\p{N}_])N(\d+)(?![\p{L}\p{N}_])/gu;
-const WORD_CHAR = /[\p{L}\p{N}_]/u;
+/** A letter or a digit: after a "." or "?" it makes an address ("N12.md"); "_" (emphasis) does not. */
+const ADDRESS_CHAR = /[\p{L}\p{N}]/u;
 
 /**
  * True when the number at text[start, end) is part of a URL or a path, not a ledger number
@@ -30,7 +31,7 @@ function inAddress(text: string, start: number, end: number): boolean {
   const after = text[end] ?? '';
   if (before && '/\\-#=&.?'.includes(before)) return true;
   if (after && '/\\-#=&'.includes(after)) return true;
-  if ((after === '.' || after === '?') && WORD_CHAR.test(text[end + 1] ?? '')) return true;
+  if ((after === '.' || after === '?') && ADDRESS_CHAR.test(text[end + 1] ?? '')) return true;
   return after === ':' && text.startsWith('//', end + 1);
 }
 
@@ -55,7 +56,8 @@ function codeRanges(text: string): [number, number][] {
         blocks.push([fence.start, lineEnd]);
         fence = null;
       }
-    } else if (marker) {
+    } else if (marker && !(marker[1][0] === '`' && line.slice(marker[0].length).includes('`'))) {
+      // A backtick fence's opening line holds no other backtick (CommonMark): "```x``` …" is a span.
       if (indented) { blocks.push(indented); indented = null; }
       fence = { char: marker[1][0], len: marker[1].length, start: at };
     } else if (/^( {4}|\t)/.test(line) && line.trim() && (prevBlank || indented)) {

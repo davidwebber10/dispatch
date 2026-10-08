@@ -48,7 +48,8 @@ describe('splitLedgerRefs — plain text', () => {
   });
 
   it('a sentence around the number is no path: the chip stays', () => {
-    for (const text of ['Approve N14?', 'Done with N14.', 'N14: A', '(N14)', 'N14, then N12', 'N14?)', 'see N14...', 'N12 — merge it']) {
+    // Review round 2: an underscore after the "?" or "." (emphasis) is no address either.
+    for (const text of ['Approve N14?', 'Done with N14.', 'N14: A', '(N14)', 'N14, then N12', 'N14?)', 'see N14...', 'N12 — merge it', '_Approve N14?_', '_Done with N14._']) {
       expect(splitLedgerRefs(text, known).some((p) => typeof p !== 'string'), text).toBe(true);
     }
   });
@@ -62,6 +63,13 @@ describe('splitLedgerRefs — plain text', () => {
     // An unclosed fence runs to the end; an unmatched backtick is plain text.
     expect(splitLedgerRefs('```\nN12 and N14', known)).toEqual(['```\nN12 and N14']);
     expect(splitLedgerRefs('it costs 5` and N14', known)).toEqual(['it costs 5` and ', { seq: 14 }]);
+  });
+
+  // Review round 2: a backtick fence's opening line may not contain a backtick (CommonMark), so a
+  // line that starts with a code span is no fence.
+  it('a line-leading code span is no fence', () => {
+    expect(splitLedgerRefs('```show N14``` then N12', known)).toEqual(['```show N14``` then ', { seq: 12 }]);
+    expect(splitLedgerRefs('```ts\nN12\n```\nN12', known)).toEqual(['```ts\nN12\n```\n', { seq: 12 }]);
   });
 
   it('an indented line inside a paragraph is no code block', () => {
