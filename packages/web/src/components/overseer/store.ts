@@ -21,6 +21,7 @@ import { api, type ContentBlock } from '../../api/client';
 import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
 import { useThreadStatus } from '../../stores/threadStatus';
+import { useLedgerCardSync } from '../../stores/ledgerCard';
 import { useStructuredChat, type ApiRetry, type CompactResult } from '../tabs/chat/useStructuredChat';
 import { clearStoredDraft } from '../../hooks/useDraft';
 import type { PendingPermission, Terminal } from '../../api/types';
@@ -729,6 +730,9 @@ export function useCoordinatorSync(): void {
   // render them as done outcomes. Folded in here (the single root-mounted sync) to avoid
   // touching the Overseer root component.
   useArchivedSync(activeId);
+  // The pinned decision card of the shown project (pinned card spec 2026-10-08, Unit 6): loaded
+  // here, not in the card itself, so the collapsed-pane count and the chat chips have it too.
+  useLedgerCardSync(activeId);
 }
 
 /**

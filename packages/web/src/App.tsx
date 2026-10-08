@@ -33,6 +33,7 @@ import { useUpdate } from './stores/update';
 import { useHost } from './stores/host';
 import { useAgents } from './stores/agents';
 import { useAnalyticsFeed } from './stores/analytics';
+import { useLedgerCard } from './stores/ledgerCard';
 import { useAgentUI } from './stores/agentUI';
 import { useReconnect } from './stores/reconnect';
 import { useResume } from './hooks/useResume';
@@ -130,6 +131,7 @@ export default function App() {
         useUpdate.getState().applyEvent(e);
         useAgents.getState().applyEvent(e);
         useAnalyticsFeed.getState().applyEvent(e);
+        useLedgerCard.getState().applyEvent(e);
       },
     });
     sockRef.current = sock;

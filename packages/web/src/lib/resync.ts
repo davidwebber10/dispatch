@@ -1,6 +1,7 @@
 import { useThreadStatus } from '../stores/threadStatus';
 import { useProjects } from '../stores/projects';
 import { useTabs } from '../stores/tabs';
+import { useLedgerCard } from '../stores/ledgerCard';
 
 /**
  * Reconcile board/live state after the events socket reconnects.
@@ -18,11 +19,15 @@ import { useTabs } from '../stores/tabs';
  * the overlay and re-pull the authoritative rows. Fresh events then layer back on
  * top. A genuinely-working thread's refetched row is still `working`, so this never
  * mis-files an active thread as done.
+ *
+ * The pinned decision cards load again too: a `ledger:changed` missed while the socket was down
+ * never replays (pinned card spec 2026-10-08, Unit 6).
  */
 export async function resyncAfterReconnect(): Promise<void> {
   useThreadStatus.getState().reset();
   const ids = useProjects.getState().sessions.map((s) => s.id);
-  await Promise.all(
-    ids.map((id) => useTabs.getState().loadTabs(id).catch(() => { /* project gone — skip it */ })),
-  );
+  await Promise.all([
+    ...ids.map((id) => useTabs.getState().loadTabs(id).catch(() => { /* project gone — skip it */ })),
+    useLedgerCard.getState().reloadAll(),
+  ]);
 }

@@ -3,6 +3,7 @@ import { resyncAfterReconnect } from './resync';
 import { useThreadStatus } from '../stores/threadStatus';
 import { useProjects } from '../stores/projects';
 import { useTabs } from '../stores/tabs';
+import { useLedgerCard } from '../stores/ledgerCard';
 import { api } from '../api/client';
 
 beforeEach(() => {
@@ -32,6 +33,16 @@ test('re-pulls the authoritative rows for every known project', async () => {
 
   expect(listTerminals).toHaveBeenCalledWith('p1');
   expect(listTerminals).toHaveBeenCalledWith('p2');
+});
+
+test('loads the pinned cards again: a ledger:changed missed while the socket was down', async () => {
+  useProjects.setState({ sessions: [{ id: 'p1', name: 'Alpha' } as any] });
+  vi.spyOn(api, 'listTerminals').mockResolvedValue([]);
+  const reloadAll = vi.spyOn(useLedgerCard.getState(), 'reloadAll').mockResolvedValue();
+
+  await resyncAfterReconnect();
+
+  expect(reloadAll).toHaveBeenCalledTimes(1);
 });
 
 test('a failing project reload is swallowed so one dead project cannot abort the resync', async () => {

@@ -29,3 +29,18 @@ test('saved or requested Board views fall back to Threads', () => {
   expect(useUI.getState().view).toBe('workspace');
   expect(screen.queryByTestId('board-view')).not.toBeInTheDocument();
 });
+
+// Pinned card spec 2026-10-08, Unit 6: the one events socket routes ledger:changed to the card store.
+test('the events socket routes ledger:changed to the pinned card store', async () => {
+  const sockets: { onmessage: ((ev: { data: string }) => void) | null }[] = [];
+  vi.stubGlobal('WebSocket', class {
+    onopen: any = null; onclose: any = null; onmessage: any = null;
+    constructor() { sockets.push(this); }
+    send() {} close() {}
+  });
+  const { useLedgerCard } = await import('./stores/ledgerCard');
+  const applyEvent = vi.spyOn(useLedgerCard.getState(), 'applyEvent');
+  render(<App />);
+  act(() => { sockets[0].onmessage?.({ data: JSON.stringify({ type: 'ledger:changed', sessionId: 'p1' }) }); });
+  expect(applyEvent).toHaveBeenCalledWith({ type: 'ledger:changed', sessionId: 'p1' });
+});

@@ -4,74 +4,11 @@
  * items and the time of the last recap. The web app draws every field itself, so each option is
  * a real click target; nothing here is markdown.
  */
-import type { LedgerItem, LedgerKind, LedgerOrigin, LedgerSourceKind, LedgerStatus } from '../db/ledger.js';
+import type { LedgerItem } from '../db/ledger.js';
+import type { CardItem, CardSource, LedgerCard } from './ledger-card-types.js';
 import { ledgerSections, projectRules } from './ledger-render.js';
 
-export interface CardOption {
-  label: string;
-  effect: string;
-  /** What a click adds to the message box after "N17: " (see answerKey). */
-  answerKey: string;
-}
-
-export interface CardSource {
-  kind: LedgerSourceKind;
-  ref: string | null;
-  /** The file, for an agent-block item ("path#section" is stored in one field). Else null. */
-  path: string | null;
-  section: string | null;
-  /** The source's own ID, such as LR-6. */
-  id: string | null;
-}
-
-export interface CardItem {
-  seq: number;
-  kind: LedgerKind;
-  status: LedgerStatus;
-  text: string;
-  author: string;
-  context: string | null;
-  options: CardOption[];
-  recommendation: string | null;
-  why: string | null;
-  default: string | null;
-  source: CardSource | null;
-  blocks: string | null;
-  mission: string | null;
-  origin: LedgerOrigin;
-  sentAt: string | null;
-  isNew: boolean;
-  onDefaultSince: string | null;
-  overseerNote: string | null;
-  /** The question this item supersedes, when it does. */
-  original: { seq: number; text: string } | null;
-  /** A decided item: the overseer's choice, the user's quote, or the reason (withdrawn, decided by the overseer). */
-  choice: string | null;
-  quote: string | null;
-  quoteAt: string | null;
-  reason: string | null;
-  reading: string | null;
-}
-
-export interface LedgerCard {
-  /** The newest change of any item of the project; null for an empty ledger. */
-  updatedAt: string | null;
-  lastRecapAt: string | null;
-  sections: {
-    rulesCount: number;
-    needsYou: { cards: CardItem[]; lines: CardItem[] };
-    onDefaults: CardItem[];
-    actions: CardItem[];
-    decidedSince: CardItem[];
-    untriaged: CardItem[];
-    parked: CardItem[];
-    counts: { overseerDecisions: number; reversed: number };
-  };
-  /** The project rules in force, for the read-only list. */
-  rules: { seq: number; quote: string; reading: string | null }[];
-  /** Every item of the project, any status: what the ledger chips in the chat need. */
-  index: { seq: number; kind: LedgerKind; status: LedgerStatus; text: string; answer: string | null }[];
-}
+export type { CardItem, CardOption, CardSource, LedgerCard } from './ledger-card-types.js';
 
 /**
  * The short answer for an option: the label's leading token when the label starts with one to
