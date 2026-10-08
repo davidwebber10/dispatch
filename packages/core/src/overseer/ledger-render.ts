@@ -416,10 +416,24 @@ function decidedOutcome(item: LedgerItem): string {
   }
 }
 
+const PASTE_TEXT_MAX = 150;
+
+/**
+ * The item text for a paste line: on one line, cut at about 150 characters with "…" (review round
+ * 1: a long do item, a whole test procedure, made a very long recap line). The full text is on the card.
+ */
+function pasteText(text: string): string {
+  const t = text.replace(/\s+/g, ' ').trim();
+  if (t.length <= PASTE_TEXT_MAX) return t;
+  const cut = t.slice(0, PASTE_TEXT_MAX - 1);
+  const space = cut.lastIndexOf(' ');
+  return `${(space > PASTE_TEXT_MAX - 30 ? cut.slice(0, space) : cut).trimEnd()}…`;
+}
+
 /** One "Decided" line. A statement is the user's own words, so it has no question. */
 function decidedLine(item: LedgerItem): string {
-  if (item.kind === 'statement' && !isUnchecked(item)) return `- N${item.seq} · You said: "${item.quote}"${item.policy ? ' · a project rule' : ''}`;
-  return `- N${item.seq} · ${KIND_LABEL[item.kind]} · ${item.text} · ${decidedOutcome(item)}`;
+  if (item.kind === 'statement' && !isUnchecked(item)) return `- N${item.seq} · You said: "${pasteText(item.quote ?? item.text)}"${item.policy ? ' · a project rule' : ''}`;
+  return `- N${item.seq} · ${KIND_LABEL[item.kind]} · ${pasteText(item.text)} · ${decidedOutcome(item)}`;
 }
 
 const count = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -427,20 +441,23 @@ const count = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 /**
  * The part of ledger_list the overseer pastes into the recap, as is:
  *   New: one line per new item (isNewForUser), with the recommendation when there is one.
- *   Decided: one line per item decided since the last recap — the question and the answer.
+ *   Decided: one line per item decided since the last recap — the question and the answer. An
+ *     imported item is left out, as it is never New: an import is a one-time load, not news (the
+ *     card's own "Decided since the last recap" section still lists it).
  *   The count line: "Needs you: 19 decisions, 8 actions — on the card."
  * A group with no lines is left out; the count line is always there. Every line carries its
- * question, so no ledger number stands alone. Blank lines between the groups keep markdown from
- * joining a heading to the list above it.
+ * question (cut at about 150 characters), so no ledger number stands alone. Blank lines between
+ * the groups keep markdown from joining a heading to the list above it.
  */
 export function renderRecapPaste(items: LedgerItem[], opts: { now: number; lastRecapAt: string | null }): string {
   const s = ledgerSections(items, opts);
   const fresh = new Set(s.newSeqs);
   const out: string[] = [];
   const news = items.filter((i) => fresh.has(i.seq)).map((i) =>
-    `- N${i.seq} · ${KIND_LABEL[i.kind]} · ${i.text}${i.recommendation ? ` · Rec: ${i.recommendation}` : ''}`);
+    `- N${i.seq} · ${KIND_LABEL[i.kind]} · ${pasteText(i.text)}${i.recommendation ? ` · Rec: ${i.recommendation}` : ''}`);
   if (news.length) out.push(['New:', ...news].join('\n'));
-  if (s.decidedSince.length) out.push(['Decided:', ...s.decidedSince.map(decidedLine)].join('\n'));
+  const decided = s.decidedSince.filter((i) => i.origin !== 'imported');
+  if (decided.length) out.push(['Decided:', ...decided.map(decidedLine)].join('\n'));
   const decisions = s.needsYou.cards.length + s.needsYou.lines.length;
   out.push(`Needs you: ${count(decisions, 'decision')}, ${count(s.actions.length, 'action')} — on the card.`);
   return out.join('\n\n');

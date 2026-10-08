@@ -70,13 +70,38 @@ describe('renderRecapPaste — the part the overseer pastes into the recap', () 
     expect(renderRecapPaste([], { now: NOW, lastRecapAt: null })).toBe('Needs you: 0 decisions, 0 actions — on the card.');
   });
 
-  it('an imported item is never new, and an unchecked imported answer says so', () => {
-    const out = renderRecapPaste([
+  // Review round 1: an import is a one-time load, not news — for "Decided" as for "New". The
+  // card's own "Decided since the last recap" section still lists them.
+  it('an imported item is never in the paste block: not New, not Decided, even with no recap yet', () => {
+    const imported = [
       item({ seq: 1, kind: 'go', text: 'Deploy?', origin: 'imported', sentAt: ago(1_000) }),
       item({ seq: 2, text: 'Use library B?', origin: 'imported', status: 'answered', updatedAt: ago(1_000) }),
+      item({ seq: 3, kind: 'statement', text: 'keep prices as they are', author: 'you', origin: 'imported', status: 'answered', updatedAt: ago(1_000) }),
+      item({ seq: 4, kind: 'do', text: 'Check staging.', origin: 'imported', status: 'withdrawn', reason: 'moot', updatedAt: ago(1_000) }),
+    ];
+    for (const lastRecapAt of [LAST, null]) {
+      expect(renderRecapPaste(imported, { now: NOW, lastRecapAt })).toBe('Needs you: 1 decision, 0 actions — on the card.');
+    }
+    // A live answer next to them still pastes.
+    const live = item({ seq: 5, text: 'Use library A?', status: 'answered', quote: 'N5: A', updatedAt: ago(1_000) });
+    expect(renderRecapPaste([...imported, live], { now: NOW, lastRecapAt: null })).toContain('Decided:\n- N5 · Decide · Use library A? · Your answer: "N5: A"\n\n');
+  });
+
+  // Review round 1: a long item (a whole test procedure) must not make a very long recap line.
+  it('cuts the item text at about 150 characters with "…" and keeps each line on one line', () => {
+    const steps = 'Open the staging site in a private window.\nSign in with the test account.\n' + 'Then check that each banner shows the new date and the right link. '.repeat(14);
+    const out = renderRecapPaste([
+      item({ seq: 55, kind: 'do', text: steps, sentAt: ago(1_000) }),
+      item({ seq: 56, text: 'x'.repeat(400), status: 'answered', quote: 'N56: A', updatedAt: ago(1_000) }),
     ], { now: NOW, lastRecapAt: LAST });
-    expect(out).not.toContain('New:');
-    expect(out).toContain('- N2 · Decide · Use library B? · Imported, not checked');
+    const [newLine] = out.split('\n').filter((l) => l.startsWith('- N55'));
+    expect(newLine.startsWith('- N55 · Do · Open the staging site in a private window. Sign in with the test account. Then check')).toBe(true);
+    expect(newLine.endsWith('…')).toBe(true);
+    expect(newLine.length).toBeLessThanOrEqual('- N55 · Do · '.length + 151);
+    const [decided] = out.split('\n').filter((l) => l.startsWith('- N56'));
+    expect(decided).toBe(`- N56 · Decide · ${'x'.repeat(149)}… · Your answer: "N56: A"`);
+    // A short text stays whole.
+    expect(renderRecapPaste([item({ seq: 1, kind: 'go', text: 'Merge PR #9?', sentAt: ago(1_000) })], { now: NOW, lastRecapAt: LAST })).toContain('- N1 · Go · Merge PR #9?\n');
   });
 
   // Review round 1: an item marked to run on its default no longer waits on the user.
