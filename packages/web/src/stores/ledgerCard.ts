@@ -73,3 +73,31 @@ export function useLedgerCardSync(projectId: string | null): void {
     if (projectId) void useLedgerCard.getState().load(projectId);
   }, [projectId]);
 }
+
+/** The folded parts of the card that can open: the rules list and the sections below "Needs you now". */
+export type LedgerFold = 'rules' | 'actions' | 'onDefaults' | 'decidedSince' | 'untriaged' | 'parked';
+
+export const LEDGER_FOLDS_KEY = 'dispatch:ledgerCard:open';
+
+function loadFolds(): Partial<Record<LedgerFold, boolean>> {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(LEDGER_FOLDS_KEY) ?? '{}') as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Partial<Record<LedgerFold, boolean>>) : {};
+  } catch { return {}; }
+}
+
+/**
+ * Which parts of the card the user opened. Folded is the default (a count only), so only the
+ * open ones are stored; the state is kept in local storage and is the same for every project, as
+ * the sidebar shelves are (stores/sectionCollapse.ts).
+ */
+export const useLedgerFolds = create<{ open: Partial<Record<LedgerFold, boolean>>; setOpen: (fold: LedgerFold, v: boolean) => void }>((set, get) => ({
+  open: loadFolds(),
+  setOpen: (fold, v) => {
+    const open = { ...get().open };
+    if (v) open[fold] = true;
+    else delete open[fold];
+    set({ open });
+    try { localStorage.setItem(LEDGER_FOLDS_KEY, JSON.stringify(open)); } catch { /* storage unavailable */ }
+  },
+}));

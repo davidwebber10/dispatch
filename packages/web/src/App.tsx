@@ -34,6 +34,7 @@ import { useHost } from './stores/host';
 import { useAgents } from './stores/agents';
 import { useAnalyticsFeed } from './stores/analytics';
 import { useLedgerCard } from './stores/ledgerCard';
+import { openDecisionCount } from './components/overseer/ledger';
 import { useAgentUI } from './stores/agentUI';
 import { useReconnect } from './stores/reconnect';
 import { useResume } from './hooks/useResume';
@@ -63,6 +64,8 @@ export default function App() {
   const selectTab = (id: string) => { useAgentUI.getState().blur(); useTabs.getState().setActiveTab(id); };
   const dispatchProject = (projectId: string) => { useAgentUI.getState().blur(); useTabs.getState().openDispatch(projectId); };
   const activeId = useProjects((s) => s.activeId);
+  // The Control Plane's open decisions, for the collapsed details toggle (pinned card spec, Unit 7).
+  const openDecisions = useLedgerCard((s) => openDecisionCount((activeId && s.byProject[activeId]?.card) || null));
   const view = useUI((s) => s.view);
   const isMobile = useIsMobile();
   useTabCycleShortcut(); // Ctrl+Tab / Ctrl+Shift+Tab cycle open tabs
@@ -235,7 +238,7 @@ export default function App() {
                         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: 'var(--color-pane)', borderBottom: '1px solid var(--color-border)' }}>
                           <GroupedTabBar onSelect={() => useAgentUI.getState().blur()} />
                         </div>
-                        <PanelToggle side="right" />
+                        <PanelToggle side="right" count={isDispatchTab(activeTerminalId) ? openDecisions : 0} />
                       </div>
                       {activeTerminalId
                         ? (isDispatchTab(activeTerminalId)

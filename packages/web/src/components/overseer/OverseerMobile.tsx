@@ -2,7 +2,9 @@
 // two tabs (Stream / Work) plus a full-screen drill overlay; "Needs you" now lives in
 // the header alert dropdown (NeedsAlert) rather than a third tab. The live working-count
 // rides the Work tab title as a pulsing count pill (WorkCountPill) so active work is
-// signalled from the tab bar even while the Stream tab is showing. The header and tab
+// signalled from the tab bar even while the Stream tab is showing; the open decision count of the
+// pinned card (pinned card spec 2026-10-08, Unit 7) rides it too, and the card itself tops the Work
+// tab body. The header and tab
 // control are rendered inline here; the tab bodies and the overlay reuse the same shared
 // region components as desktop (each adapts its own desktop/mobile rendering via
 // useIsMobile — see CONTRACT.md). All data flows through the store / useRenderVals().
@@ -11,6 +13,8 @@ import { Icon, StatusDot, overseerRootStyle } from './atoms';
 import { useOverseer, useRenderVals, coordinatorMatchesView } from './store';
 import { useProjects } from '../../stores/projects';
 import { useDispatchName } from '../../stores/settings';
+import { useLedgerCardEntry } from '../../stores/ledgerCard';
+import { openDecisionCount } from './ledger';
 import './tokens.css';
 
 import { NeedsAlert } from './components/NeedsAlert';
@@ -18,6 +22,7 @@ import { CoordinatorMenu } from './components/CoordinatorMenu';
 import { ConversationStream } from './components/Stream';
 import { Composer } from './components/Composer';
 import { OngoingWorkOverview } from './components/WorkRail';
+import { LedgerCard } from './components/LedgerCard';
 import { ThreadDetail } from './components/ThreadDetail';
 import { WorkerLightbox } from './components/WorkerLightbox';
 
@@ -62,6 +67,30 @@ function WorkCountPill({ count, queuedCount }: { count: number; queuedCount: num
   );
 }
 
+// The open decision count of the pinned card, on the Work tab: the decisions wait there.
+function DecisionCountPill({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span
+      data-testid="work-decision-count"
+      title={`${count} open decision${count === 1 ? '' : 's'}`}
+      style={{
+        padding: '1px 6px',
+        borderRadius: 999,
+        background: 'var(--yellowDim)',
+        border: '1px solid var(--yellowLine)',
+        color: 'var(--yellow)',
+        fontFamily: 'var(--mono)',
+        fontSize: 10.5,
+        fontWeight: 700,
+        lineHeight: 1.4,
+      }}
+    >
+      {count}
+    </span>
+  );
+}
+
 export function OverseerMobile({ onBack }: { onBack?: () => void }) {
   const rv = useRenderVals();
   const { ribbon, missions, drillOpen } = rv;
@@ -74,6 +103,7 @@ export function OverseerMobile({ onBack }: { onBack?: () => void }) {
   const coordinatorId = useOverseer((s) => s.coordinatorId);
   const coordinatorProject = useOverseer((s) => s.coordinatorProject);
   const activeId = useProjects((s) => s.activeId);
+  const decisions = openDecisionCount(useLedgerCardEntry(activeId).card);
   const showSessionMenu = !!coordinatorId && !!coordinatorProject && coordinatorMatchesView(coordinatorProject, activeId);
   // "Needs you" is no longer a tab — it moved to the header alert dropdown. The store still
   // defaults mobileTab to 'needs' (and goNeeds can set it), so fold that onto Stream here
@@ -165,6 +195,7 @@ export function OverseerMobile({ onBack }: { onBack?: () => void }) {
           }}
         >
           Work
+          <DecisionCountPill count={decisions} />
           <WorkCountPill count={ribbon.working} queuedCount={queuedCount} />
         </button>
       </div>
@@ -176,7 +207,12 @@ export function OverseerMobile({ onBack }: { onBack?: () => void }) {
           <Composer />
         </div>
       )}
-      {activeTab === 'work' && <OngoingWorkOverview />}
+      {activeTab === 'work' && (
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          <LedgerCard />
+          <OngoingWorkOverview />
+        </div>
+      )}
 
       {/* full-screen drill overlay (spec §1c) — ThreadDetail renders its mobile variant */}
       {drillOpen && (
