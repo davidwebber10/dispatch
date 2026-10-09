@@ -139,5 +139,16 @@ Real-data check after the fixes (a fresh copy): plan 41 of 41 section; doc 6 sec
 (no stored section); agent sources with a file 18 section, 1 outline (no such heading), 4 "The
 file is gone" (in no folder and no worktree), 1 file-only (a YAML file).
 
-Final: core 247 files, 2789 tests passed (4 skipped); web 160 files, 1386 tests passed;
-`tsc --noEmit` clean in both.
+## Review round 2 (GPT, the last round)
+
+Fix-then-ship: 2 Medium, 1 Low, all in the round-1 fixes; fixed test-first:
+
+- 7c26b00: only a bare fence line closes a fence ("- ~~~" inside a fenced markdown example ended it
+  early and hid the real sections).
+- c2c78f6: the chip popover calls preventDefault on Escape, so one Escape never closes both (tested
+  in both opening orders with both components mounted); focus returns to the last Source line
+  (A, then B, then close gives B), and only on a real close.
+
+Final: core 247 files, 2790 tests passed (4 skipped; one full run showed the known route-test
+flake in `update.test.ts`, which passed 3 of 3 alone, and the next full run was green); web 160
+files, 1389 tests passed; `tsc --noEmit` clean in both.
