@@ -74,6 +74,12 @@ export function createWslDaemon(d: WslDaemonDeps): DaemonController {
     } catch { return false; }
   };
 
+  const stop = () => {
+    const pid = readPid();
+    if (!pid || !ownsPid(pid, entryBasename())) return;
+    d.kill(pid, 'SIGTERM');
+  };
+
   return {
     install(opts: DaemonInstallOptions) {
       const distro = d.env.WSL_DISTRO_NAME ?? 'Ubuntu';
@@ -115,18 +121,16 @@ export function createWslDaemon(d: WslDaemonDeps): DaemonController {
       d.execFileSync('schtasks.exe', ['/Run', '/TN', TASK]);
     },
     uninstall() {
+      // Deleting a Windows scheduled task does not stop its running process.
+      // Signal the verified daemon before removing its identity/config files.
+      stop();
       d.execFileSync('schtasks.exe', ['/Delete', '/F', '/TN', TASK]);
       // Best-effort: state files may already be gone, and that's fine.
       try { d.unlink(optsFile()); } catch { /* ignore */ }
       try { d.unlink(pidFile()); } catch { /* ignore */ }
     },
     start() { d.execFileSync('schtasks.exe', ['/Run', '/TN', TASK]); },
-    stop() {
-      const pid = readPid();
-      if (!pid) return;
-      if (!ownsPid(pid, entryBasename())) return; // unverifiable/recycled pid: treat as not running
-      d.kill(pid, 'SIGTERM');
-    },
+    stop,
     restart() {
       const pid = readPid();
       if (pid && ownsPid(pid, entryBasename())) {
