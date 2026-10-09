@@ -9,10 +9,13 @@ import { PROVIDER_NAMES, detectProvider, type ProviderName, type ProviderStatus 
  * PROVIDER_NAMES first — nothing a caller sends is ever interpolated into a shell string.
  */
 export const INSTALL_COMMANDS: Record<ProviderName, string> = {
-  claude: 'npm install -g @anthropic-ai/claude-code',
-  codex: 'npm install -g @openai/codex',
+  // System Node installations (the usual Ubuntu/WSL setup) have a root-owned
+  // global prefix. Install into the same user-owned bin directory that every
+  // agent's spawn environment already includes, without sudo or npm config edits.
+  claude: 'npm install -g --prefix "$HOME/.dispatch/tools" @anthropic-ai/claude-code',
+  codex: 'npm install -g --prefix "$HOME/.dispatch/tools" @openai/codex',
   grok: 'curl -fsSL https://x.ai/cli/install.sh | bash',
-  opencode: 'npm install -g opencode-ai',
+  opencode: 'npm install -g --prefix "$HOME/.dispatch/tools" opencode-ai',
 };
 
 /**

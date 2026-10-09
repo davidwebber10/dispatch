@@ -57,6 +57,11 @@ async function which(bin: string): Promise<string | null> {
 
 /** `which`, then the installers' known paths — see FALLBACK_BINS. */
 async function resolveBin(name: ProviderName): Promise<string | null> {
+  // The in-app installer uses this user-owned npm prefix. Match the tools bin
+  // precedence in getToolsSpawnEnv, including immediately after installation,
+  // before the daemon has restarted or its own PATH has changed.
+  const managed = path.join(os.homedir(), '.dispatch', 'tools', 'bin', name);
+  if (existsSync(managed)) return managed;
   const onPath = await which(name);
   if (onPath) return onPath;
   const home = os.homedir();
