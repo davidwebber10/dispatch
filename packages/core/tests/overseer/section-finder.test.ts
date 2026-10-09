@@ -128,3 +128,23 @@ describe('findSection', () => {
     expect(findSection('## Risks\r\nA risk.\r\n## Next\r\n', { section: 'Risks' })).toMatchObject({ heading: 'Risks', markdown: 'A risk.' });
   });
 });
+
+// Review round 1 (2026-10-09): a fence that opens inside a list item, and the section number.
+describe('review round 1 — list-item fences and section numbers', () => {
+  it('a fence that opens after a list marker hides its heading-like lines, and its indented closer ends it', () => {
+    const md = ['## Steps', '', '- ```md', '  ## Example', '  ```', '', '## Risks', '', 'A risk.'].join('\n');
+    expect(markdownHeadings(md).map((h) => h.text)).toEqual(['Steps', 'Risks']);
+    expect(findSection(md, { section: 'Risks' })).toMatchObject({ heading: 'Risks', markdown: 'A risk.' });
+    const ordered = ['1. ~~~', '   # Not a heading', '   ~~~', '# Real'].join('\n');
+    expect(markdownHeadings(ordered).map((h) => h.text)).toEqual(['Real']);
+  });
+
+  it('as a last step, a stored "9. Owner decisions" finds the heading with the same section number', () => {
+    const md = ['## 8. Release', '', 'x', '', '## 9. Decisions recorded (2026-10-09)', '', 'y', '', '## 9.1 Later', '', 'z'].join('\n');
+    expect(findSection(md, { section: '9. Owner decisions' })).toMatchObject({ heading: '9. Decisions recorded (2026-10-09)' });
+    expect(findSection(md, { section: '9.1 Something else' })).toMatchObject({ heading: '9.1 Later' });
+    // "9" never matches "9.1", and a name without a number still gives the outline.
+    expect(findSection(['## 9.1 Later', '', 'z'].join('\n'), { section: '9. Owner decisions' }).kind).toBe('outline');
+    expect(findSection(md, { section: 'Owner decisions' }).kind).toBe('outline');
+  });
+});

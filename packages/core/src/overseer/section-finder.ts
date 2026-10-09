@@ -4,14 +4,16 @@
  * The answer is the section (the heading, and the markdown after it up to the next heading of the
  * same or a higher level) or the outline (every heading, with its level).
  *
- * - ATX headings only (`#` to `######`); a heading inside a fenced code block is not a heading.
+ * - ATX headings only (`#` to `######`); a heading inside a fenced code block is not a heading, also
+ *   when the fence opens inside a list item.
  *   Setext headings (underlined with `===` or `---`) are not found (a known limit).
  * - Names compare in a normal form: lower case, no emphasis or code marks, spaces collapsed, no end
  *   punctuation.
  * - Order of matches: an exact match; a heading that starts with the stored name (so "after v3"
  *   finds "after v3.2 (…)"); a stored name that starts with the heading; a heading that contains the
- *   stored name; a heading that contains the ID as a whole word. The first heading in the file wins
- *   at each step. No match, or no stored section: the outline.
+ *   stored name; a heading that contains the ID as a whole word; a heading with the same leading
+ *   section number ("9."). The first heading in the file wins at each step. No match, or no stored
+ *   section: the outline.
  * - A `heading` input (a click in the outline) selects that exact heading; the first one with that
  *   text wins.
  * - A section longer than 64 KB is cut at a line end (`cut: true`; the web says "The section
@@ -33,7 +35,8 @@ export type SectionResult =
 
 const ATX = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$/;
 const CLOSING = /(?:^|[ \t]+)#+[ \t]*$/;
-const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+// A fence may open inside a list item ("- ```md", "1. ~~~") and close indented (review round 1).
+const FENCE = /^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)*(`{3,}|~{3,})(.*)$/;
 
 const lines = (markdown: string) => markdown.replace(/\r\n?/g, '\n').split('\n');
 
@@ -59,6 +62,9 @@ export function markdownHeadings(markdown: string): MarkdownHeading[] {
 export function normalizeHeading(s: string): string {
   return s.toLowerCase().replace(/[*_`~]/g, '').replace(/\s+/g, ' ').trim().replace(/[.:;,!?…]+$/u, '').trim();
 }
+
+/** The leading section number of a normalized name ("9", "3.3"), or null. */
+const sectionNumber = (n: string) => n.match(/^(\d+(?:\.\d+)*)\.?(?:\s|$)/)?.[1] ?? null;
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -105,6 +111,10 @@ export function findSection(
     const re = new RegExp(`(?<![\\p{L}\\p{N}-])${escapeRe(id)}(?![\\p{L}\\p{N}])`, 'u');
     steps.push((n) => re.test(n));
   }
+  // Review round 1: last, the same section number ("9. Owner decisions" finds "9. Decisions
+  // recorded (…)" after a rename); "9" never matches "9.1".
+  const num = sectionNumber(name);
+  if (num) steps.push((n) => sectionNumber(n) === num);
   for (const step of steps) {
     const hit = norm.find((x) => step(x.n));
     if (hit) return sectionOf(markdown, heads, hit.h);
