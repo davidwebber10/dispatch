@@ -322,4 +322,7 @@ function initializeSchema(db: Database.Database): void {
     UPDATE ledger_items SET sent_at = created_at WHERE sent_at IS NULL;
     CREATE INDEX IF NOT EXISTS idx_ledger_items_agent ON ledger_items(session_id, agent_terminal_id, agent_decision_id);
   `));
+  // Overseer ledger titles (spec 2026-10-09, Unit 1): a short label the overseer writes. Rows that
+  // exist keep NULL; they show their question until the overseer gives them a title.
+  migrate(db, '007-ledger-title', () => db.exec('ALTER TABLE ledger_items ADD COLUMN title TEXT;'));
 }

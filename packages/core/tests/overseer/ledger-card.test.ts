@@ -16,7 +16,7 @@ function item(over: Partial<LedgerItem>): LedgerItem {
     origin: 'live', createdAt: ago(2 * DAY), updatedAt: ago(2 * DAY),
     context: null, recommendationWhy: null, defaultText: null, sourceKind: null, sourceRef: null,
     sourceSection: null, sourceId: null, overseerNote: null, onDefaultSince: null, agentTerminalId: null,
-    agentDecisionId: null, decidedChoice: null, decidedAt: null, policy: false, sentAt: ago(2 * DAY),
+    agentDecisionId: null, decidedChoice: null, decidedAt: null, policy: false, sentAt: ago(2 * DAY), title: null,
     ...over,
   };
 }

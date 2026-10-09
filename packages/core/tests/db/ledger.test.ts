@@ -141,6 +141,29 @@ describe('006 migration', () => {
   });
 });
 
+// Titles and source panel spec 2026-10-09, Unit 1: a nullable title column.
+describe('007 migration', () => {
+  it('adds a nullable title column; rows that exist keep NULL', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    db.exec('ALTER TABLE ledger_items DROP COLUMN title');
+    db.exec("DELETE FROM schema_migrations WHERE id = '007-ledger-title'");
+    db.prepare(`INSERT INTO ledger_items (session_id, seq, kind, text, author, status, created_at, updated_at)
+      VALUES ('s1', 1, 'decide', 'Which store goes first?', 'overseer', 'open', ?, ?)`).run(T0, T0);
+    initSchema(db); // the next boot of a database from before titles
+    expect(db.prepare('SELECT 1 FROM schema_migrations WHERE id = ?').get('007-ledger-title')).toBeTruthy();
+    expect(ledgerDb.getBySeq(db, 's1', 1)).toMatchObject({ text: 'Which store goes first?', title: null });
+  });
+
+  it('create stores the title; without one it is null', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    expect(ledgerDb.create(db, { sessionId: 's1', kind: 'go', text: 'Merge board PR #26?', title: 'Merge board PR #26', author: 'overseer', now: T0 }).title)
+      .toBe('Merge board PR #26');
+    expect(ledgerDb.create(db, { sessionId: 's1', kind: 'do', text: 'Check staging.', author: 'overseer', now: T0 }).title).toBeNull();
+  });
+});
+
 describe('ledger db — card fields', () => {
   let db: Database.Database;
   beforeEach(() => { db = new Database(':memory:'); initSchema(db); });

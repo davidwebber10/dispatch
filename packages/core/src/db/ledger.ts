@@ -48,6 +48,7 @@ interface LedgerRow {
   decided_at: string | null;
   policy: number;
   sent_at: string | null;
+  title: string | null;
 }
 
 export interface LedgerItem {
@@ -95,6 +96,11 @@ export interface LedgerItem {
   policy: boolean;
   /** When the item first reached the user: created open, or moved from proposed to open. Null while proposed. */
   sentAt: string | null;
+  /**
+   * A short label the overseer writes (titles spec 2026-10-09, Unit 1). Chips, card rows and recap
+   * lines show it instead of the question; null for an item without one (they show the question).
+   */
+  title: string | null;
 }
 
 /** Read an options value in either shape: #62 plain strings, or `{ label, effect }` objects. */
@@ -150,6 +156,7 @@ function rowToItem(r: LedgerRow): LedgerItem {
     decidedAt: r.decided_at,
     policy: r.policy === 1,
     sentAt: r.sent_at,
+    title: r.title,
   };
 }
 
@@ -157,6 +164,8 @@ export interface CreateLedgerInput {
   sessionId: string;
   kind: LedgerKind;
   text: string;
+  /** The short label (titles spec 2026-10-09, Unit 1). The service checks it; the database stores it as is. */
+  title?: string | null;
   author: string;
   recommendation?: string | null;
   options?: LedgerOption[] | null;
@@ -205,8 +214,8 @@ export function create(db: Database.Database, input: CreateLedgerInput): LedgerI
       (session_id, seq, kind, text, author, recommendation, options, blocks, mission, status,
        quote, quote_message_id, quote_at, reading, reason, supersedes, origin, created_at, updated_at,
        context, recommendation_why, default_text, source_kind, source_ref, source_section, source_id,
-       overseer_note, agent_terminal_id, agent_decision_id, policy, sent_at, decided_choice, decided_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+       overseer_note, agent_terminal_id, agent_decision_id, policy, sent_at, decided_choice, decided_at, title)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       input.sessionId, next, input.kind, input.text, input.author,
       input.recommendation ?? null,
       input.options && input.options.length ? JSON.stringify(input.options) : null,
@@ -217,7 +226,7 @@ export function create(db: Database.Database, input: CreateLedgerInput): LedgerI
       input.sourceKind ?? null, input.sourceRef ?? null, input.sourceSection ?? null, input.sourceId ?? null,
       input.overseerNote ?? null, input.agentTerminalId ?? null, input.agentDecisionId ?? null,
       input.policy ? 1 : 0, status === 'proposed' || decided ? null : now,
-      decided ? input.decidedChoice ?? null : null, decided ? now : null,
+      decided ? input.decidedChoice ?? null : null, decided ? now : null, input.title ?? null,
     );
     if (input.supersedes !== undefined && input.supersedes !== null) {
       db.prepare("UPDATE ledger_items SET status = 'superseded', updated_at = ? WHERE session_id = ? AND seq = ? AND status IN ('open', 'proposed')")

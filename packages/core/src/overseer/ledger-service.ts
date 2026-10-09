@@ -28,7 +28,8 @@ import {
 import { buildLedgerCard, type LedgerCard } from './ledger-card.js';
 import {
   cardFieldsError, findProjectPath, gitWorktrees, holdsSeveralDecisions, isIssueRef, missingCardFields,
-  isUserSourceKind, ONE_DECISION_ERROR, ONLY_USER_ERROR, onlyUserCanDecide, sourceComplete, sourceMissingError, type CardFieldsInput,
+  isUserSourceKind, ONE_DECISION_ERROR, ONLY_USER_ERROR, onlyUserCanDecide, sourceComplete, sourceMissingError, titleProblem,
+  type CardFieldsInput,
 } from './ledger-checks.js';
 
 export const NOT_OVERSEER_ERROR = "Only the project's overseer can change the ledger.";
@@ -57,6 +58,19 @@ export function parseLedgerId(raw: unknown): number | null {
 }
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+
+/**
+ * The title of an item (titles spec 2026-10-09, Unit 1), trimmed; undefined when none is given. A
+ * title that breaks a rule is a 422 with the reason, in the shape of the card-field errors (`body`
+ * rides along, as `{ item: i }` for an import).
+ */
+function readTitle(raw: unknown, body: Record<string, unknown> = {}): string | undefined {
+  const title = str(raw);
+  if (title === undefined) return undefined;
+  const problem = titleProblem(title);
+  if (problem) throw new LedgerError(422, problem, body);
+  return title;
+}
 
 /** Options in either shape: plain strings (#62) or `{ label, effect }`. A string reads as a label with no effect. */
 function optionList(v: unknown, field: string): ledgerDb.LedgerOption[] | undefined {
@@ -252,6 +266,7 @@ export class LedgerService {
     if (typeof kind !== 'string' || !OPEN_KINDS.has(kind)) throw new LedgerError(400, "kind must be 'go', 'decide' or 'do'");
     const text = str(input.text);
     if (!text) throw new LedgerError(400, 'text is required');
+    const title = readTitle(input.title);
     let supersedes: number | undefined;
     if (input.supersedes !== undefined && input.supersedes !== null && input.supersedes !== '') {
       supersedes = this.requireItem(sessionId, input.supersedes).seq;
@@ -261,6 +276,7 @@ export class LedgerService {
       sessionId,
       kind: kind as ledgerDb.LedgerKind,
       text,
+      title,
       author: str(input.author) ?? 'overseer',
       ...card,
       blocks: str(input.blocks),
@@ -489,11 +505,13 @@ export class LedgerService {
       if (it.policy !== undefined && it.policy !== false) {
         throw new LedgerError(400, `items[${i}].policy is not allowed: a project rule needs the user's checked words (ledger_note with policy: true)`);
       }
+      const title = readTitle(it.title, { item: i });
       const card = this.checkCard(sessionId, overseer.id, kind as ledgerDb.LedgerKind, text, it, { item: i });
       return {
         sessionId,
         kind: kind as ledgerDb.LedgerKind,
         text,
+        title,
         author: kind === 'statement' ? 'you' : (str(it.author) ?? 'overseer'),
         ...card,
         options: optionList(it.options, `items[${i}].options`),
