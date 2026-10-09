@@ -215,7 +215,7 @@ it('an UNgoverned thread (no toolPolicy) keeps auto-granting a permissions escal
 
 it('a two-file ApplyPatch touching one memory path and one repo path is DENIED (decline on the wire)', async () => {
   const memoryDir = path.join(os.tmpdir(), `coordinator-memory-${process.pid}-${Date.now()}`);
-  const policy = makeCoordinatorPolicy(memoryDir);
+  const policy = makeCoordinatorPolicy([memoryDir]);
   const logPath = makeFakeLogPath();
   spawnFake(m, 't1', { toolPolicy: policy, env: { CODEX_FAKE_LOG: logPath } });
   await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
@@ -240,7 +240,7 @@ it('a two-file ApplyPatch touching one memory path and one repo path is DENIED (
 
 it('an all-memory-path ApplyPatch is ALLOWED (accept on the wire)', async () => {
   const memoryDir = path.join(os.tmpdir(), `coordinator-memory-${process.pid}-${Date.now()}-b`);
-  const policy = makeCoordinatorPolicy(memoryDir);
+  const policy = makeCoordinatorPolicy([memoryDir]);
   const logPath = makeFakeLogPath();
   spawnFake(m, 't1', { toolPolicy: policy, env: { CODEX_FAKE_LOG: logPath } });
   await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
@@ -264,7 +264,7 @@ it('an all-memory-path ApplyPatch is ALLOWED (accept on the wire)', async () => 
 
 it('an ApplyPatch that MOVES a memory file onto a repo path is DENIED end-to-end (M2, decline on the wire)', async () => {
   const memoryDir = path.join(os.tmpdir(), `coordinator-memory-${process.pid}-${Date.now()}-move`);
-  const policy = makeCoordinatorPolicy(memoryDir);
+  const policy = makeCoordinatorPolicy([memoryDir]);
   const logPath = makeFakeLogPath();
   spawnFake(m, 't1', { toolPolicy: policy, env: { CODEX_FAKE_LOG: logPath } });
   await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
@@ -322,7 +322,7 @@ it('a permissions self-escalation deny renders as a paired Permissions tool call
 // tool call", so a Codex coordinator could not call spawn_agent at all.
 it('a governed coordinator\'s MCP tool call (spawn_agent) is approved on the wire, not rejected', async () => {
   const logPath = makeFakeLogPath();
-  spawnFake(m, 't1', { toolPolicy: makeCoordinatorPolicy(coordinatorMemoryDirFor('codex'), { commandsEscalate: true }), env: { CODEX_FAKE_LOG: logPath } });
+  spawnFake(m, 't1', { toolPolicy: makeCoordinatorPolicy([coordinatorMemoryDirFor('codex')], { commandsEscalate: true }), env: { CODEX_FAKE_LOG: logPath } });
   await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
   m.sendMessage('t1', 'mcp dispatch spawn_agent');
   const resp = await waitForLogEntry(logPath, (e) => e.response === 'mcpServer/elicitation/request');

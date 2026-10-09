@@ -130,6 +130,20 @@ function wirePtyUsageCapture(
   }));
 }
 
+/**
+ * The decision ledger's live wiring (pinned card spec 2026-10-08, Unit 3): every write of either
+ * LedgerService — the router's, returned here, and the one inside SessionService (the agent
+ * owner-decisions capture) — broadcasts `ledger:changed` on the events socket, so the web app's
+ * pinned card loads again. A failed broadcast never fails the write (LedgerService catches it).
+ *
+ * createApp and startServer both call this, so the two app builders cannot drift.
+ */
+export function wireLedger(db: Database.Database, sessionService: SessionService, broadcaster: EventBroadcaster): LedgerService {
+  const onChange = (sessionId: string) => broadcaster.broadcast({ type: 'ledger:changed', sessionId });
+  sessionService.setLedgerChangeListener(onChange);
+  return new LedgerService(db, { onChange });
+}
+
 /** Repo root, derived the same way as the webDist fallback below (works from both src/ in dev and dist/ once built, since both sit at the same depth under packages/core). */
 function resolveRepoRoot(): string {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -349,7 +363,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   // Mount routes
   app.use('/api/sessions', createSessionsRouter(sessionService, broadcaster, db));
   app.use('/api', createTerminalsRouter(sessionService, undefined, statusService));
-  app.use('/api', createLedgerRouter(new LedgerService(db)));
+  app.use('/api', createLedgerRouter(wireLedger(db, sessionService, broadcaster)));
   app.use('/api/events', createEventsRouter(statusService));
   app.use('/api/agents', createAgentsRouter(agentService));
   app.use('/api/roles', createRolesRouter(rolesService));
@@ -475,6 +489,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Determine actual server URL after port is known
   const sessionService = new SessionService(db, ptyManager, path.join(dataDir, 'mcp.json'));
   sessionService.setUserPromptListener((id, text) => threadAutoNamer.notifyPrompt(id, text));
+  // A Claude overseer loads only its own memory folder under this home (overseer memory scope
+  // spec 2026-10-07, Unit 1). Only the real daemon sets it; createApp (tests) leaves it unset.
+  sessionService.setOverseerMemoryHome(os.homedir());
   const agentService = new AgentService(db, sessionService, broadcaster, path.join(dataDir, 'runs'));
   // Built ahead of rolesService (moved up from its former spot below, alongside the other
   // *Pretty wiring) so it can be handed in as RolesService's optional push dep — backs the
@@ -646,7 +663,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Mount routes
   app.use('/api/sessions', createSessionsRouter(sessionService, broadcaster, db));
   app.use('/api', createTerminalsRouter(sessionService, broadcaster, statusService));
-  app.use('/api', createLedgerRouter(new LedgerService(db)));
+  app.use('/api', createLedgerRouter(wireLedger(db, sessionService, broadcaster)));
   app.use('/api/events', createEventsRouter(statusService));
   app.use('/api/agents', createAgentsRouter(agentService));
   app.use('/api/roles', createRolesRouter(rolesService));

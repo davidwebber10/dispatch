@@ -75,7 +75,7 @@ describe('rule 1 — required fields for decide and go', () => {
 
   it('the source needs a known kind, and a ref for every kind but overseer', () => {
     expect(missingCardFields('go', { ...GO_CARD, source: { kind: 'wiki', ref: 'x' } })).toEqual(['source']);
-    for (const kind of ['plan', 'doc', 'agent', 'pr', 'issue', 'user']) {
+    for (const kind of ['plan', 'doc', 'agent', 'thread', 'pr', 'issue', 'user']) {
       expect(missingCardFields('go', { ...GO_CARD, source: { kind } }), kind).toEqual(['source']);
       expect(missingCardFields('go', { ...GO_CARD, source: { kind, ref: 'x' } }), kind).toEqual([]);
     }
@@ -198,5 +198,10 @@ describe('rule 4 — items only the user can decide', () => {
     expect(onlyUserCanDecide({ ...base, sourceKind: 'user' })).toBe(true);
     expect(onlyUserCanDecide({ ...base, sentAt: '2026-10-06T10:00:00.000Z' })).toBe(true);
     expect(onlyUserCanDecide(base)).toBe(false);
+  });
+
+  // Overseer memory scope (spec 2026-10-07), Unit 4: an item from one of the user's threads is the user's.
+  it('an item sourced from one of the user\'s own threads', () => {
+    expect(onlyUserCanDecide({ ...base, sourceKind: 'thread' })).toBe(true);
   });
 });

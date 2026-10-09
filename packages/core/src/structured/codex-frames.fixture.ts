@@ -26,7 +26,7 @@ export const threadStarted = {
       "status": {
         "type": "idle"
       },
-      "path": "/Users/davidwebber/.codex/sessions/2026/07/16/rollout-2026-07-16T18-09-24-019f6cfa-33af-7480-bed7-948b4d900c94.jsonl",
+      "path": "/Users/someone/.codex/sessions/2026/07/16/rollout-2026-07-16T18-09-24-019f6cfa-33af-7480-bed7-948b4d900c94.jsonl",
       "cwd": "/var/folders/k7/xw2xpq2d4tb_4vxd3mv020800000gn/T/codex-spike-gXBxlz",
       "cliVersion": "0.144.4",
       "source": "vscode",
@@ -115,7 +115,7 @@ export const cmdStarted = {
     "item": {
       "type": "commandExecution",
       "id": "exec-8ad0d935-eb3a-428f-8301-3ed1eacdc662",
-      "command": "/bin/zsh -lc 'cat /Users/davidwebber/.codex/RTK.md'",
+      "command": "/bin/zsh -lc 'cat /Users/someone/.codex/RTK.md'",
       "cwd": "/var/folders/k7/xw2xpq2d4tb_4vxd3mv020800000gn/T/codex-spike-gXBxlz",
       "processId": "90581",
       "source": "unifiedExecStartup",
@@ -123,9 +123,9 @@ export const cmdStarted = {
       "commandActions": [
         {
           "type": "read",
-          "command": "cat /Users/davidwebber/.codex/RTK.md",
+          "command": "cat /Users/someone/.codex/RTK.md",
           "name": "RTK.md",
-          "path": "/Users/davidwebber/.codex/RTK.md"
+          "path": "/Users/someone/.codex/RTK.md"
         }
       ],
       "aggregatedOutput": null,
@@ -144,7 +144,7 @@ export const cmdCompleted = {
     "item": {
       "type": "commandExecution",
       "id": "exec-8ad0d935-eb3a-428f-8301-3ed1eacdc662",
-      "command": "/bin/zsh -lc 'cat /Users/davidwebber/.codex/RTK.md'",
+      "command": "/bin/zsh -lc 'cat /Users/someone/.codex/RTK.md'",
       "cwd": "/var/folders/k7/xw2xpq2d4tb_4vxd3mv020800000gn/T/codex-spike-gXBxlz",
       "processId": "90581",
       "source": "unifiedExecStartup",
@@ -152,9 +152,9 @@ export const cmdCompleted = {
       "commandActions": [
         {
           "type": "read",
-          "command": "cat /Users/davidwebber/.codex/RTK.md",
+          "command": "cat /Users/someone/.codex/RTK.md",
           "name": "RTK.md",
-          "path": "/Users/davidwebber/.codex/RTK.md"
+          "path": "/Users/someone/.codex/RTK.md"
         }
       ],
       "aggregatedOutput": "# RTK - Rust Token Killer (Codex CLI)\n\n**Usage**: Token-optimized CLI proxy for shell commands.\n\n## Rule\n\nAlways prefix shell commands with `rtk`.\n\nExamples:\n\n```bash\nrtk git status\nrtk cargo test\nrtk npm run build\nrtk pytest -q\n```\n\n## Meta Commands\n\n```bash\nrtk gain            # Token savings analytics\nrtk gain --history  # Recent command savings history\nrtk proxy <cmd>     # Run raw command without filtering\n```\n\n## Verification\n\n```bash\nrtk --version\nrtk gain\nwhich rtk\n```\n",

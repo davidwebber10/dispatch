@@ -58,13 +58,42 @@ describe('agency-mcp ledger tools', () => {
     expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ caller: 'coord-1', items: [{ kind: 'go', text: 'Merge PR #9.' }] });
   });
 
-  it('ledger_list returns the rendered text itself, not a JSON string', async () => {
+  // Pinned card spec 2026-10-08, Unit 5: two parts — the lines to paste, and the rest for the overseer's own use.
+  it('ledger_list returns the paste block, then the full ledger for the overseer\'s own use, as text', async () => {
+    const paste = 'New:\n- N1 · Go · Merge PR #12?\n\nNeeds you: 1 decision, 0 actions — on the card.';
     const text = 'Needs you now:\n- none\n\nYour tests and actions:\n- none';
-    const fetchMock = vi.fn().mockResolvedValueOnce(ok({ text, openIds: [] }));
+    const fetchMock = vi.fn().mockResolvedValueOnce(ok({ paste, text, openIds: [] }));
     global.fetch = fetchMock as any;
     const out = await callTool('ledger_list', { forRecap: true });
-    expect(out.content).toEqual([{ type: 'text', text }]);
+    expect(out.content).toEqual([
+      { type: 'text', text: `Paste this into the recap:\n\n${paste}` },
+      { type: 'text', text: `For your own use — do not paste:\n\n${text}` },
+    ]);
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ caller: 'coord-1', forRecap: true });
+  });
+
+  // Overseer memory scope (spec 2026-10-07), Unit 5: the full rules are for the overseer's own use.
+  it('ledger_list puts the full project rules in the own-use part', async () => {
+    const paste = 'Needs you: 0 decisions, 0 actions — on the card.';
+    const text = 'Project rules: 2 in force (type "show rules").\n\nNeeds you now:\n- none';
+    const rules = ['N1 You said: "never deploy on Fridays" (Mon 16:01)', 'N2 You said: "always ask before a release" (Mon 16:02)'];
+    global.fetch = vi.fn().mockResolvedValueOnce(ok({ paste, text, openIds: [], rules })) as any;
+    const out = await callTool('ledger_list', {});
+    expect(out.content).toEqual([
+      { type: 'text', text: `Paste this into the recap:\n\n${paste}` },
+      { type: 'text', text: `For your own use — do not paste:\n\n${text}\n\nProject rules in force, for your own use: apply them, and do not paste them.\n- ${rules[0]}\n- ${rules[1]}` },
+    ]);
+  });
+
+  it('ledger_show({ rules: true }) asks the daemon for the full rules', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(ok({ text: 'Project rules (your words):\n- N1 You said: "x" (Mon 16:01)' }));
+    global.fetch = fetchMock as any;
+    const out = await callTool('ledger_show', { rules: true });
+    expect(out.content).toEqual([{ type: 'text', text: 'Project rules (your words):\n- N1 You said: "x" (Mon 16:01)' }]);
+    expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/sessions/sess-1/ledger/show');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ caller: 'coord-1', rules: true });
+    const props = (TOOLS.find((t) => t.name === 'ledger_show')! as any).inputSchema.properties;
+    expect(props.rules.type).toBe('boolean');
   });
 
   it('each of the nine ledger tools surfaces the daemon\'s overseer-only refusal (403) as is', async () => {
@@ -221,7 +250,8 @@ describe('agency-mcp ledger tools', () => {
     const props = (name: string) => (TOOLS.find((t) => t.name === name)! as any).inputSchema.properties;
     expect(Object.keys(props('ledger_add'))).toEqual(expect.arrayContaining(['context', 'options', 'recommendation', 'why', 'default', 'source', 'note']));
     expect(props('ledger_add').options.items.properties).toEqual({ label: expect.any(Object), effect: expect.any(Object) });
-    expect(props('ledger_add').source.properties.kind.enum).toEqual(['plan', 'doc', 'agent', 'pr', 'issue', 'user', 'overseer']);
+    expect(props('ledger_add').source.properties.kind.enum).toEqual(['plan', 'doc', 'agent', 'thread', 'pr', 'issue', 'user', 'overseer']);
+    expect(props('ledger_add').source.properties.ref.description).toContain("thread: the label or ID of one of the user's own threads");
     expect(props('ledger_note').policy.type).toBe('boolean');
     expect(Object.keys(props('ledger_import').items.items.properties)).toEqual(expect.arrayContaining(['context', 'options', 'why', 'default', 'source']));
   });

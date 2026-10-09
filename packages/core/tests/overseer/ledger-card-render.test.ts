@@ -1,7 +1,7 @@
 // The decision card, the one-line forms and the recap sections (decision cards spec 2026-10-06, Unit 5).
 import { describe, it, expect } from 'vitest';
 import { parseOptions, type LedgerItem } from '../../src/db/ledger.js';
-import { renderCard, renderItem, renderOneLine, renderDefaultLine, renderOverseerDecisionLine, renderCountLine, renderLedgerSections } from '../../src/overseer/ledger-render.js';
+import { renderCard, renderItem, renderOneLine, renderDefaultLine, renderOverseerDecisionLine, renderCountLine, renderLedgerSections, renderRulesList } from '../../src/overseer/ledger-render.js';
 
 const DAY = 86_400_000;
 const NOW = Date.parse('2026-10-06T18:00:00.000Z');
@@ -83,6 +83,14 @@ describe('the full card', () => {
     expect(src({ sourceKind: 'issue', sourceRef: '#7' })).toMatch(/Source: issue #7$/);
     expect(src({ sourceKind: 'user', sourceRef: 'switch to live mode soon' })).toMatch(/Source: your words "switch to live mode soon"$/);
     expect(src({ sourceKind: 'overseer' })).toMatch(/Source: overseer$/);
+  });
+
+  // Overseer memory scope (spec 2026-10-07), Unit 4: a decision taken from one of the user's threads.
+  it('a thread source renders as the user\'s thread', () => {
+    const src = (over: Partial<LedgerItem>) => renderCard(item(over), ctx).split('\n\n')[1];
+    expect(src({ sourceKind: 'thread', sourceRef: 'Fix the login bug' })).toMatch(/ · Source: your thread "Fix the login bug"$/);
+    expect(src({ sourceKind: 'thread', sourceRef: 'Fix the login bug', sourceSection: 'the retry plan', sourceId: 'Q2' }))
+      .toMatch(/ · Source: your thread "Fix the login bug", section "the retry plan" \(`Q2`\)$/);
   });
 
   it('an old #62 row (plain-string options, no card fields) still renders as a card', () => {
@@ -179,13 +187,16 @@ describe('the recap sections', () => {
       item({ seq: 9, text: 'Rename the CLI?', status: 'parked', quote: 'later', quoteAt: ago(1_000) }),
     ];
     const out = renderLedgerSections(items, { now: NOW, lastRecapAt: LAST, timeZone: 'UTC' });
-    const order = ['Project rules (your words):', 'Needs you now:', 'Running on defaults:', 'Your tests and actions:',
+    const order = ['Project rules: 1 in force (type "show rules").', 'Needs you now:', 'Running on defaults:', 'Your tests and actions:',
       'Decided since the last recap:', 'Not yet triaged:', 'Parked:', 'Overseer decisions in the last 7 days: 1. Reversed by you: 0.'];
     const at = order.map((h) => out.indexOf(h));
     expect(at.every((i) => i >= 0)).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
     expect(out.endsWith('Overseer decisions in the last 7 days: 1. Reversed by you: 0.')).toBe(true);
-    expect(out).toContain('Project rules (your words):\n- N1 You said: "never deploy on Fridays"');
+    // Overseer memory scope (spec 2026-10-07), Unit 5: one line in the recap, not the full list.
+    expect(out.startsWith('Project rules: 1 in force (type "show rules").\n\nNeeds you now:')).toBe(true);
+    expect(out).not.toContain('never deploy on Fridays');
+    expect(out).not.toContain('Project rules (your words)');
     expect(out).toContain('Needs you now:\n\n**N2 · Go:** Merge PR #62?');
     expect(out).toContain('Running on defaults:\n- **N3 · Decide:** Abort when duplicates pass 1%? Running on the default "abort above 1%" since Oct 1.');
     expect(out).not.toContain('**N3 · Decide:** Abort when duplicates pass 1%?\n'); // not a card under Needs you now
@@ -193,6 +204,23 @@ describe('the recap sections', () => {
     expect(out).toContain('- **N6 · Decided by overseer:** Which retry helper? → the existing one.');
     expect(out).toContain('Not yet triaged:\n- 2 proposed decisions from "Readiness planner" (N7, N8).');
     expect(out).toContain('Parked:\n- N9 [Decide] Rename the CLI?');
+  });
+
+  it('Project rules: one line with the real count; renderRulesList has the full list', () => {
+    const rules = Array.from({ length: 13 }, (_, i) => item({
+      seq: i + 1, kind: 'statement', text: `rule ${i + 1}`, author: 'you', status: 'answered', quote: `rule ${i + 1}`, quoteAt: ago(DAY), policy: true,
+    }));
+    const notARule = item({ seq: 14, kind: 'statement', text: 'I like tea', author: 'you', status: 'answered', quote: 'I like tea', quoteAt: ago(DAY) });
+    // A rule recorded after the last recap still shows once under "Decided since the last recap",
+    // as every new statement does; after that, the recap has only the one line.
+    const out = renderLedgerSections([...rules, notARule], { now: NOW, lastRecapAt: ago(DAY), timeZone: 'UTC' });
+    expect(out.split('\n\n')[0]).toBe('Project rules: 13 in force (type "show rules").');
+    expect(out).not.toContain('rule 1');
+    const list = renderRulesList([...rules, notARule], ctx);
+    expect(list.startsWith('Project rules (your words):\n- N1 You said: "rule 1"')).toBe(true);
+    expect(list.split('\n')).toHaveLength(14);
+    expect(list).not.toContain('I like tea');
+    expect(renderRulesList([notARule], ctx)).toBe('No project rules.');
   });
 
   it('leaves out Project rules when there are none, and shows "- none" for an empty section', () => {
@@ -224,6 +252,35 @@ describe('the recap sections', () => {
     const items = Array.from({ length: 7 }, (_, i) => item({ seq: i + 1, text: `Question ${i + 1}?` }));
     const out = renderLedgerSections(items, { now: NOW, lastRecapAt: null, timeZone: 'UTC' });
     expect([...out.matchAll(/^\*\*N(\d+) · Decide:\*\*/gm)]).toHaveLength(7);
+  });
+
+  // Amendment 2026-10-07: an import is a one-time load, not news. Imported decisions never count
+  // as new, so the first recap after an import shows the top 5 as cards and one line for the rest.
+  it('imported decisions never count as new: with no recap yet, 7 imports give the top 5 cards and 2 lines', () => {
+    const items = Array.from({ length: 7 }, (_, i) => item({ seq: i + 1, text: `Question ${i + 1}?`, origin: 'imported' }));
+    const out = renderLedgerSections(items, { now: NOW, lastRecapAt: null, timeZone: 'UTC' });
+    expect([...out.matchAll(/^\*\*N(\d+) · Decide:\*\*/gm)].map((m) => Number(m[1]))).toEqual([1, 2, 3, 4, 5]);
+    expect([...out.matchAll(/^- \*\*N(\d+) · Decide:\*\*/gm)].map((m) => Number(m[1]))).toEqual([6, 7]);
+  });
+
+  it('a decision imported after a recap is still not new', () => {
+    const items = [
+      ...Array.from({ length: 5 }, (_, i) => item({ seq: i + 1, text: `Question ${i + 1}?`, sentAt: ago((9 - i) * DAY) })),
+      item({ seq: 6, text: 'Question 6?', origin: 'imported', sentAt: ago(1_000) }), // imported after LAST
+    ];
+    const out = renderLedgerSections(items, { now: NOW, lastRecapAt: LAST, timeZone: 'UTC' });
+    expect([...out.matchAll(/^\*\*N(\d+) · Decide:\*\*/gm)].map((m) => Number(m[1]))).toEqual([1, 2, 3, 4, 5]);
+    expect([...out.matchAll(/^- \*\*N(\d+) · Decide:\*\*/gm)].map((m) => Number(m[1]))).toEqual([6]);
+  });
+
+  it('a live decision next to imports is still new and gets its card', () => {
+    const items = [
+      ...Array.from({ length: 7 }, (_, i) => item({ seq: i + 1, text: `Question ${i + 1}?`, origin: 'imported' })),
+      item({ seq: 8, text: 'Question 8?', origin: 'live' }),
+    ];
+    const out = renderLedgerSections(items, { now: NOW, lastRecapAt: null, timeZone: 'UTC' });
+    expect([...out.matchAll(/^\*\*N(\d+) · Decide:\*\*/gm)].map((m) => Number(m[1]))).toEqual([8, 1, 2, 3, 4, 5]);
+    expect([...out.matchAll(/^- \*\*N(\d+) · Decide:\*\*/gm)].map((m) => Number(m[1]))).toEqual([6, 7]);
   });
 
   it('one proposed decision reads in the singular; groups follow the agents in seq order', () => {

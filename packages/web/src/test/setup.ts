@@ -1,4 +1,10 @@
 import '@testing-library/jest-dom/vitest';
+import { beforeEach } from 'vitest';
+import { forgetDraftMemory } from '../hooks/useDraft';
+
+// Drafts live in the page's memory first (hooks/useDraft.ts); each test starts like a fresh page,
+// so a test that clears local storage starts with no drafts.
+beforeEach(() => forgetDraftMemory());
 
 // jsdom has no layout engine, so it ships no Element.prototype.scrollIntoView at all — calling it
 // throws "scrollIntoView does not exist", and so does vi.spyOn'ing it. Components that reveal the

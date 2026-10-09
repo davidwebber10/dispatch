@@ -22,12 +22,13 @@ import * as ledgerDb from '../db/ledger.js';
 import * as messagesDb from '../db/coordinator-messages.js';
 import { findQuote, GO_APPROVAL_ERROR, namesGoApproval, OK_ONLY_ERROR } from './ledger-quote.js';
 import {
-  isUnchecked, renderCard, renderDefaultLine, renderHandoffBlock, renderItem, renderLedgerSections, renderOverseerDecisionLine,
-  type RenderContext,
+  isUnchecked, projectRules, renderAddLine, renderCard, renderDefaultLine, renderHandoffBlock, renderItem, renderLedgerSections,
+  renderOverseerDecisionLine, renderRecapPaste, renderRulesList, type RenderContext,
 } from './ledger-render.js';
+import { buildLedgerCard, type LedgerCard } from './ledger-card.js';
 import {
   cardFieldsError, findProjectPath, gitWorktrees, holdsSeveralDecisions, isIssueRef, missingCardFields,
-  ONE_DECISION_ERROR, ONLY_USER_ERROR, onlyUserCanDecide, sourceComplete, sourceMissingError, type CardFieldsInput,
+  isUserSourceKind, ONE_DECISION_ERROR, ONLY_USER_ERROR, onlyUserCanDecide, sourceComplete, sourceMissingError, type CardFieldsInput,
 } from './ledger-checks.js';
 
 export const NOT_OVERSEER_ERROR = "Only the project's overseer can change the ledger.";
@@ -86,18 +87,33 @@ export class LedgerService {
   private readonly clock: () => number;
   private readonly timeZone?: string;
   private readonly listWorktrees: (dir: string) => string[];
+  private readonly onChange?: (sessionId: string) => void;
 
+  /**
+   * `onChange` (pinned card spec 2026-10-08, Unit 3) runs after every successful write, with the
+   * project; server.ts turns it into the `ledger:changed` event. Its failure never fails the write.
+   */
   constructor(
     private readonly db: Database.Database,
-    opts: { clock?: () => number; timeZone?: string; listWorktrees?: (dir: string) => string[] } = {},
+    opts: { clock?: () => number; timeZone?: string; listWorktrees?: (dir: string) => string[]; onChange?: (sessionId: string) => void } = {},
   ) {
     this.clock = opts.clock ?? (() => Date.now());
     this.timeZone = opts.timeZone;
     this.listWorktrees = opts.listWorktrees ?? gitWorktrees;
+    this.onChange = opts.onChange;
   }
 
   private nowIso(): string {
     return new Date(this.clock()).toISOString();
+  }
+
+  /** Tell the listener that the project's ledger changed. Never throws. */
+  private changed(sessionId: string): void {
+    try {
+      this.onChange?.(sessionId);
+    } catch (err) {
+      console.error(`ledger: the change listener failed for ${sessionId}; the write stands`, err);
+    }
   }
 
   private ctx(sessionId: string): RenderContext {
@@ -134,17 +150,30 @@ export class LedgerService {
     return [dir, ...this.listWorktrees(dir).filter((w) => w !== dir)];
   }
 
-  /** An agent thread of this project (archived ones included), by ID or label. */
-  private findAgent(sessionId: string, ref: string): { id: string; label: string } | null {
+  /** A thread of this project (archived ones included), by ID or label, whose role passes `fits`. */
+  private findThreadWhere(sessionId: string, ref: string, fits: (role: unknown) => boolean): { id: string; label: string } | null {
     const rows = this.db.prepare('SELECT id, label, config FROM terminals WHERE session_id = ?').all(sessionId) as
       { id: string; label: string | null; config: string | null }[];
     for (const r of rows) {
       let cfg: Record<string, any> = {};
       try { cfg = JSON.parse(r.config || '{}'); } catch { /* default {} */ }
-      if (cfg.role !== 'agent') continue;
+      if (!fits(cfg.role)) continue;
       if (r.id === ref || (r.label ?? '') === ref) return { id: r.id, label: r.label || ref };
     }
     return null;
+  }
+
+  /** An agent thread of this project (archived ones included), by ID or label. Never one of the user's own threads. */
+  private findAgent(sessionId: string, ref: string): { id: string; label: string } | null {
+    return this.findThreadWhere(sessionId, ref, (role) => role === 'agent');
+  }
+
+  /**
+   * One of the user's own threads of this project (archived ones included), by ID or label: neither
+   * an agent nor the overseer (overseer memory scope spec 2026-10-07, Unit 4).
+   */
+  private findUserThread(sessionId: string, ref: string): { id: string; label: string } | null {
+    return this.findThreadWhere(sessionId, ref, (role) => role !== 'agent' && role !== 'coordinator');
   }
 
   /**
@@ -195,6 +224,12 @@ export class LedgerService {
         sourceRef = agent.label;
         break;
       }
+      case 'thread': {
+        const thread = this.findUserThread(sessionId, ref);
+        if (!thread) throw fail(sourceMissingError(ref));
+        sourceRef = thread.label;
+        break;
+      }
       case 'pr':
       case 'issue':
         if (!isIssueRef(ref)) throw fail(sourceMissingError(ref));
@@ -233,9 +268,9 @@ export class LedgerService {
       supersedes,
       now: this.nowIso(),
     });
-    // A go or decide item goes to the user as its full card (Unit 5), a do item as its line.
-    const ctx = this.ctx(sessionId);
-    return { id: `N${item.seq}`, line: item.kind === 'do' ? renderItem(item, ctx) : renderCard(item, ctx) };
+    this.changed(sessionId);
+    // Pinned card spec 2026-10-08, Unit 5: the chat gets one line; the full card is on the pinned card.
+    return { id: `N${item.seq}`, line: renderAddLine(item) };
   }
 
   resolve(sessionId: string, caller: unknown, input: Record<string, unknown>): { id: string; status: string; line: string } {
@@ -260,6 +295,7 @@ export class LedgerService {
       const reason = str(input.reason);
       if (!reason) throw new LedgerError(400, 'reason is required to withdraw an item');
       const updated = ledgerDb.updateStatus(this.db, sessionId, item.seq, { status, reason, reading, now: this.nowIso() })!;
+      this.changed(sessionId);
       return { id: `N${item.seq}`, status, line: renderItem(updated, this.ctx(sessionId)) };
     }
     const quote = str(input.quote);
@@ -274,6 +310,7 @@ export class LedgerService {
     const updated = ledgerDb.updateStatus(this.db, sessionId, item.seq, {
       status, quote: match.quote, quoteMessageId: match.messageId, quoteAt: match.sentAt, reading, now: this.nowIso(),
     })!;
+    this.changed(sessionId);
     return { id: `N${item.seq}`, status, line: renderItem(updated, this.ctx(sessionId)) };
   }
 
@@ -289,6 +326,7 @@ export class LedgerService {
     const item = this.requireItem(sessionId, input.id);
     if (item.status !== 'proposed') throw new LedgerError(409, `N${item.seq} is already ${item.status}.`, { status: item.status });
     ledgerDb.markSent(this.db, sessionId, item.seq, { note: str(input.note), blocks: str(input.blocks), now: this.nowIso() });
+    this.changed(sessionId);
     return { id: `N${item.seq}`, status: 'open' };
   }
 
@@ -296,7 +334,7 @@ export class LedgerService {
    * ledger_decide_self: a low-level call by the overseer. With `id`, it decides a proposed item;
    * Unit 2 rule 4 limits it to items only it may decide. Without `id`, it records a new decision
    * that is already decided — the overseer's own low-level call that no agent proposed: always a
-   * `decide` item (a `go` kind and a `user` source are the user's), with the same card checks as
+   * `decide` item (a `go` kind, a `user` source and a `thread` source are the user's), with the same card checks as
    * ledger_add, never sent to the user (`sent_at` NULL), `decided_at` now.
    */
   decideSelf(sessionId: string, caller: unknown, input: Record<string, unknown>): { id: string; status: 'decided_by_overseer'; line: string } {
@@ -309,14 +347,15 @@ export class LedgerService {
     const reason = str(input.reason);
     if (!choice || !reason) throw new LedgerError(400, 'choice and reason are required');
     const updated = ledgerDb.markDecidedByOverseer(this.db, sessionId, item.seq, { choice, reason, now: this.nowIso() })!;
+    this.changed(sessionId);
     return { id: `N${item.seq}`, status: 'decided_by_overseer', line: renderOverseerDecisionLine(updated) };
   }
 
   /** decideSelf without `id`: a new item, created already decided. Nothing is created when a check fails. */
   private recordOwnDecision(sessionId: string, overseerId: string, input: Record<string, unknown>): { id: string; status: 'decided_by_overseer'; line: string } {
-    // Rule 4: a go item and an item sourced from the user stay with the user.
+    // Rule 4: a go item and an item sourced from the user or one of the user's threads stay with the user.
     const source = input.source as Record<string, unknown> | undefined;
-    if (input.kind === 'go' || (source && typeof source === 'object' && source.kind === 'user')) throw new LedgerError(422, ONLY_USER_ERROR);
+    if (input.kind === 'go' || (source && typeof source === 'object' && isUserSourceKind(source.kind))) throw new LedgerError(422, ONLY_USER_ERROR);
     const text = str(input.text);
     if (!text) throw new LedgerError(400, 'text is required to record a decision of your own (or pass the id of a proposed item)');
     const choice = str(input.choice);
@@ -335,6 +374,7 @@ export class LedgerService {
       reason,
       now: this.nowIso(),
     });
+    this.changed(sessionId);
     return { id: `N${item.seq}`, status: 'decided_by_overseer', line: renderOverseerDecisionLine(item) };
   }
 
@@ -345,13 +385,15 @@ export class LedgerService {
     if (item.kind !== 'go' && item.kind !== 'decide') throw new LedgerError(400, 'only a go or decide item has a default');
     if (item.status !== 'open') throw new LedgerError(409, `N${item.seq} is already ${item.status}.`, { status: item.status });
     const updated = ledgerDb.markOnDefault(this.db, sessionId, item.seq, this.nowIso())!;
+    this.changed(sessionId);
     return { id: `N${item.seq}`, line: renderDefaultLine(updated, { timeZone: this.timeZone }) };
   }
 
-  /** ledger_show: the full cards of the given items, or of every open decision. */
+  /** ledger_show: the full cards of the given items, or of every open decision; `rules: true` prints the project rules ("show rules"). */
   show(sessionId: string, caller: unknown, input: Record<string, unknown>): { text: string } {
     this.assertOverseer(sessionId, caller);
     const ctx = this.ctx(sessionId);
+    if (input.rules === true) return { text: renderRulesList(ledgerDb.listBySession(this.db, sessionId), ctx) };
     const render = (i: ledgerDb.LedgerItem) => (i.kind === 'go' || i.kind === 'decide' ? renderCard(i, ctx) : renderItem(i, ctx));
     if (input.all === true) {
       const open = ledgerDb.listBySession(this.db, sessionId).filter((i) => i.status === 'open' && (i.kind === 'go' || i.kind === 'decide'));
@@ -383,23 +425,52 @@ export class LedgerService {
       policy: input.policy === true,
       now: this.nowIso(),
     });
+    this.changed(sessionId);
     return { id: `N${item.seq}`, line: renderItem(item, this.ctx(sessionId)) };
   }
 
-  /** The rendered ledger part of a recap. `forRecap` stamps lastRecapAt and clears the interim timer. */
-  list(sessionId: string, caller: unknown, opts: { forRecap?: boolean } = {}): { text: string; openIds: string[] } {
+  /**
+   * The ledger part of a recap. `paste` is what the overseer pastes into the recap (pinned card spec
+   * 2026-10-08, Unit 5: the new items, the decided ones, the count line); `text` is the full ledger
+   * and `rules` each project rule in full, both for the overseer's own use (overseer memory scope
+   * spec 2026-10-07, Unit 5). Both are relative to the recap before this call. `forRecap` stamps
+   * lastRecapAt and clears the interim timer.
+   */
+  list(sessionId: string, caller: unknown, opts: { forRecap?: boolean } = {}): { paste: string; text: string; openIds: string[]; rules: string[] } {
     const overseer = this.assertOverseer(sessionId, caller);
     let cfg: Record<string, any> = {};
     try { cfg = JSON.parse(overseer.config || '{}'); } catch { /* default {} */ }
     const lastRecapAt = typeof cfg[LAST_RECAP_KEY] === 'string' ? (cfg[LAST_RECAP_KEY] as string) : null;
     const items = ledgerDb.listBySession(this.db, sessionId);
+    const paste = renderRecapPaste(items, { now: this.clock(), lastRecapAt });
     const text = renderLedgerSections(items, { now: this.clock(), lastRecapAt, timeZone: this.timeZone });
     if (opts.forRecap) {
       cfg[LAST_RECAP_KEY] = this.nowIso();
       delete cfg[INTERIM_DUE_KEY];
       terminalsDb.updateConfig(this.db, overseer.id, cfg);
+      this.changed(sessionId); // a recap changes which items are new
     }
-    return { text, openIds: items.filter((i) => i.status === 'open').map((i) => `N${i.seq}`) };
+    const ctx = this.ctx(sessionId);
+    return {
+      paste,
+      text,
+      openIds: items.filter((i) => i.status === 'open').map((i) => `N${i.seq}`),
+      rules: projectRules(items).map((i) => renderItem(i, ctx)),
+    };
+  }
+
+  /**
+   * The pinned card (pinned card spec 2026-10-08, Unit 2). Read-only: it never stamps lastRecapAt
+   * and never clears the interim timer, so a page load is never a recap. No caller check, like the
+   * routes that return conversations: the network is the gate. "New" is relative to the last recap
+   * of the project's live overseer; with none, nothing has been recapped yet.
+   */
+  card(sessionId: string): LedgerCard {
+    if (!sessionsDb.getById(this.db, sessionId)) throw new LedgerError(404, `Unknown project: ${sessionId}`);
+    const overseer = terminalsDb.listBySession(this.db, sessionId).map(terminalsDb.rowToTerminal) // not archived
+      .find((t) => t.config?.role === 'coordinator');
+    const lastRecapAt = typeof overseer?.config[LAST_RECAP_KEY] === 'string' ? (overseer.config[LAST_RECAP_KEY] as string) : null;
+    return buildLedgerCard(ledgerDb.listBySession(this.db, sessionId), { now: this.clock(), lastRecapAt });
   }
 
   /** One-time load of open items and earlier decisions from the overseer's context. */
@@ -435,6 +506,7 @@ export class LedgerService {
       };
     });
     const created = this.db.transaction(() => inputs.map((input) => ledgerDb.create(this.db, input)))();
+    this.changed(sessionId);
     return { ids: created.map((i) => `N${i.seq}`) };
   }
 
@@ -503,6 +575,7 @@ export class LedgerService {
         created.push(item.seq);
       });
     })();
+    if (created.length) this.changed(sessionId);
     return { created, skipped };
   }
 

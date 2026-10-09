@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import type { SessionProvider, SecretsMcpInjection, StatusHooksInjection } from './types.js';
 import { platform } from '../platform/index.js';
+import { autoMemorySettingsArg } from '../overseer/memory-scope.js';
 
 // Additive --mcp-config (no --strict-mcp-config, so the user's other MCP servers
 // still load). Returns [] when Doppler isn't connected.
@@ -91,7 +92,7 @@ export const claudeCodeProvider: SessionProvider = {
     };
   },
 
-  buildStructuredCommand({ workDir, secretsMcp, appendSystemPrompt, resumeSessionId, model, disallowedTools }: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string; model?: string; disallowedTools?: string[] }) {
+  buildStructuredCommand({ workDir, secretsMcp, appendSystemPrompt, resumeSessionId, model, disallowedTools, autoMemoryDirectory }: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string; model?: string; disallowedTools?: string[]; autoMemoryDirectory?: string }) {
     // The spike-verified stream-json control protocol. Parity permissions come from
     // the StructuredSessionManager's auto-allow loop, NOT --dangerously-skip-permissions.
     const args: string[] = [
@@ -122,6 +123,10 @@ export const claudeCodeProvider: SessionProvider = {
     // (Agent/Task/Workflow) are auto-approved by the CLI and thus unreachable by the
     // can_use_tool membrane — see COORDINATOR_DISALLOWED_TOOLS in overseer/coordinator-policy.ts.
     if (disallowedTools?.length) args.push('--disallowedTools', ...disallowedTools);
+    // The overseer's own memory folder (overseer memory scope spec 2026-10-07, Unit 1): the
+    // session loads only that folder's MEMORY.md, not the project folder that the user's own
+    // threads share. Inline JSON settings are additive, like the hooks file of a PTY thread.
+    if (autoMemoryDirectory) args.push('--settings', autoMemorySettingsArg(autoMemoryDirectory));
     return { command: 'claude', args };
   },
 

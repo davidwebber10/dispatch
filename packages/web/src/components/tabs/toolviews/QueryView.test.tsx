@@ -10,7 +10,7 @@ test('getToolView matches a tool whose input has a sql/query/statement field', (
 });
 
 test('getToolView returns null when there is no query field and no other match', () => {
-  expect(getToolView('mcp__acumatica__acumatica_search_orders', { filter: 'x' })).toBeNull();
+  expect(getToolView('mcp__erp__erp_search_orders', { filter: 'x' })).toBeNull();
 });
 
 test('parseToolInput safely returns null on junk', () => {

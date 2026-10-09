@@ -39,59 +39,59 @@ afterEach(() => {
 
 describe('resolveTranscriptPath', () => {
   test('finds the transcript at the encoded working dir (the common case)', () => {
-    const expected = writeTranscript('-Users-dw-Sites-dispatch', SID);
-    expect(resolveTranscriptPath('/Users/dw/Sites/dispatch', SID, root)).toBe(expected);
+    const expected = writeTranscript('-Users-someone-Sites-dispatch', SID);
+    expect(resolveTranscriptPath('/Users/someone/Sites/dispatch', SID, root)).toBe(expected);
   });
 
   test('finds a transcript under a dot-directory working dir', () => {
     // `/.claude` encodes to `--claude`; the old `/`-only rule looked for `-.claude`.
-    const expected = writeTranscript('-Users-dw-Sites-dispatch--claude-worktrees-status-truth', SID);
-    expect(resolveTranscriptPath('/Users/dw/Sites/dispatch/.claude/worktrees/status-truth', SID, root)).toBe(expected);
+    const expected = writeTranscript('-Users-someone-Sites-dispatch--claude-worktrees-status-truth', SID);
+    expect(resolveTranscriptPath('/Users/someone/Sites/dispatch/.claude/worktrees/status-truth', SID, root)).toBe(expected);
   });
 
   test('finds a RELOCATED transcript that no longer lives under its working dir', () => {
     // The reported bug, exactly: the thread's stored working_dir is the main repo, but the
     // session moved into a worktree, so Claude Code writes under the worktree's project dir.
     // Nothing exists at the computed path — resolution must search by session id.
-    const expected = writeTranscript('-Users-dw-Sites-dispatch--claude-worktrees-status-truth', SID);
-    fs.mkdirSync(path.join(root, '-Users-dw-Sites-dispatch'), { recursive: true }); // exists but empty
-    expect(resolveTranscriptPath('/Users/dw/Sites/dispatch', SID, root)).toBe(expected);
+    const expected = writeTranscript('-Users-someone-Sites-dispatch--claude-worktrees-status-truth', SID);
+    fs.mkdirSync(path.join(root, '-Users-someone-Sites-dispatch'), { recursive: true }); // exists but empty
+    expect(resolveTranscriptPath('/Users/someone/Sites/dispatch', SID, root)).toBe(expected);
   });
 
   test('returns undefined when the session has no transcript anywhere', () => {
-    writeTranscript('-Users-dw-Sites-dispatch', 'some-other-session');
-    expect(resolveTranscriptPath('/Users/dw/Sites/dispatch', SID, root)).toBeUndefined();
+    writeTranscript('-Users-someone-Sites-dispatch', 'some-other-session');
+    expect(resolveTranscriptPath('/Users/someone/Sites/dispatch', SID, root)).toBeUndefined();
   });
 
   test('never returns another session\'s transcript', () => {
-    writeTranscript('-Users-dw-elsewhere', 'not-the-one');
-    expect(resolveTranscriptPath('/Users/dw/Sites/dispatch', SID, root)).toBeUndefined();
+    writeTranscript('-Users-someone-elsewhere', 'not-the-one');
+    expect(resolveTranscriptPath('/Users/someone/Sites/dispatch', SID, root)).toBeUndefined();
   });
 
   test('prefers the working dir over a search hit when BOTH exist', () => {
     // A relocated session can leave a same-id file in more than one project dir. The one
     // under the thread's own working dir is the authoritative choice.
-    const expected = writeTranscript('-Users-dw-Sites-dispatch', SID);
-    writeTranscript('-Users-dw-somewhere-else', SID);
-    expect(resolveTranscriptPath('/Users/dw/Sites/dispatch', SID, root)).toBe(expected);
+    const expected = writeTranscript('-Users-someone-Sites-dispatch', SID);
+    writeTranscript('-Users-someone-somewhere-else', SID);
+    expect(resolveTranscriptPath('/Users/someone/Sites/dispatch', SID, root)).toBe(expected);
   });
 
   test('a cached resolution does not go stale when the file is removed', () => {
     // Resolution is memoized (the search scans every project dir), so a cache hit must be
     // revalidated — otherwise a deleted/rotated transcript would be served forever.
-    const p = writeTranscript('-Users-dw-Sites-dispatch', SID);
-    expect(resolveTranscriptPath('/Users/dw/Sites/dispatch', SID, root)).toBe(p);
+    const p = writeTranscript('-Users-someone-Sites-dispatch', SID);
+    expect(resolveTranscriptPath('/Users/someone/Sites/dispatch', SID, root)).toBe(p);
     fs.rmSync(p);
-    expect(resolveTranscriptPath('/Users/dw/Sites/dispatch', SID, root)).toBeUndefined();
+    expect(resolveTranscriptPath('/Users/someone/Sites/dispatch', SID, root)).toBeUndefined();
   });
 
   test('a relocated session resolves again after the search result is cached', () => {
-    const expected = writeTranscript('-Users-dw-worktree', SID);
-    expect(resolveTranscriptPath('/Users/dw/Sites/dispatch', SID, root)).toBe(expected);
-    expect(resolveTranscriptPath('/Users/dw/Sites/dispatch', SID, root)).toBe(expected);
+    const expected = writeTranscript('-Users-someone-worktree', SID);
+    expect(resolveTranscriptPath('/Users/someone/Sites/dispatch', SID, root)).toBe(expected);
+    expect(resolveTranscriptPath('/Users/someone/Sites/dispatch', SID, root)).toBe(expected);
   });
 
   test('tolerates a missing projects root without throwing', () => {
-    expect(resolveTranscriptPath('/Users/dw/x', SID, path.join(root, 'nope'))).toBeUndefined();
+    expect(resolveTranscriptPath('/Users/someone/x', SID, path.join(root, 'nope'))).toBeUndefined();
   });
 });

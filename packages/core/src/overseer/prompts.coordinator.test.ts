@@ -9,11 +9,14 @@ describe('buildCoordinatorPrompt', () => {
     expect(buildCoordinatorPrompt({ harness: 'claude-code' })).toBe(COORDINATOR_PROMPT);
   });
 
-  it('the codex variant names its dedicated memory subdir (never the bare Codex home) and never mentions ~/.claude', () => {
+  // Overseer memory scope (spec 2026-10-07): the Codex overseer may read and write the project's
+  // shared Claude folder (~/.claude/projects/…), so that is the only ~/.claude path it names.
+  it('the codex variant names its dedicated memory subdir (never the bare Codex home) and mentions ~/.claude only as the shared folder', () => {
     const p = buildCoordinatorPrompt({ harness: 'codex' });
     expect(p).toContain('~/.codex/dispatch-coordinator');
     expect(p).not.toMatch(/~\/\.codex(?!\/dispatch-coordinator)/);
-    expect(p).not.toContain('~/.claude');
+    expect(p).not.toContain('~/.claude/dispatch-overseer');
+    expect(p).not.toMatch(/~\/\.claude(?!\/projects)/);
   });
 
   it('the codex variant drops the Claude tier-alias teaching entirely', () => {
@@ -69,6 +72,7 @@ describe('buildCoordinatorPrompt', () => {
       'status checks and "did last night',
       'the opus defaults for genuine investigation, planning, and judgment.',
       'when you hit a denial, spawn the right agent instead of retrying.\n\n',
+      'It loads at each start. ', // overseer memory scope: Codex reads its folder itself
     ]) {
       expect(COORDINATOR_PROMPT, marker).toContain(marker);
     }
@@ -82,6 +86,8 @@ describe('buildCoordinatorPrompt', () => {
     expect(p).not.toContain('the opus defaults for genuine investigation');
     expect(p).toContain('the stronger default models for genuine investigation, planning, and judgment.');
     expect(p).toContain('spawn the right agent instead of retrying. On this harness specifically:');
+    expect(p).not.toContain('It loads at each start. ');
+    expect(p).toContain('Read it at each start. ');
   });
 
   it('an unrecognized harness falls back to the claude-code variant', () => {

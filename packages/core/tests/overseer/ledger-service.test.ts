@@ -70,12 +70,13 @@ describe('overseer-only check', () => {
 });
 
 describe('add', () => {
-  it('creates an open item with every card field and returns its ID and rendered line', () => {
+  it('creates an open item with every card field and returns its ID and its one line', () => {
     const out = ledger.add('s1', 'coord', { kind: 'decide', text: 'How many clean nights before live mode?', ...DECIDE_CARD, note: 'Check the dates.', blocks: 'the switch to live mode' });
     expect(out.id).toBe('N1');
-    // The line to post is the full card (Unit 5): the overseer posts it exactly as rendered.
-    expect(out.line).toBe(renderCard(ledgerDb.getBySeq(db, 's1', 1)!, { now, timeZone: 'UTC' }));
-    expect(out.line.startsWith('**N1 · Decide:** How many clean nights before live mode?\n\nHolds up: the switch to live mode · Open 0 minutes · Source: overseer\n\n**Context:** ')).toBe(true);
+    // Pinned card spec 2026-10-08, Unit 5: the chat gets one line; the full card is on the pinned card.
+    expect(out.line).toBe('N1 · Decide · How many clean nights before live mode? — the full card is on the pinned card.');
+    // ledger_show still renders the full card for the chat.
+    expect(ledger.show('s1', 'coord', { ids: ['N1'] }).text).toBe(renderCard(ledgerDb.getBySeq(db, 's1', 1)!, { now, timeZone: 'UTC' }));
     expect(ledgerDb.getBySeq(db, 's1', 1)).toMatchObject({
       status: 'open', context: DECIDE_CARD.context, options: DECIDE_CARD.options, recommendation: 'A. 5 nights',
       recommendationWhy: DECIDE_CARD.why, defaultText: DECIDE_CARD.default, sourceKind: 'overseer', sourceRef: null,
@@ -83,14 +84,14 @@ describe('add', () => {
     });
   });
 
-  it('supersedes: the old open item becomes superseded; the new line shows the original question', () => {
+  it('supersedes: the old open item becomes superseded; the new card shows the original question', () => {
     ledger.add('s1', 'coord', { kind: 'decide', text: 'Use library A?', ...DECIDE_CARD });
     ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR #12.', ...GO_CARD });
     ledger.add('s1', 'coord', { kind: 'decide', text: 'Set the first store to Draft?', ...DECIDE_CARD });
     const out = ledger.add('s1', 'coord', { kind: 'decide', text: 'Also set the second store to Draft?', ...DECIDE_CARD, supersedes: 'N3' });
     expect(out.id).toBe('N4');
-    expect(out.line).toContain('**N4 · Decide:** Also set the second store to Draft?\n\n');
-    expect(out.line).toContain('\n\n**Original question (N3):** "Set the first store to Draft?"\n\n');
+    expect(out.line).toBe('N4 · Decide · Also set the second store to Draft? — the full card is on the pinned card.');
+    expect(ledger.show('s1', 'coord', { ids: ['N4'] }).text).toContain('\n\n**Original question (N3):** "Set the first store to Draft?"\n\n');
     expect(ledgerDb.getBySeq(db, 's1', 3)!.status).toBe('superseded');
     expect(ledgerDb.listOpenSeqs(db, 's1')).toEqual([1, 2, 4]);
   });
@@ -186,6 +187,31 @@ describe('card checks (decision cards, Unit 2)', () => {
     expect(addP({ source: { kind: 'agent', ref: 'Readiness planner' } }).id).toBe('N3');
     expectLedgerError(() => addP({ source: { kind: 'agent', ref: 'Scratch' } }), 422, 'The source does not exist in this project: Scratch.');
     expectLedgerError(() => addP({ source: { kind: 'agent', ref: 'worker' } }), 422); // an agent of another project
+  });
+
+  // Overseer memory scope (spec 2026-10-07), Unit 4: `thread` is one of the user's own threads;
+  // `agent` is an agent only.
+  it('a thread source is a thread of this project that is neither an agent nor the overseer, by label or ID; the item stores its label and renders it', () => {
+    const first = addP({ source: { kind: 'thread', ref: 'Scratch' } });
+    expect(first.id).toBe('N1');
+    expect(ledger.show('p', 'pcoord', { ids: ['N1'] }).text).toContain(' · Source: your thread "Scratch"');
+    expect(addP({ source: { kind: 'thread', ref: 'pplain' } }).id).toBe('N2');
+    expect(ledgerDb.getBySeq(db, 'p', 2)).toMatchObject({ sourceKind: 'thread', sourceRef: 'Scratch' });
+    terminalsDb.archive(db, 'pplain'); // an archived thread still existed
+    expect(addP({ source: { kind: 'thread', ref: 'Scratch' } }).id).toBe('N3');
+  });
+
+  it("a thread source refuses another project's thread, an agent and the overseer", () => {
+    for (const ref of ['plain', 'Readiness planner', 'planner-1', 'Control Plane', 'pcoord']) {
+      expectLedgerError(() => addP({ source: { kind: 'thread', ref } }), 422, `The source does not exist in this project: ${ref}.`);
+    }
+    expect(ledgerDb.listBySession(db, 'p')).toEqual([]);
+  });
+
+  it("an agent source refuses one of the user's own threads, by label or ID", () => {
+    for (const ref of ['Scratch', 'pplain']) {
+      expectLedgerError(() => addP({ source: { kind: 'agent', ref } }), 422, `The source does not exist in this project: ${ref}.`);
+    }
   });
 
   it('rule 3: a PR or issue source has the form #123', () => {
@@ -308,6 +334,17 @@ describe('list', () => {
     expect(cfg.lastRecapAt).toBe(min(30));
     expect(cfg.interimDueAt).toBeUndefined();
     expect(cfg.role).toBe('coordinator'); // the rest of the config survives
+  });
+
+  // Pinned card spec 2026-10-08, Unit 5: the paste block is news since the last recap.
+  it('paste: the new items, the decided items and the count line, relative to the last recap', () => {
+    ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR #12?', ...GO_CARD });
+    expect(ledger.list('s1', 'coord').paste).toBe('New:\n- N1 · Go · Merge PR #12?\n\nNeeds you: 1 decision, 0 actions — on the card.');
+    now = T0 + 10 * 60_000;
+    expect(ledger.list('s1', 'coord', { forRecap: true }).paste).toContain('New:\n- N1 · Go · Merge PR #12?'); // new until this recap
+    now = T0 + 20 * 60_000;
+    ledger.add('s1', 'coord', { kind: 'do', text: 'Check the banner on staging.' });
+    expect(ledger.list('s1', 'coord').paste).toBe('New:\n- N2 · Do · Check the banner on staging.\n\nNeeds you: 1 decision, 1 action — on the card.');
   });
 });
 
@@ -453,6 +490,13 @@ describe('triage tools', () => {
     expect(ledgerDb.getBySeq(db, 's1', 5)!.decidedChoice).toBe('Monday');
   });
 
+  // Overseer memory scope (spec 2026-10-07), Unit 4: a thread's item is the user's to decide.
+  it("ledger_decide_self refuses an item sourced from one of the user's threads", () => {
+    ledgerDb.create(db, { sessionId: 's1', kind: 'decide', text: 'Switch when?', author: 'overseer', status: 'proposed', sourceKind: 'thread', sourceRef: 'plain' }); // N1
+    expectLedgerError(() => ledger.decideSelf('s1', 'coord', { id: 'N1', choice: 'now', reason: 'x' }), 422, ONLY_USER_ERROR);
+    expect(ledgerDb.getBySeq(db, 's1', 1)!.status).toBe('proposed');
+  });
+
   it('a reversal: ledger_resolve to answered on an overseer decision, with the user\'s checked quote; the count line counts it', () => {
     propose(); // created at minute 0
     userSays('switch on a Tuesday', 1); // after the item was created, but before the decision: never counts
@@ -520,6 +564,7 @@ describe('triage tools', () => {
     expectLedgerError(() => ledger.decideSelf('s1', 'coord', { ...OWN, kind: 'go' }), 422, ONLY_USER_ERROR);
     userSays('use the existing helper', 1);
     expectLedgerError(() => ledger.decideSelf('s1', 'coord', { ...OWN, source: { kind: 'user', ref: 'use the existing helper' } }), 422, ONLY_USER_ERROR);
+    expectLedgerError(() => ledger.decideSelf('s1', 'coord', { ...OWN, source: { kind: 'thread', ref: 'plain' } }), 422, ONLY_USER_ERROR);
     const { why: _w, ...noWhy } = OWN;
     expectLedgerError(() => ledger.decideSelf('s1', 'coord', noWhy), 422, 'A decision card needs: why. Add them and try again.');
     expectLedgerError(() => ledger.decideSelf('s1', 'coord', { ...OWN, text: 'Keep D1 to D9 as they are?' }), 422, 'One decision per card. Add each decision on its own.');
@@ -567,6 +612,28 @@ describe('triage tools', () => {
     expectLedgerError(() => ledger.show('s1', 'coord', { ids: ['N9'] }), 404);
     ledger.markDefault('s1', 'coord', { id: 'N1' });
     expect(ledger.show('s1', 'coord', { all: true }).text).toContain('Running on the default since Oct 5'); // still open: still shown
+  });
+
+  // Overseer memory scope (spec 2026-10-07), Unit 5: the rules are one line in the recap; the full
+  // list rides in a separate field and prints on "show rules".
+  it('ledger_list: the recap has the rules line; the rules field and ledger_show({ rules: true }) have the full list', () => {
+    expect(ledger.list('s1', 'coord').rules).toEqual([]);
+    expect(ledger.show('s1', 'coord', { rules: true })).toEqual({ text: 'No project rules.' });
+    userSays('never deploy on Fridays', 1);
+    userSays('always ask before a release', 2);
+    ledger.note('s1', 'coord', { quote: 'never deploy on Fridays', policy: true });
+    ledger.note('s1', 'coord', { quote: 'always ask before a release', policy: true });
+    // The first recap after a rule shows it once under "Decided since the last recap"; later recaps
+    // carry only the one line.
+    expect(ledger.list('s1', 'coord', { forRecap: true }).text).toContain('Decided since the last recap:\n- N1 You said: "never deploy on Fridays"');
+    now += 60_000;
+    const out = ledger.list('s1', 'coord');
+    expect(out.text.split('\n\n')[0]).toBe('Project rules: 2 in force (type "show rules").');
+    expect(out.text).not.toContain('never deploy on Fridays');
+    expect(out.rules).toEqual(['N1 You said: "never deploy on Fridays" (Mon 16:01)', 'N2 You said: "always ask before a release" (Mon 16:02)']);
+    expect(ledger.show('s1', 'coord', { rules: true }).text).toBe(
+      'Project rules (your words):\n- N1 You said: "never deploy on Fridays" (Mon 16:01)\n- N2 You said: "always ask before a release" (Mon 16:02)',
+    );
   });
 
   it('ledger_show all with no open decision', () => {

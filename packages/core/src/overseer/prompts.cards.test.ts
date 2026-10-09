@@ -29,7 +29,7 @@ const OVERSEER = [
   'ledger_add_from_agent({ id, note?, blocks? })',
   'ledger_decide_self({ id?, text?, context?, options?, recommendation?, why?, default?, source?, choice, reason })',
   'ledger_mark_default({ id })',
-  'ledger_show({ ids?, all? })',
+  'ledger_show({ ids?, all?, rules? })',
   'ledger_note({ quote, reading?, mission?, policy? })',
 ];
 
