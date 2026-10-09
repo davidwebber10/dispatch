@@ -531,7 +531,8 @@ export const TOOLS = [
       '(items sent to the user since the last recap), the Decided lines (answered or decided since then) and the ' +
       'count line ("Needs you: 19 decisions, 8 actions — on the card."); paste them as is. "For your own use — do ' +
       'not paste": the full ledger (Needs you now, Running on defaults, Your tests and actions, Not yet triaged, ' +
-      'Parked) and, when rules exist, each project rule in full: apply the rules, and do not paste them. The user ' +
+      'Parked), then "Open items without a title" when there are any (give each one a title with ledger_set_title ' +
+      'before you post the recap), and, when rules exist, each project rule in full: apply the rules, and do not paste them. The user ' +
       'sees the full ledger on the pinned card. Pass forRecap: true when you post the recap: it marks the recap as ' +
       'posted and clears the interim recap timer.',
     inputSchema: {

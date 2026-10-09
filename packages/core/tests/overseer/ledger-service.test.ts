@@ -74,7 +74,8 @@ describe('add', () => {
     const out = ledger.add('s1', 'coord', { kind: 'decide', text: 'How many clean nights before live mode?', ...DECIDE_CARD, note: 'Check the dates.', blocks: 'the switch to live mode' });
     expect(out.id).toBe('N1');
     // Pinned card spec 2026-10-08, Unit 5: the chat gets one line; the full card is on the pinned card.
-    expect(out.line).toBe('N1 · Decide · How many clean nights before live mode? — the full card is on the pinned card.');
+    // Titles spec 2026-10-09, Unit 3: the line names the item by its title.
+    expect(out.line).toBe('N1 · Decide · Clean nights before live mode — the full card is on the pinned card.');
     // ledger_show still renders the full card for the chat.
     expect(ledger.show('s1', 'coord', { ids: ['N1'] }).text).toBe(renderCard(ledgerDb.getBySeq(db, 's1', 1)!, { now, timeZone: 'UTC' }));
     expect(ledgerDb.getBySeq(db, 's1', 1)).toMatchObject({
@@ -88,9 +89,9 @@ describe('add', () => {
     ledger.add('s1', 'coord', { kind: 'decide', text: 'Use library A?', ...DECIDE_CARD });
     ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR #12.', ...GO_CARD });
     ledger.add('s1', 'coord', { kind: 'decide', text: 'Set the first store to Draft?', ...DECIDE_CARD });
-    const out = ledger.add('s1', 'coord', { kind: 'decide', text: 'Also set the second store to Draft?', ...DECIDE_CARD, supersedes: 'N3' });
+    const out = ledger.add('s1', 'coord', { kind: 'decide', text: 'Also set the second store to Draft?', ...DECIDE_CARD, title: 'Second store to Draft', supersedes: 'N3' });
     expect(out.id).toBe('N4');
-    expect(out.line).toBe('N4 · Decide · Also set the second store to Draft? — the full card is on the pinned card.');
+    expect(out.line).toBe('N4 · Decide · Second store to Draft — the full card is on the pinned card.');
     expect(ledger.show('s1', 'coord', { ids: ['N4'] }).text).toContain('\n\n**Original question (N3):** "Set the first store to Draft?"\n\n');
     expect(ledgerDb.getBySeq(db, 's1', 3)!.status).toBe('superseded');
     expect(ledgerDb.listOpenSeqs(db, 's1')).toEqual([1, 2, 4]);
@@ -322,9 +323,9 @@ describe('note', () => {
 describe('list', () => {
   it('renders the sections; forRecap stamps lastRecapAt and clears interimDueAt', () => {
     terminalsDb.updateConfig(db, 'coord', { role: 'coordinator', transport: 'structured', interimDueAt: min(20) });
-    ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR #12.', ...GO_CARD });
+    ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR #12.', ...GO_CARD, title: 'Merge PR #12' });
     const plain = ledger.list('s1', 'coord');
-    expect(plain.text).toContain('Needs you now:\n\n**N1 · Go:** Merge PR #12.\n\nHolds up: nothing · Open 0 minutes · Source: overseer');
+    expect(plain.text).toContain('Needs you now:\n\n**N1 · Go · Merge PR #12**\n\nMerge PR #12.\n\nHolds up: nothing · Open 0 minutes · Source: overseer');
     expect(plain.openIds).toEqual(['N1']);
     expect(JSON.parse(terminalsDb.getById(db, 'coord')!.config!).interimDueAt).toBe(min(20)); // a plain list changes nothing
 
@@ -338,13 +339,13 @@ describe('list', () => {
 
   // Pinned card spec 2026-10-08, Unit 5: the paste block is news since the last recap.
   it('paste: the new items, the decided items and the count line, relative to the last recap', () => {
-    ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR #12?', ...GO_CARD });
-    expect(ledger.list('s1', 'coord').paste).toBe('New:\n- N1 · Go · Merge PR #12?\n\nNeeds you: 1 decision, 0 actions — on the card.');
+    ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR #12?', ...GO_CARD, title: 'Merge PR #12' });
+    expect(ledger.list('s1', 'coord').paste).toBe('New:\n- N1 · Go · Merge PR #12\n\nNeeds you: 1 decision, 0 actions — on the card.');
     now = T0 + 10 * 60_000;
-    expect(ledger.list('s1', 'coord', { forRecap: true }).paste).toContain('New:\n- N1 · Go · Merge PR #12?'); // new until this recap
+    expect(ledger.list('s1', 'coord', { forRecap: true }).paste).toContain('New:\n- N1 · Go · Merge PR #12'); // new until this recap
     now = T0 + 20 * 60_000;
     ledger.add('s1', 'coord', { kind: 'do', text: 'Check the banner on staging.', title: 'Check the staging banner' });
-    expect(ledger.list('s1', 'coord').paste).toBe('New:\n- N2 · Do · Check the banner on staging.\n\nNeeds you: 1 decision, 1 action — on the card.');
+    expect(ledger.list('s1', 'coord').paste).toBe('New:\n- N2 · Do · Check the staging banner\n\nNeeds you: 1 decision, 1 action — on the card.');
   });
 });
 
@@ -451,7 +452,7 @@ describe('triage tools', () => {
     for (let i = 0; i < 6; i++) ledger.add('s1', 'coord', { kind: 'decide', text: `Old question ${i}?`, ...DECIDE_CARD });
     now = T0 + 10 * 60_000;
     ledger.list('s1', 'coord', { forRecap: true }); // now nothing is new: the top 5 rank by "holds up work", then age
-    const cards = [...ledger.list('s1', 'coord').text.matchAll(/^\*\*N(\d+) · Decide:\*\*/gm)].map((m) => Number(m[1]));
+    const cards = [...ledger.list('s1', 'coord').text.matchAll(/^\*\*N(\d+) · Decide · /gm)].map((m) => Number(m[1]));
     expect(cards[0]).toBe(2);
     expect(renderCard(ledgerDb.getBySeq(db, 's1', 2)!, { now, timeZone: 'UTC' })).toContain('Holds up: the switch to live mode · Open 5 minutes');
   });

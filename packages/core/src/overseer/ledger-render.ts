@@ -15,6 +15,10 @@
  * (each field its own paragraph, the option table, the recommended option marked); the one-line
  * forms and the recap sections follow it. The daemon renders them so a card cannot shrink to a
  * bare plan ID as turns go by.
+ *
+ * Titles (titles and source panel spec 2026-10-09, Unit 3): an item with a title shows the title in
+ * the paste block, the ledger_add line and the header of the full card (the question below it). An
+ * item without one keeps its question there. The other forms keep the question.
  */
 import type { LedgerItem, LedgerKind, LedgerStatus } from '../db/ledger.js';
 
@@ -183,7 +187,9 @@ export function renderSource(item: LedgerItem): string | null {
  */
 export function renderCard(item: LedgerItem, ctx: RenderContext): string {
   const id = `N${item.seq}`;
-  const parts: string[] = [`**${id} · ${item.kind === 'go' ? 'Go' : 'Decide'}:** ${item.text}`];
+  const kind = item.kind === 'go' ? 'Go' : 'Decide';
+  // Titles spec 2026-10-09, Unit 3: the title in the header, the question below it.
+  const parts: string[] = item.title ? [`**${id} · ${kind} · ${item.title}**`, item.text] : [`**${id} · ${kind}:** ${item.text}`];
 
   const meta = [`Holds up: ${item.blocks ?? 'nothing'}`];
   meta.push(item.status === 'open' ? `Open ${formatOpenAge(ctx.now - Date.parse(sentTime(item)))}` : STATUS_WORD[item.status]);
@@ -399,9 +405,12 @@ export function renderLedgerSections(
 
 // --- the pinned card (spec 2026-10-08, Unit 5): the recap is news ---------------------------
 
-/** "N60 · Go · Merge PR #12? — the full card is on the pinned card.": what ledger_add returns for the chat. */
+/**
+ * "N60 · Go · Merge PR #12 — the full card is on the pinned card.": what ledger_add returns for the
+ * chat, with the title (titles spec 2026-10-09, Unit 3), or the question for an item without one.
+ */
 export function renderAddLine(item: LedgerItem): string {
-  return `N${item.seq} · ${KIND_LABEL[item.kind]} · ${item.text} — the full card is on the pinned card.`;
+  return `N${item.seq} · ${KIND_LABEL[item.kind]} · ${item.title ?? item.text} — the full card is on the pinned card.`;
 }
 
 /** The answer part of a "Decided" line: the user's words, the overseer's choice, or the withdrawal reason. */
@@ -430,10 +439,13 @@ function pasteText(text: string): string {
   return `${(space > PASTE_TEXT_MAX - 30 ? cut.slice(0, space) : cut).trimEnd()}…`;
 }
 
+/** The words a paste line shows for an item: its title, else its question cut for a paste line. */
+const pasteLabel = (item: LedgerItem) => item.title ?? pasteText(item.text);
+
 /** One "Decided" line. A statement is the user's own words, so it has no question. */
 function decidedLine(item: LedgerItem): string {
   if (item.kind === 'statement' && !isUnchecked(item)) return `- N${item.seq} · You said: "${pasteText(item.quote ?? item.text)}"${item.policy ? ' · a project rule' : ''}`;
-  return `- N${item.seq} · ${KIND_LABEL[item.kind]} · ${pasteText(item.text)} · ${decidedOutcome(item)}`;
+  return `- N${item.seq} · ${KIND_LABEL[item.kind]} · ${pasteLabel(item)} · ${decidedOutcome(item)}`;
 }
 
 const count = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -445,22 +457,35 @@ const count = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
  *     imported item is left out, as it is never New: an import is a one-time load, not news (the
  *     card's own "Decided since the last recap" section still lists it).
  *   The count line: "Needs you: 19 decisions, 8 actions — on the card."
- * A group with no lines is left out; the count line is always there. Every line carries its
- * question (cut at about 150 characters), so no ledger number stands alone. Blank lines between
- * the groups keep markdown from joining a heading to the list above it.
+ * A group with no lines is left out; the count line is always there. Every line carries the
+ * item's title, or its question (cut at about 150 characters) when it has none, so no ledger number
+ * stands alone. Blank lines between the groups keep markdown from joining a heading to the list
+ * above it.
  */
 export function renderRecapPaste(items: LedgerItem[], opts: { now: number; lastRecapAt: string | null }): string {
   const s = ledgerSections(items, opts);
   const fresh = new Set(s.newSeqs);
   const out: string[] = [];
   const news = items.filter((i) => fresh.has(i.seq)).map((i) =>
-    `- N${i.seq} · ${KIND_LABEL[i.kind]} · ${pasteText(i.text)}${i.recommendation ? ` · Rec: ${i.recommendation}` : ''}`);
+    `- N${i.seq} · ${KIND_LABEL[i.kind]} · ${pasteLabel(i)}${i.recommendation ? ` · Rec: ${i.recommendation}` : ''}`);
   if (news.length) out.push(['New:', ...news].join('\n'));
   const decided = s.decidedSince.filter((i) => i.origin !== 'imported');
   if (decided.length) out.push(['Decided:', ...decided.map(decidedLine)].join('\n'));
   const decisions = s.needsYou.cards.length + s.needsYou.lines.length;
   out.push(`Needs you: ${count(decisions, 'decision')}, ${count(s.actions.length, 'action')} — on the card.`);
   return out.join('\n\n');
+}
+
+/**
+ * "Open items without a title" (titles spec 2026-10-09, Unit 3), for the overseer's own use: each
+ * go, decide and do item that is open or parked and has no title, one line each with the ID, the
+ * kind and the question (on one line, cut as in the paste block). Null when there is none.
+ */
+export function renderUntitledList(items: LedgerItem[]): string | null {
+  const lines = items
+    .filter((i) => i.kind !== 'statement' && (i.status === 'open' || i.status === 'parked') && !i.title)
+    .map((i) => `- N${i.seq} · ${KIND_LABEL[i.kind]} · ${pasteText(i.text)}`);
+  return lines.length ? ['Open items without a title:', ...lines].join('\n') : null;
 }
 
 /** The block the daemon appends to an agent hand-off for `ledgerIds`. */

@@ -23,9 +23,9 @@ describe('ledger routes', () => {
   });
 
   it('POST /ledger creates N1 (201); a non-overseer gets 403 with the fixed text', async () => {
-    const ok = await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'go', text: 'Merge PR #12.', ...GO_CARD }).expect(201);
+    const ok = await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'go', text: 'Merge PR #12.', ...GO_CARD, title: 'Merge PR #12' }).expect(201);
     expect(ok.body.id).toBe('N1');
-    expect(ok.body.line).toBe('N1 · Go · Merge PR #12. — the full card is on the pinned card.'); // pinned card spec, Unit 5
+    expect(ok.body.line).toBe('N1 · Go · Merge PR #12 — the full card is on the pinned card.'); // pinned card spec, Unit 5; titles spec, Unit 3
     const denied = await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'agent', kind: 'go', text: 'x', ...GO_CARD }).expect(403);
     expect(denied.body.error).toBe("Only the project's overseer can change the ledger.");
   });
@@ -138,7 +138,7 @@ describe('ledger routes', () => {
     const onDefault = await request(app).post(`/api/sessions/${sid}/ledger/N1/mark-default`).send({ caller: 'coord' }).expect(200);
     expect(onDefault.body.line).toContain('Running on the default');
     const shown = await request(app).post(`/api/sessions/${sid}/ledger/show`).send({ caller: 'coord', ids: ['N1'] }).expect(200);
-    expect(shown.body.text.startsWith('**N1 · Decide:** How many nights?')).toBe(true);
+    expect(shown.body.text.startsWith('**N1 · Decide · Nights before live mode**\n\nHow many nights?')).toBe(true); // titles spec, Unit 3
     expect(shown.body.text).toContain("**Overseer's note:** Mind the freeze.");
   });
 

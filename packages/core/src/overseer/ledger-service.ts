@@ -23,7 +23,7 @@ import * as messagesDb from '../db/coordinator-messages.js';
 import { findQuote, GO_APPROVAL_ERROR, namesGoApproval, OK_ONLY_ERROR } from './ledger-quote.js';
 import {
   isUnchecked, projectRules, renderAddLine, renderCard, renderDefaultLine, renderHandoffBlock, renderItem, renderLedgerSections,
-  renderOverseerDecisionLine, renderRecapPaste, renderRulesList, type RenderContext,
+  renderOverseerDecisionLine, renderRecapPaste, renderRulesList, renderUntitledList, type RenderContext,
 } from './ledger-render.js';
 import { buildLedgerCard, type LedgerCard } from './ledger-card.js';
 import {
@@ -467,8 +467,8 @@ export class LedgerService {
   /**
    * The ledger part of a recap. `paste` is what the overseer pastes into the recap (pinned card spec
    * 2026-10-08, Unit 5: the new items, the decided ones, the count line); `text` is the full ledger
-   * and `rules` each project rule in full, both for the overseer's own use (overseer memory scope
-   * spec 2026-10-07, Unit 5). Both are relative to the recap before this call. `forRecap` stamps
+   * (then the open items without a title: titles spec 2026-10-09, Unit 3) and `rules` each project
+   * rule in full, both for the overseer's own use (overseer memory scope spec 2026-10-07, Unit 5). Both are relative to the recap before this call. `forRecap` stamps
    * lastRecapAt and clears the interim timer.
    */
   list(sessionId: string, caller: unknown, opts: { forRecap?: boolean } = {}): { paste: string; text: string; openIds: string[]; rules: string[] } {
@@ -478,7 +478,9 @@ export class LedgerService {
     const lastRecapAt = typeof cfg[LAST_RECAP_KEY] === 'string' ? (cfg[LAST_RECAP_KEY] as string) : null;
     const items = ledgerDb.listBySession(this.db, sessionId);
     const paste = renderRecapPaste(items, { now: this.clock(), lastRecapAt });
-    const text = renderLedgerSections(items, { now: this.clock(), lastRecapAt, timeZone: this.timeZone });
+    // Titles spec 2026-10-09, Unit 3: the open items without a title close the own-use text.
+    const text = [renderLedgerSections(items, { now: this.clock(), lastRecapAt, timeZone: this.timeZone }), renderUntitledList(items)]
+      .filter(Boolean).join('\n\n');
     if (opts.forRecap) {
       cfg[LAST_RECAP_KEY] = this.nowIso();
       delete cfg[INTERIM_DUE_KEY];
