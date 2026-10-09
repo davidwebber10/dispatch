@@ -25,8 +25,10 @@ import {
   isUnchecked, projectRules, renderAddLine, renderCard, renderDefaultLine, renderHandoffBlock, renderItem, renderLedgerSections,
   renderOverseerDecisionLine, renderRecapPaste, renderRulesList, renderUntitledList, type RenderContext,
 } from './ledger-render.js';
-import { buildLedgerCard, type LedgerCard } from './ledger-card.js';
+import { buildLedgerCard, type LedgerCard, type LedgerSource } from './ledger-card.js';
 import { createRemoteReader } from './github-link.js';
+import { readSourceFile, sourceFileRef } from './source-file.js';
+import { findSection } from './section-finder.js';
 import {
   cardFieldsError, findProjectPath, gitWorktrees, holdsSeveralDecisions, isIssueRef, missingCardFields,
   isUserSourceKind, ONE_DECISION_ERROR, ONLY_USER_ERROR, onlyUserCanDecide, sourceComplete, sourceMissingError, TITLE_MISSING_ERROR,
@@ -34,6 +36,11 @@ import {
 } from './ledger-checks.js';
 
 export const NOT_OVERSEER_ERROR = "Only the project's overseer can change the ledger.";
+/** The source route's errors (titles and source panel spec 2026-10-09, Unit 8). */
+export const NO_SUCH_ITEM_ERROR = 'No such item';
+export const NO_FILE_SOURCE_ERROR = 'This item has no file source';
+export const FILE_GONE_ERROR = 'The file is gone';
+export const FILE_OUTSIDE_ERROR = 'The file is outside the project';
 export const QUOTE_NOT_FOUND_STATEMENT_ERROR = "Quote not found in the user's messages to you. Do not record it. Ask the user.";
 export function quoteNotFoundAfterError(seq: number): string {
   return `Quote not found in the user's messages to you after N${seq} was created. Do not record it. Ask the user.`;
@@ -521,6 +528,33 @@ export class LedgerService {
     const linked = items.some((i) => i.sourceKind === 'pr' || i.sourceKind === 'issue');
     const githubRepo = linked && session.working_dir ? this.githubRepo(session.working_dir) : null;
     return buildLedgerCard(items, { now: this.clock(), lastRecapAt, githubRepo });
+  }
+
+  /**
+   * The section panel's data (titles and source panel spec 2026-10-09, Unit 8): the plan section
+   * the item comes from, the outline of its file, or only the file's path. Read-only, with no
+   * caller check, like the card: the network is the gate. `heading` (a click in the outline)
+   * selects that exact heading. The file is read as it is now.
+   */
+  source(sessionId: string, rawId: unknown, opts: { heading?: string } = {}): LedgerSource {
+    const session = sessionsDb.getById(this.db, sessionId);
+    const seq = parseLedgerId(rawId);
+    const item = session && seq !== null ? ledgerDb.getBySeq(this.db, sessionId, seq) : null;
+    if (!session || !item) throw new LedgerError(404, NO_SUCH_ITEM_ERROR);
+    const ref = sourceFileRef(item);
+    if (!ref || !session.working_dir) throw new LedgerError(422, NO_FILE_SOURCE_ERROR);
+    const f = readSourceFile(session.working_dir, ref.path);
+    if (f.kind === 'gone') throw new LedgerError(404, FILE_GONE_ERROR);
+    if (f.kind === 'outside') throw new LedgerError(403, FILE_OUTSIDE_ERROR);
+    if (f.kind === 'file-only') return { kind: 'file-only', file: f.file, path: f.path, reason: f.reason };
+    const found = findSection(f.markdown, { section: ref.section, id: item.sourceId, heading: opts.heading });
+    if (found.kind === 'outline') {
+      return { kind: 'outline', file: f.file, path: f.path, headings: found.headings, fromMainCheckout: f.fromMainCheckout };
+    }
+    return {
+      kind: 'section', file: f.file, path: f.path, heading: found.heading, markdown: found.markdown, id: item.sourceId,
+      fromMainCheckout: f.fromMainCheckout, cut: found.cut,
+    };
   }
 
   /** One-time load of open items and earlier decisions from the overseer's context. */

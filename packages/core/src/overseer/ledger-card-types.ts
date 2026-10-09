@@ -85,3 +85,16 @@ export interface LedgerCard {
   /** Every item of the project, any status: what the ledger chips in the chat need. */
   index: { seq: number; kind: CardKind; status: CardStatus; text: string; title: string | null; answer: string | null }[];
 }
+
+/**
+ * GET /api/sessions/:sessionId/ledger/:itemId/source[?heading=…] (titles and source panel spec
+ * 2026-10-09, Unit 8): the plan section an item comes from, the outline of its file, or only the
+ * file's path. `file` is the file name, `path` the path in the project folder (for the file tab).
+ * `id` is the item's source ID (such as LR-6), for the web to mark its row. Errors: 404 "No such
+ * item", 422 "This item has no file source", 404 "The file is gone", 403 "The file is outside the
+ * project".
+ */
+export type LedgerSource =
+  | { kind: 'section'; file: string; path: string; heading: string; markdown: string; id: string | null; fromMainCheckout: boolean; cut: boolean }
+  | { kind: 'outline'; file: string; path: string; headings: { level: number; text: string }[]; fromMainCheckout: boolean }
+  | { kind: 'file-only'; file: string; path: string; reason: string };

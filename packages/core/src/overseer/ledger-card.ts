@@ -9,7 +9,7 @@ import type { CardItem, CardSource, LedgerCard } from './ledger-card-types.js';
 import { ledgerSections, projectRules } from './ledger-render.js';
 import { sourceUrl } from './github-link.js';
 
-export type { CardItem, CardOption, CardSource, LedgerCard } from './ledger-card-types.js';
+export type { CardItem, CardOption, CardSource, LedgerCard, LedgerSource } from './ledger-card-types.js';
 
 /**
  * The short answer for an option: the label's leading token when the label starts with one to
