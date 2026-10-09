@@ -36,7 +36,9 @@ export type SectionResult =
 const ATX = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$/;
 const CLOSING = /(?:^|[ \t]+)#+[ \t]*$/;
 // A fence may open inside a list item ("- ```md", "1. ~~~") and close indented (review round 1).
+// Only a bare fence line closes it: "- ~~~" inside a fenced example is content (review round 2).
 const FENCE = /^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)*(`{3,}|~{3,})(.*)$/;
+const FENCE_CLOSE = /^[ \t]*(`{3,}|~{3,})[ \t]*$/;
 
 const lines = (markdown: string) => markdown.replace(/\r\n?/g, '\n').split('\n');
 
@@ -45,11 +47,12 @@ export function markdownHeadings(markdown: string): MarkdownHeading[] {
   const out: MarkdownHeading[] = [];
   let fence: { char: string; len: number } | null = null;
   lines(markdown).forEach((line, i) => {
-    const f = line.match(FENCE);
     if (fence) {
-      if (f && f[1][0] === fence.char && f[1].length >= fence.len && !f[2].trim()) fence = null;
+      const c = line.match(FENCE_CLOSE);
+      if (c && c[1][0] === fence.char && c[1].length >= fence.len) fence = null;
       return;
     }
+    const f = line.match(FENCE);
     // A backtick fence's opening line holds no other backtick (CommonMark): "```x```" is a code span.
     if (f && !(f[1][0] === '`' && f[2].includes('`'))) { fence = { char: f[1][0], len: f[1].length }; return; }
     const h = line.match(ATX);

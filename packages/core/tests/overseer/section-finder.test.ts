@@ -139,6 +139,12 @@ describe('review round 1 — list-item fences and section numbers', () => {
     expect(markdownHeadings(ordered).map((h) => h.text)).toEqual(['Real']);
   });
 
+  it('review round 2: a list line with a fence inside a fenced markdown example does not close it', () => {
+    const md = ['## Guide', '', '~~~markdown', '- ~~~', '## Example inside', '~~~', '', '## Real', '', 'text'].join('\n');
+    expect(markdownHeadings(md).map((h) => h.text)).toEqual(['Guide', 'Real']);
+    expect(findSection(md, { section: 'Real' })).toMatchObject({ heading: 'Real', markdown: 'text' });
+  });
+
   it('as a last step, a stored "9. Owner decisions" finds the heading with the same section number', () => {
     const md = ['## 8. Release', '', 'x', '', '## 9. Decisions recorded (2026-10-09)', '', 'y', '', '## 9.1 Later', '', 'z'].join('\n');
     expect(findSection(md, { section: '9. Owner decisions' })).toMatchObject({ heading: '9. Decisions recorded (2026-10-09)' });
