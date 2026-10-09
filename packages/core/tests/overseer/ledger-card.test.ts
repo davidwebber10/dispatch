@@ -16,7 +16,7 @@ function item(over: Partial<LedgerItem>): LedgerItem {
     origin: 'live', createdAt: ago(2 * DAY), updatedAt: ago(2 * DAY),
     context: null, recommendationWhy: null, defaultText: null, sourceKind: null, sourceRef: null,
     sourceSection: null, sourceId: null, overseerNote: null, onDefaultSince: null, agentTerminalId: null,
-    agentDecisionId: null, decidedChoice: null, decidedAt: null, policy: false, sentAt: ago(2 * DAY),
+    agentDecisionId: null, decidedChoice: null, decidedAt: null, policy: false, sentAt: ago(2 * DAY), title: null,
     ...over,
   };
 }
@@ -54,7 +54,7 @@ describe('buildLedgerCard', () => {
   it('a decide item carries every field of the card', () => {
     const card = buildLedgerCard([N14], { now: NOW, lastRecapAt: LAST });
     expect(card.sections.needsYou.cards).toEqual([{
-      seq: 14, kind: 'decide', status: 'open', text: 'How many clean nights before live mode?', author: 'Readiness planner',
+      seq: 14, kind: 'decide', status: 'open', text: 'How many clean nights before live mode?', title: null, author: 'Readiness planner',
       context: N14.context,
       options: [
         { label: 'A. 5 nights', effect: 'Live mode on Oct 14 at the earliest. Covers one weekend.', answerKey: 'A' },
@@ -62,7 +62,7 @@ describe('buildLedgerCard', () => {
       ],
       recommendation: 'A. 5 nights', why: N14.recommendationWhy, default: 'Nothing switches; the shadow run continues.',
       // An agent-block source keeps the file and the section apart.
-      source: { kind: 'agent', ref: 'Readiness planner', path: 'docs/plans/readiness.md', section: 'Owner decisions', id: 'LR-6' },
+      source: { kind: 'agent', ref: 'Readiness planner', path: 'docs/plans/readiness.md', section: 'Owner decisions', id: 'LR-6', url: null },
       blocks: 'the switch to live mode', mission: 'Delta sync', origin: 'live', sentAt: N14.sentAt, isNew: true,
       onDefaultSince: null, overseerNote: 'The planner did not know about the holiday freeze.', original: null,
       choice: null, quote: null, quoteAt: null, reason: null, reading: null,
@@ -103,16 +103,16 @@ describe('buildLedgerCard', () => {
     expect(decided[10]).toMatchObject({ reason: 'moot' });
     expect(card.rules).toEqual([{ seq: 1, quote: 'never deploy on Fridays', reading: 'no release on a Friday either' }]);
     expect(card.index).toEqual([
-      { seq: 1, kind: 'statement', status: 'answered', text: 'never deploy on Fridays', answer: 'never deploy on Fridays' },
-      { seq: 2, kind: 'go', status: 'open', text: 'Merge PR #62?', answer: null },
-      { seq: 3, kind: 'decide', status: 'open', text: 'Abort when duplicates pass 1%?', answer: null },
-      { seq: 4, kind: 'do', status: 'open', text: 'Check the banner on staging.', answer: null },
-      { seq: 5, kind: 'decide', status: 'answered', text: 'Use library A?', answer: 'N5: A' },
-      { seq: 6, kind: 'decide', status: 'decided_by_overseer', text: 'Which retry helper?', answer: 'the existing one' },
-      { seq: 7, kind: 'decide', status: 'proposed', text: 'How many nights?', answer: null },
-      { seq: 8, kind: 'decide', status: 'parked', text: 'Rename the CLI?', answer: 'later' },
-      { seq: 9, kind: 'decide', status: 'open', text: 'Also set the second store to Draft?', answer: null },
-      { seq: 10, kind: 'do', status: 'withdrawn', text: 'Drop the old tag check.', answer: null },
+      { seq: 1, kind: 'statement', status: 'answered', text: 'never deploy on Fridays', title: null, answer: 'never deploy on Fridays' },
+      { seq: 2, kind: 'go', status: 'open', text: 'Merge PR #62?', title: null, answer: null },
+      { seq: 3, kind: 'decide', status: 'open', text: 'Abort when duplicates pass 1%?', title: null, answer: null },
+      { seq: 4, kind: 'do', status: 'open', text: 'Check the banner on staging.', title: null, answer: null },
+      { seq: 5, kind: 'decide', status: 'answered', text: 'Use library A?', title: null, answer: 'N5: A' },
+      { seq: 6, kind: 'decide', status: 'decided_by_overseer', text: 'Which retry helper?', title: null, answer: 'the existing one' },
+      { seq: 7, kind: 'decide', status: 'proposed', text: 'How many nights?', title: null, answer: null },
+      { seq: 8, kind: 'decide', status: 'parked', text: 'Rename the CLI?', title: null, answer: 'later' },
+      { seq: 9, kind: 'decide', status: 'open', text: 'Also set the second store to Draft?', title: null, answer: null },
+      { seq: 10, kind: 'do', status: 'withdrawn', text: 'Drop the old tag check.', title: null, answer: null },
     ]);
     // updatedAt is the newest change of any item.
     expect(card.updatedAt).toBe(ago(500));
@@ -135,15 +135,35 @@ describe('buildLedgerCard', () => {
   it('the sources in their plain forms; options of an old row read as an empty effect', () => {
     const src = (over: Partial<LedgerItem>) => buildLedgerCard([item(over)], { now: NOW, lastRecapAt: LAST }).sections.needsYou.cards[0].source;
     expect(src({ sourceKind: 'plan', sourceRef: 'docs/plans/a.md', sourceSection: 'Risks', sourceId: 'D3' }))
-      .toEqual({ kind: 'plan', ref: 'docs/plans/a.md', path: null, section: 'Risks', id: 'D3' });
+      .toEqual({ kind: 'plan', ref: 'docs/plans/a.md', path: null, section: 'Risks', id: 'D3', url: null });
     expect(src({ sourceKind: 'agent', sourceRef: 'Map researcher', sourceSection: 'Q2 part' }))
-      .toEqual({ kind: 'agent', ref: 'Map researcher', path: null, section: 'Q2 part', id: null });
+      .toEqual({ kind: 'agent', ref: 'Map researcher', path: null, section: 'Q2 part', id: null, url: null });
     expect(src({ sourceKind: 'agent', sourceRef: 'Map researcher', agentTerminalId: 'a', sourceSection: '#Findings' }))
-      .toEqual({ kind: 'agent', ref: 'Map researcher', path: null, section: 'Findings', id: null });
-    expect(src({ sourceKind: 'pr', sourceRef: '#12' })).toEqual({ kind: 'pr', ref: '#12', path: null, section: null, id: null });
+      .toEqual({ kind: 'agent', ref: 'Map researcher', path: null, section: 'Findings', id: null, url: null });
+    expect(src({ sourceKind: 'pr', sourceRef: '#12' })).toEqual({ kind: 'pr', ref: '#12', path: null, section: null, id: null, url: null }); // no repo
     expect(src({})).toBeNull();
     const old = buildLedgerCard([item({ options: [{ label: 'A', effect: '' }, { label: 'B', effect: '' }] })], { now: NOW, lastRecapAt: LAST });
     expect(old.sections.needsYou.cards[0].options).toEqual([{ label: 'A', effect: '', answerKey: 'A' }, { label: 'B', effect: '', answerKey: 'B' }]);
+  });
+
+  // Titles and source panel spec 2026-10-09, Unit 5.
+  it('the title on each card item and each index entry; null without one', () => {
+    const card = buildLedgerCard([
+      item({ seq: 1, kind: 'go', text: 'Do you approve the merge of board PR #26?', title: 'Merge board PR #26' }),
+      item({ seq: 2, kind: 'do', text: 'Check the banner on staging.' }),
+    ], { now: NOW, lastRecapAt: LAST });
+    expect(card.sections.needsYou.cards[0]).toMatchObject({ text: 'Do you approve the merge of board PR #26?', title: 'Merge board PR #26' });
+    expect(card.sections.actions[0].title).toBeNull();
+    expect(card.index.map((e) => e.title)).toEqual(['Merge board PR #26', null]);
+  });
+
+  it('a PR or issue source carries its GitHub link when the project is on GitHub; other sources have none', () => {
+    const src = (over: Partial<LedgerItem>, githubRepo: string | null) =>
+      buildLedgerCard([item(over)], { now: NOW, lastRecapAt: LAST, githubRepo }).sections.needsYou.cards[0].source!.url;
+    expect(src({ sourceKind: 'pr', sourceRef: '#26' }, 'owner/repo')).toBe('https://github.com/owner/repo/pull/26');
+    expect(src({ sourceKind: 'issue', sourceRef: '#7' }, 'owner/repo')).toBe('https://github.com/owner/repo/issues/7');
+    expect(src({ sourceKind: 'pr', sourceRef: '#26' }, null)).toBeNull();
+    expect(src({ sourceKind: 'plan', sourceRef: 'docs/plans/a.md' }, 'owner/repo')).toBeNull();
   });
 
   it('an empty ledger: empty sections, no rules, an empty index and no update time', () => {

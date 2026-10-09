@@ -18,6 +18,14 @@
 //
 // A ledger chip in the chat (Unit 9) sets the store's `focus`: the card unfolds the item's section,
 // opens it as a full card and scrolls to it, then clears the focus (so a remount does not repeat it).
+//
+// Titles (titles and source panel spec 2026-10-09, Unit 9): a full card's headline is the item's
+// title, with the full question below it; a line shows "N41 · title", with the question on hover.
+// An item without a title shows its question, as before.
+//
+// Source links (titles and source panel spec 2026-10-09, Unit 10): a plan, doc or agent-with-file
+// Source line is a button that opens the section panel (LedgerSourcePanel); a PR or issue source
+// with a GitHub link opens it in a new browser tab; other sources stay text.
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { MonoLabel } from '../atoms';
@@ -25,8 +33,8 @@ import { useOverseer } from '../store';
 import { useProjects } from '../../../stores/projects';
 import { useLedgerCard, useLedgerCardEntry, useLedgerFolds, type LedgerFold } from '../../../stores/ledgerCard';
 import { timeAgo } from '../../../lib/time';
-import { answerText, formatCardSource, formatUpdated, ledgerSectionOf, openDecisionCount, outcomeText } from '../ledger';
-import type { CardItem, CardOption, LedgerCard as Card } from '../../../api/types';
+import { answerText, formatCardSource, formatUpdated, ledgerSectionOf, openDecisionCount, outcomeText, sourceTarget } from '../ledger';
+import type { CardItem, CardOption, CardSource, LedgerCard as Card } from '../../../api/types';
 
 const KIND: Record<CardItem['kind'], string> = { go: 'Go', decide: 'Decide', do: 'Do', statement: 'Statement' };
 /** About three lines of the pane's width: a longer context is cut, with "more". */
@@ -48,12 +56,23 @@ function Badge({ children, color = 'var(--acc)' }: { children: ReactNode; color?
 }
 
 /** A labelled paragraph of a full card: "Why A. 5 nights:", "If you do not answer:", "Holds up:", … */
-function Field({ label, title, children }: { label: string; title?: string; children: ReactNode }) {
+function Field({ label, title, testId, children }: { label: string; title?: string; testId?: string; children: ReactNode }) {
   return (
-    <div title={title} style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--ts)' }}>
+    <div title={title} data-testid={testId} style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--ts)' }}>
       <span style={{ fontWeight: 600, color: 'var(--tp)' }}>{label}</span> <span>{children}</span>
     </div>
   );
+}
+
+/** The Source line's text: a button that opens the section panel, a link to GitHub, or plain text (Unit 10). */
+function SourceText({ source, onOpen }: { source: CardSource; onOpen?: () => void }) {
+  const text = formatCardSource(source);
+  const target = sourceTarget(source);
+  if (target === 'panel' && onOpen) {
+    return <button type="button" onClick={onOpen} style={{ ...smallButton, fontSize: 'inherit', textAlign: 'left' }}>{text}</button>;
+  }
+  if (target === 'link') return <a href={source.url!} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--acc)' }}>{text}</a>;
+  return <>{text}</>;
 }
 
 /** One option as a stacked row: the label, then its effect. A click adds the answer; only an open item takes one. */
@@ -85,7 +104,7 @@ function OptionRow({ item, option, onAnswer }: { item: CardItem; option: CardOpt
 }
 
 /** The full card: the number and kind, the question, the context, the options, why, the default, … */
-function FullCard({ item, onAnswer, onFold }: { item: CardItem; onAnswer?: (text: string) => void; onFold?: () => void }) {
+function FullCard({ item, onAnswer, onFold, onSource }: { item: CardItem; onAnswer?: (text: string) => void; onFold?: () => void; onSource?: () => void }) {
   const [more, setMore] = useState(false);
   const long = (item.context?.length ?? 0) > CONTEXT_CLAMP_CHARS;
   const clamped = long && !more;
@@ -106,7 +125,8 @@ function FullCard({ item, onAnswer, onFold }: { item: CardItem; onAnswer?: (text
         <span style={{ flex: 1 }} />
         {onFold && <button type="button" onClick={onFold} style={{ ...smallButton, color: 'var(--tt)' }}>fold</button>}
       </div>
-      <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.45, color: 'var(--tp)' }}>{item.text}</div>
+      <div data-testid="ledger-headline" style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.45, color: 'var(--tp)' }}>{item.title || item.text}</div>
+      {item.title && <div data-testid="ledger-question" style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--tp)' }}>{item.text}</div>}
       {item.original && <Field label={`Original question (N${item.original.seq}):`}>"{item.original.text}"</Field>}
       {item.context && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
@@ -144,7 +164,11 @@ function FullCard({ item, onAnswer, onFold }: { item: CardItem; onAnswer?: (text
       {item.default && <Field label="If you do not answer:">{item.default}</Field>}
       {item.blocks && <Field label="Holds up:">{item.blocks}</Field>}
       {/* The file name only; a hover shows the full path. */}
-      {item.source && <Field label="Source:" title={formatCardSource(item.source, { full: true })}>{formatCardSource(item.source)}</Field>}
+      {item.source && (
+        <Field label="Source:" title={formatCardSource(item.source, { full: true })} testId="ledger-source">
+          <SourceText source={item.source} onOpen={onSource} />
+        </Field>
+      )}
       {item.overseerNote && <Field label="Overseer's note:">{item.overseerNote}</Field>}
       {outcome && <Field label="Outcome:">{outcome}</Field>}
     </article>
@@ -158,9 +182,10 @@ function ItemLine({ item, detail, onOpen, action }: { item: CardItem; detail?: s
       <button
         type="button"
         onClick={onOpen}
+        title={item.title ? item.text : undefined}
         style={{ flex: 1, minWidth: 0, display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '2px 7px', textAlign: 'left', fontFamily: 'inherit', background: 'none', border: 'none', padding: '3px 0', cursor: 'pointer' }}
       >
-        <span style={{ fontSize: 12.5, lineHeight: 1.45, color: 'var(--tp)' }}>{`N${item.seq} · ${item.text}`}</span>
+        <span style={{ fontSize: 12.5, lineHeight: 1.45, color: 'var(--tp)' }}>{`N${item.seq} · ${item.title || item.text}`}</span>
         {item.isNew && <Badge>NEW</Badge>}
         {isImported(item) && <span style={{ fontSize: 11, color: 'var(--tt)' }}>imported</span>}
         {detail && <span style={{ fontSize: 11.5, color: 'var(--ts)' }}>{detail}</span>}
@@ -258,10 +283,13 @@ function ProjectLedgerCard({ projectId, onAnswer: onAnswerProp }: { projectId: s
 
   if (!projectId) return null;
 
+  // Unit 10: a Source line opens the section panel for its item; another one replaces it.
+  const openSource = (seq: number) => () => useLedgerCard.getState().setSourcePanel({ projectId, seq });
+
   // An item the user opened draws as a full card in place of its line.
   const line = (item: CardItem, detail?: string | null, action?: ReactNode) =>
     opened.has(item.seq)
-      ? <FullCard key={item.seq} item={item} onAnswer={onAnswer} onFold={() => toggle(item.seq)} />
+      ? <FullCard key={item.seq} item={item} onAnswer={onAnswer} onFold={() => toggle(item.seq)} onSource={openSource(item.seq)} />
       : <ItemLine key={item.seq} item={item} detail={detail} onOpen={() => toggle(item.seq)} action={action} />;
 
   const decisions = openDecisionCount(card);
@@ -297,7 +325,7 @@ function ProjectLedgerCard({ projectId, onAnswer: onAnswerProp }: { projectId: s
         <>
           <RulesLine card={card} />
           {decisions === 0 && s.actions.length === 0 && <div style={{ fontSize: 12.5, color: 'var(--ts)' }}>Nothing needs you.</div>}
-          {s.needsYou.cards.map((item) => <FullCard key={item.seq} item={item} onAnswer={onAnswer} />)}
+          {s.needsYou.cards.map((item) => <FullCard key={item.seq} item={item} onAnswer={onAnswer} onSource={openSource(item.seq)} />)}
           {s.needsYou.lines.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               {s.needsYou.lines.map((item) => line(item, item.recommendation ? `Rec: ${item.recommendation}` : null))}

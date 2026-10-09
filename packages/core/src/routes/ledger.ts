@@ -6,8 +6,9 @@ import { LedgerError, type LedgerService } from '../overseer/ledger-service.js';
  * terminal id that the dispatch MCP takes from DISPATCH_TERMINAL) and the service rejects any
  * caller that is not this project's overseer — the same trust level as the other agency routes.
  * `list` is a POST because `forRecap` changes the overseer's config.
- * `card` (pinned card spec 2026-10-08, Unit 2) is the one GET: it only reads, and has no caller
- * check, like the routes that return conversations — the web app reads it.
+ * `card` (pinned card spec 2026-10-08, Unit 2) and `source` (titles and source panel spec
+ * 2026-10-09, Unit 8) are the GETs: they only read, and have no caller check, like the routes that
+ * return conversations — the web app reads them.
  */
 export function createLedgerRouter(ledger: LedgerService): Router {
   const router = Router();
@@ -22,6 +23,8 @@ export function createLedgerRouter(ledger: LedgerService): Router {
   };
 
   router.get('/sessions/:sessionId/ledger/card', handle(200, (req) => ledger.card(req.params.sessionId)));
+  router.get('/sessions/:sessionId/ledger/:itemId/source', handle(200, (req) =>
+    ledger.source(req.params.sessionId, req.params.itemId, { heading: typeof req.query.heading === 'string' ? req.query.heading : undefined })));
   router.post('/sessions/:sessionId/ledger', handle(201, (req) => ledger.add(req.params.sessionId, req.body?.caller, req.body ?? {})));
   router.post('/sessions/:sessionId/ledger/list', handle(200, (req) => ledger.list(req.params.sessionId, req.body?.caller, { forRecap: req.body?.forRecap === true })));
   router.post('/sessions/:sessionId/ledger/note', handle(201, (req) => ledger.note(req.params.sessionId, req.body?.caller, req.body ?? {})));
@@ -35,6 +38,8 @@ export function createLedgerRouter(ledger: LedgerService): Router {
   router.post('/sessions/:sessionId/ledger/:itemId/add-from-agent', handle(200, (req) => ledger.addFromAgent(req.params.sessionId, req.body?.caller, { ...(req.body ?? {}), id: req.params.itemId })));
   router.post('/sessions/:sessionId/ledger/:itemId/decide-self', handle(200, (req) => ledger.decideSelf(req.params.sessionId, req.body?.caller, { ...(req.body ?? {}), id: req.params.itemId })));
   router.post('/sessions/:sessionId/ledger/:itemId/mark-default', handle(200, (req) => ledger.markDefault(req.params.sessionId, req.body?.caller, { ...(req.body ?? {}), id: req.params.itemId })));
+  // Titles and source panel (spec 2026-10-09, Unit 2): the overseer sets or changes an item's title.
+  router.post('/sessions/:sessionId/ledger/:itemId/title', handle(200, (req) => ledger.setTitle(req.params.sessionId, req.body?.caller, { ...(req.body ?? {}), id: req.params.itemId })));
 
   return router;
 }

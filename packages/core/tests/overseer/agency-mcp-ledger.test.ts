@@ -72,6 +72,13 @@ describe('agency-mcp ledger tools', () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ caller: 'coord-1', forRecap: true });
   });
 
+  // Review round 1 (2026-10-09): "Titles first" comes back alone; there is nothing to paste yet.
+  it('ledger_list returns only the "Titles first" text when the daemon asks for titles', async () => {
+    const titlesFirst = 'Titles first. This call did not mark the recap.\n\nOpen items without a title:\n- N1 · Do · Check the old banner.';
+    global.fetch = vi.fn().mockResolvedValueOnce(ok({ paste: '', text: '', openIds: ['N1'], rules: [], titlesFirst })) as any;
+    expect((await callTool('ledger_list', { forRecap: true })).content).toEqual([{ type: 'text', text: titlesFirst }]);
+  });
+
   // Overseer memory scope (spec 2026-10-07), Unit 5: the full rules are for the overseer's own use.
   it('ledger_list puts the full project rules in the own-use part', async () => {
     const paste = 'Needs you: 0 decisions, 0 actions — on the card.';
@@ -96,7 +103,7 @@ describe('agency-mcp ledger tools', () => {
     expect(props.rules.type).toBe('boolean');
   });
 
-  it('each of the nine ledger tools surfaces the daemon\'s overseer-only refusal (403) as is', async () => {
+  it('each of the ten ledger tools surfaces the daemon\'s overseer-only refusal (403) as is', async () => {
     const denied = "Only the project's overseer can change the ledger.";
     const calls: [string, Record<string, unknown>][] = [
       ['ledger_add', { kind: 'go', text: 'Merge PR #12.' }],
@@ -108,6 +115,7 @@ describe('agency-mcp ledger tools', () => {
       ['ledger_decide_self', { id: 'N1', choice: 'A', reason: 'x' }],
       ['ledger_mark_default', { id: 'N1' }],
       ['ledger_show', { all: true }],
+      ['ledger_set_title', { id: 'N1', title: 'Merge board PR #26' }],
     ];
     for (const [tool, args] of calls) {
       const fetchMock = vi.fn().mockResolvedValueOnce(fail(403, denied));
@@ -244,6 +252,38 @@ describe('agency-mcp ledger tools', () => {
       expect((await callTool(tool, args)).isError, tool).toBe(true);
     }
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // Titles and source panel spec 2026-10-09, Unit 2.
+  it('ledger_set_title POSTs { title } to the item route with the caller and returns { id, title }', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(ok({ id: 'N41', title: 'Merge board PR #26' }));
+    global.fetch = fetchMock as any;
+    const out = await callTool('ledger_set_title', { id: 'N41', title: 'Merge board PR #26' });
+    expect(JSON.parse((out.content[0] as any).text)).toEqual({ id: 'N41', title: 'Merge board PR #26' });
+    expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/sessions/sess-1/ledger/N41/title');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ title: 'Merge board PR #26', caller: 'coord-1' });
+  });
+
+  it('ledger_set_title surfaces a refused title as is, and checks its arguments before calling the daemon', async () => {
+    const reason = 'The title needs at least 2 words. Fix it and try again.';
+    global.fetch = vi.fn().mockResolvedValueOnce(fail(422, reason)) as any;
+    expect(await callTool('ledger_set_title', { id: 'N41', title: 'Merge' })).toEqual({ content: [{ type: 'text', text: `Error: ${reason}` }], isError: true });
+    const fetchMock = vi.fn();
+    global.fetch = fetchMock as any;
+    for (const args of [{ title: 'Merge board PR #26' }, { id: 'N41' }]) expect((await callTool('ledger_set_title', args)).isError).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('the title parameter: required on ledger_add, ledger_add_from_agent and ledger_set_title; per item on ledger_import', () => {
+    const tool = (name: string) => TOOLS.find((t) => t.name === name)! as any;
+    expect(tool('ledger_add').inputSchema.required).toEqual(['kind', 'text', 'title']);
+    expect(tool('ledger_add_from_agent').inputSchema.required).toEqual(['id', 'title']);
+    expect(tool('ledger_set_title').inputSchema.required).toEqual(['id', 'title']);
+    for (const t of [tool('ledger_add'), tool('ledger_add_from_agent'), tool('ledger_set_title')]) {
+      expect(t.inputSchema.properties.title.type).toBe('string');
+      expect(t.inputSchema.properties.title.description).toContain('at least 2 words');
+    }
+    expect(tool('ledger_import').inputSchema.properties.items.items.properties.title.description).toContain('Required for an open go, decide or do item');
   });
 
   it('ledger_add declares the card fields; ledger_note declares policy; ledger_import items take the card fields', () => {

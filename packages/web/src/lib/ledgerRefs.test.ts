@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { chipifyHtml, chipLabel, splitLedgerRefs, type LedgerIndexEntry } from './ledgerRefs';
 
-const entry = (seq: number, text: string): LedgerIndexEntry => ({ seq, kind: 'decide', status: 'open', text, answer: null });
+const entry = (seq: number, text: string): LedgerIndexEntry => ({ seq, kind: 'decide', status: 'open', text, title: null, answer: null });
 const INDEX = new Map<number, LedgerIndexEntry>([
   [12, entry(12, 'Merge PR #62 into main?')],
   [14, entry(14, 'How many clean nights before live mode?')],

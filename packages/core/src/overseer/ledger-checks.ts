@@ -15,6 +15,9 @@
  * 4. Only the user can decide a `go` item, an item sourced from the user or one of the user's threads,
  *    or an item already sent to the user.
  * 5. A project rule needs the user's checked words (ledger_note).
+ *
+ * Titles (titles and source panel spec 2026-10-09, Unit 1): a title is one line, has at least 2
+ * words and at most 50 characters, and is not only a code (titleProblem).
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -199,4 +202,35 @@ export function isUserSourceKind(kind: unknown): boolean {
 /** Rule 4: `ledger_decide_self` must refuse a go item, an item from the user or one of the user's threads, and an item already sent to the user. */
 export function onlyUserCanDecide(item: { kind: LedgerKind; sourceKind: LedgerSourceKind | null; sentAt: string | null }): boolean {
   return item.kind === 'go' || isUserSourceKind(item.sourceKind) || item.sentAt !== null;
+}
+
+// --- titles (spec 2026-10-09, Unit 1) -------------------------------------------------------------
+
+/** The most characters a title may have. The persona asks for about 40. */
+export const TITLE_MAX = 50;
+
+/** Unit 2: ledger_add, ledger_import (open items) and ledger_add_from_agent require a title on a go, decide or do item. */
+export const TITLE_MISSING_ERROR =
+  'A go, decide or do item needs a title: a short label of at least 2 words and at most 50 characters (about 40 is best). Add it and try again.';
+export const TITLE_ONE_LINE_ERROR = 'The title must be one line. Fix it and try again.';
+export const TITLE_TWO_WORDS_ERROR = 'The title needs at least 2 words. Fix it and try again.';
+export const TITLE_CODE_ONLY_ERROR = 'The title must say what the item is, not only a code such as N41 or LR-6. Fix it and try again.';
+export function titleTooLongError(length: number): string {
+  return `The title has ${length} characters; the most is ${TITLE_MAX} (about 40 is best). Fix it and try again.`;
+}
+
+/** A code, not a word: an N-number ("N41"), a plan code ("Q12", "LR-6", "A11") or a bare number ("#26"). */
+const CODE_WORD = /^(?:[Nn]\d+|[A-Z]{1,6}-?\d{1,5}|#?\d+)$/;
+/** Leading and trailing characters that are not letters or digits: "(A11)," → "A11". */
+const EDGE_PUNCTUATION = /^[^\p{L}\p{N}#]+|[^\p{L}\p{N}]+$/gu;
+
+/** Why the title (already trimmed) breaks a rule, as the fixed text of the 422; null when it passes. */
+export function titleProblem(title: string): string | null {
+  if (/[\r\n]/.test(title)) return TITLE_ONE_LINE_ERROR;
+  const length = [...title].length;
+  if (length > TITLE_MAX) return titleTooLongError(length);
+  const words = title.split(/\s+/).map((w) => w.replace(EDGE_PUNCTUATION, '')).filter((w) => /[\p{L}\p{N}]/u.test(w));
+  if (words.length < 2) return TITLE_TWO_WORDS_ERROR;
+  if (words.every((w) => CODE_WORD.test(w))) return TITLE_CODE_ONLY_ERROR;
+  return null;
 }

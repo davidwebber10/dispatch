@@ -13,6 +13,7 @@ import { ConversationStream } from './components/Stream';
 import { Composer } from './components/Composer';
 import { WorkerLightbox } from './components/WorkerLightbox';
 import { LedgerRefPopover } from './components/LedgerChips';
+import { LedgerSourcePanel } from './components/LedgerSourcePanel';
 
 export function OverseerView({ onBack }: { onBack?: () => void } = {}) {
   const isMobile = useIsMobile();
@@ -33,10 +34,12 @@ export function OverseerView({ onBack }: { onBack?: () => void } = {}) {
     // (see TabHost's AiThread/ChatView), starting directly with the conversation body.
     <div className="overseer-root" style={{ ...overseerRootStyle, flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'row', background: 'var(--base)' }}>
       {/* LEFT — conversation membrane (the Needs queue now lives in the header alert
-          dropdown — see NeedsAlert — so it no longer sits above the stream). */}
-      <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          dropdown — see NeedsAlert — so it no longer sits above the stream). The section panel
+          of a ledger source opens over it (titles and source panel spec 2026-10-09, Unit 10). */}
+      <div data-testid="overseer-chat-column" style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         <ConversationStream />
         <Composer />
+        <LedgerSourcePanel />
       </div>
 
       <WorkerLightbox />

@@ -74,7 +74,8 @@ describe('add', () => {
     const out = ledger.add('s1', 'coord', { kind: 'decide', text: 'How many clean nights before live mode?', ...DECIDE_CARD, note: 'Check the dates.', blocks: 'the switch to live mode' });
     expect(out.id).toBe('N1');
     // Pinned card spec 2026-10-08, Unit 5: the chat gets one line; the full card is on the pinned card.
-    expect(out.line).toBe('N1 · Decide · How many clean nights before live mode? — the full card is on the pinned card.');
+    // Titles spec 2026-10-09, Unit 3: the line names the item by its title.
+    expect(out.line).toBe('N1 · Decide · Clean nights before live mode — the full card is on the pinned card.');
     // ledger_show still renders the full card for the chat.
     expect(ledger.show('s1', 'coord', { ids: ['N1'] }).text).toBe(renderCard(ledgerDb.getBySeq(db, 's1', 1)!, { now, timeZone: 'UTC' }));
     expect(ledgerDb.getBySeq(db, 's1', 1)).toMatchObject({
@@ -88,9 +89,9 @@ describe('add', () => {
     ledger.add('s1', 'coord', { kind: 'decide', text: 'Use library A?', ...DECIDE_CARD });
     ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR #12.', ...GO_CARD });
     ledger.add('s1', 'coord', { kind: 'decide', text: 'Set the first store to Draft?', ...DECIDE_CARD });
-    const out = ledger.add('s1', 'coord', { kind: 'decide', text: 'Also set the second store to Draft?', ...DECIDE_CARD, supersedes: 'N3' });
+    const out = ledger.add('s1', 'coord', { kind: 'decide', text: 'Also set the second store to Draft?', ...DECIDE_CARD, title: 'Second store to Draft', supersedes: 'N3' });
     expect(out.id).toBe('N4');
-    expect(out.line).toBe('N4 · Decide · Also set the second store to Draft? — the full card is on the pinned card.');
+    expect(out.line).toBe('N4 · Decide · Second store to Draft — the full card is on the pinned card.');
     expect(ledger.show('s1', 'coord', { ids: ['N4'] }).text).toContain('\n\n**Original question (N3):** "Set the first store to Draft?"\n\n');
     expect(ledgerDb.getBySeq(db, 's1', 3)!.status).toBe('superseded');
     expect(ledgerDb.listOpenSeqs(db, 's1')).toEqual([1, 2, 4]);
@@ -128,9 +129,9 @@ describe('card checks (decision cards, Unit 2)', () => {
     ledger.add('p', 'pcoord', { kind, text: 'How many clean nights before live mode?', ...(kind === 'go' ? GO_CARD : DECIDE_CARD), ...extra });
 
   it('rule 1: a decide or go item without the card fields fails with the fixed text and creates nothing', () => {
-    expectLedgerError(() => ledger.add('p', 'pcoord', { kind: 'decide', text: 'Which helper?' }), 422,
+    expectLedgerError(() => ledger.add('p', 'pcoord', { kind: 'decide', text: 'Which helper?', title: 'Pick the retry helper' }), 422,
       'A decision card needs: context (20 to 800 characters), options (at least 2, each { label, effect }), default, source. Add them and try again.');
-    expectLedgerError(() => ledger.add('p', 'pcoord', { kind: 'go', text: 'Merge PR #12.' }), 422,
+    expectLedgerError(() => ledger.add('p', 'pcoord', { kind: 'go', text: 'Merge PR #12.', title: 'Merge PR #12' }), 422,
       'A decision card needs: context (20 to 800 characters), default, source. Add them and try again.');
     expectLedgerError(() => addP({ why: '' }), 422, 'A decision card needs: why. Add them and try again.');
     expect(ledgerDb.listBySession(db, 'p')).toEqual([]);
@@ -146,7 +147,7 @@ describe('card checks (decision cards, Unit 2)', () => {
   });
 
   it('rule 1: a do item needs no card fields', () => {
-    expect(ledger.add('p', 'pcoord', { kind: 'do', text: 'Check the banner on staging.' }).id).toBe('N1');
+    expect(ledger.add('p', 'pcoord', { kind: 'do', text: 'Check the banner on staging.', title: 'Check the staging banner' }).id).toBe('N1');
   });
 
   it('rule 2: a range or 3+ plan IDs in the question fails; a single LR-6 passes', () => {
@@ -232,8 +233,8 @@ describe('card checks (decision cards, Unit 2)', () => {
 
   it('import applies the same checks: the failed item is named in the body and nothing is created', () => {
     const e = expectLedgerError(() => ledger.importItems('p', 'pcoord', [
-      { kind: 'do', text: 'Check staging.' },
-      { kind: 'decide', text: 'Use library A?' },
+      { kind: 'do', text: 'Check staging.', title: 'Check staging' },
+      { kind: 'decide', text: 'Use library A?', title: 'Use library A' },
     ]), 422, 'A decision card needs: context (20 to 800 characters), options (at least 2, each { label, effect }), default, source. Add them and try again.');
     expect(e.body).toEqual({ item: 1 });
     expectLedgerError(() => ledger.importItems('p', 'pcoord', [{ kind: 'decide', text: 'Accept D1 to D9?', ...DECIDE_CARD }]), 422, 'One decision per card. Add each decision on its own.');
@@ -293,7 +294,7 @@ describe('resolve', () => {
     expectLedgerError(() => ledger.resolve('s1', 'coord', { id: 'N1', status: 'parked' }), 400);
     expectLedgerError(() => ledger.resolve('s1', 'coord', { id: 'N1', status: 'withdrawn' }), 400);
     const out = ledger.resolve('s1', 'coord', { id: 'N1', status: 'withdrawn', reason: 'the agent found a built-in option' });
-    expect(out.line).toBe('N1 [Decide] Which store goes first?\n  Recommendation: A. 5 nights\n  Options: A. 5 nights | B. 10 nights\n  Withdrawn by overseer: the agent found a built-in option');
+    expect(out.line).toBe('N1 [Decide] Clean nights before live mode — Which store goes first?\n  Recommendation: A. 5 nights\n  Options: A. 5 nights | B. 10 nights\n  Withdrawn by overseer: the agent found a built-in option');
   });
 
   it('a closed item returns 409 with its current status; an unknown ID returns 404', () => {
@@ -322,9 +323,9 @@ describe('note', () => {
 describe('list', () => {
   it('renders the sections; forRecap stamps lastRecapAt and clears interimDueAt', () => {
     terminalsDb.updateConfig(db, 'coord', { role: 'coordinator', transport: 'structured', interimDueAt: min(20) });
-    ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR #12.', ...GO_CARD });
+    ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR #12.', ...GO_CARD, title: 'Merge PR #12' });
     const plain = ledger.list('s1', 'coord');
-    expect(plain.text).toContain('Needs you now:\n\n**N1 · Go:** Merge PR #12.\n\nHolds up: nothing · Open 0 minutes · Source: overseer');
+    expect(plain.text).toContain('Needs you now:\n\n**N1 · Go · Merge PR #12**\n\nMerge PR #12.\n\nHolds up: nothing · Open 0 minutes · Source: overseer');
     expect(plain.openIds).toEqual(['N1']);
     expect(JSON.parse(terminalsDb.getById(db, 'coord')!.config!).interimDueAt).toBe(min(20)); // a plain list changes nothing
 
@@ -336,15 +337,52 @@ describe('list', () => {
     expect(cfg.role).toBe('coordinator'); // the rest of the config survives
   });
 
+  // Review round 1 (2026-10-09): titles first, once per recap. The first forRecap call with items
+  // that have no title answers only "Titles first" and does not mark the recap; the next call does,
+  // with or without the titles, so a recap is never blocked and its New lines are never lost.
+  it('forRecap with items that have no title: "Titles first" once per recap, then the normal recap', () => {
+    terminalsDb.updateConfig(db, 'coord', { role: 'coordinator', transport: 'structured', interimDueAt: min(20) });
+    ledgerDb.create(db, { sessionId: 's1', kind: 'do', text: 'Check the old banner.', author: 'overseer', now: min(0) });
+    now = T0 + 5 * 60_000;
+    const first = ledger.list('s1', 'coord', { forRecap: true });
+    expect(first.titlesFirst).toContain('Titles first. This call did not mark the recap.');
+    expect(first.titlesFirst).toContain('Open items without a title:\n- N1 · Do · Check the old banner.');
+    expect(first.paste).toBe('');
+    let cfg = JSON.parse(terminalsDb.getById(db, 'coord')!.config!);
+    expect(cfg.lastRecapAt).toBeUndefined();
+    expect(cfg.interimDueAt).toBe(min(20)); // not a recap yet
+
+    now = T0 + 6 * 60_000; // the overseer did not set the title: the recap still goes out
+    const second = ledger.list('s1', 'coord', { forRecap: true });
+    expect(second.titlesFirst).toBeUndefined();
+    expect(second.paste).toContain('N1 · Do · Check the old banner.');
+    cfg = JSON.parse(terminalsDb.getById(db, 'coord')!.config!);
+    expect(cfg.lastRecapAt).toBe(min(6));
+
+    now = T0 + 30 * 60_000; // a new recap cycle asks again, once
+    expect(ledger.list('s1', 'coord', { forRecap: true }).titlesFirst).toContain('Titles first');
+    ledger.setTitle('s1', 'coord', { id: 'N1', title: 'Check the old banner' });
+    expect(ledger.list('s1', 'coord', { forRecap: true }).titlesFirst).toBeUndefined();
+  });
+
+  it('forRecap with every item titled: the normal recap at once; a plain list never asks', () => {
+    ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR #12?', ...GO_CARD, title: 'Merge PR #12' });
+    expect(ledger.list('s1', 'coord', { forRecap: true }).titlesFirst).toBeUndefined();
+    ledgerDb.create(db, { sessionId: 's1', kind: 'do', text: 'Check the old banner.', author: 'overseer', now: min(0) });
+    const plain = ledger.list('s1', 'coord');
+    expect(plain.titlesFirst).toBeUndefined();
+    expect(plain.text).toContain('Open items without a title:');
+  });
+
   // Pinned card spec 2026-10-08, Unit 5: the paste block is news since the last recap.
   it('paste: the new items, the decided items and the count line, relative to the last recap', () => {
-    ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR #12?', ...GO_CARD });
-    expect(ledger.list('s1', 'coord').paste).toBe('New:\n- N1 · Go · Merge PR #12?\n\nNeeds you: 1 decision, 0 actions — on the card.');
+    ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR #12?', ...GO_CARD, title: 'Merge PR #12' });
+    expect(ledger.list('s1', 'coord').paste).toBe('New:\n- N1 · Go · Merge PR #12\n\nNeeds you: 1 decision, 0 actions — on the card.');
     now = T0 + 10 * 60_000;
-    expect(ledger.list('s1', 'coord', { forRecap: true }).paste).toContain('New:\n- N1 · Go · Merge PR #12?'); // new until this recap
+    expect(ledger.list('s1', 'coord', { forRecap: true }).paste).toContain('New:\n- N1 · Go · Merge PR #12'); // new until this recap
     now = T0 + 20 * 60_000;
-    ledger.add('s1', 'coord', { kind: 'do', text: 'Check the banner on staging.' });
-    expect(ledger.list('s1', 'coord').paste).toBe('New:\n- N2 · Do · Check the banner on staging.\n\nNeeds you: 1 decision, 1 action — on the card.');
+    ledger.add('s1', 'coord', { kind: 'do', text: 'Check the banner on staging.', title: 'Check the staging banner' });
+    expect(ledger.list('s1', 'coord').paste).toBe('New:\n- N2 · Do · Check the staging banner\n\nNeeds you: 1 decision, 1 action — on the card.');
   });
 });
 
@@ -359,7 +397,7 @@ describe('import', () => {
     expect(ledgerDb.listBySession(db, 's1').map((i) => [i.origin, i.status, i.author])).toEqual([
       ['imported', 'open', 'overseer'], ['imported', 'answered', 'overseer'], ['imported', 'answered', 'you'],
     ]);
-    expect(ledger.list('s1', 'coord').text).toContain('- N2 [Decide] Use library A?\n  Recommendation: A. 5 nights\n  Options: A. 5 nights | B. 10 nights\n  Imported, not checked');
+    expect(ledger.list('s1', 'coord').text).toContain('- N2 [Decide] Clean nights before live mode — Use library A?\n  Recommendation: A. 5 nights\n  Options: A. 5 nights | B. 10 nights\n  Imported, not checked');
 
     userSays('yes, library A', 2);
     const confirmed = ledger.resolve('s1', 'coord', { id: 'N2', status: 'answered', quote: 'library A' });
@@ -370,7 +408,7 @@ describe('import', () => {
   it('a withdrawn imported item is closed: it cannot be resolved again, and it renders the withdrawal', () => {
     ledger.importItems('s1', 'coord', [{ kind: 'decide', text: 'Use library A?', ...DECIDE_CARD, status: 'answered' }]);
     const out = ledger.resolve('s1', 'coord', { id: 'N1', status: 'withdrawn', reason: 'the import was wrong' });
-    expect(out.line).toBe('N1 [Decide] Use library A?\n  Recommendation: A. 5 nights\n  Options: A. 5 nights | B. 10 nights\n  Withdrawn by overseer: the import was wrong\n  Imported, not checked');
+    expect(out.line).toBe('N1 [Decide] Clean nights before live mode — Use library A?\n  Recommendation: A. 5 nights\n  Options: A. 5 nights | B. 10 nights\n  Withdrawn by overseer: the import was wrong\n  Imported, not checked');
     userSays('library A', 2);
     for (const status of ['answered', 'parked']) {
       const e = expectLedgerError(() => ledger.resolve('s1', 'coord', { id: 'N1', status, quote: 'library A' }), 409, 'N1 is already withdrawn.');
@@ -409,7 +447,7 @@ describe('handoff', () => {
     userSays('A', 1);
     ledger.resolve('s1', 'coord', { id: 'N1', status: 'answered', quote: 'A' });
     expect(ledger.handoff('s1', 'coord', ['N1']).block).toBe(
-      'Owner decisions (verbatim, from the ledger):\n- N1 [Decide] Use library A?\n  Recommendation: A. 5 nights\n  Options: A. 5 nights | B. 10 nights\n  You approved: "Use library A?" → "A" (Mon 16:01)',
+      'Owner decisions (verbatim, from the ledger):\n- N1 [Decide] Clean nights before live mode — Use library A?\n  Recommendation: A. 5 nights\n  Options: A. 5 nights | B. 10 nights\n  You approved: "Use library A?" → "A" (Mon 16:01)',
     );
     expectLedgerError(() => ledger.handoff('s1', 'coord', ['N1', 'N5']), 404, 'Unknown ledger item: N5');
   });
@@ -426,32 +464,32 @@ describe('triage tools', () => {
   it('ledger_add_from_agent: the agent\'s text stays word for word; the note becomes the overseer\'s note; the item is sent now', () => {
     propose();
     now = T0 + 5 * 60_000;
-    expect(ledger.addFromAgent('s1', 'coord', { id: 'N1', note: 'The agent did not know about the holiday freeze.' })).toEqual({ id: 'N1', status: 'open' });
+    expect(ledger.addFromAgent('s1', 'coord', { id: 'N1', title: 'Clean nights before live mode', note: 'The agent did not know about the holiday freeze.' })).toEqual({ id: 'N1', status: 'open' });
     const item = ledgerDb.getBySeq(db, 's1', 1)!;
     expect(item).toMatchObject({
       status: 'open', text: LR6.question, context: LR6.context, options: LR6.options, recommendation: LR6.recommendation,
       recommendationWhy: LR6.why, defaultText: LR6.default, overseerNote: 'The agent did not know about the holiday freeze.', sentAt: min(5),
     });
     expect(renderCard(item, { now, timeZone: 'UTC' })).toContain("**Overseer's note:** The agent did not know about the holiday freeze.");
-    expect(ledger.addFromAgent('s1', 'coord', { id: 'N2' })).toEqual({ id: 'N2', status: 'open' });
+    expect(ledger.addFromAgent('s1', 'coord', { id: 'N2', title: 'Day of the switch' })).toEqual({ id: 'N2', status: 'open' });
     expect(ledgerDb.getBySeq(db, 's1', 2)!.overseerNote).toBeNull();
-    expectLedgerError(() => ledger.addFromAgent('s1', 'coord', { id: 'N1' }), 409, 'N1 is already open.');
-    expectLedgerError(() => ledger.addFromAgent('s1', 'coord', { id: 'N9' }), 404);
+    expectLedgerError(() => ledger.addFromAgent('s1', 'coord', { id: 'N1', title: 'Clean nights before live mode' }), 409, 'N1 is already open.');
+    expectLedgerError(() => ledger.addFromAgent('s1', 'coord', { id: 'N9', title: 'Clean nights before live mode' }), 404);
   });
 
   it('ledger_add_from_agent takes blocks: the overseer says what the item holds up, and the card ranks first', () => {
     propose(); // N1, N2
     ledger.add('s1', 'coord', { kind: 'decide', text: 'Which store goes first?', ...DECIDE_CARD }); // N3, sent first
     now = T0 + 5 * 60_000;
-    ledger.addFromAgent('s1', 'coord', { id: 'N2', blocks: 'the switch to live mode' });
-    ledger.addFromAgent('s1', 'coord', { id: 'N1' });
+    ledger.addFromAgent('s1', 'coord', { id: 'N2', title: 'Day of the switch', blocks: 'the switch to live mode' });
+    ledger.addFromAgent('s1', 'coord', { id: 'N1', title: 'Clean nights before live mode' });
     expect(ledgerDb.getBySeq(db, 's1', 2)!.blocks).toBe('the switch to live mode');
     expect(ledgerDb.getBySeq(db, 's1', 1)!.blocks).toBeNull();
     ledger.list('s1', 'coord', { forRecap: true });
     for (let i = 0; i < 6; i++) ledger.add('s1', 'coord', { kind: 'decide', text: `Old question ${i}?`, ...DECIDE_CARD });
     now = T0 + 10 * 60_000;
     ledger.list('s1', 'coord', { forRecap: true }); // now nothing is new: the top 5 rank by "holds up work", then age
-    const cards = [...ledger.list('s1', 'coord').text.matchAll(/^\*\*N(\d+) · Decide:\*\*/gm)].map((m) => Number(m[1]));
+    const cards = [...ledger.list('s1', 'coord').text.matchAll(/^\*\*N(\d+) · Decide · /gm)].map((m) => Number(m[1]));
     expect(cards[0]).toBe(2);
     expect(renderCard(ledgerDb.getBySeq(db, 's1', 2)!, { now, timeZone: 'UTC' })).toContain('Holds up: the switch to live mode · Open 5 minutes');
   });
@@ -483,7 +521,7 @@ describe('triage tools', () => {
     ledger.add('s1', 'coord', { kind: 'decide', text: 'Which store goes first?', ...DECIDE_CARD }); // N3, sent at once
     expectLedgerError(() => ledger.decideSelf('s1', 'coord', { id: 'N3', choice: 'A. 5 nights', reason: 'x' }), 422, ONLY_USER_ERROR);
     propose(); // N4, N5
-    ledger.addFromAgent('s1', 'coord', { id: 'N4' }); // sent to the user by triage
+    ledger.addFromAgent('s1', 'coord', { id: 'N4', title: 'Clean nights before live mode' }); // sent to the user by triage
     expectLedgerError(() => ledger.decideSelf('s1', 'coord', { id: 'N4', choice: 'A. 5 nights', reason: 'x' }), 422, ONLY_USER_ERROR);
     ledger.decideSelf('s1', 'coord', { id: 'N5', choice: 'Monday', reason: 'x' });
     expectLedgerError(() => ledger.decideSelf('s1', 'coord', { id: 'N5', choice: 'Tuesday', reason: 'y' }), 409, 'N5 is already decided_by_overseer.');
@@ -581,16 +619,16 @@ describe('triage tools', () => {
   it('ledger_mark_default: the item stays open and moves to "Running on defaults"', () => {
     ledger.add('s1', 'coord', { kind: 'decide', text: 'Abort when duplicates pass 1%?', ...DECIDE_CARD, default: 'abort above 1%' });
     const out = ledger.markDefault('s1', 'coord', { id: 'N1' });
-    expect(out).toEqual({ id: 'N1', line: '- **N1 · Decide:** Abort when duplicates pass 1%? Running on the default "abort above 1%" since Oct 5. Recommended: A. 5 nights. (type `show N1`)' });
+    expect(out).toEqual({ id: 'N1', line: '- **N1 · Decide · Clean nights before live mode:** Abort when duplicates pass 1%? Running on the default "abort above 1%" since Oct 5. Recommended: A. 5 nights. (type `show N1`)' });
     expect(ledgerDb.getBySeq(db, 's1', 1)).toMatchObject({ status: 'open', onDefaultSince: min(0) });
     now = T0 + 86_400_000;
     ledger.markDefault('s1', 'coord', { id: 'N1' }); // again: the start date stays
     expect(ledgerDb.getBySeq(db, 's1', 1)!.onDefaultSince).toBe(min(0));
     const recap = ledger.list('s1', 'coord').text;
     expect(recap).toContain('Needs you now:\n- none');
-    expect(recap).toContain('Running on defaults:\n- **N1 · Decide:** Abort when duplicates pass 1%?');
+    expect(recap).toContain('Running on defaults:\n- **N1 · Decide · Clean nights before live mode:** Abort when duplicates pass 1%?');
     expect(ledger.list('s1', 'coord').openIds).toEqual(['N1']);
-    ledger.add('s1', 'coord', { kind: 'do', text: 'Check staging.' });
+    ledger.add('s1', 'coord', { kind: 'do', text: 'Check staging.', title: 'Check staging' });
     expectLedgerError(() => ledger.markDefault('s1', 'coord', { id: 'N2' }), 400);
     userSays('abort above 1% is fine', 2000);
     ledger.resolve('s1', 'coord', { id: 'N1', status: 'answered', quote: 'abort above 1% is fine' });
@@ -600,7 +638,7 @@ describe('triage tools', () => {
   it('ledger_show: full cards for one, several, and all open decisions', () => {
     ledger.add('s1', 'coord', { kind: 'decide', text: 'Which store goes first?', ...DECIDE_CARD });
     ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR #12?', ...GO_CARD });
-    ledger.add('s1', 'coord', { kind: 'do', text: 'Check staging.' });
+    ledger.add('s1', 'coord', { kind: 'do', text: 'Check staging.', title: 'Check staging' });
     propose(); // N4, N5: proposed, not open
     const card = (seq: number) => renderCard(ledgerDb.getBySeq(db, 's1', seq)!, { now, timeZone: 'UTC', lookup: (s) => ledgerDb.getBySeq(db, 's1', s) });
     expect(ledger.show('s1', 'coord', { ids: ['N2'] })).toEqual({ text: card(2) });

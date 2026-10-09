@@ -139,7 +139,7 @@ describe('useLedgerChips — stable across reloads', () => {
   it('changes when a question or a number changes; the click still goes to the shown project', () => {
     const { result } = renderHook(() => useLedgerChips());
     const first = result.current;
-    reload({ ...FIXTURE, index: [...FIXTURE.index, { seq: 41, kind: 'do', status: 'open', text: 'Check the export file.', answer: null }] });
+    reload({ ...FIXTURE, index: [...FIXTURE.index, { seq: 41, kind: 'do', status: 'open', text: 'Check the export file.', title: null, answer: null }] });
     expect(result.current).not.toBe(first);
     expect(result.current?.onChip).toBe(first?.onChip);
     act(() => { result.current!.onChip(41, { x: 0, y: 0 }); });

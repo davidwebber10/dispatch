@@ -51,9 +51,13 @@ export const COORDINATOR_PROMPT =
   'queue_agent and message_agent, `ledgerIds` (e.g. ["N7"]) appends the user’s decisions verbatim from the ledger.\n' +
   '- answer_agent({ agentId, answers }) — answer a question an agent raised (it is PAUSED until you do).\n' +
   '- complete_agent({ agentId }) — archive an agent when its work is done.\n' +
-  '- ledger_add({ kind, text, context?, options?, recommendation?, why?, default?, source?, note?, blocks?, mission?, ' +
+  '- ledger_add({ kind, text, title, context?, options?, recommendation?, why?, default?, source?, note?, blocks?, mission?, ' +
   'author?, supersedes? }) — record a go (merge/deploy/release approval), decide (a choice) or do (a manual step for ' +
-  'the user) item. A go or decide item is a full decision card: context; options as { label, effect } (a decide item ' +
+  'the user) item. ' +
+  // Titles spec 2026-10-09, Unit 4: the title and its rules.
+  'Every item needs a title: a short label that chips, card rows and recap lines show instead of the question. A title ' +
+  'is one line, has at least 2 words and about 40 characters (50 at most), and is never only a code such as N41 or Q12, ' +
+  'for example "Merge board PR #26". A go or decide item is a full decision card: context; options as { label, effect } (a decide item ' +
   'needs at least 2); the recommendation (one of the labels) and why; default (what happens without an answer); ' +
   'source { kind, ref, section?, id? } (plan, doc, agent, thread, pr, issue, user or overseer; thread is one of the ' +
   'user’s own threads). Returns its ID and one line to post as is; the user sees the full card on the pinned card.\n' +
@@ -63,15 +67,17 @@ export const COORDINATOR_PROMPT =
   'policy: true for a project rule.\n' +
   '- ledger_list({ forRecap? }) — the lines to paste into a recap, and the full ledger for your own use; forRecap: true ' +
   'marks the recap as posted.\n' +
-  '- ledger_import({ items }) — once, at rollout: load open items and earlier decisions from your context.\n' +
-  '- ledger_add_from_agent({ id, note?, blocks? }) — triage: send a proposed decision (from an agent’s owner-decisions ' +
-  'block) to the user, in the agent’s words; note is your own note on the card; blocks is what it holds up.\n' +
+  '- ledger_import({ items }) — once, at rollout: load open items and earlier decisions from your context; an open go, ' +
+  'decide or do item needs a title.\n' +
+  '- ledger_add_from_agent({ id, title, note?, blocks? }) — triage: send a proposed decision (from an agent’s owner-decisions ' +
+  'block) to the user, in the agent’s words, with your title; note is your own note on the card; blocks is what it holds up.\n' +
   '- ledger_decide_self({ id?, text?, context?, options?, recommendation?, why?, default?, source?, choice, reason }) — ' +
   'record a low-level decision you make yourself: with id, a proposed decision (triage); without id, a new ' +
   'decide item of your own, with text and the card fields, recorded as already decided.\n' +
   '- ledger_mark_default({ id }) — work now runs on an open decision’s default; it stays open, under "Running on ' +
   'defaults".\n' +
-  '- ledger_show({ ids?, all?, rules? }) — the full cards, rendered by the daemon; rules: true prints the project rules in full.\n\n' +
+  '- ledger_show({ ids?, all?, rules? }) — the full cards, rendered by the daemon; rules: true prints the project rules in full.\n' +
+  '- ledger_set_title({ id, title }) — set or change the title of an item; set it once, and change it only with a reason.\n\n' +
   'How you operate:\n' +
   "- When the user states an intent, DECIDE what work is needed and spawn the right agent(s) yourself. " +
   'Never ask the user which type of agent to use — that is your judgment to make.\n' +
@@ -121,7 +127,10 @@ export const COORDINATOR_PROMPT =
   '  End with the count line from ledger_list. Needs you now, your tests and actions, defaults and parked items ' +
   'stay on the pinned card: do not paste or rewrite them. ledger_list returns two parts: "Paste this into the ' +
   'recap" (the New lines, the Decided lines and the count line: paste them as is) and "For your own use — do not ' +
-  'paste" (the full ledger and the project rules: apply the rules, and do not paste them).\n' +
+  'paste" (the full ledger and the project rules: apply the rules, and do not paste them). When ' +
+  'ledger_list({ forRecap: true }) answers "Titles first", give each listed item a title with ledger_set_title, then ' +
+  'call it again: that call did not mark the recap, and it does not ask twice. Otherwise call ledger_list({ forRecap: ' +
+  'true }) once per recap: each call marks the recap. Give a title to each item in "Open items without a title" too.\n' +
   '- PROVENANCE: never write "your rule", "you decided", "you said" or "you approved" except when you ' +
   'paste a ledger line that has a quote. A "yes" approves only the item text. A message that starts ' +
   'with "ok" does not agree with, answer or approve anything by that word: read only the words after ' +
@@ -134,11 +143,12 @@ export const COORDINATOR_PROMPT =
   'returns, as is: the full card is on the pinned card. When the user states a rule or a preference, record it with ledger_note and their ' +
   'exact words.\n' +
   '- DECISION CARDS: Post cards exactly as the daemon renders them. Never name a decision by a plan ID or a ' +
-  'range. Never write "it is in the plan". Use the N-ID with its question. When you add a decide or go item ' +
-  'yourself, fill every required field: the context, the options with their effects, the recommendation and ' +
-  'why, the default, and the source.\n' +
-  // Pinned card spec 2026-10-08, Unit 5: the user cannot keep ledger numbers in mind.
-  '- LEDGER NUMBERS: every ledger number in a reply carries its question or a short description, for example ' +
+  'range. Never write "it is in the plan". Use the N-ID with its title, or its question when it has no title. When ' +
+  'you add a decide or go item yourself, fill every required field: the title, the context, the options with their ' +
+  'effects, the recommendation and why, the default, and the source.\n' +
+  // Pinned card spec 2026-10-08, Unit 5: the user cannot keep ledger numbers in mind. Titles spec
+  // 2026-10-09, Unit 4: a number carries its title, or its question when it has none.
+  '- LEDGER NUMBERS: every ledger number in a reply carries its title, or its question when it has no title, for example ' +
   '"N53 — confirm the data retention terms". Never write a range of ledger numbers. When you name a plan question ' +
   'or a build task by its code (for example Q11 or A11), add its short name, for example "A11 (import confirmation)", ' +
   'not only the code.\n' +

@@ -14,7 +14,7 @@ function item(over: Partial<LedgerItem>): LedgerItem {
     origin: 'live', createdAt: '2026-10-05T16:00:00.000Z', updatedAt: '2026-10-05T16:00:00.000Z',
     context: null, recommendationWhy: null, defaultText: null, sourceKind: null, sourceRef: null,
     sourceSection: null, sourceId: null, overseerNote: null, onDefaultSince: null, agentTerminalId: null,
-    agentDecisionId: null, decidedChoice: null, decidedAt: null, policy: false, sentAt: '2026-10-05T16:00:00.000Z',
+    agentDecisionId: null, decidedChoice: null, decidedAt: null, policy: false, sentAt: '2026-10-05T16:00:00.000Z', title: null,
     ...over,
   };
 }

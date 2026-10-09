@@ -30,8 +30,14 @@ interface LedgerCardState {
   focus: { projectId: string; seq: number } | null;
   /** A ledger chip of an item that is not on the card: the small popover at the click (Unit 9). */
   popover: { projectId: string; seq: number; x: number; y: number } | null;
+  /**
+   * The item whose source the section panel shows (titles and source panel spec 2026-10-09,
+   * Unit 10): a click on a Source line sets it, and a click on another one replaces it.
+   */
+  sourcePanel: { projectId: string; seq: number } | null;
   setFocus: (focus: { projectId: string; seq: number } | null) => void;
   setPopover: (popover: { projectId: string; seq: number; x: number; y: number } | null) => void;
+  setSourcePanel: (panel: { projectId: string; seq: number } | null) => void;
   load: (projectId: string) => Promise<void>;
   /** `ledger:changed` → load that project again, if the screen has shown it. */
   applyEvent: (e: ServerEvent) => void;
@@ -49,8 +55,10 @@ export const useLedgerCard = create<LedgerCardState>((set, get) => {
     byProject: {},
     focus: null,
     popover: null,
+    sourcePanel: null,
     setFocus: (focus) => set({ focus }),
     setPopover: (popover) => set({ popover }),
+    setSourcePanel: (sourcePanel) => set({ sourcePanel }),
     load: async (projectId) => {
       const request = ++lastRequest;
       patch(projectId, { loading: true, request });

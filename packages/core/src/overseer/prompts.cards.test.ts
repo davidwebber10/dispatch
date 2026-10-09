@@ -15,7 +15,7 @@ const OVERSEER = [
   'ledger_decide_self records your own choice and its reason',
   'This is ledger work, not a message to the user: the Batch line still limits your reply. The user sees the result in the next recap.',
   // Naming.
-  'Never name a decision by a plan ID or a range. Never write "it is in the plan". Use the N-ID with its question.',
+  'Never name a decision by a plan ID or a range. Never write "it is in the plan". Use the N-ID with its title, or its question when it has no title.',
   // Cards.
   'Post cards exactly as the daemon renders them.',
   // User commands.
@@ -26,7 +26,7 @@ const OVERSEER = [
   'When you add a decide or go item yourself, fill every required field',
   'A low-level call of your own that no agent proposed: record it with ledger_decide_self without an id (text, the card fields, choice and reason). Do not ledger_add it first: ledger_add sends it to the user, and then only the user can decide it.',
   // Tools.
-  'ledger_add_from_agent({ id, note?, blocks? })',
+  'ledger_add_from_agent({ id, title, note?, blocks? })',
   'ledger_decide_self({ id?, text?, context?, options?, recommendation?, why?, default?, source?, choice, reason })',
   'ledger_mark_default({ id })',
   'ledger_show({ ids?, all?, rules? })',
@@ -47,7 +47,7 @@ describe('overseer persona — decision cards', () => {
     it(`${harness}: the tiers, the triage rule, the naming rules, the commands, and the new tools`, () => {
       const p = buildCoordinatorPrompt({ harness });
       for (const line of OVERSEER) expect(p, line).toContain(line);
-      expect(p).toMatch(/ledger_add\(\{ kind, text, context\?, options\?, recommendation\?, why\?, default\?, source\?/);
+      expect(p).toMatch(/ledger_add\(\{ kind, text, title, context\?, options\?, recommendation\?, why\?, default\?, source\?/);
     });
   }
 

@@ -37,11 +37,11 @@ describe('agency-mcp', () => {
     const names = (res!.result as any).tools.map((t: any) => t.name).sort();
     expect(names).toEqual([
       'answer_agent', 'complete_agent', 'ledger_add', 'ledger_add_from_agent', 'ledger_decide_self', 'ledger_import',
-      'ledger_list', 'ledger_mark_default', 'ledger_note', 'ledger_resolve', 'ledger_show', 'list_agents', 'list_missions',
+      'ledger_list', 'ledger_mark_default', 'ledger_note', 'ledger_resolve', 'ledger_set_title', 'ledger_show', 'list_agents', 'list_missions',
       'list_threads', 'list_watches', 'message_agent', 'message_thread', 'post_image', 'queue_agent', 'read_agent',
       'read_thread', 'report_status', 'spawn_agent', 'start_agent', 'unwatch_thread', 'watch_thread',
     ]);
-    expect(TOOLS).toHaveLength(26);
+    expect(TOOLS).toHaveLength(27);
   });
 
   it('initialize returns protocolVersion + tools capability', async () => {

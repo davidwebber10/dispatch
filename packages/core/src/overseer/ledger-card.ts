@@ -7,8 +7,9 @@
 import type { LedgerItem } from '../db/ledger.js';
 import type { CardItem, CardSource, LedgerCard } from './ledger-card-types.js';
 import { ledgerSections, projectRules } from './ledger-render.js';
+import { sourceUrl } from './github-link.js';
 
-export type { CardItem, CardOption, CardSource, LedgerCard } from './ledger-card-types.js';
+export type { CardItem, CardOption, CardSource, LedgerCard, LedgerSource } from './ledger-card-types.js';
 
 /**
  * The short answer for an option: the label's leading token when the label starts with one to
@@ -20,8 +21,11 @@ export function answerKey(label: string): string {
   return m ? m[1] : label;
 }
 
-/** The source in plain fields. An agent-block item keeps "path#section" from its `where` in sourceSection. */
-function cardSource(item: LedgerItem): CardSource | null {
+/**
+ * The source in plain fields. An agent-block item keeps "path#section" from its `where` in
+ * sourceSection. A PR or issue carries its GitHub link when the project's repo is known.
+ */
+function cardSource(item: LedgerItem, githubRepo: string | null): CardSource | null {
   if (!item.sourceKind) return null;
   let path: string | null = null;
   let section = item.sourceSection;
@@ -30,21 +34,28 @@ function cardSource(item: LedgerItem): CardSource | null {
     path = (hash === -1 ? section : section.slice(0, hash)) || null;
     section = hash === -1 ? null : section.slice(hash + 1) || null;
   }
-  return { kind: item.sourceKind, ref: item.sourceRef, path, section, id: item.sourceId };
+  return { kind: item.sourceKind, ref: item.sourceRef, path, section, id: item.sourceId, url: sourceUrl(item.sourceKind, item.sourceRef, githubRepo) };
 }
 
-export function buildLedgerCard(items: LedgerItem[], opts: { now: number; lastRecapAt: string | null }): LedgerCard {
+/**
+ * `githubRepo` ("owner/repo", titles and source panel spec 2026-10-09, Unit 5) is the project's
+ * GitHub repo, for the links of PR and issue sources; null or left out: no links.
+ */
+export function buildLedgerCard(
+  items: LedgerItem[],
+  opts: { now: number; lastRecapAt: string | null; githubRepo?: string | null },
+): LedgerCard {
   const bySeq = new Map(items.map((i) => [i.seq, i] as const));
   const s = ledgerSections(items, opts);
   const fresh = new Set(s.newSeqs);
   const toCard = (i: LedgerItem): CardItem => {
     const original = i.supersedes !== null ? bySeq.get(i.supersedes) : undefined;
     return {
-      seq: i.seq, kind: i.kind, status: i.status, text: i.text, author: i.author,
+      seq: i.seq, kind: i.kind, status: i.status, text: i.text, title: i.title, author: i.author,
       context: i.context,
       options: (i.options ?? []).map((o) => ({ label: o.label, effect: o.effect, answerKey: answerKey(o.label) })),
       recommendation: i.recommendation, why: i.recommendationWhy, default: i.defaultText,
-      source: cardSource(i),
+      source: cardSource(i, opts.githubRepo ?? null),
       blocks: i.blocks, mission: i.mission, origin: i.origin, sentAt: i.sentAt, isNew: fresh.has(i.seq),
       onDefaultSince: i.onDefaultSince, overseerNote: i.overseerNote,
       original: original ? { seq: original.seq, text: original.text } : null,
@@ -66,7 +77,7 @@ export function buildLedgerCard(items: LedgerItem[], opts: { now: number; lastRe
     },
     rules: projectRules(items).map((i) => ({ seq: i.seq, quote: i.quote ?? i.text, reading: i.reading })),
     index: items.map((i) => ({
-      seq: i.seq, kind: i.kind, status: i.status, text: i.text,
+      seq: i.seq, kind: i.kind, status: i.status, text: i.text, title: i.title,
       answer: i.status === 'decided_by_overseer' ? i.decidedChoice : i.quote,
     })),
   };

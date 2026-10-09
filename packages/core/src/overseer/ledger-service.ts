@@ -23,15 +23,25 @@ import * as messagesDb from '../db/coordinator-messages.js';
 import { findQuote, GO_APPROVAL_ERROR, namesGoApproval, OK_ONLY_ERROR } from './ledger-quote.js';
 import {
   isUnchecked, projectRules, renderAddLine, renderCard, renderDefaultLine, renderHandoffBlock, renderItem, renderLedgerSections,
-  renderOverseerDecisionLine, renderRecapPaste, renderRulesList, type RenderContext,
+  renderOverseerDecisionLine, renderRecapPaste, renderRulesList, renderUntitledList, type RenderContext,
 } from './ledger-render.js';
-import { buildLedgerCard, type LedgerCard } from './ledger-card.js';
+import { buildLedgerCard, type LedgerCard, type LedgerSource } from './ledger-card.js';
+import { createRemoteReader } from './github-link.js';
+import { readSourceFile, sourceFileRef } from './source-file.js';
+import { findSection } from './section-finder.js';
 import {
   cardFieldsError, findProjectPath, gitWorktrees, holdsSeveralDecisions, isIssueRef, missingCardFields,
-  isUserSourceKind, ONE_DECISION_ERROR, ONLY_USER_ERROR, onlyUserCanDecide, sourceComplete, sourceMissingError, type CardFieldsInput,
+  isUserSourceKind, ONE_DECISION_ERROR, ONLY_USER_ERROR, onlyUserCanDecide, sourceComplete, sourceMissingError, TITLE_MISSING_ERROR,
+  titleProblem, type CardFieldsInput,
 } from './ledger-checks.js';
 
 export const NOT_OVERSEER_ERROR = "Only the project's overseer can change the ledger.";
+/** The source route's errors (titles and source panel spec 2026-10-09, Unit 8). */
+export const NO_SUCH_ITEM_ERROR = 'No such item';
+export const NO_FILE_SOURCE_ERROR = 'This item has no file source';
+export const FILE_GONE_ERROR = 'The file is gone';
+export const FILE_OUTSIDE_ERROR = 'The file is outside the project';
+export const NO_PROJECT_FOLDER_ERROR = 'This project has no folder';
 export const QUOTE_NOT_FOUND_STATEMENT_ERROR = "Quote not found in the user's messages to you. Do not record it. Ask the user.";
 export function quoteNotFoundAfterError(seq: number): string {
   return `Quote not found in the user's messages to you after N${seq} was created. Do not record it. Ask the user.`;
@@ -40,6 +50,10 @@ export function quoteNotFoundAfterError(seq: number): string {
 /** Coordinator config keys this feature owns. */
 export const LAST_RECAP_KEY = 'lastRecapAt';
 export const INTERIM_DUE_KEY = 'interimDueAt';
+/** When the overseer was last asked for titles before a recap (review round 1, 2026-10-09). */
+export const TITLES_ASKED_KEY = 'titlesAskedAt';
+export const TITLES_FIRST_TEXT = 'Titles first. This call did not mark the recap. Give each item below a title with ' +
+  'ledger_set_title, then call ledger_list({ forRecap: true }) again; it does not ask twice.';
 
 /** An error with the HTTP status the route returns, plus extra JSON fields for the body. */
 export class LedgerError extends Error {
@@ -57,6 +71,22 @@ export function parseLedgerId(raw: unknown): number | null {
 }
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+
+/**
+ * The title of an item (titles spec 2026-10-09, Unit 1), trimmed; undefined when none is given. A
+ * missing `required` title (Unit 2) and a title that breaks a rule are 422s with the fixed text, in
+ * the shape of the card-field errors (`body` rides along, as `{ item: i }` for an import).
+ */
+function readTitle(raw: unknown, body: Record<string, unknown> = {}, required = false): string | undefined {
+  const title = str(raw);
+  if (title === undefined) {
+    if (required) throw new LedgerError(422, TITLE_MISSING_ERROR, body);
+    return undefined;
+  }
+  const problem = titleProblem(title);
+  if (problem) throw new LedgerError(422, problem, body);
+  return title;
+}
 
 /** Options in either shape: plain strings (#62) or `{ label, effect }`. A string reads as a label with no effect. */
 function optionList(v: unknown, field: string): ledgerDb.LedgerOption[] | undefined {
@@ -88,19 +118,26 @@ export class LedgerService {
   private readonly timeZone?: string;
   private readonly listWorktrees: (dir: string) => string[];
   private readonly onChange?: (sessionId: string) => void;
+  private readonly githubRepo: (dir: string) => string | null;
 
   /**
    * `onChange` (pinned card spec 2026-10-08, Unit 3) runs after every successful write, with the
    * project; server.ts turns it into the `ledger:changed` event. Its failure never fails the write.
+   * `githubRepo` (titles and source panel spec 2026-10-09, Unit 5) gives a project folder's GitHub
+   * repo for the PR and issue links on the card; by default it reads the remote, cached 10 minutes.
    */
   constructor(
     private readonly db: Database.Database,
-    opts: { clock?: () => number; timeZone?: string; listWorktrees?: (dir: string) => string[]; onChange?: (sessionId: string) => void } = {},
+    opts: {
+      clock?: () => number; timeZone?: string; listWorktrees?: (dir: string) => string[]; onChange?: (sessionId: string) => void;
+      githubRepo?: (dir: string) => string | null;
+    } = {},
   ) {
     this.clock = opts.clock ?? (() => Date.now());
     this.timeZone = opts.timeZone;
     this.listWorktrees = opts.listWorktrees ?? gitWorktrees;
     this.onChange = opts.onChange;
+    this.githubRepo = opts.githubRepo ?? createRemoteReader({ clock: this.clock });
   }
 
   private nowIso(): string {
@@ -252,6 +289,7 @@ export class LedgerService {
     if (typeof kind !== 'string' || !OPEN_KINDS.has(kind)) throw new LedgerError(400, "kind must be 'go', 'decide' or 'do'");
     const text = str(input.text);
     if (!text) throw new LedgerError(400, 'text is required');
+    const title = readTitle(input.title, {}, true); // Unit 2: every kind ledger_add takes needs one
     let supersedes: number | undefined;
     if (input.supersedes !== undefined && input.supersedes !== null && input.supersedes !== '') {
       supersedes = this.requireItem(sessionId, input.supersedes).seq;
@@ -261,6 +299,7 @@ export class LedgerService {
       sessionId,
       kind: kind as ledgerDb.LedgerKind,
       text,
+      title,
       author: str(input.author) ?? 'overseer',
       ...card,
       blocks: str(input.blocks),
@@ -318,14 +357,16 @@ export class LedgerService {
 
   /**
    * ledger_add_from_agent: a proposed item goes to the user (status open), the agent's text word
-   * for word. `note` becomes the overseer's note; `blocks` says what the item holds up (the
-   * overseer knows that; the agent block cannot set it).
+   * for word, with the overseer's title (required: titles spec 2026-10-09, Unit 2). `note` becomes
+   * the overseer's note; `blocks` says what the item holds up (the overseer knows that; the agent
+   * block cannot set it).
    */
   addFromAgent(sessionId: string, caller: unknown, input: Record<string, unknown>): { id: string; status: 'open' } {
     this.assertOverseer(sessionId, caller);
     const item = this.requireItem(sessionId, input.id);
     if (item.status !== 'proposed') throw new LedgerError(409, `N${item.seq} is already ${item.status}.`, { status: item.status });
-    ledgerDb.markSent(this.db, sessionId, item.seq, { note: str(input.note), blocks: str(input.blocks), now: this.nowIso() });
+    const title = readTitle(input.title, {}, true);
+    ledgerDb.markSent(this.db, sessionId, item.seq, { title, note: str(input.note), blocks: str(input.blocks), now: this.nowIso() });
     this.changed(sessionId);
     return { id: `N${item.seq}`, status: 'open' };
   }
@@ -376,6 +417,20 @@ export class LedgerService {
     });
     this.changed(sessionId);
     return { id: `N${item.seq}`, status: 'decided_by_overseer', line: renderOverseerDecisionLine(item) };
+  }
+
+  /**
+   * ledger_set_title (titles spec 2026-10-09, Unit 2): set or change the title of any item of the
+   * overseer's own project. A title is a label, so a change is safe; it is not logged.
+   */
+  setTitle(sessionId: string, caller: unknown, input: Record<string, unknown>): { id: string; title: string } {
+    this.assertOverseer(sessionId, caller);
+    const item = this.requireItem(sessionId, input.id);
+    if (str(input.title) === undefined) throw new LedgerError(400, 'title is required');
+    const title = readTitle(input.title)!;
+    ledgerDb.setTitle(this.db, sessionId, item.seq, title);
+    this.changed(sessionId);
+    return { id: `N${item.seq}`, title };
   }
 
   /** ledger_mark_default: work now runs on the default of an open decision. It stays open. */
@@ -432,18 +487,35 @@ export class LedgerService {
   /**
    * The ledger part of a recap. `paste` is what the overseer pastes into the recap (pinned card spec
    * 2026-10-08, Unit 5: the new items, the decided ones, the count line); `text` is the full ledger
-   * and `rules` each project rule in full, both for the overseer's own use (overseer memory scope
-   * spec 2026-10-07, Unit 5). Both are relative to the recap before this call. `forRecap` stamps
+   * (then the open items without a title: titles spec 2026-10-09, Unit 3) and `rules` each project
+   * rule in full, both for the overseer's own use (overseer memory scope spec 2026-10-07, Unit 5). Both are relative to the recap before this call. `forRecap` stamps
    * lastRecapAt and clears the interim timer.
    */
-  list(sessionId: string, caller: unknown, opts: { forRecap?: boolean } = {}): { paste: string; text: string; openIds: string[]; rules: string[] } {
+  list(sessionId: string, caller: unknown, opts: { forRecap?: boolean } = {}): {
+    paste: string; text: string; openIds: string[]; rules: string[]; titlesFirst?: string;
+  } {
     const overseer = this.assertOverseer(sessionId, caller);
     let cfg: Record<string, any> = {};
     try { cfg = JSON.parse(overseer.config || '{}'); } catch { /* default {} */ }
     const lastRecapAt = typeof cfg[LAST_RECAP_KEY] === 'string' ? (cfg[LAST_RECAP_KEY] as string) : null;
     const items = ledgerDb.listBySession(this.db, sessionId);
+    // Review round 1: titles first, once per recap. With items that have no title, the first forRecap
+    // call of a recap only asks for them and does not mark the recap; the next call is the recap,
+    // with or without the titles, so a recap is never blocked and its New lines are never spent.
+    const untitled = renderUntitledList(items);
+    if (opts.forRecap && untitled) {
+      const asked = typeof cfg[TITLES_ASKED_KEY] === 'string' ? (cfg[TITLES_ASKED_KEY] as string) : null;
+      if (asked === null || (lastRecapAt !== null && asked <= lastRecapAt)) {
+        cfg[TITLES_ASKED_KEY] = this.nowIso();
+        terminalsDb.updateConfig(this.db, overseer.id, cfg);
+        const openIds = items.filter((i) => i.status === 'open').map((i) => `N${i.seq}`);
+        return { paste: '', text: '', openIds, rules: [], titlesFirst: `${TITLES_FIRST_TEXT}\n\n${untitled}` };
+      }
+    }
     const paste = renderRecapPaste(items, { now: this.clock(), lastRecapAt });
-    const text = renderLedgerSections(items, { now: this.clock(), lastRecapAt, timeZone: this.timeZone });
+    // Titles spec 2026-10-09, Unit 3: the open items without a title close the own-use text.
+    const text = [renderLedgerSections(items, { now: this.clock(), lastRecapAt, timeZone: this.timeZone }), untitled]
+      .filter(Boolean).join('\n\n');
     if (opts.forRecap) {
       cfg[LAST_RECAP_KEY] = this.nowIso();
       delete cfg[INTERIM_DUE_KEY];
@@ -466,11 +538,41 @@ export class LedgerService {
    * of the project's live overseer; with none, nothing has been recapped yet.
    */
   card(sessionId: string): LedgerCard {
-    if (!sessionsDb.getById(this.db, sessionId)) throw new LedgerError(404, `Unknown project: ${sessionId}`);
+    const session = sessionsDb.getById(this.db, sessionId);
+    if (!session) throw new LedgerError(404, `Unknown project: ${sessionId}`);
     const overseer = terminalsDb.listBySession(this.db, sessionId).map(terminalsDb.rowToTerminal) // not archived
       .find((t) => t.config?.role === 'coordinator');
     const lastRecapAt = typeof overseer?.config[LAST_RECAP_KEY] === 'string' ? (overseer.config[LAST_RECAP_KEY] as string) : null;
-    return buildLedgerCard(ledgerDb.listBySession(this.db, sessionId), { now: this.clock(), lastRecapAt });
+    const items = ledgerDb.listBySession(this.db, sessionId);
+    // Unit 5: git runs only for a ledger with a PR or issue source.
+    const linked = items.some((i) => i.sourceKind === 'pr' || i.sourceKind === 'issue');
+    const githubRepo = linked && session.working_dir ? this.githubRepo(session.working_dir) : null;
+    return buildLedgerCard(items, { now: this.clock(), lastRecapAt, githubRepo });
+  }
+
+  /**
+   * The section panel's data (titles and source panel spec 2026-10-09, Unit 8): the plan section
+   * the item comes from, the outline of its file, or only the file's path. Read-only, with no
+   * caller check, like the card: the network is the gate. `heading` (a click in the outline)
+   * selects that exact heading. The file is read as it is now.
+   */
+  source(sessionId: string, rawId: unknown, opts: { heading?: string } = {}): LedgerSource {
+    const session = sessionsDb.getById(this.db, sessionId);
+    const seq = parseLedgerId(rawId);
+    const item = session && seq !== null ? ledgerDb.getBySeq(this.db, sessionId, seq) : null;
+    if (!session || !item) throw new LedgerError(404, NO_SUCH_ITEM_ERROR);
+    const ref = sourceFileRef(item);
+    if (!ref) throw new LedgerError(422, NO_FILE_SOURCE_ERROR);
+    if (!session.working_dir) throw new LedgerError(422, NO_PROJECT_FOLDER_ERROR); // review round 1: its own text
+    const f = readSourceFile(session.working_dir, ref.path);
+    if (f.kind === 'gone') throw new LedgerError(404, FILE_GONE_ERROR);
+    if (f.kind === 'outside') throw new LedgerError(403, FILE_OUTSIDE_ERROR);
+    // Review round 1: every answer says which copy it read (`note`), also file-only.
+    const where = { file: f.file, path: f.path, fromMainCheckout: f.fromMainCheckout, note: f.note };
+    if (f.kind === 'file-only') return { kind: 'file-only', ...where, reason: f.reason };
+    const found = findSection(f.markdown, { section: ref.section, id: item.sourceId, heading: opts.heading });
+    if (found.kind === 'outline') return { kind: 'outline', ...where, headings: found.headings };
+    return { kind: 'section', ...where, heading: found.heading, markdown: found.markdown, id: item.sourceId, cut: found.cut };
   }
 
   /** One-time load of open items and earlier decisions from the overseer's context. */
@@ -489,11 +591,15 @@ export class LedgerService {
       if (it.policy !== undefined && it.policy !== false) {
         throw new LedgerError(400, `items[${i}].policy is not allowed: a project rule needs the user's checked words (ledger_note with policy: true)`);
       }
+      // Titles spec 2026-10-09, Unit 2: an open go, decide or do item needs a title; an answered or
+      // parked item and a statement may have one.
+      const title = readTitle(it.title, { item: i }, kind !== 'statement' && status === 'open');
       const card = this.checkCard(sessionId, overseer.id, kind as ledgerDb.LedgerKind, text, it, { item: i });
       return {
         sessionId,
         kind: kind as ledgerDb.LedgerKind,
         text,
+        title,
         author: kind === 'statement' ? 'you' : (str(it.author) ?? 'overseer'),
         ...card,
         options: optionList(it.options, `items[${i}].options`),

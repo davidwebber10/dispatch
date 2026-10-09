@@ -24,6 +24,7 @@ import { Composer } from './components/Composer';
 import { OngoingWorkOverview } from './components/WorkRail';
 import { LedgerCard } from './components/LedgerCard';
 import { LedgerRefPopover } from './components/LedgerChips';
+import { LedgerSourcePanel } from './components/LedgerSourcePanel';
 import { ThreadDetail } from './components/ThreadDetail';
 import { WorkerLightbox } from './components/WorkerLightbox';
 
@@ -230,6 +231,10 @@ export function OverseerMobile({ onBack }: { onBack?: () => void }) {
           <ThreadDetail />
         </div>
       )}
+
+      {/* The section panel of a ledger source: a full-screen sheet with a back button (titles and
+          source panel spec 2026-10-09, Unit 10). */}
+      <LedgerSourcePanel mobile />
 
       <WorkerLightbox />
       <LedgerRefPopover />
