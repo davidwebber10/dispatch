@@ -7,8 +7,9 @@
 //
 //   • Desktop: over the chat column of the Control Plane (OverseerView), with ✕.
 //   • Phone: a full-screen sheet over the Work tab (OverseerMobile), with a back button.
-//   • The file name, the heading, "From the main checkout: the worktree is gone." when the worktree
-//     is gone, the section, and "Open the full file" (the file tab, brought to the front).
+//   • The file name, the heading, the daemon's note when it read another copy (a worktree, or the
+//     main checkout), the section, and "Open the full file" (the file tab, brought to the front).
+//   • A dialog: focus moves in and back to the opener; what it covers is inert.
 //   • No section matched: the outline; a click on a heading loads that section.
 //   • Escape, ✕ or Back close it; a click on another Source line replaces it; a change of project
 //     closes it. The panel shows the file as it is now.
@@ -82,9 +83,31 @@ function PanelBody({ projectId, seq, mobile }: { projectId: string; seq: number;
   }, [projectId, seq, heading, attempt]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    // Review round 1: an open chip popover takes the Escape first (it closes alone).
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented || useLedgerCard.getState().popover) return;
+      close();
+    };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
+  // Review round 1: focus moves into the panel and back to the opener on close; what the panel
+  // covers (its siblings: the chat on desktop, the whole Work screen on the phone) is inert, so
+  // Tab never reaches a hidden control. The card in the right pane stays usable on desktop.
+  const sectionRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = sectionRef.current;
+    const opener = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
+    el?.focus({ preventScroll: true });
+    const covered = el?.parentElement
+      ? [...el.parentElement.children].filter((c): c is HTMLElement => c !== el && c instanceof HTMLElement && !c.hasAttribute('inert'))
+      : [];
+    for (const c of covered) c.setAttribute('inert', '');
+    return () => {
+      for (const c of covered) c.removeAttribute('inert');
+      if (opener?.isConnected) opener.focus({ preventScroll: true });
+    };
   }, []);
 
   // After the section renders: mark the item's row and bring it into view.
@@ -102,10 +125,15 @@ function PanelBody({ projectId, seq, mobile }: { projectId: string; seq: number;
 
   return (
     <section
+      ref={sectionRef}
+      role="dialog"
+      aria-modal={mobile ? 'true' : undefined}
+      tabIndex={-1}
       data-testid="ledger-source-panel"
       data-sheet={mobile ? 'true' : undefined}
       aria-label="Source section"
-      style={{ position: 'absolute', inset: 0, zIndex: mobile ? 6 : 4, display: 'flex', flexDirection: 'column', background: 'var(--base)' }}
+      // Above the chat's floating buttons (the jump and "Loading earlier" pills use 5) and the drill overlay.
+      style={{ position: 'absolute', inset: 0, zIndex: 10, display: 'flex', flexDirection: 'column', background: 'var(--base)', outline: 'none' }}
     >
       <div style={{ flex: 'none', display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px', borderBottom: '1px solid var(--border)', background: 'var(--pane)' }}>
         {mobile && (
@@ -132,9 +160,8 @@ function PanelBody({ projectId, seq, mobile }: { projectId: string; seq: number;
             <button type="button" onClick={() => setAttempt((n) => n + 1)} style={textButton}>Retry</button>
           </div>
         )}
-        {data && data.kind !== 'file-only' && data.fromMainCheckout && (
-          <div style={{ ...note, color: 'var(--yellow)' }}>From the main checkout: the worktree is gone.</div>
-        )}
+        {/* Review round 1: the daemon's note names the copy it read (a worktree, or the main checkout). */}
+        {data?.note && <div style={{ ...note, color: 'var(--yellow)' }}>{data.note}</div>}
         {data?.kind === 'section' && (
           <>
             <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.4, color: 'var(--tp)' }}>{data.heading}</div>

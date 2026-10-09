@@ -31,7 +31,7 @@ const TABLE = [
 const SECTION: LedgerSource = {
   kind: 'section', file: 'readiness.md', path: 'docs/plans/readiness.md',
   heading: 'Open owner decisions after v3.2 (the v3 table, updated 2026-10-08)', markdown: TABLE,
-  id: 'LR-6', fromMainCheckout: false, cut: false,
+  id: 'LR-6', fromMainCheckout: false, note: null, cut: false,
 };
 
 function deferred<T>() {
@@ -134,10 +134,11 @@ describe('the section panel', () => {
   });
 
   it('the flags: from the main checkout, and a cut section', async () => {
-    vi.spyOn(api, 'getLedgerSource').mockResolvedValue({ ...SECTION, fromMainCheckout: true, cut: true });
+    // Review round 1: the daemon's note names the copy the panel reads.
+    vi.spyOn(api, 'getLedgerSource').mockResolvedValue({ ...SECTION, fromMainCheckout: true, note: 'From the main checkout: the worktree does not have this file.', cut: true });
     open();
     render(<LedgerSourcePanel />);
-    expect(await screen.findByText('From the main checkout: the worktree is gone.')).toBeInTheDocument();
+    expect(await screen.findByText('From the main checkout: the worktree does not have this file.')).toBeInTheDocument();
     expect(screen.getByText('The section continues in the file.')).toBeInTheDocument();
   });
 
@@ -154,7 +155,7 @@ describe('the section panel', () => {
 
   it('the outline: a list of the headings; a click loads that section', async () => {
     const get = vi.spyOn(api, 'getLedgerSource')
-      .mockResolvedValueOnce({ kind: 'outline', file: 'readiness.md', path: 'docs/plans/readiness.md', fromMainCheckout: false, headings: [{ level: 1, text: 'Example plan' }, { level: 2, text: 'Background' }] })
+      .mockResolvedValueOnce({ kind: 'outline', file: 'readiness.md', path: 'docs/plans/readiness.md', fromMainCheckout: false, note: null, headings: [{ level: 1, text: 'Example plan' }, { level: 2, text: 'Background' }] })
       .mockResolvedValueOnce({ ...SECTION, heading: 'Background', markdown: 'Some history.', id: null });
     open();
     render(<LedgerSourcePanel />);
@@ -164,12 +165,16 @@ describe('the section panel', () => {
   });
 
   it('file-only: the reason and the button that opens the full file in its tab', async () => {
-    vi.spyOn(api, 'getLedgerSource').mockResolvedValue({ kind: 'file-only', file: 'notes.txt', path: 'docs/notes.txt', reason: 'This file is not markdown, so the panel cannot show a section of it.' });
+    vi.spyOn(api, 'getLedgerSource').mockResolvedValue({
+      kind: 'file-only', file: 'notes.txt', path: '.claude/worktrees/wt-a/docs/notes.txt', fromMainCheckout: false,
+      note: 'From the worktree "wt-a": the main checkout does not have this file.', reason: 'This file is not markdown, so the panel cannot show a section of it.',
+    });
     open();
     render(<LedgerSourcePanel />);
     expect(await screen.findByText('This file is not markdown, so the panel cannot show a section of it.')).toBeInTheDocument();
+    expect(screen.getByText('From the worktree "wt-a": the main checkout does not have this file.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Open the full file' }));
-    expect(openFileTab).toHaveBeenCalledWith('p1', 'docs/notes.txt', { focus: true });
+    expect(openFileTab).toHaveBeenCalledWith('p1', '.claude/worktrees/wt-a/docs/notes.txt', { focus: true });
   });
 
   it('"Open the full file" from a section opens the file tab and brings it to the front', async () => {
@@ -229,6 +234,61 @@ describe('the section panel', () => {
     act(() => useProjects.setState({ activeId: 'p2' } as never));
     expect(useLedgerCard.getState().sourcePanel).toBeNull();
     expect(screen.queryByTestId('ledger-source-panel')).toBeNull();
+  });
+});
+
+// Review round 1 (2026-10-09): focus, the covered controls, Escape with a chip popover, the stacking.
+describe('the panel and the keyboard', () => {
+  it('focus moves into the panel when it opens and back to the opener when it closes', async () => {
+    vi.spyOn(api, 'getLedgerSource').mockResolvedValue(SECTION);
+    render(<><button type="button">opener</button><LedgerSourcePanel /></>);
+    const opener = screen.getByRole('button', { name: 'opener' });
+    opener.focus();
+    act(() => useLedgerCard.setState({ sourcePanel: { projectId: 'p1', seq: 14 } }));
+    const panel = await screen.findByRole('dialog', { name: 'Source section' });
+    expect(document.activeElement).toBe(panel);
+    fireEvent.click(within(panel).getByRole('button', { name: 'Close' }));
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it('desktop: the chat under the panel is inert while it is open; the card stays usable', async () => {
+    vi.spyOn(api, 'getLedgerSource').mockResolvedValue(SECTION);
+    useLedgerCard.setState({ sourcePanel: { projectId: 'p1', seq: 14 } });
+    render(<OverseerView />);
+    const panel = await screen.findByTestId('ledger-source-panel');
+    expect(screen.getByTestId('stream-stub').closest('[inert]')).not.toBeNull();
+    expect(screen.getByTestId('composer-stub').closest('[inert]')).not.toBeNull();
+    expect(panel.closest('[inert]')).toBeNull();
+    act(() => useLedgerCard.getState().setSourcePanel(null));
+    expect(screen.getByTestId('stream-stub').closest('[inert]')).toBeNull();
+    expect(screen.getByTestId('composer-stub').closest('[inert]')).toBeNull();
+  });
+
+  it('phone: the Work tab under the sheet is inert while it is open', async () => {
+    vi.spyOn(api, 'getLedgerSource').mockResolvedValue(SECTION);
+    render(<OverseerMobile />);
+    fireEvent.click(within(sourceField(14)).getByRole('button'));
+    const sheet = await screen.findByTestId('ledger-source-panel');
+    expect(sheet).toHaveAttribute('aria-modal', 'true');
+    expect(screen.getByTestId('ledger-card').closest('[inert]')).not.toBeNull();
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Back' }));
+    expect(screen.getByTestId('ledger-card').closest('[inert]')).toBeNull();
+  });
+
+  it('Escape with a chip popover open closes only the popover', async () => {
+    vi.spyOn(api, 'getLedgerSource').mockResolvedValue(SECTION);
+    useLedgerCard.setState({ sourcePanel: { projectId: 'p1', seq: 14 }, popover: { projectId: 'p1', seq: 3, x: 10, y: 10 } });
+    render(<LedgerSourcePanel />);
+    await screen.findByText('readiness.md');
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(useLedgerCard.getState().sourcePanel).not.toBeNull();
+  });
+
+  it('desktop: the panel sits above the chat\'s floating buttons (z-index 5)', async () => {
+    vi.spyOn(api, 'getLedgerSource').mockResolvedValue(SECTION);
+    useLedgerCard.setState({ sourcePanel: { projectId: 'p1', seq: 14 } });
+    render(<LedgerSourcePanel />);
+    expect(Number((await screen.findByTestId('ledger-source-panel')).style.zIndex)).toBeGreaterThan(5);
   });
 });
 
