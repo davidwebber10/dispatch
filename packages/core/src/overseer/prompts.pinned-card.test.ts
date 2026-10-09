@@ -19,8 +19,9 @@ const ONE_LINE = [
   'Returns its ID and one line to post as is; the user sees the full card on the pinned card.',
 ];
 
+// Titles spec 2026-10-09, Unit 4: the title, or the question when the item has none.
 const LEDGER_NUMBERS = [
-  '- LEDGER NUMBERS: every ledger number in a reply carries its question or a short description, for example "N53 — confirm the data retention terms". Never write a range of ledger numbers.',
+  '- LEDGER NUMBERS: every ledger number in a reply carries its title, or its question when it has no title, for example "N53 — confirm the data retention terms". Never write a range of ledger numbers.',
 ];
 
 // The user cannot keep plan codes in mind either: a code carries its short name.
