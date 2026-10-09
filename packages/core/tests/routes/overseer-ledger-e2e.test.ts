@@ -87,7 +87,7 @@ describe('overseer ledger — end to end', () => {
     const res = await request(app).post(`/api/sessions/${sid}/ledger/N1/resolve`).send({ caller: coordId, status: 'answered', quote: 'a, BUT only   for the first store' }).expect(200);
     expect(res.body.line).toContain('You approved: "Which store goes first?" → "A, but only for the first store"');
     const list = await request(app).post(`/api/sessions/${sid}/ledger/list`).send({ caller: coordId }).expect(200);
-    expect(list.body.text).toContain('Decided since the last recap:\n- N1 [Decide] Which store goes first?');
+    expect(list.body.text).toContain('Decided since the last recap:\n- N1 [Decide] Clean nights before live mode — Which store goes first?');
   });
 
   it('an "ok"-only answer, a canned click, and a non-overseer caller all fail', async () => {
