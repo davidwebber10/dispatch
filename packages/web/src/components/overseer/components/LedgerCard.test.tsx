@@ -23,12 +23,14 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('LedgerCard — the sections', () => {
-  it('the header: "Needs you", the counts, the time of the last update, and the folded rules line', () => {
+  it('the header: "Needs you", the counts, the time of the last change, and the folded rules line', () => {
     render(<LedgerCard />);
     const header = screen.getByTestId('ledger-card-header');
     expect(header).toHaveTextContent('Needs you');
     expect(header).toHaveTextContent('3 decisions · 2 actions');
-    expect(header).toHaveTextContent(/updated \S+/);
+    expect(header).not.toHaveTextContent('updated');
+    // The time is the last change to the ledger, not a load time: the tooltip says so.
+    expect(within(header).getByTitle('The card is live. This is the time of the last change to the ledger.')).toHaveTextContent(/^last change \S+/);
     expect(screen.getByRole('button', { name: /Project rules: 1 in force/ })).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByText('never deploy on Fridays')).not.toBeInTheDocument();
   });

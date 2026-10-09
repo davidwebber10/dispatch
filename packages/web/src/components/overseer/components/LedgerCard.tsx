@@ -5,7 +5,7 @@
 // overseer's recap can shrink to news. Desktop: the top of the right pane's Details tab
 // (DispatchWorkPane), above "Ongoing work". Mobile: the top of the Work tab (OverseerMobile).
 //
-//   • Header — "Needs you", the counts, the time of the last update; a folded "Project rules"
+//   • Header — "Needs you", the counts, the time of the last change; a folded "Project rules"
 //     line that opens the read-only list.
 //   • Needs you now — full cards (the new ones, then the top 5), one line for the rest; a click
 //     on a line opens it as a full card.
@@ -277,7 +277,12 @@ function ProjectLedgerCard({ projectId, onAnswer: onAnswerProp }: { projectId: s
         <MonoLabel color="var(--yellow)">Needs you</MonoLabel>
         {s && <span style={{ fontSize: 12, color: 'var(--ts)' }}>{plural(decisions, 'decision')} · {plural(s.actions.length, 'action')}</span>}
         <span style={{ flex: 1 }} />
-        {card?.updatedAt && <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--tt)' }}>updated {formatUpdated(card.updatedAt)}</span>}
+        {/* The time of the last change to any ledger item, not a load time: the card is live. */}
+        {card?.updatedAt && (
+          <span title="The card is live. This is the time of the last change to the ledger." style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--tt)' }}>
+            last change {formatUpdated(card.updatedAt)}
+          </span>
+        )}
       </div>
 
       {error && (
