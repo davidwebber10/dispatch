@@ -18,6 +18,10 @@
 //
 // A ledger chip in the chat (Unit 9) sets the store's `focus`: the card unfolds the item's section,
 // opens it as a full card and scrolls to it, then clears the focus (so a remount does not repeat it).
+//
+// Titles (titles and source panel spec 2026-10-09, Unit 9): a full card's headline is the item's
+// title, with the full question below it; a line shows "N41 · title", with the question on hover.
+// An item without a title shows its question, as before.
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { MonoLabel } from '../atoms';
@@ -106,7 +110,8 @@ function FullCard({ item, onAnswer, onFold }: { item: CardItem; onAnswer?: (text
         <span style={{ flex: 1 }} />
         {onFold && <button type="button" onClick={onFold} style={{ ...smallButton, color: 'var(--tt)' }}>fold</button>}
       </div>
-      <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.45, color: 'var(--tp)' }}>{item.text}</div>
+      <div data-testid="ledger-headline" style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.45, color: 'var(--tp)' }}>{item.title || item.text}</div>
+      {item.title && <div data-testid="ledger-question" style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--tp)' }}>{item.text}</div>}
       {item.original && <Field label={`Original question (N${item.original.seq}):`}>"{item.original.text}"</Field>}
       {item.context && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
@@ -158,9 +163,10 @@ function ItemLine({ item, detail, onOpen, action }: { item: CardItem; detail?: s
       <button
         type="button"
         onClick={onOpen}
+        title={item.title ? item.text : undefined}
         style={{ flex: 1, minWidth: 0, display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '2px 7px', textAlign: 'left', fontFamily: 'inherit', background: 'none', border: 'none', padding: '3px 0', cursor: 'pointer' }}
       >
-        <span style={{ fontSize: 12.5, lineHeight: 1.45, color: 'var(--tp)' }}>{`N${item.seq} · ${item.text}`}</span>
+        <span style={{ fontSize: 12.5, lineHeight: 1.45, color: 'var(--tp)' }}>{`N${item.seq} · ${item.title || item.text}`}</span>
         {item.isNew && <Badge>NEW</Badge>}
         {isImported(item) && <span style={{ fontSize: 11, color: 'var(--tt)' }}>imported</span>}
         {detail && <span style={{ fontSize: 11.5, color: 'var(--ts)' }}>{detail}</span>}

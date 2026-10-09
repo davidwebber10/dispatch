@@ -2,7 +2,8 @@
 // so on the Control Plane screen every ledger number that the project's ledger knows carries its
 // question. These are the pure parts: find the numbers in plain text (outside code spans and code
 // blocks) and in sanitized markdown HTML (outside <code>, <pre> and links), never in a URL or a
-// path. Numbers the ledger does not know stay plain text.
+// path. Numbers the ledger does not know stay plain text. An item with a title (titles and source
+// panel spec 2026-10-09, Unit 9) shows its title in the chip; the hover text is the full question.
 
 import type { LedgerCard } from '../api/types';
 
@@ -88,9 +89,12 @@ function codeRanges(text: string): [number, number][] {
 
 const LABEL_MAX = 70;
 
-/** "N17 · How many clean nights…": the number and the question, cut at about 70 characters. */
-export function chipLabel(seq: number, question: string): string {
-  const q = question.replace(/\s+/g, ' ').trim();
+/**
+ * "N17 · Clean nights before live mode": the number and the title; without a title, the number and
+ * the question, cut at about 70 characters.
+ */
+export function chipLabel(seq: number, question: string, title?: string | null): string {
+  const q = (title || question).replace(/\s+/g, ' ').trim();
   if (q.length <= LABEL_MAX) return `N${seq} · ${q}`;
   const cut = q.slice(0, LABEL_MAX);
   const space = cut.lastIndexOf(' ');
@@ -125,7 +129,7 @@ function chipElement(doc: Document, entry: LedgerIndexEntry): HTMLElement {
   el.setAttribute('role', 'button');
   el.setAttribute('tabindex', '0');
   el.setAttribute('title', entry.text);
-  el.textContent = chipLabel(entry.seq, entry.text);
+  el.textContent = chipLabel(entry.seq, entry.text, entry.title);
   return el;
 }
 

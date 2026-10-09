@@ -6,7 +6,9 @@
 // The index comes from the shown project's pinned card only, so a chip never uses another
 // project's ledger. A chip click opens the item on the card — the right pane's Details tab on
 // desktop, the Work tab on mobile — or, for an item the card does not show (answered long ago), a
-// small popover with its question, status and answer.
+// small popover with its question, status and answer. An item with a title (titles and source
+// panel spec 2026-10-09, Unit 9) shows the title in its chip and its popover; the chip's hover text
+// is the full question.
 
 import { useCallback, useEffect, useMemo, useRef, type KeyboardEvent, type MouseEvent } from 'react';
 import { useProjects } from '../../../stores/projects';
@@ -51,7 +53,7 @@ export function useLedgerChips(): LedgerChips | undefined {
     const { projectId: id, mobile: onMobile } = target.current;
     if (id) openLedgerRef(id, seq, anchor, { mobile: onMobile });
   }, []);
-  const content = projectId && card?.index.length ? `${projectId}\n${card.index.map((e) => `${e.seq}:${e.text}`).join('\n')}` : '';
+  const content = projectId && card?.index.length ? `${projectId}\n${card.index.map((e) => `${e.seq}:${e.title ?? ''}:${e.text}`).join('\n')}` : '';
   const index = card?.index;
   return useMemo(
     () => (content && index ? { index: new Map(index.map((e) => [e.seq, e] as const)), onChip } : undefined),
@@ -73,7 +75,7 @@ function LedgerChip({ entry, onChip }: { entry: LedgerIndexEntry; onChip: Ledger
   };
   return (
     <span className="ledger-chip" data-ledger-chip={entry.seq} role="button" tabIndex={0} title={entry.text} onClick={open} onKeyDown={onKey}>
-      {chipLabel(entry.seq, entry.text)}
+      {chipLabel(entry.seq, entry.text, entry.title)}
     </span>
   );
 }
@@ -122,7 +124,8 @@ export function LedgerRefPopover() {
         fontSize: 12.5, lineHeight: 1.45, color: 'var(--tp)',
       }}
     >
-      <div style={{ fontWeight: 600 }}>{`N${entry.seq} · ${entry.text}`}</div>
+      <div style={{ fontWeight: 600 }}>{`N${entry.seq} · ${entry.title || entry.text}`}</div>
+      {entry.title && <div style={{ fontSize: 12, color: 'var(--tp)' }}>{entry.text}</div>}
       <div style={{ fontSize: 11.5, color: 'var(--ts)' }}>{STATUS_WORD[entry.status]}</div>
       {entry.answer && (
         <div style={{ fontSize: 12, color: 'var(--ts)' }}>
