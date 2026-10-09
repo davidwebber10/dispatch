@@ -7,6 +7,10 @@ links) and 10 (a short title for each ledger item). Follows
 work)": "Source links that open a plan at its section" and "A short title field on ledger
 items").
 
+Changed after review round 1 and the real-data check (2026-10-09): titles first, once per
+recap (Unit 3); a section-number match (Unit 6); a worktree lookup and a note that names the copy
+read (Unit 7, Unit 8). Each change is marked "Review round 1" below.
+
 ## Goal
 
 Each ledger item gets a short title that the overseer writes. Chips, card rows and recap lines
@@ -82,12 +86,18 @@ Ledger data of all projects on one machine, 2026-10-09:
   question, cut at about 150 characters).
 - The one line that `ledger_add` returns is "N41 · Do · *title*".
 - The chat cards that `ledger_show` renders show the title in the header and the question below
-  it.
+  it. The overseer's own-use lines show the title before the question, unless the title only
+  repeats it.
+- Review round 1 — titles first, once per recap: with items that have no title, the first
+  `ledger_list({ forRecap: true })` call of a recap answers only "Titles first" and the list, and
+  does not mark the recap. The next call is the recap, with or without the titles. Thus the recap is
+  never blocked, and its New lines are never spent on a call that the overseer cannot paste.
 
 ### Unit 4 — the persona (core, Claude and Codex)
 
-- New line: "Before you post a recap, give each item in 'Open items without a title' a title with
-  `ledger_set_title`."
+- New line (review round 1): when `ledger_list({ forRecap: true })` answers "Titles first", give
+  each listed item a title with `ledger_set_title`, then call it again; otherwise call it once per
+  recap.
 - The LEDGER NUMBERS rule changes to: every ledger number carries its title, or its question when
   it has no title.
 - The tool list names `ledger_set_title` and the `title` parameter, with the title rules.
@@ -113,8 +123,11 @@ Ledger data of all projects on one machine, 2026-10-09:
   collapsed, end punctuation removed.
 - Order of matches: an exact match; then a heading that starts with the stored name (so "after
   v3" finds "after v3.2 (…)"); then a stored name that starts with the heading; then a heading
-  that contains the stored name; then a heading that contains the ID as a whole word. The first
-  heading in the file wins at each step.
+  that contains the stored name; then a heading that contains the ID as a whole word; then
+  (review round 1) a heading with the same leading section number ("9. Owner decisions" finds
+  "9. Decisions recorded (…)"; "9" never matches "9.1"). The first heading in the file wins at
+  each step.
+- A fence can open inside a list item ("- ```md") and close indented (review round 1).
 - No match, or no stored section: the outline.
 - A section longer than 64 KB is cut at a line end, with the note "The section continues in the
   file."
@@ -129,6 +142,13 @@ Ledger data of all projects on one machine, 2026-10-09:
   project folder.
 - If the file is missing and its path starts with `.claude/worktrees/` plus a worktree name, the
   daemon tries the rest of the path in the project folder and flags `fromMainCheckout`.
+- Review round 1: if a project path is missing, the daemon looks for it in each worktree under
+  `.claude/worktrees/` (an overseer can store the path an agent saw in its worktree). The newest
+  copy wins; a worktree that leads out of the project is skipped.
+- Every answer carries `note`, the text that names the copy read when it is not the stored path:
+  "From the main checkout: the worktree is gone.", "From the main checkout: the worktree does not
+  have this file.", or "From the worktree "name": the main checkout does not have this file."
+- "." or the project folder itself is a folder (file-only), not a way out.
 - Markdown files only (`.md`, `.markdown`). Other files and files larger than 5 MB give no
   section, only the full-file path.
 
@@ -137,10 +157,12 @@ Ledger data of all projects on one machine, 2026-10-09:
 `GET /api/sessions/:sessionId/ledger/:itemId/source[?heading=…]`, read-only; the network is the
 gate, as for the card route. Answers:
 
-- `{ kind: "section", file, path, heading, markdown, id, fromMainCheckout, cut }`
-- `{ kind: "outline", file, path, headings: [{ level, text }], fromMainCheckout }`
-- `{ kind: "file-only", file, path, reason }` for a file that is not markdown or is too large.
-- 404 "No such item"; 422 "This item has no file source"; 404 "The file is gone".
+- `{ kind: "section", file, path, heading, markdown, id, fromMainCheckout, note, cut }`
+- `{ kind: "outline", file, path, headings: [{ level, text }], fromMainCheckout, note }`
+- `{ kind: "file-only", file, path, fromMainCheckout, note, reason }` for a folder, a file that is
+  not markdown, or a file that is too large.
+- 404 "No such item"; 422 "This item has no file source"; 422 "This project has no folder";
+  404 "The file is gone"; 403 "The file is outside the project".
 
 ### Unit 9 — titles on the card and in the chips (web)
 
@@ -171,7 +193,7 @@ gate, as for the card route. Answers:
 ## Errors and edge cases
 
 - A refused title returns the reason; the overseer fixes it and retries.
-- The daemon never blocks a recap because titles are missing.
+- The daemon asks for titles once per recap ("Titles first") and never blocks a recap.
 - A source file can change after the decision was recorded; the panel shows the file as it is now.
 - Two headings with the same text: the first one wins; the outline lets the user choose.
 - Git remote errors give no PR link and no error message.
@@ -208,6 +230,8 @@ Test first, one commit per unit.
 ## Known limits
 
 - Setext headings (underlined with `===` or `---`) are not found; the outline does not list them.
+- A worktree outside the project folder is not searched; its files give "The file is gone".
+- With two headings of the same text, the outline opens only the first one.
 - A title change is not logged.
 - The panel shows the file at the time of the click, not at the time of the decision.
 - Chat decision cards keep a plain-text Source line (no link).

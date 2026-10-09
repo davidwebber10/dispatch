@@ -91,9 +91,8 @@ Web (Units 9 and 10):
 - The spec's Decided example writes "title. Your answer: …"; the build keeps today's " · ".
 - With `?heading=` text only, the outline cannot open the second of two headings with the same
   text. A heading index would fix it.
-- `ledger_list({ forRecap: true })` marks the recap when it is called. Titles that the overseer sets
-  after that call show from the next recap on. The first recap after the deploy can show questions
-  for older live items; imported items never show in its New or Decided lines.
+- `ledger_list({ forRecap: true })` marked the recap when it was called, so titles came after the
+  recap. Fixed in review round 1 (titles first, once per recap).
 
 ## Tests
 
@@ -108,7 +107,37 @@ Web (Units 9 and 10):
   hang up"), `ledger` (the card "only reads" test, message not kept) and `appearance` ("read
   ECONNRESET"). Each file passed 3 of 3 alone, and the next full run was green.
 
-## Left for the next steps
+## Review round 1 and the checks (2026-10-09)
 
-- The checks before the PR: the built code on a copy of the real data, and a test daemon on another
-  port. Then the reviews, the PR, and the user's own yes for the merge.
+Reviews: GPT (fix-then-ship: 4 Medium, 1 Low) and Fable (fix-then-ship: 1 Medium, 4 Low). All
+fixed test-first:
+
+- b4e1dde: the overseer's own-use lines show the title before the question (the build gap that the
+  build agent reported); 8164408 updates the end-to-end test for it.
+- 9a8e40b: fences that open in a list item; the section-number match (from the real-data check).
+- af42e3b: the worktree lookup for a project path that only a worktree has (GPT 1 and the real-data
+  check); the `note` on every answer, also file-only (Fable 4, 5); "." is a folder; "This project
+  has no folder".
+- 19cb7a9: titles first, once per recap (GPT 2, Fable 1); the title timestamp test moves the clock
+  (GPT 5).
+- df0bd7a: the panel is a dialog: focus in and back, covered controls inert, Escape goes to an open
+  chip popover first, z-index 10 above the chat's pills (GPT 4, Fable 2, 3); the daemon's note.
+
+Real-data check (the built code on a copy of the real database and the real project folders,
+before these fixes): plan sources 41 of 41 gave a section; doc 5 section, 4 outline; agent sources
+with a file 3 section, 9 outline, 9 "The file is gone", 1 file-only; 13 agent sources without a
+file stay text. 5 of the "gone" files existed in exactly one worktree, and 8 of the outlines had a
+renamed numbered heading. PR and issue links: 7 of 7 on the cards.
+
+Test daemon (port 3999, temporary home folder), after the fixes: 29 of 29 HTTP checks passed — the title rules and
+the overseer check on `ledger_add`, `ledger_set_title` and `ledger_import`, the untitled list, the
+card title and index title, the section with a renamed heading, code fences, the section end,
+`../`, a symlink out, a missing file, a JSON file, the outline, `?heading=`, the main-checkout
+fallback, an unknown item, and titles first (the first forRecap call asks, the second is the recap).
+
+Real-data check after the fixes (a fresh copy): plan 41 of 41 section; doc 6 section, 3 outline
+(no stored section); agent sources with a file 18 section, 1 outline (no such heading), 4 "The
+file is gone" (in no folder and no worktree), 1 file-only (a YAML file).
+
+Final: core 247 files, 2789 tests passed (4 skipped); web 160 files, 1386 tests passed;
+`tsc --noEmit` clean in both.
