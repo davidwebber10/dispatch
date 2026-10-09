@@ -14,6 +14,7 @@ export interface Ctx {
   entry?: string;
   repoRoot?: string;
   logDir?: string;
+  dataDir?: string;
   env?: Record<string, string>;
   /** The platform identifier — used to conditionally pass { shell: true } on win32. */
   platformId?: NodeJS.Platform;
@@ -74,8 +75,10 @@ export function runCommand(argv: string[], ctx: Ctx): void | Promise<void> {
       cmdUpdate(ctx);
       return;
     case 'run':
-    case 'daemon-run':
       cmdRun(ctx);
+      return;
+    case 'daemon-run':
+      cmdDaemonRun(ctx);
       return;
     case 'logs':
       cmdLogs(ctx, rest);
@@ -286,6 +289,33 @@ export function cmdRun(ctx: Ctx): void {
   const env = { ...process.env, PORT: String(ctx.port), ...(ctx.env ?? {}) };
   const result = spawnSync(ctx.nodePath ?? process.execPath, [ctx.entry ?? ''], { stdio: 'inherit', env });
   process.exit(result.status ?? 1);
+}
+
+/** The Windows logon task starts with a fresh environment: use the installed settings. */
+export function cmdDaemonRun(ctx: Ctx): void {
+  if (!ctx.dataDir) throw new Error('Missing daemon data directory');
+  const opts = JSON.parse(fs.readFileSync(path.join(ctx.dataDir, 'daemon.json'), 'utf-8')) as DaemonInstallOptions;
+  if (!opts.nodePath || !opts.entry || !opts.logDir || !Number.isInteger(opts.port) || opts.port < 1 || opts.port > 65535) {
+    throw new Error('Invalid daemon.json; run dispatch install again.');
+  }
+  fs.mkdirSync(opts.logDir, { recursive: true });
+  const out = fs.openSync(path.join(opts.logDir, 'dispatch.out.log'), 'a', 0o600);
+  let err: number | undefined;
+  let status = 1;
+  try {
+    err = fs.openSync(path.join(opts.logDir, 'dispatch.err.log'), 'a', 0o600);
+    const result = spawnSync(opts.nodePath, [opts.entry], {
+      cwd: opts.repoRoot,
+      stdio: ['ignore', out, err],
+      env: { ...process.env, ...opts.env, PORT: String(opts.port) },
+    });
+    if (result.error) fs.writeSync(err, `${result.error.message}\n`);
+    status = result.status ?? 1;
+  } finally {
+    fs.closeSync(out);
+    if (err !== undefined) fs.closeSync(err);
+  }
+  process.exit(status);
 }
 
 /**
@@ -547,6 +577,7 @@ async function main(): Promise<void> {
     entry,
     repoRoot,
     logDir,
+    dataDir: platform.dataDir(),
     platformId: platform.id,
     env: {
       PORT: String(port),
