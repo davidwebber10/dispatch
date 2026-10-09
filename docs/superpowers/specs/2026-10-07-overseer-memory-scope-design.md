@@ -41,8 +41,10 @@ overseers.
    folder. `claude -p --settings '{"autoMemoryDirectory":"<folder>"}'` loaded only the
    separate folder, reported it as its memory folder, and did not load the normal one.
    Without the setting, the normal folder loaded.
-2. **Can a Codex overseer read a file in the Claude memory folder? Not checked.** The design
-   below works either way (Unit 3).
+2. **A Codex overseer can read a file in the Claude memory folder: verified.** On 2026-10-09, a
+   Codex overseer in its read-only sandbox read the project's shared Claude memory index with one
+   shell read. No approval prompt came up, and it reported the content correctly. `read_thread`
+   stays the fallback (Unit 3).
 3. **Where Claude keeps a project's shared memory: confirmed in Claude Code's documentation**
    (memory page, "Storage location"): "The `<project>` path is derived from the git repository,
    so all worktrees and subdirectories within the same repo share one auto memory directory.
@@ -148,8 +150,8 @@ folder label, derived as today):
   there on purpose. That is the intended bridge.
 - The user's Codex threads have no shared project memory, so a shared note reaches only the
   user's Claude threads.
-- Check 2 is open. If a Codex overseer cannot read the Claude folder, it relies on
-  `read_thread`.
+- Check 2 passed on 2026-10-09: a Codex overseer read the Claude folder with one shell read, in
+  its read-only sandbox and with no approval prompt. If a read fails, it relies on `read_thread`.
 - The write scope covers file-writing tools only. A Claude overseer can still write a file with
   a shell command, as before this change. Per the guardrail policy ("drift, not an adversary"),
   this is documented, not fixed: the persona forbids repository writes, and the policy blocks
