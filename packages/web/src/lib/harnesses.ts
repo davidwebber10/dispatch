@@ -11,10 +11,10 @@ export const THREAD_TYPES: TerminalType[] = HARNESSES.map((h) => h.type);
 
 /** The install command per CLI, shown beside the Install button. Mirrors core's INSTALL_COMMANDS. */
 export const INSTALL_COMMAND: Record<ProviderName, string> = {
-  claude: 'npm install -g @anthropic-ai/claude-code',
-  codex: 'npm install -g @openai/codex',
+  claude: 'npm install -g --prefix "$HOME/.dispatch/tools" @anthropic-ai/claude-code',
+  codex: 'npm install -g --prefix "$HOME/.dispatch/tools" @openai/codex',
   grok: 'curl -fsSL https://x.ai/cli/install.sh | bash',
-  opencode: 'npm install -g opencode-ai',
+  opencode: 'npm install -g --prefix "$HOME/.dispatch/tools" opencode-ai',
 };
 
 /**

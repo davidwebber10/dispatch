@@ -37,6 +37,7 @@ async function installAwsWithStubs(opts: {
   fs.mkdirSync(stubs, { recursive: true });
   fs.mkdirSync(path.join(sandbox, 'tmp'), { recursive: true });
   const stub = (name: string, ...lines: string[]) => fs.writeFileSync(path.join(stubs, name), ['#!/bin/sh', ...lines, ''].join('\n'), { mode: 0o755 });
+  stub('uname', 'echo Darwin');
   stub('curl', opts.curlFails ? 'exit 22' : 'while [ $# -gt 0 ]; do if [ "$1" = -o ]; then : > "$2"; fi; shift; done');
   stub('pkgutil',
     `echo "$3" > "${root}/pkgutil-dest"`,
@@ -157,11 +158,33 @@ describe('manifest', () => {
     expect(check('jq')).toBeUndefined();
   });
 
-  it('aws is darwin-gated (its script recipe shells out to macOS-only pkgutil, no Linux variant yet)', () => {
+  it('aws supports both macOS and Linux/WSL', () => {
     const m = loadManifest(base);
     const aws = m.find((e) => e.name === 'aws');
     expect(aws).toBeTruthy();
-    expect(aws!.platforms).toEqual(['darwin']);
+    expect(aws!.platforms).toEqual(['darwin', 'linux']);
+  });
+
+  it('Linux AWS install uses the user-owned tool paths and propagates download failures', async () => {
+    const stubs = path.join(root, 'linux-stubs'); fs.mkdirSync(stubs);
+    const stub = (name: string, text: string) => fs.writeFileSync(path.join(stubs, name), '#!/bin/sh\n' + text + '\n', { mode: 0o755 });
+    stub('uname', 'echo Linux');
+    const installer = path.join(root, 'install.sh');
+    fs.writeFileSync(installer, `set -e\nmkdir -p "$XDG_DATA_HOME/aws-cli" "$XDG_BIN_HOME"\nprintf '#!/bin/sh\\necho aws-cli/2-linux-test\\n' > "$XDG_DATA_HOME/aws-cli/aws"\nchmod +x "$XDG_DATA_HOME/aws-cli/aws"\nln -sf "$XDG_DATA_HOME/aws-cli/aws" "$XDG_BIN_HOME/aws"\n`);
+    stub('curl', `while [ "$#" -gt 0 ]; do if [ "$1" = -o ]; then cp "${installer}" "$2"; exit; fi; shift; done; exit 1`);
+    vi.stubEnv('PATH', `${stubs}${path.delimiter}${process.env.PATH}`);
+    try {
+      const aws = { ...loadManifest(base).find(e => e.name === 'aws')!, platforms: undefined };
+      await installTool(aws, { base });
+      const p = toolPaths(base);
+      expect(fs.readlinkSync(path.join(p.bin, 'aws'))).toBe(path.join(p.opt, 'aws-cli', 'aws'));
+      expect(execFileSync(path.join(p.bin, 'aws'), { encoding: 'utf8' }).trim()).toBe('aws-cli/2-linux-test');
+      fs.unlinkSync(p.installed);
+      stub('curl', 'exit 22');
+      await expect(installTool(aws, { base })).rejects.toThrow();
+      expect(fs.existsSync(p.installed)).toBe(false);
+      expect(execFileSync(path.join(p.bin, 'aws'), { encoding: 'utf8' }).trim()).toBe('aws-cli/2-linux-test');
+    } finally { vi.unstubAllEnvs(); }
   });
 
   it('aws recipe stages under $TOOLS_PREFIX/opt and swaps the payload into opt/aws (macOS purges $TMPDIR)', async () => {
