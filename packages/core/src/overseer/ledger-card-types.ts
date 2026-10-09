@@ -95,6 +95,6 @@ export interface LedgerCard {
  * project".
  */
 export type LedgerSource =
-  | { kind: 'section'; file: string; path: string; heading: string; markdown: string; id: string | null; fromMainCheckout: boolean; cut: boolean }
-  | { kind: 'outline'; file: string; path: string; headings: { level: number; text: string }[]; fromMainCheckout: boolean }
-  | { kind: 'file-only'; file: string; path: string; reason: string };
+  | { kind: 'section'; file: string; path: string; heading: string; markdown: string; id: string | null; fromMainCheckout: boolean; note: string | null; cut: boolean }
+  | { kind: 'outline'; file: string; path: string; headings: { level: number; text: string }[]; fromMainCheckout: boolean; note: string | null }
+  | { kind: 'file-only'; file: string; path: string; fromMainCheckout: boolean; note: string | null; reason: string };

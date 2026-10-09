@@ -59,7 +59,7 @@ describe('GET /ledger/:itemId/source', () => {
       kind: 'section', file: 'readiness.md', path: 'docs/plans/readiness.md',
       heading: 'Open owner decisions after v3.2 (the v3 table, updated 2026-10-08)',
       markdown: '| ID | Question |\n|---|---|\n| LR-6 | How many clean nights before live mode? |',
-      id: 'LR-6', fromMainCheckout: false, cut: false,
+      id: 'LR-6', fromMainCheckout: false, note: null, cut: false,
     });
     expect(ledgerDb.listBySession(db, sid)).toEqual(before); // read-only
   });
@@ -72,7 +72,7 @@ describe('GET /ledger/:itemId/source', () => {
   it('an outline when no heading matches; ?heading= loads that section', async () => {
     add({ sourceKind: 'doc', sourceRef: 'docs/plans/readiness.md', sourceSection: 'Rollout steps' });
     expect((await get('N1').expect(200)).body).toEqual({
-      kind: 'outline', file: 'readiness.md', path: 'docs/plans/readiness.md', fromMainCheckout: false,
+      kind: 'outline', file: 'readiness.md', path: 'docs/plans/readiness.md', fromMainCheckout: false, note: null,
       headings: [
         { level: 1, text: 'Example plan' }, { level: 2, text: 'Background' },
         { level: 2, text: 'Open owner decisions after v3.2 (the v3 table, updated 2026-10-08)' }, { level: 2, text: 'Risks' },
@@ -84,13 +84,14 @@ describe('GET /ledger/:itemId/source', () => {
 
   it('the worktree is gone: the main checkout, flagged', async () => {
     add({ sourceKind: 'plan', sourceRef: '.claude/worktrees/some-plan/docs/plans/readiness.md', sourceSection: 'Risks' });
-    expect((await get('N1').expect(200)).body).toMatchObject({ kind: 'section', path: 'docs/plans/readiness.md', fromMainCheckout: true });
+    expect((await get('N1').expect(200)).body).toMatchObject({ kind: 'section', path: 'docs/plans/readiness.md', fromMainCheckout: true, note: 'From the main checkout: the worktree is gone.' });
   });
 
   it('file-only for a file that is not markdown', async () => {
     add({ sourceKind: 'doc', sourceRef: 'docs/notes.txt' });
     expect((await get('N1').expect(200)).body).toEqual({
-      kind: 'file-only', file: 'notes.txt', path: 'docs/notes.txt', reason: 'This file is not markdown, so the panel cannot show a section of it.',
+      kind: 'file-only', file: 'notes.txt', path: 'docs/notes.txt', fromMainCheckout: false, note: null,
+      reason: 'This file is not markdown, so the panel cannot show a section of it.',
     });
   });
 
@@ -117,5 +118,20 @@ describe('GET /ledger/:itemId/source', () => {
     add({ sourceKind: 'agent', sourceRef: 'Readiness planner', agentTerminalId: 'agent-1', sourceSection: '../outside/secret.md#secret' });
     add({ sourceKind: 'doc', sourceRef: 'docs/link.md' });
     for (const seq of ['N1', 'N2']) expect((await get(seq).expect(403)).body, seq).toEqual({ error: 'The file is outside the project' });
+  });
+  // Review round 1 (2026-10-09).
+  it('a project path that only a worktree has: that copy, with a note', async () => {
+    write('project/.claude/worktrees/wt-a/docs/plans/branch-only.md', PLAN);
+    add({ sourceKind: 'plan', sourceRef: 'docs/plans/branch-only.md', sourceSection: 'Risks' });
+    expect((await get('N1').expect(200)).body).toMatchObject({
+      kind: 'section', path: '.claude/worktrees/wt-a/docs/plans/branch-only.md', heading: 'Risks',
+      note: 'From the worktree "wt-a": the main checkout does not have this file.',
+    });
+  });
+
+  it('422 "This project has no folder" when the project has no working folder', async () => {
+    sessionsDb.create(db, { id: 'no-dir', provider: 'claude-code', name: 'no folder', workingDir: '' });
+    ledgerDb.create(db, { sessionId: 'no-dir', kind: 'do', text: 'Read the plan.', title: 'Read the plan', author: 'overseer', sourceKind: 'doc', sourceRef: 'docs/a.md' });
+    expect((await request(app).get('/api/sessions/no-dir/ledger/N1/source').expect(422)).body).toEqual({ error: 'This project has no folder' });
   });
 });

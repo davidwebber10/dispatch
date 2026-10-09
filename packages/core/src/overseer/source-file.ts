@@ -7,9 +7,11 @@
  * - The real path (symlinks resolved) must stay inside the project folder; worktrees under the
  *   project folder count as inside. An absolute path is accepted only when it is inside the
  *   project folder.
- * - A missing file whose path starts with `.claude/worktrees/<name>/` is tried once more as the
- *   rest of the path in the project folder: the worktree is gone, the main checkout has the file
- *   (`fromMainCheckout`).
+ * - A missing file whose path starts with `.claude/worktrees/` plus a worktree name is tried once
+ *   more as the rest of the path in the project folder (`fromMainCheckout`, with a note that says
+ *   whether the worktree is gone or only lacks the file).
+ * - A missing project path is looked for in the project's worktrees (review round 1): an overseer
+ *   may store the path an agent saw inside its worktree. The newest copy wins, with a note.
  * - Markdown files only (`.md`, `.markdown`). Another file, a folder, or a file larger than 5 MB
  *   gives the path only, with the reason.
  *
@@ -24,10 +26,13 @@ export const SOURCE_MAX_BYTES = 5 * 1024 * 1024;
 export const NOT_MARKDOWN_REASON = 'This file is not markdown, so the panel cannot show a section of it.';
 export const FOLDER_REASON = 'This source is a folder, not a file.';
 export const TOO_LARGE_REASON = 'This file is larger than 5 MB, so the panel does not show it.';
+// Review round 1: the panel shows which copy it reads when it is not the path as stored.
+export const WORKTREE_GONE_NOTE = 'From the main checkout: the worktree is gone.';
+export const WORKTREE_LACKS_NOTE = 'From the main checkout: the worktree does not have this file.';
 
 export type SourceFile =
-  | { kind: 'file'; path: string; file: string; fromMainCheckout: boolean; markdown: string }
-  | { kind: 'file-only'; path: string; file: string; fromMainCheckout: boolean; reason: string }
+  | { kind: 'file'; path: string; file: string; fromMainCheckout: boolean; note: string | null; markdown: string }
+  | { kind: 'file-only'; path: string; file: string; fromMainCheckout: boolean; note: string | null; reason: string }
   /** Not in the project folder, nor (for a worktree path) in the main checkout. */
   | { kind: 'gone' }
   /** The path, or a symlink on it, leads out of the project folder. */
@@ -58,7 +63,7 @@ export function sourceFileRef(
 }
 
 const leadsOut = (rel: string) => !rel || rel === '.' || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
-const WORKTREE = /^\.claude\/worktrees\/[^/]+\/(.+)$/;
+const WORKTREE = /^\.claude\/worktrees\/([^/]+)\/(.+)$/;
 
 /** `ref` as a path relative to the project folder; null when it leads out of the folder before any symlink. */
 function projectRelative(projectDir: string, realRoot: string, ref: string): string | null {
@@ -85,8 +90,8 @@ function locate(realRoot: string, rel: string): string | 'missing' | 'outside' {
   return leadsOut(path.relative(realRoot, real)) ? 'outside' : real;
 }
 
-function open(real: string, rel: string, fromMainCheckout: boolean): SourceFile {
-  const where = { path: rel.split(path.sep).join('/'), file: path.basename(rel), fromMainCheckout };
+function open(real: string, rel: string, fromMainCheckout: boolean, note: string | null = null): SourceFile {
+  const where = { path: rel.split(path.sep).join('/'), file: path.basename(rel), fromMainCheckout, note };
   let st: fs.Stats;
   try { st = fs.statSync(real); } catch { return { kind: 'gone' }; }
   if (st.isDirectory()) return { kind: 'file-only', ...where, reason: FOLDER_REASON };
@@ -105,19 +110,48 @@ export function readSourceFile(projectDir: string, ref: string): SourceFile {
   let realRoot: string;
   try { realRoot = fs.realpathSync(projectDir); } catch { return { kind: 'gone' }; }
   const rel = projectRelative(projectDir, realRoot, ref);
+  // Review round 1: "." or the project folder itself is a folder, not a way out.
+  const isRoot = path.isAbsolute(ref) ? [path.resolve(projectDir), realRoot].includes(path.resolve(ref)) : path.normalize(ref) === '.';
+  if (isRoot) {
+    return { kind: 'file-only', path: '.', file: path.basename(realRoot), fromMainCheckout: false, note: null, reason: FOLDER_REASON };
+  }
   if (rel === null) return { kind: 'outside' };
   const found = locate(realRoot, rel);
   if (found === 'outside') return { kind: 'outside' };
   if (found !== 'missing') return open(found, rel, false);
-  // The worktree is gone: the rest of the path, in the main checkout.
-  const rest = rel.split(path.sep).join('/').match(WORKTREE)?.[1];
-  if (rest) {
-    const mainRel = path.normalize(rest);
+  // The worktree is gone, or lacks the file: the rest of the path, in the main checkout.
+  const wt = rel.split(path.sep).join('/').match(WORKTREE);
+  if (wt) {
+    const mainRel = path.normalize(wt[2]);
     if (!leadsOut(mainRel)) {
       const main = locate(realRoot, mainRel);
       if (main === 'outside') return { kind: 'outside' };
-      if (main !== 'missing') return open(main, mainRel, true);
+      const worktreeGone = !fs.existsSync(path.join(realRoot, '.claude', 'worktrees', wt[1]));
+      if (main !== 'missing') return open(main, mainRel, true, worktreeGone ? WORKTREE_GONE_NOTE : WORKTREE_LACKS_NOTE);
     }
+    return { kind: 'gone' };
   }
-  return { kind: 'gone' };
+  // Review round 1: a project path that only a worktree has (an overseer stores the path as the
+  // agent saw it in its worktree). The newest copy wins; a worktree that leads out is skipped.
+  const copies = worktreeCopies(realRoot, rel);
+  if (!copies.length) return { kind: 'gone' };
+  const [best] = copies;
+  const of = copies.length > 1 ? ` (the newest of ${copies.length} copies)` : '';
+  return open(best.real, best.rel, false, `From the worktree "${best.name}"${of}: the main checkout does not have this file.`);
+}
+
+/** Every worktree under the project that has `rel`, newest first; never one that leads out. */
+function worktreeCopies(realRoot: string, rel: string): { name: string; rel: string; real: string; mtime: number }[] {
+  let names: string[];
+  try { names = fs.readdirSync(path.join(realRoot, '.claude', 'worktrees')); } catch { return []; }
+  const out: { name: string; rel: string; real: string; mtime: number }[] = [];
+  for (const name of names) {
+    const wtRel = path.join('.claude', 'worktrees', name, rel);
+    const real = locate(realRoot, wtRel);
+    if (real === 'missing' || real === 'outside') continue;
+    let mtime = 0;
+    try { mtime = fs.statSync(real).mtimeMs; } catch { continue; }
+    out.push({ name, rel: wtRel, real, mtime });
+  }
+  return out.sort((a, b) => b.mtime - a.mtime);
 }

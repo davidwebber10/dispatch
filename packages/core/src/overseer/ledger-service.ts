@@ -41,6 +41,7 @@ export const NO_SUCH_ITEM_ERROR = 'No such item';
 export const NO_FILE_SOURCE_ERROR = 'This item has no file source';
 export const FILE_GONE_ERROR = 'The file is gone';
 export const FILE_OUTSIDE_ERROR = 'The file is outside the project';
+export const NO_PROJECT_FOLDER_ERROR = 'This project has no folder';
 export const QUOTE_NOT_FOUND_STATEMENT_ERROR = "Quote not found in the user's messages to you. Do not record it. Ask the user.";
 export function quoteNotFoundAfterError(seq: number): string {
   return `Quote not found in the user's messages to you after N${seq} was created. Do not record it. Ask the user.`;
@@ -542,19 +543,17 @@ export class LedgerService {
     const item = session && seq !== null ? ledgerDb.getBySeq(this.db, sessionId, seq) : null;
     if (!session || !item) throw new LedgerError(404, NO_SUCH_ITEM_ERROR);
     const ref = sourceFileRef(item);
-    if (!ref || !session.working_dir) throw new LedgerError(422, NO_FILE_SOURCE_ERROR);
+    if (!ref) throw new LedgerError(422, NO_FILE_SOURCE_ERROR);
+    if (!session.working_dir) throw new LedgerError(422, NO_PROJECT_FOLDER_ERROR); // review round 1: its own text
     const f = readSourceFile(session.working_dir, ref.path);
     if (f.kind === 'gone') throw new LedgerError(404, FILE_GONE_ERROR);
     if (f.kind === 'outside') throw new LedgerError(403, FILE_OUTSIDE_ERROR);
-    if (f.kind === 'file-only') return { kind: 'file-only', file: f.file, path: f.path, reason: f.reason };
+    // Review round 1: every answer says which copy it read (`note`), also file-only.
+    const where = { file: f.file, path: f.path, fromMainCheckout: f.fromMainCheckout, note: f.note };
+    if (f.kind === 'file-only') return { kind: 'file-only', ...where, reason: f.reason };
     const found = findSection(f.markdown, { section: ref.section, id: item.sourceId, heading: opts.heading });
-    if (found.kind === 'outline') {
-      return { kind: 'outline', file: f.file, path: f.path, headings: found.headings, fromMainCheckout: f.fromMainCheckout };
-    }
-    return {
-      kind: 'section', file: f.file, path: f.path, heading: found.heading, markdown: found.markdown, id: item.sourceId,
-      fromMainCheckout: f.fromMainCheckout, cut: found.cut,
-    };
+    if (found.kind === 'outline') return { kind: 'outline', ...where, headings: found.headings };
+    return { kind: 'section', ...where, heading: found.heading, markdown: found.markdown, id: item.sourceId, cut: found.cut };
   }
 
   /** One-time load of open items and earlier decisions from the overseer's context. */

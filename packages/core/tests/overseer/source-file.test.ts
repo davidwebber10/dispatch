@@ -6,7 +6,9 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { LedgerItem } from '../../src/db/ledger.js';
-import { readSourceFile, SOURCE_MAX_BYTES, sourceFileRef, FOLDER_REASON, NOT_MARKDOWN_REASON, TOO_LARGE_REASON } from '../../src/overseer/source-file.js';
+import {
+  readSourceFile, SOURCE_MAX_BYTES, sourceFileRef, FOLDER_REASON, NOT_MARKDOWN_REASON, TOO_LARGE_REASON, WORKTREE_GONE_NOTE, WORKTREE_LACKS_NOTE,
+} from '../../src/overseer/source-file.js';
 
 function item(over: Partial<LedgerItem>): LedgerItem {
   return {
@@ -62,7 +64,7 @@ describe('readSourceFile — the file under the project folder', () => {
 
   it('a markdown file inside the project: its text, its project path and its file name', () => {
     expect(readSourceFile(project, 'docs/plans/readiness.md')).toEqual({
-      kind: 'file', path: 'docs/plans/readiness.md', file: 'readiness.md', fromMainCheckout: false, markdown: '# Plan\n## Risks\nx\n',
+      kind: 'file', path: 'docs/plans/readiness.md', file: 'readiness.md', fromMainCheckout: false, note: null, markdown: '# Plan\n## Risks\nx\n',
     });
     expect(readSourceFile(project, './docs/../docs/plans/readiness.md')).toMatchObject({ kind: 'file', path: 'docs/plans/readiness.md' });
   });
@@ -99,7 +101,7 @@ describe('readSourceFile — the file under the project folder', () => {
 
   it('the worktree is gone: the rest of the path in the project folder, flagged fromMainCheckout', () => {
     expect(readSourceFile(project, '.claude/worktrees/some-plan/docs/plans/readiness.md')).toEqual({
-      kind: 'file', path: 'docs/plans/readiness.md', file: 'readiness.md', fromMainCheckout: true, markdown: '# Plan\n## Risks\nx\n',
+      kind: 'file', path: 'docs/plans/readiness.md', file: 'readiness.md', fromMainCheckout: true, note: WORKTREE_GONE_NOTE, markdown: '# Plan\n## Risks\nx\n',
     });
   });
 
@@ -114,8 +116,8 @@ describe('readSourceFile — the file under the project folder', () => {
     write('project/docs/long.markdown', '# Long');
     expect(readSourceFile(project, 'docs/UPPER.MD')).toMatchObject({ kind: 'file' });
     expect(readSourceFile(project, 'docs/long.markdown')).toMatchObject({ kind: 'file' });
-    expect(readSourceFile(project, 'notes.txt')).toEqual({ kind: 'file-only', path: 'notes.txt', file: 'notes.txt', fromMainCheckout: false, reason: NOT_MARKDOWN_REASON });
-    expect(readSourceFile(project, 'docs/plans')).toEqual({ kind: 'file-only', path: 'docs/plans', file: 'plans', fromMainCheckout: false, reason: FOLDER_REASON });
+    expect(readSourceFile(project, 'notes.txt')).toEqual({ kind: 'file-only', path: 'notes.txt', file: 'notes.txt', fromMainCheckout: false, note: null, reason: NOT_MARKDOWN_REASON });
+    expect(readSourceFile(project, 'docs/plans')).toEqual({ kind: 'file-only', path: 'docs/plans', file: 'plans', fromMainCheckout: false, note: null, reason: FOLDER_REASON });
     expect(SOURCE_MAX_BYTES).toBe(5 * 1024 * 1024);
     write('project/docs/huge.md', 'x'.repeat(SOURCE_MAX_BYTES + 1));
     expect(readSourceFile(project, 'docs/huge.md')).toMatchObject({ kind: 'file-only', reason: TOO_LARGE_REASON });
@@ -124,5 +126,47 @@ describe('readSourceFile — the file under the project folder', () => {
       'This source is a folder, not a file.',
       'This file is larger than 5 MB, so the panel does not show it.',
     ]);
+  });
+  // Review round 1 (2026-10-09).
+  it('the worktree still exists but lacks the file: the main checkout copy, with its own note', () => {
+    write('project/.claude/worktrees/some-plan/docs/other.md', '# Other\n');
+    expect(readSourceFile(project, '.claude/worktrees/some-plan/docs/plans/readiness.md')).toMatchObject({
+      kind: 'file', path: 'docs/plans/readiness.md', fromMainCheckout: true, note: WORKTREE_LACKS_NOTE,
+    });
+    expect([WORKTREE_GONE_NOTE, WORKTREE_LACKS_NOTE]).toEqual([
+      'From the main checkout: the worktree is gone.',
+      'From the main checkout: the worktree does not have this file.',
+    ]);
+  });
+
+  it('a project path missing from the main checkout is found in the one worktree that has it', () => {
+    write('project/.claude/worktrees/wt-a/docs/plans/branch-only.md', '# Branch\n');
+    expect(readSourceFile(project, 'docs/plans/branch-only.md')).toEqual({
+      kind: 'file', path: '.claude/worktrees/wt-a/docs/plans/branch-only.md', file: 'branch-only.md', fromMainCheckout: false,
+      note: 'From the worktree "wt-a": the main checkout does not have this file.', markdown: '# Branch\n',
+    });
+  });
+
+  it('in several worktrees: the newest copy, and the note says so', () => {
+    write('project/.claude/worktrees/old/docs/b.md', '# Old\n');
+    write('project/.claude/worktrees/new/docs/b.md', '# New\n');
+    const past = new Date('2026-01-01T00:00:00Z');
+    fs.utimesSync(path.join(project, '.claude/worktrees/old/docs/b.md'), past, past);
+    expect(readSourceFile(project, 'docs/b.md')).toMatchObject({
+      kind: 'file', path: '.claude/worktrees/new/docs/b.md', markdown: '# New\n',
+      note: 'From the worktree "new" (the newest of 2 copies): the main checkout does not have this file.',
+    });
+  });
+
+  it('a worktree that is a symlink out of the project is skipped, never read', () => {
+    write('outside/wt/docs/c.md', '# Outside\n');
+    fs.mkdirSync(path.join(project, '.claude/worktrees'), { recursive: true });
+    fs.symlinkSync(path.join(outside, 'wt'), path.join(project, '.claude/worktrees/evil'));
+    expect(readSourceFile(project, 'docs/c.md')).toEqual({ kind: 'gone' });
+  });
+
+  it('"." or the project folder itself is a folder, not "outside"', () => {
+    expect(readSourceFile(project, '.')).toMatchObject({ kind: 'file-only', reason: FOLDER_REASON });
+    expect(readSourceFile(project, project)).toMatchObject({ kind: 'file-only', reason: FOLDER_REASON });
   });
 });
