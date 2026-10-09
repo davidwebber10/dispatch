@@ -23,13 +23,22 @@ const LEDGER_NUMBERS = [
   '- LEDGER NUMBERS: every ledger number in a reply carries its question or a short description, for example "N53 — confirm the data retention terms". Never write a range of ledger numbers.',
 ];
 
-const INTERIM = '"🕒 Interim recap due" notice arrives (new items wait on the user: post the short recap and mark it "interim")';
+// The user cannot keep plan codes in mind either: a code carries its short name.
+const PLAN_CODES =
+  'Never write a range of ledger numbers. When you name a plan question or a build task by its code (for example Q11 or A11), ' +
+  'add its short name, for example "A11 (import confirmation)", not only the code.\n';
+
+const INTERIM ='"🕒 Interim recap due" notice arrives (new items wait on the user: post the short recap and mark it "interim")';
 
 describe('overseer persona — the pinned card', () => {
   for (const harness of ['claude-code', 'codex']) {
     it(`${harness}: the recap format, the one-line rule, the ledger-number rule and the interim wording`, () => {
       const p = buildCoordinatorPrompt({ harness });
       for (const line of [...RECAP_FORMAT, ...ONE_LINE, ...LEDGER_NUMBERS, INTERIM]) expect(p, line).toContain(line);
+    });
+
+    it(`${harness}: a plan question or build task named by its code carries its short name, in the ledger-number rule`, () => {
+      expect(buildCoordinatorPrompt({ harness })).toContain(PLAN_CODES);
     });
 
     it(`${harness}: the old paste-the-ledger instructions are gone`, () => {

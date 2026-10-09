@@ -5,7 +5,7 @@
 // overseer's recap can shrink to news. Desktop: the top of the right pane's Details tab
 // (DispatchWorkPane), above "Ongoing work". Mobile: the top of the Work tab (OverseerMobile).
 //
-//   • Header — "Needs you", the counts, the time of the last update; a folded "Project rules"
+//   • Header — "Needs you", the counts, the time of the last change; a folded "Project rules"
 //     line that opens the read-only list.
 //   • Needs you now — full cards (the new ones, then the top 5), one line for the rest; a click
 //     on a line opens it as a full card.
@@ -48,9 +48,9 @@ function Badge({ children, color = 'var(--acc)' }: { children: ReactNode; color?
 }
 
 /** A labelled paragraph of a full card: "Why A. 5 nights:", "If you do not answer:", "Holds up:", … */
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({ label, title, children }: { label: string; title?: string; children: ReactNode }) {
   return (
-    <div style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--ts)' }}>
+    <div title={title} style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--ts)' }}>
       <span style={{ fontWeight: 600, color: 'var(--tp)' }}>{label}</span> <span>{children}</span>
     </div>
   );
@@ -143,7 +143,8 @@ function FullCard({ item, onAnswer, onFold }: { item: CardItem; onAnswer?: (text
       {!item.why && item.recommendation && <Field label="Recommended:">{item.recommendation}</Field>}
       {item.default && <Field label="If you do not answer:">{item.default}</Field>}
       {item.blocks && <Field label="Holds up:">{item.blocks}</Field>}
-      {item.source && <Field label="Source:">{formatCardSource(item.source)}</Field>}
+      {/* The file name only; a hover shows the full path. */}
+      {item.source && <Field label="Source:" title={formatCardSource(item.source, { full: true })}>{formatCardSource(item.source)}</Field>}
       {item.overseerNote && <Field label="Overseer's note:">{item.overseerNote}</Field>}
       {outcome && <Field label="Outcome:">{outcome}</Field>}
     </article>
@@ -276,7 +277,12 @@ function ProjectLedgerCard({ projectId, onAnswer: onAnswerProp }: { projectId: s
         <MonoLabel color="var(--yellow)">Needs you</MonoLabel>
         {s && <span style={{ fontSize: 12, color: 'var(--ts)' }}>{plural(decisions, 'decision')} · {plural(s.actions.length, 'action')}</span>}
         <span style={{ flex: 1 }} />
-        {card?.updatedAt && <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--tt)' }}>updated {formatUpdated(card.updatedAt)}</span>}
+        {/* The time of the last change to any ledger item, not a load time: the card is live. */}
+        {card?.updatedAt && (
+          <span title="The card is live. This is the time of the last change to the ledger." style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--tt)' }}>
+            last change {formatUpdated(card.updatedAt)}
+          </span>
+        )}
       </div>
 
       {error && (
