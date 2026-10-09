@@ -5,7 +5,9 @@ import { buildCoordinatorPrompt } from './prompts.js';
 
 const TITLE_LINES = [
   // Titles for the items that lack one, before each recap.
-  'Before you post a recap, give each item in "Open items without a title" a title with ledger_set_title.',
+  'When ledger_list({ forRecap: true }) answers "Titles first", give each listed item a title with ledger_set_title, then ' +
+    'call it again: that call did not mark the recap, and it does not ask twice. Otherwise call ledger_list({ forRecap: ' +
+    'true }) once per recap: each call marks the recap. Give a title to each item in "Open items without a title" too.',
   // The ledger-number rule: the title, or the question when there is none.
   '- LEDGER NUMBERS: every ledger number in a reply carries its title, or its question when it has no title, for example ' +
     '"N53 — confirm the data retention terms". Never write a range of ledger numbers.',

@@ -72,6 +72,13 @@ describe('agency-mcp ledger tools', () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ caller: 'coord-1', forRecap: true });
   });
 
+  // Review round 1 (2026-10-09): "Titles first" comes back alone; there is nothing to paste yet.
+  it('ledger_list returns only the "Titles first" text when the daemon asks for titles', async () => {
+    const titlesFirst = 'Titles first. This call did not mark the recap.\n\nOpen items without a title:\n- N1 · Do · Check the old banner.';
+    global.fetch = vi.fn().mockResolvedValueOnce(ok({ paste: '', text: '', openIds: ['N1'], rules: [], titlesFirst })) as any;
+    expect((await callTool('ledger_list', { forRecap: true })).content).toEqual([{ type: 'text', text: titlesFirst }]);
+  });
+
   // Overseer memory scope (spec 2026-10-07), Unit 5: the full rules are for the overseer's own use.
   it('ledger_list puts the full project rules in the own-use part', async () => {
     const paste = 'Needs you: 0 decisions, 0 actions — on the card.';

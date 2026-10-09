@@ -97,6 +97,7 @@ describe('the title in the tools', () => {
   let ledger: LedgerService;
   let changes: string[];
   const T = '2026-10-09T10:00:00.000Z';
+  let clockAt = T;
   beforeEach(() => {
     db = new Database(':memory:');
     initSchema(db);
@@ -106,7 +107,8 @@ describe('the title in the tools', () => {
     terminalsDb.create(db, { id: 'coord2', sessionId: 's2', type: 'claude-code', label: 'Control Plane', config: { role: 'coordinator' } });
     terminalsDb.create(db, { id: 'agent', sessionId: 's1', type: 'claude-code', label: 'Readiness planner', config: { role: 'agent' } });
     changes = [];
-    ledger = new LedgerService(db, { clock: () => Date.parse(T), timeZone: 'UTC', onChange: (id) => changes.push(id) });
+    clockAt = T;
+    ledger = new LedgerService(db, { clock: () => Date.parse(clockAt), timeZone: 'UTC', onChange: (id) => changes.push(id) });
   });
 
   const status = (fn: () => unknown): { status: number; message: string; body: Record<string, unknown> } => {
@@ -173,11 +175,20 @@ describe('the title in the tools', () => {
   it('ledger_set_title sets and changes the title of an item of the own project; the question and the update time stay', () => {
     ledger.add('s1', 'coord', { kind: 'go', text: 'Do you approve the merge of board PR #26?', ...GO_CARD, title: 'Merge PR #26' });
     changes.length = 0;
+    clockAt = '2026-10-09T11:00:00.000Z'; // review round 1: a later clock, so a changed updated_at would show
     expect(ledger.setTitle('s1', 'coord', { id: 'N1', title: 'Merge board PR #26' })).toEqual({ id: 'N1', title: 'Merge board PR #26' });
     expect(ledgerDb.getBySeq(db, 's1', 1)).toMatchObject({
       text: 'Do you approve the merge of board PR #26?', title: 'Merge board PR #26', updatedAt: T,
     });
     expect(changes).toEqual(['s1']);
+  });
+
+  it('a new title on an answered item that a recap already showed does not bring it back into "Decided"', () => {
+    terminalsDb.updateConfig(db, 'coord', { role: 'coordinator', lastRecapAt: '2026-10-09T10:30:00.000Z' });
+    ledgerDb.create(db, { sessionId: 's1', kind: 'go', text: 'Merge PR #12?', title: 'Merge PR #12', author: 'overseer', status: 'answered', now: T });
+    clockAt = '2026-10-09T11:00:00.000Z';
+    ledger.setTitle('s1', 'coord', { id: 'N1', title: 'Merge the fix PR #12' });
+    expect(ledger.list('s1', 'coord').paste).not.toContain('Decided');
   });
 
   it('ledger_set_title: a label, so a closed item and a statement take one too', () => {

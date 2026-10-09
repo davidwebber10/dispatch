@@ -50,6 +50,10 @@ export function quoteNotFoundAfterError(seq: number): string {
 /** Coordinator config keys this feature owns. */
 export const LAST_RECAP_KEY = 'lastRecapAt';
 export const INTERIM_DUE_KEY = 'interimDueAt';
+/** When the overseer was last asked for titles before a recap (review round 1, 2026-10-09). */
+export const TITLES_ASKED_KEY = 'titlesAskedAt';
+export const TITLES_FIRST_TEXT = 'Titles first. This call did not mark the recap. Give each item below a title with ' +
+  'ledger_set_title, then call ledger_list({ forRecap: true }) again; it does not ask twice.';
 
 /** An error with the HTTP status the route returns, plus extra JSON fields for the body. */
 export class LedgerError extends Error {
@@ -487,15 +491,30 @@ export class LedgerService {
    * rule in full, both for the overseer's own use (overseer memory scope spec 2026-10-07, Unit 5). Both are relative to the recap before this call. `forRecap` stamps
    * lastRecapAt and clears the interim timer.
    */
-  list(sessionId: string, caller: unknown, opts: { forRecap?: boolean } = {}): { paste: string; text: string; openIds: string[]; rules: string[] } {
+  list(sessionId: string, caller: unknown, opts: { forRecap?: boolean } = {}): {
+    paste: string; text: string; openIds: string[]; rules: string[]; titlesFirst?: string;
+  } {
     const overseer = this.assertOverseer(sessionId, caller);
     let cfg: Record<string, any> = {};
     try { cfg = JSON.parse(overseer.config || '{}'); } catch { /* default {} */ }
     const lastRecapAt = typeof cfg[LAST_RECAP_KEY] === 'string' ? (cfg[LAST_RECAP_KEY] as string) : null;
     const items = ledgerDb.listBySession(this.db, sessionId);
+    // Review round 1: titles first, once per recap. With items that have no title, the first forRecap
+    // call of a recap only asks for them and does not mark the recap; the next call is the recap,
+    // with or without the titles, so a recap is never blocked and its New lines are never spent.
+    const untitled = renderUntitledList(items);
+    if (opts.forRecap && untitled) {
+      const asked = typeof cfg[TITLES_ASKED_KEY] === 'string' ? (cfg[TITLES_ASKED_KEY] as string) : null;
+      if (asked === null || (lastRecapAt !== null && asked <= lastRecapAt)) {
+        cfg[TITLES_ASKED_KEY] = this.nowIso();
+        terminalsDb.updateConfig(this.db, overseer.id, cfg);
+        const openIds = items.filter((i) => i.status === 'open').map((i) => `N${i.seq}`);
+        return { paste: '', text: '', openIds, rules: [], titlesFirst: `${TITLES_FIRST_TEXT}\n\n${untitled}` };
+      }
+    }
     const paste = renderRecapPaste(items, { now: this.clock(), lastRecapAt });
     // Titles spec 2026-10-09, Unit 3: the open items without a title close the own-use text.
-    const text = [renderLedgerSections(items, { now: this.clock(), lastRecapAt, timeZone: this.timeZone }), renderUntitledList(items)]
+    const text = [renderLedgerSections(items, { now: this.clock(), lastRecapAt, timeZone: this.timeZone }), untitled]
       .filter(Boolean).join('\n\n');
     if (opts.forRecap) {
       cfg[LAST_RECAP_KEY] = this.nowIso();

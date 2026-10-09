@@ -337,6 +337,43 @@ describe('list', () => {
     expect(cfg.role).toBe('coordinator'); // the rest of the config survives
   });
 
+  // Review round 1 (2026-10-09): titles first, once per recap. The first forRecap call with items
+  // that have no title answers only "Titles first" and does not mark the recap; the next call does,
+  // with or without the titles, so a recap is never blocked and its New lines are never lost.
+  it('forRecap with items that have no title: "Titles first" once per recap, then the normal recap', () => {
+    terminalsDb.updateConfig(db, 'coord', { role: 'coordinator', transport: 'structured', interimDueAt: min(20) });
+    ledgerDb.create(db, { sessionId: 's1', kind: 'do', text: 'Check the old banner.', author: 'overseer', now: min(0) });
+    now = T0 + 5 * 60_000;
+    const first = ledger.list('s1', 'coord', { forRecap: true });
+    expect(first.titlesFirst).toContain('Titles first. This call did not mark the recap.');
+    expect(first.titlesFirst).toContain('Open items without a title:\n- N1 · Do · Check the old banner.');
+    expect(first.paste).toBe('');
+    let cfg = JSON.parse(terminalsDb.getById(db, 'coord')!.config!);
+    expect(cfg.lastRecapAt).toBeUndefined();
+    expect(cfg.interimDueAt).toBe(min(20)); // not a recap yet
+
+    now = T0 + 6 * 60_000; // the overseer did not set the title: the recap still goes out
+    const second = ledger.list('s1', 'coord', { forRecap: true });
+    expect(second.titlesFirst).toBeUndefined();
+    expect(second.paste).toContain('N1 · Do · Check the old banner.');
+    cfg = JSON.parse(terminalsDb.getById(db, 'coord')!.config!);
+    expect(cfg.lastRecapAt).toBe(min(6));
+
+    now = T0 + 30 * 60_000; // a new recap cycle asks again, once
+    expect(ledger.list('s1', 'coord', { forRecap: true }).titlesFirst).toContain('Titles first');
+    ledger.setTitle('s1', 'coord', { id: 'N1', title: 'Check the old banner' });
+    expect(ledger.list('s1', 'coord', { forRecap: true }).titlesFirst).toBeUndefined();
+  });
+
+  it('forRecap with every item titled: the normal recap at once; a plain list never asks', () => {
+    ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR #12?', ...GO_CARD, title: 'Merge PR #12' });
+    expect(ledger.list('s1', 'coord', { forRecap: true }).titlesFirst).toBeUndefined();
+    ledgerDb.create(db, { sessionId: 's1', kind: 'do', text: 'Check the old banner.', author: 'overseer', now: min(0) });
+    const plain = ledger.list('s1', 'coord');
+    expect(plain.titlesFirst).toBeUndefined();
+    expect(plain.text).toContain('Open items without a title:');
+  });
+
   // Pinned card spec 2026-10-08, Unit 5: the paste block is news since the last recap.
   it('paste: the new items, the decided items and the count line, relative to the last recap', () => {
     ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR #12?', ...GO_CARD, title: 'Merge PR #12' });

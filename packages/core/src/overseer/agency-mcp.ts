@@ -531,10 +531,12 @@ export const TOOLS = [
       '(items sent to the user since the last recap), the Decided lines (answered or decided since then) and the ' +
       'count line ("Needs you: 19 decisions, 8 actions — on the card."); paste them as is. "For your own use — do ' +
       'not paste": the full ledger (Needs you now, Running on defaults, Your tests and actions, Not yet triaged, ' +
-      'Parked), then "Open items without a title" when there are any (give each one a title with ledger_set_title ' +
-      'before you post the recap), and, when rules exist, each project rule in full: apply the rules, and do not paste them. The user ' +
+      'Parked), then "Open items without a title" when there are any (give each one a title with ledger_set_title), ' +
+      'and, when rules exist, each project rule in full: apply the rules, and do not paste them. The user ' +
       'sees the full ledger on the pinned card. Pass forRecap: true when you post the recap: it marks the recap as ' +
-      'posted and clears the interim recap timer.',
+      'posted and clears the interim recap timer. When items have no title, the first forRecap call of a recap answers ' +
+      'only "Titles first" and that list, and does not mark the recap: set the titles, then call it again (it does ' +
+      'not ask twice). Otherwise call it once per recap.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -649,7 +651,7 @@ export const TOOLS = [
     name: 'ledger_set_title',
     description:
       'Overseer only. Set or change the title of an item of your project. Give a title to each item that ledger_list ' +
-      'lists under "Open items without a title" before you post a recap. Set a title once; change it only with a ' +
+      'lists under "Open items without a title" or "Titles first". Set a title once; change it only with a ' +
       'reason. The question never changes.',
     inputSchema: {
       type: 'object',
@@ -1073,6 +1075,8 @@ export const RULES_FOR_OVERSEER = 'Project rules in force, for your own use: app
  */
 async function ledgerList(args: { forRecap?: boolean }): Promise<{ type: 'text'; text: string }[]> {
   const data = await ledgerRequest('/list', { caller: requireSelf('use the ledger'), forRecap: args?.forRecap === true });
+  // Review round 1: "Titles first" — the recap is not marked yet; nothing to paste.
+  if (typeof data?.titlesFirst === 'string') return [{ type: 'text', text: data.titlesFirst }];
   const rules = Array.isArray(data?.rules) ? data.rules.filter((r: unknown): r is string => typeof r === 'string') : [];
   const ownUse = [`${OWN_USE_HEADING}\n\n${String(data?.text ?? '')}`];
   if (rules.length) ownUse.push([RULES_FOR_OVERSEER, ...rules.map((r: string) => `- ${r}`)].join('\n'));

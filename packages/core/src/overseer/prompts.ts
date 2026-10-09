@@ -127,8 +127,10 @@ export const COORDINATOR_PROMPT =
   '  End with the count line from ledger_list. Needs you now, your tests and actions, defaults and parked items ' +
   'stay on the pinned card: do not paste or rewrite them. ledger_list returns two parts: "Paste this into the ' +
   'recap" (the New lines, the Decided lines and the count line: paste them as is) and "For your own use — do not ' +
-  'paste" (the full ledger and the project rules: apply the rules, and do not paste them). Before you post a recap, ' +
-  'give each item in "Open items without a title" a title with ledger_set_title.\n' +
+  'paste" (the full ledger and the project rules: apply the rules, and do not paste them). When ' +
+  'ledger_list({ forRecap: true }) answers "Titles first", give each listed item a title with ledger_set_title, then ' +
+  'call it again: that call did not mark the recap, and it does not ask twice. Otherwise call ledger_list({ forRecap: ' +
+  'true }) once per recap: each call marks the recap. Give a title to each item in "Open items without a title" too.\n' +
   '- PROVENANCE: never write "your rule", "you decided", "you said" or "you approved" except when you ' +
   'paste a ledger line that has a quote. A "yes" approves only the item text. A message that starts ' +
   'with "ok" does not agree with, answer or approve anything by that word: read only the words after ' +
