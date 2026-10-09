@@ -26,6 +26,7 @@ import {
   renderOverseerDecisionLine, renderRecapPaste, renderRulesList, renderUntitledList, type RenderContext,
 } from './ledger-render.js';
 import { buildLedgerCard, type LedgerCard } from './ledger-card.js';
+import { createRemoteReader } from './github-link.js';
 import {
   cardFieldsError, findProjectPath, gitWorktrees, holdsSeveralDecisions, isIssueRef, missingCardFields,
   isUserSourceKind, ONE_DECISION_ERROR, ONLY_USER_ERROR, onlyUserCanDecide, sourceComplete, sourceMissingError, TITLE_MISSING_ERROR,
@@ -105,19 +106,26 @@ export class LedgerService {
   private readonly timeZone?: string;
   private readonly listWorktrees: (dir: string) => string[];
   private readonly onChange?: (sessionId: string) => void;
+  private readonly githubRepo: (dir: string) => string | null;
 
   /**
    * `onChange` (pinned card spec 2026-10-08, Unit 3) runs after every successful write, with the
    * project; server.ts turns it into the `ledger:changed` event. Its failure never fails the write.
+   * `githubRepo` (titles and source panel spec 2026-10-09, Unit 5) gives a project folder's GitHub
+   * repo for the PR and issue links on the card; by default it reads the remote, cached 10 minutes.
    */
   constructor(
     private readonly db: Database.Database,
-    opts: { clock?: () => number; timeZone?: string; listWorktrees?: (dir: string) => string[]; onChange?: (sessionId: string) => void } = {},
+    opts: {
+      clock?: () => number; timeZone?: string; listWorktrees?: (dir: string) => string[]; onChange?: (sessionId: string) => void;
+      githubRepo?: (dir: string) => string | null;
+    } = {},
   ) {
     this.clock = opts.clock ?? (() => Date.now());
     this.timeZone = opts.timeZone;
     this.listWorktrees = opts.listWorktrees ?? gitWorktrees;
     this.onChange = opts.onChange;
+    this.githubRepo = opts.githubRepo ?? createRemoteReader({ clock: this.clock });
   }
 
   private nowIso(): string {
@@ -503,11 +511,16 @@ export class LedgerService {
    * of the project's live overseer; with none, nothing has been recapped yet.
    */
   card(sessionId: string): LedgerCard {
-    if (!sessionsDb.getById(this.db, sessionId)) throw new LedgerError(404, `Unknown project: ${sessionId}`);
+    const session = sessionsDb.getById(this.db, sessionId);
+    if (!session) throw new LedgerError(404, `Unknown project: ${sessionId}`);
     const overseer = terminalsDb.listBySession(this.db, sessionId).map(terminalsDb.rowToTerminal) // not archived
       .find((t) => t.config?.role === 'coordinator');
     const lastRecapAt = typeof overseer?.config[LAST_RECAP_KEY] === 'string' ? (overseer.config[LAST_RECAP_KEY] as string) : null;
-    return buildLedgerCard(ledgerDb.listBySession(this.db, sessionId), { now: this.clock(), lastRecapAt });
+    const items = ledgerDb.listBySession(this.db, sessionId);
+    // Unit 5: git runs only for a ledger with a PR or issue source.
+    const linked = items.some((i) => i.sourceKind === 'pr' || i.sourceKind === 'issue');
+    const githubRepo = linked && session.working_dir ? this.githubRepo(session.working_dir) : null;
+    return buildLedgerCard(items, { now: this.clock(), lastRecapAt, githubRepo });
   }
 
   /** One-time load of open items and earlier decisions from the overseer's context. */
