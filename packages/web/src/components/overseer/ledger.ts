@@ -37,6 +37,18 @@ export function formatCardSource(s: CardSource, { full = false }: { full?: boole
 }
 
 /**
+ * What a click on a Source line does (titles and source panel spec 2026-10-09, Unit 10): a plan, a
+ * doc or an agent-block item with a file opens the section panel; a PR or issue with a GitHub link
+ * opens the link; any other source is text.
+ */
+export function sourceTarget(s: CardSource): 'panel' | 'link' | null {
+  if (s.kind === 'plan' || s.kind === 'doc') return s.ref ? 'panel' : null;
+  if (s.kind === 'agent') return s.path ? 'panel' : null;
+  if ((s.kind === 'pr' || s.kind === 'issue') && s.url && /^https:\/\//.test(s.url)) return 'link';
+  return null;
+}
+
+/**
  * What a click on the card adds to the message box (Unit 8): a decide option its answerKey
  * ("N17: A"), the Approve row of a go item "N34: approve", the Done link of an action "N55: done".
  * The message stays the user's own: the daemon checks its words as for any typed answer.

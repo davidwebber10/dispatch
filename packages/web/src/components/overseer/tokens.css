@@ -91,6 +91,14 @@
   white-space: normal;
   transition: background 0.12s, border-color 0.12s;
 }
+/* The item's row in the section panel (titles and source panel spec 2026-10-09, Unit 10). */
+.overseer-root [data-source-mark],
+.overseer-root tr[data-source-mark] > td {
+  background: var(--yellowDim);
+}
+.overseer-root [data-source-mark] {
+  outline: 1px solid var(--yellowLine);
+}
 .overseer-root .ledger-chip:hover,
 .overseer-root .ledger-chip:focus-visible {
   background: var(--hover);

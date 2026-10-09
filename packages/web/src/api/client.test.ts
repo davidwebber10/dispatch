@@ -110,3 +110,13 @@ test('sendStructuredMessage adds canned: true only when asked', async () => {
     method: 'POST', body: JSON.stringify({ text: 'got it', source: 'user', canned: true }),
   }));
 });
+
+// Titles and source panel spec 2026-10-09, Unit 10: the section of a ledger item's source.
+test('getLedgerSource GETs the item\'s source route, with ?heading= for a click in the outline', async () => {
+  mockJson({ kind: 'file-only', file: 'notes.txt', path: 'docs/notes.txt', reason: 'x' });
+  await api.getLedgerSource('s1', 14, undefined);
+  expect(fetch).toHaveBeenLastCalledWith('/api/sessions/s1/ledger/N14/source', expect.objectContaining({ method: 'GET' }));
+  mockJson({ kind: 'file-only', file: 'notes.txt', path: 'docs/notes.txt', reason: 'x' });
+  await api.getLedgerSource('s1', 14, 'Risks & costs');
+  expect(fetch).toHaveBeenLastCalledWith('/api/sessions/s1/ledger/N14/source?heading=Risks%20%26%20costs', expect.objectContaining({ method: 'GET' }));
+});

@@ -433,5 +433,5 @@ export type {
 // The pinned card (pinned card spec 2026-10-08): the decision ledger of one project, as the daemon
 // computes it. The payload type lives in core, in a file with no imports, as above.
 export type {
-  CardItem, CardKind, CardOption, CardOrigin, CardSource, CardSourceKind, CardStatus, LedgerCard,
+  CardItem, CardKind, CardOption, CardOrigin, CardSource, CardSourceKind, CardStatus, LedgerCard, LedgerSource,
 } from '../../../core/src/overseer/ledger-card-types';

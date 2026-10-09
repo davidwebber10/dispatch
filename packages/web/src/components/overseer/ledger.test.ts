@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { answerText, formatCardSource, openDecisionCount, outcomeText } from './ledger';
+import { answerText, formatCardSource, openDecisionCount, outcomeText, sourceTarget } from './ledger';
 import { FIXTURE, EMPTY_CARD, N12, N14, cardItem } from './ledger-fixture';
 
 describe('openDecisionCount', () => {
@@ -65,5 +65,23 @@ describe('outcomeText — what happened to an item', () => {
       .toBe('Decided by overseer: the existing one. Reason: it covers this case');
     expect(outcomeText(cardItem({ status: 'superseded' }))).toBe('Superseded');
     expect(outcomeText(cardItem({ status: 'proposed' }))).toBe('Not yet triaged');
+  });
+});
+
+// Titles and source panel spec 2026-10-09, Unit 10.
+describe('sourceTarget — what a click on a Source line does', () => {
+  const src = (over: Partial<Parameters<typeof sourceTarget>[0]>) =>
+    sourceTarget({ kind: 'plan', ref: null, path: null, section: null, id: null, url: null, ...over });
+  it('the panel for a plan, a doc and an agent-block item with a file; a link for a PR or issue with an https link; else nothing', () => {
+    expect(src({ kind: 'plan', ref: 'docs/plans/a.md' })).toBe('panel');
+    expect(src({ kind: 'doc', ref: 'docs/notes.md' })).toBe('panel');
+    expect(src({ kind: 'agent', ref: 'Readiness planner', path: 'docs/plans/r.md' })).toBe('panel');
+    expect(src({ kind: 'agent', ref: 'Readiness planner' })).toBeNull();
+    expect(src({ kind: 'pr', ref: '#62', url: 'https://github.com/owner/repo/pull/62' })).toBe('link');
+    expect(src({ kind: 'issue', ref: '#7', url: 'https://github.com/owner/repo/issues/7' })).toBe('link');
+    expect(src({ kind: 'pr', ref: '#62' })).toBeNull();
+    expect(src({ kind: 'pr', ref: '#62', url: 'javascript:alert(1)' })).toBeNull();
+    expect(src({ kind: 'overseer' })).toBeNull();
+    expect(src({ kind: 'thread', ref: 'Scratch' })).toBeNull();
   });
 });
