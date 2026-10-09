@@ -16,6 +16,7 @@ import { useProjects } from '../../../stores/projects';
 import { useLedgerCard, useLedgerFolds } from '../../../stores/ledgerCard';
 import { LedgerCard } from './LedgerCard';
 import { LedgerSourcePanel } from './LedgerSourcePanel';
+import { LedgerRefPopover } from './LedgerChips';
 import { OverseerView } from '../OverseerView';
 import { OverseerMobile } from '../OverseerMobile';
 import { FIXTURE, N12, NOW, cardItem } from '../ledger-fixture';
@@ -282,6 +283,39 @@ describe('the panel and the keyboard', () => {
     await screen.findByText('readiness.md');
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(useLedgerCard.getState().sourcePanel).not.toBeNull();
+  });
+
+  // Review round 2: both components mounted, in both opening orders.
+  for (const order of ['popover first', 'panel first'] as const) {
+    it(`Escape with the real chip popover mounted (${order}) closes only the popover`, async () => {
+      vi.spyOn(api, 'getLedgerSource').mockResolvedValue(SECTION);
+      const seq = FIXTURE.index[0].seq;
+      const popover = { projectId: 'p1', seq, x: 10, y: 10 };
+      const panel = { projectId: 'p1', seq: 14 };
+      useLedgerCard.setState(order === 'popover first' ? { popover } : { sourcePanel: panel });
+      render(<><LedgerRefPopover /><LedgerSourcePanel /></>);
+      act(() => useLedgerCard.setState(order === 'popover first' ? { sourcePanel: panel } : { popover }));
+      await screen.findByText('readiness.md');
+      expect(screen.getByRole('dialog', { name: `N${seq}` })).toBeInTheDocument();
+      fireEvent.keyDown(document, { key: 'Escape' });
+      expect(useLedgerCard.getState().popover).toBeNull();
+      expect(useLedgerCard.getState().sourcePanel).not.toBeNull();
+      fireEvent.keyDown(document, { key: 'Escape' });
+      expect(useLedgerCard.getState().sourcePanel).toBeNull();
+    });
+  }
+
+  it('A, then B, then close: focus goes back to B, the last Source line', async () => {
+    vi.spyOn(api, 'getLedgerSource').mockResolvedValue(SECTION);
+    render(<><button type="button">source A</button><button type="button">source B</button><LedgerSourcePanel /></>);
+    screen.getByRole('button', { name: 'source A' }).focus();
+    act(() => useLedgerCard.setState({ sourcePanel: { projectId: 'p1', seq: 14 } }));
+    await screen.findByText('readiness.md');
+    screen.getByRole('button', { name: 'source B' }).focus();
+    act(() => useLedgerCard.setState({ sourcePanel: { projectId: 'p1', seq: 9 } }));
+    await screen.findByText('readiness.md');
+    act(() => useLedgerCard.getState().setSourcePanel(null));
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'source B' }));
   });
 
   it('desktop: the panel sits above the chat\'s floating buttons (z-index 5)', async () => {

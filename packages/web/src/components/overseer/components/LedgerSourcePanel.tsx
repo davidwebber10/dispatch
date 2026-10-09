@@ -25,6 +25,12 @@ import type { LedgerSource } from '../../../api/types';
 
 const close = () => useLedgerCard.getState().setSourcePanel(null);
 
+/**
+ * The element to give focus back to when the panel closes (review round 2): the last Source line
+ * that opened or replaced it. A replacement keeps the panel open, so it never restores focus.
+ */
+let opener: HTMLElement | null = null;
+
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
@@ -83,9 +89,10 @@ function PanelBody({ projectId, seq, mobile }: { projectId: string; seq: number;
   }, [projectId, seq, heading, attempt]);
 
   useEffect(() => {
-    // Review round 1: an open chip popover takes the Escape first (it closes alone).
+    // Review rounds 1 and 2: an open chip popover takes the Escape (it closes alone and calls
+    // preventDefault, whichever listener runs first).
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.defaultPrevented || useLedgerCard.getState().popover) return;
+      if (e.key !== 'Escape' || e.defaultPrevented || useLedgerCard.getState().popover) return; // the popover goes first
       close();
     };
     document.addEventListener('keydown', onKey);
@@ -98,7 +105,8 @@ function PanelBody({ projectId, seq, mobile }: { projectId: string; seq: number;
   const sectionRef = useRef<HTMLElement>(null);
   useEffect(() => {
     const el = sectionRef.current;
-    const opener = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active !== document.body && !el?.contains(active)) opener = active;
     el?.focus({ preventScroll: true });
     const covered = el?.parentElement
       ? [...el.parentElement.children].filter((c): c is HTMLElement => c !== el && c instanceof HTMLElement && !c.hasAttribute('inert'))
@@ -106,7 +114,11 @@ function PanelBody({ projectId, seq, mobile }: { projectId: string; seq: number;
     for (const c of covered) c.setAttribute('inert', '');
     return () => {
       for (const c of covered) c.removeAttribute('inert');
-      if (opener?.isConnected) opener.focus({ preventScroll: true });
+      // Only a real close gives focus back; a replacement (another Source line) keeps the panel open.
+      if (useLedgerCard.getState().sourcePanel) return;
+      const back = opener;
+      opener = null;
+      if (back?.isConnected) back.focus({ preventScroll: true });
     };
   }, []);
 

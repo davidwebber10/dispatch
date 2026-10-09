@@ -104,7 +104,8 @@ export function LedgerRefPopover() {
   useEffect(() => {
     if (!popover) return;
     const close = () => useLedgerCard.getState().setPopover(null);
-    const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    // It takes the Escape alone: preventDefault tells the source panel not to close too (review round 2).
+    const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); close(); } };
     const onDown = (e: globalThis.MouseEvent) => { if (!(e.target as Element | null)?.closest?.('[data-ledger-popover]')) close(); };
     document.addEventListener('keydown', onKey);
     document.addEventListener('mousedown', onDown);
