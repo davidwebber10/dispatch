@@ -457,7 +457,10 @@ export class SessionService {
     for (const terminal of terminals) {
       watchesDb.removeForTerminal(this.db, terminal.id);
     }
+    // The hard delete takes the archived threads' rows too: list them before it, for their files.
+    const archived = terminalsDb.listArchivedBySession(this.db, id);
     terminalsDb.removeBySession(this.db, id);
+    for (const terminal of [...terminals, ...archived]) this.removeThreadMcpConfig(terminal.id);
 
     if (this.ptyManager.isAlive(id)) this.ptyManager.kill(id);
     sessionsDb.archive(this.db, id);
@@ -511,6 +514,7 @@ export class SessionService {
       this.spawnTerminal(terminalId);
     } catch (err: any) {
       terminalsDb.remove(this.db, terminalId);
+      this.removeThreadMcpConfig(terminalId);
       throw new Error(`Failed to start ${displayLabel}: ${err.message}`);
     }
 
@@ -627,6 +631,7 @@ export class SessionService {
       this.spawnTerminal(terminalId);
     } catch (err: any) {
       terminalsDb.remove(this.db, terminalId);
+      this.removeThreadMcpConfig(terminalId);
       throw new Error(`Failed to start ${displayLabel}: ${err.message}`);
     }
 
@@ -671,6 +676,7 @@ export class SessionService {
       this.spawnTerminal(terminalId);
     } catch (err: any) {
       terminalsDb.remove(this.db, terminalId);
+      this.removeThreadMcpConfig(terminalId);
       throw new Error(`Failed to branch: ${err.message}`);
     }
     return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
@@ -2023,6 +2029,8 @@ export class SessionService {
     // design — see db/watches.ts), so this is the daemon's one "a thread is gone" hook:
     // sweep any watch where this terminal was either side, else rows accumulate forever.
     watchesDb.removeForTerminal(this.db, terminalId);
+    // A restore re-spawns, which writes the file again.
+    this.removeThreadMcpConfig(terminalId);
   }
 
   // Restore an archived terminal
@@ -2666,6 +2674,22 @@ export class SessionService {
    */
   private perTerminalMcpConfigPath(terminalId: string): string {
     return path.join(path.dirname(this.mcpConfigPath), `thread-${terminalId}.mcp.json`);
+  }
+
+  /**
+   * Delete the per-terminal MCP config file (see `perTerminalMcpConfigPath`) of a thread that is
+   * deleted or archived; without this the files pile up. Safe on archive: a restore re-spawns, and
+   * every spawn writes the file again before its CLI starts (spawnTerminal and spawnStructured
+   * both call composeInjection). Only that one file: an id with a path separator or ".." is
+   * refused, and a missing file is fine.
+   */
+  private removeThreadMcpConfig(terminalId: string): void {
+    if (!terminalId || /[\\/]/.test(terminalId) || terminalId.includes('..')) return;
+    try {
+      fs.unlinkSync(this.perTerminalMcpConfigPath(terminalId));
+    } catch (err: any) {
+      if (err?.code !== 'ENOENT') console.warn(`[sessions] could not delete the MCP config of ${terminalId}: ${err?.message ?? err}`);
+    }
   }
 
   /**
