@@ -10,16 +10,23 @@ export function openDecisionCount(card: LedgerCard | null): number {
 }
 
 const where = (s: CardSource) => `${s.section ? ` › ${s.section}` : ''}${s.id ? ` · ${s.id}` : ''}`;
+/** The last part of a path, for "/" and "\" alike; a ref without a separator stays as is. */
+const fileName = (p: string) => p.split(/[\\/]/).pop() || p;
 
-/** "plan · path › section · plan ID", "PR #62", "your thread "Scratch"", … — the chat card's source line, shortened. */
-export function formatCardSource(s: CardSource): string {
+/**
+ * "plan · file name › section · plan ID", "PR #62", "your thread "Scratch"", … — the chat card's
+ * source line, shortened: a plan or doc path shows only its file name. `full` keeps the whole path
+ * (the hover text).
+ */
+export function formatCardSource(s: CardSource, { full = false }: { full?: boolean } = {}): string {
+  const file = (p: string) => (full ? p : fileName(p));
   switch (s.kind) {
     case 'plan':
     case 'doc':
-      return `${s.kind} · ${s.ref ?? ''}${where(s)}`;
+      return `${s.kind} · ${file(s.ref ?? '')}${where(s)}`;
     case 'agent':
       // An agent-block item names the file the decision lives in.
-      if (s.path) return `${/plan/i.test(s.path) ? 'plan' : 'doc'} · ${s.path}${where(s)} · from agent "${s.ref ?? ''}"`;
+      if (s.path) return `${/plan/i.test(s.path) ? 'plan' : 'doc'} · ${file(s.path)}${where(s)} · from agent "${s.ref ?? ''}"`;
       return `agent "${s.ref ?? ''}"${where(s)}`;
     case 'thread': return `your thread "${s.ref ?? ''}"${where(s)}`;
     case 'pr': return `PR ${s.ref ?? ''}${s.id ? ` · ${s.id}` : ''}`;

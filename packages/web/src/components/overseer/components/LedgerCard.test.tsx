@@ -86,7 +86,10 @@ describe('LedgerCard — a full card', () => {
     expect(card.getByText('The weekend pattern is the known risk; 5 nights cover one weekend.')).toBeInTheDocument();
     expect(card.getByText('If you do not answer:')).toBeInTheDocument();
     expect(card.getByText('Holds up:')).toBeInTheDocument();
-    expect(card.getByText('plan · docs/plans/readiness.md › Owner decisions · LR-6 · from agent "Readiness planner"')).toBeInTheDocument();
+    // The source shows the file name; a hover shows the full path.
+    expect(card.getByText('plan · readiness.md › Owner decisions · LR-6 · from agent "Readiness planner"')).toBeInTheDocument();
+    expect(card.getByTitle('plan · docs/plans/readiness.md › Owner decisions · LR-6 · from agent "Readiness planner"'))
+      .toHaveTextContent('Source: plan · readiness.md › Owner decisions · LR-6 · from agent "Readiness planner"');
     expect(card.getByText('The planner did not know about the holiday freeze.')).toBeInTheDocument();
   });
 

@@ -48,9 +48,9 @@ function Badge({ children, color = 'var(--acc)' }: { children: ReactNode; color?
 }
 
 /** A labelled paragraph of a full card: "Why A. 5 nights:", "If you do not answer:", "Holds up:", … */
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({ label, title, children }: { label: string; title?: string; children: ReactNode }) {
   return (
-    <div style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--ts)' }}>
+    <div title={title} style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--ts)' }}>
       <span style={{ fontWeight: 600, color: 'var(--tp)' }}>{label}</span> <span>{children}</span>
     </div>
   );
@@ -143,7 +143,8 @@ function FullCard({ item, onAnswer, onFold }: { item: CardItem; onAnswer?: (text
       {!item.why && item.recommendation && <Field label="Recommended:">{item.recommendation}</Field>}
       {item.default && <Field label="If you do not answer:">{item.default}</Field>}
       {item.blocks && <Field label="Holds up:">{item.blocks}</Field>}
-      {item.source && <Field label="Source:">{formatCardSource(item.source)}</Field>}
+      {/* The file name only; a hover shows the full path. */}
+      {item.source && <Field label="Source:" title={formatCardSource(item.source, { full: true })}>{formatCardSource(item.source)}</Field>}
       {item.overseerNote && <Field label="Overseer's note:">{item.overseerNote}</Field>}
       {outcome && <Field label="Outcome:">{outcome}</Field>}
     </article>

@@ -10,18 +10,33 @@ describe('openDecisionCount', () => {
   });
 });
 
-describe('formatCardSource — plan · path › section · plan ID', () => {
+describe('formatCardSource — plan · file name › section · plan ID', () => {
   it('each source kind', () => {
-    expect(formatCardSource(N14.source!)).toBe('plan · docs/plans/readiness.md › Owner decisions · LR-6 · from agent "Readiness planner"');
+    expect(formatCardSource(N14.source!)).toBe('plan · readiness.md › Owner decisions · LR-6 · from agent "Readiness planner"');
     expect(formatCardSource(N12.source!)).toBe('PR #62');
-    expect(formatCardSource({ kind: 'plan', ref: 'docs/plans/a.md', path: null, section: 'Risks', id: 'D3' })).toBe('plan · docs/plans/a.md › Risks · D3');
-    expect(formatCardSource({ kind: 'doc', ref: 'docs/notes.md', path: null, section: null, id: null })).toBe('doc · docs/notes.md');
-    expect(formatCardSource({ kind: 'agent', ref: 'Map researcher', path: 'docs/research/map.md', section: null, id: 'Q2' })).toBe('doc · docs/research/map.md · Q2 · from agent "Map researcher"');
+    expect(formatCardSource({ kind: 'plan', ref: 'docs/plans/a.md', path: null, section: 'Risks', id: 'D3' })).toBe('plan · a.md › Risks · D3');
+    expect(formatCardSource({ kind: 'doc', ref: 'docs/notes.md', path: null, section: null, id: null })).toBe('doc · notes.md');
+    expect(formatCardSource({ kind: 'agent', ref: 'Map researcher', path: 'docs/research/map.md', section: null, id: 'Q2' })).toBe('doc · map.md · Q2 · from agent "Map researcher"');
     expect(formatCardSource({ kind: 'agent', ref: 'Map researcher', path: null, section: 'Q2 part', id: null })).toBe('agent "Map researcher" › Q2 part');
     expect(formatCardSource({ kind: 'thread', ref: 'Scratch', path: null, section: null, id: null })).toBe('your thread "Scratch"');
     expect(formatCardSource({ kind: 'issue', ref: '#7', path: null, section: null, id: null })).toBe('issue #7');
     expect(formatCardSource({ kind: 'user', ref: 'switch to live mode soon', path: null, section: null, id: null })).toBe('your words "switch to live mode soon"');
     expect(formatCardSource({ kind: 'overseer', ref: null, path: null, section: null, id: null })).toBe('overseer');
+  });
+
+  it('a long path shows only its file name, for / and \\ separators; a ref without a separator stays as is', () => {
+    const plan = '.claude/worktrees/some-plan/docs/superpowers/plans/2026-10-01-some-plan.md';
+    expect(formatCardSource({ kind: 'plan', ref: plan, path: null, section: 'Open owner decisions after v3', id: null }))
+      .toBe('plan · 2026-10-01-some-plan.md › Open owner decisions after v3');
+    expect(formatCardSource({ kind: 'doc', ref: 'docs\\notes\\setup.md', path: null, section: null, id: 'S2' })).toBe('doc · setup.md · S2');
+    expect(formatCardSource({ kind: 'agent', ref: 'Planner', path: 'docs\\plans\\b.md', section: 'Risks', id: null })).toBe('plan · b.md › Risks · from agent "Planner"');
+    expect(formatCardSource({ kind: 'plan', ref: 'roadmap.md', path: null, section: null, id: null })).toBe('plan · roadmap.md');
+  });
+
+  it('full: the unshortened source, for the hover text', () => {
+    expect(formatCardSource(N14.source!, { full: true })).toBe('plan · docs/plans/readiness.md › Owner decisions · LR-6 · from agent "Readiness planner"');
+    expect(formatCardSource({ kind: 'doc', ref: 'docs\\notes\\setup.md', path: null, section: null, id: null }, { full: true })).toBe('doc · docs\\notes\\setup.md');
+    expect(formatCardSource(N12.source!, { full: true })).toBe('PR #62');
   });
 });
 
