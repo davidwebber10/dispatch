@@ -88,6 +88,11 @@ const LEDGER_IDS_ARG_DESCRIPTION =
 
 const LEDGER_IDS_SCHEMA = { type: 'array', items: { type: 'string' }, description: LEDGER_IDS_ARG_DESCRIPTION } as const;
 
+/** The title rules, for each tool that takes a title (titles and source panel spec 2026-10-09, Unit 2). */
+const TITLE_RULES =
+  'A short title that chips, card rows and recap lines show instead of the question: one line, at least 2 words, ' +
+  'about 40 characters (50 at most), never only a code such as N41 or Q12, e.g. "Merge board PR #26".';
+
 /** The decision-card fields of ledger_add and ledger_import (decision cards spec 2026-10-06, Unit 1). */
 const CARD_FIELDS_SCHEMA = {
   context: { type: 'string', description: 'Go/decide: what the user needs to know to decide, 20 to 800 characters.' },
@@ -457,8 +462,9 @@ export const TOOLS = [
       'question to the user goes here first. A go or decide item is a full decision card: it needs ' +
       '`context`, `default` and `source`; a decide item also needs at least 2 `options` ({ label, effect }) ' +
       'with a `recommendation` (one of the labels) and `why`. One decision per item: never a range of plan ' +
-      'IDs. The daemon checks every field and the source, and returns 422 with the missing fields. Returns ' +
-      '{ id, line }: `line` is one line with the ID and the question; post it to the user exactly as it is. ' +
+      'IDs. Every item needs a `title`. The daemon checks every field, the title and the source, and returns 422 with ' +
+      'the missing fields or the reason. Returns { id, line }: `line` is one line with the ID and the title; post it to ' +
+      'the user exactly as it is. ' +
       'The user sees the full card on the pinned card (ledger_show prints it when the user asks). The ' +
       'item text never changes; for a wider scope, add a new item with `supersedes`.',
     inputSchema: {
@@ -466,13 +472,14 @@ export const TOOLS = [
       properties: {
         kind: { type: 'string', enum: ['go', 'decide', 'do'], description: 'go = merge/deploy/release approval, decide = a choice, do = a manual step for the user.' },
         text: { type: 'string', description: 'The question as the user will see it: one decision, never a plan ID alone or a range. It never changes after creation.' },
+        title: { type: 'string', description: `${TITLE_RULES} Required.` },
         ...CARD_FIELDS_SCHEMA,
         blocks: { type: 'string', description: 'Optional: what this item holds up (shown as "Holds up").' },
         mission: { type: 'string', description: 'Optional mission name this item belongs to.' },
         author: { type: 'string', description: 'Optional: who proposed it, "overseer" (the default) or an agent label.' },
         supersedes: { type: 'string', description: 'Optional: the ID (e.g. "N3") of an older item that this item replaces or widens.' },
       },
-      required: ['kind', 'text'],
+      required: ['kind', 'text', 'title'],
     },
   },
   {
@@ -539,7 +546,8 @@ export const TOOLS = [
     description:
       'Overseer only. Use once, at rollout: load the open items and earlier decisions from your current ' +
       'context. They show as "Imported, not checked" until the user confirms one and you record the quote ' +
-      'with ledger_resolve. A go or decide item needs the same card fields as ledger_add. For a large ' +
+      'with ledger_resolve. A go or decide item needs the same card fields as ledger_add, and an open go, decide or ' +
+      'do item a title. For a large ' +
       'plan, have a planner agent turn its decision list into an owner-decisions block instead.',
     inputSchema: {
       type: 'object',
@@ -551,6 +559,7 @@ export const TOOLS = [
             properties: {
               kind: { type: 'string', enum: ['go', 'decide', 'do', 'statement'] },
               text: { type: 'string' },
+              title: { type: 'string', description: `${TITLE_RULES} Required for an open go, decide or do item; optional otherwise.` },
               status: { type: 'string', enum: ['open', 'answered', 'parked'] },
               author: { type: 'string' },
               ...CARD_FIELDS_SCHEMA,
@@ -571,16 +580,17 @@ export const TOOLS = [
     name: 'ledger_add_from_agent',
     description:
       'Overseer only. Triage: send a proposed decision (from an agent\'s owner-decisions block) to the ' +
-      'user. The agent\'s text stays word for word; `note` becomes the card\'s "Overseer\'s note" — use it ' +
+      'user, with your `title`. The agent\'s text stays word for word; `note` becomes the card\'s "Overseer\'s note" — use it ' +
       'for what the agent did not know. The user sees it in the next recap; do not post it now.',
     inputSchema: {
       type: 'object',
       properties: {
         id: { type: 'string', description: 'The proposed item ID, e.g. "N30".' },
+        title: { type: 'string', description: `${TITLE_RULES} Required.` },
         note: { type: 'string', description: 'Optional: your own note, shown under its own label on the card.' },
         blocks: { type: 'string', description: 'Optional: what this decision holds up (shown as "Holds up"; it ranks the card first).' },
       },
-      required: ['id'],
+      required: ['id', 'title'],
     },
   },
   {
@@ -631,6 +641,22 @@ export const TOOLS = [
         all: { type: 'boolean', description: 'True for every open decision.' },
         rules: { type: 'boolean', description: 'True for the project rules in full ("show rules").' },
       },
+    },
+  },
+  // --- titles (titles and source panel spec 2026-10-09, Unit 2) ---
+  {
+    name: 'ledger_set_title',
+    description:
+      'Overseer only. Set or change the title of an item of your project. Give a title to each item that ledger_list ' +
+      'lists under "Open items without a title" before you post a recap. Set a title once; change it only with a ' +
+      'reason. The question never changes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The item ID, e.g. "N41".' },
+        title: { type: 'string', description: TITLE_RULES },
+      },
+      required: ['id', 'title'],
     },
   },
 ] as const;
@@ -1081,6 +1107,13 @@ async function ledgerMarkDefault(args: Record<string, unknown>): Promise<{ id: s
   return ledgerRequest(`/${encodeURIComponent(String(args.id))}/mark-default`, { caller: requireSelf('use the ledger') });
 }
 
+/** Titles spec 2026-10-09, Unit 2: set or change an item's title. */
+async function ledgerSetTitle(args: Record<string, unknown>): Promise<{ id: string; title: string }> {
+  if (!args?.id) throw new Error('id is required');
+  if (!args?.title) throw new Error('title is required');
+  return ledgerRequest(`/${encodeURIComponent(String(args.id))}/title`, { title: args.title, caller: requireSelf('use the ledger') });
+}
+
 /** Returns the rendered cards themselves (not JSON), so the overseer can post them as is. */
 async function ledgerShow(args: { ids?: unknown; all?: unknown; rules?: unknown }): Promise<string> {
   if (args?.rules === true) {
@@ -1176,6 +1209,7 @@ export async function callTool(
       case 'ledger_add_from_agent': result = await ledgerAddFromAgent(args ?? {}); break;
       case 'ledger_decide_self': result = await ledgerDecideSelf(args ?? {}); break;
       case 'ledger_mark_default': result = await ledgerMarkDefault(args ?? {}); break;
+      case 'ledger_set_title': result = await ledgerSetTitle(args ?? {}); break;
       // ledger_show's result IS the cards to post — return them as is, not as a JSON string.
       case 'ledger_show': return { content: [{ type: 'text', text: await ledgerShow(args ?? {}) }] };
       // ledger_list's result IS text — return it as is, not as a JSON string: the lines to paste,

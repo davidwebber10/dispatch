@@ -268,13 +268,24 @@ export interface StatusPatch {
   now?: string;
 }
 
-/** Triage: a proposed item reaches the user now (status open), with the overseer's optional note and "holds up". */
+/** Triage: a proposed item reaches the user now (status open), with the overseer's title, its optional note and "holds up". */
 export function markSent(
-  db: Database.Database, sessionId: string, seq: number, opts: { note?: string | null; blocks?: string | null; now: string },
+  db: Database.Database, sessionId: string, seq: number,
+  opts: { title?: string | null; note?: string | null; blocks?: string | null; now: string },
 ): LedgerItem | null {
-  db.prepare(`UPDATE ledger_items SET status = 'open', sent_at = ?, overseer_note = COALESCE(?, overseer_note),
+  db.prepare(`UPDATE ledger_items SET status = 'open', sent_at = ?, title = COALESCE(?, title), overseer_note = COALESCE(?, overseer_note),
       blocks = COALESCE(?, blocks), updated_at = ?
-    WHERE session_id = ? AND seq = ?`).run(opts.now, opts.note ?? null, opts.blocks ?? null, opts.now, sessionId, seq);
+    WHERE session_id = ? AND seq = ?`).run(opts.now, opts.title ?? null, opts.note ?? null, opts.blocks ?? null, opts.now, sessionId, seq);
+  return getBySeq(db, sessionId, seq);
+}
+
+/**
+ * Set or change an item's title (titles spec 2026-10-09, Unit 2). A title is a label, so
+ * `updated_at` stays: the "decided since the last recap" rule reads it, and a new label must not
+ * bring an old answer back into the recap.
+ */
+export function setTitle(db: Database.Database, sessionId: string, seq: number, title: string): LedgerItem | null {
+  db.prepare('UPDATE ledger_items SET title = ? WHERE session_id = ? AND seq = ?').run(title, sessionId, seq);
   return getBySeq(db, sessionId, seq);
 }
 

@@ -39,7 +39,7 @@ const proposed = () => ledgerDb.create(db, { sessionId: 's1', kind: 'decide', te
 describe('LedgerService onChange', () => {
   const writes: [string, () => unknown][] = [
     ['add', () => ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR #12?', ...GO_CARD })],
-    ['importItems', () => ledger.importItems('s1', 'coord', [{ kind: 'do', text: 'Check staging.' }])],
+    ['importItems', () => ledger.importItems('s1', 'coord', [{ kind: 'do', text: 'Check staging.', title: 'Check staging' }])],
     ['resolve', () => {
       ledgerDb.create(db, { sessionId: 's1', kind: 'decide', text: 'Which store?', author: 'overseer', now: min(0) });
       return ledger.resolve('s1', 'coord', { id: 'N1', status: 'answered', quote: 'N1: A' });
@@ -47,7 +47,7 @@ describe('LedgerService onChange', () => {
     ['note', () => ledger.note('s1', 'coord', { quote: 'never deploy on Fridays', policy: true })],
     ['decideSelf with an id', () => { proposed(); return ledger.decideSelf('s1', 'coord', { id: 'N1', choice: 'A', reason: 'the smallest step' }); }],
     ['decideSelf without an id', () => ledger.decideSelf('s1', 'coord', { text: 'Which retry helper?', ...DECIDE_CARD, choice: 'A. 5 nights', reason: 'it covers one weekend' })],
-    ['addFromAgent', () => { proposed(); return ledger.addFromAgent('s1', 'coord', { id: 'N1' }); }],
+    ['addFromAgent', () => { proposed(); return ledger.addFromAgent('s1', 'coord', { id: 'N1', title: 'Clean nights before live mode' }); }],
     ['markDefault', () => {
       ledgerDb.create(db, { sessionId: 's1', kind: 'decide', text: 'Which store?', author: 'overseer', now: min(0) });
       return ledger.markDefault('s1', 'coord', { id: 'N1' });
@@ -77,7 +77,7 @@ describe('LedgerService onChange', () => {
   it('a throwing callback never fails the write', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const throwing = new LedgerService(db, { onChange: () => { throw new Error('socket gone'); } });
-    expect(throwing.add('s1', 'coord', { kind: 'do', text: 'Check staging.' })).toMatchObject({ id: 'N1' });
+    expect(throwing.add('s1', 'coord', { kind: 'do', text: 'Check staging.', title: 'Check staging' })).toMatchObject({ id: 'N1' });
     expect(ledgerDb.getBySeq(db, 's1', 1)?.text).toBe('Check staging.');
   });
 });
@@ -97,7 +97,7 @@ describe('wireLedger — both LedgerService instances broadcast ledger:changed',
     const svc = new SessionService(db, new NoopPty(), '/tmp/dispatch-ledger-change-test-mcp.json');
     const broadcast = vi.fn();
     const routerLedger = wireLedger(db, svc, { broadcast });
-    routerLedger.add('s1', 'coord', { kind: 'do', text: 'Check staging.' });
+    routerLedger.add('s1', 'coord', { kind: 'do', text: 'Check staging.', title: 'Check staging' });
     expect(broadcast.mock.calls).toEqual([[{ type: 'ledger:changed', sessionId: 's1' }]]);
     // The session service's own ledger (the owner-decisions capture) is wired to the same broadcast.
     (svc as unknown as { ledger: LedgerService }).ledger.captureAgentBlock('s1', AGENT, [LR6]);
@@ -108,7 +108,7 @@ describe('wireLedger — both LedgerService instances broadcast ledger:changed',
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const svc = new SessionService(db, new NoopPty(), '/tmp/dispatch-ledger-change-test-mcp.json');
     const routerLedger = wireLedger(db, svc, { broadcast: () => { throw new Error('closed'); } });
-    expect(routerLedger.add('s1', 'coord', { kind: 'do', text: 'Check staging.' })).toMatchObject({ id: 'N1' });
+    expect(routerLedger.add('s1', 'coord', { kind: 'do', text: 'Check staging.', title: 'Check staging' })).toMatchObject({ id: 'N1' });
   });
 
   it('createApp and startServer both build their ledger with wireLedger', () => {

@@ -209,6 +209,9 @@ export function onlyUserCanDecide(item: { kind: LedgerKind; sourceKind: LedgerSo
 /** The most characters a title may have. The persona asks for about 40. */
 export const TITLE_MAX = 50;
 
+/** Unit 2: ledger_add, ledger_import (open items) and ledger_add_from_agent require a title on a go, decide or do item. */
+export const TITLE_MISSING_ERROR =
+  'A go, decide or do item needs a title: a short label of at least 2 words and at most 50 characters (about 40 is best). Add it and try again.';
 export const TITLE_ONE_LINE_ERROR = 'The title must be one line. Fix it and try again.';
 export const TITLE_TWO_WORDS_ERROR = 'The title needs at least 2 words. Fix it and try again.';
 export const TITLE_CODE_ONLY_ERROR = 'The title must say what the item is, not only a code such as N41 or LR-6. Fix it and try again.';

@@ -31,13 +31,13 @@ describe('ledger routes', () => {
   });
 
   it('a card that fails a Unit 2 check is a 422 with the fixed text, and nothing is created', async () => {
-    const missing = await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'go', text: 'Merge PR #12.' }).expect(422);
+    const missing = await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'go', text: 'Merge PR #12.', title: 'Merge PR #12' }).expect(422);
     expect(missing.body).toEqual({ error: 'A decision card needs: context (20 to 800 characters), default, source. Add them and try again.' });
     const range = await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'decide', text: 'Approve LR-1..LR-26?', ...DECIDE_CARD }).expect(422);
     expect(range.body.error).toBe('One decision per card. Add each decision on its own.');
     const source = await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'go', text: 'Merge PR #12.', ...GO_CARD, source: { kind: 'pr', ref: 'twelve' } }).expect(422);
     expect(source.body.error).toBe('The source does not exist in this project: twelve.');
-    const imported = await request(app).post(`/api/sessions/${sid}/ledger/import`).send({ caller: 'coord', items: [{ kind: 'go', text: 'Merge PR #9.' }] }).expect(422);
+    const imported = await request(app).post(`/api/sessions/${sid}/ledger/import`).send({ caller: 'coord', items: [{ kind: 'go', text: 'Merge PR #9.', title: 'Merge PR #9' }] }).expect(422);
     expect(imported.body).toEqual({ error: 'A decision card needs: context (20 to 800 characters), default, source. Add them and try again.', item: 0 });
     const list = await request(app).post(`/api/sessions/${sid}/ledger/list`).send({ caller: 'coord' }).expect(200);
     expect(list.body.openIds).toEqual([]);
@@ -62,13 +62,14 @@ describe('ledger routes', () => {
       ['ledger', { kind: 'go', text: 'Merge PR #12.', ...GO_CARD }],
       ['ledger/list', { forRecap: true }],
       ['ledger/note', { quote: 'never on Fridays' }],
-      ['ledger/import', { items: [{ kind: 'do', text: 'Check staging.' }] }],
+      ['ledger/import', { items: [{ kind: 'do', text: 'Check staging.', title: 'Check staging' }] }],
       ['ledger/handoff', { ids: ['N1'] }],
       ['ledger/N1/resolve', { status: 'withdrawn', reason: 'moot' }],
       ['ledger/show', { all: true }],
       ['ledger/N1/add-from-agent', { note: 'x' }],
       ['ledger/N1/decide-self', { choice: 'A', reason: 'x' }],
       ['ledger/N1/mark-default', {}],
+      ['ledger/N1/title', { title: 'Check the banner' }],
     ];
     for (const caller of ['agent', undefined]) {
       for (const [route, body] of routes) {
@@ -103,7 +104,7 @@ describe('ledger routes', () => {
   });
 
   it('list, note, import and handoff answer on their routes', async () => {
-    await request(app).post(`/api/sessions/${sid}/ledger/import`).send({ caller: 'coord', items: [{ kind: 'do', text: 'Check staging.' }] }).expect(201);
+    await request(app).post(`/api/sessions/${sid}/ledger/import`).send({ caller: 'coord', items: [{ kind: 'do', text: 'Check staging.', title: 'Check staging' }] }).expect(201);
     const list = await request(app).post(`/api/sessions/${sid}/ledger/list`).send({ caller: 'coord', forRecap: true }).expect(200);
     expect(list.body.text).toContain('Your tests and actions:\n- N1 [Do] Check staging.');
     expect(list.body.paste).toBe('Needs you: 0 decisions, 1 action — on the card.'); // an import is never new
@@ -128,7 +129,7 @@ describe('ledger routes', () => {
     for (const text of ['How many nights?', 'Which day?']) {
       ledgerDb.create(db, { sessionId: sid, kind: 'decide', text, author: 'planner', status: 'proposed', ...{ context: DECIDE_CARD.context, defaultText: DECIDE_CARD.default } });
     }
-    const sent = await request(app).post(`/api/sessions/${sid}/ledger/N1/add-from-agent`).send({ caller: 'coord', note: 'Mind the freeze.' }).expect(200);
+    const sent = await request(app).post(`/api/sessions/${sid}/ledger/N1/add-from-agent`).send({ caller: 'coord', title: 'Nights before live mode', note: 'Mind the freeze.' }).expect(200);
     expect(sent.body).toEqual({ id: 'N1', status: 'open' });
     const decided = await request(app).post(`/api/sessions/${sid}/ledger/N2/decide-self`).send({ caller: 'coord', choice: 'Monday', reason: 'quiet day' }).expect(200);
     expect(decided.body.status).toBe('decided_by_overseer');
@@ -141,6 +142,21 @@ describe('ledger routes', () => {
     expect(shown.body.text).toContain("**Overseer's note:** Mind the freeze.");
   });
 
+  // Titles and source panel spec 2026-10-09, Unit 2: the title route, overseer only.
+  it('POST /ledger/:itemId/title sets the title; a missing title on a new item and a bad title are 422s', async () => {
+    const untitled = await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'do', text: 'Check staging.' }).expect(422);
+    expect(untitled.body).toEqual({ error: 'A go, decide or do item needs a title: a short label of at least 2 words and at most 50 characters (about 40 is best). Add it and try again.' });
+    await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'do', text: 'Check staging.', title: 'Check staging' }).expect(201);
+    const set = await request(app).post(`/api/sessions/${sid}/ledger/N1/title`).send({ caller: 'coord', title: 'Check the staging banner' }).expect(200);
+    expect(set.body).toEqual({ id: 'N1', title: 'Check the staging banner' });
+    const bad = await request(app).post(`/api/sessions/${sid}/ledger/N1/title`).send({ caller: 'coord', title: 'N41 Q12' }).expect(422);
+    expect(bad.body).toEqual({ error: 'The title must say what the item is, not only a code such as N41 or LR-6. Fix it and try again.' });
+    const denied = await request(app).post(`/api/sessions/${sid}/ledger/N1/title`).send({ caller: 'agent', title: 'Check the banner' }).expect(403);
+    expect(denied.body).toEqual({ error: "Only the project's overseer can change the ledger." });
+    await request(app).post(`/api/sessions/${sid}/ledger/N9/title`).send({ caller: 'coord', title: 'Check the banner' }).expect(404);
+    expect(ledgerDb.getBySeq(db, sid, 1)!.title).toBe('Check the staging banner');
+  });
+
   // Pinned card spec 2026-10-08, Unit 2: the read-only card route.
   describe('GET /ledger/card', () => {
     it('returns the sections as card items, the rules and the index; no caller is needed', async () => {
@@ -148,7 +164,7 @@ describe('ledger routes', () => {
       await request(app).post(`/api/sessions/${sid}/ledger/note`).send({ caller: 'coord', quote: 'never deploy on Fridays', policy: true }).expect(201);
       await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'decide', text: 'How many clean nights before live mode?', ...DECIDE_CARD }).expect(201);
       await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'go', text: 'Merge PR #12?', ...GO_CARD }).expect(201);
-      await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'do', text: 'Check the banner on staging.' }).expect(201);
+      await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'do', text: 'Check the banner on staging.', title: 'Check the staging banner' }).expect(201);
       const res = await request(app).get(`/api/sessions/${sid}/ledger/card`).expect(200);
       expect(Object.keys(res.body).sort()).toEqual(['index', 'lastRecapAt', 'rules', 'sections', 'updatedAt']);
       expect(res.body.lastRecapAt).toBeNull();
@@ -168,7 +184,7 @@ describe('ledger routes', () => {
     it('only reads: lastRecapAt and the interim timer stay as they are', async () => {
       const cfg = { role: 'coordinator', lastRecapAt: '2026-10-08T10:00:00.000Z', interimDueAt: '2026-10-08T10:20:00.000Z' };
       terminalsDb.updateConfig(db, 'coord', cfg);
-      await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'do', text: 'Check staging.' }).expect(201);
+      await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'do', text: 'Check staging.', title: 'Check staging' }).expect(201);
       const before = ledgerDb.listBySession(db, sid);
       const res = await request(app).get(`/api/sessions/${sid}/ledger/card`).expect(200);
       expect(res.body.lastRecapAt).toBe('2026-10-08T10:00:00.000Z');

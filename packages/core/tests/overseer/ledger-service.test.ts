@@ -128,9 +128,9 @@ describe('card checks (decision cards, Unit 2)', () => {
     ledger.add('p', 'pcoord', { kind, text: 'How many clean nights before live mode?', ...(kind === 'go' ? GO_CARD : DECIDE_CARD), ...extra });
 
   it('rule 1: a decide or go item without the card fields fails with the fixed text and creates nothing', () => {
-    expectLedgerError(() => ledger.add('p', 'pcoord', { kind: 'decide', text: 'Which helper?' }), 422,
+    expectLedgerError(() => ledger.add('p', 'pcoord', { kind: 'decide', text: 'Which helper?', title: 'Pick the retry helper' }), 422,
       'A decision card needs: context (20 to 800 characters), options (at least 2, each { label, effect }), default, source. Add them and try again.');
-    expectLedgerError(() => ledger.add('p', 'pcoord', { kind: 'go', text: 'Merge PR #12.' }), 422,
+    expectLedgerError(() => ledger.add('p', 'pcoord', { kind: 'go', text: 'Merge PR #12.', title: 'Merge PR #12' }), 422,
       'A decision card needs: context (20 to 800 characters), default, source. Add them and try again.');
     expectLedgerError(() => addP({ why: '' }), 422, 'A decision card needs: why. Add them and try again.');
     expect(ledgerDb.listBySession(db, 'p')).toEqual([]);
@@ -146,7 +146,7 @@ describe('card checks (decision cards, Unit 2)', () => {
   });
 
   it('rule 1: a do item needs no card fields', () => {
-    expect(ledger.add('p', 'pcoord', { kind: 'do', text: 'Check the banner on staging.' }).id).toBe('N1');
+    expect(ledger.add('p', 'pcoord', { kind: 'do', text: 'Check the banner on staging.', title: 'Check the staging banner' }).id).toBe('N1');
   });
 
   it('rule 2: a range or 3+ plan IDs in the question fails; a single LR-6 passes', () => {
@@ -232,8 +232,8 @@ describe('card checks (decision cards, Unit 2)', () => {
 
   it('import applies the same checks: the failed item is named in the body and nothing is created', () => {
     const e = expectLedgerError(() => ledger.importItems('p', 'pcoord', [
-      { kind: 'do', text: 'Check staging.' },
-      { kind: 'decide', text: 'Use library A?' },
+      { kind: 'do', text: 'Check staging.', title: 'Check staging' },
+      { kind: 'decide', text: 'Use library A?', title: 'Use library A' },
     ]), 422, 'A decision card needs: context (20 to 800 characters), options (at least 2, each { label, effect }), default, source. Add them and try again.');
     expect(e.body).toEqual({ item: 1 });
     expectLedgerError(() => ledger.importItems('p', 'pcoord', [{ kind: 'decide', text: 'Accept D1 to D9?', ...DECIDE_CARD }]), 422, 'One decision per card. Add each decision on its own.');
@@ -343,7 +343,7 @@ describe('list', () => {
     now = T0 + 10 * 60_000;
     expect(ledger.list('s1', 'coord', { forRecap: true }).paste).toContain('New:\n- N1 · Go · Merge PR #12?'); // new until this recap
     now = T0 + 20 * 60_000;
-    ledger.add('s1', 'coord', { kind: 'do', text: 'Check the banner on staging.' });
+    ledger.add('s1', 'coord', { kind: 'do', text: 'Check the banner on staging.', title: 'Check the staging banner' });
     expect(ledger.list('s1', 'coord').paste).toBe('New:\n- N2 · Do · Check the banner on staging.\n\nNeeds you: 1 decision, 1 action — on the card.');
   });
 });
@@ -426,25 +426,25 @@ describe('triage tools', () => {
   it('ledger_add_from_agent: the agent\'s text stays word for word; the note becomes the overseer\'s note; the item is sent now', () => {
     propose();
     now = T0 + 5 * 60_000;
-    expect(ledger.addFromAgent('s1', 'coord', { id: 'N1', note: 'The agent did not know about the holiday freeze.' })).toEqual({ id: 'N1', status: 'open' });
+    expect(ledger.addFromAgent('s1', 'coord', { id: 'N1', title: 'Clean nights before live mode', note: 'The agent did not know about the holiday freeze.' })).toEqual({ id: 'N1', status: 'open' });
     const item = ledgerDb.getBySeq(db, 's1', 1)!;
     expect(item).toMatchObject({
       status: 'open', text: LR6.question, context: LR6.context, options: LR6.options, recommendation: LR6.recommendation,
       recommendationWhy: LR6.why, defaultText: LR6.default, overseerNote: 'The agent did not know about the holiday freeze.', sentAt: min(5),
     });
     expect(renderCard(item, { now, timeZone: 'UTC' })).toContain("**Overseer's note:** The agent did not know about the holiday freeze.");
-    expect(ledger.addFromAgent('s1', 'coord', { id: 'N2' })).toEqual({ id: 'N2', status: 'open' });
+    expect(ledger.addFromAgent('s1', 'coord', { id: 'N2', title: 'Day of the switch' })).toEqual({ id: 'N2', status: 'open' });
     expect(ledgerDb.getBySeq(db, 's1', 2)!.overseerNote).toBeNull();
-    expectLedgerError(() => ledger.addFromAgent('s1', 'coord', { id: 'N1' }), 409, 'N1 is already open.');
-    expectLedgerError(() => ledger.addFromAgent('s1', 'coord', { id: 'N9' }), 404);
+    expectLedgerError(() => ledger.addFromAgent('s1', 'coord', { id: 'N1', title: 'Clean nights before live mode' }), 409, 'N1 is already open.');
+    expectLedgerError(() => ledger.addFromAgent('s1', 'coord', { id: 'N9', title: 'Clean nights before live mode' }), 404);
   });
 
   it('ledger_add_from_agent takes blocks: the overseer says what the item holds up, and the card ranks first', () => {
     propose(); // N1, N2
     ledger.add('s1', 'coord', { kind: 'decide', text: 'Which store goes first?', ...DECIDE_CARD }); // N3, sent first
     now = T0 + 5 * 60_000;
-    ledger.addFromAgent('s1', 'coord', { id: 'N2', blocks: 'the switch to live mode' });
-    ledger.addFromAgent('s1', 'coord', { id: 'N1' });
+    ledger.addFromAgent('s1', 'coord', { id: 'N2', title: 'Day of the switch', blocks: 'the switch to live mode' });
+    ledger.addFromAgent('s1', 'coord', { id: 'N1', title: 'Clean nights before live mode' });
     expect(ledgerDb.getBySeq(db, 's1', 2)!.blocks).toBe('the switch to live mode');
     expect(ledgerDb.getBySeq(db, 's1', 1)!.blocks).toBeNull();
     ledger.list('s1', 'coord', { forRecap: true });
@@ -483,7 +483,7 @@ describe('triage tools', () => {
     ledger.add('s1', 'coord', { kind: 'decide', text: 'Which store goes first?', ...DECIDE_CARD }); // N3, sent at once
     expectLedgerError(() => ledger.decideSelf('s1', 'coord', { id: 'N3', choice: 'A. 5 nights', reason: 'x' }), 422, ONLY_USER_ERROR);
     propose(); // N4, N5
-    ledger.addFromAgent('s1', 'coord', { id: 'N4' }); // sent to the user by triage
+    ledger.addFromAgent('s1', 'coord', { id: 'N4', title: 'Clean nights before live mode' }); // sent to the user by triage
     expectLedgerError(() => ledger.decideSelf('s1', 'coord', { id: 'N4', choice: 'A. 5 nights', reason: 'x' }), 422, ONLY_USER_ERROR);
     ledger.decideSelf('s1', 'coord', { id: 'N5', choice: 'Monday', reason: 'x' });
     expectLedgerError(() => ledger.decideSelf('s1', 'coord', { id: 'N5', choice: 'Tuesday', reason: 'y' }), 409, 'N5 is already decided_by_overseer.');
@@ -590,7 +590,7 @@ describe('triage tools', () => {
     expect(recap).toContain('Needs you now:\n- none');
     expect(recap).toContain('Running on defaults:\n- **N1 · Decide:** Abort when duplicates pass 1%?');
     expect(ledger.list('s1', 'coord').openIds).toEqual(['N1']);
-    ledger.add('s1', 'coord', { kind: 'do', text: 'Check staging.' });
+    ledger.add('s1', 'coord', { kind: 'do', text: 'Check staging.', title: 'Check staging' });
     expectLedgerError(() => ledger.markDefault('s1', 'coord', { id: 'N2' }), 400);
     userSays('abort above 1% is fine', 2000);
     ledger.resolve('s1', 'coord', { id: 'N1', status: 'answered', quote: 'abort above 1% is fine' });
@@ -600,7 +600,7 @@ describe('triage tools', () => {
   it('ledger_show: full cards for one, several, and all open decisions', () => {
     ledger.add('s1', 'coord', { kind: 'decide', text: 'Which store goes first?', ...DECIDE_CARD });
     ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR #12?', ...GO_CARD });
-    ledger.add('s1', 'coord', { kind: 'do', text: 'Check staging.' });
+    ledger.add('s1', 'coord', { kind: 'do', text: 'Check staging.', title: 'Check staging' });
     propose(); // N4, N5: proposed, not open
     const card = (seq: number) => renderCard(ledgerDb.getBySeq(db, 's1', seq)!, { now, timeZone: 'UTC', lookup: (s) => ledgerDb.getBySeq(db, 's1', s) });
     expect(ledger.show('s1', 'coord', { ids: ['N2'] })).toEqual({ text: card(2) });

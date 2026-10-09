@@ -35,6 +35,8 @@ export function createLedgerRouter(ledger: LedgerService): Router {
   router.post('/sessions/:sessionId/ledger/:itemId/add-from-agent', handle(200, (req) => ledger.addFromAgent(req.params.sessionId, req.body?.caller, { ...(req.body ?? {}), id: req.params.itemId })));
   router.post('/sessions/:sessionId/ledger/:itemId/decide-self', handle(200, (req) => ledger.decideSelf(req.params.sessionId, req.body?.caller, { ...(req.body ?? {}), id: req.params.itemId })));
   router.post('/sessions/:sessionId/ledger/:itemId/mark-default', handle(200, (req) => ledger.markDefault(req.params.sessionId, req.body?.caller, { ...(req.body ?? {}), id: req.params.itemId })));
+  // Titles and source panel (spec 2026-10-09, Unit 2): the overseer sets or changes an item's title.
+  router.post('/sessions/:sessionId/ledger/:itemId/title', handle(200, (req) => ledger.setTitle(req.params.sessionId, req.body?.caller, { ...(req.body ?? {}), id: req.params.itemId })));
 
   return router;
 }

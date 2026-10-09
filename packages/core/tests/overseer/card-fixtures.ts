@@ -1,8 +1,10 @@
 // Card fields that pass every Unit 2 check (decision cards spec 2026-10-06), for tests that add
-// go or decide items but test something else.
+// go or decide items but test something else. Each has a title too, as ledger_add and an open
+// imported item require one (titles spec 2026-10-09, Unit 2); a test that checks a title sets its own.
 export const CONTEXT = 'The new sync runs in shadow mode. It computes changes but does not write them.';
 
 export const DECIDE_CARD = {
+  title: 'Clean nights before live mode',
   context: CONTEXT,
   options: [
     { label: 'A. 5 nights', effect: 'Live mode on Oct 14 at the earliest. Covers one weekend.' },
@@ -15,6 +17,7 @@ export const DECIDE_CARD = {
 } as const;
 
 export const GO_CARD = {
+  title: 'Merge the reviewed fix',
   context: 'The fix is reviewed and CI is green on the branch.',
   default: 'Nothing happens.',
   source: { kind: 'overseer' },

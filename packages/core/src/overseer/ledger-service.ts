@@ -28,8 +28,8 @@ import {
 import { buildLedgerCard, type LedgerCard } from './ledger-card.js';
 import {
   cardFieldsError, findProjectPath, gitWorktrees, holdsSeveralDecisions, isIssueRef, missingCardFields,
-  isUserSourceKind, ONE_DECISION_ERROR, ONLY_USER_ERROR, onlyUserCanDecide, sourceComplete, sourceMissingError, titleProblem,
-  type CardFieldsInput,
+  isUserSourceKind, ONE_DECISION_ERROR, ONLY_USER_ERROR, onlyUserCanDecide, sourceComplete, sourceMissingError, TITLE_MISSING_ERROR,
+  titleProblem, type CardFieldsInput,
 } from './ledger-checks.js';
 
 export const NOT_OVERSEER_ERROR = "Only the project's overseer can change the ledger.";
@@ -61,12 +61,15 @@ const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim
 
 /**
  * The title of an item (titles spec 2026-10-09, Unit 1), trimmed; undefined when none is given. A
- * title that breaks a rule is a 422 with the reason, in the shape of the card-field errors (`body`
- * rides along, as `{ item: i }` for an import).
+ * missing `required` title (Unit 2) and a title that breaks a rule are 422s with the fixed text, in
+ * the shape of the card-field errors (`body` rides along, as `{ item: i }` for an import).
  */
-function readTitle(raw: unknown, body: Record<string, unknown> = {}): string | undefined {
+function readTitle(raw: unknown, body: Record<string, unknown> = {}, required = false): string | undefined {
   const title = str(raw);
-  if (title === undefined) return undefined;
+  if (title === undefined) {
+    if (required) throw new LedgerError(422, TITLE_MISSING_ERROR, body);
+    return undefined;
+  }
   const problem = titleProblem(title);
   if (problem) throw new LedgerError(422, problem, body);
   return title;
@@ -266,7 +269,7 @@ export class LedgerService {
     if (typeof kind !== 'string' || !OPEN_KINDS.has(kind)) throw new LedgerError(400, "kind must be 'go', 'decide' or 'do'");
     const text = str(input.text);
     if (!text) throw new LedgerError(400, 'text is required');
-    const title = readTitle(input.title);
+    const title = readTitle(input.title, {}, true); // Unit 2: every kind ledger_add takes needs one
     let supersedes: number | undefined;
     if (input.supersedes !== undefined && input.supersedes !== null && input.supersedes !== '') {
       supersedes = this.requireItem(sessionId, input.supersedes).seq;
@@ -334,14 +337,16 @@ export class LedgerService {
 
   /**
    * ledger_add_from_agent: a proposed item goes to the user (status open), the agent's text word
-   * for word. `note` becomes the overseer's note; `blocks` says what the item holds up (the
-   * overseer knows that; the agent block cannot set it).
+   * for word, with the overseer's title (required: titles spec 2026-10-09, Unit 2). `note` becomes
+   * the overseer's note; `blocks` says what the item holds up (the overseer knows that; the agent
+   * block cannot set it).
    */
   addFromAgent(sessionId: string, caller: unknown, input: Record<string, unknown>): { id: string; status: 'open' } {
     this.assertOverseer(sessionId, caller);
     const item = this.requireItem(sessionId, input.id);
     if (item.status !== 'proposed') throw new LedgerError(409, `N${item.seq} is already ${item.status}.`, { status: item.status });
-    ledgerDb.markSent(this.db, sessionId, item.seq, { note: str(input.note), blocks: str(input.blocks), now: this.nowIso() });
+    const title = readTitle(input.title, {}, true);
+    ledgerDb.markSent(this.db, sessionId, item.seq, { title, note: str(input.note), blocks: str(input.blocks), now: this.nowIso() });
     this.changed(sessionId);
     return { id: `N${item.seq}`, status: 'open' };
   }
@@ -392,6 +397,20 @@ export class LedgerService {
     });
     this.changed(sessionId);
     return { id: `N${item.seq}`, status: 'decided_by_overseer', line: renderOverseerDecisionLine(item) };
+  }
+
+  /**
+   * ledger_set_title (titles spec 2026-10-09, Unit 2): set or change the title of any item of the
+   * overseer's own project. A title is a label, so a change is safe; it is not logged.
+   */
+  setTitle(sessionId: string, caller: unknown, input: Record<string, unknown>): { id: string; title: string } {
+    this.assertOverseer(sessionId, caller);
+    const item = this.requireItem(sessionId, input.id);
+    if (str(input.title) === undefined) throw new LedgerError(400, 'title is required');
+    const title = readTitle(input.title)!;
+    ledgerDb.setTitle(this.db, sessionId, item.seq, title);
+    this.changed(sessionId);
+    return { id: `N${item.seq}`, title };
   }
 
   /** ledger_mark_default: work now runs on the default of an open decision. It stays open. */
@@ -505,7 +524,9 @@ export class LedgerService {
       if (it.policy !== undefined && it.policy !== false) {
         throw new LedgerError(400, `items[${i}].policy is not allowed: a project rule needs the user's checked words (ledger_note with policy: true)`);
       }
-      const title = readTitle(it.title, { item: i });
+      // Titles spec 2026-10-09, Unit 2: an open go, decide or do item needs a title; an answered or
+      // parked item and a statement may have one.
+      const title = readTitle(it.title, { item: i }, kind !== 'statement' && status === 'open');
       const card = this.checkCard(sessionId, overseer.id, kind as ledgerDb.LedgerKind, text, it, { item: i });
       return {
         sessionId,
