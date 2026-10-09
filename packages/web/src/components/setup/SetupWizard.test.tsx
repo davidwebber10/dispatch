@@ -39,3 +39,16 @@ test('mobile step shows the tailnet URL when running', async () => {
   fireEvent.click(screen.getByText('Continue')); // agents → mobile
   await waitFor(() => expect(screen.getByText('http://my-mac.ts.net:3456')).toBeInTheDocument());
 });
+
+test('WSL setup gives Linux installation instructions instead of Homebrew', async () => {
+  const { useHost } = await import('../../stores/host');
+  useHost.setState({ platform: 'linux', flavor: 'wsl' });
+  getSetupState.mockResolvedValue({ firstRun: true, providers: [], tailscale: { installed: false, running: false }, secrets: { connected: false } });
+  render(<SetupWizard />);
+  await screen.findByText('Set up Dispatch');
+  fireEvent.click(screen.getByText('Continue'));
+  expect(screen.getByText(/inside the WSL distribution/)).toBeInTheDocument();
+  expect(screen.getByText(/sudo tailscale up/)).toBeInTheDocument();
+  expect(screen.queryByText(/brew install/)).not.toBeInTheDocument();
+  useHost.setState({ platform: null, flavor: null });
+});

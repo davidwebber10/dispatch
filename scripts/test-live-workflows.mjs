@@ -118,6 +118,42 @@ await check('provider detection, host capabilities and update state', async () =
   await request('GET', '/api/state/update');
   await request('GET', '/api/setup/harnesses');
 });
+await check('harness preference save and readback', async () => {
+  await request('PUT', '/api/settings/harnesses', { codex: { defaultMode: 'pretty' } });
+  assert.equal((await request('GET', '/api/settings/harnesses')).settings.codex.defaultMode, 'pretty');
+});
+await check('server list add, persist and remove', async () => {
+  const origin = 'http://localhost:49999';
+  assert.ok((await request('POST', '/api/servers', { label: 'Parity fixture', origin })).some(x => x.origin === origin));
+  assert.ok((await request('GET', '/api/servers')).some(x => x.origin === origin));
+  assert.ok(!(await request('DELETE', '/api/servers?origin=' + encodeURIComponent(origin))).some(x => x.origin === origin));
+});
+await check('analytics, usage records, tracking and control-plane summaries', async () => {
+  for (const suffix of ['summary', 'series', 'top', 'records', 'tracking', 'control-plane']) await request('GET', '/api/analytics/' + suffix);
+});
+await check('bundled tool status, roles and project ledger', async () => {
+  assert.ok((await request('GET', '/api/tools')).tools.length > 0);
+  await request('GET', '/api/roles');
+  await request('GET', root + '/ledger/card');
+});
+await check('file download matches edited contents', async () => {
+  const res = await fetch(base + root + '/files/download?path=docs/renamed.txt');
+  assert.equal(res.status, 200); assert.equal(await res.text(), 'Hello WSL — café\n');
+});
+const host = await request('GET', '/api/state/host');
+if (host.flavor === 'wsl') {
+  await check('Windows filesystem project warning and file I/O', async () => {
+    const win = await request('POST', '/api/sessions', { name: 'Windows path', workingDir: '/mnt/c/DispatchTest/project with spaces', provider: 'claude-code' }, 201);
+    assert.match(win.warning, /Windows filesystem/);
+    await request('PUT', `/api/sessions/${win.id}/files/write?path=test.txt`, { content: 'Windows filesystem verified' });
+    assert.equal((await request('GET', `/api/sessions/${win.id}/files/read?path=test.txt`)).content, 'Windows filesystem verified');
+    await request('DELETE', `/api/sessions/${win.id}`, undefined, 204);
+  });
+  await check('Windows Explorer reveal route and local-client capability', async () => {
+    assert.equal(host.fileManagerName, 'File Explorer'); assert.equal(host.canReveal, true);
+    assert.equal((await request('POST', root + '/files/reveal', { paths: ['seed.txt'] })).ok, true);
+  });
+}
 const report = { at: new Date().toISOString(), platform: process.platform, projectId: project.id, terminalId: terminal?.id, dir, results };
 fs.writeFileSync(path.join(os.homedir(), 'dispatch-parity-results.json'), JSON.stringify(report, null, 2));
 console.log(JSON.stringify(report, null, 2));

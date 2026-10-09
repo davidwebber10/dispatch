@@ -19,6 +19,7 @@ interface UpdateState {
   currentNotes: string | null;
   /** True once any client (this one or another) has triggered POST /api/update/apply. */
   inProgress: boolean;
+  failure: string | null;
   load: () => Promise<void>;
   /** Ask the server to poll GitHub right now (Settings → Check for updates). */
   check: () => Promise<void>;
@@ -42,6 +43,7 @@ export const useUpdate = create<UpdateState>((set, get) => ({
   notes: [],
   currentNotes: null,
   inProgress: false,
+  failure: null,
   load: async () => {
     set(fromDto(await api.getUpdateState()));
   },
@@ -63,7 +65,9 @@ export const useUpdate = create<UpdateState>((set, get) => ({
       // so a client that was already open still shows what the update contains.
       void get().load().catch(() => {});
     } else if (e.type === 'update:in-progress') {
-      set({ inProgress: true });
+      set({ inProgress: true, failure: null });
+    } else if (e.type === 'update:failed') {
+      set({ inProgress: false, failure: typeof e.reason === 'string' ? e.reason : 'Update failed. Run dispatch update to retry.' });
     }
   },
   dismiss: () => set({ dismissedVersion: get().available?.version ?? null }),

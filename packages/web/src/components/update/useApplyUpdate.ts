@@ -12,6 +12,7 @@ import { useUpdate } from '../../stores/update';
  */
 export function useApplyUpdate() {
   const inProgress = useUpdate((s) => s.inProgress);
+  const failure = useUpdate((s) => s.failure);
   const [applying, setApplying] = useState(false);
   const [failReason, setFailReason] = useState<string | null>(null);
   const [failDirty, setFailDirty] = useState<{ status: string; path: string }[] | null>(null);
@@ -24,6 +25,7 @@ export function useApplyUpdate() {
   const apply = async (force?: boolean) => {
     setApplying(true);
     setFailReason(null);
+    useUpdate.setState({ failure: null });
     setFailDirty(null);
     setFailDirtyOverflow(0);
     setCanForce(false);
@@ -58,5 +60,5 @@ export function useApplyUpdate() {
     return () => clearInterval(timer);
   }, [inProgress]);
 
-  return { apply, applying, failReason, failDirty, failDirtyOverflow, canForce, inProgress, hosted };
+  return { apply, applying, failReason: failReason ?? failure, failDirty, failDirtyOverflow, canForce, inProgress, hosted };
 }

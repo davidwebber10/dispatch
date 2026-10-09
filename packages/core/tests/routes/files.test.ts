@@ -250,7 +250,7 @@ describe('file routes', () => {
   });
 
   describe('POST /reveal', () => {
-    let originalFileManagerName: string | null;
+    let originalFileManagerName: PropertyDescriptor;
     let revealSpy: ReturnType<typeof vi.spyOn>;
     let isLocalClientSpy: ReturnType<typeof vi.spyOn>;
 
@@ -258,14 +258,14 @@ describe('file routes', () => {
       // Pin a capable platform (non-null file manager) regardless of which OS this suite runs on;
       // isLocalClient wraps the REAL loopback predicate so the route's own plumbing — reading the
       // socket peer, not req.ip — is genuinely exercised, not just stubbed away.
-      originalFileManagerName = platform.fileManagerName;
-      (platform as { fileManagerName: string | null }).fileManagerName = 'Finder';
+      originalFileManagerName = Object.getOwnPropertyDescriptor(platform, 'fileManagerName')!;
+      Object.defineProperty(platform, 'fileManagerName', { configurable: true, writable: true, value: 'Finder' });
       isLocalClientSpy = vi.spyOn(platform, 'isLocalClient').mockImplementation(isGenuinelyLocal);
       revealSpy = vi.spyOn(platform, 'revealInFileManager').mockResolvedValue(undefined);
     });
 
     afterEach(() => {
-      (platform as { fileManagerName: string | null }).fileManagerName = originalFileManagerName;
+      Object.defineProperty(platform, 'fileManagerName', originalFileManagerName);
       vi.restoreAllMocks();
     });
 

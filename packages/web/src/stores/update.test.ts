@@ -81,3 +81,12 @@ test('a failed refetch after update:available leaves the banner intact', async (
   await Promise.resolve();
   expect(useUpdate.getState().available).toEqual({ version: 'v1.3.0', url: null, publishedAt: null });
 });
+
+test('failed update stops progress and keeps an actionable error for every connected client', () => {
+  useUpdate.getState().applyEvent({ type: 'update:in-progress' });
+  useUpdate.getState().applyEvent({ type: 'update:failed', reason: 'Build failed. See update.log.' });
+  expect(useUpdate.getState().inProgress).toBe(false);
+  expect(useUpdate.getState().failure).toBe('Build failed. See update.log.');
+  useUpdate.getState().applyEvent({ type: 'update:in-progress' });
+  expect(useUpdate.getState().failure).toBeNull();
+});
