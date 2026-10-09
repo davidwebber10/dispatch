@@ -1,5 +1,7 @@
 import { execFileSync, spawn } from 'child_process';
 import path from 'path';
+import fs from 'fs';
+import { platform } from '../platform/index.js';
 
 export interface PreflightResult {
   ok: boolean;
@@ -110,12 +112,27 @@ export function preflightUpdate(repoDir: string, gitExec?: GitExec, opts?: { for
   return { ok: true };
 }
 
-/** Spawns `bin/dispatch update` detached so it survives this request/process. */
-export function applyUpdate(repoDir: string): void {
-  const child = spawn(path.join(repoDir, 'bin', 'dispatch'), ['update'], {
-    cwd: repoDir,
-    detached: true,
-    stdio: 'ignore',
-  });
-  child.unref();
+/** Keep build diagnostics, and notify clients if the detached updater fails before restart. */
+export function applyUpdate(repoDir: string, onFailure?: (reason: string) => void): void {
+  const logDir = platform.logDir();
+  fs.mkdirSync(logDir, { recursive: true });
+  const logPath = path.join(logDir, 'update.log');
+  const log = fs.openSync(logPath, 'a', 0o600);
+  const fail = (reason: string) => {
+    fs.appendFileSync(logPath, `[dispatch] ${reason}\n`);
+    onFailure?.(`${reason} See ${logPath} for details.`);
+  };
+  try {
+    fs.writeSync(log, `\n[dispatch] Update started ${new Date().toISOString()}\n`);
+    const child = spawn(path.join(repoDir, 'bin', 'dispatch'), ['update'], {
+      cwd: repoDir,
+      detached: true,
+      stdio: ['ignore', log, log],
+    });
+    child.once('error', error => fail(`Could not start updater: ${error.message}`));
+    child.once('exit', (code, signal) => {
+      if (code !== 0) fail(`Update failed (${signal ?? `exit ${code}`}).`);
+    });
+    child.unref();
+  } finally { fs.closeSync(log); }
 }

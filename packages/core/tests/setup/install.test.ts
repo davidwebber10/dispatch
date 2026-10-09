@@ -58,13 +58,24 @@ describe('isProviderName', () => {
 
 describe('INSTALL_COMMANDS', () => {
   it('are fixed constants, one per provider', () => {
-    expect(INSTALL_COMMANDS.claude).toBe('npm install -g @anthropic-ai/claude-code');
-    expect(INSTALL_COMMANDS.codex).toBe('npm install -g @openai/codex');
+    expect(INSTALL_COMMANDS.claude).toBe('npm install -g --prefix "$HOME/.dispatch/tools" @anthropic-ai/claude-code');
+    expect(INSTALL_COMMANDS.codex).toBe('npm install -g --prefix "$HOME/.dispatch/tools" @openai/codex');
     expect(INSTALL_COMMANDS.grok).toBe('curl -fsSL https://x.ai/cli/install.sh | bash');
   });
 });
 
 describe('installProvider', () => {
+  it.each(['codex', 'claude', 'opencode'] as const)('detects newly installed %s in the user-owned prefix without a PATH change', async (name) => {
+    const run = vi.fn(async () => {
+      fakeInstall(`.dispatch/tools/bin/${name}`);
+      return { ok: true, output: 'installed' };
+    });
+    const result = await installProvider(name, run);
+    expect(result.ok).toBe(true);
+    expect(result.status.installed).toBe(true);
+    expect(result.status.version).toBe('1.0.3');
+  });
+
   it('runs that provider\'s command and reports success once the binary is really there', async () => {
     const run = vi.fn(async () => { fakeInstall('.grok/bin/grok'); return { ok: true, output: 'installed' }; });
 

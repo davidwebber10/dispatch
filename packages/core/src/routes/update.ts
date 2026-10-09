@@ -33,7 +33,7 @@ export interface CreateUpdateRouterOptions {
 
 export function createUpdateRouter(broadcaster: EventBroadcaster, repoDir: string, db: Database.Database, opts?: CreateUpdateRouterOptions): Router {
   const router = Router();
-  const apply = opts?.applyFn ?? applyUpdate;
+  const apply = opts?.applyFn ?? ((dir: string) => applyUpdate(dir, reason => broadcaster.broadcast({ type: 'update:failed', reason })));
   const check = opts?.checkFn ?? checkForUpdateOnce;
   // Resolved once at construction: a box does not become un-hosted at runtime.
   const hosted = opts?.hosted !== undefined ? opts.hosted : hostedTarget();

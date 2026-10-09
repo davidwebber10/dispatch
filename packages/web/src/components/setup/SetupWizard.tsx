@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import QRCode from 'qrcode';
 import type { SetupState, ProviderStatus, ProviderName, TailscaleStatus } from '../../api/types';
 import { api } from '../../api/client';
+import { useHost } from '../../stores/host';
 import { useSetup } from '../../stores/setup';
 import { HARNESSES, INSTALL_COMMAND, LOGIN_COMMAND } from '../../lib/harnesses';
 import { SecretsSection } from '../settings/SecretsSection';
@@ -73,6 +74,7 @@ export function btn(primary: boolean): React.CSSProperties {
 function AgentsStep({ providers: initial }: { providers: ProviderStatus[] }) {
   const [providers, setProviders] = useState(initial);
   const [checking, setChecking] = useState(false);
+  const [installErrors, setInstallErrors] = useState<Partial<Record<ProviderName, string>>>({});
   const [installing, setInstalling] = useState<ProviderName | null>(null);
   const recheck = async () => { setChecking(true); try { setProviders(await api.recheckProviders(true)); } catch { /* keep prior */ } setChecking(false); };
   // Same action the New Thread modal offers: run that CLI's own install one-liner here,
@@ -80,10 +82,12 @@ function AgentsStep({ providers: initial }: { providers: ProviderStatus[] }) {
   const install = async (name: ProviderName) => {
     if (installing) return;
     setInstalling(name);
+    setInstallErrors(prev => ({ ...prev, [name]: undefined }));
     try {
       const result = await api.installProvider(name);
       setProviders((prev) => prev.map((p) => (p.name === name ? result.status : p)));
-    } catch { /* the pre block still shows the manual command */ }
+      if (!result.ok) setInstallErrors(prev => ({ ...prev, [name]: result.output || 'Installation failed. Try the command above in a terminal.' }));
+    } catch (error) { setInstallErrors(prev => ({ ...prev, [name]: error instanceof Error ? error.message : 'Could not reach the installer.' })); }
     setInstalling(null);
   };
   return (
@@ -104,6 +108,7 @@ function AgentsStep({ providers: initial }: { providers: ProviderStatus[] }) {
             {!ok && (
               <pre style={{ margin: '8px 0 0', font: '400 11.5px var(--font-mono)', background: 'var(--color-elevated)', borderRadius: 8, padding: '8px 10px', whiteSpace: 'pre-wrap' }}>{meta.install}{'\n'}{meta.login}</pre>
             )}
+            {installErrors[p.name] && <pre role="alert" style={{ color: 'var(--color-status-red)', fontSize: 11, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 160, overflowY: 'auto' }}>{installErrors[p.name]}</pre>}
             {!p.installed && (
               <button onClick={() => void install(p.name)} disabled={installing !== null}
                 style={{ ...btn(false), marginTop: 8, height: 28, fontSize: 12, borderColor: 'var(--color-accent)', color: 'var(--color-accent)' }}>
@@ -119,6 +124,7 @@ function AgentsStep({ providers: initial }: { providers: ProviderStatus[] }) {
 }
 
 function MobileStep({ tailscale: initial }: { tailscale: TailscaleStatus }) {
+  const flavor = useHost(s => s.flavor);
   const [ts, setTs] = useState(initial);
   const [qr, setQr] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
@@ -138,8 +144,8 @@ function MobileStep({ tailscale: initial }: { tailscale: TailscaleStatus }) {
         </div>
       ) : (
         <div>
-          <p style={{ fontSize: 13 }}>{ts.installed ? 'Tailscale is installed but not running. Start it, then re-check.' : 'Install Tailscale on this Mac:'}</p>
-          {!ts.installed && <pre style={{ font: '400 11.5px var(--font-mono)', background: 'var(--color-elevated)', borderRadius: 8, padding: '8px 10px' }}>brew install --cask tailscale{'\n'}tailscale up</pre>}
+          <p style={{ fontSize: 13 }}>{ts.installed ? 'Tailscale is installed but not running. Start it, then re-check.' : flavor === 'macos' ? 'Install Tailscale on this Mac:' : flavor === 'wsl' ? 'Install Tailscale inside the WSL distribution running Dispatch:' : 'Install Tailscale on the computer running Dispatch:'}</p>
+          {!ts.installed && (flavor ? <pre style={{ font: '400 11.5px var(--font-mono)', background: 'var(--color-elevated)', borderRadius: 8, padding: '8px 10px', whiteSpace: 'pre-wrap' }}>{flavor === 'macos' ? 'brew install --cask tailscale\ntailscale up' : 'curl -fsSL https://tailscale.com/install.sh | sh\nsudo tailscale up'}</pre> : <a href="https://tailscale.com/download" target="_blank" rel="noreferrer">Tailscale installation instructions</a>)}
           <button onClick={recheck} disabled={checking} style={btn(false)}>{checking ? 'Checking…' : 'Re-check'}</button>
         </div>
       )}

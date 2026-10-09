@@ -213,3 +213,15 @@ test('status reads the pidfile and probes liveness', () => {
   const { daemon } = harness({ '/fake/.dispatch/daemon.pid': '4242' });
   expect(daemon.status()).toEqual({ loaded: true, pid: 4242 });
 });
+
+
+test('uninstall stops the verified daemon before removing its install record', () => {
+  const { daemon, killed, files } = harness({
+    '/fake/.dispatch/daemon.pid': '4242',
+    '/fake/.dispatch/daemon.json': JSON.stringify(OPTS),
+    '/proc/4242/cmdline': OWN_CMDLINE,
+  });
+  daemon.uninstall();
+  expect(killed).toEqual([4242]);
+  expect(files['/fake/.dispatch/daemon.json']).toBeUndefined();
+});

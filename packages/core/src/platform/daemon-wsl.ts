@@ -10,7 +10,7 @@ export interface WslDaemonDeps {
   readFile(p: string): string;
   writeFile(p: string, s: string): void;
   unlink(p: string): void;
-  spawnDetached(cmd: string, args: string[], opts?: { env?: NodeJS.ProcessEnv }): void;
+  spawnDetached(cmd: string, args: string[], opts?: { env?: NodeJS.ProcessEnv; logDir?: string }): void;
   kill(pid: number, sig: number | NodeJS.Signals): void;
   env: NodeJS.ProcessEnv;
   /** Number of 100ms polls `restart()` waits for the old daemon to exit before giving up.
@@ -29,7 +29,19 @@ export const defaultWslDaemonDeps: WslDaemonDeps = {
   writeFile: (p, s) => fs.writeFileSync(p, s),
   unlink: (p) => fs.unlinkSync(p),
   spawnDetached: (cmd, args, o) => {
-    spawn(cmd, args, { detached: true, stdio: 'ignore', ...(o?.env ? { env: o.env } : {}) }).unref();
+    const logDir = o?.logDir ?? path.join(os.homedir(), '.dispatch', 'logs');
+    fs.mkdirSync(logDir, { recursive: true });
+    const out = fs.openSync(path.join(logDir, 'dispatch.out.log'), 'a', 0o600);
+    let err: number | undefined;
+    try {
+      err = fs.openSync(path.join(logDir, 'dispatch.err.log'), 'a', 0o600);
+      const child = spawn(cmd, args, { detached: true, stdio: ['ignore', out, err], ...(o?.env ? { env: o.env } : {}) });
+      child.on('error', error => fs.appendFileSync(path.join(logDir, 'dispatch.err.log'), `${error.message}\n`));
+      child.unref();
+    } finally {
+      fs.closeSync(out);
+      if (err !== undefined) fs.closeSync(err);
+    }
   },
   kill: (pid, sig) => process.kill(pid, sig),
   env: process.env,
@@ -60,6 +72,12 @@ export function createWslDaemon(d: WslDaemonDeps): DaemonController {
       const cmdline = d.readFile(`/proc/${pid}/cmdline`);
       return cmdline.includes(basename);
     } catch { return false; }
+  };
+
+  const stop = () => {
+    const pid = readPid();
+    if (!pid || !ownsPid(pid, entryBasename())) return;
+    d.kill(pid, 'SIGTERM');
   };
 
   return {
@@ -103,18 +121,16 @@ export function createWslDaemon(d: WslDaemonDeps): DaemonController {
       d.execFileSync('schtasks.exe', ['/Run', '/TN', TASK]);
     },
     uninstall() {
+      // Deleting a Windows scheduled task does not stop its running process.
+      // Signal the verified daemon before removing its identity/config files.
+      stop();
       d.execFileSync('schtasks.exe', ['/Delete', '/F', '/TN', TASK]);
       // Best-effort: state files may already be gone, and that's fine.
       try { d.unlink(optsFile()); } catch { /* ignore */ }
       try { d.unlink(pidFile()); } catch { /* ignore */ }
     },
     start() { d.execFileSync('schtasks.exe', ['/Run', '/TN', TASK]); },
-    stop() {
-      const pid = readPid();
-      if (!pid) return;
-      if (!ownsPid(pid, entryBasename())) return; // unverifiable/recycled pid: treat as not running
-      d.kill(pid, 'SIGTERM');
-    },
+    stop,
     restart() {
       const pid = readPid();
       if (pid && ownsPid(pid, entryBasename())) {
@@ -145,7 +161,7 @@ export function createWslDaemon(d: WslDaemonDeps): DaemonController {
       // it's unsafe to signal a pid we can't identify. We still proceed to spawn the new
       // instance; the persisted install options (env/port) always win via the PORT override.
       const opts = JSON.parse(d.readFile(optsFile())) as DaemonInstallOptions;
-      d.spawnDetached(opts.nodePath, [opts.entry], { env: { ...d.env, ...opts.env, PORT: String(opts.port) } });
+      d.spawnDetached(opts.nodePath, [opts.entry], { env: { ...d.env, ...opts.env, PORT: String(opts.port) }, logDir: opts.logDir });
     },
     status() { const pid = readPid(); return pid && alive(pid) ? { loaded: true, pid } : { loaded: false }; },
   };

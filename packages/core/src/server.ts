@@ -862,7 +862,10 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const interimRecapInterval = startInterimRecapLoop(db, sessionService);
 
   // Graceful shutdown
+  let shuttingDown = false;
   const cleanup = () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     console.log('Shutting down Dispatch server...');
     clearInterval(ptyTimingInterval);
     clearInterval(updateCheckInterval);
@@ -879,10 +882,15 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       structuredManager.killAll();
       for (const manager of extraManagers.values()) manager.killAll();
     });
-    eventsWss.close();
-    terminalWss.close();
-    structuredWss.close();
+    // WebSocketServer.close() stops upgrades but leaves connected browsers alive.
+    // Those upgraded sockets keep Node running forever, so WSL's updater times out
+    // waiting for this process to exit. Disconnect them explicitly before closing.
+    for (const wss of [eventsWss, terminalWss, structuredWss]) {
+      for (const client of wss.clients) client.terminate();
+      wss.close();
+    }
     server.close();
+    server.closeAllConnections();
     db.close();
     try { fs.unlinkSync(path.join(dataDir, 'daemon.pid')); } catch {}
   };
