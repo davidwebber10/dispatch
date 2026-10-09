@@ -294,7 +294,7 @@ describe('resolve', () => {
     expectLedgerError(() => ledger.resolve('s1', 'coord', { id: 'N1', status: 'parked' }), 400);
     expectLedgerError(() => ledger.resolve('s1', 'coord', { id: 'N1', status: 'withdrawn' }), 400);
     const out = ledger.resolve('s1', 'coord', { id: 'N1', status: 'withdrawn', reason: 'the agent found a built-in option' });
-    expect(out.line).toBe('N1 [Decide] Which store goes first?\n  Recommendation: A. 5 nights\n  Options: A. 5 nights | B. 10 nights\n  Withdrawn by overseer: the agent found a built-in option');
+    expect(out.line).toBe('N1 [Decide] Clean nights before live mode — Which store goes first?\n  Recommendation: A. 5 nights\n  Options: A. 5 nights | B. 10 nights\n  Withdrawn by overseer: the agent found a built-in option');
   });
 
   it('a closed item returns 409 with its current status; an unknown ID returns 404', () => {
@@ -360,7 +360,7 @@ describe('import', () => {
     expect(ledgerDb.listBySession(db, 's1').map((i) => [i.origin, i.status, i.author])).toEqual([
       ['imported', 'open', 'overseer'], ['imported', 'answered', 'overseer'], ['imported', 'answered', 'you'],
     ]);
-    expect(ledger.list('s1', 'coord').text).toContain('- N2 [Decide] Use library A?\n  Recommendation: A. 5 nights\n  Options: A. 5 nights | B. 10 nights\n  Imported, not checked');
+    expect(ledger.list('s1', 'coord').text).toContain('- N2 [Decide] Clean nights before live mode — Use library A?\n  Recommendation: A. 5 nights\n  Options: A. 5 nights | B. 10 nights\n  Imported, not checked');
 
     userSays('yes, library A', 2);
     const confirmed = ledger.resolve('s1', 'coord', { id: 'N2', status: 'answered', quote: 'library A' });
@@ -371,7 +371,7 @@ describe('import', () => {
   it('a withdrawn imported item is closed: it cannot be resolved again, and it renders the withdrawal', () => {
     ledger.importItems('s1', 'coord', [{ kind: 'decide', text: 'Use library A?', ...DECIDE_CARD, status: 'answered' }]);
     const out = ledger.resolve('s1', 'coord', { id: 'N1', status: 'withdrawn', reason: 'the import was wrong' });
-    expect(out.line).toBe('N1 [Decide] Use library A?\n  Recommendation: A. 5 nights\n  Options: A. 5 nights | B. 10 nights\n  Withdrawn by overseer: the import was wrong\n  Imported, not checked');
+    expect(out.line).toBe('N1 [Decide] Clean nights before live mode — Use library A?\n  Recommendation: A. 5 nights\n  Options: A. 5 nights | B. 10 nights\n  Withdrawn by overseer: the import was wrong\n  Imported, not checked');
     userSays('library A', 2);
     for (const status of ['answered', 'parked']) {
       const e = expectLedgerError(() => ledger.resolve('s1', 'coord', { id: 'N1', status, quote: 'library A' }), 409, 'N1 is already withdrawn.');
@@ -410,7 +410,7 @@ describe('handoff', () => {
     userSays('A', 1);
     ledger.resolve('s1', 'coord', { id: 'N1', status: 'answered', quote: 'A' });
     expect(ledger.handoff('s1', 'coord', ['N1']).block).toBe(
-      'Owner decisions (verbatim, from the ledger):\n- N1 [Decide] Use library A?\n  Recommendation: A. 5 nights\n  Options: A. 5 nights | B. 10 nights\n  You approved: "Use library A?" → "A" (Mon 16:01)',
+      'Owner decisions (verbatim, from the ledger):\n- N1 [Decide] Clean nights before live mode — Use library A?\n  Recommendation: A. 5 nights\n  Options: A. 5 nights | B. 10 nights\n  You approved: "Use library A?" → "A" (Mon 16:01)',
     );
     expectLedgerError(() => ledger.handoff('s1', 'coord', ['N1', 'N5']), 404, 'Unknown ledger item: N5');
   });
@@ -582,14 +582,14 @@ describe('triage tools', () => {
   it('ledger_mark_default: the item stays open and moves to "Running on defaults"', () => {
     ledger.add('s1', 'coord', { kind: 'decide', text: 'Abort when duplicates pass 1%?', ...DECIDE_CARD, default: 'abort above 1%' });
     const out = ledger.markDefault('s1', 'coord', { id: 'N1' });
-    expect(out).toEqual({ id: 'N1', line: '- **N1 · Decide:** Abort when duplicates pass 1%? Running on the default "abort above 1%" since Oct 5. Recommended: A. 5 nights. (type `show N1`)' });
+    expect(out).toEqual({ id: 'N1', line: '- **N1 · Decide · Clean nights before live mode:** Abort when duplicates pass 1%? Running on the default "abort above 1%" since Oct 5. Recommended: A. 5 nights. (type `show N1`)' });
     expect(ledgerDb.getBySeq(db, 's1', 1)).toMatchObject({ status: 'open', onDefaultSince: min(0) });
     now = T0 + 86_400_000;
     ledger.markDefault('s1', 'coord', { id: 'N1' }); // again: the start date stays
     expect(ledgerDb.getBySeq(db, 's1', 1)!.onDefaultSince).toBe(min(0));
     const recap = ledger.list('s1', 'coord').text;
     expect(recap).toContain('Needs you now:\n- none');
-    expect(recap).toContain('Running on defaults:\n- **N1 · Decide:** Abort when duplicates pass 1%?');
+    expect(recap).toContain('Running on defaults:\n- **N1 · Decide · Clean nights before live mode:** Abort when duplicates pass 1%?');
     expect(ledger.list('s1', 'coord').openIds).toEqual(['N1']);
     ledger.add('s1', 'coord', { kind: 'do', text: 'Check staging.', title: 'Check staging' });
     expectLedgerError(() => ledger.markDefault('s1', 'coord', { id: 'N2' }), 400);

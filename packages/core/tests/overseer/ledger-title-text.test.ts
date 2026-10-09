@@ -9,7 +9,7 @@ import * as sessionsDb from '../../src/db/sessions.js';
 import * as terminalsDb from '../../src/db/terminals.js';
 import * as ledgerDb from '../../src/db/ledger.js';
 import { LedgerService } from '../../src/overseer/ledger-service.js';
-import { renderAddLine, renderCard, renderRecapPaste, renderUntitledList } from '../../src/overseer/ledger-render.js';
+import { renderAddLine, renderCard, renderDefaultLine, renderItem, renderOneLine, renderOverseerDecisionLine, renderRecapPaste, renderUntitledList } from '../../src/overseer/ledger-render.js';
 import { DECIDE_CARD, GO_CARD } from './card-fixtures.js';
 
 const DAY = 86_400_000;
@@ -128,5 +128,32 @@ describe('the service — ledger_list and ledger_add', () => {
     ledger.setTitle('s1', 'coord', { id: 'N1', title: 'Library A or B' });
     ledger.setTitle('s1', 'coord', { id: 'N3', title: 'Merge PR #62' });
     expect(ledger.list('s1', 'coord').text).not.toContain('Open items without a title');
+  });
+});
+
+// Review fix (2026-10-09): the overseer's own-use lines carry the title too, so after a compaction
+// it can still write "N41 · title" from what ledger_list gives it.
+describe('the own-use lines — the title before the question', () => {
+  const CTX = { now: NOW };
+  it('renderItem: "N41 [Do] title — question"; without a title, the question as before', () => {
+    expect(renderItem(item({ seq: 41, kind: 'do', text: 'Check the banner on staging.', title: 'Check the staging banner' }), CTX).split('\n')[0])
+      .toBe('N41 [Do] Check the staging banner — Check the banner on staging. (open 2d)');
+    expect(renderItem(item({ seq: 55, kind: 'do', text: 'Check the banner on staging.' }), CTX).split('\n')[0])
+      .toBe('N55 [Do] Check the banner on staging. (open 2d)');
+  });
+  it('renderOneLine and renderDefaultLine: the title in the bold label', () => {
+    expect(renderOneLine(item({ seq: 41, kind: 'go', text: BOARD, title: 'Merge board PR #26' })))
+      .toMatch(/^- \*\*N41 · Go · Merge board PR #26:\*\* Do you approve the merge of board PR #26/);
+    expect(renderOneLine(item({ seq: 43, kind: 'go', text: 'Merge PR #62?' }))).toMatch(/^- \*\*N43 · Go:\*\* Merge PR #62\?/);
+    expect(renderDefaultLine(item({ seq: 42, text: 'How many clean nights?', title: 'Clean nights before live mode', defaultText: '5 nights' }), CTX))
+      .toMatch(/^- \*\*N42 · Decide · Clean nights before live mode:\*\* How many clean nights\? Running on the default "5 nights"/);
+  });
+  it('a title that only repeats the question (case and end punctuation aside) is not shown twice', () => {
+    expect(renderItem(item({ seq: 3, kind: 'do', text: 'Check staging.', title: 'Check staging' }), CTX).split('\n')[0]).toBe('N3 [Do] Check staging. (open 2d)');
+    expect(renderOneLine(item({ seq: 43, kind: 'go', text: 'Merge PR #62?', title: 'merge PR #62' }))).toMatch(/^- \*\*N43 · Go:\*\* Merge PR #62\?/);
+  });
+  it('renderOverseerDecisionLine: the title before the question', () => {
+    expect(renderOverseerDecisionLine(item({ seq: 44, text: 'Which lane first?', title: 'First lane', status: 'decided_by_overseer', decidedChoice: 'Lane A', reason: 'smaller' })))
+      .toMatch(/^- \*\*N44 · Decided by overseer:\*\* First lane — Which lane first\? → Lane A\./);
   });
 });

@@ -85,6 +85,16 @@ function attribution(item: LedgerItem, stamp: string): string[] {
 }
 
 /** One item as a block: the first line, then two-space-indented detail lines. */
+/**
+ * The title to show next to the question in the overseer's own-use lines (review fix 2026-10-09),
+ * or null when there is none or it only repeats the question (case and end punctuation aside).
+ */
+function extraTitle(item: LedgerItem): string | null {
+  if (!item.title) return null;
+  const norm = (t: string) => t.trim().replace(/[.?!:]+$/, '').toLowerCase();
+  return norm(item.title) === norm(item.text) ? null : item.title;
+}
+
 export function renderItem(item: LedgerItem, ctx: RenderContext): string {
   const id = `N${item.seq}`;
   const stamp = item.quoteAt ? ` (${formatStamp(item.quoteAt, ctx.timeZone)})` : '';
@@ -93,7 +103,8 @@ export function renderItem(item: LedgerItem, ctx: RenderContext): string {
     lines.push(`${id} You said: "${item.quote}"${stamp}`);
   } else {
     const age = item.status === 'open' ? ` (open ${formatAge(ctx.now - Date.parse(item.createdAt))})` : '';
-    lines.push(`${id} [${KIND_LABEL[item.kind]}] ${item.text}${age}`);
+    // Review fix 2026-10-09: the title first, so the overseer can name the item after a compaction.
+    lines.push(`${id} [${KIND_LABEL[item.kind]}] ${extraTitle(item) ? `${extraTitle(item)} — ` : ''}${item.text}${age}`);
   }
   if (item.supersedes !== null) {
     const original = ctx.lookup?.(item.supersedes);
@@ -240,7 +251,8 @@ function showHint(item: LedgerItem): string {
   return `(${item.sourceId ? `\`${item.sourceId}\`, ` : ''}type \`show N${item.seq}\`)`;
 }
 
-const title = (item: LedgerItem) => `**N${item.seq} · ${item.kind === 'go' ? 'Go' : 'Decide'}:**`;
+/** "**N17 · Decide:**", or "**N17 · Decide · title:**" for an item with a title (review fix 2026-10-09). */
+const title = (item: LedgerItem) => `**N${item.seq} · ${item.kind === 'go' ? 'Go' : 'Decide'}${extraTitle(item) ? ` · ${extraTitle(item)}` : ''}:**`;
 
 /** The one-line form of an open decision under "Needs you now". */
 export function renderOneLine(item: LedgerItem): string {
@@ -260,7 +272,7 @@ export function renderDefaultLine(item: LedgerItem, ctx: { timeZone?: string }):
 
 /** The one-line form of a decision the overseer made itself. */
 export function renderOverseerDecisionLine(item: LedgerItem): string {
-  return `- **N${item.seq} · Decided by overseer:** ${item.text} → ${sentence(item.decidedChoice ?? '')} ` +
+  return `- **N${item.seq} · Decided by overseer:** ${extraTitle(item) ? `${extraTitle(item)} — ` : ''}${item.text} → ${sentence(item.decidedChoice ?? '')} ` +
     `Reason: ${sentence(item.reason ?? '')} (Reply "reverse N${item.seq}" to change it.)`;
 }
 
