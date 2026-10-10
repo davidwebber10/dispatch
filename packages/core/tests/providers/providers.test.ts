@@ -105,13 +105,14 @@ describe('codex provider', () => {
     // Regression: an interactive/PTY Codex thread must launch fully autonomous. Without this
     // flag it starts with Codex's default approval policy + sandbox and stalls on prompts.
     expect(cmd.args[0]).toBe('--dangerously-bypass-approvals-and-sandbox');
+    expect(cmd.args).toContain('--no-alt-screen');
   });
 
   it('builds resume command with full permissions, flag before the subcommand', () => {
     const cmd = codexProvider.buildResumeCommand({ externalSessionId: 'xyz', workDir: '/tmp' });
     expect(cmd.command).toBe('codex');
     // The global bypass flag precedes the `resume` subcommand (same as the -c overrides).
-    expect(cmd.args).toEqual(['--dangerously-bypass-approvals-and-sandbox', 'resume', 'xyz']);
+    expect(cmd.args).toEqual(['--dangerously-bypass-approvals-and-sandbox', '--no-alt-screen', 'resume', 'xyz']);
   });
 
   it('pins the model with --model, before the resume subcommand', () => {

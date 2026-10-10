@@ -10,6 +10,10 @@ import type { SessionProvider, SecretsMcpInjection, StatusHooksInjection } from 
 // It is a global flag (shown at the root of `codex --help`), so it precedes any subcommand.
 const FULL_PERMISSIONS = '--dangerously-bypass-approvals-and-sandbox';
 
+// Keep terminal threads inline with scrollback; the fullscreen alternate screen is
+// awkward to navigate in Dispatch's mobile terminal. Apply to new and resumed TUIs.
+const INLINE_TUI = '--no-alt-screen';
+
 // Codex `-c` overrides are global options and must precede the subcommand.
 // Returns [] when Doppler isn't connected.
 function mcpArgs(secretsMcp?: SecretsMcpInjection): string[] {
@@ -38,7 +42,7 @@ export const codexProvider: SessionProvider = {
   buildNewCommand({ prompt, secretsMcp, statusHooks, model }) {
     // Without FULL_PERMISSIONS an interactive Codex thread launches with Codex's default
     // approval policy + sandbox and stalls waiting for approvals — the bug this fixes.
-    const args: string[] = [FULL_PERMISSIONS, ...mcpArgs(secretsMcp), ...hookArgs(statusHooks), ...modelArgs(model)];
+    const args: string[] = [FULL_PERMISSIONS, INLINE_TUI, ...mcpArgs(secretsMcp), ...hookArgs(statusHooks), ...modelArgs(model)];
     if (prompt) args.push(prompt);
     return { command: 'codex', args };
   },
@@ -46,7 +50,7 @@ export const codexProvider: SessionProvider = {
   buildResumeCommand({ externalSessionId, secretsMcp, statusHooks, model }) {
     // A resumed thread must run as autonomously as a fresh one — same FULL_PERMISSIONS flag,
     // preceding the `resume` subcommand.
-    return { command: 'codex', args: [FULL_PERMISSIONS, ...mcpArgs(secretsMcp), ...hookArgs(statusHooks), ...modelArgs(model), 'resume', externalSessionId] };
+    return { command: 'codex', args: [FULL_PERMISSIONS, INLINE_TUI, ...mcpArgs(secretsMcp), ...hookArgs(statusHooks), ...modelArgs(model), 'resume', externalSessionId] };
   },
 
   buildStatusHooks({ serverUrl, terminalId, codexHelperPath }) {

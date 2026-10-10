@@ -80,6 +80,9 @@ codex --version
 
 Credentials and settings are stored under `~/.codex`. Docs: <https://developers.openai.com/codex/cli>
 
+Dispatch launches new and resumed Codex terminal threads with `--no-alt-screen`, keeping
+the TUI inline with terminal scrollback for easier navigation on mobile.
+
 ---
 
 ## Troubleshooting
