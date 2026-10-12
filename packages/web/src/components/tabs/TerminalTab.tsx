@@ -39,6 +39,16 @@ const REBUILD_TIMEOUT_MS = 10_000;
 // percent of the buffer is not worth a full reset either.
 const SCROLLBACK_CAP_FRACTION = 0.98;
 
+// Codex's inline TUI (--no-alt-screen) answers every resize by clearing the screen AND the
+// scrollback (CSI 3 J) and printing about 1000 lines of history again. In the browser the clear
+// shrinks xterm's scroll area; the browser clamps the viewport's scrollTop and fires a scroll
+// event that xterm takes for the reader's own scroll, so the view stops following output and the
+// reprint leaves it thousands of lines up. A reader at the bottom when the clear arrives stays at
+// the bottom until the reprint has been quiet for REPRINT_QUIET_MS; their own wheel, touch or
+// pointer input ends that at once.
+const SCROLLBACK_CLEAR = '\x1b[3J';
+const REPRINT_QUIET_MS = 400;
+
 // Shared look for every key in the row above the mobile composer. `flex: 0 0 auto` is
 // the important part: the row scrolls, so a key keeps its natural width instead of
 // dividing the row evenly and shrinking below a hittable size as the count grows.
@@ -267,16 +277,38 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     // history. The rebuild path owns its own anchor restore (finishRebuild) and never routes
     // through here, so the two can't fight.
     let pinNextReplay = true;
+    // True while a reprint that began with a scrollback clear is still arriving and the reader
+    // was at the bottom when it began (see SCROLLBACK_CLEAR).
+    let followReprint = false;
+    let reprintTimer: ReturnType<typeof setTimeout> | undefined;
+    const endFollow = () => {
+      followReprint = false;
+      if (reprintTimer) { clearTimeout(reprintTimer); reprintTimer = undefined; }
+    };
     // The "just show it" path: used for every socket's data whenever that data is
     // NOT part of an in-flight rebuild's buffered catch-up — i.e. the original
     // connection's normal traffic, and any survivor-of-a-rebuild socket once it
     // has become primary again.
     const attachLive = (chunk: string) => {
-      if (pinNextReplay) {
+      if (chunk.includes(SCROLLBACK_CLEAR)) {
+        const b = term.buffer.active;
+        if (followReprint || b.viewportY >= b.baseY) followReprint = true;
+      }
+      if (followReprint) {
+        if (reprintTimer) clearTimeout(reprintTimer);
+        reprintTimer = setTimeout(() => {
+          reprintTimer = undefined;
+          followReprint = false;
+          if (!disposed) scrollToEndRef.current();
+        }, REPRINT_QUIET_MS);
+      }
+      const pinReplay = pinNextReplay;
+      if (pinReplay || followReprint) {
         pinNextReplay = false;
         // In the write CALLBACK: xterm parses asynchronously, so scrolling synchronously after
-        // write() would target the PRE-write buffer and land short of the end.
-        term.write(chunk, () => { if (!disposed) scrollToEndRef.current(); });
+        // write() would target the PRE-write buffer and land short of the end. A reprint follow
+        // that the reader ended in the meantime does not pin.
+        term.write(chunk, () => { if (!disposed && (pinReplay || followReprint)) scrollToEndRef.current(); });
       } else {
         term.write(chunk);
       }
@@ -675,7 +707,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       if (b.viewportY === before) applyTransform(); // no repaint coming → apply now; else onRender does
       updateAtBottom();
     };
-    const onTouchStart = (e: TouchEvent) => { stopInertia(); stopSpring(); lastY = e.touches[0].clientY; startY = lastY; moved = false; lastT = performance.now(); vel = 0; };
+    const onTouchStart = (e: TouchEvent) => { endFollow(); stopInertia(); stopSpring(); lastY = e.touches[0].clientY; startY = lastY; moved = false; lastT = performance.now(); vel = 0; };
     const onTouchMove = (e: TouchEvent) => {
       if (e.touches.length !== 1) return;
       const y = e.touches[0].clientY, now = performance.now();
@@ -716,8 +748,16 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       touchSurface.addEventListener('touchcancel', onTouchEnd, { passive: true });
     }
 
+    // The reader's own scroll input ends a reprint follow at once (see SCROLLBACK_CLEAR): the
+    // desktop wheel and a press on the scrollbar land inside the host; touch ends it in onTouchStart.
+    const onUserScrollInput = () => endFollow();
+    host?.addEventListener('wheel', onUserScrollInput, { passive: true, capture: true });
+    host?.addEventListener('pointerdown', onUserScrollInput, { passive: true, capture: true });
+    // During a reprint follow, the browser's own scroll event (its scrollTop clamp after the
+    // scrollback clear) puts the view back at the bottom instead of leaving it where it landed.
+    const onViewportScroll = () => { if (followReprint) scrollToEndRef.current(); else updateAtBottom(); };
     const vp0 = viewportEl();
-    vp0?.addEventListener('scroll', updateAtBottom, { passive: true });
+    vp0?.addEventListener('scroll', onViewportScroll, { passive: true });
     const offScroll = term.onScroll(() => { updateAtBottom(); maybeStartRebuild(); });
     updateAtBottom();
     scrollToEndRef.current = () => { stopInertia(); stopSpring(); subPx = 0; overscroll = 0; applyTransform(); term.scrollToBottom(); updateAtBottom(); };
@@ -738,7 +778,10 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
         touchSurface.removeEventListener('touchend', onTouchEnd);
         touchSurface.removeEventListener('touchcancel', onTouchEnd);
       }
-      vp0?.removeEventListener('scroll', updateAtBottom);
+      endFollow();
+      host?.removeEventListener('wheel', onUserScrollInput, { capture: true });
+      host?.removeEventListener('pointerdown', onUserScrollInput, { capture: true });
+      vp0?.removeEventListener('scroll', onViewportScroll);
       offScroll.dispose();
       offRender.dispose();
       ro?.disconnect();
