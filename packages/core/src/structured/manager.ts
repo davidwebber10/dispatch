@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import * as readline from 'readline';
 import { looksLikeQuestion } from '../status/question.js';
+import { broadKillDenial } from './broad-kill-guard.js';
 
 /**
  * A gated tool/permission request the CLI is blocked on, awaiting a human call.
@@ -339,9 +340,12 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
         // human.) Every OTHER gated tool surfaces only when this thread escalates (the
         // supervised membrane); otherwise it's auto-allowed.
         const isAsk = r?.tool_name === 'AskUserQuestion' || questions !== undefined;
-        const denied = !isAsk && session.toolPolicy
-          ? session.toolPolicy(typeof r?.tool_name === 'string' ? r.tool_name : '', r?.input)
-          : null;
+        const toolName = typeof r?.tool_name === 'string' ? r.tool_name : '';
+        // Every thread first refuses a kill by name or pattern (see broad-kill-guard.ts), then
+        // applies its own policy, if any.
+        const denied = isAsk
+          ? null
+          : broadKillDenial(toolName, r?.input) ?? (session.toolPolicy ? session.toolPolicy(toolName, r?.input) : null);
         if (denied && !denied.allow) {
           // Policy deny: answer the CLI immediately with the instructive message — the model
           // sees it as the tool result and can redirect (spawn an agent) within the same turn.
