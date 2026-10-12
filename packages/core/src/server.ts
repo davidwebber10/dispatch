@@ -42,7 +42,7 @@ import { createSecretsRouter } from './routes/secrets.js';
 import { createHarnessSettingsRouter } from './routes/harness-settings.js';
 import { opencodeKeySecretName } from './settings/harness-settings.js';
 import { warmModelCapabilities } from './settings/model-capabilities.js';
-import { warmClaudeVersion, prunePromptFiles } from './providers/claude-prompt-file.js';
+import { warmClaudeVersion, prunePromptFiles, setClaudeProbeEnv } from './providers/claude-prompt-file.js';
 import { createTranscribeRouter } from './routes/transcribe.js';
 import { TranscriptionService } from './transcription/service.js';
 import { createSetupRouter } from './routes/setup.js';
@@ -585,6 +585,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     // route an OAuth URL has to the person signing in: there is no local browser.
     spawnEnv.PATH = withShimPath(dataDir, spawnEnv.PATH);
     toolsAuth.setSpawnEnv(spawnEnv);
+    // The Claude version check reads the same `claude` the agents will run.
+    setClaudeProbeEnv(spawnEnv);
     ptyManager.setDefaultEnv(spawnEnv);
     structuredManager.setDefaultEnv(spawnEnv);
     // The ACP children (Grok, OpenCode) run real tools directly (no app-server

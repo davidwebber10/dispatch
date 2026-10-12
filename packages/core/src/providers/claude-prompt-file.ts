@@ -35,10 +35,23 @@ export function supportsPromptFile(v: Version): boolean {
 
 let known: { supported: boolean; at: number } | null = null;
 let reading: Promise<void> | null = null;
+/** The env agents are spawned with: its PATH puts Dispatch's own bin dirs first. */
+let probeEnv: Record<string, string> | undefined;
+
+/**
+ * Read the version from the `claude` the agents will run: the first on THEIR PATH, which can be a
+ * different install than the daemon's own (e.g. one under ~/.dispatch/tools). A PATH change
+ * re-reads it.
+ */
+export function setClaudeProbeEnv(env: Record<string, string>): void {
+  const changed = probeEnv?.PATH !== env.PATH;
+  probeEnv = env;
+  if (changed && known) void warmClaudeVersion().then(() => prunePromptFiles());
+}
 
 function claudeVersionOutput(): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile('claude', ['--version'], { timeout: 15_000 }, (err, stdout) => (err ? reject(err) : resolve(String(stdout))));
+    execFile('claude', ['--version'], { timeout: 15_000, env: probeEnv ?? process.env }, (err, stdout) => (err ? reject(err) : resolve(String(stdout))));
   });
 }
 
@@ -70,6 +83,7 @@ export function claudePromptFileSupported(now = Date.now()): boolean {
 export function resetClaudeVersionForTests(): void {
   known = null;
   reading = null;
+  probeEnv = undefined;
 }
 
 function promptDir(): string {

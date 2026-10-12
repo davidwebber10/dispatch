@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   parseClaudeVersion, supportsPromptFile, appendSystemPromptArgs, writePromptFile, prunePromptFiles,
-  warmClaudeVersion, claudePromptFileSupported, resetClaudeVersionForTests,
+  warmClaudeVersion, claudePromptFileSupported, resetClaudeVersionForTests, setClaudeProbeEnv,
 } from './claude-prompt-file.js';
 
 let dir: string;
@@ -34,6 +34,25 @@ describe('the Claude Code version gate', () => {
     expect(claudePromptFileSupported()).toBe(true);
     await warmClaudeVersion(async () => '2.1.10 (Claude Code)');
     expect(claudePromptFileSupported()).toBe(false);
+  });
+
+  // Review: agents run the `claude` first on THEIR PATH (Dispatch's bin dirs come first), so the
+  // version must be read from that same binary, not from the daemon's own PATH.
+  it('reads the version of the claude on the agents\' PATH', async () => {
+    const mk = (name: string, version: string) => {
+      const bin = path.join(dir, name);
+      fs.mkdirSync(bin);
+      fs.writeFileSync(path.join(bin, 'claude'), `#!/bin/sh\necho "${version} (Claude Code)"\n`, { mode: 0o755 });
+      return bin;
+    };
+    const oldBin = mk('old', '2.1.10');
+    const newBin = mk('new', '2.1.300');
+    setClaudeProbeEnv({ ...process.env, PATH: `${oldBin}:${process.env.PATH}` } as Record<string, string>);
+    await warmClaudeVersion();
+    expect(claudePromptFileSupported()).toBe(false);
+    setClaudeProbeEnv({ ...process.env, PATH: `${newBin}:${process.env.PATH}` } as Record<string, string>);
+    await warmClaudeVersion();
+    expect(claudePromptFileSupported()).toBe(true);
   });
 
   it('a failed version read means the text form', async () => {
