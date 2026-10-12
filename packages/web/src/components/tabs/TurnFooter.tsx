@@ -3,42 +3,63 @@
 //
 // Every change in the footer's height resizes the terminal, and Codex's inline TUI answers every
 // resize by clearing its scrollback and printing about 1000 lines of history again. The strip and
-// the card used to change on every submit. So while a turn runs, the footer keeps the height it had
-// when the turn began; when the turn settles, it takes its natural height again (at most one resize
-// per turn, at its end, and none when the height is the same).
+// the card used to change on every submit. So while a turn runs the footer keeps, exactly, the
+// height it had when the turn began. It keeps it for SETTLE_HOLD_MS after the turn settles too: the
+// strip comes from the live status at once, but the card fetches the new outcome a moment later,
+// and letting go before both are in would resize twice (review round 1). One resize per turn at
+// most, and none when the height is the same.
 
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useThreadStatus } from '../../stores/threadStatus';
+
+export const SETTLE_HOLD_MS = 1500;
 
 export function TurnFooter({ terminalId, children }: { terminalId: string; children?: ReactNode }) {
   const threadStatus = useThreadStatus((s) => s.byTerminal[terminalId]?.threadStatus);
   const working = threadStatus === 'working' || threadStatus === 'starting';
+
+  // The turn edges, as state from the previous render (React's "adjust state while rendering"
+  // pattern): the render in which a turn ends must already hold, or one commit without the hold
+  // would be measured and laid out.
+  const [prevWorking, setPrevWorking] = useState(working);
+  const [settling, setSettling] = useState(false);
+  if (working !== prevWorking) {
+    setPrevWorking(working);
+    setSettling(!working);
+  }
+  useEffect(() => {
+    if (!settling) return;
+    const t = setTimeout(() => setSettling(false), SETTLE_HOLD_MS);
+    return () => clearTimeout(t);
+  }, [settling]);
+  const holding = working || settling;
+
+  // The footer's exact height (getBoundingClientRect: a rounded hold still moves the terminal by a
+  // pixel, and xterm can measure its rows again on that resize) at the last moment it was not held,
+  // for THIS thread: the same terminal view can switch threads without a remount (review round 1).
   const ref = useRef<HTMLDivElement>(null);
-  // The footer's height at the last render while the thread was settled. Read during render on
-  // purpose: the render in which `working` turns true must already carry that height in the same
-  // commit, or the terminal sees one frame of the smaller footer and resizes. The exact height, not
-  // offsetHeight: a rounded hold still moves the terminal by a pixel, and xterm can measure its
-  // rows again on that resize.
-  const settledHeight = useRef(0);
-  const workingRef = useRef(working);
-  workingRef.current = working;
+  const settled = useRef<{ id: string; height: number } | null>(null);
+  const live = useRef({ holding, terminalId });
+  live.current = { holding, terminalId };
   useLayoutEffect(() => {
-    if (!working && ref.current) settledHeight.current = ref.current.getBoundingClientRect().height;
+    if (!holding && ref.current) settled.current = { id: terminalId, height: ref.current.getBoundingClientRect().height };
   });
-  // A child can change its height without rendering the footer (the card refetches its outcome
-  // after a turn settles), so a ResizeObserver keeps the settled height current between renders.
+  // A child can change its height without rendering the footer (the card refetches its outcome),
+  // so a ResizeObserver keeps the measurement current between renders.
   useEffect(() => {
     const el = ref.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(() => {
-      if (!workingRef.current) settledHeight.current = el.getBoundingClientRect().height;
+      if (!live.current.holding) settled.current = { id: live.current.terminalId, height: el.getBoundingClientRect().height };
     });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const hold = working && settledHeight.current > 0 ? settledHeight.current : undefined;
+
+  const s = settled.current;
+  const hold = holding && s && s.id === terminalId && s.height > 0 ? s.height : undefined;
   return (
-    <div ref={ref} data-testid="turn-footer" style={{ flexShrink: 0, minHeight: hold }}>
+    <div ref={ref} data-testid="turn-footer" style={{ flexShrink: 0, height: hold, overflow: hold !== undefined ? 'hidden' : undefined }}>
       {children}
     </div>
   );

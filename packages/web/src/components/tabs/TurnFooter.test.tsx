@@ -1,21 +1,23 @@
-// The footer under a CLI thread's terminal (2026-10-12): while a turn runs it keeps the height it
-// had when the turn began, so a submit does not resize the terminal (each resize makes Codex's
-// inline TUI clear its scrollback and reprint about 1000 lines).
-import { afterEach, beforeEach, expect, test } from 'vitest';
+// The footer under a CLI thread's terminal (2026-10-12): while a turn runs, and for a short time
+// after it settles, it keeps the height it had when the turn began, so the terminal resizes at most
+// once per turn (each resize makes Codex's inline TUI clear its scrollback and reprint about 1000
+// lines).
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { act, cleanup, render, screen } from '@testing-library/react';
-import { TurnFooter } from './TurnFooter';
+import { SETTLE_HOLD_MS, TurnFooter } from './TurnFooter';
 import { useThreadStatus } from '../../stores/threadStatus';
 
-const setStatus = (threadStatus: string) => act(() => { useThreadStatus.setState({ byTerminal: { t1: { threadStatus } } } as any); });
+const setStatus = (threadStatus: string, id = 't1') =>
+  act(() => { useThreadStatus.setState({ byTerminal: { [id]: { threadStatus } } } as any); });
 
-beforeEach(() => { useThreadStatus.setState({ byTerminal: {} } as any); });
-afterEach(() => { cleanup(); });
+beforeEach(() => { useThreadStatus.setState({ byTerminal: {} } as any); vi.useFakeTimers(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); });
 
-function Footer({ show }: { show: boolean }) {
-  return <TurnFooter terminalId="t1">{show && <div data-testid="strip">asking you</div>}</TurnFooter>;
+function Footer({ show, id = 't1' }: { show: boolean; id?: string }) {
+  return <TurnFooter terminalId={id}>{show && <div data-testid="strip">asking you</div>}</TurnFooter>;
 }
 
-test('while a turn runs, the footer keeps the height it had when the turn began; it lets go when the turn settles', () => {
+test('while a turn runs, and for a short time after it settles, the footer keeps the height it had when the turn began', () => {
   setStatus('idle');
   const { rerender } = render(<Footer show />);
   const footer = screen.getByTestId('turn-footer');
@@ -23,15 +25,17 @@ test('while a turn runs, the footer keeps the height it had when the turn began;
   // a pixel, and xterm can measure its rows again on that resize (seen in the browser check).
   footer.getBoundingClientRect = () => ({ height: 64.5 }) as DOMRect;
   rerender(<Footer show />); // measured while settled
-  expect(footer.style.minHeight).toBe('');
+  expect(footer.style.height).toBe('');
 
   setStatus('working');
   rerender(<Footer show={false} />); // the strip goes away as the turn starts
-  expect(footer.style.minHeight).toBe('64.5px');
+  expect(footer.style.height).toBe('64.5px');
+  expect(footer.style.overflow).toBe('hidden');
 
-  setStatus('idle');
-  rerender(<Footer show={false} />);
-  expect(footer.style.minHeight).toBe('');
+  setStatus('idle'); // settled: the new outcome is still on its way, so the hold stays a little longer
+  expect(footer.style.height).toBe('64.5px');
+  act(() => { vi.advanceTimersByTime(SETTLE_HOLD_MS); });
+  expect(footer.style.height).toBe('');
 });
 
 test('a footer that was empty when the turn began holds no height', () => {
@@ -39,7 +43,7 @@ test('a footer that was empty when the turn began holds no height', () => {
   const { rerender } = render(<Footer show={false} />);
   setStatus('working');
   rerender(<Footer show={false} />);
-  expect(screen.getByTestId('turn-footer').style.minHeight).toBe('');
+  expect(screen.getByTestId('turn-footer').style.height).toBe('');
 });
 
 // Browser check (2026-10-12): the card updates its own text after the turn settles (it refetches the
@@ -58,8 +62,22 @@ test('a height change inside the footer while settled is held too (ResizeObserve
     footer.getBoundingClientRect = () => ({ height: 132 }) as DOMRect; // a child grew on its own
     act(() => { observers.forEach((cb) => cb()); });
     setStatus('working');
-    expect(footer.style.minHeight).toBe('132px');
+    expect(footer.style.height).toBe('132px');
   } finally {
     globalThis.ResizeObserver = RO;
   }
+});
+
+// Review round 1 (2026-10-12): the same terminal view can switch threads without a remount; one
+// thread's height must not hold another thread's footer.
+test('a height measured for one thread is never held for another', () => {
+  setStatus('idle', 'a');
+  const { rerender } = render(<Footer show id="a" />);
+  const footer = screen.getByTestId('turn-footer');
+  footer.getBoundingClientRect = () => ({ height: 90 }) as DOMRect;
+  rerender(<Footer show id="a" />);
+  act(() => { useThreadStatus.setState({ byTerminal: { a: { threadStatus: 'idle' }, b: { threadStatus: 'working' } } } as any); });
+  rerender(<Footer show={false} id="b" />);
+  expect(footer.style.height).toBe('');
+  expect(footer.style.minHeight).toBe('');
 });
