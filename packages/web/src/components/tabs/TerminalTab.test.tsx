@@ -1026,6 +1026,27 @@ test('the reader\'s own wheel during a reprint ends the follow at once', async (
   expect(term.scrolledToBottom).toBe(afterWheel);
 });
 
+// Review round 1 (2026-10-12): keyboard scrolling ends the follow too, and a clear split across
+// two frames still starts it.
+test('Shift+PageUp during a reprint ends the follow, also for the quiet timer', async () => {
+  const { term, send, getByTestId } = await mountAtBottom();
+  send(`${CLEAR}${'line\n'.repeat(5)}`);
+  await waitFor(() => expect(term.scrolledToBottom).toBeGreaterThan(1));
+  fireEvent.keyDown(getByTestId('term-host'), { key: 'PageUp', shiftKey: true });
+  const afterKey = term.scrolledToBottom;
+  send('line\n'.repeat(50));
+  await new Promise((r) => setTimeout(r, 600));
+  expect(term.scrolledToBottom).toBe(afterKey);
+});
+
+test('a scrollback clear split across two frames still keeps a reader at the bottom', async () => {
+  const { term, send } = await mountAtBottom();
+  const start = term.scrolledToBottom;
+  send('\x1b[H\x1b[2J\x1b[3');
+  send(`J${'line\n'.repeat(5)}`);
+  await waitFor(() => expect(term.scrolledToBottom).toBeGreaterThan(start));
+});
+
 test('during a reprint, the browser\'s own scroll event on the viewport puts the view back at the bottom', async () => {
   fakeDom.viewport = true;
   const { term, send, getByTestId } = await mountAtBottom();

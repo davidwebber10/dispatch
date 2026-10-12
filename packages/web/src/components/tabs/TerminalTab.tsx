@@ -256,6 +256,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     // happens — then do the normal reset + resize.
     const handleConnectionReset = () => {
       activeRebuildAbort?.();
+      chunkTail = ''; // a new byte stream follows
       term.reset();
       resyncSize();
       // The server replays the whole scrollback next — land at the newest output, not at
@@ -281,6 +282,9 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     // was at the bottom when it began (see SCROLLBACK_CLEAR).
     let followReprint = false;
     let reprintTimer: ReturnType<typeof setTimeout> | undefined;
+    // The last bytes of the previous frame, so a clear split across two frames is still seen
+    // (review round 1).
+    let chunkTail = '';
     const endFollow = () => {
       followReprint = false;
       if (reprintTimer) { clearTimeout(reprintTimer); reprintTimer = undefined; }
@@ -290,7 +294,9 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     // connection's normal traffic, and any survivor-of-a-rebuild socket once it
     // has become primary again.
     const attachLive = (chunk: string) => {
-      if (chunk.includes(SCROLLBACK_CLEAR)) {
+      const clearIn = (chunkTail + chunk).includes(SCROLLBACK_CLEAR);
+      chunkTail = (chunkTail + chunk).slice(-(SCROLLBACK_CLEAR.length - 1));
+      if (clearIn) {
         const b = term.buffer.active;
         if (followReprint || b.viewportY >= b.baseY) followReprint = true;
       }
@@ -751,8 +757,13 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     // The reader's own scroll input ends a reprint follow at once (see SCROLLBACK_CLEAR): the
     // desktop wheel and a press on the scrollbar land inside the host; touch ends it in onTouchStart.
     const onUserScrollInput = () => endFollow();
+    // xterm's own keyboard scrolling (Shift+PageUp/PageDown/Home/End) ends it too (review round 1).
+    // Ordinary typing does not: a reader typing the next prompt is still at the bottom.
+    const SCROLL_KEYS = new Set(['PageUp', 'PageDown', 'Home', 'End']);
+    const onKeyScroll = (e: KeyboardEvent) => { if (e.shiftKey && SCROLL_KEYS.has(e.key)) endFollow(); };
     host?.addEventListener('wheel', onUserScrollInput, { passive: true, capture: true });
     host?.addEventListener('pointerdown', onUserScrollInput, { passive: true, capture: true });
+    host?.addEventListener('keydown', onKeyScroll, { capture: true });
     // During a reprint follow, the browser's own scroll event (its scrollTop clamp after the
     // scrollback clear) puts the view back at the bottom instead of leaving it where it landed.
     const onViewportScroll = () => { if (followReprint) scrollToEndRef.current(); else updateAtBottom(); };
@@ -781,6 +792,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       endFollow();
       host?.removeEventListener('wheel', onUserScrollInput, { capture: true });
       host?.removeEventListener('pointerdown', onUserScrollInput, { capture: true });
+      host?.removeEventListener('keydown', onKeyScroll, { capture: true });
       vp0?.removeEventListener('scroll', onViewportScroll);
       offScroll.dispose();
       offRender.dispose();
