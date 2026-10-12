@@ -370,8 +370,10 @@ export class LedgerService {
     const item = this.requireItem(sessionId, input.id);
     if (item.status !== 'proposed') throw new LedgerError(409, `N${item.seq} is already ${item.status}.`, { status: item.status });
     // Monday check 2026-10-12: a title set before with ledger_set_title counts. An agent block
-    // never stores a title, so a stored title is always the overseer's own.
-    const title = readTitle(str(input.title) ?? item.title ?? undefined, {}, true);
+    // never stores a title, so a stored title is always the overseer's own. Only an absent title (or
+    // null) uses it: a blank or non-text title in the call is refused (review round 1).
+    const given = input.title === undefined || input.title === null ? (item.title ?? undefined) : input.title;
+    const title = readTitle(given, {}, true);
     ledgerDb.markSent(this.db, sessionId, item.seq, { title, note: str(input.note), blocks: str(input.blocks), now: this.nowIso() });
     this.changed(sessionId);
     return { id: `N${item.seq}`, status: 'open' };
