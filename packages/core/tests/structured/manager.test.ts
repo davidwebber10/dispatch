@@ -630,3 +630,22 @@ it('kill() while only stdout drains (stderr already closed) still emits exit onc
   await new Promise((r) => setTimeout(r, 1500));
   expect(exits).toEqual([1]);
 });
+
+// 2026-10-12: an agent's `pkill -f until` stopped 14 agent threads. Every thread refuses a kill by
+// name or pattern, even an ungoverned, auto-allowing one, and tells the model to kill by PID.
+it('denies a kill by name or pattern on any thread, with the kill-by-PID advice', async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  m.sendMessage('t1', 'TRIGGER_BASH:pkill -f until');
+  const ev = await waitForEvent(m, 't1', (e) => e.type === 'user' && /WROTE|DENIED/.test(JSON.stringify(e)));
+  expect(ev.message.content[0].content).toBe('DENIED');
+  expect(ev.message.content[0].message).toMatch(/by PID/);
+});
+
+it('still auto-allows a kill by PID', async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  m.sendMessage('t1', 'TRIGGER_BASH:kill 12345');
+  const ev = await waitForEvent(m, 't1', (e) => e.type === 'user' && /WROTE|DENIED/.test(JSON.stringify(e)));
+  expect(ev.message.content[0].content).toBe('WROTE');
+});
