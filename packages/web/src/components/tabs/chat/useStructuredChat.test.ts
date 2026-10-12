@@ -1282,3 +1282,13 @@ test('a recovered reply that the late REST page also holds is shown once', async
   await flushAsync();
   expect(result.current.items.map((i) => i.text)).toEqual(['question', 'The reply.']);
 });
+
+test('two recovered replies of one turn with the same text both show (only a REST page counts as already shown)', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'question' }] } }));
+  act(() => cbs.onEvent(stopWith(1, 'Done.')));
+  act(() => cbs.onEvent({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'x1', name: 'Shell', input: { command: 'ls' } }] } }));
+  act(() => cbs.onEvent(stopWith(3, 'Done.')));
+  drainRaf();
+  expect(assistantTexts(result.current.items)).toEqual(['Done.', 'Done.']);
+});

@@ -207,14 +207,15 @@ function userOrNotice(text: string, source: ConvItem['source'], uuid?: string): 
   return { kind: 'user', text, ...(source ? { source } : {}), ...(uuid ? { uuid } : {}) };
 }
 
-/** True when an assistant item after the last user turn already shows `text` — the same message,
- *  already rendered (e.g. from a REST page read after Codex wrote it to its transcript). */
+/** True when a REST-page assistant item after the last user turn already shows `text`: the same
+ *  message, read from the transcript after Codex wrote it. Only page items count (they carry their
+ *  transcript `line`); a live reply with the same words is a different message and both show. */
 function shownThisTurn(items: ConvItem[], text: string): boolean {
   const want = text.trim();
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i];
     if (it.kind === 'user') return false;
-    if (it.kind === 'assistant' && (it.text ?? '').trim() === want) return true;
+    if (it.kind === 'assistant' && it.line !== undefined && (it.text ?? '').trim() === want) return true;
   }
   return false;
 }
