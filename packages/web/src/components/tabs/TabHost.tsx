@@ -32,15 +32,15 @@ function AiThread({ tab }: { tab: Terminal }) {
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
       {/* Structured threads are chat-only (no xterm — it would crash on a missing PTY);
-          CLI threads render the terminal, topped by a one-time nudge toward Pretty and
-          the latest declared turn outcome (the TUI collapses report_status's arguments,
-          so a turn's substance was otherwise invisible here). Keyed by thread so a tab
-          switch never carries one thread's outcome state onto another. */}
+          CLI threads render the terminal, topped by a one-time nudge toward Pretty, with the
+          latest declared turn outcome UNDER it, in its footer (the TUI collapses
+          report_status's arguments, so a turn's substance was otherwise invisible here; at the
+          bottom, as in a Pretty thread). Keyed by thread so a tab switch never carries one
+          thread's outcome state onto another. */}
       {structured ? <ChatView terminalId={tab.id} /> : (
         <>
           <CliPrettyHint tab={tab} />
-          <CliStatusCard key={tab.id} tab={tab} />
-          <TerminalTab terminalId={tab.id} />
+          <TerminalTab terminalId={tab.id} footer={<CliStatusCard key={tab.id} tab={tab} />} />
         </>
       )}
       {/* Desktop: the CLI⇄Pretty transport switch floats over the top-right (the only render
