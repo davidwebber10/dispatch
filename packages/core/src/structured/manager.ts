@@ -235,6 +235,8 @@ export function turnTextsFromEvents(events: readonly unknown[]): string[] {
 const MAX_EVENTS = 5000;
 /** How much of a structured CLI's stderr to keep for its exit report. */
 const STDERR_TAIL = 2000;
+/** The longest wait after a CLI's 'exit' for its stdout and stderr to close (see spawn()). */
+const EXIT_DRAIN_MS = 1000;
 /** Claude's verdict on a `-r <id>` whose transcript is gone (Claude Code 2.1.296: an error
  *  `result` with no `result` field; the reason only in `errors[]` and on stderr). */
 const CONVERSATION_LOST = /No conversation found with session ID: (\S+)/;
@@ -435,7 +437,15 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       }
     });
 
-    child.on('exit', (code) => {
+    // Node can fire 'exit' before the child's stdout and stderr are drained, and the last frame
+    // (a failed resume's only reason, #76) must still be read. So finish once both streams have
+    // closed, or EXIT_DRAIN_MS after 'exit' if something else holds them open.
+    let exitCode: number | null = null;
+    let finished = false;
+    let open = 2; // stdout (via readline) + stderr
+    const finish = () => {
+      if (finished || exitCode === null) return;
+      finished = true;
       // Fix 1: only clear the map if this child is still the current session
       // (a re-spawn may have already replaced it; its exit must not evict the new child)
       if (this.sessions.get(terminalId)?.child !== child) return;
@@ -443,8 +453,16 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       this.sessions.delete(terminalId);
       const detail = session.stderrTail?.trim() || undefined;
       // The daemon log is the only place this reaches when no browser is watching.
-      if (code && detail) console.error(`[structured] thread ${terminalId} exited (${code}): ${detail}`);
-      this.emit('exit', terminalId, code ?? 0, detail);
+      if (exitCode && detail) console.error(`[structured] thread ${terminalId} exited (${exitCode}): ${detail}`);
+      this.emit('exit', terminalId, exitCode, detail);
+    };
+    const streamClosed = () => { if (--open === 0) finish(); };
+    rl.on('close', streamClosed);
+    child.stderr.on('close', streamClosed);
+    child.on('exit', (code) => {
+      exitCode = code ?? 0;
+      if (open === 0) finish();
+      else setTimeout(finish, EXIT_DRAIN_MS).unref();
     });
     child.on('error', (err) => {
       if (this.sessions.get(terminalId)?.child !== child) return;

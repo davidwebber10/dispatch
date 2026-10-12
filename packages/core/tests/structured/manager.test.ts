@@ -581,3 +581,16 @@ it('a resume whose conversation is gone: conversation-lost with the id, and the 
   expect(code).toBe(1);
   expect(detail).toContain('No conversation found with session ID: gone-session');
 });
+
+// Review finding: Node can fire the child's 'exit' before its stdout is drained. Claude's error
+// frame must still be read when it lands after 'exit', or the doomed resume repeats (#76).
+it('reads a lost-conversation frame that lands after the process exited', async () => {
+  const m = new StructuredSessionManager();
+  const lost = waitForManagerEvent(m, 'conversation-lost', 'tLate');
+  const exited = waitForManagerEvent(m, 'exit', 'tLate');
+  m.spawn('tLate', { command: process.execPath, args: [fake, '-r', 'gone-late'], workDir: process.cwd() });
+  expect(await lost).toEqual(['gone-late']);
+  const [code, detail] = await exited;
+  expect(code).toBe(1);
+  expect(detail).toContain('No conversation found with session ID: gone-late');
+});

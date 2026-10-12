@@ -7,6 +7,16 @@ const send = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 // no init frame, one error `result` with no `result` field and the reason in `errors[]`, the
 // same text on stderr, exit code 1.
 const rIdx = process.argv.indexOf('-r');
+// `-r gone-late`: the same failure, but the error frame reaches stdout only AFTER this process
+// has exited (a helper that inherited stdout writes it 200 ms later). Node fires the child's
+// 'exit' first, so this pins that the manager still reads the late frame.
+if (rIdx > -1 && process.argv[rIdx + 1] === 'gone-late') {
+  const { spawn } = await import('node:child_process');
+  const reason = 'No conversation found with session ID: gone-late';
+  const frame = JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, session_id: 'gone-late', errors: [reason] });
+  spawn(process.execPath, ['-e', `setTimeout(() => { process.stderr.write(${JSON.stringify(reason + '\n')}); process.stdout.write(${JSON.stringify(frame + '\n')}); }, 200)`], { stdio: ['ignore', 'inherit', 'inherit'] });
+  process.exit(1);
+}
 if (rIdx > -1 && process.argv[rIdx + 1] === 'gone-session') {
   const reason = 'No conversation found with session ID: gone-session';
   process.stderr.write(reason + '\n');
