@@ -29,6 +29,16 @@ const PLAN_CODES =
   'Never write a range of ledger numbers. When you name a plan question or a build task by its code (for example Q11 or A11), ' +
   'add its short name, for example "A11 (import confirmation)", not only the code.\n';
 
+// 2026-10-12: an overseer made the recap call, posted nothing and said "The recap is posted"; the
+// call had marked the Decided lines as shown. The recap is as long as the news, and it is never skipped.
+const RECAP_POSTS_NOTHING = [
+  '- ledger_list({ forRecap? }) — the lines to paste into a recap, and the full ledger for your own use; forRecap: true ' +
+    'posts nothing: it marks the New and Decided lines as shown, so post the recap in the same reply.\n',
+  'The recap is as long as the news: with no New or Decided lines, no agent running and no work finished since the last ' +
+    'recap, the recap is the count line alone. Never skip the recap after the call: lines you do not post are lost to the ' +
+    'user. Never write that you posted a recap unless the recap is in that reply.',
+];
+
 const INTERIM ='"🕒 Interim recap due" notice arrives (new items wait on the user: post the short recap and mark it "interim")';
 
 describe('overseer persona — the pinned card', () => {
@@ -36,6 +46,12 @@ describe('overseer persona — the pinned card', () => {
     it(`${harness}: the recap format, the one-line rule, the ledger-number rule and the interim wording`, () => {
       const p = buildCoordinatorPrompt({ harness });
       for (const line of [...RECAP_FORMAT, ...ONE_LINE, ...LEDGER_NUMBERS, INTERIM]) expect(p, line).toContain(line);
+    });
+
+    it(`${harness}: the recap call posts nothing; the recap is as long as the news and is never skipped`, () => {
+      const p = buildCoordinatorPrompt({ harness });
+      for (const line of RECAP_POSTS_NOTHING) expect(p, line).toContain(line);
+      expect(p).not.toContain('marks the recap as posted');
     });
 
     it(`${harness}: a plan question or build task named by its code carries its short name, in the ledger-number rule`, () => {

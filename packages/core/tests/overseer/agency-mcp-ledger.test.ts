@@ -1,7 +1,7 @@
 // The decision-ledger tools (structured-recap spec, Unit 3) and the `ledgerIds` hand-off on
 // spawn_agent / queue_agent / message_agent. fetch is mocked, as in agency-mcp.test.ts.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { callTool, TOOLS } from '../../src/overseer/agency-mcp.js';
+import { callTool, RECAP_NOT_POSTED, TOOLS } from '../../src/overseer/agency-mcp.js';
 
 const ok = (body: unknown, status = 200) => ({ ok: true, status, statusText: 'OK', text: async () => (body === undefined ? '' : JSON.stringify(body)) });
 const fail = (status: number, error: string) => ({ ok: false, status, statusText: 'Err', text: async () => JSON.stringify({ error }) });
@@ -68,8 +68,32 @@ describe('agency-mcp ledger tools', () => {
     expect(out.content).toEqual([
       { type: 'text', text: `Paste this into the recap:\n\n${paste}` },
       { type: 'text', text: `For your own use — do not paste:\n\n${text}` },
+      { type: 'text', text: RECAP_NOT_POSTED },
     ]);
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ caller: 'coord-1', forRecap: true });
+  });
+
+  // 2026-10-12: an overseer called ledger_list({ forRecap: true }), posted no recap and said "The recap is
+  // posted". The call marks the lines as shown, so the user never saw them. The last words it reads now
+  // say that the call posted nothing. A plain ledger_list marks nothing and does not get this line.
+  it('ledger_list with forRecap ends with the line that the call posted nothing; a plain call does not', async () => {
+    expect(RECAP_NOT_POSTED).toBe(
+      'This call posted nothing. Post the recap now, in this reply. The lines under "Paste this into the recap" are now ' +
+      'marked as shown: if you do not post them, the user never sees them. With no news, the recap is the count line alone.',
+    );
+    const paste = 'Needs you: 0 decisions, 5 actions — on the card.';
+    global.fetch = vi.fn().mockResolvedValue(ok({ paste, text: 'Needs you now:\n- none', openIds: [] })) as any;
+    const recap = (await callTool('ledger_list', { forRecap: true })).content as { text: string }[];
+    expect(recap.at(-1)!.text).toBe(RECAP_NOT_POSTED);
+    const plain = (await callTool('ledger_list', {})).content as { text: string }[];
+    expect(plain.map((b) => b.text).join('\n')).not.toContain('This call posted nothing');
+  });
+
+  it('the ledger_list description says that forRecap posts nothing', () => {
+    const description = (TOOLS.find((t) => t.name === 'ledger_list')! as any).description as string;
+    expect(description).toContain('Pass forRecap: true when you post the recap. The call posts nothing: it marks the New and ' +
+      'Decided lines as shown and clears the interim recap timer, so post the recap in your reply right after it.');
+    expect(description).not.toContain('marks the recap as posted');
   });
 
   // Review round 1 (2026-10-09): "Titles first" comes back alone; there is nothing to paste yet.
