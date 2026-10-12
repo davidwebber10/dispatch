@@ -24,6 +24,25 @@ describe('broadKillDenial — commands that signal processes by name or pattern'
     'kill -TERM 0',
     'if pgrep -f loop; then pkill -f loop; fi',
     'cd /repo\npkill -f loop',
+    // Review round 1: ordinary forms the first version missed.
+    'echo "$(pkill -f until)"',
+    'kill "$(pgrep -f until)"',
+    'echo "it\'s fine"; pkill -f until; echo "it\'s done"',
+    '/usr/bin/pkill -f until',
+    'env pkill -f until',
+    'FOO=bar pkill -f until',
+    '/usr/bin/time -p pkill -f until',
+    'sudo -u "$USER" pkill -f until',
+    'kill $(/usr/bin/pgrep -f until)',
+    'kill -9 -1 2>/dev/null',
+    'kill 0 # stop the process group',
+    'kill 0 12345',
+    'kill -s TERM -1',
+    'xargs -I{} kill {} <<< $(pgrep -f until)',
+    'pgrep -f until |\n  xargs kill',
+    'pgrep -f until | xargs -I{} kill {}',
+    'timeout 5 pkill -f until',
+    '{ pkill -f until; }',
   ])('blocks: %s', (cmd) => {
     const d = bash(cmd);
     expect(d).not.toBeNull();
@@ -48,8 +67,21 @@ describe('broadKillDenial — commands that signal processes by name or pattern'
     'ls -la',
     'npm run skill-check',
     'python skillfull.py',
+    // Review round 1: data and look-alikes the first version blocked.
+    'echo "done\\"; pkill -f until"',
+    "cat > cleanup-example.md <<'EOF'\npkill -f node\nEOF",
+    'git ls-files docs/ps | xargs rg kill',
+    'kill -- -12345',
+    'kill -9 1234 2>/dev/null',
   ])('allows: %s', (cmd) => {
     expect(bash(cmd)).toBeNull();
+  });
+
+  it('stays fast on a very long command', () => {
+    const long = Array.from({ length: 2000 }, (_, i) => `echo ${i} | grep ${i}`).join(' && ');
+    const t0 = performance.now();
+    expect(bash(long)).toBeNull();
+    expect(performance.now() - t0).toBeLessThan(200);
   });
 
   it('only looks at the Bash tool', () => {
