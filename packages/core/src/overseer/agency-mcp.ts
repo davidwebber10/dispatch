@@ -489,7 +489,8 @@ export const TOOLS = [
       'which the daemon checks against the messages the user sent you after the item was created. ' +
       '"withdrawn" needs `reason`. An "ok" at the start of a message is never an answer. If the check ' +
       'fails, do not record the item: ask the user. To reverse a decision you made yourself ' +
-      '(ledger_decide_self) when the user says "reverse N21", set it to "answered" with the user\'s words.',
+      '(ledger_decide_self) when the user says "reverse N21", set it to "answered" with the user\'s words. A parked ' +
+      'item can still take the answer later: set it to "answered" with the user\'s words from after the park.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -583,17 +584,17 @@ export const TOOLS = [
     name: 'ledger_add_from_agent',
     description:
       'Overseer only. Triage: send a proposed decision (from an agent\'s owner-decisions block) to the ' +
-      'user, with your `title`. The agent\'s text stays word for word; `note` becomes the card\'s "Overseer\'s note" — use it ' +
+      'user, with your `title` (a title you set before with ledger_set_title counts). The agent\'s text stays word for word; `note` becomes the card\'s "Overseer\'s note" — use it ' +
       'for what the agent did not know. The user sees it in the next recap; do not post it now.',
     inputSchema: {
       type: 'object',
       properties: {
         id: { type: 'string', description: 'The proposed item ID, e.g. "N30".' },
-        title: { type: 'string', description: `${TITLE_RULES} Required.` },
+        title: { type: 'string', description: `${TITLE_RULES} Required unless you set one before with ledger_set_title.` },
         note: { type: 'string', description: 'Optional: your own note, shown under its own label on the card.' },
         blocks: { type: 'string', description: 'Optional: what this decision holds up (shown as "Holds up"; it ranks the card first).' },
       },
-      required: ['id', 'title'],
+      required: ['id'],
     },
   },
   {

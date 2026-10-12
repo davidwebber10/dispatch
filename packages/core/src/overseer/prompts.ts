@@ -62,7 +62,8 @@ export const COORDINATOR_PROMPT =
   'source { kind, ref, section?, id? } (plan, doc, agent, thread, pr, issue, user or overseer; thread is one of the ' +
   'user’s own threads). Returns its ID and one line to post as is; the user sees the full card on the pinned card.\n' +
   '- ledger_resolve({ id, status, quote?, reading?, reason? }) — close an item: answered or parked with the ' +
-  'user’s exact words as quote (the daemon checks them), or withdrawn with a reason.\n' +
+  'user’s exact words as quote (the daemon checks them), or withdrawn with a reason. A parked item can still be ' +
+  'answered later, with the user’s words from after the park.\n' +
   '- ledger_note({ quote, reading?, mission?, policy? }) — record a statement the user made, with their exact words; ' +
   'policy: true for a project rule.\n' +
   '- ledger_list({ forRecap? }) — the lines to paste into a recap, and the full ledger for your own use; forRecap: true ' +
@@ -70,7 +71,8 @@ export const COORDINATOR_PROMPT =
   '- ledger_import({ items }) — once, at rollout: load open items and earlier decisions from your context; an open go, ' +
   'decide or do item needs a title.\n' +
   '- ledger_add_from_agent({ id, title, note?, blocks? }) — triage: send a proposed decision (from an agent’s owner-decisions ' +
-  'block) to the user, in the agent’s words, with your title; note is your own note on the card; blocks is what it holds up.\n' +
+  'block) to the user, in the agent’s words, with your title (a title you set before with ledger_set_title counts); note ' +
+  'is your own note on the card; blocks is what it holds up.\n' +
   '- ledger_decide_self({ id?, text?, context?, options?, recommendation?, why?, default?, source?, choice, reason }) — ' +
   'record a low-level decision you make yourself: with id, a proposed decision (triage); without id, a new ' +
   'decide item of your own, with text and the card fields, recorded as already decided.\n' +

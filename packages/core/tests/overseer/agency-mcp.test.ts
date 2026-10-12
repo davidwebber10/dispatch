@@ -872,6 +872,16 @@ describe('agency-mcp', () => {
     expect(tool.inputSchema.properties.force).toBeTruthy();
     expect(tool.inputSchema.required).toEqual(['agentId']); // force is optional
   });
+
+  // Monday check 2026-10-12: a stored title counts for ledger_add_from_agent; a parked item takes a later answer.
+  it('ledger_add_from_agent needs only the id; ledger_resolve tells how to answer a parked item', () => {
+    const send = TOOLS.find((t) => t.name === 'ledger_add_from_agent') as any;
+    expect(send.inputSchema.required).toEqual(['id']);
+    expect(send.description).toContain('(a title you set before with ledger_set_title counts)');
+    expect(send.inputSchema.properties.title.description).toContain('Required unless you set one before with ledger_set_title.');
+    const resolve = TOOLS.find((t) => t.name === 'ledger_resolve') as any;
+    expect(resolve.description).toContain('A parked item can still take the answer later: set it to "answered" with the user\'s words from after the park.');
+  });
 });
 
 describe('agency-mcp post_image', () => {

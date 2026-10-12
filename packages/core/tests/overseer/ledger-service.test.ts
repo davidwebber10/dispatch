@@ -9,7 +9,7 @@ import * as terminalsDb from '../../src/db/terminals.js';
 import * as ledgerDb from '../../src/db/ledger.js';
 import * as messagesDb from '../../src/db/coordinator-messages.js';
 import { LedgerService, LedgerError, NOT_OVERSEER_ERROR, parseLedgerId, quoteNotFoundAfterError, QUOTE_NOT_FOUND_STATEMENT_ERROR } from '../../src/overseer/ledger-service.js';
-import { OK_ONLY_ERROR } from '../../src/overseer/ledger-quote.js';
+import { GO_APPROVAL_ERROR, OK_ONLY_ERROR } from '../../src/overseer/ledger-quote.js';
 import { renderCard } from '../../src/overseer/ledger-render.js';
 import { DECIDE_CARD, GO_CARD, LR6 } from './card-fixtures.js';
 import { ONLY_USER_ERROR } from '../../src/overseer/ledger-checks.js';
@@ -295,6 +295,43 @@ describe('resolve', () => {
     expectLedgerError(() => ledger.resolve('s1', 'coord', { id: 'N1', status: 'withdrawn' }), 400);
     const out = ledger.resolve('s1', 'coord', { id: 'N1', status: 'withdrawn', reason: 'the agent found a built-in option' });
     expect(out.line).toBe('N1 [Decide] Clean nights before live mode — Which store goes first?\n  Recommendation: A. 5 nights\n  Options: A. 5 nights | B. 10 nights\n  Withdrawn by overseer: the agent found a built-in option');
+  });
+
+  // Monday check 2026-10-12: the user parked an item and gave the answer days later. The ledger
+  // refused it ("N1 is already parked."), so the item stayed parked on the card.
+  it('a parked item takes a later answer; only words sent after the park count', () => {
+    userSays('N1: park it until the vendor replies', 5);
+    now = T0 + 6 * 60_000;
+    ledger.resolve('s1', 'coord', { id: 'N1', status: 'parked', quote: 'park it until the vendor replies' });
+    now = T0 + 30 * 60_000;
+    ledger.list('s1', 'coord', { forRecap: true });
+
+    expectLedgerError(() => ledger.resolve('s1', 'coord', { id: 'N1', status: 'answered', quote: 'park it until the vendor replies' }), 422,
+      quoteNotFoundAfterError(1, 'parked'));
+    expect(quoteNotFoundAfterError(1, 'parked')).toBe("Quote not found in the user's messages to you after N1 was parked. Do not record it. Ask the user.");
+    expect(ledgerDb.getBySeq(db, 's1', 1)!.status).toBe('parked');
+
+    userSays('N1: B, the vendor said ten nights', 60);
+    now = T0 + 61 * 60_000;
+    ledger.resolve('s1', 'coord', { id: 'N1', status: 'answered', quote: 'B, the vendor said ten nights' });
+    expect(ledgerDb.getBySeq(db, 's1', 1)).toMatchObject({ status: 'answered', quote: 'B, the vendor said ten nights', quoteAt: min(60) });
+    expect(ledger.list('s1', 'coord').paste).toContain('Decided:\n- N1'); // the next recap shows the answer
+    expectLedgerError(() => ledger.resolve('s1', 'coord', { id: 'N1', status: 'answered', quote: 'B, the vendor said ten nights' }), 409, 'N1 is already answered.');
+  });
+
+  it('a parked item cannot be parked again or withdrawn; a parked go item still needs a named approval', () => {
+    ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR #12.', ...GO_CARD, title: 'Merge PR #12' });
+    userSays('park N1 and N2 for now', 5);
+    now = T0 + 6 * 60_000;
+    ledger.resolve('s1', 'coord', { id: 'N1', status: 'parked', quote: 'park N1 and N2 for now' });
+    ledger.resolve('s1', 'coord', { id: 'N2', status: 'parked', quote: 'park N1 and N2 for now' });
+    userSays('still park it', 10);
+    userSays('yes', 11);
+    now = T0 + 12 * 60_000;
+    expectLedgerError(() => ledger.resolve('s1', 'coord', { id: 'N1', status: 'parked', quote: 'still park it' }), 409, 'N1 is already parked.');
+    expectLedgerError(() => ledger.resolve('s1', 'coord', { id: 'N1', status: 'withdrawn', reason: 'moot' }), 409, 'N1 is already parked.');
+    expectLedgerError(() => ledger.resolve('s1', 'coord', { id: 'N2', status: 'answered', quote: 'yes' }), 422, GO_APPROVAL_ERROR);
+    expect(ledgerDb.getBySeq(db, 's1', 2)!.status).toBe('parked');
   });
 
   it('a closed item returns 409 with its current status; an unknown ID returns 404', () => {
