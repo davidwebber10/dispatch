@@ -75,6 +75,40 @@ describe('CodexTranslator — server → Claude-shaped stream', () => {
     expect(second[0]).toMatchObject({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: (fx.agentMsgDelta2 as any).params.delta } } });
   });
 
+  // A view that missed the stream (a reconnect or a thread switch mid-reply) has no other way to
+  // get the text: the ring holds deltas only. So the closing stop carries the whole text.
+  it('a completed agentMessage closes its streamed block with the full text (final_text)', () => {
+    const t = new CodexTranslator();
+    t.translate(fx.turnStarted as any);
+    t.translate(fx.agentMsgDelta1 as any);
+    t.translate(fx.agentMsgDelta2 as any);
+    const done = events(t.translate(fx.agentMsgCompleted as any));
+    expect(done).toEqual([{ type: 'stream_event', event: { type: 'content_block_stop', index: 0, final_text: fx.agentMsgCompleted.params.item.text } }]);
+  });
+
+  // Only the stop: no start or delta, so the reducer's no-block path adds it and checks first that
+  // the turn does not already show it (a REST page can hold a message that completed before it).
+  it('a completed agentMessage that never streamed is sent as its own block stop with the full text', () => {
+    const t = new CodexTranslator();
+    t.translate(fx.turnStarted as any);
+    const item = { ...fx.agentMsgCompleted.params.item, id: 'msg_whole', text: 'The whole reply.' };
+    const out = events(t.translate({ method: 'item/completed', params: { ...fx.agentMsgCompleted.params, item } } as any));
+    expect(out).toEqual([
+      { type: 'stream_event', event: { type: 'message_start' } },
+      { type: 'stream_event', event: { type: 'content_block_stop', index: 0, final_text: 'The whole reply.' } },
+    ]);
+    // The index is taken: a later block of the turn gets the next one.
+    const next = events(t.translate({ method: 'item/reasoning/textDelta', params: { itemId: 'rs_9', delta: 'x', contentIndex: 0 } } as any));
+    expect(next[0]).toMatchObject({ type: 'stream_event', event: { type: 'content_block_start', index: 1 } });
+  });
+
+  it('an empty completed agentMessage that never streamed renders nothing', () => {
+    const t = new CodexTranslator();
+    t.translate(fx.turnStarted as any);
+    const item = { ...fx.agentMsgCompleted.params.item, id: 'msg_empty', text: '  ' };
+    expect(events(t.translate({ method: 'item/completed', params: { ...fx.agentMsgCompleted.params, item } } as any))).toEqual([]);
+  });
+
   it('reasoning textDelta → a streamed thinking block', () => {
     const t = new CodexTranslator();
     t.translate(fx.turnStarted as any);

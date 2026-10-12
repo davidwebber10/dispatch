@@ -207,6 +207,19 @@ function userOrNotice(text: string, source: ConvItem['source'], uuid?: string): 
   return { kind: 'user', text, ...(source ? { source } : {}), ...(uuid ? { uuid } : {}) };
 }
 
+/** True when a REST-page assistant item after the last user turn already shows `text`: the same
+ *  message, read from the transcript after Codex wrote it. Only page items count (they carry their
+ *  transcript `line`); a live reply with the same words is a different message and both show. */
+function shownThisTurn(items: ConvItem[], text: string): boolean {
+  const want = text.trim();
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it.kind === 'user') return false;
+    if (it.kind === 'assistant' && it.line !== undefined && (it.text ?? '').trim() === want) return true;
+  }
+  return false;
+}
+
 /** Tracks one in-progress streamed content block within the current turn.
  * `text` accumulates text/thinking deltas; `jsonAccum` accumulates tool input
  * JSON. Deltas are buffered here and applied to the items in a single rAF flush
@@ -338,6 +351,9 @@ export function useStructuredChat(
   const streamingRef = useRef(false);                 // sticky once any stream_event seen
   const turnRef = useRef(0);                           // monotonic turn id → unique block keys
   const blockMapRef = useRef<Map<number, BlockRec>>(new Map()); // content-block index → record
+  // Keys of replies added from a stop's final_text (see content_block_stop below). They do not make
+  // the stream "own" the view, so a REST page still loading after a reconnect still lands.
+  const recoveredRef = useRef<Set<string>>(new Set());
 
   // rAF coalescing: deltas mutate the BlockRec buffers above + add the rec to a
   // dirty set; a single rAF then applies ALL dirty recs in ONE setItems map, so a
@@ -361,7 +377,7 @@ export function useStructuredChat(
     loadingOlderRef.current = false; setLoadingOlder(false);
     oldestLineRef.current = undefined; pageTokenRef.current += 1; // discard any in-flight fetch from the previous thread
     inactiveHydratedRef.current = false; anchorBlockedRef.current = false;
-    streamingRef.current = false; turnRef.current = 0; blockMapRef.current.clear();
+    streamingRef.current = false; turnRef.current = 0; blockMapRef.current.clear(); recoveredRef.current.clear();
     pendingRef.current.clear();
     if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
 
@@ -438,7 +454,7 @@ export function useStructuredChat(
         setItems([]); setBusy(false);
         setPending(null); // the server re-sends a still-pending permission after replay
         setContextTokens(undefined); setContextWindow(undefined); setCompacting(false); setCompactResult(null); setApiRetry(null); // replay rebuilds these
-        blockMapRef.current.clear();
+        blockMapRef.current.clear(); recoveredRef.current.clear();
         // Re-arm pagination too: `items` above is being fully rebuilt from a fresh replay,
         // so a stale REST anchor from before the reconnect could otherwise skip a gap of
         // history between the new tail replay and where the old anchor left off.
@@ -490,13 +506,18 @@ export function useStructuredChat(
               // about to discard. The updater's `prev` is the authoritative fresh state; the
               // itemsRef check outside is a fast-path only. The ref/setHasMore writes in here
               // are idempotent, so a double-invoked (StrictMode) updater is harmless.
-              const conversational = (it: ConvItem) => it.kind !== 'result';
+              // A reply recovered from a stop's final_text is no such item: it stays under the
+              // page, and is dropped only when the page already holds it (it completed before the
+              // page was read) — else a recovery after a reconnect would cost the whole history.
+              const recovered = (it: ConvItem) => !!it.uuid && recoveredRef.current.has(it.uuid);
+              const conversational = (it: ConvItem) => it.kind !== 'result' && !recovered(it);
               if (itemsRef.current.some(conversational)) return; // fast path only
               setItems((prev) => {
                 if (prev.some(conversational)) return prev; // authoritative — skips the anchor too
                 oldestLineRef.current = conv.startLine;
                 hasMoreRef.current = conv.hasMore; setHasMore(conv.hasMore);
-                return conv.items.length ? [...conv.items, ...prev] : prev;
+                if (!conv.items.length) return prev;
+                return [...conv.items, ...prev.filter((it) => !(recovered(it) && shownThisTurn(conv.items, it.text ?? '')))];
               });
             })
             .catch(() => { /* transient — the next near-top scroll retries via loadOlder */ })
@@ -594,6 +615,29 @@ export function useStructuredChat(
               rec.jsonAccum = (rec.jsonAccum ?? '') + (d.partial_json ?? '');
               pendingRef.current.add(rec); scheduleFlush();
             }
+            return;
+          }
+
+          // A Codex message's stop carries its whole text (codex-translate.ts, 2026-10-12). Its
+          // deltas reach only a view that saw the block start: after a socket reconnect, or a
+          // return to the thread mid-reply, they were dropped above and the reply stayed missing
+          // until a reload. The whole text wins over the streamed one; a missed block is added,
+          // unless this turn already shows the same text (a REST page read after it was written).
+          if (se.type === 'content_block_stop' && typeof se.final_text === 'string') {
+            const finalText: string = se.final_text;
+            const rec = blockMapRef.current.get(se.index);
+            if (rec) {
+              if (rec.kind === 'assistant' && rec.text !== finalText) {
+                rec.text = finalText;
+                pendingRef.current.add(rec); scheduleFlush();
+              }
+              return;
+            }
+            if (!finalText.trim()) return;
+            const key = `s-${turnRef.current}-${se.index}`;
+            blockMapRef.current.set(se.index, { key, kind: 'assistant', text: finalText, revealed: finalText.length });
+            recoveredRef.current.add(key);
+            setItems((p) => (shownThisTurn(p, finalText) ? p : [...p, { kind: 'assistant', text: finalText, uuid: key }]));
             return;
           }
 

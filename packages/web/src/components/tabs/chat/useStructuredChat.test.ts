@@ -1206,3 +1206,89 @@ test('default (no opts) keeps the optimistic hasMore for pageable harnesses', ()
   const { result } = renderHook(() => useStructuredChat('t1'));
   expect(result.current.hasMore).toBe(true);
 });
+
+// Codex: a message's content_block_stop carries its whole text (`final_text`, 2026-10-12), so a
+// view that missed the deltas (a socket reconnect, or a return to the thread mid-reply) still
+// shows the reply. Before, the reply stayed missing until a page reload.
+const stopWith = (index: number, final_text: string) => ({ type: 'stream_event', event: { type: 'content_block_stop', index, final_text } });
+const assistantTexts = (items: { kind: string; text?: string }[]) => items.filter((i) => i.kind === 'assistant').map((i) => i.text);
+
+test('final_text adds the reply when the view missed its block start (return mid-reply)', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'question' }] } }));
+  // The view (re)connected after this block opened: its deltas have no block and are dropped.
+  act(() => cbs.onEvent(textDelta(1, 'The rep')));
+  act(() => cbs.onEvent(stopWith(1, 'The reply.')));
+  drainRaf();
+  expect(assistantTexts(result.current.items)).toEqual(['The reply.']);
+});
+
+test('final_text corrects a streamed bubble and adds no second one', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'stream_event', event: { type: 'message_start' } }));
+  act(() => cbs.onEvent(start(0, { type: 'text' })));
+  act(() => cbs.onEvent(textDelta(0, 'Hel')));
+  act(() => cbs.onEvent(stopWith(0, 'Hello!')));
+  drainRaf();
+  expect(assistantTexts(result.current.items)).toEqual(['Hello!']);
+});
+
+test('final_text does not add a reply the REST page already shows', async () => {
+  vi.spyOn(api, 'getConversation').mockResolvedValue({
+    items: [{ kind: 'user', text: 'question', line: 1 }, { kind: 'assistant', text: 'The reply.', line: 2 }],
+    cursor: 3, startLine: 1, hasMore: false,
+  } as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'inactive' }));
+  await flushAsync();
+  act(() => cbs.onEvent(stopWith(3, 'The reply.')));
+  drainRaf();
+  expect(assistantTexts(result.current.items)).toEqual(['The reply.']);
+});
+
+test('after a final_text recovery, the next block of the turn still streams in order', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent(stopWith(1, 'First, a check.')));
+  act(() => cbs.onEvent(start(2, { type: 'text' })));
+  act(() => cbs.onEvent(textDelta(2, 'Then the answer.')));
+  act(() => cbs.onEvent(stopWith(2, 'Then the answer.')));
+  drainRaf();
+  expect(assistantTexts(result.current.items)).toEqual(['First, a check.', 'Then the answer.']);
+});
+
+// A recovered reply must not cost the reader the history: after a reconnect or a remount the REST
+// page is still loading when the reply's stop can arrive, and a page that finds a conversational
+// item already rendered is discarded. A recovered reply does not count as one; it stays under the
+// page, and is dropped only when the page itself already holds it.
+test('a reply recovered before the REST page lands keeps the page, under it', async () => {
+  let resolveFetch!: (v: unknown) => void;
+  vi.spyOn(api, 'getConversation').mockReturnValue(new Promise((r) => { resolveFetch = r; }) as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'inactive' }));
+  act(() => cbs.onEvent(stopWith(3, 'The reply.')));
+  resolveFetch({ items: [{ kind: 'user', text: 'question', line: 1 }, { kind: 'assistant', text: 'Earlier step.', line: 2 }], cursor: 3, startLine: 1, hasMore: true });
+  await flushAsync();
+  expect(result.current.items.map((i) => i.text)).toEqual(['question', 'Earlier step.', 'The reply.']);
+  expect(result.current.hasMore).toBe(true);
+});
+
+test('a recovered reply that the late REST page also holds is shown once', async () => {
+  let resolveFetch!: (v: unknown) => void;
+  vi.spyOn(api, 'getConversation').mockReturnValue(new Promise((r) => { resolveFetch = r; }) as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'inactive' }));
+  act(() => cbs.onEvent(stopWith(3, 'The reply.')));
+  resolveFetch({ items: [{ kind: 'user', text: 'question', line: 1 }, { kind: 'assistant', text: 'The reply.', line: 2 }], cursor: 3, startLine: 1, hasMore: false });
+  await flushAsync();
+  expect(result.current.items.map((i) => i.text)).toEqual(['question', 'The reply.']);
+});
+
+test('two recovered replies of one turn with the same text both show (only a REST page counts as already shown)', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'question' }] } }));
+  act(() => cbs.onEvent(stopWith(1, 'Done.')));
+  act(() => cbs.onEvent({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'x1', name: 'Shell', input: { command: 'ls' } }] } }));
+  act(() => cbs.onEvent(stopWith(3, 'Done.')));
+  drainRaf();
+  expect(assistantTexts(result.current.items)).toEqual(['Done.', 'Done.']);
+});
