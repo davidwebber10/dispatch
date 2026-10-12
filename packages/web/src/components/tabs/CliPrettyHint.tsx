@@ -15,8 +15,11 @@ export const CLI_PRETTY_HINT_KEY = 'dispatch:cliPrettyHint:dismissed';
  * history to the TUI's resume stub — so a finished turn's prose is routinely
  * unreadable there. The button performs the same switch as TransportToggle and is
  * gated the same way (a captured session id, no turn in flight).
+ *
+ * `reserveRight` keeps that many pixels free on the right (2026-10-12): on desktop the thread's
+ * floating bell and CLI/Pretty switch sit over the hint's right end and hid both buttons.
  */
-export function CliPrettyHint({ tab }: { tab: Terminal }) {
+export function CliPrettyHint({ tab, reserveRight }: { tab: Terminal; reserveRight?: number }) {
   const [dismissed, setDismissed] = useState(() => localStorage.getItem(CLI_PRETTY_HINT_KEY) === '1');
   const [busy, setBusy] = useState(false);
   const threadStatus = useThreadStatus((s) => s.byTerminal[tab.id]?.threadStatus);
@@ -46,8 +49,9 @@ export function CliPrettyHint({ tab }: { tab: Terminal }) {
 
   return (
     <div
+      data-testid="cli-pretty-hint"
       style={{
-        display: 'flex', alignItems: 'center', gap: 10, padding: '5px 12px', flexShrink: 0,
+        display: 'flex', alignItems: 'center', gap: 10, padding: '5px 12px', paddingRight: reserveRight || 12, flexShrink: 0,
         background: 'var(--color-elevated)', borderBottom: '1px solid #2C2C32',
         color: 'var(--color-text-secondary)', fontSize: 12, lineHeight: 1.4,
       }}

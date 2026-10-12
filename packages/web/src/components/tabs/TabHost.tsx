@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api } from '../../api/client';
 import type { Terminal } from '../../api/types';
 import { TerminalTab } from './TerminalTab';
@@ -25,9 +25,29 @@ export function isStructured(tab: Pick<Terminal, 'config'>): boolean {
  *  (ChatView); CLI threads render the real terminal. The old frontend-only "View" render of
  *  a PTY thread (ConversationView, behind a View/Terminal toggle) was removed — switch the
  *  thread to Pretty (real stream-json) via the TransportToggle for a rendered chat. */
+// The floating controls' right offset, and the gap the Pretty hint keeps from them.
+const FLOATING_RIGHT = 12;
+const FLOATING_GAP = 8;
+
 function AiThread({ tab }: { tab: Terminal }) {
   const isMobile = useIsMobile();
   const structured = isStructured(tab);
+  // On desktop the bell and the CLI/Pretty switch float over the top-right corner, which is the
+  // right end of the Pretty hint: they hid its "Switch to Pretty" and dismiss buttons (2026-10-12).
+  // Measure the floating group, so the hint keeps that space free whatever the switch shows.
+  const floatingRef = useRef<HTMLDivElement>(null);
+  const [floatingWidth, setFloatingWidth] = useState(0);
+  useLayoutEffect(() => {
+    const el = floatingRef.current;
+    if (!el) { setFloatingWidth(0); return; }
+    const measure = () => setFloatingWidth(el.getBoundingClientRect().width);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isMobile, structured]);
+  const hintReserve = !isMobile && floatingWidth > 0 ? Math.ceil(floatingWidth) + FLOATING_RIGHT + FLOATING_GAP : undefined;
 
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
@@ -39,14 +59,14 @@ function AiThread({ tab }: { tab: Terminal }) {
           thread's outcome state onto another. */}
       {structured ? <ChatView terminalId={tab.id} /> : (
         <>
-          <CliPrettyHint tab={tab} />
+          <CliPrettyHint tab={tab} reserveRight={hintReserve} />
           <TerminalTab terminalId={tab.id} footer={<CliStatusCard key={tab.id} tab={tab} />} />
         </>
       )}
       {/* Desktop: the CLI⇄Pretty transport switch floats over the top-right (the only render
           switch now; mobile keeps the same control in its header). */}
       {!isMobile && (
-        <div style={{ position: 'absolute', top: 4, right: 12, zIndex: 12, display: 'flex', gap: 6 }}>
+        <div ref={floatingRef} data-testid="thread-floating-controls" style={{ position: 'absolute', top: 4, right: FLOATING_RIGHT, zIndex: 12, display: 'flex', gap: 6 }}>
           <AlertBell terminalId={tab.id} floating />
           <TransportToggle terminalId={tab.id} floating />
         </div>
