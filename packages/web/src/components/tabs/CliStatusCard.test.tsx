@@ -56,19 +56,26 @@ test('no outcome at all renders nothing', () => {
   expect(screen.queryByTestId('status-notice')).toBeNull();
 });
 
-test('the card hides while a new turn is running', () => {
+// 2026-10-12: hiding the card on submit resized the terminal (and made Codex reprint its history).
+// The card keeps its place, dimmed and marked as the last turn, until the new outcome arrives.
+test('while a new turn is running, the card stays in place, dimmed, as the last turn', () => {
   useThreadStatus.setState({ byTerminal: { t1: { threadStatus: 'working' } } } as any);
   render(<CliStatusCard tab={tab({ summary: 'stale outcome', needsHelp: false, inferred: false, declaredState: 'done', at: 'x' })} />);
-  expect(screen.queryByTestId('status-notice')).toBeNull();
+  expect(screen.getByText('stale outcome')).toBeInTheDocument();
+  const card = screen.getByTestId('cli-status-card');
+  expect(card).toHaveAttribute('data-last-turn', 'true');
+  expect(card).toHaveAttribute('title', 'Last turn');
+  expect(card.style.opacity).toBe('0.55');
 });
 
 test('when the turn settles, the card refetches the terminal and shows the NEW outcome', async () => {
   (api.getTerminal as any).mockResolvedValue(tab({ summary: 'Fresh result from this turn.', needsHelp: false, inferred: false, declaredState: 'done', at: 'y' }));
   useThreadStatus.setState({ byTerminal: { t1: { threadStatus: 'working' } } } as any);
   render(<CliStatusCard tab={tab({ summary: 'old outcome', needsHelp: false, inferred: false, declaredState: 'blocked', blocker: 'old blocker', at: 'x' })} />);
-  expect(screen.queryByTestId('status-notice')).toBeNull(); // hidden mid-turn
+  expect(screen.getByTestId('cli-status-card')).toHaveAttribute('data-last-turn', 'true'); // dimmed mid-turn
   act(() => { useThreadStatus.setState({ byTerminal: { t1: { threadStatus: 'idle' } } } as any); });
   await waitFor(() => expect(api.getTerminal).toHaveBeenCalledWith('t1'));
   expect(await screen.findByText('Fresh result from this turn.')).toBeInTheDocument();
   expect(screen.queryByText('old outcome')).toBeNull();
+  expect(screen.getByTestId('cli-status-card')).not.toHaveAttribute('data-last-turn');
 });

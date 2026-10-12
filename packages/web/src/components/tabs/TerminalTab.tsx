@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -10,6 +10,7 @@ import { api } from '../../api/client';
 import type { Terminal } from '../../api/types';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { ThreadAskBanner } from './ThreadAskBanner';
+import { TurnFooter } from './TurnFooter';
 import { useDraft } from '../../hooks/useDraft';
 import { copyText } from '../../lib/clipboard';
 import { isMacLike } from '../../lib/hostkeys';
@@ -133,7 +134,9 @@ function keysFor(type?: string): { actions: SoftKey[]; slash: SlashCmd[] } {
   return { actions: CLAUDE_ACTIONS, slash: CLAUDE_SLASH };
 }
 
-export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: { terminalId: string; socketFactory?: typeof openTerminalSocket }) {
+/** `footer` renders under the terminal, in the turn footer with the ask strip (a CLI AI thread's
+ *  outcome card — see TurnFooter). */
+export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, footer }: { terminalId: string; socketFactory?: typeof openTerminalSocket; footer?: ReactNode }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const scrollOverlayRef = useRef<HTMLDivElement>(null);
   const sockRef = useRef<ReturnType<typeof openTerminalSocket> | null>(null);
@@ -868,10 +871,6 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       onPaste={(e) => { const f = Array.from(e.clipboardData?.files ?? []); if (f.length) { e.preventDefault(); f.forEach((x) => void uploadImage(x)); } }}
       style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', background: isMobile ? 'var(--color-pane)' : 'var(--color-terminal)', position: 'relative' }}
     >
-      {/* Safety net: a needs_you question a CLI thread declared via report_status lands only on
-          the status channel — surface it as a top strip so it isn't invisible in the terminal. */}
-      <ThreadAskBanner terminalId={terminalId} onAnswer={() => { try { termRef.current?.focus(); } catch { /* jsdom */ } }} />
-
       {/* The xterm host is absolutely positioned so the terminal's own size never
           drives the flex layout width (which previously blew the column out).
           On mobile the terminal is a rounded card with a thin frame (the pane bg
@@ -912,6 +911,14 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
           <div style={{ position: 'absolute', left: 14, bottom: 14, zIndex: 6, background: 'rgba(10,10,12,.85)', color: 'var(--color-accent)', fontSize: 12, fontWeight: 500, padding: '5px 11px', borderRadius: 9, pointerEvents: 'none' }}>{note}</div>
         )}
       </div>
+      {/* Safety net: a needs_you question a CLI thread declared via report_status lands only on
+          the status channel — surface it as a strip so it isn't invisible in the terminal. It sits
+          under the terminal with the footer (a CLI AI thread's outcome card), where a Pretty thread
+          shows them, in a footer that holds its height during a turn (see TurnFooter). */}
+      <TurnFooter terminalId={terminalId}>
+        <ThreadAskBanner terminalId={terminalId} onAnswer={() => { try { termRef.current?.focus(); } catch { /* jsdom */ } }} />
+        {footer}
+      </TurnFooter>
       {isMobile && (
         <>
           {/* A row of action keys, a "/" that opens the searchable slash-command sheet,

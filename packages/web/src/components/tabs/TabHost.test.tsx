@@ -8,7 +8,7 @@ import type { Terminal } from '../../api/types';
 // This file is about ROUTING only: which component does a given file path land in?
 vi.mock('./FileEditorTab', () => ({ FileEditorTab: () => <div data-testid="file-editor" /> }));
 vi.mock('./ImageFileTab', () => ({ ImageFileTab: () => <div data-testid="image-viewer" /> }));
-vi.mock('./TerminalTab', () => ({ TerminalTab: () => <div data-testid="terminal" /> }));
+vi.mock('./TerminalTab', () => ({ TerminalTab: ({ footer }: { footer?: import('react').ReactNode }) => <div data-testid="terminal">{footer}</div> }));
 vi.mock('./BrowserTab', () => ({ BrowserTab: () => <div data-testid="browser" /> }));
 vi.mock('./NotesTab', () => ({ NotesTab: () => <div data-testid="notes" /> }));
 vi.mock('./chat/ChatView', () => ({ ChatView: () => <div data-testid="chat" /> }));
@@ -75,6 +75,15 @@ it('a CLI claude thread renders the terminal WITH the Pretty hint and the status
   expect(screen.getByTestId('terminal')).toBeInTheDocument();
   expect(screen.getByTestId('pretty-hint')).toBeInTheDocument();
   expect(screen.getByTestId('cli-status-card')).toBeInTheDocument();
+});
+
+// 2026-10-12: the card sat above the terminal (in a Pretty thread the outcome is at the bottom),
+// and it hid while a turn ran, so every submit resized the terminal and Codex reprinted its
+// history. It now goes to the terminal's footer, below the terminal.
+it('a CLI thread passes the status card to the terminal as its footer, below the terminal', () => {
+  useTabs.setState({ byProject: { p1: [aiTab({})] } });
+  render(<TabHost terminalId="t1" />);
+  expect(screen.getByTestId('terminal')).toContainElement(screen.getByTestId('cli-status-card'));
 });
 
 it('a structured claude thread renders the chat with NO hint and NO card (StatusNotice is inline there)', () => {
