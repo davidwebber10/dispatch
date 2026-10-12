@@ -568,3 +568,65 @@ it('kill emits one exit and the old child cannot settle a replacement', async ()
   expect(m.isAlive('t1')).toBe(true);
   expect(exits).toEqual(['t1']);
 });
+
+// #76: a resume whose transcript is gone. Claude's only reason is in errors[] and on stderr, so
+// the manager names the lost id (the service stops reviving it) and the exit carries a stderr tail.
+it('a resume whose conversation is gone: conversation-lost with the id, and the exit carries the stderr tail', async () => {
+  const m = new StructuredSessionManager();
+  const lost = waitForManagerEvent(m, 'conversation-lost', 'tLost');
+  const exited = waitForManagerEvent(m, 'exit', 'tLost');
+  m.spawn('tLost', { command: process.execPath, args: [fake, '-r', 'gone-session'], workDir: process.cwd() });
+  expect(await lost).toEqual(['gone-session']);
+  const [code, detail] = await exited;
+  expect(code).toBe(1);
+  expect(detail).toContain('No conversation found with session ID: gone-session');
+});
+
+// Review finding: Node can fire the child's 'exit' before its stdout is drained. Claude's error
+// frame must still be read when it lands after 'exit', or the doomed resume repeats (#76).
+it('reads a lost-conversation frame that lands after the process exited', async () => {
+  const m = new StructuredSessionManager();
+  const lost = waitForManagerEvent(m, 'conversation-lost', 'tLate');
+  const exited = waitForManagerEvent(m, 'exit', 'tLate');
+  m.spawn('tLate', { command: process.execPath, args: [fake, '-r', 'gone-late'], workDir: process.cwd() });
+  expect(await lost).toEqual(['gone-late']);
+  const [code, detail] = await exited;
+  expect(code).toBe(1);
+  expect(detail).toContain('No conversation found with session ID: gone-late');
+});
+
+// Review round 2: while the manager waits for a dead CLI's streams to drain, the session is not
+// alive (a send must start a new process, not vanish into a closed stdin), and a kill() in that
+// window emits 'exit' once, with the real code.
+it('a CLI that exited but is still draining is not alive', async () => {
+  const m = new StructuredSessionManager();
+  let exitAt = 0;
+  m.on('exit', (id: string) => { if (id === 'tDrain') exitAt = Date.now(); });
+  m.spawn('tDrain', { command: process.execPath, args: [fake, '-r', 'gone-late'], workDir: process.cwd() });
+  await waitFor(() => !m.isAlive('tDrain'), 3000);
+  const deadAt = Date.now();
+  await waitFor(() => exitAt > 0, 3000);
+  expect(deadAt).toBeLessThan(exitAt);
+});
+
+it('kill() while a dead CLI drains emits exit once, with its real code', async () => {
+  const m = new StructuredSessionManager();
+  const exits: number[] = [];
+  m.on('exit', (id: string, code: number) => { if (id === 'tKill') exits.push(code); });
+  m.spawn('tKill', { command: process.execPath, args: [fake, '-r', 'gone-late'], workDir: process.cwd() });
+  await waitFor(() => !m.isAlive('tKill'), 3000);
+  m.kill('tKill');
+  await new Promise((r) => setTimeout(r, 1500));
+  expect(exits).toEqual([1]);
+});
+
+it('kill() while only stdout drains (stderr already closed) still emits exit once', async () => {
+  const m = new StructuredSessionManager();
+  const exits: number[] = [];
+  m.on('exit', (id: string, code: number) => { if (id === 'tOut') exits.push(code); });
+  m.spawn('tOut', { command: process.execPath, args: [fake, '-r', 'gone-late-out'], workDir: process.cwd() });
+  await waitFor(() => !m.isAlive('tOut'), 3000);
+  m.kill('tOut');
+  await new Promise((r) => setTimeout(r, 1500));
+  expect(exits).toEqual([1]);
+});

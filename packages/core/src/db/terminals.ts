@@ -148,7 +148,7 @@ export function updatePid(db: Database.Database, id: string, pid: number | null)
   db.prepare('UPDATE terminals SET pid = ? WHERE id = ?').run(pid, id);
 }
 
-export function updateExternalId(db: Database.Database, id: string, externalId: string): void {
+export function updateExternalId(db: Database.Database, id: string, externalId: string | null): void {
   db.prepare('UPDATE terminals SET external_id = ? WHERE id = ?').run(externalId, id);
 }
 

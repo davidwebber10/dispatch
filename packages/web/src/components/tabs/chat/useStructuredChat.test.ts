@@ -1292,3 +1292,28 @@ test('two recovered replies of one turn with the same text both show (only a RES
   drainRaf();
   expect(assistantTexts(result.current.items)).toEqual(['Done.', 'Done.']);
 });
+
+// #76: Claude's reason for a failed turn or start must reach the reader, not a generic line.
+test("an error result with no `result` field shows the reason from errors[]", () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['No conversation found with session ID: gone-1'] }));
+  const err = result.current.items.find((i) => i.kind === 'result' && i.isError);
+  expect(err?.text).toBe('No conversation found with session ID: gone-1');
+});
+
+test('a spawn_error shows why the thread could not start, and stops the spinner', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => { cbs.onEvent({ type: 'stream_event', event: { type: 'message_start' } }); });
+  act(() => cbs.onEvent({ type: 'system', subtype: 'spawn_error', message: 'Error: spawn claude ENOENT' }));
+  expect(result.current.busy).toBe(false);
+  const err = result.current.items.find((i) => i.kind === 'result' && i.isError);
+  expect(err?.text).toBe('Could not start the thread: Error: spawn claude ENOENT');
+});
+
+test("a failed send shows the server's reason", async () => {
+  vi.spyOn(api, 'sendStructuredMessage').mockRejectedValue(new Error('POST /api/terminals/t1/message failed: 400 — could not start the thread: spawn claude ENOENT'));
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  await act(async () => { result.current.send('hello'); await Promise.resolve(); });
+  const err = result.current.items.find((i) => i.kind === 'result' && i.isError);
+  expect(err?.text).toBe('Failed to send message: could not start the thread: spawn claude ENOENT');
+});

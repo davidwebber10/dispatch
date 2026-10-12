@@ -50,6 +50,11 @@ interface Session {
   toolPolicy?: (toolName: string, input: unknown) => { allow: true } | { allow: false; message: string };
   /** The single in-flight permission request awaiting a human decision, if any. */
   pending: PendingPermission | null;
+  /** The last STDERR_TAIL chars of the CLI's stderr. Read so the pipe never fills, and carried
+   *  on 'exit': a CLI that dies early often says why only there (#76). */
+  stderrTail?: string;
+  /** Set when the CLI process has exited, while its streams still drain (see spawn()). */
+  exitCode?: number;
   /** The claude session_id parsed from the init/system event (for resume on restart). */
   sessionId?: string;
   /**
@@ -230,6 +235,13 @@ export function turnTextsFromEvents(events: readonly unknown[]): string[] {
 }
 
 const MAX_EVENTS = 5000;
+/** How much of a structured CLI's stderr to keep for its exit report. */
+const STDERR_TAIL = 2000;
+/** The longest wait after a CLI's 'exit' for its stdout and stderr to close (see spawn()). */
+const EXIT_DRAIN_MS = 1000;
+/** Claude's verdict on a `-r <id>` whose transcript is gone (Claude Code 2.1.296: an error
+ *  `result` with no `result` field; the reason only in `errors[]` and on stderr). */
+const CONVERSATION_LOST = /No conversation found with session ID: (\S+)/;
 
 /**
  * Harness tools that deliberately END the current turn to sleep until a timer/event fires
@@ -295,6 +307,9 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       if (session.events.length > MAX_EVENTS) session.events.splice(0, session.events.length - MAX_EVENTS);
     }
     this.sessions.set(terminalId, session);
+    child.stderr.on('data', (chunk: Buffer) => {
+      session.stderrTail = ((session.stderrTail ?? '') + chunk.toString()).slice(-STDERR_TAIL);
+    });
     rl.on('line', (line) => {
       if (this.sessions.get(terminalId) !== session) return;
       const trimmed = line.trim();
@@ -375,6 +390,12 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
         // needs_you wins over everything — a question blocks the thread regardless of a
         // pending timer, so it's checked first even ahead of a wake-scheduler call.
         if (event.is_error === true) {
+          // A resume of a conversation Claude no longer has. Name the id, so the service stops
+          // reviving it with the same doomed `-r` (#76).
+          const lost = Array.isArray(event.errors)
+            ? event.errors.map((e: unknown) => (typeof e === 'string' ? CONVERSATION_LOST.exec(e)?.[1] : undefined)).find(Boolean)
+            : undefined;
+          if (lost) this.emit('conversation-lost', terminalId, lost);
           this.emit('failed', terminalId);
         } else if (declared?.state === 'needs_you') {
           this.emit('needs-help', terminalId, { ask: declared.ask ?? declared.summary, summary: declared.summary, inferred: false });
@@ -418,13 +439,33 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       }
     });
 
-    child.on('exit', (code) => {
+    // Node can fire 'exit' before the child's stdout and stderr are drained, and the last frame
+    // (a failed resume's only reason, #76) must still be read. So finish once both streams have
+    // closed, or EXIT_DRAIN_MS after 'exit' if something else holds them open.
+    let exitCode: number | null = null;
+    let finished = false;
+    let open = 2; // stdout (via readline) + stderr
+    const finish = () => {
+      if (finished || exitCode === null) return;
+      finished = true;
       // Fix 1: only clear the map if this child is still the current session
       // (a re-spawn may have already replaced it; its exit must not evict the new child)
       if (this.sessions.get(terminalId)?.child !== child) return;
       session.pending = null; // drop any unanswered permission — the process is gone
       this.sessions.delete(terminalId);
-      this.emit('exit', terminalId, code ?? 0);
+      const detail = session.stderrTail?.trim() || undefined;
+      // The daemon log is the only place this reaches when no browser is watching.
+      if (exitCode && detail) console.error(`[structured] thread ${terminalId} exited (${exitCode}): ${detail}`);
+      this.emit('exit', terminalId, exitCode, detail);
+    };
+    const streamClosed = () => { if (--open === 0) finish(); };
+    rl.on('close', streamClosed);
+    child.stderr.on('close', streamClosed);
+    child.on('exit', (code) => {
+      exitCode = code ?? 0;
+      session.exitCode = exitCode; // no longer alive: a send now starts a new process
+      if (open === 0) finish();
+      else setTimeout(finish, EXIT_DRAIN_MS).unref();
     });
     child.on('error', (err) => {
       if (this.sessions.get(terminalId)?.child !== child) return;
@@ -574,15 +615,21 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
     const s = this.sessions.get(terminalId);
     if (!s) return;
     s.pending = null;
+    // Remove the session first: closing readline below can finish a pending drain (see spawn()),
+    // which must then find the session gone and stay silent — this is the one 'exit'.
+    this.sessions.delete(terminalId);
     s.rl.close(); // Fix 3: close readline so buffered lines stop emitting after kill
     try { s.child.kill(); } catch { /* already gone */ }
-    this.sessions.delete(terminalId);
-    this.emit('exit', terminalId, 0);
+    // A CLI that had already exited (still draining) reports its own code, not the kill's 0.
+    this.emit('exit', terminalId, s.exitCode ?? 0, s.exitCode !== undefined ? s.stderrTail?.trim() || undefined : undefined);
   }
 
   killAll(): void { for (const id of [...this.sessions.keys()]) this.kill(id); }
 
-  isAlive(terminalId: string): boolean { return this.sessions.has(terminalId); }
+  isAlive(terminalId: string): boolean {
+    const s = this.sessions.get(terminalId);
+    return !!s && s.exitCode === undefined; // a CLI that exited is not alive while its streams drain
+  }
 
   /** The claude session_id captured for a live thread (from its init event), or undefined. */
   getSessionId(terminalId: string): string | undefined { return this.sessions.get(terminalId)?.sessionId; }

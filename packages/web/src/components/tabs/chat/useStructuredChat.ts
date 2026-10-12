@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ConvItem, PendingPermission } from '../../../api/types';
 import { openStructuredSocket } from '../../../api/structured-socket';
 import { api, type ContentBlock } from '../../../api/client';
+import { sendFailureText } from '../../../lib/sendError';
 import { classifyUserText } from '../../../lib/taskNotification';
 
 /** Fallback context window (tokens) for when no model is known yet. Every model Dispatch
@@ -205,6 +206,14 @@ function userOrNotice(text: string, source: ConvItem['source'], uuid?: string): 
   if (c.kind === 'drop') return null;
   if (c.kind === 'notice') return { kind: 'notice', text: c.text, ...(uuid ? { uuid } : {}) };
   return { kind: 'user', text, ...(source ? { source } : {}), ...(uuid ? { uuid } : {}) };
+}
+
+/** An error `result`'s reason: its `result` text, else Claude's `errors[]` (a failed resume, for
+ *  example, has no `result` field and says why only there — #76). */
+function errorText(event: any): string | undefined {
+  if (typeof event.result === 'string' && event.result) return event.result;
+  const errors = Array.isArray(event.errors) ? event.errors.filter((e: unknown) => typeof e === 'string' && e) : [];
+  return errors.length ? errors.join('\n') : undefined;
 }
 
 /** True when a REST-page assistant item after the last user turn already shows `text`: the same
@@ -530,6 +539,15 @@ export function useStructuredChat(
         // A model-call retry (529 overload, 5xx): surface it so the busy slot can say what's
         // actually happening — during an outage the CLI retries for minutes and a bare
         // "Working…" spinner reads as a dead session. Cleared on any turn progress below.
+        // The thread's process could not start (its manager could not spawn it). Say why, and stop
+        // the spinner: no turn is coming (#76).
+        if (type === 'system' && event.subtype === 'spawn_error') {
+          setBusy(false);
+          const why = typeof event.message === 'string' && event.message ? event.message : 'unknown error';
+          setItems((p) => [...p, { kind: 'result', isError: true, text: `Could not start the thread: ${why}` }]);
+          return;
+        }
+
         if (type === 'system' && event.subtype === 'api_retry') {
           setApiRetry({
             attempt: typeof event.attempt === 'number' ? event.attempt : 0,
@@ -817,7 +835,7 @@ export function useStructuredChat(
             durationMs: typeof event.duration_ms === 'number' ? event.duration_ms : undefined,
             tokensIn: event.usage?.input_tokens,
             tokensOut: event.usage?.output_tokens,
-            text: typeof event.result === 'string' && event.is_error ? event.result : undefined,
+            text: event.is_error ? errorText(event) : undefined,
           }]);
           return;
         }
@@ -840,11 +858,11 @@ export function useStructuredChat(
     // No optimistic user bubble: the backend echoes the turn as a `user` event (text or
     // image blocks, surviving reconnect replay), so an optimistic append would double up.
     setBusy(true);
-    api.sendStructuredMessage(terminalId, payload).catch(() => {
+    api.sendStructuredMessage(terminalId, payload).catch((err) => {
       // P0c: the POST rejects (e.g. the claude process died → 400) — surface it and
       // stop spinning instead of leaving "Working…" forever.
       setBusy(false);
-      setItems((p) => [...p, { kind: 'result', isError: true, text: 'Failed to send message' }]);
+      setItems((p) => [...p, { kind: 'result', isError: true, text: sendFailureText(err) }]);
     });
   }, [terminalId]);
 
