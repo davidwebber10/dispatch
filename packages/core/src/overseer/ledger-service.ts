@@ -8,7 +8,8 @@
  * 4. Without a quote, the overseer can close an item only as `withdrawn`, with a reason.
  * 5. Imported items stay "Imported, not checked" until the user confirms one and the overseer
  *    records that quote — so an unchecked imported `answered` or `parked` item can be resolved
- *    once more. A `withdrawn` or `superseded` item is always closed, imported or not (409).
+ *    once more. A `withdrawn` or `superseded` item is always closed, imported or not (409). A
+ *    `parked` item can still become `answered`, with a quote from after the park (2026-10-12).
  * 6. A leading "ok" never counts (see ledger-quote.ts).
  *
  * Decision cards (spec 2026-10-06, Unit 2): `add`, `importItems` and the agent-block path apply
@@ -43,8 +44,8 @@ export const FILE_GONE_ERROR = 'The file is gone';
 export const FILE_OUTSIDE_ERROR = 'The file is outside the project';
 export const NO_PROJECT_FOLDER_ERROR = 'This project has no folder';
 export const QUOTE_NOT_FOUND_STATEMENT_ERROR = "Quote not found in the user's messages to you. Do not record it. Ask the user.";
-export function quoteNotFoundAfterError(seq: number): string {
-  return `Quote not found in the user's messages to you after N${seq} was created. Do not record it. Ask the user.`;
+export function quoteNotFoundAfterError(seq: number, event: 'created' | 'parked' = 'created'): string {
+  return `Quote not found in the user's messages to you after N${seq} was ${event}. Do not record it. Ask the user.`;
 }
 
 /** Coordinator config keys this feature owns. */
@@ -325,8 +326,11 @@ export class LedgerService {
     // Decision cards, Unit 4: a reversal sets an overseer's own decision to answered, with the
     // user's checked quote from after the decision. A proposed item can be closed like an open one.
     const reversal = item.status === 'decided_by_overseer' && status === 'answered';
+    // Monday check 2026-10-12: a parked item takes a later answer, with the user's words from after
+    // the park. It cannot be parked again or withdrawn.
+    const unpark = item.status === 'parked' && status === 'answered' && !confirmable;
     const live = item.status === 'open' || item.status === 'proposed';
-    if (!live && !confirmable && !reversal) {
+    if (!live && !confirmable && !reversal && !unpark) {
       throw new LedgerError(409, `N${item.seq} is already ${item.status}.`, { status: item.status });
     }
     const reading = str(input.reading);
@@ -339,9 +343,9 @@ export class LedgerService {
     }
     const quote = str(input.quote);
     if (!quote) throw new LedgerError(400, 'quote is required for answered and parked');
-    const after = reversal ? (item.decidedAt ?? item.createdAt) : item.createdAt;
+    const after = reversal ? (item.decidedAt ?? item.createdAt) : unpark ? (item.quoteAt ?? item.updatedAt) : item.createdAt;
     const match = findQuote(quote, this.userMessages(overseer.id, after), { after });
-    if (!match.ok) throw new LedgerError(422, match.reason === 'ok_only' ? OK_ONLY_ERROR : quoteNotFoundAfterError(item.seq));
+    if (!match.ok) throw new LedgerError(422, match.reason === 'ok_only' ? OK_ONLY_ERROR : quoteNotFoundAfterError(item.seq, unpark ? 'parked' : 'created'));
     // Rule 7: a go item becomes answered only on a named approval. Parking it needs no name.
     if (item.kind === 'go' && status === 'answered' && !namesGoApproval(match.quote, item.seq)) {
       throw new LedgerError(422, GO_APPROVAL_ERROR);
@@ -365,7 +369,9 @@ export class LedgerService {
     this.assertOverseer(sessionId, caller);
     const item = this.requireItem(sessionId, input.id);
     if (item.status !== 'proposed') throw new LedgerError(409, `N${item.seq} is already ${item.status}.`, { status: item.status });
-    const title = readTitle(input.title, {}, true);
+    // Monday check 2026-10-12: a title set before with ledger_set_title counts. An agent block
+    // never stores a title, so a stored title is always the overseer's own.
+    const title = readTitle(str(input.title) ?? item.title ?? undefined, {}, true);
     ledgerDb.markSent(this.db, sessionId, item.seq, { title, note: str(input.note), blocks: str(input.blocks), now: this.nowIso() });
     this.changed(sessionId);
     return { id: `N${item.seq}`, status: 'open' };

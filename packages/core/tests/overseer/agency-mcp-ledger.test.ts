@@ -274,10 +274,10 @@ describe('agency-mcp ledger tools', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('the title parameter: required on ledger_add, ledger_add_from_agent and ledger_set_title; per item on ledger_import', () => {
+  it('the title parameter: required on ledger_add and ledger_set_title; on ledger_add_from_agent unless set before; per item on ledger_import', () => {
     const tool = (name: string) => TOOLS.find((t) => t.name === name)! as any;
     expect(tool('ledger_add').inputSchema.required).toEqual(['kind', 'text', 'title']);
-    expect(tool('ledger_add_from_agent').inputSchema.required).toEqual(['id', 'title']);
+    expect(tool('ledger_add_from_agent').inputSchema.required).toEqual(['id']); // Monday check 2026-10-12: a stored title counts
     expect(tool('ledger_set_title').inputSchema.required).toEqual(['id', 'title']);
     for (const t of [tool('ledger_add'), tool('ledger_add_from_agent'), tool('ledger_set_title')]) {
       expect(t.inputSchema.properties.title.type).toBe('string');

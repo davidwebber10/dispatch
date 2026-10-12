@@ -21,6 +21,8 @@ const OVERSEER = [
   // User commands.
   '"show N17" or "show all" → ledger_show.',
   '"reverse N21" → ledger_resolve to answered, with the user’s quote.',
+  // Monday check 2026-10-12: a parked item takes a later answer.
+  'A parked item can still be answered later, with the user’s words from after the park.',
   'A rule from the user → ledger_note with policy: true.',
   // Own decisions.
   'When you add a decide or go item yourself, fill every required field',

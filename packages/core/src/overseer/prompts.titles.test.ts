@@ -15,6 +15,7 @@ const TITLE_LINES = [
   // The tools.
   'ledger_add({ kind, text, title, context?, options?, recommendation?, why?, default?, source?, note?, blocks?, mission?, author?, supersedes? })',
   'ledger_add_from_agent({ id, title, note?, blocks? })',
+  'with your title (a title you set before with ledger_set_title counts)', // Monday check 2026-10-12
   '- ledger_set_title({ id, title }) — set or change the title of an item; set it once, and change it only with a reason.',
   'ledger_import({ items }) — once, at rollout: load open items and earlier decisions from your context; an open go, ' +
     'decide or do item needs a title.',
