@@ -139,6 +139,8 @@ export class SessionService {
   /** The service's clock. Tests replace it to pin times (message log, interim recap timer). */
   clock: () => number = () => Date.now();
   private structuredManagers = new Map<string, import('../structured/manager.js').IStructuredManager>();
+  /** Why the last revive of a structured thread failed, so a send can say so (#76). */
+  private lastSpawnError = new Map<string, string>();
   /** Override for structured command (test seam: lets tests spawn fake-claude instead of real claude). */
   private structuredCommandOverride?: { command: string; args: string[] };
   /**
@@ -181,11 +183,36 @@ export class SessionService {
     if (existing) return;
     this.structuredManagers.set(type, manager);
     this.persistStructuredSessionIds(manager, type);
-    if (type === 'claude-code') this.persistMessageSources(manager);
+    if (type === 'claude-code') {
+      this.persistMessageSources(manager);
+      this.forgetLostConversations(manager);
+    }
   }
 
   setStructuredManager(m: import('../structured/manager.js').IStructuredManager): void {
     this.registerStructuredManager('claude-code', m);
+  }
+
+  /**
+   * #76: Claude reported that it no longer has the conversation behind `-r <id>` (its
+   * transcript was cleaned up). Every revive used to run the same doomed resume again. Clear
+   * the stored id, so the next revive starts a fresh conversation, and keep the old id in
+   * config for the record. Only when the stored id is still the lost one: a newer
+   * conversation may have replaced it.
+   */
+  private forgetLostConversations(m: import('../structured/manager.js').IStructuredManager): void {
+    m.on('conversation-lost', (terminalId: string, lostId: string) => {
+      try {
+        const t = terminalsDb.getById(this.db, terminalId);
+        if (!t || t.external_id !== lostId) return;
+        let config: Record<string, any> = {};
+        try { config = JSON.parse(t.config || '{}'); } catch { /* default {} */ }
+        config.lostConversation = { externalId: lostId, at: new Date().toISOString() };
+        terminalsDb.updateConfig(this.db, terminalId, config);
+        terminalsDb.updateExternalId(this.db, terminalId, null);
+        console.warn(`[structured] thread ${terminalId}: conversation ${lostId} is gone; the next message starts a new one`);
+      } catch { /* best effort — the worst case is the old retry */ }
+    });
   }
 
   private persistMessageSources(m: import('../structured/manager.js').IStructuredManager): void {
@@ -1027,7 +1054,10 @@ export class SessionService {
     // conversation when an external_id was captured) before delivering the message.
     const manager = this.structuredManagerForTerminal(terminalId);
     if (!manager?.isAlive(terminalId)) this.ensureStructuredAlive(terminalId);
-    if (!manager?.isAlive(terminalId)) throw new Error('no structured session for terminal');
+    if (!manager?.isAlive(terminalId)) {
+      const cause = this.lastSpawnError.get(terminalId);
+      throw new Error(cause ? `could not start the thread: ${cause}` : 'no structured session for terminal');
+    }
     manager.sendMessage(terminalId, content, source);
     this.logCoordinatorMessage(terminalId, content, logAs ?? (source === 'user' ? 'user' : source === 'coordinator' ? 'coordinator' : 'daemon'));
   }
@@ -2533,8 +2563,12 @@ export class SessionService {
     const workDir = terminal.working_dir || session.working_dir;
     try {
       this.spawnStructured(terminal, config, workDir);
+      this.lastSpawnError.delete(terminalId);
       return manager.isAlive(terminalId);
-    } catch {
+    } catch (err) {
+      const cause = err instanceof Error ? err.message : String(err);
+      this.lastSpawnError.set(terminalId, cause);
+      console.error(`[structured] thread ${terminalId} could not start: ${cause}`);
       return false;
     }
   }

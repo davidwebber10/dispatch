@@ -50,6 +50,9 @@ interface Session {
   toolPolicy?: (toolName: string, input: unknown) => { allow: true } | { allow: false; message: string };
   /** The single in-flight permission request awaiting a human decision, if any. */
   pending: PendingPermission | null;
+  /** The last STDERR_TAIL chars of the CLI's stderr. Read so the pipe never fills, and carried
+   *  on 'exit': a CLI that dies early often says why only there (#76). */
+  stderrTail?: string;
   /** The claude session_id parsed from the init/system event (for resume on restart). */
   sessionId?: string;
   /**
@@ -230,6 +233,11 @@ export function turnTextsFromEvents(events: readonly unknown[]): string[] {
 }
 
 const MAX_EVENTS = 5000;
+/** How much of a structured CLI's stderr to keep for its exit report. */
+const STDERR_TAIL = 2000;
+/** Claude's verdict on a `-r <id>` whose transcript is gone (Claude Code 2.1.296: an error
+ *  `result` with no `result` field; the reason only in `errors[]` and on stderr). */
+const CONVERSATION_LOST = /No conversation found with session ID: (\S+)/;
 
 /**
  * Harness tools that deliberately END the current turn to sleep until a timer/event fires
@@ -295,6 +303,9 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       if (session.events.length > MAX_EVENTS) session.events.splice(0, session.events.length - MAX_EVENTS);
     }
     this.sessions.set(terminalId, session);
+    child.stderr.on('data', (chunk: Buffer) => {
+      session.stderrTail = ((session.stderrTail ?? '') + chunk.toString()).slice(-STDERR_TAIL);
+    });
     rl.on('line', (line) => {
       if (this.sessions.get(terminalId) !== session) return;
       const trimmed = line.trim();
@@ -375,6 +386,12 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
         // needs_you wins over everything — a question blocks the thread regardless of a
         // pending timer, so it's checked first even ahead of a wake-scheduler call.
         if (event.is_error === true) {
+          // A resume of a conversation Claude no longer has. Name the id, so the service stops
+          // reviving it with the same doomed `-r` (#76).
+          const lost = Array.isArray(event.errors)
+            ? event.errors.map((e: unknown) => (typeof e === 'string' ? CONVERSATION_LOST.exec(e)?.[1] : undefined)).find(Boolean)
+            : undefined;
+          if (lost) this.emit('conversation-lost', terminalId, lost);
           this.emit('failed', terminalId);
         } else if (declared?.state === 'needs_you') {
           this.emit('needs-help', terminalId, { ask: declared.ask ?? declared.summary, summary: declared.summary, inferred: false });
@@ -424,7 +441,10 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       if (this.sessions.get(terminalId)?.child !== child) return;
       session.pending = null; // drop any unanswered permission — the process is gone
       this.sessions.delete(terminalId);
-      this.emit('exit', terminalId, code ?? 0);
+      const detail = session.stderrTail?.trim() || undefined;
+      // The daemon log is the only place this reaches when no browser is watching.
+      if (code && detail) console.error(`[structured] thread ${terminalId} exited (${code}): ${detail}`);
+      this.emit('exit', terminalId, code ?? 0, detail);
     });
     child.on('error', (err) => {
       if (this.sessions.get(terminalId)?.child !== child) return;

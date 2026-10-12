@@ -3,6 +3,16 @@
 // stdin control_responses / user turns. Lets us test the manager hermetically.
 import readline from 'node:readline';
 const send = (o) => process.stdout.write(JSON.stringify(o) + '\n');
+// `-r gone-session`: a resume whose transcript is gone. Mirrors Claude Code 2.1.296 exactly:
+// no init frame, one error `result` with no `result` field and the reason in `errors[]`, the
+// same text on stderr, exit code 1.
+const rIdx = process.argv.indexOf('-r');
+if (rIdx > -1 && process.argv[rIdx + 1] === 'gone-session') {
+  const reason = 'No conversation found with session ID: gone-session';
+  process.stderr.write(reason + '\n');
+  send({ type: 'result', subtype: 'error_during_execution', is_error: true, session_id: 'gone-session', errors: [reason] });
+  process.exit(1);
+}
 // `argv` echoes the launch args so resume tests can assert `-r <id>` was applied.
 send({ type: 'system', subtype: 'init', apiKeySource: 'none', model: 'claude', session_id: 'sess-fake', testEnv: process.env.DISPATCH_TEST_ENV ?? null, argv: process.argv.slice(2) });
 const rl = readline.createInterface({ input: process.stdin });

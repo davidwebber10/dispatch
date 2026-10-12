@@ -568,3 +568,16 @@ it('kill emits one exit and the old child cannot settle a replacement', async ()
   expect(m.isAlive('t1')).toBe(true);
   expect(exits).toEqual(['t1']);
 });
+
+// #76: a resume whose transcript is gone. Claude's only reason is in errors[] and on stderr, so
+// the manager names the lost id (the service stops reviving it) and the exit carries a stderr tail.
+it('a resume whose conversation is gone: conversation-lost with the id, and the exit carries the stderr tail', async () => {
+  const m = new StructuredSessionManager();
+  const lost = waitForManagerEvent(m, 'conversation-lost', 'tLost');
+  const exited = waitForManagerEvent(m, 'exit', 'tLost');
+  m.spawn('tLost', { command: process.execPath, args: [fake, '-r', 'gone-session'], workDir: process.cwd() });
+  expect(await lost).toEqual(['gone-session']);
+  const [code, detail] = await exited;
+  expect(code).toBe(1);
+  expect(detail).toContain('No conversation found with session ID: gone-session');
+});

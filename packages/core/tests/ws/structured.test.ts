@@ -35,6 +35,14 @@ it("forwards manager 'exit' as a synthetic error result so busy clears (P0b)", (
   expect(res.result).toContain('137');
 });
 
+it("the exit result carries the CLI's stderr tail when there is one (#76)", () => {
+  const ws = fakeWs();
+  handleStructuredConnection(ws as any, { url: '/api/terminals/t1/structured-ws' } as any, m);
+  m.emit('exit', 't1', 1, 'No conversation found with session ID: gone-session');
+  const res = ws.sent.find((e) => e.type === 'result');
+  expect(res.result).toBe('Process exited (1): No conversation found with session ID: gone-session');
+});
+
 it('only forwards exit for THIS terminal', () => {
   const ws = fakeWs();
   handleStructuredConnection(ws as any, { url: '/api/terminals/t1/structured-ws' } as any, m);
