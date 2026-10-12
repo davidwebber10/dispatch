@@ -207,6 +207,18 @@ function userOrNotice(text: string, source: ConvItem['source'], uuid?: string): 
   return { kind: 'user', text, ...(source ? { source } : {}), ...(uuid ? { uuid } : {}) };
 }
 
+/** True when an assistant item after the last user turn already shows `text` — the same message,
+ *  already rendered (e.g. from a REST page read after Codex wrote it to its transcript). */
+function shownThisTurn(items: ConvItem[], text: string): boolean {
+  const want = text.trim();
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it.kind === 'user') return false;
+    if (it.kind === 'assistant' && (it.text ?? '').trim() === want) return true;
+  }
+  return false;
+}
+
 /** Tracks one in-progress streamed content block within the current turn.
  * `text` accumulates text/thinking deltas; `jsonAccum` accumulates tool input
  * JSON. Deltas are buffered here and applied to the items in a single rAF flush
@@ -594,6 +606,28 @@ export function useStructuredChat(
               rec.jsonAccum = (rec.jsonAccum ?? '') + (d.partial_json ?? '');
               pendingRef.current.add(rec); scheduleFlush();
             }
+            return;
+          }
+
+          // A Codex message's stop carries its whole text (codex-translate.ts, 2026-10-12). Its
+          // deltas reach only a view that saw the block start: after a socket reconnect, or a
+          // return to the thread mid-reply, they were dropped above and the reply stayed missing
+          // until a reload. The whole text wins over the streamed one; a missed block is added,
+          // unless this turn already shows the same text (a REST page read after it was written).
+          if (se.type === 'content_block_stop' && typeof se.final_text === 'string') {
+            const finalText: string = se.final_text;
+            const rec = blockMapRef.current.get(se.index);
+            if (rec) {
+              if (rec.kind === 'assistant' && rec.text !== finalText) {
+                rec.text = finalText;
+                pendingRef.current.add(rec); scheduleFlush();
+              }
+              return;
+            }
+            if (!finalText.trim()) return;
+            const key = `s-${turnRef.current}-${se.index}`;
+            blockMapRef.current.set(se.index, { key, kind: 'assistant', text: finalText, revealed: finalText.length });
+            setItems((p) => (shownThisTurn(p, finalText) ? p : [...p, { kind: 'assistant', text: finalText, uuid: key }]));
             return;
           }
 

@@ -13,7 +13,9 @@
 //
 // Streaming: assistant text and reasoning are re-emitted as Anthropic `stream_event` frames
 // (message_start / content_block_start|delta|stop) so the chat reveals tokens incrementally,
-// exactly like the Claude structured path. Tool calls (command/file/mcp/…) are re-emitted as
+// exactly like the Claude structured path. An agentMessage's content_block_stop also carries the
+// message's whole text (`final_text`), so a view that missed the deltas still shows the reply
+// (see itemCompleted). Tool calls (command/file/mcp/…) are re-emitted as
 // whole `assistant` tool_use + `user` tool_result pairs (the streaming reducer appends any
 // tool it never saw start), and each turn ends with a synthetic `result` footer + 'idle'.
 
@@ -333,11 +335,25 @@ export class CodexTranslator {
     }
     if (!item || typeof item.id !== 'string') return [];
     if (item.type === 'agentMessage') {
-      // Close the streamed text block (harmless if never opened). Text itself already rendered
-      // from deltas — do NOT re-emit it (the streaming reducer ignores whole-assistant text).
-      const index = this.msgBlock.get(item.id);
-      if (index === undefined) return [];
-      return [{ kind: 'event', event: { type: 'stream_event', event: { type: 'content_block_stop', index } } }];
+      // Close the text block and carry the WHOLE text on the stop (`final_text`, 2026-10-12). The
+      // ring holds deltas only, so a view that missed them (its socket reconnected, or the reader
+      // came back to the thread mid-reply) had no way to get this message until a reload. The
+      // reducer uses it to fill or add the bubble. Not a whole `assistant` text event: the streaming
+      // reducer ignores those, and the Claude ring walk (turnTextsFromEvents) must keep finding none.
+      const text = typeof item.text === 'string' ? item.text : '';
+      let index = this.msgBlock.get(item.id);
+      const out: TranslatedAction[] = [];
+      if (index === undefined) {
+        // A message that never streamed (no delta reached us): open, fill and close it here.
+        if (!text.trim()) return [];
+        this.ensureMessageStart(out);
+        index = this.nextBlockIndex++;
+        this.msgBlock.set(item.id, index);
+        out.push({ kind: 'event', event: { type: 'stream_event', event: { type: 'content_block_start', index, content_block: { type: 'text', text: '' } } } });
+        out.push({ kind: 'event', event: { type: 'stream_event', event: { type: 'content_block_delta', index, delta: { type: 'text_delta', text } } } });
+      }
+      out.push({ kind: 'event', event: { type: 'stream_event', event: { type: 'content_block_stop', index, final_text: text } } });
+      return out;
     }
     if (NON_TOOL_ITEMS.has(item.type)) return [];
     this.itemDetails.set(item.id, item);

@@ -1206,3 +1206,52 @@ test('default (no opts) keeps the optimistic hasMore for pageable harnesses', ()
   const { result } = renderHook(() => useStructuredChat('t1'));
   expect(result.current.hasMore).toBe(true);
 });
+
+// Codex: a message's content_block_stop carries its whole text (`final_text`, 2026-10-12), so a
+// view that missed the deltas (a socket reconnect, or a return to the thread mid-reply) still
+// shows the reply. Before, the reply stayed missing until a page reload.
+const stopWith = (index: number, final_text: string) => ({ type: 'stream_event', event: { type: 'content_block_stop', index, final_text } });
+const assistantTexts = (items: { kind: string; text?: string }[]) => items.filter((i) => i.kind === 'assistant').map((i) => i.text);
+
+test('final_text adds the reply when the view missed its block start (return mid-reply)', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'question' }] } }));
+  // The view (re)connected after this block opened: its deltas have no block and are dropped.
+  act(() => cbs.onEvent(textDelta(1, 'The rep')));
+  act(() => cbs.onEvent(stopWith(1, 'The reply.')));
+  drainRaf();
+  expect(assistantTexts(result.current.items)).toEqual(['The reply.']);
+});
+
+test('final_text corrects a streamed bubble and adds no second one', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'stream_event', event: { type: 'message_start' } }));
+  act(() => cbs.onEvent(start(0, { type: 'text' })));
+  act(() => cbs.onEvent(textDelta(0, 'Hel')));
+  act(() => cbs.onEvent(stopWith(0, 'Hello!')));
+  drainRaf();
+  expect(assistantTexts(result.current.items)).toEqual(['Hello!']);
+});
+
+test('final_text does not add a reply the REST page already shows', async () => {
+  vi.spyOn(api, 'getConversation').mockResolvedValue({
+    items: [{ kind: 'user', text: 'question', line: 1 }, { kind: 'assistant', text: 'The reply.', line: 2 }],
+    cursor: 3, startLine: 1, hasMore: false,
+  } as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'inactive' }));
+  await flushAsync();
+  act(() => cbs.onEvent(stopWith(3, 'The reply.')));
+  drainRaf();
+  expect(assistantTexts(result.current.items)).toEqual(['The reply.']);
+});
+
+test('after a final_text recovery, the next block of the turn still streams in order', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent(stopWith(1, 'First, a check.')));
+  act(() => cbs.onEvent(start(2, { type: 'text' })));
+  act(() => cbs.onEvent(textDelta(2, 'Then the answer.')));
+  act(() => cbs.onEvent(stopWith(2, 'Then the answer.')));
+  drainRaf();
+  expect(assistantTexts(result.current.items)).toEqual(['First, a check.', 'Then the answer.']);
+});
