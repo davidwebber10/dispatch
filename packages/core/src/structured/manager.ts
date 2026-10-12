@@ -53,6 +53,8 @@ interface Session {
   /** The last STDERR_TAIL chars of the CLI's stderr. Read so the pipe never fills, and carried
    *  on 'exit': a CLI that dies early often says why only there (#76). */
   stderrTail?: string;
+  /** Set when the CLI process has exited, while its streams still drain (see spawn()). */
+  exitCode?: number;
   /** The claude session_id parsed from the init/system event (for resume on restart). */
   sessionId?: string;
   /**
@@ -461,6 +463,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
     child.stderr.on('close', streamClosed);
     child.on('exit', (code) => {
       exitCode = code ?? 0;
+      session.exitCode = exitCode; // no longer alive: a send now starts a new process
       if (open === 0) finish();
       else setTimeout(finish, EXIT_DRAIN_MS).unref();
     });
@@ -612,15 +615,21 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
     const s = this.sessions.get(terminalId);
     if (!s) return;
     s.pending = null;
+    // Remove the session first: closing readline below can finish a pending drain (see spawn()),
+    // which must then find the session gone and stay silent — this is the one 'exit'.
+    this.sessions.delete(terminalId);
     s.rl.close(); // Fix 3: close readline so buffered lines stop emitting after kill
     try { s.child.kill(); } catch { /* already gone */ }
-    this.sessions.delete(terminalId);
-    this.emit('exit', terminalId, 0);
+    // A CLI that had already exited (still draining) reports its own code, not the kill's 0.
+    this.emit('exit', terminalId, s.exitCode ?? 0, s.exitCode !== undefined ? s.stderrTail?.trim() || undefined : undefined);
   }
 
   killAll(): void { for (const id of [...this.sessions.keys()]) this.kill(id); }
 
-  isAlive(terminalId: string): boolean { return this.sessions.has(terminalId); }
+  isAlive(terminalId: string): boolean {
+    const s = this.sessions.get(terminalId);
+    return !!s && s.exitCode === undefined; // a CLI that exited is not alive while its streams drain
+  }
 
   /** The claude session_id captured for a live thread (from its init event), or undefined. */
   getSessionId(terminalId: string): string | undefined { return this.sessions.get(terminalId)?.sessionId; }

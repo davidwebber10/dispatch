@@ -10,6 +10,15 @@ const rIdx = process.argv.indexOf('-r');
 // `-r gone-late`: the same failure, but the error frame reaches stdout only AFTER this process
 // has exited (a helper that inherited stdout writes it 200 ms later). Node fires the child's
 // 'exit' first, so this pins that the manager still reads the late frame.
+// `-r gone-late-out`: like gone-late, but the helper holds only stdout (stderr closes at exit).
+if (rIdx > -1 && process.argv[rIdx + 1] === 'gone-late-out') {
+  const { spawn } = await import('node:child_process');
+  const reason = 'No conversation found with session ID: gone-late-out';
+  const frame = JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, session_id: 'gone-late-out', errors: [reason] });
+  process.stderr.write(reason + '\n');
+  spawn(process.execPath, ['-e', `setTimeout(() => process.stdout.write(${JSON.stringify(frame + '\n')}), 200)`], { stdio: ['ignore', 'inherit', 'ignore'] });
+  process.exit(1);
+}
 if (rIdx > -1 && process.argv[rIdx + 1] === 'gone-late') {
   const { spawn } = await import('node:child_process');
   const reason = 'No conversation found with session ID: gone-late';
