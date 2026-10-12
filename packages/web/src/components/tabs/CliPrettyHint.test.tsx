@@ -58,3 +58,15 @@ test('dismissal hides the hint and persists across mounts (a one-time education,
   render(<CliPrettyHint tab={cliTab({ id: 't2' })} />);
   expect(screen.queryByText(/read best in Pretty/i)).not.toBeInTheDocument();
 });
+
+// 2026-10-12: on desktop the thread's floating bell and CLI/Pretty switch sit over the right end of
+// the hint and hid its "Switch to Pretty" and dismiss buttons. The hint keeps that space free.
+test('keeps the given space free on its right for the floating controls', () => {
+  render(<CliPrettyHint tab={cliTab()} reserveRight={196} />);
+  expect(screen.getByTestId('cli-pretty-hint').style.paddingRight).toBe('196px');
+});
+
+test('without a reserve, the right padding stays 12px', () => {
+  render(<CliPrettyHint tab={cliTab()} />);
+  expect(screen.getByTestId('cli-pretty-hint').style.paddingRight).toBe('12px');
+});

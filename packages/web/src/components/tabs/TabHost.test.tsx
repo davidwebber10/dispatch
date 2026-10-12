@@ -12,7 +12,7 @@ vi.mock('./TerminalTab', () => ({ TerminalTab: ({ footer }: { footer?: import('r
 vi.mock('./BrowserTab', () => ({ BrowserTab: () => <div data-testid="browser" /> }));
 vi.mock('./NotesTab', () => ({ NotesTab: () => <div data-testid="notes" /> }));
 vi.mock('./chat/ChatView', () => ({ ChatView: () => <div data-testid="chat" /> }));
-vi.mock('./CliPrettyHint', () => ({ CliPrettyHint: () => <div data-testid="pretty-hint" /> }));
+vi.mock('./CliPrettyHint', () => ({ CliPrettyHint: ({ reserveRight }: { reserveRight?: number }) => <div data-testid="pretty-hint" data-reserve={reserveRight ?? ''} /> }));
 vi.mock('./CliStatusCard', () => ({ CliStatusCard: () => <div data-testid="cli-status-card" /> }));
 
 function fileTab(path: string): Terminal {
@@ -100,4 +100,20 @@ it('a plain shell renders the terminal with NO hint and NO card — no agent beh
   expect(screen.getByTestId('terminal')).toBeInTheDocument();
   expect(screen.queryByTestId('pretty-hint')).toBeNull();
   expect(screen.queryByTestId('cli-status-card')).toBeNull();
+});
+
+// 2026-10-12: the floating bell and CLI/Pretty switch covered the right end of the Pretty hint.
+// TabHost measures the floating group and reserves its width, its 12px offset and an 8px gap.
+it('a CLI thread on desktop reserves the floating controls\' width on the right of the Pretty hint', () => {
+  const rect = HTMLElement.prototype.getBoundingClientRect;
+  HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+    return (this.dataset.testid === 'thread-floating-controls' ? { width: 176 } : { width: 0 }) as DOMRect;
+  };
+  try {
+    useTabs.setState({ byProject: { p1: [aiTab({})] } });
+    render(<TabHost terminalId="t1" />);
+    expect(screen.getByTestId('pretty-hint').dataset.reserve).toBe('196');
+  } finally {
+    HTMLElement.prototype.getBoundingClientRect = rect;
+  }
 });
