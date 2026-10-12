@@ -43,6 +43,12 @@ describe('broadKillDenial — commands that signal processes by name or pattern'
     'pgrep -f until | xargs -I{} kill {}',
     'timeout 5 pkill -f until',
     '{ pkill -f until; }',
+    // Review round 2.
+    "printf '%s\\n' '<<EOF'\npkill -f node",
+    'cat <<< EOF\npkill -f node',
+    'cat <<EOF\n$(pkill -f node)\nEOF',
+    'kill $(\npgrep -f node\n)',
+    'pgrep -f node | xargs sudo kill',
   ])('blocks: %s', (cmd) => {
     const d = bash(cmd);
     expect(d).not.toBeNull();
@@ -73,8 +79,27 @@ describe('broadKillDenial — commands that signal processes by name or pattern'
     'git ls-files docs/ps | xargs rg kill',
     'kill -- -12345',
     'kill -9 1234 2>/dev/null',
+    // Review round 2.
+    "cat <<'END-EXAMPLE'\npkill -f node\nEND-EXAMPLE",
+    "cat <<'EOF'\n  EOF\npkill -f node\nEOF",
+    'command -v /usr/bin/pkill',
   ])('allows: %s', (cmd) => {
     expect(bash(cmd)).toBeNull();
+  });
+
+  // The guard runs inside the daemon's message handling: odd input must never throw.
+  it.each([
+    'toString --help',
+    'constructor --help',
+    '__proto__ --help',
+    '$('.repeat(10000) + 'echo ok' + ')'.repeat(10000),
+    '$('.repeat(10000),
+    'echo "unterminated',
+    "echo 'unterminated",
+    'kill $(',
+    ')))',
+  ])('never throws: %s', (cmd) => {
+    expect(() => bash(cmd)).not.toThrow();
   });
 
   it('stays fast on a very long command', () => {

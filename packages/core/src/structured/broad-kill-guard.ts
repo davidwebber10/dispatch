@@ -12,36 +12,87 @@
  */
 
 /** Commands that wrap another command, with the options of each that take an argument. */
-const WRAPPERS: Record<string, ReadonlySet<string>> = {
-  sudo: new Set(['-u', '-g', '-h', '-p', '-C', '-U', '-r', '-t', '-D', '-R', '-T']),
-  env: new Set(['-u', '-C', '-S', '-P']),
-  time: new Set(['-o', '-f']),
-  nice: new Set(['-n']),
-  nohup: new Set(),
-  timeout: new Set(['-s', '-k']),
-  command: new Set(),
-  exec: new Set(['-a']),
-  builtin: new Set(),
-  stdbuf: new Set(['-i', '-o', '-e']),
-  caffeinate: new Set(['-t', '-w']),
-};
+const WRAPPERS = new Map<string, ReadonlySet<string>>([
+  ['sudo', new Set(['-u', '-g', '-h', '-p', '-C', '-U', '-r', '-t', '-D', '-R', '-T'])],
+  ['env', new Set(['-u', '-C', '-S', '-P'])],
+  ['time', new Set(['-o', '-f'])],
+  ['nice', new Set(['-n'])],
+  ['nohup', new Set()],
+  ['timeout', new Set(['-s', '-k'])],
+  ['command', new Set()],
+  ['exec', new Set(['-a'])],
+  ['builtin', new Set()],
+  ['stdbuf', new Set(['-i', '-o', '-e'])],
+  ['caffeinate', new Set(['-t', '-w'])],
+]);
+/** Deeper `$(` nesting is read as plain text: no real command nests this far, and it bounds recursion. */
+const MAX_NEST = 32;
 const KEYWORDS = new Set(['if', 'then', 'elif', 'else', 'while', 'until', 'do', '!']);
 const PROCESS_LISTERS = new Set(['pgrep', 'pidof', 'ps']);
 /** xargs options that take a separate argument (`-n 1`, `-I {}`, …). */
 const XARGS_ARG_OPTS = new Set(['-I', '-J', '-L', '-n', '-P', '-s', '-E', '-d', '-R', '-S']);
 
-/** Heredoc bodies are data written somewhere (a file, a doc), not commands. */
+type Heredoc = { word: string; tabs: boolean; expands: boolean };
+
+/** The heredoc a line opens, if any: a `<<` outside quotes and comments (not a `<<<` here-string). */
+function heredocOpener(line: string): Heredoc | null {
+  let quote: string | null = null;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (quote) {
+      if (c === '\\' && quote === '"') i++;
+      else if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '\\') { i++; continue; }
+    if (c === "'" || c === '"') { quote = c; continue; }
+    if (c === '#' && (i === 0 || /\s/.test(line[i - 1]))) return null;
+    if (c === '<' && line[i + 1] === '<' && line[i + 2] !== '<' && line[i - 1] !== '<') {
+      const m = /^<<(-?)[ \t]*(?:'([^']*)'|"([^"]*)"|(\\?)([^\s'"<>;&|()]+))/.exec(line.slice(i));
+      if (m) return { word: m[2] ?? m[3] ?? m[5], tabs: m[1] === '-', expands: m[2] === undefined && m[3] === undefined && !m[4] };
+    }
+  }
+  return null;
+}
+
+/** The `$(…)` and `` `…` `` spans of a line, joined; '' when there are none. */
+function substitutionsIn(line: string): string {
+  const spans: string[] = [];
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === '$' && line[i + 1] === '(') {
+      let parens = 0;
+      let j = i + 2;
+      for (; j < line.length; j++) {
+        if (line[j] === '(') parens++;
+        else if (line[j] === ')') { if (parens === 0) break; parens--; }
+      }
+      spans.push(line.slice(i, j + 1));
+      i = j;
+    } else if (line[i] === '`') {
+      const k = line.indexOf('`', i + 1);
+      const e = k < 0 ? line.length - 1 : k;
+      spans.push(line.slice(i, e + 1));
+      i = e;
+    }
+  }
+  return spans.join(' ');
+}
+
+/**
+ * Heredoc bodies are data written somewhere (a file, a doc), not commands. Only a body under an
+ * unquoted delimiter is expanded, so its substitutions still run: those are kept, as `: $(…)`.
+ */
 function withoutHeredocBodies(command: string): string {
   const out: string[] = [];
-  let end: { word: string; tabs: boolean } | null = null;
+  let open: Heredoc | null = null;
   for (const line of command.split('\n')) {
-    if (end) {
-      if ((end.tabs ? line.replace(/^\t+/, '') : line).trim() === end.word) end = null;
+    if (open) {
+      if ((open.tabs ? line.replace(/^\t+/, '') : line) === open.word) { open = null; continue; }
+      if (open.expands) { const subs = substitutionsIn(line); if (subs) out.push(`: ${subs}`); }
       continue;
     }
     out.push(line);
-    const m = /<<(-?)\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\2/.exec(line);
-    if (m) end = { word: m[3], tabs: m[1] === '-' };
+    open = heredocOpener(line);
   }
   return out.join('\n');
 }
@@ -52,17 +103,17 @@ function withoutHeredocBodies(command: string): string {
  */
 function codeText(s: string): string {
   const n = s.length;
-  // Scan code from `i`; with `inSub`, stop after the `)` that closes a `$(`.
-  function scan(i: number, inSub: boolean): [string, number] {
+  // Scan code from `i`; with `inSub`, stop after the `)` that closes a `$(`. `nest` counts open `$(`.
+  function scan(i: number, inSub: boolean, nest: number): [string, number] {
     let out = '';
     let depth = 0;
     while (i < n) {
       const c = s[i];
       if (c === '\\') { out += s[i + 1] === '\n' ? ' ' : '_'; i += 2; continue; }
       if (c === "'") { const k = s.indexOf("'", i + 1); out += "''"; i = k < 0 ? n : k + 1; continue; }
-      if (c === '"') { const [kept, k] = doubleQuoted(i + 1); out += kept; i = k; continue; }
+      if (c === '"') { const [kept, k] = doubleQuoted(i + 1, nest); out += kept; i = k; continue; }
       if (c === '#' && (i === 0 || /\s/.test(s[i - 1]))) { while (i < n && s[i] !== '\n') i++; continue; }
-      if (c === '$' && s[i + 1] === '(') { const [code, k] = scan(i + 2, true); out += `$(${code})`; i = k; continue; }
+      if (c === '$' && s[i + 1] === '(' && nest < MAX_NEST) { const [code, k] = scan(i + 2, true, nest + 1); out += `$(${code})`; i = k; continue; }
       if (inSub && c === '(') depth++;
       if (inSub && c === ')') { if (depth === 0) return [out, i + 1]; depth--; }
       out += c;
@@ -71,17 +122,17 @@ function codeText(s: string): string {
     return [out, i];
   }
   // Inside "…": keep only the substitutions; the rest is one literal token.
-  function doubleQuoted(i: number): [string, number] {
+  function doubleQuoted(i: number, nest: number): [string, number] {
     let kept = '""';
     while (i < n && s[i] !== '"') {
       if (s[i] === '\\') { i += 2; continue; }
-      if (s[i] === '$' && s[i + 1] === '(') { const [code, k] = scan(i + 2, true); kept += ` $(${code}) `; i = k; continue; }
+      if (s[i] === '$' && s[i + 1] === '(' && nest < MAX_NEST) { const [code, k] = scan(i + 2, true, nest + 1); kept += ` $(${code}) `; i = k; continue; }
       if (s[i] === '`') { const k = s.indexOf('`', i + 1); const e = k < 0 ? n : k; kept += ` \`${s.slice(i + 1, e)}\` `; i = e + 1; continue; }
       i++;
     }
     return [kept, i + 1];
   }
-  return scan(0, false)[0];
+  return scan(0, false, 0)[0];
 }
 
 /** Replace each `$(…)` / `` `…` `` with a ` __S<n>__ ` token, collecting the bodies. */
@@ -130,10 +181,14 @@ function commandOf(stage: string): { name: string; args: string[] } | null {
     const t = tokens[i];
     const base = t.slice(t.lastIndexOf('/') + 1);
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t) || KEYWORDS.has(t)) { i++; continue; }
-    const argOpts = WRAPPERS[base];
+    const argOpts = WRAPPERS.get(base);
     if (argOpts) {
       i++;
-      while (i < tokens.length && tokens[i].startsWith('-')) { if (argOpts.has(tokens[i])) i++; i++; }
+      while (i < tokens.length && tokens[i].startsWith('-')) {
+        if (base === 'command' && (tokens[i] === '-v' || tokens[i] === '-V')) return null; // a lookup, not a run
+        if (argOpts.has(tokens[i])) i++;
+        i++;
+      }
       if (base === 'timeout' && /^\d/.test(tokens[i] ?? '')) i++;
       continue;
     }
@@ -156,23 +211,24 @@ function killsEverything(args: string[]): boolean {
   return false;
 }
 
-/** The command xargs runs (its basename), past xargs's own options. */
+/** The command xargs runs (its basename), past xargs's own options and any wrapper (`xargs sudo kill`). */
 function xargsCommand(args: string[]): string | undefined {
   let k = 0;
   while (k < args.length && args[k].startsWith('-')) { if (XARGS_ARG_OPTS.has(args[k])) k++; k++; }
-  const t = args[k];
-  return t === undefined ? undefined : t.slice(t.lastIndexOf('/') + 1);
+  return commandOf(args.slice(k).join(' '))?.name;
 }
 
 /** True when `code` (already through codeText) holds a kill by name or pattern. */
-function isBroadKill(code: string): boolean {
+function isBroadKill(code: string, nest = 0): boolean {
   const bodies: string[] = [];
   const flat = extractSubstitutions(code, bodies);
   // A substitution runs too: `echo "$(pkill -f x)"`.
-  if (bodies.some((b) => isBroadKill(b))) return true;
-  // Which substitutions list processes: `$(pgrep …)`, `$(ps … | grep …)`.
+  if (nest < MAX_NEST && bodies.some((b) => isBroadKill(b, nest + 1))) return true;
+  // Which substitutions list processes: `$(pgrep …)`, `$(ps … | grep …)` — read from their first
+  // command, which may follow a newline (`$(⏎pgrep -f x⏎)`).
   const listsProcesses = bodies.map((b) => {
-    const first = extractSubstitutions(b, []).split(/\|\||&&|[;\n]|(?<![<>])&(?![>&])/)[0]?.split('|')[0] ?? '';
+    const pipelines = extractSubstitutions(b, []).split(/\|\||&&|[;\n]|(?<![<>])&(?![>&])/);
+    const first = pipelines.map((p) => p.trim()).find(Boolean)?.split('|')[0] ?? '';
     return PROCESS_LISTERS.has(commandOf(first)?.name ?? '');
   });
   const fedByLister = (stage: string) => [...stage.matchAll(/__S(\d+)__/g)].some((m) => listsProcesses[Number(m[1])]);
@@ -205,5 +261,10 @@ export function broadKillDenial(toolName: string, input: unknown): { allow: fals
   if (toolName !== 'Bash') return null;
   const command = (input as { command?: unknown } | undefined)?.command;
   if (typeof command !== 'string' || !command) return null;
-  return isBroadKill(codeText(withoutHeredocBodies(command))) ? { allow: false, message: MESSAGE } : null;
+  try {
+    return isBroadKill(codeText(withoutHeredocBodies(command))) ? { allow: false, message: MESSAGE } : null;
+  } catch {
+    // This runs inside the daemon's message handling: a parse failure must never escape. Fail open.
+    return null;
+  }
 }
