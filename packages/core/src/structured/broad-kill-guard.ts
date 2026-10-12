@@ -250,9 +250,9 @@ function isBroadKill(code: string, nest = 0): boolean {
 
 const MESSAGE =
   'Dispatch blocked this command: it signals processes by name or pattern (pkill, killall, ' +
-  'pgrep/pidof/ps feeding kill, or kill -1 / kill 0). On this machine that can stop every agent ' +
-  "thread, because each Claude agent's command line holds its prompt (a broad pattern once stopped " +
-  '14 agents at once). Kill by PID instead: save the PID when you start a background process ' +
+  'pgrep/pidof/ps feeding kill, or kill -1 / kill 0). On this machine such a pattern can match ' +
+  "every agent thread's process (a broad pattern once stopped 14 agents at once). " +
+  'Kill by PID instead: save the PID when you start a background process ' +
   "(`cmd & echo $!`), or find it with `pgrep -fl '<pattern>'`, check that it is yours, then run " +
   '`kill <pid>`.';
 
