@@ -86,17 +86,20 @@ describe('CodexTranslator — server → Claude-shaped stream', () => {
     expect(done).toEqual([{ type: 'stream_event', event: { type: 'content_block_stop', index: 0, final_text: fx.agentMsgCompleted.params.item.text } }]);
   });
 
-  it('a completed agentMessage that never streamed opens, fills and closes its own block', () => {
+  // Only the stop: no start or delta, so the reducer's no-block path adds it and checks first that
+  // the turn does not already show it (a REST page can hold a message that completed before it).
+  it('a completed agentMessage that never streamed is sent as its own block stop with the full text', () => {
     const t = new CodexTranslator();
     t.translate(fx.turnStarted as any);
     const item = { ...fx.agentMsgCompleted.params.item, id: 'msg_whole', text: 'The whole reply.' };
     const out = events(t.translate({ method: 'item/completed', params: { ...fx.agentMsgCompleted.params, item } } as any));
     expect(out).toEqual([
       { type: 'stream_event', event: { type: 'message_start' } },
-      { type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } } },
-      { type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'The whole reply.' } } },
       { type: 'stream_event', event: { type: 'content_block_stop', index: 0, final_text: 'The whole reply.' } },
     ]);
+    // The index is taken: a later block of the turn gets the next one.
+    const next = events(t.translate({ method: 'item/reasoning/textDelta', params: { itemId: 'rs_9', delta: 'x', contentIndex: 0 } } as any));
+    expect(next[0]).toMatchObject({ type: 'stream_event', event: { type: 'content_block_start', index: 1 } });
   });
 
   it('an empty completed agentMessage that never streamed renders nothing', () => {

@@ -1255,3 +1255,30 @@ test('after a final_text recovery, the next block of the turn still streams in o
   drainRaf();
   expect(assistantTexts(result.current.items)).toEqual(['First, a check.', 'Then the answer.']);
 });
+
+// A recovered reply must not cost the reader the history: after a reconnect or a remount the REST
+// page is still loading when the reply's stop can arrive, and a page that finds a conversational
+// item already rendered is discarded. A recovered reply does not count as one; it stays under the
+// page, and is dropped only when the page itself already holds it.
+test('a reply recovered before the REST page lands keeps the page, under it', async () => {
+  let resolveFetch!: (v: unknown) => void;
+  vi.spyOn(api, 'getConversation').mockReturnValue(new Promise((r) => { resolveFetch = r; }) as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'inactive' }));
+  act(() => cbs.onEvent(stopWith(3, 'The reply.')));
+  resolveFetch({ items: [{ kind: 'user', text: 'question', line: 1 }, { kind: 'assistant', text: 'Earlier step.', line: 2 }], cursor: 3, startLine: 1, hasMore: true });
+  await flushAsync();
+  expect(result.current.items.map((i) => i.text)).toEqual(['question', 'Earlier step.', 'The reply.']);
+  expect(result.current.hasMore).toBe(true);
+});
+
+test('a recovered reply that the late REST page also holds is shown once', async () => {
+  let resolveFetch!: (v: unknown) => void;
+  vi.spyOn(api, 'getConversation').mockReturnValue(new Promise((r) => { resolveFetch = r; }) as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'inactive' }));
+  act(() => cbs.onEvent(stopWith(3, 'The reply.')));
+  resolveFetch({ items: [{ kind: 'user', text: 'question', line: 1 }, { kind: 'assistant', text: 'The reply.', line: 2 }], cursor: 3, startLine: 1, hasMore: false });
+  await flushAsync();
+  expect(result.current.items.map((i) => i.text)).toEqual(['question', 'The reply.']);
+});

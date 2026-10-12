@@ -344,13 +344,13 @@ export class CodexTranslator {
       let index = this.msgBlock.get(item.id);
       const out: TranslatedAction[] = [];
       if (index === undefined) {
-        // A message that never streamed (no delta reached us): open, fill and close it here.
+        // A message that never streamed (no delta reached us): the stop alone, on a fresh index.
+        // No start or delta — the reducer's no-block path adds it, after checking that the turn does
+        // not already show it (a REST page can hold a message that completed before the page).
         if (!text.trim()) return [];
         this.ensureMessageStart(out);
         index = this.nextBlockIndex++;
         this.msgBlock.set(item.id, index);
-        out.push({ kind: 'event', event: { type: 'stream_event', event: { type: 'content_block_start', index, content_block: { type: 'text', text: '' } } } });
-        out.push({ kind: 'event', event: { type: 'stream_event', event: { type: 'content_block_delta', index, delta: { type: 'text_delta', text } } } });
       }
       out.push({ kind: 'event', event: { type: 'stream_event', event: { type: 'content_block_stop', index, final_text: text } } });
       return out;
