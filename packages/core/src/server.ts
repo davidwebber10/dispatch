@@ -27,6 +27,7 @@ import { ClaudeLoginService } from './auth/claude-login.js';
 import { requireBoxToken, upgradeAllowed } from './auth/box-token.js';
 import { OsConnectionsProvider } from './integrations/os-provider.js';
 import { HeartbeatService } from './platform/heartbeat.js';
+import { writeOwnPid, removeOwnPid } from './platform/pid-file.js';
 import { UsageRecorder } from './usage/recorder.js';
 import { createClaudeAuthRouter } from './routes/claude-auth.js';
 import { createProvidersRouter } from './routes/providers.js';
@@ -427,10 +428,6 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const dataDir = platform.dataDir();
   fs.mkdirSync(dataDir, { recursive: true });
 
-  // Record our own pid so daemon controllers (e.g. WSL's restart()) can find and
-  // signal this process without depending on the OS service manager for tracking.
-  fs.writeFileSync(path.join(dataDir, 'daemon.pid'), String(process.pid));
-
   const browserShimEnv = platform.installBrowserShim({
     dataDir,
     serverUrl: `http://127.0.0.1:${preferredPort}`,
@@ -780,6 +777,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     });
   });
 
+  // Record our own pid so daemon controllers (e.g. WSL's restart()) can find and signal this
+  // process without an OS service manager. Only now that the port is bound: a duplicate launch
+  // that loses the port race exits above and must not overwrite the live daemon's pid (#56).
+  writeOwnPid(dataDir);
+
   if (port !== preferredPort) {
     effectiveShimEnv = platform.installBrowserShim({
       dataDir,
@@ -892,7 +894,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     server.close();
     server.closeAllConnections();
     db.close();
-    try { fs.unlinkSync(path.join(dataDir, 'daemon.pid')); } catch {}
+    removeOwnPid(dataDir); // only if still ours: a newer daemon may own the file by now
   };
 
   process.on('SIGTERM', cleanup);
