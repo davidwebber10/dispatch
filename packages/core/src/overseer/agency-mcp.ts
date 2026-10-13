@@ -282,7 +282,7 @@ export const TOOLS = [
       type: 'object',
       properties: {
         agentId: { type: 'string', description: 'The paused agent thread id (from the notification / list_agents).' },
-        requestId: { type: 'string', description: 'The question\'s requestId, from the "PAUSED" message. The answer is refused if that question is no longer the one pending.' },
+        requestId: { type: 'string', description: 'The question\'s requestId, from the "PAUSED" message. Required. The answer is refused if that question is no longer the one pending.' },
         answers: {
           type: 'object',
           description: 'Map of question header -> chosen option label, e.g. { "Approach": "Use Postgres" }.',
@@ -290,7 +290,7 @@ export const TOOLS = [
         },
         answer: { type: 'string', description: 'Shortcut for a single-question prompt: just the chosen option label (used when `answers` is omitted).' },
       },
-      required: ['agentId'],
+      required: ['agentId', 'requestId'],
     },
   },
   {
@@ -851,6 +851,8 @@ async function readAgent(args: { agentId: string }): Promise<{ agentId: string; 
  */
 async function answerAgent(args: { agentId: string; requestId?: string; answers?: Record<string, string>; answer?: string }): Promise<{ ok: true; agentId: string }> {
   if (!args?.agentId) throw new Error('agentId is required');
+  const requestId = typeof args.requestId === 'string' && args.requestId ? args.requestId : undefined;
+  if (!requestId) throw new Error('requestId is required: copy it from the PAUSED message, so the answer cannot land on a newer question');
   let answers = args.answers && typeof args.answers === 'object' ? args.answers : undefined;
   if ((!answers || Object.keys(answers).length === 0) && typeof args.answer === 'string' && args.answer.trim()) {
     const pending = await httpJson('GET', `${apiBase()}/api/terminals/${args.agentId}/permission`);
@@ -860,17 +862,14 @@ async function answerAgent(args: { agentId: string; requestId?: string; answers?
   if (!answers || Object.keys(answers).length === 0) {
     throw new Error('provide `answers` (map of question header -> chosen option) or `answer` (single option label)');
   }
-  const requestId = typeof args.requestId === 'string' && args.requestId ? args.requestId : undefined;
   try {
-    await httpJson('POST', `${apiBase()}/api/terminals/${args.agentId}/permission`, { decision: 'allow', answers, ...(requestId ? { requestId } : {}) });
+    await httpJson('POST', `${apiBase()}/api/terminals/${args.agentId}/permission`, { decision: 'allow', answers, requestId });
   } catch (err) {
     // 404: nothing is pending, or (with a requestId) a different question is. Most often the human
     // already answered it in the agent's own chat, and the agent may have asked again.
     if (err instanceof Error && / -> 404 /.test(err.message)) {
       throw new Error(
-        requestId
-          ? `That question (requestId ${requestId}) is no longer pending. The user may have already answered it in the agent's chat. Read the agent with read_agent before answering again.`
-          : 'The agent has no pending question. The user may have already answered it in the agent\'s chat. Read the agent with read_agent.',
+        `That question (requestId ${requestId}) is no longer pending. The user may have already answered it in the agent's chat. Read the agent with read_agent before answering again.`,
       );
     }
     throw err;

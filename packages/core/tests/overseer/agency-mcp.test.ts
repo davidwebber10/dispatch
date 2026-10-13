@@ -332,6 +332,15 @@ describe('agency-mcp', () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ decision: 'allow', answers: { Choice: 'A' }, requestId: 'req-7' });
   });
 
+  it('answer_agent requires a requestId and does not call the API without one', async () => {
+    const fetchMock = vi.fn();
+    global.fetch = fetchMock as any;
+    const out = await callTool('answer_agent', { agentId: 'a1', answers: { Choice: 'A' } });
+    expect(out.isError).toBe(true);
+    expect(JSON.stringify(out.content)).toContain('requestId is required');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('answer_agent errors when that requestId is no longer the pending question', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce({ ok: false, status: 404, statusText: 'Not Found', text: async () => '{"error":"no pending permission"}' });
     global.fetch = fetchMock as any;
