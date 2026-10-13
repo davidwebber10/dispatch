@@ -279,6 +279,15 @@ describe('endless fix round 1', () => {
     s!.stop();
   });
 
+  it('GET /project resolves a name and explains an unknown one', async () => {
+    const ok = await request(app).get('/api/endless/project?ref=SALSIFY');
+    expect(ok.status).toBe(200);
+    expect(ok.body).toEqual({ id: 's1', name: 'salsify', folder: path.join(root, 'salsify') });
+    const bad = await request(app).get('/api/endless/project?ref=nope');
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toBe('unknown project "nope". Known projects: salsify');
+  });
+
   it('refuses an image entry that is not an object with 400', async () => {
     const db = new Database(':memory:');
     initSchema(db);

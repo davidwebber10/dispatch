@@ -24,6 +24,7 @@ import { zoom, dateOf, readImage, RecallError, type ZoomImage } from './recall.j
 import { importOnce } from './import.js';
 import { DEFAULT_LIMITS, type ViewLimits } from './view.js';
 import { nodeName } from './tree.js';
+import { resolveProject, type ProjectRef } from './projects.js';
 
 export class UserError extends Error {}
 
@@ -140,6 +141,13 @@ export class EndlessService {
 
   projectName(id: string | null): string | null {
     return id ? sessionsDb.getById(this.o.db, id)?.name ?? null : null;
+  }
+
+  /** A project by name or id, for the thread tools; UserError when unknown or ambiguous. */
+  project(ref: string): ProjectRef {
+    const r = resolveProject(sessionsDb.list(this.o.db), ref);
+    if (!r.ok) throw new UserError(r.error);
+    return r.project;
   }
 
   toWire(m: EndlessMessage): WireMessage {
