@@ -187,6 +187,9 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
         return res.status(204).end();
       } catch (e: any) { return res.status(400).json({ error: e?.message ?? String(e) }); }
     }
+    if (canned !== undefined && !sessionService.getPendingPermission(req.params.terminalId)?.questions?.length) {
+      return res.status(404).json({ error: 'no pending question' });
+    }
     try {
       const ok = sessionService.answerPermission(req.params.terminalId, requestId, { decision, answers, message, canned });
       if (!ok) return res.status(404).json({ error: 'no pending permission' });

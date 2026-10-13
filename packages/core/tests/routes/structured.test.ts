@@ -220,6 +220,18 @@ it('POST permission `canned: dismiss` denies the question with the fixed Dismiss
   await request(app).post(`/api/terminals/${id}/stop`);
 });
 
+it('POST permission `canned` is 404 when the pending gate has no questions, and leaves it pending', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent', autonomy: 'supervised' } });
+  const id = t.body.id;
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'TRIGGER_PERMISSION' });
+  const pending = await pollPermission(app, id);
+  for (const canned of ['dismiss', 'discuss']) {
+    expect((await request(app).post(`/api/terminals/${id}/permission`).send({ requestId: pending.requestId, decision: 'deny', canned })).status).toBe(404);
+  }
+  expect((await request(app).get(`/api/terminals/${id}/permission`)).body).toMatchObject({ requestId: pending.requestId });
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
 it('POST permission `reply` on a Codex question → 409, and the question stays pending', async () => {
   const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-reply-'));
   const a = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fakeCodex] } });
