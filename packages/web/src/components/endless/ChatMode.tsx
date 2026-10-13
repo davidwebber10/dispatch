@@ -4,6 +4,7 @@ import { useEndless } from '../../stores/endless';
 import { EndlessColumn } from './EndlessColumn';
 import { ProjectFilter } from './ProjectFilter';
 import { ProjectsPanel } from './ProjectsPanel';
+import { MemorySearch } from './MemorySearch';
 import { Modal } from '../common/Modal';
 
 const toolbarButton: React.CSSProperties = {
@@ -26,7 +27,7 @@ export function ChatMode({ mobile = false }: { mobile?: boolean }) {
       style={{ display: 'flex', flex: 1, minWidth: 0, minHeight: 0, height: '100%', background: 'var(--color-base)' }}>
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
         <div data-testid="chat-toolbar" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', flexShrink: 0, borderBottom: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
-          <div style={{ flex: 1 }} />
+          <MemorySearch />
           <button type="button" aria-pressed={panel} onClick={() => setPanel((p) => !p)} style={toolbarButton}><Folders size={15} /> Projects</button>
         </div>
         {unavailable && (
