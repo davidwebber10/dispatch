@@ -110,4 +110,28 @@ describe('useEndless', () => {
     useEndless.getState().applyEvent({ type: 'endless:turn', status: 'interrupted' });
     expect(useEndless.getState()).toMatchObject({ liveText: '', liveThinking: '', turn: { status: 'interrupted' } });
   });
+
+  it('a loadTail during a pending loadOlder does not leave loadingOlder stuck', async () => {
+    useEndless.setState({ messages: [msg(5)], hasMore: true });
+    let release!: (v: any) => void;
+    const spy = vi.spyOn(api, 'endlessMessages').mockImplementationOnce(() => new Promise((r) => { release = r; }));
+    const older = useEndless.getState().loadOlder();
+    spy.mockResolvedValue({ messages: [msg(5), msg(6)], hasMore: true, hasMoreAfter: false });
+    await useEndless.getState().loadTail();
+    release({ messages: [msg(3)], hasMore: true, hasMoreAfter: false });
+    await older;
+    expect(useEndless.getState().loadingOlder).toBe(false);
+    spy.mockClear();
+    await useEndless.getState().loadOlder();
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('reconnect while unavailable reloads even after a search jump', async () => {
+    useEndless.setState({ unavailable: true, loaded: false, atTail: false });
+    const spy = vi.spyOn(api, 'endlessMessages').mockResolvedValue({ messages: [msg(0)], hasMore: false, hasMoreAfter: false });
+    vi.spyOn(api, 'endlessState').mockResolvedValue({ turn: { status: 'idle', error: null }, total: 0, compactor: { unbuilt: 0, merges: 0, running: 0 } });
+    useEndless.getState().resyncAfterReconnect();
+    await vi.waitFor(() => expect(useEndless.getState()).toMatchObject({ unavailable: false, atTail: true }));
+    expect(spy).toHaveBeenCalled();
+  });
 });

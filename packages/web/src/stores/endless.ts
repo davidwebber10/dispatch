@@ -70,6 +70,7 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
 
     loadTail: () => {
       const g = ++gen;
+      set({ loadingOlder: false });
       return load(
         () => api.endlessMessages({ limit: PAGE, project: get().filter }),
         (page) => {
@@ -124,7 +125,7 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
 
     resyncAfterReconnect: () => {
       const { loaded, unavailable, atTail } = get();
-      if (!(loaded || unavailable) || !atTail) return;
+      if (!unavailable && !(loaded && atTail)) return;
       void get().loadTail().catch(() => {});
       void get().refreshState().catch(() => {});
     },
