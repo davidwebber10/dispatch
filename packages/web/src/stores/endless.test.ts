@@ -18,6 +18,14 @@ describe('useEndless', () => {
     expect(useEndless.getState().messages.map((m) => m.i)).toEqual([0]);
   });
 
+  it('a work message reloads the projects, so the last report is current at once', () => {
+    const spy = vi.mocked(api.endlessProjects);
+    useEndless.getState().applyEvent({ type: 'endless:message', message: msg(0) });
+    expect(spy).not.toHaveBeenCalled();
+    useEndless.getState().applyEvent({ type: 'endless:message', message: msg(1, { kind: 'work', text: '[Fix] report: done', project: 's1', ref: 't9' }) });
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
   it('ignores another project while filtered, and new messages while reading history', () => {
     useEndless.setState({ filter: 'p1' });
     useEndless.getState().applyEvent({ type: 'endless:message', message: msg(0, { project: 'p2' }) });

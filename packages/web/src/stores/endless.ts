@@ -139,6 +139,8 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
         if (m.kind === 'unii' || m.kind === 'tool') patch.liveThinking = '';
         if (atTail && (filter === null || m.project === filter) && !messages.some((x) => x.i === m.i)) patch.messages = [...messages, m];
         set(patch);
+        // A thread report changes its project's "last report" in the projects panel.
+        if (m.kind === 'work') void get().loadProjects().catch(() => {});
         return;
       }
       if (e.type === 'endless:delta') {

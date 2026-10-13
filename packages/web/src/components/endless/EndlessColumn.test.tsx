@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { EndlessColumn } from './EndlessColumn';
 import { ChatMode } from './ChatMode';
 import { foldRows } from './EndlessMessageRow';
 import { useEndless } from '../../stores/endless';
+import { useUI } from '../../stores/ui';
 import { api } from '../../api/client';
 import type { EndlessMessage } from '../../api/types';
 
@@ -32,6 +33,8 @@ beforeAll(() => {
 
 const msg = (i: number, kind: EndlessMessage['kind'], text: string, over: Partial<EndlessMessage> = {}): EndlessMessage =>
   ({ i, kind, text, size: text.length, project: null, projectName: null, ref: null, media: [], createdAt: 0, ...over });
+
+afterEach(() => { useUI.setState({ view: 'chat', pendingOpenThread: null }); });
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -197,5 +200,14 @@ describe('EndlessColumn', () => {
     expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).value).toBe('my draft');
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(loadTail).toHaveBeenCalled();
+  });
+
+  it('a work card opens its thread: project as sessionId, ref as terminalId, in the workspace', () => {
+    useEndless.setState({ messages: [msg(0, 'work', '[Fix login] report: done', { project: 's1', projectName: 'salsify', ref: 't9' })] });
+    useUI.setState({ view: 'chat', pendingOpenThread: null });
+    render(<EndlessColumn />);
+    fireEvent.click(screen.getByRole('button', { name: /\[Fix login\] report: done/ }));
+    expect(useUI.getState().pendingOpenThread).toEqual({ sessionId: 's1', terminalId: 't9' });
+    expect(useUI.getState().view).toBe('workspace');
   });
 });
