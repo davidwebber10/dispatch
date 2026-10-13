@@ -325,4 +325,39 @@ function initializeSchema(db: Database.Database): void {
   // Overseer ledger titles (spec 2026-10-09, Unit 1): a short label the overseer writes. Rows that
   // exist keep NULL; they show their question until the overseer gives them a title.
   migrate(db, '007-ledger-title', () => db.exec('ALTER TABLE ledger_items ADD COLUMN title TEXT;'));
+  // Endless Chat (spec 2026-10-13, section 3): the append-only log, the summary tree, the
+  // saved views, and an FTS5 index for the human's memory search. Triggers make both logs
+  // append-only; the FTS index follows inserts through a trigger (external content table).
+  migrate(db, '008-endless-chat', () => db.exec(`
+    CREATE TABLE IF NOT EXISTS endless_messages (
+      i          INTEGER PRIMARY KEY,
+      kind       TEXT NOT NULL,
+      text       TEXT NOT NULL,
+      size       INTEGER NOT NULL,
+      project    TEXT,
+      ref        TEXT,
+      media      TEXT,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_endless_messages_project ON endless_messages(project, i);
+    CREATE TABLE IF NOT EXISTS endless_nodes (
+      l    INTEGER NOT NULL,
+      i    INTEGER NOT NULL,
+      text TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      PRIMARY KEY (l, i)
+    );
+    CREATE TABLE IF NOT EXISTS endless_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE VIRTUAL TABLE IF NOT EXISTS endless_messages_fts USING fts5(text, content='endless_messages', content_rowid='i');
+    CREATE TRIGGER IF NOT EXISTS endless_messages_fts_insert AFTER INSERT ON endless_messages
+      BEGIN INSERT INTO endless_messages_fts(rowid, text) VALUES (new.i, new.text); END;
+    CREATE TRIGGER IF NOT EXISTS endless_messages_no_update BEFORE UPDATE ON endless_messages
+      BEGIN SELECT RAISE(ABORT, 'endless messages are append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS endless_messages_no_delete BEFORE DELETE ON endless_messages
+      BEGIN SELECT RAISE(ABORT, 'endless messages are append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS endless_nodes_no_update BEFORE UPDATE ON endless_nodes
+      BEGIN SELECT RAISE(ABORT, 'endless nodes are append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS endless_nodes_no_delete BEFORE DELETE ON endless_nodes
+      BEGIN SELECT RAISE(ABORT, 'endless nodes are append-only'); END;
+  `));
 }
