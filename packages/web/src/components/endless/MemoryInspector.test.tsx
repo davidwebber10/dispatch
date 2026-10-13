@@ -38,4 +38,43 @@ describe('MemoryInspector', () => {
     await waitFor(() => expect(save).toHaveBeenCalledWith('I am David. Be brief.'));
     expect(await screen.findByRole('button', { name: 'Saved' })).toBeInTheDocument();
   });
+
+  it('disables the textarea and Save while the instructions load, and when the load fails', async () => {
+    vi.spyOn(api, 'endlessInstructions').mockReturnValue(new Promise(() => {}));
+    const { unmount } = render(<MemoryInspector open onClose={() => {}} />);
+    expect(screen.getByRole('button', { name: 'Save instructions' })).toBeDisabled();
+    expect(screen.getByRole('textbox', { name: 'Chat instructions' })).toBeDisabled();
+    unmount();
+    vi.spyOn(api, 'endlessInstructions').mockRejectedValue(new Error('503'));
+    const save = vi.spyOn(api, 'setEndlessInstructions').mockResolvedValue({ ok: true });
+    render(<MemoryInspector open onClose={() => {}} />);
+    expect(await screen.findByText('Instructions could not be loaded.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save instructions' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Save instructions' }));
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('shows "Could not save" when the save fails', async () => {
+    vi.spyOn(api, 'setEndlessInstructions').mockRejectedValue(new Error('500'));
+    render(<MemoryInspector open onClose={() => {}} />);
+    const box = await screen.findByRole('textbox', { name: 'Chat instructions' });
+    await waitFor(() => expect(box).not.toBeDisabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Save instructions' }));
+    expect(await screen.findByText('Could not save')).toBeInTheDocument();
+  });
+
+  it('clears the stale view on reopen and ignores an older response', async () => {
+    let resolveOld: (v: any) => void = () => {};
+    const spy = vi.spyOn(api, 'endlessView')
+      .mockReturnValueOnce(new Promise((r) => { resolveOld = r; }))
+      .mockResolvedValueOnce({ bytes: 1000, rendered: 'NEW', lines: [] });
+    const { rerender } = render(<MemoryInspector open onClose={() => {}} />);
+    rerender(<MemoryInspector open={false} onClose={() => {}} />);
+    rerender(<MemoryInspector open onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId('memory-view').textContent).toBe('NEW'));
+    resolveOld({ bytes: 5, rendered: 'OLD', lines: [] });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.getByTestId('memory-view').textContent).toBe('NEW');
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
 });
