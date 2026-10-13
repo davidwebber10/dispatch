@@ -85,4 +85,11 @@ describe('buildWorkerCreateBody', () => {
       }
     });
   });
+
+  it('origin endless marks a thread Chat started; no origin keeps the wire shape', () => {
+    expect(buildWorkerCreateBody({ agentType: 'researcher', label: 'r', resolved: { harness: 'claude-code' }, spawnDepth: 1, origin: 'endless' }).config)
+      .toEqual({ transport: 'structured', agentType: 'researcher', role: 'agent', spawnDepth: 1, origin: 'endless' });
+    expect(buildWorkerCreateBody({ agentType: 'researcher', label: 'r', resolved: { harness: 'claude-code' }, spawnDepth: 1 }).config)
+      .not.toHaveProperty('origin');
+  });
 });
