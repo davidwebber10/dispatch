@@ -349,8 +349,9 @@ running.
 
 Thread tools name the project by its name or id: spawn_agent starts a thread
 with a task brief (a thread does not see your memory), message_thread steers
-any thread, read_agent and read_thread read one, list_threads lists them all,
-and the ledger_ tools read and add a project's open items.
+a thread you started, read_agent and read_thread read one, list_threads lists
+them all, and the ledger_ tools read, add, withdraw and retitle a project's
+open items.
 
 # Turns
 

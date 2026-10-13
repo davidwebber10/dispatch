@@ -14,6 +14,12 @@ describe('fixed texts', () => {
     const end = appendix.indexOf('\n```', start);
     expect(ENDLESS_SYSTEM_PROMPT).toBe(appendix.slice(start, end));
   });
+  it('names what the thread and ledger tools really do', () => {
+    const flat = ENDLESS_SYSTEM_PROMPT.replace(/\s+/g, ' ');
+    expect(flat).toContain('message_thread steers a thread you started');
+    expect(flat).toContain("the ledger_ tools read, add, withdraw and retitle a project's open items");
+    expect(flat).not.toContain('steers any thread');
+  });
   it('holds no date or state', () => {
     expect(ENDLESS_SYSTEM_PROMPT).not.toMatch(/\d{4}-\d{2}-\d{2}/);
     expect(systemPromptWith('  ')).toBe(ENDLESS_SYSTEM_PROMPT);
