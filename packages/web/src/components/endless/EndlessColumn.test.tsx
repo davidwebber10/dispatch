@@ -7,6 +7,23 @@ import { useEndless } from '../../stores/endless';
 import { api } from '../../api/client';
 import type { EndlessMessage } from '../../api/types';
 
+// Wrap the real scroller hook so a test sees the calls EndlessColumn makes.
+const scroller = vi.hoisted(() => ({ toMessage: vi.fn(), toEnd: vi.fn() }));
+vi.mock('@shadcn/react/message-scroller', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@shadcn/react/message-scroller')>();
+  return {
+    ...actual,
+    useMessageScroller: () => {
+      const real = actual.useMessageScroller();
+      return {
+        ...real,
+        scrollToMessage: (id: string, o?: Parameters<typeof real.scrollToMessage>[1]) => { scroller.toMessage(id, o); return real.scrollToMessage(id, o); },
+        scrollToEnd: (o?: Parameters<typeof real.scrollToEnd>[0]) => { scroller.toEnd(o); return real.scrollToEnd(o); },
+      };
+    },
+  };
+});
+
 beforeAll(() => {
   class Noop { observe() {} unobserve() {} disconnect() {} }
   (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = Noop;
@@ -18,6 +35,8 @@ const msg = (i: number, kind: EndlessMessage['kind'], text: string, over: Partia
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  scroller.toMessage.mockClear();
+  scroller.toEnd.mockClear();
   useEndless.setState({
     messages: [
       msg(0, 'user', 'check the exporter', { project: 's1', projectName: 'salsify' }),
@@ -75,22 +94,41 @@ describe('EndlessColumn', () => {
     await waitFor(() => expect(send).toHaveBeenCalledWith('hello there', 's1', []));
   });
 
-  it('scrolls to the focused row once, not on every list change', () => {
-    const spy = vi.fn();
-    Element.prototype.scrollIntoView = spy;
-    useEndless.setState({ focus: 0 });
+  it('a search jump from the tail scrolls to the row through the scroller and does not follow to the end', async () => {
+    const page = useEndless.getState().messages;
+    vi.spyOn(api, 'endlessMessages').mockResolvedValue({ messages: page, hasMore: true, hasMoreAfter: true });
     render(<EndlessColumn />);
-    expect(spy).toHaveBeenCalledTimes(1);
-    act(() => { useEndless.setState({ messages: [msg(-1, 'unii', 'older'), ...useEndless.getState().messages] }); });
-    expect(spy).toHaveBeenCalledTimes(1);
+    scroller.toMessage.mockClear();
+    scroller.toEnd.mockClear();
+    await act(async () => { await useEndless.getState().openAt(5); });
+    expect(scroller.toMessage).toHaveBeenCalledTimes(1);
+    expect(scroller.toMessage).toHaveBeenCalledWith('m5', { align: 'center' });
+    expect(scroller.toEnd).not.toHaveBeenCalled();
   });
 
-  it('scrolls to a focus that is a folded echo', () => {
-    const spy = vi.fn();
-    Element.prototype.scrollIntoView = spy;
+  it('scrolls to the focused row once, not on every list change', () => {
+    useEndless.setState({ focus: 0 });
+    render(<EndlessColumn />);
+    expect(scroller.toMessage).toHaveBeenCalledTimes(1);
+    expect(scroller.toMessage).toHaveBeenCalledWith('m0', { align: 'center' });
+    act(() => { useEndless.setState({ messages: [msg(-1, 'unii', 'older'), ...useEndless.getState().messages] }); });
+    expect(scroller.toMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('scrolls to the tool row when the focus is a folded echo', () => {
     useEndless.setState({ focus: 2 });
     render(<EndlessColumn />);
-    expect(spy).toHaveBeenCalledTimes(1);
+    expect(scroller.toMessage).toHaveBeenCalledTimes(1);
+    expect(scroller.toMessage).toHaveBeenCalledWith('m1', { align: 'center' });
+  });
+
+  it('when the focus returns to null (Back to latest), scrolls to the end so following resumes', () => {
+    useEndless.setState({ focus: 4 });
+    render(<EndlessColumn />);
+    expect(scroller.toMessage).toHaveBeenCalledWith('m3', { align: 'center' });
+    scroller.toEnd.mockClear();
+    act(() => { useEndless.setState({ focus: null }); });
+    expect(scroller.toEnd).toHaveBeenCalledTimes(1);
   });
 
   it('does not render undefined when a recall has no id or n', () => {

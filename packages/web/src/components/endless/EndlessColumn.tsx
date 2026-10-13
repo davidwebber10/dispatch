@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent, type UIEvent } from 'react';
-import { MessageScroller } from '@shadcn/react/message-scroller';
+import { MessageScroller, useMessageScroller } from '@shadcn/react/message-scroller';
 import { ArrowUp, Paperclip, X } from '@phosphor-icons/react';
 import { useEndless } from '../../stores/endless';
 import { useBootstrapOlderPages } from '../../hooks/useBootstrapOlderPages';
 import { LoadEarlierButton, Thinking } from '../tabs/chat/ChatView';
 import { InsightText } from '../InsightText';
 import { WorkingIndicator } from '../WorkingIndicator';
-import { EndlessRows } from './EndlessMessageRow';
+import { EndlessRows, rowKeyOf } from './EndlessMessageRow';
 import { ProjectSelect } from './ProjectSelect';
 import type { EndlessImage } from '../../api/types';
 import { MODEL_IMAGE_MIME, fileToBase64 } from '../../lib/image-attach';
@@ -17,6 +17,36 @@ function BootstrapOlder() {
   const loadingOlder = useEndless((s) => s.loadingOlder);
   const loadOlder = useEndless((s) => s.loadOlder);
   useBootstrapOlderPages({ hasMore, loadingOlder, loadOlder });
+  return null;
+}
+
+/**
+ * Scrolls to the search focus through the scroller. scrollToMessage puts the scroller in
+ * its jump mode, so its own follow-the-end handlers do not pull the view back down after
+ * the window swap (a plain scrollIntoView left it following the end). When the focus
+ * returns to null ("Back to latest"), scrollToEnd resumes following.
+ * It scrolls only when the focus changes: a later prepend or append must not move the reader.
+ */
+function FocusScroll() {
+  const focus = useEndless((s) => s.focus);
+  const messages = useEndless((s) => s.messages);
+  const { scrollToMessage, scrollToEnd } = useMessageScroller();
+  const scrolledFocus = useRef<number | null>(null);
+  const prevFocus = useRef<number | null>(focus);
+  useEffect(() => {
+    const was = prevFocus.current;
+    prevFocus.current = focus;
+    if (focus === null) {
+      scrolledFocus.current = null;
+      if (was !== null) scrollToEnd({ behavior: 'auto' });
+      return;
+    }
+    if (scrolledFocus.current === focus) return;
+    const key = rowKeyOf(messages, focus);
+    if (key === null) return;
+    scrolledFocus.current = focus;
+    scrollToMessage(`m${key}`, { align: 'center' });
+  }, [focus, messages, scrollToMessage, scrollToEnd]);
   return null;
 }
 
@@ -103,17 +133,6 @@ export function EndlessColumn({ mobile = false }: { mobile?: boolean } = {}) {
   const turn = useEndless((s) => s.turn);
   const busy = turn.status === 'waiting' || turn.status === 'running';
 
-  // Scroll only when the focus changes: a later prepend or append must not pull the reader back.
-  const scrolledFocus = useRef<number | null>(null);
-  useEffect(() => {
-    if (focus === null) { scrolledFocus.current = null; return; }
-    if (scrolledFocus.current === focus) return;
-    const el = document.querySelector(`[data-endless-i="${focus}"],[data-endless-echo-i="${focus}"]`);
-    if (!el) return;
-    scrolledFocus.current = focus;
-    el.scrollIntoView({ block: 'center' });
-  }, [focus, messages]);
-
   const onScroll = (e: UIEvent<HTMLDivElement>) => {
     if (e.currentTarget.scrollTop < 120 && hasMore && !loadingOlder) void loadOlder();
   };
@@ -141,6 +160,7 @@ export function EndlessColumn({ mobile = false }: { mobile?: boolean } = {}) {
             </MessageScroller.Content>
           </MessageScroller.Viewport>
           <BootstrapOlder />
+          <FocusScroll />
         </MessageScroller.Root>
       </MessageScroller.Provider>
       {!atTail && (

@@ -28,6 +28,15 @@ export function foldRows(messages: EndlessMessage[]): Row[] {
   return rows;
 }
 
+/** The row key (`messageId` is `m<key>`) that shows message `i`; a folded echo maps to its tool. Null if not loaded. */
+export function rowKeyOf(messages: EndlessMessage[], i: number): number | null {
+  for (const r of foldRows(messages)) {
+    if (r.kind === 'msg') { if (r.m.i === i) return i; continue; }
+    if (r.tool.i === i || r.echo?.i === i) return r.tool.i;
+  }
+  return null;
+}
+
 function recallLabel(text: string): string {
   try {
     const input = JSON.parse(text.replace(ZOOM_TOOL, '')) as { id?: number; n?: number };
