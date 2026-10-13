@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ProjectFilter } from './ProjectFilter';
-import { Composer } from './EndlessColumn';
 import { useEndless } from '../../stores/endless';
 import { useProjects } from '../../stores/projects';
 import { api } from '../../api/client';
@@ -27,20 +26,5 @@ describe('ProjectFilter', () => {
     fireEvent.click(screen.getByRole('button', { name: 'dispatch' }));
     await waitFor(() => expect(useEndless.getState().filter).toBe('s3'));
     expect(api.endlessMessages).toHaveBeenCalledWith({ limit: 60, project: 's3' });
-  });
-});
-
-describe('composer project selector', () => {
-  it('defaults to the active filter and sends with the chosen project', async () => {
-    const send = vi.spyOn(api, 'endlessSend').mockResolvedValue({ ok: true });
-    useEndless.setState({ filter: 's1' });
-    render(<Composer />);
-    const select = screen.getByRole('combobox', { name: 'Project' }) as HTMLSelectElement;
-    expect(select.value).toBe('s1');
-    fireEvent.change(select, { target: { value: '' } });
-    const box = screen.getByRole('textbox', { name: 'Message' });
-    fireEvent.change(box, { target: { value: 'general question' } });
-    fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() => expect(send).toHaveBeenCalledWith('general question', null, []));
   });
 });

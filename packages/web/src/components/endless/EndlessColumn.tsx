@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent, type UIEvent } from 'react';
 import { MessageScroller, useMessageScroller } from '@shadcn/react/message-scroller';
-import { ArrowUp, Paperclip, X } from '@phosphor-icons/react';
+import { ArrowUp, Paperclip, Rows, X } from '@phosphor-icons/react';
 import { useEndless } from '../../stores/endless';
+import { useProjects } from '../../stores/projects';
 import { useBootstrapOlderPages } from '../../hooks/useBootstrapOlderPages';
 import { LoadEarlierButton, Thinking } from '../tabs/chat/ChatView';
 import { InsightText } from '../InsightText';
 import { WorkingIndicator } from '../WorkingIndicator';
 import { EndlessRows, rowKeyOf } from './EndlessMessageRow';
-import { ProjectSelect } from './ProjectSelect';
+import { ProjectPicker, iconBtn } from './ProjectPicker';
 import type { EndlessImage } from '../../api/types';
 import { MODEL_IMAGE_MIME, fileToBase64 } from '../../lib/image-attach';
 
@@ -66,14 +67,11 @@ function TurnError({ text, mobile = false }: { text: string; mobile?: boolean })
   );
 }
 
-const iconBtn: React.CSSProperties = { width: 36, height: 36, padding: 0, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 10, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', cursor: 'pointer' };
-
 export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
   const [text, setText] = useState('');
   const [images, setImages] = useState<EndlessImage[]>([]);
-  const filter = useEndless((s) => s.filter);
-  const [project, setProject] = useState<string | null>(filter);
-  useEffect(() => setProject(filter), [filter]);
+  const [project, setProject] = useState<string | null>(null);
+  const projectName = useProjects((s) => s.sessions.find((x) => x.id === project)?.name ?? null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const sending = useRef(false);
@@ -84,12 +82,14 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
     const t = raw.trim();
     if ((!t && images.length === 0) || sending.current) return;
     const imgs = images;
+    const proj = project;
     sending.current = true;
     setSendError(null);
     try {
-      await useEndless.getState().send(t, project, imgs);
+      await useEndless.getState().send(t, proj, imgs);
       setText((cur) => (cur === raw ? '' : cur));
       setImages((cur) => (cur === imgs ? [] : cur));
+      setProject((cur) => (cur === proj ? null : cur));
     } catch (err) {
       setSendError(`Send failed: ${errorText(err)}`);
     } finally {
@@ -109,8 +109,18 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
   return (
     <div style={{ flexShrink: 0, borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', padding: mobile ? '10px 16px' : '10px 12px calc(10px + env(safe-area-inset-bottom))' }}>
       <div style={{ maxWidth: 768, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {images.length > 0 && (
-          <div style={{ display: 'flex', gap: 6 }}>
+        {(project !== null || images.length > 0) && (
+          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+            {project !== null && (
+              <div data-testid="project-pill" style={{ display: 'flex', alignItems: 'center', gap: 6, maxWidth: '100%', height: 28, padding: '0 6px 0 9px', borderRadius: 999, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', fontSize: 13 }}>
+                <Rows size={14} />
+                <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{projectName ?? project}</span>
+                <button type="button" aria-label="Remove project" onClick={() => setProject(null)}
+                  style={{ width: 18, height: 18, padding: 0, flexShrink: 0, border: 'none', borderRadius: '50%', background: 'transparent', color: 'var(--color-text-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                  <X size={11} weight="bold" />
+                </button>
+              </div>
+            )}
             {images.map((im, k) => (
               <div key={k} style={{ position: 'relative' }}>
                 <img src={`data:${im.media_type};base64,${im.data}`} alt="" style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 8 }} />
@@ -123,8 +133,8 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
           </div>
         )}
         {sendError && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)', wordBreak: 'break-word' }}>{sendError}</div>}
-        <ProjectSelect value={project} onChange={setProject} />
         <div data-testid="composer-row" style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
+          <ProjectPicker value={project} onChange={setProject} />
           <button type="button" aria-label="Attach image" onClick={() => fileRef.current?.click()} style={iconBtn}><Paperclip size={18} /></button>
           <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden onChange={(e) => void onFiles(e)} />
           <textarea aria-label="Message" value={text} rows={1} placeholder="Message Dispatch…"

@@ -84,14 +84,14 @@ describe('EndlessColumn', () => {
     await waitFor(() => expect(retry).toHaveBeenCalled());
   });
 
-  it('sends on Enter with the active filter as the project', async () => {
+  it('sends on Enter with no project when none is picked, even under a filter', async () => {
     const send = vi.spyOn(api, 'endlessSend').mockResolvedValue({ ok: true });
     useEndless.setState({ filter: 's1' });
     render(<EndlessColumn />);
     const box = screen.getByRole('textbox', { name: 'Message' });
     fireEvent.change(box, { target: { value: 'hello there' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() => expect(send).toHaveBeenCalledWith('hello there', 's1', []));
+    await waitFor(() => expect(send).toHaveBeenCalledWith('hello there', null, []));
   });
 
   it('keeps the draft and shows the error when the send fails, with no unhandled rejection', async () => {
