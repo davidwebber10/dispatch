@@ -233,3 +233,73 @@ status block and the new user line change on every turn, so turn N+1 never finds
 prefix that turn N wrote. Only tools + system prompt (11,365 tokens here) are read. The probe
 in section (a) sent two identical calls, so it did not show this. With the default view
 limits the view is larger, so the cache write per turn is larger.
+
+## Stage 2 end-to-end
+
+Date: 2026-10-13. Build: `feat/endless-chat` at `9e844adc`. Isolated daemon on port 3998
+(`HOME=/tmp/endless-s2/home`, fresh `.dispatch`, real home symlinked for the claude CLI
+login; `doppler.json`, `doppler.mcp.json`, `mcp.json` copied; `bin` and `tools` symlinked).
+The web client came from this worktree (`Serving web client from …/.worktrees/endless-chat/packages/web/dist`).
+The CLI check under the fake HOME (`claude -p "Reply with the word ok." --model haiku`) printed `ok`.
+Scratch project: `Scratch`, folder `/tmp/endless-s2/scratch` (git init, `NOTES.md` with
+`alpha-7 is the build code.` / `Second line.`), project id `e19a6105-bb73-4895-8304-ab6132abb0c7`.
+Chat ran on Opus; the thread was a `researcher` on `haiku`. The production daemon (3456) and the
+test copy (3999) were not touched.
+
+### Job 1: spawn_agent → report → new turn (path: a new turn)
+
+Driver output (`/tmp/endless-s2/out.txt`):
+
+```
+first turn idle  secs 11
+tools called ToolSearch, mcp__memory__spawn_agent
+work {"i":6,"text":"[Read notes] report: The first line of the file is:\n\nalpha-7 is the build code.","project":true,"ref":"5adcb23c-0483-4187-9903-1201fb5c986a"}
+thread {"id":"5adcb23c-…","inProject":true,"config":{"transport":"structured","agentType":"researcher","role":"agent","model":"haiku","spawnDepth":1,"origin":"endless",…}}
+second turn idle
+after report 7:unii
+a reply after the report true
+works for this thread 1
+```
+
+Log: `0 user`, `1 tool ToolSearch`, `3 tool mcp__memory__spawn_agent`, `4 echo {"agentId":"5adcb23c-…","label":"Read notes","project":"Scratch","folder":"/tmp/endless-s2/scratch"}`,
+`5 unii` (the turn ends), `6 work` (the report), `7 unii` (a new turn with no user line:
+"The "Read notes" thread has finished. The first line … is: alpha-7 is the build code.").
+The first turn was idle before the report came, so the report started a new turn (not a hand-off).
+`endless_pending_reports` after the report: 0.
+
+### Job 2: message_thread follow-up → second report (path: a hand-off)
+
+Chat called `mcp__memory__message_thread` (`8 user`, `11 tool`, `12 echo {"ok":true,"id":"5adcb23c-…"}`).
+Owed rows: 0 before, 1 while the thread ran (max seen), 0 after the report.
+`13 work "[Read notes] report: The second line is:\n\nSecond line.\n\nThe file size is 40 bytes."`
+(project = Scratch, ref = the same thread). The thread finished in about 2.5 s, before the
+Chat turn ended, so this report took the hand-off path: `14 unii` is the end of the running
+turn ("I sent your follow-up…"), and `15 unii` answers the report ("Second line" / 40 bytes).
+Work rows for this thread: 2 (one per job). 40 bytes is correct (27 + 13).
+
+### Restart check
+
+Before the restart: 16 messages, 2 `work` rows, 0 `endless_pending_reports`. Killed the
+3998 daemon and started it again on the same data. After 8 s: the API showed `works 2`
+of `total 16`; the DB showed 2 `work` rows, 0 pending rows, 16 messages. No duplicate report.
+
+### UI (Playwright, http://localhost:3998)
+
+1. Chat mode shows both reports as work cards that start with `[Read notes] report:`: pass.
+2. The Projects panel shows `Scratch` · `0 live · 0 need you · 0 open` with the last report
+   `[Read notes] report: The second line is: Second line. The file size is 40 bytes.`: pass.
+3. A click on the first card switched to Threads mode, with `Scratch` active and the tab
+   `Read notes · Scratch` open; it shows both tasks, the `Read`/`Bash stat` tool calls and both
+   answers. Details panel: Thread `Read notes`, `/tmp/endless-s2/scratch`, branch `main`: pass.
+No console errors. Screenshots: `/Users/davidwebber/Sites/dispatch/.playwright-mcp/endless-s2-ui-1-chat.png`,
+`…/endless-s2-ui-2-card-opens-thread.png` (not committed).
+
+Observations (not bugs, by design today):
+- The project sidebar shows `THREADS 0 · No threads yet` for Scratch, while the status line
+  shows `1 thread · idle`. `ProjectCard.tsx` hides typed agents (`agentType` set) from the
+  Threads sidebar, so a Chat thread is reachable only from the work card.
+- In the thread, the tasks from Chat carry the label `VIA CONTROL PLANE`, the same label as
+  coordinator-sent messages. Chat is not the Control Plane, so a later label change can help.
+
+Result: all five loop steps pass, plus the `message_thread` second report and the restart check.
+No product bug found.
