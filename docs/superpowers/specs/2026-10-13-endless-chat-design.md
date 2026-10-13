@@ -133,7 +133,7 @@ Exactly the gist, sections 2–4. The rules that matter most:
 - A compaction is isolated from the user's MCP servers and skills (user decision B;
   the prompt cache is per model, so it never shared the turns' prefix) and must call
   none: the permission callback denies every tool call in a compaction process.
-- Haiku runs at the highest effort level the CLI exposes (the gist uses xhigh).
+- Haiku runs at effort `high` (controller ruling; max measured 33 s median).
 - Cache-write coordination: when several compactions share one marked prefix, start one,
   wait for its response to begin streaming, then start the rest — otherwise all of them
   pay to write the same prefix.
