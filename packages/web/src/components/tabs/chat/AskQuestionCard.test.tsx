@@ -1,6 +1,7 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { test, expect, vi, describe } from 'vitest';
 import { AskQuestionCard, AnsweredQuestionCard } from './AskQuestionCard';
+import { QUESTION_REPLY_PREFIX, parseQuestionReply } from './questionReply';
 import type { PermissionQuestion } from '../../../api/types';
 
 test('renders the header, question text, and option labels', () => {
@@ -14,14 +15,68 @@ test('renders the header, question text, and option labels', () => {
   expect(screen.getByRole('button', { name: /Banana/ })).toBeInTheDocument();
 });
 
-test('a single single-select question submits immediately on tap (answers keyed by question text)', () => {
+test('a single single-select question does NOT submit on tap: Submit sends it (answers keyed by question text)', () => {
   const onAnswer = vi.fn();
   const questions: PermissionQuestion[] = [
     { question: 'Which fruit?', header: 'Fruit', options: ['Apple', 'Banana'], multiSelect: false },
   ];
   render(<AskQuestionCard questions={questions} onAnswer={onAnswer} />);
   fireEvent.click(screen.getByRole('button', { name: /Apple/ }));
+  expect(onAnswer).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: /Submit/ }));
   expect(onAnswer).toHaveBeenCalledWith({ 'Which fruit?': 'Apple' });
+});
+
+test('Other takes a typed answer, which replaces a single-select pick', () => {
+  const onAnswer = vi.fn();
+  const questions: PermissionQuestion[] = [{ question: 'Which fruit?', header: 'Fruit', options: ['Apple', 'Banana'] }];
+  render(<AskQuestionCard questions={questions} onAnswer={onAnswer} />);
+  fireEvent.click(screen.getByRole('button', { name: /Apple/ }));
+  fireEvent.click(screen.getByRole('button', { name: /Other/ }));
+  const submit = screen.getByRole('button', { name: /Submit/ }) as HTMLButtonElement;
+  expect(submit.disabled).toBe(true); // Other chosen but still empty
+  fireEvent.change(screen.getByLabelText('Other answer for Fruit'), { target: { value: 'A pear, ripe' } });
+  fireEvent.click(submit);
+  expect(onAnswer).toHaveBeenCalledWith({ 'Which fruit?': 'A pear, ripe' });
+});
+
+test('multi-select plus Other joins the picks and the typed answer with ", "', () => {
+  const onAnswer = vi.fn();
+  const questions: PermissionQuestion[] = [{ question: 'Toppings?', header: 'Top', options: ['Cheese', 'Onion'], multiSelect: true }];
+  render(<AskQuestionCard questions={questions} onAnswer={onAnswer} />);
+  fireEvent.click(screen.getByRole('button', { name: /Cheese/ }));
+  fireEvent.click(screen.getByRole('button', { name: /Other/ }));
+  fireEvent.change(screen.getByLabelText('Other answer for Top'), { target: { value: 'Basil' } });
+  fireEvent.click(screen.getByRole('button', { name: /Submit/ }));
+  expect(onAnswer).toHaveBeenCalledWith({ 'Toppings?': 'Cheese, Basil' });
+});
+
+test('Discuss with text calls onReply; Discuss with nothing typed asks for more context', () => {
+  const onReply = vi.fn();
+  const onDeny = vi.fn();
+  const questions: PermissionQuestion[] = [{ question: 'Which fruit?', options: ['Apple'] }];
+  render(<AskQuestionCard questions={questions} onAnswer={() => {}} onReply={onReply} onDeny={onDeny} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Discuss' }));
+  fireEvent.change(screen.getByLabelText('Discuss the question'), { target: { value: 'Neither, why not C?' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+  expect(onReply).toHaveBeenCalledWith('Neither, why not C?');
+  fireEvent.click(screen.getByRole('button', { name: 'Discuss' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+  expect(onDeny).toHaveBeenCalledWith('discuss');
+  expect(onReply).toHaveBeenCalledTimes(1);
+});
+
+test('Dismiss calls onDeny with dismiss; without handlers, Discuss and Dismiss are hidden', () => {
+  const onDeny = vi.fn();
+  const questions: PermissionQuestion[] = [{ question: 'Which fruit?', options: ['Apple'] }];
+  const { unmount } = render(<AskQuestionCard questions={questions} onAnswer={() => {}} onDeny={onDeny} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+  expect(onDeny).toHaveBeenCalledWith('dismiss');
+  unmount();
+  render(<AskQuestionCard questions={questions} onAnswer={() => {}} />);
+  expect(screen.queryByRole('button', { name: 'Discuss' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull();
+  expect(screen.getByText('or reply below to discuss')).toBeInTheDocument();
 });
 
 test('multi-select accumulates picks and joins labels with ", " on Submit', () => {
@@ -123,6 +178,53 @@ describe('AnsweredQuestionCard — the collapsed "answered" record', () => {
     fireEvent.click(screen.getByRole('button'));
     // No option can be matched as "selected", but the raw text is shown as a fallback note.
     expect(screen.getAllByText(/some future CLI format/).length).toBeGreaterThan(0);
+  });
+});
+
+// The tool_result a chat reply produces. Claude Code 2.1.296 (spike, 2026-10-13) returns the
+// deny message verbatim as an is_error tool_result. This fixture is that frame's shape and text.
+const REPLY_FRAME = {
+  type: 'user',
+  message: { role: 'user', content: [{
+    type: 'tool_result', tool_use_id: 'toolu_01ReplyFixture', is_error: true,
+    content: 'The user did not pick an option. They replied: Neither. Why not just use a JSON file instead?\n\n' +
+      'Treat this as their answer. If it settles the question, continue. If it pushes back on the options or asks for ' +
+      'more context, answer them in plain text and then ask again with revised options. Do not proceed on a guess.',
+  }] },
+};
+
+describe('AnsweredQuestionCard — a question answered in chat', () => {
+  const questions: PermissionQuestion[] = [
+    { question: 'Which store?', header: 'Store', options: ['Postgres', 'SQLite'] },
+    { question: 'Which cache?', header: 'Cache', options: ['Redis', 'None'] },
+  ];
+  const resultText = REPLY_FRAME.message.content[0].content;
+
+  test('pins the prefix both sides share', () => {
+    expect(QUESTION_REPLY_PREFIX).toBe('The user did not pick an option. They replied: ');
+  });
+
+  test('renders "answered in chat" with the reply, not the raw result', () => {
+    render(<AnsweredQuestionCard questions={questions} resultText={resultText} />);
+    expect(screen.getByRole('button').textContent).toContain('answered in chat: Neither.'); // the one-line summary
+    expect(screen.queryByText(/Treat this as their answer/)).toBeNull();
+    fireEvent.click(screen.getByRole('button'));
+    expect(screen.getByText('Neither. Why not just use a JSON file instead?')).toBeInTheDocument();
+    expect(screen.queryByText(/Treat this as their answer/)).toBeNull(); // no italic raw fallback
+    expect(screen.getByText('Which cache?')).toBeInTheDocument();
+  });
+
+  test('finds the prefix anywhere in the result (a wrapped message still parses)', () => {
+    expect(parseQuestionReply(`<tool_use_error>${resultText}</tool_use_error>`)?.reply)
+      .toBe('Neither. Why not just use a JSON file instead?');
+  });
+
+  test('drops the attachment note and handles an image-only reply', () => {
+    const withImages = 'The user did not pick an option. They replied: Like this\n\n(They also attached 2 images. They follow in the next message.)\n\nTreat this as their answer.';
+    expect(parseQuestionReply(withImages)).toEqual({ reply: 'Like this', imageOnly: false });
+    expect(parseQuestionReply('The user did not pick an option. They replied with an image only. (1 image. It follows in the next message.)\n\nTreat this.'))
+      .toEqual({ reply: '', imageOnly: true });
+    expect(parseQuestionReply('Your questions have been answered: "Q"="A".')).toBeNull();
   });
 });
 

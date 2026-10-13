@@ -608,6 +608,8 @@ export function ConversationStream() {
   const coordinatorId = useOverseer((s) => s.coordinatorId);
   const coordinatorPending = useOverseer((s) => s.coordinatorPending);
   const coordinatorAnswer = useOverseer((s) => s.coordinatorAnswer);
+  const replyToCoordinatorQuestion = useOverseer((s) => s.replyToCoordinatorQuestion);
+  const denyCoordinatorQuestion = useOverseer((s) => s.denyCoordinatorQuestion);
   const coordinatorHasMore = useOverseer((s) => s.coordinatorHasMore);
   const coordinatorLoadingOlder = useOverseer((s) => s.coordinatorLoadingOlder);
   const coordinatorLoadOlder = useOverseer((s) => s.coordinatorLoadOlder);
@@ -682,7 +684,7 @@ export function ConversationStream() {
               {projectMatches && coordinatorPending?.questions && coordinatorPending.questions.length > 0 && (
                 <MessageScroller.Item messageId="__ask" style={{ display: 'flex' }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <AskQuestionCard key={coordinatorPending.requestId} questions={coordinatorPending.questions} onAnswer={coordinatorAnswer} />
+                    <AskQuestionCard key={coordinatorPending.requestId} questions={coordinatorPending.questions} onAnswer={coordinatorAnswer} onReply={replyToCoordinatorQuestion} onDeny={denyCoordinatorQuestion} />
                   </div>
                 </MessageScroller.Item>
               )}

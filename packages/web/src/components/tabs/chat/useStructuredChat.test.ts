@@ -3,7 +3,7 @@ import { renderHook, act } from '@testing-library/react';
 import { test, expect, vi, beforeEach } from 'vitest';
 import { useStructuredChat, contextWindowFor } from './useStructuredChat';
 import * as sock from '../../../api/structured-socket';
-import { api, type ContentBlock } from '../../../api/client';
+import { api, ApiError, type ContentBlock } from '../../../api/client';
 // Used by the anchorless-bail RE-ARM test below, which drives the REAL bootstrap loop (the
 // only caller that can re-fire paging on its own) instead of asserting on internals. The
 // scroller reports "not overflowing" — jsdom measures every element as 0-sized, so the
@@ -446,6 +446,103 @@ test('a reconnect reset clears pending (stale question not re-shown before repla
   act(() => cbs.onEvent({ type: 'permission', pending: { requestId: 'req-9', toolName: 'AskUserQuestion', toolUseId: 'tu-9', questions: [{ question: 'Q', options: ['A'] }] } }));
   expect(result.current.pending).not.toBeNull();
   act(() => cbs.onReset?.());
+  expect(result.current.pending).toBeNull();
+});
+
+// --- A chat reply answers a pending AskUserQuestion (owner decision N1) --------------------
+const QUESTION = { requestId: 'req-9', toolName: 'AskUserQuestion', toolUseId: 'tu-9', questions: [{ question: 'Pick one', header: 'Choice', options: ['A', 'B'], multiSelect: false }] };
+const IMAGE: ContentBlock = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } };
+const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+
+test('send() with a question pending posts the reply as a deny with the requestId, and sends no user turn', async () => {
+  const answer = vi.spyOn(api, 'answerPermission').mockResolvedValue(undefined as any);
+  const send = vi.spyOn(api, 'sendStructuredMessage').mockResolvedValue(undefined as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'permission', pending: QUESTION }));
+  act(() => { result.current.send('Neither. Why not C?'); });
+  expect(result.current.busy).toBe(true);
+  expect(result.current.pending).not.toBeNull(); // not cleared until the POST lands
+  await settle();
+  expect(answer).toHaveBeenCalledWith('t1', { requestId: 'req-9', decision: 'deny', reply: 'Neither. Why not C?', imageCount: 0 });
+  expect(send).not.toHaveBeenCalled();
+  expect(result.current.pending).toBeNull();
+  expect(result.current.busy).toBe(true);
+});
+
+test('send() with a plain gated tool pending (not a question) is a normal send', async () => {
+  const answer = vi.spyOn(api, 'answerPermission').mockResolvedValue(undefined as any);
+  const send = vi.spyOn(api, 'sendStructuredMessage').mockResolvedValue(undefined as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'permission', pending: { requestId: 'req-1', toolName: 'Write', input: {} } }));
+  act(() => { result.current.send('go ahead'); });
+  await settle();
+  expect(answer).not.toHaveBeenCalled();
+  expect(send).toHaveBeenCalledWith('t1', 'go ahead');
+});
+
+test.each([404, 409])('a %i keeps the card and sends the reply as a normal turn', async (status) => {
+  vi.spyOn(api, 'answerPermission').mockRejectedValue(new ApiError('gone', status));
+  const send = vi.spyOn(api, 'sendStructuredMessage').mockResolvedValue(undefined as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'permission', pending: QUESTION }));
+  act(() => { result.current.send('Neither.'); });
+  await settle();
+  expect(send).toHaveBeenCalledWith('t1', 'Neither.');
+  expect(result.current.pending?.requestId).toBe('req-9');
+  expect(result.current.items.some((i) => i.kind === 'result' && i.isError)).toBe(false);
+});
+
+test('a 500 keeps the card, sends nothing, and shows the failure', async () => {
+  vi.spyOn(api, 'answerPermission').mockRejectedValue(new ApiError('boom', 500));
+  const send = vi.spyOn(api, 'sendStructuredMessage').mockResolvedValue(undefined as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'permission', pending: QUESTION }));
+  act(() => { result.current.send('Neither.'); });
+  await settle();
+  expect(send).not.toHaveBeenCalled();
+  expect(result.current.pending?.requestId).toBe('req-9');
+  expect(result.current.busy).toBe(false);
+  expect(result.current.items.some((i) => i.kind === 'result' && i.isError)).toBe(true);
+});
+
+test('a block-array reply splits: the text rides the deny, then the images go out as their own turn', async () => {
+  const order: string[] = [];
+  const answer = vi.spyOn(api, 'answerPermission').mockImplementation(async () => { order.push('deny'); });
+  const send = vi.spyOn(api, 'sendStructuredMessage').mockImplementation(async () => { order.push('images'); });
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'permission', pending: QUESTION }));
+  act(() => { result.current.send([IMAGE, { type: 'text', text: 'Like this one' }]); });
+  await settle();
+  expect(answer).toHaveBeenCalledWith('t1', { requestId: 'req-9', decision: 'deny', reply: 'Like this one', imageCount: 1 });
+  expect(send).toHaveBeenCalledWith('t1', [IMAGE]);
+  expect(order).toEqual(['deny', 'images']);
+});
+
+test('denyFromCard posts the canned action with the requestId', async () => {
+  const answer = vi.spyOn(api, 'answerPermission').mockResolvedValue(undefined as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'permission', pending: QUESTION }));
+  act(() => { result.current.denyFromCard('dismiss'); });
+  await settle();
+  expect(answer).toHaveBeenCalledWith('t1', { requestId: 'req-9', decision: 'deny', canned: 'dismiss' });
+  expect(result.current.pending).toBeNull();
+});
+
+test('a null permission frame clears the card and leaves busy alone', () => {
+  vi.spyOn(api, 'sendStructuredMessage').mockResolvedValue(undefined as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'permission', pending: QUESTION }));
+  act(() => cbs.onEvent({ type: 'assistant', message: { content: [{ type: 'text', text: 'thinking it over' }] } }));
+  expect(result.current.busy).toBe(true);
+  act(() => cbs.onEvent({ type: 'permission', pending: null }));
+  expect(result.current.pending).toBeNull();
+  expect(result.current.busy).toBe(true);
+});
+
+test('a result frame clears a stale card', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'permission', pending: QUESTION }));
+  act(() => cbs.onEvent({ type: 'result', subtype: 'success', is_error: false }));
   expect(result.current.pending).toBeNull();
 });
 
