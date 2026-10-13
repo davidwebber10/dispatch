@@ -44,6 +44,15 @@ describe('computeBatchState', () => {
     expect(state).toEqual({ working: [], queued: [], waiting: [{ id: 'dm', label: 'DM' }] });
   });
 
+  it("leaves out Chat's threads: they report to Chat, not to the Control Plane", () => {
+    agent('cp', 'working');
+    agent('chat-w', 'working', { origin: 'endless' });
+    agent('chat-q', 'queued', { origin: 'endless' });
+    agent('chat-n', 'needs_input', { origin: 'endless' });
+    const state = computeBatchState(db, 's1', { justStarted: ['chat-w'] }, () => false);
+    expect(state).toEqual({ working: [{ id: 'cp', label: 'CP' }], queued: [], waiting: [] });
+  });
+
   it('leaves out excluded ids, role runs, archived agents, the coordinator and plain threads', () => {
     agent('self', 'working');
     agent('role', 'working', { roleRun: 'nightly-check' });

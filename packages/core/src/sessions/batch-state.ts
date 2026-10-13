@@ -27,7 +27,8 @@ export interface BatchOptions {
 }
 
 /**
- * Sort the project's agents (`config.role === 'agent'`, not archived, not a scheduled role run)
+ * Sort the project's agents (`config.role === 'agent'`, not archived, not a scheduled role run,
+ * not a thread Chat started)
  * into working / queued / waiting on the overseer. `hasPending` says whether a terminal has a
  * pending question (the structured manager's getPending).
  */
@@ -46,6 +47,8 @@ export function computeBatchState(
     try { cfg = JSON.parse(row.config || '{}'); } catch { /* default {} */ }
     if (cfg.role !== 'agent') continue;
     if (typeof cfg.roleRun === 'string' && cfg.roleRun) continue;
+    // A thread Chat started reports to Chat, not to the Control Plane: not part of its batch.
+    if (cfg.origin === 'endless') continue;
     const ref = { id: row.id, label: row.label || 'agent' };
     // A pending question beats the "just started" override: an agent paused on a question
     // (for example one the user just messaged directly) waits on the overseer.
