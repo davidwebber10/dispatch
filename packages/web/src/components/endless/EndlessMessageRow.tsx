@@ -31,7 +31,7 @@ export function foldRows(messages: EndlessMessage[]): Row[] {
 function recallLabel(text: string): string {
   try {
     const input = JSON.parse(text.replace(ZOOM_TOOL, '')) as { id?: number; n?: number };
-    return `${input.id}+${input.n}`;
+    return typeof input.id === 'number' && typeof input.n === 'number' ? `${input.id}+${input.n}` : '';
   } catch {
     return '';
   }
@@ -66,7 +66,7 @@ function RecallLine({ tool }: { tool: EndlessMessage }) {
   return (
     <div style={{ ...mono, display: 'flex', alignItems: 'center', gap: 6 }}>
       <ClockCounterClockwise size={12} />
-      <span>recalled {recallLabel(tool.text)}</span>
+      <span>{`recalled ${recallLabel(tool.text)}`.trim()}</span>
     </div>
   );
 }
@@ -122,9 +122,10 @@ export function EndlessRows({ messages, focus }: { messages: EndlessMessage[]; f
     <>
       {foldRows(messages).map((r) => {
         const key = r.kind === 'msg' ? r.m.i : r.tool.i;
+        const echoI = r.kind === 'msg' ? undefined : r.echo?.i;
         return (
           <MessageScroller.Item key={key} messageId={`m${key}`} style={{ display: 'flex', flexDirection: 'column' }}>
-            <div data-endless-i={key} style={{ borderRadius: 8, outline: focus === key ? '1px solid var(--color-accent)' : 'none', outlineOffset: 4 }}>
+            <div data-endless-i={key} data-endless-echo-i={echoI} style={{ borderRadius: 8, outline: focus === key || (echoI !== undefined && focus === echoI) ? '1px solid var(--color-accent)' : 'none', outlineOffset: 4 }}>
               {r.kind === 'msg' ? <MessageRow m={r.m} /> : r.kind === 'recall' ? <RecallLine tool={r.tool} /> : <ToolLine tool={r.tool} echo={r.echo} />}
             </div>
           </MessageScroller.Item>

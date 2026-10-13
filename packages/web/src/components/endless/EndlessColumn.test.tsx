@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { EndlessColumn } from './EndlessColumn';
+import { ChatMode } from './ChatMode';
 import { foldRows } from './EndlessMessageRow';
 import { useEndless } from '../../stores/endless';
 import { api } from '../../api/client';
@@ -72,5 +73,42 @@ describe('EndlessColumn', () => {
     fireEvent.change(box, { target: { value: 'hello there' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     await waitFor(() => expect(send).toHaveBeenCalledWith('hello there', 's1', []));
+  });
+
+  it('scrolls to the focused row once, not on every list change', () => {
+    const spy = vi.fn();
+    Element.prototype.scrollIntoView = spy;
+    useEndless.setState({ focus: 0 });
+    render(<EndlessColumn />);
+    expect(spy).toHaveBeenCalledTimes(1);
+    act(() => { useEndless.setState({ messages: [msg(-1, 'unii', 'older'), ...useEndless.getState().messages] }); });
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('scrolls to a focus that is a folded echo', () => {
+    const spy = vi.fn();
+    Element.prototype.scrollIntoView = spy;
+    useEndless.setState({ focus: 2 });
+    render(<EndlessColumn />);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not render undefined when a recall has no id or n', () => {
+    useEndless.setState({ messages: [msg(0, 'tool', 'mcp__memory__zoom {}')] });
+    render(<EndlessColumn />);
+    expect(screen.queryByText(/undefined/)).not.toBeInTheDocument();
+    expect(screen.getByText('recalled')).toBeInTheDocument();
+  });
+
+  it('keeps the draft when Chat is unavailable and Try again reloads the tail', () => {
+    const loadTail = vi.fn().mockResolvedValue(undefined);
+    useEndless.setState({ loadTail });
+    render(<ChatMode />);
+    loadTail.mockClear();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: 'my draft' } });
+    act(() => { useEndless.setState({ unavailable: true }); });
+    expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).value).toBe('my draft');
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(loadTail).toHaveBeenCalled();
   });
 });

@@ -8,15 +8,7 @@ import { InsightText } from '../InsightText';
 import { WorkingIndicator } from '../WorkingIndicator';
 import { EndlessRows } from './EndlessMessageRow';
 import type { EndlessImage } from '../../api/types';
-
-const MODEL_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
-
-async function fileToBase64(file: File): Promise<string> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(binary);
-}
+import { MODEL_IMAGE_MIME, fileToBase64 } from '../../lib/image-attach';
 
 /** Pages older history in while the first page is too short to scroll (see useBootstrapOlderPages). */
 function BootstrapOlder() {
@@ -107,9 +99,15 @@ export function EndlessColumn() {
   const turn = useEndless((s) => s.turn);
   const busy = turn.status === 'waiting' || turn.status === 'running';
 
+  // Scroll only when the focus changes: a later prepend or append must not pull the reader back.
+  const scrolledFocus = useRef<number | null>(null);
   useEffect(() => {
-    if (focus === null) return;
-    document.querySelector(`[data-endless-i="${focus}"]`)?.scrollIntoView({ block: 'center' });
+    if (focus === null) { scrolledFocus.current = null; return; }
+    if (scrolledFocus.current === focus) return;
+    const el = document.querySelector(`[data-endless-i="${focus}"],[data-endless-echo-i="${focus}"]`);
+    if (!el) return;
+    scrolledFocus.current = focus;
+    el.scrollIntoView({ block: 'center' });
   }, [focus, messages]);
 
   const onScroll = (e: UIEvent<HTMLDivElement>) => {
