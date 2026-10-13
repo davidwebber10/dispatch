@@ -6,6 +6,7 @@ import path from 'path';
 import type { SessionProvider, SecretsMcpInjection, StatusHooksInjection } from './types.js';
 import { platform } from '../platform/index.js';
 import { autoMemorySettingsArg } from '../overseer/memory-scope.js';
+import { appendSystemPromptArgs } from './claude-prompt-file.js';
 
 // Additive --mcp-config (no --strict-mcp-config, so the user's other MCP servers
 // still load). Returns [] when Doppler isn't connected.
@@ -20,9 +21,10 @@ function hookArgs(statusHooks?: StatusHooksInjection): string[] {
 }
 
 // Appends a standing instruction (e.g. "use Doppler for secrets") to the system
-// prompt so the agent just knows it, without touching the user's prompt.
+// prompt so the agent just knows it, without touching the user's prompt. A private
+// file when the installed Claude supports it (see claude-prompt-file.ts).
 function systemPromptArgs(secretsMcp?: SecretsMcpInjection): string[] {
-  return secretsMcp?.systemPrompt ? ['--append-system-prompt', secretsMcp.systemPrompt] : [];
+  return appendSystemPromptArgs([secretsMcp?.systemPrompt]);
 }
 
 // Pins the model tier for an interactive (PTY) thread. `--model` accepts an alias
@@ -107,11 +109,10 @@ export const claudeCodeProvider: SessionProvider = {
       '--permission-mode', 'default',
       '--permission-prompt-tool', 'stdio',
       ...mcpArgs(secretsMcp),
-      ...systemPromptArgs(secretsMcp),
+      // The secrets/roster note, then the Overseer persona (coordinator / typed agent):
+      // one private file when the installed Claude supports it, else two text flags.
+      ...appendSystemPromptArgs([secretsMcp?.systemPrompt, appendSystemPrompt]),
     ];
-    // Overseer persona (coordinator / typed agent) — additive, on top of any
-    // secrets system prompt above; --append-system-prompt is repeatable.
-    if (appendSystemPrompt) args.push('--append-system-prompt', appendSystemPrompt);
     // Resume an existing claude conversation (revive after a daemon restart). `-r <id>`
     // continues the same session id (no fork), so the thread's external_id stays stable.
     if (resumeSessionId) args.push('-r', resumeSessionId);

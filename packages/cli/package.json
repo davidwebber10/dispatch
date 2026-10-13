@@ -1,6 +1,6 @@
 {
   "name": "dispatch-cli",
-  "version": "2.47.1",
+  "version": "2.47.9",
   "private": true,
   "type": "module",
   "bin": {

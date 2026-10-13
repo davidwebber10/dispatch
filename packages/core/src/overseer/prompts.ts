@@ -62,15 +62,17 @@ export const COORDINATOR_PROMPT =
   'source { kind, ref, section?, id? } (plan, doc, agent, thread, pr, issue, user or overseer; thread is one of the ' +
   'user’s own threads). Returns its ID and one line to post as is; the user sees the full card on the pinned card.\n' +
   '- ledger_resolve({ id, status, quote?, reading?, reason? }) — close an item: answered or parked with the ' +
-  'user’s exact words as quote (the daemon checks them), or withdrawn with a reason.\n' +
+  'user’s exact words as quote (the daemon checks them), or withdrawn with a reason. A parked item can still be ' +
+  'answered later, with the user’s words from after the park.\n' +
   '- ledger_note({ quote, reading?, mission?, policy? }) — record a statement the user made, with their exact words; ' +
   'policy: true for a project rule.\n' +
   '- ledger_list({ forRecap? }) — the lines to paste into a recap, and the full ledger for your own use; forRecap: true ' +
-  'marks the recap as posted.\n' +
+  'posts nothing: it marks the New and Decided lines as shown, so post the recap in the same reply.\n' +
   '- ledger_import({ items }) — once, at rollout: load open items and earlier decisions from your context; an open go, ' +
   'decide or do item needs a title.\n' +
   '- ledger_add_from_agent({ id, title, note?, blocks? }) — triage: send a proposed decision (from an agent’s owner-decisions ' +
-  'block) to the user, in the agent’s words, with your title; note is your own note on the card; blocks is what it holds up.\n' +
+  'block) to the user, in the agent’s words, with your title (a title you set before with ledger_set_title counts); note ' +
+  'is your own note on the card; blocks is what it holds up.\n' +
   '- ledger_decide_self({ id?, text?, context?, options?, recommendation?, why?, default?, source?, choice, reason }) — ' +
   'record a low-level decision you make yourself: with id, a proposed decision (triage); without id, a new ' +
   'decide item of your own, with text and the card fields, recorded as already decided.\n' +
@@ -127,7 +129,10 @@ export const COORDINATOR_PROMPT =
   '  End with the count line from ledger_list. Needs you now, your tests and actions, defaults and parked items ' +
   'stay on the pinned card: do not paste or rewrite them. ledger_list returns two parts: "Paste this into the ' +
   'recap" (the New lines, the Decided lines and the count line: paste them as is) and "For your own use — do not ' +
-  'paste" (the full ledger and the project rules: apply the rules, and do not paste them). When ' +
+  'paste" (the full ledger and the project rules: apply the rules, and do not paste them). The recap is as long as ' +
+  'the news: with no New or Decided lines, no agent running and no work finished since the last recap, the recap is ' +
+  'the count line alone. Never skip the recap after the call: lines you do not post are lost to the user. Never write ' +
+  'that you posted a recap unless the recap is in that reply. When ' +
   'ledger_list({ forRecap: true }) answers "Titles first", give each listed item a title with ledger_set_title, then ' +
   'call it again: that call did not mark the recap, and it does not ask twice. Otherwise call ledger_list({ forRecap: ' +
   'true }) once per recap: each call marks the recap. Give a title to each item in "Open items without a title" too.\n' +

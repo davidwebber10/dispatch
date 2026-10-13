@@ -442,7 +442,8 @@ export const TOOLS = [
       'which the daemon checks against the messages the user sent you after the item was created. ' +
       '"withdrawn" needs `reason`. An "ok" at the start of a message is never an answer. If the check ' +
       'fails, do not record the item: ask the user. To reverse a decision you made yourself ' +
-      '(ledger_decide_self) when the user says "reverse N21", set it to "answered" with the user\'s words.',
+      '(ledger_decide_self) when the user says "reverse N21", set it to "answered" with the user\'s words. A parked ' +
+      'item can still take the answer later: set it to "answered" with the user\'s words from after the park.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -486,8 +487,9 @@ export const TOOLS = [
       'not paste": the full ledger (Needs you now, Running on defaults, Your tests and actions, Not yet triaged, ' +
       'Parked), then "Open items without a title" when there are any (give each one a title with ledger_set_title), ' +
       'and, when rules exist, each project rule in full: apply the rules, and do not paste them. The user ' +
-      'sees the full ledger on the pinned card. Pass forRecap: true when you post the recap: it marks the recap as ' +
-      'posted and clears the interim recap timer. When items have no title, the first forRecap call of a recap answers ' +
+      'sees the full ledger on the pinned card. Pass forRecap: true when you post the recap. The call posts nothing: ' +
+      'it marks the New and Decided lines as shown and clears the interim recap timer, so post the recap in your ' +
+      'reply right after it. When items have no title, the first forRecap call of a recap answers ' +
       'only "Titles first" and that list, and does not mark the recap: set the titles, then call it again (it does ' +
       'not ask twice). Otherwise call it once per recap.',
     inputSchema: {
@@ -536,17 +538,17 @@ export const TOOLS = [
     name: 'ledger_add_from_agent',
     description:
       'Overseer only. Triage: send a proposed decision (from an agent\'s owner-decisions block) to the ' +
-      'user, with your `title`. The agent\'s text stays word for word; `note` becomes the card\'s "Overseer\'s note" — use it ' +
+      'user, with your `title` (a title you set before with ledger_set_title counts). The agent\'s text stays word for word; `note` becomes the card\'s "Overseer\'s note" — use it ' +
       'for what the agent did not know. The user sees it in the next recap; do not post it now.',
     inputSchema: {
       type: 'object',
       properties: {
         id: { type: 'string', description: 'The proposed item ID, e.g. "N30".' },
-        title: { type: 'string', description: `${TITLE_RULES} Required.` },
+        title: { type: 'string', description: `${TITLE_RULES} Required unless you set one before with ledger_set_title.` },
         note: { type: 'string', description: 'Optional: your own note, shown under its own label on the card.' },
         blocks: { type: 'string', description: 'Optional: what this decision holds up (shown as "Holds up"; it ranks the card first).' },
       },
-      required: ['id', 'title'],
+      required: ['id'],
     },
   },
   {
@@ -978,6 +980,13 @@ async function ledgerNote(args: Record<string, unknown>): Promise<{ id: string; 
 /** The headings of ledger_list's two blocks (pinned card spec 2026-10-08, Unit 5). */
 export const PASTE_HEADING = 'Paste this into the recap:';
 export const OWN_USE_HEADING = 'For your own use — do not paste:';
+/**
+ * The last words of a forRecap result (2026-10-12): an overseer made the recap call, posted nothing and
+ * said "The recap is posted", while the call had marked the lines as shown.
+ */
+export const RECAP_NOT_POSTED =
+  'This call posted nothing. Post the recap now, in this reply. The lines under "Paste this into the recap" are now ' +
+  'marked as shown: if you do not post them, the user never sees them. With no news, the recap is the count line alone.';
 /** The heading of the project rules in full, inside the own-use block (overseer memory scope, Unit 5). */
 export const RULES_FOR_OVERSEER = 'Project rules in force, for your own use: apply them, and do not paste them.';
 
@@ -992,10 +1001,12 @@ async function ledgerList(args: { forRecap?: boolean }): Promise<{ type: 'text';
   const rules = Array.isArray(data?.rules) ? data.rules.filter((r: unknown): r is string => typeof r === 'string') : [];
   const ownUse = [`${OWN_USE_HEADING}\n\n${String(data?.text ?? '')}`];
   if (rules.length) ownUse.push([RULES_FOR_OVERSEER, ...rules.map((r: string) => `- ${r}`)].join('\n'));
-  return [
+  const out: { type: 'text'; text: string }[] = [
     { type: 'text', text: `${PASTE_HEADING}\n\n${String(data?.paste ?? '')}` },
     { type: 'text', text: ownUse.join('\n\n') },
   ];
+  if (args?.forRecap === true) out.push({ type: 'text', text: RECAP_NOT_POSTED });
+  return out;
 }
 
 async function ledgerImport(args: { items?: unknown }): Promise<{ ids: string[] }> {

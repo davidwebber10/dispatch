@@ -11,7 +11,7 @@ import { vi, test, expect, beforeEach, afterEach, type Mock } from 'vitest';
 //  - reset() clears the buffer, scrollToLine() records the requested line.
 //  - onScroll() registers a handler fireScroll() can invoke to simulate the
 //    reader scrolling the viewport (set buffer.active.viewportY first).
-const { instances } = vi.hoisted(() => ({ instances: [] as any[] }));
+const { instances, fakeDom } = vi.hoisted(() => ({ instances: [] as any[], fakeDom: { viewport: false } }));
 vi.mock('@xterm/xterm', () => {
   class FakeTerminal {
     cols = 80;
@@ -33,7 +33,11 @@ vi.mock('@xterm/xterm', () => {
     getSelection() { return this.selection; }
     clearSelection() { this.selection = ''; }
     loadAddon() {}
-    open() {}
+    // With fakeDom.viewport, open() adds the .xterm-viewport element real xterm creates, so a
+    // test can fire the browser's own scroll event on it.
+    open(host?: HTMLElement) {
+      if (fakeDom.viewport && host) { const vp = document.createElement('div'); vp.className = 'xterm-viewport'; host.appendChild(vp); }
+    }
     focusCalls = 0;
     focus() { this.focusCalls++; }
     dispose() {}
@@ -69,6 +73,7 @@ vi.mock('../../lib/clipboard', async (orig) => ({ ...(await orig<typeof import('
 import { TerminalTab } from './TerminalTab';
 import { api } from '../../api/client';
 import { useSettings } from '../../stores/settings';
+import { useThreadStatus } from '../../stores/threadStatus';
 import { INITIAL_REPLAY_MOBILE, MAX_REPLAY, nextReplayStep } from '../../api/terminal-socket';
 import { PAGE_UP, WHEEL_UP } from '../../lib/ptyWheel';
 
@@ -100,7 +105,7 @@ beforeEach(() => {
   vi.spyOn(api, 'getGitInfo').mockResolvedValue({ branch: 'main' });
   vi.spyOn(api, 'getScrollbackSize').mockResolvedValue(0);
 });
-afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); fakeDom.viewport = false; });
 
 test('mounts the terminal and wires the socket for replayed output', async () => {
   let onData!: (c: string) => void;
@@ -961,6 +966,98 @@ test('a reconnect re-pins: the replayed scrollback lands at the bottom again', a
   await waitFor(() => expect(term.scrolledToBottom).toBeGreaterThan(afterFirst));
 });
 
+// ---- a reprint after a scrollback clear (Codex inline TUI) keeps a reader at the bottom ----
+// Codex with --no-alt-screen answers every resize by clearing the screen AND the scrollback
+// (CSI 3 J) and printing about 1000 lines of history again. In the browser the clear shrinks
+// xterm's scroll area; the browser clamps scrollTop and fires a scroll event that xterm takes
+// for the reader's own scroll, so the view stops following and lands thousands of lines up.
+
+const CLEAR = '\x1b[H\x1b[2J\x1b[3J';
+
+async function mountAtBottom() {
+  const { factory, created } = makeSocketFactory();
+  const utils = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+  const term = instances[0];
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(term.scrolledToBottom).toBeGreaterThan(0));
+  term.buffer.active.viewportY = term.buffer.active.baseY; // the reader is at the bottom
+  return { term, send: (c: string) => act(() => { created[0].opts.onData(c); }), ...utils };
+}
+
+test('a reprint that starts with a scrollback clear keeps a reader who was at the bottom there, until it goes quiet', async () => {
+  const { term, send } = await mountAtBottom();
+  const start = term.scrolledToBottom;
+
+  send(`${CLEAR}Earlier messages are available\n${'line\n'.repeat(5)}`);
+  await waitFor(() => expect(term.scrolledToBottom).toBeGreaterThan(start));
+
+  // The browser's clamp moved the view up; the rest of the reprint still lands at the bottom.
+  term.buffer.active.viewportY = 0;
+  const mid = term.scrolledToBottom;
+  send('line\n'.repeat(50));
+  await waitFor(() => expect(term.scrolledToBottom).toBeGreaterThan(mid));
+
+  // Once the reprint is quiet, ordinary frames no longer pin.
+  await new Promise((r) => setTimeout(r, 600));
+  const quiet = term.scrolledToBottom;
+  send('a later frame');
+  await tick();
+  expect(term.scrolledToBottom).toBe(quiet);
+});
+
+test('a reader scrolled up when the scrollback clear comes is not moved', async () => {
+  const { term, send } = await mountAtBottom();
+  term.buffer.active.baseY += 100;
+  term.buffer.active.viewportY = 10; // reading history, far above the bottom
+  const start = term.scrolledToBottom;
+  send(`${CLEAR}${'line\n'.repeat(5)}`);
+  await tick(); await tick();
+  expect(term.scrolledToBottom).toBe(start);
+});
+
+test('the reader\'s own wheel during a reprint ends the follow at once', async () => {
+  const { term, send, getByTestId } = await mountAtBottom();
+  send(`${CLEAR}${'line\n'.repeat(5)}`);
+  await waitFor(() => expect(term.scrolledToBottom).toBeGreaterThan(1));
+  fireEvent.wheel(getByTestId('term-host'), { deltaY: -120 });
+  const afterWheel = term.scrolledToBottom;
+  send('line\n'.repeat(50));
+  await tick(); await tick();
+  expect(term.scrolledToBottom).toBe(afterWheel);
+});
+
+// Review round 1 (2026-10-12): keyboard scrolling ends the follow too, and a clear split across
+// two frames still starts it.
+test('Shift+PageUp during a reprint ends the follow, also for the quiet timer', async () => {
+  const { term, send, getByTestId } = await mountAtBottom();
+  send(`${CLEAR}${'line\n'.repeat(5)}`);
+  await waitFor(() => expect(term.scrolledToBottom).toBeGreaterThan(1));
+  fireEvent.keyDown(getByTestId('term-host'), { key: 'PageUp', shiftKey: true });
+  const afterKey = term.scrolledToBottom;
+  send('line\n'.repeat(50));
+  await new Promise((r) => setTimeout(r, 600));
+  expect(term.scrolledToBottom).toBe(afterKey);
+});
+
+test('a scrollback clear split across two frames still keeps a reader at the bottom', async () => {
+  const { term, send } = await mountAtBottom();
+  const start = term.scrolledToBottom;
+  send('\x1b[H\x1b[2J\x1b[3');
+  send(`J${'line\n'.repeat(5)}`);
+  await waitFor(() => expect(term.scrolledToBottom).toBeGreaterThan(start));
+});
+
+test('during a reprint, the browser\'s own scroll event on the viewport puts the view back at the bottom', async () => {
+  fakeDom.viewport = true;
+  const { term, send, getByTestId } = await mountAtBottom();
+  send(`${CLEAR}${'line\n'.repeat(5)}`);
+  await waitFor(() => expect(term.scrolledToBottom).toBeGreaterThan(1));
+  const before = term.scrolledToBottom;
+  fireEvent.scroll(getByTestId('term-host').querySelector('.xterm-viewport')!);
+  expect(term.scrolledToBottom).toBeGreaterThan(before);
+});
+
 // ---- mobile swipe: alt-screen TUI (Grok) vs normal xterm scrollback ----
 
 function swipe(el: Element, fromY: number, toY: number) {
@@ -1098,4 +1195,20 @@ test('the size getter reports null when the host never had dimensions (no false 
   // jsdom: clientWidth/Height are 0, so no fit ever succeeded — declaring xterm's
   // 80×24 default would resize the real pty to a size nobody is rendering at.
   expect(size()).toBeNull();
+});
+
+// ---- 2026-10-12: the ask strip and the footer sit BELOW the terminal ----
+// In a Pretty thread the outcome and the ask are at the bottom, by the composer; in a CLI thread
+// they sat above the terminal. Both now go under the terminal frame, in the turn footer.
+test('the ask strip and the footer render below the terminal frame, inside the turn footer', async () => {
+  useThreadStatus.setState({ byTerminal: { t1: { threadStatus: 'needs_input', activity: 'Which store first?' } } } as any);
+  const { factory } = makeSocketFactory();
+  const { getByTestId } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} footer={<div data-testid="footer-x" />} />);
+  await waitFor(() => expect(instances).toHaveLength(1));
+  const frame = getByTestId('term-frame');
+  const footer = getByTestId('turn-footer');
+  expect(footer).toContainElement(getByTestId('thread-ask-banner'));
+  expect(footer).toContainElement(getByTestId('footer-x'));
+  expect(frame.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  useThreadStatus.setState({ byTerminal: {} } as any);
 });

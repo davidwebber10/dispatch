@@ -6,7 +6,8 @@ import { StatusNotice } from './chat/StatusNotice';
 
 /**
  * The latest DECLARED turn outcome (`config.lastOutcome`, stamped by report_status),
- * rendered above a CLI-transport AI thread's terminal. This is the CLI-view sibling of
+ * rendered under a CLI-transport AI thread's terminal, in its footer (2026-10-12: it sat
+ * above the terminal; a Pretty thread shows it at the bottom). This is the CLI-view sibling of
  * the Pretty chat's inline StatusNotice: agents put their real findings in
  * report_status's arguments, and the TUI collapses tool arguments to one truncated
  * line — so a turn's substance was invisible in this view unless the agent also said
@@ -17,8 +18,9 @@ import { StatusNotice } from './chat/StatusNotice';
  *   outcome's summary is just the reply's closing text, already on screen in the TUI.
  * - Never the `ask` — ThreadAskBanner owns the declared question; two banners asking
  *   the same thing would read as a nag.
- * - Hidden while a turn is in flight: the outcome describes the PREVIOUS turn. On
- *   settle it refetches the terminal row, so the fresh turn's outcome appears without
+ * - Dimmed and marked "Last turn" while a turn is in flight: the outcome describes the
+ *   PREVIOUS turn. It keeps its place so the terminal does not resize (it used to hide).
+ *   On settle it refetches the terminal row, so the fresh turn's outcome appears without
  *   a reload.
  */
 export function CliStatusCard({ tab }: { tab: Terminal }) {
@@ -38,11 +40,18 @@ export function CliStatusCard({ tab }: { tab: Terminal }) {
     return () => { on = false; };
   }, [working, tab.id]);
 
-  if (working) return null;
   const input = noticeInput(outcome);
   if (!input) return null;
+  // While a turn runs, the card keeps its place, dimmed and marked as the last turn (2026-10-12):
+  // hiding it resized the terminal on every submit, and Codex's inline TUI reprints its history
+  // on every resize. The new outcome replaces it when the turn settles.
   return (
-    <div style={{ padding: '8px 12px 0', flexShrink: 0 }}>
+    <div
+      data-testid="cli-status-card"
+      data-last-turn={working ? 'true' : undefined}
+      title={working ? 'Last turn' : undefined}
+      style={{ padding: '6px 12px 8px', flexShrink: 0, opacity: working ? 0.55 : undefined }}
+    >
       <StatusNotice input={input} />
     </div>
   );

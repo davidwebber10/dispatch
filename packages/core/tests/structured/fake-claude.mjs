@@ -3,6 +3,35 @@
 // stdin control_responses / user turns. Lets us test the manager hermetically.
 import readline from 'node:readline';
 const send = (o) => process.stdout.write(JSON.stringify(o) + '\n');
+// `-r gone-session`: a resume whose transcript is gone. Mirrors Claude Code 2.1.296 exactly:
+// no init frame, one error `result` with no `result` field and the reason in `errors[]`, the
+// same text on stderr, exit code 1.
+const rIdx = process.argv.indexOf('-r');
+// `-r gone-late`: the same failure, but the error frame reaches stdout only AFTER this process
+// has exited (a helper that inherited stdout writes it 200 ms later). Node fires the child's
+// 'exit' first, so this pins that the manager still reads the late frame.
+// `-r gone-late-out`: like gone-late, but the helper holds only stdout (stderr closes at exit).
+if (rIdx > -1 && process.argv[rIdx + 1] === 'gone-late-out') {
+  const { spawn } = await import('node:child_process');
+  const reason = 'No conversation found with session ID: gone-late-out';
+  const frame = JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, session_id: 'gone-late-out', errors: [reason] });
+  process.stderr.write(reason + '\n');
+  spawn(process.execPath, ['-e', `setTimeout(() => process.stdout.write(${JSON.stringify(frame + '\n')}), 200)`], { stdio: ['ignore', 'inherit', 'ignore'] });
+  process.exit(1);
+}
+if (rIdx > -1 && process.argv[rIdx + 1] === 'gone-late') {
+  const { spawn } = await import('node:child_process');
+  const reason = 'No conversation found with session ID: gone-late';
+  const frame = JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, session_id: 'gone-late', errors: [reason] });
+  spawn(process.execPath, ['-e', `setTimeout(() => { process.stderr.write(${JSON.stringify(reason + '\n')}); process.stdout.write(${JSON.stringify(frame + '\n')}); }, 200)`], { stdio: ['ignore', 'inherit', 'inherit'] });
+  process.exit(1);
+}
+if (rIdx > -1 && process.argv[rIdx + 1] === 'gone-session') {
+  const reason = 'No conversation found with session ID: gone-session';
+  process.stderr.write(reason + '\n');
+  send({ type: 'result', subtype: 'error_during_execution', is_error: true, session_id: 'gone-session', errors: [reason] });
+  process.exit(1);
+}
 // `argv` echoes the launch args so resume tests can assert `-r <id>` was applied.
 send({ type: 'system', subtype: 'init', apiKeySource: 'none', model: 'claude', session_id: 'sess-fake', testEnv: process.env.DISPATCH_TEST_ENV ?? null, argv: process.argv.slice(2) });
 const rl = readline.createInterface({ input: process.stdin });
@@ -18,6 +47,11 @@ rl.on('line', (line) => {
     if (text === 'TRIGGER_QUESTION') {
       // AskUserQuestion arrives as a can_use_tool whose input carries questions[]
       send({ type: 'control_request', request_id: 'req-2', request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [{ question: 'Pick one', header: 'Choice', options: ['A', 'B'], multiSelect: false }] }, tool_use_id: 'tu-2' } });
+      return;
+    }
+    if (typeof text === 'string' && text.startsWith('TRIGGER_BASH:')) {
+      // A Bash tool call asking permission for the given command (the broad-kill guard tests).
+      send({ type: 'control_request', request_id: 'req-bash', request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: text.slice('TRIGGER_BASH:'.length) }, tool_use_id: 'tu-1' } });
       return;
     }
     if (text === 'TRIGGER_SCHEDULE') {

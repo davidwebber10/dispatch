@@ -136,9 +136,10 @@ export function handleStructuredConnection(
   // P0b: the CLI never emits a `result` when its process exits/crashes mid-turn,
   // so the client's `busy` would spin forever. Synthesize one from the manager's
   // 'exit' so the existing result handler clears `busy` and shows the error.
-  const onExit = (eid: string, code: number) => {
+  // `detail` is the CLI's stderr tail, when it wrote one: often the only place it says why (#76).
+  const onExit = (eid: string, code: number, detail?: string) => {
     if (eid === id && ws.readyState === 1) {
-      ws.send(JSON.stringify({ type: 'result', is_error: true, subtype: 'process_exit', result: `Process exited (${code})` }));
+      ws.send(JSON.stringify({ type: 'result', is_error: true, subtype: 'process_exit', result: `Process exited (${code})${detail ? `: ${detail}` : ''}` }));
     }
   };
   // Forward escalations (the membrane) so a structured chat view can render the

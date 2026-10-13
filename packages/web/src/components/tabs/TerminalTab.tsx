@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -10,6 +10,7 @@ import { api } from '../../api/client';
 import type { Terminal } from '../../api/types';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { ThreadAskBanner } from './ThreadAskBanner';
+import { TurnFooter } from './TurnFooter';
 import { useDraft } from '../../hooks/useDraft';
 import { copyText } from '../../lib/clipboard';
 import { isMacLike } from '../../lib/hostkeys';
@@ -38,6 +39,16 @@ const REBUILD_TIMEOUT_MS = 10_000;
 // pure loss, so we refuse it. The fraction leaves a small margin: the last couple of
 // percent of the buffer is not worth a full reset either.
 const SCROLLBACK_CAP_FRACTION = 0.98;
+
+// Codex's inline TUI (--no-alt-screen) answers every resize by clearing the screen AND the
+// scrollback (CSI 3 J) and printing about 1000 lines of history again. In the browser the clear
+// shrinks xterm's scroll area; the browser clamps the viewport's scrollTop and fires a scroll
+// event that xterm takes for the reader's own scroll, so the view stops following output and the
+// reprint leaves it thousands of lines up. A reader at the bottom when the clear arrives stays at
+// the bottom until the reprint has been quiet for REPRINT_QUIET_MS; their own wheel, touch or
+// pointer input ends that at once.
+const SCROLLBACK_CLEAR = '\x1b[3J';
+const REPRINT_QUIET_MS = 400;
 
 // Shared look for every key in the row above the mobile composer. `flex: 0 0 auto` is
 // the important part: the row scrolls, so a key keeps its natural width instead of
@@ -123,7 +134,9 @@ function keysFor(type?: string): { actions: SoftKey[]; slash: SlashCmd[] } {
   return { actions: CLAUDE_ACTIONS, slash: CLAUDE_SLASH };
 }
 
-export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: { terminalId: string; socketFactory?: typeof openTerminalSocket }) {
+/** `footer` renders under the terminal, in the turn footer with the ask strip (a CLI AI thread's
+ *  outcome card — see TurnFooter). */
+export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, footer }: { terminalId: string; socketFactory?: typeof openTerminalSocket; footer?: ReactNode }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const scrollOverlayRef = useRef<HTMLDivElement>(null);
   const sockRef = useRef<ReturnType<typeof openTerminalSocket> | null>(null);
@@ -246,6 +259,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     // happens — then do the normal reset + resize.
     const handleConnectionReset = () => {
       activeRebuildAbort?.();
+      chunkTail = ''; // a new byte stream follows
       term.reset();
       resyncSize();
       // The server replays the whole scrollback next — land at the newest output, not at
@@ -267,16 +281,43 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
     // history. The rebuild path owns its own anchor restore (finishRebuild) and never routes
     // through here, so the two can't fight.
     let pinNextReplay = true;
+    // True while a reprint that began with a scrollback clear is still arriving and the reader
+    // was at the bottom when it began (see SCROLLBACK_CLEAR).
+    let followReprint = false;
+    let reprintTimer: ReturnType<typeof setTimeout> | undefined;
+    // The last bytes of the previous frame, so a clear split across two frames is still seen
+    // (review round 1).
+    let chunkTail = '';
+    const endFollow = () => {
+      followReprint = false;
+      if (reprintTimer) { clearTimeout(reprintTimer); reprintTimer = undefined; }
+    };
     // The "just show it" path: used for every socket's data whenever that data is
     // NOT part of an in-flight rebuild's buffered catch-up — i.e. the original
     // connection's normal traffic, and any survivor-of-a-rebuild socket once it
     // has become primary again.
     const attachLive = (chunk: string) => {
-      if (pinNextReplay) {
+      const clearIn = (chunkTail + chunk).includes(SCROLLBACK_CLEAR);
+      chunkTail = (chunkTail + chunk).slice(-(SCROLLBACK_CLEAR.length - 1));
+      if (clearIn) {
+        const b = term.buffer.active;
+        if (followReprint || b.viewportY >= b.baseY) followReprint = true;
+      }
+      if (followReprint) {
+        if (reprintTimer) clearTimeout(reprintTimer);
+        reprintTimer = setTimeout(() => {
+          reprintTimer = undefined;
+          followReprint = false;
+          if (!disposed) scrollToEndRef.current();
+        }, REPRINT_QUIET_MS);
+      }
+      const pinReplay = pinNextReplay;
+      if (pinReplay || followReprint) {
         pinNextReplay = false;
         // In the write CALLBACK: xterm parses asynchronously, so scrolling synchronously after
-        // write() would target the PRE-write buffer and land short of the end.
-        term.write(chunk, () => { if (!disposed) scrollToEndRef.current(); });
+        // write() would target the PRE-write buffer and land short of the end. A reprint follow
+        // that the reader ended in the meantime does not pin.
+        term.write(chunk, () => { if (!disposed && (pinReplay || followReprint)) scrollToEndRef.current(); });
       } else {
         term.write(chunk);
       }
@@ -675,7 +716,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       if (b.viewportY === before) applyTransform(); // no repaint coming → apply now; else onRender does
       updateAtBottom();
     };
-    const onTouchStart = (e: TouchEvent) => { stopInertia(); stopSpring(); lastY = e.touches[0].clientY; startY = lastY; moved = false; lastT = performance.now(); vel = 0; };
+    const onTouchStart = (e: TouchEvent) => { endFollow(); stopInertia(); stopSpring(); lastY = e.touches[0].clientY; startY = lastY; moved = false; lastT = performance.now(); vel = 0; };
     const onTouchMove = (e: TouchEvent) => {
       if (e.touches.length !== 1) return;
       const y = e.touches[0].clientY, now = performance.now();
@@ -716,8 +757,21 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       touchSurface.addEventListener('touchcancel', onTouchEnd, { passive: true });
     }
 
+    // The reader's own scroll input ends a reprint follow at once (see SCROLLBACK_CLEAR): the
+    // desktop wheel and a press on the scrollbar land inside the host; touch ends it in onTouchStart.
+    const onUserScrollInput = () => endFollow();
+    // xterm's own keyboard scrolling (Shift+PageUp/PageDown/Home/End) ends it too (review round 1).
+    // Ordinary typing does not: a reader typing the next prompt is still at the bottom.
+    const SCROLL_KEYS = new Set(['PageUp', 'PageDown', 'Home', 'End']);
+    const onKeyScroll = (e: KeyboardEvent) => { if (e.shiftKey && SCROLL_KEYS.has(e.key)) endFollow(); };
+    host?.addEventListener('wheel', onUserScrollInput, { passive: true, capture: true });
+    host?.addEventListener('pointerdown', onUserScrollInput, { passive: true, capture: true });
+    host?.addEventListener('keydown', onKeyScroll, { capture: true });
+    // During a reprint follow, the browser's own scroll event (its scrollTop clamp after the
+    // scrollback clear) puts the view back at the bottom instead of leaving it where it landed.
+    const onViewportScroll = () => { if (followReprint) scrollToEndRef.current(); else updateAtBottom(); };
     const vp0 = viewportEl();
-    vp0?.addEventListener('scroll', updateAtBottom, { passive: true });
+    vp0?.addEventListener('scroll', onViewportScroll, { passive: true });
     const offScroll = term.onScroll(() => { updateAtBottom(); maybeStartRebuild(); });
     updateAtBottom();
     scrollToEndRef.current = () => { stopInertia(); stopSpring(); subPx = 0; overscroll = 0; applyTransform(); term.scrollToBottom(); updateAtBottom(); };
@@ -738,7 +792,11 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
         touchSurface.removeEventListener('touchend', onTouchEnd);
         touchSurface.removeEventListener('touchcancel', onTouchEnd);
       }
-      vp0?.removeEventListener('scroll', updateAtBottom);
+      endFollow();
+      host?.removeEventListener('wheel', onUserScrollInput, { capture: true });
+      host?.removeEventListener('pointerdown', onUserScrollInput, { capture: true });
+      host?.removeEventListener('keydown', onKeyScroll, { capture: true });
+      vp0?.removeEventListener('scroll', onViewportScroll);
       offScroll.dispose();
       offRender.dispose();
       ro?.disconnect();
@@ -813,10 +871,6 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
       onPaste={(e) => { const f = Array.from(e.clipboardData?.files ?? []); if (f.length) { e.preventDefault(); f.forEach((x) => void uploadImage(x)); } }}
       style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', background: isMobile ? 'var(--color-pane)' : 'var(--color-terminal)', position: 'relative' }}
     >
-      {/* Safety net: a needs_you question a CLI thread declared via report_status lands only on
-          the status channel — surface it as a top strip so it isn't invisible in the terminal. */}
-      <ThreadAskBanner terminalId={terminalId} onAnswer={() => { try { termRef.current?.focus(); } catch { /* jsdom */ } }} />
-
       {/* The xterm host is absolutely positioned so the terminal's own size never
           drives the flex layout width (which previously blew the column out).
           On mobile the terminal is a rounded card with a thin frame (the pane bg
@@ -857,6 +911,14 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket }: 
           <div style={{ position: 'absolute', left: 14, bottom: 14, zIndex: 6, background: 'rgba(10,10,12,.85)', color: 'var(--color-accent)', fontSize: 12, fontWeight: 500, padding: '5px 11px', borderRadius: 9, pointerEvents: 'none' }}>{note}</div>
         )}
       </div>
+      {/* Safety net: a needs_you question a CLI thread declared via report_status lands only on
+          the status channel — surface it as a strip so it isn't invisible in the terminal. It sits
+          under the terminal with the footer (a CLI AI thread's outcome card), where a Pretty thread
+          shows them, in a footer that holds its height during a turn (see TurnFooter). */}
+      <TurnFooter terminalId={terminalId}>
+        <ThreadAskBanner terminalId={terminalId} onAnswer={() => { try { termRef.current?.focus(); } catch { /* jsdom */ } }} />
+        {footer}
+      </TurnFooter>
       {isMobile && (
         <>
           {/* A row of action keys, a "/" that opens the searchable slash-command sheet,

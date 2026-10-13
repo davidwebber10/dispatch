@@ -166,6 +166,38 @@ describe('the title in the tools', () => {
     });
   });
 
+  // Monday check 2026-10-12: the overseer gave a proposed item a title with ledger_set_title and then
+  // sent it without `title`. The send failed "needs a title" three times. The stored title counts.
+  it('ledger_add_from_agent: a title set before with ledger_set_title counts; a title in the call replaces it', () => {
+    ledger.captureAgentBlock('s1', { id: 'agent', label: 'Readiness planner', mission: null }, [
+      { id: 'LR-6', kind: 'decide', question: 'How many clean nights before live mode?', ...DECIDE_CARD, title: undefined, source: undefined },
+      { id: 'LR-7', kind: 'decide', question: 'Which day is the switch?', ...DECIDE_CARD, title: undefined, source: undefined },
+    ]);
+    ledger.setTitle('s1', 'coord', { id: 'N1', title: 'Clean nights before live mode' });
+    expect(ledger.addFromAgent('s1', 'coord', { id: 'N1', note: 'The agent did not know about the freeze.' })).toEqual({ id: 'N1', status: 'open' });
+    expect(ledgerDb.getBySeq(db, 's1', 1)).toMatchObject({ status: 'open', title: 'Clean nights before live mode' });
+
+    ledger.setTitle('s1', 'coord', { id: 'N2', title: 'Switch day' });
+    expect(status(() => ledger.addFromAgent('s1', 'coord', { id: 'N2', title: 'Nights' })).message).toBe(TITLE_TWO_WORDS_ERROR);
+    expect(ledger.addFromAgent('s1', 'coord', { id: 'N2', title: 'Day of the switch' })).toEqual({ id: 'N2', status: 'open' });
+    expect(ledgerDb.getBySeq(db, 's1', 2)!.title).toBe('Day of the switch');
+  });
+
+  // Review round 1 (2026-10-12): a blank or non-text title in the call is refused, not replaced by the
+  // stored one; null means "no title", as models often send null for an empty optional field.
+  it('ledger_add_from_agent: a blank or non-text title in the call is refused even with a stored title; null uses it', () => {
+    ledger.captureAgentBlock('s1', { id: 'agent', label: 'Readiness planner', mission: null }, [
+      { id: 'LR-6', kind: 'decide', question: 'How many clean nights before live mode?', ...DECIDE_CARD, title: undefined, source: undefined },
+    ]);
+    ledger.setTitle('s1', 'coord', { id: 'N1', title: 'Clean nights before live mode' });
+    for (const title of ['', '   ', 42, ['Clean nights']]) {
+      expect(status(() => ledger.addFromAgent('s1', 'coord', { id: 'N1', title })).message, JSON.stringify(title)).toBe(TITLE_MISSING_ERROR);
+    }
+    expect(ledgerDb.getBySeq(db, 's1', 1)!.status).toBe('proposed');
+    expect(ledger.addFromAgent('s1', 'coord', { id: 'N1', title: null })).toEqual({ id: 'N1', status: 'open' });
+    expect(ledgerDb.getBySeq(db, 's1', 1)!.title).toBe('Clean nights before live mode');
+  });
+
   it('ledger_decide_self and ledger_note need no title', () => {
     const own = { text: 'Which retry helper?', ...DECIDE_CARD, title: undefined, choice: 'A. 5 nights', reason: 'it covers this case' };
     expect(ledger.decideSelf('s1', 'coord', own).id).toBe('N1');

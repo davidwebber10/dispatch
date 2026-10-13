@@ -8,11 +8,11 @@ import type { Terminal } from '../../api/types';
 // This file is about ROUTING only: which component does a given file path land in?
 vi.mock('./FileEditorTab', () => ({ FileEditorTab: () => <div data-testid="file-editor" /> }));
 vi.mock('./ImageFileTab', () => ({ ImageFileTab: () => <div data-testid="image-viewer" /> }));
-vi.mock('./TerminalTab', () => ({ TerminalTab: () => <div data-testid="terminal" /> }));
+vi.mock('./TerminalTab', () => ({ TerminalTab: ({ footer }: { footer?: import('react').ReactNode }) => <div data-testid="terminal">{footer}</div> }));
 vi.mock('./BrowserTab', () => ({ BrowserTab: () => <div data-testid="browser" /> }));
 vi.mock('./NotesTab', () => ({ NotesTab: () => <div data-testid="notes" /> }));
 vi.mock('./chat/ChatView', () => ({ ChatView: () => <div data-testid="chat" /> }));
-vi.mock('./CliPrettyHint', () => ({ CliPrettyHint: () => <div data-testid="pretty-hint" /> }));
+vi.mock('./CliPrettyHint', () => ({ CliPrettyHint: ({ reserveRight }: { reserveRight?: number }) => <div data-testid="pretty-hint" data-reserve={reserveRight ?? ''} /> }));
 vi.mock('./CliStatusCard', () => ({ CliStatusCard: () => <div data-testid="cli-status-card" /> }));
 
 function fileTab(path: string): Terminal {
@@ -77,6 +77,15 @@ it('a CLI claude thread renders the terminal WITH the Pretty hint and the status
   expect(screen.getByTestId('cli-status-card')).toBeInTheDocument();
 });
 
+// 2026-10-12: the card sat above the terminal (in a Pretty thread the outcome is at the bottom),
+// and it hid while a turn ran, so every submit resized the terminal and Codex reprinted its
+// history. It now goes to the terminal's footer, below the terminal.
+it('a CLI thread passes the status card to the terminal as its footer, below the terminal', () => {
+  useTabs.setState({ byProject: { p1: [aiTab({})] } });
+  render(<TabHost terminalId="t1" />);
+  expect(screen.getByTestId('terminal')).toContainElement(screen.getByTestId('cli-status-card'));
+});
+
 it('a structured claude thread renders the chat with NO hint and NO card (StatusNotice is inline there)', () => {
   useTabs.setState({ byProject: { p1: [aiTab({ transport: 'structured' })] } });
   render(<TabHost terminalId="t1" />);
@@ -91,4 +100,20 @@ it('a plain shell renders the terminal with NO hint and NO card — no agent beh
   expect(screen.getByTestId('terminal')).toBeInTheDocument();
   expect(screen.queryByTestId('pretty-hint')).toBeNull();
   expect(screen.queryByTestId('cli-status-card')).toBeNull();
+});
+
+// 2026-10-12: the floating bell and CLI/Pretty switch covered the right end of the Pretty hint.
+// TabHost measures the floating group and reserves its width, its 12px offset and an 8px gap.
+it('a CLI thread on desktop reserves the floating controls\' width on the right of the Pretty hint', () => {
+  const rect = HTMLElement.prototype.getBoundingClientRect;
+  HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+    return (this.dataset.testid === 'thread-floating-controls' ? { width: 176 } : { width: 0 }) as DOMRect;
+  };
+  try {
+    useTabs.setState({ byProject: { p1: [aiTab({})] } });
+    render(<TabHost terminalId="t1" />);
+    expect(screen.getByTestId('pretty-hint').dataset.reserve).toBe('196');
+  } finally {
+    HTMLElement.prototype.getBoundingClientRect = rect;
+  }
 });

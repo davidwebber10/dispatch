@@ -18,6 +18,7 @@ import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 import { useEffect, useMemo } from 'react';
 import { api, type ContentBlock } from '../../api/client';
+import { sendFailureText } from '../../lib/sendError';
 import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
 import { useThreadStatus } from '../../stores/threadStatus';
@@ -321,8 +322,8 @@ export const useOverseer = create<OverseerState>((set, get) => ({
     // (and any attached image) just vanished, reading as "nothing happened". Mirrors the
     // agent chat's visible "Failed to send message" (useStructuredChat.ts). useRenderVals
     // renders sendError as an inline error row; the next send attempt clears it.
-    api.sendStructuredMessage(id, payload).catch(() => {
-      if (get().coordinatorId === id) set({ sendError: 'Failed to send message' });
+    api.sendStructuredMessage(id, payload).catch((err) => {
+      if (get().coordinatorId === id) set({ sendError: sendFailureText(err) });
     });
   },
 

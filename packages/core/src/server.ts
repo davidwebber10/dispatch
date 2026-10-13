@@ -27,6 +27,7 @@ import { ClaudeLoginService } from './auth/claude-login.js';
 import { requireBoxToken, upgradeAllowed } from './auth/box-token.js';
 import { OsConnectionsProvider } from './integrations/os-provider.js';
 import { HeartbeatService } from './platform/heartbeat.js';
+import { writeOwnPid, removeOwnPid } from './platform/pid-file.js';
 import { UsageRecorder } from './usage/recorder.js';
 import { createClaudeAuthRouter } from './routes/claude-auth.js';
 import { createProvidersRouter } from './routes/providers.js';
@@ -41,6 +42,7 @@ import { createSecretsRouter } from './routes/secrets.js';
 import { createHarnessSettingsRouter } from './routes/harness-settings.js';
 import { opencodeKeySecretName } from './settings/harness-settings.js';
 import { warmModelCapabilities } from './settings/model-capabilities.js';
+import { warmClaudeVersion, prunePromptFiles, setClaudeProbeEnv } from './providers/claude-prompt-file.js';
 import { createTranscribeRouter } from './routes/transcribe.js';
 import { TranscriptionService } from './transcription/service.js';
 import { createSetupRouter } from './routes/setup.js';
@@ -429,10 +431,6 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const dataDir = platform.dataDir();
   fs.mkdirSync(dataDir, { recursive: true });
 
-  // Record our own pid so daemon controllers (e.g. WSL's restart()) can find and
-  // signal this process without depending on the OS service manager for tracking.
-  fs.writeFileSync(path.join(dataDir, 'daemon.pid'), String(process.pid));
-
   const browserShimEnv = platform.installBrowserShim({
     dataDir,
     serverUrl: `http://127.0.0.1:${preferredPort}`,
@@ -613,6 +611,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     // route an OAuth URL has to the person signing in: there is no local browser.
     spawnEnv.PATH = withShimPath(dataDir, spawnEnv.PATH);
     toolsAuth.setSpawnEnv(spawnEnv);
+    // The Claude version check reads the same `claude` the agents will run.
+    setClaudeProbeEnv(spawnEnv);
     ptyManager.setDefaultEnv(spawnEnv);
     structuredManager.setDefaultEnv(spawnEnv);
     endlessManager.setDefaultEnv(spawnEnv);
@@ -808,6 +808,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     });
   });
 
+  // Record our own pid so daemon controllers (e.g. WSL's restart()) can find and signal this
+  // process without an OS service manager. Only now that the port is bound: a duplicate launch
+  // that loses the port race exits above and must not overwrite the live daemon's pid (#56).
+  writeOwnPid(dataDir);
+
   if (port !== preferredPort) {
     effectiveShimEnv = platform.installBrowserShim({
       dataDir,
@@ -837,6 +842,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // the OpenRouter and models.dev catalogs once now. A chat-only model resumed right after
   // boot then gets its tools turned off instead of failing its first turn.
   void warmModelCapabilities();
+  // Same for the installed Claude Code version: it decides whether a spawn hands Claude its
+  // appended system prompt in a private file or as command-line text (claude-prompt-file.ts).
+  void warmClaudeVersion().then(() => prunePromptFiles());
 
   // Prime the brokered-tool cache so the FIRST spawn after boot already has tools
   // (getServerSpecs is sync, so it can only ever serve a cached answer).
@@ -927,7 +935,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     server.close();
     server.closeAllConnections();
     db.close();
-    try { fs.unlinkSync(path.join(dataDir, 'daemon.pid')); } catch {}
+    removeOwnPid(dataDir); // only if still ours: a newer daemon may own the file by now
   };
 
   process.on('SIGTERM', cleanup);
