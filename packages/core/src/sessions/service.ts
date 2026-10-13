@@ -1330,7 +1330,7 @@ export class SessionService {
    * agent's own chat. The coordinator was told to call answer_agent (routeAgentQuestionToCoordinator);
    * this says it no longer needs to. No-op when the thread isn't a typed agent or there's no coordinator.
    */
-  private noteQuestionAnsweredInChat(agentTerminalId: string, reply: string, imageCount: number): void {
+  private noteQuestionAnsweredInChat(agentTerminalId: string, reply: string, imageCount: number, canned?: QuestionCannedAction): void {
     const agent = terminalsDb.getById(this.db, agentTerminalId);
     if (!agent) return;
     let cfg: Record<string, any> = {};
@@ -1338,6 +1338,16 @@ export class SessionService {
     if (cfg.role !== 'agent') return;
     const mission = typeof cfg.mission === 'string' && cfg.mission.trim() ? cfg.mission.trim() : null;
     const summary = reply.trim() ? `"${this.summarizeUserPayload(reply)}"` : `(${imageCount === 1 ? 'an image' : `${imageCount} images`})`;
+    if (canned) {
+      const what = canned === 'dismiss'
+        ? 'dismissed it without answering. The agent will continue on its own judgment'
+        : 'asked it to explain the options first. The agent is explaining and will ask again';
+      this.notifyCoordinatorOfAgent(agentTerminalId,
+        `💬 The user answered the question your agent "${agent.label || 'agent'}"${mission ? ` (mission "${mission}")` : ''} ` +
+        `[agentId ${agentTerminalId}] asked, directly in the agent's chat: they ${what}. Do not call answer_agent for that question. ` +
+        `Read how it responds with read_agent and adjust.`, { kind: 'question-answered' });
+      return;
+    }
     const note =
       `💬 The user answered the question your agent "${agent.label || 'agent'}"${mission ? ` (mission "${mission}")` : ''} ` +
       `[agentId ${agentTerminalId}] asked, directly in the agent's chat: ${summary}. The agent has the answer and ` +
@@ -1718,7 +1728,11 @@ export class SessionService {
       // A card's Discuss-with-no-text or Dismiss: fixed text, logged as `canned` so a quote never matches it.
       const message = QUESTION_CANNED_MESSAGES[opts.canned];
       const delivered = manager.answerPermission(terminalId, requestId || pending.requestId, { behavior: 'deny', message });
-      if (delivered) this.logCoordinatorMessage(terminalId, message, 'canned');
+      if (delivered) {
+        this.logCoordinatorMessage(terminalId, message, 'canned');
+        // A worker's coordinator was told to call answer_agent; tell it the user closed the card.
+        this.noteQuestionAnsweredInChat(terminalId, '', 0, opts.canned);
+      }
       return delivered;
     }
     return manager.answerPermission(terminalId, requestId || pending.requestId, { behavior: 'deny', message: opts.message || 'Denied' });

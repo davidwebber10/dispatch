@@ -259,6 +259,18 @@ describe('a chat reply to a pending question', () => {
     expect(log()).toEqual([{ source: 'canned', text: QUESTION_DISMISS_MESSAGE }, { source: 'canned', text: QUESTION_DISCUSS_MESSAGE }]);
   });
 
+  it("Dismiss and an empty Discuss in a worker's chat tell the coordinator the question is closed", () => {
+    ask('agent');
+    expect(svc.answerPermission('agent', 'r1', { decision: 'deny', canned: 'dismiss' })).toBe(true);
+    ask('agent');
+    expect(svc.answerPermission('agent', 'r1', { decision: 'deny', canned: 'discuss' })).toBe(true);
+    const notices = structured.sent.filter((m) => m.id === 'coord').map((m) => m.content);
+    expect(notices).toHaveLength(2);
+    expect(notices[0]).toEqual(expect.stringContaining('dismissed it without answering'));
+    expect(notices[1]).toEqual(expect.stringContaining('asked it to explain the options first'));
+    for (const n of notices) expect(n).toEqual(expect.stringContaining('Do not call answer_agent for that question.'));
+  });
+
   it("a reply in a worker's chat tells the coordinator the question is answered, not that the user messaged it", () => {
     ask('agent');
     expect(svc.answerQuestionInChat('agent', 'r1', 'Go with B.')).toBe('delivered');
