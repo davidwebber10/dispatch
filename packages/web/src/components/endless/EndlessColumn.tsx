@@ -50,6 +50,8 @@ function FocusScroll() {
   return null;
 }
 
+const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
 function TurnError({ text, mobile = false }: { text: string; mobile?: boolean }) {
   return (
     <div role="alert" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: mobile ? '10px 16px' : '10px 12px', border: '1px solid var(--color-status-red)', borderRadius: 8, color: 'var(--color-text-primary)', fontSize: 13.5 }}>
@@ -68,14 +70,26 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
   const [project, setProject] = useState<string | null>(filter);
   useEffect(() => setProject(filter), [filter]);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const sending = useRef(false);
 
+  // Clear the draft only after the send succeeds; a failed send keeps it and shows why.
   const submit = async () => {
-    const t = text.trim();
-    if (!t && images.length === 0) return;
+    const raw = text;
+    const t = raw.trim();
+    if ((!t && images.length === 0) || sending.current) return;
     const imgs = images;
-    setText('');
-    setImages([]);
-    await useEndless.getState().send(t, project, imgs);
+    sending.current = true;
+    setSendError(null);
+    try {
+      await useEndless.getState().send(t, project, imgs);
+      setText((cur) => (cur === raw ? '' : cur));
+      setImages((cur) => (cur === imgs ? [] : cur));
+    } catch (err) {
+      setSendError(`Send failed: ${errorText(err)}`);
+    } finally {
+      sending.current = false;
+    }
   };
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit(); }
@@ -103,6 +117,7 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
             ))}
           </div>
         )}
+        {sendError && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)', wordBreak: 'break-word' }}>{sendError}</div>}
         <ProjectSelect value={project} onChange={setProject} />
         <div data-testid="composer-row" style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
           <button type="button" aria-label="Attach image" onClick={() => fileRef.current?.click()} style={iconBtn}><Paperclip size={18} /></button>

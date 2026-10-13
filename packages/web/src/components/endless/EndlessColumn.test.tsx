@@ -94,6 +94,38 @@ describe('EndlessColumn', () => {
     await waitFor(() => expect(send).toHaveBeenCalledWith('hello there', 's1', []));
   });
 
+  it('keeps the draft and shows the error when the send fails, with no unhandled rejection', async () => {
+    vi.spyOn(api, 'endlessSend').mockRejectedValue(new Error('POST /api/endless/send failed: 503 Chat is unavailable'));
+    const rejections: unknown[] = [];
+    const onRejection = (r: unknown) => { rejections.push(r); };
+    process.on('unhandledRejection', onRejection);
+    try {
+      render(<EndlessColumn />);
+      const box = screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement;
+      fireEvent.change(box, { target: { value: 'keep me' } });
+      fireEvent.keyDown(box, { key: 'Enter' });
+      expect(await screen.findByText(/503 Chat is unavailable/)).toBeInTheDocument();
+      expect(box.value).toBe('keep me');
+      await new Promise((r) => setTimeout(r, 0));
+      expect(rejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onRejection);
+    }
+  });
+
+  it('clears the draft only after the send succeeds', async () => {
+    let done!: () => void;
+    vi.spyOn(api, 'endlessSend').mockImplementation(() => new Promise((r) => { done = () => r({ ok: true }); }));
+    render(<EndlessColumn />);
+    const box = screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: 'pending' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.endlessSend).toHaveBeenCalled());
+    expect(box.value).toBe('pending');
+    await act(async () => { done(); });
+    expect(box.value).toBe('');
+  });
+
   it('a search jump from the tail scrolls to the row through the scroller and does not follow to the end', async () => {
     const page = useEndless.getState().messages;
     vi.spyOn(api, 'endlessMessages').mockResolvedValue({ messages: page, hasMore: true, hasMoreAfter: true });
