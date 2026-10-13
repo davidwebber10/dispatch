@@ -109,6 +109,7 @@ Spec section 10. Nothing in this task changes repo code. All scripts live in a s
 
 **Interfaces:**
 - Consumes: the `claude` CLI on PATH (2.1.296 when this plan was written), the built `packages/core/dist/structured/manager.js` (probe c only).
+- Probe 1a also runs the turn variant (no `--setting-sources project`, no `--strict-mcp-config`, no `--disable-slash-commands`, no `CLAUDE_CODE_DISABLE_BUNDLED_SKILLS`) twice with `--model opus` and records whether `system` and `tools` stay IDENTICAL with the user's servers and skills loaded. A difference caused only by a server's connect/auth state is acceptable; record it. Any other difference is a STOP-gate item.
 - Produces: the findings file with a section `## Chosen set` that lists the exact `FIXED_CONTEXT_ARGS`, `FIXED_CONTEXT_SETTINGS`, `FIXED_CONTEXT_ENV`, `SUMMARY_EFFORT`, the summary engine (`claude` or `openrouter`), and the mid-turn hand-off behavior. Task 5 copies these values into `src/endless/claude-args.ts` and `src/endless/summarizer-choice.ts`.
 
 Candidate switches found in `claude --help` and in the 2.1.296 binary (the probe must confirm each one; do not assume):
@@ -121,7 +122,7 @@ Candidate switches found in `claude --help` and in the 2.1.296 binary (the probe
 | Org/managed memory | env `CLAUDE_CODE_DISABLE_ORG_MEMORY=1` | binary strings |
 | Git status / git instructions | env `CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS=1`; settings `{"includeGitInstructions": false}` | binary strings |
 | Plugin/user hooks (SessionStart `additionalContext`, e.g. the explanatory output style seen in `tests/fixtures/claude-stream.jsonl`) | settings `{"disableAllHooks": true}`; `--setting-sources project` (skip user settings, so no user plugins) | binary strings, `claude --help` |
-| User MCP servers (vary the tool list) | `--strict-mcp-config` | `claude --help` |
+| User MCP servers (vary the tool list) | `--strict-mcp-config` — COMPACTIONS ONLY. Turns keep the user's servers (user decision, option B); the probe records whether the turn tool list is identical across two calls when no server changed | `claude --help` |
 | Skills listing | `--disable-slash-commands`; env `CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1` | `claude --help`, binary strings |
 | Session transcripts piling up in `~/.claude/projects` | `--no-session-persistence` | `claude --help` |
 | Not usable | `--bare` (reads only `ANTHROPIC_API_KEY`, never OAuth: breaks subscription billing); `--exclude-dynamic-system-prompt-sections` (ignored with `--system-prompt`) | `claude --help` |
@@ -1456,7 +1457,7 @@ git commit -m "feat(endless): append-only log, node and state tables with FTS5 s
 - Produces:
   - `prompt.ts`: `ENDLESS_SYSTEM_PROMPT: string`, `RULER: string` (512 dashes), `systemPromptWith(instructions: string): string`, `compressTask(id: number, kindAndText: string): string`, `mergeTask(a: string, b: string, id: number, end: number, lineA: string, lineB: string): string`, `tooLongText(bytes: number, head: string): string`
   - `summarizer.ts`: `interface SummarizerSession { ask(text: string): Promise<string>; close(): void }`, `interface SummarizerOpenOptions { systemPrompt: string; onFirstToken: () => void }`, `interface Summarizer { open(opts: SummarizerOpenOptions): SummarizerSession }`, `interface Usage { input: number; cacheRead: number; cacheWrite: number; output: number }`, `usageOf(raw: unknown): Usage | null`
-  - `claude-args.ts`: `TURN_MODEL = 'opus'`, `SUMMARY_MODEL = 'haiku'`, `SUMMARY_EFFORT: string`, `FIXED_CONTEXT_ENV: Record<string, string>`, `FIXED_CONTEXT_SETTINGS: string`, `FIXED_CONTEXT_ARGS: readonly string[]`, `endlessClaudeArgs(o: { model: string; effort?: string; systemPrompt: string; mcpConfigPath: string }): string[]`
+  - `claude-args.ts`: `TURN_MODEL = 'opus'`, `SUMMARY_MODEL = 'haiku'`, `SUMMARY_EFFORT: string`, `FIXED_CONTEXT_ENV: Record<string, string>`, `FIXED_CONTEXT_SETTINGS: string`, `FIXED_CONTEXT_ARGS: readonly string[]`, `COMPACTION_ISOLATION_ARGS: readonly string[]`, `COMPACTION_ENV: Record<string, string>`, `endlessClaudeArgs(o: { model: string; effort?: string; systemPrompt: string; mcpConfigPath: string; userTools: boolean }): string[]`
   - `summarizer-claude.ts`: `class ClaudeSummarizer implements Summarizer` with `new ClaudeSummarizer({ manager, chatDir, mcpConfigPath, model?, effort?, askTimeoutMs?, onUsage?, command?, commandArgs? })`
   - `summarizer-openrouter.ts`: `class OpenRouterSummarizer implements Summarizer` with `new OpenRouterSummarizer({ apiKey: () => Promise<string | null>, model?, timeoutMs?, fetchImpl? })`, `OPENROUTER_SUMMARY_MODEL`
   - `summarizer-choice.ts`: `type SummaryEngine = 'claude' | 'openrouter'`, `SUMMARY_ENGINE`, `createSummarizer(d: { manager; chatDir; mcpConfigPath; openRouterKey; onUsage? }): Summarizer`
@@ -1510,7 +1511,7 @@ Create `packages/core/tests/endless/claude-args.test.ts`:
 
 ```ts
 import { describe, it, expect } from 'vitest';
-import { endlessClaudeArgs, TURN_MODEL, SUMMARY_MODEL, SUMMARY_EFFORT, FIXED_CONTEXT_ARGS } from '../../src/endless/claude-args.js';
+import { endlessClaudeArgs, TURN_MODEL, SUMMARY_MODEL, SUMMARY_EFFORT, FIXED_CONTEXT_ARGS, COMPACTION_ISOLATION_ARGS } from '../../src/endless/claude-args.js';
 
 const withoutModel = (args: string[]) => {
   const out: string[] = [];
@@ -1522,11 +1523,19 @@ const withoutModel = (args: string[]) => {
 };
 
 describe('endlessClaudeArgs', () => {
-  const turn = endlessClaudeArgs({ model: TURN_MODEL, systemPrompt: 'SYS', mcpConfigPath: '/c/memory.mcp.json' });
-  const compaction = endlessClaudeArgs({ model: SUMMARY_MODEL, effort: SUMMARY_EFFORT, systemPrompt: 'SYS', mcpConfigPath: '/c/memory.mcp.json' });
+  const turn = endlessClaudeArgs({ model: TURN_MODEL, systemPrompt: 'SYS', mcpConfigPath: '/c/memory.mcp.json', userTools: true });
+  const compaction = endlessClaudeArgs({ model: SUMMARY_MODEL, effort: SUMMARY_EFFORT, systemPrompt: 'SYS', mcpConfigPath: '/c/memory.mcp.json', userTools: false });
 
-  it('turns and compactions differ only in model and effort (same tools, same system prompt)', () => {
-    expect(withoutModel(turn)).toEqual(withoutModel(compaction));
+  it('turns keep the user MCP servers and skills; compactions are isolated', () => {
+    for (const a of COMPACTION_ISOLATION_ARGS.filter(x => x.startsWith('--'))) {
+      expect(turn).not.toContain(a);
+      expect(compaction).toContain(a);
+    }
+  });
+  it('apart from isolation, model and effort, turns and compactions match (same system prompt)', () => {
+    const strip = (args: string[]) => withoutModel(args).filter((x, k, all) =>
+      !COMPACTION_ISOLATION_ARGS.includes(x) && !(all[k - 1] === '--setting-sources'));
+    expect(strip(turn)).toEqual(strip(compaction));
   });
   it('replaces the system prompt and never resumes', () => {
     expect(turn[turn.indexOf('--system-prompt') + 1]).toBe('SYS');
@@ -1805,21 +1814,33 @@ export const FIXED_CONTEXT_ENV: Record<string, string> = {
   CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
   CLAUDE_CODE_DISABLE_ORG_MEMORY: '1',
   CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1',
-  CLAUDE_CODE_DISABLE_BUNDLED_SKILLS: '1',
 };
+
+/** Compactions also hide skills: they never use them, and Haiku has its own cache anyway. */
+export const COMPACTION_ENV: Record<string, string> = { ...FIXED_CONTEXT_ENV, CLAUDE_CODE_DISABLE_BUNDLED_SKILLS: '1' };
 
 export const FIXED_CONTEXT_SETTINGS = JSON.stringify({ autoMemoryEnabled: false, includeGitInstructions: false, disableAllHooks: true });
 
 /** Last on the command line: `--disallowedTools` takes a list and must not swallow other flags. */
 export const FIXED_CONTEXT_ARGS: readonly string[] = [
-  '--setting-sources', 'project',
-  '--strict-mcp-config',
-  '--disable-slash-commands',
   '--no-session-persistence',
   '--disallowedTools', 'AskUserQuestion',
 ];
 
-export function endlessClaudeArgs(o: { model: string; effort?: string; systemPrompt: string; mcpConfigPath: string }): string[] {
+/**
+ * User decision (2026-10-13, option B): TURNS load the user's own MCP servers, claude.ai
+ * connectors, plugins and skills, so these isolation switches apply to COMPACTIONS ONLY.
+ * The prompt cache is per model, so turns and compactions never shared a prefix anyway.
+ * Cost: adding, removing or (re)authenticating a user server changes the turn tool list and
+ * misses the cache once.
+ */
+export const COMPACTION_ISOLATION_ARGS: readonly string[] = [
+  '--setting-sources', 'project',
+  '--strict-mcp-config',
+  '--disable-slash-commands',
+];
+
+export function endlessClaudeArgs(o: { model: string; effort?: string; systemPrompt: string; mcpConfigPath: string; userTools: boolean }): string[] {
   return [
     '-p',
     '--input-format', 'stream-json',
@@ -1833,6 +1854,7 @@ export function endlessClaudeArgs(o: { model: string; effort?: string; systemPro
     '--system-prompt', o.systemPrompt,
     '--mcp-config', o.mcpConfigPath,
     '--settings', FIXED_CONTEXT_SETTINGS,
+    ...(o.userTools ? [] : COMPACTION_ISOLATION_ARGS),
     ...FIXED_CONTEXT_ARGS,
   ];
 }
@@ -1851,7 +1873,7 @@ Create `packages/core/src/endless/summarizer-claude.ts`:
 import type { IStructuredManager } from '../structured/manager.js';
 import type { Summarizer, SummarizerOpenOptions, SummarizerSession, Usage } from './summarizer.js';
 import { usageOf } from './summarizer.js';
-import { endlessClaudeArgs, FIXED_CONTEXT_ENV, SUMMARY_EFFORT, SUMMARY_MODEL } from './claude-args.js';
+import { endlessClaudeArgs, COMPACTION_ENV, SUMMARY_EFFORT, SUMMARY_MODEL } from './claude-args.js';
 
 export interface ClaudeSummarizerOptions {
   manager: IStructuredManager;
@@ -1912,9 +1934,9 @@ export class ClaudeSummarizer implements Summarizer {
     manager.on('exit', onExit);
     manager.spawn(id, {
       command: this.o.command ?? 'claude',
-      args: [...(this.o.commandArgs ?? []), ...endlessClaudeArgs({ model: this.o.model ?? SUMMARY_MODEL, effort: this.o.effort ?? SUMMARY_EFFORT, systemPrompt: opts.systemPrompt, mcpConfigPath: this.o.mcpConfigPath })],
+      args: [...(this.o.commandArgs ?? []), ...endlessClaudeArgs({ model: this.o.model ?? SUMMARY_MODEL, effort: this.o.effort ?? SUMMARY_EFFORT, systemPrompt: opts.systemPrompt, mcpConfigPath: this.o.mcpConfigPath, userTools: false })],
       workDir: this.o.chatDir,
-      env: FIXED_CONTEXT_ENV,
+      env: COMPACTION_ENV,
       toolPolicy: () => ({ allow: false, message: 'Compaction: call no tools.' }),
     });
 
@@ -3520,7 +3542,7 @@ export class TurnRunner {
       const ended = this.watch(id);
       d.manager.spawn(id, {
         command: d.command ?? 'claude',
-        args: [...(d.commandArgs ?? []), ...endlessClaudeArgs({ model: TURN_MODEL, systemPrompt: d.systemPrompt(), mcpConfigPath: d.mcpConfigPath })],
+        args: [...(d.commandArgs ?? []), ...endlessClaudeArgs({ model: TURN_MODEL, systemPrompt: d.systemPrompt(), mcpConfigPath: d.mcpConfigPath, userTools: true })],
         workDir: d.chatDir,
         env: FIXED_CONTEXT_ENV,
       });
@@ -6187,7 +6209,7 @@ git commit -m "docs(endless): WSL2 smoke check results"
 - `--bare` would disable most injections, but it never reads OAuth, so it breaks subscription billing. `--exclude-dynamic-system-prompt-sections` is ignored with `--system-prompt`.
 - The structured manager never asks `toolPolicy` about `AskUserQuestion`, and the CLI auto-approves some tools without `can_use_tool` (see `overseer/coordinator-policy.ts`). A deny-all policy alone is not proof that a compaction calls no tools. The plan adds `--disallowedTools AskUserQuestion` (to turns too, so the prefix matches) and fails any compaction that emits a `tool_use`.
 - `claude --help` (2.1.296) lists `--permission-mode` choices without `default`; the existing structured threads pass `default` and work today. Probe 1c uses the same flags.
-- `--strict-mcp-config` (to keep the tool list fixed) removes the user's own MCP servers from Chat turns. This is a plan decision, not in the spec.
+- User decision 2026-10-13 (option B): Chat TURNS load the user's MCP servers, claude.ai connectors, plugins and skills. `--strict-mcp-config`, `--setting-sources project`, `--disable-slash-commands` and `CLAUDE_CODE_DISABLE_BUNDLED_SKILLS` apply to compactions only (`COMPACTION_ISOLATION_ARGS`, `COMPACTION_ENV`). `disableAllHooks` still applies to both.
 - FTS5 is in the bundled better-sqlite3 (SQLite 3.49.2, checked). The Linux prebuilt was not checked here (Docker's daemon was not running); Tasks 1 and 20 check it.
 
 ## Stage 2 (follow-up, not in this plan)
