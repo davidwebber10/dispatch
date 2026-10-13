@@ -435,3 +435,15 @@ export type {
 export type {
   CardItem, CardKind, CardOption, CardOrigin, CardSource, CardSourceKind, CardStatus, LedgerCard, LedgerSource,
 } from '../../../core/src/overseer/ledger-card-types';
+
+// Endless Chat (spec 2026-10-13). `media` holds image file names served by /api/endless/media/:name.
+export type EndlessKind = 'user' | 'unii' | 'tool' | 'echo' | 'work' | 'note';
+export interface EndlessMessage { i: number; kind: EndlessKind; text: string; size: number; project: string | null; projectName: string | null; ref: string | null; media: string[]; createdAt: number }
+export interface EndlessPage { messages: EndlessMessage[]; hasMore: boolean; hasMoreAfter: boolean }
+export type EndlessTurnStatus = 'idle' | 'waiting' | 'running' | 'failed' | 'interrupted';
+export interface EndlessState { turn: { status: EndlessTurnStatus; error: string | null }; total: number; compactor: { unbuilt: number; merges: number; running: number } }
+export interface EndlessSearchHit { i: number; kind: EndlessKind; project: string | null; projectName: string | null; createdAt: number; snippet: string }
+export interface EndlessViewLine { name: string; l: number; i: number; text: string | null }
+export interface EndlessView { lines: EndlessViewLine[]; bytes: number }
+export interface EndlessProject { id: string; name: string; folder: string; live: number; needsYou: number; openItems: number; lastReport: string | null; messages: number }
+export interface EndlessImage { media_type: string; data: string }

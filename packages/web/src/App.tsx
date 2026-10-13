@@ -17,6 +17,8 @@ import { AuthBanner } from './components/auth/AuthBanner';
 import { UpdateModal } from './components/update/UpdateModal';
 import { HighScoreCelebration } from './components/update/HighScoreCelebration';
 import { MobileApp } from './components/mobile/MobileApp';
+import { ChatMode } from './components/endless/ChatMode';
+import { useEndless } from './stores/endless';
 import { HintToast } from './components/common/HintToast';
 import { Spinner } from './components/common/Spinner';
 import { SetupWizard } from './components/setup/SetupWizard';
@@ -123,7 +125,15 @@ export default function App() {
       onStatus: (s) => {
         useConnection.getState().setStatus(s);
         if (s === 'closed') socketWasClosed = true;
-        else if (s === 'open' && socketWasClosed) { socketWasClosed = false; void resyncAfterReconnect(); }
+        else if (s === 'open' && socketWasClosed) {
+          socketWasClosed = false;
+          void resyncAfterReconnect();
+          // Endless messages broadcast while the socket was down were missed: reload the tail.
+          if (useEndless.getState().loaded && useEndless.getState().atTail) {
+            void useEndless.getState().loadTail().catch(() => {});
+            void useEndless.getState().refreshState().catch(() => {});
+          }
+        }
       },
       onEvent: (e) => {
         useProjects.getState().applyEvent(e);
@@ -135,6 +145,7 @@ export default function App() {
         useAgents.getState().applyEvent(e);
         useAnalyticsFeed.getState().applyEvent(e);
         useLedgerCard.getState().applyEvent(e);
+        useEndless.getState().applyEvent(e);
       },
     });
     sockRef.current = sock;
@@ -213,6 +224,8 @@ export default function App() {
       <AppShell>
         {view === 'settings'
           ? <SettingsView />
+          : view === 'chat'
+          ? <ChatMode />
           : view === 'analytics'
           ? <Suspense fallback={analyticsFallback}><AnalyticsView /></Suspense>
           : (

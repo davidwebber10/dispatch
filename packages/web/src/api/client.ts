@@ -1,6 +1,7 @@
 import type { harnessCapabilities } from '../../../core/src/providers/capabilities';
 import { apiPath } from '../lib/basePath';
 import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry, LedgerCard, LedgerSource } from './types';
+import type { EndlessPage, EndlessState, EndlessSearchHit, EndlessView, EndlessProject, EndlessImage } from './types';
 
 /**
  * A content block for a structured `user` turn (mirrors the daemon's wire shape). A
@@ -57,7 +58,27 @@ const qs = (o: QueryParams): string => {
   return s ? `?${s}` : '';
 };
 
+/** A saved Endless Chat image (`EndlessMessage.media` holds file names). */
+export const endlessMediaUrl = (name: string): string => apiPath(`/api/endless/media/${encodeURIComponent(name)}`);
+
 export const api = {
+  // Endless Chat (spec 2026-10-13).
+  endlessMessages: (p: { before?: number; around?: number; limit?: number; project?: string | null } = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(p)) if (v !== undefined && v !== null && v !== '') q.set(k, String(v));
+    const s = q.toString();
+    return req<EndlessPage>(`/api/endless/messages${s ? `?${s}` : ''}`);
+  },
+  endlessSend: (text: string, project: string | null, images: EndlessImage[] = []) =>
+    req<{ ok: true }>('/api/endless/send', { method: 'POST', body: body({ text, project, images }) }),
+  endlessRetry: () => req<{ ok: true }>('/api/endless/retry', { method: 'POST' }),
+  endlessState: () => req<EndlessState>('/api/endless/state'),
+  endlessSearch: (q: string, project: string | null) =>
+    req<{ results: EndlessSearchHit[] }>(`/api/endless/search?q=${encodeURIComponent(q)}${project ? `&project=${encodeURIComponent(project)}` : ''}`),
+  endlessView: () => req<EndlessView>('/api/endless/view'),
+  endlessProjects: () => req<EndlessProject[]>('/api/endless/projects'),
+  endlessInstructions: () => req<{ text: string }>('/api/endless/instructions'),
+  setEndlessInstructions: (text: string) => req<{ ok: true }>('/api/endless/instructions', { method: 'PUT', body: body({ text }) }),
   listServers: () => req<{ label: string; origin: string }[]>('/api/servers'),
   addServer: (label: string, origin: string) => req<{ label: string; origin: string }[]>('/api/servers', { method: 'POST', body: body({ label, origin }) }),
   removeServer: (origin: string) => req<{ label: string; origin: string }[]>(`/api/servers?origin=${encodeURIComponent(origin)}`, { method: 'DELETE' }),
