@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { LedgerError } from '../overseer/ledger-service.js';
 import { EndlessService, UserError } from '../endless/service.js';
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
@@ -54,6 +55,14 @@ export function createEndlessRouter(svc: EndlessService): Router {
   });
   router.post('/arm', (req, res) => {
     try { res.json(svc.arm(String(req.body?.terminalId ?? ''))); } catch (err) { fail(res, err); }
+  });
+
+  router.post('/ledger/:action', (req, res) => {
+    try { res.json(svc.ledger(req.params.action, req.body ?? {})); }
+    catch (err) {
+      if (err instanceof LedgerError) res.status(err.status).json({ error: err.message, ...err.body });
+      else fail(res, err);
+    }
   });
 
   router.get('/zoom', (req, res) => {

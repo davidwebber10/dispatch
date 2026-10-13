@@ -527,7 +527,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Endless Chat (spec 2026-10-13): its own Claude manager, so its turn and compaction
   // processes never reach SessionService's thread listeners.
   const endlessManager = new ClaudeStructuredSessionManager();
+  const ledgerService = wireLedger(db, sessionService, broadcaster);
   const endless = new EndlessService({
+    ledger: ledgerService,
     db, broadcaster, manager: endlessManager,
     chatDir: path.join(dataDir, 'chat'),
     home: os.homedir(),
@@ -687,7 +689,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Mount routes
   app.use('/api/sessions', createSessionsRouter(sessionService, broadcaster, db));
   app.use('/api', createTerminalsRouter(sessionService, broadcaster, statusService));
-  app.use('/api', createLedgerRouter(wireLedger(db, sessionService, broadcaster)));
+  app.use('/api', createLedgerRouter(ledgerService));
   app.use('/api/events', createEventsRouter(statusService));
   app.use('/api/agents', createAgentsRouter(agentService));
   app.use('/api/roles', createRolesRouter(rolesService));

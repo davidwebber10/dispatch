@@ -25,7 +25,8 @@ import { zoom, dateOf, readImage, RecallError, type ZoomImage } from './recall.j
 import { importOnce } from './import.js';
 import { DEFAULT_LIMITS, type ViewLimits } from './view.js';
 import { nodeName } from './tree.js';
-import { resolveProject, type ProjectRef } from './projects.js';
+import { resolveProject, overseerOf, type ProjectRef } from './projects.js';
+import type { LedgerService } from '../overseer/ledger-service.js';
 
 export class UserError extends Error {}
 
@@ -55,6 +56,8 @@ export interface EndlessServiceOptions {
   turn?: { waitMs?: number; graceMs?: number; command?: string; commandArgs?: string[] };
   /** A thread's final output for its report (SessionService.finalOutput). */
   finalOutput?: (terminalId: string) => string;
+  /** The daemon's ledger service: Chat acts as a project's overseer through it. */
+  ledger?: LedgerService;
 }
 
 export class EndlessService {
@@ -160,6 +163,41 @@ export class EndlessService {
     const r = resolveProject(sessionsDb.list(this.o.db), ref);
     if (!r.ok) throw new UserError(r.error);
     return r.project;
+  }
+
+  /**
+   * The ledger tools for Chat. The ledger belongs to the project's Control Plane (only its
+   * overseer writes, and quotes are checked against its user messages), so Chat acts as that
+   * overseer, for the actions that need no quote of the user.
+   */
+  ledger(action: string, body: Record<string, unknown>): unknown {
+    const ledger = this.o.ledger;
+    if (!ledger) throw new UserError('the ledger is not available');
+    const { project: ref, ...args } = body;
+    const p = this.project(typeof ref === 'string' ? ref : '');
+    const overseer = overseerOf(this.o.db, p.id);
+    if (!overseer) throw new UserError(`${p.name} has no Control Plane, and its ledger belongs to it. Ask the user to open the project's Control Plane once.`);
+    switch (action) {
+      case 'list': {
+        const r = ledger.list(p.id, overseer, { forRecap: false });
+        return { text: r.text, openIds: r.openIds, rules: r.rules };
+      }
+      case 'show': return ledger.show(p.id, overseer, args);
+      case 'add': {
+        const source = args.source as { kind?: unknown } | null | undefined;
+        if (source && typeof source === 'object' && source.kind === 'user') {
+          throw new UserError('Chat cannot record an item with a user source: it has no quote of the user. Use another source kind, or ask the user to add it in the project\'s Control Plane.');
+        }
+        return ledger.add(p.id, overseer, { ...args, author: 'chat' });
+      }
+      case 'resolve':
+        if (args.status !== 'withdrawn') {
+          throw new UserError('Chat can only withdraw an item (status "withdrawn", with a reason). The user answers or parks items in the project\'s Control Plane.');
+        }
+        return ledger.resolve(p.id, overseer, args);
+      case 'title': return ledger.setTitle(p.id, overseer, args);
+      default: throw new UserError(`unknown ledger action: ${action}`);
+    }
   }
 
   /** Chat sent work to a thread it started: the thread then owes Chat one more report. */

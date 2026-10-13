@@ -114,6 +114,9 @@ describe('wireLedger — both LedgerService instances broadcast ledger:changed',
   it('createApp and startServer both build their ledger with wireLedger', () => {
     const src = fs.readFileSync(new URL('../../src/server.ts', import.meta.url), 'utf8');
     expect(src.match(/new LedgerService\(/g)).toHaveLength(1); // inside wireLedger only
-    expect(src.match(/createLedgerRouter\(wireLedger\(db, sessionService, broadcaster\)\)/g)).toHaveLength(2);
+    // createApp builds it inline; startServer builds one and shares it with Chat (EndlessService).
+    expect(src.match(/createLedgerRouter\(wireLedger\(db, sessionService, broadcaster\)\)/g)).toHaveLength(1);
+    expect(src.match(/const ledgerService = wireLedger\(db, sessionService, broadcaster\)/g)).toHaveLength(1);
+    expect(src.match(/createLedgerRouter\(ledgerService\)/g)).toHaveLength(1);
   });
 });

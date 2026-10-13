@@ -12,6 +12,7 @@ import { EndlessService, startEndless } from '../../src/endless/service.js';
 import { createEndlessRouter } from '../../src/routes/endless.js';
 import { FakeSummarizer, settle } from '../endless/fake-summarizer.js';
 import { FakeManager } from '../endless/fake-manager.js';
+import { LedgerService } from '../../src/overseer/ledger-service.js';
 import { Compactor } from '../../src/endless/compactor.js';
 import { EndlessStore } from '../../src/endless/store.js';
 import { claudeMemoryProjectDir, sharedProjectMemoryDir } from '../../src/overseer/memory-scope.js';
@@ -32,7 +33,7 @@ beforeEach(() => {
   svc = new EndlessService({
     db, broadcaster: { broadcast: (e) => events.push(e) }, manager: fake.asManager(),
     chatDir: path.join(root, 'chat'), home: path.join(root, 'home'), summarizer: new FakeSummarizer(),
-    timeZone: 'UTC', turn: { waitMs: 50, graceMs: 10 },
+    timeZone: 'UTC', turn: { waitMs: 50, graceMs: 10 }, ledger: new LedgerService(db),
   });
   svc.start(3999);
   app = express();
@@ -44,6 +45,12 @@ afterEach(() => { svc.stop(); fs.rmSync(root, { recursive: true, force: true });
 const endTurn = async () => { fake.emitEvent({ type: 'result', subtype: 'success', is_error: false }); await svc.turns.whenIdle(); };
 
 describe('endless routes', () => {
+  it('POST /ledger/:action answers 400 for a project with no Control Plane', async () => {
+    const res = await request(app).post('/api/endless/ledger/list').send({ project: 'salsify' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/has no Control Plane/);
+  });
+
   it('writes the memory MCP config in the fixed chat folder', () => {
     const cfg = JSON.parse(fs.readFileSync(path.join(root, 'chat', 'memory.mcp.json'), 'utf8'));
     expect(cfg.mcpServers.memory.env.DISPATCH_PORT).toBe('3999');
