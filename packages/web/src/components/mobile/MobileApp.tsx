@@ -27,6 +27,7 @@ import { Spinner } from '../common/Spinner';
 import { SortableList } from '../common/SortableList';
 import { timeAgo } from '../../lib/time';
 import { OverseerView } from '../overseer/OverseerView';
+import { useStableOrder } from '../../hooks/useStableOrder';
 import { ChatMode } from '../endless/ChatMode';
 
 const AnalyticsView = lazy(() => import('../analytics/AnalyticsView').then((m) => ({ default: m.AnalyticsView })));
@@ -49,13 +50,6 @@ function homePath(p: string): string {
 // ProjectSidebar), so the mobile projects list had no sort control at all until now.
 type ProjectSort = 'recent' | 'alpha' | 'custom';
 const PROJECT_SORTS: [ProjectSort, string][] = [['recent', 'Most recent'], ['alpha', 'Alphabetical'], ['custom', 'Custom']];
-function sortProjects<T extends { name: string; lastActivityAt?: string; updatedAt?: string }>(list: T[], sort: ProjectSort): T[] {
-  return list.slice().sort((a, b) => {
-    if (sort === 'custom') return 0; // preserve the server's stored (drag) order
-    if (sort === 'alpha') return a.name.localeCompare(b.name);
-    return (Date.parse(b.lastActivityAt || b.updatedAt || '') || 0) - (Date.parse(a.lastActivityAt || a.updatedAt || '') || 0);
-  });
-}
 
 type NavInit = { level: 0 | 1 | 2; projectId?: string; leaf?: 'tab' | 'agent'; tabId?: string; agentId?: string };
 function parsePath(path: string): NavInit {
@@ -193,8 +187,8 @@ export function MobileApp() {
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
-  const filtered = projects.filter((p) => p.name.toLowerCase().includes(query.toLowerCase()));
-  const sortedProjects = sortProjects(filtered, projectSort);
+  const ordered = useStableOrder(projects, projectSort);
+  const sortedProjects = ordered.filter((p) => p.name.toLowerCase().includes(query.toLowerCase()));
   // The back button labels the screen it returns TO (iOS convention): the
   // project detail goes back to "Projects"; a thread/agent goes back to its
   // project.
@@ -295,7 +289,7 @@ export function MobileApp() {
                   );
                 }}
               />
-              {!filtered.length && <div style={{ padding: 16, color: 'var(--color-text-tertiary)', fontSize: 13 }}>No projects</div>}
+              {!sortedProjects.length && <div style={{ padding: 16, color: 'var(--color-text-tertiary)', fontSize: 13 }}>No projects</div>}
             </div>
             </>
             )}
