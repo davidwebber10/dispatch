@@ -2,7 +2,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { test, expect, describe, it, beforeAll, beforeEach, vi } from 'vitest';
 import { MessageScroller } from '@shadcn/react/message-scroller';
 import type { ConvItem } from '../../../api/types';
-import { UserBubble, renderTimeline, LoadEarlierButton, ChatView } from './ChatView';
+import { UserBubble, renderTimeline, LoadEarlierButton, ChatView, relayNameFor } from './ChatView';
 import { api } from '../../../api/client';
 import * as sock from '../../../api/structured-socket';
 
@@ -23,6 +23,19 @@ test('a coordinator-relayed turn (source="coordinator") gets a "via {coordinator
   expect(screen.getByText('do the thing')).toBeInTheDocument();
   // Default coordinatorName is '' → useDispatchName falls back to "Control Plane".
   expect(screen.getByText(/VIA CONTROL PLANE/)).toBeInTheDocument();
+});
+
+test('a turn Chat sent to its own thread reads "VIA CHAT", not the Control Plane name', () => {
+  render(<UserBubble text="Fix the login" source="coordinator" relayName="Chat" />);
+  expect(screen.getByText(/VIA CHAT/)).toBeInTheDocument();
+  expect(screen.queryByText(/VIA CONTROL PLANE/)).not.toBeInTheDocument();
+});
+
+test('relayNameFor names Chat only for a thread Chat started', () => {
+  expect(relayNameFor({ config: { origin: 'endless' } })).toBe('Chat');
+  expect(relayNameFor({ config: { role: 'agent' } })).toBeUndefined();
+  expect(relayNameFor({ config: {} })).toBeUndefined();
+  expect(relayNameFor(undefined)).toBeUndefined();
 });
 
 // jsdom lacks the observers the MessageScroller primitive touches (mirrors Stream.test.tsx).
@@ -59,6 +72,21 @@ function renderTimelineItems(items: ConvItem[], pageBoundaries: Set<ConvItem> = 
 // past ANY item named 'AskUserQuestion' (live or answered alike), relying solely on the
 // interactive <AskQuestionCard> overlay (ChatView's `pending` prop) to ever show it, which
 // unmounts the instant it's answered. Now an answered pair renders a durable, collapsed record.
+test('renderTimeline passes the relay name to each coordinator-sent turn', () => {
+  render(
+    <MessageScroller.Provider>
+      <MessageScroller.Root>
+        <MessageScroller.Viewport>
+          <MessageScroller.Content>
+            {renderTimeline([{ kind: 'user', text: 'Fix the login', source: 'coordinator' } as ConvItem], () => {}, new Set(), 'Chat')}
+          </MessageScroller.Content>
+        </MessageScroller.Viewport>
+      </MessageScroller.Root>
+    </MessageScroller.Provider>,
+  );
+  expect(screen.getByText(/VIA CHAT/)).toBeInTheDocument();
+});
+
 describe('renderTimeline — answered AskUserQuestion stays in history (regression)', () => {
   const items: ConvItem[] = [
     { kind: 'tool', toolId: 'tu-1', toolName: 'AskUserQuestion', toolInput: JSON.stringify({ questions: [{ question: 'Ready to ship?', header: 'Release', options: ['Yes', 'No'] }] }) },

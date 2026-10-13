@@ -38,6 +38,8 @@ import { MODEL_IMAGE_MIME, fileToBase64 } from '../../../lib/image-attach';
 export function ChatView({ terminalId }: { terminalId: string }) {
   const tab = useTabs((s) => findTerminal(s.byProject, terminalId));
   const sessionId = tab?.sessionId;
+  // A thread Chat started shows Chat's messages as "VIA CHAT", not the Control Plane's name.
+  const relayName = relayNameFor(tab);
   const connStatus = useConnection((s) => s.status);
   // The ACP harnesses (grok, opencode) have no pageable REST transcript (getConversation →
   // unsupported): their full ws-ring replay IS the whole recoverable history, so the
@@ -276,7 +278,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                   messages is a lie, so that state gets a centered reconnect spinner. */}
               {items.length === 0 && !busy && !compacting && (connStatus === 'open' ? <EmptyState model={model} /> : <ReconnectingState />)}
               {splitIdx === null ? (
-                renderTimeline(items, openFileInViewer, pageBoundariesRef.current)
+                renderTimeline(items, openFileInViewer, pageBoundariesRef.current, relayName)
               ) : (
                 <>
                   {/* Mid-compaction: the bar is a full-width divider pinned at the point the
@@ -284,11 +286,11 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                       below, so their position says "queued". The split is render-only — when
                       `compacting` clears, the timeline re-merges into one render and tool/result
                       pairing across the boundary works again. */}
-                  {renderTimeline(items.slice(0, splitIdx), openFileInViewer, pageBoundariesRef.current)}
+                  {renderTimeline(items.slice(0, splitIdx), openFileInViewer, pageBoundariesRef.current, relayName)}
                   <MessageScroller.Item messageId="__compacting" style={{ display: 'flex' }}>
                     <CompactingBar queued={items.length - splitIdx} />
                   </MessageScroller.Item>
-                  {renderTimeline(items.slice(splitIdx), openFileInViewer, pageBoundariesRef.current)}
+                  {renderTimeline(items.slice(splitIdx), openFileInViewer, pageBoundariesRef.current, relayName)}
                 </>
               )}
               {pending?.questions && pending.questions.length > 0 && (
@@ -531,7 +533,12 @@ function StagedThumbnail({ src, onRemove }: { src: string; onRemove: () => void 
  * comment on pageBoundariesRef) also forces a break — otherwise a loadOlder() prepend
  * could silently merge into a group that already existed, defeating scroll preservation.
  */
-export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void, pageBoundaries: Set<ConvItem>) {
+/** Who relayed a coordinator-sent turn in this thread: 'Chat' for a thread Chat started, else the Dispatch name. */
+export function relayNameFor(tab: { config?: Record<string, unknown> } | null | undefined): string | undefined {
+  return tab?.config?.origin === 'endless' ? 'Chat' : undefined;
+}
+
+export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void, pageBoundaries: Set<ConvItem>, relayName?: string) {
   // Map tool_use id -> its result item, so paired results aren't rendered standalone.
   const resultById = new Map<string, ConvItem>();
   // Set of tool ids that actually have a tool card, so an ORPHAN result (whose tool
@@ -608,7 +615,7 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
       }
       rows.push(
         <MessageScroller.Item key={id} messageId={id} style={{ display: 'flex', flexDirection: 'column' }}>
-          <UserBubble text={it.text ?? ''} source={it.source} grouped={lastRowWasUser} />
+          <UserBubble text={it.text ?? ''} source={it.source} grouped={lastRowWasUser} relayName={relayName} />
         </MessageScroller.Item>,
       );
       lastRowWasUser = true;
@@ -914,7 +921,8 @@ function EmptyState({ model }: { model?: string }) {
 // name}" label (same ArrowBendDownRight "relayed" icon the coordinator's own Stream uses for
 // injected notices) and a muted/bordered bubble instead of the bright human-accent one.
 // `source === 'user'` or undefined (untagged/legacy) renders exactly like before.
-export function UserBubble({ text, source, grouped = false }: { text: string; source?: 'user' | 'coordinator'; grouped?: boolean }) {
+// `relayName` overrides the Dispatch name: a thread Chat started reads "via Chat".
+export function UserBubble({ text, source, grouped = false, relayName }: { text: string; source?: 'user' | 'coordinator'; grouped?: boolean; relayName?: string }) {
   const dispatchName = useDispatchName();
   const viaCoordinator = source === 'coordinator';
   return (
@@ -927,7 +935,7 @@ export function UserBubble({ text, source, grouped = false }: { text: string; so
       {grouped ? null : viaCoordinator ? (
         <div style={{ display: 'flex', alignItems: 'center', gap: 5, font: '500 9.5px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-accent)' }}>
           <ArrowBendDownRight size={11} weight="bold" />
-          VIA {dispatchName.toUpperCase()}
+          VIA {(relayName ?? dispatchName).toUpperCase()}
         </div>
       ) : (
         <span style={{ font: '500 9.5px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-accent)' }}>YOU</span>
