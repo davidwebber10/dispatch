@@ -150,6 +150,50 @@ describe('memory MCP server', () => {
     expect(calls(fetchMock).map((c) => c[0])).not.toContain('/api/terminals/t9/message');
   });
 
+  it('message_thread: a failed send disarms, then returns the send error', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json(200, { armed: true }))
+      .mockResolvedValueOnce(json(500, { error: 'boom' }))
+      .mockResolvedValueOnce(json(200, { disarmed: true }));
+    vi.stubGlobal('fetch', fetchMock);
+    const r = await callTool('message_thread', { id: 't9', text: 'hi' });
+    expect(r.isError).toBe(true);
+    expect((r.content[0] as any).text).toMatch(/\/api\/terminals\/t9\/message -> 500/);
+    expect(calls(fetchMock)).toEqual([['/api/endless/arm', 'POST'], ['/api/terminals/t9/message', 'POST'], ['/api/endless/disarm', 'POST']]);
+    expect(bodyOf(fetchMock, 2)).toEqual({ terminalId: 't9' });
+  });
+
+  it('spawn_agent: a failed send disarms, then deletes the thread, and returns the send error even if both fail', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json(200, { id: 's1', name: 'salsify', folder: '/w/salsify' }))
+      .mockResolvedValueOnce(json(200, { harness: 'claude-code', available: true }))
+      .mockResolvedValueOnce(json(201, { id: 't9' }))
+      .mockResolvedValueOnce(json(200, { armed: true }))
+      .mockResolvedValueOnce(json(500, { error: 'boom' }))
+      .mockResolvedValueOnce(json(500, { error: 'disarm failed' }))
+      .mockResolvedValueOnce(json(500, { error: 'delete failed' }));
+    vi.stubGlobal('fetch', fetchMock);
+    const r = await callTool('spawn_agent', { project: 'salsify', agentType: 'implementer', task: 'x' });
+    expect(r.isError).toBe(true);
+    expect((r.content[0] as any).text).toMatch(/message -> 500/);
+    expect(calls(fetchMock).slice(3)).toEqual([
+      ['/api/endless/arm', 'POST'], ['/api/terminals/t9/message', 'POST'], ['/api/endless/disarm', 'POST'], ['/api/terminals/t9', 'DELETE'],
+    ]);
+  });
+
+  it('spawn_agent: a failed arm deletes the thread and does not disarm', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json(200, { id: 's1', name: 'salsify', folder: '/w/salsify' }))
+      .mockResolvedValueOnce(json(200, { harness: 'claude-code', available: true }))
+      .mockResolvedValueOnce(json(201, { id: 't9' }))
+      .mockResolvedValueOnce(json(400, { error: 'not a Chat thread: t9' }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const r = await callTool('spawn_agent', { project: 'salsify', agentType: 'implementer', task: 'x' });
+    expect((r.content[0] as any).text).toBe('Error: not a Chat thread: t9');
+    expect(calls(fetchMock).slice(3)).toEqual([['/api/endless/arm', 'POST'], ['/api/terminals/t9', 'DELETE']]);
+  });
+
   it('ledger_add does not offer the source kind "user"; the Control Plane schema keeps it', () => {
     const add = TOOLS.find((t) => t.name === 'ledger_add') as any;
     const kinds: string[] = add.inputSchema.properties.source.properties.kind.enum;

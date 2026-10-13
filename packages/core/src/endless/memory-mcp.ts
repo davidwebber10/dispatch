@@ -200,6 +200,9 @@ async function requestJson(method: string, url: string, body?: unknown): Promise
 const getJson = (url: string): Promise<any> => requestJson('GET', url);
 const asText = (v: unknown): { content: McpContent[] } => ({ content: [{ type: 'text', text: typeof v === 'string' ? v : JSON.stringify(v) }] });
 const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
+/** Take back the report one arm owed. Best effort: the send error is what the tool returns. */
+const disarm = (terminalId: string): Promise<unknown> =>
+  requestJson('POST', `${apiBase()}/api/endless/disarm`, { terminalId }).catch(() => null);
 
 
 export async function callTool(name: string, args: any): Promise<{ content: McpContent[]; isError?: boolean }> {
@@ -236,8 +239,17 @@ export async function callTool(name: string, args: any): Promise<{ content: McpC
         const agentId = await createWorker(apiBase(), project.id, {
           agentType: a.agentType as AgentType, label, mission: str(a.mission), model: str(a.model), harness: str(a.harness), spawnDepth: 1, origin: 'endless',
         });
-        await requestJson('POST', `${apiBase()}/api/endless/arm`, { terminalId: agentId });
-        await sendTask(apiBase(), agentId, String(a.task));
+        // A thread that never got its task must not owe a report, nor stay as an empty thread.
+        let armed = false;
+        try {
+          await requestJson('POST', `${apiBase()}/api/endless/arm`, { terminalId: agentId });
+          armed = true;
+          await sendTask(apiBase(), agentId, String(a.task));
+        } catch (err) {
+          if (armed) await disarm(agentId);
+          await requestJson('DELETE', `${apiBase()}/api/terminals/${encodeURIComponent(agentId)}`).catch(() => {});
+          throw err;
+        }
         return asText({ agentId, label, project: project.name, folder: project.folder });
       }
       case 'message_thread': {
@@ -245,7 +257,12 @@ export async function callTool(name: string, args: any): Promise<{ content: McpC
         if (!str(a.text)) throw new Error('text is required');
         const id = str(a.id);
         await requestJson('POST', `${apiBase()}/api/endless/arm`, { terminalId: id });
-        await sendTask(apiBase(), id, String(a.text));
+        try {
+          await sendTask(apiBase(), id, String(a.text));
+        } catch (err) {
+          await disarm(id); // the message never arrived: it owes no report
+          throw err;
+        }
         return asText({ ok: true, id });
       }
       case 'read_agent': {

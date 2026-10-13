@@ -56,6 +56,9 @@ export function createEndlessRouter(svc: EndlessService): Router {
   router.post('/arm', (req, res) => {
     try { res.json(svc.arm(String(req.body?.terminalId ?? ''))); } catch (err) { fail(res, err); }
   });
+  router.post('/disarm', (req, res) => {
+    try { res.json(svc.disarm(String(req.body?.terminalId ?? ''))); } catch (err) { fail(res, err); }
+  });
 
   router.post('/ledger/:action', (req, res) => {
     try { res.json(svc.ledger(req.params.action, req.body ?? {})); }

@@ -16,6 +16,8 @@ import { LedgerService } from '../../src/overseer/ledger-service.js';
 import { Compactor } from '../../src/endless/compactor.js';
 import { EndlessStore } from '../../src/endless/store.js';
 import { claudeMemoryProjectDir, sharedProjectMemoryDir } from '../../src/overseer/memory-scope.js';
+import { callTool } from '../../src/endless/memory-mcp.js';
+import type { AddressInfo } from 'node:net';
 
 let root: string;
 let svc: EndlessService;
@@ -176,6 +178,75 @@ describe('endless routes', () => {
     expect(mine.status).toBe(400);
     expect(mine.body.error).toBe('not a Chat thread: t2');
     expect(svc.store.hasPendingReport('t2')).toBe(false);
+  });
+});
+
+describe('a failed send owes no report (final review I-2)', () => {
+  /** The real Chat routes on a local port, with stand-in thread routes whose message send fails. */
+  async function serve() {
+    const db = (svc as any).o.db as Database.Database;
+    const seen: string[] = [];
+    const full = express();
+    full.use(express.json());
+    full.use((req, _res, next) => { seen.push(`${req.method} ${req.path}`); next(); });
+    full.use('/api/endless', createEndlessRouter(svc));
+    full.get('/api/sessions/s1/overseer/worker-defaults', (_req, res) => { res.json({ harness: 'claude-code', available: true }); });
+    full.post('/api/sessions/s1/terminals', (req, res) => {
+      terminalsDb.create(db, { id: 't9', sessionId: 's1', type: 'claude-code', label: 'Fix', config: req.body.config });
+      res.status(201).json({ id: 't9' });
+    });
+    full.post('/api/terminals/:id/message', (_req, res) => { res.status(500).json({ error: 'the thread did not start' }); });
+    full.delete('/api/terminals/:id', (_req, res) => { res.status(204).end(); });
+    const server = full.listen(0);
+    await new Promise<void>((r) => server.once('listening', () => r()));
+    vi.stubEnv('DISPATCH_API', `http://127.0.0.1:${(server.address() as AddressInfo).port}`);
+    return { db, seen, close: () => new Promise<void>((r) => server.close(() => r())) };
+  }
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it('message_thread: the send fails → the arm is taken back, owed 0, the error returns', async () => {
+    const s = await serve();
+    try {
+      terminalsDb.create(s.db, { id: 't1', sessionId: 's1', type: 'claude-code', label: 'Fix', config: { role: 'agent', origin: 'endless' } });
+      const r = await callTool('message_thread', { id: 't1', text: 'Also fix the logout.' });
+      expect(r.isError).toBe(true);
+      expect((r.content[0] as any).text).toMatch(/the thread did not start/);
+      expect(svc.store.owedReports('t1')).toBe(0);
+      expect(s.seen).toEqual(['POST /api/endless/arm', 'POST /api/terminals/t1/message', 'POST /api/endless/disarm']);
+    } finally { await s.close(); }
+  });
+
+  it('message_thread: a failed send takes back only its own arm', async () => {
+    const s = await serve();
+    try {
+      terminalsDb.create(s.db, { id: 't1', sessionId: 's1', type: 'claude-code', label: 'Fix', config: { role: 'agent', origin: 'endless' } });
+      svc.arm('t1'); // an earlier job still owes its report
+      await callTool('message_thread', { id: 't1', text: 'more' });
+      expect(svc.store.owedReports('t1')).toBe(1);
+    } finally { await s.close(); }
+  });
+
+  it('spawn_agent: the send fails → disarm, then delete the empty thread; owed 0', async () => {
+    const s = await serve();
+    try {
+      const r = await callTool('spawn_agent', { project: 'salsify', agentType: 'implementer', task: 'Fix it' });
+      expect(r.isError).toBe(true);
+      expect((r.content[0] as any).text).toMatch(/the thread did not start/);
+      expect(svc.store.owedReports('t9')).toBe(0);
+      expect(s.seen.slice(-3)).toEqual(['POST /api/terminals/t9/message', 'POST /api/endless/disarm', 'DELETE /api/terminals/t9']);
+    } finally { await s.close(); }
+  });
+
+  it('POST /disarm takes back one owed report', async () => {
+    const db = (svc as any).o.db as Database.Database;
+    terminalsDb.create(db, { id: 't1', sessionId: 's1', type: 'claude-code', label: 'Fix', config: { role: 'agent', origin: 'endless' } });
+    svc.arm('t1');
+    svc.arm('t1');
+    expect((await request(app).post('/api/endless/disarm').send({ terminalId: 't1' })).body).toEqual({ disarmed: true });
+    expect(svc.store.owedReports('t1')).toBe(1);
+    await request(app).post('/api/endless/disarm').send({ terminalId: 't1' });
+    expect((await request(app).post('/api/endless/disarm').send({ terminalId: 't1' })).body).toEqual({ disarmed: false });
+    expect(svc.store.owedReports('t1')).toBe(0);
   });
 });
 

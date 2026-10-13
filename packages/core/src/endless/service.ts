@@ -211,6 +211,11 @@ export class EndlessService {
     return { armed: true };
   }
 
+  /** The send of an armed job failed: take back the one report that arm owed. */
+  disarm(terminalId: string): { disarmed: boolean } {
+    return { disarmed: this.store.claimReport(terminalId) };
+  }
+
   /**
    * Every status edge of a thread (StatusService onWatchStatus). Only the edge INTO 'error'
    * reports (a crash; the settled listener never fires for it); a repeated error edge with no
