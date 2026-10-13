@@ -82,6 +82,43 @@ describe('Compactor', () => {
     expect(t.store.nodeText(0, 0)).toBe('z'.repeat(610));
   });
 
+  it('an empty "Too long" reply keeps the best line so far, with no more asks', async () => {
+    const t = setup();
+    t.log(LONG(0));
+    await settle();
+    const s = t.summarizer.sessions[0];
+    s.reply('z'.repeat(530));
+    await settle();
+    s.reply('   ');
+    await settle();
+    expect(s.asks).toHaveLength(2);
+    expect(t.summarizer.sessions).toHaveLength(1);
+    expect(t.store.nodeText(0, 0)).toBe('z'.repeat(530));
+  });
+
+  it('a follow-up ask that throws keeps the best line so far', async () => {
+    const t = setup();
+    t.log(LONG(0));
+    await settle();
+    const s = t.summarizer.sessions[0];
+    s.reply('z'.repeat(530));
+    await settle();
+    s.fail('the compaction process exited (1)');
+    await settle();
+    expect(t.summarizer.sessions).toHaveLength(1);
+    expect(s.closed).toBe(true);
+    expect(t.store.nodeText(0, 0)).toBe('z'.repeat(530));
+  });
+
+  it('an empty first reply still fails the node', async () => {
+    const t = setup();
+    t.log(LONG(0));
+    await settle();
+    t.summarizer.sessions[0].reply('');
+    await settle();
+    expect(t.store.isBuilt(0, 0)).toBe(false);
+  });
+
   it('stops at the first line that fits and strips an id+n head', async () => {
     const t = setup();
     t.log(LONG(0));

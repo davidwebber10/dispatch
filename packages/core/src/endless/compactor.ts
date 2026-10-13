@@ -178,10 +178,18 @@ export class Compactor {
       let best = '';
       let reply = clean(await session.ask(`${views.contextFor(ref)}\n\n${task}`));
       for (let attempt = 1; ; attempt++) {
-        if (!reply) throw new Error('the summary was empty');
+        // An empty or failed follow-up keeps the best line: a few bytes over is accepted.
+        if (!reply) {
+          if (best) return best;
+          throw new Error('the summary was empty');
+        }
         if (!best || byteLength(reply) < byteLength(best)) best = reply;
         if (byteLength(reply) <= NODE_BYTES || attempt >= MAX_TRIES) return best;
-        reply = clean(await session.ask(tooLongText(byteLength(reply), cutBytes(reply, NODE_BYTES))));
+        try {
+          reply = clean(await session.ask(tooLongText(byteLength(reply), cutBytes(reply, NODE_BYTES))));
+        } catch {
+          return best;
+        }
       }
     } finally {
       session.close();
