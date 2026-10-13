@@ -1,6 +1,6 @@
 import { appPath, href } from '../../lib/basePath';
 import { useState, useEffect, lazy, Suspense } from 'react';
-import { Gear, CaretLeft, CaretRight, Plus, Folders, PushPin, Robot, ChartBar } from '@phosphor-icons/react';
+import { Gear, CaretLeft, CaretRight, Plus, Folders, PushPin, Robot, ChartBar, ChatCircleDots } from '@phosphor-icons/react';
 import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
 import { TransportToggle } from '../layout/TransportToggle';
@@ -27,6 +27,7 @@ import { Spinner } from '../common/Spinner';
 import { SortableList } from '../common/SortableList';
 import { timeAgo } from '../../lib/time';
 import { OverseerView } from '../overseer/OverseerView';
+import { ChatMode } from '../endless/ChatMode';
 
 const AnalyticsView = lazy(() => import('../analytics/AnalyticsView').then((m) => ({ default: m.AnalyticsView })));
 
@@ -95,7 +96,7 @@ export function MobileApp() {
   const [query, setQuery] = useState('');
   const [projectSort, setProjectSort] = useState<ProjectSort>(() => (localStorage.getItem('dispatch:sort') as ProjectSort) || 'recent');
   useEffect(() => { try { localStorage.setItem('dispatch:sort', projectSort); } catch { /* ignore */ } }, [projectSort]);
-  const [bottomTab, setBottomTab] = useState<'projects' | 'pinned' | 'agents' | 'analytics' | 'settings'>('projects');
+  const [bottomTab, setBottomTab] = useState<'projects' | 'chat' | 'pinned' | 'agents' | 'analytics' | 'settings'>('projects');
   // Dispatch mode (mobile): the coordinator view opens as a full-screen overlay
   // over the active project (mirrors browseFiles). Closing returns to the project.
   const [dispatchOpen, setDispatchOpen] = useState(false);
@@ -257,7 +258,9 @@ export function MobileApp() {
         <div style={{ display: 'flex', width: '100%', height: '100%', transform: `translateX(-${level * 100}%)`, transition: 'transform .28s cubic-bezier(.4,0,.2,1)' }}>
           {/* Level 0 — projects / agents, switched by the bottom tab bar */}
           <div style={{ ...slot, display: 'flex', flexDirection: 'column' }}>
-            {bottomTab === 'analytics' ? (
+            {bottomTab === 'chat' ? (
+              <ChatMode mobile />
+            ) : bottomTab === 'analytics' ? (
               <Suspense fallback={analyticsFallback}><AnalyticsView /></Suspense>
             ) : bottomTab === 'settings' ? (
               <MobileSettingsList onOpen={openSettingsSection} />
@@ -329,7 +332,7 @@ export function MobileApp() {
           reclaims the space. Tapping a tab from a project pops back to the root. */}
       {level < 2 && (
         <div style={{ flexShrink: 0, display: 'flex', borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
-          {([['projects', 'Projects', Folders], ['pinned', 'Pinned', PushPin], ['agents', 'Automations', Robot], ['analytics', 'Analytics', ChartBar], ['settings', 'Settings', Gear]] as const).map(([key, label, Icon]) => {
+          {([['projects', 'Projects', Folders], ['chat', 'Chat', ChatCircleDots], ['pinned', 'Pinned', PushPin], ['agents', 'Automations', Robot], ['analytics', 'Analytics', ChartBar], ['settings', 'Settings', Gear]] as const).map(([key, label, Icon]) => {
             const on = bottomTab === key;
             return (
               <button key={key} onClick={() => { setBottomTab(key); if (level > 0) history.back(); }}
