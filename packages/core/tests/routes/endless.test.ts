@@ -7,7 +7,7 @@ import request from 'supertest';
 import Database from 'better-sqlite3';
 import { initSchema } from '../../src/db/schema.js';
 import * as sessionsDb from '../../src/db/sessions.js';
-import { EndlessService } from '../../src/endless/service.js';
+import { EndlessService, startEndless } from '../../src/endless/service.js';
 import { createEndlessRouter } from '../../src/routes/endless.js';
 import { FakeSummarizer, settle } from '../endless/fake-summarizer.js';
 import { FakeManager } from '../endless/fake-manager.js';
@@ -182,5 +182,93 @@ describe('endless service boot', () => {
     expect(s.viewLines().lines.map((l) => l.name)).toEqual(['0+1', '1+1']);
     s.stop();
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe('endless fix round 1', () => {
+  let dir: string;
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'endless-fix-')); });
+  afterEach(() => { vi.restoreAllMocks(); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  const make = (db: Database.Database, m: FakeManager, chatDir = path.join(dir, 'chat')) => new EndlessService({
+    db, broadcaster: { broadcast: () => {} }, manager: m.asManager(),
+    chatDir, home: path.join(dir, 'home'), summarizer: new FakeSummarizer(),
+    timeZone: 'UTC', turn: { waitMs: 50, graceMs: 10 },
+  });
+
+  it('a turn killed after the DB closes (daemon shutdown) ends without a throw; the next boot marks it interrupted', async () => {
+    const file = path.join(dir, 'dispatch.db');
+    const db = new Database(file);
+    initSchema(db);
+    const m = new FakeManager();
+    const s = make(db, m);
+    s.start(3999);
+    s.send({ text: 'long job', project: null, images: [] });
+    await settle();
+    expect(m.spawned).toHaveLength(1);
+    expect(s.state().turn.status).toBe('running');
+
+    const rejections: unknown[] = [];
+    const onRejection = (r: unknown) => { rejections.push(r); };
+    process.on('unhandledRejection', onRejection);
+    try {
+      // cleanup(): endless.stop(); endlessManager.killAll() (its kill emits 'exit' synchronously); … db.close().
+      s.stop();
+      db.close();
+      m.emitExit(143);
+      await expect(s.turns.whenIdle()).resolves.toBeUndefined();
+      await settle();
+      expect(rejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onRejection);
+    }
+
+    const db2 = new Database(file);
+    const s2 = make(db2, new FakeManager());
+    s2.start(3999);
+    expect(s2.state().turn).toEqual({ status: 'interrupted', error: null });
+    s2.stop();
+    db2.close();
+  });
+
+  it('a failed start disables only the chat: its routes answer 503, other routes still work', async () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const blocker = path.join(dir, 'not-a-folder');
+    fs.writeFileSync(blocker, 'x'); // mkdir under a file fails
+    const s = make(db, new FakeManager(), path.join(blocker, 'chat'));
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(() => startEndless(s, 3999)).not.toThrow();
+    expect(errors).toHaveBeenCalled();
+    const a = express();
+    a.use(express.json());
+    a.use('/api/endless', createEndlessRouter(s));
+    a.get('/api/other', (_req, res) => { res.json({ ok: true }); });
+    const state = await request(a).get('/api/endless/state');
+    expect(state.status).toBe(503);
+    expect(state.body).toEqual({ error: 'Chat is unavailable' });
+    expect((await request(a).post('/api/endless/send').send({ text: 'hi' })).status).toBe(503);
+    expect((await request(a).get('/api/other')).body).toEqual({ ok: true });
+    s.stop();
+  });
+
+  it('refuses an image entry that is not an object with 400', async () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const m = new FakeManager();
+    const s = make(db, m);
+    s.start(3999);
+    const a = express();
+    a.use(express.json());
+    a.use('/api/endless', createEndlessRouter(s));
+    for (const images of [[null], ['x'], [{ media_type: 'image/png' }]]) {
+      const res = await request(a).post('/api/endless/send').send({ text: 'see', images });
+      expect(res.status).toBe(400);
+      expect(typeof res.body.error).toBe('string');
+    }
+    await settle();
+    expect(m.spawned).toHaveLength(0);
+    expect(s.store.count()).toBe(0);
+    s.stop();
   });
 });

@@ -77,7 +77,7 @@ import { createLedgerRouter } from './routes/ledger.js';
 import { LedgerService } from './overseer/ledger-service.js';
 import { WatchDispatcher } from './sessions/watch-dispatcher.js';
 import { createAnalyticsRouter, trackingStartedAt } from './routes/analytics.js';
-import { EndlessService, limitsFromEnv } from './endless/service.js';
+import { EndlessService, limitsFromEnv, startEndless } from './endless/service.js';
 import { createEndlessRouter } from './routes/endless.js';
 
 /**
@@ -804,8 +804,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   // Store port in app state
   appState.set(db, 'port', String(port));
-  // Endless Chat needs the real port for its memory MCP server config.
-  endless.start(port);
+  // Endless Chat needs the real port for its memory MCP server config. A failed start
+  // logs and disables only the chat (its routes answer 503); the daemon keeps running.
+  startEndless(endless, port);
 
   // Status hooks: tell SessionService how to make spawned agents phone home with
   // lifecycle events (Claude hooks settings file + Codex notify helper).

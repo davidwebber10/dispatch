@@ -10,6 +10,10 @@ const int = (v: unknown, fallback: number, min: number, max: number): number => 
 /** Endless Chat HTTP surface (spec 2026-10-13, section 2). Live events ride the events socket. */
 export function createEndlessRouter(svc: EndlessService): Router {
   const router = Router();
+  router.use((_req, res, next) => {
+    if (svc.available) next();
+    else res.status(503).json({ error: 'Chat is unavailable' });
+  });
   const fail = (res: any, err: unknown) => {
     if (err instanceof UserError) res.status(400).json({ error: err.message });
     else res.status(500).json({ error: err instanceof Error ? err.message : String(err) });

@@ -62,7 +62,8 @@ export class EndlessService {
   readonly mcpConfigPath: string;
   private readonly timeZone: string;
   private readonly now: () => number;
-  private started = false;
+  /** 'new' until start(); 'failed' if start() threw (the chat routes then answer 503). */
+  private phase: 'new' | 'ready' | 'failed' = 'new';
   private readonly usage: { turns: Usage[]; compactions: Usage[] } = { turns: [], compactions: [] };
 
   constructor(private readonly o: EndlessServiceOptions) {
@@ -98,8 +99,28 @@ export class EndlessService {
   /** After the daemon listens: the MCP config, a stopped turn marked, recovery, the one-time import. */
   start(port: number): void {
     // recover() replaces the compactor's unbuilt list: a second call would lose work.
-    if (this.started) return;
-    this.started = true;
+    if (this.phase !== 'new') return;
+    try {
+      this.boot(port);
+      this.phase = 'ready';
+    } catch (err) {
+      this.phase = 'failed';
+      this.compactor.stop();
+      throw err;
+    }
+  }
+
+  /** True after a successful start(); the routes refuse every request until then. */
+  get available(): boolean { return this.phase === 'ready'; }
+
+  /**
+   * During daemon shutdown the DB closes before the killed turn's `finally` (a microtask
+   * after the synchronous 'exit') runs. Writes then return early; turn_status keeps its
+   * running/waiting value, so the next boot marks the turn interrupted.
+   */
+  private get closed(): boolean { return !this.o.db.open; }
+
+  private boot(port: number): void {
     fs.mkdirSync(this.mediaDir, { recursive: true });
     const memoryMcp = fileURLToPath(new URL('./memory-mcp.js', import.meta.url));
     fs.writeFileSync(this.mcpConfigPath, JSON.stringify({ mcpServers: { memory: { command: 'node', args: [memoryMcp], env: { DISPATCH_PORT: String(port) } } } }, null, 2));
@@ -124,12 +145,14 @@ export class EndlessService {
   }
 
   log(input: LogInput): EndlessMessage[] {
+    if (this.closed) return [];
     const written = appendLogged({ store: this.store, views: this.views, compactor: this.compactor }, input);
     for (const m of written) this.o.broadcaster.broadcast({ type: 'endless:message', message: this.toWire(m) });
     return written;
   }
 
   private emit(e: EndlessEvent): void {
+    if (this.closed) return;
     if (e.type === 'endless:turn') {
       this.store.setState('turn_status', e.status);
       this.store.setState('turn_error', e.error ?? '');
@@ -146,6 +169,11 @@ export class EndlessService {
   send(body: { text: string; project: string | null; images: { media_type: string; data: string }[] }): void {
     if (!body.text.trim() && body.images.length === 0) throw new UserError('a message needs text or an image');
     if (body.project && !sessionsDb.getById(this.o.db, body.project)) throw new UserError(`unknown project: ${body.project}`);
+    for (const img of body.images as unknown[]) {
+      const ok = !!img && typeof img === 'object' && typeof (img as any).media_type === 'string' && typeof (img as any).data === 'string';
+      if (!ok) throw new UserError('each image needs a media_type and base64 data');
+      if (!EXT[(img as any).media_type]) throw new UserError(`unsupported image type: ${(img as any).media_type}`);
+    }
     const media = body.images.map((img, k) => this.saveImage(img, k));
     this.turns.send({ text: body.text, project: body.project, media });
   }
@@ -210,5 +238,16 @@ export class EndlessService {
     if (base !== name || base.startsWith('.')) return null;
     const file = path.join(this.mediaDir, base);
     return fs.existsSync(file) ? file : null;
+  }
+}
+
+/** Daemon boot: a failed start logs and disables only the chat (its routes answer 503). */
+export function startEndless(svc: EndlessService, port: number): boolean {
+  try {
+    svc.start(port);
+    return true;
+  } catch (err) {
+    console.error('[endless] Chat is unavailable: start failed:', err);
+    return false;
   }
 }
