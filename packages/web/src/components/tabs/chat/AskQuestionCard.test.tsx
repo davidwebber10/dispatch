@@ -79,6 +79,18 @@ test('Dismiss calls onDeny with dismiss; without handlers, Discuss and Dismiss a
   expect(screen.getByText('or reply below to discuss')).toBeInTheDocument();
 });
 
+test('a Dismiss or empty Discuss locks the card, so a second tap cannot post twice', () => {
+  const onDeny = vi.fn();
+  const questions: PermissionQuestion[] = [{ question: 'Which fruit?', options: ['Apple'] }];
+  render(<AskQuestionCard questions={questions} onAnswer={() => {}} onReply={() => {}} onDeny={onDeny} />);
+  const dismiss = screen.getByRole('button', { name: 'Dismiss' }) as HTMLButtonElement;
+  fireEvent.click(dismiss);
+  fireEvent.click(dismiss);
+  expect(onDeny).toHaveBeenCalledTimes(1);
+  expect(dismiss.disabled).toBe(true);
+  expect((screen.getByRole('button', { name: 'Discuss' }) as HTMLButtonElement).disabled).toBe(true);
+});
+
 test('multi-select accumulates picks and joins labels with ", " on Submit', () => {
   const onAnswer = vi.fn();
   const questions: PermissionQuestion[] = [

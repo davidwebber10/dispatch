@@ -82,9 +82,15 @@ export function AskQuestionCard({ questions, onAnswer, onReply, onDeny }: {
     if (!on && !multi) setSel((prev) => ({ ...prev, [qi]: [] }));
   };
 
+  const deny = (action: 'discuss' | 'dismiss') => {
+    if (submitted) return;
+    setSubmitted(true);
+    onDeny?.(action);
+  };
+
   const sendDiscuss = () => {
     const text = discussText.trim();
-    if (text) onReply?.(text); else onDeny?.('discuss');
+    if (text) onReply?.(text); else deny('discuss');
     setDiscussOpen(false);
     setDiscussText('');
   };
@@ -196,7 +202,7 @@ export function AskQuestionCard({ questions, onAnswer, onReply, onDeny }: {
           <button onClick={() => setDiscussOpen(true)} disabled={submitted} style={actionStyle}>Discuss</button>
         )}
         {onDeny && (
-          <button onClick={() => onDeny('dismiss')} disabled={submitted} style={actionStyle}>Dismiss</button>
+          <button onClick={() => deny('dismiss')} disabled={submitted} style={actionStyle}>Dismiss</button>
         )}
         <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>or reply below to discuss</span>
       </div>
