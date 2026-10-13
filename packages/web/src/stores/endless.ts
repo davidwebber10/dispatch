@@ -31,22 +31,28 @@ interface EndlessStoreState {
   retry: () => Promise<void>;
   refreshState: () => Promise<void>;
   loadProjects: () => Promise<void>;
+  /** Socket reconnect: broadcasts were missed, so reload the tail (also recovers from `unavailable`). */
+  resyncAfterReconnect: () => void;
   applyEvent: (e: ServerEvent) => void;
 }
 
 export const useEndless = create<EndlessStoreState>((set, get) => {
   /** Run a load; a 503 sets `unavailable` instead of throwing, a good result clears it. */
-  const load = async <T,>(fetcher: () => Promise<T>, apply: (v: T) => void): Promise<void> => {
+  const load = async <T,>(fetcher: () => Promise<T>, apply: (v: T) => void, myGen?: number): Promise<void> => {
     let v: T;
     try {
       v = await fetcher();
     } catch (err) {
+      if (myGen !== undefined && myGen !== gen) return;
       if (isUnavailable(err)) { set({ unavailable: true, loaded: false }); return; }
       throw err;
     }
+    if (myGen !== undefined && myGen !== gen) return; // a newer window load replaced this one
     set({ unavailable: false });
     apply(v);
   };
+  /** Bumped by every load that replaces the window; a load that started under an older value is dropped. */
+  let gen = 0;
 
   return {
     messages: [],
@@ -62,29 +68,50 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
     turn: { status: 'idle', error: null },
     projects: [],
 
-    loadTail: () => load(
-      () => api.endlessMessages({ limit: PAGE, project: get().filter }),
-      (page) => set({ messages: page.messages, hasMore: page.hasMore, atTail: true, focus: null, loaded: true }),
-    ),
+    loadTail: () => {
+      const g = ++gen;
+      return load(
+        () => api.endlessMessages({ limit: PAGE, project: get().filter }),
+        (page) => {
+          // A broadcast can land after the server built the page but before this runs: keep it.
+          const { filter, messages, atTail } = get();
+          const last = page.messages.length ? page.messages[page.messages.length - 1].i : -1;
+          const newer = atTail ? messages.filter((m) => m.i > last && (filter === null || m.project === filter)) : [];
+          set({ messages: [...page.messages, ...newer], hasMore: page.hasMore, atTail: true, focus: null, loaded: true });
+        },
+        g,
+      );
+    },
     loadOlder: async () => {
       const { messages, hasMore, loadingOlder, filter } = get();
       if (!hasMore || loadingOlder || messages.length === 0) return;
+      const g = gen;
       set({ loadingOlder: true });
       try {
         await load(
           () => api.endlessMessages({ before: messages[0].i, limit: PAGE, project: filter }),
-          (page) => set({ messages: [...page.messages, ...get().messages], hasMore: page.hasMore }),
+          (page) => {
+            const have = new Set(get().messages.map((m) => m.i));
+            set({ messages: [...page.messages.filter((m) => !have.has(m.i)), ...get().messages], hasMore: page.hasMore });
+          },
+          g,
         );
       } finally {
-        set({ loadingOlder: false });
+        if (g === gen) set({ loadingOlder: false });
       }
     },
-    openAt: (i) => load(
-      () => api.endlessMessages({ around: i, limit: PAGE, project: get().filter }),
-      (page) => set({ messages: page.messages, hasMore: page.hasMore, atTail: !page.hasMoreAfter, focus: i, loaded: true }),
-    ),
+    openAt: (i) => {
+      const g = ++gen;
+      set({ loadingOlder: false });
+      return load(
+        () => api.endlessMessages({ around: i, limit: PAGE, project: get().filter }),
+        (page) => set({ messages: page.messages, hasMore: page.hasMore, atTail: !page.hasMoreAfter, focus: i, loaded: true }),
+        g,
+      );
+    },
     setFilter: async (project) => {
-      set({ filter: project });
+      gen++;
+      set({ filter: project, loadingOlder: false });
       await get().loadTail();
     },
     send: async (text, project, images = []) => {
@@ -94,6 +121,13 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
     retry: async () => { await api.endlessRetry(); },
     refreshState: () => load(() => api.endlessState(), (s) => set({ turn: s.turn })),
     loadProjects: () => load(() => api.endlessProjects(), (projects) => set({ projects })),
+
+    resyncAfterReconnect: () => {
+      const { loaded, unavailable, atTail } = get();
+      if (!(loaded || unavailable) || !atTail) return;
+      void get().loadTail().catch(() => {});
+      void get().refreshState().catch(() => {});
+    },
 
     applyEvent: (e) => {
       if (e.type === 'endless:message') {
@@ -115,7 +149,7 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
       if (e.type === 'endless:turn') {
         const status = e.status as EndlessTurnStatus;
         const turn = { status, error: typeof e.error === 'string' ? e.error : null };
-        if (status === 'idle' || status === 'failed') {
+        if (status === 'idle' || status === 'failed' || status === 'interrupted') {
           set({ turn, liveText: '', liveThinking: '' });
           void get().loadProjects().catch(() => {});
         } else {

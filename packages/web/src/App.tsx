@@ -129,10 +129,7 @@ export default function App() {
           socketWasClosed = false;
           void resyncAfterReconnect();
           // Endless messages broadcast while the socket was down were missed: reload the tail.
-          if (useEndless.getState().loaded && useEndless.getState().atTail) {
-            void useEndless.getState().loadTail().catch(() => {});
-            void useEndless.getState().refreshState().catch(() => {});
-          }
+          useEndless.getState().resyncAfterReconnect();
         }
       },
       onEvent: (e) => {
