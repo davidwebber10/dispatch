@@ -86,6 +86,9 @@ or contains a date.
 
 `summary-probe.mjs` as written in the brief (`--model haiku --effort <e> --system-prompt
 <3.6 KB> --no-session-persistence --strict-mcp-config`, 24 KB `<chat>` + ~2 KB message).
+Note: these latency numbers come from the brief's script as written, without the isolated
+compaction set (no `--settings`, `--setting-sources project`, `--disable-slash-commands`,
+or the `CLAUDE_CODE_DISABLE_*` env), so user plugins, hooks, and skills were loaded.
 Runs 2–5 per effort (run 1 writes the cache):
 
 | effort | exit | median wall ms (5 runs) | ttft ms (runs 2–5) | input | cache read | cache write | output (runs 2–5) | reply bytes (runs 2–5) |
@@ -99,8 +102,10 @@ Run 1: max 51,277 ms (cache_write 34,946); xhigh 20,027 ms and high 9,364 ms (ca
 6,985 of 7,022). `ttft_ms` is close to `duration_ms` because the first text token comes
 after the thinking. Every reply was ≤ 310 bytes (limit 512).
 
-- SUMMARY_EFFORT: max (the highest effort that exits 0 for Haiku).
-- Engine: openrouter (rule: openrouter when the median wall time > 5,000 ms; max median is
+The mechanical rule gives the two lines below. The controller overrode them; see "Chosen set"
+(claude/high).
+- Rule result, SUMMARY_EFFORT: max (the highest effort that exits 0 for Haiku).
+- Rule result, Engine: openrouter (rule: openrouter when the median wall time > 5,000 ms; max median is
   32,992 ms). Note: no effort meets the 5,000 ms rule; `high` is closest at 5,940 ms.
 
 ## (c) Hand-off and deny-all
@@ -139,14 +144,16 @@ Compactions only (isolation; turns keep the user's MCP servers, connectors, plug
 skills — option B):
 
 - COMPACTION_ISOLATION_ARGS: `['--setting-sources', 'project', '--strict-mcp-config', '--disable-slash-commands']`
-- COMPACTION_ISOLATION_ENV: `{ CLAUDE_CODE_DISABLE_BUNDLED_SKILLS: '1' }`
+- COMPACTION_ENV: FIXED_CONTEXT_ENV plus `CLAUDE_CODE_DISABLE_BUNDLED_SKILLS: '1'`, that is
+  `{ CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1', CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', CLAUDE_CODE_DISABLE_ORG_MEMORY: '1', CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1', CLAUDE_CODE_DISABLE_BUNDLED_SKILLS: '1' }`
 
 Not usable: `--bare` (API key only; breaks subscription billing);
 `--exclude-dynamic-system-prompt-sections` (ignored with `--system-prompt`; not needed —
 the dynamic sections already trail the first user message in 2.1.296).
 
-- SUMMARY_EFFORT: 'max'
-- SUMMARY_ENGINE: 'openrouter'
+- SUMMARY_EFFORT: 'high'
+- SUMMARY_ENGINE: 'claude'
+- Controller ruling: claude/high accepted as the exception to the 5,000 ms rule (high median 5,940 ms); the openrouter switch stays available in summarizer-choice.ts
 - Mid-turn hand-off: a message written to stdin during a tool call is injected into the
   running turn; it is answered before the first `result` (no second turn).
 - Deny-all on compactions: `toolPolicy` denies Read, but an auto-approved Bash call runs
