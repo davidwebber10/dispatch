@@ -18,20 +18,29 @@ import { lastMessage, nodeName, type Line, type NodeRef } from './tree.js';
 export interface StagedViews { chat: ChatView; compaction: Line[]; epoch: number; merged: boolean[] }
 
 export class ViewKeeper {
-  private chat: ChatView;
-  private compaction: Line[];
+  private chat: ChatView = { lines: [], batching: false };
+  private compaction: Line[] = [];
   private epochN = 0;
   private readonly text: NodeText;
   private readonly size: LineSize;
 
-  constructor(private readonly store: EndlessStore, private readonly limits: ViewLimits = DEFAULT_LIMITS) {
+  /**
+   * `defer: true` leaves the views empty until `load()`: the service loads them in its
+   * guarded start, so a corrupt saved view disables only the chat, not the daemon.
+   */
+  constructor(private readonly store: EndlessStore, private readonly limits: ViewLimits = DEFAULT_LIMITS, opts: { defer?: boolean } = {}) {
     this.text = (l, i) => store.nodeText(l, i);
     this.size = lineSize(this.text);
-    this.chat = store.loadChatView() ?? { lines: [], batching: false };
-    this.compaction = store.loadCompactionView() ?? [];
+    if (!opts.defer) this.load();
+  }
+
+  /** Load the saved views and append lines for messages they do not cover yet. */
+  load(): void {
+    this.chat = this.store.loadChatView() ?? { lines: [], batching: false };
+    this.compaction = this.store.loadCompactionView() ?? [];
     const last = this.chat.lines[this.chat.lines.length - 1];
     const covered = last ? lastMessage(last[0], last[1]) + 1 : 0;
-    for (let i = covered; i < store.count(); i++) this.onMessage(i);
+    for (let i = covered; i < this.store.count(); i++) this.onMessage(i);
   }
 
   /** Changes whenever the compaction view is rewritten (not appended): a new cached prefix. */

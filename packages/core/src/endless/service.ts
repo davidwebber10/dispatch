@@ -68,7 +68,7 @@ export class EndlessService {
 
   constructor(private readonly o: EndlessServiceOptions) {
     this.store = new EndlessStore(o.db);
-    this.views = new ViewKeeper(this.store, o.limits);
+    this.views = new ViewKeeper(this.store, o.limits, { defer: true });
     this.mediaDir = path.join(o.chatDir, 'media');
     this.mcpConfigPath = path.join(o.chatDir, 'memory.mcp.json');
     this.timeZone = o.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -121,6 +121,8 @@ export class EndlessService {
   private get closed(): boolean { return !this.o.db.open; }
 
   private boot(port: number): void {
+    // Loaded here, not in the constructor: a corrupt saved view then fails only the chat.
+    this.views.load();
     fs.mkdirSync(this.mediaDir, { recursive: true });
     const memoryMcp = fileURLToPath(new URL('./memory-mcp.js', import.meta.url));
     fs.writeFileSync(this.mcpConfigPath, JSON.stringify({ mcpServers: { memory: { command: 'node', args: [memoryMcp], env: { DISPATCH_PORT: String(port) } } } }, null, 2));

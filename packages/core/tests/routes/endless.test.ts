@@ -262,6 +262,23 @@ describe('endless fix round 1', () => {
     s.stop();
   });
 
+  it('a corrupt saved view does not throw at construction; start fails and the chat routes answer 503', async () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    new EndlessStore(db).setState('view', '{not json');
+    let s: EndlessService | undefined;
+    expect(() => { s = make(db, new FakeManager()); }).not.toThrow();
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(startEndless(s!, 3999)).toBe(false);
+    expect(errors).toHaveBeenCalled();
+    expect(s!.available).toBe(false);
+    const a = express();
+    a.use(express.json());
+    a.use('/api/endless', createEndlessRouter(s!));
+    expect((await request(a).get('/api/endless/state')).status).toBe(503);
+    s!.stop();
+  });
+
   it('refuses an image entry that is not an object with 400', async () => {
     const db = new Database(':memory:');
     initSchema(db);
