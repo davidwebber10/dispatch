@@ -86,6 +86,7 @@ endless_messages (
   size     INTEGER NOT NULL,      -- UTF-8 bytes
   project  TEXT,                  -- sessions.id, or NULL for general
   ref      TEXT,                  -- optional: terminal id for work messages
+  media    TEXT,                  -- optional: JSON list of image file paths
   created_at INTEGER NOT NULL
 )
 endless_nodes (
@@ -120,11 +121,21 @@ Exactly the gist, sections 2–4. The rules that matter most:
   oldest. Never measure from the first message.
 - When: each new message appends one line. Once the view passes 128,000 bytes, one batch
   merges until ≤64,000 bytes (or as far as built parents allow, continuing at each message).
-- Compaction view: the chat view merged further to a 16–32 KB sawtooth; it ends at the node
-  being built and stops at the first unbuilt line.
+- Compaction view: the chat view merged further to a 16–32 KB sawtooth (24 KB average).
+  It is merged down to 16 KB once, then the chat's new lines are appended; it is merged
+  again once it passes 32 KB, OR when the chat's view merges. It ends at the node being
+  built (for a merge: the lines up to the merge's last message), holds only built lines,
+  and stops at the first unbuilt line.
 - Compaction calls use the SAME system prompt as turns, then the compaction view, then the
   task text from the gist (with the 512-dash ruler). Too-long replies get the gist's
-  "Too long" follow-up; at most 5 tries; keep the shortest line.
+  "Too long" follow-up IN THE SAME CONVERSATION (a second user message to the same
+  process); at most 5 tries; keep the shortest line. A few bytes over 512 is fine.
+- A compaction carries the same tools as a turn (so the prefix matches) but must call
+  none: the permission callback denies every tool call in a compaction process.
+- Haiku runs at the highest effort level the CLI exposes (the gist uses xhigh).
+- Cache-write coordination: when several compactions share one marked prefix, start one,
+  wait for its response to begin streaming, then start the rest — otherwise all of them
+  pay to write the same prefix.
 - Up to 8 compactions at once. A message's node starts once fewer than 8 lines before it are
   unbuilt; a merge starts once both halves are built. Ready nodes live in queues; never
   scan the tree.
@@ -137,13 +148,25 @@ Exactly the gist, sections 2–4. The rules that matter most:
    none.
 2. If a turn is running: hand the message to the running process between tool calls (the
    structured manager's stdin), and log it as `user`. Stop.
-3. Otherwise log it, then wait (at most 30 s) until every earlier message has its level-0 node built.
-4. Spawn `claude -p --model opus` (stream-json, via the existing structured transport) in:
-   the tagged project's `working_dir`, or `~/.dispatch/chat` when untagged. No `-r`: every
-   turn is a fresh session.
+3. Otherwise wait until every earlier message is summarized (its level-0 node built). A
+   node whose compaction already failed 5 times does not block: it shows in the view as
+   `(not summarized yet: zoom it)`. Then RENDER THE VIEW, and only after that log the new
+   message (it goes whole after the view, never as a view line).
+4. Spawn `claude -p --model opus` (stream-json, via the existing structured transport)
+   ALWAYS in the fixed folder `~/.dispatch/chat`. No `-r`: every turn is a fresh session.
+   The folder is fixed on purpose: Claude Code puts the working directory into its system
+   context, so a per-project folder would change the prefix and break the cache between
+   projects (the gist: tools and system prompt never change). The project's folder is
+   named in the status block and the message; tools use absolute paths, and threads are
+   started in the project's own folder.
 5. Input order: `[tools] [system prompt] [view] [status block] [message]`. The system prompt
    is fixed text with no dates or state. The view, status block, and message go in the
    first user message. Per-turn state never goes in the system prompt.
+   **Fixed system context (must verify first, section 10):** pass the prompt with
+   `--system-prompt` (replace, not append) followed by the user's own instructions (a fixed
+   "Chat instructions" setting). Turn OFF everything Claude Code would inject that varies:
+   auto memory, CLAUDE.md / project memory loading, git status, and the date/environment
+   block. If a piece cannot be turned off, it must at least be identical on every call.
 6. Log each reply (`unii`), tool call (`tool`, name + JSON input) and result (`echo`) as it
    arrives.
 7. The process ends. Nothing carries over except the log. The compactor picks up the new
@@ -159,9 +182,12 @@ thread for multi-file or long work; never wait or poll for a thread.
 Control Plane's agency server). Native Claude Code tools stay enabled — this chat does its
 own work, so the coordinator tool membrane does NOT apply.
 
-**Cache note:** we cannot place Anthropic cache marks through `claude -p`. Expect the
-system prompt and tools to cache across turns, and the view to cache only partially. This
-is accepted: the subscription pays. Measure the hit rate in the end-to-end test.
+**Cache note:** we cannot place Anthropic cache marks through `claude -p`, so the gist's
+4-line blocks with a mark on the last whole block are not possible. Expect the system
+prompt and tools to cache across turns, and the view to cache only partially. This is an
+accepted consequence of the subscription engine. The view is still rendered exactly as the
+gist says, so a later move to the direct API (with marks) needs no other change. Measure
+the hit rate in the end-to-end test.
 
 ## 6. Context from projects and threads
 
@@ -173,7 +199,12 @@ is accepted: the subscription pays. Measure the hit rate in the end-to-end test.
    `ref` = terminal id. Threads not started by Chat do not report into the log.
 5. **One-time import** — on first start, import each project's `MEMORY.md` (the shared
    project memory, `overseer/memory-scope.ts`) and the open ledger items as `note`
-   messages, one per project. Mark `endless_state.imported`.
+   messages, one per project. Mark `endless_state.imported`. (The gist's `note` kind:
+   "memories imported from before the chat".)
+
+**Images.** A user message can carry images. The image files are kept under
+`~/.dispatch/chat/media/` and referenced from the message row (`media` JSON column);
+`zoom(id, 1)` returns the message whole WITH its images, as the gist requires.
 
 ## 7. UI (`packages/web`)
 
@@ -226,12 +257,41 @@ is accepted: the subscription pays. Measure the hit rate in the end-to-end test.
   real `~/.dispatch`) with real Opus + Haiku. Send 50 messages across 2 project tags; check
   the view, a deep `zoom`, search, the inspector, and record cache-read ratios.
 
-## 10. First risk to test
+## 10. First risks to test (before the full build)
 
-Each summary is its own `claude -p` process (1–2 s start-up, counts against subscription
+1. **Fixed system context.** Show that two `claude -p` calls from `~/.dispatch/chat`, on
+   different days and after a memory change, send a byte-identical system prompt (check
+   the cache-read tokens on the second call). If Claude Code injects varying state that
+   cannot be turned off, stop and decide with the user: accept it, or move turns to the
+   direct API.
+2. **Summary latency and cost.** Each summary is its own `claude -p` process (1–2 s start-up, counts against subscription
 limits). Before building the full compactor, measure one Haiku summary call's latency and
 token use through `claude -p`. If too slow or costly, implement `summarizer-openrouter.ts`
 first.
+
+## 11. Fidelity to the gist
+
+Same as the gist: one never-ending append-only log; message kinds; thoughts shown but not
+logged; tool output clipped head+tail to 30,000 chars, other long text split; the 512-byte
+tree; `id+n` naming; the `due = (T - last)/2^l` merge order; the 64–128 KB batch sawtooth;
+the saved, never-rebuilt view; the 16–32 KB compaction view; same prompt and tools for
+compactions; the ruler, the "Too long" cut, 5 tries, shortest kept; 8 concurrent
+compactions with readiness queues; a fresh call per turn with nothing carried over; render
+the view before logging the message; per-turn state after the view; mid-turn messages
+between tool calls; `zoom` and `date` as the only memory tools; the system prompt text.
+
+Deliberate differences, each agreed in brainstorming:
+
+| Gist | This spec | Why |
+|---|---|---|
+| Direct API, cache marks on 4-line blocks | `claude -p`, no marks | Subscription billing; all code tools built in |
+| `.jsonl` files + `view.json` | SQLite tables, view in `endless_state` | All Dispatch data is in SQLite; same append-only rule |
+| "Use subagents only when the user asks" | Start a thread for large work unless told otherwise | One chat must stay free; agreed work rule |
+| A subagent's first message is the view | A Dispatch thread gets a task brief, not the view | Threads are normal Dispatch threads with their own memory |
+| `zoom("Name")` opens an agent's chat | `read_thread` | Threads are Dispatch threads |
+| No project concept | Project tags on messages and in summary lines | Many projects in one chat |
+| Device list each turn | Project status block each turn | Dispatch has one host |
+| Human has no search | FTS5 search for the human only | Requested; the model still uses only `zoom` |
 
 ## Appendix A — system prompt
 
@@ -273,8 +333,8 @@ Tools:
 # Projects and threads
 
 The user works on several projects. A status block after the view lists each
-project's live threads and open items. Each user message may name a project; your
-tools run in that project's folder.
+project's live threads, open items and folder. Each user message may name a
+project; work in that project's folder, using absolute paths.
 
 Do small work yourself: answer, read, make a small edit, run a short command.
 Start a thread for work that spans many files or takes more than a few minutes,
