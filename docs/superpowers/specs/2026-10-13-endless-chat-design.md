@@ -130,7 +130,8 @@ Exactly the gist, sections 2–4. The rules that matter most:
   task text from the gist (with the 512-dash ruler). Too-long replies get the gist's
   "Too long" follow-up IN THE SAME CONVERSATION (a second user message to the same
   process); at most 5 tries; keep the shortest line. A few bytes over 512 is fine.
-- A compaction carries the same tools as a turn (so the prefix matches) but must call
+- A compaction is isolated from the user's MCP servers and skills (user decision B;
+  the prompt cache is per model, so it never shared the turns' prefix) and must call
   none: the permission callback denies every tool call in a compaction process.
 - Haiku runs at the highest effort level the CLI exposes (the gist uses xhigh).
 - Cache-write coordination: when several compactions share one marked prefix, start one,
