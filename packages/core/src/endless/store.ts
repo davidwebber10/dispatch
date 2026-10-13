@@ -142,11 +142,28 @@ export class EndlessStore {
 
   /**
    * A thread Chat sent work to owes Chat one report (stage 2). Every arm owes one more: a job sent
-   * while an earlier one runs must still report after the earlier job's report is claimed.
+   * while an earlier one runs must still report after the earlier job's report is claimed. An arm
+   * clears the waiting flag: Chat sent new work, so the next question reports again.
    */
   armReport(terminalId: string, at: number = Date.now()): void {
-    this.db.prepare('INSERT INTO endless_pending_reports (terminal_id, armed_at, owed) VALUES (?, ?, 1) ON CONFLICT(terminal_id) DO UPDATE SET owed = owed + 1')
+    this.db.prepare('INSERT INTO endless_pending_reports (terminal_id, armed_at, owed) VALUES (?, ?, 1) ON CONFLICT(terminal_id) DO UPDATE SET owed = owed + 1, waiting_reported = 0')
       .run(terminalId, at);
+  }
+
+  /**
+   * Mark that the thread's interim (waiting for an answer) report is logged: true once while a
+   * report is owed and the flag is clear, then false. The owed count does not change. Call it
+   * inside the transaction that logs the interim report.
+   */
+  markWaitingReported(terminalId: string): boolean {
+    return this.db.prepare('UPDATE endless_pending_reports SET waiting_reported = 1 WHERE terminal_id = ? AND owed > 0 AND waiting_reported = 0')
+      .run(terminalId).changes === 1;
+  }
+
+  /** True while the thread's interim report is logged and its real ending has not reported. */
+  waitingReported(terminalId: string): boolean {
+    const r = this.db.prepare('SELECT waiting_reported FROM endless_pending_reports WHERE terminal_id = ?').get(terminalId) as { waiting_reported: number } | undefined;
+    return r?.waiting_reported === 1;
   }
 
   hasPendingReport(terminalId: string): boolean {

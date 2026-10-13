@@ -536,6 +536,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     limits: limitsFromEnv(process.env.DISPATCH_ENDLESS_LIMITS),
     openRouterKey: () => resolveOpenRouterKey?.() ?? Promise.resolve(null),
     finalOutput: (id) => sessionService.finalOutput(id),
+    pendingPermission: (id) => sessionService.getPendingPermission(id),
   });
   // Stage 2: a thread Chat started reports when it settles (finished or asking) or fails.
   statusService.addThreadSettledListener(({ terminalId, threadStatus }) => endless.onThreadSettled({ terminalId, threadStatus }));

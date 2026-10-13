@@ -27,11 +27,41 @@ export function threadOrigin(t: { config: string | null }): string | null {
   }
 }
 
-/** At start: what a pending report says now, or null while the thread can still settle on its own. */
-export function recoveryOutcome(t: { status: string; archived_at: string | null } | null): string | null {
+/**
+ * At start: what a pending report says now, or null while the thread can still settle on its own.
+ * A thread that waits for an answer and whose interim report is logged (`waitingReported`) has
+ * nothing new to say: its real ending reports.
+ */
+export function recoveryOutcome(t: { status: string; archived_at: string | null } | null, waitingReported = false): string | null {
   if (!t || t.archived_at) return 'gone';
   if (t.status === 'error') return 'error';
-  if (t.status === 'needs_input') return 'needs_input';
+  if (t.status === 'needs_input') return waitingReported ? null : 'needs_input';
   if (t.status === 'waiting') return 'idle';
   return null; // working, queued, scheduled: the settle or error edge reports it
+}
+
+/** A pending prompt of a thread (SessionService.getPendingPermission): a question or a gated tool. */
+export interface PendingPrompt { toolName?: string; input?: unknown; questions?: unknown[] }
+
+/**
+ * The text of what a waiting thread asks: each AskUserQuestion question with its options, or the
+ * gated tool and its input. '' when there is no pending prompt (the thread asked in its text).
+ */
+export function pendingQuestionText(p: PendingPrompt | null | undefined): string {
+  if (!p) return '';
+  const qs = Array.isArray(p.questions) ? p.questions : [];
+  if (qs.length) {
+    return qs.map((raw) => {
+      const q = (raw ?? {}) as { question?: unknown; header?: unknown; options?: unknown };
+      const text = String(q.question ?? q.header ?? '').trim();
+      const opts = Array.isArray(q.options)
+        ? q.options.map((o: any) => (typeof o === 'string' ? o : String(o?.label ?? o?.name ?? ''))).filter(Boolean)
+        : [];
+      return opts.length ? `${text} (options: ${opts.join(' | ')})` : text;
+    }).filter(Boolean).join('\n');
+  }
+  if (!p.toolName) return '';
+  let input = '';
+  try { input = p.input === undefined ? '' : JSON.stringify(p.input); } catch { input = ''; }
+  return `permission to use ${p.toolName}${input && input !== '{}' ? `: ${input}` : ''}`;
 }

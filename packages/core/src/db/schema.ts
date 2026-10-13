@@ -375,4 +375,12 @@ function initializeSchema(db: Database.Database): void {
     const cols = db.prepare('PRAGMA table_info(endless_pending_reports)').all() as { name: string }[];
     if (!cols.some((c) => c.name === 'owed')) db.exec('ALTER TABLE endless_pending_reports ADD COLUMN owed INTEGER NOT NULL DEFAULT 1');
   });
+  // A question is an interim report (stage 2 final review, I-1): it does not take an owed report,
+  // so the job's real ending still reports. `waiting_reported` marks that the interim report is
+  // logged: a second question and a restart while the thread waits log no second one. An arm
+  // clears it; the real ending deletes the row.
+  migrate(db, '011-endless-report-waiting', () => {
+    const cols = db.prepare('PRAGMA table_info(endless_pending_reports)').all() as { name: string }[];
+    if (!cols.some((c) => c.name === 'waiting_reported')) db.exec('ALTER TABLE endless_pending_reports ADD COLUMN waiting_reported INTEGER NOT NULL DEFAULT 0');
+  });
 }

@@ -161,6 +161,33 @@ describe('EndlessStore', () => {
     expect(store.claimAllReports('t1')).toBe(false);
   });
 
+  it('an interim (waiting) report sets a flag once; an arm clears it; the row keeps its owed count', () => {
+    expect(store.markWaitingReported('t1')).toBe(false); // nothing owed: no flag
+    store.armReport('t1', 10);
+    expect(store.waitingReported('t1')).toBe(false);
+    expect(store.markWaitingReported('t1')).toBe(true);
+    expect(store.waitingReported('t1')).toBe(true);
+    expect(store.markWaitingReported('t1')).toBe(false); // a second interim is skipped
+    expect(store.owedReports('t1')).toBe(1);
+    store.armReport('t1', 20); // Chat sent more work: the next question reports again
+    expect(store.waitingReported('t1')).toBe(false);
+    expect(store.owedReports('t1')).toBe(2);
+    expect(store.markWaitingReported('t1')).toBe(true);
+    expect(store.claimAllReports('t1')).toBe(true); // the real ending clears it with the row
+    expect(store.waitingReported('t1')).toBe(false);
+  });
+
+  it('migration 011 adds waiting_reported to a 010-era table and keeps its rows', () => {
+    const old = new Database(':memory:');
+    initSchema(old);
+    old.exec("DROP TABLE endless_pending_reports; CREATE TABLE endless_pending_reports (terminal_id TEXT PRIMARY KEY, armed_at INTEGER NOT NULL, owed INTEGER NOT NULL DEFAULT 1); INSERT INTO endless_pending_reports VALUES ('t9', 5, 2); DELETE FROM schema_migrations WHERE id = '011-endless-report-waiting'");
+    initSchema(old);
+    expect(old.prepare('SELECT 1 FROM schema_migrations WHERE id = ?').get('011-endless-report-waiting')).toBeTruthy();
+    const s = new EndlessStore(old);
+    expect(s.owedReports('t9')).toBe(2);
+    expect(s.waitingReported('t9')).toBe(false);
+  });
+
   it('pending reports survive a restart', () => {
     store.armReport('t1', 1);
     expect(new EndlessStore(db).pendingReports()).toEqual(['t1']);

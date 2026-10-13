@@ -16,7 +16,7 @@ import { ViewKeeper } from './view-keeper.js';
 import { Compactor } from './compactor.js';
 import { TurnRunner, type EndlessEvent, type TurnStatus } from './turn-runner.js';
 import { appendLogged, type LogInput, type LogOptions } from './log.js';
-import { reportText, threadOrigin, recoveryOutcome } from './reports.js';
+import { reportText, threadOrigin, recoveryOutcome, pendingQuestionText, type PendingPrompt } from './reports.js';
 import { createSummarizer } from './summarizer-choice.js';
 import type { Summarizer, Usage } from './summarizer.js';
 import { systemPromptWith } from './prompt.js';
@@ -56,6 +56,8 @@ export interface EndlessServiceOptions {
   turn?: { waitMs?: number; graceMs?: number; command?: string; commandArgs?: string[] };
   /** A thread's final output for its report (SessionService.finalOutput). */
   finalOutput?: (terminalId: string) => string;
+  /** The question or gated tool a thread waits on (SessionService.getPendingPermission). */
+  pendingPermission?: (terminalId: string) => PendingPrompt | null;
   /** The daemon's ledger service: Chat acts as a project's overseer through it. */
   ledger?: LedgerService;
 }
@@ -244,8 +246,9 @@ export class EndlessService {
    * report is split, never clipped), then, after the commit, hand it to the turn runner: it
    * starts a turn, joins a starting one, or reaches the running one.
    *
-   * Ruling (Task 6 fix round 1): every ending (idle/done, needs_input, error, and recovery)
-   * claims ALL of the thread's owed reports and writes ONE report. The CLI folds a message it
+   * Ruling (Task 6 fix round 1): every ending (idle/done, error, and recovery) claims ALL of the
+   * thread's owed reports and writes ONE report. A question (needs_input) is not an ending: it
+   * writes one interim report and claims nothing (ruling I-1, final review). The CLI folds a message it
    * gets mid-turn into the running turn (Task 1 probe c), so one turn can end several jobs; a
    * leftover count would make a user-started turn report, or recovery log a duplicate.
    * Accepted risk: when the CLI runs job 2 as a separate later turn, job 2 gets no report of
@@ -259,13 +262,26 @@ export class EndlessService {
     if (this.phase !== 'ready' || this.closed || !this.store.hasPendingReport(terminalId)) return [];
     const t = terminalsDb.getById(this.o.db, terminalId);
     const gone = !t || outcome === 'gone';
-    const output = gone ? '' : this.o.finalOutput?.(terminalId) ?? '';
+    // Ruling (final review I-1): a question is INTERIM. It logs the question once and keeps the
+    // owed reports, so the job's real ending (after the answer) still reports its result.
+    const interim = !gone && outcome === 'needs_input';
+    if (interim && this.store.waitingReported(terminalId)) return [];
+    const output = gone ? '' : interim ? this.waitingText(terminalId) : this.o.finalOutput?.(terminalId) ?? '';
     const text = reportText(t?.label || terminalId, gone ? 'gone' : outcome, output);
-    const written = this.log({ kind: 'work', text, project: t?.session_id ?? null, ref: terminalId }, { claim: () => this.store.claimAllReports(terminalId) });
+    const claim = interim ? () => this.store.markWaitingReported(terminalId) : () => this.store.claimAllReports(terminalId);
+    const written = this.log({ kind: 'work', text, project: t?.session_id ?? null, ref: terminalId }, { claim });
     if (written.length) {
       this.turns.deliver({ i: written[0].i, kind: 'work', text: written.map((m) => m.text).join(''), project: written[0].project });
     }
     return written;
+  }
+
+  /** What a waiting thread asks: its pending question or gated tool, else its last output. */
+  private waitingText(terminalId: string): string {
+    let asked = '';
+    try { asked = pendingQuestionText(this.o.pendingPermission?.(terminalId)); }
+    catch (err) { console.warn(`[endless] the pending question of ${terminalId} failed:`, err); }
+    return asked || (this.o.finalOutput?.(terminalId) ?? '');
   }
 
   /**
@@ -276,7 +292,7 @@ export class EndlessService {
   private recoverReports(): void {
     for (const id of this.store.pendingReports()) {
       try {
-        const outcome = recoveryOutcome(terminalsDb.getById(this.o.db, id) ?? null);
+        const outcome = recoveryOutcome(terminalsDb.getById(this.o.db, id) ?? null, this.store.waitingReported(id));
         if (outcome) this.report(id, outcome);
       } catch (err) {
         console.warn(`[endless] the recovered report of ${id} failed:`, err);

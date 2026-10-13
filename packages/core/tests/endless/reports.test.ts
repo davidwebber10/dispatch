@@ -14,6 +14,7 @@ import { FakeManager, texts } from './fake-manager.js';
 let root: string;
 let db: Database.Database;
 let outputs: Record<string, string>;
+let pendings: Record<string, { requestId: string; toolName: string; input: unknown; questions?: unknown[] }>;
 const live: { svc: EndlessService; fake: FakeManager }[] = [];
 const flush = () => new Promise<void>((r) => setImmediate(r));
 
@@ -23,6 +24,7 @@ function make() {
     db, broadcaster: { broadcast: () => {} }, manager: fake.asManager(),
     chatDir: path.join(root, 'chat'), home: path.join(root, 'home'), summarizer: new FakeSummarizer(),
     timeZone: 'UTC', turn: { waitMs: 50, graceMs: 10 }, finalOutput: (id) => outputs[id] ?? '',
+    pendingPermission: (id) => pendings[id] ?? null,
   });
   svc.start(3999);
   live.push({ svc, fake });
@@ -42,6 +44,7 @@ beforeEach(() => {
   db = new Database(':memory:');
   initSchema(db);
   outputs = {};
+  pendings = {};
   sessionsDb.create(db, { id: 's1', provider: 'claude-code', name: 'salsify', workingDir: path.join(root, 'salsify') });
   const chat = { role: 'agent', agentType: 'implementer', origin: 'endless', spawnDepth: 1 };
   terminalsDb.create(db, { id: 't1', sessionId: 's1', type: 'claude-code', label: 'Fix login', config: chat });
@@ -76,6 +79,8 @@ describe('report texts', () => {
     expect(recoveryOutcome({ status: 'waiting', archived_at: '2026-01-01' })).toBe('gone');
     expect(recoveryOutcome({ status: 'waiting', archived_at: null })).toBe('idle');
     expect(recoveryOutcome({ status: 'needs_input', archived_at: null })).toBe('needs_input');
+    expect(recoveryOutcome({ status: 'needs_input', archived_at: null }, true)).toBeNull(); // its interim report is logged
+    expect(recoveryOutcome({ status: 'waiting', archived_at: null }, true)).toBe('idle');
     expect(recoveryOutcome({ status: 'error', archived_at: null })).toBe('error');
     for (const status of ['working', 'queued', 'scheduled']) expect(recoveryOutcome({ status, archived_at: null })).toBeNull();
   });
@@ -202,16 +207,111 @@ describe('thread reports', () => {
     await endTurn(x);
   });
 
-  it('a thread that stops on a question reports that it waits for an answer, and that consumes the report', async () => {
+  it('a question is an interim report: logged with the question, the owed report stays', async () => {
+    const x = make();
+    outputs.t1 = 'an older turn';
+    pendings.t1 = { requestId: 'r1', toolName: 'AskUserQuestion', input: {}, questions: [{ header: 'File', question: 'Which file should I change?', options: [{ label: 'a.ts' }, { label: 'b.ts' }] }] };
+    x.svc.arm('t1');
+    x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'needs_input' });
+    await flush();
+    expect(works().map((m) => m.text)).toEqual(['[Fix login] report: (waiting for an answer) Which file should I change? (options: a.ts | b.ts)']);
+    expect(x.svc.store.owedReports('t1')).toBe(1);
+    expect(x.svc.store.waitingReported('t1')).toBe(true);
+    await settle();
+    await endTurn(x);
+  });
+
+  it('a gated tool is an interim report that names the tool', async () => {
+    const x = make();
+    pendings.t1 = { requestId: 'r1', toolName: 'Bash', input: { command: 'rm -rf build' } };
+    x.svc.arm('t1');
+    x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'needs_input' });
+    await flush();
+    expect(works().map((m) => m.text)).toEqual(['[Fix login] report: (waiting for an answer) permission to use Bash: {"command":"rm -rf build"}']);
+    expect(x.svc.store.owedReports('t1')).toBe(1);
+    await settle();
+    await endTurn(x);
+  });
+
+  it('a question with no pending prompt (the thread asked in its text) reports its output', async () => {
     const x = make();
     outputs.t1 = 'Which file should I change?';
     x.svc.arm('t1');
     x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'needs_input' });
     await flush();
     expect(works().map((m) => m.text)).toEqual(['[Fix login] report: (waiting for an answer) Which file should I change?']);
-    expect(x.svc.store.hasPendingReport('t1')).toBe(false);
+    expect(x.svc.store.owedReports('t1')).toBe(1);
     await settle();
     await endTurn(x);
+  });
+
+  it('after the answer, the real ending of the job reports its result and takes the owed report', async () => {
+    const x = make();
+    pendings.t1 = { requestId: 'r1', toolName: 'AskUserQuestion', input: {}, questions: [{ question: 'Which file?' }] };
+    x.svc.arm('t1');
+    x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'needs_input' });
+    await flush();
+    delete pendings.t1; // the user answered; the job goes on
+    x.svc.onThreadStatus('t1', 'working');
+    outputs.t1 = 'Changed a.ts. Done.';
+    x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'idle' });
+    await flush();
+    expect(works().map((m) => m.text)).toEqual([
+      '[Fix login] report: (waiting for an answer) Which file?',
+      '[Fix login] report: Changed a.ts. Done.',
+    ]);
+    expect(x.svc.store.owedReports('t1')).toBe(0);
+    expect(x.svc.store.waitingReported('t1')).toBe(false);
+    await settle();
+    await endTurn(x);
+  });
+
+  it('two questions in a row make one interim report', async () => {
+    const x = make();
+    pendings.t1 = { requestId: 'r1', toolName: 'AskUserQuestion', input: {}, questions: [{ question: 'First?' }] };
+    x.svc.arm('t1');
+    x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'needs_input' });
+    await flush();
+    pendings.t1 = { requestId: 'r2', toolName: 'AskUserQuestion', input: {}, questions: [{ question: 'Second?' }] };
+    x.svc.onThreadStatus('t1', 'working');
+    x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'needs_input' });
+    await flush();
+    expect(works().map((m) => m.text)).toEqual(['[Fix login] report: (waiting for an answer) First?']);
+    expect(x.svc.store.owedReports('t1')).toBe(1);
+    await settle();
+    await endTurn(x);
+  });
+
+  it('a restart while the thread waits logs no second interim report', async () => {
+    const a = make();
+    pendings.t1 = { requestId: 'r1', toolName: 'AskUserQuestion', input: {}, questions: [{ question: 'Which file?' }] };
+    a.svc.arm('t1');
+    a.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'needs_input' });
+    await flush();
+    await settle();
+    await endTurn(a);
+    a.svc.stop();
+    terminalsDb.updateStatus(db, 't1', 'needs_input');
+    const b = make();
+    expect(works()).toHaveLength(1);
+    expect(b.svc.store.owedReports('t1')).toBe(1);
+    expect(b.fake.spawned).toHaveLength(0);
+  });
+
+  it('a question missed while the daemon was down is reported once at start, as interim', async () => {
+    const a = make();
+    outputs.t1 = 'Which file?';
+    a.svc.arm('t1');
+    a.svc.stop();
+    terminalsDb.updateStatus(db, 't1', 'needs_input');
+    const b = make();
+    expect(works().map((m) => m.text)).toEqual(['[Fix login] report: (waiting for an answer) Which file?']);
+    expect(b.svc.store.owedReports('t1')).toBe(1);
+    await settle();
+    await endTurn(b);
+    b.svc.stop();
+    make();
+    expect(works()).toHaveLength(1);
   });
 
   it('an armed thread that dies with no output reports that it stopped', async () => {
