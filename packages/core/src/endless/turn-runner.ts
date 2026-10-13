@@ -19,6 +19,8 @@ import { usageOf, type Usage } from './summarizer.js';
 export const TURN_WAIT_MS = 30_000;
 /** After a `result`, wait this long for more events (a queued message starts a second turn). */
 export const RESULT_GRACE_MS = 1_500;
+/** A result that leaves a handed-off message unanswered waits this long for the next result. */
+export const HANDOFF_RESULT_CEILING_MS = 120_000;
 
 export interface UserInput { text: string; project: string | null; media: string[] }
 export type TurnStatus = 'idle' | 'waiting' | 'running' | 'failed' | 'interrupted';
@@ -42,6 +44,7 @@ export interface TurnDeps {
   onUsage?: (u: Usage) => void;
   waitMs?: number;
   graceMs?: number;
+  handoffCeilingMs?: number;
   command?: string;
   commandArgs?: string[];
 }
@@ -62,6 +65,10 @@ export class TurnRunner {
   private turnProject: string | null = null;
   private n = 0;
   private done: Promise<void> | null = null;
+  /** A handed-off message has had no assistant or tool_result event since: its result is still owed. */
+  private handoffPending = false;
+  /** Set by watch(): lets a hand-off in the grace window switch to waiting for the next result. */
+  private afterHandOff: (() => void) | null = null;
 
   constructor(private readonly d: TurnDeps) {}
 
@@ -87,8 +94,10 @@ export class TurnRunner {
   private start(input: UserInput, logIt: boolean): void {
     this.state = 'waiting';
     this.turnProject = input.project;
+    this.handoffPending = false;
     this.d.emit({ type: 'endless:turn', status: 'waiting' });
-    this.done = this.run(input, logIt).finally(() => { this.done = null; });
+    const done: Promise<void> = this.run(input, logIt).finally(() => { if (this.done === done) this.done = null; });
+    this.done = done;
   }
 
   private content(input: UserInput, before: string[]): ContentBlock[] {
@@ -103,12 +112,15 @@ export class TurnRunner {
 
   private handOff(input: UserInput): void {
     this.d.log({ kind: 'user', text: input.text, project: input.project, media: input.media });
+    this.handoffPending = true;
+    this.afterHandOff?.();
     this.d.manager.sendMessage(this.turnId!, this.content(input, []));
   }
 
   private async run(first: UserInput, logIt: boolean): Promise<void> {
     const d = this.d;
     let error: string | undefined;
+    let cancel: (() => void) | null = null;
     try {
       await d.compactor.waitForSettled(d.store.count(), d.waitMs ?? TURN_WAIT_MS);
       const view = d.views.turnBlocks();             // render the view first …
@@ -116,7 +128,8 @@ export class TurnRunner {
       if (logIt) d.log({ kind: 'user', text: first.text, project: first.project, media: first.media }); // … then log
       const id = `endless-turn-${++this.n}-${Date.now()}`;
       this.turnId = id;
-      const ended = this.watch(id);
+      const w = this.watch(id);
+      cancel = w.cancel;
       d.manager.spawn(id, {
         command: d.command ?? 'claude',
         args: [...(d.commandArgs ?? []), ...endlessClaudeArgs({ model: TURN_MODEL, systemPrompt: d.systemPrompt(), mcpConfigPath: d.mcpConfigPath, userTools: true })],
@@ -127,57 +140,112 @@ export class TurnRunner {
       d.emit({ type: 'endless:turn', status: 'running' });
       d.manager.sendMessage(id, this.content(first, [...view, status]));
       for (const q of this.queued.splice(0)) this.handOff(q);
-      error = (await ended).error;
-      if (d.manager.isAlive(id)) d.manager.kill(id);
+      error = (await w.ended).error;
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     } finally {
-      for (const q of this.queued.splice(0)) d.log({ kind: 'user', text: q.text, project: q.project, media: q.media });
+      cancel?.();
+      const id = this.turnId;
+      try {
+        if (id && d.manager.isAlive(id)) d.manager.kill(id);
+      } catch { /* the process is gone or unkillable; the turn still ends */ }
+      try {
+        for (const q of this.queued.splice(0)) d.log({ kind: 'user', text: q.text, project: q.project, media: q.media });
+      } catch (err) {
+        error ??= err instanceof Error ? err.message : String(err);
+      }
       this.turnId = null;
+      this.handoffPending = false;
       this.state = 'idle';
       d.emit(error ? { type: 'endless:turn', status: 'failed', error } : { type: 'endless:turn', status: 'idle' });
     }
   }
 
-  private watch(id: string): Promise<{ error?: string }> {
+  /**
+   * Follow one turn process until it is done. `ended` resolves at a `result` plus the grace
+   * window, or when the process exits or fails. `cancel` detaches every listener and timer
+   * (the run calls it in `finally`, so a throw after watch() leaks nothing).
+   *
+   * A message handed off after the turn's last assistant / tool_result event may run as a
+   * second CLI turn after the first `result`, and its first event can come later than the
+   * grace window. So a `result` with such a hand-off pending waits for the next `result`
+   * (up to HANDOFF_RESULT_CEILING_MS) instead of starting the grace window.
+   */
+  private watch(id: string): { ended: Promise<{ error?: string }>; cancel: () => void } {
     const d = this.d;
     const m = d.manager;
-    return new Promise((resolve) => {
-      let grace: NodeJS.Timeout | null = null;
-      let sawResult = false;
-      let failure: string | undefined;
-      const finish = (error?: string) => {
-        if (grace) clearTimeout(grace);
-        m.off('event', onEvent);
-        m.off('exit', onExit);
-        m.off('failed', onFailed);
-        m.off('permission', onPermission);
-        resolve({ error });
-      };
-      const onEvent = (tid: string, ev: any) => {
-        if (tid !== id) return;
-        if (grace) { clearTimeout(grace); grace = null; }
+    let timer: NodeJS.Timeout | null = null;
+    let phase: 'working' | 'grace' | 'ceiling' = 'working';
+    let sawResult = false;
+    let failure: string | undefined;
+    let settled = false;
+    let resolve!: (v: { error?: string }) => void;
+    const ended = new Promise<{ error?: string }>((r) => { resolve = r; });
+    const ceilingMs = d.handoffCeilingMs ?? HANDOFF_RESULT_CEILING_MS;
+    const clear = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    const detach = () => {
+      clear();
+      m.off('event', onEvent);
+      m.off('exit', onExit);
+      m.off('failed', onFailed);
+      m.off('permission', onPermission);
+      if (this.afterHandOff === onHandOff) this.afterHandOff = null;
+    };
+    const finish = (error?: string) => {
+      if (settled) return;
+      settled = true;
+      detach();
+      resolve({ error });
+    };
+    const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
+    const waitForNextResult = () => {
+      clear();
+      this.handoffPending = false; // this wait now covers it
+      phase = 'ceiling';
+      timer = setTimeout(() => finish(`no reply to a message sent during the turn within ${Math.round(ceilingMs / 1000)} s`), ceilingMs);
+    };
+    const onHandOff = () => { if (phase !== 'working') waitForNextResult(); };
+    const onEvent = (tid: string, ev: any) => {
+      if (tid !== id || settled) return;
+      try {
+        const toolResult = ev?.type === 'user' && Array.isArray(ev.message?.content) && ev.message.content.some((b: any) => b?.type === 'tool_result');
+        // Our own user-message echo is not progress: it must not cancel the grace or ceiling timer.
+        const echo = ev?.type === 'user' && !toolResult;
+        if (!echo) { clear(); phase = 'working'; }
         this.record(ev);
+        if (ev?.parent_tool_use_id == null && (ev?.type === 'assistant' || toolResult)) this.handoffPending = false;
         if (ev?.type === 'result') {
           sawResult = true;
           failure = ev.is_error ? String(ev.result || ev.subtype || 'the turn failed') : undefined;
           const u = usageOf(ev.usage);
           if (u) d.onUsage?.(u);
-          grace = setTimeout(() => finish(failure), d.graceMs ?? RESULT_GRACE_MS);
+          if (this.handoffPending) waitForNextResult();
+          else { phase = 'grace'; timer = setTimeout(() => finish(failure), d.graceMs ?? RESULT_GRACE_MS); }
         }
-      };
-      const onExit = (tid: string, code: number) => {
-        if (tid === id) finish(sawResult ? failure : `the turn process exited (code ${code}) before it finished`);
-      };
-      const onFailed = (tid: string) => { if (tid === id && !sawResult) finish('the turn process failed'); };
-      const onPermission = (tid: string, p: PendingPermission) => {
-        if (tid === id) m.answerPermission(id, p.requestId, { behavior: 'deny', message: 'Ask the user in your reply instead, then end your turn.' });
-      };
-      m.on('event', onEvent);
-      m.on('exit', onExit);
-      m.on('failed', onFailed);
-      m.on('permission', onPermission);
-    });
+      } catch (err) {
+        finish(`the turn could not record an event: ${message(err)}`);
+      }
+    };
+    const onExit = (tid: string, code: number) => {
+      if (tid !== id) return;
+      if (phase === 'ceiling' || this.handoffPending) finish(`the turn process exited (code ${code}) before it answered a message sent during the turn`);
+      else finish(sawResult ? failure : `the turn process exited (code ${code}) before it finished`);
+    };
+    const onFailed = (tid: string) => { if (tid === id && !sawResult) finish('the turn process failed'); };
+    const onPermission = (tid: string, p: PendingPermission) => {
+      if (tid !== id || settled) return;
+      try {
+        m.answerPermission(id, p.requestId, { behavior: 'deny', message: 'Ask the user in your reply instead, then end your turn.' });
+      } catch (err) {
+        finish(`the turn could not answer a permission request: ${message(err)}`);
+      }
+    };
+    m.on('event', onEvent);
+    m.on('exit', onExit);
+    m.on('failed', onFailed);
+    m.on('permission', onPermission);
+    this.afterHandOff = onHandOff;
+    return { ended, cancel: () => { if (!settled) { settled = true; detach(); } } };
   }
 
   private record(ev: any): void {

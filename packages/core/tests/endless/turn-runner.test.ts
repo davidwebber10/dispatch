@@ -10,7 +10,7 @@ import { PLACEHOLDER } from '../../src/endless/view.js';
 import { FakeSummarizer, settle } from './fake-summarizer.js';
 import { FakeManager, texts } from './fake-manager.js';
 
-function setup(opts: { waitMs?: number } = {}) {
+function setup(opts: { waitMs?: number; failLogOn?: string; readImage?: () => { mimeType: string; data: string } | null; onEmit?: (e: EndlessEvent) => void } = {}) {
   const db = new Database(':memory:');
   initSchema(db);
   const store = new EndlessStore(db);
@@ -19,16 +19,22 @@ function setup(opts: { waitMs?: number } = {}) {
   const compactor = new Compactor({ store, views, summarizer, systemPrompt: () => 'SYS', projectName: () => null });
   const fake = new FakeManager();
   const events: EndlessEvent[] = [];
-  const log = (input: LogInput) => appendLogged({ store, views, compactor }, input);
+  const log = (input: LogInput) => {
+    if (input.kind === opts.failLogOn) throw new Error(`disk full on ${input.kind}`);
+    return appendLogged({ store, views, compactor }, input);
+  };
   const runner = new TurnRunner({
     store, views, compactor, manager: fake.asManager(), chatDir: '/chat', mcpConfigPath: '/chat/memory.mcp.json',
     systemPrompt: () => 'SYS', statusBlock: (p) => `<status>\nnow: X; project ${p ?? 'none'}\n</status>`,
-    projectName: (id) => (id ? `name-${id}` : null), log, emit: (e) => events.push(e),
-    readImage: () => ({ mimeType: 'image/png', data: 'AAAA' }), waitMs: opts.waitMs ?? 50, graceMs: 10,
+    projectName: (id) => (id ? `name-${id}` : null), log, emit: (e) => { events.push(e); opts.onEmit?.(e); },
+    readImage: opts.readImage ?? (() => ({ mimeType: 'image/png', data: 'AAAA' })), waitMs: opts.waitMs ?? 50, graceMs: 10,
   });
   return { store, views, compactor, summarizer, fake, events, log, runner };
 }
 const userRows = (store: EndlessStore) => { const out: string[] = []; for (let i = 0; i < store.count(); i++) { const m = store.get(i)!; if (m.kind === 'user') out.push(m.text); } return out; };
+const reply = (t: ReturnType<typeof setup>, text: string) =>
+  t.fake.emitEvent({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text }] } });
+const listeners = (f: FakeManager) => ['event', 'exit', 'failed', 'permission'].reduce((n, e) => n + f.listenerCount(e), 0);
 const finish = async (t: ReturnType<typeof setup>) => { t.fake.emitEvent({ type: 'result', subtype: 'success', is_error: false }); await t.runner.whenIdle(); };
 
 describe('TurnRunner', () => {
@@ -125,6 +131,7 @@ describe('TurnRunner', () => {
     expect(t.fake.spawned).toHaveLength(1);
     expect(t.fake.sent[1]).toEqual({ id: t.fake.lastId(), content: [{ type: 'text', text: 'user: also this' }] });
     expect(userRows(t.store)).toEqual(['first', 'also this']);
+    reply(t, 'both done'); // the process answered the hand-off, so the next result ends the turn
     await finish(t);
   });
 
@@ -137,6 +144,7 @@ describe('TurnRunner', () => {
     expect(userRows(t.store)).toEqual(['from tab A', 'from tab B']);
     expect(texts(t.fake.sent[0].content).at(-1)).toBe('user: from tab A');
     expect(texts(t.fake.sent[1].content)).toEqual(['user: from tab B']);
+    reply(t, 'both done');
     await finish(t);
   });
 
@@ -229,5 +237,90 @@ describe('TurnRunner', () => {
     t.fake.emit('permission', t.fake.lastId(), { requestId: 'r1', toolName: 'ExitPlanMode', input: {} });
     expect(t.fake.answers[0]).toMatchObject({ requestId: 'r1', decision: { behavior: 'deny' } });
     await finish(t);
+  });
+  it('a throw while recording an event ends the turn failed and never reaches the manager', async () => {
+    const t = setup({ failLogOn: 'unii' });
+    t.runner.send({ text: 'go', project: null, media: [] });
+    await settle();
+    expect(() => reply(t, 'hello')).not.toThrow();
+    await t.runner.whenIdle();
+    expect(t.events.at(-1)).toMatchObject({ type: 'endless:turn', status: 'failed', error: expect.stringContaining('disk full on unii') });
+    expect(t.runner.status).toBe('idle');
+    expect(listeners(t.fake)).toBe(0);
+    expect(t.fake.killed).toEqual([t.fake.lastId()]);
+  });
+
+  it('a throw after the watch starts leaks no listeners and kills the process', async () => {
+    const t = setup({ readImage: () => { throw new Error('unreadable image'); } });
+    t.runner.send({ text: 'look', project: null, media: ['/chat/media/a.png'] });
+    await t.runner.whenIdle();
+    expect(t.events.at(-1)).toMatchObject({ type: 'endless:turn', status: 'failed', error: 'unreadable image' });
+    expect(t.fake.spawned).toHaveLength(1);
+    expect(listeners(t.fake)).toBe(0);
+    expect(t.fake.killed).toEqual([t.fake.lastId()]);
+    expect(t.fake.isAlive(t.fake.lastId())).toBe(false);
+  });
+
+  it('a result right after a hand-off waits for the next result, not the grace window', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const t = setup();
+      t.runner.send({ text: 'first', project: null, media: [] });
+      await settle();
+      reply(t, 'working on it');
+      t.runner.send({ text: 'and this', project: null, media: [] }); // after the last assistant event
+      t.fake.emitEvent({ type: 'result', subtype: 'success', is_error: false });
+      await vi.advanceTimersByTimeAsync(1_600);
+      expect(t.runner.status).toBe('running');
+      expect(t.fake.killed).toEqual([]);
+      t.fake.emitEvent({ type: 'result', subtype: 'success', is_error: false });
+      await vi.advanceTimersByTimeAsync(10);
+      await t.runner.whenIdle();
+      expect(t.runner.status).toBe('idle');
+      expect(t.events.at(-1)).toEqual({ type: 'endless:turn', status: 'idle' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a hand-off with no later result ends the turn failed at the ceiling', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const t = setup();
+      t.runner.send({ text: 'first', project: null, media: [] });
+      await settle();
+      reply(t, 'done');
+      t.fake.emitEvent({ type: 'result', subtype: 'success', is_error: false });
+      await vi.advanceTimersByTimeAsync(5); // inside the grace window
+      t.runner.send({ text: 'one more', project: null, media: [] });
+      await vi.advanceTimersByTimeAsync(119_999);
+      expect(t.runner.status).toBe('running');
+      await vi.advanceTimersByTimeAsync(1);
+      await t.runner.whenIdle();
+      expect(t.events.at(-1)).toMatchObject({ type: 'endless:turn', status: 'failed', error: expect.stringContaining('120 s') });
+      expect(listeners(t.fake)).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('whenIdle follows a turn started from the idle event, not the finished one', async () => {
+    let runner!: TurnRunner;
+    let sent = false;
+    const t = setup({ onEmit: (e) => {
+      if (!sent && e.type === 'endless:turn' && e.status === 'idle') { sent = true; runner.send({ text: 'b', project: null, media: [] }); }
+    } });
+    runner = t.runner;
+    t.runner.send({ text: 'a', project: null, media: [] });
+    await settle();
+    await finish(t); // the idle event starts turn 2 before turn 1's promise settles
+    await settle();
+    expect(t.runner.status).toBe('running');
+    let idle = false;
+    void t.runner.whenIdle().then(() => { idle = true; });
+    await settle();
+    expect(idle).toBe(false);
+    await finish(t);
+    expect(idle).toBe(true);
   });
 });
