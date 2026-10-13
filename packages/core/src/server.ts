@@ -77,6 +77,8 @@ import { createLedgerRouter } from './routes/ledger.js';
 import { LedgerService } from './overseer/ledger-service.js';
 import { WatchDispatcher } from './sessions/watch-dispatcher.js';
 import { createAnalyticsRouter, trackingStartedAt } from './routes/analytics.js';
+import { EndlessService, limitsFromEnv } from './endless/service.js';
+import { createEndlessRouter } from './routes/endless.js';
 
 /**
  * The analytics boot steps, run once per app before any route is mounted.
@@ -515,6 +517,16 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   statusService.onHarnessCommitted(event => { if (event.type === 'process.exited') rolesService.handleTerminalExit(event.terminalId); });
   sessionService.setTerminalStatusWriter((id, status) => statusService.setTerminalState(id, status));
   const opencodeStructured = extraManagers.get('opencode');
+  // Endless Chat (spec 2026-10-13): its own Claude manager, so its turn and compaction
+  // processes never reach SessionService's thread listeners.
+  const endlessManager = new ClaudeStructuredSessionManager();
+  const endless = new EndlessService({
+    db, broadcaster, manager: endlessManager,
+    chatDir: path.join(dataDir, 'chat'),
+    home: os.homedir(),
+    limits: limitsFromEnv(process.env.DISPATCH_ENDLESS_LIMITS),
+    openRouterKey: () => resolveOpenRouterKey?.() ?? Promise.resolve(null),
+  });
 
   // Fleet totals are a read-only projection of the canonical analytics ledger.
   const usage = new UsageRecorder(db);
@@ -589,6 +601,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     toolsAuth.setSpawnEnv(spawnEnv);
     ptyManager.setDefaultEnv(spawnEnv);
     structuredManager.setDefaultEnv(spawnEnv);
+    endlessManager.setDefaultEnv(spawnEnv);
     // The ACP children (Grok, OpenCode) run real tools directly (no app-server
     // indirection), so they need the same spawn env a PTY thread gets — secrets, bundled
     // tools, the browser shim.
@@ -687,6 +700,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.use('/api/appearance', createAppearanceRouter(dataDir));
   app.use('/api/watches', createWatchesRouter(db));
   app.use('/api/analytics', createAnalyticsRouter(db));
+  app.use('/api/endless', createEndlessRouter(endless));
 
   // Serve the built web client (single-origin) when a build is present.
   // SPA fallback returns index.html for any non-/api, non-WS GET.
@@ -790,6 +804,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   // Store port in app state
   appState.set(db, 'port', String(port));
+  // Endless Chat needs the real port for its memory MCP server config.
+  endless.start(port);
 
   // Status hooks: tell SessionService how to make spawned agents phone home with
   // lifecycle events (Claude hooks settings file + Codex notify helper).
@@ -875,6 +891,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     clearInterval(heartbeat);
     boxHeartbeat.stop();
     threadAutoNamer.dispose();
+    endless.stop();
+    endlessManager.killAll();
     ptyManager.killAll();
     // Each manager kill settles its thread to `waiting` synchronously; keep the mid-turn overseer
     // threads `working` so the next boot's kickstart resumes them.
