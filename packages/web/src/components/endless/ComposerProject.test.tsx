@@ -21,8 +21,10 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  useEndless.setState(savedEndless, true);
-  useProjects.setState(savedProjects, true);
+  act(() => {
+    useEndless.setState(savedEndless, true);
+    useProjects.setState(savedProjects, true);
+  });
 });
 
 const open = () => fireEvent.click(screen.getByRole('button', { name: 'Choose project' }));
