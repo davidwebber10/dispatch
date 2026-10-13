@@ -10,15 +10,19 @@ import type { Compactor } from './compactor.js';
 import { splitLongText } from './text.js';
 
 export interface LogInput { kind: EndlessKind; text: string; project?: string | null; ref?: string | null; media?: string[] }
+/** `claim` runs first inside the transaction; false logs nothing (a report already logged). */
+export interface LogOptions { claim?: () => boolean }
 
-export function appendLogged(t: { store: EndlessStore; views: ViewKeeper; compactor: Compactor }, input: LogInput): EndlessMessage[] {
+export function appendLogged(t: { store: EndlessStore; views: ViewKeeper; compactor: Compactor }, input: LogInput, opts: LogOptions = {}): EndlessMessage[] {
   const pieces = splitLongText(input.text);
-  const { written, staged } = t.store.transaction((): { written: EndlessMessage[]; staged: StagedViews } => {
+  const done = t.store.transaction((): { written: EndlessMessage[]; staged: StagedViews } | null => {
+    if (opts.claim && !opts.claim()) return null;
     const written = pieces.map((text, k) =>
       t.store.append({ kind: input.kind, text, project: input.project ?? null, ref: input.ref ?? null, media: k === 0 ? input.media ?? [] : [] }));
     return { written, staged: t.views.stage(written.map((m) => m.i)) };
   });
-  t.views.commit(staged);
-  for (const m of written) t.compactor.onMessage(m.i);
-  return written;
+  if (!done) return [];
+  t.views.commit(done.staged);
+  for (const m of done.written) t.compactor.onMessage(m.i);
+  return done.written;
 }

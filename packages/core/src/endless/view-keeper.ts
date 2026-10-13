@@ -12,7 +12,7 @@ import {
   appendToChatView, appendToCompactionView, resetCompactionView, compactionContext, renderChat, renderChatBlocks,
   lineSize, DEFAULT_LIMITS, type ChatView, type ViewLimits, type NodeText, type LineSize,
 } from './view.js';
-import { lastMessage, nodeName, type Line, type NodeRef } from './tree.js';
+import { firstMessage, lastMessage, nodeName, type Line, type NodeRef } from './tree.js';
 
 /** The next state of both views, computed and saved but not yet current. */
 export interface StagedViews { chat: ChatView; compaction: Line[]; epoch: number; merged: boolean[] }
@@ -89,7 +89,14 @@ export class ViewKeeper {
     this.epochN = s.epoch;
   }
 
-  turnBlocks(): string[] { return renderChatBlocks(this.chat.lines, this.text); }
+  /**
+   * The turn view. With `before`, only the lines that start before message `before`: a message
+   * that is already logged (a thread report) is the turn's message, not a view line.
+   */
+  turnBlocks(before?: number): string[] {
+    const lines = before === undefined ? this.chat.lines : this.chat.lines.filter(([l, i]) => firstMessage(l, i) < before);
+    return renderChatBlocks(lines, this.text);
+  }
 
   /** The whole `<chat>` view as the model sees it: the turn blocks joined (the same blocks the turn runner sends). */
   rendered(): string { return this.turnBlocks().join(''); }

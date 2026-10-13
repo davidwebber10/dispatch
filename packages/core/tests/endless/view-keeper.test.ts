@@ -69,3 +69,17 @@ describe('ViewKeeper', () => {
     expect(keeper.turnBlocks().join('')).toBe('<chat>\n0+1|user: hello\n</chat>');
   });
 });
+
+describe('turnBlocks(before)', () => {
+  it('leaves out the lines from message `before` on', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const store = new EndlessStore(db);
+    const keeper = new ViewKeeper(store, limits);
+    for (const text of ['one', 'two', 'three']) logBuilt(store, keeper, text);
+    expect(keeper.turnBlocks().join('')).toContain('2+1|');
+    expect(keeper.turnBlocks(2).join('')).not.toContain('2+1|');
+    expect(keeper.turnBlocks(2).join('')).toContain('1+1|');
+    expect(keeper.turnBlocks(0)).toEqual(['<chat>\n</chat>']);
+  });
+});

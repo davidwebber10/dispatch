@@ -127,4 +127,21 @@ describe('EndlessStore', () => {
     store.setState('imported', '2');
     expect(store.getState('imported')).toBe('2');
   });
+
+  it('arms, claims once, and lists pending reports', () => {
+    store.armReport('t1', 10);
+    store.armReport('t2', 5);
+    store.armReport('t1', 20); // re-arming keeps one row
+    expect(store.pendingReports()).toEqual(['t2', 't1']);
+    expect(store.hasPendingReport('t1')).toBe(true);
+    expect(store.claimReport('t1')).toBe(true);
+    expect(store.claimReport('t1')).toBe(false);
+    expect(store.hasPendingReport('t1')).toBe(false);
+    expect(store.pendingReports()).toEqual(['t2']);
+  });
+
+  it('pending reports survive a restart', () => {
+    store.armReport('t1', 1);
+    expect(new EndlessStore(db).pendingReports()).toEqual(['t1']);
+  });
 });

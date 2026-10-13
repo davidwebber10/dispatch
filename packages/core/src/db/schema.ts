@@ -360,4 +360,13 @@ function initializeSchema(db: Database.Database): void {
     CREATE TRIGGER IF NOT EXISTS endless_nodes_no_delete BEFORE DELETE ON endless_nodes
       BEGIN SELECT RAISE(ABORT, 'endless nodes are append-only'); END;
   `));
+  // Endless Chat stage 2 (spec 2026-10-13, section 6.4): a thread Chat started owes Chat one report
+  // each time Chat sends it work. The row is deleted in the same transaction that logs the report,
+  // so a report is logged exactly once, also across a restart.
+  migrate(db, '009-endless-pending-reports', () => db.exec(`
+    CREATE TABLE IF NOT EXISTS endless_pending_reports (
+      terminal_id TEXT PRIMARY KEY,
+      armed_at    INTEGER NOT NULL
+    );
+  `));
 }

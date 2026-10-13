@@ -140,6 +140,26 @@ export class EndlessStore {
     this.db.prepare('INSERT INTO endless_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
   }
 
+  /** A thread Chat sent work to owes Chat one report (stage 2). Re-arming keeps one row. */
+  armReport(terminalId: string, at: number = Date.now()): void {
+    this.db.prepare('INSERT INTO endless_pending_reports (terminal_id, armed_at) VALUES (?, ?) ON CONFLICT(terminal_id) DO UPDATE SET armed_at = excluded.armed_at')
+      .run(terminalId, at);
+  }
+
+  hasPendingReport(terminalId: string): boolean {
+    return !!this.db.prepare('SELECT 1 FROM endless_pending_reports WHERE terminal_id = ?').get(terminalId);
+  }
+
+  /** Take the pending report: true once, then false. Call it inside the transaction that logs the report. */
+  claimReport(terminalId: string): boolean {
+    return this.db.prepare('DELETE FROM endless_pending_reports WHERE terminal_id = ?').run(terminalId).changes === 1;
+  }
+
+  pendingReports(): string[] {
+    return (this.db.prepare('SELECT terminal_id FROM endless_pending_reports ORDER BY armed_at, terminal_id').all() as { terminal_id: string }[])
+      .map((r) => r.terminal_id);
+  }
+
   loadChatView(): ChatView | null {
     const raw = this.getState('view');
     if (raw === null) return null;
