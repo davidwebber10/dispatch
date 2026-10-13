@@ -82,6 +82,9 @@ export class ViewKeeper {
 
   turnBlocks(): string[] { return renderChatBlocks(this.chat.lines, this.text); }
 
+  /** The whole `<chat>` view as the model sees it: the turn blocks joined (the same blocks the turn runner sends). */
+  rendered(): string { return this.turnBlocks().join(''); }
+
   contextFor(ref: NodeRef): string { return renderChat(compactionContext(this.compaction, ref, this.store.isBuilt), this.text); }
 
   lines(): { name: string; l: number; i: number; text: string | null }[] {

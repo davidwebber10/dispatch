@@ -121,6 +121,16 @@ describe('endless routes', () => {
     expect(view.body.bytes).toBeGreaterThan(0);
   });
 
+  it('returns the view rendered exactly as the turn runner sends it to the model', async () => {
+    svc.log({ kind: 'user', text: 'first\nsecond line', project: 's1' });
+    svc.log({ kind: 'user', text: 'third' });
+    await settle();
+    const view = await request(app).get('/api/endless/view');
+    expect(view.body.rendered).toBe((svc as any).views.turnBlocks().join(''));
+    expect(view.body.rendered.startsWith('<chat>\n')).toBe(true);
+    expect(view.body.rendered.endsWith('\n</chat>')).toBe(true);
+  });
+
   it('answers zoom and date for the memory MCP, with 400 on bad input', async () => {
     svc.log({ kind: 'user', text: 'zoom me' });
     expect((await request(app).get('/api/endless/zoom?id=0&n=1')).body).toEqual({ text: '#0 user: zoom me', images: [] });

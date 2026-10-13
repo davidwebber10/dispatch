@@ -210,8 +210,8 @@ export class EndlessService {
     return this.store.search(q, { project, limit }).map((h) => ({ ...h, projectName: this.projectName(h.project) }));
   }
 
-  viewLines(): { lines: { name: string; l: number; i: number; text: string | null }[]; bytes: number } {
-    return { lines: this.views.lines(), bytes: this.views.bytes() };
+  viewLines(): { lines: { name: string; l: number; i: number; text: string | null }[]; bytes: number; rendered: string } {
+    return { lines: this.views.lines(), bytes: this.views.bytes(), rendered: this.views.rendered() };
   }
 
   projects(): ProjectStatus[] { return collectProjects(this.o.db, this.store); }

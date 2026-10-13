@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Folders } from '@phosphor-icons/react';
+import { Brain, Folders } from '@phosphor-icons/react';
 import { useEndless } from '../../stores/endless';
 import { EndlessColumn } from './EndlessColumn';
 import { ProjectFilter } from './ProjectFilter';
 import { ProjectsPanel } from './ProjectsPanel';
 import { MemorySearch } from './MemorySearch';
+import { MemoryInspector } from './MemoryInspector';
 import { Modal } from '../common/Modal';
 
 const toolbarButton: React.CSSProperties = {
@@ -15,6 +16,7 @@ const toolbarButton: React.CSSProperties = {
 /** The Chat page (spec 2026-10-13, section 7). Loads the tail, the turn state and the projects once. */
 export function ChatMode({ mobile = false }: { mobile?: boolean }) {
   const [panel, setPanel] = useState(!mobile);
+  const [inspector, setInspector] = useState(false);
   const unavailable = useEndless((s) => s.unavailable);
   useEffect(() => {
     const s = useEndless.getState();
@@ -28,6 +30,7 @@ export function ChatMode({ mobile = false }: { mobile?: boolean }) {
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
         <div data-testid="chat-toolbar" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', flexShrink: 0, borderBottom: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
           <MemorySearch />
+          <button type="button" onClick={() => setInspector(true)} style={toolbarButton}><Brain size={15} /> Memory</button>
           <button type="button" aria-pressed={panel} onClick={() => setPanel((p) => !p)} style={toolbarButton}><Folders size={15} /> Projects</button>
         </div>
         {unavailable && (
@@ -46,6 +49,7 @@ export function ChatMode({ mobile = false }: { mobile?: boolean }) {
         </aside>
       )}
       {mobile && <Modal open={panel} onClose={() => setPanel(false)} title="Projects" sheet><ProjectsPanel /></Modal>}
+      <MemoryInspector open={inspector} onClose={() => setInspector(false)} sheet={mobile} />
     </div>
   );
 }

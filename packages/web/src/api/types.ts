@@ -444,6 +444,6 @@ export type EndlessTurnStatus = 'idle' | 'waiting' | 'running' | 'failed' | 'int
 export interface EndlessState { turn: { status: EndlessTurnStatus; error: string | null }; total: number; compactor: { unbuilt: number; merges: number; running: number } }
 export interface EndlessSearchHit { i: number; kind: EndlessKind; project: string | null; projectName: string | null; createdAt: number; snippet: string }
 export interface EndlessViewLine { name: string; l: number; i: number; text: string | null }
-export interface EndlessView { lines: EndlessViewLine[]; bytes: number }
+export interface EndlessView { lines: EndlessViewLine[]; bytes: number; rendered: string }
 export interface EndlessProject { id: string; name: string; folder: string; live: number; needsYou: number; openItems: number; lastReport: string | null; messages: number }
 export interface EndlessImage { media_type: string; data: string }
