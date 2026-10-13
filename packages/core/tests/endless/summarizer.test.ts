@@ -5,6 +5,7 @@ import { ClaudeStructuredSessionManager } from '../../src/structured/manager.js'
 import { ClaudeSummarizer } from '../../src/endless/summarizer-claude.js';
 import { OpenRouterSummarizer } from '../../src/endless/summarizer-openrouter.js';
 import { usageOf } from '../../src/endless/summarizer.js';
+import { FakeManager } from './fake-manager.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FAKE = path.join(here, '../structured/fake-claude.mjs');
@@ -30,6 +31,21 @@ describe('ClaudeSummarizer', () => {
   it('fails a compaction that calls a tool', async () => {
     const s = make(FAKE_TOOL).open({ systemPrompt: 'SYS', onFirstToken: () => {} });
     await expect(s.ask('summarize')).rejects.toThrow(/called a tool/);
+    s.close();
+  });
+  it('a process that exits between asks fails the next ask at once, not after the timeout', async () => {
+    const m = new FakeManager();
+    const s = new ClaudeSummarizer({ manager: m.asManager(), chatDir: here, mcpConfigPath: '/nowhere.json', askTimeoutMs: 60_000 })
+      .open({ systemPrompt: 'SYS', onFirstToken: () => {} });
+    const first = s.ask('one');
+    m.emitEvent({ type: 'assistant', message: { content: [{ type: 'text', text: 'line' }] } });
+    m.emitEvent({ type: 'result', is_error: false });
+    expect(await first).toBe('line');
+    m.emitExit(1);
+    const t0 = Date.now();
+    await expect(s.ask('two')).rejects.toThrow(/exited \(1\)/);
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(m.sent).toHaveLength(1);
     s.close();
   });
 });

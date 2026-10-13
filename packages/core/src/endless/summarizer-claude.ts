@@ -63,7 +63,11 @@ export class ClaudeSummarizer implements Summarizer {
       }
     };
     const onExit = (tid: string, code: number) => {
-      if (tid === id && waiting) fail(`the compaction process exited (${code})`);
+      // Mark the session dead even between asks, so the next ask rejects at once.
+      if (tid !== id) return;
+      const msg = `the compaction process exited (${code})`;
+      if (waiting) fail(msg);
+      else failed ??= msg;
     };
     manager.on('event', onEvent);
     manager.on('exit', onExit);
