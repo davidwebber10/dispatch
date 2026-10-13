@@ -305,6 +305,22 @@ export class EndlessService {
     }
   }
 
+  /**
+   * After the boot kickstart: a thread it skipped because its turn completed reads 'working' (the
+   * shutdown race), so recovery left it to a settle edge that never comes. Each such Chat thread
+   * that still owes a report reports as idle (final review M-5). Never throws.
+   */
+  reportCompletedAtBoot(terminalIds: readonly string[]): void {
+    for (const id of terminalIds) {
+      try {
+        const t = terminalsDb.getById(this.o.db, id);
+        if (t && threadOrigin(t) === 'endless') this.report(id, 'idle');
+      } catch (err) {
+        console.warn(`[endless] the boot report of ${id} failed:`, err);
+      }
+    }
+  }
+
   toWire(m: EndlessMessage): WireMessage {
     return { ...m, media: m.media.map((f) => path.basename(f)), projectName: this.projectName(m.project) };
   }

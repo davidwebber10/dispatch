@@ -864,8 +864,10 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // the previous shutdown interrupted mid-turn. Fire-and-forget — it waits a short
   // settle delay before reading status, so it must not block startup.
   void sessionService.kickstartInterruptedAgents()
-    .then(({ kicked, skipped }) => {
+    .then(({ kicked, skipped, completed }) => {
       if (kicked.length) console.log(`Kickstart: resumed ${kicked.length} interrupted thread(s); skipped ${skipped.length}`);
+      // A Chat thread whose turn completed while no one listened owes Chat its report.
+      endless.reportCompletedAtBoot(completed);
     })
     .catch((err) => console.error('kickstart failed', err))
     .finally(() => statusService.reconcileProcesses((id) => ptyManager.isAlive(id) || !!sessionService.structuredManagerForTerminal(id)?.isAlive(id)));

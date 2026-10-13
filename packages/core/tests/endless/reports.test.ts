@@ -445,6 +445,24 @@ describe('thread reports', () => {
     expect(live[1].svc.store.hasPendingReport('t1')).toBe(true);
   });
 
+  it('a thread left working whose turn completed (the boot kickstart skipped it) reports idle once', async () => {
+    const a = make();
+    outputs.t1 = 'finished just before the restart';
+    a.svc.arm('t1');
+    a.svc.arm('t1');
+    a.svc.stop();
+    terminalsDb.updateStatus(db, 't1', 'working'); // the shutdown race left it stale-working
+    const b = make();
+    expect(works()).toEqual([]); // recovery waits for a working thread
+    b.svc.reportCompletedAtBoot(['t1', 't2', 'nope']); // t2: not Chat's; nope: unknown
+    expect(works().map((m) => m.text)).toEqual(['[Fix login] report: finished just before the restart']);
+    expect(b.svc.store.owedReports('t1')).toBe(0);
+    b.svc.reportCompletedAtBoot(['t1']);
+    expect(works()).toHaveLength(1);
+    await settle();
+    await endTurn(b);
+  });
+
   it('recovery reports a thread that is gone', async () => {
     const a = make();
     a.svc.arm('t1');
