@@ -369,4 +369,10 @@ function initializeSchema(db: Database.Database): void {
       armed_at    INTEGER NOT NULL
     );
   `));
+  // Every arm owes one report: a second job sent while the first runs must not be absorbed by the
+  // first job's settle. `owed` counts the reports; a claim takes one and deletes the row at zero.
+  migrate(db, '010-endless-report-owed', () => {
+    const cols = db.prepare('PRAGMA table_info(endless_pending_reports)').all() as { name: string }[];
+    if (!cols.some((c) => c.name === 'owed')) db.exec('ALTER TABLE endless_pending_reports ADD COLUMN owed INTEGER NOT NULL DEFAULT 1');
+  });
 }

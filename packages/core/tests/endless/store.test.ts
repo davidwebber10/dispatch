@@ -131,13 +131,34 @@ describe('EndlessStore', () => {
   it('arms, claims once, and lists pending reports', () => {
     store.armReport('t1', 10);
     store.armReport('t2', 5);
-    store.armReport('t1', 20); // re-arming keeps one row
     expect(store.pendingReports()).toEqual(['t2', 't1']);
     expect(store.hasPendingReport('t1')).toBe(true);
     expect(store.claimReport('t1')).toBe(true);
     expect(store.claimReport('t1')).toBe(false);
     expect(store.hasPendingReport('t1')).toBe(false);
     expect(store.pendingReports()).toEqual(['t2']);
+  });
+
+  it('every arm owes one report: each claim takes one, the last claim deletes the row', () => {
+    store.armReport('t1', 10);
+    store.armReport('t1', 20); // a second job while the first one runs
+    expect(store.owedReports('t1')).toBe(2);
+    expect(store.pendingReports()).toEqual(['t1']);
+    expect(store.claimReport('t1')).toBe(true);
+    expect(store.owedReports('t1')).toBe(1);
+    expect(store.hasPendingReport('t1')).toBe(true);
+    expect(store.claimReport('t1')).toBe(true);
+    expect(store.owedReports('t1')).toBe(0);
+    expect(store.hasPendingReport('t1')).toBe(false);
+    expect(store.claimReport('t1')).toBe(false);
+  });
+
+  it('claimAllReports takes every owed report of a thread at once', () => {
+    store.armReport('t1', 10);
+    store.armReport('t1', 20);
+    expect(store.claimAllReports('t1')).toBe(true);
+    expect(store.hasPendingReport('t1')).toBe(false);
+    expect(store.claimAllReports('t1')).toBe(false);
   });
 
   it('pending reports survive a restart', () => {

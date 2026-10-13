@@ -140,18 +140,36 @@ export class EndlessStore {
     this.db.prepare('INSERT INTO endless_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
   }
 
-  /** A thread Chat sent work to owes Chat one report (stage 2). Re-arming keeps one row. */
+  /**
+   * A thread Chat sent work to owes Chat one report (stage 2). Every arm owes one more: a job sent
+   * while an earlier one runs must still report after the earlier job's report is claimed.
+   */
   armReport(terminalId: string, at: number = Date.now()): void {
-    this.db.prepare('INSERT INTO endless_pending_reports (terminal_id, armed_at) VALUES (?, ?) ON CONFLICT(terminal_id) DO UPDATE SET armed_at = excluded.armed_at')
+    this.db.prepare('INSERT INTO endless_pending_reports (terminal_id, armed_at, owed) VALUES (?, ?, 1) ON CONFLICT(terminal_id) DO UPDATE SET owed = owed + 1')
       .run(terminalId, at);
   }
 
   hasPendingReport(terminalId: string): boolean {
-    return !!this.db.prepare('SELECT 1 FROM endless_pending_reports WHERE terminal_id = ?').get(terminalId);
+    return this.owedReports(terminalId) > 0;
   }
 
-  /** Take the pending report: true once, then false. Call it inside the transaction that logs the report. */
+  /** How many reports the thread still owes (0 when none). */
+  owedReports(terminalId: string): number {
+    const r = this.db.prepare('SELECT owed FROM endless_pending_reports WHERE terminal_id = ?').get(terminalId) as { owed: number } | undefined;
+    return r?.owed ?? 0;
+  }
+
+  /**
+   * Take ONE owed report: true while one is owed, then false. The last claim deletes the row.
+   * Call it inside the transaction that logs the report.
+   */
   claimReport(terminalId: string): boolean {
+    if (this.db.prepare('UPDATE endless_pending_reports SET owed = owed - 1 WHERE terminal_id = ? AND owed > 1').run(terminalId).changes === 1) return true;
+    return this.db.prepare('DELETE FROM endless_pending_reports WHERE terminal_id = ?').run(terminalId).changes === 1;
+  }
+
+  /** Take every owed report of a thread at once (start-up recovery of a thread that already ended). */
+  claimAllReports(terminalId: string): boolean {
     return this.db.prepare('DELETE FROM endless_pending_reports WHERE terminal_id = ?').run(terminalId).changes === 1;
   }
 
