@@ -504,10 +504,13 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Wakes watchers on peer status edges (see sessions/watch-dispatcher.ts) — wired as an
   // optional StatusService dependency, same shape as the threadAutoNamer activity callback.
   const watchDispatcher = new WatchDispatcher(db, buildWatchDeliver(sessionService));
+  // Endless Chat hears every status edge here (a thread's error edge reports); its settles
+  // come from the settled listener below.
+  let onEndlessStatus: ((terminalId: string, status: string) => void) | null = null;
   const statusService = new StatusService(
     db, broadcaster,
     (id) => threadAutoNamer.notifyActivity(id),
-    (terminalId, status) => watchDispatcher.onStatus(terminalId, status),
+    (terminalId, status) => { watchDispatcher.onStatus(terminalId, status); onEndlessStatus?.(terminalId, status); },
     (id, prompt) => threadAutoNamer.notifyPrompt(id, prompt),
   );
   const harnessManagers = wireHarnesses(sessionService, statusService, db, broadcaster);
@@ -526,7 +529,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     home: os.homedir(),
     limits: limitsFromEnv(process.env.DISPATCH_ENDLESS_LIMITS),
     openRouterKey: () => resolveOpenRouterKey?.() ?? Promise.resolve(null),
+    finalOutput: (id) => sessionService.finalOutput(id),
   });
+  // Stage 2: a thread Chat started reports when it settles (finished or asking) or fails.
+  statusService.addThreadSettledListener(({ terminalId, threadStatus }) => endless.onThreadSettled({ terminalId, threadStatus }));
+  onEndlessStatus = (terminalId, status) => endless.onThreadStatus(terminalId, status);
 
   // Fleet totals are a read-only projection of the canonical analytics ledger.
   const usage = new UsageRecorder(db);

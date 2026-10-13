@@ -15,7 +15,8 @@ import { EndlessStore, type EndlessMessage, type Page } from './store.js';
 import { ViewKeeper } from './view-keeper.js';
 import { Compactor } from './compactor.js';
 import { TurnRunner, type EndlessEvent, type TurnStatus } from './turn-runner.js';
-import { appendLogged, type LogInput } from './log.js';
+import { appendLogged, type LogInput, type LogOptions } from './log.js';
+import { reportText, threadOrigin, recoveryOutcome } from './reports.js';
 import { createSummarizer } from './summarizer-choice.js';
 import type { Summarizer, Usage } from './summarizer.js';
 import { systemPromptWith } from './prompt.js';
@@ -52,6 +53,8 @@ export interface EndlessServiceOptions {
   now?: () => number;
   openRouterKey?: () => Promise<string | null>;
   turn?: { waitMs?: number; graceMs?: number; command?: string; commandArgs?: string[] };
+  /** A thread's final output for its report (SessionService.finalOutput). */
+  finalOutput?: (terminalId: string) => string;
 }
 
 export class EndlessService {
@@ -66,6 +69,10 @@ export class EndlessService {
   /** 'new' until start(); 'failed' if start() threw (the chat routes then answer 503). */
   private phase: 'new' | 'ready' | 'failed' = 'new';
   private readonly usage: { turns: Usage[]; compactions: Usage[] } = { turns: [], compactions: [] };
+  /** Threads with a settle edge scheduled this tick: one ending claims at most one report. */
+  private readonly settling = new Set<string>();
+  /** Threads whose last status edge was 'error': a repeated error edge is the same ending. */
+  private readonly errored = new Set<string>();
 
   constructor(private readonly o: EndlessServiceOptions) {
     this.store = new EndlessStore(o.db);
@@ -104,6 +111,8 @@ export class EndlessService {
     try {
       this.boot(port);
       this.phase = 'ready';
+      // After compactor.recover() (in boot): a report that recovery logs starts a turn.
+      this.recoverReports();
     } catch (err) {
       this.phase = 'failed';
       this.compactor.stop();
@@ -150,14 +159,95 @@ export class EndlessService {
     return r.project;
   }
 
+  /** Chat sent work to a thread it started: the thread then owes Chat one more report. */
+  arm(terminalId: string): { armed: boolean } {
+    const t = terminalsDb.getById(this.o.db, terminalId);
+    if (!t) throw new UserError(`unknown thread: ${terminalId}`);
+    if (threadOrigin(t) !== 'endless') throw new UserError(`not a Chat thread: ${terminalId}`);
+    this.store.armReport(terminalId, this.now());
+    return { armed: true };
+  }
+
+  /**
+   * Every status edge of a thread (StatusService onWatchStatus). Only the edge INTO 'error'
+   * reports (a crash; the settled listener never fires for it); a repeated error edge with no
+   * other status between (a hook error, then the process exit) is the same ending.
+   */
+  onThreadStatus(terminalId: string, status: string): void {
+    if (status !== 'error') { this.errored.delete(terminalId); return; }
+    if (this.errored.has(terminalId)) return;
+    this.errored.add(terminalId);
+    this.onThreadSettled({ terminalId, threadStatus: 'error' });
+  }
+
+  /**
+   * The StatusService settled edge (and the error edge). Deferred one tick, like the roles
+   * listener, so that the turn's outcome and texts are recorded first. Both hooks can fire for
+   * one ending in the same tick: the second is dropped, so one ending claims at most one
+   * report. Never throws.
+   */
+  onThreadSettled(info: { terminalId: string; threadStatus: string }): void {
+    const id = info.terminalId;
+    if (this.settling.has(id)) return;
+    this.settling.add(id);
+    setImmediate(() => {
+      this.settling.delete(id);
+      try { this.reportThread(id, info.threadStatus); }
+      catch (err) { console.warn(`[endless] the report of ${id} failed:`, err); }
+    });
+  }
+
+  /**
+   * Log the thread's report once (the claim and the append share one transaction; a long
+   * report is split, never clipped), then, after the commit, hand it to the turn runner: it
+   * starts a turn, joins a starting one, or reaches the running one.
+   */
+  reportThread(terminalId: string, outcome: string): EndlessMessage[] {
+    return this.report(terminalId, outcome, () => this.store.claimReport(terminalId));
+  }
+
+  private report(terminalId: string, outcome: string, claim: () => boolean): EndlessMessage[] {
+    if (this.phase !== 'ready' || this.closed || !this.store.hasPendingReport(terminalId)) return [];
+    const t = terminalsDb.getById(this.o.db, terminalId);
+    const gone = !t || outcome === 'gone';
+    const output = gone ? '' : this.o.finalOutput?.(terminalId) ?? '';
+    const text = reportText(t?.label || terminalId, gone ? 'gone' : outcome, output);
+    const written = this.log({ kind: 'work', text, project: t?.session_id ?? null, ref: terminalId }, { claim });
+    if (written.length) {
+      this.turns.deliver({ i: written[0].i, kind: 'work', text: written.map((m) => m.text).join(''), project: written[0].project });
+    }
+    return written;
+  }
+
+  /**
+   * At start: report each thread that ended while no one listened, once. Its last state covers
+   * every job it owed, so the one report takes them all. A thread that still runs keeps its
+   * reports for its own settle or error edge.
+   */
+  private recoverReports(): void {
+    for (const id of this.store.pendingReports()) {
+      try {
+        const outcome = recoveryOutcome(terminalsDb.getById(this.o.db, id) ?? null);
+        if (outcome) this.report(id, outcome, () => this.store.claimAllReports(id));
+      } catch (err) {
+        console.warn(`[endless] the recovered report of ${id} failed:`, err);
+      }
+    }
+  }
+
   toWire(m: EndlessMessage): WireMessage {
     return { ...m, media: m.media.map((f) => path.basename(f)), projectName: this.projectName(m.project) };
   }
 
-  log(input: LogInput): EndlessMessage[] {
+  log(input: LogInput, opts: LogOptions = {}): EndlessMessage[] {
     if (this.closed) return [];
-    const written = appendLogged({ store: this.store, views: this.views, compactor: this.compactor }, input);
-    for (const m of written) this.o.broadcaster.broadcast({ type: 'endless:message', message: this.toWire(m) });
+    const written = appendLogged({ store: this.store, views: this.views, compactor: this.compactor }, input, opts);
+    // The messages are committed: a failed broadcast must not hide them from the caller
+    // (a report that is logged must also be delivered).
+    for (const m of written) {
+      try { this.o.broadcaster.broadcast({ type: 'endless:message', message: this.toWire(m) }); }
+      catch (err) { console.warn('[endless] a message broadcast failed:', err); }
+    }
     return written;
   }
 

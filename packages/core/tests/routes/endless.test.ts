@@ -7,6 +7,7 @@ import request from 'supertest';
 import Database from 'better-sqlite3';
 import { initSchema } from '../../src/db/schema.js';
 import * as sessionsDb from '../../src/db/sessions.js';
+import * as terminalsDb from '../../src/db/terminals.js';
 import { EndlessService, startEndless } from '../../src/endless/service.js';
 import { createEndlessRouter } from '../../src/routes/endless.js';
 import { FakeSummarizer, settle } from '../endless/fake-summarizer.js';
@@ -153,6 +154,21 @@ describe('endless routes', () => {
   it('lists projects and threads', async () => {
     expect((await request(app).get('/api/endless/projects')).body[0]).toMatchObject({ id: 's1', name: 'salsify' });
     expect((await request(app).get('/api/endless/threads')).body).toEqual([]);
+  });
+
+  it('POST /arm arms a Chat thread and refuses an unknown or a non-Chat one', async () => {
+    const db = (svc as any).o.db as Database.Database;
+    terminalsDb.create(db, { id: 't1', sessionId: 's1', type: 'claude-code', label: 'Fix', config: { role: 'agent', origin: 'endless' } });
+    terminalsDb.create(db, { id: 't2', sessionId: 's1', type: 'claude-code', label: 'Mine', config: { role: 'agent' } });
+    expect((await request(app).post('/api/endless/arm').send({ terminalId: 't1' })).body).toEqual({ armed: true });
+    expect(svc.store.owedReports('t1')).toBe(1);
+    const bad = await request(app).post('/api/endless/arm').send({ terminalId: 'nope' });
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toBe('unknown thread: nope');
+    const mine = await request(app).post('/api/endless/arm').send({ terminalId: 't2' });
+    expect(mine.status).toBe(400);
+    expect(mine.body.error).toBe('not a Chat thread: t2');
+    expect(svc.store.hasPendingReport('t2')).toBe(false);
   });
 });
 

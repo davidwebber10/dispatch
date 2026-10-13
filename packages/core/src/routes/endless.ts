@@ -52,6 +52,9 @@ export function createEndlessRouter(svc: EndlessService): Router {
   router.get('/project', (req, res) => {
     try { res.json(svc.project(String(req.query.ref ?? ''))); } catch (err) { fail(res, err); }
   });
+  router.post('/arm', (req, res) => {
+    try { res.json(svc.arm(String(req.body?.terminalId ?? ''))); } catch (err) { fail(res, err); }
+  });
 
   router.get('/zoom', (req, res) => {
     try { res.json(svc.zoom(Number(req.query.id), Number(req.query.n))); } catch (err) { fail(res, err); }
