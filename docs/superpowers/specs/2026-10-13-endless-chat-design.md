@@ -150,7 +150,8 @@ Exactly the gist, sections 2–4. The rules that matter most:
    structured manager's stdin), and log it as `user`. Stop.
 3. Otherwise wait until every earlier message is summarized (its level-0 node built). A
    node whose compaction already failed 5 times does not block: it shows in the view as
-   `(not summarized yet: zoom it)`. Then RENDER THE VIEW, and only after that log the new
+   `(not summarized yet: zoom it)`. A 30 s ceiling is a safety net for a call that hangs
+   without failing; past it, unbuilt lines show the same placeholder. Then RENDER THE VIEW, and only after that log the new
    message (it goes whole after the view, never as a view line).
 4. Spawn `claude -p --model opus` (stream-json, via the existing structured transport)
    ALWAYS in the fixed folder `~/.dispatch/chat`. No `-r`: every turn is a fresh session.
@@ -291,6 +292,8 @@ Deliberate differences, each agreed in brainstorming:
 | `zoom("Name")` opens an agent's chat | `read_thread` | Threads are Dispatch threads |
 | No project concept | Project tags on messages and in summary lines | Many projects in one chat |
 | Device list each turn | Project status block each turn | Dispatch has one host |
+| Turn waits until summarized | Same, plus a 30 s ceiling | A hung (not failed) Haiku call must not block the chat |
+| Compactions share the turns' cache | Compactions share a cache only with each other | The prompt cache is per model (Opus turns, Haiku compactions) |
 | Human has no search | FTS5 search for the human only | Requested; the model still uses only `zoom` |
 
 ## Appendix A — system prompt
