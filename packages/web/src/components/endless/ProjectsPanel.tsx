@@ -4,6 +4,7 @@ import { useEndless } from '../../stores/endless';
 /** Per project: live threads, threads that need you, open items, and the last report (spec section 7). */
 export function ProjectsPanel() {
   const projects = useEndless((s) => s.projects);
+  const unavailable = useEndless((s) => s.unavailable);
   const shown = projects.filter((p) => p.live + p.needsYou + p.openItems > 0 || p.messages > 0 || p.lastReport);
   return (
     <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -14,7 +15,7 @@ export function ProjectsPanel() {
           <ArrowClockwise size={14} />
         </button>
       </div>
-      {shown.length === 0 && <div style={{ color: 'var(--color-text-tertiary)', fontSize: 13 }}>No project activity yet.</div>}
+      {shown.length === 0 && <div style={{ color: 'var(--color-text-tertiary)', fontSize: 13 }}>{unavailable ? 'Projects are unavailable.' : 'No project activity yet.'}</div>}
       {shown.map((p) => (
         <div key={p.id} data-testid={`project-${p.id}`} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', display: 'flex', flexDirection: 'column', gap: 4 }}>
           <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--color-text-primary)' }}>{p.name}</div>

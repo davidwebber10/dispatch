@@ -34,11 +34,24 @@ describe('ProjectsPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Refresh projects' }));
     expect(spy).toHaveBeenCalled();
   });
-  it('shows an empty note and survives a failed refresh', () => {
-    useEndless.setState({ projects: [] });
-    vi.spyOn(api, 'endlessProjects').mockRejectedValue(new Error('503'));
+  it('shows an empty note when there is no activity', () => {
+    useEndless.setState({ projects: [], unavailable: false });
     render(<ProjectsPanel />);
     expect(screen.getByText('No project activity yet.')).toBeInTheDocument();
+  });
+  it('says projects are unavailable instead of empty when the load failed', () => {
+    useEndless.setState({ projects: [], unavailable: true });
+    render(<ProjectsPanel />);
+    expect(screen.getByText('Projects are unavailable.')).toBeInTheDocument();
+    expect(screen.queryByText('No project activity yet.')).not.toBeInTheDocument();
+  });
+  it('survives a failed refresh', async () => {
+    const spy = vi.spyOn(api, 'endlessProjects').mockRejectedValue(new Error('503'));
+    render(<ProjectsPanel />);
     fireEvent.click(screen.getByRole('button', { name: 'Refresh projects' }));
+    expect(spy).toHaveBeenCalled();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(screen.getByTestId('project-s1')).toHaveTextContent('salsify');
   });
 });
