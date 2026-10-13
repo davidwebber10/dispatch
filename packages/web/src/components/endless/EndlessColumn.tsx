@@ -7,6 +7,7 @@ import { LoadEarlierButton, Thinking } from '../tabs/chat/ChatView';
 import { InsightText } from '../InsightText';
 import { WorkingIndicator } from '../WorkingIndicator';
 import { EndlessRows } from './EndlessMessageRow';
+import { ProjectSelect } from './ProjectSelect';
 import type { EndlessImage } from '../../api/types';
 import { MODEL_IMAGE_MIME, fileToBase64 } from '../../lib/image-attach';
 
@@ -34,6 +35,8 @@ export function Composer() {
   const [text, setText] = useState('');
   const [images, setImages] = useState<EndlessImage[]>([]);
   const filter = useEndless((s) => s.filter);
+  const [project, setProject] = useState<string | null>(filter);
+  useEffect(() => setProject(filter), [filter]);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const submit = async () => {
@@ -42,7 +45,7 @@ export function Composer() {
     const imgs = images;
     setText('');
     setImages([]);
-    await useEndless.getState().send(t, filter, imgs);
+    await useEndless.getState().send(t, project, imgs);
   };
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit(); }
@@ -70,6 +73,7 @@ export function Composer() {
             ))}
           </div>
         )}
+        <ProjectSelect value={project} onChange={setProject} />
         <div data-testid="composer-row" style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
           <button type="button" aria-label="Attach image" onClick={() => fileRef.current?.click()} style={iconBtn}><Paperclip size={18} /></button>
           <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden onChange={(e) => void onFiles(e)} />

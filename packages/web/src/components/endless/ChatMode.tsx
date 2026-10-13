@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useEndless } from '../../stores/endless';
 import { EndlessColumn } from './EndlessColumn';
+import { ProjectFilter } from './ProjectFilter';
 
 /** The Chat page (spec 2026-10-13, section 7). Loads the tail, the turn state and the projects once. */
 export function ChatMode({ mobile = false }: { mobile?: boolean }) {
@@ -22,6 +23,7 @@ export function ChatMode({ mobile = false }: { mobile?: boolean }) {
               style={{ padding: '5px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', cursor: 'pointer' }}>Try again</button>
           </div>
         )}
+        <ProjectFilter />
         <EndlessColumn />
       </div>
     </div>
