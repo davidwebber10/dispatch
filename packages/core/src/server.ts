@@ -42,6 +42,7 @@ import { createSecretsRouter } from './routes/secrets.js';
 import { createHarnessSettingsRouter } from './routes/harness-settings.js';
 import { opencodeKeySecretName } from './settings/harness-settings.js';
 import { warmModelCapabilities } from './settings/model-capabilities.js';
+import { warmClaudeVersion, prunePromptFiles, setClaudeProbeEnv } from './providers/claude-prompt-file.js';
 import { createTranscribeRouter } from './routes/transcribe.js';
 import { TranscriptionService } from './transcription/service.js';
 import { createSetupRouter } from './routes/setup.js';
@@ -584,6 +585,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     // route an OAuth URL has to the person signing in: there is no local browser.
     spawnEnv.PATH = withShimPath(dataDir, spawnEnv.PATH);
     toolsAuth.setSpawnEnv(spawnEnv);
+    // The Claude version check reads the same `claude` the agents will run.
+    setClaudeProbeEnv(spawnEnv);
     ptyManager.setDefaultEnv(spawnEnv);
     structuredManager.setDefaultEnv(spawnEnv);
     // The ACP children (Grok, OpenCode) run real tools directly (no app-server
@@ -808,6 +811,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // the OpenRouter and models.dev catalogs once now. A chat-only model resumed right after
   // boot then gets its tools turned off instead of failing its first turn.
   void warmModelCapabilities();
+  // Same for the installed Claude Code version: it decides whether a spawn hands Claude its
+  // appended system prompt in a private file or as command-line text (claude-prompt-file.ts).
+  void warmClaudeVersion().then(() => prunePromptFiles());
 
   // Prime the brokered-tool cache so the FIRST spawn after boot already has tools
   // (getServerSpecs is sync, so it can only ever serve a cached answer).
