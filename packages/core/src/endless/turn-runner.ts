@@ -23,6 +23,9 @@ export const RESULT_GRACE_MS = 1_500;
 export const HANDOFF_RESULT_CEILING_MS = 120_000;
 
 export interface UserInput { text: string; project: string | null; media: string[] }
+/** A message already in the log that a turn must answer: a thread's report (spec section 6.4). */
+export interface LoggedInput { i: number; kind: 'work'; text: string; project: string | null }
+type Pending = { logged: false; input: UserInput } | { logged: true; input: LoggedInput };
 export type TurnStatus = 'idle' | 'waiting' | 'running' | 'failed' | 'interrupted';
 export type EndlessEvent =
   | { type: 'endless:delta'; kind: 'text' | 'thinking'; text: string }
@@ -60,7 +63,7 @@ function toolResultText(content: unknown): string {
 
 export class TurnRunner {
   private state: 'idle' | 'waiting' | 'running' = 'idle';
-  private queued: UserInput[] = [];
+  private queued: Pending[] = [];
   private turnId: string | null = null;
   private turnProject: string | null = null;
   private n = 0;
@@ -76,10 +79,19 @@ export class TurnRunner {
 
   whenIdle(): Promise<void> { return this.done ?? Promise.resolve(); }
 
-  send(input: UserInput): void {
-    if (this.state === 'running' && this.turnId) { this.handOff(input); return; }
-    if (this.state === 'waiting') { this.queued.push(input); return; }
-    this.start(input, true);
+  send(input: UserInput): void { this.accept({ logged: false, input }); }
+
+  /**
+   * A message the service already logged (a thread report). It starts a turn when Chat is idle,
+   * joins a turn that is starting, or reaches the running process between tool calls. It is
+   * never logged again.
+   */
+  deliver(input: LoggedInput): void { this.accept({ logged: true, input }); }
+
+  private accept(p: Pending): void {
+    if (this.state === 'running' && this.turnId) { this.handOff(p); return; }
+    if (this.state === 'waiting') { this.queued.push(p); return; }
+    this.start(p, true);
   }
 
   /** Run the last user message again (it is already logged; it is not logged twice). */
@@ -87,45 +99,67 @@ export class TurnRunner {
     if (this.state !== 'idle') return false;
     const run = this.d.store.lastUserRun();
     if (!run.length) return false;
-    this.start({ text: run.map((m) => m.text).join(''), project: run[0].project, media: run.flatMap((m) => m.media) }, false);
+    this.start({ logged: false, input: { text: run.map((m) => m.text).join(''), project: run[0].project, media: run.flatMap((m) => m.media) } }, false);
     return true;
   }
 
-  private start(input: UserInput, logIt: boolean): void {
+  private start(first: Pending, logIt: boolean): void {
     this.state = 'waiting';
-    this.turnProject = input.project;
+    this.turnProject = first.input.project;
     this.handoffPending = false;
     this.d.emit({ type: 'endless:turn', status: 'waiting' });
-    const done: Promise<void> = this.run(input, logIt).finally(() => { if (this.done === done) this.done = null; });
+    const done: Promise<void> = this.run(first, logIt).finally(() => { if (this.done === done) this.done = null; });
     this.done = done;
   }
 
-  private content(input: UserInput, before: string[]): ContentBlock[] {
+  private content(p: Pending, before: string[]): ContentBlock[] {
     const blocks: ContentBlock[] = before.map((text) => ({ type: 'text', text }));
-    blocks.push({ type: 'text', text: messageLine('user', input.text, this.d.projectName(input.project)) });
-    for (const file of input.media) {
-      const img = this.d.readImage(file);
-      if (img) blocks.push({ type: 'image', source: { type: 'base64', media_type: img.mimeType, data: img.data } });
+    blocks.push({ type: 'text', text: messageLine(p.logged ? p.input.kind : 'user', p.input.text, this.d.projectName(p.input.project)) });
+    if (!p.logged) {
+      for (const file of p.input.media) {
+        const img = this.d.readImage(file);
+        if (img) blocks.push({ type: 'image', source: { type: 'base64', media_type: img.mimeType, data: img.data } });
+      }
     }
     return blocks;
   }
 
-  private handOff(input: UserInput): void {
-    this.d.log({ kind: 'user', text: input.text, project: input.project, media: input.media });
-    this.handoffPending = true;
-    this.afterHandOff?.();
-    this.d.manager.sendMessage(this.turnId!, this.content(input, []));
+  /** Log a user message; returns the index of its first row. */
+  private logUser(input: UserInput): number {
+    return this.d.log({ kind: 'user', text: input.text, project: input.project, media: input.media })[0]?.i ?? this.d.store.count();
   }
 
-  private async run(first: UserInput, logIt: boolean): Promise<void> {
+  /** Send a message to the running process. `logIt` false: the caller already logged it. */
+  private handOff(p: Pending, logIt = true): void {
+    if (logIt && !p.logged) this.logUser(p.input);
+    this.handoffPending = true;
+    this.afterHandOff?.();
+    this.d.manager.sendMessage(this.turnId!, this.content(p, []));
+  }
+
+  private async run(first: Pending, logIt: boolean): Promise<void> {
     const d = this.d;
     let error: string | undefined;
     let cancel: (() => void) | null = null;
     try {
-      await d.compactor.waitForSettled(d.store.count(), d.waitMs ?? TURN_WAIT_MS);
-      const view = d.views.turnBlocks();             // render the view first …
-      const status = d.statusBlock(first.project);
-      if (logIt) d.log({ kind: 'user', text: first.text, project: first.project, media: first.media }); // … then log
+      const upTo = first.logged ? first.input.i : d.store.count();
+      await d.compactor.waitForSettled(upTo, d.waitMs ?? TURN_WAIT_MS);
+      // A report logged while this turn waited is a message of this turn, not a view line.
+      const cut = Math.min(first.logged ? first.input.i : d.store.count(), ...this.queued.flatMap((q) => (q.logged ? [q.input.i] : [])));
+      const view = d.views.turnBlocks(cut);          // render the view first …
+      const status = d.statusBlock(first.input.project);
+      // … then log every user message of this turn, so that each message has its log index.
+      // The model receives the messages in log order: a report logged during the wait comes
+      // before a user message that is logged now. A retried message is already logged (-1: first).
+      const order: { p: Pending; at: number }[] = [];
+      order.push({ p: first, at: first.logged ? first.input.i : logIt ? this.logUser(first.input) : -1 });
+      while (this.queued.length) {
+        const q = this.queued[0];
+        const at = q.logged ? q.input.i : this.logUser(q.input);
+        this.queued.shift(); // only after it is logged: a failed log leaves it for `finally`
+        order.push({ p: q, at });
+      }
+      order.sort((a, b) => a.at - b.at);
       const id = `endless-turn-${++this.n}-${Date.now()}`;
       this.turnId = id;
       const w = this.watch(id);
@@ -138,8 +172,8 @@ export class TurnRunner {
       });
       this.state = 'running';
       d.emit({ type: 'endless:turn', status: 'running' });
-      d.manager.sendMessage(id, this.content(first, [...view, status]));
-      for (const q of this.queued.splice(0)) this.handOff(q);
+      d.manager.sendMessage(id, this.content(order[0].p, [...view, status]));
+      for (const o of order.slice(1)) this.handOff(o.p, false);
       error = (await w.ended).error;
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
@@ -150,7 +184,9 @@ export class TurnRunner {
         if (id && d.manager.isAlive(id)) d.manager.kill(id);
       } catch { /* the process is gone or unkillable; the turn still ends */ }
       try {
-        for (const q of this.queued.splice(0)) d.log({ kind: 'user', text: q.text, project: q.project, media: q.media });
+        // User messages that never reached the log are logged so that they are not lost.
+        // Reports are already in the log; the next turn sees them in its view (no auto-retry).
+        for (const q of this.queued.splice(0)) if (!q.logged) this.logUser(q.input);
       } catch (err) {
         error ??= err instanceof Error ? err.message : String(err);
       }

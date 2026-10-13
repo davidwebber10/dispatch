@@ -323,4 +323,97 @@ describe('TurnRunner', () => {
     await finish(t);
     expect(idle).toBe(true);
   });
+
+  it('a report while Chat is idle starts a turn whose message is the report; the view leaves it out', async () => {
+    const t = setup();
+    t.log({ kind: 'user', text: 'start a thread' });
+    await settle();
+    const [w] = t.log({ kind: 'work', text: '[Fix] report: done', project: 'p1', ref: 't1' });
+    t.runner.deliver({ i: w.i, kind: 'work', text: w.text, project: 'p1' });
+    await settle();
+    expect(t.fake.spawned).toHaveLength(1);
+    const parts = texts(t.fake.sent[0].content);
+    expect(parts[0]).toBe('<chat>\n0+1|user: start a thread\n</chat>');
+    expect(parts.at(-1)).toBe('work (name-p1): [Fix] report: done');
+    expect(t.store.count()).toBe(2); // not logged again
+    await finish(t);
+  });
+
+  it('a report while a turn runs reaches the process between tool calls and is not logged again', async () => {
+    const t = setup();
+    t.runner.send({ text: 'go', project: null, media: [] });
+    await settle();
+    const [w] = t.log({ kind: 'work', text: '[Fix] report: done', project: 'p1', ref: 't1' });
+    t.runner.deliver({ i: w.i, kind: 'work', text: w.text, project: 'p1' });
+    expect(t.fake.spawned).toHaveLength(1);
+    expect(texts(t.fake.sent[1].content)).toEqual(['work (name-p1): [Fix] report: done']);
+    expect(t.store.count()).toBe(2);
+    reply(t, 'noted');
+    await finish(t);
+  });
+
+  it('two reports at once start one process; the second is handed off', async () => {
+    const t = setup();
+    const [a] = t.log({ kind: 'work', text: '[A] report: one', ref: 'ta' });
+    const [b] = t.log({ kind: 'work', text: '[B] report: two', ref: 'tb' });
+    t.runner.deliver({ i: a.i, kind: 'work', text: a.text, project: null });
+    t.runner.deliver({ i: b.i, kind: 'work', text: b.text, project: null });
+    await settle();
+    expect(t.fake.spawned).toHaveLength(1);
+    expect(texts(t.fake.sent[0].content).at(-1)).toBe('work: [A] report: one');
+    expect(texts(t.fake.sent[0].content).join('')).not.toContain('[B] report');
+    expect(texts(t.fake.sent[1].content)).toEqual(['work: [B] report: two']);
+    expect(t.store.count()).toBe(2);
+    reply(t, 'both seen');
+    await finish(t);
+  });
+
+  it('a report that arrives while a user turn waits joins that turn in log order, and the view leaves it out', async () => {
+    const t = setup();
+    t.log({ kind: 'user', text: 'earlier' });
+    await settle();
+    t.runner.send({ text: 'hello', project: null, media: [] }); // waiting for summaries
+    const [w] = t.log({ kind: 'work', text: '[Fix] report: done', ref: 't1' });
+    t.runner.deliver({ i: w.i, kind: 'work', text: w.text, project: null });
+    await settle();
+    expect(t.fake.spawned).toHaveLength(1);
+    // The report was logged first (row 1), the user message at the end of the wait (row 2).
+    expect(t.store.get(1)).toMatchObject({ kind: 'work', text: '[Fix] report: done' });
+    expect(t.store.get(2)).toMatchObject({ kind: 'user', text: 'hello' });
+    const first = texts(t.fake.sent[0].content);
+    expect(first[0]).toBe('<chat>\n0+1|user: earlier\n</chat>');
+    expect(first.at(-1)).toBe('work: [Fix] report: done');
+    expect(texts(t.fake.sent[1].content)).toEqual(['user: hello']);
+    expect(userRows(t.store)).toEqual(['earlier', 'hello']);
+    expect(t.store.count()).toBe(3);
+    reply(t, 'both seen');
+    await finish(t);
+  });
+
+  it('reports and user messages queued during the wait reach the model in log order', async () => {
+    const t = setup();
+    const [a] = t.log({ kind: 'work', text: '[A] report: one', ref: 'ta' });
+    t.runner.deliver({ i: a.i, kind: 'work', text: a.text, project: null }); // starts a turn; it waits
+    t.runner.send({ text: 'user words', project: null, media: [] });
+    const [c] = t.log({ kind: 'work', text: '[C] report: three', ref: 'tc' });
+    t.runner.deliver({ i: c.i, kind: 'work', text: c.text, project: null });
+    await settle();
+    expect(t.fake.spawned).toHaveLength(1);
+    const rows = Array.from({ length: t.store.count() }, (_, i) => t.store.get(i)!.text);
+    expect(rows).toEqual(['[A] report: one', '[C] report: three', 'user words']);
+    expect(t.fake.sent.map((s) => texts(s.content).at(-1))).toEqual(['work: [A] report: one', 'work: [C] report: three', 'user: user words']);
+    expect(texts(t.fake.sent[0].content).join('')).not.toContain('[C] report');
+    reply(t, 'all seen');
+    await finish(t);
+  });
+
+  it('a report queued behind a turn that fails before its process starts is not logged again', async () => {
+    const t = setup({ failLogOn: 'user' });
+    t.runner.send({ text: 'hello', project: null, media: [] });
+    const [w] = t.log({ kind: 'work', text: '[Fix] report: done', ref: 't1' });
+    t.runner.deliver({ i: w.i, kind: 'work', text: w.text, project: null });
+    await t.runner.whenIdle();
+    expect(t.fake.spawned).toHaveLength(0);
+    expect(t.store.count()).toBe(1); // only the report, once
+  });
 });

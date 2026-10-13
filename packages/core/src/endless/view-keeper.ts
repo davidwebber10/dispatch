@@ -92,6 +92,9 @@ export class ViewKeeper {
   /**
    * The turn view. With `before`, only the lines that start before message `before`: a message
    * that is already logged (a thread report) is the turn's message, not a view line.
+   * The cut is by a line's first message. A merged parent line that starts before `before` but
+   * also covers it stays in the view, so the turn can see a summary of its own message as well as
+   * the message itself. This is rare (a merge must land during the turn's wait) and loses nothing.
    */
   turnBlocks(before?: number): string[] {
     const lines = before === undefined ? this.chat.lines : this.chat.lines.filter(([l, i]) => firstMessage(l, i) < before);
