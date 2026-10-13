@@ -1137,6 +1137,8 @@ export class SessionService {
     // and the digest, and its questions go to the human. Without this, every role run would wake
     // (and revive) the coordinator with an invitation to spawn a follow-up.
     if (typeof cfg.roleRun === 'string' && cfg.roleRun) return false;
+    // A thread Chat started reports to Chat (Endless Chat stage 2), never to the project's Control Plane.
+    if (cfg.origin === 'endless') return false;
     const coordinator = terminalsDb.listBySession(this.db, agent.session_id)
       .map(terminalsDb.rowToTerminal)
       .find((t) => isAgentType(t.type) && !t.archivedAt && t.id !== agentTerminalId && t.config?.role === 'coordinator');
@@ -1394,7 +1396,8 @@ export class SessionService {
     // Decision cards, Unit 3: the agent's owner-decisions block becomes proposed ledger items. A
     // scheduled role run reports to its own log, never to an overseer, so it is never read.
     const isRoleRun = typeof cfg.roleRun === 'string' && !!cfg.roleRun;
-    const decisions = isRoleRun ? [] : this.captureOwnerDecisions(agent, mission);
+    // A Chat thread's report goes to Chat whole; no overseer triages proposed items for it.
+    const decisions = isRoleRun || cfg.origin === 'endless' ? [] : this.captureOwnerDecisions(agent, mission);
     const note =
       `✅ Your agent "${agent.label || 'agent'}"${mission ? ` (mission "${mission}")` : ''} ` +
       `[agentId ${agentTerminalId}] just finished a turn.\n` +
@@ -1428,6 +1431,14 @@ export class SessionService {
     if (live) return [...live].reverse();
     const items = this.getConversation(terminalId, { limit: 50 }).items.filter((it) => it.kind === 'assistant' && it.text);
     return items.length ? [String(items[items.length - 1].text)] : [];
+  }
+
+  /**
+   * A thread's final output for its Endless Chat report: the texts of its last turn in order,
+   * in full, joined by blank lines. '' when it wrote none.
+   */
+  finalOutput(terminalId: string): string {
+    return [...this.lastTurnTexts(terminalId)].reverse().join('\n\n').trim();
   }
 
   /** Read the owner-decisions block of the agent's last turn into the ledger; returns the notice lines. Never throws. */
