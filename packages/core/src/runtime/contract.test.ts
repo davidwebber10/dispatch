@@ -39,6 +39,19 @@ describe.each(AGENT_TYPES)('%s shared harness contract', provider => {
     expect(notify.mock.calls.filter(([e]) => e.type === 'turn.completed')).toHaveLength(1);
     expect(status.diagnostics('t').events).toEqual(expect.arrayContaining([expect.objectContaining({ disposition: 'turn-already-closed' })]));
   });
+  it('a cleared pending never reads as a new permission request or a needs-input push', () => {
+    const { manager, notify, events } = setup(provider);
+    manager.emit('busy', 't');
+    manager.emit('permission', 't', { toolName: 'AskUserQuestion', questions: [{ question: 'Q?' }] });
+    manager.emit('resolved', 't'); manager.emit('permission-cleared', 't');
+    expect(events.filter(e => e.type === 'permission.requested')).toHaveLength(1);
+    expect(terminals.getById(db,'t')!.status).toBe('working');
+    const pushes = notify.mock.calls.length;
+    manager.emit('permission-cleared', 't');
+    expect(events.filter(e => e.type === 'permission.requested')).toHaveLength(1);
+    expect(terminals.getById(db,'t')!.status).toBe('working');
+    expect(notify.mock.calls.length).toBe(pushes);
+  });
   it('handles cancellation/crash and rejects duplicate, stale-turn, and old-process events', () => {
     const { manager, status, events, dispose } = setup(provider);
     manager.emit('busy','t'); const oldStart = events.at(-1)!;
