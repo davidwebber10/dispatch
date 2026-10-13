@@ -48,6 +48,18 @@ describe('agency-shared', () => {
     expect(await readAgentOutput('http://d', 't9')).toEqual({ agentId: 't9', status: 'waiting', output: 'one\n\ntwo', tools: ['Read'] });
   });
 
+  it('readAgentOutput encodes the agent id in both requests', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json(200, { items: [] }))
+      .mockResolvedValueOnce(json(200, { status: 'waiting' }));
+    vi.stubGlobal('fetch', fetchMock);
+    await readAgentOutput('http://d', 'a/b?c');
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual([
+      'http://d/api/terminals/a%2Fb%3Fc/conversation?limit=500',
+      'http://d/api/terminals/a%2Fb%3Fc',
+    ]);
+  });
+
   it('lists the agent types and harnesses the schemas use', () => {
     expect(AGENT_TYPES).toEqual(['planner', 'implementer', 'researcher', 'reviewer', 'design-reviewer', 'code-reviewer']);
     expect(HARNESSES).toEqual(['claude-code', 'codex', 'grok', 'opencode']);

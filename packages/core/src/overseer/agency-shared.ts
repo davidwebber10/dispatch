@@ -109,11 +109,12 @@ export async function sendTask(api: string, terminalId: string, text: string): P
 
 /** An agent's assistant output, the tools it ran (last 30) and its status. */
 export async function readAgentOutput(api: string, agentId: string): Promise<{ agentId: string; status: string | null; output: string; tools: string[] }> {
-  const conv = await httpJson('GET', `${api}/api/terminals/${agentId}/conversation?limit=500`);
+  const id = encodeURIComponent(agentId);
+  const conv = await httpJson('GET', `${api}/api/terminals/${id}/conversation?limit=500`);
   const items: any[] = Array.isArray(conv?.items) ? conv.items : [];
   const output = items.filter((it) => it?.kind === 'assistant' && it.text).map((it) => it.text).join('\n\n').trim();
   const tools = items.filter((it) => it?.kind === 'tool' && it.toolName).map((it) => it.toolName as string);
   let status: string | null = null;
-  try { const t = await httpJson('GET', `${api}/api/terminals/${agentId}`); status = t?.status ?? null; } catch { /* ignore */ }
+  try { const t = await httpJson('GET', `${api}/api/terminals/${id}`); status = t?.status ?? null; } catch { /* ignore */ }
   return { agentId, status, output: output || '(no assistant output captured yet)', tools: tools.slice(-30) };
 }
