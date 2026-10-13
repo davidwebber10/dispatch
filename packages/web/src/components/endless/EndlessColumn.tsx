@@ -134,7 +134,7 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
         )}
         {sendError && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)', wordBreak: 'break-word' }}>{sendError}</div>}
         <div data-testid="composer-row" style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
-          <ProjectPicker value={project} onChange={setProject} />
+          <ProjectPicker value={project} onChange={setProject} mobile={mobile} />
           <button type="button" aria-label="Attach image" onClick={() => fileRef.current?.click()} style={iconBtn}><Paperclip size={18} /></button>
           <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden onChange={(e) => void onFiles(e)} />
           <textarea aria-label="Message" value={text} rows={1} placeholder="Message Dispatch…"

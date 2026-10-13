@@ -8,12 +8,16 @@ const MIN_SPIN_MS = 400;
 export function ProjectsPanel() {
   const [refreshing, setRefreshing] = useState(false);
   const mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const floorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; if (floorTimer.current) clearTimeout(floorTimer.current); };
+  }, []);
   // Keep the spinner up for at least MIN_SPIN_MS so a fast refresh still shows feedback.
   const refresh = async () => {
     if (refreshing) return;
     setRefreshing(true);
-    const floor = new Promise((r) => setTimeout(r, MIN_SPIN_MS));
+    const floor = new Promise((r) => { floorTimer.current = setTimeout(r, MIN_SPIN_MS); });
     try { await useEndless.getState().loadProjects(); } catch { /* the store keeps the old list */ }
     await floor;
     if (mounted.current) setRefreshing(false);

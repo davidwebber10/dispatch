@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { Composer } from './EndlessColumn';
 import { ProjectsPanel } from './ProjectsPanel';
 import { useEndless } from '../../stores/endless';
@@ -55,7 +55,7 @@ describe('Composer project picker', () => {
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     open();
-    fireEvent.mouseDown(document.body);
+    fireEvent.pointerDown(document.body);
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 
@@ -66,6 +66,29 @@ describe('Composer project picker', () => {
     fireEvent.keyDown(menu, { key: 'ArrowDown' });
     fireEvent.keyDown(menu, { key: 'Enter' });
     expect(screen.getByTestId('project-pill')).toHaveTextContent('salsify');
+  });
+
+  it('aria-activedescendant follows the arrow keys', () => {
+    render(<Composer />);
+    open();
+    const menu = screen.getByRole('menu');
+    const items = within(menu).getAllByRole('menuitemradio');
+    expect(menu).toHaveAttribute('aria-activedescendant', items[0].id);
+    fireEvent.keyDown(menu, { key: 'ArrowDown' });
+    expect(menu).toHaveAttribute('aria-activedescendant', items[1].id);
+    fireEvent.keyDown(menu, { key: 'ArrowUp' });
+    expect(menu).toHaveAttribute('aria-activedescendant', items[0].id);
+  });
+
+  it('returns focus to the trigger after Escape and after a selection', () => {
+    render(<Composer />);
+    const trigger = screen.getByRole('button', { name: 'Choose project' });
+    open();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    expect(trigger).toHaveFocus();
+    open();
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'recent' }));
+    expect(trigger).toHaveFocus();
   });
 
   it('sends the pill project, then the pill is gone', async () => {
@@ -95,7 +118,7 @@ describe('Composer project picker', () => {
 
   it('changing the filter does not set a pill', () => {
     render(<Composer />);
-    useEndless.setState({ filter: 's1' });
+    act(() => { useEndless.setState({ filter: 's1' }); });
     expect(screen.queryByTestId('project-pill')).not.toBeInTheDocument();
   });
 });
