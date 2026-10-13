@@ -276,11 +276,13 @@ export const TOOLS = [
       'Answer a question one of your agents raised — it is PAUSED until you do. When an agent asks, ' +
       'you receive a "🔔 Your agent … is PAUSED" message listing the question header(s) and options; ' +
       'decide based on the mission and answer here. Provide `answers` as a map of each question header ' +
-      'to your chosen option label, exactly as listed (or use `answer` for a single-question prompt).',
+      'to your chosen option label, exactly as listed (or use `answer` for a single-question prompt). ' +
+      'Pass the `requestId` from that message, so the answer cannot land on a newer question.',
     inputSchema: {
       type: 'object',
       properties: {
         agentId: { type: 'string', description: 'The paused agent thread id (from the notification / list_agents).' },
+        requestId: { type: 'string', description: 'The question\'s requestId, from the "PAUSED" message. The answer is refused if that question is no longer the one pending.' },
         answers: {
           type: 'object',
           description: 'Map of question header -> chosen option label, e.g. { "Approach": "Use Postgres" }.',
@@ -847,7 +849,7 @@ async function readAgent(args: { agentId: string }): Promise<{ agentId: string; 
  * `answers` map. Accepts either an explicit `answers` map (question header -> option label) or,
  * for a single-question prompt, a bare `answer` (we look up the question's header to key it).
  */
-async function answerAgent(args: { agentId: string; answers?: Record<string, string>; answer?: string }): Promise<{ ok: true; agentId: string }> {
+async function answerAgent(args: { agentId: string; requestId?: string; answers?: Record<string, string>; answer?: string }): Promise<{ ok: true; agentId: string }> {
   if (!args?.agentId) throw new Error('agentId is required');
   let answers = args.answers && typeof args.answers === 'object' ? args.answers : undefined;
   if ((!answers || Object.keys(answers).length === 0) && typeof args.answer === 'string' && args.answer.trim()) {
@@ -858,7 +860,21 @@ async function answerAgent(args: { agentId: string; answers?: Record<string, str
   if (!answers || Object.keys(answers).length === 0) {
     throw new Error('provide `answers` (map of question header -> chosen option) or `answer` (single option label)');
   }
-  await httpJson('POST', `${apiBase()}/api/terminals/${args.agentId}/permission`, { decision: 'allow', answers });
+  const requestId = typeof args.requestId === 'string' && args.requestId ? args.requestId : undefined;
+  try {
+    await httpJson('POST', `${apiBase()}/api/terminals/${args.agentId}/permission`, { decision: 'allow', answers, ...(requestId ? { requestId } : {}) });
+  } catch (err) {
+    // 404: nothing is pending, or (with a requestId) a different question is. Most often the human
+    // already answered it in the agent's own chat, and the agent may have asked again.
+    if (err instanceof Error && / -> 404 /.test(err.message)) {
+      throw new Error(
+        requestId
+          ? `That question (requestId ${requestId}) is no longer pending. The user may have already answered it in the agent's chat. Read the agent with read_agent before answering again.`
+          : 'The agent has no pending question. The user may have already answered it in the agent\'s chat. Read the agent with read_agent.',
+      );
+    }
+    throw err;
+  }
   return { ok: true, agentId: args.agentId };
 }
 
