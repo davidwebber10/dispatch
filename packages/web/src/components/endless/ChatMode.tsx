@@ -40,8 +40,8 @@ export function ChatMode({ mobile = false }: { mobile?: boolean }) {
               style={{ padding: '5px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', cursor: 'pointer' }}>Try again</button>
           </div>
         )}
-        <ProjectFilter />
-        <EndlessColumn />
+        <ProjectFilter mobile={mobile} />
+        <EndlessColumn mobile={mobile} />
       </div>
       {panel && !mobile && (
         <aside style={{ width: 280, flexShrink: 0, overflowY: 'auto', borderLeft: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>

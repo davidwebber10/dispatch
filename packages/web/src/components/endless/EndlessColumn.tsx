@@ -20,9 +20,9 @@ function BootstrapOlder() {
   return null;
 }
 
-function TurnError({ text }: { text: string }) {
+function TurnError({ text, mobile = false }: { text: string; mobile?: boolean }) {
   return (
-    <div role="alert" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', border: '1px solid var(--color-status-red)', borderRadius: 8, color: 'var(--color-text-primary)', fontSize: 13.5 }}>
+    <div role="alert" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: mobile ? '10px 16px' : '10px 12px', border: '1px solid var(--color-status-red)', borderRadius: 8, color: 'var(--color-text-primary)', fontSize: 13.5 }}>
       <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{text}</span>
       <button type="button" onClick={() => void useEndless.getState().retry()} style={{ flexShrink: 0, padding: '5px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', cursor: 'pointer' }}>Retry</button>
     </div>
@@ -31,7 +31,7 @@ function TurnError({ text }: { text: string }) {
 
 const iconBtn: React.CSSProperties = { width: 36, height: 36, padding: 0, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 10, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', cursor: 'pointer' };
 
-export function Composer() {
+export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
   const [text, setText] = useState('');
   const [images, setImages] = useState<EndlessImage[]>([]);
   const filter = useEndless((s) => s.filter);
@@ -58,7 +58,7 @@ export function Composer() {
   };
 
   return (
-    <div style={{ flexShrink: 0, borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', padding: '10px 12px calc(10px + env(safe-area-inset-bottom))' }}>
+    <div style={{ flexShrink: 0, borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', padding: mobile ? '10px 16px' : '10px 12px calc(10px + env(safe-area-inset-bottom))' }}>
       <div style={{ maxWidth: 768, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
         {images.length > 0 && (
           <div style={{ display: 'flex', gap: 6 }}>
@@ -90,7 +90,7 @@ export function Composer() {
   );
 }
 
-export function EndlessColumn() {
+export function EndlessColumn({ mobile = false }: { mobile?: boolean } = {}) {
   const messages = useEndless((s) => s.messages);
   const hasMore = useEndless((s) => s.hasMore);
   const loadingOlder = useEndless((s) => s.loadingOlder);
@@ -123,7 +123,7 @@ export function EndlessColumn() {
       <MessageScroller.Provider autoScroll defaultScrollPosition="end" scrollEdgeThreshold={48}>
         <MessageScroller.Root style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0, display: 'flex' }}>
           <MessageScroller.Viewport preserveScrollOnPrepend onScroll={onScroll} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
-            <MessageScroller.Content style={{ maxWidth: 768, margin: '0 auto', padding: '24px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <MessageScroller.Content style={{ maxWidth: 768, margin: '0 auto', padding: mobile ? '24px 16px' : '24px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
               <LoadEarlierButton show={hasMore && !loadingOlder} onClick={() => void loadOlder()} />
               {loaded && messages.length === 0 && !busy && (
                 <div style={{ margin: '20vh auto 0', color: 'var(--color-text-tertiary)', fontSize: 14 }}>One chat that never ends. Say something.</div>
@@ -136,8 +136,8 @@ export function EndlessColumn() {
                 </MessageScroller.Item>
               )}
               {busy && <MessageScroller.Item messageId="__working" style={{ display: 'flex' }}><WorkingIndicator /></MessageScroller.Item>}
-              {turn.status === 'failed' && <TurnError text={`The last turn failed: ${turn.error ?? 'unknown error'}`} />}
-              {turn.status === 'interrupted' && <TurnError text="The daemon restarted during the last turn, so the turn stopped." />}
+              {turn.status === 'failed' && <TurnError mobile={mobile} text={`The last turn failed: ${turn.error ?? 'unknown error'}`} />}
+              {turn.status === 'interrupted' && <TurnError mobile={mobile} text="The daemon restarted during the last turn, so the turn stopped." />}
             </MessageScroller.Content>
           </MessageScroller.Viewport>
           <BootstrapOlder />
@@ -149,7 +149,7 @@ export function EndlessColumn() {
           Back to latest
         </button>
       )}
-      <Composer />
+      <Composer mobile={mobile} />
     </div>
   );
 }

@@ -1,8 +1,12 @@
-import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MobileApp } from './MobileApp';
 import { useTabs } from '../../stores/tabs';
 import { api } from '../../api/client';
+import { useEndless } from '../../stores/endless';
+import { ChatMode } from '../endless/ChatMode';
+
+const savedEndless = useEndless.getState();
 
 beforeAll(() => {
   class Noop { observe() {} unobserve() {} disconnect() {} }
@@ -23,6 +27,11 @@ beforeEach(() => {
   vi.spyOn(api, 'endlessProjects').mockResolvedValue([]);
 });
 
+afterEach(() => {
+  useEndless.setState(savedEndless, true);
+  vi.unstubAllGlobals();
+});
+
 describe('MobileApp Chat tab', () => {
   it('opens the Chat page from the bottom tab bar', async () => {
     render(<MobileApp />);
@@ -30,5 +39,20 @@ describe('MobileApp Chat tab', () => {
     const page = await screen.findByTestId('chat-mode');
     expect(page).toHaveAttribute('data-mobile', '1');
     expect(screen.getByRole('textbox', { name: 'Message' })).toBeInTheDocument();
+  });
+
+  it('does not add the bottom safe-area inset to the composer on mobile (the tab bar pads it)', async () => {
+    render(<MobileApp />);
+    fireEvent.click(screen.getByRole('button', { name: 'Chat' }));
+    const box = (await screen.findByRole('textbox', { name: 'Message' })).closest('div[style*="border-top"]') as HTMLElement;
+    expect(box.getAttribute('style')).not.toContain('safe-area-inset-bottom');
+    expect(box.style.paddingLeft).toBe('16px');
+  });
+
+  it('keeps the bottom safe-area inset on the desktop composer', async () => {
+    const { unmount } = render(<ChatMode />);
+    const box = (await screen.findByRole('textbox', { name: 'Message' })).closest('div[style*="border-top"]') as HTMLElement;
+    expect(box.getAttribute('style')).toContain('safe-area-inset-bottom');
+    unmount();
   });
 });
