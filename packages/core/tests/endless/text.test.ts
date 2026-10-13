@@ -52,6 +52,14 @@ describe('clipToolOutput', () => {
     expect(out.length).toBeLessThanOrEqual(TOOL_CLIP_CHARS);
     expect(noBrokenPair(out)).toBe(true);
   });
+  it('clipToolOutput never cuts inside a pair when the pairs start at an odd offset', () => {
+    const text = 'a' + '😀'.repeat(30_000); // pairs at odd offsets, so the cut guards must fire
+    const out = clipToolOutput(text);
+    expect(out.length).toBeLessThanOrEqual(TOOL_CLIP_CHARS);
+    expect(noBrokenPair(out)).toBe(true);
+    expect(isHigh(out.charCodeAt(out.length - 1))).toBe(false);
+    expect(out.startsWith('a')).toBe(true);
+  });
 });
 
 describe('splitLongText', () => {
@@ -70,6 +78,18 @@ describe('splitLongText', () => {
     const pieces = splitLongText(text);
     expect(pieces.join('')).toBe(text);
     for (const p of pieces) expect(noBrokenPair(p)).toBe(true);
+  });
+  it('splitLongText never splits inside a pair when the pairs start at an odd offset', () => {
+    const text = 'a' + '😀'.repeat(40_000); // pairs at odd offsets, so the cut guards must fire
+    const pieces = splitLongText(text);
+    expect(pieces.length).toBeGreaterThan(1);
+    expect(pieces.join('')).toBe(text);
+    for (const p of pieces) {
+      expect(p.length).toBeLessThanOrEqual(30_000);
+      expect(isHigh(p.charCodeAt(p.length - 1))).toBe(false);
+      expect(isLow(p.charCodeAt(0))).toBe(false);
+      expect(noBrokenPair(p)).toBe(true);
+    }
   });
 });
 
