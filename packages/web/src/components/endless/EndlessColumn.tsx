@@ -53,10 +53,15 @@ function FocusScroll() {
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 function TurnError({ text, mobile = false }: { text: string; mobile?: boolean }) {
+  const [retryError, setRetryError] = useState<string | null>(null);
+  const retry = () => {
+    setRetryError(null);
+    useEndless.getState().retry().catch((err: unknown) => setRetryError(`Retry failed: ${errorText(err)}`));
+  };
   return (
     <div role="alert" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: mobile ? '10px 16px' : '10px 12px', border: '1px solid var(--color-status-red)', borderRadius: 8, color: 'var(--color-text-primary)', fontSize: 13.5 }}>
-      <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{text}</span>
-      <button type="button" onClick={() => void useEndless.getState().retry()} style={{ flexShrink: 0, padding: '5px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', cursor: 'pointer' }}>Retry</button>
+      <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{text}{retryError && <><br />{retryError}</>}</span>
+      <button type="button" onClick={retry} style={{ flexShrink: 0, padding: '5px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', cursor: 'pointer' }}>Retry</button>
     </div>
   );
 }

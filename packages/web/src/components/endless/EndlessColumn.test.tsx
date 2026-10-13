@@ -126,6 +126,23 @@ describe('EndlessColumn', () => {
     expect(box.value).toBe('');
   });
 
+  it('shows the error when Retry is refused (409), with no unhandled rejection', async () => {
+    vi.spyOn(api, 'endlessRetry').mockRejectedValue(new Error('POST /api/endless/retry failed: 409 a turn is running'));
+    const rejections: unknown[] = [];
+    const onRejection = (r: unknown) => { rejections.push(r); };
+    process.on('unhandledRejection', onRejection);
+    try {
+      useEndless.setState({ turn: { status: 'failed', error: 'rate limited' } });
+      render(<EndlessColumn />);
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      expect(await screen.findByText(/409 a turn is running/)).toBeInTheDocument();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(rejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onRejection);
+    }
+  });
+
   it('a search jump from the tail scrolls to the row through the scroller and does not follow to the end', async () => {
     const page = useEndless.getState().messages;
     vi.spyOn(api, 'endlessMessages').mockResolvedValue({ messages: page, hasMore: true, hasMoreAfter: true });
