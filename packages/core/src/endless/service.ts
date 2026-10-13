@@ -71,7 +71,10 @@ export class EndlessService {
   private readonly usage: { turns: Usage[]; compactions: Usage[] } = { turns: [], compactions: [] };
   /** Threads with a settle edge scheduled this tick: one ending claims at most one report. */
   private readonly settling = new Set<string>();
-  /** Threads whose last status edge was 'error': a repeated error edge is the same ending. */
+  /**
+   * Threads that owed a report when their last status edge was 'error': a repeated error edge
+   * is the same ending. Only threads with a pending report enter, so the set stays bounded.
+   */
   private readonly errored = new Set<string>();
 
   constructor(private readonly o: EndlessServiceOptions) {
@@ -175,7 +178,7 @@ export class EndlessService {
    */
   onThreadStatus(terminalId: string, status: string): void {
     if (status !== 'error') { this.errored.delete(terminalId); return; }
-    if (this.errored.has(terminalId)) return;
+    if (this.errored.has(terminalId) || !this.store.hasPendingReport(terminalId)) return;
     this.errored.add(terminalId);
     this.onThreadSettled({ terminalId, threadStatus: 'error' });
   }
@@ -183,8 +186,9 @@ export class EndlessService {
   /**
    * The StatusService settled edge (and the error edge). Deferred one tick, like the roles
    * listener, so that the turn's outcome and texts are recorded first. Both hooks can fire for
-   * one ending in the same tick: the second is dropped, so one ending claims at most one
-   * report. Never throws.
+   * one ending in the same tick: the second is dropped, so one ending writes one report. When a
+   * settle and an error arrive in the same tick, the first one wins: the settle listener runs
+   * first, so the report carries the settle's outcome and text. Never throws.
    */
   onThreadSettled(info: { terminalId: string; threadStatus: string }): void {
     const id = info.terminalId;
@@ -201,18 +205,25 @@ export class EndlessService {
    * Log the thread's report once (the claim and the append share one transaction; a long
    * report is split, never clipped), then, after the commit, hand it to the turn runner: it
    * starts a turn, joins a starting one, or reaches the running one.
+   *
+   * Ruling (Task 6 fix round 1): every ending (idle/done, needs_input, error, and recovery)
+   * claims ALL of the thread's owed reports and writes ONE report. The CLI folds a message it
+   * gets mid-turn into the running turn (Task 1 probe c), so one turn can end several jobs; a
+   * leftover count would make a user-started turn report, or recovery log a duplicate.
+   * Accepted risk: when the CLI runs job 2 as a separate later turn, job 2 gets no report of
+   * its own (Chat can still read_thread).
    */
   reportThread(terminalId: string, outcome: string): EndlessMessage[] {
-    return this.report(terminalId, outcome, () => this.store.claimReport(terminalId));
+    return this.report(terminalId, outcome);
   }
 
-  private report(terminalId: string, outcome: string, claim: () => boolean): EndlessMessage[] {
+  private report(terminalId: string, outcome: string): EndlessMessage[] {
     if (this.phase !== 'ready' || this.closed || !this.store.hasPendingReport(terminalId)) return [];
     const t = terminalsDb.getById(this.o.db, terminalId);
     const gone = !t || outcome === 'gone';
     const output = gone ? '' : this.o.finalOutput?.(terminalId) ?? '';
     const text = reportText(t?.label || terminalId, gone ? 'gone' : outcome, output);
-    const written = this.log({ kind: 'work', text, project: t?.session_id ?? null, ref: terminalId }, { claim });
+    const written = this.log({ kind: 'work', text, project: t?.session_id ?? null, ref: terminalId }, { claim: () => this.store.claimAllReports(terminalId) });
     if (written.length) {
       this.turns.deliver({ i: written[0].i, kind: 'work', text: written.map((m) => m.text).join(''), project: written[0].project });
     }
@@ -220,15 +231,15 @@ export class EndlessService {
   }
 
   /**
-   * At start: report each thread that ended while no one listened, once. Its last state covers
-   * every job it owed, so the one report takes them all. A thread that still runs keeps its
-   * reports for its own settle or error edge.
+   * At start: report each thread that ended while no one listened, once (claiming all its
+   * owed reports, like any ending). A thread that still runs keeps its reports for its own
+   * settle or error edge.
    */
   private recoverReports(): void {
     for (const id of this.store.pendingReports()) {
       try {
         const outcome = recoveryOutcome(terminalsDb.getById(this.o.db, id) ?? null);
-        if (outcome) this.report(id, outcome, () => this.store.claimAllReports(id));
+        if (outcome) this.report(id, outcome);
       } catch (err) {
         console.warn(`[endless] the recovered report of ${id} failed:`, err);
       }

@@ -117,24 +117,51 @@ describe('thread reports', () => {
     expect(x.fake.spawned).toHaveLength(0);
   });
 
-  it('every arm owes one report: arm, arm, settle → one report and one still owed; settle again → a second', async () => {
+  it('one ending claims every owed report and writes one report: arm, arm, settle → one report, owed 0', async () => {
     const x = make();
-    outputs.t1 = 'job one';
+    outputs.t1 = 'jobs one and two';
     x.svc.arm('t1');
-    x.svc.arm('t1'); // Chat sent job 2 while job 1 still ran
+    x.svc.arm('t1'); // Chat sent job 2 mid-turn; the CLI folds it into the running turn
     x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'idle' });
     await flush();
-    expect(works().map((m) => m.text)).toEqual(['[Fix login] report: job one']);
-    expect(x.svc.store.owedReports('t1')).toBe(1);
-    outputs.t1 = 'job two';
+    expect(works().map((m) => m.text)).toEqual(['[Fix login] report: jobs one and two']);
+    expect(x.svc.store.owedReports('t1')).toBe(0);
+    // The next turn in that thread is the user's own: it never reports.
+    outputs.t1 = 'the user asked something';
     x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'idle' });
     await flush();
-    expect(works().map((m) => m.text)).toEqual(['[Fix login] report: job one', '[Fix login] report: job two']);
-    expect(x.svc.store.hasPendingReport('t1')).toBe(false);
+    expect(works()).toHaveLength(1);
     await settle();
-    const sent = x.fake.sent.flatMap((s) => texts(s.content));
-    expect(sent.filter((t) => t.startsWith('work'))).toEqual(['work (salsify): [Fix login] report: job one', 'work (salsify): [Fix login] report: job two']);
     await endTurn(x);
+  });
+
+  it('arm, arm, crash (error edge) → one report, owed 0', async () => {
+    const x = make();
+    x.svc.arm('t1');
+    x.svc.arm('t1');
+    x.svc.onThreadStatus('t1', 'error');
+    await flush();
+    expect(works().map((m) => m.text)).toEqual(['[Fix login] report: (stopped with an error) (no output)']);
+    expect(x.svc.store.owedReports('t1')).toBe(0);
+    await settle();
+    await endTurn(x);
+  });
+
+  it('arm, arm, settle, restart → recovery logs nothing', async () => {
+    const a = make();
+    outputs.t1 = 'done';
+    a.svc.arm('t1');
+    a.svc.arm('t1');
+    a.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'idle' });
+    await flush();
+    await settle();
+    await endTurn(a);
+    a.svc.stop();
+    terminalsDb.updateStatus(db, 't1', 'waiting');
+    const b = make();
+    expect(works()).toHaveLength(1);
+    expect(b.svc.store.hasPendingReport('t1')).toBe(false);
+    expect(b.fake.spawned).toHaveLength(0);
   });
 
   it('delivers each report only after its claimed append has committed', async () => {
@@ -197,33 +224,44 @@ describe('thread reports', () => {
     await endTurn(x);
   });
 
-  it('one ending claims at most one report, even when both hooks fire for it', async () => {
+  it('one ending reports once, even when both hooks fire for it', async () => {
     const x = make();
     outputs.t1 = 'done';
     x.svc.arm('t1');
     x.svc.arm('t1');
     x.svc.arm('t1');
-    // The settled listener and the status edge in the same tick: one ending.
+    // The settled listener and the error edge in the same tick: one ending (the settle text wins).
     x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'idle' });
     x.svc.onThreadStatus('t1', 'error');
     await flush();
-    expect(works()).toHaveLength(1);
-    expect(x.svc.store.owedReports('t1')).toBe(2);
+    expect(works().map((m) => m.text)).toEqual(['[Fix login] report: done']);
+    expect(x.svc.store.owedReports('t1')).toBe(0);
     // A repeated error edge (a hook error, then the process exit) is the same ending.
-    x.svc.onThreadStatus('t1', 'error');
-    await flush();
+    x.svc.arm('t1'); // even if Chat armed again in between
     x.svc.onThreadStatus('t1', 'error');
     await flush();
     expect(works()).toHaveLength(1);
-    expect(x.svc.store.owedReports('t1')).toBe(2);
-    // Other status edges never report; a new error edge after them is a new ending.
+    // A new error edge after another status is a new ending.
     x.svc.onThreadStatus('t1', 'working');
-    await flush();
-    expect(works()).toHaveLength(1);
     x.svc.onThreadStatus('t1', 'error');
     await flush();
     expect(works()).toHaveLength(2);
-    expect(x.svc.store.owedReports('t1')).toBe(1);
+    expect(x.svc.store.owedReports('t1')).toBe(0);
+    await settle();
+    await endTurn(x);
+  });
+
+  it('the error-edge memory holds only threads that owe a report', async () => {
+    const x = make();
+    x.svc.onThreadStatus('t2', 'error');
+    x.svc.onThreadStatus('t1', 'error');
+    expect((x.svc as any).errored.size).toBe(0);
+    x.svc.arm('t1');
+    x.svc.onThreadStatus('t1', 'error');
+    expect((x.svc as any).errored.size).toBe(1);
+    x.svc.onThreadStatus('t1', 'idle');
+    expect((x.svc as any).errored.size).toBe(0);
+    await flush();
     await settle();
     await endTurn(x);
   });

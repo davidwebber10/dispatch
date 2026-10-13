@@ -510,7 +510,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const statusService = new StatusService(
     db, broadcaster,
     (id) => threadAutoNamer.notifyActivity(id),
-    (terminalId, status) => { watchDispatcher.onStatus(terminalId, status); onEndlessStatus?.(terminalId, status); },
+    (terminalId, status) => {
+      // Endless first, in its own try: a throw in either hook must not drop the other.
+      try { onEndlessStatus?.(terminalId, status); } catch (err) { console.warn('[endless] status edge failed:', err); }
+      watchDispatcher.onStatus(terminalId, status);
+    },
     (id, prompt) => threadAutoNamer.notifyPrompt(id, prompt),
   );
   const harnessManagers = wireHarnesses(sessionService, statusService, db, broadcaster);

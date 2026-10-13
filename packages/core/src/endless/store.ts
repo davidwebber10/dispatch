@@ -168,7 +168,7 @@ export class EndlessStore {
     return this.db.prepare('DELETE FROM endless_pending_reports WHERE terminal_id = ?').run(terminalId).changes === 1;
   }
 
-  /** Take every owed report of a thread at once (start-up recovery of a thread that already ended). */
+  /** Take every owed report of a thread at once: each ending writes one report for all its jobs. */
   claimAllReports(terminalId: string): boolean {
     return this.db.prepare('DELETE FROM endless_pending_reports WHERE terminal_id = ?').run(terminalId).changes === 1;
   }
