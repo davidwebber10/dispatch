@@ -158,3 +158,78 @@ the dynamic sections already trail the first user message in 2.1.296).
   running turn; it is answered before the first `result` (no second turn).
 - Deny-all on compactions: `toolPolicy` denies Read, but an auto-approved Bash call runs
   with no `can_use_tool`. Abort on any `tool_use` in a compaction.
+
+## End-to-end (Task 19)
+
+Isolated daemon: `HOME=/tmp/endless-e2e/home` (a symlink mirror of the real home with a
+fresh `.dispatch`), `PORT=3999`, `DISPATCH_ENDLESS_LIMITS=4000,8000,2000,4000`. Real Opus
+turns and real Haiku compactions. Driver: `/tmp/endless-e2e/run.mjs` (brief Step 2).
+
+- Messages: 50 notes over 2 project tags (`alpha`, `beta`), 0 failed turns; 3 more question
+  turns, then 2 restart turns; 113 messages in the log at the end. After the 50 notes
+  (100 messages): view 28 lines, 4,883 bytes, levels 0,1,2,3,4; placeholders 0. The view
+  merged at least once on every level from 1 to 4. The tree was complete: 105 nodes on
+  levels 1–6, 0 missing. Haiku compaction calls: 27 before the restarts.
+- Deep zoom (HTTP): 4 levels, from `0+16` to the whole message
+  `#0 user (alpha): Note 0: the red item in this project has code C1000. …`
+- Search C1021: `7:beta, 6:beta` (the user note and the reply). The project filter narrows
+  the hits: `C1021` gives 6 hits for All, 0 for `alpha`, 6 for `beta`; `amber` gives 24 for
+  All, 10 for `alpha`, 14 for `beta`.
+- Model zoom: the brief's question ("What was the code of note 3?") gave 0 zoom calls,
+  because the level-4 summary line `0+16` still holds every code. The reply was correct:
+  "Note 3 gave code **C1021**, for the amber item in beta." A question for the exact words
+  of the reply to note 3 gave 1 zoom call (`mcp__memory__zoom {"id":7,"n":1}`, after one
+  `ToolSearch` call to load the deferred tool). Reply: "Noted: the amber item in beta has
+  code C1021." This is the exact text of message #7.
+- MCP process zoom (Step 3): with the brief's `printf … |` pipe, the process prints only the
+  `initialize` line. `memory-mcp.ts` line 132 calls `process.exit(0)` on stdin `close`, so
+  the in-flight `tools/call` is lost. With stdin held open (`(printf …; sleep 3) |`) the
+  second line comes: `#0 user (alpha): Note 0: the red item in this project has code
+  C1000. …`. Claude Code keeps stdin open during a session, so real turns are not affected.
+- Rendered view: the Memory inspector text equals `GET /api/endless/view` `rendered`
+  (6,290 characters, 38 lines). Spot check: a turn copied the first 3 lines of its own first
+  user message; the 687 copied characters are an exact prefix of `rendered`.
+- Turn cache-read ratio (Opus, median of 53): 0.420 (range 0.000–0.800; p25 0.410, p75
+  0.433). Each turn reads 11,365 tokens and writes 14,135–17,201 tokens. The write grows
+  by about 71 tokens per message pair and falls after a merge, so the view is in the
+  written part on every turn. The view is not read from cache. See the note below.
+- Compaction cache-read ratio (Haiku, median of 27): 0.853 (range 0.000–0.943; p25 0.843,
+  p75 0.866). Each call reads 17,398 tokens and writes 2,394–3,017 tokens.
+- Haiku compaction wall time (process start to exit, sampled every 200 ms): median
+  5,059 ms over 28 processes (range 3,088–48,253 ms; 4 over 10 s). Opus turn processes:
+  median 4,906 ms over 54 (range 3,621–9,408 ms).
+- Restart mid-compaction: killed at `compactor.running 1`, `merges 1`, turn `running`
+  (reply #111 already logged). After the restart: turn `interrupted`, the compactor started
+  again with no new message and drained in 28.4 s (3 compactions). 112 messages, 0 missing
+  nodes on levels 1–6.
+- Restart mid-turn: killed 22 ms after the turn went `running`. After the restart: turn
+  `interrupted`, user message #112 kept, no reply logged, 0 missing nodes, no orphan
+  `claude` processes. The UI shows "The daemon restarted during the last turn, so the turn
+  stopped." with a Retry button.
+- UI checks (Chromium, Playwright):
+  - Messages render with `alpha`/`beta` tags, replies as text, no raw JSON: pass.
+  - Filter `All`/`alpha`/`beta`: pass (`beta` shows only odd notes 1–19 in the window).
+  - Older messages load: pass (`messages?before=50&limit=60` fetched after the first page).
+  - Search `C1021` lists 6 results: pass.
+  - Tap a result opens the chat at that message with a highlight: FAIL from the tail, pass
+    from the middle. See the bug below.
+  - Memory button shows `<chat>` lines `0+16|…`, no placeholder: pass.
+  - Projects panel lists both projects: pass.
+  - 390 px: `scrollWidth` 390 = `innerWidth` 390 (no horizontal page scroll); the 6 bottom
+    tabs are 65 px each with 0 px label overflow: pass. Desktop 1400 px layout: pass.
+
+Bug — search jump from the tail does not scroll. Steps: open Chat (the view is at the
+newest message), search `C1021`, tap the result `beta · user` (message #6). Result: the
+client fetches `messages?around=6&limit=60` and puts the accent outline on message #6, but
+the viewport stays at the bottom of the new window (`scrollTop` 2,880 of max 2,880; message
+#6 is 2,292 px above the viewport). Scroll to the middle first and tap a result: the target
+is centered (318 px from the top of a 674 px viewport). A probable cause is the
+`MessageScroller` `autoScroll`/end anchor in `EndlessColumn.tsx`, which pulls the viewport
+back to the end after `scrollIntoView`.
+
+Note — the turn prompt cache does not hold the view. Each turn is a new `claude -p`
+process, and Claude Code writes the cache only at the end of the whole prompt. The view, the
+status block and the new user line change on every turn, so turn N+1 never finds the
+prefix that turn N wrote. Only tools + system prompt (11,365 tokens here) are read. The probe
+in section (a) sent two identical calls, so it did not show this. With the default view
+limits the view is larger, so the cache write per turn is larger.
