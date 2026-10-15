@@ -18,10 +18,15 @@ describe('TelemetrySetting', () => {
     await waitFor(() => expect(sw).toHaveAttribute('aria-checked', 'false'));
   });
 
-  it('is the last row of General', async () => {
+  it('sits right above the Multi-pane tabs row in General', async () => {
     vi.spyOn(api, 'getTelemetrySetting').mockResolvedValue({ enabled: true });
     const { container } = render(<GeneralSection />);
     await screen.findByText('Send anonymous usage stats');
-    expect(container.textContent!.trimEnd().endsWith('Send anonymous usage stats')).toBe(true);
+    const text = container.textContent!;
+    const at = text.indexOf('Send anonymous usage stats');
+    const multi = text.indexOf('Multi-pane tabs');
+    expect(at).toBeGreaterThan(text.indexOf('Push notifications on this device'));
+    expect(multi).toBeGreaterThan(at);
+    expect(text.slice(at + 'Send anonymous usage stats'.length, multi).trim()).toBe('');
   });
 });

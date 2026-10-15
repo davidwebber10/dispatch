@@ -173,12 +173,13 @@ export function GeneralSection({ onDone }: { onDone?: () => void }) {
       {pushMsg && <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>{pushMsg}</div>}
       <Divider />
 
+      <TelemetrySetting />
+      <Divider />
+
       <MultiPaneSetting />
       <Divider />
 
       <UpdatesSection />
-      <Divider />
-      <TelemetrySetting />
     </>
   );
 }

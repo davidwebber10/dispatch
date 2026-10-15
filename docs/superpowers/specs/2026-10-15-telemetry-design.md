@@ -71,7 +71,7 @@ New folder `packages/core/src/telemetry/`:
 ### Off switches
 
 - Setting `telemetry_enabled` in `app_state`; absent means on. The General section gets a
-  last row: **Send anonymous usage stats** (switch), the last row at the bottom of the section. Turning it off stops sends at the
+  last row: **Send anonymous usage stats** (switch), placed directly above "Multi-pane tabs" (user request, 2026-10-15). Turning it off stops sends at the
   next check; no request is made while it is off.
 - `DISPATCH_TELEMETRY=0` in the daemon environment disables it regardless of the setting.
   The test copy on port 3999 and the test suite set it.
