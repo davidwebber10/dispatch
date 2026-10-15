@@ -33,11 +33,6 @@ function draw(ctx: CanvasRenderingContext2D, g: Game, wall: Rect | null, joy: { 
   // A quiet star field.
   ctx.fillStyle = 'rgba(62,207,106,.22)';
   for (let k = 0; k < 70; k++) ctx.fillRect((k * 137.5) % w, (k * 89.3 + (k % 7) * 31) % h, 1.4, 1.4);
-  if (wall) {
-    ctx.strokeStyle = 'rgba(62,207,106,.35)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(wall.x - 3, wall.y - 3, wall.w + 6, wall.h + 6);
-  }
   ctx.lineWidth = 1.6;
   for (const e of g.enemies) {
     ctx.save();
