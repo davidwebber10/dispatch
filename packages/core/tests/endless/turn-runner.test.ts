@@ -416,4 +416,44 @@ describe('TurnRunner', () => {
     expect(t.fake.spawned).toHaveLength(0);
     expect(t.store.count()).toBe(1); // only the report, once
   });
+  it('Stop kills a running turn, keeps what it logged, ends idle, and a later send starts a fresh turn', async () => {
+    const t = setup();
+    expect(t.runner.stop()).toBe(false); // nothing runs
+    t.runner.send({ text: 'long job', project: 'p1', media: [] });
+    await settle();
+    reply(t, 'starting');
+    t.runner.send({ text: 'sent during the turn', project: 'p1', media: [] });
+    expect(t.runner.stop()).toBe(true);
+    await t.runner.whenIdle();
+    expect(t.runner.status).toBe('idle');
+    expect(t.fake.killed).toEqual([t.fake.spawned[0].id]);
+    expect(t.events.at(-1)).toEqual({ type: 'endless:turn', status: 'idle' });
+    expect(userRows(t.store)).toEqual(['long job', 'sent during the turn']);
+    expect(listeners(t.fake)).toBe(0);
+    t.fake.emitExit(143); // the kill's exit arrives late: it must not touch the next turn
+    t.runner.send({ text: 'next', project: null, media: [] });
+    await settle();
+    expect(t.fake.spawned).toHaveLength(2);
+    await finish(t);
+    expect(t.events.at(-1)).toEqual({ type: 'endless:turn', status: 'idle' });
+  });
+
+  it('Stop during the wait logs the message, never spawns, and ends idle', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const t = setup({ waitMs: 10_000 });
+      t.log({ kind: 'user', text: 'x'.repeat(900) }); // a summary that never comes keeps the turn waiting
+      await settle();
+      t.runner.send({ text: 'wait for me', project: null, media: [] });
+      await settle();
+      expect(t.runner.status).toBe('waiting');
+      expect(t.runner.stop()).toBe(true);
+      await t.runner.whenIdle();
+      expect(t.fake.spawned).toHaveLength(0);
+      expect(userRows(t.store)).toEqual(['x'.repeat(900), 'wait for me']);
+      expect(t.events.at(-1)).toEqual({ type: 'endless:turn', status: 'idle' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

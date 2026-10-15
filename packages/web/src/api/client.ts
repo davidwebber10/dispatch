@@ -72,6 +72,7 @@ export const api = {
   endlessSend: (text: string, project: string | null, images: EndlessImage[] = []) =>
     req<{ ok: true }>('/api/endless/send', { method: 'POST', body: body({ text, project, images }) }),
   endlessRetry: () => req<{ ok: true }>('/api/endless/retry', { method: 'POST' }),
+  endlessStop: () => req<{ ok: true }>('/api/endless/stop', { method: 'POST' }),
   endlessState: () => req<EndlessState>('/api/endless/state'),
   endlessSearch: (q: string, project: string | null) =>
     req<{ results: EndlessSearchHit[] }>(`/api/endless/search?q=${encodeURIComponent(q)}${project ? `&project=${encodeURIComponent(project)}` : ''}`),

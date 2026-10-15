@@ -183,6 +183,54 @@ describe('EndlessColumn', () => {
     expect(scroller.toEnd).toHaveBeenCalledTimes(1);
   });
 
+  it('a send after an in-tail search jump drops the focus and follows the end', async () => {
+    vi.spyOn(api, 'endlessSend').mockResolvedValue({ ok: true });
+    useEndless.setState({ focus: 3, atTail: true });
+    render(<EndlessColumn />);
+    expect(scroller.toMessage).toHaveBeenCalledWith('m3', { align: 'center' });
+    scroller.toEnd.mockClear();
+    const box = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.change(box, { target: { value: 'follow me' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(scroller.toEnd).toHaveBeenCalled());
+    expect(useEndless.getState().focus).toBeNull();
+  });
+
+  it('a send with no focus still follows the end (the reader scrolled up)', async () => {
+    vi.spyOn(api, 'endlessSend').mockResolvedValue({ ok: true });
+    render(<EndlessColumn />);
+    scroller.toEnd.mockClear();
+    const box = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.change(box, { target: { value: 'hi' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(scroller.toEnd).toHaveBeenCalledTimes(1));
+  });
+
+  it('the key is Stop while a turn runs and the draft is empty; a typed draft turns it back to Send', async () => {
+    const stop = vi.spyOn(api, 'endlessStop').mockResolvedValue({ ok: true });
+    useEndless.setState({ turn: { status: 'running', error: null } });
+    render(<EndlessColumn />);
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: 'also this' } });
+    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
+  });
+
+  it('no Stop key when Chat is idle', () => {
+    render(<EndlessColumn />);
+    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+  });
+
+  it('shows the error when Stop is refused (409), with no unhandled rejection', async () => {
+    vi.spyOn(api, 'endlessStop').mockRejectedValue(new Error('POST /api/endless/stop failed: 409 no turn is running'));
+    useEndless.setState({ turn: { status: 'waiting', error: null } });
+    render(<EndlessColumn />);
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    expect(await screen.findByText(/Stop failed: .*409/)).toBeInTheDocument();
+  });
+
   it('does not render undefined when a recall has no id or n', () => {
     useEndless.setState({ messages: [msg(0, 'tool', 'mcp__memory__zoom {}')] });
     render(<EndlessColumn />);

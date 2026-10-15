@@ -158,6 +158,7 @@ describe('endless routes', () => {
   it('reports turn state; Retry is 409 with nothing to retry', async () => {
     expect((await request(app).get('/api/endless/state')).body.turn).toEqual({ status: 'idle', error: null });
     expect((await request(app).post('/api/endless/retry')).status).toBe(409);
+    expect((await request(app).post('/api/endless/stop')).status).toBe(409);
   });
 
   it('lists projects and threads', async () => {

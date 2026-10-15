@@ -72,6 +72,8 @@ export class TurnRunner {
   private handoffPending = false;
   /** Set by watch(): lets a hand-off in the grace window switch to waiting for the next result. */
   private afterHandOff: (() => void) | null = null;
+  /** Set by stop(): ends the current turn at once, in the wait or while the process runs. */
+  private stopTurn: (() => void) | null = null;
 
   constructor(private readonly d: TurnDeps) {}
 
@@ -92,6 +94,17 @@ export class TurnRunner {
     if (this.state === 'running' && this.turnId) { this.handOff(p); return; }
     if (this.state === 'waiting') { this.queued.push(p); return; }
     this.start(p, true);
+  }
+
+  /**
+   * Stop the turn that is waiting or running (the user's Stop button). The process is
+   * killed; what it already said stays in the log. A message sent while it ran is logged
+   * and not answered. Returns false when no turn runs.
+   */
+  stop(): boolean {
+    if (this.state === 'idle' || !this.stopTurn) return false;
+    this.stopTurn();
+    return true;
   }
 
   /** Run the last user message again (it is already logged; it is not logged twice). */
@@ -141,9 +154,18 @@ export class TurnRunner {
     const d = this.d;
     let error: string | undefined;
     let cancel: (() => void) | null = null;
+    let stopped = false;
+    let onStop!: () => void;
+    const stopSignal = new Promise<void>((r) => { onStop = r; });
+    this.stopTurn = () => { stopped = true; onStop(); };
     try {
       const upTo = first.logged ? first.input.i : d.store.count();
-      await d.compactor.waitForSettled(upTo, d.waitMs ?? TURN_WAIT_MS);
+      await Promise.race([d.compactor.waitForSettled(upTo, d.waitMs ?? TURN_WAIT_MS), stopSignal]);
+      if (stopped) {
+        // Stopped before the message was logged: log it, so that it is not lost.
+        if (logIt && !first.logged) this.logUser(first.input);
+        return;
+      }
       // A report logged while this turn waited is a message of this turn, not a view line.
       const cut = Math.min(first.logged ? first.input.i : d.store.count(), ...this.queued.flatMap((q) => (q.logged ? [q.input.i] : [])));
       const view = d.views.turnBlocks(cut);          // render the view first …
@@ -174,10 +196,12 @@ export class TurnRunner {
       d.emit({ type: 'endless:turn', status: 'running' });
       d.manager.sendMessage(id, this.content(order[0].p, [...view, status]));
       for (const o of order.slice(1)) this.handOff(o.p, false);
-      error = (await w.ended).error;
+      const result = await Promise.race([w.ended, stopSignal.then(() => null)]);
+      if (result) error = result.error;
     } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
+      if (!stopped) error = err instanceof Error ? err.message : String(err);
     } finally {
+      this.stopTurn = null;
       cancel?.();
       const id = this.turnId;
       try {
@@ -193,6 +217,7 @@ export class TurnRunner {
       this.turnId = null;
       this.handoffPending = false;
       this.state = 'idle';
+      if (stopped) error = undefined; // a stop is not a failure, even when the kill makes the process fail
       d.emit(error ? { type: 'endless:turn', status: 'failed', error } : { type: 'endless:turn', status: 'idle' });
     }
   }

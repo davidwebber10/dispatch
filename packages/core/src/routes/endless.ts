@@ -41,6 +41,11 @@ export function createEndlessRouter(svc: EndlessService): Router {
     else res.status(409).json({ error: 'a turn is running, or there is no message to retry' });
   });
 
+  router.post('/stop', (_req, res) => {
+    if (svc.stopTurn()) res.status(202).json({ ok: true });
+    else res.status(409).json({ error: 'no turn is running' });
+  });
+
   router.get('/state', (_req, res) => { res.json(svc.state()); });
 
   router.get('/search', (req, res) => {

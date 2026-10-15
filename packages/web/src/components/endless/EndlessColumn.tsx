@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent, type UIEvent } from 'react';
 import { MessageScroller, useMessageScroller } from '@shadcn/react/message-scroller';
-import { ArrowUp, Paperclip, Rows, X } from '@phosphor-icons/react';
+import { ArrowUp, Paperclip, Rows, Stop, X } from '@phosphor-icons/react';
 import { useEndless } from '../../stores/endless';
 import { useProjects } from '../../stores/projects';
 import { useBootstrapOlderPages } from '../../hooks/useBootstrapOlderPages';
@@ -30,6 +30,7 @@ function BootstrapOlder() {
  */
 function FocusScroll() {
   const focus = useEndless((s) => s.focus);
+  const sendCount = useEndless((s) => s.sendCount);
   const messages = useEndless((s) => s.messages);
   const { scrollToMessage, scrollToEnd } = useMessageScroller();
   const scrolledFocus = useRef<number | null>(null);
@@ -48,6 +49,13 @@ function FocusScroll() {
     scrolledFocus.current = focus;
     scrollToMessage(`m${key}`, { align: 'center' });
   }, [focus, messages, scrollToMessage, scrollToEnd]);
+  // Each send follows the end, also when the reader scrolled up or jumped inside the tail.
+  const prevSend = useRef(sendCount);
+  useEffect(() => {
+    if (prevSend.current === sendCount) return;
+    prevSend.current = sendCount;
+    scrollToEnd({ behavior: 'auto' });
+  }, [sendCount, scrollToEnd]);
   return null;
 }
 
@@ -75,6 +83,14 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const sending = useRef(false);
+  const busy = useEndless((s) => s.turn.status === 'waiting' || s.turn.status === 'running');
+  // The key is Stop only while a turn runs and the draft is empty: a message typed during a
+  // turn still goes to the running process.
+  const stopMode = busy && !text.trim() && images.length === 0;
+  const stop = () => {
+    setSendError(null);
+    useEndless.getState().stop().catch((err: unknown) => setSendError(`Stop failed: ${errorText(err)}`));
+  };
 
   // Clear the draft only after the send succeeds; a failed send keeps it and shows why.
   const submit = async () => {
@@ -140,10 +156,17 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
           <textarea aria-label="Message" value={text} rows={1} placeholder="Message Dispatch…"
             onChange={(e) => setText(e.target.value)} onKeyDown={onKey}
             style={{ flex: 1, minWidth: 0, resize: 'none', maxHeight: 200, padding: '8px 12px', borderRadius: 10, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: 16, lineHeight: 1.4, font: 'inherit' }} />
-          <button type="button" aria-label="Send" disabled={!text.trim() && images.length === 0} onClick={() => void submit()}
-            style={{ ...iconBtn, background: 'var(--color-accent)', border: 'none', color: '#06140B' }}>
-            <ArrowUp size={18} weight="bold" />
-          </button>
+          {stopMode ? (
+            <button type="button" aria-label="Stop" title="Stop" onClick={stop}
+              style={{ ...iconBtn, background: 'color-mix(in srgb, var(--color-status-red) 20%, transparent)', border: 'none', color: 'var(--color-status-red)' }}>
+              <Stop size={16} weight="fill" />
+            </button>
+          ) : (
+            <button type="button" aria-label="Send" disabled={!text.trim() && images.length === 0} onClick={() => void submit()}
+              style={{ ...iconBtn, background: 'var(--color-accent)', border: 'none', color: '#06140B' }}>
+              <ArrowUp size={18} weight="bold" />
+            </button>
+          )}
         </div>
       </div>
     </div>

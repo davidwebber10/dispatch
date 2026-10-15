@@ -19,6 +19,8 @@ interface EndlessStoreState {
   unavailable: boolean;
   filter: string | null;
   focus: number | null;
+  /** Bumped by each send: the scroller then follows the end, even after a search jump. */
+  sendCount: number;
   liveText: string;
   liveThinking: string;
   turn: { status: EndlessTurnStatus; error: string | null };
@@ -29,6 +31,7 @@ interface EndlessStoreState {
   setFilter: (project: string | null) => Promise<void>;
   send: (text: string, project: string | null, images?: EndlessImage[]) => Promise<void>;
   retry: () => Promise<void>;
+  stop: () => Promise<void>;
   refreshState: () => Promise<void>;
   loadProjects: () => Promise<void>;
   /** Socket reconnect: broadcasts were missed, so reload the tail (also recovers from `unavailable`). */
@@ -63,6 +66,7 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
     unavailable: false,
     filter: null,
     focus: null,
+    sendCount: 0,
     liveText: '',
     liveThinking: '',
     turn: { status: 'idle', error: null },
@@ -118,8 +122,12 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
     send: async (text, project, images = []) => {
       if (!get().atTail) await get().loadTail();
       await api.endlessSend(text, project, images);
+      // A jump inside the tail leaves atTail true and the scroller in its jump mode: drop the
+      // focus and ask the scroller to follow the end, so the reply comes into view.
+      set({ focus: null, sendCount: get().sendCount + 1 });
     },
     retry: async () => { await api.endlessRetry(); },
+    stop: async () => { await api.endlessStop(); },
     refreshState: () => load(() => api.endlessState(), (s) => set({ turn: s.turn })),
     loadProjects: () => load(() => api.endlessProjects(), (projects) => set({ projects })),
 
