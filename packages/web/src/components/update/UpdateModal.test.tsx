@@ -324,3 +324,16 @@ test('the arena shows behind the running update (the game, not the rain)', async
   render(<UpdateModal />);
   expect(await screen.findByText(/Press any key or tap to play/)).toBeInTheDocument();
 });
+
+test('a page opened during an update does not call it done when it first learns the running version', async () => {
+  vi.useFakeTimers();
+  getUpdateProgress.mockResolvedValue(prog({ state: 'running', step: 'build' }));
+  getUpdateState.mockResolvedValue({ available: false, version: null, url: null, publishedAt: null, currentVersion: '3.0.3' });
+  useUpdate.setState({ inProgress: true, currentVersion: null });
+  render(<UpdateModal />);
+  await act(async () => { await vi.advanceTimersByTimeAsync(7_000); });
+  expect(useUpdate.getState().doneVersion).toBeNull();
+  getUpdateState.mockResolvedValue({ available: false, version: null, url: null, publishedAt: null, currentVersion: '3.1.0' });
+  await act(async () => { await vi.advanceTimersByTimeAsync(3_500); });
+  expect(useUpdate.getState().doneVersion).toBe('3.1.0');
+});
