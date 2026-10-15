@@ -128,27 +128,67 @@ function toolsCliPath(ctx: Ctx): string {
   return path.join(repoRoot, 'packages', 'core', 'dist', 'tools', 'cli.js');
 }
 
-export function cmdBuild(ctx: Ctx): void {
-  // On win32 pnpm/git are .cmd shims that execFile cannot launch directly without
-  // shell: true. On macOS/Linux the binaries are real executables — no shell needed.
-  const shellOpt = ctx.platformId === 'win32' ? { shell: true } : {};
-  // Mirrors the old bash script's `CI=true pnpm install` — always install first so
-  // fresh clones (scripts/install.sh) and self-updates that bump dependencies work.
-  execFileSync('pnpm', ['install'], {
-    stdio: 'inherit',
-    env: { ...process.env, CI: 'true' },
-    ...shellOpt,
-  });
-  execFileSync('pnpm', ['-r', 'run', 'build'], { stdio: 'inherit', ...shellOpt });
-  // Best-effort: install the bundled CLI tools after a successful build. Mirrors the
-  // old bash `node .../tools/cli.js install || warn` — never fail the build on this.
+// On win32 pnpm/git are .cmd shims that execFile cannot launch directly without
+// shell: true. On macOS/Linux the binaries are real executables — no shell needed.
+const shellOf = (ctx: Ctx) => (ctx.platformId === 'win32' ? { shell: true } : {});
+
+function pnpmInstall(ctx: Ctx): void {
+  // Mirrors the old bash script's `CI=true pnpm install`, so fresh clones
+  // (scripts/install.sh) and self-updates that bump dependencies work.
+  execFileSync('pnpm', ['install'], { stdio: 'inherit', env: { ...process.env, CI: 'true' }, ...shellOf(ctx) });
+}
+
+function pnpmBuild(ctx: Ctx): void {
+  execFileSync('pnpm', ['-r', 'run', 'build'], { stdio: 'inherit', ...shellOf(ctx) });
+}
+
+/** Best-effort: install the bundled CLI tools. Never fails the build or the update. */
+function toolsInstall(ctx: Ctx): void {
   try {
-    execFileSync(ctx.nodePath ?? process.execPath, [toolsCliPath(ctx), 'install'], {
-      stdio: 'inherit',
-    });
+    execFileSync(ctx.nodePath ?? process.execPath, [toolsCliPath(ctx), 'install'], { stdio: 'inherit' });
   } catch {
     console.error('Some tools failed to install (continuing).');
   }
+}
+
+export function cmdBuild(ctx: Ctx): void {
+  pnpmInstall(ctx);
+  pnpmBuild(ctx);
+  toolsInstall(ctx);
+}
+
+/**
+ * The update's progress, written to `<dataDir>/update-status.json` at each step so the
+ * daemon can show it (packages/core/src/update/progress.ts reads this exact shape; keep
+ * the two in step). No dataDir (tests, odd installs): every write is a no-op.
+ */
+export const UPDATE_STEPS = ['pull', 'install', 'build', 'tools', 'restart'] as const;
+type UpdateStep = (typeof UPDATE_STEPS)[number];
+function progressWriter(dataDir: string | undefined) {
+  const file = dataDir ? path.join(dataDir, 'update-status.json') : null;
+  const now = () => new Date().toISOString();
+  const s = { v: 1, state: 'running' as 'running' | 'restarting' | 'failed', pid: process.pid, startedAt: now(), step: 'pull' as UpdateStep,
+    stepStartedAt: now(), steps: [...UPDATE_STEPS], skipped: [] as UpdateStep[], error: null as string | null };
+  const write = () => {
+    if (!file) return;
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(`${file}.tmp`, JSON.stringify(s));
+      fs.renameSync(`${file}.tmp`, file); // the daemon never reads a half-written file
+    } catch { /* progress is best-effort; the update itself must not fail on it */ }
+  };
+  return {
+    step(step: UpdateStep) { s.step = step; s.stepStartedAt = now(); if (step === 'restart') s.state = 'restarting'; write(); },
+    skip(step: UpdateStep) { s.skipped.push(step); write(); },
+    fail(err: unknown) { s.state = 'failed'; s.error = err instanceof Error ? err.message : String(err); write(); },
+  };
+}
+
+/** The pnpm-lock.yaml blob at HEAD, or '' when git cannot say. */
+function lockfileHash(ctx: Ctx): string {
+  try {
+    return String(execFileSync('git', ['rev-parse', 'HEAD:pnpm-lock.yaml'], { encoding: 'utf8', ...shellOf(ctx) }) ?? '').trim();
+  } catch { return ''; }
 }
 
 /**
@@ -279,9 +319,30 @@ async function rolesSetEnabled(ctx: Ctx, name: string, enabled: boolean): Promis
 // linux runs foreground; an update that can't restart must surface that error, not
 // swallow it — so this deliberately does not wrap ctx.daemon.restart() in try/catch).
 export function cmdUpdate(ctx: Ctx): void {
-  const shellOpt = ctx.platformId === 'win32' ? { shell: true } : {};
-  execFileSync('git', ['pull', '--ff-only'], { stdio: 'inherit', ...shellOpt });
-  cmdBuild(ctx);
+  const progress = progressWriter(ctx.dataDir);
+  try {
+    progress.step('pull');
+    const lockBefore = lockfileHash(ctx);
+    execFileSync('git', ['pull', '--ff-only'], { stdio: 'inherit', ...shellOf(ctx) });
+    const lockAfter = lockfileHash(ctx);
+    progress.step('install');
+    // Unchanged dependencies need no install: this saves 10-20 s on most updates.
+    const repoRoot = ctx.repoRoot ?? process.cwd();
+    if (lockBefore && lockBefore === lockAfter && fs.existsSync(path.join(repoRoot, 'node_modules'))) {
+      console.log('Dependencies unchanged; skipping pnpm install.');
+      progress.skip('install');
+    } else {
+      pnpmInstall(ctx);
+    }
+    progress.step('build');
+    pnpmBuild(ctx);
+    progress.step('tools');
+    toolsInstall(ctx);
+    progress.step('restart');
+  } catch (err) {
+    progress.fail(err);
+    throw err;
+  }
   ctx.daemon.restart();
 }
 
