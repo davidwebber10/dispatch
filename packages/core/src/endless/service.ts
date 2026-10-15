@@ -377,6 +377,8 @@ export class EndlessService {
 
   retry(): boolean { return this.turns.retry(); }
   stopTurn(): boolean { return this.turns.stop(); }
+  /** A Claude login just changed: summaries that failed on the old login run again now. */
+  retryCompaction(): void { if (!this.closed) this.compactor.retryFailed(); }
 
   state(): { turn: { status: TurnStatus; error: string | null }; total: number; compactor: { unbuilt: number; merges: number; running: number }; usage: { turns: Usage[]; compactions: Usage[] } } {
     const live = this.turns.status;

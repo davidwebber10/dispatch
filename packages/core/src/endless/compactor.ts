@@ -50,6 +50,12 @@ export class Compactor {
     this.pump();
   }
 
+  /** Try the failed nodes again now (the cause is gone, e.g. a Claude login just completed). */
+  retryFailed(): void {
+    this.cooling.clear();
+    this.pump();
+  }
+
   onMessage(i: number): void {
     const last = this.unbuilt[this.unbuilt.length - 1];
     if ((last === undefined || last < i) && !this.d.store.isBuilt(0, i)) this.unbuilt.push(i);

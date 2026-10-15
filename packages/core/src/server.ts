@@ -626,7 +626,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     refreshOpencodeKeyEnv(spawnEnv);
   };
   secretsService.onChange(refreshPtyEnv);
-  claudeLogin.onChange(refreshPtyEnv);
+  // A new login reaches every spawn env first; then Chat's failed summaries run again with it.
+  claudeLogin.onChange(() => { refreshPtyEnv(); endless.retryCompaction(); });
   refreshPtyEnv();
 
   // Terminal activity monitor — parses status bar, detects busy/idle

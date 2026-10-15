@@ -148,6 +148,21 @@ describe('Compactor', () => {
     expect(t.compactor.settledThrough(1)).toBe(true);
   });
 
+  it('retryFailed() tries the failed nodes again at once, with no new message (a login just completed)', async () => {
+    const t = setup();
+    t.log(LONG(0));
+    await settle();
+    t.summarizer.sessions[0].fail('Failed to authenticate');
+    await settle();
+    expect(t.summarizer.sessions).toHaveLength(1);
+    t.compactor.retryFailed();
+    await settle();
+    expect(t.summarizer.sessions).toHaveLength(2);
+    t.summarizer.sessions[1].reply('message zero');
+    await settle();
+    expect(t.compactor.settledThrough(1)).toBe(true);
+  });
+
   it('never puts a placeholder in a compaction view', async () => {
     const t = setup();
     t.log(LONG(0));
