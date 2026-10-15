@@ -56,6 +56,25 @@ describe('worker', () => {
     expect((await post(null, 'x'.repeat(5000))).status).toBe(400);
   });
 
+  it('rejects a large body by its content-length before it reads the body', async () => {
+    let pulled = false;
+    const body = new ReadableStream({ pull(c) { pulled = true; c.enqueue(new TextEncoder().encode('{}')); c.close(); } }, { highWaterMark: 0 });
+    const req = new Request('https://dispatchd.app/v1/ping', { method: 'POST', body, headers: { 'content-length': '50000000' }, duplex: 'half' } as RequestInit);
+    expect((await worker.fetch(req, env as never)).status).toBe(400);
+    expect(pulled).toBe(false);
+  });
+
+  it('stops reading a streamed body at the limit (no content-length); valid JSON over 4 KB is 400', async () => {
+    const big = JSON.stringify(ping({ installId: '0b8f3a2e-1c4d-4e5f-9a6b-7c8d9e0f1a2b', pad: 'x'.repeat(50_000) }));
+    let chunks = 0;
+    const enc = new TextEncoder().encode(big);
+    const body = new ReadableStream({ pull(c) { if (chunks * 1024 >= enc.length) { c.close(); return; } c.enqueue(enc.slice(chunks * 1024, ++chunks * 1024)); } });
+    const req = new Request('https://dispatchd.app/v1/ping', { method: 'POST', body, duplex: 'half' } as RequestInit);
+    expect((await worker.fetch(req, env as never)).status).toBe(400);
+    expect(chunks).toBeLessThanOrEqual(6);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM pings').get()).toEqual({ n: 0 });
+  });
+
   it('404 for other paths and methods', async () => {
     expect((await worker.fetch(new Request('https://dispatchd.app/'), env as never)).status).toBe(404);
     expect((await worker.fetch(new Request('https://dispatchd.app/v1/ping'), env as never)).status).toBe(404);

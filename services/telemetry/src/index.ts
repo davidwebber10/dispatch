@@ -4,13 +4,34 @@ import { computeStats, renderStats, type D1Like } from './stats';
 interface Env { DB: D1Like }
 const MAX_BYTES = 4096;
 
+/** The body as text, or null when it is over `max` bytes. Stops reading at the limit. */
+async function readLimited(req: Request, max: number): Promise<string | null> {
+  const declared = Number(req.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > max) return null;
+  if (!req.body) return '';
+  const reader = req.body.getReader();
+  const parts: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) { await reader.cancel(); return null; }
+    parts.push(value);
+  }
+  const all = new Uint8Array(size);
+  let at = 0;
+  for (const p of parts) { all.set(p, at); at += p.byteLength; }
+  return new TextDecoder().decode(all);
+}
+
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
     try {
       if (url.pathname === '/v1/ping' && req.method === 'POST') {
-        const raw = await req.text();
-        if (raw.length > MAX_BYTES) return new Response(null, { status: 400 });
+        const raw = await readLimited(req, MAX_BYTES);
+        if (raw === null) return new Response(null, { status: 400 });
         let body: unknown;
         try { body = JSON.parse(raw); } catch { return new Response(null, { status: 400 }); }
         const now = new Date();

@@ -45,4 +45,10 @@ describe('test environment: isolated home folder', () => {
       expect(insideTmp(first!), cli).toBe(true);
     }
   });
+
+  // A test that keeps startServer alive past 60 s would otherwise send a real usage ping
+  // to dispatchd.app from a fresh install id.
+  test('usage telemetry is off for the whole suite', () => {
+    expect(process.env.DISPATCH_TELEMETRY).toBe('0');
+  });
 });
