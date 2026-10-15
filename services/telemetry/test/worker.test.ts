@@ -75,8 +75,19 @@ describe('worker', () => {
     expect(db.prepare('SELECT COUNT(*) AS n FROM pings').get()).toEqual({ n: 0 });
   });
 
+  it('/ is a small public page about Dispatch with a link to the repository, no scripts', async () => {
+    const res = await worker.fetch(new Request('https://dispatchd.app/'), env as never);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/html');
+    const html = await res.text();
+    expect(html).toContain('<title>Dispatch</title>');
+    expect(html).toContain('https://github.com/davidwebber10/dispatch');
+    expect(html).not.toMatch(/<script/);
+    expect(html).not.toMatch(/telemetry|stats/i);
+  });
+
   it('404 for other paths and methods', async () => {
-    expect((await worker.fetch(new Request('https://dispatchd.app/'), env as never)).status).toBe(404);
+    expect((await worker.fetch(new Request('https://dispatchd.app/admin'), env as never)).status).toBe(404);
     expect((await worker.fetch(new Request('https://dispatchd.app/v1/ping'), env as never)).status).toBe(404);
   });
 

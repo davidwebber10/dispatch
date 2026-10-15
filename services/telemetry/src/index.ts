@@ -1,5 +1,6 @@
 import { validatePing } from './validate';
 import { computeStats, renderStats, type D1Like } from './stats';
+import { renderHome } from './home';
 
 interface Env { DB: D1Like }
 const MAX_BYTES = 4096;
@@ -46,6 +47,9 @@ export default {
             .bind(p.installId, d.day, p.version, p.platform, JSON.stringify(d.providers), d.threads, d.chatTurns, p.projects, now.toISOString()).run();
         }
         return new Response(null, { status: 204 });
+      }
+      if (req.method === 'GET' && url.pathname === '/') {
+        return new Response(renderHome(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=3600' } });
       }
       // /stats* is guarded by Cloudflare Access at the edge; requests reach here only after login.
       if (req.method === 'GET' && url.pathname === '/stats.json') {
