@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useUpdate } from '../../stores/update';
 import { useApplyUpdate } from '../update/useApplyUpdate';
+import { STEP_LABEL } from '../update/UpdateProgress';
 import { ReleaseNotes } from '../update/ReleaseNotes';
 
 const sectionLabel: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
@@ -19,6 +20,7 @@ export function UpdatesSection() {
   const notes = useUpdate((s) => s.notes);
   const currentNotes = useUpdate((s) => s.currentNotes);
   const { apply, applying, failReason, inProgress, hosted } = useApplyUpdate();
+  const progressStep = useUpdate((st) => (st.progressUnreachable ? 'restart' : st.progress?.step ?? null));
   const [checking, setChecking] = useState(false);
   const [checked, setChecked] = useState(false);
   const [checkError, setCheckError] = useState(false);
@@ -38,7 +40,9 @@ export function UpdatesSection() {
         <span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)' }}>{currentVersion ? `Dispatch v${currentVersion}` : 'Dispatch'}</span>
       </div>
       {inProgress ? (
-        <div style={{ fontSize: 12.5, color: 'var(--color-accent)' }}>Updating — this page will refresh automatically when the server is back.</div>
+        <div style={{ fontSize: 12.5, color: 'var(--color-accent)' }}>
+          Updating{progressStep ? ` — ${STEP_LABEL[progressStep]}` : ''}. This page reloads by itself when the update is done.
+        </div>
       ) : available ? (
         <div style={row}>
           <span style={{ ...item, color: 'var(--color-accent)', fontWeight: 600 }}>{available.version} is available</span>

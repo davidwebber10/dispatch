@@ -3,15 +3,22 @@ import { test, expect, beforeEach, vi } from 'vitest';
 
 const applyUpdate = vi.fn();
 const getUpdateState = vi.fn();
-vi.mock('../../api/client', () => ({ api: { applyUpdate: (force?: boolean) => applyUpdate(force), getUpdateState: () => getUpdateState() } }));
+const getUpdateProgress = vi.fn();
+vi.mock('../../api/client', () => ({ api: { applyUpdate: (force?: boolean) => applyUpdate(force), getUpdateState: () => getUpdateState(), getUpdateProgress: () => getUpdateProgress() } }));
 
 import { UpdateModal } from './UpdateModal';
 import { useUpdate } from '../../stores/update';
+import type { UpdateProgress } from '../../api/types';
+
+const idle: UpdateProgress = { state: 'idle', step: null, steps: ['pull', 'install', 'build', 'tools', 'restart'], skipped: [], startedAt: null, stepStartedAt: null, error: null, version: null, finishedAt: null, log: [] };
+const prog = (over: Partial<UpdateProgress>): UpdateProgress => ({ ...idle, startedAt: new Date(Date.now() - 25_000).toISOString(), stepStartedAt: new Date().toISOString(), ...over });
 
 beforeEach(() => {
-  useUpdate.setState({ available: null, currentVersion: null, dismissedVersion: null, inProgress: false, notes: [], currentNotes: null });
+  useUpdate.setState({ available: null, currentVersion: null, dismissedVersion: null, inProgress: false, notes: [], currentNotes: null, failure: null, progress: null, progressHidden: false });
   applyUpdate.mockReset();
   getUpdateState.mockReset();
+  getUpdateProgress.mockReset();
+  getUpdateProgress.mockResolvedValue(idle);
   getUpdateState.mockResolvedValue({ available: false, version: null, url: null, publishedAt: null, currentVersion: '1.0.0' });
 });
 
@@ -50,7 +57,7 @@ test('clicking Update applies the update and switches to the in-progress state',
   render(<UpdateModal />);
   fireEvent.click(screen.getByText('Update'));
   await waitFor(() => expect(screen.getByText(/Updating Dispatch/)).toBeInTheDocument());
-  expect(screen.getByText(/refresh automatically/)).toBeInTheDocument();
+  expect(screen.getByText(/reloads by itself/)).toBeInTheDocument();
 });
 
 test('a failed preflight falls back to showing the manual command instead of erroring silently', async () => {
@@ -164,7 +171,7 @@ test('the progress copy still reads over the rain', () => {
   useUpdate.setState({ inProgress: true });
   render(<UpdateModal />);
   expect(screen.getByText('Updating Dispatch…')).toBeInTheDocument();
-  expect(screen.getByText(/refresh automatically/)).toBeInTheDocument();
+  expect(screen.getByText(/reloads by itself/)).toBeInTheDocument();
 });
 
 test('a canvas with no 2d context does not break the modal', () => {
@@ -205,4 +212,65 @@ test('the idle "Update available" card stays an opaque panel (no backdrop blur)'
     expect(bf || '').not.toMatch(/blur/);
     node = node.parentElement;
   }
+});
+
+test('while an update runs, the window lists the steps, marks the current one, and shows the output on request', async () => {
+  getUpdateProgress.mockResolvedValue(prog({ state: 'running', step: 'build', skipped: ['install'], log: ['packages/core build$ tsc', 'packages/web build: ✓ built in 15.90s'] }));
+  useUpdate.setState({ inProgress: true });
+  render(<UpdateModal />);
+  expect(await screen.findByText('Building')).toBeInTheDocument();
+  expect(screen.getByText('Downloading')).toBeInTheDocument();
+  expect(screen.getByText(/Installing packages/)).toBeInTheDocument();
+  expect(screen.getByText(/skipped/)).toBeInTheDocument();
+  expect(screen.getByText('Restarting')).toBeInTheDocument();
+  expect(screen.getByText(/0:2\d/)).toBeInTheDocument();
+  expect(screen.queryByText('packages/web build: ✓ built in 15.90s')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Show details' }));
+  expect(screen.getByText('packages/web build: ✓ built in 15.90s')).toBeInTheDocument();
+});
+
+test('a failed update shows the step, the error and the output, with Retry and Close', async () => {
+  getUpdateProgress.mockResolvedValue(prog({ state: 'failed', step: 'build', error: 'Command failed: pnpm -r run build', log: ['error TS2304: Cannot find name x'] }));
+  applyUpdate.mockResolvedValue({ ok: true });
+  useUpdate.setState({ inProgress: true, available: { version: 'v3.1.0', url: null, publishedAt: null } });
+  render(<UpdateModal />);
+  expect(await screen.findByText('Update failed')).toBeInTheDocument();
+  expect(screen.getByText('Command failed: pnpm -r run build')).toBeInTheDocument();
+  expect(screen.getByText('error TS2304: Cannot find name x')).toBeInTheDocument();
+  expect(screen.getByText(/Dispatch still runs the old version/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  await waitFor(() => expect(applyUpdate).toHaveBeenCalledTimes(1));
+});
+
+test('Close after a failure returns to the update prompt', async () => {
+  getUpdateProgress.mockResolvedValue(prog({ state: 'failed', step: 'pull', error: 'git pull failed' }));
+  useUpdate.setState({ inProgress: true, available: { version: 'v3.1.0', url: null, publishedAt: null } });
+  render(<UpdateModal />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Close' }));
+  expect(screen.queryByText('Update failed')).toBeNull();
+  expect(screen.getByText('Update available')).toBeInTheDocument();
+});
+
+test('restarting: the window says so while the server is away', async () => {
+  getUpdateProgress.mockRejectedValue(new Error('fetch failed'));
+  useUpdate.setState({ inProgress: true, progress: prog({ state: 'restarting', step: 'restart' }) });
+  render(<UpdateModal />);
+  expect(await screen.findByText(/Restarting Dispatch/)).toBeInTheDocument();
+});
+
+test('Hide closes the window; a small badge keeps showing the step and opens it again', async () => {
+  getUpdateProgress.mockResolvedValue(prog({ state: 'running', step: 'tools' }));
+  useUpdate.setState({ inProgress: true });
+  render(<UpdateModal />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Hide' }));
+  expect(screen.queryByText('Updating Dispatch…')).toBeNull();
+  const badge = await screen.findByRole('button', { name: /Updating · Updating tools/ });
+  fireEvent.click(badge);
+  expect(screen.getByText('Updating Dispatch…')).toBeInTheDocument();
+});
+
+test('an update that another client started shows here too', async () => {
+  getUpdateProgress.mockResolvedValue(prog({ state: 'running', step: 'pull' }));
+  render(<UpdateModal />);
+  expect(await screen.findByText('Updating Dispatch…')).toBeInTheDocument();
 });

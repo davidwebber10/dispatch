@@ -1,7 +1,7 @@
 import type { harnessCapabilities } from '../../../core/src/providers/capabilities';
 import { apiPath } from '../lib/basePath';
 import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry, LedgerCard, LedgerSource } from './types';
-import type { EndlessPage, EndlessState, EndlessSearchHit, EndlessView, EndlessProject, EndlessImage, ClaudeLoginSession } from './types';
+import type { EndlessPage, EndlessState, EndlessSearchHit, EndlessView, EndlessProject, EndlessImage, ClaudeLoginSession, UpdateProgress } from './types';
 
 /**
  * A content block for a structured `user` turn (mirrors the daemon's wire shape). A
@@ -324,6 +324,7 @@ export const api = {
 
   // Auto-updater
   getUpdateState: () => req<UpdateState>('/api/state/update'),
+  getUpdateProgress: () => req<UpdateProgress>('/api/update/progress'),
   checkUpdate: () => req<UpdateState>('/api/update/check', { method: 'POST' }),
   // Accent-tinted PWA icons (rendered client-side, served by the daemon)
   putAppearanceIcons: (icons: Record<string, string>) =>

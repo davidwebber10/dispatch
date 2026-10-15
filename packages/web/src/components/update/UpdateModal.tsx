@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ArrowCircleUp } from '@phosphor-icons/react';
-import { Spinner } from '../common/Spinner';
+import { UpdateBadge, UpdateFailed, UpdateRunning, useUpdateProgressPoller } from './UpdateProgress';
 import { useUpdate } from '../../stores/update';
 import { useApplyUpdate } from './useApplyUpdate';
 import { ReleaseNotes } from './ReleaseNotes';
@@ -22,16 +22,20 @@ export function UpdateModal() {
   const currentVersion = useUpdate((s) => s.currentVersion);
   const notes = useUpdate((s) => s.notes);
   const { apply, applying, failReason, failDirty, failDirtyOverflow, canForce, inProgress, hosted } = useApplyUpdate();
+  const runFailed = useUpdate((s) => s.runFailed);
+  const hidden = useUpdate((s) => s.progressHidden);
+  useUpdateProgressPoller();
   // The card is a narrow prompt until the notes open, then it widens to stay readable.
   const [notesOpen, setNotesOpen] = useState(false);
 
-  if (!inProgress && (!available || available.version === dismissedVersion)) return null;
+  if (inProgress && hidden) return <UpdateBadge />;
+  if (!inProgress && !runFailed && (!available || available.version === dismissedVersion)) return null;
 
   const dismiss = () => useUpdate.getState().dismiss();
 
   return (
     <div
-      onClick={inProgress ? undefined : dismiss}
+      onClick={inProgress || runFailed ? undefined : dismiss}
       style={{ position: 'fixed', inset: 0, zIndex: 280, background: inProgress ? 'transparent' : 'rgba(0,0,0,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom))' }}
     >
       {/* While the update runs, the backdrop is the rain under a LIGHT scrim, and the card
@@ -48,7 +52,7 @@ export function UpdateModal() {
         onClick={(e) => e.stopPropagation()}
         style={{
           position: 'relative',
-          width: notesOpen && !inProgress ? 460 : 340,
+          width: inProgress || runFailed ? 380 : notesOpen ? 460 : 340,
           maxWidth: '100%',
           transition: 'width .18s ease',
           // Glass, not smoked glass: a low fill alpha and a MODERATE blur — 22px averaged the
@@ -64,13 +68,9 @@ export function UpdateModal() {
           textAlign: 'center',
         }}>
         {inProgress ? (
-          <>
-            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}><Spinner size={26} /></div>
-            <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--color-text-primary)' }}>Updating Dispatch…</div>
-            <div style={{ marginTop: 8, fontSize: 12.5, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
-              The server is restarting — this page will refresh automatically when it's back.
-            </div>
-          </>
+          <UpdateRunning />
+        ) : runFailed ? (
+          <UpdateFailed onRetry={() => void apply()} retrying={applying} />
         ) : (
           <>
             <ArrowCircleUp size={34} weight="fill" color="var(--color-accent)" />

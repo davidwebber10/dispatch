@@ -447,5 +447,19 @@ export interface EndlessViewLine { name: string; l: number; i: number; text: str
 export interface EndlessView { lines: EndlessViewLine[]; bytes: number; rendered: string }
 export interface EndlessProject { id: string; name: string; folder: string; live: number; needsYou: number; openItems: number; lastReport: string | null; messages: number }
 export interface EndlessImage { media_type: string; data: string }
+/** GET /api/update/progress — the updater's status file plus its output tail (core update/progress.ts). */
+export type UpdateStepName = 'pull' | 'install' | 'build' | 'tools' | 'restart';
+export interface UpdateProgress {
+  state: 'idle' | 'running' | 'restarting' | 'failed' | 'done';
+  step: UpdateStepName | null;
+  steps: UpdateStepName[];
+  skipped: UpdateStepName[];
+  startedAt: string | null;
+  stepStartedAt: string | null;
+  error: string | null;
+  version: string | null;
+  finishedAt: string | null;
+  log: string[];
+}
 /** GET/POST /api/claude-auth — the daemon's headless Claude login (`claude setup-token`). */
 export interface ClaudeLoginSession { id: string; status: 'starting' | 'awaiting_code' | 'exchanging' | 'complete' | 'error'; url: string | null; error: string | null; createdAt: string }
