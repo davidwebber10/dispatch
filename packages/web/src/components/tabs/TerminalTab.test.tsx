@@ -23,6 +23,29 @@ vi.mock('@xterm/xterm', () => {
     scrolledLines = 0;
     dataHandler: ((d: string) => void) | null = null;
     private scrollHandlers: Array<() => void> = [];
+    // Minimal stand-in for xterm's parser: registered handlers run before the built-in
+    // ones, and write() below answers any query a handler did not swallow, like real xterm.
+    csiHandlers: Array<{ id: { prefix?: string; final: string }; cb: (p: number[]) => boolean }> = [];
+    oscHandlers: Array<{ ident: number; cb: (d: string) => boolean }> = [];
+    parser = {
+      registerCsiHandler: (id: { prefix?: string; final: string }, cb: (p: number[]) => boolean) => {
+        const h = { id, cb }; this.csiHandlers.push(h);
+        return { dispose: () => { this.csiHandlers = this.csiHandlers.filter((x) => x !== h); } };
+      },
+      registerOscHandler: (ident: number, cb: (d: string) => boolean) => {
+        const h = { ident, cb }; this.oscHandlers.push(h);
+        return { dispose: () => { this.oscHandlers = this.oscHandlers.filter((x) => x !== h); } };
+      },
+    };
+    private answerQueries(data: string) {
+      for (const m of data.matchAll(/\x1b\](1[012]);\?\x07|\x1b\[6n/g)) {
+        if (m[1]) {
+          if (!this.oscHandlers.some((h) => h.ident === Number(m[1]) && h.cb('?'))) this.dataHandler?.(`\x1b]${m[1]};rgb:1e1e/1e1e/1e1e\x07`);
+        } else if (!this.csiHandlers.some((h) => h.id.final === 'n' && !h.id.prefix && h.cb([6]))) {
+          this.dataHandler?.('\x1b[12;34R');
+        }
+      }
+    }
     constructor() { instances.push(this); }
     // Clipboard surface for the custom key handler (Ctrl+C copy / Ctrl+V release):
     // tests place a selection with `selection` and drive `keyHandler` directly.
@@ -53,6 +76,7 @@ vi.mock('@xterm/xterm', () => {
     write(data: string, cb?: () => void) {
       this.written.push(data);
       queueMicrotask(() => {
+        this.answerQueries(data);
         this.buffer.active.length += data.length;
         this.buffer.active.baseY = Math.max(0, this.buffer.active.length - this.rows);
         cb?.();
@@ -1212,3 +1236,38 @@ test('the ask strip and the footer render below the terminal frame, inside the t
   expect(frame.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   useThreadStatus.setState({ byTerminal: {} } as any);
 });
+
+// A replayed ring buffer holds every colour and cursor query the CLI ever sent. Answering
+// them again feeds the CLI replies it no longer expects, which it reads as typed text.
+const QUERIES = 'before\x1b]11;?\x07mid\x1b[6nafter';
+const isReply = (c: unknown) => typeof c === 'string' && (c.startsWith('\x1b]11;rgb') || /R$/.test(c));
+
+test('queries inside the replay frame are not answered, but a later live query is', async () => {
+    const { factory, created } = makeSocketFactory();
+    render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+    await waitFor(() => expect(created).toHaveLength(1));
+    const term = instances[instances.length - 1];
+
+    act(() => { created[0].opts.onData(QUERIES); });
+    await tick();
+    expect(term.written).toContain(QUERIES);
+    expect(created[0].send.mock.calls.map((c: unknown[]) => c[0]).filter(isReply)).toEqual([]);
+
+    // The replay write has been parsed, so a live query is answered again.
+    act(() => { created[0].opts.onData('\x1b[6n'); });
+    await tick();
+    expect(created[0].send).toHaveBeenCalledWith('\x1b[12;34R');
+  });
+
+test('typed keystrokes still reach the socket while a replay is parsing', async () => {
+    const { factory, created } = makeSocketFactory();
+    render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+    await waitFor(() => expect(created).toHaveLength(1));
+    const term = instances[instances.length - 1];
+    const realHandler = term.dataHandler;
+
+    act(() => { created[0].opts.onData(QUERIES); });
+    realHandler?.('ls -la\r');
+    await tick();
+    expect(created[0].send).toHaveBeenCalledWith('ls -la\r');
+  });

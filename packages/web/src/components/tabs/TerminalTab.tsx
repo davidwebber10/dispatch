@@ -281,6 +281,22 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
     // history. The rebuild path owns its own anchor restore (finishRebuild) and never routes
     // through here, so the two can't fight.
     let pinNextReplay = true;
+    // True while a REPLAY write (the ring-buffer history a connection opens with) is still
+    // being parsed. The history holds every OSC 10/11/12 colour query and CSI 6n cursor query
+    // the CLI ever sent. Their answers were consumed long ago, so answering them again makes
+    // the CLI read the reply as typing. A counter, because a rebuild can overlap another write.
+    let replaying = 0;
+    const writeReplay = (chunk: string, cb?: () => void) => {
+      replaying++;
+      term.write(chunk, () => { replaying--; cb?.(); });
+    };
+    // Returning true tells xterm the sequence is handled, so it sends no reply. Live queries
+    // (replaying === 0) fall through to xterm's own handlers and are answered as before.
+    const replayQueryHandlers = [
+      term.parser.registerCsiHandler({ final: 'n' }, (p) => replaying > 0 && (p[0] === 6 || p[0] === 5)),
+      term.parser.registerCsiHandler({ prefix: '?', final: 'n' }, (p) => replaying > 0 && p[0] === 6),
+      ...[10, 11, 12].map((ident) => term.parser.registerOscHandler(ident, (data) => replaying > 0 && data === '?')),
+    ];
     // True while a reprint that began with a scrollback clear is still arriving and the reader
     // was at the bottom when it began (see SCROLLBACK_CLEAR).
     let followReprint = false;
@@ -317,7 +333,8 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
         // In the write CALLBACK: xterm parses asynchronously, so scrolling synchronously after
         // write() would target the PRE-write buffer and land short of the end. A reprint follow
         // that the reader ended in the meantime does not pin.
-        term.write(chunk, () => { if (!disposed && (pinReplay || followReprint)) scrollToEndRef.current(); });
+        const afterWrite = () => { if (!disposed && (pinReplay || followReprint)) scrollToEndRef.current(); };
+        if (pinReplay) writeReplay(chunk, afterWrite); else term.write(chunk, afterWrite);
       } else {
         term.write(chunk);
       }
@@ -500,7 +517,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
             oldLength = term.buffer.active.length;
             oldViewportY = term.buffer.active.viewportY;
             term.reset();
-            term.write(chunk, drainPending);
+            writeReplay(chunk, drainPending);
             return;
           }
           if (rebuilding) { pendingNew.push(chunk); return; }
@@ -799,6 +816,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
       vp0?.removeEventListener('scroll', onViewportScroll);
       offScroll.dispose();
       offRender.dispose();
+      replayQueryHandlers.forEach((h) => h.dispose());
       ro?.disconnect();
       window.removeEventListener('resize', scheduleFit);
       vv?.removeEventListener('resize', scheduleFit);
