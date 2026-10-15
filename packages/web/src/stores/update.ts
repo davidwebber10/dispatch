@@ -28,6 +28,14 @@ interface UpdateState {
   runFailed: boolean;
   /** The user hid the window; a badge shows the update instead. */
   progressHidden: boolean;
+  /** The update this client watched finished: the version it installed (the page has not reloaded yet). */
+  doneVersion: string | null;
+  /** When it finished (ms), for the reload after a quiet spell. */
+  doneAt: number | null;
+  /** The user chose Keep playing: the card hides, a small button reloads. */
+  donePlaying: boolean;
+  /** The update finished (from the progress file, or because the daemon came back on a new version). */
+  markDone: (version: string) => void;
   /** Fold one progress answer into the state (see UpdateModal's poller). */
   applyProgress: (p: UpdateProgress) => void;
   load: () => Promise<void>;
@@ -58,11 +66,21 @@ export const useUpdate = create<UpdateState>((set, get) => ({
   progressUnreachable: false,
   runFailed: false,
   progressHidden: false,
+  doneVersion: null,
+  doneAt: null,
+  donePlaying: false,
+  markDone: (version) => {
+    if (get().doneVersion) return;
+    set({ doneVersion: version, doneAt: Date.now(), inProgress: false, progressHidden: false, progressUnreachable: false });
+  },
   applyProgress: (p) => {
     const { inProgress } = get();
     if (p.state === 'running' || p.state === 'restarting') {
       // Also picks up an update that another client (or a page before a reload) started.
       set({ progress: p, progressUnreachable: false, inProgress: true, runFailed: false });
+    } else if (p.state === 'done' && inProgress) {
+      set({ progress: p });
+      get().markDone(p.version ?? '');
     } else if (p.state === 'failed' && inProgress) {
       set({ progress: p, progressUnreachable: false, inProgress: false, runFailed: true, progressHidden: false, failure: p.error ?? 'The update failed.' });
     } else {

@@ -5,6 +5,11 @@ import { useUpdate } from '../../stores/update';
 import { Spinner } from '../common/Spinner';
 import type { UpdateProgress, UpdateStepName } from '../../api/types';
 
+/** The page reload, as a seam the tests replace. */
+export const pageReload = { run: () => { location.reload(); } };
+/** With the update done, the page reloads after this long without game input. */
+export const IDLE_RELOAD_MS = 15_000;
+
 export const STEP_LABEL: Record<UpdateStepName, string> = {
   pull: 'Downloading',
   install: 'Installing packages',
@@ -137,6 +142,34 @@ export function UpdateBadge() {
     <button type="button" aria-label={`Updating · ${label}`} onClick={() => useUpdate.setState({ progressHidden: false })}
       style={{ position: 'fixed', right: 16, bottom: 'max(16px, env(safe-area-inset-bottom))', zIndex: 280, display: 'flex', alignItems: 'center', gap: 8, height: 34, padding: '0 14px', borderRadius: 999, border: '1px solid #2C3A4A', background: '#1B1B1E', color: 'var(--color-text-primary)', fontSize: 12.5, cursor: 'pointer', boxShadow: '0 10px 30px -10px rgba(0,0,0,.8)' }}>
       <Spinner size={13} /> Updating · {label}
+    </button>
+  );
+}
+
+/** The card body once the update is done: Reload now, or Keep playing. */
+export function UpdateDone() {
+  const version = useUpdate((s) => s.doneVersion);
+  return (
+    <>
+      <CheckCircle size={30} weight="fill" color="var(--color-accent)" />
+      <div style={{ marginTop: 6, fontWeight: 600, fontSize: 15, color: 'var(--color-text-primary)' }}>Update done</div>
+      <div style={{ marginTop: 6, fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
+        {version ? `Dispatch v${version.replace(/^v/, '')} is installed.` : 'The new version is installed.'} Reload to start using it.
+      </div>
+      <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'center' }}>
+        <button type="button" onClick={() => useUpdate.setState({ donePlaying: true })} style={ghost}>Keep playing</button>
+        <button type="button" onClick={() => pageReload.run()} style={primary}>Reload now</button>
+      </div>
+    </>
+  );
+}
+
+/** After Keep playing: a small button that reloads when the player is ready. */
+export function UpdateDoneBadge() {
+  return (
+    <button type="button" aria-label="Update done · Reload" onClick={() => pageReload.run()}
+      style={{ position: 'fixed', right: 16, bottom: 'max(16px, env(safe-area-inset-bottom))', zIndex: 285, display: 'flex', alignItems: 'center', gap: 8, height: 34, padding: '0 14px', borderRadius: 999, border: 'none', background: 'var(--color-accent)', color: '#08240F', fontWeight: 600, fontSize: 12.5, cursor: 'pointer' }}>
+      <CheckCircle size={14} weight="fill" /> Update done · Reload
     </button>
   );
 }

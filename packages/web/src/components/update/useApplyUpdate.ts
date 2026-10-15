@@ -52,9 +52,9 @@ export function useApplyUpdate() {
     const timer = setInterval(async () => {
       try {
         const s = await api.getUpdateState();
-        // Only reload once the daemon is BACK and running something new —
-        // reloading while it's down would strand the PWA on an error page.
-        if (s.currentVersion && s.currentVersion !== before) location.reload();
+        // The daemon is BACK and running something new: the update is done. The window
+        // says so and reloads on Reload now, or by itself after a quiet spell (UpdateModal).
+        if (s.currentVersion && s.currentVersion !== before) useUpdate.getState().markDone(s.currentVersion);
       } catch { /* daemon restarting — keep polling */ }
     }, 3000);
     return () => clearInterval(timer);
