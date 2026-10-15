@@ -162,6 +162,8 @@ export const api = {
 
   // Per-harness settings (server-backed — the daemon needs them at spawn time).
   getHarnessSettings: () => req<HarnessSettingsResponse>('/api/settings/harnesses'),
+  getTelemetrySetting: () => req<{ enabled: boolean }>('/api/settings/telemetry'),
+  setTelemetrySetting: (enabled: boolean) => req<{ enabled: boolean }>('/api/settings/telemetry', { method: 'PUT', body: body({ enabled }) }),
   putHarnessSettings: (patch: Record<string, Partial<Record<'defaultModel' | 'defaultMode' | 'keySecret', string | null>> & { models?: OpencodeModel[] | null }>) =>
     req<HarnessSettingsResponse>('/api/settings/harnesses', { method: 'PUT', body: body(patch) }),
   /** Search OpenRouter's public catalog (daemon-cached) for the OpenCode "add a model" box. */

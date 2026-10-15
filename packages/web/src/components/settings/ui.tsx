@@ -23,9 +23,9 @@ export const iconBtn: React.CSSProperties = { width: 26, height: 26, flexShrink:
 
 export function Divider() { return <div style={{ height: 1, background: 'var(--color-hover)' }} />; }
 
-export function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
+export function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; label?: string }) {
   return (
-    <button onClick={onClick} style={{ width: 38, height: 21, borderRadius: 11, border: 'none', cursor: 'pointer', background: on ? 'var(--color-accent)' : '#34343a', position: 'relative', transition: 'background .15s ease', flexShrink: 0 }}>
+    <button onClick={onClick} {...(label ? { role: 'switch', 'aria-checked': on, 'aria-label': label } : {})} style={{ width: 38, height: 21, borderRadius: 11, border: 'none', cursor: 'pointer', background: on ? 'var(--color-accent)' : '#34343a', position: 'relative', transition: 'background .15s ease', flexShrink: 0 }}>
       <span style={{ position: 'absolute', top: 2, left: on ? 19 : 2, width: 17, height: 17, borderRadius: '50%', background: on ? '#08240F' : '#e9e9ec', transition: 'left .15s ease' }} />
     </button>
   );
