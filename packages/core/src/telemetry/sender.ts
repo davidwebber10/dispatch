@@ -24,7 +24,18 @@ export function telemetryEnabled(db: Database.Database, env: NodeJS.ProcessEnv =
   return appState.get(db, 'telemetry_enabled') !== '0';
 }
 
-export function setTelemetryEnabled(db: Database.Database, on: boolean): void {
+/**
+ * Turning the switch off forgets what was sent and when this install was alive, so no
+ * later report carries a day from the off period. Turning it on again (from off) starts a
+ * new window at `at`: usage before that moment is never sent.
+ */
+export function setTelemetryEnabled(db: Database.Database, on: boolean, at: Date = new Date()): void {
+  const wasOff = appState.get(db, 'telemetry_enabled') === '0';
+  if (!on) {
+    for (const k of ['telemetry_alive_day', 'telemetry_last_sent_day', 'telemetry_last_sent_at']) appState.set(db, k, '');
+  } else if (wasOff) {
+    appState.set(db, 'telemetry_since', at.toISOString());
+  }
   appState.set(db, 'telemetry_enabled', on ? '1' : '0');
 }
 
@@ -51,7 +62,8 @@ export async function checkTelemetryOnce(db: Database.Database, d: TelemetryDeps
     if (!newDay && now.getTime() - lastSentAt < RESEND_MS) return 'skipped';
     // Yesterday rides along only when this install was alive yesterday and its final totals are not yet sent.
     const includeYesterday = (aliveBefore === yesterday || lastSentDay === yesterday) && newDay;
-    const report = buildReport(db, { now, version: d.version ?? getRunningVersion(), platform: d.platform ?? hostPlatform(), includeYesterday });
+    const since = appState.get(db, 'telemetry_since') || undefined;
+    const report = buildReport(db, { now, version: d.version ?? getRunningVersion(), platform: d.platform ?? hostPlatform(), includeYesterday, since });
     const res = await (d.fetchImpl ?? fetch)(d.url ?? env.DISPATCH_TELEMETRY_URL ?? TELEMETRY_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

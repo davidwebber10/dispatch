@@ -77,4 +77,32 @@ describe('telemetry sender', () => {
       expect(t.fetchImpl).toHaveBeenCalledTimes(1);
     } finally { vi.useRealTimers(); }
   });
+
+  it('usage from a period with the switch off is never sent, also after it is turned on again', async () => {
+    const t = setup();
+    const turn = (at: string) => t.db.prepare(`INSERT INTO usage_turns (id, terminal_id, project_id, provider, started_at, output_tokens) VALUES (?, 't', 'p', 'claude', ?, 10)`).run(at, at);
+    t.setNow('2026-10-14T20:00:00Z');
+    await checkTelemetryOnce(t.db, t.deps);           // alive and sent yesterday
+    setTelemetryEnabled(t.db, false);
+    turn('2026-10-14T22:00:00.000Z');                  // off: yesterday
+    turn('2026-10-15T08:00:00.000Z');                  // off: today
+    t.setNow('2026-10-15T09:00:00Z');
+    expect(await checkTelemetryOnce(t.db, t.deps)).toBe('disabled');
+    setTelemetryEnabled(t.db, true, new Date('2026-10-15T09:00:00Z'));
+    turn('2026-10-15T09:30:00.000Z');                  // on again
+    t.setNow('2026-10-15T10:00:00Z');
+    expect(await checkTelemetryOnce(t.db, t.deps)).toBe('sent');
+    const sent = body(t.fetchImpl);
+    expect(sent.days.map((d: { day: string }) => d.day)).toEqual(['2026-10-15']);
+    expect(sent.days[0].providers.claude.turns).toBe(1);
+  });
+
+  it('turning the switch on when it is already on does not reset the window', async () => {
+    const t = setup();
+    const turn = (at: string) => t.db.prepare(`INSERT INTO usage_turns (id, terminal_id, project_id, provider, started_at) VALUES (?, 't', 'p', 'claude', ?)`).run(at, at);
+    turn('2026-10-15T08:00:00.000Z');
+    setTelemetryEnabled(t.db, true);
+    expect(await checkTelemetryOnce(t.db, t.deps)).toBe('sent');
+    expect(body(t.fetchImpl).days[0].providers.claude.turns).toBe(1);
+  });
 });

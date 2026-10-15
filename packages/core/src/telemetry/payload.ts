@@ -19,9 +19,11 @@ function providerKey(raw: string): ProviderKey {
   return 'other';
 }
 
-function dayTotals(db: Database.Database, day: string): DayTotals {
-  const from = `${day}T00:00:00.000Z`;
-  const next = new Date(Date.parse(from) + 86_400_000).toISOString();
+/** `since` (ISO): the switch was turned on again at this moment; earlier usage is never counted. */
+function dayTotals(db: Database.Database, day: string, since?: string): DayTotals {
+  const dayStart = `${day}T00:00:00.000Z`;
+  const next = new Date(Date.parse(dayStart) + 86_400_000).toISOString();
+  const from = since && since > dayStart ? since : dayStart;
   const rows = db.prepare(`
     SELECT provider, COUNT(*) AS turns, SUM(input_tokens) AS input, SUM(output_tokens) AS output,
            SUM(cache_read_tokens) AS cacheRead, SUM(cache_create_tokens) AS cacheWrite
@@ -40,10 +42,10 @@ function dayTotals(db: Database.Database, day: string): DayTotals {
   return { day, providers, threads, chatTurns };
 }
 
-export function buildReport(db: Database.Database, o: { now: Date; version: string; platform: TelemetryReport['platform']; includeYesterday: boolean }): TelemetryReport {
+export function buildReport(db: Database.Database, o: { now: Date; version: string; platform: TelemetryReport['platform']; includeYesterday: boolean; since?: string }): TelemetryReport {
   const today = utcDay(o.now);
   const days = [today];
   if (o.includeYesterday) days.unshift(utcDay(new Date(o.now.getTime() - 86_400_000)));
   const projects = (db.prepare('SELECT COUNT(*) AS n FROM sessions').get() as { n: number }).n;
-  return { v: 1, installId: getInstallId(db), version: o.version, platform: o.platform, days: days.map((d) => dayTotals(db, d)), projects };
+  return { v: 1, installId: getInstallId(db), version: o.version, platform: o.platform, days: days.map((d) => dayTotals(db, d, o.since)), projects };
 }
