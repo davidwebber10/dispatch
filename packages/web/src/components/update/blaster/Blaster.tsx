@@ -95,7 +95,8 @@ function draw(ctx: CanvasRenderingContext2D, g: Game, wall: Rect | null, joy: { 
 
 /**
  * The game behind the update window: a top-down blaster. The status card (`getWall`) is a
- * wall. Keys/mouse on a desktop; on a phone one joystick moves and the ship fires on its own.
+ * wall. On a desktop the arrow keys or WASD move the ship and point it, and Space shoots;
+ * the mouse only starts a round. On a phone one joystick moves and the ship fires on its own.
  * It starts at the first key or tap, and a round never ends the update or the other way round.
  */
 export function Blaster({ getWall, paused }: { getWall: () => Rect | null; paused: boolean }) {
@@ -197,14 +198,11 @@ export function Blaster({ getWall, paused }: { getWall: () => Rect | null; pause
       input.current.autoAim = true;
       if (!fresh && !joy.current) joy.current = { id: e.pointerId, origin: { x: e.clientX, y: e.clientY }, at: { x: e.clientX, y: e.clientY } };
       try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* */ }
-    } else if (!fresh) {
-      input.current.autoAim = false;
-      input.current.aim = { x: e.clientX, y: e.clientY };
-      input.current.fire = true;
     }
+    // A mouse click only starts a round: the keys steer, point and shoot.
   };
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (e.pointerType === 'mouse') { input.current.aim = { x: e.clientX, y: e.clientY }; return; }
+    if (e.pointerType === 'mouse') return;
     const j = joy.current;
     if (!j || j.id !== e.pointerId) return;
     touch();
@@ -214,7 +212,7 @@ export function Blaster({ getWall, paused }: { getWall: () => Rect | null; pause
     input.current.move = { x: (dx * k) / JOY_RADIUS, y: (dy * k) / JOY_RADIUS };
   };
   const onPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (e.pointerType === 'mouse') { input.current.fire = false; return; }
+    if (e.pointerType === 'mouse') return;
     if (joy.current?.id === e.pointerId) { joy.current = null; input.current.move = { x: 0, y: 0 }; }
   };
 
@@ -225,7 +223,7 @@ export function Blaster({ getWall, paused }: { getWall: () => Rect | null; pause
     <div style={{ position: 'absolute', inset: 0, fontFamily: mono }}>
       <canvas ref={canvasRef} aria-hidden="true" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}
         onContextMenu={(e) => e.preventDefault()}
-        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none', cursor: started ? 'crosshair' : 'pointer' }} />
+        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none', cursor: 'default' }} />
       {started && (
         <>
           <div style={{ position: 'absolute', top: 'max(14px, env(safe-area-inset-top))', left: 16, pointerEvents: 'none' }}>
@@ -245,7 +243,7 @@ export function Blaster({ getWall, paused }: { getWall: () => Rect | null; pause
         <div style={{ position: 'absolute', left: 0, right: 0, bottom: 'max(28px, env(safe-area-inset-bottom))', textAlign: 'center', pointerEvents: 'none', color: 'rgba(214,255,228,.85)', fontSize: 13, letterSpacing: 1 }}>
           {hud.over && <div style={{ fontSize: 18, fontWeight: 700, color: RED, marginBottom: 6 }}>GAME OVER · {hud.score.toLocaleString()}</div>}
           {hud.over ? 'Press any key or tap to play again' : 'Press any key or tap to play'}
-          <div style={{ marginTop: 6, fontSize: 11, color: 'rgba(214,255,228,.5)' }}>Move: arrows / WASD or drag · Shoot: mouse or Space · Phones fire on their own</div>
+          <div style={{ marginTop: 6, fontSize: 11, color: 'rgba(214,255,228,.5)' }}>Arrows or WASD move and point · Space shoots · On a phone, drag to move; it shoots by itself</div>
         </div>
       )}
     </div>

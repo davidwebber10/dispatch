@@ -97,4 +97,17 @@ describe('blaster engine', () => {
     expect(g.shots[0].vy).toBeLessThan(0);
     expect(Math.abs(g.shots[0].vx)).toBeLessThan(1);
   });
+  it('keys only: the ship points where it moves, keeps that heading when it stops, and fires that way', () => {
+    const g = empty();
+    g.ship.x = 400; g.ship.y = 300;
+    run(g, { ...idle, move: { x: 0, y: -1 } }, 0.2);
+    step(g, 1 / 60, { ...idle, fire: true }, null);
+    expect(g.shots.length).toBe(1);
+    expect(g.shots[0].vy).toBeLessThan(0);
+    expect(Math.abs(g.shots[0].vx)).toBeLessThan(1);
+    run(g, { ...idle, move: { x: -1, y: 0 } }, 0.2);
+    g.shots = []; g.ship.fireCd = 0;
+    step(g, 1 / 60, { ...idle, fire: true }, null);
+    expect(g.shots[0].vx).toBeLessThan(0);
+  });
 });

@@ -35,4 +35,12 @@ describe('Blaster', () => {
     act(() => { fireEvent.keyDown(box, { key: 'a' }); });
     expect(screen.getByText(/Press any key or tap to play/)).toBeInTheDocument();
   });
+  it('the controls are keys only: the hint says so, and a mouse click only starts the round', () => {
+    const { container } = render(<Blaster getWall={() => null} paused={false} />);
+    expect(screen.getByText(/Arrows or WASD move and point · Space shoots/)).toBeInTheDocument();
+    expect(screen.queryByText(/mouse/i)).toBeNull();
+    act(() => { fireEvent.pointerDown(container.querySelector('canvas')!, { pointerType: 'mouse', clientX: 50, clientY: 50 }); });
+    expect(screen.getByText('SCORE')).toBeInTheDocument();
+    expect((container.querySelector('canvas') as HTMLCanvasElement).style.cursor).toBe('default');
+  });
 });
