@@ -1,6 +1,6 @@
 {
   "name": "dispatch-server",
-  "version": "2.47.9",
+  "version": "3.0.0",
   "private": true,
   "license": "MIT",
   "type": "module",
