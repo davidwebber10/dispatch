@@ -259,6 +259,17 @@ describe('EndlessColumn', () => {
     expect(screen.queryByText('stale')).toBeNull();
   });
 
+  it('a turn that failed on the Claude login offers Log in to Claude; another failure does not', () => {
+    useEndless.setState({ turn: { status: 'failed', error: 'Failed to authenticate: OAuth session expired and could not be refreshed' } });
+    const { unmount } = render(<EndlessColumn />);
+    expect(screen.getByRole('button', { name: 'Log in to Claude' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    unmount();
+    useEndless.setState({ turn: { status: 'failed', error: 'the turn process exited (code 1) before it finished' } });
+    render(<EndlessColumn />);
+    expect(screen.queryByRole('button', { name: 'Log in to Claude' })).toBeNull();
+  });
+
   it('does not render undefined when a recall has no id or n', () => {
     useEndless.setState({ messages: [msg(0, 'tool', 'mcp__memory__zoom {}')] });
     render(<EndlessColumn />);
