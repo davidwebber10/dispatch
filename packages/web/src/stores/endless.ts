@@ -5,11 +5,17 @@ import type { EndlessImage, EndlessMessage, EndlessProject, EndlessTurnStatus } 
 
 const PAGE = 60;
 
+/** A sent message the daemon has not logged yet (a turn logs it after its summary wait). */
+export interface PendingSend { id: number; text: string; projectName: string | null; images: EndlessImage[] }
+let pendingSeq = 0;
+
 /** The daemon answers 503 on every /api/endless route while Chat is starting or failed to start. */
 const isUnavailable = (err: unknown): boolean => err instanceof Error && / failed: 503\b/.test(err.message);
 
 interface EndlessStoreState {
   messages: EndlessMessage[];
+  /** Shown at once under the log; each leaves when the daemon logs a user message or the turn ends. */
+  pending: PendingSend[];
   hasMore: boolean;
   /** The window ends at the newest message, so live messages append. False after a search jump. */
   atTail: boolean;
@@ -66,6 +72,7 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
     unavailable: false,
     filter: null,
     focus: null,
+    pending: [],
     sendCount: 0,
     liveText: '',
     liveThinking: '',
@@ -121,10 +128,17 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
     },
     send: async (text, project, images = []) => {
       if (!get().atTail) await get().loadTail();
-      await api.endlessSend(text, project, images);
+      const item: PendingSend = { id: ++pendingSeq, text, projectName: get().projects.find((p) => p.id === project)?.name ?? null, images };
+      set({ pending: [...get().pending, item], sendCount: get().sendCount + 1 });
+      try {
+        await api.endlessSend(text, project, images);
+      } catch (err) {
+        set({ pending: get().pending.filter((p) => p.id !== item.id) });
+        throw err;
+      }
       // A jump inside the tail leaves atTail true and the scroller in its jump mode: drop the
       // focus and ask the scroller to follow the end, so the reply comes into view.
-      set({ focus: null, sendCount: get().sendCount + 1 });
+      set({ focus: null });
     },
     retry: async () => { await api.endlessRetry(); },
     stop: async () => { await api.endlessStop(); },
@@ -145,6 +159,8 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
         const patch: Partial<EndlessStoreState> = {};
         if (m.kind === 'unii') patch.liveText = '';
         if (m.kind === 'unii' || m.kind === 'tool') patch.liveThinking = '';
+        // The daemon logged a user message: the oldest pending send is now in the log.
+        if (m.kind === 'user' && get().pending.length) patch.pending = get().pending.slice(1);
         if (atTail && (filter === null || m.project === filter) && !messages.some((x) => x.i === m.i)) patch.messages = [...messages, m];
         set(patch);
         // A thread report changes its project's "last report" in the projects panel.
@@ -161,7 +177,7 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
         const status = e.status as EndlessTurnStatus;
         const turn = { status, error: typeof e.error === 'string' ? e.error : null };
         if (status === 'idle' || status === 'failed' || status === 'interrupted') {
-          set({ turn, liveText: '', liveThinking: '' });
+          set({ turn, liveText: '', liveThinking: '', pending: [] });
           void get().loadProjects().catch(() => {});
         } else {
           set({ turn });

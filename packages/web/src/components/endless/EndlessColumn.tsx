@@ -7,7 +7,7 @@ import { useBootstrapOlderPages } from '../../hooks/useBootstrapOlderPages';
 import { LoadEarlierButton, Thinking } from '../tabs/chat/ChatView';
 import { InsightText } from '../InsightText';
 import { WorkingIndicator } from '../WorkingIndicator';
-import { EndlessRows, rowKeyOf } from './EndlessMessageRow';
+import { EndlessRows, PendingUserRow, rowKeyOf } from './EndlessMessageRow';
 import { ProjectPicker, iconBtn } from './ProjectPicker';
 import type { EndlessImage } from '../../api/types';
 import { MODEL_IMAGE_MIME, fileToBase64 } from '../../lib/image-attach';
@@ -184,6 +184,7 @@ export function EndlessColumn({ mobile = false }: { mobile?: boolean } = {}) {
   const liveText = useEndless((s) => s.liveText);
   const liveThinking = useEndless((s) => s.liveThinking);
   const turn = useEndless((s) => s.turn);
+  const pending = useEndless((s) => s.pending);
   const busy = turn.status === 'waiting' || turn.status === 'running';
 
   const onScroll = (e: UIEvent<HTMLDivElement>) => {
@@ -201,6 +202,11 @@ export function EndlessColumn({ mobile = false }: { mobile?: boolean } = {}) {
                 <div style={{ margin: '20vh auto 0', color: 'var(--color-text-tertiary)', fontSize: 14 }}>One chat that never ends. Say something.</div>
               )}
               <EndlessRows messages={messages} focus={focus} />
+              {atTail && pending.map((p) => (
+                <MessageScroller.Item key={`p${p.id}`} messageId={`p${p.id}`} style={{ display: 'flex', flexDirection: 'column' }}>
+                  <PendingUserRow text={p.text} projectName={p.projectName} images={p.images} />
+                </MessageScroller.Item>
+              ))}
               {liveThinking && <MessageScroller.Item messageId="__thinking"><Thinking text={liveThinking} /></MessageScroller.Item>}
               {liveText && (
                 <MessageScroller.Item messageId="__live">

@@ -126,6 +126,21 @@ function MessageRow({ m }: { m: EndlessMessage }) {
   return <ToolLine echo={m} />;
 }
 
+/** A sent message the daemon has not logged yet, drawn like a logged one. */
+export function PendingUserRow({ text, projectName, images }: { text: string; projectName: string | null; images: { media_type: string; data: string }[] }) {
+  return (
+    <div data-pending="true" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+      {projectName && <span style={{ font: '500 10px var(--font-mono)', letterSpacing: '0.06em', color: 'var(--color-text-tertiary)' }}>{projectName}</span>}
+      <UserBubble text={text} />
+      {images.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {images.map((im, k) => <img key={k} src={`data:${im.media_type};base64,${im.data}`} alt="" style={{ maxWidth: 220, maxHeight: 220, borderRadius: 8, border: '1px solid var(--color-border)' }} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function EndlessRows({ messages, focus }: { messages: EndlessMessage[]; focus: number | null }) {
   return (
     <>

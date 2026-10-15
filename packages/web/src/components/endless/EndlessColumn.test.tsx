@@ -49,7 +49,7 @@ beforeEach(() => {
       msg(4, 'echo', '32+8|x'),
       msg(5, 'unii', 'The exporter is fine.'),
     ],
-    loaded: true, hasMore: false, atTail: true, focus: null, filter: null, liveText: '', liveThinking: '', turn: { status: 'idle', error: null }, projects: [],
+    loaded: true, hasMore: false, atTail: true, focus: null, filter: null, liveText: '', liveThinking: '', turn: { status: 'idle', error: null }, projects: [], pending: [],
   });
 });
 
@@ -229,6 +229,34 @@ describe('EndlessColumn', () => {
     render(<EndlessColumn />);
     fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
     expect(await screen.findByText(/Stop failed: .*409/)).toBeInTheDocument();
+  });
+
+  it('a sent message shows at once, before the server logs it, and only once after it is logged', async () => {
+    vi.spyOn(api, 'endlessSend').mockReturnValue(new Promise(() => {})); // the turn waits for summaries
+    render(<EndlessColumn />);
+    const box = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.change(box, { target: { value: 'what have i worked on?' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    const bubbles = () => screen.queryAllByText('what have i worked on?').filter((el) => el.tagName !== 'TEXTAREA');
+    await waitFor(() => expect(bubbles()).toHaveLength(1));
+    expect(document.querySelector('[data-pending="true"]')).not.toBeNull();
+    act(() => { useEndless.getState().applyEvent({ type: 'endless:message', message: msg(6, 'user', 'what have i worked on?') }); });
+    expect(bubbles()).toHaveLength(1);
+    expect(document.querySelector('[data-pending="true"]')).toBeNull();
+  });
+
+  it('a pending message clears when the turn ends, and a failed send removes it', async () => {
+    vi.spyOn(api, 'endlessSend').mockRejectedValueOnce(new Error('POST /api/endless/send failed: 500'));
+    render(<EndlessColumn />);
+    const box = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.change(box, { target: { value: 'lost one' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await screen.findByText(/Send failed/);
+    expect(screen.queryAllByText('lost one').filter((el) => el.tagName !== 'TEXTAREA')).toHaveLength(0);
+    act(() => { useEndless.setState({ pending: [{ id: 99, text: 'stale', projectName: null, images: [] }] }); });
+    expect(screen.getByText('stale')).toBeInTheDocument();
+    act(() => { useEndless.getState().applyEvent({ type: 'endless:turn', status: 'failed', error: 'x' }); });
+    expect(screen.queryByText('stale')).toBeNull();
   });
 
   it('does not render undefined when a recall has no id or n', () => {
