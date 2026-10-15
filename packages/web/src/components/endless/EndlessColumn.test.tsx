@@ -277,6 +277,16 @@ describe('EndlessColumn', () => {
     expect(screen.getByText('recalled')).toBeInTheDocument();
   });
 
+  it('Chat shows no project filter bar, on desktop or on the phone, even with projects that have messages', () => {
+    vi.spyOn(api, 'endlessMessages').mockResolvedValue({ messages: [], hasMore: false, hasMoreAfter: false });
+    useEndless.setState({ projects: [{ id: 's1', name: 'salsify', folder: '/s', live: 0, needsYou: 0, openItems: 0, lastReport: null, messages: 4 }] });
+    const { unmount } = render(<ChatMode />);
+    expect(screen.queryByRole('toolbar', { name: 'Project filter' })).toBeNull();
+    unmount();
+    render(<ChatMode mobile />);
+    expect(screen.queryByRole('toolbar', { name: 'Project filter' })).toBeNull();
+  });
+
   it('keeps the draft when Chat is unavailable and Try again reloads the tail', () => {
     const loadTail = vi.fn().mockResolvedValue(undefined);
     useEndless.setState({ loadTail });

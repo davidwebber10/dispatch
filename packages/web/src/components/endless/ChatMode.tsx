@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { Brain, Folders } from '@phosphor-icons/react';
 import { useEndless } from '../../stores/endless';
 import { EndlessColumn } from './EndlessColumn';
-import { ProjectFilter } from './ProjectFilter';
 import { ProjectsPanel } from './ProjectsPanel';
 import { MemorySearch } from './MemorySearch';
 import { MemoryInspector } from './MemoryInspector';
@@ -40,7 +39,6 @@ export function ChatMode({ mobile = false }: { mobile?: boolean }) {
               style={{ padding: '5px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', cursor: 'pointer' }}>Try again</button>
           </div>
         )}
-        <ProjectFilter mobile={mobile} />
         <EndlessColumn mobile={mobile} />
       </div>
       {panel && !mobile && (
