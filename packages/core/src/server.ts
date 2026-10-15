@@ -74,6 +74,8 @@ import { TerminalMonitor } from './terminal-monitor.js';
 import { ThreadAutoNamer } from './sessions/thread-auto-namer.js';
 import { platform } from './platform/index.js';
 import { startUpdateCheckLoop } from './update/checker.js';
+import { finishRestartedUpdate } from './update/progress.js';
+import { getRunningVersion } from './update/version.js';
 import { createUpdateRouter } from './routes/update.js';
 import { createAppearanceRouter, customIconHandler } from './routes/appearance.js';
 import { createWatchesRouter } from './routes/watches.js';
@@ -890,6 +892,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Start PTY timing loop for Codex-style providers
   const ptyTimingInterval = startPtyTimingLoop(db, ptyManager, broadcaster, undefined, statusService);
   // Poll GitHub Releases for a newer version than what's running (immediately, then ~45 min)
+  // An update that restarted this daemon is done: the update window shows "Updated to …".
+  finishRestartedUpdate(dataDir, getRunningVersion());
   const updateCheckInterval = startUpdateCheckLoop(db, broadcaster);
   // Anonymous usage report: 60 s after boot, then an hourly check (Settings → General switch).
   const telemetryLoop = startTelemetryLoop(db);

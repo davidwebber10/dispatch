@@ -247,3 +247,21 @@ describe('a HOSTED box updates by rolling onto a new image, not by pulling git',
     expect(hostedApplyFn).not.toHaveBeenCalled();
   });
 });
+
+describe('GET /api/update/progress', () => {
+  const broadcaster = { broadcast: vi.fn() } as unknown as EventBroadcaster;
+  it('answers idle with no update, then the running step and its log lines', async () => {
+    const logPath = path.join(dir, 'update.log');
+    const a = app(broadcaster, fakeGit({}), () => {}, { dataDir: dir, updateLogPath: logPath });
+    expect((await request(a).get('/api/update/progress')).body).toMatchObject({ state: 'idle', log: [] });
+    fs.writeFileSync(path.join(dir, 'update-status.json'), JSON.stringify({ v: 1, state: 'running', pid: process.pid, startedAt: 'x', step: 'build', stepStartedAt: 'x', steps: ['pull', 'install', 'build', 'tools', 'restart'], skipped: ['install'], error: null }));
+    fs.writeFileSync(logPath, '[dispatch] Update started now\npackages/core build$ tsc\n');
+    expect((await request(a).get('/api/update/progress')).body).toMatchObject({ state: 'running', step: 'build', skipped: ['install'], log: ['packages/core build$ tsc'] });
+  });
+
+  it('a successful apply marks the update started, so progress shows at once', async () => {
+    const a = app(broadcaster, fakeGit(CLEAN_AND_FF_ABLE), () => {}, { dataDir: dir, updateLogPath: path.join(dir, 'update.log') });
+    expect((await request(a).post('/api/update/apply').send({})).body).toEqual({ ok: true });
+    expect((await request(a).get('/api/update/progress')).body).toMatchObject({ state: 'running', step: 'pull' });
+  });
+});
