@@ -75,6 +75,7 @@ import { ThreadAutoNamer } from './sessions/thread-auto-namer.js';
 import { platform } from './platform/index.js';
 import { startUpdateCheckLoop } from './update/checker.js';
 import { finishRestartedUpdate } from './update/progress.js';
+import { guardLoopback } from './platform/loopback-guard.js';
 import { getRunningVersion } from './update/version.js';
 import { createUpdateRouter } from './routes/update.js';
 import { createAppearanceRouter, customIconHandler } from './routes/appearance.js';
@@ -815,6 +816,10 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     });
   });
 
+  // Hold 127.0.0.1 and ::1 on the port too, so no other process can take localhost from us
+  // (platform/loopback-guard.ts).
+  const loopbackGuards = await guardLoopback(server, port);
+
   // Record our own pid so daemon controllers (e.g. WSL's restart()) can find and signal this
   // process without an OS service manager. Only now that the port is bound: a duplicate launch
   // that loses the port race exits above and must not overwrite the live daemon's pid (#56).
@@ -921,6 +926,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     console.log('Shutting down Dispatch server...');
     clearInterval(ptyTimingInterval);
     clearInterval(updateCheckInterval);
+    for (const g of loopbackGuards) g.close();
     telemetryLoop.stop();
     clearInterval(agentSchedulerInterval);
     clearInterval(autoArchiveInterval);
