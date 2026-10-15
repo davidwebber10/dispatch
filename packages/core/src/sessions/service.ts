@@ -14,6 +14,7 @@ import * as watchesDb from '../db/watches.js';
 import * as coordinatorMessagesDb from '../db/coordinator-messages.js';
 import * as ledgerDb from '../db/ledger.js';
 import { computeBatchState, formatBatchFooter, isBusy, type BatchOptions, type BatchState, type NoticeKind } from './batch-state.js';
+import { QUESTION_CANNED_MESSAGES, questionReplyMessage, type QuestionCannedAction } from './question-reply.js';
 import { LedgerService } from '../overseer/ledger-service.js';
 import { formatOwnerDecisionsNotice, parseOwnerDecisionsBlock, type BlockParse } from '../overseer/owner-decisions.js';
 import { formatInterimNotice, nextInterimConfig } from './interim-recap.js';
@@ -1171,16 +1172,16 @@ export class SessionService {
       .map(terminalsDb.rowToTerminal)
       .find((t) => isAgentType(t.type) && !t.archivedAt && t.id !== agentTerminalId && t.config?.role === 'coordinator');
     if (!coordinator) return false;
-    // The Batch line (structured-recap spec, Unit 4). A direct message starts the subject's
-    // turn, so it counts as working (unless it waits on a question); every other notice leaves
-    // its subject out. A failure here never drops the notice: it goes out without the line,
+    // The Batch line (structured-recap spec, Unit 4). A direct message, or a human answer to its
+    // question, starts the subject's turn, so it counts as working (unless it waits on a question);
+    // every other notice leaves its subject out. A failure here never drops the notice: it goes out without the line,
     // and the interim timer is left as it is.
     let batch: BatchState | null = null;
     let message = note;
     try {
       const state = this.batchState(
         agent.session_id,
-        opts.kind === 'direct-message'
+        opts.kind === 'direct-message' || opts.kind === 'question-answered'
           ? { justStarted: [...(opts.justStarted ?? []), agentTerminalId] }
           : { exclude: [agentTerminalId], justStarted: opts.justStarted },
       );
@@ -1226,7 +1227,7 @@ export class SessionService {
   }
 
   /** Format an agent's pending AskUserQuestion as a directive the coordinator can act on. */
-  private formatAgentQuestion(agentId: string, label: string, mission: string | null, questions: any[]): string {
+  private formatAgentQuestion(agentId: string, label: string, mission: string | null, questions: any[], requestId?: string): string {
     const qs = Array.isArray(questions) ? questions : [];
     const lines = qs.map((q: any, i: number) => {
       const header = (q?.header ?? `Q${i + 1}`).toString();
@@ -1244,7 +1245,7 @@ export class SessionService {
       `🔔 Your agent "${label}"${mission ? ` (mission "${mission}")` : ''} is PAUSED waiting on you to ` +
       `answer a question (it cannot proceed until you do):\n${lines.join('\n')}\n\n` +
       `Decide based on the mission and answer it now by calling:\n` +
-      `answer_agent({ agentId: "${agentId}", answers: ${exampleAnswers} })\n` +
+      `answer_agent({ agentId: "${agentId}", ${requestId ? `requestId: "${requestId}", ` : ''}answers: ${exampleAnswers} })\n` +
       `Pick from the listed options. Only raise it to the human yourself if you genuinely cannot decide.`
     );
   }
@@ -1263,7 +1264,10 @@ export class SessionService {
     let cfg: Record<string, any> = {};
     try { cfg = JSON.parse(agent.config || '{}'); } catch { /* default {} */ }
     const mission = typeof cfg.mission === 'string' && cfg.mission.trim() ? cfg.mission.trim() : null;
-    const note = this.formatAgentQuestion(agentTerminalId, agent.label || 'agent', mission, pending.questions);
+    // The requestId pins answer_agent to THIS question: if the human answers it in the agent's
+    // chat and the agent asks again, a late answer_agent must not land on the new question.
+    const requestId = this.getPendingPermission(agentTerminalId)?.requestId;
+    const note = this.formatAgentQuestion(agentTerminalId, agent.label || 'agent', mission, pending.questions, requestId);
     return this.notifyCoordinatorOfAgent(agentTerminalId, note, { kind: 'question' });
   }
 
@@ -1319,6 +1323,36 @@ export class SessionService {
       `asked it to do. Read how it responds with read_agent and adjust — don't assume it's still following your ` +
       `original instructions.`;
     this.notifyCoordinatorOfAgent(agentTerminalId, note, { kind: 'direct-message' });
+  }
+
+  /**
+   * Tell the project's coordinator that the human answered one of its agent's questions in the
+   * agent's own chat. The coordinator was told to call answer_agent (routeAgentQuestionToCoordinator);
+   * this says it no longer needs to. No-op when the thread isn't a typed agent or there's no coordinator.
+   */
+  private noteQuestionAnsweredInChat(agentTerminalId: string, reply: string, imageCount: number, canned?: QuestionCannedAction): void {
+    const agent = terminalsDb.getById(this.db, agentTerminalId);
+    if (!agent) return;
+    let cfg: Record<string, any> = {};
+    try { cfg = JSON.parse(agent.config || '{}'); } catch { /* default {} */ }
+    if (cfg.role !== 'agent') return;
+    const mission = typeof cfg.mission === 'string' && cfg.mission.trim() ? cfg.mission.trim() : null;
+    const summary = reply.trim() ? `"${this.summarizeUserPayload(reply)}"` : `(${imageCount === 1 ? 'an image' : `${imageCount} images`})`;
+    if (canned) {
+      const what = canned === 'dismiss'
+        ? 'dismissed it without answering. The agent will continue on its own judgment'
+        : 'asked it to explain the options first. The agent is explaining and will ask again';
+      this.notifyCoordinatorOfAgent(agentTerminalId,
+        `💬 The user answered the question your agent "${agent.label || 'agent'}"${mission ? ` (mission "${mission}")` : ''} ` +
+        `[agentId ${agentTerminalId}] asked, directly in the agent's chat: they ${what}. Do not call answer_agent for that question. ` +
+        `Read how it responds with read_agent and adjust.`, { kind: 'question-answered' });
+      return;
+    }
+    const note =
+      `💬 The user answered the question your agent "${agent.label || 'agent'}"${mission ? ` (mission "${mission}")` : ''} ` +
+      `[agentId ${agentTerminalId}] asked, directly in the agent's chat: ${summary}. The agent has the answer and ` +
+      `is working again. Do not call answer_agent for that question. Read how it responds with read_agent and adjust.`;
+    this.notifyCoordinatorOfAgent(agentTerminalId, note, { kind: 'question-answered' });
   }
 
   /** The agent's most recent assistant text, pulled live from the structured event ring
@@ -1671,7 +1705,7 @@ export class SessionService {
   answerPermission(
     terminalId: string,
     requestId: string,
-    opts: { decision: 'allow' | 'deny'; answers?: Record<string, string>; message?: string },
+    opts: { decision: 'allow' | 'deny'; answers?: Record<string, string>; message?: string; canned?: QuestionCannedAction },
   ): boolean {
     const manager = this.structuredManagerForTerminal(terminalId);
     if (!manager) return false;
@@ -1690,7 +1724,42 @@ export class SessionService {
       }
       return delivered;
     }
+    if (opts.canned) {
+      // A card's Discuss-with-no-text or Dismiss: fixed text, logged as `canned` so a quote never matches it.
+      const message = QUESTION_CANNED_MESSAGES[opts.canned];
+      const delivered = manager.answerPermission(terminalId, requestId || pending.requestId, { behavior: 'deny', message });
+      if (delivered) {
+        this.logCoordinatorMessage(terminalId, message, 'canned');
+        // A worker's coordinator was told to call answer_agent; tell it the user closed the card.
+        this.noteQuestionAnsweredInChat(terminalId, '', 0, opts.canned);
+      }
+      return delivered;
+    }
     return manager.answerPermission(terminalId, requestId || pending.requestId, { behavior: 'deny', message: opts.message || 'Denied' });
+  }
+
+  /**
+   * A chat reply to a pending AskUserQuestion (owner decision N1): resolve the question as a deny
+   * whose message carries the reply, so the model reads it as the question's answer. Sent once,
+   * never as a separate user turn. `imageCount` images go out afterwards as their own turn (N5);
+   * the caller sends them once this returns 'delivered'.
+   *   'not-found'   — no question pending, or `requestId` is missing or names another one. No
+   *                   fallback to "whatever is pending": that is the race guard.
+   *   'unsupported' — this harness drops a deny's message (Codex) or is untested (Grok, OpenCode).
+   *                   The caller sends the reply as a normal turn, today's behavior.
+   * Logs the RAW reply as a `user` row (a ledger quote must match the user's own words), and tells
+   * a worker's coordinator the question is answered.
+   */
+  answerQuestionInChat(terminalId: string, requestId: string, reply: string, imageCount = 0): 'delivered' | 'not-found' | 'unsupported' {
+    const manager = this.structuredManagerForTerminal(terminalId);
+    const pending = manager?.getPending(terminalId);
+    if (!manager || !pending?.questions?.length || !requestId || pending.requestId !== requestId) return 'not-found';
+    if (!manager.repliesToQuestions) return 'unsupported';
+    const message = questionReplyMessage(reply, imageCount);
+    if (!manager.answerPermission(terminalId, requestId, { behavior: 'deny', message })) return 'not-found';
+    if (reply.trim()) this.logCoordinatorMessage(terminalId, reply, 'user');
+    this.noteQuestionAnsweredInChat(terminalId, reply, imageCount);
+    return 'delivered';
   }
 
   /**

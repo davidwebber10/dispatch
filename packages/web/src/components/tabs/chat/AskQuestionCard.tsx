@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { CaretRight, CheckCircle, Question } from '@phosphor-icons/react';
 import type { PermissionQuestion } from '../../../api/types';
+import { parseQuestionReply } from './questionReply';
 
 /** An option is either a bare label string or an object carrying label/name + description. */
 function optionLabel(o: string | { label?: string; name?: string; description?: string }): string {
@@ -22,32 +23,42 @@ function truncate(s: string, n: number): string {
  * ", "). That exact wire shape is what real `claude --permission-prompt-tool stdio`
  * expects to unblock the tool — see useStructuredChat.answer / the /permission route.
  *
- * A single single-select question submits immediately on tap (the fast mobile path);
- * anything else (multi-select or several questions) accumulates selections behind a
- * Submit button that's disabled until every question has an answer.
+ * Every card submits through the Submit button, which is disabled until every question has an
+ * answer. Each question also takes an "Other" answer typed by the user, which goes through the
+ * same allow path. Discuss sends text back without picking (onReply, the same path as a reply in
+ * the composer), or with no text asks the model for more context (onDeny 'discuss'). Dismiss
+ * closes the question unanswered (onDeny 'dismiss'). Both are hidden when their handler is absent.
  */
-export function AskQuestionCard({ questions, onAnswer }: { questions: PermissionQuestion[]; onAnswer: (answers: Record<string, string>) => void }) {
+export function AskQuestionCard({ questions, onAnswer, onReply, onDeny }: {
+  questions: PermissionQuestion[];
+  onAnswer: (answers: Record<string, string>) => void;
+  onReply?: (text: string) => void;
+  onDeny?: (action: 'discuss' | 'dismiss') => void;
+}) {
   // question index → chosen labels (single-select holds 0..1; multi-select holds 0..n).
   const [sel, setSel] = useState<Record<number, string[]>>({});
+  // question index → the typed "Other" answer; absent when Other is not chosen.
+  const [other, setOther] = useState<Record<number, string>>({});
   const [submitted, setSubmitted] = useState(false);
+  const [discussOpen, setDiscussOpen] = useState(false);
+  const [discussText, setDiscussText] = useState('');
 
-  const autoSubmit = questions.length === 1 && !questions[0]?.multiSelect;
-
-  const submit = (answers: Record<string, string>) => {
-    if (submitted) return;
-    setSubmitted(true);
-    onAnswer(answers);
+  const answerFor = (i: number): string => {
+    const picks = sel[i] ?? [];
+    const typed = other[i]?.trim();
+    return (typed ? [...picks, typed] : picks).join(', ');
   };
 
-  const buildAndSubmit = (next: Record<number, string[]>) => {
+  const submit = () => {
+    if (submitted) return;
+    setSubmitted(true);
     const answers: Record<string, string> = {};
-    questions.forEach((q, i) => { answers[q.question] = (next[i] ?? []).join(', '); });
-    submit(answers);
+    questions.forEach((q, i) => { answers[q.question] = answerFor(i); });
+    onAnswer(answers);
   };
 
   const pick = (qi: number, label: string, multi: boolean) => {
     if (submitted) return;
-    if (autoSubmit) { submit({ [questions[qi].question]: label }); return; }
     setSel((prev) => {
       const cur = prev[qi] ?? [];
       const nextLabels = multi
@@ -55,9 +66,40 @@ export function AskQuestionCard({ questions, onAnswer }: { questions: Permission
         : [label];
       return { ...prev, [qi]: nextLabels };
     });
+    // A single-select holds one answer: an option replaces a typed Other.
+    if (!multi) setOther((prev) => { const next = { ...prev }; delete next[qi]; return next; });
   };
 
-  const allAnswered = questions.every((_, i) => (sel[i]?.length ?? 0) > 0);
+  const toggleOther = (qi: number, multi: boolean) => {
+    if (submitted) return;
+    const on = other[qi] !== undefined;
+    setOther((prev) => {
+      const next = { ...prev };
+      if (on) delete next[qi]; else next[qi] = '';
+      return next;
+    });
+    // A single-select holds one answer: choosing Other drops the picked option.
+    if (!on && !multi) setSel((prev) => ({ ...prev, [qi]: [] }));
+  };
+
+  const deny = (action: 'discuss' | 'dismiss') => {
+    if (submitted) return;
+    setSubmitted(true);
+    onDeny?.(action);
+  };
+
+  const sendDiscuss = () => {
+    const text = discussText.trim();
+    if (text) onReply?.(text); else deny('discuss');
+    setDiscussOpen(false);
+    setDiscussText('');
+  };
+
+  const allAnswered = questions.every((_, i) => answerFor(i).length > 0);
+  const actionStyle = {
+    border: '1px solid var(--color-border)', borderRadius: 6, height: 30, padding: '0 12px', fontSize: 12.5,
+    background: 'transparent', color: 'var(--color-text-secondary)', cursor: submitted ? 'default' : 'pointer',
+  } as const;
 
   // NEEDS YOU card (2026-08-16 pretty-chat redesign): coral-tinted, dot + letterspaced mono
   // label + right meta — the same visual state as a needs_you StatusNotice, because to the
@@ -73,6 +115,17 @@ export function AskQuestionCard({ questions, onAnswer }: { questions: Permission
       {questions.map((q, qi) => {
         const multi = q.multiSelect === true;
         const chosen = sel[qi] ?? [];
+        const otherOn = other[qi] !== undefined;
+        const optionStyle = (isSel: boolean) => ({
+          textAlign: 'left' as const, display: 'flex', flexDirection: 'column' as const, gap: 2,
+          border: isSel ? '1px solid var(--color-accent)' : '1px solid var(--color-border)',
+          background: isSel ? 'color-mix(in srgb, var(--color-accent) 16%, var(--color-elevated))' : 'var(--color-elevated)',
+          color: 'var(--color-text-primary)', borderRadius: 9, padding: '9px 12px',
+          cursor: submitted ? 'default' : 'pointer', font: '400 14px var(--font-sans)', opacity: submitted && !isSel ? 0.5 : 1, transition: 'background .12s, border-color .12s',
+        });
+        const marker = (isSel: boolean) => (
+          <span style={{ flexShrink: 0, width: 15, height: 15, borderRadius: multi ? 4 : '50%', border: isSel ? '4px solid var(--color-accent)' : '1.5px solid var(--color-text-tertiary)', boxSizing: 'border-box' }} />
+        );
         return (
           <div key={qi} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {q.header && (
@@ -85,46 +138,73 @@ export function AskQuestionCard({ questions, onAnswer }: { questions: Permission
                 const desc = optionDesc(o);
                 const isSel = chosen.includes(label);
                 return (
-                  <button
-                    key={oi}
-                    onClick={() => pick(qi, label, multi)}
-                    disabled={submitted}
-                    style={{
-                      textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 2,
-                      border: isSel ? '1px solid var(--color-accent)' : '1px solid var(--color-border)',
-                      background: isSel ? 'color-mix(in srgb, var(--color-accent) 16%, var(--color-elevated))' : 'var(--color-elevated)',
-                      color: 'var(--color-text-primary)', borderRadius: 9, padding: '9px 12px',
-                      cursor: submitted ? 'default' : 'pointer', font: '400 14px var(--font-sans)', opacity: submitted && !isSel ? 0.5 : 1, transition: 'background .12s, border-color .12s',
-                    }}
-                  >
+                  <button key={oi} onClick={() => pick(qi, label, multi)} disabled={submitted} style={optionStyle(isSel)}>
                     <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ flexShrink: 0, width: 15, height: 15, borderRadius: multi ? 4 : '50%', border: isSel ? '4px solid var(--color-accent)' : '1.5px solid var(--color-text-tertiary)', boxSizing: 'border-box' }} />
+                      {marker(isSel)}
                       <span style={{ fontWeight: 500 }}>{label}</span>
                     </span>
                     {desc && <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', paddingLeft: 23, lineHeight: 1.4 }}>{desc}</span>}
                   </button>
                 );
               })}
+              <button onClick={() => toggleOther(qi, multi)} disabled={submitted} style={optionStyle(otherOn)}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {marker(otherOn)}
+                  <span style={{ fontWeight: 500 }}>Other</span>
+                </span>
+              </button>
+              {otherOn && (
+                <input
+                  aria-label={`Other answer for ${q.header ?? q.question}`}
+                  autoFocus
+                  value={other[qi] ?? ''}
+                  disabled={submitted}
+                  onChange={(e) => { const v = e.target.value; setOther((prev) => ({ ...prev, [qi]: v })); }}
+                  placeholder="Type your answer"
+                  style={{ border: '1px solid var(--color-border)', borderRadius: 9, padding: '8px 12px', background: 'var(--color-base)', color: 'var(--color-text-primary)', font: '400 14px var(--font-sans)' }}
+                />
+              )}
             </div>
           </div>
         );
       })}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-        {!autoSubmit && (
-          <button
-            onClick={() => buildAndSubmit(sel)}
-            disabled={submitted || !allAnswered}
-            style={{
-              border: 'none', borderRadius: 6, height: 30, padding: '0 16px', fontWeight: 600, fontSize: 12.5,
-              background: allAnswered && !submitted ? 'var(--color-accent)' : 'var(--color-hover)',
-              color: allAnswered && !submitted ? '#06140B' : 'var(--color-text-tertiary)',
-              cursor: allAnswered && !submitted ? 'pointer' : 'default', transition: 'background .15s',
-            }}
-          >
-            {submitted ? 'Sent' : 'Submit'}
-          </button>
+      {discussOpen && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <textarea
+            aria-label="Discuss the question"
+            autoFocus
+            rows={2}
+            value={discussText}
+            onChange={(e) => setDiscussText(e.target.value)}
+            placeholder="Say what you think, or leave empty to ask for more context"
+            style={{ border: '1px solid var(--color-border)', borderRadius: 9, padding: '8px 12px', background: 'var(--color-base)', color: 'var(--color-text-primary)', font: '400 14px var(--font-sans)', resize: 'vertical' }}
+          />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={sendDiscuss} style={actionStyle}>Send</button>
+            <button onClick={() => { setDiscussOpen(false); setDiscussText(''); }} style={actionStyle}>Cancel</button>
+          </div>
+        </div>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' }}>
+        <button
+          onClick={submit}
+          disabled={submitted || !allAnswered}
+          style={{
+            border: 'none', borderRadius: 6, height: 30, padding: '0 16px', fontWeight: 600, fontSize: 12.5,
+            background: allAnswered && !submitted ? 'var(--color-accent)' : 'var(--color-hover)',
+            color: allAnswered && !submitted ? '#06140B' : 'var(--color-text-tertiary)',
+            cursor: allAnswered && !submitted ? 'pointer' : 'default', transition: 'background .15s',
+          }}
+        >
+          {submitted ? 'Sent' : 'Submit'}
+        </button>
+        {(onReply || onDeny) && !discussOpen && (
+          <button onClick={() => setDiscussOpen(true)} disabled={submitted} style={actionStyle}>Discuss</button>
         )}
-        <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>or reply below</span>
+        {onDeny && (
+          <button onClick={() => deny('dismiss')} disabled={submitted} style={actionStyle}>Dismiss</button>
+        )}
+        <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>or reply below to discuss</span>
       </div>
     </div>
   );
@@ -195,9 +275,12 @@ export function selectedOptionLabels(answer: string, labels: string[]): Set<stri
  */
 export function AnsweredQuestionCard({ questions, resultText }: { questions: PermissionQuestion[]; resultText: string }) {
   const [open, setOpen] = useState(false);
-  const parsed = parseAnsweredResult(resultText, questions);
+  // A chat reply (owner decision N1) answers every question at once, in the user's own words.
+  const chatReply = parseQuestionReply(resultText);
+  const replyText = chatReply ? (chatReply.imageOnly ? '(an image)' : chatReply.reply) : null;
+  const parsed = chatReply ? null : parseAnsweredResult(resultText, questions);
   const first = questions[0];
-  const firstAnswer = (first && parsed?.[first.question]) || resultText;
+  const firstAnswer = replyText != null ? `answered in chat: ${replyText}` : (first && parsed?.[first.question]) || resultText;
 
   return (
     <div style={{ border: '1px solid var(--color-border)', borderRadius: 12, background: 'var(--color-elevated)', overflow: 'hidden' }}>
@@ -216,6 +299,11 @@ export function AnsweredQuestionCard({ questions, resultText }: { questions: Per
       </button>
       {open && (
         <div style={{ padding: '0 14px 14px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {replyText != null && (
+            <div style={{ fontSize: 13, color: 'var(--color-text-primary)' }}>
+              <span style={{ color: 'var(--color-text-tertiary)' }}>answered in chat: </span>{replyText}
+            </div>
+          )}
           {questions.map((q, qi) => {
             const answer = q.question ? parsed?.[q.question] : undefined;
             const labels = (q.options ?? []).map(optionLabel);
@@ -251,7 +339,7 @@ export function AnsweredQuestionCard({ questions, resultText }: { questions: Per
                     );
                   })}
                 </div>
-                {answer == null && (
+                {answer == null && replyText == null && (
                   <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>{resultText}</div>
                 )}
                 {/* A free-text "Other" answer matches no option — show it verbatim instead of

@@ -70,6 +70,40 @@ describe('composer image staging — scoped per coordinator project', () => {
   });
 });
 
+describe('sendDirective with the coordinator parked on its own question', () => {
+  const pending = { requestId: 'req-9', toolName: 'AskUserQuestion', input: {}, questions: [{ question: 'Pick one', options: ['A'] }] };
+
+  it('routes the reply (images and text) to the question, not a normal send', async () => {
+    const reply = vi.fn().mockResolvedValue(undefined);
+    const send = vi.spyOn(api, 'sendStructuredMessage').mockResolvedValue(undefined as unknown as void);
+    useOverseer.setState({ coordinatorProject: 'proj-a', coordinatorId: 'coord-a', composerImagesByProject: { 'proj-a': [img('a1')] } });
+    useOverseer.getState().setCoordinatorPending(pending as any, () => {}, reply, vi.fn());
+    await useOverseer.getState().sendDirective('Neither.');
+    expect(reply).toHaveBeenCalledWith([img('a1'), { type: 'text', text: 'Neither.' }]);
+    expect(send).not.toHaveBeenCalled();
+    expect(useOverseer.getState().composerImagesByProject['proj-a']).toEqual([]);
+  });
+
+  it('a failed reply surfaces as sendError', async () => {
+    const reply = vi.fn().mockRejectedValue(new Error('boom'));
+    useOverseer.setState({ coordinatorProject: 'proj-a', coordinatorId: 'coord-a' });
+    useOverseer.getState().setCoordinatorPending(pending as any, () => {}, reply, vi.fn());
+    await useOverseer.getState().sendDirective('Neither.');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(useOverseer.getState().sendError).toBeTruthy();
+  });
+
+  it('with no question pending, a directive is a normal send', async () => {
+    const reply = vi.fn().mockResolvedValue(undefined);
+    const send = vi.spyOn(api, 'sendStructuredMessage').mockResolvedValue(undefined as unknown as void);
+    useOverseer.setState({ coordinatorProject: 'proj-a', coordinatorId: 'coord-a' });
+    useOverseer.getState().setCoordinatorPending(null, () => {}, reply, vi.fn());
+    await useOverseer.getState().sendDirective('hello');
+    expect(send).toHaveBeenCalledWith('coord-a', 'hello');
+    expect(reply).not.toHaveBeenCalled();
+  });
+});
+
 const sm = (key: string): StreamMessage =>
   ({ kind: 'text', who: 'overseer', text: key, time: '', key, isUser: false, isOverseer: true, isNote: false } as unknown as StreamMessage);
 

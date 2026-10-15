@@ -167,6 +167,88 @@ it('POST permission with no pending → 404; bad decision → 400', async () => 
   await request(app).post(`/api/terminals/${id}/stop`);
 });
 
+// --- A chat reply answers a pending AskUserQuestion (owner decision N1) ----------
+
+it('POST permission with `reply` denies the question with the reply text once, and sends no user turn', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'planner', role: 'agent' } });
+  const id = t.body.id;
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'TRIGGER_QUESTION' });
+  const pending = await pollPermission(app, id);
+  const ans = await request(app).post(`/api/terminals/${id}/permission`).send({ requestId: pending.requestId, decision: 'deny', reply: 'Neither. Why not C?' });
+  expect(ans.status).toBe(204);
+  const echoed = await pollEvent(app, id, (e) => e?.type === 'user' && e.message?.content?.[0]?.tool_use_id === 'tu-2');
+  const tr = echoed.message.content[0];
+  expect(tr.is_error).toBe(true);
+  expect(tr.content).toContain('The user did not pick an option. They replied: Neither. Why not C?');
+  expect(tr.content).toContain('Do not proceed on a guess.');
+  // The reply rode the deny. It never went out as its own user turn.
+  const echoes = (app as any)._structuredManager.getEvents(id).filter((e: any) => JSON.stringify(e).includes('Why not C?'));
+  expect(echoes).toHaveLength(1);
+  expect((await request(app).get(`/api/terminals/${id}/permission`)).body).toBeNull();
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+it('POST permission `reply`: 404 without or with the wrong requestId, or for a plain gated tool; 400 when malformed', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent', autonomy: 'supervised' } });
+  const id = t.body.id;
+  const post = (body: object) => request(app).post(`/api/terminals/${id}/permission`).send(body);
+  expect((await post({ requestId: 'req-2', decision: 'deny', reply: 'hi' })).status).toBe(404); // nothing pending
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'TRIGGER_PERMISSION' });
+  await pollPermission(app, id);
+  expect((await post({ requestId: 'req-1', decision: 'deny', reply: 'hi' })).status).toBe(404); // not a question
+  await request(app).post(`/api/terminals/${id}/permission`).send({ decision: 'allow' });
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'TRIGGER_QUESTION' });
+  await pollPermission(app, id);
+  expect((await post({ decision: 'deny', reply: 'hi' })).status).toBe(404); // no requestId: no fallback
+  expect((await post({ requestId: 'req-old', decision: 'deny', reply: 'hi' })).status).toBe(404);
+  expect((await post({ requestId: 'req-2', decision: 'allow', reply: 'hi' })).status).toBe(400);
+  expect((await post({ requestId: 'req-2', decision: 'deny', reply: '   ' })).status).toBe(400);
+  expect((await post({ requestId: 'req-2', decision: 'deny', canned: 'later' })).status).toBe(400);
+  expect((await request(app).get(`/api/terminals/${id}/permission`)).body).toMatchObject({ requestId: 'req-2' }); // untouched
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+it('POST permission `canned: dismiss` denies the question with the fixed Dismiss text', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'planner', role: 'agent' } });
+  const id = t.body.id;
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'TRIGGER_QUESTION' });
+  const pending = await pollPermission(app, id);
+  const ans = await request(app).post(`/api/terminals/${id}/permission`).send({ requestId: pending.requestId, decision: 'deny', canned: 'dismiss' });
+  expect(ans.status).toBe(204);
+  const echoed = await pollEvent(app, id, (e) => e?.type === 'user' && e.message?.content?.[0]?.tool_use_id === 'tu-2');
+  expect(echoed.message.content[0].content).toContain('The user dismissed these questions without answering.');
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+it('POST permission `canned` is 404 when the pending gate has no questions, and leaves it pending', async () => {
+  const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'implementer', role: 'agent', autonomy: 'supervised' } });
+  const id = t.body.id;
+  await request(app).post(`/api/terminals/${id}/message`).send({ text: 'TRIGGER_PERMISSION' });
+  const pending = await pollPermission(app, id);
+  for (const canned of ['dismiss', 'discuss']) {
+    expect((await request(app).post(`/api/terminals/${id}/permission`).send({ requestId: pending.requestId, decision: 'deny', canned })).status).toBe(404);
+  }
+  expect((await request(app).get(`/api/terminals/${id}/permission`)).body).toMatchObject({ requestId: pending.requestId });
+  await request(app).post(`/api/terminals/${id}/stop`);
+});
+
+it('POST permission `reply` on a Codex question → 409, and the question stays pending', async () => {
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-reply-'));
+  const a = createApp({ db, skipPty: true, secretsDir: cfgDir, structuredCommand: { command: process.execPath, args: [fakeCodex] } });
+  try {
+    const s = await request(a).post('/api/sessions').send({ provider: 'codex', workingDir: dir, name: 'codex-reply' });
+    const id = (await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'codex', config: { transport: 'structured', role: 'agent', agentType: 'planner' } })).body.id;
+    await request(a).post(`/api/terminals/${id}/message`).send({ text: 'ask me something' });
+    const pending = await pollPermission(a, id);
+    const ans = await request(a).post(`/api/terminals/${id}/permission`).send({ requestId: pending.requestId, decision: 'deny', reply: 'Neither.' });
+    expect(ans.status).toBe(409);
+    expect((await request(a).get(`/api/terminals/${id}/permission`)).body).toMatchObject({ requestId: pending.requestId });
+  } finally {
+    (a as any)._sessionService?.structuredManagerFor('codex')?.killAll();
+    fs.rmSync(cfgDir, { recursive: true, force: true });
+  }
+});
+
 it('a plain structured thread (no role) auto-allows gated tools — no escalation', async () => {
   const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured' } });
   const id = t.body.id;

@@ -56,12 +56,27 @@ describe('ConversationStream — coordinator AskUserQuestion surfaced inline', (
     expect(screen.getByRole('button', { name: /Not yet/ })).toBeInTheDocument();
   });
 
-  it('answering an option calls the coordinator\'s answer() (unblocks the CLI)', () => {
+  it('answering an option and submitting calls the coordinator\'s answer() (unblocks the CLI)', () => {
     const answer = vi.fn();
     useOverseer.setState({ coordinatorPending: askPending(), coordinatorAnswer: answer });
     render(<ConversationStream />);
     fireEvent.click(screen.getByRole('button', { name: /Yes, logged in/ }));
+    expect(answer).not.toHaveBeenCalled(); // no auto-submit on tap
+    fireEvent.click(screen.getByRole('button', { name: /Submit/ }));
     expect(answer).toHaveBeenCalledWith({ 'Have you finished logging in to Salsify?': 'Yes, logged in' });
+  });
+
+  it('the card\'s Discuss and Dismiss reach the coordinator\'s reply and deny', async () => {
+    const reply = vi.fn().mockResolvedValue(undefined);
+    const deny = vi.fn().mockResolvedValue(undefined);
+    useOverseer.setState({ coordinatorPending: askPending(), coordinatorReply: reply, coordinatorDeny: deny });
+    render(<ConversationStream />);
+    fireEvent.click(screen.getByRole('button', { name: 'Discuss' }));
+    fireEvent.change(screen.getByLabelText('Discuss the question'), { target: { value: 'Not sure what you need' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(reply).toHaveBeenCalledWith('Not sure what you need');
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(deny).toHaveBeenCalledWith('dismiss');
   });
 
   it('renders no question card when nothing is pending', () => {

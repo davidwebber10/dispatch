@@ -58,6 +58,18 @@ it("unsubscribes from 'exit' on ws close (no leak / no send after close)", () =>
   expect(ws.sent.find((e) => e.type === 'result')).toBeFalsy();
 });
 
+it("forwards manager 'permission-cleared' as a null permission frame, and stops on close", () => {
+  const ws = fakeWs();
+  handleStructuredConnection(ws as any, { url: '/api/terminals/t1/structured-ws' } as any, m);
+  m.emit('permission-cleared', 'other');
+  expect(ws.sent.filter((e) => e.type === 'permission')).toHaveLength(0);
+  m.emit('permission-cleared', 't1');
+  expect(ws.sent.filter((e) => e.type === 'permission')).toEqual([{ type: 'permission', pending: null }]);
+  ws.fireClose();
+  m.emit('permission-cleared', 't1');
+  expect(ws.sent.filter((e) => e.type === 'permission')).toHaveLength(1);
+});
+
 it('with no `tail` param, replays the full ring (back-compat)', () => {
   const history = Array.from({ length: 30 }, (_, i) => ({ type: 'user', message: { content: [{ type: 'text', text: `msg-${i}` }] } }));
   m.spawn('t1', { command: process.execPath, args: [fake], workDir: process.cwd(), seedEvents: history });

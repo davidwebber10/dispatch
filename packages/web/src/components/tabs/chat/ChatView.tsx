@@ -59,7 +59,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   // older-pages machinery stays off — no phantom "Load earlier messages" on a thread with
   // nothing earlier to load. An unresolved tab keeps the pageable default (claude-code is
   // the common case).
-  const { items, busy, model, send, pending, answer, contextTokens, contextWindow, compacting, compactResult, apiRetry, compact, hasMore, loadingOlder, loadOlder } =
+  const { items, busy, model, send, pending, answer, replyFromCard, denyFromCard, contextTokens, contextWindow, compacting, compactResult, apiRetry, compact, hasMore, loadingOlder, loadOlder } =
     useStructuredChat(terminalId, sessionId, { pageableHistory: tab?.type !== 'grok' && tab?.type !== 'opencode' });
 
   // Advice is about THIS resume, so "not now" lives in component state rather than
@@ -311,7 +311,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                   {/* Interactive AskUserQuestion — answering unblocks the CLI (which is
                       parked on stdin). Keyed by requestId so a new question mounts fresh. */}
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <AskQuestionCard key={pending.requestId} questions={pending.questions} onAnswer={answer} />
+                    <AskQuestionCard key={pending.requestId} questions={pending.questions} onAnswer={answer} onReply={replyFromCard} onDeny={denyFromCard} />
                   </div>
                 </MessageScroller.Item>
               )}

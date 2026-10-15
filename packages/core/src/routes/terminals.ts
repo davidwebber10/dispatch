@@ -162,13 +162,36 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // POST /api/terminals/:terminalId/permission { requestId?, decision:'allow'|'deny', answers?, message? }
   // — resolve the pending gated tool. allow folds an AskUserQuestion `answers` map into
   // the tool input; deny sends a message. On success the thread returns to working.
+  // A chat reply to a pending question adds `reply` (and `imageCount`, images the client sends
+  // next as their own turn): deny only, `requestId` required. 404 = that question is gone, 409 =
+  // this harness can't take a reply. Either way the client sends the text as a normal turn.
+  // `canned: 'discuss' | 'dismiss'` denies with the card's fixed text instead of `message`.
   router.post('/terminals/:terminalId/permission', (req, res) => {
-    const { requestId, decision, answers, message } = req.body ?? {};
+    const { requestId, decision, answers, message, reply, imageCount, canned } = req.body ?? {};
     if (decision !== 'allow' && decision !== 'deny') {
       return res.status(400).json({ error: "decision must be 'allow' or 'deny'" });
     }
+    if (canned !== undefined && (decision !== 'deny' || (canned !== 'discuss' && canned !== 'dismiss'))) {
+      return res.status(400).json({ error: "canned must be 'discuss' or 'dismiss', with decision 'deny'" });
+    }
+    if (reply !== undefined) {
+      const images = imageCount === undefined ? 0 : imageCount;
+      if (decision !== 'deny' || typeof reply !== 'string' || !Number.isInteger(images) || images < 0 || (!reply.trim() && images === 0)) {
+        return res.status(400).json({ error: "reply must be a non-empty string (or carry imageCount), with decision 'deny'" });
+      }
+      try {
+        const result = sessionService.answerQuestionInChat(req.params.terminalId, typeof requestId === 'string' ? requestId : '', reply, images);
+        if (result === 'not-found') return res.status(404).json({ error: 'no pending question with that requestId' });
+        if (result === 'unsupported') return res.status(409).json({ error: 'this harness cannot take a reply to a question' });
+        statusService?.markWorking(req.params.terminalId, 'Working…');
+        return res.status(204).end();
+      } catch (e: any) { return res.status(400).json({ error: e?.message ?? String(e) }); }
+    }
+    if (canned !== undefined && !sessionService.getPendingPermission(req.params.terminalId)?.questions?.length) {
+      return res.status(404).json({ error: 'no pending question' });
+    }
     try {
-      const ok = sessionService.answerPermission(req.params.terminalId, requestId, { decision, answers, message });
+      const ok = sessionService.answerPermission(req.params.terminalId, requestId, { decision, answers, message, canned });
       if (!ok) return res.status(404).json({ error: 'no pending permission' });
       statusService?.markWorking(req.params.terminalId, 'Working…');
       res.status(204).end();

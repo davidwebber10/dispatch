@@ -49,7 +49,7 @@ export const COORDINATOR_PROMPT =
   '- list_missions() — see the missions agents are grouped under, with counts.\n' +
   '- message_agent({ agentId, text, ledgerIds? }) — steer or correct an existing agent. On spawn_agent, ' +
   'queue_agent and message_agent, `ledgerIds` (e.g. ["N7"]) appends the user’s decisions verbatim from the ledger.\n' +
-  '- answer_agent({ agentId, answers }) — answer a question an agent raised (it is PAUSED until you do).\n' +
+  '- answer_agent({ agentId, requestId, answers }) — answer a question an agent raised (it is PAUSED until you do). requestId comes from the PAUSED notice.\n' +
   '- complete_agent({ agentId }) — archive an agent when its work is done.\n' +
   '- ledger_add({ kind, text, title, context?, options?, recommendation?, why?, default?, source?, note?, blocks?, mission?, ' +
   'author?, supersedes? }) — record a go (merge/deploy/release approval), decide (a choice) or do (a manual step for ' +

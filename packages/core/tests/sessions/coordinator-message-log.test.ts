@@ -14,6 +14,7 @@ import { SessionService } from '../../src/sessions/service.js';
 import type { IStructuredManager, PendingPermission } from '../../src/structured/manager.js';
 import { LedgerService } from '../../src/overseer/ledger-service.js';
 import { DECIDE_CARD, GO_CARD } from '../overseer/card-fixtures.js';
+import { QUESTION_DISMISS_MESSAGE, QUESTION_DISCUSS_MESSAGE, questionReplyMessage } from '../../src/sessions/question-reply.js';
 
 class FakePty extends EventEmitter {
   isAlive() { return false; }
@@ -24,6 +25,7 @@ class FakePty extends EventEmitter {
 }
 
 class FakeStructured extends EventEmitter implements IStructuredManager {
+  repliesToQuestions = true;
   live = new Set<string>();
   sent: { id: string; content: unknown; source?: string }[] = [];
   pendings = new Map<string, PendingPermission>();
@@ -199,5 +201,105 @@ describe('the user\'s answer to the overseer\'s own question card', () => {
     expect(svc.answerPermission('coord', 'r1', { decision: 'allow', answers: { Store: 'A' } })).toBe(true);
     expect(structured.answered).toHaveLength(1);
     expect(err).toHaveBeenCalled();
+  });
+});
+
+describe('a chat reply to a pending question', () => {
+  const QUESTIONS = [{ header: 'Store', question: 'Which store goes first?', options: [{ label: 'A' }, { label: 'B' }] }];
+  const ask = (id: string, requestId = 'r1') => {
+    structured.pendings.set(id, { requestId, toolName: 'AskUserQuestion', input: { questions: QUESTIONS }, questions: QUESTIONS });
+  };
+
+  it('denies with the N4 message, logs the raw reply as one user row, and sends no user turn', () => {
+    const ledger = new LedgerService(db, { clock: () => Date.parse('2026-10-05T16:00:00.000Z') });
+    ledger.add('s1', 'coord', { kind: 'decide', text: 'Which store goes first?', ...DECIDE_CARD });
+    ask('coord');
+    expect(svc.answerQuestionInChat('coord', 'r1', 'Neither. Start with the outlet store.')).toBe('delivered');
+    expect(structured.answered).toEqual([{ id: 'coord', decision: { behavior: 'deny', message: questionReplyMessage('Neither. Start with the outlet store.') } }]);
+    expect(structured.sent).toEqual([]);
+    expect(log()).toEqual([{ source: 'user', text: 'Neither. Start with the outlet store.' }]);
+    expect(ledger.resolve('s1', 'coord', { id: 'N1', status: 'answered', quote: 'Start with the outlet store.' }).status).toBe('answered');
+  });
+
+  it('requires the pending requestId: a missing or stale id is not-found and logs nothing', () => {
+    ask('coord', 'r2');
+    expect(svc.answerQuestionInChat('coord', '', 'hi')).toBe('not-found');
+    expect(svc.answerQuestionInChat('coord', 'r1', 'hi')).toBe('not-found');
+    expect(structured.answered).toEqual([]);
+    expect(log()).toEqual([]);
+  });
+
+  it('is not-found for a plain gated tool, which is not a question', () => {
+    structured.pendings.set('coord', { requestId: 'r1', toolName: 'Bash', input: { command: 'ls' } });
+    expect(svc.answerQuestionInChat('coord', 'r1', 'hi')).toBe('not-found');
+  });
+
+  it('is unsupported, and writes nothing, on a harness that drops a deny message', () => {
+    structured.repliesToQuestions = false;
+    ask('coord');
+    expect(svc.answerQuestionInChat('coord', 'r1', 'hi')).toBe('unsupported');
+    expect(structured.answered).toEqual([]);
+    expect(structured.pendings.has('coord')).toBe(true);
+    expect(log()).toEqual([]);
+  });
+
+  it('an image-only reply logs no user row, and the message says images follow', () => {
+    ask('coord');
+    expect(svc.answerQuestionInChat('coord', 'r1', '', 2)).toBe('delivered');
+    expect((structured.answered[0].decision as any).message).toContain('They replied with an image only. (2 images. They follow in the next message.)');
+    expect(log()).toEqual([]);
+  });
+
+  it('Dismiss and an empty Discuss deny with their fixed text and log it as canned', () => {
+    ask('coord');
+    expect(svc.answerPermission('coord', 'r1', { decision: 'deny', canned: 'dismiss' })).toBe(true);
+    ask('coord');
+    expect(svc.answerPermission('coord', 'r1', { decision: 'deny', canned: 'discuss' })).toBe(true);
+    expect(structured.answered.map((a) => (a.decision as any).message)).toEqual([QUESTION_DISMISS_MESSAGE, QUESTION_DISCUSS_MESSAGE]);
+    expect(log()).toEqual([{ source: 'canned', text: QUESTION_DISMISS_MESSAGE }, { source: 'canned', text: QUESTION_DISCUSS_MESSAGE }]);
+  });
+
+  it("Dismiss and an empty Discuss in a worker's chat tell the coordinator the question is closed", () => {
+    ask('agent');
+    expect(svc.answerPermission('agent', 'r1', { decision: 'deny', canned: 'dismiss' })).toBe(true);
+    ask('agent');
+    expect(svc.answerPermission('agent', 'r1', { decision: 'deny', canned: 'discuss' })).toBe(true);
+    const notices = structured.sent.filter((m) => m.id === 'coord').map((m) => m.content);
+    expect(notices).toHaveLength(2);
+    expect(notices[0]).toEqual(expect.stringContaining('dismissed it without answering'));
+    expect(notices[1]).toEqual(expect.stringContaining('asked it to explain the options first'));
+    for (const n of notices) expect(n).toEqual(expect.stringContaining('Do not call answer_agent for that question.'));
+  });
+
+  it("a reply in a worker's chat tells the coordinator the question is answered, not that the user messaged it", () => {
+    ask('agent');
+    expect(svc.answerQuestionInChat('agent', 'r1', 'Go with B.')).toBe('delivered');
+    const notice = structured.sent.find((m) => m.id === 'coord');
+    expect(notice?.content).toEqual(expect.stringContaining('The user answered the question your agent "worker"'));
+    expect(notice?.content).toEqual(expect.stringContaining('"Go with B."'));
+    expect(notice?.content).toEqual(expect.stringContaining('Do not call answer_agent for that question.'));
+    expect(notice?.content).not.toEqual(expect.stringContaining('a message directly'));
+    expect(structured.sent.filter((m) => m.id === 'agent')).toEqual([]);
+  });
+
+  it("the coordinator's question notice names the requestId for answer_agent", () => {
+    ask('agent', 'req-77');
+    expect(svc.routeAgentQuestionToCoordinator('agent', { toolName: 'AskUserQuestion', questions: QUESTIONS })).toBe(true);
+    const notice = structured.sent.find((m) => m.id === 'coord');
+    expect(notice?.content).toEqual(expect.stringContaining('answer_agent({ agentId: "agent", requestId: "req-77", answers: { "Store": "<chosen option>" } })'));
+  });
+});
+
+describe('the reply wording (owner decision N4)', () => {
+  it('is the fixed prefix, the reply, a blank line, then the guidance line', () => {
+    expect(questionReplyMessage('Neither.')).toBe(
+      'The user did not pick an option. They replied: Neither.\n\n' +
+      'Treat this as their answer. If it settles the question, continue. If it pushes back on the options or asks for ' +
+      'more context, answer them in plain text and then ask again with revised options. Do not proceed on a guess.',
+    );
+  });
+
+  it('says how many images follow', () => {
+    expect(questionReplyMessage('See this', 1)).toContain('They replied: See this\n\n(They also attached 1 image. It follows in the next message.)');
   });
 });

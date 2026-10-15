@@ -248,6 +248,76 @@ it('interrupt sends the interrupt control frame on stdin (graceful — process s
   expect(m.isAlive('t1')).toBe(true); // NOT killed
 });
 
+/** Records the order of the manager emits that matter to a pending's lifecycle. */
+function recordEmits(m: StructuredSessionManager, id: string, names: string[]): string[] {
+  const seen: string[] = [];
+  for (const name of names) m.on(name, (eid: string) => { if (eid === id) seen.push(name); });
+  return seen;
+}
+
+it("answerPermission emits 'resolved' then 'permission-cleared', and never a null 'permission'", async () => {
+  spawnFakeEscalate(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  const pendingP = waitForPermission(m, 't1');
+  m.sendMessage('t1', 'TRIGGER_PERMISSION');
+  const pending = await pendingP;
+  const seen = recordEmits(m, 't1', ['permission', 'resolved', 'permission-cleared']);
+  expect(m.answerPermission('t1', pending.requestId, { behavior: 'allow' })).toBe(true);
+  expect(seen).toEqual(['resolved', 'permission-cleared']);
+});
+
+it('a deny with a message on a question comes back as the is_error tool_result with that text', async () => {
+  spawnFakeEscalate(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  const pendingP = waitForPermission(m, 't1');
+  m.sendMessage('t1', 'TRIGGER_QUESTION');
+  const pending = await pendingP;
+  const tr = waitForEvent(m, 't1', (e) => e.type === 'user' && e.message?.content?.[0]?.tool_use_id === 'tu-2');
+  expect(m.answerPermission('t1', pending.requestId, { behavior: 'deny', message: 'They replied: neither' })).toBe(true);
+  const block = (await tr).message.content[0];
+  expect(block).toMatchObject({ type: 'tool_result', is_error: true, content: 'They replied: neither' });
+});
+
+it('interrupt while a question is pending: the CLI cancel clears it, before the turn settles', async () => {
+  spawnFakeEscalate(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  const pendingP = waitForPermission(m, 't1');
+  m.sendMessage('t1', 'TRIGGER_QUESTION');
+  await pendingP;
+  const seen = recordEmits(m, 't1', ['permission', 'resolved', 'permission-cleared', 'idle', 'needs-help']);
+  const settled = waitForManagerEvent(m, 'idle', 't1');
+  expect(m.interrupt('t1')).toBe(true);
+  await settled;
+  expect(m.getPending('t1')).toBeNull();
+  // Cleared once, by the cancel. The result backstop finds nothing left to clear.
+  expect(seen).toEqual(['resolved', 'permission-cleared', 'idle']);
+  expect(m.getEvents('t1').filter((e: any) => e.type === 'control_cancel_request')).toHaveLength(1);
+  // No deny was written for the question: the fake would echo it as a DENIED tool_result.
+  expect(JSON.stringify(m.getEvents('t1'))).not.toContain('DENIED');
+});
+
+it('a control_cancel_request for another request id leaves the pending alone', async () => {
+  spawnFakeEscalate(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  const pendingP = waitForPermission(m, 't1');
+  m.sendMessage('t1', 'TRIGGER_QUESTION');
+  await pendingP;
+  m.sendMessage('t1', 'TRIGGER_STRAY_CANCEL');
+  await waitForEvent(m, 't1', (e) => e.type === 'control_cancel_request');
+  expect(m.getPending('t1')).toMatchObject({ requestId: 'req-2' });
+});
+
+it('a result with a stale pending clears it before the idle/needs-help emit', async () => {
+  spawnFakeEscalate(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  const seen = recordEmits(m, 't1', ['permission', 'resolved', 'permission-cleared', 'idle', 'needs-help']);
+  const settled = waitForManagerEvent(m, 'idle', 't1');
+  m.sendMessage('t1', 'TRIGGER_STALE_QUESTION');
+  await settled;
+  expect(m.getPending('t1')).toBeNull();
+  expect(seen).toEqual(['permission', 'resolved', 'permission-cleared', 'idle']);
+});
+
 it('interrupt / setEscalate return false when there is no live session', () => {
   expect(m.interrupt('nope')).toBe(false);
   expect(m.setEscalate('nope', false)).toBe(false);

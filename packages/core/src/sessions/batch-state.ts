@@ -5,8 +5,8 @@
 import type Database from 'better-sqlite3';
 import * as terminalsDb from '../db/terminals.js';
 
-/** The five agent notices that carry the Batch line. */
-export type NoticeKind = 'finished' | 'blocked' | 'question' | 'stopped' | 'direct-message';
+/** The agent notices that carry the Batch line. */
+export type NoticeKind = 'finished' | 'blocked' | 'question' | 'stopped' | 'direct-message' | 'question-answered';
 
 export interface AgentRef { id: string; label: string }
 
