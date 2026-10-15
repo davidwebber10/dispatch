@@ -1,4 +1,4 @@
-# Agent providers: Claude Code, Codex & Grok
+# Agent providers: Claude Code, Codex, OpenCode & Grok
 
 > The in-app setup wizard **and the New Thread modal** auto-detect whether `claude`, `codex`
 > and `grok` are installed and signed in. A harness whose CLI is missing is greyed out, with
@@ -95,6 +95,25 @@ the TUI inline with terminal scrollback for easier navigation on mobile.
   as you). Re-run the login if needed, then `dispatch restart`.
 - **Switching accounts / re-auth** — just re-run `claude` or `codex` in a normal terminal and
   sign in again; Dispatch picks up the refreshed credentials on the next spawned thread.
+
+---
+
+## OpenCode
+
+OpenCode runs models from many vendors through [OpenRouter](https://openrouter.ai). Dispatch
+drives it over `opencode acp`, so OpenCode threads always use the chat (Pretty) view.
+
+```bash
+# the setup wizard's Install button runs this for you
+npm install -g --prefix "$HOME/.dispatch/tools" opencode-ai
+```
+
+**Sign-in:** OpenCode needs an OpenRouter API key. Run `opencode auth login` once in a normal
+terminal and choose OpenRouter, or keep the key in Doppler (default secret name
+`OPENROUTER_API_KEY`; change it in **Settings → Harnesses → OpenCode key**).
+
+**Models:** the New Thread picker lists OpenRouter models. Edit the list in
+**Settings → Harnesses**.
 
 ---
 

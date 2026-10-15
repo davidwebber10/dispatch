@@ -2,6 +2,7 @@
   "name": "dispatch-cli",
   "version": "2.47.9",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "bin": {
     "dispatch": "dist/index.js"

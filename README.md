@@ -1,16 +1,19 @@
 # Dispatch
 
-Control your coding agents — **Claude Code** and **Codex** — and terminals from any browser or phone.
+Control your coding agents — **Claude Code**, **Codex**, **OpenCode** and **Grok** — and terminals from any browser or phone.
 
-Dispatch runs as a small daemon on your Mac. It manages long-lived terminal sessions
+Dispatch runs as a small daemon on your Mac (or on Windows, inside WSL2). It manages long-lived terminal sessions
 (your agents) and serves a web client, so you can drive your projects from a laptop, the
 couch, or your phone — including as an installable PWA. Put it behind a
 [Cloudflare Tunnel + Access](docs/cloudflare.md) and it's reachable anywhere, securely.
 
-- **Projects & threads** — group terminals by working directory; each thread is a Claude Code, Codex, or plain shell session.
+- **Chat** — one conversation that never ends. Dispatch remembers everything you have discussed, across all your projects, and starts and follows threads for you. See [Chat](#chat).
+- **Projects & threads** — group terminals by working directory; each thread is a Claude Code, Codex, OpenCode, Grok, or plain shell session.
+- **Control Plane** — a coordinator per project that plans work, starts agents, and asks you only for decisions.
 - **Live terminals** — full xterm.js terminals over WebSocket, with scrollback, image paste/upload, and mobile soft-keys.
 - **Files** — browse the project tree, view/edit files with syntax highlighting, render Markdown.
 - **Agents** — schedule and monitor agent runs.
+- **Analytics** — tokens, turns, and time per project, model, and provider, from your own machine.
 - **Single-origin** — the daemon serves both the API/WebSocket and the web bundle, so there's no CORS and one URL to expose.
 - **Installable PWA** — add it to your Dock (macOS) or Home Screen (iOS).
 
@@ -21,12 +24,15 @@ couch, or your phone — including as an installable PWA. Put it behind a
 
 ## Prerequisites
 
-- **macOS** (the daemon installs as a `launchd` agent).
+- **macOS** (the daemon installs as a `launchd` agent), or **Windows 10/11 with WSL2** — run
+  [`scripts/install-windows.ps1`](scripts/install-windows.ps1); see [docs/wsl2-bring-up.md](docs/wsl2-bring-up.md).
 - **Node.js 18+** and **pnpm 9+** — `node -v`, `pnpm -v`. Install pnpm with `npm i -g pnpm` or `corepack enable`.
 - **git**.
 - **The agent CLIs you want to drive, installed and authenticated as the same user that runs the daemon:**
-  - **Claude Code** (`claude`)
+  - **Claude Code** (`claude`) — also required for [Chat](#chat)
   - **Codex** (`codex`)
+  - **OpenCode** (`opencode`) — runs OpenRouter models; needs an OpenRouter key
+  - **Grok** (`grok`)
 
   Dispatch does **not** manage their logins — it just spawns them as terminals, so they must
   already be on your `PATH` and signed in. See **[docs/providers.md](docs/providers.md)** for
@@ -96,6 +102,25 @@ dispatch update      # git pull + rebuild + restart
 dispatch uninstall   # stop + remove the launchd agent (keeps your data)
 dispatch run         # run in the foreground instead of as a daemon (Ctrl-C to stop)
 ```
+
+---
+
+## Chat
+
+**Chat** (the second icon in the left rail) is one conversation that never ends. You do not
+open threads or pick a project: you talk, and Dispatch does the work itself or starts threads
+in the right project and reports back in the same chat when they finish.
+
+- **It remembers.** Older messages are summarized into short lines that Dispatch can open
+  again, so it can answer from months of history without a long context. Search the memory
+  from the box at the top of the Chat view.
+- **All projects.** Dispatch knows your projects and their open items. Pick a project with the
+  button left of the attach button when you want to point at one; otherwise it works out the
+  project from what you say.
+- **Requirements.** Chat uses the Claude Code CLI (`claude`): Opus for its replies and Haiku for
+  the summaries. Your Claude login must have access to both. Chat works in `~/.dispatch/chat`
+  and loads your normal Claude Code MCP servers and skills.
+- The **Stop** button ends a reply that runs too long. What Dispatch already wrote stays.
 
 ---
 
@@ -180,4 +205,4 @@ Open the site in a browser and install it:
 
 ## License
 
-Private. © David Webber. All rights reserved.
+[MIT](LICENSE) © David Webber.
