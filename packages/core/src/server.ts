@@ -40,6 +40,8 @@ import * as usageDb from './db/usage.js';
 import { createGitRouter } from './routes/git.js';
 import { createSecretsRouter } from './routes/secrets.js';
 import { createHarnessSettingsRouter } from './routes/harness-settings.js';
+import { createTelemetrySettingsRouter } from './routes/telemetry-settings.js';
+import { startTelemetryLoop } from './telemetry/sender.js';
 import { opencodeKeySecretName } from './settings/harness-settings.js';
 import { warmModelCapabilities } from './settings/model-capabilities.js';
 import { warmClaudeVersion, prunePromptFiles, setClaudeProbeEnv } from './providers/claude-prompt-file.js';
@@ -375,6 +377,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   app.use('/api/servers', createServersRouter(db));
   app.use('/api/secrets', createSecretsRouter(secretsService));
   app.use('/api/settings/harnesses', createHarnessSettingsRouter(db, secretsService));
+  app.use('/api/settings/telemetry', createTelemetrySettingsRouter(db));
   app.use('/api/transcribe', createTranscribeRouter(new TranscriptionService(secretsService)));
   app.use('/api/setup', createSetupRouter(db, secretsService));
   app.use('/api/sessions/:id/files', createFilesRouter(db));
@@ -698,6 +701,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.use('/api/servers', createServersRouter(db));
   app.use('/api/secrets', createSecretsRouter(secretsService, refreshPtyEnv));
   app.use('/api/settings/harnesses', createHarnessSettingsRouter(db, secretsService, refreshPtyEnv));
+  app.use('/api/settings/telemetry', createTelemetrySettingsRouter(db));
   app.use('/api/transcribe', createTranscribeRouter(new TranscriptionService(secretsService)));
   app.use('/api/setup', createSetupRouter(db, secretsService));
   app.use('/api/sessions/:id/files', createFilesRouter(db));
@@ -886,6 +890,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const ptyTimingInterval = startPtyTimingLoop(db, ptyManager, broadcaster, undefined, statusService);
   // Poll GitHub Releases for a newer version than what's running (immediately, then ~45 min)
   const updateCheckInterval = startUpdateCheckLoop(db, broadcaster);
+  // Anonymous usage report: 60 s after boot, then an hourly check (Settings → General switch).
+  const telemetryLoop = startTelemetryLoop(db);
   const agentSchedulerInterval = setInterval(() => {
     try {
       agentService.processDueRuns();
@@ -910,6 +916,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     console.log('Shutting down Dispatch server...');
     clearInterval(ptyTimingInterval);
     clearInterval(updateCheckInterval);
+    telemetryLoop.stop();
     clearInterval(agentSchedulerInterval);
     clearInterval(autoArchiveInterval);
     clearInterval(interimRecapInterval);
