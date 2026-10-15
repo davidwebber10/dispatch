@@ -3,9 +3,9 @@ main = "src/index.ts"
 compatibility_date = "2026-10-01"
 account_id = "d02ecc2fed211574398816b35aa68880"
 workers_dev = false
-routes = [{ pattern = "dispatchd.app/*", zone_name = "dispatchd.app" }]
+routes = [{ pattern = "dispatchd.app", custom_domain = true }]
 
 [[d1_databases]]
 binding = "DB"
 database_name = "dispatch-telemetry"
-database_id = "REPLACED_IN_TASK_5"
+database_id = "63f4547f-9d2c-49ee-b86a-08359c1c7994"
