@@ -320,6 +320,10 @@ export class TurnRunner {
       return;
     }
     if (ev?.type === 'assistant' && Array.isArray(ev.message?.content)) {
+      // The CLI's own error notices (login expired, rate limit) come as assistant messages
+      // from the model "<synthetic>". They are not Dispatch's words: the turn's failure
+      // shows them, and the log stays clean for the summaries.
+      if (ev.isApiErrorMessage || ev.message?.model === '<synthetic>') return;
       for (const b of ev.message.content) {
         if (b?.type === 'text' && String(b.text ?? '').trim()) d.log({ kind: 'unii', text: b.text, project });
         else if (b?.type === 'tool_use') d.log({ kind: 'tool', text: `${b.name} ${JSON.stringify(b.input ?? {})}`, project });

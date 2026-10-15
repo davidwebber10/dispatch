@@ -456,4 +456,18 @@ describe('TurnRunner', () => {
       vi.useRealTimers();
     }
   });
+  it('a synthetic API error reply (login expired, rate limit) is not logged as a Dispatch reply; the turn fails with its text', async () => {
+    const t = setup();
+    t.runner.send({ text: 'what have i worked on?', project: null, media: [] });
+    await settle();
+    t.fake.emitEvent({ type: 'assistant', parent_tool_use_id: null, isApiErrorMessage: true, error: 'authentication_failed',
+      message: { model: '<synthetic>', content: [{ type: 'text', text: 'Failed to authenticate: OAuth session expired' }] } });
+    t.fake.emitEvent({ type: 'assistant', parent_tool_use_id: null, message: { model: '<synthetic>', content: [{ type: 'text', text: 'Another synthetic line' }] } });
+    t.fake.emitEvent({ type: 'result', subtype: 'success', is_error: true, result: 'Failed to authenticate: OAuth session expired' });
+    await t.runner.whenIdle();
+    const kinds = Array.from({ length: t.store.count() }, (_, i) => t.store.get(i)!.kind);
+    expect(kinds).toEqual(['user']);
+    expect(t.events.at(-1)).toEqual({ type: 'endless:turn', status: 'failed', error: 'Failed to authenticate: OAuth session expired' });
+  });
+
 });
