@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { newGame, step, type Game, type Input, type Rect } from './engine';
+import { newGame, step, type Game, type Input, type Rect, type Weapon } from './engine';
 
 const W = 800, H = 600;
 const idle: Input = { move: { x: 0, y: 0 }, aim: null, fire: false, autoAim: false };
@@ -149,5 +149,116 @@ describe('blaster engine', () => {
     g.enemyShots.push({ x: g.ship.x, y: g.ship.y, vx: 0, vy: 0, life: 1 });
     step(g, 1 / 60, idle, null);
     expect(g.ship.shield).toBeCloseTo(1.2, 1);
+  });
+  describe('tank steering (keys)', () => {
+    const keys = (thrust: number, turn: number, trigger: Weapon[] = []): Input => ({ ...idle, thrust, turn, trigger });
+
+    it('up thrusts the way the ship points; left and right turn it', () => {
+      const g = empty();
+      g.ship.x = 400; g.ship.y = 300; g.ship.angle = 0; // pointing right
+      run(g, keys(1, 0), 0.5);
+      expect(g.ship.x).toBeGreaterThan(430);
+      expect(Math.abs(g.ship.y - 300)).toBeLessThan(2);
+      const before = g.ship.angle;
+      run(g, keys(0, -1), 0.25);
+      expect(g.ship.angle).toBeLessThan(before - 0.5); // turned left (counter-clockwise on screen)
+    });
+
+    it('down brakes first, then reverses slowly', () => {
+      const g = empty();
+      g.ship.x = 400; g.ship.y = 300; g.ship.angle = 0;
+      run(g, keys(1, 0), 0.6);
+      const fast = g.ship.vx;
+      run(g, keys(-1, 0), 0.15);
+      expect(g.ship.vx).toBeLessThan(fast);
+      expect(g.ship.vx).toBeGreaterThan(-1);
+      run(g, keys(-1, 0), 1.5);
+      expect(g.ship.vx).toBeLessThan(0);
+      expect(g.ship.vx).toBeGreaterThan(-140); // reverse is slow
+    });
+
+    it('with no thrust the ship drifts and slows down', () => {
+      const g = empty();
+      g.ship.x = 200; g.ship.y = 300; g.ship.angle = 0;
+      run(g, keys(1, 0), 0.5);
+      const v = g.ship.vx;
+      run(g, keys(0, 0), 1);
+      expect(g.ship.vx).toBeGreaterThan(0);
+      expect(g.ship.vx).toBeLessThan(v * 0.5);
+    });
+  });
+
+  describe('loadout', () => {
+    const fireOnce = (g: Game, w: Weapon, wall: Rect | null = null) => step(g, 1 / 60, { ...idle, trigger: [w] }, wall);
+
+    it('a missile explodes on a hit and its blast also destroys a drone next to the target', () => {
+      const g = empty();
+      g.ship.x = 100; g.ship.y = 300; g.ship.angle = 0;
+      g.enemies.push({ kind: 'drone', x: 400, y: 300, vx: 0, vy: 0, r: 9, hp: 1, cooldown: 99 });
+      g.enemies.push({ kind: 'drone', x: 400, y: 340, vx: 0, vy: 0, r: 9, hp: 1, cooldown: 99 });
+      fireOnce(g, 'missile');
+      run(g, { ...idle, thrust: 0, turn: 0 }, 1.2);
+      expect(g.enemies.length).toBe(0);
+    });
+
+    it('a heat-seeker turns toward an enemy that is not in front of the ship', () => {
+      const g = empty();
+      g.ship.x = 400; g.ship.y = 500; g.ship.angle = 0; // pointing right
+      g.enemies.push({ kind: 'gunship', x: 400, y: 120, vx: 0, vy: 0, r: 13, hp: 2, cooldown: 99 });
+      fireOnce(g, 'seeker');
+      run(g, { ...idle, thrust: 0, turn: 0 }, 3);
+      expect(g.enemies.length).toBe(0);
+    });
+
+    it('a mortar flies over the status card and blasts the far side', () => {
+      const g = empty();
+      const wall: Rect = { x: 250, y: 260, w: 100, h: 80 };
+      g.ship.x = 150; g.ship.y = 300; g.ship.angle = 0;
+      g.enemies.push({ kind: 'drone', x: 410, y: 300, vx: 0, vy: 0, r: 9, hp: 1, cooldown: 99 });
+      fireOnce(g, 'mortar', wall);
+      run(g, { ...idle, thrust: 0, turn: 0 }, 1.2, wall);
+      expect(g.enemies.length).toBe(0);
+    });
+
+    it('the A-bomb clears every enemy and enemy shot, costs a life even with a shield, and uses ammo', () => {
+      const g = empty();
+      g.ship.shield = 5;
+      for (let k = 0; k < 5; k++) g.enemies.push({ kind: 'drone', x: 100 + k * 120, y: 100, vx: 0, vy: 0, r: 9, hp: 1, cooldown: 99 });
+      g.enemyShots.push({ x: 700, y: 500, vx: 0, vy: 0, life: 3 });
+      expect(g.bombs).toBe(1);
+      fireOnce(g, 'bomb');
+      expect(g.enemies.length).toBe(0);
+      expect(g.enemyShots.length).toBe(0);
+      expect(g.lives).toBe(2);
+      expect(g.bombs).toBe(0);
+      expect(g.score).toBeGreaterThanOrEqual(500);
+      g.enemies.push({ kind: 'drone', x: 100, y: 100, vx: 0, vy: 0, r: 9, hp: 1, cooldown: 99 });
+      fireOnce(g, 'bomb');
+      expect(g.enemies.length).toBe(1); // no ammo left
+    });
+
+    it('the A-bomb on the last life ends the game', () => {
+      const g = empty();
+      g.lives = 1;
+      fireOnce(g, 'bomb');
+      expect(g.over).toBe(true);
+    });
+
+    it('each weapon has its own cooldown', () => {
+      const g = empty();
+      g.ship.angle = 0;
+      fireOnce(g, 'missile');
+      fireOnce(g, 'missile');
+      expect(g.missiles.filter((m) => m.kind === 'missile').length).toBe(1);
+      fireOnce(g, 'seeker');
+      expect(g.missiles.filter((m) => m.kind === 'seeker').length).toBe(1);
+    });
+
+    it('a new wave gives one more A-bomb, up to 2', () => {
+      const g = newGame(W, H, () => 0.5);
+      g.bombs = 1;
+      for (let k = 0; k < 3; k++) { g.enemies = []; run(g, idle, 2); }
+      expect(g.bombs).toBe(2);
+    });
   });
 });
