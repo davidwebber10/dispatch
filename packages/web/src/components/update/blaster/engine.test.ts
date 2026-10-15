@@ -110,4 +110,44 @@ describe('blaster engine', () => {
     step(g, 1 / 60, { ...idle, fire: true }, null);
     expect(g.shots[0].vx).toBeLessThan(0);
   });
+  it('hard from the start: wave 1 has 6 drones, 2 gunships and an asteroid', () => {
+    const g = newGame(W, H, Math.random);
+    const count = (k: string) => g.enemies.filter((e) => e.kind === k).length;
+    expect([count('drone'), count('gunship'), count('asteroid')]).toEqual([6, 2, 1]);
+  });
+
+  it('drones are fast: they close a 300 px gap in about 2 seconds', () => {
+    const g = empty();
+    g.ship.x = 100; g.ship.y = 300; g.ship.shield = 99;
+    g.enemies.push({ kind: 'drone', x: 400, y: 300, vx: 0, vy: 0, r: 9, hp: 1, cooldown: 99 });
+    run(g, idle, 2);
+    const d = g.enemies[0];
+    expect(!d || Math.hypot(d.x - g.ship.x, d.y - g.ship.y) < 40).toBe(true);
+  });
+
+  it('from wave 3, a gunship fires a spread of 3 shots', () => {
+    const g = empty();
+    g.wave = 3;
+    g.ship.x = 100; g.ship.y = 300; g.ship.shield = 99;
+    g.enemies.push({ kind: 'gunship', x: 400, y: 300, vx: 0, vy: 0, r: 13, hp: 3, cooldown: 0 });
+    step(g, 1 / 60, idle, null);
+    expect(g.enemyShots.length).toBe(3);
+  });
+
+  it('reinforcements arrive during a wave', () => {
+    const g = empty();
+    g.waveClearAt = null;
+    g.ship.shield = 999;
+    g.enemies.push({ kind: 'asteroid', x: 50, y: 50, vx: 0, vy: 0, r: 28, hp: 1, cooldown: 99 });
+    run(g, idle, 7);
+    expect(g.enemies.filter((e) => e.kind === 'drone').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('the shield after a hit is short (1.2 s)', () => {
+    const g = empty();
+    g.ship.shield = 0;
+    g.enemyShots.push({ x: g.ship.x, y: g.ship.y, vx: 0, vy: 0, life: 1 });
+    step(g, 1 / 60, idle, null);
+    expect(g.ship.shield).toBeCloseTo(1.2, 1);
+  });
 });

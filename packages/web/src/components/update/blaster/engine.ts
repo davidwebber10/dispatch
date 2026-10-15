@@ -34,8 +34,10 @@ export interface Game {
   combo: number;
   lastKillAt: number;
   time: number;
-  /** When the next wave starts (null: not scheduled). */
+  /** When the next wave starts (null: not scheduled, so a wave is on). */
   waveClearAt: number | null;
+  /** When the next reinforcement drone arrives during a wave. */
+  reinforceAt: number;
   banner: { text: string; until: number } | null;
   over: boolean;
   aliveAcc: number;
@@ -45,7 +47,16 @@ const SHIP_SPEED = 260;
 const SHOT_SPEED = 620;
 const FIRE_RATE = 7;
 const AUTO_AIM_RANGE = 600;
-const SHIELD_SECS = 2;
+/** The shield after a hit (a new round starts with START_SHIELD, so the first spawn is fair). */
+const SHIELD_SECS = 1.2;
+const START_SHIELD = 2;
+/** Difficulty: hard from wave 1, and harder every wave. */
+const DRONE_SPEED = 160;
+const DRONE_ACCEL = 3;
+const GUN_SHOT_SPEED = 300;
+const SPREAD_FROM_WAVE = 3;
+const MAX_ENEMIES = 28;
+const reinforceEvery = (wave: number) => Math.max(2.5, 6 - 0.4 * wave);
 const POINTS: Record<EnemyKind, number> = { drone: 100, gunship: 250, asteroid: 50 };
 const COMBO_WINDOW = 1.5;
 const MAX_COMBO = 5;
@@ -53,9 +64,9 @@ const MAX_COMBO = 5;
 export function newGame(w: number, h: number, rand: () => number = Math.random, wall: Rect | null = null): Game {
   const g: Game = {
     w, h, rand,
-    ship: { x: w / 2, y: h - 60, vx: 0, vy: 0, r: 10, angle: -Math.PI / 2, shield: SHIELD_SECS, fireCd: 0 },
+    ship: { x: w / 2, y: h - 60, vx: 0, vy: 0, r: 10, angle: -Math.PI / 2, shield: START_SHIELD, fireCd: 0 },
     shots: [], enemyShots: [], enemies: [], particles: [],
-    score: 0, lives: 3, wave: 1, combo: 0, lastKillAt: -10, time: 0, waveClearAt: null,
+    score: 0, lives: 3, wave: 1, combo: 0, lastKillAt: -10, time: 0, waveClearAt: null, reinforceAt: reinforceEvery(1),
     banner: { text: 'WAVE 1', until: 1.5 }, over: false, aliveAcc: 0,
   };
   spawnWave(g, wall);
@@ -86,14 +97,20 @@ function spawnWave(g: Game, wall: Rect | null): void {
     for (let k = 0; k < n; k++) {
       const p = spawnPoint(g, wall);
       const a = g.rand() * Math.PI * 2;
-      const speed = kind === 'asteroid' ? 40 + g.rand() * 40 : 0;
+      const speed = kind === 'asteroid' ? 70 + g.rand() * 60 : 0;
       g.enemies.push({ kind, x: p.x, y: p.y, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
         r: kind === 'asteroid' ? 28 : kind === 'gunship' ? 13 : 9, hp: kind === 'gunship' ? 3 : 1, cooldown: 1.5 + g.rand() * 1.5 });
     }
   };
-  add('drone', 2 + g.wave);
-  add('gunship', Math.floor(g.wave / 2));
-  add('asteroid', 1 + Math.floor(g.wave / 3));
+  add('drone', 4 + 2 * g.wave);
+  add('gunship', 1 + g.wave);
+  add('asteroid', 1 + Math.floor(g.wave / 2));
+}
+
+function reinforce(g: Game, wall: Rect | null): void {
+  if (g.enemies.length >= MAX_ENEMIES) return;
+  const p = spawnPoint(g, wall);
+  g.enemies.push({ kind: 'drone', x: p.x, y: p.y, vx: 0, vy: 0, r: 9, hp: 1, cooldown: 99 });
 }
 
 function burst(g: Game, x: number, y: number, n: number): void {
@@ -211,9 +228,9 @@ export function step(g: Game, dt: number, input: Input, wall: Rect | null): void
   for (const e of g.enemies) {
     const dx = s.x - e.x, dy = s.y - e.y, d = Math.hypot(dx, dy) || 1;
     if (e.kind === 'drone') {
-      const sp = 90 * speedUp;
-      e.vx += (dx / d * sp - e.vx) * Math.min(1, dt * 2);
-      e.vy += (dy / d * sp - e.vy) * Math.min(1, dt * 2);
+      const sp = DRONE_SPEED * speedUp;
+      e.vx += (dx / d * sp - e.vx) * Math.min(1, dt * DRONE_ACCEL);
+      e.vy += (dy / d * sp - e.vy) * Math.min(1, dt * DRONE_ACCEL);
     } else if (e.kind === 'gunship') {
       const away = d < 260 ? -1 : d > 320 ? 1 : 0;
       const sp = 70 * speedUp;
@@ -221,9 +238,12 @@ export function step(g: Game, dt: number, input: Input, wall: Rect | null): void
       e.vx += (tx - e.vx) * Math.min(1, dt * 2);
       e.vy += (ty - e.vy) * Math.min(1, dt * 2);
       e.cooldown -= dt;
-      if (e.cooldown <= 0 && d < 600) {
-        g.enemyShots.push({ x: e.x, y: e.y, vx: (dx / d) * 230, vy: (dy / d) * 230, life: 3 });
-        e.cooldown = 1.8 + g.rand() * 0.8;
+      if (e.cooldown <= 0 && d < 700) {
+        const base = Math.atan2(dy, dx);
+        for (const off of g.wave >= SPREAD_FROM_WAVE ? [-0.25, 0, 0.25] : [0]) {
+          g.enemyShots.push({ x: e.x, y: e.y, vx: Math.cos(base + off) * GUN_SHOT_SPEED, vy: Math.sin(base + off) * GUN_SHOT_SPEED, life: 3 });
+        }
+        e.cooldown = 1.1 + g.rand() * 0.5;
       }
     }
     e.x += e.vx * dt; e.y += e.vy * dt;
@@ -252,12 +272,19 @@ export function step(g: Game, dt: number, input: Input, wall: Rect | null): void
   }
   g.enemyShots = g.enemyShots.filter((o) => o.life > 0);
 
+  // Reinforcements during a wave.
+  if (g.waveClearAt === null && g.enemies.length > 0 && g.time >= g.reinforceAt) {
+    reinforce(g, wall);
+    g.reinforceAt = g.time + reinforceEvery(g.wave);
+  }
+
   // The next wave.
   if (g.enemies.length === 0 && g.waveClearAt === null) g.waveClearAt = g.time + 1.5;
   if (g.waveClearAt !== null && g.time >= g.waveClearAt) {
     g.wave += 1;
     g.waveClearAt = null;
     g.banner = { text: `WAVE ${g.wave}`, until: g.time + 1.5 };
+    g.reinforceAt = g.time + reinforceEvery(g.wave);
     spawnWave(g, wall);
   }
 }
