@@ -72,14 +72,37 @@ export class Compactor {
     return true;
   }
 
+  /**
+   * Wait until every message before `n` is built, or until each unbuilt one has failed again.
+   * A failed node waits in `cooling` for the next message, so the wait first retries those
+   * nodes once; a node that fails again ends the wait at once instead of at the timeout
+   * (with an expired login, every summary fails within seconds). Resolves true only when
+   * everything before `n` is built or given up (settledThrough).
+   */
   waitForSettled(n: number, timeoutMs: number): Promise<boolean> {
+    if (this.settledThrough(n)) return Promise.resolve(true);
+    this.retryFailed();
     if (this.settledThrough(n)) return Promise.resolve(true);
     return new Promise((resolve) => {
       const done = (v: boolean) => { clearTimeout(timer); this.waiters.delete(check); resolve(v); };
-      const check = () => { if (this.settledThrough(n)) done(true); };
+      const check = () => {
+        if (this.settledThrough(n)) done(true);
+        else if (this.nothingLeftToTry(n)) done(false);
+      };
       const timer = setTimeout(() => done(false), timeoutMs);
       this.waiters.add(check);
     });
+  }
+
+  /** Every unbuilt message before `n` has failed in this round (cooling) or for good: no build is coming. */
+  private nothingLeftToTry(n: number): boolean {
+    for (const i of this.unbuilt) {
+      if (i >= n) break;
+      const key = nodeKey(0, i);
+      if (this.running.has(key)) return false;
+      if (!this.cooling.has(key) && (this.failures.get(key) ?? 0) < MAX_TRIES) return false;
+    }
+    return true;
   }
 
   stats(): { unbuilt: number; merges: number; running: number } {

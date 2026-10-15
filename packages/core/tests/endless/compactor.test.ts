@@ -163,6 +163,36 @@ describe('Compactor', () => {
     expect(t.compactor.settledThrough(1)).toBe(true);
   });
 
+  it('a wait retries a failed node once and ends when it fails again, not at the timeout (a login problem)', async () => {
+    const t = setup();
+    t.log(LONG(0));
+    await settle();
+    t.summarizer.sessions[0].fail('Failed to authenticate');
+    await settle();
+    let ended: boolean | null = null;
+    void t.compactor.waitForSettled(1, 600_000).then((v) => { ended = v; });
+    await settle();
+    expect(t.summarizer.sessions).toHaveLength(2);   // the wait retried it at once
+    expect(ended).toBeNull();                          // and waits while the retry runs
+    t.summarizer.sessions[1].fail('Failed to authenticate');
+    await settle();
+    expect(ended).toBe(false);                         // failed again: the wait is over
+  });
+
+  it('a wait whose retry succeeds ends at once with true', async () => {
+    const t = setup();
+    t.log(LONG(0));
+    await settle();
+    t.summarizer.sessions[0].fail('rate limited');
+    await settle();
+    let ended: boolean | null = null;
+    void t.compactor.waitForSettled(1, 600_000).then((v) => { ended = v; });
+    await settle();
+    t.summarizer.sessions[1].reply('message zero');
+    await settle();
+    expect(ended).toBe(true);
+  });
+
   it('never puts a placeholder in a compaction view', async () => {
     const t = setup();
     t.log(LONG(0));
