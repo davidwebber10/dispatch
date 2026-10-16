@@ -388,10 +388,10 @@ const AGENT_AUTONOMY_NOTE =
   'moving on your own otherwise. END every turn with a concise, self-contained SUMMARY of what you ' +
   'found or did and any recommended next step — your coordinator reads that summary (and your full ' +
   'output) to decide what happens next, so make it the last thing you say.' +
-  ' Test runs: run only the test files your change touches, and the full suite once at the end. Never ' +
-  'pipe a test run through head or tail, or cut its output off early, while the process keeps running. ' +
-  'Before you start a full run, check that no vitest or node test process is still alive. If a run ' +
-  'moves to the background, wait for it to finish or kill it by PID before you start another.';
+  ' Test runs: if you changed code, run the test files your change touches, then the full suite once ' +
+  'at the end. If you did not change code, run single test files only. Do not pipe a test run through ' +
+  'head or tail. Write the output to a file, then read the file. If a run that you did not start is ' +
+  'alive, wait. Never kill a process that you did not start.';
 
 /**
  * Browser-auth relay note: a CLI you run (gh, npm, etc.) may need a browser login. WHEN a CLI
