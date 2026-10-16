@@ -151,19 +151,70 @@ describe('Chat composer parity with the other composers', () => {
     expect(api.endlessSend).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps a newer draft when a failed send comes back after the user typed again', async () => {
-    let fail!: (e: Error) => void;
-    vi.spyOn(api, 'endlessSend').mockImplementation(() => new Promise((_, rej) => { fail = rej; }));
+  it('does not restore the sent text twice when the send rejects before the next render (a fast reject)', async () => {
+    vi.spyOn(api, 'endlessSend').mockRejectedValue(new Error('nope'));
     render(<Composer />);
     fireEvent.change(box(), { target: { value: 'raw' } });
-    fireEvent.keyDown(box(), { key: 'Enter' });
-    await waitFor(() => expect(api.endlessSend).toHaveBeenCalled());
-    // A reject before the next render must not restore "raw raw".
-    await act(async () => { fail(new Error('nope')); });
+    // The reject lands in a microtask, before React renders the cleared box: the catch must not see the old text.
+    await act(async () => { fireEvent.keyDown(box(), { key: 'Enter' }); });
     expect(box().value).toBe('raw');
+    expect(await screen.findByText(/nope/)).toBeInTheDocument();
   });
 
-  it('does not overwrite the draft of a later composer when a send fails after unmount', async () => {
+  it('keeps a disabled Send, not Stop, for a short while after a send resolves, so a quick second tap cannot stop the turn', async () => {
+    vi.useFakeTimers();
+    try {
+      useEndless.setState({ turn: { status: 'running', error: null } });
+      let done!: () => void;
+      vi.spyOn(api, 'endlessSend').mockImplementation(() => new Promise((r) => { done = () => r({ ok: true }); }));
+      const stopSpy = vi.spyOn(api, 'endlessStop').mockResolvedValue({ ok: true });
+      render(<Composer />);
+      fireEvent.change(box(), { target: { value: 'hello' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+      await act(async () => { done(); });
+      // The send resolved between two quick taps: the button is still a Send.
+      expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+      expect(stopSpy).not.toHaveBeenCalled();
+      await act(async () => { vi.advanceTimersByTime(600); });
+      expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('saves the text to the draft when a send fails after the user left Chat', async () => {
+    let fail!: (e: Error) => void;
+    vi.spyOn(api, 'endlessSend').mockImplementation(() => new Promise((_, rej) => { fail = rej; }));
+    const first = render(<Composer />);
+    fireEvent.change(box(), { target: { value: 'lost?' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(api.endlessSend).toHaveBeenCalled());
+    first.unmount();
+    expect(localStorage.getItem('dispatch:draft:chat')).toBeNull();
+    await act(async () => { fail(new Error('late failure')); });
+    expect(localStorage.getItem('dispatch:draft:chat')).toBe('lost?');
+    render(<Composer />);
+    expect(box().value).toBe('lost?');
+  });
+
+  it('does not raise an unhandled rejection when reading a pasted image fails', async () => {
+    const seen: unknown[] = [];
+    const onRej = (e: unknown) => { seen.push(e); };
+    process.on('unhandledRejection', onRej);
+    try {
+      render(<Composer />);
+      fireEvent.paste(box(), { clipboardData: { files: [png(() => Promise.reject(new Error('read failed')))], types: ['Files'] } });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(seen).toEqual([]);
+      expect(screen.queryByRole('button', { name: 'Remove image' })).toBeNull();
+      expect(await screen.findByText(/Could not read the image: read failed/)).toBeInTheDocument();
+    } finally {
+      process.off('unhandledRejection', onRej);
+    }
+  });
+
+  it('adds the failed text after the draft of a later composer, and does not overwrite it, when a send fails after unmount', async () => {
     let fail!: (e: Error) => void;
     vi.spyOn(api, 'endlessSend').mockImplementation(() => new Promise((_, rej) => { fail = rej; }));
     const first = render(<Composer />);
@@ -174,8 +225,8 @@ describe('Chat composer parity with the other composers', () => {
     render(<Composer />);
     fireEvent.change(box(), { target: { value: 'newer draft' } });
     await act(async () => { fail(new Error('late failure')); });
-    expect(box().value).toBe('newer draft');
-    expect(localStorage.getItem('dispatch:draft:chat')).toBe('newer draft');
+    expect(box().value).toBe('newer draft, old text');
+    expect(localStorage.getItem('dispatch:draft:chat')).toBe('newer draft, old text');
   });
 
   it('does not swallow a text drop: it calls preventDefault only for a file drag', () => {

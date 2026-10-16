@@ -3,7 +3,7 @@ import { MessageScroller, useMessageScroller } from '@shadcn/react/message-scrol
 import { ArrowUp, Paperclip, Rows, Stop, X } from '@phosphor-icons/react';
 import { useEndless } from '../../stores/endless';
 import { useProjects } from '../../stores/projects';
-import { useDraft } from '../../hooks/useDraft';
+import { useDraft, appendToDraft } from '../../hooks/useDraft';
 import { useBootstrapOlderPages } from '../../hooks/useBootstrapOlderPages';
 import { LoadEarlierButton, Thinking } from '../tabs/chat/ChatView';
 import { InsightText } from '../InsightText';
@@ -61,6 +61,9 @@ function FocusScroll() {
   return null;
 }
 
+/** How long the key stays a Send after a send ends (see settling in Composer). */
+const SETTLE_MS = 400;
+
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 function TurnError({ text, mobile = false }: { text: string; mobile?: boolean }) {
@@ -96,12 +99,19 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
   // Pasted or dropped images are read asynchronously; a send before the read ends would leave them for the next message.
   const readsRef = useRef(0);
   const [reading, setReading] = useState(false);
+  // For a moment after a send ends the key stays a Send: a second tap that lands just as the send
+  // resolves would otherwise hit a Stop and stop the turn it just started.
+  const [settling, setSettling] = useState(false);
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; if (settleTimer.current) clearTimeout(settleTimer.current); };
+  }, []);
   const busy = useEndless((s) => s.turn.status === 'waiting' || s.turn.status === 'running');
   // The key is Stop only while a turn runs and the draft is empty: a message typed during a
   // turn still goes to the running process.
-  const stopMode = busy && !text.trim() && images.length === 0 && !sendingNow && !reading;
+  const stopMode = busy && !text.trim() && images.length === 0 && !sendingNow && !reading && !settling;
   const stop = () => {
     setSendError(null);
     useEndless.getState().stop().catch((err: unknown) => setSendError(`Stop failed: ${errorText(err)}`));
@@ -111,7 +121,7 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
   // phone, and the user may keep typing, or the PWA may reload, during it. Clearing after the wait
   // left the sent text in the box (and in local storage), so the next send carried it again.
   // A failed send puts the text back in front of anything typed since, and shows why. After an unmount
-  // it restores nothing: the box that now shows the draft belongs to a later composer.
+  // it saves the text to the stored draft instead (appendToDraft), never into this dead composer.
   // Known trade-off: a reload during a slow send that then fails loses the text, since the draft
   // was already removed from local storage.
   const submit = async () => {
@@ -130,7 +140,7 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
     try {
       await useEndless.getState().send(t, proj, imgs);
     } catch (err) {
-      if (!mounted.current) return;
+      if (!mounted.current) { appendToDraft('chat', raw); return; }
       const now = textRef.current;
       setText(now.trim() ? `${raw} ${now}` : raw);
       setImages((cur) => [...imgs, ...cur]);
@@ -138,7 +148,12 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
       setSendError(`Send failed: ${errorText(err)}`);
     } finally {
       sending.current = false;
-      if (mounted.current) setSendingNow(false);
+      if (mounted.current) {
+        setSendingNow(false);
+        setSettling(true);
+        if (settleTimer.current) clearTimeout(settleTimer.current);
+        settleTimer.current = setTimeout(() => setSettling(false), SETTLE_MS);
+      }
     }
   };
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -154,6 +169,8 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
     try {
       const add = await Promise.all(files.map(async (f) => ({ media_type: f.type, data: await fileToBase64(f) })));
       if (mounted.current && add.length) setImages((prev) => [...prev, ...add]);
+    } catch (err) {
+      if (mounted.current) setSendError(`Could not read the image: ${errorText(err)}`);
     } finally {
       readsRef.current -= 1;
       if (mounted.current && readsRef.current === 0) setReading(false);
