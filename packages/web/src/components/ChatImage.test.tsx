@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi, beforeEach, afterEach, it, expect } from 'vitest';
-import { ChatImage } from './ChatImage';
+import { ChatImage, ImageViewerHost } from './ChatImage';
 
 /** Open the lightbox and click Download, capturing the anchor the component builds. */
 async function downloadFrom(blobType: string, alt: string): Promise<{ download: string }> {
@@ -69,4 +69,27 @@ it('opens as a modal dialog, takes focus, traps Tab, and gives focus back on Esc
   fireEvent.keyDown(window, { key: 'Escape' });
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(document.activeElement).toBe(opener);
+});
+
+it('keeps the viewer open when the image that opened it is replaced by another with the same picture', () => {
+  // A sent image row is first drawn from the pending send, then from the logged message: the
+  // thumbnail that opened the viewer is unmounted and a new one mounts.
+  const { rerender } = render(<ImageViewerHost><ChatImage key="pending" src="data:image/png;base64,AAA" /></ImageViewerHost>);
+  fireEvent.click(screen.getByRole('button', { name: 'Open image' }));
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+  rerender(<ImageViewerHost><ChatImage key="logged" src="/api/endless/media/a.png" /></ImageViewerHost>);
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText('Close'));
+  expect(screen.queryByRole('dialog')).toBeNull();
+});
+
+it('keeps Tab inside the dialog after a click on the image took the focus away', () => {
+  render(<ChatImage src="/a.png" alt="chart" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Open image: chart' }));
+  const dialog = screen.getByRole('dialog');
+  // A click on the picture moves focus to the body, where the dialog's own key handler never sees Tab.
+  (document.activeElement as HTMLElement).blur();
+  expect(dialog.contains(document.activeElement)).toBe(false);
+  expect(fireEvent.keyDown(document.body, { key: 'Tab' })).toBe(false);
+  expect(dialog.contains(document.activeElement)).toBe(true);
 });

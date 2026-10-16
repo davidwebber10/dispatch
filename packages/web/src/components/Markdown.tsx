@@ -23,6 +23,23 @@ import { ImageLightbox } from './ChatImage';
 const sanitize = (html: string): string =>
   DOMPurify.sanitize(html, { ADD_TAGS: ['img'], ADD_ATTR: ['src', 'alt'] });
 
+/** Wraps each image in a focusable opener, so a keyboard user can reach the viewer (see onKeyDown). */
+function openableImages(html: string): string {
+  if (!html.includes('<img')) return html;
+  const box = document.createElement('template');
+  box.innerHTML = html;
+  for (const img of box.content.querySelectorAll('img')) {
+    const opener = document.createElement('span');
+    opener.setAttribute('role', 'button');
+    opener.setAttribute('tabindex', '0');
+    opener.setAttribute('data-md-image', '');
+    opener.setAttribute('aria-label', img.alt ? `Open image: ${img.alt}` : 'Open image');
+    img.replaceWith(opener);
+    opener.append(img);
+  }
+  return box.innerHTML;
+}
+
 /**
  * `ledger` (the Control Plane only — pinned card spec 2026-10-08, Unit 9) turns each known ledger
  * number into a chip with its question. The chips are made AFTER the sanitizer, on text nodes
@@ -30,7 +47,7 @@ const sanitize = (html: string): string =>
  */
 export const Markdown = React.memo(function Markdown({ source, ledger }: { source: string; ledger?: LedgerChips }) {
   const html = useMemo(() => {
-    const clean = sanitize(renderMarkdown(source));
+    const clean = openableImages(sanitize(renderMarkdown(source)));
     return ledger ? chipifyHtml(clean, ledger.index) : clean;
   }, [source, ledger]);
   // Markdown-embedded images render as raw sanitized <img> tags with no React handlers,
@@ -52,7 +69,15 @@ export const Markdown = React.memo(function Markdown({ source, ledger }: { sourc
     }
   };
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    const chip = (e.key === 'Enter' || e.key === ' ') && chipOf(e.target);
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const opener = (e.target as HTMLElement).closest?.<HTMLElement>('[data-md-image]');
+    const img = opener?.querySelector('img');
+    if (opener && img?.src) {
+      e.preventDefault();
+      setLightbox({ src: img.src, alt: img.alt || undefined });
+      return;
+    }
+    const chip = chipOf(e.target);
     if (!chip || !ledger) return;
     e.preventDefault();
     const r = chip.getBoundingClientRect();
@@ -60,7 +85,7 @@ export const Markdown = React.memo(function Markdown({ source, ledger }: { sourc
   };
   return (
     <>
-      <div className="md-view" style={{ minWidth: 0 }} onClick={onClick} onKeyDown={ledger ? onKeyDown : undefined} dangerouslySetInnerHTML={{ __html: html }} />
+      <div className="md-view" style={{ minWidth: 0 }} onClick={onClick} onKeyDown={onKeyDown} dangerouslySetInnerHTML={{ __html: html }} />
       {lightbox && <ImageLightbox src={lightbox.src} alt={lightbox.alt} onClose={() => setLightbox(null)} />}
     </>
   );

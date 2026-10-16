@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type TouchEvent } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode, type TouchEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, Copy, DownloadSimple, X } from '@phosphor-icons/react';
 import { clipboardImageSupported, copyImageToClipboard } from '../lib/clipboard';
@@ -113,7 +113,9 @@ export function ImageLightbox({ src, alt, onClose }: { src: string; alt?: string
   }, []);
 
   // Tab stays inside the dialog: from the last control it wraps to the first, and back.
-  function trapTab(e: ReactKeyboardEvent<HTMLDivElement>) {
+  // It listens on the window, like Escape: a click on the picture moves focus to the body, and a
+  // handler on the dialog would never see the next Tab.
+  function trapTab(e: KeyboardEvent) {
     if (e.key !== 'Tab') return;
     const items = [...(dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled])') ?? [])];
     if (items.length === 0) return;
@@ -128,6 +130,7 @@ export function ImageLightbox({ src, alt, onClose }: { src: string; alt?: string
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
+      else trapTab(e);
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -203,7 +206,6 @@ export function ImageLightbox({ src, alt, onClose }: { src: string; alt?: string
       role="dialog"
       aria-modal="true"
       aria-label={alt || 'Image viewer'}
-      onKeyDown={trapTab}
       onClick={onClose}
       style={{
             position: 'fixed',
@@ -268,8 +270,27 @@ export function ImageLightbox({ src, alt, onClose }: { src: string; alt?: string
   );
 }
 
+type Viewing = { src: string; alt?: string };
+const ViewerContext = createContext<((v: Viewing) => void) | null>(null);
+
+/**
+ * Holds the open viewer above the rows that open it. A row can be replaced while its viewer is
+ * open (a sent image is drawn from the pending send, then from the logged message); a viewer
+ * held by the row itself would close with it. Without a host, a ChatImage keeps its own viewer.
+ */
+export function ImageViewerHost({ children }: { children: ReactNode }) {
+  const [viewing, setViewing] = useState<Viewing | null>(null);
+  return (
+    <ViewerContext.Provider value={setViewing}>
+      {children}
+      {viewing && <ImageLightbox src={viewing.src} alt={viewing.alt} onClose={() => setViewing(null)} />}
+    </ViewerContext.Provider>
+  );
+}
+
 export function ChatImage({ src, alt, maxHeight = 320 }: { src: string; alt?: string; maxHeight?: number | string }) {
   const [open, setOpen] = useState(false);
+  const host = useContext(ViewerContext);
   if (!src) return null;
   return (
     <>
@@ -277,7 +298,7 @@ export function ChatImage({ src, alt, maxHeight = 320 }: { src: string; alt?: st
       <button
         type="button"
         aria-label={alt ? `Open image: ${alt}` : 'Open image'}
-        onClick={() => setOpen(true)}
+        onClick={() => (host ? host({ src, alt }) : setOpen(true))}
         title={alt || 'Open image'}
         style={{ display: 'block', maxWidth: '100%', padding: 0, margin: 0, border: 'none', background: 'none', font: 'inherit', cursor: 'zoom-in' }}
       >
@@ -298,7 +319,7 @@ export function ChatImage({ src, alt, maxHeight = 320 }: { src: string; alt?: st
           }}
         />
       </button>
-      {open && <ImageLightbox src={src} alt={alt} onClose={() => setOpen(false)} />}
+      {!host && open && <ImageLightbox src={src} alt={alt} onClose={() => setOpen(false)} />}
     </>
   );
 }
