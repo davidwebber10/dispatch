@@ -74,6 +74,10 @@ those to the user rather than guessing.
 - **The data dir is `~/.dispatch`** (SQLite + runtime). Don't delete it unless the user asks.
 - **Logs:** `~/Library/Logs/dispatch/` and `./bin/dispatch logs -f`.
 - Prefer the `dispatch` CLI over hand-running `launchctl`.
+- **Test runs:** if you changed code, run the affected test files, then the full suite once at the end.
+  If you did not change code, run single files only. Do not pipe a test run through `head` or `tail`;
+  write the output to a file, then read the file. If a run that you did not start is alive, wait.
+  Never kill a process that you did not start.
 
 ## Useful commands
 
