@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent, type UIEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type UIEvent } from 'react';
 import { MessageScroller, useMessageScroller } from '@shadcn/react/message-scroller';
 import { ArrowUp, Paperclip, Rows, Stop, X } from '@phosphor-icons/react';
 import { useEndless } from '../../stores/endless';
 import { useProjects } from '../../stores/projects';
+import { useDraft } from '../../hooks/useDraft';
 import { useBootstrapOlderPages } from '../../hooks/useBootstrapOlderPages';
 import { LoadEarlierButton, Thinking } from '../tabs/chat/ChatView';
 import { InsightText } from '../InsightText';
@@ -79,7 +80,11 @@ function TurnError({ text, mobile = false }: { text: string; mobile?: boolean })
 }
 
 export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
-  const [text, setText] = useState('');
+  // The unsent text survives a reload, like the other composers' drafts.
+  const [text, setText] = useDraft('chat');
+  const textRef = useRef(text); textRef.current = text; // the latest text, for the clear after an awaited send
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const [dragActive, setDragActive] = useState(false); // drives the drop-target cue
   const [images, setImages] = useState<EndlessImage[]>([]);
   const [project, setProject] = useState<string | null>(null);
   const projectName = useProjects((s) => s.sessions.find((x) => x.id === project)?.name ?? null);
@@ -106,7 +111,7 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
     setSendError(null);
     try {
       await useEndless.getState().send(t, proj, imgs);
-      setText((cur) => (cur === raw ? '' : cur));
+      if (textRef.current === raw) setText('');
       setImages((cur) => (cur === imgs ? [] : cur));
       setProject((cur) => (cur === proj ? null : cur));
     } catch (err) {
@@ -118,16 +123,50 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit(); }
   };
-  const onFiles = async (e: ChangeEvent<HTMLInputElement>) => {
-    const files = [...(e.target.files ?? [])].filter((f) => MODEL_IMAGE_MIME.has(f.type));
+  // Picked, dropped and pasted files all take this one path. Only the image types the model
+  // can read are kept: Chat has no project inbox to hold other files.
+  const addImages = async (list: Iterable<File> | null | undefined) => {
+    const files = [...(list ?? [])].filter((f) => MODEL_IMAGE_MIME.has(f.type));
     const add = await Promise.all(files.map(async (f) => ({ media_type: f.type, data: await fileToBase64(f) })));
-    setImages((prev) => [...prev, ...add]);
-    e.target.value = '';
+    if (add.length) setImages((prev) => [...prev, ...add]);
   };
+  const onFiles = async (e: ChangeEvent<HTMLInputElement>) => {
+    const input = e.target;
+    await addImages(input.files);
+    input.value = '';
+  };
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = [...(e.clipboardData?.files ?? [])].filter((f) => MODEL_IMAGE_MIME.has(f.type));
+    if (files.length) { e.preventDefault(); void addImages(files); }
+  };
+  // Gate on a FILE drag so the cue does not flash on text drags.
+  const onDragOver = (e: DragEvent<HTMLDivElement>) => {
+    if (!Array.from(e.dataTransfer.types || []).includes('Files')) return;
+    e.preventDefault();
+    setDragActive(true);
+  };
+  const onDragLeave = (e: DragEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragActive(false);
+  };
+  const onDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragActive(false);
+    if (e.dataTransfer.files?.length) void addImages(e.dataTransfer.files);
+  };
+  // Grow with the text up to 200px, then scroll. Runs on every text change, so a paste, a
+  // draft restore and the clear after a send all resize the box.
+  useLayoutEffect(() => {
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+  }, [text]);
 
   return (
-    <div style={{ flexShrink: 0, borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', padding: mobile ? '10px 16px' : '10px 12px calc(10px + env(safe-area-inset-bottom))' }}>
+    <div onDragOver={onDragOver} onDragEnter={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
+      style={{ flexShrink: 0, borderTop: '1px solid var(--color-border)', background: dragActive ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-pane))' : 'var(--color-pane)', outline: dragActive ? '1px solid var(--color-accent)' : 'none', outlineOffset: -1, padding: mobile ? '10px 16px' : '10px 12px calc(10px + env(safe-area-inset-bottom))' }}>
       <div style={{ maxWidth: 768, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {dragActive && <div style={{ fontSize: 12, color: 'var(--color-accent)' }}>Drop image to attach</div>}
         {(project !== null || images.length > 0) && (
           <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
             {project !== null && (
@@ -156,9 +195,9 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
           <ProjectPicker value={project} onChange={setProject} mobile={mobile} />
           <button type="button" aria-label="Attach image" onClick={() => fileRef.current?.click()} style={iconBtn}><Paperclip size={18} /></button>
           <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden onChange={(e) => void onFiles(e)} />
-          <textarea aria-label="Message" value={text} rows={1} placeholder="Message Dispatch…"
+          <textarea ref={taRef} aria-label="Message" value={text} rows={1} enterKeyHint="send" onPaste={onPaste} placeholder="Message Dispatch…"
             onChange={(e) => setText(e.target.value)} onKeyDown={onKey}
-            style={{ flex: 1, minWidth: 0, resize: 'none', maxHeight: 200, padding: '8px 12px', borderRadius: 10, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: 16, lineHeight: 1.4, font: 'inherit' }} />
+            style={{ flex: 1, minWidth: 0, resize: 'none', maxHeight: 200, overflowY: 'auto', padding: '8px 12px', borderRadius: 10, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: 16, lineHeight: 1.4, font: 'inherit' }} />
           {stopMode ? (
             <button type="button" aria-label="Stop" title="Stop" onClick={stop}
               style={{ ...iconBtn, background: 'color-mix(in srgb, var(--color-status-red) 20%, transparent)', border: 'none', color: 'var(--color-status-red)' }}>

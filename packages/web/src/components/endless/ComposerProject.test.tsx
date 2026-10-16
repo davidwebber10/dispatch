@@ -13,6 +13,7 @@ let savedProjects: ReturnType<typeof useProjects.getState>;
 const sess = (id: string, name: string, lastActivityAt: string) => ({ id, name, lastActivityAt }) as unknown as Session;
 
 beforeEach(() => {
+  localStorage.clear(); // drafts persist in local storage; each case starts with none
   savedEndless = useEndless.getState();
   savedProjects = useProjects.getState();
   useProjects.setState({ sessions: [sess('s1', 'salsify', '2026-10-01T00:00:00Z'), sess('s2', 'recent', '2026-10-10T00:00:00Z')] });

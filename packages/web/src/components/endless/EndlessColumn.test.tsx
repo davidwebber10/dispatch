@@ -37,6 +37,7 @@ const msg = (i: number, kind: EndlessMessage['kind'], text: string, over: Partia
 afterEach(() => { useUI.setState({ view: 'chat', pendingOpenThread: null }); });
 
 beforeEach(() => {
+  localStorage.clear(); // drafts persist in local storage; each case starts with none
   vi.restoreAllMocks();
   scroller.toMessage.mockClear();
   scroller.toEnd.mockClear();
