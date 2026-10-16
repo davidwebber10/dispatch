@@ -292,7 +292,67 @@ describe('Chat composer parity with the other composers', () => {
     expect(screen.getByText(/Send failed: offline/)).toBeInTheDocument();
   });
 
-  it('offers JPEG first in the picker so Safari converts HEIC to JPEG, not PNG', () => {
+  const deferredPng = () => {
+    let fail!: (e: Error) => void;
+    const file = png(() => new Promise<ArrayBuffer>((_, rej) => { fail = rej; }));
+    return { file, fail: (m = 'boom') => fail(new Error(m)) };
+  };
+
+  it('keeps a newer skipped-file notice when an older pending read then fails', async () => {
+    const { container } = render(<Composer />);
+    const slow = deferredPng();
+    fireEvent.change(fileInput(container), { target: { files: [slow.file] } });
+    fireEvent.change(fileInput(container), { target: { files: [heicFile('B.HEIC')] } });
+    await screen.findByText(/B\.HEIC not attached/);
+    await act(async () => { slow.fail(); });
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/B\.HEIC not attached/);
+    expect(alert).toHaveTextContent(/Could not read the image: boom/);
+  });
+
+  it('does not bring back the skipped files of an older batch when its read fails after a newer pick', async () => {
+    const { container } = render(<Composer />);
+    const slow = deferredPng();
+    fireEvent.change(fileInput(container), { target: { files: [heicFile('old.heic'), slow.file] } });
+    fireEvent.change(fileInput(container), { target: { files: [heicFile('new.heic')] } });
+    await screen.findByText(/new\.heic not attached/);
+    await act(async () => { slow.fail(); });
+    const alert = await screen.findByText(/Could not read the image: boom/);
+    expect(alert).toHaveTextContent(/new\.heic not attached/);
+    expect(alert).not.toHaveTextContent(/old\.heic/);
+  });
+
+  it('reports the first read error of a batch with several failures', async () => {
+    const { container } = render(<Composer />);
+    const a = deferredPng();
+    const b = deferredPng();
+    fireEvent.change(fileInput(container), { target: { files: [a.file, b.file] } });
+    await act(async () => { a.fail('first'); b.fail('second'); });
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not read the image: first');
+  });
+
+  it('clears the attach notice when a message is sent', async () => {
+    vi.spyOn(api, 'endlessSend').mockResolvedValue({ ok: true });
+    const { container } = render(<Composer />);
+    fireEvent.change(fileInput(container), { target: { files: [heicFile()] } });
+    await screen.findByRole('alert');
+    fireEvent.change(box(), { target: { value: 'hello' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  });
+
+  it('shows the attach notice together with the lost-image notice', async () => {
+    const s = await startSend('with a picture', true);
+    s.view.unmount();
+    await s.fail('late failure');
+    const { container } = render(<Composer />);
+    expect(screen.getByRole('alert')).toHaveTextContent(/1 image .*not saved/i);
+    fireEvent.change(fileInput(container), { target: { files: [heicFile()] } });
+    await screen.findByText(/IMG_0001\.HEIC not attached/);
+    expect(screen.getByText(/1 image .*not saved/i)).toBeInTheDocument();
+  });
+
+  it('lists JPEG first in the picker, so a Safari that converts HEIC picks JPEG over PNG', () => {
     const { container } = render(<Composer />);
     expect(fileInput(container).accept).toBe('image/jpeg,image/png,image/gif,image/webp');
   });

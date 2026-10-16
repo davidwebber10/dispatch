@@ -207,9 +207,12 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
       const read = await Promise.allSettled(files.map(async (f) => ({ media_type: f.type, data: await fileToBase64(f) })));
       const add = read.flatMap((x) => (x.status === 'fulfilled' ? [x.value] : []));
       const failed = read.flatMap((x) => (x.status === 'rejected' ? [x.reason] : []));
-      if (failed.length) notes.push(`Could not read the image: ${errorText(failed[0])}`);
       if (mounted.current) {
-        if (failed.length) setAttachNotice(notes.join(' '));
+        // Merge into the notice on screen, never replace it: a newer pick may have written its own by now.
+        if (failed.length) {
+          const fail = `Could not read the image: ${errorText(failed[0])}`;
+          setAttachNotice((cur) => (cur?.includes(fail) ? cur : cur ? `${cur} ${fail}` : fail));
+        }
         if (add.length) setImages((prev) => [...prev, ...add]);
       }
     } finally {
