@@ -215,6 +215,31 @@ describe('Chat composer parity with the other composers', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(/1 image .*not saved/i);
   });
 
+  it('says so when a picked file is not an image the model can read, instead of dropping it silently', async () => {
+    const { container } = render(<Composer />);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const heic = new File([new Uint8Array([1, 2, 3])], 'IMG_0001.HEIC', { type: 'image/heic' });
+    const blank = new File([new Uint8Array([1, 2, 3])], 'IMG_0002', { type: '' });
+    fireEvent.change(input, { target: { files: [heic, blank, png()] } });
+    expect(await screen.findByRole('button', { name: 'Remove image' })).toBeInTheDocument(); // the PNG still attaches
+    expect(screen.getByRole('alert')).toHaveTextContent(/2 files? not attached.*image\/heic.*unknown/i);
+  });
+
+  it('says so when every picked file is skipped', async () => {
+    const { container } = render(<Composer />);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File([new Uint8Array([1])], 'a.heic', { type: 'image/heic' })] } });
+    expect(await screen.findByRole('alert')).toHaveTextContent(/1 file not attached.*image\/heic/i);
+    expect(screen.queryByRole('button', { name: 'Remove image' })).toBeNull();
+  });
+
+  it('counts a failed read in the same notice', async () => {
+    const { container } = render(<Composer />);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [png(() => Promise.reject(new Error('read failed'))), png()] } });
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Could not read the image: read failed/);
+  });
+
   it('does not raise an unhandled rejection when reading a pasted image fails', async () => {
     const seen: unknown[] = [];
     const onRej = (e: unknown) => { seen.push(e); };

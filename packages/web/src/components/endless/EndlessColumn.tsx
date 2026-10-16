@@ -187,7 +187,13 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
   // Picked, dropped and pasted files all take this one path. Only the image types the model
   // can read are kept: Chat has no project inbox to hold other files.
   const addImages = async (list: Iterable<File> | null | undefined) => {
-    const files = [...(list ?? [])].filter((f) => MODEL_IMAGE_MIME.has(f.type));
+    const all = [...(list ?? [])];
+    const files = all.filter((f) => MODEL_IMAGE_MIME.has(f.type));
+    if (files.length < all.length) {
+      // A picked file the model cannot read is named, not dropped without a word.
+      const types = [...new Set(all.filter((f) => !MODEL_IMAGE_MIME.has(f.type)).map((f) => f.type || 'unknown'))];
+      setSendError(`${all.length - files.length} ${all.length - files.length === 1 ? 'file' : 'files'} not attached (${types.join(', ')}): only PNG, JPEG, GIF and WebP images work.`);
+    }
     if (!files.length) return;
     readsRef.current += 1;
     setReading(true);
