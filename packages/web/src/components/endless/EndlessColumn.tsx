@@ -107,6 +107,8 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
   const projectName = useProjects((s) => s.sessions.find((x) => x.id === project)?.name ?? null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [sendError, setSendError] = useState<string | null>(pendingImagesLost);
+  // Skipped or unreadable attachments. Apart from sendError so a later good attach clears it and it never hides a send failure.
+  const [attachNotice, setAttachNotice] = useState<string | null>(null);
   useEffect(() => {
     // The initializer only reads (React StrictMode renders it twice); the notice is spent after the commit.
     clearImagesLost();
@@ -154,6 +156,7 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
     sending.current = true;
     setSendingNow(true);
     setSendError(null);
+    setAttachNotice(null);
     setText('');
     textRef.current = ''; // render has not run yet; a reject before it must not see the old text
     setImages([]);
@@ -184,18 +187,34 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit(); }
   };
-  // Picked, dropped and pasted files all take this one path. Only the image types the model
-  // can read are kept: Chat has no project inbox to hold other files.
+  // Picked and dropped files take this path (pasted ones are filtered to images first). Only the
+  // image types the model can read are kept: Chat has no project inbox to hold other files.
   const addImages = async (list: Iterable<File> | null | undefined) => {
-    const files = [...(list ?? [])].filter((f) => MODEL_IMAGE_MIME.has(f.type));
+    const all = [...(list ?? [])];
+    const files = all.filter((f) => MODEL_IMAGE_MIME.has(f.type));
+    const notes: string[] = [];
+    if (files.length < all.length) {
+      // A file the model cannot read is named, not dropped without a word.
+      const names = all.filter((f) => !MODEL_IMAGE_MIME.has(f.type)).map((f) => f.name || f.type || 'a file');
+      const shown = names.length > 3 ? `${names.slice(0, 3).join(', ')} +${names.length - 3} more` : names.join(', ');
+      notes.push(`${shown} not attached: Chat takes PNG, JPEG, GIF or WebP images.`);
+    }
+    setAttachNotice(notes.join(' ') || null);
     if (!files.length) return;
     readsRef.current += 1;
     setReading(true);
     try {
-      const add = await Promise.all(files.map(async (f) => ({ media_type: f.type, data: await fileToBase64(f) })));
-      if (mounted.current && add.length) setImages((prev) => [...prev, ...add]);
-    } catch (err) {
-      if (mounted.current) setSendError(`Could not read the image: ${errorText(err)}`);
+      const read = await Promise.allSettled(files.map(async (f) => ({ media_type: f.type, data: await fileToBase64(f) })));
+      const add = read.flatMap((x) => (x.status === 'fulfilled' ? [x.value] : []));
+      const failed = read.flatMap((x) => (x.status === 'rejected' ? [x.reason] : []));
+      if (mounted.current) {
+        // Merge into the notice on screen, never replace it: a newer pick may have written its own by now.
+        if (failed.length) {
+          const fail = `Could not read the image: ${errorText(failed[0])}`;
+          setAttachNotice((cur) => (cur?.includes(fail) ? cur : cur ? `${cur} ${fail}` : fail));
+        }
+        if (add.length) setImages((prev) => [...prev, ...add]);
+      }
     } finally {
       readsRef.current -= 1;
       if (mounted.current && readsRef.current === 0) setReading(false);
@@ -269,10 +288,11 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
           </div>
         )}
         {sendError && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)', wordBreak: 'break-word' }}>{sendError}</div>}
+        {attachNotice && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)', wordBreak: 'break-word' }}>{attachNotice}</div>}
         <div data-testid="composer-row" style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
           <ProjectPicker value={project} onChange={setProject} mobile={mobile} />
           <button type="button" aria-label="Attach image" onClick={() => fileRef.current?.click()} style={iconBtn}><Paperclip size={18} /></button>
-          <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden onChange={(e) => void onFiles(e)} />
+          <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/gif,image/webp" multiple hidden onChange={(e) => void onFiles(e)} />
           <textarea ref={taRef} aria-label="Message" value={text} rows={1} enterKeyHint="send" onPaste={onPaste} placeholder="Message Dispatch…"
             onChange={(e) => setText(e.target.value)} onKeyDown={onKey}
             style={{ flex: 1, minWidth: 0, resize: 'none', maxHeight: 200, overflowY: 'auto', padding: '8px 12px', borderRadius: 10, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: 16, lineHeight: 1.4, font: 'inherit' }} />

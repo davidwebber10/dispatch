@@ -215,6 +215,148 @@ describe('Chat composer parity with the other composers', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(/1 image .*not saved/i);
   });
 
+  const heicFile = (name = 'IMG_0001.HEIC') => new File([new Uint8Array([1, 2, 3])], name, { type: 'image/heic' });
+  const fileInput = (c: HTMLElement) => c.querySelector('input[type="file"]') as HTMLInputElement;
+  const failingPng = () => png(() => Promise.reject(new Error('read failed')));
+
+  it('names a picked file it cannot attach, by file name, instead of dropping it silently', async () => {
+    const { container } = render(<Composer />);
+    const blank = new File([new Uint8Array([1, 2, 3])], 'IMG_0002', { type: '' });
+    fireEvent.change(fileInput(container), { target: { files: [heicFile(), blank, png()] } });
+    expect(await screen.findByRole('button', { name: 'Remove image' })).toBeInTheDocument(); // the PNG still attaches
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent(/IMG_0001\.HEIC, IMG_0002 not attached: Chat takes PNG, JPEG, GIF or WebP images\./);
+    expect(alert).not.toHaveTextContent(/image\/heic|unknown/);
+  });
+
+  it('shows the type only for a file with no name, and caps the names at 3 with +N more', async () => {
+    const { container } = render(<Composer />);
+    const noName = new File([new Uint8Array([1])], '', { type: 'image/heic' });
+    fireEvent.change(fileInput(container), { target: { files: [heicFile('a.heic'), heicFile('b.heic'), heicFile('c.heic'), heicFile('d.heic'), noName] } });
+    expect(await screen.findByRole('alert')).toHaveTextContent('a.heic, b.heic, c.heic +2 more not attached');
+    fireEvent.change(fileInput(container), { target: { files: [noName] } });
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('image/heic not attached'));
+  });
+
+  it('says so when every picked file is skipped', async () => {
+    const { container } = render(<Composer />);
+    fireEvent.change(fileInput(container), { target: { files: [heicFile('a.heic')] } });
+    expect(await screen.findByRole('alert')).toHaveTextContent(/a\.heic not attached/);
+    expect(screen.queryByRole('button', { name: 'Remove image' })).toBeNull();
+  });
+
+  it('says so for a dropped file it cannot attach', async () => {
+    const { container } = render(<Composer />);
+    fireEvent.drop(container.firstElementChild as HTMLElement, { dataTransfer: { types: ['Files'], files: [heicFile('dropped.heic')] } });
+    expect(await screen.findByRole('alert')).toHaveTextContent(/dropped\.heic not attached/);
+  });
+
+  it('stays quiet for a pasted HEIC and leaves the default paste alone', () => {
+    render(<Composer />);
+    expect(fireEvent.paste(box(), { clipboardData: { files: [heicFile()], types: ['Files'] } })).toBe(true);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('shows both the skipped file and the failed read when the only readable file fails', async () => {
+    const { container } = render(<Composer />);
+    fireEvent.change(fileInput(container), { target: { files: [heicFile(), failingPng()] } });
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/IMG_0001\.HEIC not attached/));
+    expect(screen.getByRole('alert')).toHaveTextContent(/Could not read the image: read failed/);
+  });
+
+  it('still attaches the good files in a batch where one read fails, and reports both problems', async () => {
+    const { container } = render(<Composer />);
+    fireEvent.change(fileInput(container), { target: { files: [heicFile(), failingPng(), png()] } });
+    expect(await screen.findAllByRole('button', { name: 'Remove image' })).toHaveLength(1);
+    expect(screen.getByRole('alert')).toHaveTextContent(/IMG_0001\.HEIC not attached/);
+    expect(screen.getByRole('alert')).toHaveTextContent(/Could not read the image/);
+  });
+
+  it('clears the attach notice on the next good attach', async () => {
+    const { container } = render(<Composer />);
+    fireEvent.change(fileInput(container), { target: { files: [heicFile()] } });
+    await screen.findByRole('alert');
+    fireEvent.change(fileInput(container), { target: { files: [png()] } });
+    await screen.findByRole('button', { name: 'Remove image' });
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('keeps a send failure visible next to a later attach notice', async () => {
+    vi.spyOn(api, 'endlessSend').mockRejectedValue(new Error('offline'));
+    const { container } = render(<Composer />);
+    fireEvent.change(box(), { target: { value: 'hi' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await screen.findByText(/Send failed: offline/);
+    fireEvent.change(fileInput(container), { target: { files: [heicFile()] } });
+    await screen.findByText(/IMG_0001\.HEIC not attached/);
+    expect(screen.getByText(/Send failed: offline/)).toBeInTheDocument();
+  });
+
+  const deferredPng = () => {
+    let fail!: (e: Error) => void;
+    const file = png(() => new Promise<ArrayBuffer>((_, rej) => { fail = rej; }));
+    return { file, fail: (m = 'boom') => fail(new Error(m)) };
+  };
+
+  it('keeps a newer skipped-file notice when an older pending read then fails', async () => {
+    const { container } = render(<Composer />);
+    const slow = deferredPng();
+    fireEvent.change(fileInput(container), { target: { files: [slow.file] } });
+    fireEvent.change(fileInput(container), { target: { files: [heicFile('B.HEIC')] } });
+    await screen.findByText(/B\.HEIC not attached/);
+    await act(async () => { slow.fail(); });
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/B\.HEIC not attached/);
+    expect(alert).toHaveTextContent(/Could not read the image: boom/);
+  });
+
+  it('does not bring back the skipped files of an older batch when its read fails after a newer pick', async () => {
+    const { container } = render(<Composer />);
+    const slow = deferredPng();
+    fireEvent.change(fileInput(container), { target: { files: [heicFile('old.heic'), slow.file] } });
+    fireEvent.change(fileInput(container), { target: { files: [heicFile('new.heic')] } });
+    await screen.findByText(/new\.heic not attached/);
+    await act(async () => { slow.fail(); });
+    const alert = await screen.findByText(/Could not read the image: boom/);
+    expect(alert).toHaveTextContent(/new\.heic not attached/);
+    expect(alert).not.toHaveTextContent(/old\.heic/);
+  });
+
+  it('reports the first read error of a batch with several failures', async () => {
+    const { container } = render(<Composer />);
+    const a = deferredPng();
+    const b = deferredPng();
+    fireEvent.change(fileInput(container), { target: { files: [a.file, b.file] } });
+    await act(async () => { a.fail('first'); b.fail('second'); });
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not read the image: first');
+  });
+
+  it('clears the attach notice when a message is sent', async () => {
+    vi.spyOn(api, 'endlessSend').mockResolvedValue({ ok: true });
+    const { container } = render(<Composer />);
+    fireEvent.change(fileInput(container), { target: { files: [heicFile()] } });
+    await screen.findByRole('alert');
+    fireEvent.change(box(), { target: { value: 'hello' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  });
+
+  it('shows the attach notice together with the lost-image notice', async () => {
+    const s = await startSend('with a picture', true);
+    s.view.unmount();
+    await s.fail('late failure');
+    const { container } = render(<Composer />);
+    expect(screen.getByRole('alert')).toHaveTextContent(/1 image .*not saved/i);
+    fireEvent.change(fileInput(container), { target: { files: [heicFile()] } });
+    await screen.findByText(/IMG_0001\.HEIC not attached/);
+    expect(screen.getByText(/1 image .*not saved/i)).toBeInTheDocument();
+  });
+
+  it('lists JPEG first in the picker, so a Safari that converts HEIC picks JPEG over PNG', () => {
+    const { container } = render(<Composer />);
+    expect(fileInput(container).accept).toBe('image/jpeg,image/png,image/gif,image/webp');
+  });
+
   it('does not raise an unhandled rejection when reading a pasted image fails', async () => {
     const seen: unknown[] = [];
     const onRej = (e: unknown) => { seen.push(e); };
