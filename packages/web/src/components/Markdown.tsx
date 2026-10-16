@@ -30,7 +30,7 @@ function openableImages(html: string): string {
   box.innerHTML = html;
   for (const img of box.content.querySelectorAll('img')) {
     // A linked image follows its link: no opener inside the anchor (one tab stop, no viewer).
-    if (img.closest('a')) continue;
+    if (img.closest('a[href]')) continue;
     const opener = document.createElement('span');
     opener.setAttribute('role', 'button');
     opener.setAttribute('tabindex', '0');
@@ -70,7 +70,7 @@ export const Markdown = React.memo(function Markdown({ source, ledger }: { sourc
       ledger.onChip(Number(chip.dataset.ledgerChip), { x: e.clientX, y: e.clientY });
       return;
     }
-    if (t.tagName === 'IMG' && !t.closest('a')) {
+    if (t.tagName === 'IMG' && !t.closest('a[href]')) {
       const img = t as HTMLImageElement;
       if (img.src) openImage({ src: img.src, alt: img.alt || undefined });
     }

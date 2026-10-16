@@ -67,9 +67,16 @@ const SETTLE_MS = 400;
 
 // Draft storage holds text only. A send that fails after the user left Chat saves its text, but its
 // images are dropped; this notice says so the next time the composer shows (or now, if one is showing).
+// The notice lives in memory only: after a PWA reload the text is still in the draft, but the notice is gone.
 const IMAGES_LOST = 'dispatch:chat-images-lost';
-let imagesLost = '';
-const imagesLostText = (n: number) => `A message failed to send after you left Chat. Its text is back in the draft, but its ${n === 1 ? '1 image was' : `${n} images were`} not saved. Attach again to retry.`;
+let imagesLostCount = 0; // images dropped by failures that no composer has shown yet
+let imagesLostHadText = false; // whether any of those failures had text that went back to the draft
+const imagesLostText = (n: number, hadText: boolean) => {
+  const images = n === 1 ? '1 image was' : `${n} images were`;
+  return `A message failed to send after you left Chat. ${hadText ? `Its text is back in the draft, but its ${images} not saved.` : `Its ${images} not saved.`} Attach again to retry.`;
+};
+const pendingImagesLost = () => (imagesLostCount ? imagesLostText(imagesLostCount, imagesLostHadText) : null);
+const clearImagesLost = () => { imagesLostCount = 0; imagesLostHadText = false; };
 
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
@@ -99,9 +106,11 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
   const [project, setProject] = useState<string | null>(null);
   const projectName = useProjects((s) => s.sessions.find((x) => x.id === project)?.name ?? null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const [sendError, setSendError] = useState<string | null>(() => { const m = imagesLost; imagesLost = ''; return m || null; });
+  const [sendError, setSendError] = useState<string | null>(pendingImagesLost);
   useEffect(() => {
-    const show = () => { if (imagesLost) { setSendError(imagesLost); imagesLost = ''; } };
+    // The initializer only reads (React StrictMode renders it twice); the notice is spent after the commit.
+    clearImagesLost();
+    const show = () => { const m = pendingImagesLost(); if (m) { setSendError(m); clearImagesLost(); } };
     window.addEventListener(IMAGES_LOST, show);
     return () => window.removeEventListener(IMAGES_LOST, show);
   }, []);
@@ -154,7 +163,7 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
     } catch (err) {
       if (!mounted.current) {
         if (raw.trim()) appendToDraft('chat', raw);
-        if (imgs.length) { imagesLost = imagesLostText(imgs.length); window.dispatchEvent(new Event(IMAGES_LOST)); }
+        if (imgs.length) { imagesLostCount += imgs.length; imagesLostHadText ||= !!raw.trim(); window.dispatchEvent(new Event(IMAGES_LOST)); }
         return;
       }
       const now = textRef.current;

@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { Composer } from './EndlessColumn';
@@ -277,5 +278,103 @@ describe('Chat composer parity with the other composers', () => {
     Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => 34 });
     fireEvent(window, new Event('resize'));
     expect(el.style.height).toBe('34px');
+  });
+
+  // A send that fails after the composer unmounted: returns the rejecter, so the case can fail it later.
+  const startSend = async (value: string, withImage: boolean) => {
+    let fail!: (e: Error) => void;
+    vi.spyOn(api, 'endlessSend').mockImplementationOnce(() => new Promise((_, rej) => { fail = rej; }));
+    const view = render(<Composer />);
+    if (value) fireEvent.change(box(), { target: { value } });
+    if (withImage) {
+      fireEvent.paste(box(), { clipboardData: { files: [png()], types: ['Files'] } });
+      await screen.findByRole('button', { name: 'Remove image' });
+    }
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(api.endlessSend).toHaveBeenCalled());
+    return { view, fail: async (m: string) => { await act(async () => { fail(new Error(m)); }); } };
+  };
+
+  it('shows the lost-image notice when the composer is rendered twice, as React StrictMode does in dev', async () => {
+    const s = await startSend('with a picture', true);
+    s.view.unmount();
+    await s.fail('late failure');
+    render(<StrictMode><Composer /></StrictMode>);
+    expect(screen.getByRole('alert')).toHaveTextContent(/1 image .*not saved/i);
+  });
+
+  it('shows the notice only once: a third mount does not show it again', async () => {
+    const s = await startSend('with a picture', true);
+    s.view.unmount();
+    await s.fail('late failure');
+    const second = render(<Composer />);
+    expect(screen.getByRole('alert')).toHaveTextContent(/not saved/i);
+    second.unmount();
+    render(<Composer />);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('shows the notice at once in a composer that is already mounted', async () => {
+    const s = await startSend('with a picture', true);
+    s.view.unmount();
+    const later = render(<Composer />);
+    expect(screen.queryByRole('alert')).toBeNull();
+    await s.fail('late failure');
+    expect(screen.getByRole('alert')).toHaveTextContent(/1 image .*not saved/i);
+    later.unmount();
+    render(<Composer />);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('does not say the text came back when the failed message had only images', async () => {
+    const s = await startSend('', true);
+    s.view.unmount();
+    await s.fail('late failure');
+    render(<Composer />);
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent(/1 image was not saved/i);
+    expect(alert).not.toHaveTextContent(/text is back/i);
+  });
+
+  it('says the text came back when the failed message had text and images', async () => {
+    const s = await startSend('words', true);
+    s.view.unmount();
+    await s.fail('late failure');
+    render(<Composer />);
+    expect(screen.getByRole('alert')).toHaveTextContent(/text is back in the draft/i);
+  });
+
+  it('adds 2 images and then 1 image to 3 when both sends fail before a composer shows the notice', async () => {
+    const fails: Array<(e: Error) => void> = [];
+    vi.spyOn(api, 'endlessSend').mockImplementation(() => new Promise((_, rej) => { fails.push(rej); }));
+    const send = async (count: number) => {
+      const view = render(<Composer />);
+      for (let i = 0; i < count; i++) {
+        fireEvent.paste(box(), { clipboardData: { files: [png()], types: ['Files'] } });
+        await waitFor(() => expect(screen.getAllByRole('button', { name: 'Remove image' })).toHaveLength(i + 1));
+      }
+      fireEvent.keyDown(box(), { key: 'Enter' });
+      await waitFor(() => expect(fails.length).toBeGreaterThan(0));
+      view.unmount();
+    };
+    await send(2);
+    const afterFirst = fails.length;
+    await send(1);
+    expect(fails.length).toBe(afterFirst + 1);
+    await act(async () => { fails.forEach((f) => f(new Error('down'))); });
+    render(<Composer />);
+    expect(screen.getByRole('alert')).toHaveTextContent(/3 images were not saved/i);
+  });
+
+  it('keeps "hello" as it is when an image-only message fails after the user left Chat', async () => {
+    const s = await startSend('', true);
+    s.view.unmount();
+    const later = render(<Composer />);
+    fireEvent.change(box(), { target: { value: 'hello' } });
+    later.unmount();
+    await s.fail('late failure');
+    expect(localStorage.getItem('dispatch:draft:chat')).toBe('hello');
+    render(<Composer />);
+    expect(box().value).toBe('hello');
   });
 });

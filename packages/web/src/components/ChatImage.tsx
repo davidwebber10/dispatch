@@ -109,7 +109,11 @@ export function ImageLightbox({ src, alt, onClose }: { src: string; alt?: string
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null;
     closeRef.current?.focus();
-    return () => { if (opener && opener.isConnected) opener.focus(); };
+    return () => {
+      if (opener && opener.isConnected) opener.focus();
+      // The opener row can be replaced at turn end: the composer is the next place to type.
+      else document.querySelector<HTMLElement>('textarea[aria-label="Message"]')?.focus();
+    };
   }, []);
 
   // Tab stays inside the dialog: from the last control it wraps to the first, and back.

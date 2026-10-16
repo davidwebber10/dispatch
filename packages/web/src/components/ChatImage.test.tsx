@@ -93,3 +93,15 @@ it('keeps Tab inside the dialog after a click on the image took the focus away',
   expect(fireEvent.keyDown(document.body, { key: 'Tab' })).toBe(false);
   expect(dialog.contains(document.activeElement)).toBe(true);
 });
+
+it('gives focus to the composer when the thumbnail that opened the viewer was replaced', () => {
+  const tree = (k: string) => <ImageViewerHost><textarea aria-label="Message" /><ChatImage key={k} src="/a.png" alt="chart" /></ImageViewerHost>;
+  const { rerender } = render(tree('pending'));
+  const opener = screen.getByRole('button', { name: 'Open image: chart' });
+  opener.focus();
+  fireEvent.click(opener);
+  rerender(tree('logged')); // the row is replaced at turn end
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Message' }));
+});
