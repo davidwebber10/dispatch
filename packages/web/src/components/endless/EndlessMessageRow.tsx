@@ -1,5 +1,5 @@
 import { useId, useState } from 'react';
-import { MessageScroller } from '@shadcn/react/message-scroller';
+import { MessageScroller, useMessageScroller } from '@shadcn/react/message-scroller';
 import { CaretRight, ClockCounterClockwise, Briefcase, Notebook, Wrench } from '@phosphor-icons/react';
 import { UserBubble } from '../tabs/chat/ChatView';
 import { InsightText } from '../InsightText';
@@ -81,7 +81,7 @@ function RecallLine({ tool }: { tool: EndlessMessage }) {
   );
 }
 
-const REPORT_HEAD = /^\[([^\]]+)\] report: ?/;
+const REPORT_HEAD = /^\[(.+?)\] report: ?/;
 /** A report of at most this many characters and lines shows in full; a longer one folds. */
 const FOLD_CHARS = 240;
 const FOLD_LINES = 3;
@@ -102,6 +102,7 @@ const cardStyle: React.CSSProperties = { display: 'flex', gap: 10, alignItems: '
 function WorkCard({ m }: { m: EndlessMessage }) {
   const [open, setOpen] = useState(false);
   const id = useId();
+  const { scrollToMessage } = useMessageScroller();
   const head = REPORT_HEAD.exec(m.text);
   const body = head ? m.text.slice(head[0].length) : m.text;
   const short = m.text.length <= FOLD_CHARS && m.text.split('\n').length <= FOLD_LINES;
@@ -116,12 +117,16 @@ function WorkCard({ m }: { m: EndlessMessage }) {
   const preview = body.split('\n').find((l) => l.trim()) ?? '';
   return (
     <div style={{ ...cardStyle, flexDirection: 'column', gap: 0, padding: 0 }}>
-      <button type="button" aria-expanded={open} aria-controls={open ? id : undefined} onClick={() => setOpen((o) => !o)}
+      <button type="button" aria-expanded={open} aria-controls={open ? id : undefined} onClick={() => {
+          // Opening grows the row. Pin its top so the scroller does not follow the new end of the content.
+          if (!open) scrollToMessage(`m${m.i}`, { align: 'start' });
+          setOpen((o) => !o);
+        }}
         style={{ display: 'flex', gap: 8, alignItems: 'flex-start', width: '100%', minHeight: 44, padding: '10px 12px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', color: 'inherit', font: 'inherit' }}>
         <CaretRight size={13} weight="bold" style={{ flexShrink: 0, marginTop: 4, transition: 'transform .12s', transform: open ? 'rotate(90deg)' : 'none' }} />
         <Briefcase size={16} style={{ flexShrink: 0, marginTop: 2 }} />
         <span style={{ minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <span style={{ fontSize: 13.5, fontWeight: 600, overflowWrap: 'anywhere' }}>{head ? head[1] : 'Thread report'}</span>
+          <span style={{ fontSize: 13.5, fontWeight: 600, overflowWrap: 'anywhere' }}>{head ? head[1] : 'Thread report (continued)'}</span>
           {!open && <span style={{ fontSize: 12.5, lineHeight: 1.4, color: 'var(--color-text-secondary)', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere' }}>{preview}</span>}
         </span>
       </button>
@@ -129,7 +134,7 @@ function WorkCard({ m }: { m: EndlessMessage }) {
         <div id={id} style={{ padding: '0 12px 10px', minWidth: 0 }}>
           <div style={{ fontSize: 13.5, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{m.text}</div>
           {m.ref && (
-            <button type="button" onClick={() => openThread(m)} style={{ marginTop: 8, minHeight: 36, padding: '0 10px', background: 'none', border: '1px solid var(--color-border)', borderRadius: 6, cursor: 'pointer', color: 'var(--color-text-secondary)', font: '500 12.5px var(--font-sans)' }}>Open thread</button>
+            <button type="button" onClick={() => openThread(m)} style={{ marginTop: 8, minHeight: 44, padding: '0 10px', background: 'none', border: '1px solid var(--color-border)', borderRadius: 6, cursor: 'pointer', color: 'var(--color-text-secondary)', font: '500 12.5px var(--font-sans)' }}>Open thread</button>
           )}
         </div>
       )}

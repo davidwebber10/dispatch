@@ -329,6 +329,47 @@ describe('EndlessColumn', () => {
     expect(screen.queryAllByText(/more detail/)).toHaveLength(0);
   });
 
+  it('opening a long thread report scrolls its top into view and does not follow the end', () => {
+    useEndless.setState({ messages: [msg(0, 'work', 'short', { project: 's1' }), msg(1, 'work', `[Fix login] report: ${LONG}`, { project: 's1', ref: 't9' })] });
+    render(<EndlessColumn />);
+    scroller.toMessage.mockClear();
+    scroller.toEnd.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: /Fix login/ }));
+    expect(scroller.toMessage).toHaveBeenCalledWith('m1', expect.objectContaining({ align: 'start' }));
+    expect(scroller.toEnd).not.toHaveBeenCalled();
+  });
+
+  it('closing a long thread report does not scroll', () => {
+    useEndless.setState({ messages: [msg(0, 'work', `[Fix login] report: ${LONG}`, { project: 's1', ref: 't9' })] });
+    render(<EndlessColumn />);
+    const head = screen.getByRole('button', { name: /Fix login/ });
+    fireEvent.click(head);
+    scroller.toMessage.mockClear();
+    fireEvent.click(head);
+    expect(scroller.toMessage).not.toHaveBeenCalled();
+  });
+
+  it('a thread name that contains a closing bracket still shows as the name', () => {
+    useEndless.setState({ messages: [msg(0, 'work', `[[WIP] fold reports] report: ${LONG}`, { project: 's1', ref: 't9' })] });
+    render(<EndlessColumn />);
+    expect(screen.getByText('[WIP] fold reports')).toBeTruthy();
+    expect(screen.getByText('line one of the report')).toBeTruthy();
+  });
+
+  it('the Open thread button is a 44px tap target', () => {
+    useEndless.setState({ messages: [msg(0, 'work', `[Fix login] report: ${LONG}`, { project: 's1', ref: 't9' })] });
+    render(<EndlessColumn />);
+    fireEvent.click(screen.getByRole('button', { name: /Fix login/ }));
+    expect(screen.getByRole('button', { name: 'Open thread' }).style.minHeight).toBe('44px');
+  });
+
+  it('a continuation piece of a split report says it continues', () => {
+    useEndless.setState({ messages: [msg(0, 'work', `[Fix login] report: ${LONG}`, { project: 's1', ref: 't9' }), msg(1, 'work', LONG, { project: 's1', ref: 't9' })] });
+    render(<EndlessColumn />);
+    expect(screen.getByText('Fix login')).toBeTruthy();
+    expect(screen.getByText('Thread report (continued)')).toBeTruthy();
+  });
+
   it('an open thread report stays open when a message arrives', () => {
     useEndless.setState({ messages: [msg(0, 'work', `[Fix login] report: ${LONG}`, { project: 's1', ref: 't9' })] });
     render(<EndlessColumn />);
