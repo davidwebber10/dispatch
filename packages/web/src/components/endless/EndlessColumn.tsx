@@ -100,7 +100,10 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
     useEndless.getState().stop().catch((err: unknown) => setSendError(`Stop failed: ${errorText(err)}`));
   };
 
-  // Clear the draft only after the send succeeds; a failed send keeps it and shows why.
+  // Clear the draft the moment the send starts, not after it ends. The wait can last seconds on a
+  // phone, and the user may keep typing, or the PWA may reload, during it. Clearing after the wait
+  // left the sent text in the box (and in local storage), so the next send carried it again.
+  // A failed send puts the text back in front of anything typed since, and shows why.
   const submit = async () => {
     const raw = text;
     const t = raw.trim();
@@ -109,12 +112,16 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
     const proj = project;
     sending.current = true;
     setSendError(null);
+    setText('');
+    setImages([]);
+    setProject(null);
     try {
       await useEndless.getState().send(t, proj, imgs);
-      if (textRef.current === raw) setText('');
-      setImages((cur) => (cur === imgs ? [] : cur));
-      setProject((cur) => (cur === proj ? null : cur));
     } catch (err) {
+      const now = textRef.current;
+      setText(now.trim() ? `${raw} ${now}` : raw);
+      setImages((cur) => [...imgs, ...cur]);
+      setProject((cur) => cur ?? proj);
       setSendError(`Send failed: ${errorText(err)}`);
     } finally {
       sending.current = false;

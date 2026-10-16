@@ -95,4 +95,44 @@ describe('Chat composer parity with the other composers', () => {
     fireEvent.keyDown(box(), { key: 'Enter', isComposing: true });
     expect(send).not.toHaveBeenCalled();
   });
+
+  it('does not send a sent part again when the user keeps typing while the send is in flight', async () => {
+    const resolvers: Array<() => void> = [];
+    const send = vi.spyOn(api, 'endlessSend').mockImplementation(() => new Promise((r) => { resolvers.push(() => r({ ok: true })); }));
+    render(<Composer />);
+    fireEvent.change(box(), { target: { value: 'This was on opening. The tutorial? All' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    // The box is empty at once, so more typing starts a new message.
+    expect(box().value).toBe('');
+    fireEvent.change(box(), { target: { value: 'steps had the same issue' } });
+    await act(async () => { resolvers[0](); });
+    expect(box().value).toBe('steps had the same issue');
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    expect(send.mock.calls[1][0]).toBe('steps had the same issue');
+  });
+
+  it('puts the text back in front of new typing when the send fails', async () => {
+    let fail!: (e: Error) => void;
+    vi.spyOn(api, 'endlessSend').mockImplementation(() => new Promise((_, rej) => { fail = rej; }));
+    render(<Composer />);
+    fireEvent.change(box(), { target: { value: 'first part' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(api.endlessSend).toHaveBeenCalled());
+    fireEvent.change(box(), { target: { value: 'more' } });
+    await act(async () => { fail(new Error('503 down')); });
+    expect(box().value).toBe('first part more');
+    expect(await screen.findByText(/503 down/)).toBeInTheDocument();
+  });
+
+  it('removes the stored draft at once, so a reload during a slow send does not bring it back', async () => {
+    vi.spyOn(api, 'endlessSend').mockImplementation(() => new Promise(() => {}));
+    render(<Composer />);
+    fireEvent.change(box(), { target: { value: 'sent text' } });
+    expect(localStorage.getItem('dispatch:draft:chat')).toBe('sent text');
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(api.endlessSend).toHaveBeenCalled());
+    expect(localStorage.getItem('dispatch:draft:chat')).toBeNull();
+  });
 });
