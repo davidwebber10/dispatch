@@ -3,7 +3,7 @@ import { MessageScroller, useMessageScroller } from '@shadcn/react/message-scrol
 import { ArrowUp, Paperclip, Rows, Stop, X } from '@phosphor-icons/react';
 import { useEndless } from '../../stores/endless';
 import { useProjects } from '../../stores/projects';
-import { useDraft } from '../../hooks/useDraft';
+import { useDraft, appendToDraft } from '../../hooks/useDraft';
 import { useBootstrapOlderPages } from '../../hooks/useBootstrapOlderPages';
 import { LoadEarlierButton, Thinking } from '../tabs/chat/ChatView';
 import { InsightText } from '../InsightText';
@@ -61,6 +61,9 @@ function FocusScroll() {
   return null;
 }
 
+/** How long the key stays a Send after a send ends (see settling in Composer). */
+const SETTLE_MS = 400;
+
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 function TurnError({ text, mobile = false }: { text: string; mobile?: boolean }) {
@@ -91,33 +94,66 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const sending = useRef(false);
+  // The same fact as state, so the button stays a disabled Send (not Stop) while a send is in flight.
+  const [sendingNow, setSendingNow] = useState(false);
+  // Pasted or dropped images are read asynchronously; a send before the read ends would leave them for the next message.
+  const readsRef = useRef(0);
+  const [reading, setReading] = useState(false);
+  // For a moment after a send ends the key stays a Send: a second tap that lands just as the send
+  // resolves would otherwise hit a Stop and stop the turn it just started.
+  const [settling, setSettling] = useState(false);
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; if (settleTimer.current) clearTimeout(settleTimer.current); };
+  }, []);
   const busy = useEndless((s) => s.turn.status === 'waiting' || s.turn.status === 'running');
   // The key is Stop only while a turn runs and the draft is empty: a message typed during a
   // turn still goes to the running process.
-  const stopMode = busy && !text.trim() && images.length === 0;
+  const stopMode = busy && !text.trim() && images.length === 0 && !sendingNow && !reading && !settling;
   const stop = () => {
     setSendError(null);
     useEndless.getState().stop().catch((err: unknown) => setSendError(`Stop failed: ${errorText(err)}`));
   };
 
-  // Clear the draft only after the send succeeds; a failed send keeps it and shows why.
+  // Clear the draft the moment the send starts, not after it ends. The wait can last seconds on a
+  // phone, and the user may keep typing, or the PWA may reload, during it. Clearing after the wait
+  // left the sent text in the box (and in local storage), so the next send carried it again.
+  // A failed send puts the text back in front of anything typed since, and shows why. After an unmount
+  // it saves the text to the stored draft instead (appendToDraft), never into this dead composer.
+  // Known trade-off: a reload during a slow send that then fails loses the text, since the draft
+  // was already removed from local storage.
   const submit = async () => {
     const raw = text;
     const t = raw.trim();
-    if ((!t && images.length === 0) || sending.current) return;
+    if ((!t && images.length === 0) || sending.current || readsRef.current > 0) return;
     const imgs = images;
     const proj = project;
     sending.current = true;
+    setSendingNow(true);
     setSendError(null);
+    setText('');
+    textRef.current = ''; // render has not run yet; a reject before it must not see the old text
+    setImages([]);
+    setProject(null);
     try {
       await useEndless.getState().send(t, proj, imgs);
-      if (textRef.current === raw) setText('');
-      setImages((cur) => (cur === imgs ? [] : cur));
-      setProject((cur) => (cur === proj ? null : cur));
     } catch (err) {
+      if (!mounted.current) { appendToDraft('chat', raw); return; }
+      const now = textRef.current;
+      setText(now.trim() ? `${raw} ${now}` : raw);
+      setImages((cur) => [...imgs, ...cur]);
+      setProject((cur) => cur ?? proj);
       setSendError(`Send failed: ${errorText(err)}`);
     } finally {
       sending.current = false;
+      if (mounted.current) {
+        setSendingNow(false);
+        setSettling(true);
+        if (settleTimer.current) clearTimeout(settleTimer.current);
+        settleTimer.current = setTimeout(() => setSettling(false), SETTLE_MS);
+      }
     }
   };
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -127,8 +163,18 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
   // can read are kept: Chat has no project inbox to hold other files.
   const addImages = async (list: Iterable<File> | null | undefined) => {
     const files = [...(list ?? [])].filter((f) => MODEL_IMAGE_MIME.has(f.type));
-    const add = await Promise.all(files.map(async (f) => ({ media_type: f.type, data: await fileToBase64(f) })));
-    if (add.length) setImages((prev) => [...prev, ...add]);
+    if (!files.length) return;
+    readsRef.current += 1;
+    setReading(true);
+    try {
+      const add = await Promise.all(files.map(async (f) => ({ media_type: f.type, data: await fileToBase64(f) })));
+      if (mounted.current && add.length) setImages((prev) => [...prev, ...add]);
+    } catch (err) {
+      if (mounted.current) setSendError(`Could not read the image: ${errorText(err)}`);
+    } finally {
+      readsRef.current -= 1;
+      if (mounted.current && readsRef.current === 0) setReading(false);
+    }
   };
   const onFiles = async (e: ChangeEvent<HTMLInputElement>) => {
     const input = e.target;
@@ -149,18 +195,25 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
     if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragActive(false);
   };
   const onDrop = (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
+    // A text drag into the box must drop its text: take over only a file drop.
+    if (Array.from(e.dataTransfer.types || []).includes('Files')) e.preventDefault();
     setDragActive(false);
     if (e.dataTransfer.files?.length) void addImages(e.dataTransfer.files);
   };
   // Grow with the text up to 200px, then scroll. Runs on every text change, so a paste, a
   // draft restore and the clear after a send all resize the box.
-  useLayoutEffect(() => {
+  const fit = () => {
     const el = taRef.current;
     if (!el) return;
     el.style.height = 'auto';
     el.style.height = Math.min(el.scrollHeight, 200) + 'px';
-  }, [text]);
+  };
+  useLayoutEffect(fit, [text]);
+  // A resize re-wraps the text, so it changes the height with the text unchanged.
+  useEffect(() => {
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, []);
 
   return (
     <div onDragOver={onDragOver} onDragEnter={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
@@ -204,7 +257,7 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
               <Stop size={16} weight="fill" />
             </button>
           ) : (
-            <button type="button" aria-label="Send" disabled={!text.trim() && images.length === 0} onClick={() => void submit()}
+            <button type="button" aria-label="Send" disabled={(!text.trim() && images.length === 0) || sendingNow || reading} onClick={() => void submit()}
               style={{ ...iconBtn, background: 'var(--color-accent)', border: 'none', color: '#06140B' }}>
               <ArrowUp size={18} weight="bold" />
             </button>

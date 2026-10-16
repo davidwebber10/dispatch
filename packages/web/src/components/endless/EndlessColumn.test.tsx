@@ -117,7 +117,7 @@ describe('EndlessColumn', () => {
     }
   });
 
-  it('clears the draft only after the send succeeds', async () => {
+  it('clears the draft as the send starts, so a slow send cannot leave it behind', async () => {
     let done!: () => void;
     vi.spyOn(api, 'endlessSend').mockImplementation(() => new Promise((r) => { done = () => r({ ok: true }); }));
     render(<EndlessColumn />);
@@ -125,7 +125,7 @@ describe('EndlessColumn', () => {
     fireEvent.change(box, { target: { value: 'pending' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     await waitFor(() => expect(api.endlessSend).toHaveBeenCalled());
-    expect(box.value).toBe('pending');
+    expect(box.value).toBe('');
     await act(async () => { done(); });
     expect(box.value).toBe('');
   });
