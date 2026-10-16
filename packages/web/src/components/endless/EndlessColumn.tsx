@@ -91,10 +91,17 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const sending = useRef(false);
+  // The same fact as state, so the button stays a disabled Send (not Stop) while a send is in flight.
+  const [sendingNow, setSendingNow] = useState(false);
+  // Pasted or dropped images are read asynchronously; a send before the read ends would leave them for the next message.
+  const readsRef = useRef(0);
+  const [reading, setReading] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const busy = useEndless((s) => s.turn.status === 'waiting' || s.turn.status === 'running');
   // The key is Stop only while a turn runs and the draft is empty: a message typed during a
   // turn still goes to the running process.
-  const stopMode = busy && !text.trim() && images.length === 0;
+  const stopMode = busy && !text.trim() && images.length === 0 && !sendingNow && !reading;
   const stop = () => {
     setSendError(null);
     useEndless.getState().stop().catch((err: unknown) => setSendError(`Stop failed: ${errorText(err)}`));
@@ -103,21 +110,27 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
   // Clear the draft the moment the send starts, not after it ends. The wait can last seconds on a
   // phone, and the user may keep typing, or the PWA may reload, during it. Clearing after the wait
   // left the sent text in the box (and in local storage), so the next send carried it again.
-  // A failed send puts the text back in front of anything typed since, and shows why.
+  // A failed send puts the text back in front of anything typed since, and shows why. After an unmount
+  // it restores nothing: the box that now shows the draft belongs to a later composer.
+  // Known trade-off: a reload during a slow send that then fails loses the text, since the draft
+  // was already removed from local storage.
   const submit = async () => {
     const raw = text;
     const t = raw.trim();
-    if ((!t && images.length === 0) || sending.current) return;
+    if ((!t && images.length === 0) || sending.current || readsRef.current > 0) return;
     const imgs = images;
     const proj = project;
     sending.current = true;
+    setSendingNow(true);
     setSendError(null);
     setText('');
+    textRef.current = ''; // render has not run yet; a reject before it must not see the old text
     setImages([]);
     setProject(null);
     try {
       await useEndless.getState().send(t, proj, imgs);
     } catch (err) {
+      if (!mounted.current) return;
       const now = textRef.current;
       setText(now.trim() ? `${raw} ${now}` : raw);
       setImages((cur) => [...imgs, ...cur]);
@@ -125,6 +138,7 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
       setSendError(`Send failed: ${errorText(err)}`);
     } finally {
       sending.current = false;
+      if (mounted.current) setSendingNow(false);
     }
   };
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -134,8 +148,16 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
   // can read are kept: Chat has no project inbox to hold other files.
   const addImages = async (list: Iterable<File> | null | undefined) => {
     const files = [...(list ?? [])].filter((f) => MODEL_IMAGE_MIME.has(f.type));
-    const add = await Promise.all(files.map(async (f) => ({ media_type: f.type, data: await fileToBase64(f) })));
-    if (add.length) setImages((prev) => [...prev, ...add]);
+    if (!files.length) return;
+    readsRef.current += 1;
+    setReading(true);
+    try {
+      const add = await Promise.all(files.map(async (f) => ({ media_type: f.type, data: await fileToBase64(f) })));
+      if (mounted.current && add.length) setImages((prev) => [...prev, ...add]);
+    } finally {
+      readsRef.current -= 1;
+      if (mounted.current && readsRef.current === 0) setReading(false);
+    }
   };
   const onFiles = async (e: ChangeEvent<HTMLInputElement>) => {
     const input = e.target;
@@ -156,18 +178,25 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
     if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragActive(false);
   };
   const onDrop = (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
+    // A text drag into the box must drop its text: take over only a file drop.
+    if (Array.from(e.dataTransfer.types || []).includes('Files')) e.preventDefault();
     setDragActive(false);
     if (e.dataTransfer.files?.length) void addImages(e.dataTransfer.files);
   };
   // Grow with the text up to 200px, then scroll. Runs on every text change, so a paste, a
   // draft restore and the clear after a send all resize the box.
-  useLayoutEffect(() => {
+  const fit = () => {
     const el = taRef.current;
     if (!el) return;
     el.style.height = 'auto';
     el.style.height = Math.min(el.scrollHeight, 200) + 'px';
-  }, [text]);
+  };
+  useLayoutEffect(fit, [text]);
+  // A resize re-wraps the text, so it changes the height with the text unchanged.
+  useEffect(() => {
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, []);
 
   return (
     <div onDragOver={onDragOver} onDragEnter={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
@@ -211,7 +240,7 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
               <Stop size={16} weight="fill" />
             </button>
           ) : (
-            <button type="button" aria-label="Send" disabled={!text.trim() && images.length === 0} onClick={() => void submit()}
+            <button type="button" aria-label="Send" disabled={(!text.trim() && images.length === 0) || sendingNow || reading} onClick={() => void submit()}
               style={{ ...iconBtn, background: 'var(--color-accent)', border: 'none', color: '#06140B' }}>
               <ArrowUp size={18} weight="bold" />
             </button>
