@@ -1,8 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import DOMPurify from 'dompurify';
 import { renderMarkdown } from '../lib/markdown';
 import { chipifyHtml, type LedgerChips } from '../lib/ledgerRefs';
-import { ImageLightbox } from './ChatImage';
+import { ImageLightbox, useViewerHost } from './ChatImage';
 
 /**
  * Shared markdown surface for the agent chat and the coordinator stream. Routing both
@@ -23,12 +23,14 @@ import { ImageLightbox } from './ChatImage';
 const sanitize = (html: string): string =>
   DOMPurify.sanitize(html, { ADD_TAGS: ['img'], ADD_ATTR: ['src', 'alt'] });
 
-/** Wraps each image in a focusable opener, so a keyboard user can reach the viewer (see onKeyDown). */
+/** Wraps each unlinked image in a focusable opener, so a keyboard user can reach the viewer (see onKeyDown). */
 function openableImages(html: string): string {
   if (!html.includes('<img')) return html;
   const box = document.createElement('template');
   box.innerHTML = html;
   for (const img of box.content.querySelectorAll('img')) {
+    // A linked image follows its link: no opener inside the anchor (one tab stop, no viewer).
+    if (img.closest('a[href]')) continue;
     const opener = document.createElement('span');
     opener.setAttribute('role', 'button');
     opener.setAttribute('tabindex', '0');
@@ -53,7 +55,12 @@ export const Markdown = React.memo(function Markdown({ source, ledger }: { sourc
   // Markdown-embedded images render as raw sanitized <img> tags with no React handlers,
   // so on a phone a tap did nothing while every ChatImage opened the lightbox — one
   // delegated click handler on the chokepoint gives every markdown image the same viewer.
+  // Inside an ImageViewerHost the viewer lives above this row, so it survives the row being replaced
+  // at the end of a turn; elsewhere (the Control Plane) this component keeps its own.
+  const host = useViewerHost();
   const [lightbox, setLightbox] = useState<{ src: string; alt?: string } | null>(null);
+  const closeLightbox = useCallback(() => setLightbox(null), []);
+  const openImage = (v: { src: string; alt?: string }) => (host ? host(v) : setLightbox(v));
   const chipOf = (t: EventTarget) => (ledger ? (t as HTMLElement).closest?.<HTMLElement>('[data-ledger-chip]') ?? null : null);
   const onClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const t = e.target as HTMLElement;
@@ -63,9 +70,9 @@ export const Markdown = React.memo(function Markdown({ source, ledger }: { sourc
       ledger.onChip(Number(chip.dataset.ledgerChip), { x: e.clientX, y: e.clientY });
       return;
     }
-    if (t.tagName === 'IMG') {
+    if (t.tagName === 'IMG' && !t.closest('a[href]')) {
       const img = t as HTMLImageElement;
-      if (img.src) setLightbox({ src: img.src, alt: img.alt || undefined });
+      if (img.src) openImage({ src: img.src, alt: img.alt || undefined });
     }
   };
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -74,7 +81,7 @@ export const Markdown = React.memo(function Markdown({ source, ledger }: { sourc
     const img = opener?.querySelector('img');
     if (opener && img?.src) {
       e.preventDefault();
-      setLightbox({ src: img.src, alt: img.alt || undefined });
+      openImage({ src: img.src, alt: img.alt || undefined });
       return;
     }
     const chip = chipOf(e.target);
@@ -86,7 +93,7 @@ export const Markdown = React.memo(function Markdown({ source, ledger }: { sourc
   return (
     <>
       <div className="md-view" style={{ minWidth: 0 }} onClick={onClick} onKeyDown={onKeyDown} dangerouslySetInnerHTML={{ __html: html }} />
-      {lightbox && <ImageLightbox src={lightbox.src} alt={lightbox.alt} onClose={() => setLightbox(null)} />}
+      {lightbox && <ImageLightbox src={lightbox.src} alt={lightbox.alt} onClose={closeLightbox} />}
     </>
   );
 });
