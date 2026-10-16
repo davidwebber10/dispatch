@@ -74,6 +74,9 @@ those to the user rather than guessing.
 - **The data dir is `~/.dispatch`** (SQLite + runtime). Don't delete it unless the user asks.
 - **Logs:** `~/Library/Logs/dispatch/` and `./bin/dispatch logs -f`.
 - Prefer the `dispatch` CLI over hand-running `launchctl`.
+- **Test runs:** run only the affected test files, and the full suite once at the end. Never pipe a
+  run through `head`/`tail` or cut it off while it keeps running. Check for a live vitest/node test
+  process before starting a full run; if a run goes to the background, wait for it or kill it by PID first.
 
 ## Useful commands
 

@@ -1,8 +1,14 @@
+import os from 'node:os';
 import { defineConfig } from 'vitest/config';
+
+// Half the cores, 1.5 GB of heap per worker: see packages/web/vitest.config.ts.
+const maxForks = Math.max(1, Math.floor(os.availableParallelism() / 2));
 
 export default defineConfig({
   test: {
     root: '.',
+    pool: 'forks',
+    poolOptions: { forks: { minForks: 1, maxForks, execArgv: ['--max-old-space-size=1536'] } },
     include: ['tests/**/*.test.ts', 'src/**/*.test.ts'],
     // Fake HOME + stub agent CLIs for every test file, so the suite never writes into the
     // real home folder (~/.dispatch, ~/.claude.json). Guarded by tests/harness/isolated-home.test.ts.
