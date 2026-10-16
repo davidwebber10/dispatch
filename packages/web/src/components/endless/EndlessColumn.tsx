@@ -8,6 +8,7 @@ import { useBootstrapOlderPages } from '../../hooks/useBootstrapOlderPages';
 import { LoadEarlierButton, Thinking } from '../tabs/chat/ChatView';
 import { InsightText } from '../InsightText';
 import { WorkingIndicator } from '../WorkingIndicator';
+import { ImageViewerHost } from '../ChatImage';
 import { EndlessRows, PendingUserRow, rowKeyOf } from './EndlessMessageRow';
 import { ProjectPicker, iconBtn } from './ProjectPicker';
 import { ClaudeLogin, isClaudeAuthError } from './ClaudeLogin';
@@ -287,6 +288,7 @@ export function EndlessColumn({ mobile = false }: { mobile?: boolean } = {}) {
   };
 
   return (
+    <ImageViewerHost>
     <div className="chat-scope" style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
       <MessageScroller.Provider autoScroll defaultScrollPosition="end" scrollEdgeThreshold={48}>
         <MessageScroller.Root style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0, display: 'flex' }}>
@@ -325,5 +327,6 @@ export function EndlessColumn({ mobile = false }: { mobile?: boolean } = {}) {
       )}
       <Composer mobile={mobile} />
     </div>
+    </ImageViewerHost>
   );
 }

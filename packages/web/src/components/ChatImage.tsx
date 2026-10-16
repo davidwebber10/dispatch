@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type TouchEvent } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode, type TouchEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, Copy, DownloadSimple, X } from '@phosphor-icons/react';
 import { clipboardImageSupported, copyImageToClipboard } from '../lib/clipboard';
@@ -102,10 +102,35 @@ export function ImageLightbox({ src, alt, onClose }: { src: string; alt?: string
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const gesture = useRef<Gesture>(IDLE_GESTURE);
   const lastTap = useRef(0);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  // A modal takes focus on open and gives it back to the opener on close.
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    closeRef.current?.focus();
+    return () => { if (opener && opener.isConnected) opener.focus(); };
+  }, []);
+
+  // Tab stays inside the dialog: from the last control it wraps to the first, and back.
+  // It listens on the window, like Escape: a click on the picture moves focus to the body, and a
+  // handler on the dialog would never see the next Tab.
+  function trapTab(e: KeyboardEvent) {
+    if (e.key !== 'Tab') return;
+    const items = [...(dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled])') ?? [])];
+    if (items.length === 0) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    const active = document.activeElement;
+    if (!dialogRef.current?.contains(active)) { e.preventDefault(); first.focus(); }
+    else if (e.shiftKey && active === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
+  }
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
+      else trapTab(e);
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -177,6 +202,10 @@ export function ImageLightbox({ src, alt, onClose }: { src: string; alt?: string
   // reset the transform ("doesn't open until I navigate to settings", 2026-08-16).
   return createPortal(
     <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label={alt || 'Image viewer'}
       onClick={onClose}
       style={{
             position: 'fixed',
@@ -213,7 +242,7 @@ export function ImageLightbox({ src, alt, onClose }: { src: string; alt?: string
         >
           <DownloadSimple size={17} weight="bold" />
         </button>
-        <button onClick={onClose} title="Close" aria-label="Close" style={toolbarButtonStyle(false)}>
+        <button ref={closeRef} onClick={onClose} title="Close" aria-label="Close" style={toolbarButtonStyle(false)}>
           <X size={17} weight="bold" />
         </button>
       </div>
@@ -241,31 +270,56 @@ export function ImageLightbox({ src, alt, onClose }: { src: string; alt?: string
   );
 }
 
+type Viewing = { src: string; alt?: string };
+const ViewerContext = createContext<((v: Viewing) => void) | null>(null);
+
+/**
+ * Holds the open viewer above the rows that open it. A row can be replaced while its viewer is
+ * open (a sent image is drawn from the pending send, then from the logged message); a viewer
+ * held by the row itself would close with it. Without a host, a ChatImage keeps its own viewer.
+ */
+export function ImageViewerHost({ children }: { children: ReactNode }) {
+  const [viewing, setViewing] = useState<Viewing | null>(null);
+  return (
+    <ViewerContext.Provider value={setViewing}>
+      {children}
+      {viewing && <ImageLightbox src={viewing.src} alt={viewing.alt} onClose={() => setViewing(null)} />}
+    </ViewerContext.Provider>
+  );
+}
+
 export function ChatImage({ src, alt, maxHeight = 320 }: { src: string; alt?: string; maxHeight?: number | string }) {
   const [open, setOpen] = useState(false);
+  const host = useContext(ViewerContext);
   if (!src) return null;
   return (
     <>
-      <img
-        src={src}
-        alt={alt || ''}
-        loading="lazy"
-        onClick={() => setOpen(true)}
+      {/* A real button: it takes keyboard focus, and Enter and Space open the viewer. */}
+      <button
+        type="button"
+        aria-label={alt ? `Open image: ${alt}` : 'Open image'}
+        onClick={() => (host ? host({ src, alt }) : setOpen(true))}
         title={alt || 'Open image'}
-        style={{
-          display: 'block',
-          maxWidth: '100%',
-          maxHeight,
-          width: 'auto',
-          height: 'auto',
-          objectFit: 'contain',
-          borderRadius: 10,
-          border: '1px solid var(--color-border)',
-          background: 'var(--color-elevated)',
-          cursor: 'zoom-in',
-        }}
-      />
-      {open && <ImageLightbox src={src} alt={alt} onClose={() => setOpen(false)} />}
+        style={{ display: 'block', maxWidth: '100%', padding: 0, margin: 0, border: 'none', background: 'none', font: 'inherit', cursor: 'zoom-in' }}
+      >
+        <img
+          src={src}
+          alt={alt || ''}
+          loading="lazy"
+          style={{
+            display: 'block',
+            maxWidth: '100%',
+            maxHeight,
+            width: 'auto',
+            height: 'auto',
+            objectFit: 'contain',
+            borderRadius: 10,
+            border: '1px solid var(--color-border)',
+            background: 'var(--color-elevated)',
+          }}
+        />
+      </button>
+      {!host && open && <ImageLightbox src={src} alt={alt} onClose={() => setOpen(false)} />}
     </>
   );
 }

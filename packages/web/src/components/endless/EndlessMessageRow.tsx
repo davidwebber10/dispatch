@@ -3,6 +3,7 @@ import { MessageScroller } from '@shadcn/react/message-scroller';
 import { CaretRight, ClockCounterClockwise, Briefcase, Notebook, Wrench } from '@phosphor-icons/react';
 import { UserBubble } from '../tabs/chat/ChatView';
 import { InsightText } from '../InsightText';
+import { ChatImage } from '../ChatImage';
 import { endlessMediaUrl } from '../../api/client';
 import { useUI } from '../../stores/ui';
 import type { EndlessMessage } from '../../api/types';
@@ -114,7 +115,7 @@ function MessageRow({ m }: { m: EndlessMessage }) {
         <UserBubble text={m.text} />
         {m.media.length > 0 && (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            {m.media.map((name) => <img key={name} src={endlessMediaUrl(name)} alt="" style={{ maxWidth: 220, maxHeight: 220, borderRadius: 8, border: '1px solid var(--color-border)' }} />)}
+            {m.media.map((name) => <ChatImage key={name} src={endlessMediaUrl(name)} maxHeight={220} />)}
           </div>
         )}
       </div>
@@ -134,7 +135,7 @@ export function PendingUserRow({ text, projectName, images }: { text: string; pr
       <UserBubble text={text} />
       {images.length > 0 && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {images.map((im, k) => <img key={k} src={`data:${im.media_type};base64,${im.data}`} alt="" style={{ maxWidth: 220, maxHeight: 220, borderRadius: 8, border: '1px solid var(--color-border)' }} />)}
+          {images.map((im, k) => <ChatImage key={k} src={`data:${im.media_type};base64,${im.data}`} maxHeight={220} />)}
         </div>
       )}
     </div>
