@@ -300,12 +300,97 @@ describe('EndlessColumn', () => {
     expect(loadTail).toHaveBeenCalled();
   });
 
-  it('a work card opens its thread: project as sessionId, ref as terminalId, in the workspace', () => {
+  const LONG = 'line one of the report\n' + 'more detail\n'.repeat(30);
+
+  it('a short thread report shows in full, and the card opens its thread', () => {
     useEndless.setState({ messages: [msg(0, 'work', '[Fix login] report: done', { project: 's1', projectName: 'salsify', ref: 't9' })] });
     useUI.setState({ view: 'chat', pendingOpenThread: null });
     render(<EndlessColumn />);
     fireEvent.click(screen.getByRole('button', { name: /\[Fix login\] report: done/ }));
     expect(useUI.getState().pendingOpenThread).toEqual({ sessionId: 's1', terminalId: 't9' });
     expect(useUI.getState().view).toBe('workspace');
+  });
+
+  it('a long thread report is folded to its name and a preview, and opens on a tap', () => {
+    useEndless.setState({ messages: [msg(0, 'work', `[Fix login] report: ${LONG}`, { project: 's1', ref: 't9' })] });
+    render(<EndlessColumn />);
+    const head = screen.getByRole('button', { name: /Fix login/ });
+    expect(head.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByText('Fix login')).toBeTruthy();
+    expect(screen.getByText('line one of the report')).toBeTruthy(); // the preview is the first line
+    expect(screen.queryAllByText(/more detail/)).toHaveLength(0);
+    expect(document.getElementById(head.getAttribute('aria-controls')!)).toBeNull();
+    fireEvent.click(head);
+    expect(head.getAttribute('aria-expanded')).toBe('true');
+    const body = document.getElementById(head.getAttribute('aria-controls')!)!;
+    expect(body.textContent).toContain('more detail');
+    fireEvent.click(head);
+    expect(head.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryAllByText(/more detail/)).toHaveLength(0);
+  });
+
+  it('opening a long thread report scrolls its top into view and does not follow the end', () => {
+    useEndless.setState({ messages: [msg(0, 'work', 'short', { project: 's1' }), msg(1, 'work', `[Fix login] report: ${LONG}`, { project: 's1', ref: 't9' })] });
+    render(<EndlessColumn />);
+    scroller.toMessage.mockClear();
+    scroller.toEnd.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: /Fix login/ }));
+    expect(scroller.toMessage).toHaveBeenCalledWith('m1', expect.objectContaining({ align: 'start' }));
+    expect(scroller.toEnd).not.toHaveBeenCalled();
+  });
+
+  it('closing a long thread report does not scroll', () => {
+    useEndless.setState({ messages: [msg(0, 'work', `[Fix login] report: ${LONG}`, { project: 's1', ref: 't9' })] });
+    render(<EndlessColumn />);
+    const head = screen.getByRole('button', { name: /Fix login/ });
+    fireEvent.click(head);
+    scroller.toMessage.mockClear();
+    fireEvent.click(head);
+    expect(scroller.toMessage).not.toHaveBeenCalled();
+  });
+
+  it('a thread name that contains a closing bracket still shows as the name', () => {
+    useEndless.setState({ messages: [msg(0, 'work', `[[WIP] fold reports] report: ${LONG}`, { project: 's1', ref: 't9' })] });
+    render(<EndlessColumn />);
+    expect(screen.getByText('[WIP] fold reports')).toBeTruthy();
+    expect(screen.getByText('line one of the report')).toBeTruthy();
+  });
+
+  it('the Open thread button is a 44px tap target', () => {
+    useEndless.setState({ messages: [msg(0, 'work', `[Fix login] report: ${LONG}`, { project: 's1', ref: 't9' })] });
+    render(<EndlessColumn />);
+    fireEvent.click(screen.getByRole('button', { name: /Fix login/ }));
+    expect(screen.getByRole('button', { name: 'Open thread' }).style.minHeight).toBe('44px');
+  });
+
+  it('a continuation piece of a split report says it continues', () => {
+    useEndless.setState({ messages: [msg(0, 'work', `[Fix login] report: ${LONG}`, { project: 's1', ref: 't9' }), msg(1, 'work', LONG, { project: 's1', ref: 't9' })] });
+    render(<EndlessColumn />);
+    expect(screen.getByText('Fix login')).toBeTruthy();
+    expect(screen.getByText('Thread report (continued)')).toBeTruthy();
+  });
+
+  it('an open thread report stays open when a message arrives', () => {
+    useEndless.setState({ messages: [msg(0, 'work', `[Fix login] report: ${LONG}`, { project: 's1', ref: 't9' })] });
+    render(<EndlessColumn />);
+    fireEvent.click(screen.getByRole('button', { name: /Fix login/ }));
+    act(() => { useEndless.getState().applyEvent({ type: 'endless:message', message: msg(1, 'unii', 'noted') }); });
+    expect(screen.getByRole('button', { name: /Fix login/ }).getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('an expanded thread report can open its thread', () => {
+    useEndless.setState({ messages: [msg(0, 'work', `[Fix login] report: ${LONG}`, { project: 's1', ref: 't9' })] });
+    useUI.setState({ view: 'chat', pendingOpenThread: null });
+    render(<EndlessColumn />);
+    fireEvent.click(screen.getByRole('button', { name: /Fix login/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open thread' }));
+    expect(useUI.getState().pendingOpenThread).toEqual({ sessionId: 's1', terminalId: 't9' });
+  });
+
+  it('user and Dispatch messages are never folded, however long', () => {
+    useEndless.setState({ messages: [msg(0, 'user', LONG), msg(1, 'unii', LONG)] });
+    render(<EndlessColumn />);
+    expect(document.querySelectorAll('[aria-controls]')).toHaveLength(0);
+    expect(screen.getAllByText(/more detail/).length).toBeGreaterThan(0);
   });
 });
