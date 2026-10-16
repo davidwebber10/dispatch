@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode, type TouchEvent } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode, type TouchEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, Copy, DownloadSimple, X } from '@phosphor-icons/react';
 import { clipboardImageSupported, copyImageToClipboard } from '../lib/clipboard';
@@ -280,12 +280,18 @@ const ViewerContext = createContext<((v: Viewing) => void) | null>(null);
  */
 export function ImageViewerHost({ children }: { children: ReactNode }) {
   const [viewing, setViewing] = useState<Viewing | null>(null);
+  const close = useCallback(() => setViewing(null), []); // stable: the viewer's key listener is not re-bound on every render
   return (
     <ViewerContext.Provider value={setViewing}>
       {children}
-      {viewing && <ImageLightbox src={viewing.src} alt={viewing.alt} onClose={() => setViewing(null)} />}
+      {viewing && <ImageLightbox src={viewing.src} alt={viewing.alt} onClose={close} />}
     </ViewerContext.Provider>
   );
+}
+
+/** The opener of the surrounding ImageViewerHost, or null when there is none. */
+export function useViewerHost(): ((v: Viewing) => void) | null {
+  return useContext(ViewerContext);
 }
 
 export function ChatImage({ src, alt, maxHeight = 320 }: { src: string; alt?: string; maxHeight?: number | string }) {

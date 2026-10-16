@@ -198,6 +198,22 @@ describe('Chat composer parity with the other composers', () => {
     expect(box().value).toBe('lost?');
   });
 
+  it('tells the user that attached images were not saved when a send fails after the user left Chat', async () => {
+    let fail!: (e: Error) => void;
+    vi.spyOn(api, 'endlessSend').mockImplementation(() => new Promise((_, rej) => { fail = rej; }));
+    const first = render(<Composer />);
+    fireEvent.change(box(), { target: { value: 'with a picture' } });
+    fireEvent.paste(box(), { clipboardData: { files: [png()], types: ['Files'] } });
+    await screen.findByRole('button', { name: 'Remove image' });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(api.endlessSend).toHaveBeenCalled());
+    first.unmount();
+    await act(async () => { fail(new Error('late failure')); });
+    expect(localStorage.getItem('dispatch:draft:chat')).toBe('with a picture');
+    render(<Composer />);
+    expect(screen.getByRole('alert')).toHaveTextContent(/1 image .*not saved/i);
+  });
+
   it('does not raise an unhandled rejection when reading a pasted image fails', async () => {
     const seen: unknown[] = [];
     const onRej = (e: unknown) => { seen.push(e); };

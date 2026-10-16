@@ -65,6 +65,12 @@ function FocusScroll() {
 /** How long the key stays a Send after a send ends (see settling in Composer). */
 const SETTLE_MS = 400;
 
+// Draft storage holds text only. A send that fails after the user left Chat saves its text, but its
+// images are dropped; this notice says so the next time the composer shows (or now, if one is showing).
+const IMAGES_LOST = 'dispatch:chat-images-lost';
+let imagesLost = '';
+const imagesLostText = (n: number) => `A message failed to send after you left Chat. Its text is back in the draft, but its ${n === 1 ? '1 image was' : `${n} images were`} not saved. Attach again to retry.`;
+
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 function TurnError({ text, mobile = false }: { text: string; mobile?: boolean }) {
@@ -93,7 +99,12 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
   const [project, setProject] = useState<string | null>(null);
   const projectName = useProjects((s) => s.sessions.find((x) => x.id === project)?.name ?? null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const [sendError, setSendError] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<string | null>(() => { const m = imagesLost; imagesLost = ''; return m || null; });
+  useEffect(() => {
+    const show = () => { if (imagesLost) { setSendError(imagesLost); imagesLost = ''; } };
+    window.addEventListener(IMAGES_LOST, show);
+    return () => window.removeEventListener(IMAGES_LOST, show);
+  }, []);
   const sending = useRef(false);
   // The same fact as state, so the button stays a disabled Send (not Stop) while a send is in flight.
   const [sendingNow, setSendingNow] = useState(false);
@@ -141,7 +152,11 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
     try {
       await useEndless.getState().send(t, proj, imgs);
     } catch (err) {
-      if (!mounted.current) { appendToDraft('chat', raw); return; }
+      if (!mounted.current) {
+        if (raw.trim()) appendToDraft('chat', raw);
+        if (imgs.length) { imagesLost = imagesLostText(imgs.length); window.dispatchEvent(new Event(IMAGES_LOST)); }
+        return;
+      }
       const now = textRef.current;
       setText(now.trim() ? `${raw} ${now}` : raw);
       setImages((cur) => [...imgs, ...cur]);
