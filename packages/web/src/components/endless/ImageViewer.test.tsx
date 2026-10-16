@@ -4,7 +4,7 @@ import { MessageScroller } from '@shadcn/react/message-scroller';
 import { EndlessRows, PendingUserRow } from './EndlessMessageRow';
 import type { EndlessMessage } from '../../api/types';
 
-const userMsg = { id: 1, kind: 'user', text: 'look', media: ['a.png'], projectName: null } as unknown as EndlessMessage;
+const userMsg = { i: 1, id: 1, kind: 'user', text: 'look', media: ['a.png'], projectName: null } as unknown as EndlessMessage;
 
 it('opens a sent Chat image in the lightbox and closes it with Escape', () => {
   render(<MessageScroller.Provider><MessageScroller.Root><MessageScroller.Viewport><EndlessRows messages={[userMsg]} focus={null} /></MessageScroller.Viewport></MessageScroller.Root></MessageScroller.Provider>);

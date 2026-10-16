@@ -38,3 +38,35 @@ it('names an AVIF download .avif, not .png', async () => {
 it('still names the common types correctly', async () => {
   expect((await downloadFrom('image/png', 'shot')).download).toBe('shot.png');
 });
+
+it('opens from a focusable button with an accessible name', () => {
+  render(<ChatImage src="/a.png" alt="chart" />);
+  const opener = screen.getByRole('button', { name: 'Open image: chart' });
+  expect(opener.tagName).toBe('BUTTON'); // a native button opens on Enter and Space
+  expect(opener).not.toHaveAttribute('tabindex', '-1');
+  opener.focus();
+  expect(document.activeElement).toBe(opener);
+  fireEvent.click(opener);
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+});
+
+it('opens as a modal dialog, takes focus, traps Tab, and gives focus back on Escape', () => {
+  render(<ChatImage src="/a.png" alt="chart" />);
+  const opener = screen.getByRole('button', { name: 'Open image: chart' });
+  opener.focus();
+  fireEvent.click(opener);
+  const dialog = screen.getByRole('dialog');
+  expect(dialog).toHaveAttribute('aria-modal', 'true');
+  const close = screen.getByLabelText('Close');
+  expect(dialog.contains(document.activeElement)).toBe(true);
+  expect(document.activeElement).toBe(close);
+  // Tab on the last control wraps to the first; Shift+Tab on the first wraps to the last.
+  expect(fireEvent.keyDown(close, { key: 'Tab' })).toBe(false);
+  expect(document.activeElement).toBe(screen.getByLabelText('Copy image').hasAttribute('disabled') ? screen.getByLabelText('Download image') : screen.getByLabelText('Copy image'));
+  const first = document.activeElement as HTMLElement;
+  expect(fireEvent.keyDown(first, { key: 'Tab', shiftKey: true })).toBe(false);
+  expect(document.activeElement).toBe(close);
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(document.activeElement).toBe(opener);
+});
