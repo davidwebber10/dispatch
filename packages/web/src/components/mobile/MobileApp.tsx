@@ -1,6 +1,6 @@
 import { appPath, href } from '../../lib/basePath';
 import { useState, useEffect, lazy, Suspense } from 'react';
-import { Gear, CaretLeft, CaretRight, Plus, Folders, PushPin, Robot, ChartBar, ChatCircleDots } from '@phosphor-icons/react';
+import { Gear, CaretLeft, CaretRight, Plus, Folders, PushPin, ChartBar, ChatCircleDots } from '@phosphor-icons/react';
 import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
 import { TransportToggle } from '../layout/TransportToggle';
@@ -321,12 +321,13 @@ export function MobileApp() {
         </div>
       </div>
 
-      {/* Bottom tab bar — Projects / Pinned / Automations. Visible at the root AND
+      {/* Bottom tab bar — Projects / Chat / Pinned / Analytics / Settings. Automations
+          is hidden on mobile (desktop only). Visible at the root AND
           inside a project (level 1); only the thread/agent screen (level 2)
           reclaims the space. Tapping a tab from a project pops back to the root. */}
       {level < 2 && (
         <div style={{ flexShrink: 0, display: 'flex', borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
-          {([['projects', 'Projects', Folders], ['chat', 'Chat', ChatCircleDots], ['pinned', 'Pinned', PushPin], ['agents', 'Automations', Robot], ['analytics', 'Analytics', ChartBar], ['settings', 'Settings', Gear]] as const).map(([key, label, Icon]) => {
+          {([['projects', 'Projects', Folders], ['chat', 'Chat', ChatCircleDots], ['pinned', 'Pinned', PushPin], ['analytics', 'Analytics', ChartBar], ['settings', 'Settings', Gear]] as const).map(([key, label, Icon]) => {
             const on = bottomTab === key;
             return (
               <button key={key} onClick={() => { setBottomTab(key); if (level > 0) history.back(); }}
