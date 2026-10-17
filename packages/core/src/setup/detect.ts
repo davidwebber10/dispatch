@@ -138,11 +138,25 @@ export function _resetAuthCache(): void {
   authCache.clear();
 }
 
+/**
+ * The env threads are spawned with. It carries Dispatch's own credentials (the saved
+ * Claude token as CLAUDE_CODE_OAUTH_TOKEN, secrets, tool keys), so asking the CLI under it
+ * answers "can a THREAD sign in?" rather than "is the daemon's bare env signed in?". A CLI
+ * whose own login expired is still signed in for threads when Dispatch holds a token.
+ */
+let probeEnv: Record<string, string> | undefined;
+
+/** Called whenever the spawn env changes. A changed env can change every verdict. */
+export function setProviderProbeEnv(env: Record<string, string>): void {
+  probeEnv = env;
+  authCache.clear();
+}
+
 /** Ask the CLI directly. Returns null when the command could not be run at all. */
 async function probeSignedIn(name: ProviderName, bin: string): Promise<boolean | 'unknown' | null> {
   const probe = AUTH_PROBES[name];
   try {
-    const { stdout, stderr } = await exec(bin, probe.args, { timeout: 5000 });
+    const { stdout, stderr } = await exec(bin, probe.args, { timeout: 5000, env: probeEnv ?? process.env });
     return probe.read(`${stdout}\n${stderr}`);
   } catch (err) {
     // A non-zero exit is how some CLIs say "not signed in", and its message is still on

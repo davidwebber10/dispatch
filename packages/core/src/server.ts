@@ -45,6 +45,7 @@ import { startTelemetryLoop } from './telemetry/sender.js';
 import { opencodeKeySecretName } from './settings/harness-settings.js';
 import { warmModelCapabilities } from './settings/model-capabilities.js';
 import { warmClaudeVersion, prunePromptFiles, setClaudeProbeEnv } from './providers/claude-prompt-file.js';
+import { setProviderProbeEnv } from './setup/detect.js';
 import { createTranscribeRouter } from './routes/transcribe.js';
 import { TranscriptionService } from './transcription/service.js';
 import { createSetupRouter } from './routes/setup.js';
@@ -619,6 +620,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     toolsAuth.setSpawnEnv(spawnEnv);
     // The Claude version check reads the same `claude` the agents will run.
     setClaudeProbeEnv(spawnEnv);
+    // The sign-in check that gates new threads asks the CLI under the same env, so
+    // Dispatch's saved Claude token counts even when the CLI's own login has expired.
+    setProviderProbeEnv(spawnEnv);
     ptyManager.setDefaultEnv(spawnEnv);
     structuredManager.setDefaultEnv(spawnEnv);
     endlessManager.setDefaultEnv(spawnEnv);
