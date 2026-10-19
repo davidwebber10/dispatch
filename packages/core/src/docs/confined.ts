@@ -12,8 +12,11 @@
  *   resolve inside `realRoot`. On any mismatch the file is closed and refused.
  * - The bytes come from the descriptor only, at most `max` + 1, so a file that grew is too large.
  *
- * A known limit: a parent folder swapped out and back again between the open and the last check
- * is not seen. The dev/ino check still holds the read to the inode seen at check time.
+ * A known limit: the check-time `lstat` runs as a separate path lookup after `locate`. A same-user
+ * process that swaps a parent folder out before that `lstat` and back between the open and the
+ * realpath re-check can still make the read return an outside file. Path-only checks cannot close
+ * that window in Node. The threat model (the attacker is a process of the same user, who can already
+ * read that file) makes this low severity.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -33,8 +36,8 @@ export type Confined =
   /** The path no longer resolves inside the project. */
   | { kind: 'outside' };
 
-/** Test hooks only; the route never passes them. `beforeOpen` runs between the check and the open. */
-export interface ConfinedHooks { beforeOpen?: () => Promise<void> | void }
+/** Test hooks only; the route never passes them. `beforeOpen` runs between the check and the open; `afterOpen` between the open and the read. */
+export interface ConfinedHooks { beforeOpen?: () => Promise<void> | void; afterOpen?: () => Promise<void> | void }
 
 export async function readConfined(realRoot: string, real: string, max: number, hooks: ConfinedHooks = {}): Promise<Confined> {
   let checked: fs.Stats;
@@ -53,6 +56,7 @@ export async function readConfined(realRoot: string, real: string, max: number, 
     const code = (e as NodeJS.ErrnoException).code;
     if (code === 'ENOENT' || code === 'ENOTDIR') return { kind: 'missing' };
     if (code === 'EISDIR') return { kind: 'folder' };
+    if (code === 'EACCES' || code === 'EPERM') return { kind: 'missing' }; // not readable: reads as not found
     return { kind: 'changed' }; // ELOOP (a symlink now), or another error: never read
   }
   try {
@@ -63,6 +67,7 @@ export async function readConfined(realRoot: string, real: string, max: number, 
     try { again = await fs.promises.realpath(real); } catch { return { kind: 'changed' }; }
     if (leadsOut(path.relative(realRoot, again))) return { kind: 'outside' };
     if (st.size > max) return { kind: 'too_large', size: st.size };
+    await hooks.afterOpen?.();
     const buf = Buffer.alloc(Math.min(st.size, max) + 1);
     let n = 0;
     while (n < buf.length) {
@@ -71,6 +76,7 @@ export async function readConfined(realRoot: string, real: string, max: number, 
       n += bytesRead;
     }
     if (n > max) return { kind: 'too_large', size: Math.max(n, st.size) };
+    if (n > st.size) return { kind: 'changed' }; // grew after the fstat: not a whole, consistent copy
     return { kind: 'file', bytes: buf.subarray(0, n), mtime: st.mtime };
   } finally {
     await fh.close().catch(() => { /* closing is best effort */ });

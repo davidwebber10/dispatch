@@ -161,7 +161,7 @@ describe('DocsService.doc', () => {
     expect(DOC_CONCURRENCY).toBe(4);
   });
 
-  it('a resolution that takes longer than the deadline fails with DocTimeoutError; a queued one past it never starts', async () => {
+  it('a resolution that takes longer than the deadline fails with DocTimeoutError', async () => {
     expect(DOC_DEADLINE_MS).toBe(3000);
     const resolver = vi.fn(() => new Promise<never>(() => { /* never settles */ }));
     const svc = new DocsService(db, store, now, undefined, { resolver, deadlineMs: 50 });
@@ -169,6 +169,15 @@ describe('DocsService.doc', () => {
     const calls = Array.from({ length: 5 }, () => svc.doc('s1', 'docs/specs/one.md', null));
     for (const c of calls) await expect(c).rejects.toBeInstanceOf(DocTimeoutError);
     expect(Date.now() - started).toBeGreaterThanOrEqual(45);
-    expect(resolver).toHaveBeenCalledTimes(4); // the 5th waited for a slot, then its deadline passed
+  });
+
+  it('a lookup queued behind the full semaphore whose deadline passed never calls its resolver', async () => {
+    // Each resolver settles AFTER the deadline, so the slots free late and the queued 5th gets its turn too late.
+    const resolver = vi.fn(() => new Promise<never>((_, rej) => setTimeout(() => rej(new Error('late')), 150)));
+    const svc = new DocsService(db, store, now, undefined, { resolver, deadlineMs: 50 });
+    const calls = Array.from({ length: 5 }, () => svc.doc('s1', 'docs/specs/one.md', null));
+    for (const c of calls) await expect(c).rejects.toBeInstanceOf(DocTimeoutError);
+    await new Promise((res) => setTimeout(res, 300)); // past the slots freeing
+    expect(resolver).toHaveBeenCalledTimes(4);
   });
 });

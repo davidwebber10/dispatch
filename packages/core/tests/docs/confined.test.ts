@@ -88,4 +88,29 @@ describe('readConfined', () => {
     const r = await readConfined(project, real, MAX, { beforeOpen: () => fs.appendFileSync(real, 'x'.repeat(MAX)) });
     expect(r.kind).toBe('too_large');
   });
+
+  it('a parent folder swapped for an outside symlink after locate, before the read, is outside (the realpath re-check)', async () => {
+    const real = checked();
+    fs.renameSync(path.join(project, 'docs'), path.join(project, 'docs-old'));
+    fs.symlinkSync(path.join(outside, 'docs'), path.join(project, 'docs'));
+    const r = await readConfined(project, real, MAX);
+    expect(text(r)).not.toBe('outside secret');
+    expect(r.kind).toBe('outside');
+  });
+
+  it.skipIf(process.getuid?.() === 0)('a file that cannot be opened (mode 000) reads as missing, not changed', async () => {
+    const real = checked();
+    fs.chmodSync(real, 0o000); // root skips this test: root opens any file
+    try {
+      expect((await readConfined(project, real, MAX)).kind).toBe('missing');
+    } finally {
+      fs.chmodSync(real, 0o644);
+    }
+  });
+
+  it('a file that grew after the open, still under the cap, is changed, not a cut copy', async () => {
+    const real = checked();
+    const r = await readConfined(project, real, MAX, { afterOpen: () => fs.appendFileSync(real, 'x'.repeat(10)) });
+    expect(r.kind).toBe('changed');
+  });
 });
