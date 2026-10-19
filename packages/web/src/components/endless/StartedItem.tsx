@@ -5,6 +5,7 @@ import { StateMark, STATE_WORD } from './StateMark';
 import { openThreadInPlace } from './openThread';
 import { useEndless } from '../../stores/endless';
 import { harnessShort } from './harness';
+import { DocChip, docLinks } from './DocText';
 import type { EndlessMessage, EndlessPaneState } from '../../api/types';
 
 const WORD_COLOR: Record<EndlessPaneState, string> = {
@@ -27,8 +28,10 @@ export function StartedItem({ tool, echo }: { tool: EndlessMessage; echo?: Endle
   if (s.kind === 'failed') return <div role="alert" style={{ ...line, borderColor: 'var(--color-status-red)' }}><Warning size={13} color="var(--color-status-red)" aria-hidden="true" /><span style={{ color: 'var(--color-status-red)' }}>Could not start</span><span style={{ color: 'var(--color-text-primary)' }}>{s.name}</span><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.error}</span></div>;
   const projectId = s.projectId ?? projects.find((p) => p.name === s.projectName)?.id ?? null;
   const harness = view.row ? harnessShort(view.row.harness) : null;
-  return (
-    <button type="button" disabled={!projectId} onClick={() => projectId && void openThreadInPlace(projectId, s.agentId)} style={{ ...line, cursor: projectId ? 'pointer' : 'default' }}>
+  // Spec section 15: at most 2 doc chips from the task, on a second line; the card is otherwise one line.
+  const docs = docLinks(s.task, projectId, projects).filter((d, k, all) => all.findIndex((o) => o.path === d.path) === k).slice(0, 2);
+  const card = (
+    <button type="button" disabled={!projectId} onClick={() => projectId && void openThreadInPlace(projectId, s.agentId)} style={{ ...line, cursor: projectId ? 'pointer' : 'default', ...(docs.length ? { border: 'none', background: 'none' } : {}) }}>
       <ArrowRight size={13} color="var(--color-text-tertiary)" aria-hidden="true" />
       <span>Started</span>
       <span style={{ color: 'var(--color-text-primary)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{s.label}</span>
@@ -36,5 +39,14 @@ export function StartedItem({ tool, echo }: { tool: EndlessMessage; echo?: Endle
       <span style={{ flex: 1 }} />
       {view.state && <span style={chip}><StateMark state={view.state} decorative /><span style={{ color: WORD_COLOR[view.state] }}>{STATE_WORD[view.state]}</span></span>}
     </button>
+  );
+  if (!docs.length) return card;
+  return (
+    <div style={{ minWidth: 0, borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
+      {card}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, minWidth: 0, padding: '0 10px 7px 31px' }}>
+        {docs.map((d) => <DocChip key={d.start} span={d} project={projectId} />)}
+      </div>
+    </div>
   );
 }

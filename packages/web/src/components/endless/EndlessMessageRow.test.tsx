@@ -7,6 +7,7 @@ import { StartedItem } from './StartedItem';
 import { useEndless } from '../../stores/endless';
 import { useThreadStatus } from '../../stores/threadStatus';
 import * as open from './openThread';
+import { useDocViewer } from '../../stores/docViewer';
 import type { EndlessMessage } from '../../api/types';
 
 const m = (i: number, kind: EndlessMessage['kind'], text: string): EndlessMessage => ({ i, kind, text, size: text.length, project: null, projectName: null, ref: null, media: [], createdAt: 0 });
@@ -22,6 +23,7 @@ beforeAll(() => {
 beforeEach(() => {
   useEndless.setState({ threads: [], projects: [] });
   useThreadStatus.setState({ byTerminal: {} });
+  useDocViewer.setState({ open: null, back: [] });
 });
 
 describe('foldRows', () => {
@@ -101,5 +103,52 @@ describe('report card', () => {
     fireEvent.click(screen.getByRole('button', { name: /\[Fix\] report: done|Fix/ }));
     expect(spy).toHaveBeenCalledWith('s1', 't9');
     expect(setView).not.toHaveBeenCalled();
+  });
+});
+
+describe('doc links in chat', () => {
+  it('a report card path opens the doc viewer with the report project', () => {
+    const spy = vi.spyOn(open, 'openThreadInPlace').mockResolvedValue();
+    const work = { ...m(0, 'work', '[Plan] report: done. Doc: docs/specs/x.md (branch spec/x)'), project: 's1', ref: 't1' };
+    render(<MessageScroller.Provider><EndlessRows messages={[work]} focus={null} /></MessageScroller.Provider>);
+    fireEvent.click(screen.getByRole('button', { name: 'x.md' }));
+    expect(useDocViewer.getState().open).toEqual({ project: 's1', path: 'docs/specs/x.md', branch: 'spec/x' });
+    expect(spy).not.toHaveBeenCalled();
+  });
+  it('a folded report shows chips in its preview and its open body', () => {
+    const spy = vi.spyOn(open, 'openThreadInPlace').mockResolvedValue();
+    const long = `[Plan] report: Doc: /w/studio/docs/specs/y.md\n${'more words here. '.repeat(20)}`;
+    useEndless.setState({ projects: [{ id: 's7', name: 'studio', folder: '/w/studio' }] as any });
+    const work = { ...m(0, 'work', long), project: 's1', ref: 't1' };
+    render(<MessageScroller.Provider><EndlessRows messages={[work]} focus={null} /></MessageScroller.Provider>);
+    fireEvent.click(screen.getByRole('button', { name: 'y.md' }));
+    expect(useDocViewer.getState().open).toEqual({ project: 's7', path: '/w/studio/docs/specs/y.md', branch: null });
+    const header = screen.getByRole('button', { name: /Plan/ });
+    expect(header).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.keyDown(header, { key: 'Enter' });
+    // The same element opens (no remount, so the keyboard focus stays).
+    expect(screen.getByRole('button', { name: /Plan/ })).toBe(header);
+    expect(header).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getAllByRole('button', { name: 'y.md' })).toHaveLength(1);
+    expect(spy).not.toHaveBeenCalled();
+  });
+  it('a Dispatch reply path opens the doc viewer with the message project', () => {
+    const reply = { ...m(0, 'unii', 'The plan is in `docs/plans/p.md`.'), project: 's1' };
+    render(<MessageScroller.Provider><EndlessRows messages={[reply]} focus={null} /></MessageScroller.Provider>);
+    fireEvent.click(screen.getByRole('button', { name: 'p.md' }));
+    expect(useDocViewer.getState().open).toEqual({ project: 's1', path: 'docs/plans/p.md', branch: null });
+  });
+  it('a relative path with no project is not a link; tool rows stay plain', () => {
+    render(<MessageScroller.Provider><EndlessRows messages={[m(0, 'unii', 'See docs/a.md'), m(1, 'tool', 'Read {"file_path":"/w/studio/docs/a.md"}')]} focus={null} /></MessageScroller.Provider>);
+    expect(screen.queryByRole('button', { name: 'a.md' })).toBeNull();
+  });
+  it('a Started card shows up to 2 doc links from its task', () => {
+    const tool = m(0, 'tool', `mcp__memory__spawn_agent ${JSON.stringify({ project: 'studio', name: 'Plan', task: 'Read docs/a.md, docs/b.md and docs/c.md' })}`);
+    render(<StartedItem tool={tool} echo={spawnEcho(1, 't9', 'Plan')} />);
+    expect(screen.getAllByRole('button', { name: /\.md$/ })).toHaveLength(2);
+    const spy = vi.spyOn(open, 'openThreadInPlace').mockResolvedValue();
+    fireEvent.click(screen.getByRole('button', { name: 'b.md' }));
+    expect(useDocViewer.getState().open).toEqual({ project: 's1', path: 'docs/b.md', branch: null });
+    expect(spy).not.toHaveBeenCalled();
   });
 });

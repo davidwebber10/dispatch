@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { MessageScroller, useMessageScroller } from '@shadcn/react/message-scroller';
 import { CaretRight, ClockCounterClockwise, Briefcase, Notebook, Wrench } from '@phosphor-icons/react';
 import { UserBubble } from '../tabs/chat/ChatView';
@@ -7,6 +7,9 @@ import { ChatImage } from '../ChatImage';
 import { endlessMediaUrl } from '../../api/client';
 import { openThreadInPlace } from './openThread';
 import { StartedItem } from './StartedItem';
+import { DocText, docLinks, openDoc } from './DocText';
+import { projectForPath } from '../../lib/docPaths';
+import { useEndless } from '../../stores/endless';
 import { SPAWN_TOOL, parseSpawn } from './spawn';
 export { SPAWN_TOOL, parseSpawn };
 import type { EndlessMessage } from '../../api/types';
@@ -103,6 +106,25 @@ function openThread(m: EndlessMessage) {
   void openThreadInPlace(m.project, m.ref);
 }
 
+/**
+ * A card's tap target. A plain card is a button; a card that holds doc chips (buttons) is a
+ * role="button" box, so no button sits inside a button. Enter and Space on the box itself tap it.
+ * `chips` must not change when the card opens: a new element type would drop the keyboard focus.
+ */
+function Tap({ chips, onTap, style, children, ...aria }: { chips: boolean; onTap: () => void; style: React.CSSProperties; children: React.ReactNode; 'aria-expanded'?: boolean; 'aria-controls'?: string }) {
+  if (!chips) return <button type="button" onClick={onTap} style={style} {...aria}>{children}</button>;
+  return (
+    <div role="button" tabIndex={0} onClick={onTap} style={style} {...aria}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return;
+        e.preventDefault();
+        onTap();
+      }}>
+      {children}
+    </div>
+  );
+}
+
 const cardStyle: React.CSSProperties = { display: 'flex', gap: 10, alignItems: 'flex-start', textAlign: 'left', width: '100%', padding: '10px 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 8, color: 'var(--color-text-primary)' };
 
 /**
@@ -116,19 +138,20 @@ function WorkCard({ m }: { m: EndlessMessage }) {
   const { scrollToMessage } = useMessageScroller();
   const head = REPORT_HEAD.exec(m.text);
   const body = head ? m.text.slice(head[0].length) : m.text;
+  const projects = useEndless((s) => s.projects);
   const short = m.text.length <= FOLD_CHARS && m.text.split('\n').length <= FOLD_LINES;
+  const preview = body.split('\n').find((l) => l.trim()) ?? '';
   if (short) {
     return (
-      <button type="button" onClick={() => openThread(m)} style={{ ...cardStyle, cursor: m.ref ? 'pointer' : 'default' }}>
+      <Tap chips={docLinks(m.text, m.project, projects).length > 0} onTap={() => openThread(m)} style={{ ...cardStyle, cursor: m.ref ? 'pointer' : 'default' }}>
         <Briefcase size={16} style={{ flexShrink: 0, marginTop: 2 }} />
-        <span style={{ minWidth: 0, fontSize: 13.5, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{m.text}</span>
-      </button>
+        <span style={{ minWidth: 0, fontSize: 13.5, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}><DocText text={m.text} project={m.project} raised /></span>
+      </Tap>
     );
   }
-  const preview = body.split('\n').find((l) => l.trim()) ?? '';
   return (
     <div style={{ ...cardStyle, flexDirection: 'column', gap: 0, padding: 0 }}>
-      <button type="button" aria-expanded={open} aria-controls={open ? id : undefined} onClick={() => {
+      <Tap chips={docLinks(preview, m.project, projects).length > 0} aria-expanded={open} aria-controls={open ? id : undefined} onTap={() => {
           // Opening grows the row. Pin its top so the scroller does not follow the new end of the content.
           if (!open) scrollToMessage(`m${m.i}`, { align: 'start' });
           setOpen((o) => !o);
@@ -138,12 +161,12 @@ function WorkCard({ m }: { m: EndlessMessage }) {
         <Briefcase size={16} style={{ flexShrink: 0, marginTop: 2 }} />
         <span style={{ minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
           <span style={{ fontSize: 13.5, fontWeight: 600, overflowWrap: 'anywhere' }}>{head ? head[1] : 'Thread report (continued)'}</span>
-          {!open && <span style={{ fontSize: 12.5, lineHeight: 1.4, color: 'var(--color-text-secondary)', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere' }}>{preview}</span>}
+          {!open && <span style={{ fontSize: 12.5, lineHeight: 1.4, color: 'var(--color-text-secondary)', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere' }}><DocText text={preview} project={m.project} raised /></span>}
         </span>
-      </button>
+      </Tap>
       {open && (
         <div id={id} style={{ padding: '0 12px 10px', minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{m.text}</div>
+          <div style={{ fontSize: 13.5, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}><DocText text={m.text} project={m.project} raised /></div>
           {m.ref && (
             <button type="button" onClick={() => openThread(m)} style={{ marginTop: 8, minHeight: 44, padding: '0 10px', background: 'none', border: '1px solid var(--color-border)', borderRadius: 6, cursor: 'pointer', color: 'var(--color-text-secondary)', font: '500 12.5px var(--font-sans)' }}>Open thread</button>
           )}
@@ -151,6 +174,16 @@ function WorkCard({ m }: { m: EndlessMessage }) {
       )}
     </div>
   );
+}
+
+/** A Dispatch reply: markdown, with each doc path as a doc chip (spec 12.2). */
+function ReplyRow({ m }: { m: EndlessMessage }) {
+  const projects = useEndless((s) => s.projects);
+  const docs = useMemo(() => ({
+    onOpen: (p: string, b: string | null) => openDoc(p, b, m.project),
+    accept: (p: string) => projectForPath(p, m.project, projects) !== null,
+  }), [m.project, projects]);
+  return <div style={{ fontSize: 14.5, lineHeight: 1.75, minWidth: 0 }}><InsightText source={m.text} scheme="global" variant="rail" docs={docs} /></div>;
 }
 
 function NoteCard({ m }: { m: EndlessMessage }) {
@@ -179,7 +212,7 @@ function MessageRow({ m }: { m: EndlessMessage }) {
       </div>
     );
   }
-  if (m.kind === 'unii') return <div style={{ fontSize: 14.5, lineHeight: 1.75, minWidth: 0 }}><InsightText source={m.text} scheme="global" variant="rail" /></div>;
+  if (m.kind === 'unii') return <ReplyRow m={m} />;
   if (m.kind === 'work') return <WorkCard m={m} />;
   if (m.kind === 'note') return <NoteCard m={m} />;
   return <ToolLine echo={m} />;
