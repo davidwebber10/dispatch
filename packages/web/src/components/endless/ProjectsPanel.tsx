@@ -9,6 +9,9 @@ import { harnessShort } from './harness';
 import { openThreadInPlace } from './openThread';
 import { stateFromStatus, useThreadView } from './threadView';
 import { DocsFold } from './DocsFold';
+import { MoreButton, formatStart } from './paneParts';
+
+export { formatStart };
 
 /** The Chat right pane (spec 3.2): per project, the counts and a quiet list of recent threads.
  * Waiting threads come first, finished ones fold under "Done today (N)". */
@@ -24,21 +27,6 @@ export function orderProjects(projects: EndlessProject[], threads: EndlessPaneTh
   const newest = (id: string) => Math.max(0, ...threads.filter((t) => t.project === id).map((t) => (t.lastActivityAt ? Date.parse(t.lastActivityAt) || 0 : 0)));
   const group = (p: EndlessProject) => (p.needsYou > 0 ? 0 : p.live > 0 ? 1 : 2);
   return [...projects].sort((a, b) => group(a) - group(b) || newest(b.id) - newest(a.id));
-}
-
-const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const MONTH = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-/** "14:02" today, "Sat 14:02" this week, "1 Sep" before that. Fixed names: ICU builds differ ("Sep" or "Sept"). */
-export function formatStart(iso: string, now = Date.now()): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const days = Math.round((day(new Date(now)) - day(d)) / 86_400_000);
-  if (days === 0) return hm;
-  if (days > 0 && days < 7) return `${WEEKDAY[d.getDay()]} ${hm}`;
-  return `${d.getDate()} ${MONTH[d.getMonth()]}`;
 }
 
 function originText(t: EndlessPaneThread): string {
@@ -87,21 +75,6 @@ function ThreadRow({ t, onOpen, mobile, needCard = false, project }: { t: Endles
       {needCard && t.question && (
         <span style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: mobile ? 13 : 12.5, lineHeight: 1.5, marginTop: 6, paddingLeft: 16 }}>{t.question}</span>
       )}
-    </button>
-  );
-}
-
-/** The footer toggles of a project block ("+N more", "Done today (N)", "Docs (N)"). */
-export function MoreButton({ children, onClick, expanded, mobile, first }: { children: React.ReactNode; onClick: () => void; expanded?: boolean; mobile: boolean; first: boolean }) {
-  return (
-    <button type="button" aria-expanded={expanded} onClick={onClick}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 6, width: '100%', background: 'transparent', border: 0, cursor: 'pointer', textAlign: 'left',
-        borderTop: first ? '1px solid var(--color-border)' : 0, marginTop: first ? 4 : 0,
-        ...mono(12, expanded ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)'),
-        ...(mobile ? { minHeight: 44, padding: 0 } : { padding: '7px 0 1px' }),
-      }}>
-      {children}
     </button>
   );
 }

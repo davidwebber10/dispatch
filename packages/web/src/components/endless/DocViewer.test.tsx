@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
-import { DocViewer } from './DocViewer';
+import { DocViewer, editorUrl } from './DocViewer';
 import { useDocViewer } from '../../stores/docViewer';
 import { useHost } from '../../stores/host';
 import { useSettings } from '../../stores/settings';
@@ -115,6 +115,49 @@ describe('DocViewer', () => {
     render(<DocViewer />);
     await screen.findByText('not on main');
     fireEvent.keyDown(window, { key: 'Escape' });
+    expect(useDocViewer.getState().open).toBeNull();
+  });
+  it('passes the worktree name of the ref to the API', async () => {
+    useDocViewer.setState({ open: { project: 's1', path: 'docs/specs/x.md', branch: null, worktree: 'x' }, back: [] });
+    const spy = vi.spyOn(api, 'endlessDoc').mockResolvedValue(copy() as any);
+    render(<DocViewer />);
+    await screen.findByText('not on main');
+    expect(spy).toHaveBeenCalledWith('s1', 'docs/specs/x.md', null, 'x');
+  });
+  it('the editor URL encodes each path segment', () => {
+    expect(editorUrl('vscode', '/w/a#b?.md')).toBe('vscode://file/w/a%23b%3F.md');
+    expect(editorUrl('cursor', '/w/my doc/é.md')).toBe('cursor://file/w/my%20doc/%C3%A9.md');
+    expect(editorUrl('zed', '/w/100%/x.md')).toBe('zed://file/w/100%25/x.md');
+  });
+  it('Open in editor clicks a temporary link (no page navigation) with the encoded URL', async () => {
+    vi.spyOn(api, 'endlessDoc').mockResolvedValue(copy({ absPath: '/w/d/a#b?.md' }) as any);
+    useSettings.setState({ editor: 'vscode' } as any);
+    const hrefs: (string | null)[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { hrefs.push(this.getAttribute('href')); expect(this.isConnected).toBe(true); });
+    const before = window.location.href;
+    render(<DocViewer />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Open in editor' }));
+    expect(hrefs).toEqual(['vscode://file/w/d/a%23b%3F.md']);
+    expect(window.location.href).toBe(before);
+    expect(document.querySelector('a[href^="vscode:"]')).toBeNull();
+  });
+  it('a path that is not absolute has no Open in editor', async () => {
+    vi.spyOn(api, 'endlessDoc').mockResolvedValue(copy({ absPath: 'w/d/x.md' }) as any);
+    useSettings.setState({ editor: 'vscode' } as any);
+    render(<DocViewer />);
+    await screen.findByText('not on main');
+    expect(screen.queryByRole('button', { name: 'Open in editor' })).not.toBeInTheDocument();
+  });
+  it('Escape that another handler already took does not close; a close takes the key', async () => {
+    vi.spyOn(api, 'endlessDoc').mockResolvedValue(copy() as any);
+    render(<DocViewer />);
+    await screen.findByText('not on main');
+    const take = (e: Event) => e.preventDefault();
+    document.body.addEventListener('keydown', take);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(useDocViewer.getState().open).not.toBeNull();
+    document.body.removeEventListener('keydown', take);
+    expect(fireEvent.keyDown(document.body, { key: 'Escape' })).toBe(false);
     expect(useDocViewer.getState().open).toBeNull();
   });
 });

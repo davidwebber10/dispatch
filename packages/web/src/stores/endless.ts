@@ -116,6 +116,8 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
   };
   /** The first watch came before the first projects load: load the counts when that load lands. */
   let countsOnLoad = false;
+  /** The newest doc counts request. */
+  let countsSeq = 0;
   const onVisible = () => { if (document.visibilityState === 'visible') void reload(); };
 
   return {
@@ -207,7 +209,11 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
       if (countsOnLoad && watchers > 0) { countsOnLoad = false; loadCounts(); }
     }),
     loadDocCounts: async (ids) => {
-      try { const r = await api.endlessDocCounts(ids); set({ docCounts: r.counts ?? {} }); } catch { /* keep the old counts */ }
+      const seq = ++countsSeq;
+      try {
+        const r = await api.endlessDocCounts(ids);
+        if (seq === countsSeq) set({ docCounts: r.counts ?? {} }); // an answer older than the newest request is dropped
+      } catch { /* keep the old counts */ }
     },
     watch: () => {
       watchers++;

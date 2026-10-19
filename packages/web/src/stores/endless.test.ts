@@ -9,7 +9,7 @@ beforeEach(() => {
   vi.restoreAllMocks();
   vi.spyOn(api, 'endlessProjects').mockResolvedValue([]);
   vi.spyOn(api, 'endlessDocCounts').mockResolvedValue({ counts: {} });
-  useEndless.setState({ docCounts: {},  messages: [], hasMore: false, atTail: true, loadingOlder: false, loaded: true, unavailable: false, filter: null, focus: null, liveText: '', liveThinking: '', turn: { status: 'idle', error: null }, projects: [], threads: [], truncated: false });
+  useEndless.setState({ docCounts: {}, messages: [], hasMore: false, atTail: true, loadingOlder: false, loaded: true, unavailable: false, filter: null, focus: null, liveText: '', liveThinking: '', turn: { status: 'idle', error: null }, projects: [], threads: [], truncated: false });
 });
 
 describe('useEndless', () => {
@@ -328,5 +328,16 @@ describe('doc counts', () => {
     vi.mocked(api.endlessDocCounts).mockRejectedValue(new Error('GET /api/endless/docs/counts failed: 500'));
     await useEndless.getState().loadDocCounts(['a']);
     expect(useEndless.getState().docCounts).toEqual({ a: 2 });
+  });
+  it('a count answer older than the newest request is dropped', async () => {
+    let first!: (v: { counts: Record<string, number> }) => void;
+    vi.mocked(api.endlessDocCounts)
+      .mockReturnValueOnce(new Promise((res) => { first = res; }))
+      .mockResolvedValueOnce({ counts: { a: 5 } });
+    const older = useEndless.getState().loadDocCounts(['a']);
+    await useEndless.getState().loadDocCounts(['a']);
+    first({ counts: { a: 1 } });
+    await older;
+    expect(useEndless.getState().docCounts).toEqual({ a: 5 });
   });
 });

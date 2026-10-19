@@ -1,11 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { ProjectsPanel, orderProjects, formatStart } from './ProjectsPanel';
 import * as open from './openThread';
 import { useEndless } from '../../stores/endless';
 import { useUI } from '../../stores/ui';
 import { useDocViewer } from '../../stores/docViewer';
 import { api } from '../../api/client';
+
+const { isMobileMock } = vi.hoisted(() => ({ isMobileMock: vi.fn(() => false) }));
+vi.mock('../../hooks/useIsMobile', () => ({ useIsMobile: isMobileMock }));
 
 let saved: ReturnType<typeof useEndless.getState>;
 
@@ -120,7 +123,7 @@ describe('ProjectsPanel thread list', () => {
 
 describe('Docs fold', () => {
   const docRow = (k: number, o: Partial<Record<string, unknown>> = {}) => ({ path: `docs/specs/d${k}.md`, name: `d${k}.md`, status: 'draft', source: 'worktree', worktree: 'chat-visibility-spec', branch: 'spec/chat-thread-visibility', vsMain: 'not_on_main', modifiedAt: '2026-10-19T11:00:00Z', copies: 1, writer: { id: 't1', label: 'Plan' }, ...o });
-  afterEach(() => { useDocViewer.setState({ open: null, back: [] }); useUI.setState({ pendingOpenProject: null }); });
+  afterEach(() => { useDocViewer.setState({ open: null, back: [] }); useUI.setState({ pendingOpenProject: null }); isMobileMock.mockReturnValue(false); });
   it('is hidden at a count of 0', () => {
     useEndless.setState({ projects: [P('s1', 'dispatch', { live: 1 })], threads: [row('w', 's1', 'working')] as any, docCounts: { s1: 0 } } as any);
     render(<ProjectsPanel />);
@@ -166,5 +169,38 @@ describe('Docs fold', () => {
     fireEvent.click(screen.getByRole('button', { name: /d1\.md/ }));
     expect(useDocViewer.getState().open).toEqual({ project: 's1', path: 'docs/specs/d1.md', branch: 'origin/spec/t' });
     expect(onNavigate).toHaveBeenCalledTimes(2);
+  });
+  it('a worktree row opens its worktree copy by name', async () => {
+    vi.spyOn(api, 'endlessDocs').mockResolvedValue({ rows: [docRow(0)], total: 1 } as any);
+    useEndless.setState({ projects: [P('s1', 'dispatch', { live: 1 })], threads: [row('w', 's1', 'working')] as any, docCounts: { s1: 1 } } as any);
+    render(<ProjectsPanel />);
+    fireEvent.click(screen.getByRole('button', { name: 'Docs (1)' }));
+    fireEvent.click(await screen.findByRole('button', { name: /d0\.md/ }));
+    expect(useDocViewer.getState().open).toEqual({ project: 's1', path: 'docs/specs/d0.md', branch: null, worktree: 'chat-visibility-spec' });
+  });
+  it('opened again after the count changed, it loads the rows again', async () => {
+    const spy = vi.spyOn(api, 'endlessDocs').mockResolvedValue({ rows: [docRow(0)], total: 1 } as any);
+    useEndless.setState({ projects: [P('s1', 'dispatch', { live: 1 })], threads: [row('w', 's1', 'working')] as any, docCounts: { s1: 1 } } as any);
+    render(<ProjectsPanel />);
+    fireEvent.click(screen.getByRole('button', { name: 'Docs (1)' }));
+    await screen.findByTestId('doc-row-docs/specs/d0.md');
+    fireEvent.click(screen.getByRole('button', { name: 'Docs (1)' }));
+    spy.mockResolvedValue({ rows: [docRow(0), docRow(1)], total: 2 } as any);
+    act(() => { useEndless.setState({ docCounts: { s1: 2 } }); });
+    fireEvent.click(screen.getByRole('button', { name: 'Docs (2)' }));
+    expect(await screen.findByTestId('doc-row-docs/specs/d1.md')).toBeInTheDocument();
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+  it('on mobile the writer button and the row are 44 px tap targets', async () => {
+    isMobileMock.mockReturnValue(true);
+    vi.spyOn(api, 'endlessDocs').mockResolvedValue({ rows: [docRow(0)], total: 1 } as any);
+    useEndless.setState({ projects: [P('s1', 'dispatch', { live: 1 })], threads: [row('w', 's1', 'working')] as any, docCounts: { s1: 1 } } as any);
+    render(<ProjectsPanel />);
+    fireEvent.click(screen.getByRole('button', { name: 'Docs (1)' }));
+    const writer = await screen.findByRole('button', { name: 'Plan' });
+    expect(writer.style.minHeight).toBe('44px');
+    expect(writer.style.display).toBe('inline-flex');
+    expect(writer.style.alignItems).toBe('center');
+    expect(screen.getByRole('button', { name: /d0\.md/ }).style.minHeight).toBe('44px');
   });
 });

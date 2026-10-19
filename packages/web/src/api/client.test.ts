@@ -120,3 +120,12 @@ test('getLedgerSource GETs the item\'s source route, with ?heading= for a click 
   await api.getLedgerSource('s1', 14, 'Risks & costs');
   expect(fetch).toHaveBeenLastCalledWith('/api/sessions/s1/ledger/N14/source?heading=Risks%20%26%20costs', expect.objectContaining({ method: 'GET' }));
 });
+
+test('endlessDoc sends the branch and the worktree only when set', async () => {
+  mockJson({});
+  await api.endlessDoc('s1', 'docs/a b.md', null, 'wt-a');
+  expect(fetch).toHaveBeenLastCalledWith('/api/endless/doc?project=s1&path=docs%2Fa+b.md&worktree=wt-a', expect.anything());
+  mockJson({});
+  await api.endlessDoc('s1', 'docs/a.md', 'spec/a');
+  expect(fetch).toHaveBeenLastCalledWith('/api/endless/doc?project=s1&path=docs%2Fa.md&branch=spec%2Fa', expect.anything());
+});

@@ -82,9 +82,10 @@ export const api = {
   endlessProjects: () => req<EndlessProjectsResponse | EndlessProject[]>('/api/endless/projects'),
   endlessInstructions: () => req<{ text: string }>('/api/endless/instructions'),
   /** One doc copy. Throws `GET … failed: 403` (outside the project), `404` (not found), `413` (over 2 MB), `400` (unknown project). */
-  endlessDoc: (project: string, path: string, branch: string | null) => {
+  endlessDoc: (project: string, path: string, branch: string | null, worktree?: string | null) => {
     const q = new URLSearchParams({ project, path });
     if (branch) q.set('branch', branch);
+    if (worktree) q.set('worktree', worktree);
     return req<EndlessDocCopy>(`/api/endless/doc?${q.toString()}`);
   },
   endlessDocs: (project: string) => req<{ rows: EndlessDocRow[]; total: number }>(`/api/endless/docs?project=${encodeURIComponent(project)}`),

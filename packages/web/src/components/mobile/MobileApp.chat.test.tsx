@@ -31,6 +31,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  window.history.pushState({}, '', '/');
   useEndless.setState(savedEndless, true);
   vi.unstubAllGlobals();
 });

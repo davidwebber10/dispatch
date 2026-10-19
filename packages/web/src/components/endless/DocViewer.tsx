@@ -10,14 +10,21 @@ import { useHost } from '../../stores/host';
 import { useSettings } from '../../stores/settings';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { docName, projectForPath } from '../../lib/docPaths';
-import { formatStart } from './ProjectsPanel';
+import { formatStart } from './paneParts';
 
 /** The editors "Open in editor" can use: the browser opens the editor's URL, the daemon runs nothing. */
-const EDITOR_URL: Record<string, (abs: string) => string> = {
-  vscode: (p) => `vscode://file${encodeURI(p)}`,
-  cursor: (p) => `cursor://file${encodeURI(p)}`,
-  zed: (p) => `zed://file${encodeURI(p)}`,
-};
+const EDITOR_SCHEME: Record<string, string> = { vscode: 'vscode', cursor: 'cursor', zed: 'zed' };
+/** The editor URL of an absolute path; each segment is encoded, so `#`, `?` and `%` stay in the path. */
+export const editorUrl = (editor: string, abs: string) => `${EDITOR_SCHEME[editor]}://file${abs.split('/').map(encodeURIComponent).join('/')}`;
+/** Open a URL with a link click, not `location.href`: that would fire the app's beforeunload guard. */
+function openUrl(url: string) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
 /** The HTTP status in the API client's error text ("GET /api/... failed: 404 — ..."), or 0. */
 const statusOf = (e: unknown) => Number(/ failed: (\d{3})\b/.exec(e instanceof Error ? e.message : '')?.[1] ?? 0);
 /** Where the copy came from (spec 12.4). */
@@ -66,7 +73,7 @@ export function DocViewer() {
     let cancelled = false;
     setState({ kind: 'loading' });
     setNote(null);
-    api.endlessDoc(open.project, open.path, open.branch)
+    api.endlessDoc(open.project, open.path, open.branch, open.worktree ?? null)
       .then((doc) => { if (!cancelled) setState({ kind: 'doc', doc }); })
       .catch((e) => { if (!cancelled) setState({ kind: 'error', status: statusOf(e) }); });
     return () => { cancelled = true; };
@@ -74,7 +81,11 @@ export function DocViewer() {
 
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') useDocViewer.getState().close(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return; // another layer (a menu, a lightbox) took the key
+      e.preventDefault();
+      useDocViewer.getState().close();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
@@ -95,7 +106,7 @@ export function DocViewer() {
   const folder = projects.find((p) => p.id === open.project)?.folder;
   const rel = doc?.absPath ? relativeTo(doc.absPath, folder) : null;
   const showReveal = canReveal && !!doc?.absPath && rel !== null;
-  const showEditor = canReveal && !!doc?.absPath && !!editor && !!EDITOR_URL[editor];
+  const showEditor = canReveal && !!doc?.absPath?.startsWith('/') && !!editor && !!EDITOR_SCHEME[editor];
   const vs = doc ? VS[doc.vsMain] : null;
   const prev = back[back.length - 1];
 
@@ -175,14 +186,14 @@ export function DocViewer() {
             <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
               {showReveal && <button type="button" onClick={() => void reveal()} style={action}><FolderOpen size={15} aria-hidden />Reveal in {fileManager}</button>}
               {showEditor && (
-                <button type="button" onClick={() => { window.location.href = EDITOR_URL[editor](doc.absPath!); }} style={action}>
+                <button type="button" onClick={() => openUrl(editorUrl(editor, doc.absPath!))} style={action}>
                   <Code size={15} aria-hidden />Open in editor
                 </button>
               )}
               {copyButton}
               {note && <span role="status" style={mono(11.5, 'var(--color-text-secondary)')}>{note}</span>}
             </div>
-            <div key={`${open.project}:${open.branch ?? ''}:${open.path}`}
+            <div key={`${open.project}:${open.branch ?? ''}:${open.worktree ?? ''}:${open.path}`}
               style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-base)' }}>
               <article style={{ maxWidth: 680, margin: '0 auto', padding: mobile ? '24px 20px 34px' : '32px 24px', fontSize: 14.5, lineHeight: 1.75 }}>
                 <Markdown source={doc.markdown} docs={docs} />
