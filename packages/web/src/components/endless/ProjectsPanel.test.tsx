@@ -111,7 +111,7 @@ describe('ProjectsPanel thread list', () => {
   it('the cut note', () => {
     useEndless.setState({ projects: [P('s1', 'studio', { live: 1 })], threads: [row('w', 's1', 'working')] as any, truncated: true });
     render(<ProjectsPanel />);
-    expect(screen.getByText('Some projects are not shown')).toBeInTheDocument();
+    expect(screen.getByText('Some threads are not shown')).toBeInTheDocument();
   });
   it('formats the start time', () => {
     const now = Date.parse('2026-10-19T15:00:00');

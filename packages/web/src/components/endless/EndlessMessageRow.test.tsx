@@ -106,6 +106,16 @@ describe('StartedItem', () => {
     fireEvent.click(screen.getByRole('button', { name: /Fix PR #2/ }));
     expect(spy).toHaveBeenCalledWith('s1', 't9');
   });
+  it('a very long project name ellipsizes instead of overflowing the one-line card', () => {
+    const long = 'p'.repeat(120);
+    const echo = m(1, 'echo', JSON.stringify({ agentId: 't9', label: 'Fix', project: long, projectId: 's1', folder: '/w/x' }));
+    render(<StartedItem tool={spawnTool(0, 'Fix')} echo={echo} />);
+    const span = screen.getByText(long);
+    const css = span.getAttribute('style') ?? '';
+    for (const part of ['overflow: hidden', 'text-overflow: ellipsis', 'white-space: nowrap', 'min-width: 0']) expect(css).toContain(part);
+    expect(span.parentElement).toHaveStyle({ overflow: 'hidden' });
+    expect(screen.getByText('Started')).toHaveStyle({ flexShrink: '0' });
+  });
   it('Starting is not a button; Could not start shows the error', () => {
     const { rerender } = render(<StartedItem tool={spawnTool(0, 'Fix')} />);
     expect(screen.getByText('Starting')).toBeInTheDocument();

@@ -181,7 +181,7 @@ export function ProjectsPanel({ onNavigate }: { onNavigate?: () => void } = {}) 
 
       {truncated && (
         <p style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '2px 2px 0', ...mono(11.5, 'var(--color-text-secondary)') }}>
-          <Info size={13} aria-hidden style={{ flexShrink: 0 }} />Some projects are not shown
+          <Info size={13} aria-hidden style={{ flexShrink: 0 }} />Some threads are not shown
         </p>
       )}
     </div>
