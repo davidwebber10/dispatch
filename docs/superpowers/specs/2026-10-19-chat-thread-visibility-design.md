@@ -1,16 +1,17 @@
 # Chat thread visibility: design
 
 Date: 2026-10-19
-Status: approved by Jason on 2026-10-19, with every decision recorded below. Next: the visual
-design review in Claude Design (section 13 and the design brief), then an in-app preview page
-(section 14), then the implementation plan.
+Status: approved by Jason on 2026-10-19, with every decision recorded below. The Claude Design
+boards are back and adopted (section 15), with the in-progress Docs rule (CTV-DOCS). Next:
+Jason approves these changes, then an in-app preview page (section 14), then the
+implementation plan.
 Base: origin/main 91b15fdd (v3.1.7)
 Parent spec: `2026-10-13-endless-chat-design.md` (called "the Chat spec" below)
 
 ## Decisions (approved by Jason, 2026-10-19)
 
 Jason approved this spec on 2026-10-19 and accepted the recommended answer to every question.
-No question is open. Section 10 lists all of them (Q1 to Q17).
+Section 10 lists Q1 to Q17 (all decided) and the open Q18 to Q20.
 
 | ID | Decision |
 |---|---|
@@ -20,6 +21,10 @@ No question is open. Section 10 lists all of them (Q1 to Q17).
 | CTV-Q7 | "No private agents" (Task, Agent) is a written rule in the Chat instructions only, with no code behind it |
 | CTV-NAMES | The committed `2026-10-19-chat-thread-visibility-design-brief.md` keeps the neutral project names, because the repository is public. The copy with the real names, `2026-10-19-chat-thread-visibility-design-brief.local.md`, stays git-ignored and is never committed |
 | Q4 to Q6, Q8 to Q17 | The recommendations exactly as written in section 10 |
+| CTV-DOCS (2026-10-19, after the design review) | The Docs list shows only in-progress docs: a doc that is not on main, or that a worktree or unmerged branch changed. At most 5 rows, newest first; "+N more" opens the project in Workspace; the Docs line is hidden when there are none. A doc linked in chat still opens wherever it lives, main included. Reason: some projects have dozens of docs, and the pane must not list them all (section 12.7) |
+| CTV-DESIGNS (2026-10-19) | The Claude Design boards are the visual reference, with their 7 differences from the brief adopted as spec changes (section 15). Where a board and this spec differ, the spec wins |
+
+Questions Q18 to Q20 came from these two changes and are still open (section 10).
 
 ## 1. Goal
 
@@ -107,7 +112,8 @@ them.
 The pane keeps one block per project. Under the project's name and counts, it lists the
 project's visible threads.
 
-**Row, line 1:** a state dot, the thread name (one line, ellipsis), the start time
+**Row, line 1:** a state mark (the shapes in section 15), the thread name (one line,
+ellipsis), the start time
 (`14:02` today, `Mon 14:02` this week, else the date).
 
 **Row, line 2 (mono, 11 px):** who started it (section 3.3), the harness (`Claude`, `Codex`,
@@ -145,8 +151,9 @@ Inside a group, the newest activity first.
 reloads (keyed by project id in component state).
 
 **Which projects show:** a project with at least one visible thread, a need-you count, or open
-items. A project with only open items shows its header line and no rows. Projects with a
-thread that needs you come first; then projects by their newest thread activity.
+items. A project with only open items shows its header line and no rows. Order (section 15):
+projects with a thread that needs you first, then projects with live work, then the rest;
+inside each group, by the newest thread activity.
 
 ### 3.3 Who started it (item 3)
 
@@ -183,7 +190,8 @@ the moment the spawn returns (about 1 to 2 s later). A new kind would add rows t
 append-only log and the model's view, change the fixed system prompt (the kind list), and
 sit between the tool row and its echo. Drawing the existing rows needs no core change.
 
-**States of the item** (one line, a light card, smaller than a report card):
+**States of the item** (one line, a light card, smaller than a report card; a second line
+only for doc chips, section 15):
 
 | Rows present | Shows |
 |---|---|
@@ -254,7 +262,8 @@ fork of the component.
   Overseer store; without this, a thread opened in Chat would reopen over Overseer or the board.
 - Decided (Q3): an "Open in Workspace" button in the lightbox header, shown only when the
   caller passes an `onOpenFull` prop (Chat passes it; Overseer and the board do not), because
-  a CLI thread is easier to use full size.
+  a CLI thread is easier to use full size. Per the boards (section 15), it is a ghost button
+  to the left of Interrupt, Stop and Archive.
 
 ## 4. Data and API changes
 
@@ -437,13 +446,21 @@ Jason accepted every recommended answer on 2026-10-19. Each answer below is now 
 | Q9 | How does "Open in editor" work, and which editor? | An editor URL opened by the browser (`vscode://file`, or the Cursor or Zed form), picked in the Chat settings, empty by default so the button is hidden. No daemon process, desktop only |
 | Q10 | Which file types become links? | `.md`, `.markdown` and `.txt`. Other files stay plain text |
 | Q11 | Fetch remote branches before a branch read? | No. Read them as of the last fetch and say so in the viewer |
-| Q12 | Which folders does the Docs list scan? | `docs/superpowers/specs`, `docs/superpowers/plans`, `docs/specs`, `docs/plans`. Not every `.md` in the repo |
+| Q12 | Which folders does the Docs list scan, and which docs does it show? | `docs/superpowers/specs`, `docs/superpowers/plans`, `docs/specs`, `docs/plans`. Not every `.md` in the repo. Changed 2026-10-19 (CTV-DOCS): only in-progress docs (not on main, or changed against main), at most 5 rows, "+N more" opens the project in Workspace, no Docs line when there are none |
 | Q13 | Should doc links inside the thread lightbox (a thread's own chat) open the doc viewer too? | Later. Today they open a file tab; changing the shared `ChatView` is a separate change |
 | Q14 | Where does the "report doc paths" rule live? | One sentence in the shared worker prompt in `prompts.ts`, for all agent types, so Overseer and Chat threads both follow it |
 | Q15 | A path inside a removed worktree with no branch named: what opens? | The branch whose name ends in the worktree name, else the main checkout copy with a note, else "not found" |
 | Q16 | One PR or two? | Two, in one plan: PR 1 is items 1 to 6, PR 2 is item 7 (doc links), built on PR 1. Each stays reviewable |
 | Q17 | Keep the in-app preview page after the build? | No. Delete it in the last build task; its fixtures would drift from the real data (section 14) |
 | CTV-NAMES | Which project names does the committed design brief use? | Neutral names, because the repository is public. The real-name `.local.md` copy stays git-ignored (section 13) |
+
+### Still open (from the design review and CTV-DOCS)
+
+| # | Question | Recommendation |
+|---|---|---|
+| Q18 | How does "+N more" open "the project in Workspace"? No "open a project" action exists today; the app has only `requestOpenThread` (`packages/web/src/stores/ui.ts`) | Add a small `requestOpenProject(projectId)` to the UI store: switch to Workspace (on the iPhone, the Projects tab) and expand that project's sidebar card |
+| Q19 | Where does the Docs count N come from, so the line can hide at 0 before the list opens? | A separate counts route, cached 60 s per project, loaded on ChatMode mount and on the 60 s timer only, never on thread events. Rows stay lazy per project |
+| Q20 | Does an in-progress doc alone make a project show in the pane? | No. The Docs line shows only inside projects that the 3.2 rule already shows, so the pane stays quiet |
 
 ## 11. Next steps and task breakdown
 
@@ -452,7 +469,8 @@ The owner set this order on 2026-10-19:
 1. The owner reviews this spec.
 2. Visual designs of every changed screen (section 13). The owner pastes the design brief
    `2026-10-19-chat-thread-visibility-design-brief.md` into Claude Design and reviews the
-   output.
+   output. Done on 2026-10-19: the boards are adopted (section 15). Jason approves the
+   resulting spec changes before step 3.
 3. An in-app preview page on the spec branch (section 14): the approved designs built with the
    real components and fixture data, so the owner sees them in the real app before the build.
    It starts only after the owner reviews the Claude Design output.
@@ -640,29 +658,46 @@ Doc: /abs/path/to/project/.worktrees/name/docs/superpowers/specs/file.md (branch
 
 ### 12.7 Per-project Docs list in the pane
 
-- Under each project block (section 3.2), after the threads: a "Docs (N)" line, closed by
-  default. Opening it loads the list for that project only (lazy), from
-  `GET /api/endless/docs?project=ID`.
-- **What it lists:** `.md` files in `docs/superpowers/specs`, `docs/superpowers/plans`,
-  `docs/specs` and `docs/plans` (Q12), from the main checkout, each worktree in the project
-  folder, and each unmerged branch. For a branch, only the doc files that the branch added or
-  changed against the default branch (`git diff --name-only default...branch` on those
-  folders), newest 20 branches by commit date.
-- **One row per path:** the newest copy wins; the row shows the other copies as a count.
-  Row: the file name, the doc's status line (for example "draft, awaiting owner review"),
-  the location chip, the `vsMain` chip, the modified time, and the writer.
+Decided 2026-10-19 (CTV-DOCS): the list shows in-progress docs only.
+
+- **What it lists:** in-progress `.md` files in the same four folders (Q12):
+  `docs/superpowers/specs`, `docs/superpowers/plans`, `docs/specs` and `docs/plans`. A doc
+  is in progress when its newest copy is not on main (`vsMain` is `not_on_main`) or differs
+  from main (`changed`). A doc that exists only on main, or whose every copy matches main,
+  is never listed.
+- **Where copies come from:** each worktree in the project folder (its committed and
+  uncommitted changes and its untracked files in those folders, against the default branch)
+  and each unmerged branch with no worktree (`git diff --name-only default...branch` on those
+  folders), newest 20 branches by commit date. The main checkout itself adds no rows.
+- **One row per path:** the newest in-progress copy wins; the row shows the other copies as a
+  count. Row: the file name (long names wrap, section 15), the doc's status line (for example
+  "draft, awaiting owner review"), the location chip, the `vsMain` chip, the modified time,
+  and the writer.
+- **Location chip in a row:** the short form only: "worktree chat-visibility-spec", or
+  "branch spec/telemetry". The branch of a worktree copy shows on hover and in the viewer
+  header (12.4), not in the row. The chip never cuts off mid-word (section 15, board fix).
 - **The writer:** the newest non-archived thread whose working folder is that worktree; else
   the thread (`ref`) of the newest Chat report that names the path; else none. A writer tap
   opens the thread lightbox; a row tap opens the viewer.
-- **Order and caps:** newest first; 8 rows, then "+N more". The server caches the list for
-  60 s per project, keyed by the worktree list and the branch heads, so a reopen is cheap.
+- **The Docs line:** "Docs (N)" under the project's threads, closed by default, and shown
+  only when N is more than 0. With no in-progress doc, the project block has no Docs line.
+- **The count N:** the pane needs N before the list opens. Proposed (Q19): a separate,
+  cached `GET /api/endless/docs/counts` that the pane loads on ChatMode mount and on its 60 s
+  timer, never on thread events. Opening the line loads the rows for that project only, from
+  `GET /api/endless/docs?project=ID`.
+- **Order and caps:** newest first; at most 5 rows. "+N more" opens the project in Workspace
+  (Q18); it does not grow the pane. The server caches the list and the count for 60 s per
+  project, keyed by the worktree list and the branch heads.
+- **Unchanged:** a doc link in chat opens the viewer wherever the doc lives, main included.
+  The 12.3 resolver does not change; only the list is limited.
 
 ### 12.8 Data and API changes
 
 | Route | Returns |
 |---|---|
 | `GET /api/endless/doc?project=ID&path=P&branch=B` | `DocCopy`, or 404 with the places it looked, or 403 for a refused path |
-| `GET /api/endless/docs?project=ID` | the doc rows of 12.7 |
+| `GET /api/endless/docs?project=ID` | the in-progress doc rows of 12.7 (at most 5, and the total) |
+| `GET /api/endless/docs/counts` | the in-progress doc count per project (Q19) |
 
 Core: `packages/core/src/docs/resolve.ts` (12.3, 12.5), `packages/core/src/docs/list.ts`
 (12.7), `packages/core/src/docs/git.ts` (a small `execFile` wrapper: worktrees, refs, blob
@@ -683,14 +718,14 @@ shared folder, and never touch the real HOME.
 |---|---|---|
 | `docs/resolve.test.ts` (new) | main copy; a `.worktrees/` copy and a `.claude/worktrees/` copy (newest wins, with the note); a gone worktree read at the named branch; an unmerged branch read; `vsMain` same, changed, not_on_main; the status line | yes (no module) |
 | `docs/resolve.test.ts`, safety cases | `../` out, an absolute path outside every project, a symlink out, a worktree outside the project folder, a branch the server did not list, a branch named like an option, a folder, a `.json` file, a file over 2 MB, a branch blob over 2 MB | yes |
-| `docs/list.test.ts` (new) | the four folders only; one row per path with the newest copy; only added or changed files for a branch; the writer from a worktree thread and from a Chat report; the 60 s cache | yes |
+| `docs/list.test.ts` (new) | the four folders only; only in-progress docs: a main-only doc and a copy that matches main are not listed, a `not_on_main` and a `changed` copy are; an untracked file in a worktree counts; one row per path with the newest copy; at most 5 rows with the total; the short location chip; the count per project; the writer from a worktree thread and from a Chat report; the 60 s cache | yes |
 | `overseer/source-file.test.ts` (existing plus new) | the old cases unchanged; a `.worktrees/` copy is found | the new case, yes |
 | `routes/endless.test.ts` (new cases) | the two routes; 403 and 404 bodies | yes |
 | `overseer/prompts.test.ts` (new case) | the worker prompt has the doc report rule | yes |
 | `lib/docPaths.test.ts` (new, web) | bare and inline-code paths; trailing punctuation; URLs left alone; the `(branch ...)` part; `.md`, `.markdown`, `.txt` only | yes |
 | `Markdown.test.tsx` (new cases) | the `docs` pass makes buttons after the sanitizer; a path inside a link or code block is still sanitized | yes |
 | `DocViewer.test.tsx` (new) | the chips for each `source` and `vsMain`; Reveal and editor hidden when `canReveal` is false; Copy path; not found; back after a link inside the doc | yes |
-| `ProjectsPanel.test.tsx` (new cases) | Docs fold closed by default, loads once on open, rows, writer tap opens the lightbox | yes |
+| `ProjectsPanel.test.tsx` (new cases) | no Docs line at a count of 0; Docs fold closed by default, loads once on open, at most 5 rows; "+N more" opens the project in Workspace; writer tap opens the lightbox; the state mark shapes; the project order (waiting, live, rest) | yes |
 
 End to end (`/verify`): a fake project with a main checkout, a `.worktrees/` worktree and a
 spec branch with no worktree. A Chat report that names each copy opens the right one;
@@ -722,13 +757,13 @@ source for the behavior.
 |---|---|---|---|---|
 | S1 | Right pane, per project | `packages/web/src/components/endless/ProjectsPanel.tsx`, in the 280 px aside of `ChatMode.tsx` | `ProjectStatus` counts (live, need you, open); `PaneThread` rows: name, state, harness, who started it, start time, latest step, question | loading (first load); empty ("No project activity yet"); unavailable (Chat is starting); the Needs you section first, with the question; a project block with working, queued and error rows; each who-started tag (Chat, Overseer, You, Role, "via" a thread); "Done today (N)" closed and open; "+N more"; a project with only open items; the truncated note |
 | S2 | Toolbar Projects button | `ChatMode.tsx` | the need-you count | no badge; badge with a count |
-| S3 | "Started" card in the chat | `packages/web/src/components/endless/EndlessMessageRow.tsx` (new `StartedItem`) | thread label, project, harness, live state, up to 2 doc links from the task | Starting (no result yet); Started with each chip (working, needs you, done, error); no chip (an old thread); Could not start; the card among tool rows, and the same thread's report card later in the chat |
+| S3 | "Started" card in the chat | `packages/web/src/components/endless/EndlessMessageRow.tsx` (new `StartedItem`) | thread label, project, harness, live state, up to 2 doc links from the task | one line, with a second line only for doc chips (section 15); Starting (no result yet); Started with each chip (working, needs you, done, error); no chip (an old thread); Could not start; the card among tool rows, and the same thread's report card later in the chat |
 | S4 | Report card with doc links | `EndlessMessageRow.tsx` (`WorkCard`) | the report text and its doc paths | short card; folded; open with "Open thread" and doc link chips |
-| S5 | Thread viewer opened from Chat | `packages/web/src/components/overseer/components/WorkerLightbox.tsx` (reused), mounted in `ChatMode.tsx` | the thread's own chat or terminal, its header and controls | over the chat on desktop; a waiting thread with its question; the "Open in Workspace" button (Q3). Do not redesign the lightbox itself |
+| S5 | Thread viewer opened from Chat | `packages/web/src/components/overseer/components/WorkerLightbox.tsx` (reused), mounted in `ChatMode.tsx` | the thread's own chat or terminal, its header and controls | over the chat on desktop; a waiting thread with its question; the "Open in Workspace" ghost button left of Interrupt, Stop and Archive (Q3, section 15). Do not redesign the lightbox itself |
 | S6 | Doc link chip | `packages/web/src/components/Markdown.tsx` (new `docs` pass), `EndlessMessageRow.tsx` | the file name; the full path on hover | in a Dispatch reply (bare path and inline code); in a report card; a long absolute path; hover and focus |
 | S7 | Doc viewer | new `packages/web/src/components/endless/DocViewer.tsx` in `common/Modal` | `DocCopy`: file name, location, `vsMain`, status line, modified time, note, the rendered Markdown | from main, same as main; from a worktree, changed here; from a worktree, not on main; branch only, as of the last fetch; actions on the Mac (Reveal in Finder, Open in editor, Copy path, the writer thread) and elsewhere (Copy path only); loading; not found; refused; too large; back after a link inside the doc |
-| S8 | Per-project Docs list | `ProjectsPanel.tsx` (the Docs fold) | doc rows: file name, status line, location, `vsMain`, modified time, writer thread, other copies count | closed ("Docs (N)"); loading; rows; empty; "+N more" |
-| S9 | Mobile (iPhone Safari PWA) | `ChatMode.tsx` (the Projects `Modal` sheet), `packages/web/src/components/mobile/MobileApp.tsx` | the same as S1 to S8 | the Projects sheet with the S1 states and S8; the toolbar badge; a "Started" card at 393 px; the thread viewer as a sheet; the doc viewer as a sheet with Copy path only |
+| S8 | Per-project Docs list (in-progress docs only, CTV-DOCS) | `ProjectsPanel.tsx` (the Docs fold) | in-progress doc rows: file name (wraps), status line, short location chip, `vsMain` ("not on main" or "changed here"), modified time, writer thread, other copies count | closed ("Docs (N)", shown only when N is more than 0); loading; up to 5 rows; "+N more" (opens the project in Workspace). No empty state: with 0 docs the line is hidden |
+| S9 | Mobile (iPhone Safari PWA) | `ChatMode.tsx` (the Projects `Modal` sheet), `packages/web/src/components/mobile/MobileApp.tsx` | the same as S1 to S8 | the Projects sheet, which reuses the desktop pane and its states at full width (section 15), with S8; the toolbar badge; a "Started" card at 393 px; the thread viewer as a sheet; the doc viewer as a sheet with Copy path only |
 
 ## 14. In-app preview page (after the design review, before the build)
 
@@ -754,3 +789,54 @@ output. No code exists for it yet. Outline:
   the preview stay together until the owner approves both. No PR, no merge into main.
 - **Decided (Q17):** the last build task deletes the preview page, because its fixtures
   would drift from the real data and nothing tests them.
+
+## 15. Designs (Claude Design boards, 2026-10-19)
+
+**Where:** `docs/superpowers/specs/2026-10-19-chat-thread-visibility-designs.local/`, in the
+worktree only. The boards use the owner's real project names and the repository is public,
+so git ignores the folder (`*.local/` in `.git/info/exclude`, next to the existing
+`*.local.md` rule) and it is never committed. The source is the zip from Claude Design: 12
+`.dc.html` boards and a README. Each board is static HTML with inline CSS that holds the exact
+values; build the components in the app's own stack with its tokens, and ignore the design
+tool's wrapper elements.
+
+| Board | Covers |
+|---|---|
+| `Main.dc.html` | Desktop Chat with the pane: S1, S2 (badge), S3 Started cards, S4 folded, S6 chips, S8 closed |
+| `ReportOpen.dc.html` | S4 open, S3 "Could not start", Done today open |
+| `ThreadViewer.dc.html` | S5 thread viewer over Chat, waiting thread, "Open in Workspace" |
+| `DocViewer.dc.html` | S7 doc viewer on the Mac |
+| `PaneStates.dc.html` | S1 loading, empty, unavailable, +N more, cut note; S8 open, closed, loading, empty, +N more |
+| `ChatStates.dc.html` | S2 button states, S3 card states, S4 short and folded, S6 chip states |
+| `DocStates.dc.html` | S7 loading, not found, refused, too large, back arrow, copies note, non-Mac actions |
+| `PhoneChat.dc.html` | iPhone Chat: toolbar badge, Started cards (S9) |
+| `PhoneProjects.dc.html` | iPhone Projects sheet |
+| `PhoneDocs.dc.html` | iPhone sheet with Docs open |
+| `PhoneThread.dc.html` | iPhone thread viewer sheet |
+| `PhoneDoc.dc.html` | iPhone doc viewer sheet |
+
+**Adopted as spec changes** (the README's "Differences from the brief"):
+
+1. **State marks carry a shape**, so the meaning survives any accent color: working is a dot
+   with a halo, needs you a diamond, queued a hollow ring, error a square, done a check.
+   Chips also carry the word. This applies to the pane rows (3.2) and the Started chip (3.4).
+2. **Project order:** projects with a waiting thread first, then projects with live work,
+   then the rest (3.2).
+3. **"Docs (N)" shows only when N is more than 0** (12.7).
+4. **The Started card is one line.** It gets a second line only for doc chips (3.4, S3).
+5. **Long doc names in the Docs list wrap**, with no middle cut (12.7, S8).
+6. **The iPhone Projects sheet reuses the desktop pane** and its states at full width (S9).
+7. **"Open in Workspace" is a ghost button** to the left of Interrupt, Stop and Archive in
+   the thread viewer header (3.6, S5).
+
+**Fix the boards need:** in the S8 Docs rows (`PaneStates.dc.html`, `PhoneDocs.dc.html`), the
+location chip is cut off ("worktree chat-visibility-spec on s..."): the chip CSS uses
+`nowrap` with an ellipsis inside the 280 px pane. The build uses the short form in rows
+("worktree chat-visibility-spec"), with the branch on hover and in the viewer (12.7). The
+chip wraps if the short form is still too long.
+
+**Where the boards are out of date:** they show the old Docs rule (main docs listed, 8 rows,
+an empty state). The spec wins: in-progress docs only, at most 5 rows, no line at 0
+(CTV-DOCS). The designer also filled in content that the brief did not give (the thread
+viewer's tool rows, the doc viewer's Goal text, "+1 copy" on one row); that content is sample
+data only.
