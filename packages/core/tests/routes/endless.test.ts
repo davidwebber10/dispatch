@@ -203,6 +203,13 @@ describe('endless routes', () => {
     expect((await request(app).get('/api/endless/docs').query({ project: 'nope' })).status).toBe(400);
   });
 
+  it('GET /docs and /docs/counts answer 500 on an unexpected error', async () => {
+    vi.spyOn(svc.docs, 'list').mockRejectedValue(new Error('boom'));
+    vi.spyOn(svc.docs, 'counts').mockRejectedValue(new Error('boom'));
+    expect((await request(app).get('/api/endless/docs').query({ project: 's1' })).status).toBe(500);
+    expect((await request(app).get('/api/endless/docs/counts').query({ projects: 's1' })).status).toBe(500);
+  });
+
   it('POST /arm arms a Chat thread and refuses an unknown or a non-Chat one', async () => {
     const db = (svc as any).o.db as Database.Database;
     terminalsDb.create(db, { id: 't1', sessionId: 's1', type: 'claude-code', label: 'Fix', config: { role: 'agent', origin: 'endless' } });

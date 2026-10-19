@@ -9,7 +9,7 @@ afterEach(() => r?.rm());
 const noWriter = () => null;
 
 describe('listDocs', () => {
-  it('lists only in-progress docs in the four folders', () => {
+  it('lists only in-progress docs in the four folders', async () => {
     r = makeRepo();
     r.write('docs/superpowers/specs/on-main.md', 'same');
     r.write('docs/superpowers/specs/edited.md', 'v1');
@@ -19,30 +19,30 @@ describe('listDocs', () => {
     r.write('docs/superpowers/specs/edited.md', 'v2', wt);         // changed
     r.write('docs/superpowers/plans/new-plan.md', 'p', wt);       // untracked: not on main
     r.write('notes/other.md', 'x', wt);                            // outside the folders
-    const { rows, total } = listDocs({ id: 's1', folder: r.dir }, noWriter);
+    const { rows, total } = await listDocs({ id: 's1', folder: r.dir }, noWriter);
     expect(rows.map((x) => [x.path, x.vsMain]).sort()).toEqual([['docs/superpowers/plans/new-plan.md', 'not_on_main'], ['docs/superpowers/specs/edited.md', 'changed']]);
     expect(total).toBe(2);
     expect(rows[0]).toMatchObject({ source: 'worktree', worktree: 'a', branch: 'spec/a' });
   });
 
-  it('a branch with no worktree adds only what it added or changed', () => {
+  it('a branch with no worktree adds only what it added or changed', async () => {
     r = makeRepo();
     r.write('docs/plans/base.md', 'b'); r.commit('init');
     r.g(r.dir, 'checkout', '-q', '-b', 'spec/c');
     r.write('docs/plans/c.md', 'c'); r.commit('c');
     r.g(r.dir, 'checkout', '-q', 'main');
-    const { rows } = listDocs({ id: 's1', folder: r.dir }, noWriter);
+    const { rows } = await listDocs({ id: 's1', folder: r.dir }, noWriter);
     expect(rows.map((x) => [x.path, x.source, x.branch])).toEqual([['docs/plans/c.md', 'branch', 'spec/c']]);
   });
 
-  it('a copy that matches main is not listed', () => {
+  it('a copy that matches main is not listed', async () => {
     r = makeRepo();
     r.write('docs/specs/x.md', 'same'); r.commit('init');
     r.g(r.dir, 'worktree', 'add', '-q', '-b', 'spec/x', path.join(r.dir, '.worktrees', 'x'));
-    expect(listDocs({ id: 's1', folder: r.dir }, noWriter).rows).toEqual([]);
+    expect((await listDocs({ id: 's1', folder: r.dir }, noWriter)).rows).toEqual([]);
   });
 
-  it('one row per path, the newest copy, with the copies count; at most 5 rows and the total', () => {
+  it('one row per path, the newest copy, with the copies count; at most 5 rows and the total', async () => {
     r = makeRepo();
     r.write('README.md', 'x'); r.commit('init');
     const a = path.join(r.dir, '.worktrees', 'a'); const b = path.join(r.dir, '.worktrees', 'b');
@@ -53,28 +53,64 @@ describe('listDocs', () => {
     fs.utimesSync(path.join(a, 'docs/specs/same.md'), new Date(2026, 0, 1), new Date(2026, 0, 1));
     r.write('docs/specs/same.md', 'new', b); // the newest file of all
     for (let k = 0; k < 6; k++) { r.write(`docs/plans/p${k}.md`, `${k}`, a); fs.utimesSync(path.join(a, `docs/plans/p${k}.md`), old, old); }
-    const { rows, total } = listDocs({ id: 's1', folder: r.dir }, noWriter);
+    const { rows, total } = await listDocs({ id: 's1', folder: r.dir }, noWriter);
     expect(rows).toHaveLength(DOCS_ROWS);
     expect(total).toBe(7);
     expect(rows[0]).toMatchObject({ path: 'docs/specs/same.md', worktree: 'b', copies: 2 });
   });
 
-  it('the writer comes from the callback, with the worktree folder', () => {
+  it('the writer comes from the callback, with the worktree folder', async () => {
     r = makeRepo();
     r.write('README.md', 'x'); r.commit('init');
     const a = path.join(r.dir, '.worktrees', 'a');
     r.g(r.dir, 'worktree', 'add', '-q', '-b', 'spec/a', a);
     r.write('docs/specs/w.md', 'w', a);
     const writerOf = vi.fn(() => ({ id: 't1', label: 'Plan: w' }));
-    const { rows } = listDocs({ id: 's1', folder: r.dir }, writerOf);
+    const { rows } = await listDocs({ id: 's1', folder: r.dir }, writerOf);
     expect(rows[0].writer).toEqual({ id: 't1', label: 'Plan: w' });
     expect(writerOf).toHaveBeenCalledWith({ path: 'docs/specs/w.md', worktreeReal: fs.realpathSync(a) });
   });
 
-  it('a folder that is not a git repo lists nothing', () => {
+  it('a folder that is not a git repo lists nothing', async () => {
     r = makeRepo();
     fs.rmSync(path.join(r.dir, '.git'), { recursive: true, force: true });
     r.write('docs/specs/a.md', 'a');
-    expect(listDocs({ id: 's1', folder: r.dir }, noWriter)).toEqual({ rows: [], total: 0 });
+    expect(await listDocs({ id: 's1', folder: r.dir }, noWriter)).toEqual({ rows: [], total: 0 });
+  });
+
+  it('a worktree symlink that leads out of the project is not listed', async () => {
+    r = makeRepo();
+    r.write('README.md', 'x'); r.commit('init');
+    const a = path.join(r.dir, '.worktrees', 'a');
+    r.g(r.dir, 'worktree', 'add', '-q', '-b', 'spec/a', a);
+    fs.writeFileSync(path.join(r.root, 'outside.md'), 'secret');
+    fs.mkdirSync(path.join(a, 'docs/specs'), { recursive: true });
+    fs.symlinkSync(path.join(r.root, 'outside.md'), path.join(a, 'docs/specs/link.md'));
+    r.write('docs/specs/real.md', 'r', a);
+    const { rows, total } = await listDocs({ id: 's1', folder: r.dir }, noWriter);
+    expect(rows.map((x) => x.path)).toEqual(['docs/specs/real.md']);
+    expect(total).toBe(1);
+  });
+
+  it('the main checkout adds no rows, even on an unmerged branch', async () => {
+    r = makeRepo();
+    r.write('README.md', 'x'); r.commit('init');
+    r.g(r.dir, 'checkout', '-q', '-b', 'spec/m');
+    r.write('docs/specs/m.md', 'm'); r.commit('m');
+    expect(await listDocs({ id: 's1', folder: r.dir }, noWriter)).toEqual({ rows: [], total: 0 });
+  });
+
+  it('a local branch and its remote-tracking copy count as one copy', async () => {
+    r = makeRepo();
+    r.write('README.md', 'x'); r.commit('init');
+    r.g(r.dir, 'checkout', '-q', '-b', 'fix/x');
+    r.write('docs/plans/x.md', 'x'); r.commit('x');
+    const sha = r.g(r.dir, 'rev-parse', 'HEAD').trim();
+    r.g(r.dir, 'checkout', '-q', 'main');
+    r.g(r.dir, 'remote', 'add', 'origin', r.dir);
+    r.g(r.dir, 'update-ref', 'refs/remotes/origin/fix/x', sha);
+    const { rows, total } = await listDocs({ id: 's1', folder: r.dir }, noWriter);
+    expect(rows.map((x) => [x.path, x.branch, x.copies])).toEqual([['docs/plans/x.md', 'fix/x', 1]]);
+    expect(total).toBe(1);
   });
 });

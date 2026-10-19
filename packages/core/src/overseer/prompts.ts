@@ -392,7 +392,7 @@ const AGENT_AUTONOMY_NOTE =
   'at the end. If you did not change code, run single test files only. Do not pipe a test run through ' +
   'head or tail. Write the output to a file, then read the file. If a run that you did not start is ' +
   'alive, wait. Never kill a process that you did not start.' +
-  ' When you write or change a doc (.md), end your report with one line per doc: "Doc: " and its absolute path, then the branch in parentheses, for example "Doc: /abs/path/docs/plans/x.md (branch spec/x)".';
+  ' When you write or change a doc (.md), put one line per doc in your final report: "Doc: " and its absolute path, then the branch in parentheses, for example "Doc: /abs/path/docs/plans/x.md (branch spec/x)".';
 
 /**
  * Browser-auth relay note: a CLI you run (gh, npm, etc.) may need a browser login. WHEN a CLI

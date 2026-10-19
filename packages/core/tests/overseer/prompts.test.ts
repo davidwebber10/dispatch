@@ -175,5 +175,10 @@ it('every agent type gets the test-run rule: full suite only after a code change
 });
 
 it('every agent prompt asks for the absolute path and branch of each doc it writes', () => {
-  for (const p of Object.values(AGENT_PROMPTS)) expect(p).toMatch(/Doc: .*absolute path.*branch/s);
+  for (const p of Object.values(AGENT_PROMPTS)) {
+    expect(p).toMatch(/Doc: .*absolute path.*branch/s);
+    // It must not compete with "make it the last thing you say" (the summary rule).
+    expect(p).toContain('put one line per doc in your final report');
+    expect(p).not.toContain('end your report with');
+  }
 });
