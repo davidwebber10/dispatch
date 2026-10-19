@@ -21,9 +21,9 @@ export class DocsService {
     return s ? { id: s.id, folder: s.working_dir } : null;
   }
   /** Null for an unknown project. */
-  doc(projectId: string, docPath: string, branch: string | null): DocResult | null {
+  doc(projectId: string, docPath: string, branch: string | null, worktree: string | null = null): DocResult | null {
     const p = this.project(projectId);
-    return p ? resolveDoc(p, docPath, { branch }) : null;
+    return p ? resolveDoc(p, docPath, { branch, worktree }) : null;
   }
   /** The in-progress docs of a project, cached DOCS_CACHE_MS; null for an unknown project. */
   async list(projectId: string): Promise<{ rows: DocRow[]; total: number } | null> {

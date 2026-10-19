@@ -114,3 +114,16 @@ describe('DocsService writer', () => {
     expect(await writer(new DocsService(db, store, now))).toEqual({ id: 't3', label: 'Spec: late' });
   });
 });
+
+describe('DocsService.doc', () => {
+  it('passes the branch and the worktree name to the resolver; null for an unknown project', () => {
+    r.write('docs/specs/one.md', 'main'); r.commit('main copy');
+    r.write('docs/specs/one.md', 'wt', wt);
+    const svc = new DocsService(db, store, now);
+    const d = svc.doc('s1', 'docs/specs/one.md', null, 'a');
+    expect(d).toMatchObject({ kind: 'doc', doc: { source: 'worktree', worktree: 'a', markdown: 'wt' } });
+    expect(svc.doc('s1', 'docs/specs/one.md', 'spec/a')).toMatchObject({ kind: 'doc', doc: { source: 'worktree', markdown: 'wt' } });
+    expect(svc.doc('s1', 'docs/specs/one.md', null)).toMatchObject({ kind: 'doc', doc: { source: 'main', markdown: 'main' } });
+    expect(svc.doc('nope', 'docs/specs/one.md', null, 'a')).toBeNull();
+  });
+});

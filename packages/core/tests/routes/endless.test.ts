@@ -187,6 +187,18 @@ describe('endless routes', () => {
     expect((await request(app).get('/api/endless/doc').query({ project: 'nope', path: 'docs/a.md' })).status).toBe(400);
   });
 
+  it('GET /doc passes the worktree name: the named worktree copy wins over the main checkout', async () => {
+    const folder = svc.docs.project('s1')!.folder;
+    fs.mkdirSync(path.join(folder, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(folder, 'docs', 'a.md'), 'main');
+    fs.mkdirSync(path.join(folder, '.worktrees', 'a', 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(folder, '.worktrees', 'a', 'docs', 'a.md'), 'worktree');
+    const res = await request(app).get('/api/endless/doc').query({ project: 's1', path: 'docs/a.md', worktree: 'a' });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ path: 'docs/a.md', source: 'worktree', worktree: 'a', markdown: 'worktree' });
+    expect((await request(app).get('/api/endless/doc').query({ project: 's1', path: 'docs/a.md' })).body).toMatchObject({ source: 'main', markdown: 'main' });
+  });
+
   it('GET /doc returns 413 for a file over 2 MB', async () => {
     const folder = svc.docs.project('s1')!.folder;
     fs.mkdirSync(path.join(folder, 'docs'), { recursive: true });

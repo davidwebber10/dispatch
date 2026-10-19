@@ -2,7 +2,9 @@
  * The doc resolver (chat thread visibility spec, 12.5): finds the right copy of a spec or plan
  * doc that a Chat message names, and says how it compares to main. Read only.
  *
- * Order: the path on disk (the main checkout, or a worktree path as given); for a path inside a
+ * Order: first an explicitly named copy (a worktree by name; or a listed branch: the copy on disk
+ * in the worktree that has it checked out, else its blob), when it has the file; then the path on
+ * disk (the main checkout, or a worktree path as given); for a path inside a
  * removed worktree, the named branch, then the branch that ends in the worktree name, then the
  * main checkout; otherwise the copies in the project's worktrees (newest first), then the
  * unmerged branches (newest first).
@@ -38,7 +40,7 @@ export function statusLine(text: string): string | null {
   return null;
 }
 
-export function resolveDoc(project: { id: string; folder: string }, ref: string, opts: { branch?: string | null } = {}): DocResult {
+export function resolveDoc(project: { id: string; folder: string }, ref: string, opts: { branch?: string | null; worktree?: string | null } = {}): DocResult {
   let realRoot: string;
   try { realRoot = fs.realpathSync.native(project.folder); } catch { return { kind: 'not_found', looked: [project.folder] }; }
   if (path.sep === '/' && ref.includes('\\')) return OUTSIDE;
@@ -83,11 +85,43 @@ export function resolveDoc(project: { id: string; folder: string }, ref: string,
     const text = bytes.toString('utf8');
     return { kind: 'doc', doc: { project: project.id, path: posix(docRel), absPath: null, source: 'branch', worktree: null, branch, vsMain: vs(docRel, bytes), modifiedAt: commitDate(realRoot, branch, docRel) ?? new Date((known.find((k) => k.name === branch)?.date ?? 0) * 1000).toISOString(), status: statusLine(text), note, markdown: text } };
   };
+  /** The worktree copy of `rel`, or null when that worktree does not have it. */
+  const inWorktree = (w: { rel: string }): DocResult | null => {
+    const inRoot = path.join(w.rel, rel);
+    looked.push(posix(inRoot));
+    const real = locate(realRoot, inRoot);
+    if (real === 'outside') return OUTSIDE;
+    if (real === 'missing') return null;
+    const r = fromDisk(real, inRoot);
+    return r.kind === 'not_found' ? null : r;
+  };
+  /** The copy that `opts` names, or null (no name, an unknown name, or the copy lacks the file). */
+  const namedCopy = (): DocResult | null => {
+    const byName = opts.worktree ? wts.find((w) => w.name === opts.worktree) : undefined;
+    if (byName) {
+      const r = inWorktree(byName);
+      if (r) return r;
+    }
+    const b = opts.branch;
+    if (!b || !known.some((k) => k.name === b)) return null;
+    const remotes = (git(realRoot, ['remote']) ?? '').split('\n').map((s) => s.trim()).filter(Boolean);
+    const checkedOut = wts.find((w) => w.branch && (w.branch === b || remotes.some((rm) => b === `${rm}/${w.branch}`)));
+    if (checkedOut) return inWorktree(checkedOut);
+    looked.push(`${b}:${posix(rel)}`);
+    return fromBranch(b, rel);
+  };
   const unmerged = (): { name: string; date: number }[] => {
     if (!base) return [];
     const merged = new Set((git(realRoot, ['branch', '-a', '--merged', base, '--format=%(refname:short)']) ?? '').split('\n').map((s) => s.trim()).filter(Boolean));
     return known.filter((k) => k.name !== base && !merged.has(k.name)).sort((a, b) => b.date - a.date);
   };
+
+  const wt = WT.exec(posix(rel));
+  // 0. An explicitly named copy (a path inside a worktree already names its copy).
+  if (!wt) {
+    const named = namedCopy();
+    if (named) return named;
+  }
 
   // 1. On disk.
   looked.push(posix(rel));
@@ -95,7 +129,6 @@ export function resolveDoc(project: { id: string; folder: string }, ref: string,
   if (found === 'outside') return OUTSIDE;
   if (found !== 'missing') return fromDisk(found, rel);
 
-  const wt = WT.exec(posix(rel));
   if (wt) {
     // 3. A path inside a removed worktree: the named branch, the branch that ends in its name, the main checkout.
     const rest = path.normalize(wt[3]);

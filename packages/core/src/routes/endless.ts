@@ -56,7 +56,7 @@ export function createEndlessRouter(svc: EndlessService): Router {
   router.get('/projects', (_req, res) => { res.json(svc.projects()); });
   // Read only: a spec or plan doc under a registered project folder (main, a worktree or an unmerged branch).
   router.get('/doc', (req, res) => {
-    const r = svc.docs.doc(String(req.query.project ?? ''), String(req.query.path ?? ''), str(req.query.branch));
+    const r = svc.docs.doc(String(req.query.project ?? ''), String(req.query.path ?? ''), str(req.query.branch), str(req.query.worktree));
     if (!r) { res.status(400).json({ error: 'unknown project' }); return; }
     if (r.kind === 'doc') res.json(r.doc);
     else if (r.kind === 'refused') res.status(403).json({ reason: r.reason });

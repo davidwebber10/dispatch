@@ -136,6 +136,67 @@ describe('resolveDoc', () => {
   });
 });
 
+describe('resolveDoc: an explicitly named copy wins over the main checkout', () => {
+  /** main has v1; worktree `a` on `spec/a` has v2 on disk. */
+  const setup = () => {
+    r = makeRepo();
+    r.write(SPEC, 'v1'); r.commit('init');
+    const wt = path.join(r.dir, '.worktrees', 'a');
+    r.g(r.dir, 'worktree', 'add', '-q', '-b', 'spec/a', wt);
+    fs.writeFileSync(path.join(wt, SPEC), 'v2');
+    return wt;
+  };
+
+  it('a named worktree returns its copy', () => {
+    const wt = setup();
+    const d = doc(resolveDoc(project(), SPEC, { worktree: 'a' }));
+    expect(d).toMatchObject({ source: 'worktree', worktree: 'a', branch: 'spec/a', markdown: 'v2', vsMain: 'changed', path: SPEC });
+    expect(d.absPath).toBe(path.join(wt, SPEC));
+  });
+
+  it('a named branch that a worktree has checked out returns the worktree copy on disk', () => {
+    setup();
+    expect(doc(resolveDoc(project(), SPEC, { branch: 'spec/a' }))).toMatchObject({ source: 'worktree', worktree: 'a', markdown: 'v2' });
+  });
+
+  it('a remote branch whose local name a worktree has checked out returns the worktree copy', () => {
+    setup();
+    r.g(r.dir, 'remote', 'add', 'origin', r.dir);
+    r.g(r.dir, 'update-ref', 'refs/remotes/origin/spec/a', 'HEAD');
+    expect(doc(resolveDoc(project(), SPEC, { branch: 'origin/spec/a' }))).toMatchObject({ source: 'worktree', worktree: 'a', markdown: 'v2' });
+  });
+
+  it('a named branch with no worktree that changed the file returns the blob', () => {
+    setup();
+    r.g(r.dir, 'checkout', '-q', '-b', 'spec/c');
+    r.write(SPEC, 'v3'); r.commit('c');
+    r.g(r.dir, 'checkout', '-q', 'main');
+    expect(doc(resolveDoc(project(), SPEC, { branch: 'spec/c' }))).toMatchObject({ source: 'branch', branch: 'spec/c', absPath: null, markdown: 'v3', vsMain: 'changed' });
+  });
+
+  it('an unknown worktree name, an unlisted branch, or a named copy without the file falls back to the main copy', () => {
+    setup();
+    r.g(r.dir, 'branch', 'spec/empty');
+    r.write('docs/other.md', 'main other'); r.commit('other');
+    expect(doc(resolveDoc(project(), SPEC, { worktree: 'nope' }))).toMatchObject({ source: 'main', markdown: 'v1' });
+    expect(doc(resolveDoc(project(), SPEC, { branch: 'no-such-branch' }))).toMatchObject({ source: 'main', markdown: 'v1' });
+    expect(doc(resolveDoc(project(), SPEC, { branch: '--output=/tmp/x' }))).toMatchObject({ source: 'main', markdown: 'v1' });
+    expect(doc(resolveDoc(project(), 'docs/other.md', { worktree: 'a' }))).toMatchObject({ source: 'main', markdown: 'main other' });
+    expect(doc(resolveDoc(project(), 'docs/other.md', { branch: 'spec/empty' }))).toMatchObject({ source: 'main', markdown: 'main other' });
+  });
+
+  it('a named worktree copy still obeys the safety rules', () => {
+    const wt = setup();
+    fs.writeFileSync(path.join(r.root, 'secret.md'), 's');
+    fs.rmSync(path.join(wt, SPEC));
+    fs.symlinkSync(path.join(r.root, 'secret.md'), path.join(wt, SPEC));
+    expect(resolveDoc(project(), SPEC, { worktree: 'a' }).kind).toBe('refused');
+    fs.rmSync(path.join(wt, SPEC));
+    fs.writeFileSync(path.join(wt, SPEC), 'x'.repeat(DOC_MAX_BYTES + 1));
+    expect(resolveDoc(project(), SPEC, { worktree: 'a' }).kind).toBe('too_large');
+  });
+});
+
 describe('resolveDoc safety', () => {
   it('refuses ../, an absolute path outside, and a symlink out', () => {
     r = makeRepo();
