@@ -7,6 +7,8 @@ import { ChatImage } from '../ChatImage';
 import { endlessMediaUrl } from '../../api/client';
 import { useUI } from '../../stores/ui';
 import { StartedItem } from './StartedItem';
+import { SPAWN_TOOL, parseSpawn } from './spawn';
+export { SPAWN_TOOL, parseSpawn };
 import type { EndlessMessage } from '../../api/types';
 
 export type Row =
@@ -16,13 +18,6 @@ export type Row =
   | { kind: 'started'; tool: EndlessMessage; echo?: EndlessMessage };
 
 const ZOOM_TOOL = /^mcp__memory__zoom\s/;
-export const SPAWN_TOOL = /^mcp__memory__spawn_agent\s/;
-
-export type Spawn =
-  | { kind: 'starting'; name: string; projectName: string | null; task: string }
-  | { kind: 'started'; agentId: string; label: string; projectName: string | null; projectId: string | null; task: string }
-  | { kind: 'failed'; name: string; error: string; task: string };
-
 /**
  * A run of N tool calls pairs with the run of up to N results right after it, in order (Claude Code
  * returns parallel results in call order). A `zoom` call is a "recalled" row; a `spawn_agent` call is
@@ -44,23 +39,6 @@ export function foldRows(messages: EndlessMessage[]): Row[] {
     });
   }
   return rows;
-}
-
-const firstLine = (s: string) => s.split('\n').find((l) => l.trim())?.trim() ?? '';
-export function parseSpawn(tool: EndlessMessage, echo?: EndlessMessage): Spawn {
-  let input: { name?: unknown; project?: unknown; task?: unknown; agentType?: unknown } = {};
-  try { input = JSON.parse(tool.text.replace(SPAWN_TOOL, '')); } catch { /* keep {} */ }
-  const name = (typeof input.name === 'string' && input.name.trim()) || `${typeof input.agentType === 'string' ? input.agentType : 'thread'} agent`;
-  const projectName = typeof input.project === 'string' ? input.project : null;
-  const task = typeof input.task === 'string' ? input.task : '';
-  if (!echo) return { kind: 'starting', name, projectName, task };
-  try {
-    const r = JSON.parse(echo.text) as { agentId?: unknown; label?: unknown; project?: unknown; projectId?: unknown };
-    if (typeof r.agentId === 'string' && r.agentId) {
-      return { kind: 'started', agentId: r.agentId, label: typeof r.label === 'string' ? r.label : name, projectName: typeof r.project === 'string' ? r.project : projectName, projectId: typeof r.projectId === 'string' ? r.projectId : null, task };
-    }
-  } catch { /* not JSON: the spawn failed */ }
-  return { kind: 'failed', name, error: firstLine(echo.text), task };
 }
 
 /** The row key (`messageId` is `m<key>`) that shows message `i`; a folded echo maps to its tool. Null if not loaded. */

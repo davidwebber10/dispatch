@@ -32,6 +32,18 @@ describe('foldRows', () => {
   });
 });
 
+describe('foldRows runs', () => {
+  it('a run of 2 tools with 1 echo pairs the first and leaves the second alone', () => {
+    const rows = foldRows([m(0, 'tool', 'Read {}'), m(1, 'tool', 'Grep {}'), m(2, 'echo', 'A')]);
+    expect(rows.map((r) => (r.kind === 'msg' ? r.m.i : [r.tool.i, r.echo?.i]))).toEqual([[0, 2], [1, undefined]]);
+  });
+  it('a mixed run keeps the kinds and pairs the echoes in order', () => {
+    const rows = foldRows([m(0, 'tool', 'mcp__memory__zoom {}'), spawnTool(1, 'Fix'), m(2, 'tool', 'Read {}'), m(3, 'echo', 'Z'), spawnEcho(4, 't9', 'Fix'), m(5, 'echo', 'R')]);
+    expect(rows.map((r) => r.kind)).toEqual(['recall', 'started', 'tool']);
+    expect(rows.map((r) => (r.kind === 'msg' ? -1 : r.echo?.i))).toEqual([3, 4, 5]);
+  });
+});
+
 describe('parseSpawn', () => {
   it('starting, started, failed', () => {
     expect(parseSpawn(spawnTool(0, 'Fix'))).toMatchObject({ kind: 'starting', name: 'Fix', projectName: 'studio' });
@@ -55,6 +67,12 @@ describe('StartedItem', () => {
     rerender(<StartedItem tool={spawnTool(0, 'Fix')} echo={m(1, 'echo', 'unknown project: catalog')} />);
     expect(screen.getByText('Could not start')).toBeInTheDocument();
     expect(screen.getByText(/unknown project: catalog/)).toBeInTheDocument();
+  });
+  it('Starting is aria-busy; Could not start is an alert', () => {
+    const { container, rerender } = render(<StartedItem tool={spawnTool(0, 'Fix')} />);
+    expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
+    rerender(<StartedItem tool={spawnTool(0, 'Fix')} echo={m(1, 'echo', 'unknown project: catalog')} />);
+    expect(screen.getByRole('alert')).toBeInTheDocument();
   });
   it('the chip follows a terminal:status event with no reload', () => {
     useEndless.setState({ threads: [{ id: 't9', project: 's1', label: 'Fix', harness: 'claude-code', state: 'working', startedBy: 'chat', via: null, startedAt: '', lastActivityAt: null, question: null }] });
