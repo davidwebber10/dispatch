@@ -40,7 +40,8 @@ export function statusLine(text: string): string | null {
 
 export function resolveDoc(project: { id: string; folder: string }, ref: string, opts: { branch?: string | null } = {}): DocResult {
   let realRoot: string;
-  try { realRoot = fs.realpathSync(project.folder); } catch { return { kind: 'not_found', looked: [project.folder] }; }
+  try { realRoot = fs.realpathSync.native(project.folder); } catch { return { kind: 'not_found', looked: [project.folder] }; }
+  if (path.sep === '/' && ref.includes('\\')) return OUTSIDE;
   const rel = projectRelative(project.folder, realRoot, ref);
   if (rel === null) return OUTSIDE;
   if (!DOC_EXT.test(rel)) return NOT_A_DOC;
@@ -78,8 +79,9 @@ export function resolveDoc(project: { id: string; folder: string }, ref: string,
     if (size > DOC_MAX_BYTES) return { kind: 'too_large', path: posix(docRel), size };
     const bytes = readBlob(realRoot, branch, docRel);
     if (!bytes) return null;
+    if (bytes.length > DOC_MAX_BYTES) return { kind: 'too_large', path: posix(docRel), size: bytes.length };
     const text = bytes.toString('utf8');
-    return { kind: 'doc', doc: { project: project.id, path: posix(docRel), absPath: null, source: 'branch', worktree: null, branch, vsMain: vs(docRel, bytes), modifiedAt: commitDate(realRoot, branch, docRel) ?? new Date(0).toISOString(), status: statusLine(text), note, markdown: text } };
+    return { kind: 'doc', doc: { project: project.id, path: posix(docRel), absPath: null, source: 'branch', worktree: null, branch, vsMain: vs(docRel, bytes), modifiedAt: commitDate(realRoot, branch, docRel) ?? new Date((known.find((k) => k.name === branch)?.date ?? 0) * 1000).toISOString(), status: statusLine(text), note, markdown: text } };
   };
   const unmerged = (): { name: string; date: number }[] => {
     if (!base) return [];
@@ -99,10 +101,12 @@ export function resolveDoc(project: { id: string; folder: string }, ref: string,
     const rest = path.normalize(wt[3]);
     if (leadsOut(rest)) return OUTSIDE;
     const byName = known.filter((k) => k.name === wt[2] || k.name.endsWith(`/${wt[2]}`)).sort((a, b) => b.date - a.date)[0]?.name;
+    const wtGone = !fs.existsSync(path.join(realRoot, wt[1], wt[2]));
+    const lead = wtGone ? `The worktree "${wt[2]}" is gone` : `The worktree "${wt[2]}" does not have this file`;
     for (const b of [opts.branch, byName]) {
       if (!b) continue;
       looked.push(`${b}:${posix(rest)}`);
-      const r = fromBranch(b, rest, `The worktree "${wt[2]}" is gone; read from the branch.`);
+      const r = fromBranch(b, rest, `${lead}; read from the branch.`);
       if (r) return r;
     }
     looked.push(posix(rest));
@@ -110,8 +114,13 @@ export function resolveDoc(project: { id: string; folder: string }, ref: string,
     if (main === 'outside') return OUTSIDE;
     if (main !== 'missing') {
       const r = fromDisk(main, rest);
-      if (r.kind === 'doc') r.doc.note = `The worktree "${wt[2]}" is gone; this is the main checkout copy.`;
+      if (r.kind === 'doc') r.doc.note = `${lead}; this is the main checkout copy.`;
       return r;
+    }
+    for (const b of unmerged()) {
+      looked.push(`${b.name}:${posix(rest)}`);
+      const r = fromBranch(b.name, rest, `${lead}; read from the branch.`);
+      if (r) return r;
     }
     return { kind: 'not_found', looked };
   }

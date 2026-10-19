@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { resolveDoc, statusLine, DOC_MAX_BYTES } from '../../src/docs/resolve.js';
+import { refs } from '../../src/docs/git.js';
 import { makeRepo } from './git-fixture.js';
 
 const SPEC = 'docs/superpowers/specs/a-design.md';
@@ -83,6 +84,48 @@ describe('resolveDoc', () => {
     r.write('README.md', 'x'); r.commit('init');
     const res = resolveDoc(project(), 'docs/plans/none.md');
     expect(res.kind).toBe('not_found');
+    if (res.kind === 'not_found') {
+      expect(Array.isArray(res.looked)).toBe(true);
+      expect(res.looked.length).toBeGreaterThan(0);
+      expect(res.looked).toContain('docs/plans/none.md');
+    }
+  });
+
+  it('a removed worktree path also searches unmerged branches whose name differs', () => {
+    r = makeRepo();
+    r.write('README.md', 'x'); r.commit('init');
+    const wt = path.join(r.dir, '.worktrees', 'wt-x');
+    r.g(r.dir, 'worktree', 'add', '-q', '-b', 'feat/other-name', wt);
+    r.write(SPEC, 'other', wt); r.commit('doc', wt);
+    r.g(r.dir, 'worktree', 'remove', '--force', wt);
+    expect(doc(resolveDoc(project(), `.worktrees/wt-x/${SPEC}`))).toMatchObject({ source: 'branch', branch: 'feat/other-name', markdown: 'other' });
+  });
+
+  it('the note says "is gone" only when the worktree folder is gone', () => {
+    r = makeRepo();
+    r.write('README.md', 'x'); r.commit('init');
+    const wt = path.join(r.dir, '.worktrees', 'wt-e');
+    r.g(r.dir, 'worktree', 'add', '-q', '-b', 'spec/e', wt);
+    r.g(r.dir, 'branch', 'spec/f');
+    r.g(r.dir, 'checkout', '-q', 'spec/f');
+    r.write(SPEC, 'f'); r.commit('f');
+    r.g(r.dir, 'checkout', '-q', 'main');
+    const kept = doc(resolveDoc(project(), `.worktrees/wt-e/${SPEC}`, { branch: 'spec/f' }));
+    expect(kept.note).toBe('The worktree "wt-e" does not have this file; read from the branch.');
+    r.g(r.dir, 'worktree', 'remove', '--force', wt);
+    const gone = doc(resolveDoc(project(), `.worktrees/wt-e/${SPEC}`, { branch: 'spec/f' }));
+    expect(gone.note).toBe('The worktree "wt-e" is gone; read from the branch.');
+  });
+
+  it('a removed or file-less worktree path falls back to the main checkout copy, with the matching note', () => {
+    r = makeRepo();
+    r.write(SPEC, 'main copy'); r.commit('init');
+    const wt = path.join(r.dir, '.worktrees', 'wt-m');
+    r.g(r.dir, 'worktree', 'add', '-q', '-b', 'spec/m', wt);
+    fs.rmSync(path.join(wt, SPEC), { force: true });
+    expect(doc(resolveDoc(project(), `.worktrees/wt-m/${SPEC}`))).toMatchObject({ source: 'main', note: 'The worktree "wt-m" does not have this file; this is the main checkout copy.' });
+    r.g(r.dir, 'worktree', 'remove', '--force', wt);
+    expect(doc(resolveDoc(project(), `.worktrees/wt-m/${SPEC}`))).toMatchObject({ source: 'main', markdown: 'main copy', note: 'The worktree "wt-m" is gone; this is the main checkout copy.' });
   });
 
   it('a folder that is not a git repo: on disk only, vsMain unknown', () => {
@@ -123,6 +166,23 @@ describe('resolveDoc safety', () => {
     r.write('README.md', 'x'); r.commit('init');
     expect(resolveDoc(project(), `.worktrees/x/${SPEC}`, { branch: '--output=/tmp/x' }).kind).toBe('not_found');
     expect(resolveDoc(project(), `.worktrees/x/${SPEC}`, { branch: 'no-such-branch' }).kind).toBe('not_found');
+  });
+  it('refuses a path with a backslash', () => {
+    r = makeRepo();
+    r.write('README.md', 'x'); r.commit('init');
+    expect(resolveDoc(project(), 'docs\\..\\..\\x.md').kind).toBe('refused');
+  });
+  it('refs() drops a ref name that starts with a dash', () => {
+    r = makeRepo();
+    r.write('README.md', 'x'); r.commit('init');
+    try { r.g(r.dir, 'update-ref', 'refs/heads/-x', 'HEAD'); } catch { /* git refused to create it: the filter is still kept */ }
+    expect(refs(r.dir).some((k) => k.name.startsWith('-'))).toBe(false);
+  });
+  it('ignores a stale origin/HEAD that points at a branch that does not exist', () => {
+    r = makeRepo();
+    r.write(SPEC, 'm'); r.commit('init');
+    r.g(r.dir, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/gone');
+    expect(doc(resolveDoc(project(), SPEC)).vsMain).toBe('same');
   });
   it('a symlink inside the project to another kind of file is refused', () => {
     r = makeRepo();

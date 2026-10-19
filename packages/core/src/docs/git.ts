@@ -25,7 +25,7 @@ export function git(dir: string, args: string[]): string | null { const b = gitB
 export function isRepo(dir: string): boolean {
   const top = git(dir, ['rev-parse', '--show-toplevel'])?.trim();
   if (!top) return false;
-  try { return fs.realpathSync(top) === fs.realpathSync(dir); } catch { return false; }
+  try { return fs.realpathSync.native(top) === fs.realpathSync.native(dir); } catch { return false; }
 }
 
 /** Linked worktrees (`git worktree list --porcelain`, the main checkout left out); branch without refs/heads/. */
@@ -46,14 +46,14 @@ export function worktrees(dir: string): { path: string; branch: string | null }[
 export function refs(dir: string): { name: string; date: number }[] {
   const out = git(dir, ['for-each-ref', '--format=%(refname:short)%09%(committerdate:unix)', 'refs/heads', 'refs/remotes']);
   if (!out) return [];
-  return out.split('\n').filter(Boolean).map((l) => { const [name, d] = l.split('\t'); return { name, date: Number(d) || 0 }; }).filter((r) => !r.name.endsWith('/HEAD') && r.name !== 'origin');
+  return out.split('\n').filter(Boolean).map((l) => { const [name, d] = l.split('\t'); return { name, date: Number(d) || 0 }; }).filter((r) => !r.name.endsWith('/HEAD') && r.name !== 'origin' && !r.name.startsWith('-'));
 }
 
 /** The origin/HEAD target, else main, else master. */
 export function defaultBranch(dir: string): string | null {
   const head = git(dir, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'])?.trim();
-  if (head) return head;
   const names = new Set(refs(dir).map((r) => r.name));
+  if (head && names.has(head)) return head;
   return names.has('main') ? 'main' : names.has('master') ? 'master' : null;
 }
 

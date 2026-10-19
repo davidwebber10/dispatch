@@ -187,6 +187,15 @@ describe('endless routes', () => {
     expect((await request(app).get('/api/endless/doc').query({ project: 'nope', path: 'docs/a.md' })).status).toBe(400);
   });
 
+  it('GET /doc returns 413 for a file over 2 MB', async () => {
+    const folder = svc.docs.project('s1')!.folder;
+    fs.mkdirSync(path.join(folder, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(folder, 'docs', 'big.md'), 'x'.repeat(2 * 1024 * 1024 + 1));
+    const res = await request(app).get('/api/endless/doc').query({ project: 's1', path: 'docs/big.md' });
+    expect(res.status).toBe(413);
+    expect(res.body).toMatchObject({ path: 'docs/big.md', size: 2 * 1024 * 1024 + 1 });
+  });
+
   it('POST /arm arms a Chat thread and refuses an unknown or a non-Chat one', async () => {
     const db = (svc as any).o.db as Database.Database;
     terminalsDb.create(db, { id: 't1', sessionId: 's1', type: 'claude-code', label: 'Fix', config: { role: 'agent', origin: 'endless' } });

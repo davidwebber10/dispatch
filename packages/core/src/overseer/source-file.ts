@@ -86,7 +86,7 @@ export function projectRelative(projectDir: string, realRoot: string, ref: strin
 export function locate(realRoot: string, rel: string): string | 'missing' | 'outside' {
   let real: string;
   try {
-    real = fs.realpathSync(path.join(realRoot, rel));
+    real = fs.realpathSync.native(path.join(realRoot, rel));
   } catch {
     return 'missing'; // absent, a dangling symlink, a loop or an unreadable folder
   }
@@ -111,7 +111,7 @@ function open(real: string, rel: string, fromMainCheckout: boolean, note: string
 /** The file `ref` names, read under the project folder `projectDir` only. */
 export function readSourceFile(projectDir: string, ref: string): SourceFile {
   let realRoot: string;
-  try { realRoot = fs.realpathSync(projectDir); } catch { return { kind: 'gone' }; }
+  try { realRoot = fs.realpathSync.native(projectDir); } catch { return { kind: 'gone' }; }
   const rel = projectRelative(projectDir, realRoot, ref);
   // Review round 1: "." or the project folder itself is a folder, not a way out.
   const isRoot = path.isAbsolute(ref) ? [path.resolve(projectDir), realRoot].includes(path.resolve(ref)) : path.normalize(ref) === '.';
@@ -148,7 +148,7 @@ export function projectWorktrees(realRoot: string): { name: string; real: string
   const out = new Map<string, { name: string; real: string; rel: string; branch: string | null }>();
   const add = (abs: string, branch: string | null) => {
     let real: string;
-    try { real = fs.realpathSync(abs); } catch { return; }
+    try { real = fs.realpathSync.native(abs); } catch { return; }
     const rel = path.relative(realRoot, real);
     if (leadsOut(rel) || out.has(real)) return;
     out.set(real, { name: path.basename(real), real, rel, branch });
