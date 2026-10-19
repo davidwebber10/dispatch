@@ -6,27 +6,61 @@ import { InsightText } from '../InsightText';
 import { ChatImage } from '../ChatImage';
 import { endlessMediaUrl } from '../../api/client';
 import { useUI } from '../../stores/ui';
+import { StartedItem } from './StartedItem';
 import type { EndlessMessage } from '../../api/types';
 
 export type Row =
   | { kind: 'msg'; m: EndlessMessage }
   | { kind: 'tool'; tool: EndlessMessage; echo?: EndlessMessage }
-  | { kind: 'recall'; tool: EndlessMessage; echo?: EndlessMessage };
+  | { kind: 'recall'; tool: EndlessMessage; echo?: EndlessMessage }
+  | { kind: 'started'; tool: EndlessMessage; echo?: EndlessMessage };
 
 const ZOOM_TOOL = /^mcp__memory__zoom\s/;
+export const SPAWN_TOOL = /^mcp__memory__spawn_agent\s/;
 
-/** A tool call and the result right after it fold into one row; a `zoom` call is a "recalled" row. */
+export type Spawn =
+  | { kind: 'starting'; name: string; projectName: string | null; task: string }
+  | { kind: 'started'; agentId: string; label: string; projectName: string | null; projectId: string | null; task: string }
+  | { kind: 'failed'; name: string; error: string; task: string };
+
+/**
+ * A run of N tool calls pairs with the run of up to N results right after it, in order (Claude Code
+ * returns parallel results in call order). A `zoom` call is a "recalled" row; a `spawn_agent` call is
+ * a Started card.
+ */
 export function foldRows(messages: EndlessMessage[]): Row[] {
   const rows: Row[] = [];
-  for (let k = 0; k < messages.length; k++) {
+  let k = 0;
+  while (k < messages.length) {
     const m = messages[k];
-    if (m.kind !== 'tool') { rows.push({ kind: 'msg', m }); continue; }
-    const next = messages[k + 1];
-    const echo = next && next.kind === 'echo' && next.i === m.i + 1 ? next : undefined;
-    if (echo) k++;
-    rows.push({ kind: ZOOM_TOOL.test(m.text) ? 'recall' : 'tool', tool: m, echo });
+    if (m.kind !== 'tool') { rows.push({ kind: 'msg', m }); k++; continue; }
+    const tools: EndlessMessage[] = [];
+    while (k < messages.length && messages[k].kind === 'tool' && (tools.length === 0 || messages[k].i === tools[tools.length - 1].i + 1)) tools.push(messages[k++]);
+    const echoes: EndlessMessage[] = [];
+    while (k < messages.length && echoes.length < tools.length && messages[k].kind === 'echo' && messages[k].i === (echoes.length ? echoes[echoes.length - 1].i : tools[tools.length - 1].i) + 1) echoes.push(messages[k++]);
+    tools.forEach((tool, n) => {
+      const kind = ZOOM_TOOL.test(tool.text) ? 'recall' : SPAWN_TOOL.test(tool.text) ? 'started' : 'tool';
+      rows.push({ kind, tool, echo: echoes[n] });
+    });
   }
   return rows;
+}
+
+const firstLine = (s: string) => s.split('\n').find((l) => l.trim())?.trim() ?? '';
+export function parseSpawn(tool: EndlessMessage, echo?: EndlessMessage): Spawn {
+  let input: { name?: unknown; project?: unknown; task?: unknown; agentType?: unknown } = {};
+  try { input = JSON.parse(tool.text.replace(SPAWN_TOOL, '')); } catch { /* keep {} */ }
+  const name = (typeof input.name === 'string' && input.name.trim()) || `${typeof input.agentType === 'string' ? input.agentType : 'thread'} agent`;
+  const projectName = typeof input.project === 'string' ? input.project : null;
+  const task = typeof input.task === 'string' ? input.task : '';
+  if (!echo) return { kind: 'starting', name, projectName, task };
+  try {
+    const r = JSON.parse(echo.text) as { agentId?: unknown; label?: unknown; project?: unknown; projectId?: unknown };
+    if (typeof r.agentId === 'string' && r.agentId) {
+      return { kind: 'started', agentId: r.agentId, label: typeof r.label === 'string' ? r.label : name, projectName: typeof r.project === 'string' ? r.project : projectName, projectId: typeof r.projectId === 'string' ? r.projectId : null, task };
+    }
+  } catch { /* not JSON: the spawn failed */ }
+  return { kind: 'failed', name, error: firstLine(echo.text), task };
 }
 
 /** The row key (`messageId` is `m<key>`) that shows message `i`; a folded echo maps to its tool. Null if not loaded. */
@@ -198,7 +232,7 @@ export function EndlessRows({ messages, focus }: { messages: EndlessMessage[]; f
         return (
           <MessageScroller.Item key={key} messageId={`m${key}`} style={{ display: 'flex', flexDirection: 'column' }}>
             <div data-endless-i={key} data-endless-echo-i={echoI} style={{ borderRadius: 8, outline: focus === key || (echoI !== undefined && focus === echoI) ? '1px solid var(--color-accent)' : 'none', outlineOffset: 4 }}>
-              {r.kind === 'msg' ? <MessageRow m={r.m} /> : r.kind === 'recall' ? <RecallLine tool={r.tool} /> : <ToolLine tool={r.tool} echo={r.echo} />}
+              {r.kind === 'msg' ? <MessageRow m={r.m} /> : r.kind === 'recall' ? <RecallLine tool={r.tool} /> : r.kind === 'started' ? <StartedItem tool={r.tool} echo={r.echo} /> : <ToolLine tool={r.tool} echo={r.echo} />}
             </div>
           </MessageScroller.Item>
         );
