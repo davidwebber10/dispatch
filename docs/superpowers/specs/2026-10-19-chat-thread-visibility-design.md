@@ -1,22 +1,25 @@
 # Chat thread visibility: design
 
 Date: 2026-10-19
-Status: draft, awaiting owner review. Next: a visual design review in Claude Design (section 13 and the
-design brief), then an in-app preview page (section 14), then the implementation plan.
+Status: approved by Jason on 2026-10-19, with every decision recorded below. Next: the visual
+design review in Claude Design (section 13 and the design brief), then an in-app preview page
+(section 14), then the implementation plan.
 Base: origin/main 91b15fdd (v3.1.7)
 Parent spec: `2026-10-13-endless-chat-design.md` (called "the Chat spec" below)
 
-## Decisions needed
+## Decisions (approved by Jason, 2026-10-19)
 
-Four owner decisions. Each has a recommendation; the spec follows it until the owner answers.
-Section 10 has all open questions (Q1 to Q17).
+Jason approved this spec on 2026-10-19 and accepted the recommended answer to every question.
+No question is open. Section 10 lists all of them (Q1 to Q17).
 
-| ID | Decision | Recommendation |
-|---|---|---|
-| CTV-Q1 | Which finished threads show in the pane? | Finished today only, folded under "Done today (N)" per project |
-| CTV-Q2 | Does each project's own Overseer thread show as a row? | No. Its open items stay in the counts; Overseer shows the thread |
-| CTV-Q3 | Add "Open in Workspace" to the thread viewer when Chat opens it? | Yes, for Chat only, behind an optional prop; Overseer and the board do not change |
-| CTV-Q7 | Block private background agents (Task, Agent) in code for Chat turns? | No, not in this work. Keep it as a rule in the Chat instructions |
+| ID | Decision |
+|---|---|
+| CTV-Q1 | Finished threads show folded: finished today only, under "Done today (N)" per project |
+| CTV-Q2 | No row for a project's own Overseer thread. Its open items stay in the counts; Overseer shows the thread |
+| CTV-Q3 | "Open in Workspace" appears in the thread viewer only when Chat opens it, behind an optional prop; Overseer and the board do not change |
+| CTV-Q7 | "No private agents" (Task, Agent) is a written rule in the Chat instructions only, with no code behind it |
+| CTV-NAMES | The committed `2026-10-19-chat-thread-visibility-design-brief.md` keeps the neutral project names, because the repository is public. The copy with the real names, `2026-10-19-chat-thread-visibility-design-brief.local.md`, stays git-ignored and is never committed |
+| Q4 to Q6, Q8 to Q17 | The recommendations exactly as written in section 10 |
 
 ## 1. Goal
 
@@ -56,7 +59,7 @@ This change does NOT add:
 Chat always delegates through real `spawn_agent` threads, never through private background
 agents (the Claude Code Task or Agent tool). Only real threads show in the pane, in the
 "Started" item, and in the lightbox. This spec relies on the rule; it does not enforce it.
-The owner keeps the rule in the Chat instructions setting. See open question Q7.
+The owner keeps the rule in the Chat instructions setting. Decided (Q7): no code enforces it.
 
 ## 2. Current behavior (verified in code)
 
@@ -249,9 +252,9 @@ fork of the component.
   sheet (`Modal`, z-index 100) sits above the lightbox (z-index 60).
 - `ChatMode` calls `closeWorkerLightbox()` on unmount. The lightbox state lives in the shared
   Overseer store; without this, a thread opened in Chat would reopen over Overseer or the board.
-- Q3: an "Open in Workspace" button in the lightbox header, shown only when the caller passes
-  an `onOpenFull` prop (Chat passes it; Overseer and the board do not). Recommended, because a
-  CLI thread is easier to use full size. If the owner says no, the lightbox is used unchanged.
+- Decided (Q3): an "Open in Workspace" button in the lightbox header, shown only when the
+  caller passes an `onOpenFull` prop (Chat passes it; Overseer and the board do not), because
+  a CLI thread is easier to use full size.
 
 ## 4. Data and API changes
 
@@ -379,7 +382,7 @@ origin/main 91b15fdd.
 | `ProjectsPanel.test.tsx` | the Needs you section comes first with the question; rows show name, origin, harness, time; Done today folds; "+N more"; a row tap awaits `loadTabs` when the project is not loaded, then calls `drillInto`; on mobile the sheet closes first | yes |
 | report card | the short card and "Open thread" open the lightbox; `setView` is not called | yes |
 | `ChatMode` | mounts the lightbox inside `.overseer-root`; unmount calls `closeWorkerLightbox` | yes |
-| `WorkerLightbox` (only if Q3 is yes) | "Open in Workspace" shows only with `onOpenFull` | yes |
+| `WorkerLightbox` (Q3) | "Open in Workspace" shows only with `onOpenFull` | yes |
 
 ### End to end
 
@@ -417,9 +420,11 @@ Chrome run at iPhone size for the sheet, the badge, and the lightbox.
 - Close the absolute-path gap in `GET /api/sessions/:id/files/read` (section 12.1). It is a
   separate fix with its own review.
 
-## 10. Open questions (each with a recommended answer)
+## 10. Decided questions (approved by Jason, 2026-10-19)
 
-| # | Question | Recommendation |
+Jason accepted every recommended answer on 2026-10-19. Each answer below is now the decision.
+
+| # | Question | Decision |
 |---|---|---|
 | Q1 | Which finished threads show? | Finished today (local midnight, daemon time zone), folded under "Done today (N)" per project. Older ones are in the Work tab |
 | Q2 | Does the project's own Overseer coordinator thread show as a row? | No. It is almost always active and would fill the list. Its open items stay in the counts, and Overseer shows it |
@@ -438,6 +443,7 @@ Chrome run at iPhone size for the sheet, the badge, and the lightbox.
 | Q15 | A path inside a removed worktree with no branch named: what opens? | The branch whose name ends in the worktree name, else the main checkout copy with a note, else "not found" |
 | Q16 | One PR or two? | Two, in one plan: PR 1 is items 1 to 6, PR 2 is item 7 (doc links), built on PR 1. Each stays reviewable |
 | Q17 | Keep the in-app preview page after the build? | No. Delete it in the last build task; its fixtures would drift from the real data (section 14) |
+| CTV-NAMES | Which project names does the committed design brief use? | Neutral names, because the repository is public. The real-name `.local.md` copy stays git-ignored (section 13) |
 
 ## 11. Next steps and task breakdown
 
@@ -467,7 +473,7 @@ commit. Tasks 1 to 7 are PR 1; tasks 8 to 12 are PR 2 (Q16).
    `EndlessMessageRow.tsx`. First check the parallel result order with a real two-spawn turn
    (section 3.4). Tests: fold, Started states, live chip.
 5. **Web: open in place.** `openThread.ts`, the lightbox mount and unmount close in
-   `ChatMode`, the report card switch, and `onOpenFull` if Q3 is yes. Tests: report card,
+   `ChatMode`, the report card switch, and the `onOpenFull` prop (Q3). Tests: report card,
    ChatMode, lightbox prop.
 6. **Web: the pane.** Needs you section, project blocks, rows, Done today fold, "+N more",
    toolbar badge, mobile sheet close. Tests: `ProjectsPanel.test.tsx`.
@@ -746,6 +752,5 @@ output. No code exists for it yet. Outline:
   a 393 px frame for the iPhone).
 - **Where it lives:** commits on a branch from `spec/chat-thread-visibility`, so the spec and
   the preview stay together until the owner approves both. No PR, no merge into main.
-- **Open question Q17:** keep the preview page after the build as a dev tool, or delete it
-  in the last build task? Recommendation: delete it, because fixtures drift from the real
-  data and nothing tests them.
+- **Decided (Q17):** the last build task deletes the preview page, because its fixtures
+  would drift from the real data and nothing tests them.
