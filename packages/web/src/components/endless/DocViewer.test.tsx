@@ -230,6 +230,32 @@ describe('DocViewer: links inside the doc stay in the viewer', () => {
     expect(window.location.href).toBe(before);
     expect(useDocViewer.getState().open?.path).toBe('docs/specs/x.md');
   });
+  it('only http, https and mailto links open a new tab; every other href does nothing', async () => {
+    const opened = vi.spyOn(window, 'open').mockReturnValue(null);
+    await show('[ext](https://example.com)');
+    const article = screen.getByRole('link', { name: 'ext' }).closest('article')!;
+    const add = (href: string, text: string) => {
+      const a = document.createElement('a');
+      a.setAttribute('href', href);
+      a.textContent = text;
+      article.appendChild(a);
+      return a;
+    };
+    const before = window.location.href;
+    for (const [href, text] of [['javascript:alert(1)', 'js'], ['../../src/x.ts', 'rel'], ['/abs/path', 'abs'], ['//evil.test/x', 'proto'], ['data:text/html,x', 'data'], ['#frag', 'frag']]) {
+      const a = add(href, text);
+      expect(fireEvent.click(a)).toBe(false);
+    }
+    expect(opened).not.toHaveBeenCalled();
+    expect(window.location.href).toBe(before);
+    fireEvent.click(add('mailto:a@b.c', 'mail'));
+    expect(opened).toHaveBeenLastCalledWith('mailto:a@b.c', '_blank', 'noopener');
+    fireEvent.click(add('HTTPS://example.com/Up', 'upper'));
+    expect(opened).toHaveBeenLastCalledWith('HTTPS://example.com/Up', '_blank', 'noopener');
+    fireEvent.click(screen.getByRole('link', { name: 'ext' }));
+    expect(opened).toHaveBeenLastCalledWith('https://example.com', '_blank', 'noopener');
+    expect(opened).toHaveBeenCalledTimes(3);
+  });
   it('a relative link that leads above the repo root does nothing', async () => {
     useDocViewer.setState({ open: { project: 's1', path: 'docs/x.md', branch: null }, back: [] });
     const opened = vi.spyOn(window, 'open').mockReturnValue(null);

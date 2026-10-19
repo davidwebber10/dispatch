@@ -140,7 +140,7 @@ export function DocViewer() {
   const close = () => useDocViewer.getState().close();
   /**
    * A link in the doc never navigates the app: a relative doc link opens in the viewer (the same
-   * copy rule as a doc chip); a fragment-only link does nothing; any other link opens a new tab.
+   * copy rule as a doc chip); only an http(s) or mailto link opens a new tab; every other link does nothing.
    */
   const onLink = (e: React.MouseEvent<HTMLElement>) => {
     const a = (e.target as HTMLElement).closest?.('a[href]');
@@ -152,7 +152,8 @@ export function DocViewer() {
       if (target) docs.onOpen(target, null);
       return;
     }
-    if (!href || href.startsWith('#')) return;
+    // Only a web or mail link leaves the app; any other scheme, a //host, a path or a fragment does nothing.
+    if (!/^(https?:|mailto:)/i.test(href.trim())) return;
     window.open(href, '_blank', 'noopener');
   };
   const doc = state.kind === 'doc' ? state.doc : null;

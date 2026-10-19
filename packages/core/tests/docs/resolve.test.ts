@@ -312,6 +312,13 @@ describe('resolveDoc: the branch scan is bounded', () => {
     if (res.kind === 'not_found') expect(res.looked).not.toContain(`b00:${SPEC}`);
   });
 
+  it('the limit is exactly 20: the 20th newest is read, the 21st newest is not', () => {
+    many(5); // b05 is the 20th newest of b00..b24
+    expect(doc(resolveDoc(project(), SPEC))).toMatchObject({ source: 'branch', branch: 'b05', markdown: 'b05' });
+    many(4); // b04 is the 21st newest
+    expect(resolveDoc(project(), SPEC).kind).toBe('not_found');
+  });
+
   it('the 3rd newest unmerged branch is read', () => {
     many(22);
     expect(doc(resolveDoc(project(), SPEC))).toMatchObject({ source: 'branch', branch: 'b22', markdown: 'b22' });
