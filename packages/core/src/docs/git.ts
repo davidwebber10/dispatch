@@ -1,7 +1,9 @@
 /**
  * Read-only git helpers for the doc resolver (chat thread visibility spec, 12.5).
  *
- * - Every call is `execFileSync('git', ['-C', dir, ...])`: no shell, a 5 s timeout, stderr dropped.
+ * - Every call is `execFileSync('git', ['--no-optional-locks', '-C', dir, ...])`: no shell, a 5 s
+ *   timeout, stderr dropped. `--no-optional-locks` keeps a background `git status` or `diff` from
+ *   taking the index lock, so an agent's own `git commit` in the same worktree never fails on it.
  *   The `...Async` twins use `execFile` (no shell either, the same timeout and output cap) so the
  *   docs list never blocks the daemon's event loop; the sync ones stay for the resolver.
  * - The `ref` given to `blobHash`, `blobSize`, `readBlob` and `commitDate` must always be a name
@@ -13,10 +15,15 @@ import { createHash } from 'node:crypto';
 
 export const GIT_TIMEOUT_MS = 5000;
 const GIT_MAX_BUFFER = 8 * 1024 * 1024;
+/** The newest this many unmerged branches are searched (the docs list and the resolver). */
+export const DOCS_BRANCHES = 20;
+
+/** The full argument list for `git`: no optional lock, then the folder, then `args`. */
+export function gitArgs(dir: string, args: string[]): string[] { return ['--no-optional-locks', '-C', dir, ...args]; }
 
 /** Stdout as bytes, or null on any error (not a repo, a bad ref, a timeout). */
 export function gitBuffer(dir: string, args: string[]): Buffer | null {
-  try { return execFileSync('git', ['-C', dir, ...args], { timeout: GIT_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: GIT_MAX_BUFFER }); } catch { return null; }
+  try { return execFileSync('git', gitArgs(dir, args), { timeout: GIT_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: GIT_MAX_BUFFER }); } catch { return null; }
 }
 export function git(dir: string, args: string[]): string | null { const b = gitBuffer(dir, args); return b ? b.toString('utf8') : null; }
 
@@ -60,8 +67,8 @@ function parseRefs(out: string | null): { name: string; date: number }[] {
 export function currentBranch(dir: string): string | null { return git(dir, ['symbolic-ref', '--short', '-q', 'HEAD'])?.trim() || null; }
 
 const ORIGIN_HEAD_ARGS = ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'];
-/** The origin/HEAD target (only when `refs()` lists it), else main, else master. */
-export function defaultBranch(dir: string): string | null { return pickDefault(git(dir, ORIGIN_HEAD_ARGS), refs(dir)); }
+/** The origin/HEAD target (only when `refs()` lists it), else main, else master. `known`: a `refs(dir)` the caller already has. */
+export function defaultBranch(dir: string, known?: { name: string }[]): string | null { return pickDefault(git(dir, ORIGIN_HEAD_ARGS), known ?? refs(dir)); }
 function pickDefault(headOut: string | null, list: { name: string }[]): string | null {
   const head = headOut?.trim();
   const names = new Set(list.map((r) => r.name));
@@ -84,7 +91,7 @@ export const commitDate = (dir: string, ref: string, rel: string) => git(dir, ['
 export function gitBufferAsync(dir: string, args: string[]): Promise<Buffer | null> {
   return new Promise((resolve) => {
     try {
-      const child = execFile('git', ['-C', dir, ...args], { timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_MAX_BUFFER, encoding: 'buffer' }, (err, stdout) => resolve(err ? null : stdout));
+      const child = execFile('git', gitArgs(dir, args), { timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_MAX_BUFFER, encoding: 'buffer' }, (err, stdout) => resolve(err ? null : stdout));
       child.stdin?.end();
     } catch { resolve(null); }
   });

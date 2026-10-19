@@ -7,7 +7,7 @@
  * disk (the main checkout, or a worktree path as given); for a path inside a
  * removed worktree, the named branch, then the branch that ends in the worktree name, then the
  * main checkout; otherwise the copies in the project's worktrees (newest first), then the
- * unmerged branches (newest first).
+ * newest DOCS_BRANCHES unmerged branches (newest first). A branch is tried at most once.
  *
  * Safety:
  * - Only real paths inside the project folder; a worktree counts only when its real path is
@@ -19,7 +19,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { leadsOut, projectRelative, locate, projectWorktrees } from '../overseer/source-file.js';
-import { isRepo, refs, defaultBranch, blobHash, blobSize, readBlob, hashBytes, commitDate, git, currentBranch } from './git.js';
+import { isRepo, refs, defaultBranch, blobHash, blobSize, readBlob, hashBytes, commitDate, git, currentBranch, DOCS_BRANCHES } from './git.js';
 
 export const DOC_MAX_BYTES = 2 * 1024 * 1024;
 export const DOC_EXT = /\.(md|markdown|txt)$/i;
@@ -48,8 +48,8 @@ export function resolveDoc(project: { id: string; folder: string }, ref: string,
   if (rel === null) return OUTSIDE;
   if (!DOC_EXT.test(rel)) return NOT_A_DOC;
   const repo = isRepo(realRoot);
-  const base = repo ? defaultBranch(realRoot) : null;
   const known = repo ? refs(realRoot) : [];
+  const base = repo ? defaultBranch(realRoot, known) : null;
   const wts = projectWorktrees(realRoot);
   const looked: string[] = [];
 
@@ -85,6 +85,14 @@ export function resolveDoc(project: { id: string; folder: string }, ref: string,
     const text = bytes.toString('utf8');
     return { kind: 'doc', doc: { project: project.id, path: posix(docRel), absPath: null, source: 'branch', worktree: null, branch, vsMain: vs(docRel, bytes), modifiedAt: commitDate(realRoot, branch, docRel) ?? new Date((known.find((k) => k.name === branch)?.date ?? 0) * 1000).toISOString(), status: statusLine(text), note, markdown: text } };
   };
+  /** The branch blobs already tried: each branch is read (and listed in `looked`) once. */
+  const tried = new Set<string>();
+  const tryBranch = (branch: string, docRel: string, note: string | null = null): DocResult | null => {
+    if (tried.has(branch)) return null;
+    tried.add(branch);
+    looked.push(`${branch}:${posix(docRel)}`);
+    return fromBranch(branch, docRel, note);
+  };
   /** The worktree copy of `rel`, or null when that worktree does not have it. */
   const inWorktree = (w: { rel: string }): DocResult | null => {
     const inRoot = path.join(w.rel, rel);
@@ -111,13 +119,12 @@ export function resolveDoc(project: { id: string; folder: string }, ref: string,
     // A checked-out worktree that lacks the file falls back to the normal order (by design).
     const checkedOut = wts.find((w) => w.branch && (w.branch === b || remotes.some((rm) => b === `${rm}/${w.branch}`)));
     if (checkedOut) return inWorktree(checkedOut);
-    looked.push(`${b}:${posix(rel)}`);
-    return fromBranch(b, rel);
+    return tryBranch(b, rel);
   };
   const unmerged = (): { name: string; date: number }[] => {
     if (!base) return [];
     const merged = new Set((git(realRoot, ['branch', '-a', '--merged', base, '--format=%(refname:short)']) ?? '').split('\n').map((s) => s.trim()).filter(Boolean));
-    return known.filter((k) => k.name !== base && !merged.has(k.name)).sort((a, b) => b.date - a.date);
+    return known.filter((k) => k.name !== base && !merged.has(k.name)).sort((a, b) => b.date - a.date).slice(0, DOCS_BRANCHES);
   };
 
   const wt = WT.exec(posix(rel));
@@ -142,8 +149,7 @@ export function resolveDoc(project: { id: string; folder: string }, ref: string,
     const lead = wtGone ? `The worktree "${wt[2]}" is gone` : `The worktree "${wt[2]}" does not have this file`;
     for (const b of [opts.branch, byName]) {
       if (!b) continue;
-      looked.push(`${b}:${posix(rest)}`);
-      const r = fromBranch(b, rest, `${lead}; read from the branch.`);
+      const r = tryBranch(b, rest, `${lead}; read from the branch.`);
       if (r) return r;
     }
     looked.push(posix(rest));
@@ -155,8 +161,7 @@ export function resolveDoc(project: { id: string; folder: string }, ref: string,
       return r;
     }
     for (const b of unmerged()) {
-      looked.push(`${b.name}:${posix(rest)}`);
-      const r = fromBranch(b.name, rest, `${lead}; read from the branch.`);
+      const r = tryBranch(b.name, rest, `${lead}; read from the branch.`);
       if (r) return r;
     }
     return { kind: 'not_found', looked };
@@ -177,8 +182,7 @@ export function resolveDoc(project: { id: string; folder: string }, ref: string,
 
   // 4. Unmerged branches, newest first.
   for (const b of unmerged()) {
-    looked.push(`${b.name}:${posix(rel)}`);
-    const r = fromBranch(b.name, rel);
+    const r = tryBranch(b.name, rel);
     if (r) return r;
   }
   return { kind: 'not_found', looked };

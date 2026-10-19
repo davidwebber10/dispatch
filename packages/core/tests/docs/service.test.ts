@@ -69,8 +69,8 @@ describe('DocsService.counts', () => {
     expect(lister).toHaveBeenCalledTimes(2);
   });
 
-  it('computes the projects with no value one at a time, before the answer', async () => {
-    sessionsDb.create(db, { id: 's2', provider: 'claude-code', name: 'rollup', workingDir: r.dir });
+  it('computes the projects with no value at most 3 at a time, before the answer', async () => {
+    for (const id of ['s2', 's3', 's4', 's5']) sessionsDb.create(db, { id, provider: 'claude-code', name: 'rollup', workingDir: r.dir });
     let active = 0;
     let most = 0;
     const lister = vi.fn(async () => {
@@ -80,9 +80,24 @@ describe('DocsService.counts', () => {
       return { rows: [], total: 3 };
     });
     const svc = new DocsService(db, store, now, lister);
-    expect(await svc.counts(['s1', 's2'])).toEqual({ s1: 3, s2: 3 });
-    expect(lister).toHaveBeenCalledTimes(2);
-    expect(most).toBe(1);
+    expect(await svc.counts(['s1', 's2', 's3', 's4', 's5'])).toEqual({ s1: 3, s2: 3, s3: 3, s4: 3, s5: 3 });
+    expect(lister).toHaveBeenCalledTimes(5);
+    expect(most).toBe(3);
+  });
+
+  it('two concurrent counts for a project with no value run the lister once', async () => {
+    const releases: (() => void)[] = [];
+    const lister = vi.fn(async () => { await new Promise<void>((res) => releases.push(res)); return { rows: [], total: 4 }; });
+    const svc = new DocsService(db, store, now, lister);
+    const a = svc.counts(['s1']);
+    const b = svc.counts(['s1']);
+    const c = svc.list('s1');
+    await vi.waitFor(() => expect(lister).toHaveBeenCalled());
+    for (const f of releases) f();
+    expect(await a).toEqual({ s1: 4 });
+    expect(await b).toEqual({ s1: 4 });
+    expect((await c)!.total).toBe(4);
+    expect(lister).toHaveBeenCalledTimes(1);
   });
 });
 

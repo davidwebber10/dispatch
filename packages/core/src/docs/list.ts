@@ -20,12 +20,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { leadsOut, locate } from '../overseer/source-file.js';
-import { isRepoAsync, refsAsync, defaultBranchAsync, blobHashAsync, blobSizeAsync, readBlobAsync, hashBytes, commitDateAsync, gitAsync, worktreesAsync } from './git.js';
+import { isRepoAsync, refsAsync, defaultBranchAsync, blobHashAsync, blobSizeAsync, readBlobAsync, hashBytes, commitDateAsync, gitAsync, worktreesAsync, DOCS_BRANCHES } from './git.js';
 import { statusLine, DOC_MAX_BYTES } from './resolve.js';
 
 export const DOC_FOLDERS = ['docs/superpowers/specs', 'docs/superpowers/plans', 'docs/specs', 'docs/plans'];
 export const DOCS_ROWS = 5;
-export const DOCS_BRANCHES = 20;
+export { DOCS_BRANCHES };
 export const DOCS_CACHE_MS = 60_000;
 export interface DocRow { path: string; name: string; status: string | null; source: 'worktree' | 'branch'; worktree: string | null; branch: string | null; vsMain: 'changed' | 'not_on_main'; modifiedAt: string; copies: number; writer: { id: string; label: string } | null }
 export type DocWriterOf = (c: { path: string; worktreeReal: string | null }) => { id: string; label: string } | null;

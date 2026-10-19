@@ -1,8 +1,9 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { resolveDoc, statusLine, DOC_MAX_BYTES } from '../../src/docs/resolve.js';
-import { refs } from '../../src/docs/git.js';
+import { refs, gitArgs } from '../../src/docs/git.js';
 import { makeRepo } from './git-fixture.js';
 
 const SPEC = 'docs/superpowers/specs/a-design.md';
@@ -282,6 +283,57 @@ describe('resolveDoc safety', () => {
     r.g(r.dir, 'checkout', '-q', 'main');
     fs.rmSync(path.join(r.dir, 'docs', 'big.md'), { force: true }); // the branch commit took it along
     expect(resolveDoc(project(), 'docs/bigb.md').kind).toBe('too_large');
+  });
+});
+
+describe('resolveDoc: the branch scan is bounded', () => {
+  /** A branch off main with one commit at committer time `secs`. */
+  const branchAt = (name: string, secs: number, files: Record<string, string>) => {
+    r.g(r.dir, 'checkout', '-q', '-b', name, 'main');
+    for (const [f, text] of Object.entries(files)) r.write(f, text);
+    r.g(r.dir, 'add', '-A');
+    execFileSync('git', ['commit', '-q', '-m', name], { cwd: r.dir, env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_COMMITTER_DATE: `@${secs} +0000` } });
+    r.g(r.dir, 'checkout', '-q', 'main');
+  };
+  /** 25 unmerged branches b00 (oldest) to b24 (newest); only `withDoc` has the spec. */
+  const many = (withDoc: number) => {
+    r = makeRepo();
+    r.write('README.md', 'x'); r.commit('init');
+    for (let i = 0; i < 25; i++) {
+      const n = `b${String(i).padStart(2, '0')}`;
+      branchAt(n, 1_700_000_000 + i * 60, i === withDoc ? { [SPEC]: n } : { [`docs/n-${i}.md`]: n });
+    }
+  };
+
+  it('an unmerged branch older than the newest 20 is not read', () => {
+    many(0);
+    const res = resolveDoc(project(), SPEC);
+    expect(res.kind).toBe('not_found');
+    if (res.kind === 'not_found') expect(res.looked).not.toContain(`b00:${SPEC}`);
+  });
+
+  it('the 3rd newest unmerged branch is read', () => {
+    many(22);
+    expect(doc(resolveDoc(project(), SPEC))).toMatchObject({ source: 'branch', branch: 'b22', markdown: 'b22' });
+  });
+
+  it('a branch tried as the named or the name-suffix branch is not tried again', () => {
+    r = makeRepo();
+    r.write('README.md', 'x'); r.commit('init');
+    const wt = path.join(r.dir, '.worktrees', 'gone');
+    r.g(r.dir, 'worktree', 'add', '-q', '-b', 'spec/gone', wt);
+    r.write('docs/other.md', 'o', wt); r.commit('other', wt);
+    r.g(r.dir, 'worktree', 'remove', '--force', wt);
+    for (const res of [resolveDoc(project(), `.worktrees/gone/${SPEC}`, { branch: 'spec/gone' }), resolveDoc(project(), `.worktrees/gone/${SPEC}`), resolveDoc(project(), SPEC, { branch: 'spec/gone' })]) {
+      expect(res.kind).toBe('not_found');
+      if (res.kind === 'not_found') expect(res.looked).toEqual([...new Set(res.looked)]);
+    }
+  });
+});
+
+describe('git wrapper', () => {
+  it('takes no optional lock: --no-optional-locks comes first, before -C', () => {
+    expect(gitArgs('/repo', ['status'])).toEqual(['--no-optional-locks', '-C', '/repo', 'status']);
   });
 });
 
