@@ -33,6 +33,8 @@ interface EndlessStoreState {
   projects: EndlessProject[];
   threads: EndlessPaneThread[];
   truncated: boolean;
+  /** In-progress docs per project (the pane's "Docs (N)"); loaded on the first watch and the 60 s timer only. */
+  docCounts: Record<string, number>;
   loadTail: () => Promise<void>;
   loadOlder: () => Promise<void>;
   openAt: (i: number) => Promise<void>;
@@ -42,6 +44,8 @@ interface EndlessStoreState {
   stop: () => Promise<void>;
   refreshState: () => Promise<void>;
   loadProjects: () => Promise<void>;
+  /** Errors are ignored: the old counts stay. */
+  loadDocCounts: (ids: string[]) => Promise<void>;
   /** Keep the pane live while mounted: thread events, a 60 s timer and page resume reload it. Counted. */
   watch: () => void;
   unwatch: () => void;
@@ -56,6 +60,10 @@ export const RELOAD_EVERY_MS = 60_000;
 const COARSE: Record<string, string> = { working: 'working', needs_you: 'needs_input', queued: 'queued', error: 'error', done: 'waiting', idle: 'waiting' };
 const normalizePane = (v: EndlessProjectsResponse | EndlessProject[]): EndlessProjectsResponse =>
   Array.isArray(v) ? { projects: v, threads: [], truncated: false } : { projects: v.projects ?? [], threads: v.threads ?? [], truncated: !!v.truncated };
+
+/** The pane rule: a project shows when it has activity. An in-progress doc alone does not make it show. */
+export const paneShows = (p: EndlessProject, threads: EndlessPaneThread[]): boolean =>
+  p.live + p.needsYou + p.openItems > 0 || p.messages > 0 || !!p.lastReport || threads.some((t) => t.project === p.id);
 
 export const useEndless = create<EndlessStoreState>((set, get) => {
   /** Run a load; a 503 sets `unavailable` instead of throwing, a good result clears it. */
@@ -100,6 +108,14 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
     debounce = setTimeout(fire, RELOAD_DEBOUNCE_MS);
     if (!maxWait) maxWait = setTimeout(fire, RELOAD_MAX_WAIT_MS);
   };
+  /** The doc counts of the projects the pane shows. Never called for a thread event. */
+  const loadCounts = () => {
+    const { projects, threads } = get();
+    const ids = projects.filter((p) => paneShows(p, threads)).map((p) => p.id);
+    if (ids.length) void get().loadDocCounts(ids);
+  };
+  /** The first watch came before the first projects load: load the counts when that load lands. */
+  let countsOnLoad = false;
   const onVisible = () => { if (document.visibilityState === 'visible') void reload(); };
 
   return {
@@ -119,6 +135,7 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
     projects: [],
     threads: [],
     truncated: false,
+    docCounts: {},
 
     loadTail: () => {
       const g = ++gen;
@@ -184,12 +201,21 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
     retry: async () => { await api.endlessRetry(); },
     stop: async () => { await api.endlessStop(); },
     refreshState: () => load(() => api.endlessState(), (s) => set({ turn: s.turn })),
-    loadProjects: () => load(() => api.endlessProjects(), (v) => { const p = normalizePane(v); set({ projects: p.projects, threads: p.threads, truncated: p.truncated }); }),
+    loadProjects: () => load(() => api.endlessProjects(), (v) => {
+      const p = normalizePane(v);
+      set({ projects: p.projects, threads: p.threads, truncated: p.truncated });
+      if (countsOnLoad && watchers > 0) { countsOnLoad = false; loadCounts(); }
+    }),
+    loadDocCounts: async (ids) => {
+      try { const r = await api.endlessDocCounts(ids); set({ docCounts: r.counts ?? {} }); } catch { /* keep the old counts */ }
+    },
     watch: () => {
       watchers++;
       if (watchers > 1) return;
-      every = setInterval(() => { if (document.visibilityState === 'visible') void reload(); }, RELOAD_EVERY_MS);
+      every = setInterval(() => { if (document.visibilityState === 'visible') void reload().then(loadCounts); }, RELOAD_EVERY_MS);
       document.addEventListener('visibilitychange', onVisible);
+      if (get().projects.some((p) => paneShows(p, get().threads))) loadCounts();
+      else countsOnLoad = true;
     },
     unwatch: () => {
       if (watchers === 0) return;
@@ -198,7 +224,7 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
       if (every) clearInterval(every);
       if (debounce) clearTimeout(debounce);
       if (maxWait) clearTimeout(maxWait);
-      every = null; debounce = null; maxWait = null;
+      every = null; debounce = null; maxWait = null; countsOnLoad = false;
       document.removeEventListener('visibilitychange', onVisible);
     },
 

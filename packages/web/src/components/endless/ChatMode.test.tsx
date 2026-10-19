@@ -4,6 +4,7 @@ import { ChatMode } from './ChatMode';
 import { useOverseer } from '../overseer/store';
 import { useEndless } from '../../stores/endless';
 import { api } from '../../api/client';
+import { useDocViewer } from '../../stores/docViewer';
 
 beforeAll(() => {
   class Noop { observe() {} unobserve() {} disconnect() {} }
@@ -26,6 +27,18 @@ describe('ChatMode', () => {
     unmount();
     expect(useOverseer.getState().workerLightboxId).toBeNull();
     useEndless.setState({ watch: origWatch } as any);
+  });
+
+  it('mounts the doc viewer once and closes it on unmount', async () => {
+    vi.spyOn(api, 'endlessProjects').mockResolvedValue({ projects: [], threads: [], truncated: false } as any);
+    vi.spyOn(api, 'endlessMessages').mockResolvedValue({ messages: [], hasMore: false, hasMoreAfter: false } as any);
+    vi.spyOn(api, 'endlessState').mockResolvedValue({ turn: { status: 'idle', error: null } } as any);
+    vi.spyOn(api, 'endlessDoc').mockResolvedValue({ project: 's1', path: 'docs/a.md', absPath: null, source: 'main', worktree: null, branch: null, vsMain: 'same', modifiedAt: '2026-10-19T11:00:00Z', status: null, note: null, markdown: '# A' });
+    const { unmount } = render(<ChatMode />);
+    useDocViewer.getState().show({ project: 's1', path: 'docs/a.md', branch: null });
+    expect(await screen.findAllByRole('dialog', { name: 'a.md' })).toHaveLength(1);
+    unmount();
+    expect(useDocViewer.getState().open).toBeNull();
   });
 
   it('the Projects button shows the need-you count', () => {

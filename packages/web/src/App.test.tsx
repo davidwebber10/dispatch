@@ -2,6 +2,7 @@ import { act, render, screen } from '@testing-library/react';
 import { beforeEach, afterEach, vi, test, expect } from 'vitest';
 import App from './App';
 import { useUI, loadView } from './stores/ui';
+import { useProjects } from './stores/projects';
 
 beforeEach(() => {
   vi.stubGlobal('WebSocket', class {
@@ -43,4 +44,13 @@ test('the events socket routes ledger:changed to the pinned card store', async (
   render(<App />);
   act(() => { sockets[0].onmessage?.({ data: JSON.stringify({ type: 'ledger:changed', sessionId: 'p1' }) }); });
   expect(applyEvent).toHaveBeenCalledWith({ type: 'ledger:changed', sessionId: 'p1' });
+});
+
+test('the open-project intent opens that project in the Threads view (desktop)', () => {
+  useUI.setState({ view: 'chat' });
+  render(<App />);
+  act(() => { useUI.getState().requestOpenProject('s7'); });
+  expect(useUI.getState().pendingOpenProject).toBeNull();
+  expect(useProjects.getState().activeId).toBe('s7');
+  expect(useUI.getState().view).toBe('workspace');
 });

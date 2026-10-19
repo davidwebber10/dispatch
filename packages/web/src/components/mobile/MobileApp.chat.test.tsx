@@ -5,6 +5,9 @@ import { useTabs } from '../../stores/tabs';
 import { api } from '../../api/client';
 import { useEndless } from '../../stores/endless';
 import { ChatMode } from '../endless/ChatMode';
+import { useUI } from '../../stores/ui';
+import { useProjects } from '../../stores/projects';
+import { act } from '@testing-library/react';
 
 const savedEndless = useEndless.getState();
 
@@ -54,5 +57,18 @@ describe('MobileApp Chat tab', () => {
     const box = (await screen.findByRole('textbox', { name: 'Message' })).closest('div[style*="border-top"]') as HTMLElement;
     expect(box.getAttribute('style')).toContain('safe-area-inset-bottom');
     unmount();
+  });
+});
+
+describe('MobileApp open-project intent', () => {
+  it('opens the project from the Projects tab and clears the intent', async () => {
+    render(<MobileApp />);
+    fireEvent.click(screen.getByRole('button', { name: 'Chat' }));
+    await screen.findByTestId('chat-mode');
+    act(() => { useUI.getState().requestOpenProject('s7'); });
+    expect(useUI.getState().pendingOpenProject).toBeNull();
+    expect(useProjects.getState().activeId).toBe('s7');
+    expect(window.location.pathname).toMatch(/\/p\/s7$/);
+    expect(screen.queryByTestId('chat-mode')).not.toBeInTheDocument();
   });
 });

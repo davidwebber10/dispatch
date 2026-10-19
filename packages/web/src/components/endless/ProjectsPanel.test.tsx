@@ -3,6 +3,8 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { ProjectsPanel, orderProjects, formatStart } from './ProjectsPanel';
 import * as open from './openThread';
 import { useEndless } from '../../stores/endless';
+import { useUI } from '../../stores/ui';
+import { useDocViewer } from '../../stores/docViewer';
 import { api } from '../../api/client';
 
 let saved: ReturnType<typeof useEndless.getState>;
@@ -113,5 +115,56 @@ describe('ProjectsPanel thread list', () => {
     expect(formatStart('2026-10-19T14:02:00', now)).toBe('14:02');
     expect(formatStart('2026-10-17T14:02:00', now)).toMatch(/^Sat 14:02$/);
     expect(formatStart('2026-09-01T14:02:00', now)).toBe('1 Sep');
+  });
+});
+
+describe('Docs fold', () => {
+  const docRow = (k: number, o: Partial<Record<string, unknown>> = {}) => ({ path: `docs/specs/d${k}.md`, name: `d${k}.md`, status: 'draft', source: 'worktree', worktree: 'chat-visibility-spec', branch: 'spec/chat-thread-visibility', vsMain: 'not_on_main', modifiedAt: '2026-10-19T11:00:00Z', copies: 1, writer: { id: 't1', label: 'Plan' }, ...o });
+  afterEach(() => { useDocViewer.setState({ open: null, back: [] }); useUI.setState({ pendingOpenProject: null }); });
+  it('is hidden at a count of 0', () => {
+    useEndless.setState({ projects: [P('s1', 'dispatch', { live: 1 })], threads: [row('w', 's1', 'working')] as any, docCounts: { s1: 0 } } as any);
+    render(<ProjectsPanel />);
+    expect(screen.queryByRole('button', { name: /^Docs/ })).not.toBeInTheDocument();
+  });
+  it('an in-progress doc alone does not make a project show', () => {
+    useEndless.setState({ projects: [P('s1', 'dispatch')], threads: [], docCounts: { s1: 4 } } as any);
+    render(<ProjectsPanel />);
+    expect(screen.queryByTestId('project-s1')).not.toBeInTheDocument();
+  });
+  it('closed by default; opens once; at most 5 rows; +N more opens the project in Threads', async () => {
+    const spy = vi.spyOn(api, 'endlessDocs').mockResolvedValue({ rows: [0, 1, 2, 3, 4].map((k) => docRow(k)), total: 7 } as any);
+    const ask = vi.spyOn(useUI.getState(), 'requestOpenProject');
+    useEndless.setState({ projects: [P('s1', 'dispatch', { live: 1 })], threads: [row('w', 's1', 'working')] as any, docCounts: { s1: 7 } } as any);
+    render(<ProjectsPanel />);
+    expect(screen.queryAllByTestId(/^doc-row-/)).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Docs (7)' }));
+    expect(await screen.findAllByTestId(/^doc-row-/)).toHaveLength(5);
+    expect(screen.getAllByText('worktree chat-visibility-spec')[0]).toBeInTheDocument();
+    expect(screen.getAllByText('worktree chat-visibility-spec')[0]).toHaveAttribute('title', 'worktree chat-visibility-spec on spec/chat-thread-visibility');
+    fireEvent.click(screen.getByRole('button', { name: '+2 more' }));
+    expect(ask).toHaveBeenCalledWith('s1');
+    fireEvent.click(screen.getByRole('button', { name: 'Docs (7)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Docs (7)' }));
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+  it('a row opens the viewer, the writer opens the thread, and other copies show', async () => {
+    vi.spyOn(api, 'endlessDocs').mockResolvedValue({ rows: [docRow(0, { copies: 2 }), docRow(1, { source: 'branch', worktree: null, branch: 'origin/spec/t', vsMain: 'changed', writer: null })], total: 2 } as any);
+    const thread = vi.spyOn(open, 'openThreadInPlace').mockResolvedValue();
+    const onNavigate = vi.fn();
+    useEndless.setState({ projects: [P('s1', 'dispatch', { live: 1 })], threads: [row('w', 's1', 'working')] as any, docCounts: { s1: 2 } } as any);
+    render(<ProjectsPanel onNavigate={onNavigate} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Docs (2)' }));
+    const first = await screen.findByTestId('doc-row-docs/specs/d0.md');
+    expect(first).toHaveTextContent('+1 copy');
+    expect(first).toHaveTextContent('not on main');
+    expect(screen.getByText('branch origin/spec/t')).toHaveAttribute('title', 'branch origin/spec/t, as of the last fetch');
+    expect(screen.getByTestId('doc-row-docs/specs/d1.md')).toHaveTextContent('changed here');
+    expect(screen.queryByRole('button', { name: /more$/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Plan' }));
+    expect(thread).toHaveBeenCalledWith('s1', 't1');
+    expect(useDocViewer.getState().open).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /d1\.md/ }));
+    expect(useDocViewer.getState().open).toEqual({ project: 's1', path: 'docs/specs/d1.md', branch: 'origin/spec/t' });
+    expect(onNavigate).toHaveBeenCalledTimes(2);
   });
 });

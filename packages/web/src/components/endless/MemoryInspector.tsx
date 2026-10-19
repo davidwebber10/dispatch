@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../api/client';
 import { Modal } from '../common/Modal';
+import { useSettings, type DocEditor } from '../../stores/settings';
 import type { EndlessView } from '../../api/types';
 
 /** The view exactly as the model sees it (rendered by the server, spec section 7), and the Chat instructions. */
@@ -12,6 +13,7 @@ export function MemoryInspector({ open, onClose, sheet = false }: { open: boolea
   const [loaded, setLoaded] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
+  const editor = useSettings((s) => s.editor);
 
   useEffect(() => {
     if (!open) return;
@@ -62,6 +64,17 @@ export function MemoryInspector({ open, onClose, sheet = false }: { open: boolea
           </button>
           {loadFailed && <span role="alert" style={{ marginLeft: 10, fontSize: 12.5, color: 'var(--color-danger, #e5484d)' }}>Instructions could not be loaded.</span>}
           {saveFailed && <span role="alert" style={{ marginLeft: 10, fontSize: 12.5, color: 'var(--color-danger, #e5484d)' }}>Could not save</span>}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <label htmlFor="endless-doc-editor" style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>Open docs in</label>
+          <select id="endless-doc-editor" aria-label="Open docs in" value={editor} onChange={(e) => useSettings.getState().setEditor(e.target.value as DocEditor)}
+            style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: 16, font: 'inherit' }}>
+            <option value="">None</option>
+            <option value="vscode">VS Code</option>
+            <option value="cursor">Cursor</option>
+            <option value="zed">Zed</option>
+          </select>
+          <span style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>The doc viewer's "Open in editor" uses it, on this computer only.</span>
         </div>
       </div>
     </Modal>

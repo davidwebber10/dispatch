@@ -1,7 +1,7 @@
 import type { harnessCapabilities } from '../../../core/src/providers/capabilities';
 import { apiPath } from '../lib/basePath';
 import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry, LedgerCard, LedgerSource } from './types';
-import type { EndlessPage, EndlessState, EndlessSearchHit, EndlessView, EndlessProject, EndlessProjectsResponse, EndlessImage, ClaudeLoginSession, UpdateProgress } from './types';
+import type { EndlessPage, EndlessState, EndlessSearchHit, EndlessView, EndlessProject, EndlessProjectsResponse, EndlessImage, EndlessDocCopy, EndlessDocRow, ClaudeLoginSession, UpdateProgress } from './types';
 
 /**
  * A content block for a structured `user` turn (mirrors the daemon's wire shape). A
@@ -81,6 +81,15 @@ export const api = {
   endlessView: () => req<EndlessView>('/api/endless/view'),
   endlessProjects: () => req<EndlessProjectsResponse | EndlessProject[]>('/api/endless/projects'),
   endlessInstructions: () => req<{ text: string }>('/api/endless/instructions'),
+  /** One doc copy. Throws `GET … failed: 403` (outside the project), `404` (not found), `413` (over 2 MB), `400` (unknown project). */
+  endlessDoc: (project: string, path: string, branch: string | null) => {
+    const q = new URLSearchParams({ project, path });
+    if (branch) q.set('branch', branch);
+    return req<EndlessDocCopy>(`/api/endless/doc?${q.toString()}`);
+  },
+  endlessDocs: (project: string) => req<{ rows: EndlessDocRow[]; total: number }>(`/api/endless/docs?project=${encodeURIComponent(project)}`),
+  endlessDocCounts: (projects: string[]) =>
+    req<{ counts: Record<string, number> }>(`/api/endless/docs/counts?projects=${projects.map(encodeURIComponent).join(',')}`),
   setEndlessInstructions: (text: string) => req<{ ok: true }>('/api/endless/instructions', { method: 'PUT', body: body({ text }) }),
   listServers: () => req<{ label: string; origin: string }[]>('/api/servers'),
   addServer: (label: string, origin: string) => req<{ label: string; origin: string }[]>('/api/servers', { method: 'POST', body: body({ label, origin }) }),

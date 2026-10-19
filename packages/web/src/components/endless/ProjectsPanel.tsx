@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowClockwise, CaretDown, CaretRight, Check, Info, Warning } from '@phosphor-icons/react';
-import { useEndless } from '../../stores/endless';
+import { paneShows, useEndless } from '../../stores/endless';
 import { useThreadStatus } from '../../stores/threadStatus';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import type { EndlessPaneState, EndlessPaneThread, EndlessProject } from '../../api/types';
@@ -8,6 +8,7 @@ import { StateMark } from './StateMark';
 import { harnessShort } from './harness';
 import { openThreadInPlace } from './openThread';
 import { stateFromStatus, useThreadView } from './threadView';
+import { DocsFold } from './DocsFold';
 
 /** The Chat right pane (spec 3.2): per project, the counts and a quiet list of recent threads.
  * Waiting threads come first, finished ones fold under "Done today (N)". */
@@ -90,8 +91,8 @@ function ThreadRow({ t, onOpen, mobile, needCard = false, project }: { t: Endles
   );
 }
 
-/** The footer toggles of a project block ("+N more", "Done today (N)"). */
-function MoreButton({ children, onClick, expanded, mobile, first }: { children: React.ReactNode; onClick: () => void; expanded?: boolean; mobile: boolean; first: boolean }) {
+/** The footer toggles of a project block ("+N more", "Done today (N)", "Docs (N)"). */
+export function MoreButton({ children, onClick, expanded, mobile, first }: { children: React.ReactNode; onClick: () => void; expanded?: boolean; mobile: boolean; first: boolean }) {
   return (
     <button type="button" aria-expanded={expanded} onClick={onClick}
       style={{
@@ -129,6 +130,7 @@ export function ProjectsPanel({ onNavigate }: { onNavigate?: () => void } = {}) 
   const threads = useEndless((s) => s.threads);
   const truncated = useEndless((s) => s.truncated);
   const unavailable = useEndless((s) => s.unavailable);
+  const docCounts = useEndless((s) => s.docCounts);
   const live = useThreadStatus((s) => s.byTerminal);
 
   // Group with the live overlay too, so a row moves between sections as soon as its status changes.
@@ -138,7 +140,7 @@ export function ProjectsPanel({ onNavigate }: { onNavigate?: () => void } = {}) 
   const open: Open = (t) => { onNavigate?.(); void openThreadInPlace(t.project, t.id); };
 
   const needs = threads.filter((t) => stateOf(t) === 'needs_you').sort((a, b) => activityOf(b) - activityOf(a));
-  const shown = orderProjects(projects, threads).filter((p) => p.live + p.needsYou + p.openItems > 0 || p.messages > 0 || p.lastReport || threads.some((t) => t.project === p.id));
+  const shown = orderProjects(projects, threads).filter((p) => paneShows(p, threads));
 
   return (
     <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -199,6 +201,7 @@ export function ProjectsPanel({ onNavigate }: { onNavigate?: () => void } = {}) 
                 {isDoneOpen && done.map((t) => <ThreadRow key={t.id} t={t} onOpen={open} mobile={mobile} />)}
               </>
             )}
+            <DocsFold projectId={p.id} count={docCounts[p.id] ?? 0} onNavigate={onNavigate} first={hidden === 0 && done.length === 0} />
           </div>
         );
       })}

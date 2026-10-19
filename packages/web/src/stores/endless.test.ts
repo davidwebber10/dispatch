@@ -8,7 +8,8 @@ const msg = (i: number, over: Partial<EndlessMessage> = {}): EndlessMessage => (
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.spyOn(api, 'endlessProjects').mockResolvedValue([]);
-  useEndless.setState({ messages: [], hasMore: false, atTail: true, loadingOlder: false, loaded: true, unavailable: false, filter: null, focus: null, liveText: '', liveThinking: '', turn: { status: 'idle', error: null }, projects: [], threads: [], truncated: false });
+  vi.spyOn(api, 'endlessDocCounts').mockResolvedValue({ counts: {} });
+  useEndless.setState({ docCounts: {},  messages: [], hasMore: false, atTail: true, loadingOlder: false, loaded: true, unavailable: false, filter: null, focus: null, liveText: '', liveThinking: '', turn: { status: 'idle', error: null }, projects: [], threads: [], truncated: false });
 });
 
 describe('useEndless', () => {
@@ -268,5 +269,64 @@ describe('pane live reload', () => {
     document.dispatchEvent(new Event('visibilitychange'));
     await vi.advanceTimersByTimeAsync(0);
     expect(spy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('doc counts', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { useEndless.getState().unwatch(); vi.useRealTimers(); });
+
+  const P = (id: string, over: Partial<Record<string, number>> = {}) => ({ id, name: id, folder: `/w/${id}`, live: 0, needsYou: 0, openItems: 0, lastReport: null, messages: 0, ...over });
+
+  it('the first watch loads the counts of the projects the pane shows', async () => {
+    useEndless.setState({ projects: [P('a', { live: 1 }), P('idle'), P('b', { messages: 2 })] as any });
+    const spy = vi.mocked(api.endlessDocCounts).mockResolvedValue({ counts: { a: 3, b: 0 } });
+    useEndless.getState().watch();
+    useEndless.getState().watch();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith(['a', 'b']);
+    expect(useEndless.getState().docCounts).toEqual({ a: 3, b: 0 });
+    useEndless.getState().unwatch();
+  });
+
+  it('with no projects yet, the counts load after the first projects load', async () => {
+    const spy = vi.mocked(api.endlessDocCounts);
+    useEndless.getState().watch();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(spy).not.toHaveBeenCalled();
+    vi.mocked(api.endlessProjects).mockResolvedValue({ projects: [P('a', { live: 1 })], threads: [], truncated: false } as any);
+    await useEndless.getState().loadProjects();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(spy).toHaveBeenCalledWith(['a']);
+    await useEndless.getState().loadProjects();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('loads on the 60 s timer, never on thread events', async () => {
+    useEndless.setState({ projects: [P('a', { live: 1 })] as any });
+    vi.mocked(api.endlessProjects).mockResolvedValue({ projects: [P('a', { live: 1 })], threads: [], truncated: false } as any);
+    const spy = vi.mocked(api.endlessDocCounts);
+    useEndless.getState().watch();
+    await vi.advanceTimersByTimeAsync(0);
+    spy.mockClear();
+    useEndless.getState().applyEvent({ type: 'terminal:created', terminal: { id: 't1' } });
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(api.endlessProjects).toHaveBeenCalled();
+    expect(spy).not.toHaveBeenCalled();
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(spy).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(57_000);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith(['a']);
+  });
+
+  it('a failed count load keeps the old counts', async () => {
+    useEndless.setState({ docCounts: { a: 2 } });
+    vi.mocked(api.endlessDocCounts).mockRejectedValue(new Error('GET /api/endless/docs/counts failed: 500'));
+    await useEndless.getState().loadDocCounts(['a']);
+    expect(useEndless.getState().docCounts).toEqual({ a: 2 });
   });
 });

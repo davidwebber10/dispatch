@@ -5,6 +5,8 @@ import { EndlessColumn } from './EndlessColumn';
 import { ProjectsPanel } from './ProjectsPanel';
 import { MemorySearch } from './MemorySearch';
 import { MemoryInspector } from './MemoryInspector';
+import { DocViewer } from './DocViewer';
+import { useDocViewer } from '../../stores/docViewer';
 import { Modal } from '../common/Modal';
 import { WorkerLightbox } from '../overseer/components/WorkerLightbox';
 import { useOverseer } from '../overseer/store';
@@ -29,7 +31,7 @@ export function ChatMode({ mobile = false }: { mobile?: boolean }) {
     void s.refreshState().catch(() => {});
     void s.loadProjects().catch(() => {});
     s.watch();
-    return () => { useEndless.getState().unwatch(); useOverseer.getState().closeWorkerLightbox(); };
+    return () => { useEndless.getState().unwatch(); useOverseer.getState().closeWorkerLightbox(); useDocViewer.getState().close(); };
   }, []);
   return (
     <div data-testid="chat-mode" data-mobile={mobile ? '1' : undefined}
@@ -68,6 +70,8 @@ export function ChatMode({ mobile = false }: { mobile?: boolean }) {
           useUI.getState().setView('workspace'); // the "Threads" view; `workspace` is its code name
         }} />
       </div>
+      {/* After the lightbox: a doc opened from a thread stacks above it (Modal z-index 100, the lightbox 60). */}
+      <DocViewer />
     </div>
   );
 }
