@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll } from 'vitest';
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { ChatMode } from './ChatMode';
 import { useOverseer } from '../overseer/store';
 import { useEndless } from '../../stores/endless';
@@ -26,5 +26,15 @@ describe('ChatMode', () => {
     unmount();
     expect(useOverseer.getState().workerLightboxId).toBeNull();
     useEndless.setState({ watch: origWatch } as any);
+  });
+
+  it('the Projects button shows the need-you count', () => {
+    const projects = [{ id: 's1', name: 'rollup', folder: '/w', live: 0, needsYou: 2, openItems: 0, lastReport: null, messages: 0 }];
+    vi.spyOn(api, 'endlessProjects').mockResolvedValue({ projects, threads: [], truncated: false } as any);
+    vi.spyOn(api, 'endlessMessages').mockResolvedValue({ messages: [], hasMore: false, hasMoreAfter: false } as any);
+    vi.spyOn(api, 'endlessState').mockResolvedValue({ turn: { status: 'idle', error: null } } as any);
+    useEndless.setState({ projects });
+    render(<ChatMode />);
+    expect(screen.getByRole('button', { name: /Projects/ })).toHaveTextContent('2');
   });
 });

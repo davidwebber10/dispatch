@@ -22,6 +22,7 @@ export function ChatMode({ mobile = false }: { mobile?: boolean }) {
   const [panel, setPanel] = useState(!mobile);
   const [inspector, setInspector] = useState(false);
   const unavailable = useEndless((s) => s.unavailable);
+  const needs = useEndless((s) => s.projects.reduce((n, p) => n + p.needsYou, 0));
   useEffect(() => {
     const s = useEndless.getState();
     void s.loadTail().catch(() => {});
@@ -37,7 +38,10 @@ export function ChatMode({ mobile = false }: { mobile?: boolean }) {
         <div data-testid="chat-toolbar" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: mobile ? '8px 16px' : '8px 12px', flexWrap: mobile ? 'wrap' : undefined, flexShrink: 0, borderBottom: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
           <MemorySearch />
           <button type="button" onClick={() => setInspector(true)} style={toolbarButton}><Brain size={15} /> Memory</button>
-          <button type="button" aria-pressed={panel} onClick={() => setPanel((p) => !p)} style={toolbarButton}><Folders size={15} /> Projects</button>
+          <button type="button" aria-pressed={panel} aria-label={needs > 0 ? `Projects, ${needs} need${needs === 1 ? 's' : ''} you` : undefined} onClick={() => setPanel((p) => !p)} style={toolbarButton}>
+            <Folders size={15} /> Projects
+            {needs > 0 && <span aria-hidden style={{ minWidth: 16, height: 16, padding: '0 4px', borderRadius: 8, background: 'var(--color-status-yellow)', color: 'var(--color-canvas)', font: '600 10.5px/16px var(--font-mono)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{needs}</span>}
+          </button>
         </div>
         {unavailable && (
           <div role="status" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: mobile ? '8px 16px' : '8px 12px', color: 'var(--color-text-secondary)', fontSize: 13, borderBottom: '1px solid var(--color-border)' }}>
@@ -53,7 +57,7 @@ export function ChatMode({ mobile = false }: { mobile?: boolean }) {
           <ProjectsPanel />
         </aside>
       )}
-      {mobile && <Modal open={panel} onClose={() => setPanel(false)} title="Projects" sheet><ProjectsPanel /></Modal>}
+      {mobile && <Modal open={panel} onClose={() => setPanel(false)} title="Projects" sheet><ProjectsPanel onNavigate={() => setPanel(false)} /></Modal>}
       <MemoryInspector open={inspector} onClose={() => setInspector(false)} sheet={mobile} />
       <div className="overseer-root">
         <WorkerLightbox onOpenFull={(id) => {
