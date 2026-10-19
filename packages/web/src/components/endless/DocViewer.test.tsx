@@ -198,3 +198,45 @@ describe('DocViewer', () => {
     expect(useDocViewer.getState().open).not.toBeNull();
   });
 });
+
+describe('DocViewer: links inside the doc stay in the viewer', () => {
+  const show = async (markdown: string, o = {}) => {
+    vi.spyOn(api, 'endlessDoc').mockResolvedValue(copy({ markdown, ...o }) as any);
+    render(<DocViewer />);
+    await screen.findByText('not on main');
+  };
+  it('a relative doc link opens that doc from the open doc\'s folder, in the same copy', async () => {
+    await show('[y](./y.md)');
+    expect(fireEvent.click(screen.getByRole('link', { name: 'y' }))).toBe(false);
+    expect(useDocViewer.getState().open).toMatchObject({ project: 's1', path: 'docs/specs/y.md', worktree: 'x' });
+    expect(useDocViewer.getState().back).toHaveLength(1);
+  });
+  it('a ../ link resolves against the folder; a #fragment is dropped', async () => {
+    await show('[up](../plans/z.md#part)');
+    fireEvent.click(screen.getByRole('link', { name: 'up' }));
+    expect(useDocViewer.getState().open).toMatchObject({ path: 'docs/plans/z.md' });
+  });
+  it('a ?query is dropped too', async () => {
+    await show('[q](y.markdown?v=1)');
+    fireEvent.click(screen.getByRole('link', { name: 'q' }));
+    expect(useDocViewer.getState().open).toMatchObject({ path: 'docs/specs/y.markdown' });
+  });
+  it('a web link opens in a new tab and the app does not navigate', async () => {
+    const opened = vi.spyOn(window, 'open').mockReturnValue(null);
+    const before = window.location.href;
+    await show('[ext](https://example.com)');
+    expect(fireEvent.click(screen.getByRole('link', { name: 'ext' }))).toBe(false);
+    expect(opened).toHaveBeenCalledWith('https://example.com', '_blank', 'noopener');
+    expect(window.location.href).toBe(before);
+    expect(useDocViewer.getState().open?.path).toBe('docs/specs/x.md');
+  });
+  it('a relative link that leads above the repo root does nothing', async () => {
+    useDocViewer.setState({ open: { project: 's1', path: 'docs/x.md', branch: null }, back: [] });
+    const opened = vi.spyOn(window, 'open').mockReturnValue(null);
+    await show('[bad](../../../x.md)', { path: 'docs/x.md' });
+    expect(fireEvent.click(screen.getByRole('link', { name: 'bad' }))).toBe(false);
+    expect(useDocViewer.getState().open).toMatchObject({ path: 'docs/x.md' });
+    expect(useDocViewer.getState().back).toHaveLength(0);
+    expect(opened).not.toHaveBeenCalled();
+  });
+});

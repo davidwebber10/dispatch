@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { ChatMode } from './ChatMode';
+import { ChatMode, openInThreads } from './ChatMode';
 import { useOverseer } from '../overseer/store';
 import { useEndless } from '../../stores/endless';
 import { api } from '../../api/client';
 import { useDocViewer } from '../../stores/docViewer';
+import { useTabs } from '../../stores/tabs';
+import { useUI } from '../../stores/ui';
 
 beforeAll(() => {
   class Noop { observe() {} unobserve() {} disconnect() {} }
@@ -49,5 +51,41 @@ describe('ChatMode', () => {
     useEndless.setState({ projects });
     render(<ChatMode />);
     expect(screen.getByRole('button', { name: /Projects/ })).toHaveTextContent('2');
+  });
+});
+
+describe('openInThreads (the lightbox Open in Threads)', () => {
+  const setup = () => {
+    const requestOpenThread = vi.fn();
+    const setView = vi.fn();
+    useUI.setState({ requestOpenThread, setView } as any);
+    useOverseer.setState({ workerLightboxId: 't9' });
+    return { requestOpenThread, setView };
+  };
+  it('a loaded terminal opens with its own session', () => {
+    const { requestOpenThread, setView } = setup();
+    useTabs.setState({ byProject: { s1: [{ id: 't9', sessionId: 's1' }] } } as any);
+    useEndless.setState({ threads: [] });
+    openInThreads('t9');
+    expect(requestOpenThread).toHaveBeenCalledWith({ sessionId: 's1', terminalId: 't9' });
+    expect(setView).toHaveBeenCalledWith('workspace');
+    expect(useOverseer.getState().workerLightboxId).toBeNull();
+  });
+  it('a terminal the tabs have not loaded opens with the project from the pane row', () => {
+    const { requestOpenThread, setView } = setup();
+    useTabs.setState({ byProject: {} } as any);
+    useEndless.setState({ threads: [{ id: 't9', project: 's2' }] as any });
+    openInThreads('t9');
+    expect(requestOpenThread).toHaveBeenCalledWith({ sessionId: 's2', terminalId: 't9' });
+    expect(setView).toHaveBeenCalledWith('workspace');
+  });
+  it('no known project: nothing opens, the lightbox still closes', () => {
+    const { requestOpenThread, setView } = setup();
+    useTabs.setState({ byProject: {} } as any);
+    useEndless.setState({ threads: [] });
+    openInThreads('t9');
+    expect(requestOpenThread).not.toHaveBeenCalled();
+    expect(setView).not.toHaveBeenCalled();
+    expect(useOverseer.getState().workerLightboxId).toBeNull();
   });
 });

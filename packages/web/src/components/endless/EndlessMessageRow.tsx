@@ -130,8 +130,8 @@ function WorkCard({ m }: { m: EndlessMessage }) {
   if (short) {
     const tap = () => openThread(m);
     return (
-      <div onClick={tap} style={{ ...cardStyle, cursor: m.ref ? 'pointer' : 'default' }}>
-        <button type="button" aria-label={head ? `Open thread ${head[1]}` : 'Open thread'} onClick={(e) => { e.stopPropagation(); tap(); }}
+      <div onClick={tap} style={{ ...cardStyle, minHeight: 44, cursor: m.ref ? 'pointer' : 'default' }}>
+        <button type="button" disabled={!m.ref} aria-label={head ? `Open thread ${head[1]}` : 'Open thread'} onClick={(e) => { e.stopPropagation(); tap(); }}
           style={{ ...bare, display: 'flex', flexShrink: 0, marginTop: 2, borderRadius: 4, cursor: m.ref ? 'pointer' : 'default' }}>
           <Briefcase size={16} />
         </button>
@@ -168,13 +168,19 @@ function WorkCard({ m }: { m: EndlessMessage }) {
   );
 }
 
+/** The project ids and folders as one string: a pane reload makes a new projects array, not a new key. */
+const projectsKey = (s: { projects: { id: string; folder: string }[] }) => JSON.stringify(s.projects.map((p) => [p.id, p.folder]));
+
 /** A Dispatch reply: markdown, with each doc path as a doc chip (spec 12.2). */
 function ReplyRow({ m }: { m: EndlessMessage }) {
-  const projects = useEndless((s) => s.projects);
-  const docs = useMemo(() => ({
-    onOpen: (p: string, b: string | null) => openDoc(p, b, m.project),
-    accept: (p: string) => projectForPath(p, m.project, projects) !== null,
-  }), [m.project, projects]);
+  const key = useEndless(projectsKey);
+  const docs = useMemo(() => {
+    const projects = (JSON.parse(key) as [string, string][]).map(([id, folder]) => ({ id, folder }));
+    return {
+      onOpen: (p: string, b: string | null) => openDoc(p, b, m.project),
+      accept: (p: string) => projectForPath(p, m.project, projects) !== null,
+    };
+  }, [m.project, key]);
   return <div style={{ fontSize: 14.5, lineHeight: 1.75, minWidth: 0 }}><InsightText source={m.text} scheme="global" variant="rail" docs={docs} /></div>;
 }
 

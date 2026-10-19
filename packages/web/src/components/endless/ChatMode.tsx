@@ -19,6 +19,19 @@ const toolbarButton: React.CSSProperties = {
   border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 12.5,
 };
 
+/**
+ * The lightbox's Open in Threads: close the lightbox and open the thread in the Threads view. A
+ * terminal the tabs have not loaded yet opens with the project from its pane row; with no known
+ * project, nothing opens.
+ */
+export function openInThreads(id: string): void {
+  const sessionId = findTerminal(useTabs.getState().byProject, id)?.sessionId ?? useEndless.getState().threads.find((t) => t.id === id)?.project;
+  useOverseer.getState().closeWorkerLightbox();
+  if (!sessionId) return;
+  useUI.getState().requestOpenThread({ sessionId, terminalId: id });
+  useUI.getState().setView('workspace'); // the "Threads" view; `workspace` is its code name
+}
+
 /** The Chat page (spec 2026-10-13, section 7). Loads the tail, the turn state and the projects once. */
 export function ChatMode({ mobile = false }: { mobile?: boolean }) {
   const [panel, setPanel] = useState(!mobile);
@@ -62,13 +75,7 @@ export function ChatMode({ mobile = false }: { mobile?: boolean }) {
       {mobile && <Modal open={panel} onClose={() => setPanel(false)} title="Projects" sheet><ProjectsPanel onNavigate={() => setPanel(false)} /></Modal>}
       <MemoryInspector open={inspector} onClose={() => setInspector(false)} sheet={mobile} />
       <div className="overseer-root">
-        <WorkerLightbox onOpenFull={(id) => {
-          const t = findTerminal(useTabs.getState().byProject, id);
-          useOverseer.getState().closeWorkerLightbox();
-          if (!t) return;
-          useUI.getState().requestOpenThread({ sessionId: t.sessionId, terminalId: id });
-          useUI.getState().setView('workspace'); // the "Threads" view; `workspace` is its code name
-        }} />
+        <WorkerLightbox onOpenFull={openInThreads} />
       </div>
       {/* After the lightbox: a doc opened from a thread stacks above it (Modal z-index 100, the lightbox 60). */}
       <DocViewer />

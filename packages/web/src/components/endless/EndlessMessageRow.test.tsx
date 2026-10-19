@@ -207,4 +207,33 @@ describe('report cards do not nest buttons', () => {
     rerender(<MessageScroller.Provider><EndlessRows messages={[work]} focus={0} /></MessageScroller.Provider>);
     expect(scans.n).toBe(1);
   });
+  it('a short report with no thread: the card is 44 px tall at least and its Open thread button is disabled', () => {
+    const work = { ...m(0, 'work', '[Plan] report: done'), project: 's1', ref: null };
+    render(<MessageScroller.Provider><EndlessRows messages={[work]} focus={null} /></MessageScroller.Provider>);
+    const btn = screen.getByRole('button', { name: 'Open thread Plan' });
+    expect(btn).toBeDisabled();
+    expect((btn.parentElement as HTMLElement).style.minHeight).toBe('44px');
+  });
+  it('a short report with a thread: the Open thread button is enabled', () => {
+    const work = { ...m(0, 'work', '[Plan] report: done'), project: 's1', ref: 't1' };
+    render(<MessageScroller.Provider><EndlessRows messages={[work]} focus={null} /></MessageScroller.Provider>);
+    expect(screen.getByRole('button', { name: 'Open thread Plan' })).toBeEnabled();
+  });
+});
+
+describe('a pane reload leaves reply rows alone', () => {
+  it('a new but equal projects array does not render the reply markdown again', () => {
+    useEndless.setState({ projects: [{ id: 's7', name: 'studio', folder: '/w/studio' }] as any });
+    const reply = { ...m(0, 'unii', 'The plan is in `/w/studio/docs/plans/p.md`.'), project: 's1' };
+    scans.n = 0;
+    render(<MessageScroller.Provider><EndlessRows messages={[reply]} focus={null} /></MessageScroller.Provider>);
+    expect(screen.getByRole('button', { name: 'p.md' })).toBeInTheDocument();
+    const after = scans.n;
+    expect(after).toBeGreaterThan(0);
+    act(() => { useEndless.setState({ projects: [{ id: 's7', name: 'studio', folder: '/w/studio' }] as any }); });
+    expect(scans.n).toBe(after);
+    // A changed folder is a real change: the reply is drawn again.
+    act(() => { useEndless.setState({ projects: [{ id: 's7', name: 'studio', folder: '/w/other' }] as any }); });
+    expect(scans.n).toBeGreaterThan(after);
+  });
 });
