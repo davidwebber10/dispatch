@@ -91,9 +91,9 @@ export class EndlessService {
     this.views = new ViewKeeper(this.store, o.limits, { defer: true });
     this.mediaDir = path.join(o.chatDir, 'media');
     this.mcpConfigPath = path.join(o.chatDir, 'memory.mcp.json');
-    this.docs = new DocsService(o.db);
     this.timeZone = o.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
     this.now = o.now ?? Date.now;
+    this.docs = new DocsService(o.db, this.store, this.now);
     const summarizer = o.summarizer ?? createSummarizer({
       manager: o.manager, chatDir: o.chatDir, mcpConfigPath: this.mcpConfigPath,
       openRouterKey: o.openRouterKey ?? (async () => null), onUsage: (u) => this.note('compactions', u),

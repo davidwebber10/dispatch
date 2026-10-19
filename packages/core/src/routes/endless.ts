@@ -63,6 +63,16 @@ export function createEndlessRouter(svc: EndlessService): Router {
     else if (r.kind === 'too_large') res.status(413).json({ path: r.path, size: r.size });
     else res.status(404).json({ looked: r.looked });
   });
+  // Read only: the in-progress docs of a project, and their totals for the projects the pane shows.
+  router.get('/docs', (req, res) => {
+    const r = svc.docs.list(String(req.query.project ?? ''));
+    if (!r) { res.status(400).json({ error: 'unknown project' }); return; }
+    res.json(r);
+  });
+  router.get('/docs/counts', (req, res) => {
+    const ids = String(req.query.projects ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+    res.json({ counts: svc.docs.counts(ids) });
+  });
   router.get('/threads', (_req, res) => { res.json(svc.threads()); });
   router.get('/project', (req, res) => {
     try { res.json(svc.project(String(req.query.ref ?? ''))); } catch (err) { fail(res, err); }

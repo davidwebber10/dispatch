@@ -196,6 +196,13 @@ describe('endless routes', () => {
     expect(res.body).toMatchObject({ path: 'docs/big.md', size: 2 * 1024 * 1024 + 1 });
   });
 
+  it('GET /docs and /docs/counts answer for a project that is not a repo', async () => {
+    fs.mkdirSync(path.join(root, 'salsify'), { recursive: true });
+    expect((await request(app).get('/api/endless/docs').query({ project: 's1' })).body).toEqual({ rows: [], total: 0 });
+    expect((await request(app).get('/api/endless/docs/counts').query({ projects: 's1' })).body).toEqual({ counts: { s1: 0 } });
+    expect((await request(app).get('/api/endless/docs').query({ project: 'nope' })).status).toBe(400);
+  });
+
   it('POST /arm arms a Chat thread and refuses an unknown or a non-Chat one', async () => {
     const db = (svc as any).o.db as Database.Database;
     terminalsDb.create(db, { id: 't1', sessionId: 's1', type: 'claude-code', label: 'Fix', config: { role: 'agent', origin: 'endless' } });

@@ -173,3 +173,7 @@ it('every agent type gets the test-run rule: full suite only after a code change
     expect(prompt, type).not.toMatch(/kill it by PID/i);
   }
 });
+
+it('every agent prompt asks for the absolute path and branch of each doc it writes', () => {
+  for (const p of Object.values(AGENT_PROMPTS)) expect(p).toMatch(/Doc: .*absolute path.*branch/s);
+});
