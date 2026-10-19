@@ -5,7 +5,7 @@ import { UserBubble } from '../tabs/chat/ChatView';
 import { InsightText } from '../InsightText';
 import { ChatImage } from '../ChatImage';
 import { endlessMediaUrl } from '../../api/client';
-import { useUI } from '../../stores/ui';
+import { openThreadInPlace } from './openThread';
 import { StartedItem } from './StartedItem';
 import { SPAWN_TOOL, parseSpawn } from './spawn';
 export { SPAWN_TOOL, parseSpawn };
@@ -100,8 +100,7 @@ const FOLD_LINES = 3;
 
 function openThread(m: EndlessMessage) {
   if (!m.project || !m.ref) return;
-  useUI.getState().requestOpenThread({ sessionId: m.project, terminalId: m.ref });
-  useUI.getState().setView('workspace');
+  void openThreadInPlace(m.project, m.ref);
 }
 
 const cardStyle: React.CSSProperties = { display: 'flex', gap: 10, alignItems: 'flex-start', textAlign: 'left', width: '100%', padding: '10px 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 8, color: 'var(--color-text-primary)' };

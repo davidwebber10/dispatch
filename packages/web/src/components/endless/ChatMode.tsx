@@ -6,6 +6,11 @@ import { ProjectsPanel } from './ProjectsPanel';
 import { MemorySearch } from './MemorySearch';
 import { MemoryInspector } from './MemoryInspector';
 import { Modal } from '../common/Modal';
+import { WorkerLightbox } from '../overseer/components/WorkerLightbox';
+import { useOverseer } from '../overseer/store';
+import { useTabs, findTerminal } from '../../stores/tabs';
+import { useUI } from '../../stores/ui';
+import '../overseer/tokens.css';
 
 const toolbarButton: React.CSSProperties = {
   height: 32, padding: '0 10px', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, borderRadius: 8,
@@ -22,6 +27,8 @@ export function ChatMode({ mobile = false }: { mobile?: boolean }) {
     void s.loadTail().catch(() => {});
     void s.refreshState().catch(() => {});
     void s.loadProjects().catch(() => {});
+    s.watch();
+    return () => { useEndless.getState().unwatch(); useOverseer.getState().closeWorkerLightbox(); };
   }, []);
   return (
     <div data-testid="chat-mode" data-mobile={mobile ? '1' : undefined}
@@ -48,6 +55,15 @@ export function ChatMode({ mobile = false }: { mobile?: boolean }) {
       )}
       {mobile && <Modal open={panel} onClose={() => setPanel(false)} title="Projects" sheet><ProjectsPanel /></Modal>}
       <MemoryInspector open={inspector} onClose={() => setInspector(false)} sheet={mobile} />
+      <div className="overseer-root">
+        <WorkerLightbox onOpenFull={(id) => {
+          const t = findTerminal(useTabs.getState().byProject, id);
+          useOverseer.getState().closeWorkerLightbox();
+          if (!t) return;
+          useUI.getState().requestOpenThread({ sessionId: t.sessionId, terminalId: id });
+          useUI.getState().setView('workspace'); // the "Threads" view; `workspace` is its code name
+        }} />
+      </div>
     </div>
   );
 }

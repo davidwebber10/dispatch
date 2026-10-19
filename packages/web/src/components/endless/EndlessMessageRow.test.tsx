@@ -1,6 +1,8 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, beforeAll, vi } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import { foldRows, parseSpawn } from './EndlessMessageRow';
+import { foldRows, parseSpawn, EndlessRows } from './EndlessMessageRow';
+import { MessageScroller } from '@shadcn/react/message-scroller';
+import { useUI } from '../../stores/ui';
 import { StartedItem } from './StartedItem';
 import { useEndless } from '../../stores/endless';
 import { useThreadStatus } from '../../stores/threadStatus';
@@ -10,6 +12,12 @@ import type { EndlessMessage } from '../../api/types';
 const m = (i: number, kind: EndlessMessage['kind'], text: string): EndlessMessage => ({ i, kind, text, size: text.length, project: null, projectName: null, ref: null, media: [], createdAt: 0 });
 const spawnTool = (i: number, name: string) => m(i, 'tool', `mcp__memory__spawn_agent ${JSON.stringify({ project: 'studio', agentType: 'implementer', name, task: 'Fix it' })}`);
 const spawnEcho = (i: number, id: string, label: string) => m(i, 'echo', JSON.stringify({ agentId: id, label, project: 'studio', projectId: 's1', folder: '/w/studio' }));
+
+beforeAll(() => {
+  class Noop { observe() {} unobserve() {} disconnect() {} }
+  (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = Noop;
+  (globalThis as unknown as { IntersectionObserver: unknown }).IntersectionObserver = Noop;
+});
 
 beforeEach(() => {
   useEndless.setState({ threads: [], projects: [] });
@@ -80,5 +88,18 @@ describe('StartedItem', () => {
     expect(screen.getByText('working')).toBeInTheDocument();
     act(() => { useThreadStatus.getState().applyEvent({ type: 'terminal:status', terminalId: 't9', status: 'needs_input' }); });
     expect(screen.getByText('needs you')).toBeInTheDocument();
+  });
+});
+
+describe('report card', () => {
+  it('opens the thread in place and stays in Chat', () => {
+    const spy = vi.spyOn(open, 'openThreadInPlace').mockResolvedValue();
+    const setView = vi.fn();
+    useUI.setState({ setView } as any);
+    const work = { ...m(0, 'work', '[Fix] report: done'), project: 's1', ref: 't9' };
+    render(<MessageScroller.Provider><EndlessRows messages={[work]} focus={null} /></MessageScroller.Provider>);
+    fireEvent.click(screen.getByRole('button', { name: /\[Fix\] report: done|Fix/ }));
+    expect(spy).toHaveBeenCalledWith('s1', 't9');
+    expect(setView).not.toHaveBeenCalled();
   });
 });

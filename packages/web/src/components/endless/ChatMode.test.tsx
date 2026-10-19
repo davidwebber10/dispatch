@@ -1,0 +1,30 @@
+import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { render } from '@testing-library/react';
+import { ChatMode } from './ChatMode';
+import { useOverseer } from '../overseer/store';
+import { useEndless } from '../../stores/endless';
+import { api } from '../../api/client';
+
+beforeAll(() => {
+  class Noop { observe() {} unobserve() {} disconnect() {} }
+  (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = Noop;
+  (globalThis as unknown as { IntersectionObserver: unknown }).IntersectionObserver = Noop;
+});
+
+describe('ChatMode', () => {
+  it('watches the pane, mounts the lightbox in .overseer-root, and closes it on unmount', () => {
+    vi.spyOn(api, 'endlessProjects').mockResolvedValue({ projects: [], threads: [], truncated: false } as any);
+    vi.spyOn(api, 'endlessMessages').mockResolvedValue({ messages: [], hasMore: false, hasMoreAfter: false } as any);
+    vi.spyOn(api, 'endlessState').mockResolvedValue({ turn: { status: 'idle', error: null } } as any);
+    const origWatch = useEndless.getState().watch;
+    const watch = vi.fn(origWatch);
+    useEndless.setState({ watch } as any);
+    const { container, unmount } = render(<ChatMode />);
+    expect(watch).toHaveBeenCalled();
+    expect(container.querySelector('.overseer-root')).not.toBeNull();
+    useOverseer.setState({ workerLightboxId: 't9' });
+    unmount();
+    expect(useOverseer.getState().workerLightboxId).toBeNull();
+    useEndless.setState({ watch: origWatch } as any);
+  });
+});
