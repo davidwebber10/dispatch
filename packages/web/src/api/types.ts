@@ -446,7 +446,14 @@ export interface EndlessSearchHit { i: number; kind: EndlessKind; project: strin
 export interface EndlessViewLine { name: string; l: number; i: number; text: string | null }
 export interface EndlessView { lines: EndlessViewLine[]; bytes: number; rendered: string }
 export interface EndlessProject { id: string; name: string; folder: string; live: number; needsYou: number; openItems: number; lastReport: string | null; messages: number }
+export type EndlessPaneState = 'working' | 'needs_you' | 'queued' | 'error' | 'done' | 'idle';
+export interface EndlessPaneThread { id: string; project: string; label: string; harness: string; state: EndlessPaneState; startedBy: 'chat' | 'overseer' | 'thread' | 'role' | 'user'; via: string | null; startedAt: string; lastActivityAt: string | null; question: string | null }
+export interface EndlessProjectsResponse { projects: EndlessProject[]; threads: EndlessPaneThread[]; truncated: boolean }
 export interface EndlessImage { media_type: string; data: string }
+/** GET /api/endless/doc: one copy of a spec or plan doc (core docs/resolve.ts DocCopy). `worktree` is the base name the chip shows; `worktreeRel` names the worktree. */
+export interface EndlessDocCopy { project: string; path: string; absPath: string | null; source: 'main' | 'worktree' | 'branch'; worktree: string | null; worktreeRel: string | null; branch: string | null; remote: boolean; vsMain: 'same' | 'changed' | 'not_on_main' | 'unknown'; modifiedAt: string; status: string | null; note: string | null; markdown: string }
+/** GET /api/endless/docs: one in-progress doc of a project (core docs/list.ts DocRow). */
+export interface EndlessDocRow { path: string; name: string; status: string | null; source: 'worktree' | 'branch'; worktree: string | null; worktreeRel: string | null; branch: string | null; vsMain: 'changed' | 'not_on_main'; modifiedAt: string; copies: number; writer: { id: string; label: string } | null }
 /** GET /api/update/progress — the updater's status file plus its output tail (core update/progress.ts). */
 export type UpdateStepName = 'pull' | 'install' | 'build' | 'tools' | 'restart';
 export interface UpdateProgress {

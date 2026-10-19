@@ -1,30 +1,57 @@
-import { useId, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { MessageScroller, useMessageScroller } from '@shadcn/react/message-scroller';
 import { CaretRight, ClockCounterClockwise, Briefcase, Notebook, Wrench } from '@phosphor-icons/react';
 import { UserBubble } from '../tabs/chat/ChatView';
 import { InsightText } from '../InsightText';
 import { ChatImage } from '../ChatImage';
 import { endlessMediaUrl } from '../../api/client';
-import { useUI } from '../../stores/ui';
+import { openThreadInPlace } from './openThread';
+import { StartedItem } from './StartedItem';
+import { DocText, openDoc } from './DocText';
+import { projectForPath } from '../../lib/docPaths';
+import { useEndless } from '../../stores/endless';
+import { SPAWN_TOOL, parseSpawn } from './spawn';
+export { SPAWN_TOOL, parseSpawn };
 import type { EndlessMessage } from '../../api/types';
 
 export type Row =
   | { kind: 'msg'; m: EndlessMessage }
   | { kind: 'tool'; tool: EndlessMessage; echo?: EndlessMessage }
-  | { kind: 'recall'; tool: EndlessMessage; echo?: EndlessMessage };
+  | { kind: 'recall'; tool: EndlessMessage; echo?: EndlessMessage }
+  | { kind: 'started'; tool: EndlessMessage; echo?: EndlessMessage };
 
 const ZOOM_TOOL = /^mcp__memory__zoom\s/;
+const toolKind = (tool: EndlessMessage): 'recall' | 'started' | 'tool' => (ZOOM_TOOL.test(tool.text) ? 'recall' : SPAWN_TOOL.test(tool.text) ? 'started' : 'tool');
 
-/** A tool call and the result right after it fold into one row; a `zoom` call is a "recalled" row. */
+/**
+ * A tool call that carries an id (`ref`) pairs with the first later result with the same id, wherever
+ * it sits in the list; that result is consumed. Calls and results logged before ids existed have no
+ * `ref`: a run of N such calls pairs with the run of up to N results right after it, in order. A `zoom`
+ * call is a "recalled" row; a `spawn_agent` call is a Started card.
+ */
 export function foldRows(messages: EndlessMessage[]): Row[] {
+  const echoOf = new Map<number, EndlessMessage>(); // tool.i -> its result, paired by id
+  const consumed = new Set<number>();
+  const open = new Map<string, EndlessMessage[]>(); // ref -> calls still waiting, oldest first
+  for (const m of messages) {
+    if (m.kind === 'tool' && m.ref) open.set(m.ref, [...(open.get(m.ref) ?? []), m]);
+    else if (m.kind === 'echo' && m.ref) {
+      const tool = open.get(m.ref)?.shift();
+      if (tool) { echoOf.set(tool.i, m); consumed.add(m.i); }
+    }
+  }
   const rows: Row[] = [];
-  for (let k = 0; k < messages.length; k++) {
+  let k = 0;
+  while (k < messages.length) {
     const m = messages[k];
-    if (m.kind !== 'tool') { rows.push({ kind: 'msg', m }); continue; }
-    const next = messages[k + 1];
-    const echo = next && next.kind === 'echo' && next.i === m.i + 1 ? next : undefined;
-    if (echo) k++;
-    rows.push({ kind: ZOOM_TOOL.test(m.text) ? 'recall' : 'tool', tool: m, echo });
+    if (m.kind === 'echo' && consumed.has(m.i)) { k++; continue; }
+    if (m.kind !== 'tool') { rows.push({ kind: 'msg', m }); k++; continue; }
+    if (m.ref) { rows.push({ kind: toolKind(m), tool: m, echo: echoOf.get(m.i) }); k++; continue; }
+    const tools: EndlessMessage[] = [];
+    while (k < messages.length && messages[k].kind === 'tool' && !messages[k].ref && (tools.length === 0 || messages[k].i === tools[tools.length - 1].i + 1)) tools.push(messages[k++]);
+    const echoes: EndlessMessage[] = [];
+    while (k < messages.length && echoes.length < tools.length && messages[k].kind === 'echo' && !messages[k].ref && messages[k].i === (echoes.length ? echoes[echoes.length - 1].i : tools[tools.length - 1].i) + 1) echoes.push(messages[k++]);
+    tools.forEach((tool, n) => rows.push({ kind: toolKind(tool), tool, echo: echoes[n] }));
   }
   return rows;
 }
@@ -88,16 +115,21 @@ const FOLD_LINES = 3;
 
 function openThread(m: EndlessMessage) {
   if (!m.project || !m.ref) return;
-  useUI.getState().requestOpenThread({ sessionId: m.project, terminalId: m.ref });
-  useUI.getState().setView('workspace');
+  void openThreadInPlace(m.project, m.ref);
 }
 
 const cardStyle: React.CSSProperties = { display: 'flex', gap: 10, alignItems: 'flex-start', textAlign: 'left', width: '100%', padding: '10px 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 8, color: 'var(--color-text-primary)' };
+/** A button with no look of its own: the card draws it. */
+const bare: React.CSSProperties = { background: 'none', border: 'none', padding: 0, margin: 0, color: 'inherit', font: 'inherit', textAlign: 'left', cursor: 'pointer' };
 
 /**
  * A thread report. A short one is one card that opens its thread; a long one folds to the thread
  * name and the first lines, and a tap on the header opens it. The open state is local to the row,
  * so it survives new messages (the row keeps its key).
+ *
+ * No control sits inside another: the card box is a plain div (a mouse click anywhere on it taps
+ * it), the one real button is the header, and the text with its doc chips sits outside that button.
+ * The keyboard reaches the header button, then each chip.
  */
 function WorkCard({ m }: { m: EndlessMessage }) {
   const [open, setOpen] = useState(false);
@@ -106,33 +138,39 @@ function WorkCard({ m }: { m: EndlessMessage }) {
   const head = REPORT_HEAD.exec(m.text);
   const body = head ? m.text.slice(head[0].length) : m.text;
   const short = m.text.length <= FOLD_CHARS && m.text.split('\n').length <= FOLD_LINES;
+  const preview = body.split('\n').find((l) => l.trim()) ?? '';
   if (short) {
+    const tap = () => openThread(m);
     return (
-      <button type="button" onClick={() => openThread(m)} style={{ ...cardStyle, cursor: m.ref ? 'pointer' : 'default' }}>
-        <Briefcase size={16} style={{ flexShrink: 0, marginTop: 2 }} />
-        <span style={{ minWidth: 0, fontSize: 13.5, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{m.text}</span>
-      </button>
+      <div onClick={tap} style={{ ...cardStyle, minHeight: 44, cursor: m.ref ? 'pointer' : 'default' }}>
+        <button type="button" disabled={!m.ref} aria-label={head ? `Open thread ${head[1]}` : 'Open thread'} onClick={(e) => { e.stopPropagation(); tap(); }}
+          style={{ ...bare, display: 'flex', flexShrink: 0, marginTop: 2, borderRadius: 4, cursor: m.ref ? 'pointer' : 'default' }}>
+          <Briefcase size={16} />
+        </button>
+        <span style={{ minWidth: 0, fontSize: 13.5, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}><DocText text={m.text} project={m.project} raised /></span>
+      </div>
     );
   }
-  const preview = body.split('\n').find((l) => l.trim()) ?? '';
+  const toggle = () => {
+    // Opening grows the row. Pin its top so the scroller does not follow the new end of the content.
+    if (!open) scrollToMessage(`m${m.i}`, { align: 'start' });
+    setOpen((o) => !o);
+  };
   return (
     <div style={{ ...cardStyle, flexDirection: 'column', gap: 0, padding: 0 }}>
-      <button type="button" aria-expanded={open} aria-controls={open ? id : undefined} onClick={() => {
-          // Opening grows the row. Pin its top so the scroller does not follow the new end of the content.
-          if (!open) scrollToMessage(`m${m.i}`, { align: 'start' });
-          setOpen((o) => !o);
-        }}
-        style={{ display: 'flex', gap: 8, alignItems: 'flex-start', width: '100%', minHeight: 44, padding: '10px 12px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', color: 'inherit', font: 'inherit' }}>
-        <CaretRight size={13} weight="bold" style={{ flexShrink: 0, marginTop: 4, transition: 'transform .12s', transform: open ? 'rotate(90deg)' : 'none' }} />
-        <Briefcase size={16} style={{ flexShrink: 0, marginTop: 2 }} />
-        <span style={{ minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <span style={{ fontSize: 13.5, fontWeight: 600, overflowWrap: 'anywhere' }}>{head ? head[1] : 'Thread report (continued)'}</span>
-          {!open && <span style={{ fontSize: 12.5, lineHeight: 1.4, color: 'var(--color-text-secondary)', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere' }}>{preview}</span>}
-        </span>
-      </button>
+      <div onClick={toggle} style={{ width: '100%', cursor: 'pointer' }}>
+        <button type="button" aria-expanded={open} aria-controls={open ? id : undefined} onClick={(e) => { e.stopPropagation(); toggle(); }}
+          style={{ ...bare, display: 'flex', gap: 8, alignItems: 'flex-start', width: '100%', minHeight: open ? 44 : undefined, padding: open ? '10px 12px' : '10px 12px 2px' }}>
+          <CaretRight size={13} weight="bold" style={{ flexShrink: 0, marginTop: 4, transition: 'transform .12s', transform: open ? 'rotate(90deg)' : 'none' }} />
+          <Briefcase size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+          <span style={{ minWidth: 0, flex: 1, fontSize: 13.5, fontWeight: 600, overflowWrap: 'anywhere' }}>{head ? head[1] : 'Thread report (continued)'}</span>
+        </button>
+        {/* The preview lines up under the name: 12 padding + 13 caret + 8 gap + 16 icon + 8 gap. */}
+        {!open && <div style={{ padding: '0 12px 10px 57px', fontSize: 12.5, lineHeight: 1.4, color: 'var(--color-text-secondary)', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere' }}><DocText text={preview} project={m.project} raised /></div>}
+      </div>
       {open && (
         <div id={id} style={{ padding: '0 12px 10px', minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{m.text}</div>
+          <div style={{ fontSize: 13.5, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}><DocText text={m.text} project={m.project} raised /></div>
           {m.ref && (
             <button type="button" onClick={() => openThread(m)} style={{ marginTop: 8, minHeight: 44, padding: '0 10px', background: 'none', border: '1px solid var(--color-border)', borderRadius: 6, cursor: 'pointer', color: 'var(--color-text-secondary)', font: '500 12.5px var(--font-sans)' }}>Open thread</button>
           )}
@@ -140,6 +178,22 @@ function WorkCard({ m }: { m: EndlessMessage }) {
       )}
     </div>
   );
+}
+
+/** The project ids and folders as one string: a pane reload makes a new projects array, not a new key. */
+const projectsKey = (s: { projects: { id: string; folder: string }[] }) => JSON.stringify(s.projects.map((p) => [p.id, p.folder]));
+
+/** A Dispatch reply: markdown, with each doc path as a doc chip (spec 12.2). */
+function ReplyRow({ m }: { m: EndlessMessage }) {
+  const key = useEndless(projectsKey);
+  const docs = useMemo(() => {
+    const projects = (JSON.parse(key) as [string, string][]).map(([id, folder]) => ({ id, folder }));
+    return {
+      onOpen: (p: string, b: string | null) => openDoc(p, b, m.project),
+      accept: (p: string) => projectForPath(p, m.project, projects) !== null,
+    };
+  }, [m.project, key]);
+  return <div style={{ fontSize: 14.5, lineHeight: 1.75, minWidth: 0 }}><InsightText source={m.text} scheme="global" variant="rail" docs={docs} /></div>;
 }
 
 function NoteCard({ m }: { m: EndlessMessage }) {
@@ -168,7 +222,7 @@ function MessageRow({ m }: { m: EndlessMessage }) {
       </div>
     );
   }
-  if (m.kind === 'unii') return <div style={{ fontSize: 14.5, lineHeight: 1.75, minWidth: 0 }}><InsightText source={m.text} scheme="global" variant="rail" /></div>;
+  if (m.kind === 'unii') return <ReplyRow m={m} />;
   if (m.kind === 'work') return <WorkCard m={m} />;
   if (m.kind === 'note') return <NoteCard m={m} />;
   return <ToolLine echo={m} />;
@@ -198,7 +252,7 @@ export function EndlessRows({ messages, focus }: { messages: EndlessMessage[]; f
         return (
           <MessageScroller.Item key={key} messageId={`m${key}`} style={{ display: 'flex', flexDirection: 'column' }}>
             <div data-endless-i={key} data-endless-echo-i={echoI} style={{ borderRadius: 8, outline: focus === key || (echoI !== undefined && focus === echoI) ? '1px solid var(--color-accent)' : 'none', outlineOffset: 4 }}>
-              {r.kind === 'msg' ? <MessageRow m={r.m} /> : r.kind === 'recall' ? <RecallLine tool={r.tool} /> : <ToolLine tool={r.tool} echo={r.echo} />}
+              {r.kind === 'msg' ? <MessageRow m={r.m} /> : r.kind === 'recall' ? <RecallLine tool={r.tool} /> : r.kind === 'started' ? <StartedItem tool={r.tool} echo={r.echo} /> : <ToolLine tool={r.tool} echo={r.echo} />}
             </div>
           </MessageScroller.Item>
         );

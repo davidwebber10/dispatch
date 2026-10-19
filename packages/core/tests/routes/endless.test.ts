@@ -10,6 +10,7 @@ import * as sessionsDb from '../../src/db/sessions.js';
 import * as terminalsDb from '../../src/db/terminals.js';
 import { EndlessService, startEndless } from '../../src/endless/service.js';
 import { createEndlessRouter } from '../../src/routes/endless.js';
+import { DocTimeoutError } from '../../src/docs/service.js';
 import { FakeSummarizer, settle } from '../endless/fake-summarizer.js';
 import { FakeManager } from '../endless/fake-manager.js';
 import { LedgerService } from '../../src/overseer/ledger-service.js';
@@ -161,9 +162,76 @@ describe('endless routes', () => {
     expect((await request(app).post('/api/endless/stop')).status).toBe(409);
   });
 
+  it('GET /projects returns the projects, the pane threads and the cut flag', async () => {
+    const res = await request(app).get('/api/endless/projects');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.projects)).toBe(true);
+    expect(res.body.projects[0]).toMatchObject({ id: 's1' });
+    expect(res.body.threads).toEqual([]);
+    expect(res.body.truncated).toBe(false);
+  });
+
   it('lists projects and threads', async () => {
-    expect((await request(app).get('/api/endless/projects')).body[0]).toMatchObject({ id: 's1', name: 'salsify' });
+    expect((await request(app).get('/api/endless/projects')).body.projects[0]).toMatchObject({ id: 's1', name: 'salsify' });
     expect((await request(app).get('/api/endless/threads')).body).toEqual([]);
+  });
+
+  it('GET /doc returns a doc, 403 for a refused path, 404 when missing', async () => {
+    const folder = svc.docs.project('s1')!.folder;
+    fs.mkdirSync(path.join(folder, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(folder, 'docs', 'a.md'), '# A\n');
+    const ok = await request(app).get('/api/endless/doc').query({ project: 's1', path: 'docs/a.md' });
+    expect(ok.status).toBe(200);
+    expect(ok.body).toMatchObject({ path: 'docs/a.md', markdown: '# A\n' });
+    expect((await request(app).get('/api/endless/doc').query({ project: 's1', path: '../x.md' })).status).toBe(403);
+    expect((await request(app).get('/api/endless/doc').query({ project: 's1', path: 'docs/none.md' })).status).toBe(404);
+    expect((await request(app).get('/api/endless/doc').query({ project: 'nope', path: 'docs/a.md' })).status).toBe(400);
+  });
+
+  it('GET /doc passes the worktree path: the named worktree copy wins over the main checkout', async () => {
+    const folder = svc.docs.project('s1')!.folder;
+    fs.mkdirSync(path.join(folder, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(folder, 'docs', 'a.md'), 'main');
+    fs.mkdirSync(path.join(folder, '.worktrees', 'a', 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(folder, '.worktrees', 'a', 'docs', 'a.md'), 'worktree');
+    const res = await request(app).get('/api/endless/doc').query({ project: 's1', path: 'docs/a.md', worktree: '.worktrees/a' });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ path: 'docs/a.md', source: 'worktree', worktree: 'a', worktreeRel: '.worktrees/a', markdown: 'worktree' });
+    // A bare name still works while one worktree has it.
+    expect((await request(app).get('/api/endless/doc').query({ project: 's1', path: 'docs/a.md', worktree: 'a' })).body).toMatchObject({ source: 'worktree', markdown: 'worktree' });
+    expect((await request(app).get('/api/endless/doc').query({ project: 's1', path: 'docs/a.md' })).body).toMatchObject({ source: 'main', markdown: 'main' });
+  });
+
+  it('GET /doc answers 503 when the lookup passes its deadline, 500 on an unexpected error', async () => {
+    const spy = vi.spyOn(svc.docs, 'doc').mockRejectedValueOnce(new DocTimeoutError());
+    const slow = await request(app).get('/api/endless/doc').query({ project: 's1', path: 'docs/a.md' });
+    expect(slow.status).toBe(503);
+    expect(slow.body).toEqual({ error: 'the doc lookup took too long' });
+    spy.mockRejectedValueOnce(new Error('boom'));
+    expect((await request(app).get('/api/endless/doc').query({ project: 's1', path: 'docs/a.md' })).status).toBe(500);
+  });
+
+  it('GET /doc returns 413 for a file over 2 MB', async () => {
+    const folder = svc.docs.project('s1')!.folder;
+    fs.mkdirSync(path.join(folder, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(folder, 'docs', 'big.md'), 'x'.repeat(2 * 1024 * 1024 + 1));
+    const res = await request(app).get('/api/endless/doc').query({ project: 's1', path: 'docs/big.md' });
+    expect(res.status).toBe(413);
+    expect(res.body).toMatchObject({ path: 'docs/big.md', size: 2 * 1024 * 1024 + 1 });
+  });
+
+  it('GET /docs and /docs/counts answer for a project that is not a repo', async () => {
+    fs.mkdirSync(path.join(root, 'salsify'), { recursive: true });
+    expect((await request(app).get('/api/endless/docs').query({ project: 's1' })).body).toEqual({ rows: [], total: 0 });
+    expect((await request(app).get('/api/endless/docs/counts').query({ projects: 's1' })).body).toEqual({ counts: { s1: 0 } });
+    expect((await request(app).get('/api/endless/docs').query({ project: 'nope' })).status).toBe(400);
+  });
+
+  it('GET /docs and /docs/counts answer 500 on an unexpected error', async () => {
+    vi.spyOn(svc.docs, 'list').mockRejectedValue(new Error('boom'));
+    vi.spyOn(svc.docs, 'counts').mockRejectedValue(new Error('boom'));
+    expect((await request(app).get('/api/endless/docs').query({ project: 's1' })).status).toBe(500);
+    expect((await request(app).get('/api/endless/docs/counts').query({ projects: 's1' })).status).toBe(500);
   });
 
   it('POST /arm arms a Chat thread and refuses an unknown or a non-Chat one', async () => {

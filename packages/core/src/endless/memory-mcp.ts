@@ -250,7 +250,7 @@ export async function callTool(name: string, args: any): Promise<{ content: McpC
           await requestJson('DELETE', `${apiBase()}/api/terminals/${encodeURIComponent(agentId)}`).catch(() => {});
           throw err;
         }
-        return asText({ agentId, label, project: project.name, folder: project.folder });
+        return asText({ agentId, label, project: project.name, projectId: project.id, folder: project.folder });
       }
       case 'message_thread': {
         if (!str(a.id)) throw new Error('id is required');

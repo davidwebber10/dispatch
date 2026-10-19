@@ -21,7 +21,7 @@ import { AgentDetailHeader } from './AgentDetailHeader';
 import { InterruptButton, StopButton, ArchiveButton } from './AutonomyControls';
 import { useOverseer } from '../store';
 
-export function WorkerLightbox() {
+export function WorkerLightbox({ onOpenFull }: { onOpenFull?: (terminalId: string) => void } = {}) {
   const workerLightboxId = useOverseer((s) => s.workerLightboxId);
   const close = useOverseer((s) => s.closeWorkerLightbox);
   const isMobile = useIsMobile();
@@ -59,6 +59,12 @@ export function WorkerLightbox() {
   // both header layouts (only one renders at a time).
   const actions = (
     <>
+      {onOpenFull && (
+        <button type="button" onClick={() => onOpenFull(workerLightboxId)}
+          style={{ height: 26, padding: '0 9px', borderRadius: 7, background: 'transparent', border: '1px solid var(--border)', color: 'var(--ts)', font: '500 11.5px var(--font-sans)', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+          Open in Threads
+        </button>
+      )}
       <InterruptButton terminalId={workerLightboxId} scheme="scoped" />
       <StopButton terminalId={workerLightboxId} scheme="scoped" />
       <ArchiveButton terminalId={workerLightboxId} scheme="scoped" onArchived={close} />

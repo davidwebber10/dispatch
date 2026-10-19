@@ -121,6 +121,17 @@ describe('EndlessStore', () => {
     expect(store.lastOfKind('work', 'p2')).toBeNull();
   });
 
+  it('lastWorkMentioning gives the newest work message of the project that has the needle', () => {
+    store.append({ kind: 'work', text: 'Doc: /x/docs/a.md (branch spec/a)', project: 'p1', ref: 't1' });
+    store.append({ kind: 'user', text: 'docs/a.md', project: 'p1' });
+    store.append({ kind: 'work', text: 'see docs/a.md again', project: 'p1', ref: 't2' });
+    store.append({ kind: 'work', text: 'other docs/a.md', project: 'p2', ref: 't3' });
+    store.append({ kind: 'work', text: 'nothing', project: 'p1', ref: 't4' });
+    expect(store.lastWorkMentioning('p1', 'docs/a.md')).toMatchObject({ i: 2, ref: 't2' });
+    expect(store.lastWorkMentioning('p2', 'docs/a.md')).toMatchObject({ i: 3, ref: 't3' });
+    expect(store.lastWorkMentioning('p1', 'docs/b.md')).toBeNull();
+  });
+
   it('state keys upsert', () => {
     expect(store.getState('imported')).toBeNull();
     store.setState('imported', '1');

@@ -20,6 +20,7 @@ import { reportText, threadOrigin, recoveryOutcome, pendingQuestionText, type Pe
 import { createSummarizer } from './summarizer-choice.js';
 import type { Summarizer, Usage } from './summarizer.js';
 import { systemPromptWith } from './prompt.js';
+import { collectPaneThreads, type PaneThread } from './pane.js';
 import { buildStatusBlock, collectProjects, type ProjectStatus } from './status-block.js';
 import { zoom, dateOf, readImage, RecallError, type ZoomImage } from './recall.js';
 import { importOnce } from './import.js';
@@ -27,6 +28,7 @@ import { DEFAULT_LIMITS, type ViewLimits } from './view.js';
 import { nodeName } from './tree.js';
 import { resolveProject, overseerOf, type ProjectRef } from './projects.js';
 import type { LedgerService } from '../overseer/ledger-service.js';
+import { DocsService } from '../docs/service.js';
 
 export class UserError extends Error {}
 
@@ -69,6 +71,8 @@ export class EndlessService {
   readonly turns: TurnRunner;
   readonly mediaDir: string;
   readonly mcpConfigPath: string;
+  /** The read-only doc resolver behind GET /doc (chat thread visibility spec, 12.5). */
+  readonly docs: DocsService;
   private readonly timeZone: string;
   private readonly now: () => number;
   /** 'new' until start(); 'failed' if start() threw (the chat routes then answer 503). */
@@ -89,6 +93,7 @@ export class EndlessService {
     this.mcpConfigPath = path.join(o.chatDir, 'memory.mcp.json');
     this.timeZone = o.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
     this.now = o.now ?? Date.now;
+    this.docs = new DocsService(o.db, this.store, this.now);
     const summarizer = o.summarizer ?? createSummarizer({
       manager: o.manager, chatDir: o.chatDir, mcpConfigPath: this.mcpConfigPath,
       openRouterKey: o.openRouterKey ?? (async () => null), onUsage: (u) => this.note('compactions', u),
@@ -403,7 +408,10 @@ export class EndlessService {
     return { lines: this.views.lines(), bytes: this.views.bytes(), rendered: this.views.rendered() };
   }
 
-  projects(): ProjectStatus[] { return collectProjects(this.o.db, this.store); }
+  projects(): { projects: ProjectStatus[]; threads: PaneThread[]; truncated: boolean } {
+    const pane = collectPaneThreads(this.o.db, { now: this.now(), timeZone: this.timeZone, question: (id) => this.waitingText(id) });
+    return { projects: collectProjects(this.o.db, this.store), ...pane };
+  }
 
   zoom(id: number, n: number): { text: string; images: ZoomImage[] } {
     try { return zoom(this.store, (pid) => this.projectName(pid), id, n); }

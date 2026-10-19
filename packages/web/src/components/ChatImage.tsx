@@ -133,11 +133,12 @@ export function ImageLightbox({ src, alt, onClose }: { src: string; alt?: string
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') { e.preventDefault(); onClose(); }
       else trapTab(e);
     }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    // Capture phase: a lightbox over another layer (the doc viewer) takes Escape first.
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, [onClose]);
 
   async function handleCopy() {

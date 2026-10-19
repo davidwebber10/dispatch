@@ -2,6 +2,17 @@ import { describe, it, expect } from 'vitest';
 import { buildWorkerCreateBody } from './worker-payload.js';
 
 describe('buildWorkerCreateBody', () => {
+  it('writes spawnedBy into config after spawnDepth', () => {
+    const body = buildWorkerCreateBody({ agentType: 'implementer', label: 'x', resolved: { harness: 'claude-code' }, spawnDepth: 2, spawnedBy: 'parent-1' });
+    expect(body.config).toEqual({ transport: 'structured', agentType: 'implementer', role: 'agent', spawnDepth: 2, spawnedBy: 'parent-1' });
+  });
+
+  it('an empty spawnedBy is omitted, so the old body is byte-identical', () => {
+    const a = buildWorkerCreateBody({ agentType: 'implementer', label: 'x', resolved: { harness: 'claude-code' }, spawnDepth: 1, spawnedBy: '' });
+    const b = buildWorkerCreateBody({ agentType: 'implementer', label: 'x', resolved: { harness: 'claude-code' }, spawnDepth: 1 });
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+
   it('claude default matches the pre-selector wire shape exactly', () => {
     expect(buildWorkerCreateBody({ agentType: 'implementer', label: 'implementer agent', resolved: { harness: 'claude-code' }, spawnDepth: 1 }))
       .toEqual({ type: 'claude-code', label: 'implementer agent', config: { transport: 'structured', agentType: 'implementer', role: 'agent', spawnDepth: 1 } });

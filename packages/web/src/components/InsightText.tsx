@@ -19,7 +19,7 @@
 
 import { useState } from 'react';
 import { Lightbulb } from '@phosphor-icons/react';
-import { Markdown } from './Markdown';
+import { Markdown, type DocChips } from './Markdown';
 import type { LedgerChips } from '../lib/ledgerRefs';
 
 // Opener: "★ Insight" + trailing dashes (box-drawing, em/en dash, hyphen), optionally wrapped
@@ -68,7 +68,7 @@ const SCHEMES: Record<Scheme, Tokens> = {
   },
 };
 
-function InsightCallout({ content, tokens, ledger }: { content: string; tokens: Tokens; ledger?: LedgerChips }) {
+function InsightCallout({ content, tokens, ledger, docs }: { content: string; tokens: Tokens; ledger?: LedgerChips; docs?: DocChips }) {
   return (
     <div
       style={{
@@ -98,7 +98,7 @@ function InsightCallout({ content, tokens, ledger }: { content: string; tokens: 
       </div>
       {/* enclosed content — still markdown, so lists/code inside a callout render normally */}
       <div style={{ minWidth: 0 }}>
-        <Markdown source={content} ledger={ledger} />
+        <Markdown source={content} ledger={ledger} docs={docs} />
       </div>
     </div>
   );
@@ -110,7 +110,7 @@ function InsightCallout({ content, tokens, ledger }: { content: string; tokens: 
  * click anywhere to expand. Deliberately quieter than the coordinator's tinted callout: in a
  * thread the insight is an aside to the work, not a headline.
  */
-function InsightRail({ content }: { content: string }) {
+function InsightRail({ content, docs }: { content: string; docs?: DocChips }) {
   const [open, setOpen] = useState(false);
   return (
     // Accent left rail + a faint accent wash ("insight needs visual distinction" — David):
@@ -137,7 +137,7 @@ function InsightRail({ content }: { content: string }) {
           ...(open ? {} : { display: '-webkit-box', WebkitBoxOrient: 'vertical' as const, WebkitLineClamp: 2, overflow: 'hidden' }),
         }}
       >
-        <Markdown source={content} />
+        <Markdown source={content} docs={docs} />
       </div>
     </div>
   );
@@ -147,9 +147,9 @@ function InsightRail({ content }: { content: string }) {
  * Render assistant text: prose through <Markdown>, any ★ Insight blocks lifted into tinted
  * callouts. `scheme` selects the token set (default 'scoped' for the coordinator surface);
  * `variant="rail"` (agent chat) swaps the callout for the clamped left-rail block. `ledger` (the
- * Control Plane) draws known ledger numbers as chips (see Markdown).
+ * Control Plane) draws known ledger numbers as chips; `docs` (Chat) draws doc paths as doc chips (see Markdown).
  */
-export function InsightText({ source, scheme = 'scoped', variant = 'callout', ledger }: { source: string; scheme?: Scheme; variant?: 'callout' | 'rail'; ledger?: LedgerChips }) {
+export function InsightText({ source, scheme = 'scoped', variant = 'callout', ledger, docs }: { source: string; scheme?: Scheme; variant?: 'callout' | 'rail'; ledger?: LedgerChips; docs?: DocChips }) {
   const segs = splitInsights(source);
   if (segs.length === 0) return null; // all-blank body → nothing to render
   const tokens = SCHEMES[scheme];
@@ -157,9 +157,9 @@ export function InsightText({ source, scheme = 'scoped', variant = 'callout', le
     <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
       {segs.map((seg, i) =>
         seg.type === 'insight' ? (
-          variant === 'rail' ? <InsightRail key={i} content={seg.content} /> : <InsightCallout key={i} content={seg.content} tokens={tokens} ledger={ledger} />
+          variant === 'rail' ? <InsightRail key={i} content={seg.content} docs={docs} /> : <InsightCallout key={i} content={seg.content} tokens={tokens} ledger={ledger} docs={docs} />
         ) : (
-          <Markdown key={i} source={seg.content} ledger={ledger} />
+          <Markdown key={i} source={seg.content} ledger={ledger} docs={docs} />
         ),
       )}
     </div>

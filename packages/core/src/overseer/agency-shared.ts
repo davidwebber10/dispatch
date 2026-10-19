@@ -90,13 +90,13 @@ export async function resolveWorkerDefaults(api: string, sessionId: string, agen
   return { harness: defaults.harness, model: defaults.model };
 }
 
-export interface WorkerSpec { agentType: AgentType; label: string; mission: string; model: string; harness: string; spawnDepth: number; origin?: 'endless' }
+export interface WorkerSpec { agentType: AgentType; label: string; mission: string; model: string; harness: string; spawnDepth: number; origin?: 'endless'; spawnedBy?: string }
 
 /** Create a worker thread in project `sessionId` and return its id. The caller sends the task. */
 export async function createWorker(api: string, sessionId: string, spec: WorkerSpec): Promise<string> {
   const resolved = await resolveWorkerDefaults(api, sessionId, spec.agentType, spec.harness);
   const terminal = await httpJson('POST', `${api}/api/sessions/${sessionId}/terminals`,
-    buildWorkerCreateBody({ agentType: spec.agentType, label: spec.label, resolved, explicitModel: spec.model, mission: spec.mission, spawnDepth: spec.spawnDepth, origin: spec.origin }));
+    buildWorkerCreateBody({ agentType: spec.agentType, label: spec.label, resolved, explicitModel: spec.model, mission: spec.mission, spawnDepth: spec.spawnDepth, origin: spec.origin, spawnedBy: spec.spawnedBy }));
   const agentId: string | undefined = terminal?.id;
   if (!agentId) throw new Error('spawn did not return a terminal id');
   return agentId;

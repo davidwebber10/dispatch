@@ -47,6 +47,10 @@ export const useUI = create<{
   pendingOpenThread: { sessionId: string; terminalId: string } | null;
   requestOpenThread: (v: { sessionId: string; terminalId: string }) => void;
   clearOpenThread: () => void;
+  // Cross-shell "open this project in the Threads view" intent (the Chat pane's Docs "+N more").
+  pendingOpenProject: string | null;
+  requestOpenProject: (id: string) => void;
+  clearOpenProject: () => void;
 }>((set, get) => ({
   view: loadView(),
   setView: (requested) => { const view = requested === 'board' ? 'workspace' : requested; saveView(view); set({ view }); },
@@ -64,4 +68,7 @@ export const useUI = create<{
   pendingOpenThread: null,
   requestOpenThread: (v) => set({ pendingOpenThread: v }),
   clearOpenThread: () => set({ pendingOpenThread: null }),
+  pendingOpenProject: null,
+  requestOpenProject: (id) => set({ pendingOpenProject: id }),
+  clearOpenProject: () => set({ pendingOpenProject: null }),
 }));

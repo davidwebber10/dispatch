@@ -110,6 +110,12 @@ export class EndlessStore {
     return r ? toMessage(r) : null;
   }
 
+  /** The newest work report of a project whose text has `needle` (a doc path), for the doc writer. */
+  lastWorkMentioning(project: string, needle: string): EndlessMessage | null {
+    const r = this.db.prepare("SELECT * FROM endless_messages WHERE kind = 'work' AND project = ? AND instr(text, ?) > 0 ORDER BY i DESC LIMIT 1").get(project, needle) as Row | undefined;
+    return r ? toMessage(r) : null;
+  }
+
   projectCounts(): Record<string, number> {
     const rows = this.db.prepare('SELECT project, COUNT(*) AS n FROM endless_messages WHERE project IS NOT NULL GROUP BY project').all() as { project: string; n: number }[];
     return Object.fromEntries(rows.map((r) => [r.project, r.n]));

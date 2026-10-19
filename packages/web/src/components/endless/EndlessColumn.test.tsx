@@ -6,6 +6,7 @@ import { foldRows } from './EndlessMessageRow';
 import { useEndless } from '../../stores/endless';
 import { useUI } from '../../stores/ui';
 import { api } from '../../api/client';
+import * as open from './openThread';
 import type { EndlessMessage } from '../../api/types';
 
 // Wrap the real scroller hook so a test sees the calls EndlessColumn makes.
@@ -306,9 +307,11 @@ describe('EndlessColumn', () => {
     useEndless.setState({ messages: [msg(0, 'work', '[Fix login] report: done', { project: 's1', projectName: 'salsify', ref: 't9' })] });
     useUI.setState({ view: 'chat', pendingOpenThread: null });
     render(<EndlessColumn />);
-    fireEvent.click(screen.getByRole('button', { name: /\[Fix login\] report: done/ }));
-    expect(useUI.getState().pendingOpenThread).toEqual({ sessionId: 's1', terminalId: 't9' });
-    expect(useUI.getState().view).toBe('workspace');
+    const spy = vi.spyOn(open, 'openThreadInPlace').mockResolvedValue();
+    expect(screen.getByText('[Fix login] report: done')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Open thread Fix login' }));
+    expect(spy).toHaveBeenCalledWith('s1', 't9');
+    expect(useUI.getState().view).toBe('chat');
   });
 
   it('a long thread report is folded to its name and a preview, and opens on a tap', () => {
@@ -383,8 +386,9 @@ describe('EndlessColumn', () => {
     useUI.setState({ view: 'chat', pendingOpenThread: null });
     render(<EndlessColumn />);
     fireEvent.click(screen.getByRole('button', { name: /Fix login/ }));
+    const spy = vi.spyOn(open, 'openThreadInPlace').mockResolvedValue();
     fireEvent.click(screen.getByRole('button', { name: 'Open thread' }));
-    expect(useUI.getState().pendingOpenThread).toEqual({ sessionId: 's1', terminalId: 't9' });
+    expect(spy).toHaveBeenCalledWith('s1', 't9');
   });
 
   it('user and Dispatch messages are never folded, however long', () => {

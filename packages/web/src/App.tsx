@@ -187,6 +187,15 @@ export default function App() {
     })();
   }, [pendingThread, isMobile]);
 
+  // Desktop consumer of the open-project intent (the Chat pane's Docs "+N more"); mobile's lives in MobileApp.
+  const pendingProject = useUI((s) => s.pendingOpenProject);
+  useEffect(() => {
+    if (!pendingProject || isMobile) return;
+    useUI.getState().clearOpenProject();
+    useProjects.getState().setActive(pendingProject);
+    useUI.getState().setView('workspace'); // the "Threads" view; `workspace` is its code name
+  }, [pendingProject, isMobile]);
+
   // Returning from the background: re-establish the events socket and remount
   // every terminal (which iOS may have silently killed) so the UI is live
   // again without the user having to back out of the view.

@@ -61,6 +61,9 @@ function toolResultText(content: unknown): string {
     .join('\n');
 }
 
+/** A tool-call id for the `ref` column (pairs a call with its result); null if the CLI gave none. */
+const idOrNull = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
+
 export class TurnRunner {
   private state: 'idle' | 'waiting' | 'running' = 'idle';
   private queued: Pending[] = [];
@@ -326,14 +329,14 @@ export class TurnRunner {
       if (ev.isApiErrorMessage || ev.message?.model === '<synthetic>') return;
       for (const b of ev.message.content) {
         if (b?.type === 'text' && String(b.text ?? '').trim()) d.log({ kind: 'unii', text: b.text, project });
-        else if (b?.type === 'tool_use') d.log({ kind: 'tool', text: `${b.name} ${JSON.stringify(b.input ?? {})}`, project });
+        else if (b?.type === 'tool_use') d.log({ kind: 'tool', text: `${b.name} ${JSON.stringify(b.input ?? {})}`, project, ref: idOrNull(b.id) });
         // thinking blocks: streamed above, never logged
       }
       return;
     }
     if (ev?.type === 'user' && Array.isArray(ev.message?.content)) {
       for (const b of ev.message.content) {
-        if (b?.type === 'tool_result') d.log({ kind: 'echo', text: clipToolOutput(toolResultText(b.content)), project });
+        if (b?.type === 'tool_result') d.log({ kind: 'echo', text: clipToolOutput(toolResultText(b.content)), project, ref: idOrNull(b.tool_use_id) });
       }
     }
   }

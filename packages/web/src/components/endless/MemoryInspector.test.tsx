@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryInspector } from './MemoryInspector';
 import { api } from '../../api/client';
+import { useSettings } from '../../stores/settings';
 
 const RENDERED = '<chat>\n0+4|user: set up the repo\n4+1|(not summarized yet: zoom it)\n</chat>';
 
@@ -76,5 +77,20 @@ describe('MemoryInspector', () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(screen.getByTestId('memory-view').textContent).toBe('NEW');
     expect(spy).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('MemoryInspector editor setting', () => {
+  it('Open docs in: None by default; a choice is saved', async () => {
+    useSettings.setState({ editor: '' });
+    render(<MemoryInspector open onClose={() => {}} />);
+    const select = screen.getByRole('combobox', { name: 'Open docs in' }) as HTMLSelectElement;
+    expect(select.value).toBe('');
+    expect([...select.options].map((o) => o.textContent)).toEqual(['None', 'VS Code', 'Cursor', 'Zed']);
+    fireEvent.change(select, { target: { value: 'zed' } });
+    expect(useSettings.getState().editor).toBe('zed');
+    expect(localStorage.getItem('dispatch:editor')).toBe('"zed"');
+    useSettings.getState().setEditor('');
+    await waitFor(() => expect(select.value).toBe(''));
   });
 });

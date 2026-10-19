@@ -636,7 +636,7 @@ async function spawnAgent(args: { agentType: AgentType; name?: string; task: str
   const harness = typeof args.harness === 'string' ? args.harness.trim() : '';
   const childDepth = selfSpawnDepth() + 1;
 
-  const agentId = await createWorker(apiBase(), sessionId(), { agentType: args.agentType, label, mission, model, harness, spawnDepth: childDepth });
+  const agentId = await createWorker(apiBase(), sessionId(), { agentType: args.agentType, label, mission, model, harness, spawnDepth: childDepth, spawnedBy: selfTerminalId() || undefined });
   await sendTask(apiBase(), agentId, task);
   return { agentId, label, ...(mission ? { mission } : {}) };
 }
@@ -665,7 +665,7 @@ async function queueAgent(args: { agentType: AgentType; name?: string; task: str
   const resolved = await resolveWorkerDefaults(apiBase(), sessionId(), args.agentType, harness);
 
   const terminal = await httpJson('POST', `${apiBase()}/api/sessions/${sessionId()}/terminals`,
-    buildWorkerCreateBody({ agentType: args.agentType, label, resolved, explicitModel: model, mission, spawnDepth: childDepth, queued: true, task, dependsOn }));
+    buildWorkerCreateBody({ agentType: args.agentType, label, resolved, explicitModel: model, mission, spawnDepth: childDepth, queued: true, task, dependsOn, spawnedBy: selfTerminalId() || undefined }));
   const agentId: string | undefined = terminal?.id;
   if (!agentId) throw new Error('queue did not return a terminal id');
   return { agentId, label, ...(mission ? { mission } : {}), queued: true };

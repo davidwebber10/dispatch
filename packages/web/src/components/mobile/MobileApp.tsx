@@ -153,6 +153,16 @@ export function MobileApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingThread]);
 
+  // The Chat pane's Docs "+N more": open that project in the Projects tab.
+  const pendingProject = useUI((s) => s.pendingOpenProject);
+  useEffect(() => {
+    if (!pendingProject) return;
+    useUI.getState().clearOpenProject();
+    setBottomTab('projects');
+    openProject(pendingProject);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingProject]);
+
   // Presence: the thread terminal is "being viewed" only on the level-2 tab leaf.
   useEffect(() => {
     useViewing.getState().set(level === 2 && leaf === 'tab' ? leafTabId : null);
