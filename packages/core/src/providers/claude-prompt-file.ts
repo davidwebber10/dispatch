@@ -14,6 +14,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { platform } from '../platform/index.js';
+import { inheritedEnv } from '../platform/inherited-env.js';
 
 type Version = [number, number, number];
 
@@ -35,7 +36,10 @@ export function supportsPromptFile(v: Version): boolean {
 
 let known: { supported: boolean; at: number } | null = null;
 let reading: Promise<void> | null = null;
-/** The env agents are spawned with: its PATH puts Dispatch's own bin dirs first. */
+/**
+ * The env agents are spawned with: its PATH puts Dispatch's own bin dirs first. It is an overlay
+ * that the thread managers spread over inheritedEnv(), so the probe spreads it the same way.
+ */
 let probeEnv: Record<string, string> | undefined;
 
 /**
@@ -51,7 +55,7 @@ export function setClaudeProbeEnv(env: Record<string, string>): void {
 
 function claudeVersionOutput(): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile('claude', ['--version'], { timeout: 15_000, env: probeEnv ?? process.env }, (err, stdout) => (err ? reject(err) : resolve(String(stdout))));
+    execFile('claude', ['--version'], { timeout: 15_000, env: { ...inheritedEnv(), ...probeEnv } }, (err, stdout) => (err ? reject(err) : resolve(String(stdout))));
   });
 }
 
