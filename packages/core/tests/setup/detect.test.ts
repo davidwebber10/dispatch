@@ -114,6 +114,27 @@ describe('detectProvider', () => {
     }
   });
 
+  it("keeps the daemon's own env under the spawn env overlay — the CLI finds its keychain login by $USER", async () => {
+    // The spawn env is an OVERLAY (PATH, BROWSER, DOPPLER_*, …) that the thread managers
+    // merge over process.env. Handing it to execFile alone drops USER, and the macOS CLI
+    // then looks up its keychain item under no account and reports loggedIn:false while
+    // every thread runs signed in.
+    const prevUser = process.env.USER;
+    process.env.USER = 'someone';
+    whenExec((cmd, args, opts) => {
+      if (cmd === 'which') return { stdout: '/usr/local/bin/claude\n' };
+      if (args.includes('--version')) return { stdout: 'claude 1.2.3\n' };
+      return { stdout: JSON.stringify({ loggedIn: opts?.env?.USER === 'someone' }) };
+    });
+    setProviderProbeEnv({ PATH: '/usr/bin', DOPPLER_TOKEN: 'x' });
+    try {
+      expect((await detectProvider('claude')).signedIn).toBe(true);
+    } finally {
+      process.env.USER = prevUser;
+      setProviderProbeEnv({ ...process.env } as Record<string, string>);
+    }
+  });
+
   it('forgets the cached verdict when the CLI disappears', async () => {
     whenExec((cmd, args) => {
       if (cmd === 'which') return { stdout: '/usr/local/bin/claude\n' };
