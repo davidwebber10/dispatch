@@ -1,4 +1,4 @@
-import { Fragment } from 'react';
+import { Fragment, useMemo } from 'react';
 import { findDocPaths, docName, projectForPath, type DocSpan } from '../../lib/docPaths';
 import { useDocViewer } from '../../stores/docViewer';
 import { useEndless } from '../../stores/endless';
@@ -35,7 +35,8 @@ export function DocChip({ span, project, raised }: { span: DocSpan; project: str
 /** Plain text with each doc link drawn as a chip; the rest of the text stays as it is. `raised`: on an elevated card (board ReportOpen). */
 export function DocText({ text, project, raised }: { text: string; project: string | null; raised?: boolean }) {
   const projects = useEndless((s) => s.projects);
-  const spans = docLinks(text, project, projects);
+  // Once per text and project: a card re-renders on every new message.
+  const spans = useMemo(() => docLinks(text, project, projects), [text, project, projects]);
   if (!spans.length) return <>{text}</>;
   let last = 0;
   return (

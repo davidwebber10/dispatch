@@ -27,6 +27,26 @@ describe('findDocPaths', () => {
   it('a longer name is not a doc path; ./ and ../ paths are', () => {
     expect(paths('a.md.bak b.mdx ./c.md ../d.txt')).toEqual([['./c.md', null], ['../d.txt', null]]);
   });
+  it('a path after @ or ~ in the same word is not a doc path', () => {
+    expect(paths('~/docs/a.md')).toEqual([]);
+  });
+});
+
+// Each input must finish well under a second. The bound is generous, so a busy machine does not fail it.
+const timed = (t: string) => { const t0 = performance.now(); const n = findDocPaths(t).length; return { n, ms: performance.now() - t0 }; };
+
+describe('findDocPaths is linear', () => {
+  it.each([
+    ['a long word, then one path', 'x'.repeat(100000) + ' a.md', 1],
+    ['20000 paths', ' a.md'.repeat(20000), 20000],
+    ['a long word, then 200 paths', 'x'.repeat(50000) + ' (a.md)'.repeat(200), 200],
+    ['50000 @', '@'.repeat(50000), 0],
+    ['25000 @.', '@.'.repeat(25000), 0],
+  ])('%s', (_name, text, count) => {
+    const { n, ms } = timed(text);
+    expect(n).toBe(count);
+    expect(ms).toBeLessThan(200);
+  });
 });
 
 describe('projectForPath', () => {

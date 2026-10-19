@@ -10,6 +10,12 @@ import * as open from './openThread';
 import { useDocViewer } from '../../stores/docViewer';
 import type { EndlessMessage } from '../../api/types';
 
+const scans = vi.hoisted(() => ({ n: 0 }));
+vi.mock('../../lib/docPaths', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../lib/docPaths')>();
+  return { ...real, findDocPaths: (t: string) => { scans.n++; return real.findDocPaths(t); } };
+});
+
 const m = (i: number, kind: EndlessMessage['kind'], text: string): EndlessMessage => ({ i, kind, text, size: text.length, project: null, projectName: null, ref: null, media: [], createdAt: 0 });
 const spawnTool = (i: number, name: string) => m(i, 'tool', `mcp__memory__spawn_agent ${JSON.stringify({ project: 'studio', agentType: 'implementer', name, task: 'Fix it' })}`);
 const spawnEcho = (i: number, id: string, label: string) => m(i, 'echo', JSON.stringify({ agentId: id, label, project: 'studio', projectId: 's1', folder: '/w/studio' }));
@@ -125,7 +131,8 @@ describe('doc links in chat', () => {
     expect(useDocViewer.getState().open).toEqual({ project: 's7', path: '/w/studio/docs/specs/y.md', branch: null });
     const header = screen.getByRole('button', { name: /Plan/ });
     expect(header).toHaveAttribute('aria-expanded', 'false');
-    fireEvent.keyDown(header, { key: 'Enter' });
+    // A real button: the browser turns Enter into a click (jsdom does not, so the test clicks).
+    fireEvent.click(header);
     // The same element opens (no remount, so the keyboard focus stays).
     expect(screen.getByRole('button', { name: /Plan/ })).toBe(header);
     expect(header).toHaveAttribute('aria-expanded', 'true');
@@ -150,5 +157,54 @@ describe('doc links in chat', () => {
     fireEvent.click(screen.getByRole('button', { name: 'b.md' }));
     expect(useDocViewer.getState().open).toEqual({ project: 's1', path: 'docs/b.md', branch: null });
     expect(spy).not.toHaveBeenCalled();
+  });
+
+});
+
+describe('report cards do not nest buttons', () => {
+  const nested = (c: HTMLElement) => c.querySelectorAll('button button, [role=button] button').length;
+  it('a short report: the header button opens the thread, a chip opens the doc viewer only', () => {
+    const spy = vi.spyOn(open, 'openThreadInPlace').mockResolvedValue();
+    const work = { ...m(0, 'work', '[Plan] report: done. Doc: docs/specs/x.md'), project: 's1', ref: 't1' };
+    const { container } = render(<MessageScroller.Provider><EndlessRows messages={[work]} focus={null} /></MessageScroller.Provider>);
+    expect(nested(container)).toBe(0);
+    expect(container.querySelector('[role=button]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'x.md' }));
+    expect(useDocViewer.getState().open).toEqual({ project: 's1', path: 'docs/specs/x.md', branch: null });
+    expect(spy).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Open thread Plan' }));
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith('s1', 't1');
+  });
+  it('a folded report: the header button opens the card, a chip opens the doc viewer only', () => {
+    const spy = vi.spyOn(open, 'openThreadInPlace').mockResolvedValue();
+    const long = `[Plan] report: Doc: docs/specs/y.md\n${'more words here. '.repeat(20)}`;
+    const work = { ...m(0, 'work', long), project: 's1', ref: 't1' };
+    const { container } = render(<MessageScroller.Provider><EndlessRows messages={[work]} focus={null} /></MessageScroller.Provider>);
+    expect(nested(container)).toBe(0);
+    expect(container.querySelector('[role=button]')).toBeNull();
+    const header = screen.getByRole('button', { name: /Plan/ });
+    expect(header.tagName).toBe('BUTTON');
+    fireEvent.click(screen.getByRole('button', { name: 'y.md' }));
+    expect(useDocViewer.getState().open).toEqual({ project: 's1', path: 'docs/specs/y.md', branch: null });
+    expect(header).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(header);
+    expect(header).toHaveAttribute('aria-expanded', 'true');
+    expect(nested(container)).toBe(0);
+    expect(spy).not.toHaveBeenCalled();
+  });
+  it('the keyboard order is the header button, then each chip', () => {
+    const work = { ...m(0, 'work', '[Plan] report: see docs/a.md and docs/b.md'), project: 's1', ref: 't1' };
+    const { container } = render(<MessageScroller.Provider><EndlessRows messages={[work]} focus={null} /></MessageScroller.Provider>);
+    const stops = [...container.querySelectorAll<HTMLElement>('button, [tabindex]')].filter((e) => e.tabIndex >= 0);
+    expect(stops.map((e) => e.getAttribute('aria-label'))).toEqual(['Open thread Plan', 'a.md', 'b.md']);
+  });
+  it('a report card scans its text once, and not again when nothing changed', () => {
+    const work = { ...m(0, 'work', '[Plan] report: done. Doc: docs/specs/x.md'), project: 's1', ref: 't1' };
+    scans.n = 0;
+    const { rerender } = render(<MessageScroller.Provider><EndlessRows messages={[work]} focus={null} /></MessageScroller.Provider>);
+    expect(scans.n).toBe(1);
+    rerender(<MessageScroller.Provider><EndlessRows messages={[work]} focus={0} /></MessageScroller.Provider>);
+    expect(scans.n).toBe(1);
   });
 });

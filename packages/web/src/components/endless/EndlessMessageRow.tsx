@@ -7,7 +7,7 @@ import { ChatImage } from '../ChatImage';
 import { endlessMediaUrl } from '../../api/client';
 import { openThreadInPlace } from './openThread';
 import { StartedItem } from './StartedItem';
-import { DocText, docLinks, openDoc } from './DocText';
+import { DocText, openDoc } from './DocText';
 import { projectForPath } from '../../lib/docPaths';
 import { useEndless } from '../../stores/endless';
 import { SPAWN_TOOL, parseSpawn } from './spawn';
@@ -106,31 +106,18 @@ function openThread(m: EndlessMessage) {
   void openThreadInPlace(m.project, m.ref);
 }
 
-/**
- * A card's tap target. A plain card is a button; a card that holds doc chips (buttons) is a
- * role="button" box, so no button sits inside a button. Enter and Space on the box itself tap it.
- * `chips` must not change when the card opens: a new element type would drop the keyboard focus.
- */
-function Tap({ chips, onTap, style, children, ...aria }: { chips: boolean; onTap: () => void; style: React.CSSProperties; children: React.ReactNode; 'aria-expanded'?: boolean; 'aria-controls'?: string }) {
-  if (!chips) return <button type="button" onClick={onTap} style={style} {...aria}>{children}</button>;
-  return (
-    <div role="button" tabIndex={0} onClick={onTap} style={style} {...aria}
-      onKeyDown={(e) => {
-        if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return;
-        e.preventDefault();
-        onTap();
-      }}>
-      {children}
-    </div>
-  );
-}
-
 const cardStyle: React.CSSProperties = { display: 'flex', gap: 10, alignItems: 'flex-start', textAlign: 'left', width: '100%', padding: '10px 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 8, color: 'var(--color-text-primary)' };
+/** A button with no look of its own: the card draws it. */
+const bare: React.CSSProperties = { background: 'none', border: 'none', padding: 0, margin: 0, color: 'inherit', font: 'inherit', textAlign: 'left', cursor: 'pointer' };
 
 /**
  * A thread report. A short one is one card that opens its thread; a long one folds to the thread
  * name and the first lines, and a tap on the header opens it. The open state is local to the row,
  * so it survives new messages (the row keeps its key).
+ *
+ * No control sits inside another: the card box is a plain div (a mouse click anywhere on it taps
+ * it), the one real button is the header, and the text with its doc chips sits outside that button.
+ * The keyboard reaches the header button, then each chip.
  */
 function WorkCard({ m }: { m: EndlessMessage }) {
   const [open, setOpen] = useState(false);
@@ -138,32 +125,37 @@ function WorkCard({ m }: { m: EndlessMessage }) {
   const { scrollToMessage } = useMessageScroller();
   const head = REPORT_HEAD.exec(m.text);
   const body = head ? m.text.slice(head[0].length) : m.text;
-  const projects = useEndless((s) => s.projects);
   const short = m.text.length <= FOLD_CHARS && m.text.split('\n').length <= FOLD_LINES;
   const preview = body.split('\n').find((l) => l.trim()) ?? '';
   if (short) {
+    const tap = () => openThread(m);
     return (
-      <Tap chips={docLinks(m.text, m.project, projects).length > 0} onTap={() => openThread(m)} style={{ ...cardStyle, cursor: m.ref ? 'pointer' : 'default' }}>
-        <Briefcase size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+      <div onClick={tap} style={{ ...cardStyle, cursor: m.ref ? 'pointer' : 'default' }}>
+        <button type="button" aria-label={head ? `Open thread ${head[1]}` : 'Open thread'} onClick={(e) => { e.stopPropagation(); tap(); }}
+          style={{ ...bare, display: 'flex', flexShrink: 0, marginTop: 2, borderRadius: 4, cursor: m.ref ? 'pointer' : 'default' }}>
+          <Briefcase size={16} />
+        </button>
         <span style={{ minWidth: 0, fontSize: 13.5, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}><DocText text={m.text} project={m.project} raised /></span>
-      </Tap>
+      </div>
     );
   }
+  const toggle = () => {
+    // Opening grows the row. Pin its top so the scroller does not follow the new end of the content.
+    if (!open) scrollToMessage(`m${m.i}`, { align: 'start' });
+    setOpen((o) => !o);
+  };
   return (
     <div style={{ ...cardStyle, flexDirection: 'column', gap: 0, padding: 0 }}>
-      <Tap chips={docLinks(preview, m.project, projects).length > 0} aria-expanded={open} aria-controls={open ? id : undefined} onTap={() => {
-          // Opening grows the row. Pin its top so the scroller does not follow the new end of the content.
-          if (!open) scrollToMessage(`m${m.i}`, { align: 'start' });
-          setOpen((o) => !o);
-        }}
-        style={{ display: 'flex', gap: 8, alignItems: 'flex-start', width: '100%', minHeight: 44, padding: '10px 12px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', color: 'inherit', font: 'inherit' }}>
-        <CaretRight size={13} weight="bold" style={{ flexShrink: 0, marginTop: 4, transition: 'transform .12s', transform: open ? 'rotate(90deg)' : 'none' }} />
-        <Briefcase size={16} style={{ flexShrink: 0, marginTop: 2 }} />
-        <span style={{ minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <span style={{ fontSize: 13.5, fontWeight: 600, overflowWrap: 'anywhere' }}>{head ? head[1] : 'Thread report (continued)'}</span>
-          {!open && <span style={{ fontSize: 12.5, lineHeight: 1.4, color: 'var(--color-text-secondary)', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere' }}><DocText text={preview} project={m.project} raised /></span>}
-        </span>
-      </Tap>
+      <div onClick={toggle} style={{ width: '100%', cursor: 'pointer' }}>
+        <button type="button" aria-expanded={open} aria-controls={open ? id : undefined} onClick={(e) => { e.stopPropagation(); toggle(); }}
+          style={{ ...bare, display: 'flex', gap: 8, alignItems: 'flex-start', width: '100%', minHeight: open ? 44 : undefined, padding: open ? '10px 12px' : '10px 12px 2px' }}>
+          <CaretRight size={13} weight="bold" style={{ flexShrink: 0, marginTop: 4, transition: 'transform .12s', transform: open ? 'rotate(90deg)' : 'none' }} />
+          <Briefcase size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+          <span style={{ minWidth: 0, flex: 1, fontSize: 13.5, fontWeight: 600, overflowWrap: 'anywhere' }}>{head ? head[1] : 'Thread report (continued)'}</span>
+        </button>
+        {/* The preview lines up under the name: 12 padding + 13 caret + 8 gap + 16 icon + 8 gap. */}
+        {!open && <div style={{ padding: '0 12px 10px 57px', fontSize: 12.5, lineHeight: 1.4, color: 'var(--color-text-secondary)', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere' }}><DocText text={preview} project={m.project} raised /></div>}
+      </div>
       {open && (
         <div id={id} style={{ padding: '0 12px 10px', minWidth: 0 }}>
           <div style={{ fontSize: 13.5, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}><DocText text={m.text} project={m.project} raised /></div>

@@ -51,8 +51,10 @@ function openableImages(html: string): string {
 export interface DocChips { onOpen: (path: string, branch: string | null) => void; accept?: (path: string) => boolean }
 
 const DOC_EXT = /\.(?:md|markdown|txt)/i;
-/** Text inside these stays plain: a link already goes somewhere, a code block is code, a button is a control. */
-const DOC_SKIP = new Set(['A', 'PRE', 'BUTTON', 'SCRIPT', 'STYLE']);
+/** Text inside these stays plain: a link already goes somewhere, a code block is code, a button or a form field is a control. */
+const DOC_SKIP = new Set(['A', 'PRE', 'BUTTON', 'SCRIPT', 'STYLE', 'TEXTAREA', 'OPTION']);
+/** Text inside a non-HTML element (SVG, MathML) stays plain too: a chip button is HTML only. */
+const XHTML = 'http://www.w3.org/1999/xhtml';
 
 /** The doc chip element. Path and name go through the DOM (setAttribute, textContent), never through markup. */
 function docChip(doc: Document, path: string, branch: string | null): HTMLElement {
@@ -68,9 +70,9 @@ function docChip(doc: Document, path: string, branch: string | null): HTMLElemen
 
 /**
  * Sanitized markdown HTML with each doc path (spec 12.2) turned into a chip. Runs AFTER the
- * sanitizer, on text nodes only (like chipifyHtml). Text inside a link, a code block, a button or a
- * ledger chip is skipped; text inside inline code is included, and an inline code that is one path
- * becomes the chip. HTML with no doc path comes back unchanged.
+ * sanitizer, on text nodes only (like chipifyHtml). Text inside a link, a code block, a button, a
+ * form field, SVG, MathML or a ledger chip is skipped; text inside inline code is included, and an
+ * inline code that is one path becomes the chip. HTML with no doc path comes back unchanged.
  */
 function docifyHtml(html: string, accept?: (path: string) => boolean): string {
   const forged = html.includes('data-doc-');
@@ -86,7 +88,7 @@ function docifyHtml(html: string, accept?: (path: string) => boolean): string {
   let changed = false;
   for (const node of nodes) {
     let skip = false;
-    for (let p = node.parentElement; p; p = p.parentElement) if (DOC_SKIP.has(p.tagName) || p.hasAttribute('data-ledger-chip')) { skip = true; break; }
+    for (let p = node.parentElement; p; p = p.parentElement) if (p.namespaceURI !== XHTML || DOC_SKIP.has(p.tagName) || p.hasAttribute('data-ledger-chip')) { skip = true; break; }
     if (skip) continue;
     const text = node.data;
     const spans = findDocPaths(text).filter((s) => !accept || accept(s.path));

@@ -93,3 +93,14 @@ it("a reply's own data-doc-path markup is not a chip", () => {
   fireEvent.click(screen.getByText('click'));
   expect(onOpen).not.toHaveBeenCalled();
 });
+
+it('the docs pass skips SVG text', () => {
+  const { container } = render(<Markdown source={'<svg><a href="x"><text>docs/a.md</text></a></svg>'} docs={{ onOpen: vi.fn() }} />);
+  expect(container.querySelector('[data-doc-path]')).toBeNull();
+});
+
+it('the docs pass skips form text', () => {
+  const { container } = render(<Markdown source={'<textarea>docs/a.md</textarea>'} docs={{ onOpen: vi.fn() }} />);
+  expect(container.querySelector('[data-doc-path]')).toBeNull();
+  expect(container.querySelector('textarea')!.textContent).toBe('docs/a.md');
+});

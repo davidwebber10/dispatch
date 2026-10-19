@@ -308,7 +308,8 @@ describe('EndlessColumn', () => {
     useUI.setState({ view: 'chat', pendingOpenThread: null });
     render(<EndlessColumn />);
     const spy = vi.spyOn(open, 'openThreadInPlace').mockResolvedValue();
-    fireEvent.click(screen.getByRole('button', { name: /\[Fix login\] report: done/ }));
+    expect(screen.getByText('[Fix login] report: done')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Open thread Fix login' }));
     expect(spy).toHaveBeenCalledWith('s1', 't9');
     expect(useUI.getState().view).toBe('chat');
   });
