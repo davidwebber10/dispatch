@@ -1,7 +1,8 @@
 # Chat thread visibility: design
 
 Date: 2026-10-19
-Status: draft, awaiting owner review
+Status: draft, awaiting owner review. Next: a visual design review (section 13 and the
+design brief), then the implementation plan.
 Base: origin/main 91b15fdd (v3.1.7)
 Parent spec: `2026-10-13-endless-chat-design.md` (called "the Chat spec" below)
 
@@ -19,9 +20,12 @@ This change gives Chat a light view of delegated work and of what else runs in e
 4. A compact "Started" item shows in the chat the moment Chat starts a thread.
 5. Threads that wait for the owner come first, highlighted, with the question they ask.
 6. Every thread opens in place, in the Overseer's thread lightbox, so the owner stays in Chat.
+7. Spec and plan files named in Chat open in place, from the right copy (main, a worktree or
+   an unmerged branch), with Reveal in Finder on the Mac and a per-project Docs list
+   (section 12).
 
-The owner approved all six items. Item 4 is the owner's favorite. The in-place lightbox is
-the owner's addition.
+The owner approved all six items. Item 4 is the owner's favorite. The in-place lightbox and
+item 7 are the owner's additions.
 
 ### Non-goals
 
@@ -397,6 +401,9 @@ Chrome run at iPhone size for the sheet, the badge, and the lightbox.
 - Thread names in the model's status block.
 - Enforcing the behavior rule with `--disallowedTools` for the Task and Agent tools in Chat
   turns (Q7).
+- Doc links inside the thread lightbox open the doc viewer, not a file tab (Q13).
+- Close the absolute-path gap in `GET /api/sessions/:id/files/read` (section 12.1). It is a
+  separate fix with its own review.
 
 ## 10. Open questions (each with a recommended answer)
 
@@ -409,11 +416,29 @@ Chrome run at iPhone size for the sheet, the badge, and the lightbox.
 | Q5 | Under a project filter, show a "Started" item by the turn's tag or by the target project? | The turn's tag (no core change). Showing it by target would need a per-row project override in the store |
 | Q6 | Give the model the thread list too (in the status block)? | No. It changes the model's input every turn and Chat already has `list_threads` |
 | Q7 | Enforce "real threads only" in code (disallow Task and Agent in Chat turns)? | Not in this PR. Keep it as a rule in the Chat instructions; revisit only if a private agent run is seen |
-| Q8 | Make the pane wider than 280 px? | No. Two-line rows fit; the chat column keeps its width |
+| Q8 | Make the pane wider than 280 px? | No. Two-line rows fit; the chat column keeps its width. The visual design review (section 13) can change this |
+| Q9 | How does "Open in editor" work, and which editor? | An editor URL opened by the browser (`vscode://file`, or the Cursor or Zed form), picked in the Chat settings, empty by default so the button is hidden. No daemon process, desktop only |
+| Q10 | Which file types become links? | `.md`, `.markdown` and `.txt`. Other files stay plain text |
+| Q11 | Fetch remote branches before a branch read? | No. Read them as of the last fetch and say so in the viewer |
+| Q12 | Which folders does the Docs list scan? | `docs/superpowers/specs`, `docs/superpowers/plans`, `docs/specs`, `docs/plans`. Not every `.md` in the repo |
+| Q13 | Should doc links inside the thread lightbox (a thread's own chat) open the doc viewer too? | Later. Today they open a file tab; changing the shared `ChatView` is a separate change |
+| Q14 | Where does the "report doc paths" rule live? | One sentence in the shared worker prompt in `prompts.ts`, for all agent types, so Overseer and Chat threads both follow it |
+| Q15 | A path inside a removed worktree with no branch named: what opens? | The branch whose name ends in the worktree name, else the main checkout copy with a note, else "not found" |
+| Q16 | One PR or two? | Two, in one plan: PR 1 is items 1 to 6, PR 2 is item 7 (doc links), built on PR 1. Each stays reviewable |
 
-## 11. Task breakdown (for the later plan)
+## 11. Next steps and task breakdown
 
-One PR, in this order. Each task is tests first, then code, then one commit.
+The owner set this order on 2026-10-19:
+
+1. The owner reviews this spec.
+2. Visual designs of every changed screen (section 13), from the design brief
+   `2026-10-19-chat-thread-visibility-design-brief.md` (Claude Design preferred, or a local
+   HTML preview). The owner approves them.
+3. Only then the implementation plan and the code. The plan follows the approved designs
+   where they differ from this spec.
+
+The rough task order for that plan is below. Each task is tests first, then code, then one
+commit. Tasks 1 to 7 are PR 1; tasks 8 to 12 are PR 2 (Q16).
 
 1. **Core: record the spawner.** `spawnedBy` in `buildWorkerCreateBody`, `WorkerSpec`,
    `createWorker`, and the agency `spawnAgent` and `queueAgent`. Tests: worker payload, agency
@@ -430,7 +455,234 @@ One PR, in this order. Each task is tests first, then code, then one commit.
    ChatMode, lightbox prop.
 6. **Web: the pane.** Needs you section, project blocks, rows, Done today fold, "+N more",
    toolbar badge, mobile sheet close. Tests: `ProjectsPanel.test.tsx`.
-7. **Verify.** The touched test files, then the full suite once; `/verify` end to end; a
-   headless Chrome check at iPhone size. A short build record in the PR.
+7. **Verify PR 1.** The touched test files, then the full suite once; `/verify` end to end;
+   a headless Chrome check at iPhone size. A short build record in the PR.
+8. **Core: doc resolver.** `docs/git.ts`, `docs/resolve.ts`, the `.worktrees/` and
+   `git worktree list` step in `readSourceFile`, the `/api/endless/doc` route. Tests: resolve,
+   safety, source-file, route.
+9. **Core: Docs list and the report rule.** `docs/list.ts`, `/api/endless/docs`, the worker
+   prompt sentence. Tests: list, route, prompts.
+10. **Web: links.** `lib/docPaths.ts`, the `docs` pass in `Markdown`, report card and
+    "Started" task links. Tests: docPaths, Markdown.
+11. **Web: viewer and Docs list.** `DocViewer`, `useDocViewer`, the editor setting, Reveal,
+    Copy path, the Docs fold in `ProjectsPanel`. Tests: DocViewer, ProjectsPanel.
+12. **Verify PR 2.** Same as task 7, with the three-copy fake project (12.9).
 
-Estimated size: about 250 lines of core code, 450 of web code, and the tests.
+Estimated size: PR 1 about 250 lines of core code and 450 of web code; PR 2 about 350 of core
+and 350 of web; plus the tests.
+
+## 12. Open spec and plan files from Chat (item 7, added 2026-10-19)
+
+The owner added this item after the first draft: "i need a way to open plan files from here.
+it would be great if they were direct linked to the file in the folder structure. finding
+them in worktrees is a pain."
+
+### 12.1 Current behavior (verified in code)
+
+| Area | Today | Where |
+|---|---|---|
+| Paths in chat text | Not linked. Dispatch replies render through `InsightText` and `Markdown`; report cards render plain text. No path becomes a link | `packages/web/src/components/endless/EndlessMessageRow.tsx:110-140`, `packages/web/src/components/InsightText.tsx` |
+| File links elsewhere | "View file" on tool rows opens a FILE tab (`openFileTab`), which leaves the current surface | `packages/web/src/lib/openFileTab.ts`, `packages/web/src/components/tabs/chat/ChatView.tsx:221-226` |
+| A safe doc reader | `readSourceFile` (the Overseer source panel): the real path must stay inside the project folder, symlinks resolved; `.md` and `.markdown` only; 5 MB cap; a missing path is looked for in worktrees (newest copy wins) and a gone worktree falls back to the main checkout, each with a note | `packages/core/src/overseer/source-file.ts` |
+| Its gap | It knows worktrees only under `.claude/worktrees/`. This owner's convention is `.worktrees/` (this spec's own worktree). It never reads a branch that has no worktree | `source-file.ts:66`, `:144-157` |
+| Markdown renderer | `Markdown` renders with DOMPurify, then runs a text-node pass after the sanitizer (the ledger chips), with one delegated click handler | `packages/web/src/components/Markdown.tsx:46-60` |
+| Reveal in Finder | `POST /api/sessions/:id/files/reveal` exists. It works only when the browser runs on the Mac itself (loopback socket, no proxy headers). The web app reads `canReveal` from `/api/state` | `packages/core/src/routes/files.ts:304-325`, `packages/core/src/routes/state.ts:165-179`, `packages/web/src/stores/host.ts` |
+| Open in editor | Nothing exists | |
+| A read route NOT to reuse | `GET /api/sessions/:id/files/read` accepts any absolute path (`resolveRead`), so it can read outside the project. The new route must not call it. Closing that gap is a separate item (section 12.9) | `packages/core/src/routes/files.ts:88-98`, `:195-208` |
+
+### 12.2 Doc links in chat
+
+- **What becomes a link:** a path that ends in `.md`, `.markdown` or `.txt` (Q10), as a bare
+  word or in inline code, in three places: Dispatch replies (`unii`), report cards (`work`),
+  and the task text of a "Started" item (up to 2 links shown on the card, from the
+  `spawn_agent` input). Tool rows stay plain. URLs (`http:`, `https:`) are never path links.
+- **Which project:** an absolute path belongs to the registered project whose real folder
+  contains it (longest match). A relative path uses the message's project tag. A relative
+  path with no tag does not become a link.
+- **How:** one pure function `findDocPaths(text)` returns the path spans. `Markdown` gets an
+  optional `docs` prop: the same after-sanitizer text-node pass as the ledger chips wraps each
+  span in a button (`data-doc-path`), and the delegated click handler opens the viewer. Report
+  cards split their plain text with the same function. Trailing punctuation (`.`, `,`, `)`,
+  `:`) is not part of the path.
+- A link only opens; it never checks the file first. The viewer shows "not found" when the
+  file is gone, so the chat never makes one request per path.
+
+### 12.3 Resolving the right copy
+
+A new core module `packages/core/src/docs/resolve.ts` grows from `readSourceFile` (it does
+not fork it). Input: project id, path, and an optional branch name (from the text, see 12.6).
+The first match wins:
+
+1. **The path on disk.** An absolute path, or a relative path under the main checkout. The
+   real path must be inside the project folder.
+2. **Worktree copies.** The same relative path in each worktree inside the project folder,
+   newest file first. Worktrees come from `git worktree list --porcelain`, kept to the ones
+   whose real path is inside the project folder, plus the existing `.claude/worktrees/` scan
+   for a non-git folder. So `.worktrees/` works and `.claude/worktrees/` keeps working.
+3. **A path inside a gone worktree** (`.worktrees/name/rest` or `.claude/worktrees/name/rest`,
+   the folder no longer exists): read `rest` at the named branch if the text gave one,
+   else at the branch whose name ends in `name`, else the main checkout copy (today's note).
+4. **Unmerged branches.** `rest` at the newest local or remote-tracking branch that has it and
+   is not merged into the default branch, read with `git cat-file` (section 12.5).
+5. Else "not found", with the places it looked.
+
+The answer names the copy and how it compares to the default branch:
+
+```ts
+type DocCopy = {
+  project: string;
+  path: string;                    // relative to the checkout or worktree
+  absPath: string | null;          // null for a branch-only read
+  source: 'main' | 'worktree' | 'branch';
+  worktree: string | null;         // folder name, e.g. chat-visibility-spec
+  branch: string | null;           // e.g. spec/chat-thread-visibility, origin/spec/x
+  vsMain: 'same' | 'changed' | 'not_on_main';
+  modifiedAt: string;              // file mtime, or the branch commit date
+  status: string | null;           // the doc's own "Status:" line, max 60 chars
+  note: string | null;             // e.g. "the newest of 2 copies"
+  markdown: string;
+};
+```
+
+- **Default branch:** `origin/HEAD` if set, else `main`, else `master`.
+- **vsMain:** `same` when the blob hash at the default branch equals the hash of this copy,
+  `changed` when the default branch has the path with another hash, `not_on_main` when it
+  does not have the path. The viewer says "changed here" for `changed`. It does not claim
+  "newer", because the hash alone cannot tell which side is newer.
+- **No fetch.** Remote-tracking branches are read as they are after the last fetch. The
+  viewer says "as of the last fetch" for a remote branch (Q11).
+
+### 12.4 The doc viewer
+
+- `DocViewer` in `packages/web/src/components/endless/DocViewer.tsx`: `common/Modal`
+  (a centered card on desktop, a sheet on mobile) around the app's `Markdown`. It is the same
+  in-place pattern as the thread lightbox, but `common/Modal` already gives the mobile sheet,
+  focus return and Escape, and it does not need the Overseer tokens.
+- **Header:** the file name; a location chip ("main", "worktree chat-visibility-spec on
+  spec/chat-thread-visibility", or "branch origin/spec/x, as of the last fetch"); the
+  `vsMain` chip ("on main", "changed here", "not on main"); the doc's status line; the
+  modified time; the note.
+- **Actions:**
+
+| Action | Shown when | Does |
+|---|---|---|
+| Reveal in Finder | `canReveal` is true and `absPath` is set | the existing reveal route, with the path made relative to the project folder |
+| Open in editor | `canReveal` is true, `absPath` is set, and an editor is set (Q9) | opens an editor URL (`vscode://file` + the absolute path, or the Cursor or Zed form) in the browser; no daemon process |
+| Copy path | always | copies `absPath`, or `branch:path` for a branch-only copy |
+| Open the thread that wrote it | a writer is known (12.7) | the thread lightbox (section 3.6) |
+
+- **Desktop only:** Reveal and Open in editor need the browser on the Mac, so they never show
+  on the iPhone or on another computer. The server already decides this (`canReveal`), so
+  the web app needs no device check of its own.
+- **Mobile:** the viewer is a full-height sheet. Copy path stays. Links inside the doc to
+  other `.md` files open in the same viewer, with a back button.
+- **Stacking:** the viewer opens above the thread lightbox (Modal z-index 100 over 60), so a
+  doc opened from a pane row inside the open lightbox is fine. Closing the viewer returns to
+  what was below.
+
+### 12.5 Safety (read-only)
+
+- **Read only.** The new routes have no write, rename or delete path.
+- **Only registered project folders.** Every path, after `realpath`, must be inside the
+  folder of a registered project. A worktree is allowed only when its real path is inside
+  that folder. A symlink that leads out is refused (`readSourceFile` rules).
+- **No traversal.** A relative path is normalized; `..` that leads out is refused before any
+  read. An absolute path outside every project folder is refused.
+- **File types:** `.md`, `.markdown`, `.txt` only, checked on the path, and a regular file
+  only (no folders, pipes or devices).
+- **Size:** 2 MB cap for the viewer (the 5 MB source-panel cap stays for that panel). For a
+  branch read, `git cat-file -s` checks the size before the content is read.
+- **Branch reads:** the branch must be one that the server itself listed for that project
+  (`git for-each-ref refs/heads refs/remotes`), so an input such as `--output=x` never
+  reaches git. Git runs with `execFile` (no shell), `-C` the project folder, a 5 s timeout,
+  and `--end-of-options` where the command takes it.
+- **Rendering:** `Markdown` sanitizes with DOMPurify (unchanged). Relative images in a doc do
+  not load (a known limit).
+
+### 12.6 Threads report doc paths (rule)
+
+Every spawned thread that writes or changes a doc names it in its final report as an absolute
+path and a branch, on its own line:
+
+```
+Doc: /abs/path/to/project/.worktrees/name/docs/superpowers/specs/file.md (branch spec/name)
+```
+
+- This is one sentence added to the shared worker prompt for all agent types in
+  `packages/core/src/overseer/prompts.ts` (next to the Planner text at `:454`), so Overseer
+  and Chat threads both follow it. It changes prompt text only.
+- `findDocPaths` reads the `(branch ...)` part, and the resolver uses it in step 3 when the
+  worktree is gone.
+- Links still work without the line (relative paths and the worktree search). The rule makes
+  the link exact and lets it survive a removed worktree.
+
+### 12.7 Per-project Docs list in the pane
+
+- Under each project block (section 3.2), after the threads: a "Docs (N)" line, closed by
+  default. Opening it loads the list for that project only (lazy), from
+  `GET /api/endless/docs?project=ID`.
+- **What it lists:** `.md` files in `docs/superpowers/specs`, `docs/superpowers/plans`,
+  `docs/specs` and `docs/plans` (Q12), from the main checkout, each worktree in the project
+  folder, and each unmerged branch. For a branch, only the doc files that the branch added or
+  changed against the default branch (`git diff --name-only default...branch` on those
+  folders), newest 20 branches by commit date.
+- **One row per path:** the newest copy wins; the row shows the other copies as a count.
+  Row: the file name, the doc's status line (for example "draft, awaiting owner review"),
+  the location chip, the `vsMain` chip, the modified time, and the writer.
+- **The writer:** the newest non-archived thread whose working folder is that worktree; else
+  the thread (`ref`) of the newest Chat report that names the path; else none. A writer tap
+  opens the thread lightbox; a row tap opens the viewer.
+- **Order and caps:** newest first; 8 rows, then "+N more". The server caches the list for
+  60 s per project, keyed by the worktree list and the branch heads, so a reopen is cheap.
+
+### 12.8 Data and API changes
+
+| Route | Returns |
+|---|---|
+| `GET /api/endless/doc?project=ID&path=P&branch=B` | `DocCopy`, or 404 with the places it looked, or 403 for a refused path |
+| `GET /api/endless/docs?project=ID` | the doc rows of 12.7 |
+
+Core: `packages/core/src/docs/resolve.ts` (12.3, 12.5), `packages/core/src/docs/list.ts`
+(12.7), `packages/core/src/docs/git.ts` (a small `execFile` wrapper: worktrees, refs, blob
+hash, size and content). `readSourceFile` gains the `git worktree list` step and the
+`.worktrees/` form, so the Overseer source panel finds the same copies (its tests must stay
+green).
+
+Web: `findDocPaths` in `packages/web/src/lib/docPaths.ts`; the `docs` prop on `Markdown`;
+`DocViewer`; a `useDocViewer` store (open path, history for back); the editor choice in the
+Chat settings (Q9); the Docs fold in `ProjectsPanel`.
+
+### 12.9 Tests (tests first)
+
+Core tests build their git repos in a nested temp folder made for each test, never in a
+shared folder, and never touch the real HOME.
+
+| Test | Checks | Fails first |
+|---|---|---|
+| `docs/resolve.test.ts` (new) | main copy; a `.worktrees/` copy and a `.claude/worktrees/` copy (newest wins, with the note); a gone worktree read at the named branch; an unmerged branch read; `vsMain` same, changed, not_on_main; the status line | yes (no module) |
+| `docs/resolve.test.ts`, safety cases | `../` out, an absolute path outside every project, a symlink out, a worktree outside the project folder, a branch the server did not list, a branch named like an option, a folder, a `.json` file, a file over 2 MB, a branch blob over 2 MB | yes |
+| `docs/list.test.ts` (new) | the four folders only; one row per path with the newest copy; only added or changed files for a branch; the writer from a worktree thread and from a Chat report; the 60 s cache | yes |
+| `overseer/source-file.test.ts` (existing plus new) | the old cases unchanged; a `.worktrees/` copy is found | the new case, yes |
+| `routes/endless.test.ts` (new cases) | the two routes; 403 and 404 bodies | yes |
+| `overseer/prompts.test.ts` (new case) | the worker prompt has the doc report rule | yes |
+| `lib/docPaths.test.ts` (new, web) | bare and inline-code paths; trailing punctuation; URLs left alone; the `(branch ...)` part; `.md`, `.markdown`, `.txt` only | yes |
+| `Markdown.test.tsx` (new cases) | the `docs` pass makes buttons after the sanitizer; a path inside a link or code block is still sanitized | yes |
+| `DocViewer.test.tsx` (new) | the chips for each `source` and `vsMain`; Reveal and editor hidden when `canReveal` is false; Copy path; not found; back after a link inside the doc | yes |
+| `ProjectsPanel.test.tsx` (new cases) | Docs fold closed by default, loads once on open, rows, writer tap opens the lightbox | yes |
+
+End to end (`/verify`): a fake project with a main checkout, a `.worktrees/` worktree and a
+spec branch with no worktree. A Chat report that names each copy opens the right one;
+Reveal works in a local browser and is hidden at iPhone size.
+
+### 12.10 Risks
+
+| Risk | Mitigation |
+|---|---|
+| A new read route becomes a way to read any file | The 12.5 rules, the safety test cases, and no use of `/files/read` |
+| Git calls are slow on 18 projects with many branches | The list is lazy per project, capped at 20 branches, cached 60 s; a single doc read is a few `git cat-file` calls |
+| False links (a word that looks like a path) | Only the three file types; a relative path needs a project tag; a bad link only shows "not found" |
+| The wrong copy opens when several exist | The newest copy wins, and the header always says which copy and how many there are |
+| Remote branches are stale | No auto fetch; the viewer says "as of the last fetch" |
+| The editor URL does nothing when that editor is not installed | The editor is a setting, empty by default, so the button is hidden until the owner picks one |
+| `readSourceFile` changes affect the Overseer source panel | Its existing tests stay; only one lookup step is added |
+| The existing `/files/read` absolute-path gap | Out of scope here; list it as its own fix |
