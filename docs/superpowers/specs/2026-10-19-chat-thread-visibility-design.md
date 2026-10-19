@@ -1,10 +1,22 @@
 # Chat thread visibility: design
 
 Date: 2026-10-19
-Status: draft, awaiting owner review. Next: a visual design review (section 13 and the
-design brief), then the implementation plan.
+Status: draft, awaiting owner review. Next: a visual design review in Claude Design (section 13 and the
+design brief), then an in-app preview page (section 14), then the implementation plan.
 Base: origin/main 91b15fdd (v3.1.7)
 Parent spec: `2026-10-13-endless-chat-design.md` (called "the Chat spec" below)
+
+## Decisions needed
+
+Four owner decisions. Each has a recommendation; the spec follows it until the owner answers.
+Section 10 has all open questions (Q1 to Q17).
+
+| ID | Decision | Recommendation |
+|---|---|---|
+| CTV-Q1 | Which finished threads show in the pane? | Finished today only, folded under "Done today (N)" per project |
+| CTV-Q2 | Does each project's own Overseer thread show as a row? | No. Its open items stay in the counts; Overseer shows the thread |
+| CTV-Q3 | Add "Open in Workspace" to the thread viewer when Chat opens it? | Yes, for Chat only, behind an optional prop; Overseer and the board do not change |
+| CTV-Q7 | Block private background agents (Task, Agent) in code for Chat turns? | No, not in this work. Keep it as a rule in the Chat instructions |
 
 ## 1. Goal
 
@@ -425,17 +437,21 @@ Chrome run at iPhone size for the sheet, the badge, and the lightbox.
 | Q14 | Where does the "report doc paths" rule live? | One sentence in the shared worker prompt in `prompts.ts`, for all agent types, so Overseer and Chat threads both follow it |
 | Q15 | A path inside a removed worktree with no branch named: what opens? | The branch whose name ends in the worktree name, else the main checkout copy with a note, else "not found" |
 | Q16 | One PR or two? | Two, in one plan: PR 1 is items 1 to 6, PR 2 is item 7 (doc links), built on PR 1. Each stays reviewable |
+| Q17 | Keep the in-app preview page after the build? | No. Delete it in the last build task; its fixtures would drift from the real data (section 14) |
 
 ## 11. Next steps and task breakdown
 
 The owner set this order on 2026-10-19:
 
 1. The owner reviews this spec.
-2. Visual designs of every changed screen (section 13), from the design brief
-   `2026-10-19-chat-thread-visibility-design-brief.md` (Claude Design preferred, or a local
-   HTML preview). The owner approves them.
-3. Only then the implementation plan and the code. The plan follows the approved designs
-   where they differ from this spec.
+2. Visual designs of every changed screen (section 13). The owner pastes the design brief
+   `2026-10-19-chat-thread-visibility-design-brief.md` into Claude Design and reviews the
+   output.
+3. An in-app preview page on the spec branch (section 14): the approved designs built with the
+   real components and fixture data, so the owner sees them in the real app before the build.
+   It starts only after the owner reviews the Claude Design output.
+4. Only then the implementation plan and the code. The plan follows the approved designs and
+   the preview where they differ from this spec.
 
 The rough task order for that plan is below. Each task is tests first, then code, then one
 commit. Tasks 1 to 7 are PR 1; tasks 8 to 12 are PR 2 (Q16).
@@ -686,3 +702,50 @@ Reveal works in a local browser and is hidden at iPhone size.
 | The editor URL does nothing when that editor is not installed | The editor is a setting, empty by default, so the button is hidden until the owner picks one |
 | `readSourceFile` changes affect the Overseer source panel | Its existing tests stay; only one lookup step is added |
 | The existing `/files/read` absolute-path gap | Out of scope here; list it as its own fix |
+
+## 13. Screens to design
+
+The owner reviews visual designs of these screens before the plan (section 11). The brief
+for the designer is `2026-10-19-chat-thread-visibility-design-brief.md`. It uses neutral
+project names, because the repository is public. A copy with the owner's real project names,
+`2026-10-19-chat-thread-visibility-design-brief.local.md`, sits next to it and git ignores
+it (`*.local.md` in `.git/info/exclude`). The designs show the look only; this spec stays the
+source for the behavior.
+
+| # | Screen | Real component | Data it shows | States to design |
+|---|---|---|---|---|
+| S1 | Right pane, per project | `packages/web/src/components/endless/ProjectsPanel.tsx`, in the 280 px aside of `ChatMode.tsx` | `ProjectStatus` counts (live, need you, open); `PaneThread` rows: name, state, harness, who started it, start time, latest step, question | loading (first load); empty ("No project activity yet"); unavailable (Chat is starting); the Needs you section first, with the question; a project block with working, queued and error rows; each who-started tag (Chat, Overseer, You, Role, "via" a thread); "Done today (N)" closed and open; "+N more"; a project with only open items; the truncated note |
+| S2 | Toolbar Projects button | `ChatMode.tsx` | the need-you count | no badge; badge with a count |
+| S3 | "Started" card in the chat | `packages/web/src/components/endless/EndlessMessageRow.tsx` (new `StartedItem`) | thread label, project, harness, live state, up to 2 doc links from the task | Starting (no result yet); Started with each chip (working, needs you, done, error); no chip (an old thread); Could not start; the card among tool rows, and the same thread's report card later in the chat |
+| S4 | Report card with doc links | `EndlessMessageRow.tsx` (`WorkCard`) | the report text and its doc paths | short card; folded; open with "Open thread" and doc link chips |
+| S5 | Thread viewer opened from Chat | `packages/web/src/components/overseer/components/WorkerLightbox.tsx` (reused), mounted in `ChatMode.tsx` | the thread's own chat or terminal, its header and controls | over the chat on desktop; a waiting thread with its question; the "Open in Workspace" button (Q3). Do not redesign the lightbox itself |
+| S6 | Doc link chip | `packages/web/src/components/Markdown.tsx` (new `docs` pass), `EndlessMessageRow.tsx` | the file name; the full path on hover | in a Dispatch reply (bare path and inline code); in a report card; a long absolute path; hover and focus |
+| S7 | Doc viewer | new `packages/web/src/components/endless/DocViewer.tsx` in `common/Modal` | `DocCopy`: file name, location, `vsMain`, status line, modified time, note, the rendered Markdown | from main, same as main; from a worktree, changed here; from a worktree, not on main; branch only, as of the last fetch; actions on the Mac (Reveal in Finder, Open in editor, Copy path, the writer thread) and elsewhere (Copy path only); loading; not found; refused; too large; back after a link inside the doc |
+| S8 | Per-project Docs list | `ProjectsPanel.tsx` (the Docs fold) | doc rows: file name, status line, location, `vsMain`, modified time, writer thread, other copies count | closed ("Docs (N)"); loading; rows; empty; "+N more" |
+| S9 | Mobile (iPhone Safari PWA) | `ChatMode.tsx` (the Projects `Modal` sheet), `packages/web/src/components/mobile/MobileApp.tsx` | the same as S1 to S8 | the Projects sheet with the S1 states and S8; the toolbar badge; a "Started" card at 393 px; the thread viewer as a sheet; the doc viewer as a sheet with Copy path only |
+
+## 14. In-app preview page (after the design review, before the build)
+
+Step 3 of section 11. Not started: it begins only after the owner reviews the Claude Design
+output. No code exists for it yet. Outline:
+
+- **Route:** `/preview/chat-visibility`, in the web app only.
+- **Dev only:** the page is loaded through a dynamic import behind `import.meta.env.DEV`, so
+  `pnpm --filter web dev` (Vite) serves it and the production build leaves it out. The
+  daemon never serves it, so it never reaches an installed Dispatch.
+- **Fixture data:** one file, `packages/web/src/preview/chat-visibility.fixtures.ts`, with the
+  brief's sample data (section 4 of the brief, neutral names). The page fills the stores
+  (`useEndless`, `useThreadStatus`, `useTabs`, `useHost` for `canReveal`) from it and stubs the
+  API calls, so it needs no running daemon.
+- **Real components:** the page renders `ChatMode`'s parts with the new components as they
+  will ship (`ProjectsPanel`, `StartedItem`, `WorkCard`, `DocViewer`, `WorkerLightbox` in its
+  `.overseer-root` wrapper). The components it shows are the first build of tasks 4 to 6 and
+  10 to 11, kept behind fixtures until the plan wires them to live data.
+- **Screens:** S1 to S9 from section 13. A small bar at the top switches the state of each
+  screen (for example loading, empty, needs you, Done today open) and the width (desktop, or
+  a 393 px frame for the iPhone).
+- **Where it lives:** commits on a branch from `spec/chat-thread-visibility`, so the spec and
+  the preview stay together until the owner approves both. No PR, no merge into main.
+- **Open question Q17:** keep the preview page after the build as a dev tool, or delete it
+  in the last build task? Recommendation: delete it, because fixtures drift from the real
+  data and nothing tests them.
