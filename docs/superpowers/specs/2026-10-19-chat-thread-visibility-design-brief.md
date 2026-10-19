@@ -140,7 +140,7 @@ chips inside the text. States: short card; folded; open.
 It exists: a large centered modal on desktop (about 880 px wide, 82 % of the height), a
 full-height sheet on the iPhone. It shows the thread's own chat, its name, task summary and
 stats, and Interrupt, Stop and Archive. Show it over the Chat screen, add one small "Open in
-Workspace" button to its header, and show a thread that waits with its question.
+Threads" button to its header, and show a thread that waits with its question.
 
 ### S6. Doc link chip
 
