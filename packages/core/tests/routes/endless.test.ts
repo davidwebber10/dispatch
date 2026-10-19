@@ -161,8 +161,17 @@ describe('endless routes', () => {
     expect((await request(app).post('/api/endless/stop')).status).toBe(409);
   });
 
+  it('GET /projects returns the projects, the pane threads and the cut flag', async () => {
+    const res = await request(app).get('/api/endless/projects');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.projects)).toBe(true);
+    expect(res.body.projects[0]).toMatchObject({ id: 's1' });
+    expect(res.body.threads).toEqual([]);
+    expect(res.body.truncated).toBe(false);
+  });
+
   it('lists projects and threads', async () => {
-    expect((await request(app).get('/api/endless/projects')).body[0]).toMatchObject({ id: 's1', name: 'salsify' });
+    expect((await request(app).get('/api/endless/projects')).body.projects[0]).toMatchObject({ id: 's1', name: 'salsify' });
     expect((await request(app).get('/api/endless/threads')).body).toEqual([]);
   });
 

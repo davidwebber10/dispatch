@@ -20,6 +20,7 @@ import { reportText, threadOrigin, recoveryOutcome, pendingQuestionText, type Pe
 import { createSummarizer } from './summarizer-choice.js';
 import type { Summarizer, Usage } from './summarizer.js';
 import { systemPromptWith } from './prompt.js';
+import { collectPaneThreads, type PaneThread } from './pane.js';
 import { buildStatusBlock, collectProjects, type ProjectStatus } from './status-block.js';
 import { zoom, dateOf, readImage, RecallError, type ZoomImage } from './recall.js';
 import { importOnce } from './import.js';
@@ -403,7 +404,10 @@ export class EndlessService {
     return { lines: this.views.lines(), bytes: this.views.bytes(), rendered: this.views.rendered() };
   }
 
-  projects(): ProjectStatus[] { return collectProjects(this.o.db, this.store); }
+  projects(): { projects: ProjectStatus[]; threads: PaneThread[]; truncated: boolean } {
+    const pane = collectPaneThreads(this.o.db, { now: this.now(), timeZone: this.timeZone, question: (id) => this.waitingText(id) });
+    return { projects: collectProjects(this.o.db, this.store), ...pane };
+  }
 
   zoom(id: number, n: number): { text: string; images: ZoomImage[] } {
     try { return zoom(this.store, (pid) => this.projectName(pid), id, n); }
