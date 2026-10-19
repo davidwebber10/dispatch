@@ -76,7 +76,20 @@ export function projectRelative(projectDir: string, realRoot: string, ref: strin
       const rel = path.relative(root, path.resolve(ref));
       if (!leadsOut(rel)) return rel;
     }
-    return null;
+    // A symlinked spelling of the project (/tmp/x for /private/tmp/x): real-path the longest existing
+    // ancestor, put the rest back, and compare with the real root. `locate` still checks the file itself.
+    const abs = path.resolve(ref);
+    let head = abs;
+    const rest: string[] = [];
+    for (;;) {
+      try { head = fs.realpathSync.native(head); break; } catch { /* not there yet: try its parent */ }
+      const parent = path.dirname(head);
+      if (parent === head) return null;
+      rest.unshift(path.basename(head));
+      head = parent;
+    }
+    const rel = path.relative(realRoot, path.join(head, ...rest));
+    return leadsOut(rel) ? null : rel;
   }
   const rel = path.normalize(ref);
   return leadsOut(rel) ? null : rel;

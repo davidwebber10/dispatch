@@ -222,6 +222,39 @@ describe('resolveDoc safety', () => {
     expect(resolveDoc(project(), path.join(r.root, 'secret.md')).kind).toBe('refused');
     expect(resolveDoc(project(), 'docs/link.md').kind).toBe('refused');
   });
+  it('an absolute path through a symlinked spelling of the project resolves; an alias that leads out is refused', () => {
+    r = makeRepo();
+    r.write('docs/a.md', '# A'); r.commit('init');
+    const alias = path.join(r.root, 'alias');
+    fs.symlinkSync(r.dir, alias);
+    expect(doc(resolveDoc(project(), path.join(alias, 'docs', 'a.md')))).toMatchObject({ path: 'docs/a.md', source: 'main' });
+    // A missing file under the alias is not found, not refused.
+    expect(resolveDoc(project(), path.join(alias, 'docs', 'nope.md')).kind).toBe('not_found');
+    const outside = path.join(r.root, 'outside');
+    fs.mkdirSync(path.join(outside, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(outside, 'docs', 'a.md'), 'secret');
+    const bad = path.join(r.root, 'bad');
+    fs.symlinkSync(outside, bad);
+    expect(resolveDoc(project(), path.join(bad, 'docs', 'a.md')).kind).toBe('refused');
+  });
+  it('a copy says whether its branch is remote-tracking', () => {
+    r = makeRepo();
+    r.write('README.md', 'x'); r.commit('init');
+    r.g(r.dir, 'branch', 'spec/l');
+    r.g(r.dir, 'remote', 'add', 'origin', r.dir);
+    r.g(r.dir, 'update-ref', 'refs/remotes/origin/x', 'HEAD');
+    for (const [b, remote] of [['spec/l', false], ['origin/x', true]] as const) {
+      r.g(r.dir, 'checkout', '-q', '--detach');
+      r.write(`docs/${remote}.md`, '# B');
+      r.g(r.dir, 'checkout', '-q', '-B', 'tmp-' + remote);
+      r.commit('doc');
+      const ref = r.g(r.dir, 'rev-parse', 'HEAD').trim();
+      r.g(r.dir, remote ? 'update-ref' : 'update-ref', remote ? 'refs/remotes/origin/x' : 'refs/heads/spec/l', ref);
+      r.g(r.dir, 'checkout', '-q', 'main');
+      fs.rmSync(path.join(r.dir, `docs/${remote}.md`), { force: true });
+      expect(doc(resolveDoc(project(), `docs/${remote}.md`, { branch: b }))).toMatchObject({ source: 'branch', branch: b, remote });
+    }
+  });
   it('refuses other file types and a folder', () => {
     r = makeRepo();
     r.write('docs/a.json', '{}'); r.write('docs/dir.md/x.md', 'x'); r.commit('init');

@@ -28,8 +28,8 @@ function openUrl(url: string) {
 /** The HTTP status in the API client's error text ("GET /api/... failed: 404 — ..."), or 0. */
 const statusOf = (e: unknown) => Number(/ failed: (\d{3})\b/.exec(e instanceof Error ? e.message : '')?.[1] ?? 0);
 /** Where the copy came from (spec 12.4). */
-export const LOCATION = (d: { source: string; worktree: string | null; branch: string | null }) =>
-  d.source === 'main' ? 'main' : d.source === 'worktree' ? `worktree ${d.worktree}${d.branch ? ` on ${d.branch}` : ''}` : `branch ${d.branch}, as of the last fetch`;
+export const LOCATION = (d: { source: string; worktree: string | null; branch: string | null; remote?: boolean }) =>
+  d.source === 'main' ? 'main' : d.source === 'worktree' ? `worktree ${d.worktree}${d.branch ? ` on ${d.branch}` : ''}` : `branch ${d.branch}${d.remote ? ', as of the last fetch' : ''}`;
 const VS: Record<EndlessDocCopy['vsMain'], string | null> = { same: 'on main', changed: 'changed here', not_on_main: 'not on main', unknown: null };
 
 type Load = { kind: 'loading' } | { kind: 'doc'; doc: EndlessDocCopy } | { kind: 'error'; status: number };

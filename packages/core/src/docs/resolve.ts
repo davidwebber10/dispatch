@@ -23,7 +23,7 @@ import { isRepo, refs, defaultBranch, blobHash, blobSize, readBlob, hashBytes, c
 
 export const DOC_MAX_BYTES = 2 * 1024 * 1024;
 export const DOC_EXT = /\.(md|markdown|txt)$/i;
-export interface DocCopy { project: string; path: string; absPath: string | null; source: 'main' | 'worktree' | 'branch'; worktree: string | null; branch: string | null; vsMain: 'same' | 'changed' | 'not_on_main' | 'unknown'; modifiedAt: string; status: string | null; note: string | null; markdown: string }
+export interface DocCopy { project: string; path: string; absPath: string | null; source: 'main' | 'worktree' | 'branch'; worktree: string | null; branch: string | null; remote: boolean; vsMain: 'same' | 'changed' | 'not_on_main' | 'unknown'; modifiedAt: string; status: string | null; note: string | null; markdown: string }
 export type DocResult = { kind: 'doc'; doc: DocCopy } | { kind: 'not_found'; looked: string[] } | { kind: 'refused'; reason: string } | { kind: 'too_large'; path: string; size: number };
 
 const WT = /^(\.claude\/worktrees|\.worktrees)\/([^/]+)\/(.+)$/;
@@ -72,8 +72,11 @@ export function resolveDoc(project: { id: string; folder: string }, ref: string,
     const w = wts.find((x) => inRoot === x.rel || inRoot.startsWith(x.rel + path.sep));
     const docRel = w ? path.relative(w.rel, inRoot) : inRoot;
     const text = bytes.toString('utf8');
-    return { kind: 'doc', doc: { project: project.id, path: posix(docRel), absPath: real, source: w ? 'worktree' : 'main', worktree: w?.name ?? null, branch: w?.branch ?? null, vsMain: vs(docRel, bytes), modifiedAt: st.mtime.toISOString(), status: statusLine(text), note: null, markdown: text } };
+    return { kind: 'doc', doc: { project: project.id, path: posix(docRel), absPath: real, source: w ? 'worktree' : 'main', worktree: w?.name ?? null, branch: w?.branch ?? null, remote: false, vsMain: vs(docRel, bytes), modifiedAt: st.mtime.toISOString(), status: statusLine(text), note: null, markdown: text } };
   };
+  const remoteNames = repo ? (git(realRoot, ['remote']) ?? '').split('\n').map((s) => s.trim()).filter(Boolean) : [];
+  /** True for a remote-tracking branch: its first segment names a git remote. */
+  const isRemote = (branch: string) => remoteNames.includes(branch.split('/')[0]);
   const fromBranch = (branch: string, docRel: string, note: string | null = null): DocResult | null => {
     if (!known.some((k) => k.name === branch)) return null;
     const size = blobSize(realRoot, branch, docRel);
@@ -83,7 +86,7 @@ export function resolveDoc(project: { id: string; folder: string }, ref: string,
     if (!bytes) return null;
     if (bytes.length > DOC_MAX_BYTES) return { kind: 'too_large', path: posix(docRel), size: bytes.length };
     const text = bytes.toString('utf8');
-    return { kind: 'doc', doc: { project: project.id, path: posix(docRel), absPath: null, source: 'branch', worktree: null, branch, vsMain: vs(docRel, bytes), modifiedAt: commitDate(realRoot, branch, docRel) ?? new Date((known.find((k) => k.name === branch)?.date ?? 0) * 1000).toISOString(), status: statusLine(text), note, markdown: text } };
+    return { kind: 'doc', doc: { project: project.id, path: posix(docRel), absPath: null, source: 'branch', worktree: null, branch, remote: isRemote(branch), vsMain: vs(docRel, bytes), modifiedAt: commitDate(realRoot, branch, docRel) ?? new Date((known.find((k) => k.name === branch)?.date ?? 0) * 1000).toISOString(), status: statusLine(text), note, markdown: text } };
   };
   /** The branch blobs already tried: each branch is read (and listed in `looked`) once. */
   const tried = new Set<string>();

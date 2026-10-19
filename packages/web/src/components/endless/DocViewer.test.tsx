@@ -36,8 +36,14 @@ describe('DocViewer', () => {
     expect(screen.getByRole('heading', { name: 'X' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'x.md' })).toBeInTheDocument();
   });
+  it('a local branch copy does not say as of the last fetch', async () => {
+    vi.spyOn(api, 'endlessDoc').mockResolvedValue(copy({ source: 'branch', absPath: null, worktree: null, branch: 'spec/b', remote: false, vsMain: 'changed' }) as any);
+    render(<DocViewer />);
+    expect(await screen.findByText('branch spec/b')).toBeInTheDocument();
+    expect(screen.queryByText(/as of the last fetch/)).toBeNull();
+  });
   it('a branch copy says as of the last fetch, and has no Reveal', async () => {
-    vi.spyOn(api, 'endlessDoc').mockResolvedValue(copy({ source: 'branch', absPath: null, worktree: null, branch: 'origin/spec/t', vsMain: 'changed' }) as any);
+    vi.spyOn(api, 'endlessDoc').mockResolvedValue(copy({ source: 'branch', absPath: null, worktree: null, branch: 'origin/spec/t', remote: true, vsMain: 'changed' }) as any);
     render(<DocViewer />);
     expect(await screen.findByText('branch origin/spec/t, as of the last fetch')).toBeInTheDocument();
     expect(screen.getByText('changed here')).toBeInTheDocument();

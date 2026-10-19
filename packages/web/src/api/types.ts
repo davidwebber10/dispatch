@@ -451,7 +451,7 @@ export interface EndlessPaneThread { id: string; project: string; label: string;
 export interface EndlessProjectsResponse { projects: EndlessProject[]; threads: EndlessPaneThread[]; truncated: boolean }
 export interface EndlessImage { media_type: string; data: string }
 /** GET /api/endless/doc: one copy of a spec or plan doc (core docs/resolve.ts DocCopy). */
-export interface EndlessDocCopy { project: string; path: string; absPath: string | null; source: 'main' | 'worktree' | 'branch'; worktree: string | null; branch: string | null; vsMain: 'same' | 'changed' | 'not_on_main' | 'unknown'; modifiedAt: string; status: string | null; note: string | null; markdown: string }
+export interface EndlessDocCopy { project: string; path: string; absPath: string | null; source: 'main' | 'worktree' | 'branch'; worktree: string | null; branch: string | null; remote: boolean; vsMain: 'same' | 'changed' | 'not_on_main' | 'unknown'; modifiedAt: string; status: string | null; note: string | null; markdown: string }
 /** GET /api/endless/docs: one in-progress doc of a project (core docs/list.ts DocRow). */
 export interface EndlessDocRow { path: string; name: string; status: string | null; source: 'worktree' | 'branch'; worktree: string | null; branch: string | null; vsMain: 'changed' | 'not_on_main'; modifiedAt: string; copies: number; writer: { id: string; label: string } | null }
 /** GET /api/update/progress — the updater's status file plus its output tail (core update/progress.ts). */
