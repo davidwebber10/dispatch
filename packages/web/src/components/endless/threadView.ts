@@ -2,9 +2,9 @@ import { useEndless } from '../../stores/endless';
 import { useThreadStatus } from '../../stores/threadStatus';
 import type { EndlessPaneState, EndlessPaneThread } from '../../api/types';
 
-/** The live overlay (terminal:status) is newer than the pane row, so it wins when present. */
-export function stateFromStatus(status: string | undefined, threadStatus: string | undefined, fallback: EndlessPaneState | null): EndlessPaneState | null {
-  void threadStatus;
+/** The live overlay (terminal:status) is newer than the pane row, so it wins when present.
+ * The live threadStatus is not needed by the current mapping; the parameter keeps the signature. */
+export function stateFromStatus(status: string | undefined, _threadStatus: string | undefined, fallback: EndlessPaneState | null): EndlessPaneState | null {
   switch (status) {
     case 'working': return 'working';
     case 'needs_input': return 'needs_you';

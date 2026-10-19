@@ -202,6 +202,65 @@ describe('pane live reload', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
+  it('activity-only events from an unknown terminal reload at most once', async () => {
+    const spy = vi.mocked(api.endlessProjects);
+    useEndless.getState().watch();
+    spy.mockClear();
+    useEndless.getState().applyEvent({ type: 'terminal:status', terminalId: 'coord', status: 'working' });
+    await vi.advanceTimersByTimeAsync(600);
+    expect(spy).toHaveBeenCalledTimes(1);
+    for (let k = 0; k < 5; k++) {
+      useEndless.getState().applyEvent({ type: 'terminal:status', terminalId: 'coord', status: 'working', activity: `Step ${k}` });
+    }
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('first sight of an unknown terminal with status waiting does not reload', async () => {
+    const spy = vi.mocked(api.endlessProjects);
+    useEndless.getState().watch();
+    spy.mockClear();
+    useEndless.getState().applyEvent({ type: 'terminal:status', terminalId: 'old', status: 'waiting' });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('a burst of events reloads by 3000 ms after the first event', async () => {
+    const spy = vi.mocked(api.endlessProjects);
+    useEndless.getState().watch();
+    spy.mockClear();
+    useEndless.getState().applyEvent({ type: 'terminal:status', terminalId: 'm0', status: 'working' });
+    for (let k = 1; k <= 5; k++) {
+      await vi.advanceTimersByTimeAsync(500);
+      useEndless.getState().applyEvent({ type: 'terminal:status', terminalId: `m${k}`, status: 'working' });
+    }
+    await vi.advanceTimersByTimeAsync(500); // 3000 ms after the first event
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('the 60 s timer does not reload while the page is hidden', async () => {
+    const spy = vi.mocked(api.endlessProjects);
+    useEndless.getState().watch();
+    spy.mockClear();
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    try {
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    }
+  });
+
+  it('after unwatch a thread event and 60 s of timers do nothing', async () => {
+    const spy = vi.mocked(api.endlessProjects);
+    useEndless.getState().watch();
+    useEndless.getState().unwatch();
+    spy.mockClear();
+    useEndless.getState().applyEvent({ type: 'terminal:created', terminal: { id: 'x' } });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
   it('reloads when the page becomes visible again', async () => {
     const spy = vi.mocked(api.endlessProjects);
     useEndless.getState().watch();

@@ -51,6 +51,7 @@ interface EndlessStoreState {
 }
 
 export const RELOAD_DEBOUNCE_MS = 600;
+export const RELOAD_MAX_WAIT_MS = 3000;
 export const RELOAD_EVERY_MS = 60_000;
 const COARSE: Record<string, string> = { working: 'working', needs_you: 'needs_input', queued: 'queued', error: 'error', done: 'waiting', idle: 'waiting' };
 const normalizePane = (v: EndlessProjectsResponse | EndlessProject[]): EndlessProjectsResponse =>
@@ -75,6 +76,9 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
   let gen = 0;
   let watchers = 0;
   let debounce: ReturnType<typeof setTimeout> | null = null;
+  let maxWait: ReturnType<typeof setTimeout> | null = null;
+  /** The last coarse status seen per terminal, for terminals the pane does not list. */
+  const lastStatus = new Map<string, string>();
   let every: ReturnType<typeof setInterval> | null = null;
   let inflight = false;
   let again = false;
@@ -86,8 +90,15 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
   };
   const schedule = () => {
     if (watchers === 0) return;
+    const fire = () => {
+      if (debounce) clearTimeout(debounce);
+      if (maxWait) clearTimeout(maxWait);
+      debounce = null; maxWait = null;
+      void reload();
+    };
     if (debounce) clearTimeout(debounce);
-    debounce = setTimeout(() => { debounce = null; void reload(); }, RELOAD_DEBOUNCE_MS);
+    debounce = setTimeout(fire, RELOAD_DEBOUNCE_MS);
+    if (!maxWait) maxWait = setTimeout(fire, RELOAD_MAX_WAIT_MS);
   };
   const onVisible = () => { if (document.visibilityState === 'visible') void reload(); };
 
@@ -186,7 +197,8 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
       if (watchers > 0) return;
       if (every) clearInterval(every);
       if (debounce) clearTimeout(debounce);
-      every = null; debounce = null;
+      if (maxWait) clearTimeout(maxWait);
+      every = null; debounce = null; maxWait = null;
       document.removeEventListener('visibilitychange', onVisible);
     },
 
@@ -232,8 +244,13 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
       }
       if (e.type === 'terminal:created' || e.type === 'terminal:exit' || e.type === 'terminal:removed') { schedule(); return; }
       if (e.type === 'terminal:status' && typeof e.terminalId === 'string') {
-        const known = get().threads.find((t) => t.id === e.terminalId);
-        if (!known || (typeof e.status === 'string' && COARSE[known.state] !== e.status)) schedule();
+        if (typeof e.status !== 'string') return;
+        const id = e.terminalId;
+        const known = get().threads.find((t) => t.id === id);
+        const prev = known ? COARSE[known.state] : lastStatus.get(id);
+        lastStatus.set(id, e.status);
+        // A terminal the pane never saw and that just waits has nothing to show.
+        if (prev === undefined ? e.status !== 'waiting' : prev !== e.status) schedule();
       }
     },
   };
