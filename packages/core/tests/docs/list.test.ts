@@ -113,4 +113,42 @@ describe('listDocs', () => {
     expect(rows.map((x) => [x.path, x.branch, x.copies])).toEqual([['docs/plans/x.md', 'fix/x', 1]]);
     expect(total).toBe(1);
   });
+
+  describe('a worktree is compared from its branch point', () => {
+    const setup = () => {
+      r = makeRepo();
+      r.write('docs/specs/a.md', 'v1'); r.commit('init');
+      const wt = path.join(r.dir, '.worktrees', 'x');
+      r.g(r.dir, 'worktree', 'add', '-q', '-b', 'spec/x', wt);
+      r.write('docs/specs/a.md', 'v2'); r.commit('main edits a');
+      return wt;
+    };
+    const list = () => listDocs({ id: 's1', folder: r.dir }, noWriter);
+
+    it('main edited the doc after the branch point: no row', async () => {
+      setup();
+      expect(await list()).toEqual({ rows: [], total: 0 });
+    });
+
+    it('the worktree edits the doc (uncommitted) after main did: listed as changed', async () => {
+      const wt = setup();
+      r.write('docs/specs/a.md', 'v3', wt);
+      const { rows } = await list();
+      expect(rows.map((x) => [x.path, x.vsMain])).toEqual([['docs/specs/a.md', 'changed']]);
+    });
+
+    it('a new doc committed on the worktree branch is listed as not on main', async () => {
+      const wt = setup();
+      r.write('docs/plans/n.md', 'n', wt); r.commit('n', wt);
+      const { rows } = await list();
+      expect(rows.map((x) => [x.path, x.vsMain])).toEqual([['docs/plans/n.md', 'not_on_main']]);
+    });
+
+    it('an untracked doc in the worktree is still listed', async () => {
+      const wt = setup();
+      r.write('docs/plans/u.md', 'u', wt);
+      const { rows } = await list();
+      expect(rows.map((x) => [x.path, x.vsMain])).toEqual([['docs/plans/u.md', 'not_on_main']]);
+    });
+  });
 });

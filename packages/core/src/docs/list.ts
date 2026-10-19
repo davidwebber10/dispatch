@@ -4,7 +4,7 @@
  * - Only `.md` docs in DOC_FOLDERS that are not on main, or that differ from main. A copy that
  *   matches main, or a doc that exists only on main, is never listed. The main checkout adds no rows.
  * - Copies come from each worktree in the project folder (committed and uncommitted changes and
- *   untracked files in those folders, against the default branch) and from each unmerged branch
+ *   untracked files in those folders, against the branch point from the default branch) and from each unmerged branch
  *   with no worktree (`git diff --name-only default...branch`), the newest DOCS_BRANCHES branches.
  * - One row per path: the newest copy, with the number of copies. At most DOCS_ROWS rows, newest
  *   first, and the total.
@@ -57,8 +57,11 @@ export const listDocs: DocLister = async (project, writerOf) => {
   const wts: Awaited<ReturnType<typeof projectWorktreesAsync>> = [];
   for (const w of await projectWorktreesAsync(realRoot)) if (await isRepoAsync(w.real)) wts.push(w);
   for (const w of wts) {
+    // Diff from the branch point, so a doc that only main edited since is not "in progress" here.
+    // If there is no merge base (unrelated history, shallow clone), diff against the default branch.
+    const mb = (await gitAsync(w.real, ['merge-base', base, 'HEAD']))?.trim();
     const [changed, untracked] = await Promise.all([
-      gitAsync(w.real, ['diff', '-z', '--name-only', base, '--', ...DOC_FOLDERS]),
+      gitAsync(w.real, ['diff', '-z', '--name-only', mb || base, '--', ...DOC_FOLDERS]),
       gitAsync(w.real, ['ls-files', '-z', '--others', '--exclude-standard', '--', ...DOC_FOLDERS]),
     ]);
     for (const rel of new Set([...names(changed), ...names(untracked)])) {
