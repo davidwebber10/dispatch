@@ -720,9 +720,9 @@ export function parseSpawn(tool: EndlessMessage, echo?: EndlessMessage): Spawn;
 export function StateMark(props: { state: EndlessPaneState; size?: number }): JSX.Element;
 ```
 
-- [ ] **Step 0: Check the result order (spec 3.4 assumption)**
+- [x] **Step 0: Check the result order (spec 3.4 assumption)**
 
-On a scratch isolated daemon (the `/verify` skill: fake HOME, port 3999), ask Chat to start two threads in one message. Read `endless_messages` in that daemon's DB (`SELECT i, kind, substr(text,1,80) FROM endless_messages ORDER BY i DESC LIMIT 8`). Expected: tool, tool, echo, echo, with the echoes in call order. Write the result in the task report. If the order differs, stop and report; the run pairing below assumes call order.
+Done by the controller on 2026-10-19, read-only, on the real Chat log (`endless_messages`): every run of two parallel tool calls in the log has its two results in call order. A fake-HOME daemon cannot sign in to Claude, so a live two-spawn turn was not used. No action for the implementer.
 
 - [ ] **Step 1: Write the failing tests** `EndlessMessageRow.test.tsx`
 
