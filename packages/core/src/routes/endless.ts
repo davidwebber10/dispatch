@@ -54,6 +54,15 @@ export function createEndlessRouter(svc: EndlessService): Router {
 
   router.get('/view', (_req, res) => { res.json(svc.viewLines()); });
   router.get('/projects', (_req, res) => { res.json(svc.projects()); });
+  // Read only: a spec or plan doc under a registered project folder (main, a worktree or an unmerged branch).
+  router.get('/doc', (req, res) => {
+    const r = svc.docs.doc(String(req.query.project ?? ''), String(req.query.path ?? ''), str(req.query.branch));
+    if (!r) { res.status(400).json({ error: 'unknown project' }); return; }
+    if (r.kind === 'doc') res.json(r.doc);
+    else if (r.kind === 'refused') res.status(403).json({ reason: r.reason });
+    else if (r.kind === 'too_large') res.status(413).json({ path: r.path, size: r.size });
+    else res.status(404).json({ looked: r.looked });
+  });
   router.get('/threads', (_req, res) => { res.json(svc.threads()); });
   router.get('/project', (req, res) => {
     try { res.json(svc.project(String(req.query.ref ?? ''))); } catch (err) { fail(res, err); }

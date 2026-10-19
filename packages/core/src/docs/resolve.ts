@@ -1,0 +1,139 @@
+/**
+ * The doc resolver (chat thread visibility spec, 12.5): finds the right copy of a spec or plan
+ * doc that a Chat message names, and says how it compares to main. Read only.
+ *
+ * Order: the path on disk (the main checkout, or a worktree path as given); for a path inside a
+ * removed worktree, the named branch, then the branch that ends in the worktree name, then the
+ * main checkout; otherwise the copies in the project's worktrees (newest first), then the
+ * unmerged branches (newest first).
+ *
+ * Safety:
+ * - Only real paths inside the project folder; a worktree counts only when its real path is
+ *   inside it; a symlink that leads out is refused; `..` that leads out is refused before any read.
+ * - Only `.md`, `.markdown` and `.txt`, regular files only, at most 2 MB (a branch blob's size
+ *   is checked with `git cat-file -s` before it is read).
+ * - A branch is used only when it is one that `git for-each-ref` listed.
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import { leadsOut, projectRelative, locate, projectWorktrees } from '../overseer/source-file.js';
+import { isRepo, refs, defaultBranch, blobHash, blobSize, readBlob, hashBytes, commitDate, git } from './git.js';
+
+export const DOC_MAX_BYTES = 2 * 1024 * 1024;
+export const DOC_EXT = /\.(md|markdown|txt)$/i;
+export interface DocCopy { project: string; path: string; absPath: string | null; source: 'main' | 'worktree' | 'branch'; worktree: string | null; branch: string | null; vsMain: 'same' | 'changed' | 'not_on_main' | 'unknown'; modifiedAt: string; status: string | null; note: string | null; markdown: string }
+export type DocResult = { kind: 'doc'; doc: DocCopy } | { kind: 'not_found'; looked: string[] } | { kind: 'refused'; reason: string } | { kind: 'too_large'; path: string; size: number };
+
+const WT = /^(\.claude\/worktrees|\.worktrees)\/([^/]+)\/(.+)$/;
+const posix = (p: string) => p.split(path.sep).join('/');
+const OUTSIDE: DocResult = { kind: 'refused', reason: 'This path is outside the project.' };
+const NOT_A_DOC: DocResult = { kind: 'refused', reason: 'Only .md, .markdown and .txt files open here.' };
+
+/** The first `Status:` line in the first 20 lines, at most 60 characters. */
+export function statusLine(text: string): string | null {
+  for (const line of text.split('\n').slice(0, 20)) {
+    const m = /^\s*Status:\s*(.+?)\s*$/i.exec(line);
+    if (m) return m[1].slice(0, 60);
+  }
+  return null;
+}
+
+export function resolveDoc(project: { id: string; folder: string }, ref: string, opts: { branch?: string | null } = {}): DocResult {
+  let realRoot: string;
+  try { realRoot = fs.realpathSync(project.folder); } catch { return { kind: 'not_found', looked: [project.folder] }; }
+  const rel = projectRelative(project.folder, realRoot, ref);
+  if (rel === null) return OUTSIDE;
+  if (!DOC_EXT.test(rel)) return NOT_A_DOC;
+  const repo = isRepo(realRoot);
+  const base = repo ? defaultBranch(realRoot) : null;
+  const known = repo ? refs(realRoot) : [];
+  const wts = projectWorktrees(realRoot);
+  const looked: string[] = [];
+
+  const vs = (mainRel: string, bytes: Buffer): DocCopy['vsMain'] => {
+    if (!base) return 'unknown';
+    const h = blobHash(realRoot, base, mainRel);
+    return h === null ? 'not_on_main' : h === hashBytes(bytes) ? 'same' : 'changed';
+  };
+  const fromDisk = (real: string, inRoot: string): DocResult => {
+    let st: fs.Stats;
+    try { st = fs.statSync(real); } catch { return { kind: 'not_found', looked }; }
+    if (st.isDirectory()) return { kind: 'refused', reason: 'This path is a folder, not a file.' };
+    if (!st.isFile()) return { kind: 'refused', reason: 'This path is not a regular file.' };
+    // A symlink inside the project that leads to another kind of file is not a doc either.
+    if (!DOC_EXT.test(real)) return NOT_A_DOC;
+    if (st.size > DOC_MAX_BYTES) return { kind: 'too_large', path: posix(inRoot), size: st.size };
+    let bytes: Buffer;
+    try { bytes = fs.readFileSync(real); } catch { return { kind: 'not_found', looked }; }
+    if (bytes.length > DOC_MAX_BYTES) return { kind: 'too_large', path: posix(inRoot), size: bytes.length };
+    const w = wts.find((x) => inRoot === x.rel || inRoot.startsWith(x.rel + path.sep));
+    const docRel = w ? path.relative(w.rel, inRoot) : inRoot;
+    const text = bytes.toString('utf8');
+    return { kind: 'doc', doc: { project: project.id, path: posix(docRel), absPath: real, source: w ? 'worktree' : 'main', worktree: w?.name ?? null, branch: w?.branch ?? null, vsMain: vs(docRel, bytes), modifiedAt: st.mtime.toISOString(), status: statusLine(text), note: null, markdown: text } };
+  };
+  const fromBranch = (branch: string, docRel: string, note: string | null = null): DocResult | null => {
+    if (!known.some((k) => k.name === branch)) return null;
+    const size = blobSize(realRoot, branch, docRel);
+    if (size === null || !Number.isFinite(size)) return null;
+    if (size > DOC_MAX_BYTES) return { kind: 'too_large', path: posix(docRel), size };
+    const bytes = readBlob(realRoot, branch, docRel);
+    if (!bytes) return null;
+    const text = bytes.toString('utf8');
+    return { kind: 'doc', doc: { project: project.id, path: posix(docRel), absPath: null, source: 'branch', worktree: null, branch, vsMain: vs(docRel, bytes), modifiedAt: commitDate(realRoot, branch, docRel) ?? new Date(0).toISOString(), status: statusLine(text), note, markdown: text } };
+  };
+  const unmerged = (): { name: string; date: number }[] => {
+    if (!base) return [];
+    const merged = new Set((git(realRoot, ['branch', '-a', '--merged', base, '--format=%(refname:short)']) ?? '').split('\n').map((s) => s.trim()).filter(Boolean));
+    return known.filter((k) => k.name !== base && !merged.has(k.name)).sort((a, b) => b.date - a.date);
+  };
+
+  // 1. On disk.
+  looked.push(posix(rel));
+  const found = locate(realRoot, rel);
+  if (found === 'outside') return OUTSIDE;
+  if (found !== 'missing') return fromDisk(found, rel);
+
+  const wt = WT.exec(posix(rel));
+  if (wt) {
+    // 3. A path inside a removed worktree: the named branch, the branch that ends in its name, the main checkout.
+    const rest = path.normalize(wt[3]);
+    if (leadsOut(rest)) return OUTSIDE;
+    const byName = known.filter((k) => k.name === wt[2] || k.name.endsWith(`/${wt[2]}`)).sort((a, b) => b.date - a.date)[0]?.name;
+    for (const b of [opts.branch, byName]) {
+      if (!b) continue;
+      looked.push(`${b}:${posix(rest)}`);
+      const r = fromBranch(b, rest, `The worktree "${wt[2]}" is gone; read from the branch.`);
+      if (r) return r;
+    }
+    looked.push(posix(rest));
+    const main = locate(realRoot, rest);
+    if (main === 'outside') return OUTSIDE;
+    if (main !== 'missing') {
+      const r = fromDisk(main, rest);
+      if (r.kind === 'doc') r.doc.note = `The worktree "${wt[2]}" is gone; this is the main checkout copy.`;
+      return r;
+    }
+    return { kind: 'not_found', looked };
+  }
+
+  // 2. Worktree copies, newest first.
+  const copies = wts.flatMap((w) => {
+    const real = locate(realRoot, path.join(w.rel, rel));
+    if (real === 'missing' || real === 'outside') return [];
+    try { return [{ w, real, mtime: fs.statSync(real).mtimeMs }]; } catch { return []; }
+  }).sort((a, b) => b.mtime - a.mtime);
+  for (const w of wts) looked.push(posix(path.join(w.rel, rel)));
+  if (copies.length) {
+    const r = fromDisk(copies[0].real, path.join(copies[0].w.rel, rel));
+    if (r.kind === 'doc' && copies.length > 1) r.doc.note = `The newest of ${copies.length} copies.`;
+    return r;
+  }
+
+  // 4. Unmerged branches, newest first.
+  for (const b of unmerged()) {
+    looked.push(`${b.name}:${posix(rel)}`);
+    const r = fromBranch(b.name, rel);
+    if (r) return r;
+  }
+  return { kind: 'not_found', looked };
+}

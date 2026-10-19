@@ -7,11 +7,13 @@
  * - The real path (symlinks resolved) must stay inside the project folder; worktrees under the
  *   project folder count as inside. An absolute path is accepted only when it is inside the
  *   project folder.
- * - A missing file whose path starts with `.claude/worktrees/` plus a worktree name is tried once
+ * - A missing file whose path starts with `.claude/worktrees/` or `.worktrees/` plus a worktree name is tried once
  *   more as the rest of the path in the project folder (`fromMainCheckout`, with a note that says
  *   whether the worktree is gone or only lacks the file).
  * - A missing project path is looked for in the project's worktrees (review round 1): an overseer
- *   may store the path an agent saw inside its worktree. The newest copy wins, with a note.
+ *   may store the path an agent saw inside its worktree. The newest copy wins, with a note. The
+ *   worktrees are `git worktree list` plus the `.claude/worktrees` and `.worktrees` folders, and
+ *   only those whose real path is inside the project folder.
  * - Markdown files only (`.md`, `.markdown`). Another file, a folder, or a file larger than 5 MB
  *   gives the path only, with the reason.
  *
@@ -20,6 +22,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { LedgerItem } from '../db/ledger.js';
+import { worktrees } from '../docs/git.js';
 
 export const SOURCE_MAX_BYTES = 5 * 1024 * 1024;
 
@@ -62,11 +65,11 @@ export function sourceFileRef(
   }
 }
 
-const leadsOut = (rel: string) => !rel || rel === '.' || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
-const WORKTREE = /^\.claude\/worktrees\/([^/]+)\/(.+)$/;
+export const leadsOut = (rel: string): boolean => !rel || rel === '.' || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
+const WORKTREE = /^(\.claude\/worktrees|\.worktrees)\/([^/]+)\/(.+)$/;
 
 /** `ref` as a path relative to the project folder; null when it leads out of the folder before any symlink. */
-function projectRelative(projectDir: string, realRoot: string, ref: string): string | null {
+export function projectRelative(projectDir: string, realRoot: string, ref: string): string | null {
   if (path.isAbsolute(ref)) {
     // Inside the folder as given, or inside its real path (/tmp/x and /private/tmp/x on macOS).
     for (const root of [path.resolve(projectDir), realRoot]) {
@@ -80,7 +83,7 @@ function projectRelative(projectDir: string, realRoot: string, ref: string): str
 }
 
 /** The real path of `rel` under the project: 'missing' when it does not resolve, 'outside' when a symlink leads out. */
-function locate(realRoot: string, rel: string): string | 'missing' | 'outside' {
+export function locate(realRoot: string, rel: string): string | 'missing' | 'outside' {
   let real: string;
   try {
     real = fs.realpathSync(path.join(realRoot, rel));
@@ -122,11 +125,11 @@ export function readSourceFile(projectDir: string, ref: string): SourceFile {
   // The worktree is gone, or lacks the file: the rest of the path, in the main checkout.
   const wt = rel.split(path.sep).join('/').match(WORKTREE);
   if (wt) {
-    const mainRel = path.normalize(wt[2]);
+    const mainRel = path.normalize(wt[3]);
     if (!leadsOut(mainRel)) {
       const main = locate(realRoot, mainRel);
       if (main === 'outside') return { kind: 'outside' };
-      const worktreeGone = !fs.existsSync(path.join(realRoot, '.claude', 'worktrees', wt[1]));
+      const worktreeGone = !fs.existsSync(path.join(realRoot, wt[1], wt[2]));
       if (main !== 'missing') return open(main, mainRel, true, worktreeGone ? WORKTREE_GONE_NOTE : WORKTREE_LACKS_NOTE);
     }
     return { kind: 'gone' };
@@ -140,18 +143,35 @@ export function readSourceFile(projectDir: string, ref: string): SourceFile {
   return open(best.real, best.rel, false, `From the worktree "${best.name}"${of}: the main checkout does not have this file.`);
 }
 
+/** Worktrees inside the project folder: `git worktree list`, plus the `.claude/worktrees` and `.worktrees` folders (for a folder git does not know). */
+export function projectWorktrees(realRoot: string): { name: string; real: string; rel: string; branch: string | null }[] {
+  const out = new Map<string, { name: string; real: string; rel: string; branch: string | null }>();
+  const add = (abs: string, branch: string | null) => {
+    let real: string;
+    try { real = fs.realpathSync(abs); } catch { return; }
+    const rel = path.relative(realRoot, real);
+    if (leadsOut(rel) || out.has(real)) return;
+    out.set(real, { name: path.basename(real), real, rel, branch });
+  };
+  for (const w of worktrees(realRoot)) add(w.path, w.branch);
+  for (const base of ['.claude/worktrees', '.worktrees']) {
+    let names: string[] = [];
+    try { names = fs.readdirSync(path.join(realRoot, base)); } catch { continue; }
+    for (const n of names) add(path.join(realRoot, base, n), null);
+  }
+  return [...out.values()];
+}
+
 /** Every worktree under the project that has `rel`, newest first; never one that leads out. */
 function worktreeCopies(realRoot: string, rel: string): { name: string; rel: string; real: string; mtime: number }[] {
-  let names: string[];
-  try { names = fs.readdirSync(path.join(realRoot, '.claude', 'worktrees')); } catch { return []; }
   const out: { name: string; rel: string; real: string; mtime: number }[] = [];
-  for (const name of names) {
-    const wtRel = path.join('.claude', 'worktrees', name, rel);
+  for (const w of projectWorktrees(realRoot)) {
+    const wtRel = path.join(w.rel, rel);
     const real = locate(realRoot, wtRel);
     if (real === 'missing' || real === 'outside') continue;
     let mtime = 0;
     try { mtime = fs.statSync(real).mtimeMs; } catch { continue; }
-    out.push({ name, rel: wtRel, real, mtime });
+    out.push({ name: w.name, rel: wtRel, real, mtime });
   }
   return out.sort((a, b) => b.mtime - a.mtime);
 }

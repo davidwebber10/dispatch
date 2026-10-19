@@ -175,6 +175,18 @@ describe('endless routes', () => {
     expect((await request(app).get('/api/endless/threads')).body).toEqual([]);
   });
 
+  it('GET /doc returns a doc, 403 for a refused path, 404 when missing', async () => {
+    const folder = svc.docs.project('s1')!.folder;
+    fs.mkdirSync(path.join(folder, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(folder, 'docs', 'a.md'), '# A\n');
+    const ok = await request(app).get('/api/endless/doc').query({ project: 's1', path: 'docs/a.md' });
+    expect(ok.status).toBe(200);
+    expect(ok.body).toMatchObject({ path: 'docs/a.md', markdown: '# A\n' });
+    expect((await request(app).get('/api/endless/doc').query({ project: 's1', path: '../x.md' })).status).toBe(403);
+    expect((await request(app).get('/api/endless/doc').query({ project: 's1', path: 'docs/none.md' })).status).toBe(404);
+    expect((await request(app).get('/api/endless/doc').query({ project: 'nope', path: 'docs/a.md' })).status).toBe(400);
+  });
+
   it('POST /arm arms a Chat thread and refuses an unknown or a non-Chat one', async () => {
     const db = (svc as any).o.db as Database.Database;
     terminalsDb.create(db, { id: 't1', sessionId: 's1', type: 'claude-code', label: 'Fix', config: { role: 'agent', origin: 'endless' } });
