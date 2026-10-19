@@ -19,7 +19,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { leadsOut, projectRelative, locate, projectWorktrees } from '../overseer/source-file.js';
-import { isRepo, refs, defaultBranch, blobHash, blobSize, readBlob, hashBytes, commitDate, git } from './git.js';
+import { isRepo, refs, defaultBranch, blobHash, blobSize, readBlob, hashBytes, commitDate, git, currentBranch } from './git.js';
 
 export const DOC_MAX_BYTES = 2 * 1024 * 1024;
 export const DOC_EXT = /\.(md|markdown|txt)$/i;
@@ -105,6 +105,10 @@ export function resolveDoc(project: { id: string; folder: string }, ref: string,
     const b = opts.branch;
     if (!b || !known.some((k) => k.name === b)) return null;
     const remotes = (git(realRoot, ['remote']) ?? '').split('\n').map((s) => s.trim()).filter(Boolean);
+    // The main checkout's own branch reads the live file there (step 1), not the committed blob.
+    const mainBranch = currentBranch(realRoot);
+    if (mainBranch && (b === mainBranch || remotes.some((rm) => b === `${rm}/${mainBranch}`))) return null;
+    // A checked-out worktree that lacks the file falls back to the normal order (by design).
     const checkedOut = wts.find((w) => w.branch && (w.branch === b || remotes.some((rm) => b === `${rm}/${w.branch}`)));
     if (checkedOut) return inWorktree(checkedOut);
     looked.push(`${b}:${posix(rel)}`);

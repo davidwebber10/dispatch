@@ -91,13 +91,22 @@ export function DocViewer() {
   }, [open]);
 
   const project = open?.project ?? null;
-  // Stable per project list: the Markdown chips are redrawn when this changes.
+  const loaded = state.kind === 'doc' ? state.doc : null;
+  const copySource = loaded?.source, copyWorktree = loaded?.worktree, copyBranch = loaded?.branch;
+  // Stable per project list and open copy: the Markdown chips are redrawn when this changes.
   const docs = useMemo(() => ({
     onOpen: (p: string, b: string | null) => {
       if (!project) return;
-      useDocViewer.getState().push({ project: projectForPath(p, project, projects) ?? project, path: p, branch: b });
+      const target = projectForPath(p, project, projects) ?? project;
+      const extra: { worktree?: string; branch?: string } = {};
+      // A relative link with no branch keeps the copy that is open (not an absolute path, not a worktree path).
+      if (!b && !p.startsWith('/') && !/^(\.worktrees|\.claude\/worktrees)\//.test(p) && target === project) {
+        if (copySource === 'worktree' && copyWorktree) extra.worktree = copyWorktree;
+        else if (copySource === 'branch' && copyBranch) extra.branch = copyBranch;
+      }
+      useDocViewer.getState().push({ project: target, path: p, branch: b ?? extra.branch ?? null, ...(extra.worktree ? { worktree: extra.worktree } : {}) });
     },
-  }), [project, projects]);
+  }), [project, projects, copySource, copyWorktree, copyBranch]);
 
   if (!open) return null;
   const close = () => useDocViewer.getState().close();

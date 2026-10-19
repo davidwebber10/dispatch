@@ -185,6 +185,19 @@ describe('resolveDoc: an explicitly named copy wins over the main checkout', () 
     expect(doc(resolveDoc(project(), 'docs/other.md', { branch: 'spec/empty' }))).toMatchObject({ source: 'main', markdown: 'main other' });
   });
 
+  it('a named branch that the main checkout has checked out reads the live file, not the blob', () => {
+    setup();
+    fs.writeFileSync(path.join(r.dir, SPEC), 'live edit');
+    for (const ref of [SPEC, path.join(r.dir, SPEC)]) {
+      const d = doc(resolveDoc(project(), ref, { branch: 'main' }));
+      expect(d).toMatchObject({ source: 'main', markdown: 'live edit' });
+      expect(d.absPath).not.toBeNull();
+    }
+    r.g(r.dir, 'remote', 'add', 'origin', r.dir);
+    r.g(r.dir, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+    expect(doc(resolveDoc(project(), SPEC, { branch: 'origin/main' }))).toMatchObject({ source: 'main', markdown: 'live edit' });
+  });
+
   it('a named worktree copy still obeys the safety rules', () => {
     const wt = setup();
     fs.writeFileSync(path.join(r.root, 'secret.md'), 's');

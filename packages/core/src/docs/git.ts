@@ -56,6 +56,9 @@ function parseRefs(out: string | null): { name: string; date: number }[] {
   return out.split('\n').filter(Boolean).map((l) => { const [name, d] = l.split('\t'); return { name, date: Number(d) || 0 }; }).filter((r) => !r.name.endsWith('/HEAD') && r.name !== 'origin' && !r.name.startsWith('-'));
 }
 
+/** The branch `dir` has checked out, or null (a detached HEAD, not a repo, an error). */
+export function currentBranch(dir: string): string | null { return git(dir, ['symbolic-ref', '--short', '-q', 'HEAD'])?.trim() || null; }
+
 const ORIGIN_HEAD_ARGS = ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'];
 /** The origin/HEAD target (only when `refs()` lists it), else main, else master. */
 export function defaultBranch(dir: string): string | null { return pickDefault(git(dir, ORIGIN_HEAD_ARGS), refs(dir)); }

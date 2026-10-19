@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import { DocViewer, editorUrl } from './DocViewer';
+import { ChatImage } from '../ChatImage';
 import { useDocViewer } from '../../stores/docViewer';
 import { useHost } from '../../stores/host';
 import { useSettings } from '../../stores/settings';
@@ -105,6 +106,32 @@ describe('DocViewer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     await waitFor(() => expect(useDocViewer.getState().open?.path).toBe('docs/specs/x.md'));
   });
+  it('a relative link in a copy keeps the open copy; an absolute link and a main copy do not', async () => {
+    const spy = vi.spyOn(api, 'endlessDoc').mockResolvedValue(copy() as any);
+    const { unmount } = render(<DocViewer />);
+    fireEvent.click(await screen.findByRole('button', { name: 'y.md' }));
+    expect(useDocViewer.getState().open).toMatchObject({ path: 'docs/specs/y.md', worktree: 'x' });
+    unmount();
+    useDocViewer.setState({ open: { project: 's1', path: 'docs/specs/x.md', branch: null }, back: [] });
+    spy.mockResolvedValue(copy({ markdown: 'See /w/d/docs/specs/y.md' }) as any);
+    const second = render(<DocViewer />);
+    fireEvent.click(await screen.findByRole('button', { name: 'y.md' }));
+    expect(useDocViewer.getState().open?.worktree ?? null).toBeNull();
+    expect(useDocViewer.getState().open?.branch ?? null).toBeNull();
+    second.unmount();
+    useDocViewer.setState({ open: { project: 's1', path: 'docs/specs/x.md', branch: null }, back: [] });
+    spy.mockResolvedValue(copy({ source: 'main', worktree: null, branch: null }) as any);
+    render(<DocViewer />);
+    fireEvent.click(await screen.findByRole('button', { name: 'y.md' }));
+    expect(useDocViewer.getState().open?.worktree ?? null).toBeNull();
+    expect(useDocViewer.getState().open?.branch ?? null).toBeNull();
+  });
+  it('a relative link in a branch copy keeps the branch', async () => {
+    vi.spyOn(api, 'endlessDoc').mockResolvedValue(copy({ source: 'branch', absPath: null, worktree: null, branch: 'spec/t' }) as any);
+    render(<DocViewer />);
+    fireEvent.click(await screen.findByRole('button', { name: 'y.md' }));
+    expect(useDocViewer.getState().open).toMatchObject({ path: 'docs/specs/y.md', branch: 'spec/t' });
+  });
   it('Close and Escape close the viewer', async () => {
     vi.spyOn(api, 'endlessDoc').mockResolvedValue(copy() as any);
     const { unmount } = render(<DocViewer />);
@@ -159,5 +186,15 @@ describe('DocViewer', () => {
     document.body.removeEventListener('keydown', take);
     expect(fireEvent.keyDown(document.body, { key: 'Escape' })).toBe(false);
     expect(useDocViewer.getState().open).toBeNull();
+  });
+  it('Escape over an image lightbox inside the viewer closes only the image', async () => {
+    vi.spyOn(api, 'endlessDoc').mockResolvedValue(copy() as any);
+    render(<><DocViewer /><ChatImage src="/a.png" alt="chart" /></>);
+    await screen.findByText('not on main');
+    fireEvent.click(screen.getByAltText('chart'));
+    expect(screen.getByRole('dialog', { name: 'chart' })).toBeInTheDocument();
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: 'chart' })).toBeNull();
+    expect(useDocViewer.getState().open).not.toBeNull();
   });
 });
