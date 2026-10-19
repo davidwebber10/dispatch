@@ -1,6 +1,6 @@
 {
   "name": "dispatch",
-  "version": "3.1.5",
+  "version": "3.1.6",
   "private": true,
   "license": "MIT",
   "description": "Control your coding agents (Claude Code, Codex) and terminals from any browser or phone.",
