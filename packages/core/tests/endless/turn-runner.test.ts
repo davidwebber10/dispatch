@@ -98,6 +98,29 @@ describe('TurnRunner', () => {
     expect(t.events).toContainEqual({ type: 'endless:delta', kind: 'text', text: 'Here' });
   });
 
+  it('logs the tool-call id as the ref of a tool row and of its result row', async () => {
+    const t = setup();
+    t.runner.send({ text: 'go', project: 'p1', media: [] });
+    await settle();
+    t.fake.emitEvent({ type: 'assistant', parent_tool_use_id: null, message: { content: [
+      { type: 'tool_use', id: 'tu_1', name: 'Read', input: { file_path: '/a' } },
+      { type: 'tool_use', id: 'tu_2', name: 'Read', input: { file_path: '/b' } },
+    ] } });
+    t.fake.emitEvent({ type: 'user', parent_tool_use_id: null, message: { content: [
+      { type: 'tool_result', tool_use_id: 'tu_2', content: 'B' },
+      { type: 'tool_result', tool_use_id: 'tu_1', content: 'A' },
+    ] } });
+    await finish(t);
+    const rows = Array.from({ length: t.store.count() }, (_, i) => t.store.get(i)!);
+    expect(rows.map((m) => [m.kind, m.text, m.ref])).toEqual([
+      ['user', 'go', null],
+      ['tool', 'Read {"file_path":"/a"}', 'tu_1'],
+      ['tool', 'Read {"file_path":"/b"}', 'tu_2'],
+      ['echo', 'B', 'tu_2'],
+      ['echo', 'A', 'tu_1'],
+    ]);
+  });
+
   it('clips tool output to 30,000 characters', async () => {
     const t = setup();
     t.runner.send({ text: 'go', project: null, media: [] });

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, beforeAll, vi } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import { foldRows, parseSpawn, EndlessRows } from './EndlessMessageRow';
+import { foldRows, rowKeyOf, parseSpawn, EndlessRows } from './EndlessMessageRow';
 import { MessageScroller } from '@shadcn/react/message-scroller';
 import { useUI } from '../../stores/ui';
 import { StartedItem } from './StartedItem';
@@ -57,6 +57,36 @@ describe('foldRows runs', () => {
     const rows = foldRows([m(0, 'tool', 'mcp__memory__zoom {}'), spawnTool(1, 'Fix'), m(2, 'tool', 'Read {}'), m(3, 'echo', 'Z'), spawnEcho(4, 't9', 'Fix'), m(5, 'echo', 'R')]);
     expect(rows.map((r) => r.kind)).toEqual(['recall', 'started', 'tool']);
     expect(rows.map((r) => (r.kind === 'msg' ? -1 : r.echo?.i))).toEqual([3, 4, 5]);
+  });
+});
+
+describe('foldRows by tool-call id', () => {
+  const r = (msg: EndlessMessage, ref: string) => ({ ...msg, ref });
+  const shape = (rows: ReturnType<typeof foldRows>) => rows.map((x) => (x.kind === 'msg' ? [x.kind, x.m.i] : [x.kind, x.tool.i, x.echo?.i]));
+  it('pairs a call with its result across a message logged between them', () => {
+    const work = { ...m(1, 'work', '[Fix] report: done'), ref: 't9' };
+    const rows = foldRows([r(spawnTool(0, 'Fix'), 'A'), work, r(spawnEcho(2, 't9', 'Fix'), 'A')]);
+    expect(shape(rows)).toEqual([['started', 0, 2], ['msg', 1]]);
+  });
+  it('a parallel spawn with a missing result does not shift the others', () => {
+    const rows = foldRows([r(spawnTool(0, 'One'), 'A'), r(spawnTool(1, 'Two'), 'B'), r(spawnEcho(2, 't2', 'Two'), 'B')]);
+    expect(shape(rows)).toEqual([['started', 0, undefined], ['started', 1, 2]]);
+  });
+  it('results in reverse order pair by id', () => {
+    const rows = foldRows([r(m(0, 'tool', 'Read {}'), 'A'), r(m(1, 'tool', 'Grep {}'), 'B'), r(m(2, 'echo', 'rb'), 'B'), r(m(3, 'echo', 'ra'), 'A')]);
+    expect(shape(rows)).toEqual([['tool', 0, 3], ['tool', 1, 2]]);
+  });
+  it('a result whose call is not loaded renders as a lone row; ref-less rows keep positional pairing', () => {
+    expect(shape(foldRows([r(m(0, 'echo', 'x'), 'Z')]))).toEqual([['msg', 0]]);
+    expect(shape(foldRows([m(0, 'tool', 'Read {}'), m(1, 'echo', 'A')]))).toEqual([['tool', 0, 1]]);
+  });
+  it('a ref-carrying call never pairs positionally with a ref-less result', () => {
+    expect(shape(foldRows([r(m(0, 'tool', 'Read {}'), 'A'), m(1, 'echo', 'old')]))).toEqual([['tool', 0, undefined], ['msg', 1]]);
+  });
+  it('rowKeyOf maps an echo paired by id to its tool', () => {
+    const msgs = [r(m(0, 'tool', 'Read {}'), 'A'), m(1, 'unii', 'hi'), r(m(2, 'echo', 'ra'), 'A')];
+    expect(rowKeyOf(msgs, 2)).toBe(0);
+    expect(rowKeyOf(msgs, 1)).toBe(1);
   });
 });
 

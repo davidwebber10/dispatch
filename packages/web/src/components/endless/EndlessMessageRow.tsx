@@ -21,25 +21,37 @@ export type Row =
   | { kind: 'started'; tool: EndlessMessage; echo?: EndlessMessage };
 
 const ZOOM_TOOL = /^mcp__memory__zoom\s/;
+const toolKind = (tool: EndlessMessage): 'recall' | 'started' | 'tool' => (ZOOM_TOOL.test(tool.text) ? 'recall' : SPAWN_TOOL.test(tool.text) ? 'started' : 'tool');
+
 /**
- * A run of N tool calls pairs with the run of up to N results right after it, in order (Claude Code
- * returns parallel results in call order). A `zoom` call is a "recalled" row; a `spawn_agent` call is
- * a Started card.
+ * A tool call that carries an id (`ref`) pairs with the first later result with the same id, wherever
+ * it sits in the list; that result is consumed. Calls and results logged before ids existed have no
+ * `ref`: a run of N such calls pairs with the run of up to N results right after it, in order. A `zoom`
+ * call is a "recalled" row; a `spawn_agent` call is a Started card.
  */
 export function foldRows(messages: EndlessMessage[]): Row[] {
+  const echoOf = new Map<number, EndlessMessage>(); // tool.i -> its result, paired by id
+  const consumed = new Set<number>();
+  const open = new Map<string, EndlessMessage[]>(); // ref -> calls still waiting, oldest first
+  for (const m of messages) {
+    if (m.kind === 'tool' && m.ref) open.set(m.ref, [...(open.get(m.ref) ?? []), m]);
+    else if (m.kind === 'echo' && m.ref) {
+      const tool = open.get(m.ref)?.shift();
+      if (tool) { echoOf.set(tool.i, m); consumed.add(m.i); }
+    }
+  }
   const rows: Row[] = [];
   let k = 0;
   while (k < messages.length) {
     const m = messages[k];
+    if (m.kind === 'echo' && consumed.has(m.i)) { k++; continue; }
     if (m.kind !== 'tool') { rows.push({ kind: 'msg', m }); k++; continue; }
+    if (m.ref) { rows.push({ kind: toolKind(m), tool: m, echo: echoOf.get(m.i) }); k++; continue; }
     const tools: EndlessMessage[] = [];
-    while (k < messages.length && messages[k].kind === 'tool' && (tools.length === 0 || messages[k].i === tools[tools.length - 1].i + 1)) tools.push(messages[k++]);
+    while (k < messages.length && messages[k].kind === 'tool' && !messages[k].ref && (tools.length === 0 || messages[k].i === tools[tools.length - 1].i + 1)) tools.push(messages[k++]);
     const echoes: EndlessMessage[] = [];
-    while (k < messages.length && echoes.length < tools.length && messages[k].kind === 'echo' && messages[k].i === (echoes.length ? echoes[echoes.length - 1].i : tools[tools.length - 1].i) + 1) echoes.push(messages[k++]);
-    tools.forEach((tool, n) => {
-      const kind = ZOOM_TOOL.test(tool.text) ? 'recall' : SPAWN_TOOL.test(tool.text) ? 'started' : 'tool';
-      rows.push({ kind, tool, echo: echoes[n] });
-    });
+    while (k < messages.length && echoes.length < tools.length && messages[k].kind === 'echo' && !messages[k].ref && messages[k].i === (echoes.length ? echoes[echoes.length - 1].i : tools[tools.length - 1].i) + 1) echoes.push(messages[k++]);
+    tools.forEach((tool, n) => rows.push({ kind: toolKind(tool), tool, echo: echoes[n] }));
   }
   return rows;
 }
