@@ -6,7 +6,7 @@ import { initSchema } from '../../src/db/schema.js';
 import * as sessionsDb from '../../src/db/sessions.js';
 import * as terminalsDb from '../../src/db/terminals.js';
 import { EndlessStore } from '../../src/endless/store.js';
-import { DocsService } from '../../src/docs/service.js';
+import { DocsService, DocTimeoutError, DOC_CONCURRENCY, DOC_DEADLINE_MS } from '../../src/docs/service.js';
 import { DOCS_CACHE_MS } from '../../src/docs/list.js';
 import { makeRepo } from './git-fixture.js';
 
@@ -131,14 +131,44 @@ describe('DocsService writer', () => {
 });
 
 describe('DocsService.doc', () => {
-  it('passes the branch and the worktree name to the resolver; null for an unknown project', () => {
+  it('passes the branch and the worktree path to the resolver; null for an unknown project', async () => {
     r.write('docs/specs/one.md', 'main'); r.commit('main copy');
     r.write('docs/specs/one.md', 'wt', wt);
     const svc = new DocsService(db, store, now);
-    const d = svc.doc('s1', 'docs/specs/one.md', null, 'a');
-    expect(d).toMatchObject({ kind: 'doc', doc: { source: 'worktree', worktree: 'a', markdown: 'wt' } });
-    expect(svc.doc('s1', 'docs/specs/one.md', 'spec/a')).toMatchObject({ kind: 'doc', doc: { source: 'worktree', markdown: 'wt' } });
-    expect(svc.doc('s1', 'docs/specs/one.md', null)).toMatchObject({ kind: 'doc', doc: { source: 'main', markdown: 'main' } });
-    expect(svc.doc('nope', 'docs/specs/one.md', null, 'a')).toBeNull();
+    const d = await svc.doc('s1', 'docs/specs/one.md', null, '.worktrees/a');
+    expect(d).toMatchObject({ kind: 'doc', doc: { source: 'worktree', worktree: 'a', worktreeRel: '.worktrees/a', markdown: 'wt' } });
+    expect(await svc.doc('s1', 'docs/specs/one.md', null, 'a')).toMatchObject({ kind: 'doc', doc: { source: 'worktree', markdown: 'wt' } });
+    expect(await svc.doc('s1', 'docs/specs/one.md', 'spec/a')).toMatchObject({ kind: 'doc', doc: { source: 'worktree', markdown: 'wt' } });
+    expect(await svc.doc('s1', 'docs/specs/one.md', null)).toMatchObject({ kind: 'doc', doc: { source: 'main', markdown: 'main' } });
+    expect(await svc.doc('nope', 'docs/specs/one.md', null, 'a')).toBeNull();
+  });
+
+  it('runs at most 4 resolutions at once; the rest wait their turn', async () => {
+    let active = 0;
+    let most = 0;
+    const resolver = vi.fn(async () => {
+      active++; most = Math.max(most, active);
+      await new Promise((res) => setTimeout(res, 10));
+      active--;
+      return { kind: 'not_found' as const, looked: [] };
+    });
+    const svc = new DocsService(db, store, now, undefined, { resolver });
+    const all = await Promise.all(Array.from({ length: 6 }, (_, k) => svc.doc('s1', `docs/specs/d${k}.md`, null)));
+    expect(all).toHaveLength(6);
+    for (const x of all) expect(x).toEqual({ kind: 'not_found', looked: [] });
+    expect(resolver).toHaveBeenCalledTimes(6);
+    expect(most).toBe(DOC_CONCURRENCY);
+    expect(DOC_CONCURRENCY).toBe(4);
+  });
+
+  it('a resolution that takes longer than the deadline fails with DocTimeoutError; a queued one past it never starts', async () => {
+    expect(DOC_DEADLINE_MS).toBe(3000);
+    const resolver = vi.fn(() => new Promise<never>(() => { /* never settles */ }));
+    const svc = new DocsService(db, store, now, undefined, { resolver, deadlineMs: 50 });
+    const started = Date.now();
+    const calls = Array.from({ length: 5 }, () => svc.doc('s1', 'docs/specs/one.md', null));
+    for (const c of calls) await expect(c).rejects.toBeInstanceOf(DocTimeoutError);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(45);
+    expect(resolver).toHaveBeenCalledTimes(4); // the 5th waited for a slot, then its deadline passed
   });
 });

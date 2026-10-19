@@ -10,6 +10,7 @@ import * as sessionsDb from '../../src/db/sessions.js';
 import * as terminalsDb from '../../src/db/terminals.js';
 import { EndlessService, startEndless } from '../../src/endless/service.js';
 import { createEndlessRouter } from '../../src/routes/endless.js';
+import { DocTimeoutError } from '../../src/docs/service.js';
 import { FakeSummarizer, settle } from '../endless/fake-summarizer.js';
 import { FakeManager } from '../endless/fake-manager.js';
 import { LedgerService } from '../../src/overseer/ledger-service.js';
@@ -187,16 +188,27 @@ describe('endless routes', () => {
     expect((await request(app).get('/api/endless/doc').query({ project: 'nope', path: 'docs/a.md' })).status).toBe(400);
   });
 
-  it('GET /doc passes the worktree name: the named worktree copy wins over the main checkout', async () => {
+  it('GET /doc passes the worktree path: the named worktree copy wins over the main checkout', async () => {
     const folder = svc.docs.project('s1')!.folder;
     fs.mkdirSync(path.join(folder, 'docs'), { recursive: true });
     fs.writeFileSync(path.join(folder, 'docs', 'a.md'), 'main');
     fs.mkdirSync(path.join(folder, '.worktrees', 'a', 'docs'), { recursive: true });
     fs.writeFileSync(path.join(folder, '.worktrees', 'a', 'docs', 'a.md'), 'worktree');
-    const res = await request(app).get('/api/endless/doc').query({ project: 's1', path: 'docs/a.md', worktree: 'a' });
+    const res = await request(app).get('/api/endless/doc').query({ project: 's1', path: 'docs/a.md', worktree: '.worktrees/a' });
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ path: 'docs/a.md', source: 'worktree', worktree: 'a', markdown: 'worktree' });
+    expect(res.body).toMatchObject({ path: 'docs/a.md', source: 'worktree', worktree: 'a', worktreeRel: '.worktrees/a', markdown: 'worktree' });
+    // A bare name still works while one worktree has it.
+    expect((await request(app).get('/api/endless/doc').query({ project: 's1', path: 'docs/a.md', worktree: 'a' })).body).toMatchObject({ source: 'worktree', markdown: 'worktree' });
     expect((await request(app).get('/api/endless/doc').query({ project: 's1', path: 'docs/a.md' })).body).toMatchObject({ source: 'main', markdown: 'main' });
+  });
+
+  it('GET /doc answers 503 when the lookup passes its deadline, 500 on an unexpected error', async () => {
+    const spy = vi.spyOn(svc.docs, 'doc').mockRejectedValueOnce(new DocTimeoutError());
+    const slow = await request(app).get('/api/endless/doc').query({ project: 's1', path: 'docs/a.md' });
+    expect(slow.status).toBe(503);
+    expect(slow.body).toEqual({ error: 'the doc lookup took too long' });
+    spy.mockRejectedValueOnce(new Error('boom'));
+    expect((await request(app).get('/api/endless/doc').query({ project: 's1', path: 'docs/a.md' })).status).toBe(500);
   });
 
   it('GET /doc returns 413 for a file over 2 MB', async () => {

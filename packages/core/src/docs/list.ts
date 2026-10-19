@@ -11,7 +11,7 @@
  * - Every ref passed to git comes from `refs()` / `defaultBranch()`. A file over DOC_MAX_BYTES is
  *   not read (and not listed).
  * - A worktree copy is read only through its real path, which must stay inside the project folder
- *   and be a regular `.md` file (a symlink that leads out is never read).
+ *   and be a regular `.md` file (a symlink that leads out is never read), with `readConfined`.
  * - The main checkout's own branch counts as checked out. A remote-tracking branch whose local
  *   branch exists is the same copy, so it is counted once.
  * - Git runs only through the async helpers (`execFile`, no shell), so a list never blocks the
@@ -19,15 +19,17 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { leadsOut, locate } from '../overseer/source-file.js';
-import { isRepoAsync, refsAsync, defaultBranchAsync, blobHashAsync, blobSizeAsync, readBlobAsync, hashBytes, commitDateAsync, gitAsync, worktreesAsync, DOCS_BRANCHES } from './git.js';
+import { locate, projectWorktreesAsync } from '../overseer/source-file.js';
+import { isRepoAsync, refsAsync, defaultBranchAsync, blobHashAsync, blobSizeAsync, readBlobAsync, hashBytes, commitDateAsync, gitAsync, DOCS_BRANCHES } from './git.js';
 import { statusLine, DOC_MAX_BYTES } from './resolve.js';
+import { readConfined } from './confined.js';
 
 export const DOC_FOLDERS = ['docs/superpowers/specs', 'docs/superpowers/plans', 'docs/specs', 'docs/plans'];
 export const DOCS_ROWS = 5;
 export { DOCS_BRANCHES };
 export const DOCS_CACHE_MS = 60_000;
-export interface DocRow { path: string; name: string; status: string | null; source: 'worktree' | 'branch'; worktree: string | null; branch: string | null; vsMain: 'changed' | 'not_on_main'; modifiedAt: string; copies: number; writer: { id: string; label: string } | null }
+/** `worktree`: the base name (what the chip shows); `worktreeRel`: its path in the project (what names it). */
+export interface DocRow { path: string; name: string; status: string | null; source: 'worktree' | 'branch'; worktree: string | null; worktreeRel: string | null; branch: string | null; vsMain: 'changed' | 'not_on_main'; modifiedAt: string; copies: number; writer: { id: string; label: string } | null }
 export type DocWriterOf = (c: { path: string; worktreeReal: string | null }) => { id: string; label: string } | null;
 export type DocLister = (project: { id: string; folder: string }, writerOf: DocWriterOf) => Promise<{ rows: DocRow[]; total: number }>;
 
@@ -36,29 +38,6 @@ const lines = (s: string | null) => (s ?? '').split('\n').map((x) => x.trim()).f
 const names = (s: string | null) => (s ?? '').split('\0').filter(Boolean);
 const isDoc = (p: string) => /\.md$/i.test(p) && DOC_FOLDERS.some((f) => p.startsWith(`${f}/`));
 const NONE = () => ({ rows: [] as DocRow[], total: 0 });
-
-/**
- * The project's worktrees, as `projectWorktrees` in overseer/source-file.ts finds them (git's list
- * plus the `.claude/worktrees` and `.worktrees` folders, real path inside the project only), with
- * the git call made async.
- */
-async function worktreesOf(realRoot: string): Promise<{ name: string; real: string; rel: string; branch: string | null }[]> {
-  const out = new Map<string, { name: string; real: string; rel: string; branch: string | null }>();
-  const add = (abs: string, branch: string | null) => {
-    let real: string;
-    try { real = fs.realpathSync.native(abs); } catch { return; }
-    const rel = path.relative(realRoot, real);
-    if (leadsOut(rel) || out.has(real)) return;
-    out.set(real, { name: path.basename(real), real, rel, branch });
-  };
-  for (const w of await worktreesAsync(realRoot)) add(w.path, w.branch);
-  for (const base of ['.claude/worktrees', '.worktrees']) {
-    let list: string[] = [];
-    try { list = fs.readdirSync(path.join(realRoot, base)); } catch { continue; }
-    for (const n of list) add(path.join(realRoot, base, n), null);
-  }
-  return [...out.values()];
-}
 
 export const listDocs: DocLister = async (project, writerOf) => {
   let realRoot: string;
@@ -75,8 +54,8 @@ export const listDocs: DocLister = async (project, writerOf) => {
 
   // 1. Worktrees. A folder under .worktrees that is not a worktree of its own would run git in
   //    the main checkout, so only a folder that is its own work tree top counts.
-  const wts: Awaited<ReturnType<typeof worktreesOf>> = [];
-  for (const w of await worktreesOf(realRoot)) if (await isRepoAsync(w.real)) wts.push(w);
+  const wts: Awaited<ReturnType<typeof projectWorktreesAsync>> = [];
+  for (const w of await projectWorktreesAsync(realRoot)) if (await isRepoAsync(w.real)) wts.push(w);
   for (const w of wts) {
     const [changed, untracked] = await Promise.all([
       gitAsync(w.real, ['diff', '-z', '--name-only', base, '--', ...DOC_FOLDERS]),
@@ -87,12 +66,12 @@ export const listDocs: DocLister = async (project, writerOf) => {
       // The real path must stay inside the project and be a regular .md file.
       const real = locate(realRoot, path.join(w.rel, rel));
       if (real === 'missing' || real === 'outside' || !/\.md$/i.test(real)) continue; // deleted, or leads out
-      let st: fs.Stats; try { st = fs.statSync(real); } catch { continue; }
-      if (!st.isFile() || st.size > DOC_MAX_BYTES) continue;
-      let bytes: Buffer; try { bytes = fs.readFileSync(real); } catch { continue; }
+      const file = await readConfined(realRoot, real, DOC_MAX_BYTES);
+      if (file.kind !== 'file') continue; // not a regular file, too large, or changed since the check
+      const { bytes, mtime } = file;
       const v = await vs(rel, bytes);
       if (!v) continue;
-      copies.push({ path: rel, status: statusLine(bytes.toString('utf8')), source: 'worktree', worktree: w.name, branch: w.branch, vsMain: v, modifiedAt: st.mtime.toISOString(), at: st.mtimeMs, worktreeReal: w.real });
+      copies.push({ path: rel, status: statusLine(bytes.toString('utf8')), source: 'worktree', worktree: w.name, worktreeRel: w.rel.split(path.sep).join('/'), branch: w.branch, vsMain: v, modifiedAt: mtime.toISOString(), at: mtime.getTime(), worktreeReal: w.real });
     }
   }
 
@@ -129,7 +108,7 @@ export const listDocs: DocLister = async (project, writerOf) => {
       const v = await vs(rel, bytes);
       if (!v) continue;
       const when = (await commitDateAsync(realRoot, b.name, rel)) ?? new Date(b.date * 1000).toISOString();
-      copies.push({ path: rel, status: statusLine(bytes.toString('utf8')), source: 'branch', worktree: null, branch: b.name, vsMain: v, modifiedAt: when, at: Date.parse(when), worktreeReal: null });
+      copies.push({ path: rel, status: statusLine(bytes.toString('utf8')), source: 'branch', worktree: null, worktreeRel: null, branch: b.name, vsMain: v, modifiedAt: when, at: Date.parse(when), worktreeReal: null });
     }
   }
 

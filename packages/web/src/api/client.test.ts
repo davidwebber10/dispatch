@@ -123,8 +123,8 @@ test('getLedgerSource GETs the item\'s source route, with ?heading= for a click 
 
 test('endlessDoc sends the branch and the worktree only when set', async () => {
   mockJson({});
-  await api.endlessDoc('s1', 'docs/a b.md', null, 'wt-a');
-  expect(fetch).toHaveBeenLastCalledWith('/api/endless/doc?project=s1&path=docs%2Fa+b.md&worktree=wt-a', expect.anything());
+  await api.endlessDoc('s1', 'docs/a b.md', null, '.claude/worktrees/wt-a');
+  expect(fetch).toHaveBeenLastCalledWith('/api/endless/doc?project=s1&path=docs%2Fa+b.md&worktree=.claude%2Fworktrees%2Fwt-a', expect.anything());
   mockJson({});
   await api.endlessDoc('s1', 'docs/a.md', 'spec/a');
   expect(fetch).toHaveBeenLastCalledWith('/api/endless/doc?project=s1&path=docs%2Fa.md&branch=spec%2Fa', expect.anything());

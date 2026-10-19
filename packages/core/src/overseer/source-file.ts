@@ -22,7 +22,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { LedgerItem } from '../db/ledger.js';
-import { worktrees } from '../docs/git.js';
+import { worktrees, worktreesAsync } from '../docs/git.js';
 
 export const SOURCE_MAX_BYTES = 5 * 1024 * 1024;
 
@@ -156,9 +156,14 @@ export function readSourceFile(projectDir: string, ref: string): SourceFile {
   return open(best.real, best.rel, false, `From the worktree "${best.name}"${of}: the main checkout does not have this file.`);
 }
 
+export type ProjectWorktree = { name: string; real: string; rel: string; branch: string | null };
+
 /** Worktrees inside the project folder: `git worktree list`, plus the `.claude/worktrees` and `.worktrees` folders (for a folder git does not know). */
-export function projectWorktrees(realRoot: string): { name: string; real: string; rel: string; branch: string | null }[] {
-  const out = new Map<string, { name: string; real: string; rel: string; branch: string | null }>();
+export function projectWorktrees(realRoot: string): ProjectWorktree[] { return worktreesFrom(realRoot, worktrees(realRoot)); }
+/** `projectWorktrees` with the git call made async (the docs list and the doc resolver). */
+export async function projectWorktreesAsync(realRoot: string): Promise<ProjectWorktree[]> { return worktreesFrom(realRoot, await worktreesAsync(realRoot)); }
+function worktreesFrom(realRoot: string, listed: { path: string; branch: string | null }[]): ProjectWorktree[] {
+  const out = new Map<string, ProjectWorktree>();
   const add = (abs: string, branch: string | null) => {
     let real: string;
     try { real = fs.realpathSync.native(abs); } catch { return; }
@@ -166,7 +171,7 @@ export function projectWorktrees(realRoot: string): { name: string; real: string
     if (leadsOut(rel) || out.has(real)) return;
     out.set(real, { name: path.basename(real), real, rel, branch });
   };
-  for (const w of worktrees(realRoot)) add(w.path, w.branch);
+  for (const w of listed) add(w.path, w.branch);
   for (const base of ['.claude/worktrees', '.worktrees']) {
     let names: string[] = [];
     try { names = fs.readdirSync(path.join(realRoot, base)); } catch { continue; }

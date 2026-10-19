@@ -35,7 +35,7 @@ describe('ChatMode', () => {
     vi.spyOn(api, 'endlessProjects').mockResolvedValue({ projects: [], threads: [], truncated: false } as any);
     vi.spyOn(api, 'endlessMessages').mockResolvedValue({ messages: [], hasMore: false, hasMoreAfter: false } as any);
     vi.spyOn(api, 'endlessState').mockResolvedValue({ turn: { status: 'idle', error: null } } as any);
-    vi.spyOn(api, 'endlessDoc').mockResolvedValue({ project: 's1', path: 'docs/a.md', absPath: null, source: 'main', worktree: null, branch: null, remote: false, vsMain: 'same', modifiedAt: '2026-10-19T11:00:00Z', status: null, note: null, markdown: '# A' });
+    vi.spyOn(api, 'endlessDoc').mockResolvedValue({ project: 's1', path: 'docs/a.md', absPath: null, source: 'main', worktree: null, worktreeRel: null, branch: null, remote: false, vsMain: 'same', modifiedAt: '2026-10-19T11:00:00Z', status: null, note: null, markdown: '# A' });
     const { unmount } = render(<ChatMode />);
     useDocViewer.getState().show({ project: 's1', path: 'docs/a.md', branch: null });
     expect(await screen.findAllByRole('dialog', { name: 'a.md' })).toHaveLength(1);

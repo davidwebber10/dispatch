@@ -120,7 +120,7 @@ export function DocViewer() {
 
   const project = open?.project ?? null;
   const loaded = state.kind === 'doc' ? state.doc : null;
-  const copySource = loaded?.source, copyWorktree = loaded?.worktree, copyBranch = loaded?.branch;
+  const copySource = loaded?.source, copyWorktree = loaded?.worktreeRel ?? loaded?.worktree, copyBranch = loaded?.branch;
   // Stable per project list and open copy: the Markdown chips are redrawn when this changes.
   const docs = useMemo(() => ({
     onOpen: (p: string, b: string | null) => {

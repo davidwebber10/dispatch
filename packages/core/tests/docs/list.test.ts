@@ -22,7 +22,7 @@ describe('listDocs', () => {
     const { rows, total } = await listDocs({ id: 's1', folder: r.dir }, noWriter);
     expect(rows.map((x) => [x.path, x.vsMain]).sort()).toEqual([['docs/superpowers/plans/new-plan.md', 'not_on_main'], ['docs/superpowers/specs/edited.md', 'changed']]);
     expect(total).toBe(2);
-    expect(rows[0]).toMatchObject({ source: 'worktree', worktree: 'a', branch: 'spec/a' });
+    expect(rows[0]).toMatchObject({ source: 'worktree', worktree: 'a', worktreeRel: '.worktrees/a', branch: 'spec/a' });
   });
 
   it('a branch with no worktree adds only what it added or changed', async () => {
@@ -32,7 +32,7 @@ describe('listDocs', () => {
     r.write('docs/plans/c.md', 'c'); r.commit('c');
     r.g(r.dir, 'checkout', '-q', 'main');
     const { rows } = await listDocs({ id: 's1', folder: r.dir }, noWriter);
-    expect(rows.map((x) => [x.path, x.source, x.branch])).toEqual([['docs/plans/c.md', 'branch', 'spec/c']]);
+    expect(rows.map((x) => [x.path, x.source, x.branch, x.worktreeRel])).toEqual([['docs/plans/c.md', 'branch', 'spec/c', null]]);
   });
 
   it('a copy that matches main is not listed', async () => {

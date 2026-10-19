@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { LedgerError } from '../overseer/ledger-service.js';
 import { EndlessService, UserError } from '../endless/service.js';
+import { DocTimeoutError } from '../docs/service.js';
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
 const int = (v: unknown, fallback: number, min: number, max: number): number => {
@@ -55,13 +56,19 @@ export function createEndlessRouter(svc: EndlessService): Router {
   router.get('/view', (_req, res) => { res.json(svc.viewLines()); });
   router.get('/projects', (_req, res) => { res.json(svc.projects()); });
   // Read only: a spec or plan doc under a registered project folder (main, a worktree or an unmerged branch).
-  router.get('/doc', (req, res) => {
-    const r = svc.docs.doc(String(req.query.project ?? ''), String(req.query.path ?? ''), str(req.query.branch), str(req.query.worktree));
-    if (!r) { res.status(400).json({ error: 'unknown project' }); return; }
-    if (r.kind === 'doc') res.json(r.doc);
-    else if (r.kind === 'refused') res.status(403).json({ reason: r.reason });
-    else if (r.kind === 'too_large') res.status(413).json({ path: r.path, size: r.size });
-    else res.status(404).json({ looked: r.looked });
+  // `worktree` names a worktree by its path in the project (`.worktrees/x`); a bare name that one worktree has works too.
+  router.get('/doc', async (req, res) => {
+    try {
+      const r = await svc.docs.doc(String(req.query.project ?? ''), String(req.query.path ?? ''), str(req.query.branch), str(req.query.worktree));
+      if (!r) { res.status(400).json({ error: 'unknown project' }); return; }
+      if (r.kind === 'doc') res.json(r.doc);
+      else if (r.kind === 'refused') res.status(403).json({ reason: r.reason });
+      else if (r.kind === 'too_large') res.status(413).json({ path: r.path, size: r.size });
+      else res.status(404).json({ looked: r.looked });
+    } catch (err) {
+      if (err instanceof DocTimeoutError) res.status(503).json({ error: err.message });
+      else res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
   });
   // Read only: the in-progress docs of a project, and their totals for the projects the pane shows.
   router.get('/docs', async (req, res) => {

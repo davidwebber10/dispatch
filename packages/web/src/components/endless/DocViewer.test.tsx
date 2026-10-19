@@ -8,7 +8,7 @@ import { useSettings } from '../../stores/settings';
 import { useEndless } from '../../stores/endless';
 import { api } from '../../api/client';
 
-const copy = (o = {}) => ({ project: 's1', path: 'docs/specs/x.md', absPath: '/w/d/.worktrees/x/docs/specs/x.md', source: 'worktree', worktree: 'x', branch: 'spec/x', vsMain: 'not_on_main', modifiedAt: '2026-10-19T11:31:00Z', status: 'draft', note: null, markdown: '# X\n\nSee docs/specs/y.md', ...o });
+const copy = (o = {}) => ({ project: 's1', path: 'docs/specs/x.md', absPath: '/w/d/.worktrees/x/docs/specs/x.md', source: 'worktree', worktree: 'x', worktreeRel: '.worktrees/x', branch: 'spec/x', vsMain: 'not_on_main', modifiedAt: '2026-10-19T11:31:00Z', status: 'draft', note: null, markdown: '# X\n\nSee docs/specs/y.md', ...o });
 // The API client's own message format (api/client.ts `req`).
 const failed = (status: number, detail = '') => new Error(`GET /api/endless/doc?project=s1&path=docs%2Fspecs%2Fx.md failed: ${status}${detail ? ` — ${detail}` : ''}`);
 
@@ -116,7 +116,7 @@ describe('DocViewer', () => {
     const spy = vi.spyOn(api, 'endlessDoc').mockResolvedValue(copy() as any);
     const { unmount } = render(<DocViewer />);
     fireEvent.click(await screen.findByRole('button', { name: 'y.md' }));
-    expect(useDocViewer.getState().open).toMatchObject({ path: 'docs/specs/y.md', worktree: 'x' });
+    expect(useDocViewer.getState().open).toMatchObject({ path: 'docs/specs/y.md', worktree: '.worktrees/x' });
     unmount();
     useDocViewer.setState({ open: { project: 's1', path: 'docs/specs/x.md', branch: null }, back: [] });
     spy.mockResolvedValue(copy({ markdown: 'See /w/d/docs/specs/y.md' }) as any);
@@ -150,12 +150,19 @@ describe('DocViewer', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(useDocViewer.getState().open).toBeNull();
   });
-  it('passes the worktree name of the ref to the API', async () => {
-    useDocViewer.setState({ open: { project: 's1', path: 'docs/specs/x.md', branch: null, worktree: 'x' }, back: [] });
+  it('passes the worktree path of the ref to the API', async () => {
+    useDocViewer.setState({ open: { project: 's1', path: 'docs/specs/x.md', branch: null, worktree: '.claude/worktrees/x' }, back: [] });
     const spy = vi.spyOn(api, 'endlessDoc').mockResolvedValue(copy() as any);
     render(<DocViewer />);
     await screen.findByText('not on main');
-    expect(spy).toHaveBeenCalledWith('s1', 'docs/specs/x.md', null, 'x');
+    expect(spy).toHaveBeenCalledWith('s1', 'docs/specs/x.md', null, '.claude/worktrees/x');
+  });
+  it('a copy in .claude/worktrees shows the base name; a relative link keeps its path', async () => {
+    vi.spyOn(api, 'endlessDoc').mockResolvedValue(copy({ worktreeRel: '.claude/worktrees/x' }) as any);
+    render(<DocViewer />);
+    expect(await screen.findByText('worktree x on spec/x')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'y.md' }));
+    expect(useDocViewer.getState().open).toMatchObject({ path: 'docs/specs/y.md', worktree: '.claude/worktrees/x' });
   });
   it('the editor URL encodes each path segment', () => {
     expect(editorUrl('vscode', '/w/a#b?.md')).toBe('vscode://file/w/a%23b%3F.md');
@@ -214,7 +221,7 @@ describe('DocViewer: links inside the doc stay in the viewer', () => {
   it('a relative doc link opens that doc from the open doc\'s folder, in the same copy', async () => {
     await show('[y](./y.md)');
     expect(fireEvent.click(screen.getByRole('link', { name: 'y' }))).toBe(false);
-    expect(useDocViewer.getState().open).toMatchObject({ project: 's1', path: 'docs/specs/y.md', worktree: 'x' });
+    expect(useDocViewer.getState().open).toMatchObject({ project: 's1', path: 'docs/specs/y.md', worktree: '.worktrees/x' });
     expect(useDocViewer.getState().back).toHaveLength(1);
   });
   it('a ../ link resolves against the folder; a #fragment is dropped', async () => {

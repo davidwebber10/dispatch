@@ -2,7 +2,8 @@ import { create } from 'zustand';
 
 /**
  * A doc to show: the project that owns it, its path, the branch to read it from (null: the project's
- * own checkout), and the worktree (by name) whose copy to read. A named copy wins over the main checkout.
+ * own checkout), and the worktree whose copy to read, by its path in the project (`.worktrees/x` or
+ * `.claude/worktrees/x`). A named copy wins over the main checkout.
  */
 export interface DocRef { project: string; path: string; branch: string | null; worktree?: string | null }
 

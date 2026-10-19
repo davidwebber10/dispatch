@@ -56,10 +56,10 @@ export function DocsFold({ projectId, count, onNavigate, first = true }: { proje
   };
   const openDoc = (r: EndlessDocRow) => {
     onNavigate?.();
-    // A worktree copy is read by its worktree name, a branch copy from its branch.
+    // A worktree copy is read by its worktree's path in the project, a branch copy from its branch.
     useDocViewer.getState().show(r.source === 'branch'
       ? { project: projectId, path: r.path, branch: r.branch }
-      : { project: projectId, path: r.path, branch: null, worktree: r.worktree });
+      : { project: projectId, path: r.path, branch: null, worktree: r.worktreeRel ?? r.worktree });
   };
 
   const more = list ? list.total - list.rows.length : 0;
@@ -78,7 +78,7 @@ export function DocsFold({ projectId, count, onNavigate, first = true }: { proje
         <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column' }}>
           {list.rows.map((r) => (
             // The row is a tap target as a whole; its button gives the keyboard the same action, and the writer is its own button.
-            <div key={`${r.source}:${r.branch ?? r.worktree}:${r.path}`} data-testid={`doc-row-${r.path}`} onClick={() => openDoc(r)}
+            <div key={`${r.source}:${r.branch ?? r.worktreeRel ?? r.worktree}:${r.path}`} data-testid={`doc-row-${r.path}`} onClick={() => openDoc(r)}
               style={{ padding: mobile ? '10px 0' : '8px 0', borderTop: '1px solid var(--color-border)', cursor: 'pointer' }}>
               <button type="button" title={r.path} onClick={(e) => { e.stopPropagation(); openDoc(r); }}
                 style={{ display: 'block', width: '100%', minHeight: mobile ? 44 : undefined, textAlign: 'left', background: 'transparent', border: 0, padding: 0, cursor: 'pointer', color: 'var(--color-text-primary)', font: 'inherit' }}>

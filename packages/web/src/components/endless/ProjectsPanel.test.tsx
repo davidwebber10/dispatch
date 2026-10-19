@@ -122,7 +122,7 @@ describe('ProjectsPanel thread list', () => {
 });
 
 describe('Docs fold', () => {
-  const docRow = (k: number, o: Partial<Record<string, unknown>> = {}) => ({ path: `docs/specs/d${k}.md`, name: `d${k}.md`, status: 'draft', source: 'worktree', worktree: 'chat-visibility-spec', branch: 'spec/chat-thread-visibility', vsMain: 'not_on_main', modifiedAt: '2026-10-19T11:00:00Z', copies: 1, writer: { id: 't1', label: 'Plan' }, ...o });
+  const docRow = (k: number, o: Partial<Record<string, unknown>> = {}) => ({ path: `docs/specs/d${k}.md`, name: `d${k}.md`, status: 'draft', source: 'worktree', worktree: 'chat-visibility-spec', worktreeRel: '.worktrees/chat-visibility-spec', branch: 'spec/chat-thread-visibility', vsMain: 'not_on_main', modifiedAt: '2026-10-19T11:00:00Z', copies: 1, writer: { id: 't1', label: 'Plan' }, ...o });
   afterEach(() => { useDocViewer.setState({ open: null, back: [] }); useUI.setState({ pendingOpenProject: null }); isMobileMock.mockReturnValue(false); });
   it('is hidden at a count of 0', () => {
     useEndless.setState({ projects: [P('s1', 'dispatch', { live: 1 })], threads: [row('w', 's1', 'working')] as any, docCounts: { s1: 0 } } as any);
@@ -170,13 +170,13 @@ describe('Docs fold', () => {
     expect(useDocViewer.getState().open).toEqual({ project: 's1', path: 'docs/specs/d1.md', branch: 'origin/spec/t' });
     expect(onNavigate).toHaveBeenCalledTimes(2);
   });
-  it('a worktree row opens its worktree copy by name', async () => {
+  it('a worktree row opens its worktree copy by its path in the project', async () => {
     vi.spyOn(api, 'endlessDocs').mockResolvedValue({ rows: [docRow(0)], total: 1 } as any);
     useEndless.setState({ projects: [P('s1', 'dispatch', { live: 1 })], threads: [row('w', 's1', 'working')] as any, docCounts: { s1: 1 } } as any);
     render(<ProjectsPanel />);
     fireEvent.click(screen.getByRole('button', { name: 'Docs (1)' }));
     fireEvent.click(await screen.findByRole('button', { name: /d0\.md/ }));
-    expect(useDocViewer.getState().open).toEqual({ project: 's1', path: 'docs/specs/d0.md', branch: null, worktree: 'chat-visibility-spec' });
+    expect(useDocViewer.getState().open).toEqual({ project: 's1', path: 'docs/specs/d0.md', branch: null, worktree: '.worktrees/chat-visibility-spec' });
   });
   it('opened again after the count changed, it loads the rows again', async () => {
     const spy = vi.spyOn(api, 'endlessDocs').mockResolvedValue({ rows: [docRow(0)], total: 1 } as any);
