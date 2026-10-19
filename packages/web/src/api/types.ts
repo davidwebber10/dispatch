@@ -446,6 +446,9 @@ export interface EndlessSearchHit { i: number; kind: EndlessKind; project: strin
 export interface EndlessViewLine { name: string; l: number; i: number; text: string | null }
 export interface EndlessView { lines: EndlessViewLine[]; bytes: number; rendered: string }
 export interface EndlessProject { id: string; name: string; folder: string; live: number; needsYou: number; openItems: number; lastReport: string | null; messages: number }
+export type EndlessPaneState = 'working' | 'needs_you' | 'queued' | 'error' | 'done' | 'idle';
+export interface EndlessPaneThread { id: string; project: string; label: string; harness: string; state: EndlessPaneState; startedBy: 'chat' | 'overseer' | 'thread' | 'role' | 'user'; via: string | null; startedAt: string; lastActivityAt: string | null; question: string | null }
+export interface EndlessProjectsResponse { projects: EndlessProject[]; threads: EndlessPaneThread[]; truncated: boolean }
 export interface EndlessImage { media_type: string; data: string }
 /** GET /api/update/progress — the updater's status file plus its output tail (core update/progress.ts). */
 export type UpdateStepName = 'pull' | 'install' | 'build' | 'tools' | 'restart';

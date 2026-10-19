@@ -1,7 +1,7 @@
 import type { harnessCapabilities } from '../../../core/src/providers/capabilities';
 import { apiPath } from '../lib/basePath';
 import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry, LedgerCard, LedgerSource } from './types';
-import type { EndlessPage, EndlessState, EndlessSearchHit, EndlessView, EndlessProject, EndlessImage, ClaudeLoginSession, UpdateProgress } from './types';
+import type { EndlessPage, EndlessState, EndlessSearchHit, EndlessView, EndlessProject, EndlessProjectsResponse, EndlessImage, ClaudeLoginSession, UpdateProgress } from './types';
 
 /**
  * A content block for a structured `user` turn (mirrors the daemon's wire shape). A
@@ -79,7 +79,7 @@ export const api = {
   endlessSearch: (q: string, project: string | null) =>
     req<{ results: EndlessSearchHit[] }>(`/api/endless/search?q=${encodeURIComponent(q)}${project ? `&project=${encodeURIComponent(project)}` : ''}`),
   endlessView: () => req<EndlessView>('/api/endless/view'),
-  endlessProjects: () => req<EndlessProject[]>('/api/endless/projects'),
+  endlessProjects: () => req<EndlessProjectsResponse | EndlessProject[]>('/api/endless/projects'),
   endlessInstructions: () => req<{ text: string }>('/api/endless/instructions'),
   setEndlessInstructions: (text: string) => req<{ ok: true }>('/api/endless/instructions', { method: 'PUT', body: body({ text }) }),
   listServers: () => req<{ label: string; origin: string }[]>('/api/servers'),

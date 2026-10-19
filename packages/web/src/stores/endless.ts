@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { api } from '../api/client';
 import type { ServerEvent } from '../api/events-socket';
-import type { EndlessImage, EndlessMessage, EndlessProject, EndlessTurnStatus } from '../api/types';
+import type { EndlessImage, EndlessMessage, EndlessPaneThread, EndlessProject, EndlessProjectsResponse, EndlessTurnStatus } from '../api/types';
 
 const PAGE = 60;
 
@@ -31,6 +31,8 @@ interface EndlessStoreState {
   liveThinking: string;
   turn: { status: EndlessTurnStatus; error: string | null };
   projects: EndlessProject[];
+  threads: EndlessPaneThread[];
+  truncated: boolean;
   loadTail: () => Promise<void>;
   loadOlder: () => Promise<void>;
   openAt: (i: number) => Promise<void>;
@@ -40,10 +42,19 @@ interface EndlessStoreState {
   stop: () => Promise<void>;
   refreshState: () => Promise<void>;
   loadProjects: () => Promise<void>;
+  /** Keep the pane live while mounted: thread events, a 60 s timer and page resume reload it. Counted. */
+  watch: () => void;
+  unwatch: () => void;
   /** Socket reconnect: broadcasts were missed, so reload the tail (also recovers from `unavailable`). */
   resyncAfterReconnect: () => void;
   applyEvent: (e: ServerEvent) => void;
 }
+
+export const RELOAD_DEBOUNCE_MS = 600;
+export const RELOAD_EVERY_MS = 60_000;
+const COARSE: Record<string, string> = { working: 'working', needs_you: 'needs_input', queued: 'queued', error: 'error', done: 'waiting', idle: 'waiting' };
+const normalizePane = (v: EndlessProjectsResponse | EndlessProject[]): EndlessProjectsResponse =>
+  Array.isArray(v) ? { projects: v, threads: [], truncated: false } : { projects: v.projects ?? [], threads: v.threads ?? [], truncated: !!v.truncated };
 
 export const useEndless = create<EndlessStoreState>((set, get) => {
   /** Run a load; a 503 sets `unavailable` instead of throwing, a good result clears it. */
@@ -62,6 +73,23 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
   };
   /** Bumped by every load that replaces the window; a load that started under an older value is dropped. */
   let gen = 0;
+  let watchers = 0;
+  let debounce: ReturnType<typeof setTimeout> | null = null;
+  let every: ReturnType<typeof setInterval> | null = null;
+  let inflight = false;
+  let again = false;
+  const reload = async () => {
+    if (inflight) { again = true; return; }
+    inflight = true;
+    try { await get().loadProjects(); } catch { /* the store keeps the old list */ }
+    finally { inflight = false; if (again) { again = false; void reload(); } }
+  };
+  const schedule = () => {
+    if (watchers === 0) return;
+    if (debounce) clearTimeout(debounce);
+    debounce = setTimeout(() => { debounce = null; void reload(); }, RELOAD_DEBOUNCE_MS);
+  };
+  const onVisible = () => { if (document.visibilityState === 'visible') void reload(); };
 
   return {
     messages: [],
@@ -78,6 +106,8 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
     liveThinking: '',
     turn: { status: 'idle', error: null },
     projects: [],
+    threads: [],
+    truncated: false,
 
     loadTail: () => {
       const g = ++gen;
@@ -143,9 +173,25 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
     retry: async () => { await api.endlessRetry(); },
     stop: async () => { await api.endlessStop(); },
     refreshState: () => load(() => api.endlessState(), (s) => set({ turn: s.turn })),
-    loadProjects: () => load(() => api.endlessProjects(), (projects) => set({ projects })),
+    loadProjects: () => load(() => api.endlessProjects(), (v) => { const p = normalizePane(v); set({ projects: p.projects, threads: p.threads, truncated: p.truncated }); }),
+    watch: () => {
+      watchers++;
+      if (watchers > 1) return;
+      every = setInterval(() => { if (document.visibilityState === 'visible') void reload(); }, RELOAD_EVERY_MS);
+      document.addEventListener('visibilitychange', onVisible);
+    },
+    unwatch: () => {
+      if (watchers === 0) return;
+      watchers--;
+      if (watchers > 0) return;
+      if (every) clearInterval(every);
+      if (debounce) clearTimeout(debounce);
+      every = null; debounce = null;
+      document.removeEventListener('visibilitychange', onVisible);
+    },
 
     resyncAfterReconnect: () => {
+      if (watchers > 0) void reload();
       const { loaded, unavailable, atTail } = get();
       if (!unavailable && !(loaded && atTail)) return;
       void get().loadTail().catch(() => {});
@@ -182,6 +228,12 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
         } else {
           set({ turn });
         }
+        return;
+      }
+      if (e.type === 'terminal:created' || e.type === 'terminal:exit' || e.type === 'terminal:removed') { schedule(); return; }
+      if (e.type === 'terminal:status' && typeof e.terminalId === 'string') {
+        const known = get().threads.find((t) => t.id === e.terminalId);
+        if (!known || (typeof e.status === 'string' && COARSE[known.state] !== e.status)) schedule();
       }
     },
   };
