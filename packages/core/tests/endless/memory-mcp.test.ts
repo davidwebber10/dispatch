@@ -61,7 +61,7 @@ describe('memory MCP server', () => {
     vi.stubGlobal('fetch', fetchMock);
     const r = await callTool('spawn_agent', { project: 'salsify', agentType: 'implementer', name: 'Fix login', task: 'Fix the login bug in /w/salsify/src/login.ts' });
     expect(r.isError).toBeUndefined();
-    expect(JSON.parse((r.content[0] as any).text)).toEqual({ agentId: 't9', label: 'Fix login', project: 'salsify', folder: '/w/salsify' });
+    expect(JSON.parse((r.content[0] as any).text)).toEqual({ agentId: 't9', label: 'Fix login', project: 'salsify', projectId: 's1', folder: '/w/salsify' });
     expect(calls(fetchMock)).toEqual([
       ['/api/endless/project?ref=salsify', 'GET'],
       ['/api/sessions/s1/overseer/worker-defaults?agentType=implementer', 'GET'],
