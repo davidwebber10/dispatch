@@ -175,7 +175,7 @@ describe('thread reports', () => {
     await endTurn(x);
   });
 
-  it('a repeat of a long (split) report is dropped, and the same text in a later turn reports', async () => {
+  it('a repeat of a long (split) report is dropped, and the same text in a new turn reports', async () => {
     const x = make();
     outputs.t1 = 'z'.repeat(50_000);
     x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'idle' });
@@ -184,11 +184,39 @@ describe('thread reports', () => {
     x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'idle' });
     await flush();
     expect(works()).toHaveLength(n);
-    const t0 = Date.now();
-    (x.svc as any).now = () => t0 + 120_000;
+    x.svc.onThreadStatus('t1', 'working'); // a new turn
     x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'idle' });
     await flush();
     expect(works()).toHaveLength(n * 2);
+    await settle();
+    await endTurn(x);
+  });
+
+  it('a re-asked question after a new turn reports again', async () => {
+    const x = make();
+    pendings.t1 = { requestId: 'r1', toolName: 'Bash', input: { cmd: 'ls' } };
+    x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'needs_input' });
+    await flush();
+    x.svc.onThreadStatus('t1', 'working');
+    x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'needs_input' });
+    await flush();
+    expect(works()).toHaveLength(2);
+    await settle();
+    await endTurn(x);
+  });
+
+  it('while boot holds unsolicited reports, an error or question edge of an unarmed thread says nothing', async () => {
+    const x = make();
+    x.svc.holdUnsolicitedReports();
+    x.svc.onThreadStatus('t1', 'error');
+    x.svc.onThreadStatus('t3', 'needs_input');
+    await flush();
+    expect(works()).toEqual([]);
+    x.svc.releaseUnsolicitedReports();
+    x.svc.onThreadStatus('t1', 'idle');
+    x.svc.onThreadStatus('t1', 'error');
+    await flush();
+    expect(works()).toHaveLength(1);
     await settle();
     await endTurn(x);
   });

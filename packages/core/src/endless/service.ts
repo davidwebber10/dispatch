@@ -64,9 +64,6 @@ export interface EndlessServiceOptions {
   ledger?: LedgerService;
 }
 
-/** A repeat of the same report text within this window is one ending seen twice. */
-const DEDUPE_MS = 60_000;
-
 export class EndlessService {
   readonly store: EndlessStore;
   readonly views: ViewKeeper;
@@ -88,6 +85,15 @@ export class EndlessService {
    * Cleared by the next other edge; capped, for a thread archived while in error.
    */
   private readonly errored = new Set<string>();
+  /**
+   * True during boot, until the process reconcile ran: it ends threads that died with the old
+   * daemon with error edges, and a report recovery already wrote must not be followed by a second
+   * one. While held, only an owed report is delivered from a status edge.
+   */
+  private hold = false;
+
+  holdUnsolicitedReports(): void { this.hold = true; }
+  releaseUnsolicitedReports(): void { this.hold = false; }
 
   constructor(private readonly o: EndlessServiceOptions) {
     this.store = new EndlessStore(o.db);
@@ -230,14 +236,15 @@ export class EndlessService {
    * other status between (a hook error, then the process exit) is the same ending.
    */
   onThreadStatus(terminalId: string, status: string): void {
+    if (status === 'working' && this.isChatThread(terminalId)) this.store.clearReportNote(terminalId);
     if (status !== 'error') {
       this.errored.delete(terminalId);
       // A question is always delivered, even when the settle edge did not fire for it (the
       // thread was not 'working' before, e.g. a watch woke it). The report dedupes identical text.
-      if (status === 'needs_input' && this.isChatThread(terminalId)) this.onThreadSettled({ terminalId, threadStatus: 'needs_input' });
+      if (status === 'needs_input' && !this.hold && this.isChatThread(terminalId)) this.onThreadSettled({ terminalId, threadStatus: 'needs_input' });
       return;
     }
-    if (this.errored.has(terminalId) || !(this.store.hasPendingReport(terminalId) || this.isChatThread(terminalId))) return;
+    if (this.errored.has(terminalId) || !(this.store.hasPendingReport(terminalId) || (!this.hold && this.isChatThread(terminalId)))) return;
     // Bounded: a thread archived while in error never gets the clearing edge.
     if (this.errored.size >= 500) this.errored.clear();
     this.errored.add(terminalId);
@@ -303,10 +310,11 @@ export class EndlessService {
     const output = gone ? '' : interim ? this.waitingText(terminalId) : this.o.finalOutput?.(terminalId) ?? '';
     const text = reportText(t?.label || terminalId, gone ? 'gone' : outcome, output);
     // The same question or ending twice in a row is one report; a new question always reports.
-    // Only a repeat within DEDUPE_MS counts as the same ending (a hook edge plus the exit edge):
-    // a later turn with the same result is a new turn and reports.
+    // The same text again with no 'working' edge between is one ending seen twice (a hook edge
+    // plus the exit edge). A new turn clears the note (onThreadStatus), so a re-asked question or
+    // a later turn with the same result reports.
     const last = this.store.lastReport(terminalId);
-    if ((interim || !owed) && last && last.text === text && this.now() - last.at < DEDUPE_MS) return [];
+    if ((interim || !owed) && last && last.text === text) return [];
     const note = () => this.store.noteReport(terminalId, text, this.now());
     const claim = !owed ? () => { note(); return true; }
       : interim ? () => { this.store.markWaitingReported(terminalId); note(); return true; }
