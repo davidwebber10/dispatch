@@ -85,6 +85,9 @@ export class EndlessService {
    * Cleared by the next other edge; capped, for a thread archived while in error.
    */
   private readonly errored = new Set<string>();
+  /** The boot process reconcile is over: no error edge of it is left to drop. */
+  endBoot(): void { this.bootReported.clear(); }
+
   /**
    * Threads reportCompletedAtBoot just reported as finished. The process reconcile that follows
    * ends such a thread (its row still reads 'working', no process lives) with an error edge: that
@@ -233,6 +236,8 @@ export class EndlessService {
    * other status between (a hook error, then the process exit) is the same ending.
    */
   onThreadStatus(terminalId: string, status: string): void {
+    // Only the reconcile's error edge is the same ending: any other edge means the thread lives.
+    if (status !== 'error') this.bootReported.delete(terminalId);
     if (status === 'working' && this.isChatThread(terminalId)) this.store.clearReportNote(terminalId);
     if (status !== 'error') {
       this.errored.delete(terminalId);
@@ -241,7 +246,7 @@ export class EndlessService {
       if (status === 'needs_input' && this.isChatThread(terminalId)) this.onThreadSettled({ terminalId, threadStatus: 'needs_input' });
       return;
     }
-    if (this.bootReported.delete(terminalId)) return;
+    if (status === 'error' && this.bootReported.delete(terminalId)) return;
     if (this.errored.has(terminalId) || !(this.store.hasPendingReport(terminalId) || this.isChatThread(terminalId))) return;
     // Bounded: a thread archived while in error never gets the clearing edge.
     if (this.errored.size >= 500) this.errored.clear();

@@ -894,7 +894,10 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       endless.reportCompletedAtBoot(completed);
     })
     .catch((err) => console.error('kickstart failed', err))
-    .finally(() => statusService.reconcileProcesses((id) => ptyManager.isAlive(id) || !!sessionService.structuredManagerForTerminal(id)?.isAlive(id)));
+    .finally(() => {
+      try { statusService.reconcileProcesses((id) => ptyManager.isAlive(id) || !!sessionService.structuredManagerForTerminal(id)?.isAlive(id)); }
+      finally { setTimeout(() => endless.endBoot(), 1000).unref(); }
+    });
 
   threadAutoNamer.resumePending();
 

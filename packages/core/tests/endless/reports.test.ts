@@ -223,6 +223,28 @@ describe('thread reports', () => {
     await endTurn(x);
   });
 
+  it('a boot-reported thread the reconcile skipped (alive) does not lose a later failure', async () => {
+    const x = make();
+    outputs.t1 = 'done at boot';
+    x.svc.arm('t1');
+    x.svc.reportCompletedAtBoot(['t1']);
+    await flush();
+    x.svc.onThreadStatus('t1', 'working'); // it lives: no reconcile error edge came
+    x.svc.onThreadStatus('t1', 'error');
+    await flush();
+    expect(works()).toHaveLength(2);
+    // And a thread whose reconcile edge never came is released by endBoot.
+    outputs.t3 = 'boot3';
+    x.svc.arm('t3');
+    x.svc.reportCompletedAtBoot(['t3']);
+    x.svc.endBoot();
+    x.svc.onThreadStatus('t3', 'error');
+    await flush();
+    expect(works()).toHaveLength(4);
+    await settle();
+    await endTurn(x);
+  });
+
   it('identical consecutive reports of a thread are dropped', async () => {
     const x = make();
     outputs.t1 = 'same';
