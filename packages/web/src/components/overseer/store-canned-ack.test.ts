@@ -18,3 +18,17 @@ describe('needAction — canned acknowledgement', () => {
     expect(useOverseer.getState().resolved).toContain('agent-1');
   });
 });
+
+describe('needAction — Deny on a worker question', () => {
+  it('denies a question with the canned Dismiss, and a plain gated tool with a bare deny', () => {
+    const spy = vi.spyOn(api, 'answerPermission').mockResolvedValue(undefined as unknown as void);
+    useOverseer.setState({ pendingByTerminal: {
+      'agent-q': { requestId: 'r-q', toolName: 'AskUserQuestion', input: {}, questions: [{ question: 'Pick one', options: ['A'] }] },
+      'agent-t': { requestId: 'r-t', toolName: 'Write', input: {} },
+    } as any });
+    useOverseer.getState().needAction('agent-q', 'Deny');
+    useOverseer.getState().needAction('agent-t', 'Deny');
+    expect(spy).toHaveBeenCalledWith('agent-q', { requestId: 'r-q', decision: 'deny', canned: 'dismiss' });
+    expect(spy).toHaveBeenCalledWith('agent-t', { requestId: 'r-t', decision: 'deny' });
+  });
+});

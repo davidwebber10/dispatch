@@ -35,6 +35,8 @@ if (rIdx > -1 && process.argv[rIdx + 1] === 'gone-session') {
 // `argv` echoes the launch args so resume tests can assert `-r <id>` was applied.
 send({ type: 'system', subtype: 'init', apiKeySource: 'none', model: 'claude', session_id: 'sess-fake', testEnv: process.env.DISPATCH_TEST_ENV ?? null, argv: process.argv.slice(2) });
 const rl = readline.createInterface({ input: process.stdin });
+// The AskUserQuestion request this CLI is blocked on, if any (see TRIGGER_QUESTION).
+let pendingQuestion = null;
 rl.on('line', (line) => {
   let msg; try { msg = JSON.parse(line); } catch { return; }
   if (msg.type === 'user') {
@@ -46,12 +48,24 @@ rl.on('line', (line) => {
     }
     if (text === 'TRIGGER_QUESTION') {
       // AskUserQuestion arrives as a can_use_tool whose input carries questions[]
+      pendingQuestion = { request_id: 'req-2', tool_use_id: 'tu-2' };
       send({ type: 'control_request', request_id: 'req-2', request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [{ question: 'Pick one', header: 'Choice', options: ['A', 'B'], multiSelect: false }] }, tool_use_id: 'tu-2' } });
       return;
     }
     if (typeof text === 'string' && text.startsWith('TRIGGER_BASH:')) {
       // A Bash tool call asking permission for the given command (the broad-kill guard tests).
       send({ type: 'control_request', request_id: 'req-bash', request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: text.slice('TRIGGER_BASH:'.length) }, tool_use_id: 'tu-1' } });
+      return;
+    }
+    if (text === 'TRIGGER_STALE_QUESTION') {
+      // A question, then a turn end without an answer: a stale pending the manager must clear.
+      send({ type: 'control_request', request_id: 'req-5', request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [{ question: 'Pick one', header: 'Choice', options: ['A', 'B'], multiSelect: false }] }, tool_use_id: 'tu-5' } });
+      send({ type: 'result', subtype: 'success', is_error: false });
+      return;
+    }
+    if (text === 'TRIGGER_STRAY_CANCEL') {
+      // A cancel for a request that is not the pending one: must be ignored.
+      send({ type: 'control_cancel_request', request_id: 'req-other' });
       return;
     }
     if (text === 'TRIGGER_SCHEDULE') {
@@ -72,8 +86,27 @@ rl.on('line', (line) => {
     // Echo client→CLI controls (e.g. interrupt) back so tests can assert the frame
     // the manager wrote to stdin (top-level request_id + request.subtype).
     send({ type: 'system', subtype: 'control_request_received', request_id: msg.request_id, request: msg.request });
+    if (msg.request?.subtype === 'interrupt' && pendingQuestion) {
+      // Claude Code 2.1.303 on an interrupt while a question is up: cancel the pending request,
+      // two is_error tool_results, then an error_during_execution result. No control_response from us is needed.
+      const q = pendingQuestion;
+      pendingQuestion = null;
+      send({ type: 'control_cancel_request', request_id: q.request_id });
+      send({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: q.tool_use_id, is_error: true, content: "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed." }] } });
+      send({ type: 'user', message: { content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] } });
+      send({ type: 'result', subtype: 'error_during_execution', is_error: true, stop_reason: 'tool_use' });
+    }
   } else if (msg.type === 'control_response') {
     const r = msg.response?.response ?? {};
+    if (pendingQuestion && msg.response?.request_id === pendingQuestion.request_id && r.behavior === 'deny') {
+      // A deny's message becomes the question's is_error tool_result, verbatim (spike, 2.1.296).
+      const q = pendingQuestion;
+      pendingQuestion = null;
+      send({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: q.tool_use_id, is_error: true, content: r.message }] } });
+      send({ type: 'result', subtype: 'success', is_error: false });
+      return;
+    }
+    if (pendingQuestion && msg.response?.request_id === pendingQuestion.request_id) pendingQuestion = null;
     const allowed = r.behavior === 'allow';
     // Echo the resolved decision back so tests can assert the updatedInput / answers
     // map shape and the deny message the manager wrote.

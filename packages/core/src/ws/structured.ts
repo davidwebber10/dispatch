@@ -147,11 +147,20 @@ export function handleStructuredConnection(
   const onPermission = (eid: string, pending: unknown) => {
     if (eid === id && ws.readyState === 1) ws.send(JSON.stringify({ type: 'permission', pending }));
   };
+  // A pending that went away (answered, cancelled, stale at a turn end) clears every viewer's
+  // card. A separate manager event, because a `permission` emit means a NEW request to status.
+  const onCleared = (eid: string) => {
+    if (eid === id && ws.readyState === 1) ws.send(JSON.stringify({ type: 'permission', pending: null }));
+  };
   // Replay a still-pending permission on (re)connect so a refresh re-surfaces it.
   const initialPending = manager.getPending(id);
   if (initialPending && ws.readyState === 1) ws.send(JSON.stringify({ type: 'permission', pending: initialPending }));
   manager.on('event', onEvent);
   manager.on('exit', onExit);
   manager.on('permission', onPermission);
-  ws.on('close', () => { manager.off('event', onEvent); manager.off('exit', onExit); manager.off('permission', onPermission); });
+  manager.on('permission-cleared', onCleared);
+  ws.on('close', () => {
+    manager.off('event', onEvent); manager.off('exit', onExit); manager.off('permission', onPermission);
+    manager.off('permission-cleared', onCleared);
+  });
 }

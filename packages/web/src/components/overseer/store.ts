@@ -135,7 +135,14 @@ interface OverseerState {
   // agent ChatView. `coordinatorAnswer` is that hook's own answer() (stable per terminal); a
   // no-op until a pending is live.
   coordinatorPending: PendingPermission | null;
-  coordinatorAnswer: (answers: Record<string, string>) => void;
+  coordinatorAnswer: (answers: Record<string, string>) => void | boolean;
+  /** That hook's replyToQuestion and denyQuestion: a chat reply, or the card's Discuss/Dismiss. */
+  coordinatorReply: (content: string | ContentBlock[]) => Promise<boolean | void>;
+  coordinatorDeny: (action: 'discuss' | 'dismiss') => Promise<void>;
+  /** Answer the coordinator's pending question in chat (the card's Discuss box). A failure shows as sendError. */
+  replyToCoordinatorQuestion: (content: string | ContentBlock[]) => Promise<boolean>;
+  /** The card's empty Discuss or Dismiss. A failure shows as sendError. Both resolve false on failure, so the card can unlock. */
+  denyCoordinatorQuestion: (action: 'discuss' | 'dismiss') => Promise<boolean>;
   sendError: string | null; // last directive send that FAILED (POST rejected); surfaced inline, cleared on next send
   ensuring: boolean; // a find-or-create coordinator request is in flight
   setupNeeded: boolean; // ensureForProject peeked and found no live coordinator — the inline setup card should show instead of auto-creating one
@@ -203,7 +210,12 @@ interface OverseerState {
   /** Pushed in by useCoordinatorSync() from the same useStructuredChat() call's hasMore/loadingOlder/loadOlder. */
   setCoordinatorPaging: (info: { hasMore: boolean; loadingOlder: boolean; loadOlder: () => void }) => void;
   /** Pushed in by useCoordinatorSync() from the same useStructuredChat() call's pending/answer — the coordinator's OWN gated question, surfaced inline in its stream. */
-  setCoordinatorPending: (pending: PendingPermission | null, answer: (answers: Record<string, string>) => void) => void;
+  setCoordinatorPending: (
+    pending: PendingPermission | null,
+    answer: (answers: Record<string, string>) => void | boolean,
+    reply?: (content: string | ContentBlock[]) => Promise<boolean | void>,
+    deny?: (action: 'discuss' | 'dismiss') => Promise<void>,
+  ) => void;
   setPending: (terminalId: string, pending: PendingPermission | null) => void;
   setArchivedTerminals: (projectId: string, terminals: Terminal[]) => void;
   /** Clean slate: archive the coordinator + its agents and start a fresh Dispatch conversation. */
@@ -236,6 +248,8 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   coordinatorLoadOlder: () => {},
   coordinatorPending: null,
   coordinatorAnswer: () => {},
+  coordinatorReply: async () => {},
+  coordinatorDeny: async () => {},
   sendError: null,
   ensuring: false,
   setupNeeded: false,
@@ -317,6 +331,12 @@ export const useOverseer = create<OverseerState>((set, get) => ({
     const payload: string | ContentBlock[] = images.length
       ? [...images, ...(trimmed ? [{ type: 'text', text: trimmed } as ContentBlock] : [])]
       : trimmed;
+    // The coordinator is parked on its own question: this reply answers it.
+    // The hook splits off any images and falls back to a normal send when the question is gone.
+    if (get().coordinatorPending?.questions?.length) {
+      get().replyToCoordinatorQuestion(payload);
+      return;
+    }
     // Surface a failed POST instead of swallowing it: without this, a rejected send (e.g.
     // the coordinator's claude process died → 400) left ZERO feedback — the user's directive
     // (and any attached image) just vanished, reading as "nothing happened". Mirrors the
@@ -347,7 +367,8 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       const removeCard = () =>
         set((s) => ({ resolved: [...s.resolved, id], pendingByTerminal: { ...s.pendingByTerminal, [id]: null } }));
       if (/^deny$/i.test(label)) {
-        api.answerPermission(id, { requestId: pending.requestId, decision: 'deny' }).catch(() => {});
+        // A question gets the card's Dismiss text, not a bare "Denied" the model can't act on.
+        api.answerPermission(id, { requestId: pending.requestId, decision: 'deny', ...(pending.questions?.length ? { canned: 'dismiss' as const } : {}) }).catch(() => {});
       } else if (pending.questions?.[0]) {
         // An AskUserQuestion option: answer maps the question text → the chosen label.
         const question = pending.questions[0].question;
@@ -425,6 +446,8 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       coordinatorLoadOlder: () => {},
       coordinatorPending: null,
       coordinatorAnswer: () => {},
+      coordinatorReply: async () => {},
+      coordinatorDeny: async () => {},
       sendError: null,
       resolved: [],
       pendingByTerminal: {},
@@ -547,6 +570,8 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       coordinatorLoadOlder: () => {},
       coordinatorPending: null,
       coordinatorAnswer: () => {},
+      coordinatorReply: async () => {},
+      coordinatorDeny: async () => {},
       sendError: null,
       ensuring: false,
     });
@@ -576,8 +601,30 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   setCoordinatorPaging: (info) =>
     set({ coordinatorHasMore: info.hasMore, coordinatorLoadingOlder: info.loadingOlder, coordinatorLoadOlder: info.loadOlder }),
 
-  setCoordinatorPending: (coordinatorPending, coordinatorAnswer) =>
-    set({ coordinatorPending, coordinatorAnswer }),
+  setCoordinatorPending: (coordinatorPending, coordinatorAnswer, coordinatorReply, coordinatorDeny) =>
+    set({
+      coordinatorPending, coordinatorAnswer,
+      coordinatorReply: coordinatorReply ?? (async () => {}),
+      coordinatorDeny: coordinatorDeny ?? (async () => {}),
+    }),
+
+  replyToCoordinatorQuestion: (content) => {
+    const id = get().coordinatorId;
+    set({ sendError: null });
+    return get().coordinatorReply(content).then((settled) => settled !== false, (err) => {
+      if (get().coordinatorId === id) set({ sendError: sendFailureText(err) });
+      return false;
+    });
+  },
+
+  denyCoordinatorQuestion: (action) => {
+    const id = get().coordinatorId;
+    set({ sendError: null });
+    return get().coordinatorDeny(action).then(() => true, (err) => {
+      if (get().coordinatorId === id) set({ sendError: sendFailureText(err) });
+      return false;
+    });
+  },
 
   setPending: (terminalId, pending) =>
     set((s) => ({ pendingByTerminal: { ...s.pendingByTerminal, [terminalId]: pending } })),
@@ -731,7 +778,7 @@ export function useCoordinatorSync(): void {
   // — without it, imageItemFromBlock returns null for path refs and images vanish after a
   // daemon-restart/transcript-resume. (The hook reads sessionId via a ref, so this does
   // NOT re-key the socket effect.)
-  const { items, busy, model, contextTokens, contextWindow, compacting, compactResult, apiRetry, pending, answer, hasMore, loadingOlder, loadOlder } = useStructuredChat(coordinatorId ?? '', coordinatorProject ?? undefined);
+  const { items, busy, model, contextTokens, contextWindow, compacting, compactResult, apiRetry, pending, answer, replyToQuestion, denyQuestion, hasMore, loadingOlder, loadOlder } = useStructuredChat(coordinatorId ?? '', coordinatorProject ?? undefined);
   const stream = useMemo(() => convItemsToStream(items), [items]);
   useEffect(() => {
     setCoordinatorStream(stream);
@@ -748,8 +795,8 @@ export function useCoordinatorSync(): void {
   // Surface the coordinator's OWN pending AskUserQuestion inline in its stream — without this
   // a coordinator that asks the human a question freezes with the question shown nowhere.
   useEffect(() => {
-    setCoordinatorPending(pending, answer);
-  }, [pending, answer, setCoordinatorPending]);
+    setCoordinatorPending(pending, answer, replyToQuestion, denyQuestion);
+  }, [pending, answer, replyToQuestion, denyQuestion, setCoordinatorPending]);
 
   // Keep the project's archived (complete_agent'd) workers in the store so the rail can
   // render them as done outcomes. Folded in here (the single root-mounted sync) to avoid

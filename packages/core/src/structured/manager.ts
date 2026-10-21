@@ -185,10 +185,20 @@ export type PermissionDecision =
  *   'busy'   (terminalId)             — a turn started (idempotent while active)
  *   'failed' (terminalId)             — transport/request failure ended active work
  *   'resolved'(terminalId)            — a pending permission was answered
+ *   'permission-cleared'(terminalId)  — a pending permission went away (answered, cancelled by the
+ *                                       CLI, or stale at a turn end). Viewers drop their card. Never
+ *                                       routed to status: it is not a new request (see adapter.ts).
  *   'exit'   (terminalId, code)       — the backing process/connection exited
  *   'message-source'(terminalId, src) — a tagged turn's result landed (persist src)
  */
 export interface IStructuredManager extends EventEmitter {
+  /**
+   * True when a deny `message` reaches the model as the question's own tool result, so a chat
+   * reply can answer a pending AskUserQuestion (see SessionService.answerPermission's `reply`).
+   * Only the Claude manager does today. Codex drops a deny's message, and Grok/OpenCode are
+   * untested, so a reply there falls back to a normal send.
+   */
+  readonly repliesToQuestions?: boolean;
   setDefaultEnv(env: Record<string, string>): void;
   spawn(terminalId: string, opts: StructuredSpawnOpts): number;
   sendMessage(terminalId: string, content: string | ContentBlock[], source?: MessageSource): void;
@@ -279,6 +289,7 @@ function wakeActivity(toolName: string, input: unknown): string {
  * xterm/runner data path. Permissions are auto-allowed (parity with today).
  */
 export class ClaudeStructuredSessionManager extends EventEmitter implements IStructuredManager {
+  readonly repliesToQuestions = true;
   private sessions = new Map<string, Session>();
   private defaultEnv: Record<string, string> = {};
 
@@ -375,6 +386,11 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
           });
         }
       }
+      // The CLI dropped the request it was blocked on. Claude Code 2.1.296 sends this on an
+      // interrupt while a question is up, in the same millisecond as the interrupt's reply.
+      if (event?.type === 'control_cancel_request' && session.pending && event.request_id === session.pending.requestId) {
+        this.clearPending(terminalId, session);
+      }
       // Deliver the final frame before settle listeners close analytics or start another turn.
       this.emit('event', terminalId, { ...event, telemetry: { counterScope } });
       // Turn boundary: a `result` event ends the current turn. Three things can have
@@ -387,6 +403,9 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       // its coordinator — 'scheduled' and 'needs-help' must NOT do either (the agent hasn't
       // finished, or is waiting on the human, not filed as done).
       if (event?.type === 'result') {
+        // Backstop: a CLI blocked on a request cannot end a turn, so a pending still set here is
+        // stale. Cleared before the settle emits below, so the status sees it while the turn is open.
+        if (session.pending) this.clearPending(terminalId, session);
         const declared = session.declared;
         const wake = session.lastToolUse && WAKE_TOOLS.has(session.lastToolUse.name) ? session.lastToolUse : undefined;
         session.lastToolUse = undefined; // reset for the next turn
@@ -570,9 +589,19 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       type: 'control_response',
       response: { subtype: 'success', request_id: rid, response },
     });
+    this.clearPending(terminalId, s);
+    return true;
+  }
+
+  /**
+   * Drop the pending request and tell everyone. 'resolved' returns the status to working;
+   * 'permission-cleared' makes every viewer drop its card, even one that never sees a tool_result
+   * for it (a cancel, or a stale pending at a turn end).
+   */
+  private clearPending(terminalId: string, s: Session): void {
     s.pending = null;
     this.emit('resolved', terminalId);
-    return true;
+    this.emit('permission-cleared', terminalId);
   }
 
   /**
@@ -595,8 +624,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
         type: 'control_response',
         response: { subtype: 'success', request_id: rid, response: { behavior: 'allow', updatedInput } },
       });
-      s.pending = null;
-      this.emit('resolved', terminalId);
+      this.clearPending(terminalId, s);
     }
     return true;
   }
@@ -607,6 +635,8 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
    * control_responses. Mirrors how the CLI frames its own control_requests
    * (top-level `request_id` + `request.subtype`). The conversation stays alive and
    * can be steered/resumed afterwards. Returns false when there's no live session.
+   * A pending question needs nothing extra: the CLI answers the interrupt even while blocked,
+   * and sends a control_cancel_request for the pending request, which clears it (see spawn()).
    */
   interrupt(terminalId: string): boolean {
     const s = this.sessions.get(terminalId);

@@ -335,6 +335,59 @@ describe('agency-mcp', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/sessions/sess-1/terminals');
   });
 
+  it('list_agents shows the requestId of an agent\'s pending question', async () => {
+    const ok = (body: unknown) => ({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify(body) });
+    global.fetch = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/sessions/sess-1/terminals')) {
+        return ok([
+          { id: 'a1', label: 'one', status: 'working', config: { agentType: 'researcher' } },
+          { id: 'a2', label: 'two', status: 'idle', config: { agentType: 'planner' } },
+        ]);
+      }
+      if (String(url).endsWith('/terminals/a1/permission')) return ok({ requestId: 'req-9', toolName: 'AskUserQuestion', questions: [{ header: 'Choice', question: 'Which?' }] });
+      return ok(null);
+    }) as any;
+    const out = await callTool('list_agents', {});
+    expect(JSON.parse(out.content[0].text)).toEqual([
+      { id: 'a1', label: 'one', agentType: 'researcher', status: 'working', pendingQuestionRequestId: 'req-9' },
+      { id: 'a2', label: 'two', agentType: 'planner', status: 'idle' },
+    ]);
+  });
+
+  it('read_agent returns the pending question with its requestId, so answer_agent still works after the coordinator forgets the PAUSED notice', async () => {
+    const ok = (body: unknown) => ({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify(body) });
+    global.fetch = vi.fn(async (url: string) => {
+      if (String(url).includes('/conversation')) return ok({ items: [{ kind: 'assistant', text: 'Asking' }] });
+      if (String(url).endsWith('/terminals/a1/permission')) {
+        return ok({ requestId: 'req-9', toolName: 'AskUserQuestion', questions: [{ header: 'Choice', question: 'Which?', options: [{ label: 'A' }, { label: 'B' }] }] });
+      }
+      return ok({ id: 'a1', status: 'working' });
+    }) as any;
+    const out = await callTool('read_agent', { agentId: 'a1' });
+    expect(JSON.parse(out.content[0].text).pendingQuestion).toEqual({
+      requestId: 'req-9',
+      questions: [{ header: 'Choice', question: 'Which?', options: ['A', 'B'] }],
+    });
+  });
+
+  it('read_agent leaves pendingQuestion out for a plain gated tool or nothing pending', async () => {
+    const ok = (body: unknown) => ({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify(body) });
+    global.fetch = vi.fn(async (url: string) => {
+      if (String(url).includes('/conversation')) return ok({ items: [] });
+      if (String(url).endsWith('/permission')) return ok({ requestId: 'req-1', toolName: 'Bash' });
+      return ok({ id: 'a1', status: 'working' });
+    }) as any;
+    const out = await callTool('read_agent', { agentId: 'a1' });
+    expect(JSON.parse(out.content[0].text)).not.toHaveProperty('pendingQuestion');
+  });
+
+  it('answer_agent without a requestId points at read_agent', async () => {
+    global.fetch = vi.fn() as any;
+    const out = await callTool('answer_agent', { agentId: 'a1', answers: { Choice: 'A' } });
+    expect(out.isError).toBe(true);
+    expect(JSON.stringify(out.content)).toContain('read_agent');
+  });
+
   it('message_agent POSTs the text to the agent thread', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
     global.fetch = fetchMock as any;
@@ -342,6 +395,32 @@ describe('agency-mcp', () => {
     expect(out.isError).toBeUndefined();
     expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/terminals/a1/message');
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ text: 'focus on auth', source: 'coordinator' });
+  });
+
+  it('answer_agent passes the requestId with the answers', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
+    global.fetch = fetchMock as any;
+    const out = await callTool('answer_agent', { agentId: 'a1', requestId: 'req-7', answers: { Choice: 'A' } });
+    expect(out.isError).toBeUndefined();
+    expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/terminals/a1/permission');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ decision: 'allow', answers: { Choice: 'A' }, requestId: 'req-7' });
+  });
+
+  it('answer_agent requires a requestId and does not call the API without one', async () => {
+    const fetchMock = vi.fn();
+    global.fetch = fetchMock as any;
+    const out = await callTool('answer_agent', { agentId: 'a1', answers: { Choice: 'A' } });
+    expect(out.isError).toBe(true);
+    expect(JSON.stringify(out.content)).toContain('requestId is required');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('answer_agent errors when that requestId is no longer the pending question', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({ ok: false, status: 404, statusText: 'Not Found', text: async () => '{"error":"no pending permission"}' });
+    global.fetch = fetchMock as any;
+    const out = await callTool('answer_agent', { agentId: 'a1', requestId: 'req-old', answers: { Choice: 'A' } });
+    expect(out.isError).toBe(true);
+    expect(JSON.stringify(out.content)).toContain("(requestId req-old) is no longer pending. The user may have already answered it in the agent's chat.");
   });
 
   it('complete_agent archives a typed agent thread (DELETE) — role set, no force needed', async () => {

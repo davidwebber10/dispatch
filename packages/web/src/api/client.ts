@@ -18,6 +18,11 @@ export interface ResumeAdvice {
   shouldPrompt: boolean;
 }
 
+/** A failed API call. `status` lets a caller tell "that is gone" (404) from a real failure. */
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) { super(message); }
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(apiPath(path), {
     method: init?.method ?? 'GET',
@@ -29,7 +34,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     // a deleted file from a directory or a refused path.
     let detail = '';
     try { const b = await res.json(); if (typeof b?.error === 'string') detail = b.error; } catch { /* not JSON */ }
-    throw new Error(`${init?.method ?? 'GET'} ${path} failed: ${res.status}${detail ? ` — ${detail}` : ''}`);
+    throw new ApiError(`${init?.method ?? 'GET'} ${path} failed: ${res.status}${detail ? ` — ${detail}` : ''}`, res.status);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
@@ -144,7 +149,13 @@ export const api = {
   // The membrane: the gated tool/question a structured AGENT thread is blocked on (or null).
   getPermission: (terminalId: string) => req<PendingPermission | null>(`/api/terminals/${terminalId}/permission`),
   // Resolve it: allow (optionally with an AskUserQuestion answers map) or deny (with a message).
-  answerPermission: (terminalId: string, payload: { requestId?: string; decision: 'allow' | 'deny'; answers?: Record<string, string>; message?: string }) =>
+  // A chat reply to a pending question denies with `reply` (+ `imageCount` images sent next as
+  // their own turn) and needs the requestId: 404 = that question is gone, 409 = this harness
+  // can't take a reply. `canned` denies with a card's fixed Discuss or Dismiss text.
+  answerPermission: (terminalId: string, payload: {
+    requestId?: string; decision: 'allow' | 'deny'; answers?: Record<string, string>; message?: string;
+    reply?: string; imageCount?: number; canned?: 'discuss' | 'dismiss';
+  }) =>
     req<void>(`/api/terminals/${terminalId}/permission`, { method: 'POST', body: body(payload) }),
   // Autonomy dial: supervised (surface gated tools as Needs) ⇄ autonomous (auto-allow, run free).
   setAutonomy: (terminalId: string, mode: 'supervised' | 'autonomous') =>

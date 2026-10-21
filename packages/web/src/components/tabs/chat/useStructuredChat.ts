@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ConvItem, PendingPermission } from '../../../api/types';
 import { openStructuredSocket } from '../../../api/structured-socket';
-import { api, type ContentBlock } from '../../../api/client';
+import { api, ApiError, type ContentBlock } from '../../../api/client';
 import { sendFailureText } from '../../../lib/sendError';
 import { classifyUserText } from '../../../lib/taskNotification';
 
@@ -61,7 +61,18 @@ export interface StructuredChat {
   /** Answer the pending AskUserQuestion. `answers` is keyed by question TEXT →
    *  the chosen option label(s) (multi-select joined with ", "). Verified wire shape
    *  against real `claude --permission-prompt-tool stdio`. */
-  answer: (answers: Record<string, string>) => void;
+  /** Returns false when the answer was dropped because a reply or Dismiss is in flight. */
+  answer: (answers: Record<string, string>) => void | boolean;
+  /** A chat reply to the pending question: the text rides a deny, images follow as their own
+   *  turn. Falls back to a normal send on 404/409. Rejects on any other failure, card kept. */
+  /** Resolves false when the reply went out as a normal turn and the question is still open (409, e.g. Codex). */
+  replyToQuestion: (content: string | ContentBlock[]) => Promise<boolean>;
+  /** The card's empty Discuss or Dismiss: deny with the daemon's fixed text. Rejects on failure. */
+  denyQuestion: (action: 'discuss' | 'dismiss') => Promise<void>;
+  /** replyToQuestion / denyQuestion for the card's own buttons, with failures shown in the timeline. */
+  /** Resolve true when the reply went out, false when it failed (the failure is already in the timeline). */
+  replyFromCard: (text: string) => Promise<boolean>;
+  denyFromCard: (action: 'discuss' | 'dismiss') => Promise<boolean>;
   /** Trigger native Claude Code compaction on this thread (no chat bubble is added). */
   compact: () => void;
   /** Whether an older page of history is believed to exist above the current window.
@@ -576,9 +587,15 @@ export function useStructuredChat(
         // Escalation frame (ws/structured.ts) — an AskUserQuestion / gated tool the CLI
         // is blocked on. Surface it for the interactive card and stop the "Working…"
         // spinner: we're now waiting on the HUMAN, not the model. Answering resumes busy.
+        // A null frame only says the pending went away (answered, cancelled, stale). It leaves
+        // busy alone: after a reply the turn is running, and the spinner must not flicker off.
         if (type === 'permission') {
-          setPending((event.pending as PendingPermission) ?? null);
-          setBusy(false);
+          if (event.pending) {
+            setPending(event.pending as PendingPermission);
+            setBusy(false);
+          } else {
+            setPending(null);
+          }
           return;
         }
 
@@ -820,6 +837,9 @@ export function useStructuredChat(
         if (type === 'result') {
           flushNow(); // land any buffered trailing tokens before the footer
           setBusy(false);
+          // A CLI blocked on a question cannot end a turn, so any card still up is stale. On
+          // replay the server re-sends a live pending after the ring, so this never hides one.
+          setPending(null);
           clearApiRetry(); // turn over — either recovered or gave up with an error result
           // Synthetic result from backfillEventsFromTranscript (see cc-sessions.ts): Claude
           // Code transcripts never write a real trailing `result` line, so a revived
@@ -849,22 +869,94 @@ export function useStructuredChat(
     };
   }, [terminalId, setPending]);
 
+  // How many question actions (a chat reply, Discuss, Dismiss, or Submit) are in flight. Submit is
+  // dropped while any other is, so two answers to one question cannot race and a losing Submit
+  // cannot bring the old card back.
+  const questionActionsRef = useRef(0);
+
+  // A chat reply while a question is pending answers THAT question: the
+  // text rides a deny the model reads as the question's result, once, never as its own turn.
+  // Images can't ride a deny, so they follow as an images-only turn AFTER the deny lands.
+  // The card is not cleared up front: the server's tool_result and null frame clear it. When
+  // the question is gone (404) or this harness can't take a reply (409, e.g. Codex), the reply
+  // goes out as a normal turn, today's behavior, and the card stays as the server reports it.
+  // Any other failure keeps the card, sends nothing, and rejects so the caller can show it.
+  const replyToQuestion = useCallback(async (content: string | ContentBlock[]): Promise<boolean> => {
+    const p = permissionRef.current;
+    if (!terminalId || !p?.questions?.length) return true;
+    const blocks = typeof content === 'string' ? [{ type: 'text', text: content } as ContentBlock] : content;
+    const text = blocks.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('\n').trim();
+    const images = blocks.filter((b) => b.type === 'image');
+    if (!text && !images.length) return true;
+    setBusy(true);
+    questionActionsRef.current++;
+    try {
+      await api.answerPermission(terminalId, { requestId: p.requestId, decision: 'deny', reply: text, imageCount: images.length });
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 404 || err.status === 409)) {
+        try { await api.sendStructuredMessage(terminalId, content); } catch (sendErr) { setBusy(false); throw sendErr; }
+        // A 404 means the server closed the question. A 409 means this harness never took the reply,
+        // so the question is still open and the card must stay usable.
+        return err.status !== 409;
+      }
+      setBusy(false);
+      throw err;
+    } finally {
+      questionActionsRef.current--;
+    }
+    if (permissionRef.current?.requestId === p.requestId) setPending(null);
+    if (images.length) await api.sendStructuredMessage(terminalId, images);
+    return true;
+  }, [terminalId, setPending]);
+
+  // A card's Discuss with no text, or Dismiss: deny the question with the daemon's fixed text.
+  // Same contract as replyToQuestion: no optimistic clear, and a failure keeps the card.
+  const denyQuestion = useCallback(async (action: 'discuss' | 'dismiss'): Promise<void> => {
+    const p = permissionRef.current;
+    if (!terminalId || !p) return;
+    setBusy(true);
+    questionActionsRef.current++;
+    try {
+      await api.answerPermission(terminalId, { requestId: p.requestId, decision: 'deny', canned: action });
+    } catch (err) {
+      setBusy(false);
+      throw err;
+    } finally {
+      questionActionsRef.current--;
+    }
+    if (permissionRef.current?.requestId === p.requestId) setPending(null);
+  }, [terminalId, setPending]);
+
+  // Surface a failed send in the timeline and stop the spinner (P0c).
+  const showSendFailure = useCallback((err: unknown) => {
+    setBusy(false);
+    setItems((p) => [...p, { kind: 'result', isError: true, text: sendFailureText(err) }]);
+  }, []);
+
   const send = useCallback((content: string | ContentBlock[]) => {
     // A string turn is trimmed + empty-guarded as before; a block turn (e.g. an image)
     // just needs at least one block. Both flow through the SAME widened API.
     const payload = typeof content === 'string' ? content.trim() : content;
     const empty = typeof payload === 'string' ? !payload : payload.length === 0;
     if (empty || !terminalId) return;
+    // A pending question takes the reply. A plain gated tool does not: that stays a normal send.
+    if (permissionRef.current?.questions?.length) {
+      replyToQuestion(payload).catch(showSendFailure);
+      return;
+    }
     // No optimistic user bubble: the backend echoes the turn as a `user` event (text or
     // image blocks, surviving reconnect replay), so an optimistic append would double up.
     setBusy(true);
-    api.sendStructuredMessage(terminalId, payload).catch((err) => {
-      // P0c: the POST rejects (e.g. the claude process died → 400) — surface it and
-      // stop spinning instead of leaving "Working…" forever.
-      setBusy(false);
-      setItems((p) => [...p, { kind: 'result', isError: true, text: sendFailureText(err) }]);
-    });
-  }, [terminalId]);
+    // P0c: the POST rejects (e.g. the claude process died → 400) — surface it and
+    // stop spinning instead of leaving "Working…" forever.
+    api.sendStructuredMessage(terminalId, payload).catch(showSendFailure);
+  }, [terminalId, replyToQuestion, showSendFailure]);
+
+  // The card's own Discuss (with text) and Dismiss buttons. Errors land in the timeline.
+  const replyFromCard = useCallback((text: string): Promise<boolean> =>
+    replyToQuestion(text).then((settled) => settled, (err) => { showSendFailure(err); return false; }), [replyToQuestion, showSendFailure]);
+  const denyFromCard = useCallback((action: 'discuss' | 'dismiss'): Promise<boolean> =>
+    denyQuestion(action).then(() => true, (err) => { showSendFailure(err); return false; }), [denyQuestion, showSendFailure]);
 
   // Answer the pending AskUserQuestion. `answers` is keyed by question TEXT → the chosen
   // option label(s). We fire the REST call (the ws has no inbound channel), clear the card
@@ -872,13 +964,18 @@ export function useStructuredChat(
   const answer = useCallback((answers: Record<string, string>) => {
     const p = permissionRef.current;
     if (!p || !terminalId) return;
+    // A chat reply, Discuss or Dismiss for this question is already in flight: it decides the question.
+    if (questionActionsRef.current > 0) return false;
+    questionActionsRef.current++;
     setPending(null);
     setBusy(true);
-    api.answerPermission(terminalId, { requestId: p.requestId, decision: 'allow', answers }).catch(() => {
-      // The POST failed (e.g. the process died) — re-surface the question so it isn't lost.
+    api.answerPermission(terminalId, { requestId: p.requestId, decision: 'allow', answers }).catch((err) => {
+      // 404: another answer won, or the question is gone. The server's frames settle the card, so do not
+      // put the old one back. Any other failure (e.g. the process died) re-surfaces it so it isn't lost.
+      if (err instanceof ApiError && err.status === 404) return;
       setBusy(false);
       setPending(p);
-    });
+    }).finally(() => { questionActionsRef.current--; });
   }, [terminalId, setPending]);
 
   // Trigger native compaction. No optimistic state change: the CLI's own system/status
@@ -984,5 +1081,8 @@ export function useStructuredChat(
     // body reads nothing from it.
   }, [terminalId, anchorRetry]);
 
-  return { items, busy, model, contextTokens, contextWindow, compacting, compactResult, apiRetry, send, pending, answer, compact, hasMore, loadingOlder, loadOlder };
+  return {
+    items, busy, model, contextTokens, contextWindow, compacting, compactResult, apiRetry, send, pending, answer,
+    replyToQuestion, denyQuestion, replyFromCard, denyFromCard, compact, hasMore, loadingOlder, loadOlder,
+  };
 }
