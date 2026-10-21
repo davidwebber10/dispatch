@@ -32,8 +32,9 @@ function truncate(s: string, n: number): string {
 export function AskQuestionCard({ questions, onAnswer, onReply, onDeny }: {
   questions: PermissionQuestion[];
   onAnswer: (answers: Record<string, string>) => void;
-  onReply?: (text: string) => void;
-  onDeny?: (action: 'discuss' | 'dismiss') => void;
+  /** May return a promise: resolving false means the reply failed, and the card unlocks for another try. */
+  onReply?: (text: string) => void | Promise<boolean>;
+  onDeny?: (action: 'discuss' | 'dismiss') => void | Promise<boolean>;
 }) {
   // question index → chosen labels (single-select holds 0..1; multi-select holds 0..n).
   const [sel, setSel] = useState<Record<number, string[]>>({});
@@ -82,15 +83,24 @@ export function AskQuestionCard({ questions, onAnswer, onReply, onDeny }: {
     if (!on && !multi) setSel((prev) => ({ ...prev, [qi]: [] }));
   };
 
+  // Lock the whole card while a Dismiss, Discuss or typed reply is in flight, so Submit cannot race it.
+  // A handler that settles false (or rejects) means nothing was sent, so the card unlocks to try again.
+  const lockWhile = (result: void | Promise<boolean>) => {
+    setSubmitted(true);
+    if (result && typeof (result as Promise<boolean>).then === 'function') {
+      (result as Promise<boolean>).then((ok) => { if (ok === false) setSubmitted(false); }, () => setSubmitted(false));
+    }
+  };
+
   const deny = (action: 'discuss' | 'dismiss') => {
     if (submitted) return;
-    setSubmitted(true);
-    onDeny?.(action);
+    lockWhile(onDeny?.(action));
   };
 
   const sendDiscuss = () => {
+    if (submitted) return;
     const text = discussText.trim();
-    if (text) onReply?.(text); else deny('discuss');
+    if (text) lockWhile(onReply?.(text)); else deny('discuss');
     setDiscussOpen(false);
     setDiscussText('');
   };

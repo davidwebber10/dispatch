@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import { test, expect, vi, describe } from 'vitest';
 import { AskQuestionCard, AnsweredQuestionCard } from './AskQuestionCard';
 import { QUESTION_REPLY_PREFIX, parseQuestionReply } from './questionReply';
@@ -60,6 +60,9 @@ test('Discuss with text calls onReply; Discuss with nothing typed asks for more 
   fireEvent.change(screen.getByLabelText('Discuss the question'), { target: { value: 'Neither, why not C?' } });
   fireEvent.click(screen.getByRole('button', { name: 'Send' }));
   expect(onReply).toHaveBeenCalledWith('Neither, why not C?');
+  expect(onDeny).not.toHaveBeenCalled();
+  cleanup();
+  render(<AskQuestionCard questions={questions} onAnswer={() => {}} onReply={onReply} onDeny={onDeny} />);
   fireEvent.click(screen.getByRole('button', { name: 'Discuss' }));
   fireEvent.click(screen.getByRole('button', { name: 'Send' }));
   expect(onDeny).toHaveBeenCalledWith('discuss');
@@ -89,6 +92,31 @@ test('a Dismiss or empty Discuss locks the card, so a second tap cannot post twi
   expect(onDeny).toHaveBeenCalledTimes(1);
   expect(dismiss.disabled).toBe(true);
   expect((screen.getByRole('button', { name: 'Discuss' }) as HTMLButtonElement).disabled).toBe(true);
+});
+
+test('a Dismiss that fails unlocks the card, so the user can try again', async () => {
+  const onDeny = vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true);
+  render(<AskQuestionCard questions={[{ question: 'Q?', header: 'H', options: ['A'] }]} onAnswer={() => {}} onDeny={onDeny} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+  expect((screen.getByRole('button', { name: 'Dismiss' }) as HTMLButtonElement).disabled).toBe(true);
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Dismiss' }) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+  expect(onDeny).toHaveBeenCalledTimes(2);
+});
+
+test('Discuss with text locks Submit while the reply is in flight, and unlocks it if the reply fails', async () => {
+  const onAnswer = vi.fn();
+  const onReply = vi.fn().mockResolvedValue(false);
+  render(<AskQuestionCard questions={[{ question: 'Q?', header: 'H', options: ['A'] }]} onAnswer={onAnswer} onReply={onReply} />);
+  fireEvent.click(screen.getByRole('button', { name: /^A/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Discuss' }));
+  fireEvent.change(screen.getByLabelText('Discuss the question'), { target: { value: 'What about B?' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+  expect(onReply).toHaveBeenCalledWith('What about B?');
+  expect((screen.getByRole('button', { name: /Submit|Sent/ }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: /Submit|Sent/ }));
+  expect(onAnswer).not.toHaveBeenCalled();
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Submit' }) as HTMLButtonElement).disabled).toBe(false));
 });
 
 test('multi-select accumulates picks and joins labels with ", " on Submit', () => {

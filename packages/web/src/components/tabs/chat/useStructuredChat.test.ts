@@ -528,6 +528,51 @@ test('denyFromCard posts the canned action with the requestId', async () => {
   expect(result.current.pending).toBeNull();
 });
 
+test('a Submit while a chat reply is in flight is ignored, so the two cannot race', async () => {
+  let release!: () => void;
+  const answer = vi.spyOn(api, 'answerPermission').mockImplementation(() => new Promise<void>((r) => { release = r; }) as any);
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'permission', pending: QUESTION }));
+  act(() => { result.current.send('Neither.'); });
+  act(() => { result.current.answer({ 'Pick one': 'A' }); });
+  expect(answer).toHaveBeenCalledTimes(1);
+  expect(answer).toHaveBeenCalledWith('t1', expect.objectContaining({ decision: 'deny', reply: 'Neither.' }));
+  expect(result.current.pending).not.toBeNull(); // Submit did not clear the card
+  release();
+  await settle();
+});
+
+test('a Submit that loses to another answer (404) does not bring the old card back', async () => {
+  vi.spyOn(api, 'answerPermission').mockRejectedValue(new ApiError('gone', 404));
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'permission', pending: QUESTION }));
+  act(() => { result.current.answer({ 'Pick one': 'A' }); });
+  await settle();
+  expect(result.current.pending).toBeNull();
+});
+
+test('a Submit that fails for another reason still brings the card back', async () => {
+  vi.spyOn(api, 'answerPermission').mockRejectedValue(new ApiError('boom', 500));
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'permission', pending: QUESTION }));
+  act(() => { result.current.answer({ 'Pick one': 'A' }); });
+  await settle();
+  expect(result.current.pending?.requestId).toBe('req-9');
+});
+
+test('replyFromCard and denyFromCard resolve true on success and false on failure', async () => {
+  const answer = vi.spyOn(api, 'answerPermission').mockResolvedValueOnce(undefined as any).mockRejectedValueOnce(new ApiError('boom', 500));
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'permission', pending: QUESTION }));
+  let ok: boolean | undefined;
+  await act(async () => { ok = await result.current.denyFromCard('dismiss'); });
+  expect(ok).toBe(true);
+  act(() => cbs.onEvent({ type: 'permission', pending: QUESTION }));
+  await act(async () => { ok = await result.current.replyFromCard('hmm'); });
+  expect(ok).toBe(false);
+  expect(answer).toHaveBeenCalledTimes(2);
+});
+
 test('a null permission frame clears the card and leaves busy alone', () => {
   vi.spyOn(api, 'sendStructuredMessage').mockResolvedValue(undefined as any);
   const { result } = renderHook(() => useStructuredChat('t1'));

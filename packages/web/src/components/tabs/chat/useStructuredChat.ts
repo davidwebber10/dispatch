@@ -68,8 +68,9 @@ export interface StructuredChat {
   /** The card's empty Discuss or Dismiss: deny with the daemon's fixed text. Rejects on failure. */
   denyQuestion: (action: 'discuss' | 'dismiss') => Promise<void>;
   /** replyToQuestion / denyQuestion for the card's own buttons, with failures shown in the timeline. */
-  replyFromCard: (text: string) => void;
-  denyFromCard: (action: 'discuss' | 'dismiss') => void;
+  /** Resolve true when the reply went out, false when it failed (the failure is already in the timeline). */
+  replyFromCard: (text: string) => Promise<boolean>;
+  denyFromCard: (action: 'discuss' | 'dismiss') => Promise<boolean>;
   /** Trigger native Claude Code compaction on this thread (no chat bubble is added). */
   compact: () => void;
   /** Whether an older page of history is believed to exist above the current window.
@@ -866,9 +867,14 @@ export function useStructuredChat(
     };
   }, [terminalId, setPending]);
 
-  // A chat reply while a question is pending answers THAT question (owner decision N1): the
+  // How many question actions (a chat reply, Discuss, Dismiss, or Submit) are in flight. Submit is
+  // dropped while any other is, so two answers to one question cannot race and a losing Submit
+  // cannot bring the old card back.
+  const questionActionsRef = useRef(0);
+
+  // A chat reply while a question is pending answers THAT question: the
   // text rides a deny the model reads as the question's result, once, never as its own turn.
-  // Images can't ride a deny, so they follow as an images-only turn AFTER the deny lands (N5).
+  // Images can't ride a deny, so they follow as an images-only turn AFTER the deny lands.
   // The card is not cleared up front: the server's tool_result and null frame clear it. When
   // the question is gone (404) or this harness can't take a reply (409, e.g. Codex), the reply
   // goes out as a normal turn, today's behavior, and the card stays as the server reports it.
@@ -881,6 +887,7 @@ export function useStructuredChat(
     const images = blocks.filter((b) => b.type === 'image');
     if (!text && !images.length) return;
     setBusy(true);
+    questionActionsRef.current++;
     try {
       await api.answerPermission(terminalId, { requestId: p.requestId, decision: 'deny', reply: text, imageCount: images.length });
     } catch (err) {
@@ -890,6 +897,8 @@ export function useStructuredChat(
       }
       setBusy(false);
       throw err;
+    } finally {
+      questionActionsRef.current--;
     }
     if (permissionRef.current?.requestId === p.requestId) setPending(null);
     if (images.length) await api.sendStructuredMessage(terminalId, images);
@@ -901,11 +910,14 @@ export function useStructuredChat(
     const p = permissionRef.current;
     if (!terminalId || !p) return;
     setBusy(true);
+    questionActionsRef.current++;
     try {
       await api.answerPermission(terminalId, { requestId: p.requestId, decision: 'deny', canned: action });
     } catch (err) {
       setBusy(false);
       throw err;
+    } finally {
+      questionActionsRef.current--;
     }
     if (permissionRef.current?.requestId === p.requestId) setPending(null);
   }, [terminalId, setPending]);
@@ -936,8 +948,10 @@ export function useStructuredChat(
   }, [terminalId, replyToQuestion, showSendFailure]);
 
   // The card's own Discuss (with text) and Dismiss buttons. Errors land in the timeline.
-  const replyFromCard = useCallback((text: string) => { replyToQuestion(text).catch(showSendFailure); }, [replyToQuestion, showSendFailure]);
-  const denyFromCard = useCallback((action: 'discuss' | 'dismiss') => { denyQuestion(action).catch(showSendFailure); }, [denyQuestion, showSendFailure]);
+  const replyFromCard = useCallback((text: string): Promise<boolean> =>
+    replyToQuestion(text).then(() => true, (err) => { showSendFailure(err); return false; }), [replyToQuestion, showSendFailure]);
+  const denyFromCard = useCallback((action: 'discuss' | 'dismiss'): Promise<boolean> =>
+    denyQuestion(action).then(() => true, (err) => { showSendFailure(err); return false; }), [denyQuestion, showSendFailure]);
 
   // Answer the pending AskUserQuestion. `answers` is keyed by question TEXT → the chosen
   // option label(s). We fire the REST call (the ws has no inbound channel), clear the card
@@ -945,13 +959,18 @@ export function useStructuredChat(
   const answer = useCallback((answers: Record<string, string>) => {
     const p = permissionRef.current;
     if (!p || !terminalId) return;
+    // A chat reply, Discuss or Dismiss for this question is already in flight: it decides the question.
+    if (questionActionsRef.current > 0) return;
+    questionActionsRef.current++;
     setPending(null);
     setBusy(true);
-    api.answerPermission(terminalId, { requestId: p.requestId, decision: 'allow', answers }).catch(() => {
-      // The POST failed (e.g. the process died) — re-surface the question so it isn't lost.
+    api.answerPermission(terminalId, { requestId: p.requestId, decision: 'allow', answers }).catch((err) => {
+      // 404: another answer won, or the question is gone. The server's frames settle the card, so do not
+      // put the old one back. Any other failure (e.g. the process died) re-surfaces it so it isn't lost.
+      if (err instanceof ApiError && err.status === 404) return;
       setBusy(false);
       setPending(p);
-    });
+    }).finally(() => { questionActionsRef.current--; });
   }, [terminalId, setPending]);
 
   // Trigger native compaction. No optimistic state change: the CLI's own system/status
