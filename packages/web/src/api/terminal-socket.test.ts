@@ -266,6 +266,25 @@ describe('replay meta', () => {
     sock.close();
   });
 
+  test('passes hasReplay through, and leaves it out when an older daemon does not send it', () => {
+    const metas: ReplayMeta[] = [];
+    let ws!: FakeTermWS;
+    const sock = openTerminalSocket({ terminalId: 't1', onData: () => {}, onMeta: (m) => metas.push(m), wsFactory: () => (ws = new FakeTermWS()) });
+    ws.onopen!();
+    ws.onmessage!({ data: metaFrame({ hasReplay: false } as Partial<ReplayMeta>) });
+    expect(metas[0].hasReplay).toBe(false);
+    ws.onclose!();
+    sock.close();
+
+    const older: ReplayMeta[] = [];
+    let ws2!: FakeTermWS;
+    const sock2 = openTerminalSocket({ terminalId: 't1', onData: () => {}, onMeta: (m) => older.push(m), wsFactory: () => (ws2 = new FakeTermWS()) });
+    ws2.onopen!();
+    ws2.onmessage!({ data: metaFrame() });
+    expect('hasReplay' in older[0]).toBe(false);
+    sock2.close();
+  });
+
   test('only the FIRST frame of a connection is examined — later meta-shaped output stays data', () => {
     const chunks: string[] = [];
     const metas: ReplayMeta[] = [];

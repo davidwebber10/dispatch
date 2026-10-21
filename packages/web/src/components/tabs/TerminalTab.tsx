@@ -18,6 +18,7 @@ import { useSettings } from '../../stores/settings';
 import { useDictation } from '../../hooks/useDictation';
 import { DictationControl } from '../dictation/DictationControl';
 import { InputActionsMenu } from '../dictation/InputActionsMenu';
+import { createWriteGate, suppressReplayedQueries } from '../../lib/replayQueries';
 import { consumePageTicks, shouldPtyScroll } from '../../lib/ptyWheel';
 import { findTerminal, useTabs } from '../../stores/tabs';
 
@@ -281,6 +282,22 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
     // history. The rebuild path owns its own anchor restore (finishRebuild) and never routes
     // through here, so the two can't fight.
     let pinNextReplay = true;
+    // Every write goes through the gate, which knows whether the write xterm is parsing right now
+    // is a REPLAY (the ring-buffer history a connection opens with). The history holds every
+    // colour, cursor and device query the CLI ever sent. Their answers were consumed long ago, so
+    // answering them again makes the CLI read the reply as typing. The handlers below make xterm
+    // skip its own answer while a replay parses; live queries are answered as before.
+    //
+    // Known limit: a query that is still unanswered at the very end of a replay (a CLI that
+    // started before any viewer attached) is not answered either. The replay cannot tell it from
+    // one whose answer was consumed, and answering a stale one is the bug this fixes.
+    // The same goes for a query the CLI sent in the short window of a progressive-scrollback rebuild.
+    const gate = createWriteGate(term);
+    const stopSuppressingReplayQueries = suppressReplayedQueries(term, gate.parsingReplay);
+    // The server sends no replay frame when its ring is empty (a new thread, a revived one). Then
+    // the first frame is LIVE: the CLI's startup queries, which must be answered. An older daemon
+    // does not say, so it keeps the rule that the first frame is the replay.
+    const noReplayFollows = (m: { hasReplay?: boolean }) => { if (m.hasReplay === false) pinNextReplay = false; };
     // True while a reprint that began with a scrollback clear is still arriving and the reader
     // was at the bottom when it began (see SCROLLBACK_CLEAR).
     let followReprint = false;
@@ -317,9 +334,10 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
         // In the write CALLBACK: xterm parses asynchronously, so scrolling synchronously after
         // write() would target the PRE-write buffer and land short of the end. A reprint follow
         // that the reader ended in the meantime does not pin.
-        term.write(chunk, () => { if (!disposed && (pinReplay || followReprint)) scrollToEndRef.current(); });
+        const afterWrite = () => { if (!disposed && (pinReplay || followReprint)) scrollToEndRef.current(); };
+        gate.write(chunk, pinReplay, afterWrite);
       } else {
-        term.write(chunk);
+        gate.write(chunk, false);
       }
       if (!gotData) {
         gotData = true;
@@ -393,7 +411,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
         if (disposed || settled) return;
         if (pendingNew.length === 0) { finishRebuild(); return; }
         const chunk = pendingNew.shift()!;
-        term.write(chunk, drainPending);
+        gate.write(chunk, false, drainPending);
       };
 
       const finishRebuild = () => {
@@ -450,7 +468,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
         // or the terminal is going away — replaying here would duplicate or waste.
         // Written before `rebuilding` clears, so xterm's ordered write queue keeps these
         // ahead of any frame that lands immediately after.
-        if (opts?.recoverBuffered) for (const chunk of pendingOld) term.write(chunk);
+        if (opts?.recoverBuffered) for (const chunk of pendingOld) gate.write(chunk, false);
         pendingOld = [];
         pendingNew = [];
         rebuilding = false;
@@ -478,7 +496,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
           if (disposed || aborted) return;
           // Already promoted to primary — this is a later reconnect's replay, which
           // replaces the view wholesale, so its offset is what's now on screen.
-          if (settled) { displayedStartOffset = m.startOffset; return; }
+          if (settled) { displayedStartOffset = m.startOffset; noReplayFollows(m); return; }
           // A window that starts at or after what we already show contains nothing
           // older. Rebuilding would reset the screen and jump the viewport to buy
           // the reader exactly zero extra history, so keep the current view and
@@ -500,7 +518,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
             oldLength = term.buffer.active.length;
             oldViewportY = term.buffer.active.viewportY;
             term.reset();
-            term.write(chunk, drainPending);
+            gate.write(chunk, true, drainPending);
             return;
           }
           if (rebuilding) { pendingNew.push(chunk); return; }
@@ -569,7 +587,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
       size: currentSize,
       // This socket owns the view, so its replay window IS what the reader sees —
       // on the first connect and again after every reconnect-driven replay.
-      onMeta: (m) => { if (!disposed) displayedStartOffset = m.startOffset; },
+      onMeta: (m) => { if (disposed) return; displayedStartOffset = m.startOffset; noReplayFollows(m); },
       onData: (chunk) => {
         if (disposed) return;
         if (rebuilding) { pendingOld.push(chunk); return; }
@@ -799,6 +817,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
       vp0?.removeEventListener('scroll', onViewportScroll);
       offScroll.dispose();
       offRender.dispose();
+      stopSuppressingReplayQueries();
       ro?.disconnect();
       window.removeEventListener('resize', scheduleFit);
       vv?.removeEventListener('resize', scheduleFit);

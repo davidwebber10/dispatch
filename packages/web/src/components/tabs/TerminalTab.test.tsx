@@ -23,6 +23,49 @@ vi.mock('@xterm/xterm', () => {
     scrolledLines = 0;
     dataHandler: ((d: string) => void) | null = null;
     private scrollHandlers: Array<() => void> = [];
+    // Minimal stand-in for xterm's parser: registered handlers run before the built-in ones, and
+    // write() below answers any query a handler did not swallow, like real xterm. It runs when
+    // the write is PARSED (a microtask), so a handler sees the state of that moment.
+    csiHandlers: Array<{ id: { prefix?: string; intermediates?: string; final: string }; cb: (p: number[]) => boolean }> = [];
+    oscHandlers: Array<{ ident: number; cb: (d: string) => boolean }> = [];
+    dcsHandlers: Array<{ id: { intermediates?: string; final: string }; cb: (d: string) => boolean }> = [];
+    parser = {
+      registerCsiHandler: (id: { prefix?: string; intermediates?: string; final: string }, cb: (p: number[]) => boolean) => {
+        const h = { id, cb }; this.csiHandlers.push(h);
+        return { dispose: () => { this.csiHandlers = this.csiHandlers.filter((x) => x !== h); } };
+      },
+      registerOscHandler: (ident: number, cb: (d: string) => boolean) => {
+        const h = { ident, cb }; this.oscHandlers.push(h);
+        return { dispose: () => { this.oscHandlers = this.oscHandlers.filter((x) => x !== h); } };
+      },
+      registerDcsHandler: (id: { intermediates?: string; final: string }, cb: (d: string) => boolean) => {
+        const h = { id, cb }; this.dcsHandlers.push(h);
+        return { dispose: () => { this.dcsHandlers = this.dcsHandlers.filter((x) => x !== h); } };
+      },
+    };
+    private answerQueries(data: string) {
+      const reply = (r: string) => this.dataHandler?.(r);
+      for (const m of data.matchAll(/\x1b\](\d+);([^\x07\x1b]*)\x07|\x1b\[([?>]?)([\d;]*)(\$?)([a-z])|\x1bP\$q[^\x1b]*\x1b\\/g)) {
+        if (m[1]) { // OSC: a colour query is every slot "?"
+          const ident = Number(m[1]);
+          if (!this.oscHandlers.some((h) => h.ident === ident && h.cb(m[2]))) {
+            if (m[2].split(';').every((x) => x === '?')) reply(`\x1b]${ident};rgb:1e1e/1e1e/1e1e\x07`);
+          }
+        } else if (m[6]) { // CSI
+          const [, , , prefix, args, inter, final] = m;
+          const params = args ? args.split(';').map(Number) : [0];
+          if (this.csiHandlers.some((h) => (h.id.prefix ?? '') === prefix && (h.id.intermediates ?? '') === inter && h.id.final === final && h.cb(params))) continue;
+          const key = `${prefix}${inter}${final}`;
+          if (key === 'n' && params[0] === 6) reply('\x1b[12;34R');
+          else if (key === 'n' && params[0] === 5) reply('\x1b[0n');
+          else if (key === '?n' && params[0] === 6) reply('\x1b[?12;34R');
+          else if ((key === 'c' || key === '>c') && !(params[0] > 0)) reply(key === 'c' ? '\x1b[?1;2c' : '\x1b[>0;276;0c');
+          else if (key === '$p' || key === '?$p') reply(`\x1b[${prefix}${params[0]};2$y`);
+        } else { // DCS $ q
+          if (!this.dcsHandlers.some((h) => h.id.intermediates === '$' && h.id.final === 'q' && h.cb(''))) reply('\x1bP1$r0m\x1b\\');
+        }
+      }
+    }
     constructor() { instances.push(this); }
     // Clipboard surface for the custom key handler (Ctrl+C copy / Ctrl+V release):
     // tests place a selection with `selection` and drive `keyHandler` directly.
@@ -53,6 +96,7 @@ vi.mock('@xterm/xterm', () => {
     write(data: string, cb?: () => void) {
       this.written.push(data);
       queueMicrotask(() => {
+        this.answerQueries(data);
         this.buffer.active.length += data.length;
         this.buffer.active.baseY = Math.max(0, this.buffer.active.length - this.rows);
         cb?.();
@@ -77,7 +121,7 @@ import { useThreadStatus } from '../../stores/threadStatus';
 import { INITIAL_REPLAY_MOBILE, MAX_REPLAY, nextReplayStep } from '../../api/terminal-socket';
 import { PAGE_UP, WHEEL_UP } from '../../lib/ptyWheel';
 
-type FakeMeta = { startOffset: number; totalWritten: number; complete: boolean };
+type FakeMeta = { startOffset: number; totalWritten: number; complete: boolean; hasReplay?: boolean };
 type FakeOpts = { terminalId: string; replayBytes?: number; onData: (c: string) => void; onMeta?: (m: FakeMeta) => void; onReset?: () => void; onClose?: () => void };
 
 function makeSocketFactory() {
@@ -1211,4 +1255,133 @@ test('the ask strip and the footer render below the terminal frame, inside the t
   expect(footer).toContainElement(getByTestId('footer-x'));
   expect(frame.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   useThreadStatus.setState({ byTerminal: {} } as any);
+});
+
+// A replayed ring buffer holds every colour and cursor query the CLI ever sent. Answering
+// them again feeds the CLI replies it no longer expects, which it reads as typed text.
+// (lib/replayQueries.test.ts runs the same suppression against the real xterm parser.)
+const QUERIES = 'before\x1b]11;?\x07mid\x1b[6nafter';
+const isReply = (c: unknown) => typeof c === 'string' && (c.startsWith('\x1b]11;rgb') || /R$/.test(c));
+const replies = (created: { send: Mock }) => created.send.mock.calls.map((c: unknown[]) => c[0]).filter(isReply);
+
+test('queries inside the replay frame are not answered, but a later live query is', async () => {
+  const { factory, created } = makeSocketFactory();
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+  const term = instances[instances.length - 1];
+
+  act(() => { created[0].opts.onMeta?.(meta(0, { hasReplay: true })); });
+  act(() => { created[0].opts.onData(QUERIES); });
+  await tick();
+  expect(term.written).toContain(QUERIES);
+  expect(replies(created[0])).toEqual([]);
+
+  // The replay write has been parsed, so a live query is answered again.
+  act(() => { created[0].opts.onData('\x1b[6n'); });
+  await tick();
+  expect(created[0].send).toHaveBeenCalledWith('\x1b[12;34R');
+});
+
+test('typed keystrokes still reach the socket while a replay is parsing', async () => {
+  const { factory, created } = makeSocketFactory();
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+  const term = instances[instances.length - 1];
+  const realHandler = term.dataHandler;
+
+  act(() => { created[0].opts.onData(QUERIES); });
+  realHandler?.('ls -la\r');
+  await tick();
+  expect(created[0].send).toHaveBeenCalledWith('ls -la\r');
+  // and the replay's own queries were still held back while that happened
+  expect(replies(created[0])).toEqual([]);
+});
+
+test('an empty ring: the first live frame is the CLI\'s startup query and IS answered', async () => {
+  const { factory, created } = makeSocketFactory();
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  // The server says no replay follows, so the next frame is live.
+  act(() => { created[0].opts.onMeta?.(meta(0, { totalWritten: 0, complete: true, hasReplay: false })); });
+  act(() => { created[0].opts.onData('\x1b[6n\x1b]11;?\x07'); });
+  await tick();
+  expect(replies(created[0])).toEqual(['\x1b[12;34R', '\x1b]11;rgb:1e1e/1e1e/1e1e\x07']);
+});
+
+test('a daemon that does not say (no hasReplay) keeps the old rule: the first frame is the replay', async () => {
+  const { factory, created } = makeSocketFactory();
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  act(() => { created[0].opts.onMeta?.(meta(0)); });
+  act(() => { created[0].opts.onData(QUERIES); });
+  await tick();
+  expect(replies(created[0])).toEqual([]);
+});
+
+test('a reconnect with a replay holds its queries back; a reconnect with an empty ring does not', async () => {
+  const { factory, created } = makeSocketFactory();
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+  act(() => { created[0].opts.onMeta?.(meta(0, { hasReplay: true })); });
+  act(() => { created[0].opts.onData('first replay'); });
+  await tick();
+
+  act(() => { created[0].opts.onReset?.(); });
+  act(() => { created[0].opts.onMeta?.(meta(0, { hasReplay: true })); });
+  act(() => { created[0].opts.onData(QUERIES); });
+  await tick();
+  expect(replies(created[0])).toEqual([]);
+
+  act(() => { created[0].opts.onReset?.(); });
+  act(() => { created[0].opts.onMeta?.(meta(0, { totalWritten: 0, hasReplay: false })); });
+  act(() => { created[0].opts.onData('\x1b[6n'); });
+  await tick();
+  expect(replies(created[0])).toEqual(['\x1b[12;34R']);
+});
+
+test('replay, live query, replay: the live query queued between two replays is still answered', async () => {
+  const { factory, created } = makeSocketFactory();
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+  act(() => { created[0].opts.onMeta?.(meta(0, { hasReplay: true })); });
+
+  act(() => {
+    created[0].opts.onData(QUERIES);
+    created[0].opts.onData('\x1b[6n'); // live, queued while replay A is still unparsed
+    created[0].opts.onReset?.();
+    created[0].opts.onMeta?.(meta(0, { hasReplay: true }));
+    created[0].opts.onData(QUERIES); // replay B queued right behind it
+  });
+  await tick();
+  expect(replies(created[0])).toEqual(['\x1b[12;34R']);
+});
+
+test('a rebuild replay holds its queries back (the old socket\'s withheld frames are dropped, so no reply at all)', async () => {
+  isMobileMock.mockReturnValue(true);
+  (api.getScrollbackSize as Mock).mockResolvedValue(2_000_000);
+  const { factory, created } = makeSocketFactory();
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(created).toHaveLength(1));
+  act(() => { created[0].opts.onMeta?.(meta(5000, { hasReplay: true })); });
+  act(() => { created[0].opts.onData('INITIAL_REPLAY'); });
+  await waitFor(() => expect(api.getScrollbackSize).toHaveBeenCalledWith('t1'));
+  const term = instances[0];
+  await waitFor(() => {
+    term.buffer.active.viewportY = 0;
+    act(() => { term.fireScroll(); });
+    expect(created).toHaveLength(2);
+  });
+
+  act(() => { created[1].opts.onMeta?.(meta(1000, { hasReplay: true })); });
+  act(() => {
+    // The old socket's frames are withheld during the rebuild; none is written before the replay.
+    created[0].opts.onData('\x1b[6n');
+    created[1].opts.onData(QUERIES);
+  });
+  await waitFor(() => expect(created[0].close).toHaveBeenCalled());
+  await tick();
+  expect(replies(created[0])).toEqual([]);
+  expect(replies(created[1])).toEqual([]);
 });
