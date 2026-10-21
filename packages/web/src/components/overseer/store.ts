@@ -135,7 +135,7 @@ interface OverseerState {
   // agent ChatView. `coordinatorAnswer` is that hook's own answer() (stable per terminal); a
   // no-op until a pending is live.
   coordinatorPending: PendingPermission | null;
-  coordinatorAnswer: (answers: Record<string, string>) => void;
+  coordinatorAnswer: (answers: Record<string, string>) => void | boolean;
   /** That hook's replyToQuestion and denyQuestion: a chat reply, or the card's Discuss/Dismiss. */
   coordinatorReply: (content: string | ContentBlock[]) => Promise<void>;
   coordinatorDeny: (action: 'discuss' | 'dismiss') => Promise<void>;

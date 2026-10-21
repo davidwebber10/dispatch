@@ -61,7 +61,8 @@ export interface StructuredChat {
   /** Answer the pending AskUserQuestion. `answers` is keyed by question TEXT →
    *  the chosen option label(s) (multi-select joined with ", "). Verified wire shape
    *  against real `claude --permission-prompt-tool stdio`. */
-  answer: (answers: Record<string, string>) => void;
+  /** Returns false when the answer was dropped because a reply or Dismiss is in flight. */
+  answer: (answers: Record<string, string>) => void | boolean;
   /** A chat reply to the pending question: the text rides a deny, images follow as their own
    *  turn. Falls back to a normal send on 404/409. Rejects on any other failure, card kept. */
   replyToQuestion: (content: string | ContentBlock[]) => Promise<void>;
@@ -960,7 +961,7 @@ export function useStructuredChat(
     const p = permissionRef.current;
     if (!p || !terminalId) return;
     // A chat reply, Discuss or Dismiss for this question is already in flight: it decides the question.
-    if (questionActionsRef.current > 0) return;
+    if (questionActionsRef.current > 0) return false;
     questionActionsRef.current++;
     setPending(null);
     setBusy(true);

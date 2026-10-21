@@ -31,7 +31,8 @@ function truncate(s: string, n: number): string {
  */
 export function AskQuestionCard({ questions, onAnswer, onReply, onDeny }: {
   questions: PermissionQuestion[];
-  onAnswer: (answers: Record<string, string>) => void;
+  /** Returning false means the host dropped the answer (another action is in flight), so the card unlocks. */
+  onAnswer: (answers: Record<string, string>) => void | boolean;
   /** May return a promise: resolving false means the reply failed, and the card unlocks for another try. */
   onReply?: (text: string) => void | Promise<boolean>;
   onDeny?: (action: 'discuss' | 'dismiss') => void | Promise<boolean>;
@@ -55,7 +56,7 @@ export function AskQuestionCard({ questions, onAnswer, onReply, onDeny }: {
     setSubmitted(true);
     const answers: Record<string, string> = {};
     questions.forEach((q, i) => { answers[q.question] = answerFor(i); });
-    onAnswer(answers);
+    if (onAnswer(answers) === false) setSubmitted(false);
   };
 
   const pick = (qi: number, label: string, multi: boolean) => {

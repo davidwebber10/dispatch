@@ -534,7 +534,9 @@ test('a Submit while a chat reply is in flight is ignored, so the two cannot rac
   const { result } = renderHook(() => useStructuredChat('t1'));
   act(() => cbs.onEvent({ type: 'permission', pending: QUESTION }));
   act(() => { result.current.send('Neither.'); });
-  act(() => { result.current.answer({ 'Pick one': 'A' }); });
+  let accepted: boolean | void = undefined;
+  act(() => { accepted = result.current.answer({ 'Pick one': 'A' }); });
+  expect(accepted).toBe(false); // the card unlocks on this
   expect(answer).toHaveBeenCalledTimes(1);
   expect(answer).toHaveBeenCalledWith('t1', expect.objectContaining({ decision: 'deny', reply: 'Neither.' }));
   expect(result.current.pending).not.toBeNull(); // Submit did not clear the card

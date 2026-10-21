@@ -119,6 +119,15 @@ test('Discuss with text locks Submit while the reply is in flight, and unlocks i
   await waitFor(() => expect((screen.getByRole('button', { name: 'Submit' }) as HTMLButtonElement).disabled).toBe(false));
 });
 
+test('a Submit the host drops (onAnswer returns false) unlocks the card', async () => {
+  const onAnswer = vi.fn().mockReturnValue(false);
+  render(<AskQuestionCard questions={[{ question: 'Q?', header: 'H', options: ['A'] }]} onAnswer={onAnswer} />);
+  fireEvent.click(screen.getByRole('button', { name: /^A/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+  expect(onAnswer).toHaveBeenCalledTimes(1);
+  expect((screen.getByRole('button', { name: 'Submit' }) as HTMLButtonElement).disabled).toBe(false);
+});
+
 test('multi-select accumulates picks and joins labels with ", " on Submit', () => {
   const onAnswer = vi.fn();
   const questions: PermissionQuestion[] = [
