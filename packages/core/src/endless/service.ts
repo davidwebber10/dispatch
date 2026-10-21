@@ -64,6 +64,9 @@ export interface EndlessServiceOptions {
   ledger?: LedgerService;
 }
 
+/** A repeat of the same report text within this window is one ending seen twice. */
+const DEDUPE_MS = 60_000;
+
 export class EndlessService {
   readonly store: EndlessStore;
   readonly views: ViewKeeper;
@@ -81,8 +84,8 @@ export class EndlessService {
   /** Threads with a settle edge scheduled this tick: one ending claims at most one report. */
   private readonly settling = new Set<string>();
   /**
-   * Threads that owed a report when their last status edge was 'error': a repeated error edge
-   * is the same ending. Only threads with a pending report enter, so the set stays bounded.
+   * Chat threads whose last status edge was 'error': a repeated error edge is the same ending.
+   * Cleared by the next other edge; capped, for a thread archived while in error.
    */
   private readonly errored = new Set<string>();
 
@@ -235,6 +238,8 @@ export class EndlessService {
       return;
     }
     if (this.errored.has(terminalId) || !(this.store.hasPendingReport(terminalId) || this.isChatThread(terminalId))) return;
+    // Bounded: a thread archived while in error never gets the clearing edge.
+    if (this.errored.size >= 500) this.errored.clear();
     this.errored.add(terminalId);
     this.onThreadSettled({ terminalId, threadStatus: 'error' });
   }
@@ -298,10 +303,14 @@ export class EndlessService {
     const output = gone ? '' : interim ? this.waitingText(terminalId) : this.o.finalOutput?.(terminalId) ?? '';
     const text = reportText(t?.label || terminalId, gone ? 'gone' : outcome, output);
     // The same question or ending twice in a row is one report; a new question always reports.
-    if ((interim || !owed) && this.store.lastReportText(terminalId) === text) return [];
-    const claim = !owed ? () => true
-      : interim ? () => { this.store.markWaitingReported(terminalId); return true; }
-      : () => this.store.claimAllReports(terminalId);
+    // Only a repeat within DEDUPE_MS counts as the same ending (a hook edge plus the exit edge):
+    // a later turn with the same result is a new turn and reports.
+    const last = this.store.lastReport(terminalId);
+    if ((interim || !owed) && last && last.text === text && this.now() - last.at < DEDUPE_MS) return [];
+    const note = () => this.store.noteReport(terminalId, text, this.now());
+    const claim = !owed ? () => { note(); return true; }
+      : interim ? () => { this.store.markWaitingReported(terminalId); note(); return true; }
+      : () => { const ok = this.store.claimAllReports(terminalId); if (ok) note(); return ok; };
     const written = this.log({ kind: 'work', text, project: t?.session_id ?? null, ref: terminalId }, { claim });
     if (written.length) {
       this.turns.deliver({ i: written[0].i, kind: 'work', text: written.map((m) => m.text).join(''), project: written[0].project });

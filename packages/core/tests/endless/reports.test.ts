@@ -175,6 +175,24 @@ describe('thread reports', () => {
     await endTurn(x);
   });
 
+  it('a repeat of a long (split) report is dropped, and the same text in a later turn reports', async () => {
+    const x = make();
+    outputs.t1 = 'z'.repeat(50_000);
+    x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'idle' });
+    await flush();
+    const n = works().length;
+    x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'idle' });
+    await flush();
+    expect(works()).toHaveLength(n);
+    const t0 = Date.now();
+    (x.svc as any).now = () => t0 + 120_000;
+    x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'idle' });
+    await flush();
+    expect(works()).toHaveLength(n * 2);
+    await settle();
+    await endTurn(x);
+  });
+
   it('identical consecutive reports of a thread are dropped', async () => {
     const x = make();
     outputs.t1 = 'same';

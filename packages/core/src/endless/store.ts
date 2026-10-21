@@ -172,10 +172,17 @@ export class EndlessStore {
     return r?.waiting_reported === 1;
   }
 
-  /** The text of the thread's latest report in the log, or null (the dedupe key of an unsolicited report). */
-  lastReportText(terminalId: string): string | null {
-    const r = this.db.prepare("SELECT text FROM endless_messages WHERE kind = 'work' AND ref = ? ORDER BY i DESC LIMIT 1").get(terminalId) as { text: string } | undefined;
-    return r?.text ?? null;
+  /** The thread's latest logged report (whole text, even when the log split it) and when, or null. */
+  lastReport(terminalId: string): { text: string; at: number } | null {
+    try {
+      const v = JSON.parse(this.getState(`report:${terminalId}`) ?? 'null');
+      return v && typeof v.text === 'string' && typeof v.at === 'number' ? v : null;
+    } catch { return null; }
+  }
+
+  /** Remember the report just logged (call inside its transaction). */
+  noteReport(terminalId: string, text: string, at: number): void {
+    this.setState(`report:${terminalId}`, JSON.stringify({ text, at }));
   }
 
   hasPendingReport(terminalId: string): boolean {
