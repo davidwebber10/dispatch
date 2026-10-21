@@ -75,6 +75,8 @@ describe('ConversationStream — coordinator AskUserQuestion surfaced inline', (
     fireEvent.change(screen.getByLabelText('Discuss the question'), { target: { value: 'Not sure what you need' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(reply).toHaveBeenCalledWith('Not sure what you need');
+    cleanup(); // a reply locks the card, so Dismiss gets a fresh one
+    render(<ConversationStream />);
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
     expect(deny).toHaveBeenCalledWith('dismiss');
   });

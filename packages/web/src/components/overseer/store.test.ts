@@ -107,6 +107,22 @@ describe('sendDirective with the coordinator parked on its own question', () => 
 const sm = (key: string): StreamMessage =>
   ({ kind: 'text', who: 'overseer', text: key, time: '', key, isUser: false, isOverseer: true, isNote: false } as unknown as StreamMessage);
 
+describe('replyToCoordinatorQuestion and denyCoordinatorQuestion report whether the send worked', () => {
+  it('resolve true on success, and false (with sendError set) on failure, so the card can unlock', async () => {
+    const ok = vi.fn().mockResolvedValue(undefined);
+    useOverseer.setState({ coordinatorReply: ok, coordinatorDeny: ok, sendError: null });
+    expect(await useOverseer.getState().replyToCoordinatorQuestion('hi')).toBe(true);
+    expect(await useOverseer.getState().denyCoordinatorQuestion('dismiss')).toBe(true);
+    const bad = vi.fn().mockRejectedValue(new Error('boom'));
+    useOverseer.setState({ coordinatorReply: bad, coordinatorDeny: bad });
+    expect(await useOverseer.getState().replyToCoordinatorQuestion('hi')).toBe(false);
+    expect(useOverseer.getState().sendError).toBeTruthy();
+    useOverseer.setState({ sendError: null });
+    expect(await useOverseer.getState().denyCoordinatorQuestion('dismiss')).toBe(false);
+    expect(useOverseer.getState().sendError).toBeTruthy();
+  });
+});
+
 describe('coordinatorMatchesView — the loaded coordinator belongs to the viewed project', () => {
   it('true only when both ids are set and equal', () => {
     expect(coordinatorMatchesView('proj-a', 'proj-a')).toBe(true);

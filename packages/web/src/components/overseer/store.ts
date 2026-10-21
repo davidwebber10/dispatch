@@ -140,9 +140,9 @@ interface OverseerState {
   coordinatorReply: (content: string | ContentBlock[]) => Promise<void>;
   coordinatorDeny: (action: 'discuss' | 'dismiss') => Promise<void>;
   /** Answer the coordinator's pending question in chat (the card's Discuss box). A failure shows as sendError. */
-  replyToCoordinatorQuestion: (content: string | ContentBlock[]) => void;
-  /** The card's empty Discuss or Dismiss. A failure shows as sendError. */
-  denyCoordinatorQuestion: (action: 'discuss' | 'dismiss') => void;
+  replyToCoordinatorQuestion: (content: string | ContentBlock[]) => Promise<boolean>;
+  /** The card's empty Discuss or Dismiss. A failure shows as sendError. Both resolve false on failure, so the card can unlock. */
+  denyCoordinatorQuestion: (action: 'discuss' | 'dismiss') => Promise<boolean>;
   sendError: string | null; // last directive send that FAILED (POST rejected); surfaced inline, cleared on next send
   ensuring: boolean; // a find-or-create coordinator request is in flight
   setupNeeded: boolean; // ensureForProject peeked and found no live coordinator — the inline setup card should show instead of auto-creating one
@@ -611,16 +611,18 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   replyToCoordinatorQuestion: (content) => {
     const id = get().coordinatorId;
     set({ sendError: null });
-    get().coordinatorReply(content).catch((err) => {
+    return get().coordinatorReply(content).then(() => true, (err) => {
       if (get().coordinatorId === id) set({ sendError: sendFailureText(err) });
+      return false;
     });
   },
 
   denyCoordinatorQuestion: (action) => {
     const id = get().coordinatorId;
     set({ sendError: null });
-    get().coordinatorDeny(action).catch((err) => {
+    return get().coordinatorDeny(action).then(() => true, (err) => {
       if (get().coordinatorId === id) set({ sendError: sendFailureText(err) });
+      return false;
     });
   },
 
