@@ -1,5 +1,6 @@
-import { render, screen } from '@testing-library/react';
-import { test, expect, describe, it } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
+import { vi } from 'vitest';
+import { test, expect, describe, it, beforeEach, afterEach } from 'vitest';
 import { Modal } from './Modal';
 
 test('dialog is responsive (maxWidth, width 100%) so it fits a mobile viewport, not a fixed 500px that overflows', () => {
@@ -96,5 +97,173 @@ describe('Modal — anchor', () => {
     render(<Modal open onClose={() => {}}><div>body</div></Modal>);
     const panel = screen.getByText('body').parentElement as HTMLElement;
     expect(panel.style.margin).toBe('auto');
+  });
+});
+
+// Regression: on an iPhone the Projects sheet could not be closed. The handle was
+// decoration, the only exit was the backdrop strip, and a tall list left none.
+describe('Modal sheet: always closable', () => {
+  // jsdom has no PointerEvent, so fireEvent would drop clientY and pointerId.
+  if (typeof window.PointerEvent === 'undefined') {
+    class PointerEventShim extends MouseEvent {
+      pointerId: number; isPrimary: boolean;
+      constructor(type: string, init: PointerEventInit = {}) {
+        super(type, init);
+        this.pointerId = init.pointerId ?? 0; this.isPrimary = init.isPrimary ?? true;
+      }
+    }
+    (window as unknown as { PointerEvent: unknown }).PointerEvent = PointerEventShim;
+  }
+  function renderSheet(onClose = vi.fn(), title: string | undefined = 'Projects', props: { closeButton?: boolean } = {}) {
+    render(<Modal open onClose={onClose} title={title} sheet {...props}><div>body</div></Modal>);
+    const handle = screen.getByTestId('sheet-handle');
+    const panel = screen.getByTestId('sheet-panel') as HTMLElement;
+    Object.defineProperty(panel, 'offsetHeight', { value: 400, configurable: true });
+    return { onClose, handle, panel, header: screen.getByTestId('sheet-header') };
+  }
+  // The component times gestures with performance.now(); drive it by hand so velocity is deterministic.
+  let clock = 0;
+  beforeEach(() => { clock = 0; vi.spyOn(performance, 'now').mockImplementation(() => clock); });
+  afterEach(() => { vi.restoreAllMocks(); });
+  const at = (t: number) => { clock = t; };
+  const down = (el: Element, y: number, t = 0) => { at(t); fireEvent.pointerDown(el, { pointerId: 1, clientY: y, isPrimary: true }); };
+  const move = (el: Element, y: number, t: number) => { at(t); fireEvent.pointerMove(el, { pointerId: 1, clientY: y }); };
+  const up = (el: Element, y: number, t: number) => { at(t); fireEvent.pointerUp(el, { pointerId: 1, clientY: y }); };
+
+  it('shows a 44pt Close button in the header that closes the sheet', () => {
+    const { onClose } = renderSheet();
+    const btn = screen.getByRole('button', { name: 'Close' });
+    expect(btn.style.minWidth).toBe('44px');
+    expect(btn.style.minHeight).toBe('44px');
+    fireEvent.click(btn);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the Close button on a title-less sheet too, without an empty heading', () => {
+    render(<Modal open onClose={() => {}} sheet><div>b</div></Modal>);
+    expect(screen.queryByRole('heading')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+  });
+
+  it('desktop (non-sheet) modal has no Close button and no sheet panel', () => {
+    render(<Modal open onClose={() => {}} title="T"><div /></Modal>);
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull();
+    expect(screen.queryByTestId('sheet-panel')).toBeNull();
+  });
+
+  it('Escape closes the sheet', () => {
+    const { onClose } = renderSheet();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a dimmed strip above the sheet: the backdrop top padding is at least 48px', () => {
+    const { panel } = renderSheet();
+    expect((panel.parentElement as HTMLElement).style.paddingTop).toContain('48px');
+  });
+
+  it('keeps the header sticky so Close and the handle stay reachable in a scrolled tall sheet', () => {
+    const { header } = renderSheet();
+    expect(header.style.position).toBe('sticky');
+    expect(header.style.top).toContain('safe-area-inset-top');
+  });
+
+  it('dragging the handle down follows the finger', () => {
+    const { handle, panel } = renderSheet();
+    down(handle, 100, 0); move(handle, 160, 500);
+    expect(panel.style.transform).toBe('translateY(60px)');
+  });
+
+  it('never moves above its rest position when dragged up', () => {
+    const { handle, panel } = renderSheet();
+    down(handle, 100, 0); move(handle, 40, 100);
+    expect(panel.style.transform).toBe('translateY(0px)');
+  });
+
+  it('closes when released past 25% of the sheet height', () => {
+    const { handle, onClose } = renderSheet();
+    down(handle, 100, 0); move(handle, 210, 800); up(handle, 210, 800);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes on a fast downward flick even over a short distance', () => {
+    const { handle, onClose } = renderSheet();
+    down(handle, 100, 0); move(handle, 140, 40); up(handle, 140, 50);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('springs back (no close) on a short, slow drag', () => {
+    const { handle, panel, onClose } = renderSheet();
+    down(handle, 100, 0); move(handle, 130, 900); up(handle, 130, 1000);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(panel.style.transform).toBe('translateY(0px)');
+  });
+
+  it('drags from the header title area as well as the handle', () => {
+    const { header, onClose } = renderSheet();
+    down(header, 100, 0); move(header, 250, 700); up(header, 250, 700);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not start a drag from the body, so the list can scroll', () => {
+    const { onClose, panel } = renderSheet();
+    const body = screen.getByText('body');
+    down(body, 100, 0); move(body, 400, 100); up(body, 400, 100);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(panel.style.transform).not.toContain('300');
+  });
+
+  it('the drag zone disables native touch panning so the browser does not steal the gesture', () => {
+    const { header } = renderSheet();
+    expect(header.style.touchAction).toBe('none');
+  });
+
+  it('a tap on the Close button is not swallowed by the header drag', () => {
+    const { onClose } = renderSheet();
+    const btn = screen.getByRole('button', { name: 'Close' });
+    down(btn, 100, 0); up(btn, 100, 10); fireEvent.click(btn);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('closeButton={false} drops the header row entirely (the caller has its own Close)', () => {
+    render(<Modal open onClose={() => {}} sheet closeButton={false}><div>b</div></Modal>);
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull();
+    expect(screen.getByTestId('sheet-handle')).toBeInTheDocument();
+  });
+
+  it('a drag-close leaves no offset behind when the same mounted Modal reopens', () => {
+    const onClose = vi.fn();
+    const { rerender } = render(<Modal open onClose={onClose} title="P" sheet><div>b</div></Modal>);
+    const handle = screen.getByTestId('sheet-handle');
+    Object.defineProperty(screen.getByTestId('sheet-panel'), 'offsetHeight', { value: 400, configurable: true });
+    down(handle, 100, 0); move(handle, 300, 800); up(handle, 300, 800);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    rerender(<Modal open={false} onClose={onClose} title="P" sheet><div>b</div></Modal>);
+    rerender(<Modal open onClose={onClose} title="P" sheet><div>b</div></Modal>);
+    expect(screen.getByTestId('sheet-panel').style.transform).toBe('translateY(0px)');
+  });
+
+  it('a pause before release is not a flick', () => {
+    const { handle, onClose } = renderSheet();
+    down(handle, 100, 0); move(handle, 140, 40); up(handle, 140, 2000);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('Escape already consumed by an inner layer (a lightbox) does not close the sheet', () => {
+    const { onClose } = renderSheet();
+    const ev = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+    ev.preventDefault();
+    document.dispatchEvent(ev);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('does not capture the pointer when the press starts on the Close button', () => {
+    const { header } = renderSheet();
+    const spy = vi.fn();
+    (header as unknown as { setPointerCapture: unknown }).setPointerCapture = spy;
+    down(screen.getByRole('button', { name: 'Close' }), 100, 0);
+    expect(spy).not.toHaveBeenCalled();
+    down(header, 100, 0);
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 });
