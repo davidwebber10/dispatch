@@ -35,16 +35,12 @@ function mount(type: string) {
 beforeEach(() => { useDocViewer.getState().close(); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
-describe('closing a thread view', () => {
-  it('closes the doc its messages opened, and leaves another surface\'s doc alone', () => {
+describe('a reconnect remounts the thread view', () => {
+  it('keeps the doc the reader has open', () => {
     items = say('hi');
     const a = mount('codex');
     useDocViewer.getState().show({ project: 's1', path: 'docs/a.md', branch: null, origin: 't1' });
     a.unmount();
-    expect(useDocViewer.getState().open).toBeNull();
-    const b = mount('codex');
-    useDocViewer.getState().show({ project: 's1', path: 'docs/a.md', branch: null });
-    b.unmount();
     expect(useDocViewer.getState().open).not.toBeNull();
   });
 });

@@ -21,7 +21,6 @@ import { InputActionsMenu } from '../../dictation/InputActionsMenu';
 import { InsightText } from '../../InsightText';
 import { ThreadDocsContext, useThreadDocs, useThreadDocChips } from '../../threadDocs';
 import { DocViewer } from '../../endless/DocViewer';
-import { useDocViewer } from '../../../stores/docViewer';
 import { ResumeAdviceCard } from './ResumeAdviceCard';
 import { WorkingIndicator, CompactingBar, ApiRetryIndicator } from '../../WorkingIndicator';
 import { Spinner } from '../../common/Spinner';
@@ -258,11 +257,6 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   const hasPendingQuestion = !!pending?.questions?.length;
   // Doc chips and link clicks in this thread's messages, whichever harness wrote them.
   const threadDocs = useThreadDocChips(sessionId, terminalId);
-  // A doc this thread's messages opened does not outlive the view (it would open again with the thread).
-  useEffect(() => () => {
-    const v = useDocViewer.getState();
-    if (v.open?.origin === terminalId) v.close();
-  }, [terminalId]);
   // Re-hide on an in-place thread switch — a layout effect so it lands before paint.
   useLayoutEffect(() => setReady(false), [terminalId]);
 
