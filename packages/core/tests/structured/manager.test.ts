@@ -278,19 +278,20 @@ it('a deny with a message on a question comes back as the is_error tool_result w
   expect(block).toMatchObject({ type: 'tool_result', is_error: true, content: 'They replied: neither' });
 });
 
-it('interrupt while a question is pending: the CLI cancel clears it, before the turn settles', async () => {
+it('interrupt while a question is pending: the CLI cancel clears it, before the turn ends', async () => {
   spawnFakeEscalate(m, 't1');
   await waitForEvent(m, 't1', (e) => e.type === 'system');
   const pendingP = waitForPermission(m, 't1');
   m.sendMessage('t1', 'TRIGGER_QUESTION');
   await pendingP;
-  const seen = recordEmits(m, 't1', ['permission', 'resolved', 'permission-cleared', 'idle', 'needs-help']);
-  const settled = waitForManagerEvent(m, 'idle', 't1');
+  const seen = recordEmits(m, 't1', ['permission', 'resolved', 'permission-cleared', 'idle', 'needs-help', 'failed']);
+  const settled = waitForManagerEvent(m, 'failed', 't1');
   expect(m.interrupt('t1')).toBe(true);
   await settled;
   expect(m.getPending('t1')).toBeNull();
+  // The real CLI ends an interrupted turn with an is_error result, which the manager reports as 'failed'.
   // Cleared once, by the cancel. The result backstop finds nothing left to clear.
-  expect(seen).toEqual(['resolved', 'permission-cleared', 'idle']);
+  expect(seen).toEqual(['resolved', 'permission-cleared', 'failed']);
   expect(m.getEvents('t1').filter((e: any) => e.type === 'control_cancel_request')).toHaveLength(1);
   // No deny was written for the question: the fake would echo it as a DENIED tool_result.
   expect(JSON.stringify(m.getEvents('t1'))).not.toContain('DENIED');

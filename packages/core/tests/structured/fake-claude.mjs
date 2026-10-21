@@ -87,14 +87,14 @@ rl.on('line', (line) => {
     // the manager wrote to stdin (top-level request_id + request.subtype).
     send({ type: 'system', subtype: 'control_request_received', request_id: msg.request_id, request: msg.request });
     if (msg.request?.subtype === 'interrupt' && pendingQuestion) {
-      // Claude Code 2.1.296 on an interrupt while a question is up: cancel the pending request,
-      // two is_error tool_results, then the turn's result. No control_response from us is needed.
+      // Claude Code 2.1.303 on an interrupt while a question is up: cancel the pending request,
+      // two is_error tool_results, then an error_during_execution result. No control_response from us is needed.
       const q = pendingQuestion;
       pendingQuestion = null;
       send({ type: 'control_cancel_request', request_id: q.request_id });
       send({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: q.tool_use_id, is_error: true, content: "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed." }] } });
       send({ type: 'user', message: { content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] } });
-      send({ type: 'result', subtype: 'success', is_error: false, stop_reason: 'tool_use' });
+      send({ type: 'result', subtype: 'error_during_execution', is_error: true, stop_reason: 'tool_use' });
     }
   } else if (msg.type === 'control_response') {
     const r = msg.response?.response ?? {};
