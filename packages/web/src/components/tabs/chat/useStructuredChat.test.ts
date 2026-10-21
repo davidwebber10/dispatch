@@ -492,6 +492,19 @@ test.each([404, 409])('a %i keeps the card and sends the reply as a normal turn'
   expect(result.current.items.some((i) => i.kind === 'result' && i.isError)).toBe(false);
 });
 
+test('replyFromCard resolves false on a 409 (the question stays open on that harness) and true on a 404', async () => {
+  vi.spyOn(api, 'sendStructuredMessage').mockResolvedValue(undefined as any);
+  const answer = vi.spyOn(api, 'answerPermission').mockRejectedValueOnce(new ApiError('no', 409)).mockRejectedValueOnce(new ApiError('gone', 404));
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'permission', pending: QUESTION }));
+  let ok: boolean | undefined;
+  await act(async () => { ok = await result.current.replyFromCard('hmm'); });
+  expect(ok).toBe(false);
+  await act(async () => { ok = await result.current.replyFromCard('hmm'); });
+  expect(ok).toBe(true);
+  expect(answer).toHaveBeenCalledTimes(2);
+});
+
 test('a 500 keeps the card, sends nothing, and shows the failure', async () => {
   vi.spyOn(api, 'answerPermission').mockRejectedValue(new ApiError('boom', 500));
   const send = vi.spyOn(api, 'sendStructuredMessage').mockResolvedValue(undefined as any);

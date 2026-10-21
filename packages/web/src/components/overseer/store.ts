@@ -137,7 +137,7 @@ interface OverseerState {
   coordinatorPending: PendingPermission | null;
   coordinatorAnswer: (answers: Record<string, string>) => void | boolean;
   /** That hook's replyToQuestion and denyQuestion: a chat reply, or the card's Discuss/Dismiss. */
-  coordinatorReply: (content: string | ContentBlock[]) => Promise<void>;
+  coordinatorReply: (content: string | ContentBlock[]) => Promise<boolean | void>;
   coordinatorDeny: (action: 'discuss' | 'dismiss') => Promise<void>;
   /** Answer the coordinator's pending question in chat (the card's Discuss box). A failure shows as sendError. */
   replyToCoordinatorQuestion: (content: string | ContentBlock[]) => Promise<boolean>;
@@ -212,8 +212,8 @@ interface OverseerState {
   /** Pushed in by useCoordinatorSync() from the same useStructuredChat() call's pending/answer — the coordinator's OWN gated question, surfaced inline in its stream. */
   setCoordinatorPending: (
     pending: PendingPermission | null,
-    answer: (answers: Record<string, string>) => void,
-    reply?: (content: string | ContentBlock[]) => Promise<void>,
+    answer: (answers: Record<string, string>) => void | boolean,
+    reply?: (content: string | ContentBlock[]) => Promise<boolean | void>,
     deny?: (action: 'discuss' | 'dismiss') => Promise<void>,
   ) => void;
   setPending: (terminalId: string, pending: PendingPermission | null) => void;
@@ -611,7 +611,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
   replyToCoordinatorQuestion: (content) => {
     const id = get().coordinatorId;
     set({ sendError: null });
-    return get().coordinatorReply(content).then(() => true, (err) => {
+    return get().coordinatorReply(content).then((settled) => settled !== false, (err) => {
       if (get().coordinatorId === id) set({ sendError: sendFailureText(err) });
       return false;
     });

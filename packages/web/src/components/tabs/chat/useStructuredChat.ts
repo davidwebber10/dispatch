@@ -65,7 +65,8 @@ export interface StructuredChat {
   answer: (answers: Record<string, string>) => void | boolean;
   /** A chat reply to the pending question: the text rides a deny, images follow as their own
    *  turn. Falls back to a normal send on 404/409. Rejects on any other failure, card kept. */
-  replyToQuestion: (content: string | ContentBlock[]) => Promise<void>;
+  /** Resolves false when the reply went out as a normal turn and the question is still open (409, e.g. Codex). */
+  replyToQuestion: (content: string | ContentBlock[]) => Promise<boolean>;
   /** The card's empty Discuss or Dismiss: deny with the daemon's fixed text. Rejects on failure. */
   denyQuestion: (action: 'discuss' | 'dismiss') => Promise<void>;
   /** replyToQuestion / denyQuestion for the card's own buttons, with failures shown in the timeline. */
@@ -880,13 +881,13 @@ export function useStructuredChat(
   // the question is gone (404) or this harness can't take a reply (409, e.g. Codex), the reply
   // goes out as a normal turn, today's behavior, and the card stays as the server reports it.
   // Any other failure keeps the card, sends nothing, and rejects so the caller can show it.
-  const replyToQuestion = useCallback(async (content: string | ContentBlock[]): Promise<void> => {
+  const replyToQuestion = useCallback(async (content: string | ContentBlock[]): Promise<boolean> => {
     const p = permissionRef.current;
-    if (!terminalId || !p?.questions?.length) return;
+    if (!terminalId || !p?.questions?.length) return true;
     const blocks = typeof content === 'string' ? [{ type: 'text', text: content } as ContentBlock] : content;
     const text = blocks.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('\n').trim();
     const images = blocks.filter((b) => b.type === 'image');
-    if (!text && !images.length) return;
+    if (!text && !images.length) return true;
     setBusy(true);
     questionActionsRef.current++;
     try {
@@ -894,7 +895,9 @@ export function useStructuredChat(
     } catch (err) {
       if (err instanceof ApiError && (err.status === 404 || err.status === 409)) {
         try { await api.sendStructuredMessage(terminalId, content); } catch (sendErr) { setBusy(false); throw sendErr; }
-        return;
+        // A 404 means the server closed the question. A 409 means this harness never took the reply,
+        // so the question is still open and the card must stay usable.
+        return err.status !== 409;
       }
       setBusy(false);
       throw err;
@@ -903,6 +906,7 @@ export function useStructuredChat(
     }
     if (permissionRef.current?.requestId === p.requestId) setPending(null);
     if (images.length) await api.sendStructuredMessage(terminalId, images);
+    return true;
   }, [terminalId, setPending]);
 
   // A card's Discuss with no text, or Dismiss: deny the question with the daemon's fixed text.
@@ -950,7 +954,7 @@ export function useStructuredChat(
 
   // The card's own Discuss (with text) and Dismiss buttons. Errors land in the timeline.
   const replyFromCard = useCallback((text: string): Promise<boolean> =>
-    replyToQuestion(text).then(() => true, (err) => { showSendFailure(err); return false; }), [replyToQuestion, showSendFailure]);
+    replyToQuestion(text).then((settled) => settled, (err) => { showSendFailure(err); return false; }), [replyToQuestion, showSendFailure]);
   const denyFromCard = useCallback((action: 'discuss' | 'dismiss'): Promise<boolean> =>
     denyQuestion(action).then(() => true, (err) => { showSendFailure(err); return false; }), [denyQuestion, showSendFailure]);
 
