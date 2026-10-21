@@ -102,6 +102,7 @@ export function DocViewer({ owner }: { owner?: string } = {}) {
 
   const project = open?.project ?? null;
   const loaded = state.kind === 'doc' ? state.doc : null;
+  const loadedPath = loaded?.path ?? open?.path;
   const copySource = loaded?.source, copyWorktree = loaded?.worktreeRel ?? loaded?.worktree, copyBranch = loaded?.branch;
   // Stable per project list and open copy: the Markdown chips are redrawn when this changes.
   const docs = useMemo(() => ({
@@ -116,7 +117,8 @@ export function DocViewer({ owner }: { owner?: string } = {}) {
       }
       useDocViewer.getState().push({ project: target, path: p, branch: b ?? extra.branch ?? null, origin: open?.origin ?? null, ...(extra.worktree ? { worktree: extra.worktree } : {}) });
     },
-  }), [project, open?.origin, projects, copySource, copyWorktree, copyBranch]);
+    link: (href: string) => classifyLink(href, { project, projects, from: loadedPath }),
+  }), [project, open?.origin, projects, copySource, copyWorktree, copyBranch, loadedPath]);
 
   if (!open) return null;
   const close = () => useDocViewer.getState().close();
@@ -228,7 +230,7 @@ export function DocViewer({ owner }: { owner?: string } = {}) {
             </div>
             <div key={`${open.project}:${open.branch ?? ''}:${open.worktree ?? ''}:${open.path}`}
               style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-base)' }}>
-              <article onClick={onLink} onAuxClick={onLink} style={{ maxWidth: 680, margin: '0 auto', padding: mobile ? '24px 20px 34px' : '32px 24px', fontSize: 14.5, lineHeight: 1.75 }}>
+              <article onClick={onLink} onAuxClick={(e) => { if (e.button === 1) onLink(e); }} style={{ maxWidth: 680, margin: '0 auto', padding: mobile ? '24px 20px 34px' : '32px 24px', fontSize: 14.5, lineHeight: 1.75 }}>
                 <Markdown source={doc.markdown} docs={docs} />
               </article>
             </div>

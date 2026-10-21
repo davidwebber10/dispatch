@@ -23,17 +23,37 @@ import { ImageLightbox, useViewerHost } from './ChatImage';
 //   ConversationView.tsx (L453, L459, L463, L464, L474) and toolviews/WebView.tsx (L16).
 // (Code-highlight sinks — ToolCall / QueryView / DiffView via highlightCode — are a separate pass.)
 /**
- * `keepFileLinks`: a surface that routes its links (docs.link) keeps `file://` hrefs, which DOMPurify
- * drops. The click handler only opens one that lib/docLinks accepts; every other target does nothing.
+ * `keepFileLinks`: a surface that routes its links (docs.link) keeps `file://` and `plan.md:12` hrefs,
+ * which DOMPurify drops. The click handler only opens one that lib/docLinks accepts; every other target does nothing.
  */
+/** `plan.md:12`: it reads as a scheme to the sanitizer, but it is a doc name and a line. */
+const BARE_DOC_LINE = /^[\w.@%-]+(?:\/[\w.@%-]+)*\.(?:md|markdown|txt):\d+(?::\d+)?$/i;
 const sanitize = (html: string, keepFileLinks = false): string => {
   const keep = (_node: Element, data: { attrName: string; attrValue: string; forceKeepAttr?: boolean }) => {
-    if (data.attrName === 'href' && /^\s*file:\/\//i.test(data.attrValue)) data.forceKeepAttr = true;
+    if (data.attrName === 'href' && (/^\s*file:\/\//i.test(data.attrValue) || BARE_DOC_LINE.test(data.attrValue.trim()))) data.forceKeepAttr = true;
   };
   if (keepFileLinks) DOMPurify.addHook('uponSanitizeAttribute', keep);
   try { return DOMPurify.sanitize(html, { ADD_TAGS: ['img'], ADD_ATTR: ['src', 'alt'] }); }
   finally { if (keepFileLinks) DOMPurify.removeHook('uponSanitizeAttribute', keep); }
 };
+
+/**
+ * A surface that routes its links keeps no raw destination on a doc link or an unsupported one: a
+ * native open (a long press, "Open in new tab") would load it as an app URL. The click handler reads
+ * the original from data-md-href. A web link keeps its href.
+ */
+function neutralizeLinks(html: string, link: (href: string) => LinkAction): string {
+  if (!html.includes('href')) return html;
+  const box = document.createElement('template');
+  box.innerHTML = html;
+  for (const a of box.content.querySelectorAll('a[href]')) {
+    const href = a.getAttribute('href') ?? '';
+    if (link(href).kind === 'web') continue;
+    a.setAttribute('data-md-href', href);
+    a.setAttribute('href', '#');
+  }
+  return box.innerHTML;
+}
 
 /** Wraps each unlinked image in a focusable opener, so a keyboard user can reach the viewer (see onKeyDown). */
 function openableImages(html: string): string {
@@ -142,12 +162,13 @@ function docifyHtml(html: string, accept?: (path: string) => boolean): string {
 export const Markdown = React.memo(function Markdown({ source, ledger, docs }: { source: string; ledger?: LedgerChips; docs?: DocChips }) {
   const withDocs = !!docs;
   const accept = docs?.accept;
-  const routesLinks = !!docs?.link;
+  const linkOf = docs?.link;
   const html = useMemo(() => {
-    const clean = openableImages(sanitize(renderMarkdown(source), routesLinks));
+    const safe = sanitize(renderMarkdown(source), !!linkOf);
+    const clean = openableImages(linkOf ? neutralizeLinks(safe, linkOf) : safe);
     const chipped = ledger ? chipifyHtml(clean, ledger.index) : clean;
     return withDocs ? docifyHtml(chipped, accept) : chipped;
-  }, [source, ledger, withDocs, accept, routesLinks]);
+  }, [source, ledger, withDocs, accept, linkOf]);
   // Markdown-embedded images render as raw sanitized <img> tags with no React handlers,
   // so on a phone a tap did nothing while every ChatImage opened the lightbox — one
   // delegated click handler on the chokepoint gives every markdown image the same viewer.
@@ -164,13 +185,13 @@ export const Markdown = React.memo(function Markdown({ source, ledger, docs }: {
     if (!a || !docs?.link || !e.currentTarget.contains(a)) return false;
     e.preventDefault();
     e.stopPropagation();
-    const href = a.getAttribute('href') ?? '';
+    const href = a.getAttribute('data-md-href') ?? a.getAttribute('href') ?? '';
     const act = docs.link(href);
     if (act.kind === 'doc') docs.onOpen(act.path, null);
     else if (act.kind === 'web') window.open(href, '_blank', 'noopener,noreferrer');
     return true;
   };
-  const onAuxClick = (e: React.MouseEvent<HTMLDivElement>) => { routeLink(e); };
+  const onAuxClick = (e: React.MouseEvent<HTMLDivElement>) => { if (e.button === 1) routeLink(e); };
   const onClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const t = e.target as HTMLElement;
     if (routeLink(e)) return;

@@ -229,6 +229,11 @@ describe('DocViewer: links inside the doc stay in the viewer', () => {
     fireEvent.click(screen.getByRole('link', { name: 'up' }));
     expect(useDocViewer.getState().open).toMatchObject({ path: 'docs/plans/z.md' });
   });
+  it('a file URL to a doc in the project opens that doc', async () => {
+    await show('[f](file:///w/d/docs/specs/y.md#L4)');
+    fireEvent.click(screen.getByRole('link', { name: 'f' }));
+    expect(useDocViewer.getState().open).toMatchObject({ path: '/w/d/docs/specs/y.md' });
+  });
   it('a ?query is dropped too', async () => {
     await show('[q](y.markdown?v=1)');
     fireEvent.click(screen.getByRole('link', { name: 'q' }));

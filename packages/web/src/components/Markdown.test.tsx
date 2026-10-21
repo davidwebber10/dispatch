@@ -170,3 +170,30 @@ describe('Markdown: file URLs and middle clicks with docs.link', () => {
     open.mockRestore();
   });
 });
+
+describe('Markdown: link hardening with docs.link', () => {
+  const projects = [{ id: 'p1', folder: '/Users/me/dev/app' }];
+  const mount = (source: string) => {
+    const onOpen = vi.fn();
+    const { container } = render(<Markdown source={source} docs={{ onOpen, link: (h) => classifyLink(h, { project: 'p1', projects }) }} />);
+    return { onOpen, container };
+  };
+  it('opens a bare file name with a line suffix', () => {
+    const { onOpen } = mount('[plan](plan.md:12)');
+    fireEvent.click(screen.getByRole('link', { name: 'plan' }));
+    expect(onOpen).toHaveBeenCalledWith('plan.md', null);
+  });
+  it('a right click does not open anything', () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    const { onOpen } = mount('[doc](docs/a.md) [web](https://example.com)');
+    for (const name of ['doc', 'web']) fireEvent(screen.getByRole('link', { name }), new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 2 }));
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+    open.mockRestore();
+  });
+  it('a doc or unsupported link keeps no raw destination for a native open; a web link keeps its href', () => {
+    const { container } = mount('[doc](docs/a.md) [src](src/a.ts) [web](https://example.com/x)');
+    const hrefs = [...container.querySelectorAll('a')].map((a) => a.getAttribute('href'));
+    expect(hrefs).toEqual(['#', '#', 'https://example.com/x']);
+  });
+});
