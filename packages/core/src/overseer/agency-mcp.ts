@@ -230,12 +230,12 @@ export const TOOLS = [
       'you receive a "🔔 Your agent … is PAUSED" message listing the question header(s) and options; ' +
       'decide based on the mission and answer here. Provide `answers` as a map of each question header ' +
       'to your chosen option label, exactly as listed (or use `answer` for a single-question prompt). ' +
-      'Pass the `requestId` from that message, so the answer cannot land on a newer question.',
+      'Pass the `requestId` from that message (or from read_agent `pendingQuestion` / list_agents `pendingQuestionRequestId` if you no longer have it), so the answer cannot land on a newer question.',
     inputSchema: {
       type: 'object',
       properties: {
         agentId: { type: 'string', description: 'The paused agent thread id (from the notification / list_agents).' },
-        requestId: { type: 'string', description: 'The question\'s requestId, from the "PAUSED" message. Required. The answer is refused if that question is no longer the one pending.' },
+        requestId: { type: 'string', description: 'The question\'s requestId, from the "PAUSED" message, read_agent (pendingQuestion.requestId) or list_agents (pendingQuestionRequestId). Required. The answer is refused if that question is no longer the one pending.' },
         answers: {
           type: 'object',
           description: 'Map of question header -> chosen option label, e.g. { "Approach": "Use Postgres" }.',
@@ -685,12 +685,35 @@ function isAgentTerminal(t: any): boolean {
   return t?.config?.role === 'agent' || typeof t?.config?.agentType === 'string';
 }
 
-async function listAgents(): Promise<Array<{ id: string; label: string; agentType: string | null; status: string }>> {
+async function listAgents(): Promise<Array<{ id: string; label: string; agentType: string | null; status: string; pendingQuestionRequestId?: string }>> {
   const terminals = await httpJson('GET', `${apiBase()}/api/sessions/${sessionId()}/terminals`);
   const list = Array.isArray(terminals) ? terminals : [];
-  return list
+  return Promise.all(list
     .filter(isAgentTerminal)
-    .map((t: any) => ({ id: t.id, label: t.label, agentType: t?.config?.agentType ?? null, status: t.status }));
+    .map(async (t: any) => {
+      const row: { id: string; label: string; agentType: string | null; status: string; pendingQuestionRequestId?: string } =
+        { id: t.id, label: t.label, agentType: t?.config?.agentType ?? null, status: t.status };
+      // A question routed to the coordinator keeps the agent "working", so any agent may be parked on one.
+      const pending = await pendingQuestionOf(t.id);
+      if (pending) row.pendingQuestionRequestId = pending.requestId;
+      return row;
+    }));
+}
+
+/** The AskUserQuestion this agent is parked on (with the requestId answer_agent needs), or null. */
+async function pendingQuestionOf(agentId: string): Promise<{ requestId: string; questions: Array<{ header: string; question: string; options: string[] }> } | null> {
+  try {
+    const p = await httpJson('GET', `${apiBase()}/api/terminals/${encodeURIComponent(agentId)}/permission`);
+    if (!p?.questions?.length || typeof p.requestId !== 'string' || !p.requestId) return null;
+    return {
+      requestId: p.requestId,
+      questions: p.questions.map((q: any) => ({
+        header: String(q?.header ?? ''),
+        question: String(q?.question ?? ''),
+        options: Array.isArray(q?.options) ? q.options.map((o: any) => (typeof o === 'string' ? o : String(o?.label ?? o?.name ?? ''))).filter(Boolean) : [],
+      })),
+    };
+  } catch { return null; }
 }
 
 /**
@@ -750,9 +773,12 @@ async function completeAgent(args: { agentId: string; force?: boolean }): Promis
  * the tools it ran and its current status. This is what closes the orchestration loop —
  * list_agents gives status, read_agent gives content.
  */
-async function readAgent(args: { agentId: string }): Promise<{ agentId: string; status: string | null; output: string; tools: string[] }> {
+async function readAgent(args: { agentId: string }): Promise<{ agentId: string; status: string | null; output: string; tools: string[]; pendingQuestion?: { requestId: string; questions: Array<{ header: string; question: string; options: string[] }> } }> {
   if (!args?.agentId) throw new Error('agentId is required');
-  return readAgentOutput(apiBase(), args.agentId);
+  const out = await readAgentOutput(apiBase(), args.agentId);
+  // The PAUSED notice is the only other place the requestId appears, and a compacted coordinator no longer has it.
+  const pendingQuestion = await pendingQuestionOf(args.agentId);
+  return pendingQuestion ? { ...out, pendingQuestion } : out;
 }
 
 /**
@@ -764,7 +790,7 @@ async function readAgent(args: { agentId: string }): Promise<{ agentId: string; 
 async function answerAgent(args: { agentId: string; requestId?: string; answers?: Record<string, string>; answer?: string }): Promise<{ ok: true; agentId: string }> {
   if (!args?.agentId) throw new Error('agentId is required');
   const requestId = typeof args.requestId === 'string' && args.requestId ? args.requestId : undefined;
-  if (!requestId) throw new Error('requestId is required: copy it from the PAUSED message, so the answer cannot land on a newer question');
+  if (!requestId) throw new Error('requestId is required, so the answer cannot land on a newer question. Copy it from the PAUSED message, or get it from read_agent (pendingQuestion.requestId) or list_agents (pendingQuestionRequestId)');
   let answers = args.answers && typeof args.answers === 'object' ? args.answers : undefined;
   if ((!answers || Object.keys(answers).length === 0) && typeof args.answer === 'string' && args.answer.trim()) {
     const pending = await httpJson('GET', `${apiBase()}/api/terminals/${args.agentId}/permission`);
