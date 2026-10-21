@@ -81,10 +81,19 @@ export class EndlessService {
   /** Threads with a settle edge scheduled this tick: one ending claims at most one report. */
   private readonly settling = new Set<string>();
   /**
-   * Threads that owed a report when their last status edge was 'error': a repeated error edge
-   * is the same ending. Only threads with a pending report enter, so the set stays bounded.
+   * Chat threads whose last status edge was 'error': a repeated error edge is the same ending.
+   * Cleared by the next other edge; capped, for a thread archived while in error.
    */
   private readonly errored = new Set<string>();
+  /** The boot process reconcile is over: no error edge of it is left to drop. */
+  endBoot(): void { this.bootReported.clear(); }
+
+  /**
+   * Threads reportCompletedAtBoot just reported as finished. The process reconcile that follows
+   * ends such a thread (its row still reads 'working', no process lives) with an error edge: that
+   * edge is the same ending, so it is dropped once. Any other edge of the thread passes.
+   */
+  private readonly bootReported = new Set<string>();
 
   constructor(private readonly o: EndlessServiceOptions) {
     this.store = new EndlessStore(o.db);
@@ -227,8 +236,20 @@ export class EndlessService {
    * other status between (a hook error, then the process exit) is the same ending.
    */
   onThreadStatus(terminalId: string, status: string): void {
-    if (status !== 'error') { this.errored.delete(terminalId); return; }
-    if (this.errored.has(terminalId) || !this.store.hasPendingReport(terminalId)) return;
+    // Only the reconcile's error edge is the same ending: any other edge means the thread lives.
+    if (status !== 'error') this.bootReported.delete(terminalId);
+    if (status === 'working' && this.isChatThread(terminalId)) this.store.clearReportNote(terminalId);
+    if (status !== 'error') {
+      this.errored.delete(terminalId);
+      // A question is always delivered, even when the settle edge did not fire for it (the
+      // thread was not 'working' before, e.g. a watch woke it). The report dedupes identical text.
+      if (status === 'needs_input' && this.isChatThread(terminalId)) this.onThreadSettled({ terminalId, threadStatus: 'needs_input' });
+      return;
+    }
+    if (status === 'error' && this.bootReported.delete(terminalId)) return;
+    if (this.errored.has(terminalId) || !(this.store.hasPendingReport(terminalId) || this.isChatThread(terminalId))) return;
+    // Bounded: a thread archived while in error never gets the clearing edge.
+    if (this.errored.size >= 500) this.errored.clear();
     this.errored.add(terminalId);
     this.onThreadSettled({ terminalId, threadStatus: 'error' });
   }
@@ -246,7 +267,7 @@ export class EndlessService {
     this.settling.add(id);
     setImmediate(() => {
       this.settling.delete(id);
-      try { this.reportThread(id, info.threadStatus); }
+      try { this.report(id, info.threadStatus, true); }
       catch (err) { console.warn(`[endless] the report of ${id} failed:`, err); }
     });
   }
@@ -268,17 +289,39 @@ export class EndlessService {
     return this.report(terminalId, outcome);
   }
 
-  private report(terminalId: string, outcome: string): EndlessMessage[] {
-    if (this.phase !== 'ready' || this.closed || !this.store.hasPendingReport(terminalId)) return [];
+  private isChatThread(terminalId: string): boolean {
+    const t = terminalsDb.getById(this.o.db, terminalId);
+    return !!t && !t.archived_at && threadOrigin(t) === 'endless';
+  }
+
+  /**
+   * `live` marks a status edge seen now (not recovery). A live edge of a Chat thread reports even
+   * when no report is owed: a turn a background watch woke, or one the user steered inside the
+   * thread, owes nothing but Chat still must hear it. Such an unsolicited report claims nothing
+   * and drops text identical to the thread's latest report.
+   */
+  private report(terminalId: string, outcome: string, live = false): EndlessMessage[] {
+    if (this.phase !== 'ready' || this.closed) return [];
+    const owed = this.store.hasPendingReport(terminalId);
+    if (!owed && !(live && this.isChatThread(terminalId))) return [];
     const t = terminalsDb.getById(this.o.db, terminalId);
     const gone = !t || outcome === 'gone';
-    // Ruling (final review I-1): a question is INTERIM. It logs the question once and keeps the
+    // Ruling (final review I-1): a question is INTERIM. It logs the question and keeps the
     // owed reports, so the job's real ending (after the answer) still reports its result.
     const interim = !gone && outcome === 'needs_input';
-    if (interim && this.store.waitingReported(terminalId)) return [];
+    if (interim && owed && !live && this.store.waitingReported(terminalId)) return [];
     const output = gone ? '' : interim ? this.waitingText(terminalId) : this.o.finalOutput?.(terminalId) ?? '';
     const text = reportText(t?.label || terminalId, gone ? 'gone' : outcome, output);
-    const claim = interim ? () => this.store.markWaitingReported(terminalId) : () => this.store.claimAllReports(terminalId);
+    // The same question or ending twice in a row is one report; a new question always reports.
+    // The same text again with no 'working' edge between is one ending seen twice (a hook edge
+    // plus the exit edge). A new turn clears the note (onThreadStatus), so a re-asked question or
+    // a later turn with the same result reports.
+    const last = this.store.lastReport(terminalId);
+    if ((interim || !owed) && last && last.text === text) return [];
+    const note = () => this.store.noteReport(terminalId, text, this.now());
+    const claim = !owed ? () => { note(); return true; }
+      : interim ? () => { this.store.markWaitingReported(terminalId); note(); return true; }
+      : () => { const ok = this.store.claimAllReports(terminalId); if (ok) note(); return ok; };
     const written = this.log({ kind: 'work', text, project: t?.session_id ?? null, ref: terminalId }, { claim });
     if (written.length) {
       this.turns.deliver({ i: written[0].i, kind: 'work', text: written.map((m) => m.text).join(''), project: written[0].project });
@@ -319,7 +362,9 @@ export class EndlessService {
     for (const id of terminalIds) {
       try {
         const t = terminalsDb.getById(this.o.db, id);
-        if (t && threadOrigin(t) === 'endless') this.report(id, 'idle');
+        if (t && threadOrigin(t) === 'endless') {
+          if (this.report(id, 'idle').length) this.bootReported.add(id);
+        }
       } catch (err) {
         console.warn(`[endless] the boot report of ${id} failed:`, err);
       }

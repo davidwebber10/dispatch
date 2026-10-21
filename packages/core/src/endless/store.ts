@@ -172,6 +172,24 @@ export class EndlessStore {
     return r?.waiting_reported === 1;
   }
 
+  /** The thread's latest logged report (whole text, even when the log split it) and when, or null. */
+  lastReport(terminalId: string): { text: string; at: number } | null {
+    try {
+      const v = JSON.parse(this.getState(`report:${terminalId}`) ?? 'null');
+      return v && typeof v.text === 'string' && typeof v.at === 'number' ? v : null;
+    } catch { return null; }
+  }
+
+  /** A new turn started: the next report of the thread is never a repeat. */
+  clearReportNote(terminalId: string): void {
+    if (this.getState(`report:${terminalId}`)) this.setState(`report:${terminalId}`, '');
+  }
+
+  /** Remember the report just logged (call inside its transaction). */
+  noteReport(terminalId: string, text: string, at: number): void {
+    this.setState(`report:${terminalId}`, JSON.stringify({ text, at }));
+  }
+
   hasPendingReport(terminalId: string): boolean {
     return this.owedReports(terminalId) > 0;
   }
