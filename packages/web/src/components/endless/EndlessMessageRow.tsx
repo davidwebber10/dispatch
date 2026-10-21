@@ -9,6 +9,7 @@ import { openThreadInPlace } from './openThread';
 import { StartedItem } from './StartedItem';
 import { DocText, openDoc } from './DocText';
 import { projectForPath } from '../../lib/docPaths';
+import { classifyLink } from '../../lib/docLinks';
 import { useEndless } from '../../stores/endless';
 import { SPAWN_TOOL, parseSpawn } from './spawn';
 export { SPAWN_TOOL, parseSpawn };
@@ -191,6 +192,7 @@ function ReplyRow({ m }: { m: EndlessMessage }) {
     return {
       onOpen: (p: string, b: string | null) => openDoc(p, b, m.project),
       accept: (p: string) => projectForPath(p, m.project, projects) !== null,
+      link: (href: string) => classifyLink(href, { project: m.project, projects }),
     };
   }, [m.project, key]);
   return <div style={{ fontSize: 14.5, lineHeight: 1.75, minWidth: 0 }}><InsightText source={m.text} scheme="global" variant="rail" docs={docs} /></div>;

@@ -239,7 +239,7 @@ describe('DocViewer: links inside the doc stay in the viewer', () => {
     const before = window.location.href;
     await show('[ext](https://example.com)');
     expect(fireEvent.click(screen.getByRole('link', { name: 'ext' }))).toBe(false);
-    expect(opened).toHaveBeenCalledWith('https://example.com', '_blank', 'noopener');
+    expect(opened).toHaveBeenCalledWith('https://example.com', '_blank', 'noopener,noreferrer');
     expect(window.location.href).toBe(before);
     expect(useDocViewer.getState().open?.path).toBe('docs/specs/x.md');
   });
@@ -262,11 +262,11 @@ describe('DocViewer: links inside the doc stay in the viewer', () => {
     expect(opened).not.toHaveBeenCalled();
     expect(window.location.href).toBe(before);
     fireEvent.click(add('mailto:a@b.c', 'mail'));
-    expect(opened).toHaveBeenLastCalledWith('mailto:a@b.c', '_blank', 'noopener');
+    expect(opened).toHaveBeenLastCalledWith('mailto:a@b.c', '_blank', 'noopener,noreferrer');
     fireEvent.click(add('HTTPS://example.com/Up', 'upper'));
-    expect(opened).toHaveBeenLastCalledWith('HTTPS://example.com/Up', '_blank', 'noopener');
+    expect(opened).toHaveBeenLastCalledWith('HTTPS://example.com/Up', '_blank', 'noopener,noreferrer');
     fireEvent.click(screen.getByRole('link', { name: 'ext' }));
-    expect(opened).toHaveBeenLastCalledWith('https://example.com', '_blank', 'noopener');
+    expect(opened).toHaveBeenLastCalledWith('https://example.com', '_blank', 'noopener,noreferrer');
     expect(opened).toHaveBeenCalledTimes(3);
   });
   it('a relative link that leads above the repo root does nothing', async () => {
@@ -277,5 +277,20 @@ describe('DocViewer: links inside the doc stay in the viewer', () => {
     expect(useDocViewer.getState().open).toMatchObject({ path: 'docs/x.md' });
     expect(useDocViewer.getState().back).toHaveLength(0);
     expect(opened).not.toHaveBeenCalled();
+  });
+});
+
+describe('DocViewer: one viewer per surface', () => {
+  it('a thread\'s doc shows only in that thread\'s viewer, and Chat\'s viewer ignores it', async () => {
+    vi.spyOn(api, 'endlessDoc').mockReturnValue(new Promise(() => {}));
+    useDocViewer.setState({ open: { project: 's1', path: 'docs/a.md', branch: null, origin: 't1' }, back: [] });
+    const chat = render(<DocViewer />);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    chat.unmount();
+    const other = render(<DocViewer owner="t2" />);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    other.unmount();
+    render(<DocViewer owner="t1" />);
+    expect(screen.getByRole('dialog', { name: 'a.md' })).toBeInTheDocument();
   });
 });

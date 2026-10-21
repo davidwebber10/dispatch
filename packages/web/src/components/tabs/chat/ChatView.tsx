@@ -19,6 +19,8 @@ import { useDictation } from '../../../hooks/useDictation';
 import { DictationControl } from '../../dictation/DictationControl';
 import { InputActionsMenu } from '../../dictation/InputActionsMenu';
 import { InsightText } from '../../InsightText';
+import { ThreadDocsContext, useThreadDocs, useThreadDocChips } from '../../threadDocs';
+import { DocViewer } from '../../endless/DocViewer';
 import { ResumeAdviceCard } from './ResumeAdviceCard';
 import { WorkingIndicator, CompactingBar, ApiRetryIndicator } from '../../WorkingIndicator';
 import { Spinner } from '../../common/Spinner';
@@ -253,10 +255,13 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   const [ready, setReady] = useState(false);
   const handleReady = useCallback(() => setReady(true), []);
   const hasPendingQuestion = !!pending?.questions?.length;
+  // Doc chips and link clicks in this thread's messages, whichever harness wrote them.
+  const threadDocs = useThreadDocChips(sessionId, terminalId);
   // Re-hide on an in-place thread switch — a layout effect so it lands before paint.
   useLayoutEffect(() => setReady(false), [terminalId]);
 
   return (
+    <ThreadDocsContext.Provider value={threadDocs}>
     <div className="chat-scope" style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, background: 'var(--color-base)' }}>
       <MessageScroller.Provider autoScroll defaultScrollPosition="end" scrollEdgeThreshold={48}>
         {/* The wrapper (not Root) hosts the not-ready spinner so it isn't hidden with the
@@ -486,7 +491,9 @@ export function ChatView({ terminalId }: { terminalId: string }) {
           <ContextIndicator contextTokens={contextTokens} contextWindow={contextWindow} compacting={compacting} compactResult={compactResult} model={model} compact={compact} />
         </div>
       </div>
+      <DocViewer owner={terminalId} />
     </div>
+    </ThreadDocsContext.Provider>
   );
 }
 
@@ -976,10 +983,11 @@ export function UserBubble({ text, source, grouped = false, relayName }: { text:
 // left-railed clamped insight blocks (variant="rail") rather than the coordinator's tinted
 // callouts. The wrapper sets the redesign's reading size — md-view inherits it.
 function AssistantText({ text }: { text: string }) {
+  const docs = useThreadDocs();
   if (!text) return null;
   return (
     <div style={{ fontSize: 14.5, lineHeight: 1.75, minWidth: 0 }}>
-      <InsightText source={text} scheme="global" variant="rail" />
+      <InsightText source={text} scheme="global" variant="rail" docs={docs} />
     </div>
   );
 }

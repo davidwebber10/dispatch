@@ -3,6 +3,7 @@ import DOMPurify from 'dompurify';
 import { renderMarkdown } from '../lib/markdown';
 import { chipifyHtml, type LedgerChips } from '../lib/ledgerRefs';
 import { findDocPaths, docName } from '../lib/docPaths';
+import type { LinkAction } from '../lib/docLinks';
 import { ImageLightbox, useViewerHost } from './ChatImage';
 
 /**
@@ -48,7 +49,16 @@ function openableImages(html: string): string {
  * optionally which paths are links (a relative path with no project is not one). Keep it stable
  * (useMemo): the chips are redrawn when `accept` changes.
  */
-export interface DocChips { onOpen: (path: string, branch: string | null) => void; accept?: (path: string) => boolean }
+export interface DocChips {
+  onOpen: (path: string, branch: string | null) => void;
+  accept?: (path: string) => boolean;
+  /**
+   * What a link in the text does (see lib/docLinks). With it, a click on a link never navigates the
+   * app: a doc link calls `onOpen`, a web link opens a new tab, any other link does nothing.
+   * Without it, the links keep the browser's own behavior.
+   */
+  link?: (href: string) => LinkAction;
+}
 
 const DOC_EXT = /\.(?:md|markdown|txt)/i;
 /** Text inside these stays plain: a link already goes somewhere, a code block is code, a button or a form field is a control. */
@@ -139,6 +149,16 @@ export const Markdown = React.memo(function Markdown({ source, ledger, docs }: {
   const chipOf = (t: EventTarget) => (ledger ? (t as HTMLElement).closest?.<HTMLElement>('[data-ledger-chip]') ?? null : null);
   const onClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const t = e.target as HTMLElement;
+    const a = docs?.link ? t.closest?.('a[href]') : null;
+    if (a && docs?.link && e.currentTarget.contains(a)) {
+      e.preventDefault();
+      e.stopPropagation();
+      const href = a.getAttribute('href') ?? '';
+      const act = docs.link(href);
+      if (act.kind === 'doc') docs.onOpen(act.path, null);
+      else if (act.kind === 'web') window.open(href, '_blank', 'noopener,noreferrer');
+      return;
+    }
     const doc = docs ? (t.closest?.('[data-doc-path]') as HTMLElement | null) : null;
     if (doc && docs) { e.stopPropagation(); docs.onOpen(doc.dataset.docPath!, doc.dataset.docBranch || null); return; }
     const chip = chipOf(t);
