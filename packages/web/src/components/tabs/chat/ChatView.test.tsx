@@ -2,7 +2,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { test, expect, describe, it, beforeAll, beforeEach, vi } from 'vitest';
 import { MessageScroller } from '@shadcn/react/message-scroller';
 import type { ConvItem } from '../../../api/types';
-import { UserBubble, renderTimeline, LoadEarlierButton, ChatView } from './ChatView';
+import { UserBubble, renderTimeline, LoadEarlierButton, ChatView, relayNameFor, loginItemFor } from './ChatView';
 import { api } from '../../../api/client';
 import * as sock from '../../../api/structured-socket';
 
@@ -23,6 +23,19 @@ test('a coordinator-relayed turn (source="coordinator") gets a "via {coordinator
   expect(screen.getByText('do the thing')).toBeInTheDocument();
   // Default coordinatorName is '' → useDispatchName falls back to "Control Plane".
   expect(screen.getByText(/VIA CONTROL PLANE/)).toBeInTheDocument();
+});
+
+test('a turn Chat sent to its own thread reads "VIA CHAT", not the Control Plane name', () => {
+  render(<UserBubble text="Fix the login" source="coordinator" relayName="Chat" />);
+  expect(screen.getByText(/VIA CHAT/)).toBeInTheDocument();
+  expect(screen.queryByText(/VIA CONTROL PLANE/)).not.toBeInTheDocument();
+});
+
+test('relayNameFor names Chat only for a thread Chat started', () => {
+  expect(relayNameFor({ config: { origin: 'endless' } })).toBe('Chat');
+  expect(relayNameFor({ config: { role: 'agent' } })).toBeUndefined();
+  expect(relayNameFor({ config: {} })).toBeUndefined();
+  expect(relayNameFor(undefined)).toBeUndefined();
 });
 
 // jsdom lacks the observers the MessageScroller primitive touches (mirrors Stream.test.tsx).
@@ -59,6 +72,21 @@ function renderTimelineItems(items: ConvItem[], pageBoundaries: Set<ConvItem> = 
 // past ANY item named 'AskUserQuestion' (live or answered alike), relying solely on the
 // interactive <AskQuestionCard> overlay (ChatView's `pending` prop) to ever show it, which
 // unmounts the instant it's answered. Now an answered pair renders a durable, collapsed record.
+test('renderTimeline passes the relay name to each coordinator-sent turn', () => {
+  render(
+    <MessageScroller.Provider>
+      <MessageScroller.Root>
+        <MessageScroller.Viewport>
+          <MessageScroller.Content>
+            {renderTimeline([{ kind: 'user', text: 'Fix the login', source: 'coordinator' } as ConvItem], () => {}, new Set(), 'Chat')}
+          </MessageScroller.Content>
+        </MessageScroller.Viewport>
+      </MessageScroller.Root>
+    </MessageScroller.Provider>,
+  );
+  expect(screen.getByText(/VIA CHAT/)).toBeInTheDocument();
+});
+
 describe('renderTimeline — answered AskUserQuestion stays in history (regression)', () => {
   const items: ConvItem[] = [
     { kind: 'tool', toolId: 'tu-1', toolName: 'AskUserQuestion', toolInput: JSON.stringify({ questions: [{ question: 'Ready to ship?', header: 'Release', options: ['Yes', 'No'] }] }) },
@@ -695,5 +723,33 @@ describe('ChatView — paint-settle gate (back-port of the Stream reveal latch)'
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('Log in to Claude in a Pretty thread', () => {
+  const failed: ConvItem = { kind: 'result', isError: true, text: 'Failed to authenticate: OAuth session expired and could not be refreshed' };
+  const renderWith = (items: ConvItem[], loginItem: ConvItem | null) => render(
+    <MessageScroller.Provider><MessageScroller.Root><MessageScroller.Viewport><MessageScroller.Content>
+      {renderTimeline(items, () => {}, new Set(), undefined, loginItem)}
+    </MessageScroller.Content></MessageScroller.Viewport></MessageScroller.Root></MessageScroller.Provider>,
+  );
+
+  it('the latest failed result of a Claude thread offers Log in to Claude', () => {
+    renderWith([{ kind: 'user', text: 'hi' }, failed], failed);
+    expect(screen.getByRole('button', { name: 'Log in to Claude' })).toBeInTheDocument();
+  });
+
+  it('an older failed result, or none marked, offers nothing', () => {
+    const older: ConvItem = { ...failed };
+    renderWith([older, { kind: 'user', text: 'again' }, failed], failed);
+    expect(screen.getAllByRole('button', { name: 'Log in to Claude' })).toHaveLength(1);
+  });
+
+  it('loginItemFor picks the last result only for a Claude thread and only for a login error', () => {
+    const ok: ConvItem = { kind: 'result', isError: false, text: '' };
+    expect(loginItemFor('claude-code', [failed])).toBe(failed);
+    expect(loginItemFor('codex', [failed])).toBeNull();
+    expect(loginItemFor('claude-code', [failed, ok])).toBeNull();
+    expect(loginItemFor('claude-code', [{ kind: 'result', isError: true, text: 'the process exited (1)' }])).toBeNull();
   });
 });

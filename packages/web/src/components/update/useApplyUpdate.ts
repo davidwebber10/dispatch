@@ -48,13 +48,16 @@ export function useApplyUpdate() {
 
   useEffect(() => {
     if (!inProgress) return;
-    const before = useUpdate.getState().currentVersion;
+    // A page opened during an update may not know its version yet: the first answer then
+    // sets the baseline instead of counting as a change.
+    let before = useUpdate.getState().currentVersion;
     const timer = setInterval(async () => {
       try {
         const s = await api.getUpdateState();
-        // Only reload once the daemon is BACK and running something new —
-        // reloading while it's down would strand the PWA on an error page.
-        if (s.currentVersion && s.currentVersion !== before) location.reload();
+        if (!before) { before = s.currentVersion; return; }
+        // The daemon is BACK and running something new: the update is done. The window
+        // says so and reloads on Reload now, or by itself after a quiet spell (UpdateModal).
+        if (s.currentVersion && s.currentVersion !== before) useUpdate.getState().markDone(s.currentVersion);
       } catch { /* daemon restarting — keep polling */ }
     }, 3000);
     return () => clearInterval(timer);

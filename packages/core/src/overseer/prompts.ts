@@ -387,7 +387,12 @@ const AGENT_AUTONOMY_NOTE =
   'AskUserQuestion tool; it routes to your coordinator (Control Plane), who answers or escalates. Keep ' +
   'moving on your own otherwise. END every turn with a concise, self-contained SUMMARY of what you ' +
   'found or did and any recommended next step — your coordinator reads that summary (and your full ' +
-  'output) to decide what happens next, so make it the last thing you say.';
+  'output) to decide what happens next, so make it the last thing you say.' +
+  ' Test runs: if you changed code, run the test files your change touches, then the full suite once ' +
+  'at the end. If you did not change code, run single test files only. Do not pipe a test run through ' +
+  'head or tail. Write the output to a file, then read the file. If a run that you did not start is ' +
+  'alive, wait. Never kill a process that you did not start.' +
+  ' When you write or change a doc (.md), put one line per doc in your final report: "Doc: " and its absolute path, then the branch in parentheses, for example "Doc: /abs/path/docs/plans/x.md (branch spec/x)".';
 
 /**
  * Browser-auth relay note: a CLI you run (gh, npm, etc.) may need a browser login. WHEN a CLI

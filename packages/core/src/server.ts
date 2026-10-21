@@ -40,9 +40,12 @@ import * as usageDb from './db/usage.js';
 import { createGitRouter } from './routes/git.js';
 import { createSecretsRouter } from './routes/secrets.js';
 import { createHarnessSettingsRouter } from './routes/harness-settings.js';
+import { createTelemetrySettingsRouter } from './routes/telemetry-settings.js';
+import { startTelemetryLoop } from './telemetry/sender.js';
 import { opencodeKeySecretName } from './settings/harness-settings.js';
 import { warmModelCapabilities } from './settings/model-capabilities.js';
 import { warmClaudeVersion, prunePromptFiles, setClaudeProbeEnv } from './providers/claude-prompt-file.js';
+import { setProviderProbeEnv } from './setup/detect.js';
 import { createTranscribeRouter } from './routes/transcribe.js';
 import { TranscriptionService } from './transcription/service.js';
 import { createSetupRouter } from './routes/setup.js';
@@ -72,6 +75,9 @@ import { TerminalMonitor } from './terminal-monitor.js';
 import { ThreadAutoNamer } from './sessions/thread-auto-namer.js';
 import { platform } from './platform/index.js';
 import { startUpdateCheckLoop } from './update/checker.js';
+import { finishRestartedUpdate } from './update/progress.js';
+import { guardLoopback } from './platform/loopback-guard.js';
+import { getRunningVersion } from './update/version.js';
 import { createUpdateRouter } from './routes/update.js';
 import { createAppearanceRouter, customIconHandler } from './routes/appearance.js';
 import { createWatchesRouter } from './routes/watches.js';
@@ -79,6 +85,8 @@ import { createLedgerRouter } from './routes/ledger.js';
 import { LedgerService } from './overseer/ledger-service.js';
 import { WatchDispatcher } from './sessions/watch-dispatcher.js';
 import { createAnalyticsRouter, trackingStartedAt } from './routes/analytics.js';
+import { EndlessService, limitsFromEnv, startEndless } from './endless/service.js';
+import { createEndlessRouter } from './routes/endless.js';
 
 /**
  * The analytics boot steps, run once per app before any route is mounted.
@@ -373,6 +381,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   app.use('/api/servers', createServersRouter(db));
   app.use('/api/secrets', createSecretsRouter(secretsService));
   app.use('/api/settings/harnesses', createHarnessSettingsRouter(db, secretsService));
+  app.use('/api/settings/telemetry', createTelemetrySettingsRouter(db));
   app.use('/api/transcribe', createTranscribeRouter(new TranscriptionService(secretsService)));
   app.use('/api/setup', createSetupRouter(db, secretsService));
   app.use('/api/sessions/:id/files', createFilesRouter(db));
@@ -500,10 +509,17 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Wakes watchers on peer status edges (see sessions/watch-dispatcher.ts) — wired as an
   // optional StatusService dependency, same shape as the threadAutoNamer activity callback.
   const watchDispatcher = new WatchDispatcher(db, buildWatchDeliver(sessionService));
+  // Endless Chat hears every status edge here (a thread's error edge reports); its settles
+  // come from the settled listener below.
+  let onEndlessStatus: ((terminalId: string, status: string) => void) | null = null;
   const statusService = new StatusService(
     db, broadcaster,
     (id) => threadAutoNamer.notifyActivity(id),
-    (terminalId, status) => watchDispatcher.onStatus(terminalId, status),
+    (terminalId, status) => {
+      // Endless first, in its own try: a throw in either hook must not drop the other.
+      try { onEndlessStatus?.(terminalId, status); } catch (err) { console.warn('[endless] status edge failed:', err); }
+      watchDispatcher.onStatus(terminalId, status);
+    },
     (id, prompt) => threadAutoNamer.notifyPrompt(id, prompt),
   );
   const harnessManagers = wireHarnesses(sessionService, statusService, db, broadcaster);
@@ -513,6 +529,23 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   statusService.onHarnessCommitted(event => { if (event.type === 'process.exited') rolesService.handleTerminalExit(event.terminalId); });
   sessionService.setTerminalStatusWriter((id, status) => statusService.setTerminalState(id, status));
   const opencodeStructured = extraManagers.get('opencode');
+  // Endless Chat (spec 2026-10-13): its own Claude manager, so its turn and compaction
+  // processes never reach SessionService's thread listeners.
+  const endlessManager = new ClaudeStructuredSessionManager();
+  const ledgerService = wireLedger(db, sessionService, broadcaster);
+  const endless = new EndlessService({
+    ledger: ledgerService,
+    db, broadcaster, manager: endlessManager,
+    chatDir: path.join(dataDir, 'chat'),
+    home: os.homedir(),
+    limits: limitsFromEnv(process.env.DISPATCH_ENDLESS_LIMITS),
+    openRouterKey: () => resolveOpenRouterKey?.() ?? Promise.resolve(null),
+    finalOutput: (id) => sessionService.finalOutput(id),
+    pendingPermission: (id) => sessionService.getPendingPermission(id),
+  });
+  // Stage 2: a thread Chat started reports when it settles (finished or asking) or fails.
+  statusService.addThreadSettledListener(({ terminalId, threadStatus }) => endless.onThreadSettled({ terminalId, threadStatus }));
+  onEndlessStatus = (terminalId, status) => endless.onThreadStatus(terminalId, status);
 
   // Fleet totals are a read-only projection of the canonical analytics ledger.
   const usage = new UsageRecorder(db);
@@ -587,8 +620,12 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     toolsAuth.setSpawnEnv(spawnEnv);
     // The Claude version check reads the same `claude` the agents will run.
     setClaudeProbeEnv(spawnEnv);
+    // The sign-in check that gates new threads asks the CLI under the same env, so
+    // Dispatch's saved Claude token counts even when the CLI's own login has expired.
+    setProviderProbeEnv(spawnEnv);
     ptyManager.setDefaultEnv(spawnEnv);
     structuredManager.setDefaultEnv(spawnEnv);
+    endlessManager.setDefaultEnv(spawnEnv);
     // The ACP children (Grok, OpenCode) run real tools directly (no app-server
     // indirection), so they need the same spawn env a PTY thread gets — secrets, bundled
     // tools, the browser shim.
@@ -596,7 +633,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     refreshOpencodeKeyEnv(spawnEnv);
   };
   secretsService.onChange(refreshPtyEnv);
-  claudeLogin.onChange(refreshPtyEnv);
+  // A new login reaches every spawn env first; then Chat's failed summaries run again with it.
+  claudeLogin.onChange(() => { refreshPtyEnv(); endless.retryCompaction(); });
   refreshPtyEnv();
 
   // Terminal activity monitor — parses status bar, detects busy/idle
@@ -663,7 +701,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Mount routes
   app.use('/api/sessions', createSessionsRouter(sessionService, broadcaster, db));
   app.use('/api', createTerminalsRouter(sessionService, broadcaster, statusService));
-  app.use('/api', createLedgerRouter(wireLedger(db, sessionService, broadcaster)));
+  app.use('/api', createLedgerRouter(ledgerService));
   app.use('/api/events', createEventsRouter(statusService));
   app.use('/api/agents', createAgentsRouter(agentService));
   app.use('/api/roles', createRolesRouter(rolesService));
@@ -671,6 +709,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.use('/api/servers', createServersRouter(db));
   app.use('/api/secrets', createSecretsRouter(secretsService, refreshPtyEnv));
   app.use('/api/settings/harnesses', createHarnessSettingsRouter(db, secretsService, refreshPtyEnv));
+  app.use('/api/settings/telemetry', createTelemetrySettingsRouter(db));
   app.use('/api/transcribe', createTranscribeRouter(new TranscriptionService(secretsService)));
   app.use('/api/setup', createSetupRouter(db, secretsService));
   app.use('/api/sessions/:id/files', createFilesRouter(db));
@@ -687,6 +726,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.use('/api/appearance', createAppearanceRouter(dataDir));
   app.use('/api/watches', createWatchesRouter(db));
   app.use('/api/analytics', createAnalyticsRouter(db));
+  app.use('/api/endless', createEndlessRouter(endless));
 
   // Serve the built web client (single-origin) when a build is present.
   // SPA fallback returns index.html for any non-/api, non-WS GET.
@@ -780,6 +820,10 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     });
   });
 
+  // Hold 127.0.0.1 and ::1 on the port too, so no other process can take localhost from us
+  // (platform/loopback-guard.ts).
+  const loopbackGuards = await guardLoopback(server, port);
+
   // Record our own pid so daemon controllers (e.g. WSL's restart()) can find and signal this
   // process without an OS service manager. Only now that the port is bound: a duplicate launch
   // that loses the port race exits above and must not overwrite the live daemon's pid (#56).
@@ -795,6 +839,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   // Store port in app state
   appState.set(db, 'port', String(port));
+  // Endless Chat needs the real port for its memory MCP server config. A failed start
+  // logs and disables only the chat (its routes answer 503); the daemon keeps running.
+  startEndless(endless, port);
 
   // Status hooks: tell SessionService how to make spawned agents phone home with
   // lifecycle events (Claude hooks settings file + Codex notify helper).
@@ -841,8 +888,10 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // the previous shutdown interrupted mid-turn. Fire-and-forget — it waits a short
   // settle delay before reading status, so it must not block startup.
   void sessionService.kickstartInterruptedAgents()
-    .then(({ kicked, skipped }) => {
+    .then(({ kicked, skipped, completed }) => {
       if (kicked.length) console.log(`Kickstart: resumed ${kicked.length} interrupted thread(s); skipped ${skipped.length}`);
+      // A Chat thread whose turn completed while no one listened owes Chat its report.
+      endless.reportCompletedAtBoot(completed);
     })
     .catch((err) => console.error('kickstart failed', err))
     .finally(() => statusService.reconcileProcesses((id) => ptyManager.isAlive(id) || !!sessionService.structuredManagerForTerminal(id)?.isAlive(id)));
@@ -852,7 +901,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Start PTY timing loop for Codex-style providers
   const ptyTimingInterval = startPtyTimingLoop(db, ptyManager, broadcaster, undefined, statusService);
   // Poll GitHub Releases for a newer version than what's running (immediately, then ~45 min)
+  // An update that restarted this daemon is done: the update window shows "Updated to …".
+  finishRestartedUpdate(dataDir, getRunningVersion());
   const updateCheckInterval = startUpdateCheckLoop(db, broadcaster);
+  // Anonymous usage report: 60 s after boot, then an hourly check (Settings → General switch).
+  const telemetryLoop = startTelemetryLoop(db);
   const agentSchedulerInterval = setInterval(() => {
     try {
       agentService.processDueRuns();
@@ -877,12 +930,16 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     console.log('Shutting down Dispatch server...');
     clearInterval(ptyTimingInterval);
     clearInterval(updateCheckInterval);
+    for (const g of loopbackGuards) g.close();
+    telemetryLoop.stop();
     clearInterval(agentSchedulerInterval);
     clearInterval(autoArchiveInterval);
     clearInterval(interimRecapInterval);
     clearInterval(heartbeat);
     boxHeartbeat.stop();
     threadAutoNamer.dispose();
+    endless.stop();
+    endlessManager.killAll();
     ptyManager.killAll();
     // Each manager kill settles its thread to `waiting` synchronously; keep the mid-turn overseer
     // threads `working` so the next boot's kickstart resumes them.

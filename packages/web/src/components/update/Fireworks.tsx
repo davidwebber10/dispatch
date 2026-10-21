@@ -2,10 +2,10 @@ import { useEffect, useRef } from 'react';
 
 /**
  * Celebration fireworks: repeated shell bursts on a full-viewport canvas, using
- * the same tiny-square spark language as TerminalRain's pops so the reward
+ * the same tiny-square spark language as the update game, so the reward
  * visually rhymes with the game that earned it. Runs for as long as it is
  * mounted (HighScoreCelebration unmounts it with the popup). Decoration
- * contract matches TerminalRain: null 2d context is a silent no-op, and
+ * contract matches the update game: null 2d context is a silent no-op, and
  * prefers-reduced-motion renders nothing at all.
  */
 

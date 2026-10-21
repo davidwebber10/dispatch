@@ -26,6 +26,10 @@ export type Density = 'compact' | 'cozy' | 'roomy';
  */
 export type MobileViewMode = 'threads' | 'board';
 
+/** The editor the doc viewer's "Open in editor" uses, through its URL scheme ('' = none, the button stays hidden). */
+export type DocEditor = '' | 'vscode' | 'cursor' | 'zed';
+const EDITORS: readonly DocEditor[] = ['', 'vscode', 'cursor', 'zed'];
+
 /**
  * Sidebar list caps (THREADS / FILES sections). 0 is the "All" sentinel — no cap.
  * The stepper walks 3…50, then one more step up lands on All; step logic lives here
@@ -81,6 +85,7 @@ interface SettingsState {
    * Pretty composer is always on and has no toggle: it takes prose only.
    */
   ptyAutocorrect: boolean;
+  editor: DocEditor;
   setCoordinatorName: (name: string) => void;
   setFontSize: (n: number) => void;
   setScrollback: (n: number) => void;
@@ -99,6 +104,7 @@ interface SettingsState {
   setSttSecretName: (name: string) => void;
   setMobileViewMode: (m: MobileViewMode) => void;
   setPtyAutocorrect: (b: boolean) => void;
+  setEditor: (e: DocEditor) => void;
 }
 
 function load<T>(key: string, fallback: T): T {
@@ -143,6 +149,7 @@ export const useSettings = create<SettingsState>((set) => ({
   sttSecretName: load('dispatch:sttSecretName', ''),
   mobileViewMode: load<MobileViewMode>('dispatch:mobileViewMode', 'threads'),
   ptyAutocorrect: load<boolean>('dispatch:ptyAutocorrect', true),
+  editor: ((e) => (EDITORS.includes(e) ? e : ''))(load<DocEditor>('dispatch:editor', '')),
   setFontSize: (n) => { const fontSize = Math.max(9, Math.min(22, Math.round(n))); save('dispatch:fontSize', fontSize); set({ fontSize }); },
   setScrollback: (n) => { const scrollback = Math.max(1000, Math.min(100000, Math.round(n))); save('dispatch:scrollback', scrollback); set({ scrollback }); },
   setSidebarFontSize: (n) => { const sidebarFontSize = Math.max(10, Math.min(18, Math.round(n))); save('dispatch:sidebarFontSize', sidebarFontSize); set({ sidebarFontSize }); },
@@ -160,6 +167,7 @@ export const useSettings = create<SettingsState>((set) => ({
   setSttSecretName: (name) => { save('dispatch:sttSecretName', name); set({ sttSecretName: name }); },
   setMobileViewMode: (m) => { save('dispatch:mobileViewMode', m); set({ mobileViewMode: m }); },
   setPtyAutocorrect: (b) => { save('dispatch:ptyAutocorrect', b); set({ ptyAutocorrect: b }); },
+  setEditor: (e) => { const editor = EDITORS.includes(e) ? e : ''; save('dispatch:editor', editor); set({ editor }); },
   setPushEnabled: async (b) => {
     if (b) {
       const r = await (await import('../lib/push')).enablePush();

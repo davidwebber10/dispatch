@@ -12,7 +12,7 @@ Never point a second daemon at the real `~/.dispatch` — always use a fake HOME
 ```bash
 pnpm build   # or: pnpm --filter dispatch-server build for core only
 mkdir -p <scratch>/fake-home
-HOME=<scratch>/fake-home PORT=3999 node packages/core/dist/server.js > <scratch>/daemon.log 2>&1 &
+HOME=<scratch>/fake-home PORT=3999 DISPATCH_TELEMETRY=0 node packages/core/dist/server.js > <scratch>/daemon.log 2>&1 &
 ```
 
 Ready when the log prints `Dispatch server listening on port 3999`. No auth on the API.

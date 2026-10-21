@@ -121,4 +121,19 @@ describe('PTYManager (real PTY)', () => {
 
     manager.kill('sess-off');
   }, 10_000);
+  it("a thread never inherits the daemon's PORT (an agent's dev server must not take Dispatch's port)", async () => {
+    const saved = process.env.PORT;
+    process.env.PORT = '3456';
+    try {
+      const manager = new PTYManager();
+      const chunks: string[] = [];
+      manager.on('data', (_id: string, data: string) => chunks.push(data));
+      const exited = new Promise<void>((resolve) => manager.on('exit', () => resolve()));
+      manager.spawn('sess-port', '/bin/sh', ['-c', 'printf "PORT=[${PORT:-none}]"'], os.tmpdir());
+      await exited;
+      expect(chunks.join('')).toContain('PORT=[none]');
+    } finally {
+      if (saved === undefined) delete process.env.PORT; else process.env.PORT = saved;
+    }
+  }, 10_000);
 });

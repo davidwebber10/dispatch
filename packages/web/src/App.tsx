@@ -17,6 +17,8 @@ import { AuthBanner } from './components/auth/AuthBanner';
 import { UpdateModal } from './components/update/UpdateModal';
 import { HighScoreCelebration } from './components/update/HighScoreCelebration';
 import { MobileApp } from './components/mobile/MobileApp';
+import { ChatMode } from './components/endless/ChatMode';
+import { useEndless } from './stores/endless';
 import { HintToast } from './components/common/HintToast';
 import { Spinner } from './components/common/Spinner';
 import { SetupWizard } from './components/setup/SetupWizard';
@@ -123,7 +125,12 @@ export default function App() {
       onStatus: (s) => {
         useConnection.getState().setStatus(s);
         if (s === 'closed') socketWasClosed = true;
-        else if (s === 'open' && socketWasClosed) { socketWasClosed = false; void resyncAfterReconnect(); }
+        else if (s === 'open' && socketWasClosed) {
+          socketWasClosed = false;
+          void resyncAfterReconnect();
+          // Endless messages broadcast while the socket was down were missed: reload the tail.
+          useEndless.getState().resyncAfterReconnect();
+        }
       },
       onEvent: (e) => {
         useProjects.getState().applyEvent(e);
@@ -135,6 +142,7 @@ export default function App() {
         useAgents.getState().applyEvent(e);
         useAnalyticsFeed.getState().applyEvent(e);
         useLedgerCard.getState().applyEvent(e);
+        useEndless.getState().applyEvent(e);
       },
     });
     sockRef.current = sock;
@@ -179,6 +187,15 @@ export default function App() {
     })();
   }, [pendingThread, isMobile]);
 
+  // Desktop consumer of the open-project intent (the Chat pane's Docs "+N more"); mobile's lives in MobileApp.
+  const pendingProject = useUI((s) => s.pendingOpenProject);
+  useEffect(() => {
+    if (!pendingProject || isMobile) return;
+    useUI.getState().clearOpenProject();
+    useProjects.getState().setActive(pendingProject);
+    useUI.getState().setView('workspace'); // the "Threads" view; `workspace` is its code name
+  }, [pendingProject, isMobile]);
+
   // Returning from the background: re-establish the events socket and remount
   // every terminal (which iOS may have silently killed) so the UI is live
   // again without the user having to back out of the view.
@@ -213,6 +230,8 @@ export default function App() {
       <AppShell>
         {view === 'settings'
           ? <SettingsView />
+          : view === 'chat'
+          ? <ChatMode />
           : view === 'analytics'
           ? <Suspense fallback={analyticsFallback}><AnalyticsView /></Suspense>
           : (

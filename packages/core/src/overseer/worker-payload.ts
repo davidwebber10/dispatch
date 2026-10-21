@@ -11,6 +11,7 @@ export function buildWorkerCreateBody(input: {
   resolved: { harness: string; model?: string };
   explicitModel?: string; mission?: string; dependsOn?: string;
   spawnDepth: number; queued?: boolean; task?: string;
+  origin?: 'endless'; spawnedBy?: string;
 }): Record<string, unknown> {
   const model = input.explicitModel || input.resolved.model || '';
   // Spec constraint: sonnet/opus/haiku/fable must NEVER reach a non-Claude CLI, whether they
@@ -35,6 +36,8 @@ export function buildWorkerCreateBody(input: {
       ...(input.dependsOn ? { dependsOn: input.dependsOn } : {}),
       ...(model ? { model } : {}),
       spawnDepth: input.spawnDepth,
+      ...(input.spawnedBy ? { spawnedBy: input.spawnedBy } : {}),
+      ...(input.origin ? { origin: input.origin } : {}),
     },
   };
 }

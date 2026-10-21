@@ -55,6 +55,23 @@ describe('the Claude Code version gate', () => {
     expect(claudePromptFileSupported()).toBe(true);
   });
 
+  // The spawn env is an OVERLAY that the thread managers spread over the daemon's env. Run alone,
+  // the CLI got no USER/HOME (v3.1.5's sign-in check said "signed out" for exactly this reason).
+  it('keeps the daemon\'s own env under the spawn env overlay', async () => {
+    const bin = path.join(dir, 'user-bin');
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\n[ -n "$USER" ] && echo "2.1.300 (Claude Code)"\n', { mode: 0o755 });
+    const prevUser = process.env.USER;
+    process.env.USER = 'someone';
+    try {
+      setClaudeProbeEnv({ PATH: `${bin}:/usr/bin:/bin` });
+      await warmClaudeVersion();
+      expect(claudePromptFileSupported()).toBe(true);
+    } finally {
+      process.env.USER = prevUser;
+    }
+  });
+
   it('a failed version read means the text form', async () => {
     await warmClaudeVersion(async () => { throw new Error('ENOENT'); });
     expect(claudePromptFileSupported()).toBe(false);

@@ -88,6 +88,27 @@ describe('agency-mcp', () => {
     expect(JSON.parse(msgInit.body)).toEqual({ text: 'investigate X', source: 'coordinator' });
   });
 
+  it('spawn_agent records the calling thread as spawnedBy', async () => {
+    process.env.DISPATCH_TERMINAL = 'parent-1';
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(workerDefaultsOk())
+      .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'agent-1' }) })
+      .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
+    global.fetch = fetchMock as any;
+    await callTool('spawn_agent', { agentType: 'researcher', task: 'look' });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).config.spawnedBy).toBe('parent-1');
+  });
+
+  it('queue_agent records the calling thread as spawnedBy', async () => {
+    process.env.DISPATCH_TERMINAL = 'parent-1';
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(workerDefaultsOk())
+      .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'agent-2' }) });
+    global.fetch = fetchMock as any;
+    await callTool('queue_agent', { agentType: 'researcher', task: 'later' });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).config.spawnedBy).toBe('parent-1');
+  });
+
   it('read_agent returns the agent assistant output + tools + status (the read channel)', async () => {
     const fetchMock = vi.fn()
       // 1) GET /conversation -> items

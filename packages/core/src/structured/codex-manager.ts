@@ -28,6 +28,7 @@ import type {
 } from './manager.js';
 import { CodexTranslator, buildApprovalResponse, type ApprovalMethod, type TranslatedAction } from './codex-translate.js';
 import { adaptForPolicy } from '../overseer/policy-adapter.js';
+import { inheritedEnv } from '../platform/inherited-env.js';
 
 const MAX_EVENTS = 5000;
 
@@ -283,7 +284,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
    *  thread/start + thread/resume `config` instead; see CodexSession.threadConfig). */
   private ensureConnection(opts: StructuredSpawnOpts): CodexConnection {
     if (this.conn?.alive) return this.conn;
-    const env = { ...process.env, ...this.defaultEnv, ...opts.env } as Record<string, string>;
+    const env = { ...inheritedEnv(), ...this.defaultEnv, ...opts.env } as Record<string, string>;
     this.connSpec = { command: opts.command, args: opts.args, cwd: opts.workDir, env };
     this.conn = this.makeConnection(this.connSpec);
     return this.conn;

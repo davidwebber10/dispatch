@@ -1168,6 +1168,8 @@ export class SessionService {
     // and the digest, and its questions go to the human. Without this, every role run would wake
     // (and revive) the coordinator with an invitation to spawn a follow-up.
     if (typeof cfg.roleRun === 'string' && cfg.roleRun) return false;
+    // A thread Chat started reports to Chat (Endless Chat stage 2), never to the project's Control Plane.
+    if (cfg.origin === 'endless') return false;
     const coordinator = terminalsDb.listBySession(this.db, agent.session_id)
       .map(terminalsDb.rowToTerminal)
       .find((t) => isAgentType(t.type) && !t.archivedAt && t.id !== agentTerminalId && t.config?.role === 'coordinator');
@@ -1458,7 +1460,8 @@ export class SessionService {
     // Decision cards, Unit 3: the agent's owner-decisions block becomes proposed ledger items. A
     // scheduled role run reports to its own log, never to an overseer, so it is never read.
     const isRoleRun = typeof cfg.roleRun === 'string' && !!cfg.roleRun;
-    const decisions = isRoleRun ? [] : this.captureOwnerDecisions(agent, mission);
+    // A Chat thread's report goes to Chat whole; no overseer triages proposed items for it.
+    const decisions = isRoleRun || cfg.origin === 'endless' ? [] : this.captureOwnerDecisions(agent, mission);
     const note =
       `✅ Your agent "${agent.label || 'agent'}"${mission ? ` (mission "${mission}")` : ''} ` +
       `[agentId ${agentTerminalId}] just finished a turn.\n` +
@@ -1492,6 +1495,14 @@ export class SessionService {
     if (live) return [...live].reverse();
     const items = this.getConversation(terminalId, { limit: 50 }).items.filter((it) => it.kind === 'assistant' && it.text);
     return items.length ? [String(items[items.length - 1].text)] : [];
+  }
+
+  /**
+   * A thread's final output for its Endless Chat report: the texts of its last turn in order,
+   * in full, joined by blank lines. '' when it wrote none.
+   */
+  finalOutput(terminalId: string): string {
+    return [...this.lastTurnTexts(terminalId)].reverse().join('\n\n').trim();
   }
 
   /** Read the owner-decisions block of the agent's last turn into the ledger; returns the notice lines. Never throws. */
@@ -2657,7 +2668,9 @@ export class SessionService {
    *     race left it stale-`working` but it actually finished;
    *   - skip a thread already stamped `config.kickedAt` with no newer transcript
    *     activity since (we kicked it on a prior boot and it hasn't moved).
-   * Each kicked thread is stamped `config.kickedAt` afterwards.
+   * Each kicked thread is stamped `config.kickedAt` afterwards. `completed` names the threads
+   * skipped because their turn completed: no settle edge ever fires for them (Endless Chat
+   * reports its own threads among them, final review M-5).
    *
    * DEFERRED (follow-up): `needs_input` agents lose their in-memory pending on
    * restart. They aren't `working`, so this kicker correctly skips them — reviving
@@ -2669,10 +2682,12 @@ export class SessionService {
    * none, so they are never proactively boot-kicked and rely on `ensureStructuredAlive`
    * (revive-on-open). Pinned in coordinator-restart.test.ts.
    */
-  async kickstartInterruptedAgents(settleMs: number = KICKSTART_SETTLE_MS): Promise<{ kicked: string[]; skipped: string[] }> {
+  async kickstartInterruptedAgents(settleMs: number = KICKSTART_SETTLE_MS): Promise<{ kicked: string[]; skipped: string[]; completed: string[] }> {
     const kicked: string[] = [];
     const skipped: string[] = [];
-    if (!this.structuredManagerFor('claude-code') && !this.structuredManagerFor('codex')) return { kicked, skipped };
+    /** Skipped because the record shows the turn completed: the turn ended while no one listened. */
+    const completed: string[] = [];
+    if (!this.structuredManagerFor('claude-code') && !this.structuredManagerFor('codex')) return { kicked, skipped, completed };
 
     // (a) Settle: let any burst of save writes from the shutdown coalesce before we read status.
     if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
@@ -2713,7 +2728,7 @@ export class SessionService {
       // (interruptedAt, stamped by shutdownPreservingInterruptedTurns): Codex writes that marker
       // when its app-server gets SIGTERM mid-turn, so there it IS the cut-off turn, not a Stop.
       const cutByShutdown = interruptedByShutdown && !!tail && 'aborted' in tail && tail.aborted;
-      if (tail?.completed && !cutByShutdown) { skipped.push(row.id); continue; }
+      if (tail?.completed && !cutByShutdown) { skipped.push(row.id); completed.push(row.id); continue; }
 
       // (d) Kick (revive + re-prompt) and stamp so a later restart won't double-kick.
       try {
@@ -2725,7 +2740,7 @@ export class SessionService {
         skipped.push(row.id);
       }
     }
-    return { kicked, skipped };
+    return { kicked, skipped, completed };
   }
 
   /**

@@ -10,6 +10,7 @@
  *   os.homedir() reads HOME on every call, so module-level path constants see it too.
  * - The run folder's stub `claude` and `codex` go first on PATH, so no test starts the
  *   real agent CLIs.
+ * - DISPATCH_TELEMETRY=0, so no test sends a usage ping.
  *
  * tests/harness/isolated-home.test.ts fails if this file stops doing its job.
  */
@@ -23,6 +24,8 @@ const home = fs.mkdtempSync(path.join(root, 'home-'));
 process.env.HOME = home;
 process.env.USERPROFILE = home;
 process.env.PATH = `${bin}${path.delimiter}${process.env.PATH ?? ''}`;
+// No test may send a real usage ping to dispatchd.app.
+process.env.DISPATCH_TELEMETRY = '0';
 
 // Tidy up per file; the globalSetup teardown removes anything left (e.g. all-skipped files).
 afterAll(() => fs.rmSync(home, { recursive: true, force: true }));

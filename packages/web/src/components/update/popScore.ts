@@ -1,5 +1,5 @@
 /**
- * Persistence for the update-rain pop game (see TerminalRain). Two keys:
+ * Persistence for the update game's high score (see blaster/Blaster.tsx). Two keys:
  *
  * - BEST: the all-time high score {score, date}. Written EAGERLY on every
  *   record-breaking pop, not on unmount — the update flow ends in a hard page
@@ -18,8 +18,8 @@
 export interface PopBest { score: number; date: string }
 export interface PopCelebration { score: number; prev: number; at: string }
 
-const BEST_KEY = 'dispatch:rain-pop-best';
-const CELEBRATE_KEY = 'dispatch:rain-pop-celebrate';
+const BEST_KEY = 'dispatch:blaster-best';
+const CELEBRATE_KEY = 'dispatch:blaster-celebrate';
 /** A restart round-trip is ~a minute; an hour is generous, a day is stale. */
 const CELEBRATION_MAX_AGE_MS = 60 * 60 * 1000;
 
@@ -37,7 +37,7 @@ export function readBest(): PopBest | null {
 
 /**
  * Record a record-breaking pop count. `startedAgainst` is the best the ROUND
- * started with (frozen at rain mount) — kept in the celebration payload so the
+ * started with (frozen when the round starts) — kept in the celebration payload so the
  * popup can say what was beaten, no matter how many times this round re-broke
  * its own record on the way up.
  */
