@@ -1,6 +1,8 @@
 /**
  * Thread reports (spec 2026-10-13, section 6.4). A thread Chat started owes Chat one report
- * each time Chat sends it work (spawn_agent, message_thread). Pure helpers; the service logs.
+ * each time Chat sends it work (spawn_agent, message_thread). A live ending or question of a
+ * Chat thread reports even when no report is owed (a watch woke it; the user steered it in the
+ * thread), so Chat hears every turn. Pure helpers; the service logs.
  */
 
 const NOTES: Record<string, string> = {

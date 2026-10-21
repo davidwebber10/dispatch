@@ -112,14 +112,79 @@ describe('thread reports', () => {
     await endTurn(x);
   });
 
-  it('a thread Chat did not start, or did not arm, never reports', async () => {
+  it('a thread Chat did not start never reports', async () => {
     const x = make();
     outputs.t2 = 'mine';
     x.svc.onThreadSettled({ terminalId: 't2', threadStatus: 'idle' });
-    x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'idle' });
+    x.svc.onThreadStatus('t2', 'needs_input');
     await flush();
     expect(works()).toEqual([]);
     expect(x.fake.spawned).toHaveLength(0);
+  });
+
+  it('a Chat thread reports every later ending, armed or not, and marks a question', async () => {
+    const x = make();
+    outputs.t1 = 'first result';
+    x.svc.arm('t1');
+    x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'idle' });
+    await flush();
+    // Later turns (a watch fired, a review round ended) owe nothing, and still report.
+    outputs.t1 = 'review round done';
+    x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'idle' });
+    await flush();
+    pendings.t1 = { requestId: 'r1', toolName: 'AskUserQuestion', input: {}, questions: [{ question: 'Squash or merge?' }] };
+    x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'needs_input' });
+    await flush();
+    expect(works().map((m) => m.text)).toEqual([
+      '[Fix login] report: first result',
+      '[Fix login] report: review round done',
+      '[Fix login] report: (waiting for an answer) Squash or merge?',
+    ]);
+    expect(x.svc.store.hasPendingReport('t1')).toBe(false);
+    await settle();
+    await endTurn(x);
+  });
+
+  it('an unarmed thread that reaches needs_input without a settle edge still reports', async () => {
+    const x = make();
+    pendings.t1 = { requestId: 'r1', toolName: 'AskUserQuestion', input: {}, questions: [{ question: 'Which file?' }] };
+    x.svc.onThreadStatus('t1', 'needs_input');
+    await flush();
+    expect(works().map((m) => m.text)).toEqual(['[Fix login] report: (waiting for an answer) Which file?']);
+    await settle();
+    await endTurn(x);
+  });
+
+  it('a second question while armed reports too, an identical repeat does not', async () => {
+    const x = make();
+    x.svc.arm('t1');
+    pendings.t1 = { requestId: 'r1', toolName: 'AskUserQuestion', input: {}, questions: [{ question: 'A?' }] };
+    x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'needs_input' });
+    await flush();
+    x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'needs_input' });
+    await flush();
+    expect(works()).toHaveLength(1);
+    pendings.t1 = { requestId: 'r2', toolName: 'AskUserQuestion', input: {}, questions: [{ question: 'B?' }] };
+    x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'needs_input' });
+    await flush();
+    expect(works().map((m) => m.text)).toEqual([
+      '[Fix login] report: (waiting for an answer) A?',
+      '[Fix login] report: (waiting for an answer) B?',
+    ]);
+    await settle();
+    await endTurn(x);
+  });
+
+  it('identical consecutive reports of a thread are dropped', async () => {
+    const x = make();
+    outputs.t1 = 'same';
+    x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'idle' });
+    await flush();
+    x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'idle' });
+    await flush();
+    expect(works()).toHaveLength(1);
+    await settle();
+    await endTurn(x);
   });
 
   it('one ending claims every owed report and writes one report: arm, arm, settle → one report, owed 0', async () => {
@@ -131,11 +196,6 @@ describe('thread reports', () => {
     await flush();
     expect(works().map((m) => m.text)).toEqual(['[Fix login] report: jobs one and two']);
     expect(x.svc.store.owedReports('t1')).toBe(0);
-    // The next turn in that thread is the user's own: it never reports.
-    outputs.t1 = 'the user asked something';
-    x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'idle' });
-    await flush();
-    expect(works()).toHaveLength(1);
     await settle();
     await endTurn(x);
   });
@@ -266,7 +326,7 @@ describe('thread reports', () => {
     await endTurn(x);
   });
 
-  it('two questions in a row make one interim report', async () => {
+  it('two different questions in a row make two interim reports and keep the owed report', async () => {
     const x = make();
     pendings.t1 = { requestId: 'r1', toolName: 'AskUserQuestion', input: {}, questions: [{ question: 'First?' }] };
     x.svc.arm('t1');
@@ -276,7 +336,10 @@ describe('thread reports', () => {
     x.svc.onThreadStatus('t1', 'working');
     x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'needs_input' });
     await flush();
-    expect(works().map((m) => m.text)).toEqual(['[Fix login] report: (waiting for an answer) First?']);
+    expect(works().map((m) => m.text)).toEqual([
+      '[Fix login] report: (waiting for an answer) First?',
+      '[Fix login] report: (waiting for an answer) Second?',
+    ]);
     expect(x.svc.store.owedReports('t1')).toBe(1);
     await settle();
     await endTurn(x);
@@ -351,12 +414,10 @@ describe('thread reports', () => {
     await endTurn(x);
   });
 
-  it('the error-edge memory holds only threads that owe a report', async () => {
+  it('the error-edge memory holds only Chat threads, and clears on the next edge', async () => {
     const x = make();
     x.svc.onThreadStatus('t2', 'error');
-    x.svc.onThreadStatus('t1', 'error');
     expect((x.svc as any).errored.size).toBe(0);
-    x.svc.arm('t1');
     x.svc.onThreadStatus('t1', 'error');
     expect((x.svc as any).errored.size).toBe(1);
     x.svc.onThreadStatus('t1', 'idle');

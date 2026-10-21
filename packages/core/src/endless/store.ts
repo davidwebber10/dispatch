@@ -172,6 +172,12 @@ export class EndlessStore {
     return r?.waiting_reported === 1;
   }
 
+  /** The text of the thread's latest report in the log, or null (the dedupe key of an unsolicited report). */
+  lastReportText(terminalId: string): string | null {
+    const r = this.db.prepare("SELECT text FROM endless_messages WHERE kind = 'work' AND ref = ? ORDER BY i DESC LIMIT 1").get(terminalId) as { text: string } | undefined;
+    return r?.text ?? null;
+  }
+
   hasPendingReport(terminalId: string): boolean {
     return this.owedReports(terminalId) > 0;
   }
