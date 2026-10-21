@@ -18,6 +18,9 @@ export interface ReplayMeta {
   totalWritten: number;
   /** True when the replay reconstructs everything the PTY ever wrote. */
   complete: boolean;
+  /** False when the server sends no replay frame at all (an empty ring), so the next data
+   *  frame is live output. Absent from an older daemon. */
+  hasReplay?: boolean;
 }
 
 const REPLAY_META_TYPE = 'dispatch:replay-meta';
@@ -84,6 +87,7 @@ function parseReplayMeta(data: unknown): ReplayMeta | null {
     startOffset: typeof m.startOffset === 'number' ? m.startOffset : 0,
     totalWritten: typeof m.totalWritten === 'number' ? m.totalWritten : 0,
     complete: m.complete === true,
+    ...(typeof m.hasReplay === 'boolean' ? { hasReplay: m.hasReplay } : {}),
   };
 }
 

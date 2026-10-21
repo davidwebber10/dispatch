@@ -134,6 +134,10 @@ export function handleTerminalConnection(
       startOffset: slice.startOffset,
       totalWritten: ptyManager.getBufferOffsets(targetId).totalWritten,
       complete: ptyManager.isReplayComplete(targetId, replayBytes),
+      // Whether a replay frame follows. The client treats the first data frame as replay (and
+      // does not answer the queries in it), so it must know when none is coming: an empty ring
+      // sends nothing, and the first frame is then the CLI's live startup queries.
+      hasReplay: buffer.length > 0,
     }));
   } else {
     buffer = ptyManager.getBuffer(targetId, replayBytes);

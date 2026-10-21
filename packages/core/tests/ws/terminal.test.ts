@@ -72,7 +72,7 @@ describe('handleTerminalConnection replay meta (scrollback-offset protocol)', ()
     const ws = connect(pty, '/api/terminals/t1/ws?replayBytes=1000000&meta=1');
 
     expect(ws.sent).toEqual([
-      JSON.stringify({ type: 'dispatch:replay-meta', startOffset: 4096, totalWritten: 999999, complete: true }),
+      JSON.stringify({ type: 'dispatch:replay-meta', startOffset: 4096, totalWritten: 999999, complete: true, hasReplay: true }),
       'sliced-bytes',
     ]);
     expect(controlFrames(ws)).toHaveLength(1);
@@ -94,7 +94,7 @@ describe('handleTerminalConnection replay meta (scrollback-offset protocol)', ()
     const ws = connect(pty, '/api/terminals/t1/ws?meta=1');
     expect(ws.sent).toHaveLength(1);
     expect(JSON.parse(ws.sent[0] as string)).toEqual({
-      type: 'dispatch:replay-meta', startOffset: 0, totalWritten: 999999, complete: true,
+      type: 'dispatch:replay-meta', startOffset: 0, totalWritten: 999999, complete: true, hasReplay: false,
     });
   });
 
