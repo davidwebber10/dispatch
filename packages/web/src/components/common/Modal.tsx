@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom';
 const CLOSE_FRACTION = 0.25;
 const FLICK_PX_PER_MS = 0.5;
 const FLICK_MIN_PX = 12;
+const FLICK_MAX_AGE_MS = 100;
 
 /**
  * The shared dialog shell.
@@ -20,11 +21,13 @@ const FLICK_MIN_PX = 12;
  * flick down on the header (handle and title), and a dimmed strip above it that stays
  * tappable. The body never starts a drag, so a scrolling list scrolls instead of closing.
  */
-export function Modal({ open, onClose, title, sheet = false, anchor = 'center', maxWidth = 500, children }: {
+export function Modal({ open, onClose, title, sheet = false, closeButton = true, anchor = 'center', maxWidth = 500, children }: {
   open: boolean;
   onClose: () => void;
   title?: string;
   sheet?: boolean;
+  /** A sheet's header carries a Close button. A caller with its own (the doc viewer) turns it off. */
+  closeButton?: boolean;
   /**
    * `center` floats the card mid-viewport. `top` pins its top edge a fixed way down,
    * so a panel whose height changes with its own state (the New Thread picker: a
@@ -45,10 +48,14 @@ export function Modal({ open, onClose, title, sheet = false, anchor = 'center', 
 
   useEffect(() => {
     if (!open || !sheet) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); onClose(); } };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [open, sheet, onClose]);
+
+  // A closed Modal can stay mounted (Projects, Memory), so a drag-close must not leave
+  // its offset behind for the next open.
+  useEffect(() => { if (!open) { drag.current = null; setDragging(false); setDy(0); } }, [open]);
 
   if (!open) return null;
 
@@ -74,8 +81,11 @@ export function Modal({ open, onClose, title, sheet = false, anchor = 'center', 
     drag.current = null;
     setDragging(false);
     const dist = Math.max(0, e.clientY - d.startY);
-    const height = panelRef.current?.offsetHeight ?? 0;
-    const flick = e.type === 'pointerup' && d.v > FLICK_PX_PER_MS && dist >= FLICK_MIN_PX;
+    // Capped at the screen: 25% of a 2000px list would be farther than a thumb can drag.
+    const height = Math.min(panelRef.current?.offsetHeight ?? 0, window.innerHeight || Infinity);
+    // A pause before release drops the flick: the speed must be fresh.
+    const fresh = performance.now() - d.lastT <= FLICK_MAX_AGE_MS;
+    const flick = e.type === 'pointerup' && fresh && d.v > FLICK_PX_PER_MS && dist >= FLICK_MIN_PX;
     if (e.type === 'pointerup' && (flick || (height > 0 && dist > height * CLOSE_FRACTION))) { onClose(); return; }
     setDy(0); // spring back
   };
@@ -131,19 +141,19 @@ export function Modal({ open, onClose, title, sheet = false, anchor = 'center', 
           // The drag zone: handle plus title row. touch-action:none stops the browser
           // claiming the gesture as a scroll or pull-to-refresh before we see it.
           <div data-testid="sheet-header"
-            onPointerDown={onDragStart} onPointerMove={onDragMove} onPointerUp={onDragEnd} onPointerCancel={onDragEnd}
+            onPointerDown={onDragStart} onPointerMove={onDragMove} onPointerUp={onDragEnd} onPointerCancel={onDragEnd} onLostPointerCapture={onDragEnd}
             style={{
-              position: 'sticky', top: 0, zIndex: 1, background: '#18181B', borderRadius: '20px 20px 0 0',
-              margin: '0 -16px', padding: '8px 16px 0', touchAction: 'none', flex: 'none',
+              position: 'sticky', top: 'env(safe-area-inset-top)', zIndex: 1, background: '#18181B', borderRadius: '20px 20px 0 0',
+              margin: '0 -16px', padding: '8px 16px 0', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none', flex: 'none',
             }}>
             <div data-testid="sheet-handle" aria-hidden="true" style={{ width: 36, height: 4, borderRadius: 2, background: '#3A3A40', margin: '0 auto 2px' }} />
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 44 }}>
-              <h2 style={{ margin: 0, flex: 1, minWidth: 0, fontSize: 19, fontWeight: 600 }}>{title}</h2>
-              <button type="button" aria-label="Close" onClick={onClose} style={{
+            {(title || closeButton) && <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 44 }}>
+              {title ? <h2 style={{ margin: 0, flex: 1, minWidth: 0, fontSize: 19, fontWeight: 600 }}>{title}</h2> : <span style={{ flex: 1 }} />}
+              {closeButton && <button type="button" aria-label="Close" onClick={onClose} style={{
                 minWidth: 44, minHeight: 44, flex: 'none', marginRight: -10, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                 background: 'transparent', border: 'none', color: '#A1A1AA', fontSize: 22, lineHeight: 1, cursor: 'pointer', borderRadius: 22,
-              }}>×</button>
-            </div>
+              }}>×</button>}
+            </div>}
           </div>
         ) : title && <h2 style={{ margin: '0 0 16px', fontSize: 19, fontWeight: 600 }}>{title}</h2>}
         {children}

@@ -114,8 +114,8 @@ describe('Modal sheet: always closable', () => {
     }
     (window as unknown as { PointerEvent: unknown }).PointerEvent = PointerEventShim;
   }
-  function renderSheet(onClose = vi.fn(), title: string | undefined = 'Projects') {
-    render(<Modal open onClose={onClose} title={title} sheet><div>body</div></Modal>);
+  function renderSheet(onClose = vi.fn(), title: string | undefined = 'Projects', props: { closeButton?: boolean } = {}) {
+    render(<Modal open onClose={onClose} title={title} sheet {...props}><div>body</div></Modal>);
     const handle = screen.getByTestId('sheet-handle');
     const panel = screen.getByTestId('sheet-panel') as HTMLElement;
     Object.defineProperty(panel, 'offsetHeight', { value: 400, configurable: true });
@@ -139,8 +139,9 @@ describe('Modal sheet: always closable', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('shows the Close button on a title-less sheet too', () => {
-    renderSheet(vi.fn(), undefined);
+  it('shows the Close button on a title-less sheet too, without an empty heading', () => {
+    render(<Modal open onClose={() => {}} sheet><div>b</div></Modal>);
+    expect(screen.queryByRole('heading')).toBeNull();
     expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
   });
 
@@ -164,7 +165,7 @@ describe('Modal sheet: always closable', () => {
   it('keeps the header sticky so Close and the handle stay reachable in a scrolled tall sheet', () => {
     const { header } = renderSheet();
     expect(header.style.position).toBe('sticky');
-    expect(header.style.top).toBe('0px');
+    expect(header.style.top).toBe('env(safe-area-inset-top)');
   });
 
   it('dragging the handle down follows the finger', () => {
@@ -222,5 +223,47 @@ describe('Modal sheet: always closable', () => {
     const btn = screen.getByRole('button', { name: 'Close' });
     down(btn, 100, 0); up(btn, 100, 10); fireEvent.click(btn);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('closeButton={false} drops the header row entirely (the caller has its own Close)', () => {
+    render(<Modal open onClose={() => {}} sheet closeButton={false}><div>b</div></Modal>);
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull();
+    expect(screen.getByTestId('sheet-handle')).toBeInTheDocument();
+  });
+
+  it('a drag-close leaves no offset behind when the same mounted Modal reopens', () => {
+    const onClose = vi.fn();
+    const { rerender } = render(<Modal open onClose={onClose} title="P" sheet><div>b</div></Modal>);
+    const handle = screen.getByTestId('sheet-handle');
+    Object.defineProperty(screen.getByTestId('sheet-panel'), 'offsetHeight', { value: 400, configurable: true });
+    down(handle, 100, 0); move(handle, 300, 800); up(handle, 300, 800);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    rerender(<Modal open={false} onClose={onClose} title="P" sheet><div>b</div></Modal>);
+    rerender(<Modal open onClose={onClose} title="P" sheet><div>b</div></Modal>);
+    expect(screen.getByTestId('sheet-panel').style.transform).toBe('translateY(0px)');
+  });
+
+  it('a pause before release is not a flick', () => {
+    const { handle, onClose } = renderSheet();
+    down(handle, 100, 0); move(handle, 140, 40); up(handle, 140, 2000);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('Escape already consumed by an inner layer (a lightbox) does not close the sheet', () => {
+    const { onClose } = renderSheet();
+    const ev = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+    ev.preventDefault();
+    document.dispatchEvent(ev);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('does not capture the pointer when the press starts on the Close button', () => {
+    const { header } = renderSheet();
+    const spy = vi.fn();
+    (header as unknown as { setPointerCapture: unknown }).setPointerCapture = spy;
+    down(screen.getByRole('button', { name: 'Close' }), 100, 0);
+    expect(spy).not.toHaveBeenCalled();
+    down(header, 100, 0);
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 });

@@ -195,7 +195,7 @@ export function DocViewer() {
   );
 
   return (
-    <Modal open onClose={close} sheet={mobile} maxWidth={880}>
+    <Modal open onClose={close} sheet={mobile} closeButton={false} maxWidth={880}>
       <div role="dialog" aria-modal="true" aria-label={name}
         style={{
           display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0,
