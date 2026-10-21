@@ -3,9 +3,10 @@ import { create } from 'zustand';
 /**
  * A doc to show: the project that owns it, its path, the branch to read it from (null: the project's
  * own checkout), and the worktree whose copy to read, by its path in the project (`.worktrees/x` or
- * `.claude/worktrees/x`). A named copy wins over the main checkout.
+ * `.claude/worktrees/x`). A named copy wins over the main checkout. `origin` is the thread whose
+ * message opened it (its own viewer shows it); none: Chat's viewer.
  */
-export interface DocRef { project: string; path: string; branch: string | null; worktree?: string | null }
+export interface DocRef { project: string; path: string; branch: string | null; worktree?: string | null; origin?: string | null }
 
 interface S { open: DocRef | null; back: DocRef[]; show: (r: DocRef) => void; push: (r: DocRef) => void; pop: () => void; close: () => void }
 

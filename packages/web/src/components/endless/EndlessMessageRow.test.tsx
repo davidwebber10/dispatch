@@ -153,6 +153,15 @@ describe('report card', () => {
 });
 
 describe('doc links in chat', () => {
+  it('a markdown link to a doc in a Dispatch reply opens the viewer; an outside link does nothing', () => {
+    useEndless.setState({ projects: [{ id: 's1', name: 'studio', folder: '/w/studio' }] as any });
+    const reply = { ...m(0, 'unii', '[plan](/w/studio/docs/plan.md:3) and [out](/etc/x.md)'), project: 's1' };
+    render(<MessageScroller.Provider><EndlessRows messages={[reply]} focus={null} /></MessageScroller.Provider>);
+    expect(fireEvent.click(screen.getByRole('link', { name: 'out' }))).toBe(false);
+    expect(useDocViewer.getState().open).toBeNull();
+    expect(fireEvent.click(screen.getByRole('link', { name: 'plan' }))).toBe(false);
+    expect(useDocViewer.getState().open).toEqual({ project: 's1', path: '/w/studio/docs/plan.md', branch: null });
+  });
   it('a report card path opens the doc viewer with the report project', () => {
     const spy = vi.spyOn(open, 'openThreadInPlace').mockResolvedValue();
     const work = { ...m(0, 'work', '[Plan] report: done. Doc: docs/specs/x.md (branch spec/x)'), project: 's1', ref: 't1' };

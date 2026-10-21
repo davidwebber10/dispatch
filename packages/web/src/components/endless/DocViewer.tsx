@@ -10,6 +10,8 @@ import { useHost } from '../../stores/host';
 import { useSettings } from '../../stores/settings';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { docName, projectForPath } from '../../lib/docPaths';
+import { classifyLink } from '../../lib/docLinks';
+import { useProjects } from '../../stores/projects';
 import { formatStart } from './paneParts';
 
 /** The editors "Open in editor" can use: the browser opens the editor's URL, the daemon runs nothing. */
@@ -42,34 +44,6 @@ const ERROR_TEXT: Record<number, string> = {
 
 const mono = (size: number, color = 'var(--color-text-tertiary)'): React.CSSProperties => ({ fontFamily: 'var(--font-mono)', fontSize: size, color });
 
-/** A doc file name: the viewer opens a link to one of these itself. */
-const DOC_LINK = /\.(?:md|markdown|txt)$/i;
-/** A URL with a scheme (`https:`, `mailto:`) or a protocol-relative one (`//host`). */
-const HAS_SCHEME = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i;
-
-const bareHref = (href: string) => href.split('#')[0].split('?')[0];
-/** True for a relative link to a doc file (no scheme, not absolute). */
-const isRelativeDoc = (href: string) => { const bare = bareHref(href); return DOC_LINK.test(bare) && !bare.startsWith('/') && !HAS_SCHEME.test(bare); };
-/**
- * The repo path a relative doc link in the doc at `from` points to: `#...` and `?...` dropped,
- * joined to the folder of `from`, `.` and `..` resolved. Null when the link is not a relative doc
- * link, or when it leads above the repo root.
- */
-export function docLinkTarget(href: string, from: string): string | null {
-  if (!isRelativeDoc(href)) return null;
-  const bare = bareHref(href);
-  const parts = from.split('/').slice(0, -1);
-  for (const raw of bare.split('/')) {
-    let seg = raw;
-    try { seg = decodeURIComponent(raw); } catch { /* keep the raw segment */ }
-    if (/[/\\]/.test(seg)) return null; // an encoded separator is not a folder step
-    if (seg === '' || seg === '.') continue;
-    if (seg === '..') { if (!parts.length) return null; parts.pop(); continue; }
-    parts.push(seg);
-  }
-  return parts.length ? parts.join('/') : null;
-}
-
 /** The path of `abs` inside `folder`, or null when it is not inside it. */
 function relativeTo(abs: string, folder: string | undefined): string | null {
   if (!folder) return null;
@@ -85,10 +59,18 @@ const pathText = (ref: DocRef, doc: EndlessDocCopy | null) =>
  * The doc viewer (spec 12.4; boards DocViewer, DocStates, PhoneDoc): one doc in place over Chat, read only.
  * Mounted once in ChatMode; `useDocViewer` says which doc. A link inside the doc opens the next doc, and Back returns.
  */
-export function DocViewer() {
-  const open = useDocViewer((s) => s.open);
+export function DocViewer({ owner }: { owner?: string } = {}) {
+  const shown = useDocViewer((s) => s.open);
+  // One viewer per surface: Chat's has no owner; a thread's shows only a doc its own message opened.
+  const open = shown && (shown.origin ?? undefined) === owner ? shown : null;
   const back = useDocViewer((s) => s.back);
-  const projects = useEndless((s) => s.projects);
+  const endlessProjects = useEndless((s) => s.projects);
+  const sessions = useProjects((s) => s.sessions);
+  // Chat loads its project list; a thread does not, so a project Chat has not loaded comes from the sessions.
+  const projects = useMemo(() => {
+    const known = new Set(endlessProjects.map((p) => p.id));
+    return [...endlessProjects, ...sessions.filter((x) => !known.has(x.id)).map((x) => ({ id: x.id, folder: x.workingDir }))];
+  }, [endlessProjects, sessions]);
   const canReveal = useHost((s) => s.canReveal);
   const fileManager = useHost((s) => s.fileManagerName) ?? 'Finder';
   const editor = useSettings((s) => s.editor);
@@ -120,6 +102,7 @@ export function DocViewer() {
 
   const project = open?.project ?? null;
   const loaded = state.kind === 'doc' ? state.doc : null;
+  const loadedPath = loaded?.path ?? open?.path;
   const copySource = loaded?.source, copyWorktree = loaded?.worktreeRel ?? loaded?.worktree, copyBranch = loaded?.branch;
   // Stable per project list and open copy: the Markdown chips are redrawn when this changes.
   const docs = useMemo(() => ({
@@ -132,29 +115,26 @@ export function DocViewer() {
         if (copySource === 'worktree' && copyWorktree) extra.worktree = copyWorktree;
         else if (copySource === 'branch' && copyBranch) extra.branch = copyBranch;
       }
-      useDocViewer.getState().push({ project: target, path: p, branch: b ?? extra.branch ?? null, ...(extra.worktree ? { worktree: extra.worktree } : {}) });
+      useDocViewer.getState().push({ project: target, path: p, branch: b ?? extra.branch ?? null, origin: open?.origin ?? null, ...(extra.worktree ? { worktree: extra.worktree } : {}) });
     },
-  }), [project, projects, copySource, copyWorktree, copyBranch]);
+    link: (href: string) => classifyLink(href, { project, projects, from: loadedPath }),
+  }), [project, open?.origin, projects, copySource, copyWorktree, copyBranch, loadedPath]);
 
   if (!open) return null;
   const close = () => useDocViewer.getState().close();
   /**
-   * A link in the doc never navigates the app: a relative doc link opens in the viewer (the same
-   * copy rule as a doc chip); only an http(s) or mailto link opens a new tab; every other link does nothing.
+   * A link in the doc never navigates the app (see lib/docLinks): a doc link opens in the viewer (a
+   * relative one keeps the copy that is open); only an http(s) or mailto link opens a new tab; every
+   * other link does nothing.
    */
   const onLink = (e: React.MouseEvent<HTMLElement>) => {
     const a = (e.target as HTMLElement).closest?.('a[href]');
     if (!a || !e.currentTarget.contains(a)) return;
     e.preventDefault();
     const href = a.getAttribute('href') ?? '';
-    if (isRelativeDoc(href)) {
-      const target = state.kind === 'doc' ? docLinkTarget(href, state.doc.path) : null;
-      if (target) docs.onOpen(target, null);
-      return;
-    }
-    // Only a web or mail link leaves the app; any other scheme, a //host, a path or a fragment does nothing.
-    if (!/^(https?:|mailto:)/i.test(href.trim())) return;
-    window.open(href, '_blank', 'noopener');
+    const act = classifyLink(href, { project: open.project, projects, from: state.kind === 'doc' ? state.doc.path : open.path });
+    if (act.kind === 'doc') docs.onOpen(act.path, null);
+    else if (act.kind === 'web') window.open(href, '_blank', 'noopener,noreferrer');
   };
   const doc = state.kind === 'doc' ? state.doc : null;
   const name = docName(doc?.path ?? open.path);
@@ -250,7 +230,7 @@ export function DocViewer() {
             </div>
             <div key={`${open.project}:${open.branch ?? ''}:${open.worktree ?? ''}:${open.path}`}
               style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-base)' }}>
-              <article onClick={onLink} style={{ maxWidth: 680, margin: '0 auto', padding: mobile ? '24px 20px 34px' : '32px 24px', fontSize: 14.5, lineHeight: 1.75 }}>
+              <article onClick={onLink} onAuxClick={(e) => { if (e.button === 1) onLink(e); }} style={{ maxWidth: 680, margin: '0 auto', padding: mobile ? '24px 20px 34px' : '32px 24px', fontSize: 14.5, lineHeight: 1.75 }}>
                 <Markdown source={doc.markdown} docs={docs} />
               </article>
             </div>

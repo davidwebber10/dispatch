@@ -1,5 +1,6 @@
 import { render, screen, fireEvent } from '@testing-library/react';
-import { it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { classifyLink } from '../lib/docLinks';
 import { Markdown } from './Markdown';
 import { ImageViewerHost } from './ChatImage';
 
@@ -103,4 +104,105 @@ it('the docs pass skips form text', () => {
   const { container } = render(<Markdown source={'<textarea>docs/a.md</textarea>'} docs={{ onOpen: vi.fn() }} />);
   expect(container.querySelector('[data-doc-path]')).toBeNull();
   expect(container.querySelector('textarea')!.textContent).toBe('docs/a.md');
+});
+
+describe('Markdown: a link click with docs.link', () => {
+  const projects = [{ id: 'p1', folder: '/Users/me/dev/app' }];
+  const mount = (source: string) => {
+    const onOpen = vi.fn();
+    const link = (href: string) => classifyLink(href, { project: 'p1', projects });
+    render(<Markdown source={source} docs={{ onOpen, link }} />);
+    return onOpen;
+  };
+  it('opens a doc link in place and never navigates', () => {
+    const onOpen = mount('[plan.md](/Users/me/dev/app/docs/plan.md:12)');
+    expect(fireEvent.click(screen.getByRole('link', { name: 'plan.md' }))).toBe(false);
+    expect(onOpen).toHaveBeenCalledWith('/Users/me/dev/app/docs/plan.md', null);
+  });
+  it('opens a web link in a new tab with noopener and noreferrer', () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    const onOpen = mount('[x](https://example.com/a)');
+    expect(fireEvent.click(screen.getByRole('link', { name: 'x' }))).toBe(false);
+    expect(open).toHaveBeenCalledWith('https://example.com/a', '_blank', 'noopener,noreferrer');
+    expect(onOpen).not.toHaveBeenCalled();
+    open.mockRestore();
+  });
+  it('does nothing for every other link, and the page does not reload', () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    const onOpen = mount('[a](/etc/notes.md) [b](/Users/me/dev/app/src/a.ts) [c](//evil.test/a.md) [d](#top)');
+    for (const name of ['a', 'b', 'c', 'd']) expect(fireEvent.click(screen.getByRole('link', { name })), name).toBe(false);
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+    open.mockRestore();
+  });
+  it('does not make a chip out of the text of a link that already goes somewhere', () => {
+    const { container } = render(<Markdown source="[docs/a.md](/Users/me/dev/app/docs/a.md)" docs={{ onOpen: vi.fn(), link: () => ({ kind: 'none' }) }} />);
+    expect(container.querySelector('.doc-chip')).toBeNull();
+  });
+});
+
+describe('Markdown: file URLs and middle clicks with docs.link', () => {
+  const projects = [{ id: 'p1', folder: '/Users/me/dev/app' }];
+  const mount = (source: string) => {
+    const onOpen = vi.fn();
+    render(<Markdown source={source} docs={{ onOpen, link: (h) => classifyLink(h, { project: 'p1', projects }) }} />);
+    return onOpen;
+  };
+  it('keeps a file URL through the sanitizer so it opens the doc', () => {
+    const onOpen = mount('[a](file:///Users/me/dev/app/docs/a.md#L3) [b](file://localhost/Users/me/dev/app/docs/b.md)');
+    fireEvent.click(screen.getByRole('link', { name: 'a' }));
+    fireEvent.click(screen.getByRole('link', { name: 'b' }));
+    expect(onOpen.mock.calls).toEqual([['/Users/me/dev/app/docs/a.md', null], ['/Users/me/dev/app/docs/b.md', null]]);
+  });
+  it('a file URL stays inert without docs.link', () => {
+    render(<Markdown source="[a](file:///Users/me/dev/app/docs/a.md)" />);
+    expect(screen.queryByRole('link')).toBeNull();
+  });
+  it('a middle click is routed like a click and never navigates', () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    const onOpen = mount('[doc](/Users/me/dev/app/docs/a.md) [src](src/a.ts) [web](https://example.com)');
+    expect(fireEvent(screen.getByRole('link', { name: 'doc' }), new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }))).toBe(false);
+    expect(onOpen).toHaveBeenCalledWith('/Users/me/dev/app/docs/a.md', null);
+    expect(fireEvent(screen.getByRole('link', { name: 'src' }), new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }))).toBe(false);
+    fireEvent(screen.getByRole('link', { name: 'web' }), new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }));
+    expect(open).toHaveBeenCalledWith('https://example.com', '_blank', 'noopener,noreferrer');
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    open.mockRestore();
+  });
+});
+
+describe('Markdown: link hardening with docs.link', () => {
+  const projects = [{ id: 'p1', folder: '/Users/me/dev/app' }];
+  const mount = (source: string) => {
+    const onOpen = vi.fn();
+    const { container } = render(<Markdown source={source} docs={{ onOpen, link: (h) => classifyLink(h, { project: 'p1', projects }) }} />);
+    return { onOpen, container };
+  };
+  it('opens a bare file name with a line suffix', () => {
+    const { onOpen } = mount('[plan](plan.md:12)');
+    fireEvent.click(screen.getByRole('link', { name: 'plan' }));
+    expect(onOpen).toHaveBeenCalledWith('plan.md', null);
+  });
+  it('a right click does not open anything', () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    const { onOpen } = mount('[doc](docs/a.md) [web](https://example.com)');
+    for (const name of ['doc', 'web']) fireEvent(screen.getByRole('link', { name }), new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 2 }));
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+    open.mockRestore();
+  });
+  it('a doc or unsupported link keeps no raw destination for a native open; a web link keeps its href', () => {
+    const { container } = mount('[doc](docs/a.md) [src](src/a.ts) [web](https://example.com/x)');
+    const hrefs = [...container.querySelectorAll('a')].map((a) => a.getAttribute('href'));
+    expect(hrefs).toEqual(['#', '#', 'https://example.com/x']);
+  });
+});
+
+it('a forged data-md-href on a web link cannot redirect its click', () => {
+  const open = vi.spyOn(window, 'open').mockReturnValue(null);
+  const projects = [{ id: 'p1', folder: '/Users/me/dev/app' }];
+  render(<Markdown source={'<a href="https://trusted.example/" data-md-href="https://other.example/">T</a>'} docs={{ onOpen: vi.fn(), link: (h) => classifyLink(h, { project: 'p1', projects }) }} />);
+  fireEvent.click(screen.getByRole('link', { name: 'T' }));
+  expect(open).toHaveBeenCalledWith('https://trusted.example/', '_blank', 'noopener,noreferrer');
+  open.mockRestore();
 });
