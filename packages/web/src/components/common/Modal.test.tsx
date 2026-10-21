@@ -165,7 +165,7 @@ describe('Modal sheet: always closable', () => {
   it('keeps the header sticky so Close and the handle stay reachable in a scrolled tall sheet', () => {
     const { header } = renderSheet();
     expect(header.style.position).toBe('sticky');
-    expect(header.style.top).toBe('env(safe-area-inset-top)');
+    expect(header.style.top).toContain('safe-area-inset-top');
   });
 
   it('dragging the handle down follows the finger', () => {

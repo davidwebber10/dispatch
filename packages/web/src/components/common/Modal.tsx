@@ -143,7 +143,7 @@ export function Modal({ open, onClose, title, sheet = false, closeButton = true,
           <div data-testid="sheet-header"
             onPointerDown={onDragStart} onPointerMove={onDragMove} onPointerUp={onDragEnd} onPointerCancel={onDragEnd} onLostPointerCapture={onDragEnd}
             style={{
-              position: 'sticky', top: 'env(safe-area-inset-top)', zIndex: 1, background: '#18181B', borderRadius: '20px 20px 0 0',
+              position: 'sticky', top: 'calc(env(safe-area-inset-top) + 0px)', zIndex: 1, background: '#18181B', borderRadius: '20px 20px 0 0',
               margin: '0 -16px', padding: '8px 16px 0', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none', flex: 'none',
             }}>
             <div data-testid="sheet-handle" aria-hidden="true" style={{ width: 36, height: 4, borderRadius: 2, background: '#3A3A40', margin: '0 auto 2px' }} />
