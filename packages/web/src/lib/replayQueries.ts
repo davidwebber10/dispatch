@@ -26,8 +26,8 @@ type Params = (number | number[])[];
 const isQuery0 = (p: Params) => !(Number(p[0]) > 0);
 
 /** Registers handlers, ahead of xterm's own, that swallow the queries xterm 5.5 answers by
- *  itself while `parsingReplay()` is true. Returns a function that removes them. Sequences that
- *  only look like queries but set something (OSC 4/10/11/12 with a value) are left alone. */
+ *  itself while `parsingReplay()` is true. Returns a function that removes them. A colour
+ *  sequence that only sets values is left alone. */
 export function suppressReplayedQueries(term: Pick<Terminal, 'parser'>, parsingReplay: () => boolean): () => void {
   const p = term.parser;
   const csi = (id: { prefix?: string; intermediates?: string; final: string }, isQuery: (params: Params) => boolean) =>
@@ -35,9 +35,11 @@ export function suppressReplayedQueries(term: Pick<Terminal, 'parser'>, parsingR
   const osc = (ident: number, isQuery: (parts: string[]) => boolean) =>
     p.registerOscHandler(ident, (data) => parsingReplay() && isQuery(data.split(';')));
 
-  const allQuestion = (parts: string[]) => parts.every((s) => s === '?');
-  // OSC 4 is "index;spec" pairs: a query only when every spec is "?".
-  const paletteQuery = (parts: string[]) => parts.length >= 2 && parts.length % 2 === 0 && parts.every((s, i) => i % 2 === 0 || s === '?');
+  // A sequence with ANY query slot makes xterm answer it, even when other slots set a colour, so
+  // it is dropped whole during a replay (a replayed colour change is lost with it, a stale reply
+  // is worse). OSC 4 is "index;spec" pairs, so only the odd slots can be a query.
+  const anyQuestion = (parts: string[]) => parts.includes('?');
+  const paletteQuery = (parts: string[]) => parts.some((s, i) => i % 2 === 1 && s === '?');
 
   const handlers = [
     csi({ final: 'n' }, (a) => a[0] === 5 || a[0] === 6),
@@ -48,9 +50,9 @@ export function suppressReplayedQueries(term: Pick<Terminal, 'parser'>, parsingR
     csi({ prefix: '?', intermediates: '$', final: 'p' }, () => true),
     p.registerDcsHandler({ intermediates: '$', final: 'q' }, () => parsingReplay()),
     osc(4, paletteQuery),
-    osc(10, allQuestion),
-    osc(11, allQuestion),
-    osc(12, allQuestion),
+    osc(10, anyQuestion),
+    osc(11, anyQuestion),
+    osc(12, anyQuestion),
   ];
   return () => handlers.forEach((h) => h.dispose());
 }

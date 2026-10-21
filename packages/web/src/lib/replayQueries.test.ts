@@ -30,6 +30,9 @@ const QUERIES: Record<string, string> = {
   'OSC 10 two slots': `${ESC}]10;?;?${BEL}`,
   'OSC 4 palette': `${ESC}]4;1;?${BEL}`,
   'OSC 4 two entries': `${ESC}]4;1;?;2;?${BEL}`,
+  // A set and a query in one sequence: xterm applies the set AND answers the query.
+  'OSC 10 set then query': `${ESC}]10;#ff0000;?${BEL}`,
+  'OSC 4 set then query': `${ESC}]4;1;#ff0000;2;?${BEL}`,
   'DSR 5n': `${ESC}[5n`,
   'CPR 6n': `${ESC}[6n`,
   'DECXCPR ?6n': `${ESC}[?6n`,

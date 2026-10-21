@@ -291,6 +291,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
     // Known limit: a query that is still unanswered at the very end of a replay (a CLI that
     // started before any viewer attached) is not answered either. The replay cannot tell it from
     // one whose answer was consumed, and answering a stale one is the bug this fixes.
+    // The same goes for a query the CLI sent in the short window of a progressive-scrollback rebuild.
     const gate = createWriteGate(term);
     const stopSuppressingReplayQueries = suppressReplayedQueries(term, gate.parsingReplay);
     // The server sends no replay frame when its ring is empty (a new thread, a revived one). Then

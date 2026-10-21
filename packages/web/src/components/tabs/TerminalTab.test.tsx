@@ -1358,7 +1358,7 @@ test('replay, live query, replay: the live query queued between two replays is s
   expect(replies(created[0])).toEqual(['\x1b[12;34R']);
 });
 
-test('a rebuild replay holds its queries back, and a live frame queued before it is answered', async () => {
+test('a rebuild replay holds its queries back (the old socket\'s withheld frames are dropped, so no reply at all)', async () => {
   isMobileMock.mockReturnValue(true);
   (api.getScrollbackSize as Mock).mockResolvedValue(2_000_000);
   const { factory, created } = makeSocketFactory();
