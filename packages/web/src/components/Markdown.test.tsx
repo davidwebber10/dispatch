@@ -140,3 +140,33 @@ describe('Markdown: a link click with docs.link', () => {
     expect(container.querySelector('.doc-chip')).toBeNull();
   });
 });
+
+describe('Markdown: file URLs and middle clicks with docs.link', () => {
+  const projects = [{ id: 'p1', folder: '/Users/me/dev/app' }];
+  const mount = (source: string) => {
+    const onOpen = vi.fn();
+    render(<Markdown source={source} docs={{ onOpen, link: (h) => classifyLink(h, { project: 'p1', projects }) }} />);
+    return onOpen;
+  };
+  it('keeps a file URL through the sanitizer so it opens the doc', () => {
+    const onOpen = mount('[a](file:///Users/me/dev/app/docs/a.md#L3) [b](file://localhost/Users/me/dev/app/docs/b.md)');
+    fireEvent.click(screen.getByRole('link', { name: 'a' }));
+    fireEvent.click(screen.getByRole('link', { name: 'b' }));
+    expect(onOpen.mock.calls).toEqual([['/Users/me/dev/app/docs/a.md', null], ['/Users/me/dev/app/docs/b.md', null]]);
+  });
+  it('a file URL stays inert without docs.link', () => {
+    render(<Markdown source="[a](file:///Users/me/dev/app/docs/a.md)" />);
+    expect(screen.queryByRole('link')).toBeNull();
+  });
+  it('a middle click is routed like a click and never navigates', () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    const onOpen = mount('[doc](/Users/me/dev/app/docs/a.md) [src](src/a.ts) [web](https://example.com)');
+    expect(fireEvent(screen.getByRole('link', { name: 'doc' }), new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }))).toBe(false);
+    expect(onOpen).toHaveBeenCalledWith('/Users/me/dev/app/docs/a.md', null);
+    expect(fireEvent(screen.getByRole('link', { name: 'src' }), new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }))).toBe(false);
+    fireEvent(screen.getByRole('link', { name: 'web' }), new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }));
+    expect(open).toHaveBeenCalledWith('https://example.com', '_blank', 'noopener,noreferrer');
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    open.mockRestore();
+  });
+});

@@ -20,6 +20,7 @@ const NONE: LinkAction = { kind: 'none' };
 const DOC_LINK = /\.(?:md|markdown|txt)$/i;
 const WEB = /^(?:https?:|mailto:)/i;
 const FILE_URL = /^file:\/\/(?:localhost)?(\/.*)$/i;
+const LINE_SUFFIX = /:\d+(?::\d+)?$/;
 const SCHEME = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i;
 
 function decode(raw: string): string | null {
@@ -43,9 +44,10 @@ export function classifyLink(href: string, ctx: LinkContext): LinkAction {
   let target = h;
   const file = FILE_URL.exec(h);
   if (file) target = file[1];
-  else if (SCHEME.test(h) || h.startsWith('#')) return NONE;
+  // A :line suffix is dropped first, so `plan.md:12` is not read as a scheme.
+  else if (SCHEME.test(h.replace(LINE_SUFFIX, '')) || h.startsWith('#')) return NONE;
   // Drop a #L12 or #heading, a ?query and a :line or :line:col suffix; what is left is the path.
-  const bare = target.split('#')[0].split('?')[0].replace(/:\d+(?::\d+)?$/, '');
+  const bare = target.split('#')[0].split('?')[0].replace(LINE_SUFFIX, '');
   const path = decode(bare);
   if (!path || !DOC_LINK.test(path) || /[\\\0]/.test(path)) return NONE;
   const abs = path.startsWith('/');

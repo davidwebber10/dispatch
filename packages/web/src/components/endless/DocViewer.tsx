@@ -228,7 +228,7 @@ export function DocViewer({ owner }: { owner?: string } = {}) {
             </div>
             <div key={`${open.project}:${open.branch ?? ''}:${open.worktree ?? ''}:${open.path}`}
               style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-base)' }}>
-              <article onClick={onLink} style={{ maxWidth: 680, margin: '0 auto', padding: mobile ? '24px 20px 34px' : '32px 24px', fontSize: 14.5, lineHeight: 1.75 }}>
+              <article onClick={onLink} onAuxClick={onLink} style={{ maxWidth: 680, margin: '0 auto', padding: mobile ? '24px 20px 34px' : '32px 24px', fontSize: 14.5, lineHeight: 1.75 }}>
                 <Markdown source={doc.markdown} docs={docs} />
               </article>
             </div>

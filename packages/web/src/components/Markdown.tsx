@@ -22,8 +22,18 @@ import { ImageLightbox, useViewerHost } from './ChatImage';
 // dangerouslySetInnerHTML directly and must be swept the same way:
 //   ConversationView.tsx (L453, L459, L463, L464, L474) and toolviews/WebView.tsx (L16).
 // (Code-highlight sinks — ToolCall / QueryView / DiffView via highlightCode — are a separate pass.)
-const sanitize = (html: string): string =>
-  DOMPurify.sanitize(html, { ADD_TAGS: ['img'], ADD_ATTR: ['src', 'alt'] });
+/**
+ * `keepFileLinks`: a surface that routes its links (docs.link) keeps `file://` hrefs, which DOMPurify
+ * drops. The click handler only opens one that lib/docLinks accepts; every other target does nothing.
+ */
+const sanitize = (html: string, keepFileLinks = false): string => {
+  const keep = (_node: Element, data: { attrName: string; attrValue: string; forceKeepAttr?: boolean }) => {
+    if (data.attrName === 'href' && /^\s*file:\/\//i.test(data.attrValue)) data.forceKeepAttr = true;
+  };
+  if (keepFileLinks) DOMPurify.addHook('uponSanitizeAttribute', keep);
+  try { return DOMPurify.sanitize(html, { ADD_TAGS: ['img'], ADD_ATTR: ['src', 'alt'] }); }
+  finally { if (keepFileLinks) DOMPurify.removeHook('uponSanitizeAttribute', keep); }
+};
 
 /** Wraps each unlinked image in a focusable opener, so a keyboard user can reach the viewer (see onKeyDown). */
 function openableImages(html: string): string {
@@ -132,11 +142,12 @@ function docifyHtml(html: string, accept?: (path: string) => boolean): string {
 export const Markdown = React.memo(function Markdown({ source, ledger, docs }: { source: string; ledger?: LedgerChips; docs?: DocChips }) {
   const withDocs = !!docs;
   const accept = docs?.accept;
+  const routesLinks = !!docs?.link;
   const html = useMemo(() => {
-    const clean = openableImages(sanitize(renderMarkdown(source)));
+    const clean = openableImages(sanitize(renderMarkdown(source), routesLinks));
     const chipped = ledger ? chipifyHtml(clean, ledger.index) : clean;
     return withDocs ? docifyHtml(chipped, accept) : chipped;
-  }, [source, ledger, withDocs, accept]);
+  }, [source, ledger, withDocs, accept, routesLinks]);
   // Markdown-embedded images render as raw sanitized <img> tags with no React handlers,
   // so on a phone a tap did nothing while every ChatImage opened the lightbox — one
   // delegated click handler on the chokepoint gives every markdown image the same viewer.
@@ -147,18 +158,22 @@ export const Markdown = React.memo(function Markdown({ source, ledger, docs }: {
   const closeLightbox = useCallback(() => setLightbox(null), []);
   const openImage = (v: { src: string; alt?: string }) => (host ? host(v) : setLightbox(v));
   const chipOf = (t: EventTarget) => (ledger ? (t as HTMLElement).closest?.<HTMLElement>('[data-ledger-chip]') ?? null : null);
+  /** A link click (or a middle click) with docs.link: the link never navigates the app. True when it was a link. */
+  const routeLink = (e: React.MouseEvent<HTMLDivElement>): boolean => {
+    const a = docs?.link ? (e.target as HTMLElement).closest?.('a[href]') : null;
+    if (!a || !docs?.link || !e.currentTarget.contains(a)) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    const href = a.getAttribute('href') ?? '';
+    const act = docs.link(href);
+    if (act.kind === 'doc') docs.onOpen(act.path, null);
+    else if (act.kind === 'web') window.open(href, '_blank', 'noopener,noreferrer');
+    return true;
+  };
+  const onAuxClick = (e: React.MouseEvent<HTMLDivElement>) => { routeLink(e); };
   const onClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const t = e.target as HTMLElement;
-    const a = docs?.link ? t.closest?.('a[href]') : null;
-    if (a && docs?.link && e.currentTarget.contains(a)) {
-      e.preventDefault();
-      e.stopPropagation();
-      const href = a.getAttribute('href') ?? '';
-      const act = docs.link(href);
-      if (act.kind === 'doc') docs.onOpen(act.path, null);
-      else if (act.kind === 'web') window.open(href, '_blank', 'noopener,noreferrer');
-      return;
-    }
+    if (routeLink(e)) return;
     const doc = docs ? (t.closest?.('[data-doc-path]') as HTMLElement | null) : null;
     if (doc && docs) { e.stopPropagation(); docs.onOpen(doc.dataset.docPath!, doc.dataset.docBranch || null); return; }
     const chip = chipOf(t);
@@ -189,7 +204,7 @@ export const Markdown = React.memo(function Markdown({ source, ledger, docs }: {
   };
   return (
     <>
-      <div className="md-view" style={{ minWidth: 0 }} onClick={onClick} onKeyDown={onKeyDown} dangerouslySetInnerHTML={{ __html: html }} />
+      <div className="md-view" style={{ minWidth: 0 }} onClick={onClick} onAuxClick={onAuxClick} onKeyDown={onKeyDown} dangerouslySetInnerHTML={{ __html: html }} />
       {lightbox && <ImageLightbox src={lightbox.src} alt={lightbox.alt} onClose={closeLightbox} />}
     </>
   );

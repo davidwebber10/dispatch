@@ -30,6 +30,10 @@ describe('classifyLink', () => {
     }
     expect(classifyLink('file:///Users/me/dev/app/a.md#L3', ctx)).toEqual(doc('/Users/me/dev/app/a.md'));
   });
+  it('opens a bare file name with a line suffix', () => {
+    expect(classifyLink('plan.md:12', ctx)).toEqual(doc('plan.md'));
+    expect(classifyLink('plan.md:12:3', ctx)).toEqual(doc('plan.md'));
+  });
   it('decodes a percent-encoded path', () => {
     expect(classifyLink('/Users/me/dev/app/my%20docs/a%20b.md', ctx)).toEqual(doc('/Users/me/dev/app/my docs/a b.md'));
   });

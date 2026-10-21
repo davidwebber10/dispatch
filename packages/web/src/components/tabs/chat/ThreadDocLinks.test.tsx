@@ -35,6 +35,20 @@ function mount(type: string) {
 beforeEach(() => { useDocViewer.getState().close(); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
+describe('closing a thread view', () => {
+  it('closes the doc its messages opened, and leaves another surface\'s doc alone', () => {
+    items = say('hi');
+    const a = mount('codex');
+    useDocViewer.getState().show({ project: 's1', path: 'docs/a.md', branch: null, origin: 't1' });
+    a.unmount();
+    expect(useDocViewer.getState().open).toBeNull();
+    const b = mount('codex');
+    useDocViewer.getState().show({ project: 's1', path: 'docs/a.md', branch: null });
+    b.unmount();
+    expect(useDocViewer.getState().open).not.toBeNull();
+  });
+});
+
 describe.each(['claude-code', 'codex', 'grok', 'opencode'])('a %s thread', (type) => {
   it('opens a Codex-style markdown link to a doc in the doc viewer, in place', async () => {
     items = say(`See [plan.md](${FOLDER}/docs/plans/plan.md:12) for the steps.`);
