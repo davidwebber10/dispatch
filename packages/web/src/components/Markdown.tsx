@@ -47,6 +47,7 @@ function neutralizeLinks(html: string, link: (href: string) => LinkAction): stri
   const box = document.createElement('template');
   box.innerHTML = html;
   for (const a of box.content.querySelectorAll('a[href]')) {
+    a.removeAttribute('data-md-href'); // a forged one in the reply's own HTML must not override the href
     const href = a.getAttribute('href') ?? '';
     if (link(href).kind === 'web') continue;
     a.setAttribute('data-md-href', href);

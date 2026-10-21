@@ -197,3 +197,12 @@ describe('Markdown: link hardening with docs.link', () => {
     expect(hrefs).toEqual(['#', '#', 'https://example.com/x']);
   });
 });
+
+it('a forged data-md-href on a web link cannot redirect its click', () => {
+  const open = vi.spyOn(window, 'open').mockReturnValue(null);
+  const projects = [{ id: 'p1', folder: '/Users/me/dev/app' }];
+  render(<Markdown source={'<a href="https://trusted.example/" data-md-href="https://other.example/">T</a>'} docs={{ onOpen: vi.fn(), link: (h) => classifyLink(h, { project: 'p1', projects }) }} />);
+  fireEvent.click(screen.getByRole('link', { name: 'T' }));
+  expect(open).toHaveBeenCalledWith('https://trusted.example/', '_blank', 'noopener,noreferrer');
+  open.mockRestore();
+});
