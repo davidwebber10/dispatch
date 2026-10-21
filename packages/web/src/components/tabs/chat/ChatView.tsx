@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
+import { ClaudeLogin, isClaudeAuthError } from '../../endless/ClaudeLogin';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
 import { ArrowUp, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip, ArrowBendDownRight, X, Stop } from '@phosphor-icons/react';
 import type { ConvItem, PermissionQuestion } from '../../../api/types';
@@ -27,22 +28,7 @@ import { ToolCall, ToolResult, editDiffStat } from '../ToolCall';
 import { useToolGroupExpanded } from '../../../hooks/useToolUIState';
 import { modLabel } from '../../../lib/hostkeys';
 import { openFileTab } from '../../../lib/openFileTab';
-
-// Anthropic-vision-supported image types. Only these become a REAL base64 image block
-// the model SEES; anything else (incl. SVG, which the model can't read) falls back to
-// the path-reference line so the agent can still Read it from the inbox on disk.
-const MODEL_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
-
-/** Base64-encode a File's bytes (chunked so a large image can't blow the call stack). */
-async function fileToBase64(file: File): Promise<string> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  let binary = '';
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
-}
+import { MODEL_IMAGE_MIME, fileToBase64 } from '../../../lib/image-attach';
 
 /**
  * ChatView — the structured (stream-json) thread surface, built on shadcn's
@@ -53,6 +39,8 @@ async function fileToBase64(file: File): Promise<string> {
 export function ChatView({ terminalId }: { terminalId: string }) {
   const tab = useTabs((s) => findTerminal(s.byProject, terminalId));
   const sessionId = tab?.sessionId;
+  // A thread Chat started shows Chat's messages as "VIA CHAT", not the Control Plane's name.
+  const relayName = relayNameFor(tab);
   const connStatus = useConnection((s) => s.status);
   // The ACP harnesses (grok, opencode) have no pageable REST transcript (getConversation →
   // unsupported): their full ws-ring replay IS the whole recoverable history, so the
@@ -61,6 +49,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   // the common case).
   const { items, busy, model, send, pending, answer, contextTokens, contextWindow, compacting, compactResult, apiRetry, compact, hasMore, loadingOlder, loadOlder } =
     useStructuredChat(terminalId, sessionId, { pageableHistory: tab?.type !== 'grok' && tab?.type !== 'opencode' });
+  const loginItem = useMemo(() => loginItemFor(tab?.type, items), [tab?.type, items]);
 
   // Advice is about THIS resume, so "not now" lives in component state rather than
   // storage: a later resume of the same thread (older and larger still) should ask again.
@@ -291,7 +280,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                   messages is a lie, so that state gets a centered reconnect spinner. */}
               {items.length === 0 && !busy && !compacting && (connStatus === 'open' ? <EmptyState model={model} /> : <ReconnectingState />)}
               {splitIdx === null ? (
-                renderTimeline(items, openFileInViewer, pageBoundariesRef.current)
+                renderTimeline(items, openFileInViewer, pageBoundariesRef.current, relayName, loginItem)
               ) : (
                 <>
                   {/* Mid-compaction: the bar is a full-width divider pinned at the point the
@@ -299,11 +288,11 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                       below, so their position says "queued". The split is render-only — when
                       `compacting` clears, the timeline re-merges into one render and tool/result
                       pairing across the boundary works again. */}
-                  {renderTimeline(items.slice(0, splitIdx), openFileInViewer, pageBoundariesRef.current)}
+                  {renderTimeline(items.slice(0, splitIdx), openFileInViewer, pageBoundariesRef.current, relayName, loginItem)}
                   <MessageScroller.Item messageId="__compacting" style={{ display: 'flex' }}>
                     <CompactingBar queued={items.length - splitIdx} />
                   </MessageScroller.Item>
-                  {renderTimeline(items.slice(splitIdx), openFileInViewer, pageBoundariesRef.current)}
+                  {renderTimeline(items.slice(splitIdx), openFileInViewer, pageBoundariesRef.current, relayName, loginItem)}
                 </>
               )}
               {pending?.questions && pending.questions.length > 0 && (
@@ -546,7 +535,23 @@ function StagedThumbnail({ src, onRemove }: { src: string; onRemove: () => void 
  * comment on pageBoundariesRef) also forces a break — otherwise a loadOlder() prepend
  * could silently merge into a group that already existed, defeating scroll preservation.
  */
-export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void, pageBoundaries: Set<ConvItem>) {
+/** Who relayed a coordinator-sent turn in this thread: 'Chat' for a thread Chat started, else the Dispatch name. */
+export function relayNameFor(tab: { config?: Record<string, unknown> } | null | undefined): string | undefined {
+  return tab?.config?.origin === 'endless' ? 'Chat' : undefined;
+}
+
+/** The thread's last result, when it is a Claude login failure in a Claude thread: it gets the login box. */
+export function loginItemFor(type: string | undefined, items: ConvItem[]): ConvItem | null {
+  if (type !== 'claude-code') return null;
+  for (let k = items.length - 1; k >= 0; k--) {
+    const it = items[k];
+    if (it.kind !== 'result') continue;
+    return it.isError && isClaudeAuthError(it.text ?? '') ? it : null;
+  }
+  return null;
+}
+
+export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void, pageBoundaries: Set<ConvItem>, relayName?: string, loginItem?: ConvItem | null) {
   // Map tool_use id -> its result item, so paired results aren't rendered standalone.
   const resultById = new Map<string, ConvItem>();
   // Set of tool ids that actually have a tool card, so an ORPHAN result (whose tool
@@ -623,7 +628,7 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
       }
       rows.push(
         <MessageScroller.Item key={id} messageId={id} style={{ display: 'flex', flexDirection: 'column' }}>
-          <UserBubble text={it.text ?? ''} source={it.source} grouped={lastRowWasUser} />
+          <UserBubble text={it.text ?? ''} source={it.source} grouped={lastRowWasUser} relayName={relayName} />
         </MessageScroller.Item>,
       );
       lastRowWasUser = true;
@@ -748,7 +753,7 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
       if (consumed.has(it)) continue;                    // ...or paired by adjacency, above
       pushMach(id, <div style={{ padding: '0 20px' }}><ToolResult item={it} /></div>);
       continue;
-    } else if (it.kind === 'result') node = <ResultFooter item={it} />;
+    } else if (it.kind === 'result') node = <ResultFooter item={it} login={it === loginItem} />;
     // A system-injected event (background-task completion) that arrived as a `user`-role
     // turn. Deliberately does NOT flushGroup() the way a real `user` turn does: it isn't a
     // new speaker, it's an interruption inside the assistant's own turn — the assistant
@@ -929,7 +934,8 @@ function EmptyState({ model }: { model?: string }) {
 // name}" label (same ArrowBendDownRight "relayed" icon the coordinator's own Stream uses for
 // injected notices) and a muted/bordered bubble instead of the bright human-accent one.
 // `source === 'user'` or undefined (untagged/legacy) renders exactly like before.
-export function UserBubble({ text, source, grouped = false }: { text: string; source?: 'user' | 'coordinator'; grouped?: boolean }) {
+// `relayName` overrides the Dispatch name: a thread Chat started reads "via Chat".
+export function UserBubble({ text, source, grouped = false, relayName }: { text: string; source?: 'user' | 'coordinator'; grouped?: boolean; relayName?: string }) {
   const dispatchName = useDispatchName();
   const viaCoordinator = source === 'coordinator';
   return (
@@ -942,7 +948,7 @@ export function UserBubble({ text, source, grouped = false }: { text: string; so
       {grouped ? null : viaCoordinator ? (
         <div style={{ display: 'flex', alignItems: 'center', gap: 5, font: '500 9.5px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-accent)' }}>
           <ArrowBendDownRight size={11} weight="bold" />
-          VIA {dispatchName.toUpperCase()}
+          VIA {(relayName ?? dispatchName).toUpperCase()}
         </div>
       ) : (
         <span style={{ font: '500 9.5px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-accent)' }}>YOU</span>
@@ -1015,7 +1021,14 @@ export function Thinking({ text }: { text: string }) {
   );
 }
 
-export function ResultFooter({ item }: { item: ConvItem }) {
+/** Under a turn that failed on the Claude login: log the daemon in, then the user sends again. */
+function ResultLogin() {
+  const [done, setDone] = useState(false);
+  if (done) return <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>Logged in. Send your message again.</div>;
+  return <ClaudeLogin onDone={() => setDone(true)} />;
+}
+
+export function ResultFooter({ item, login = false }: { item: ConvItem; login?: boolean }) {
   const parts: string[] = [];
   if (typeof item.costUsd === 'number') parts.push(`$${item.costUsd.toFixed(item.costUsd < 0.01 ? 4 : 2)}`);
   const tok = (item.tokensIn ?? 0) + (item.tokensOut ?? 0);
@@ -1024,9 +1037,12 @@ export function ResultFooter({ item }: { item: ConvItem }) {
   if (item.turns) parts.push(`${item.turns} turn${item.turns !== 1 ? 's' : ''}`);
   if (item.isError) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--color-status-red)', font: '400 12px var(--font-sans)' }}>
-        <WarningCircle size={14} weight="fill" /> {item.text || 'Turn ended with an error'}
-        {parts.length > 0 && <span style={{ opacity: 0.7 }}> · {parts.join(' · ')}</span>}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--color-status-red)', font: '400 12px var(--font-sans)' }}>
+          <WarningCircle size={14} weight="fill" /> {item.text || 'Turn ended with an error'}
+          {parts.length > 0 && <span style={{ opacity: 0.7 }}> · {parts.join(' · ')}</span>}
+        </div>
+        {login && <ResultLogin />}
       </div>
     );
   }

@@ -9,7 +9,7 @@ import { createPortal } from 'react-dom';
  * sheet — rounded top corners, a drag handle, safe-area padding — instead of a floating
  * card; callers switch it on with `useIsMobile()`.
  */
-export function Modal({ open, onClose, title, sheet = false, anchor = 'center', children }: {
+export function Modal({ open, onClose, title, sheet = false, anchor = 'center', maxWidth = 500, children }: {
   open: boolean;
   onClose: () => void;
   title?: string;
@@ -21,6 +21,8 @@ export function Modal({ open, onClose, title, sheet = false, anchor = 'center', 
    * from the bottom instead of jumping to a new centre on every click.
    */
   anchor?: 'center' | 'top';
+  /** The card's widest size (not the sheet's). A reader (the doc viewer) needs more than a form. */
+  maxWidth?: number;
   children: ReactNode;
 }) {
   if (!open) return null;
@@ -59,7 +61,7 @@ export function Modal({ open, onClose, title, sheet = false, anchor = 'center', 
       } : {
         // `auto` top/bottom margins centre; a zero top margin pins the card under the
         // backdrop's top padding so only its bottom edge moves as content changes.
-        width: '100%', maxWidth: 500, margin: anchor === 'top' ? '0 auto auto' : 'auto', flexShrink: 0, boxSizing: 'border-box',
+        width: '100%', maxWidth, margin: anchor === 'top' ? '0 auto auto' : 'auto', flexShrink: 0, boxSizing: 'border-box',
         background: '#18181B', border: '1px solid #2F2F35', borderRadius: 12, padding: 20,
         boxShadow: '0 30px 80px -20px rgba(0,0,0,.85)',
       }}>

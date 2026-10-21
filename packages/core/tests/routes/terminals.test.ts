@@ -394,6 +394,16 @@ describe('terminal routes', () => {
     expect(res.body.error).toBe('Path traversal not allowed');
   });
 
+  it('POST terminals preserves config.origin "endless" in the stored config', async () => {
+    const created = await request(app)
+      .post(`/api/sessions/${sessionId}/terminals`)
+      .send({ type: 'claude-code', label: 'chat thread', config: { transport: 'structured', role: 'agent', origin: 'endless' } })
+      .expect(201);
+    expect(created.body.config.origin).toBe('endless');
+    const stored = terminalsDb.getById(db, created.body.id);
+    expect(JSON.parse(stored!.config).origin).toBe('endless');
+  });
+
   describe('PATCH /api/terminals/:terminalId/auto-archive', () => {
     it('enables auto-archive without clobbering the rest of the config', async () => {
       const created = await request(app)

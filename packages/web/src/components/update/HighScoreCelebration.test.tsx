@@ -26,7 +26,7 @@ describe('HighScoreCelebration', () => {
   it('first-ever score gets first-score copy (no "old best of 0")', () => {
     recordBest(12, 0);
     render(<HighScoreCelebration />);
-    expect(screen.getByText(/first update-rain high score/)).toBeInTheDocument();
+    expect(screen.getByText(/first blaster high score/)).toBeInTheDocument();
     expect(screen.queryByText(/old best of/)).toBeNull();
   });
 

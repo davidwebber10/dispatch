@@ -165,6 +165,13 @@ describe('readSourceFile — the file under the project folder', () => {
     expect(readSourceFile(project, 'docs/c.md')).toEqual({ kind: 'gone' });
   });
 
+  it('a .worktrees copy is found when the project lacks the file', () => {
+    write('project/.worktrees/live-plan/docs/plans/new.md', '# New\n');
+    const r = readSourceFile(project, 'docs/plans/new.md');
+    expect(r.kind).toBe('file');
+    if (r.kind === 'file') expect(r.note).toMatch(/live-plan/);
+  });
+
   it('"." or the project folder itself is a folder, not "outside"', () => {
     expect(readSourceFile(project, '.')).toMatchObject({ kind: 'file-only', reason: FOLDER_REASON });
     expect(readSourceFile(project, project)).toMatchObject({ kind: 'file-only', reason: FOLDER_REASON });

@@ -1,6 +1,6 @@
 import { appPath, href } from '../../lib/basePath';
 import { useState, useEffect, lazy, Suspense } from 'react';
-import { Gear, CaretLeft, CaretRight, Plus, Folders, PushPin, Robot, ChartBar } from '@phosphor-icons/react';
+import { Gear, CaretLeft, CaretRight, Plus, Folders, PushPin, ChartBar, ChatCircleDots } from '@phosphor-icons/react';
 import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
 import { TransportToggle } from '../layout/TransportToggle';
@@ -27,6 +27,8 @@ import { Spinner } from '../common/Spinner';
 import { SortableList } from '../common/SortableList';
 import { timeAgo } from '../../lib/time';
 import { OverseerView } from '../overseer/OverseerView';
+import { useStableOrder } from '../../hooks/useStableOrder';
+import { ChatMode } from '../endless/ChatMode';
 
 const AnalyticsView = lazy(() => import('../analytics/AnalyticsView').then((m) => ({ default: m.AnalyticsView })));
 
@@ -48,13 +50,6 @@ function homePath(p: string): string {
 // ProjectSidebar), so the mobile projects list had no sort control at all until now.
 type ProjectSort = 'recent' | 'alpha' | 'custom';
 const PROJECT_SORTS: [ProjectSort, string][] = [['recent', 'Most recent'], ['alpha', 'Alphabetical'], ['custom', 'Custom']];
-function sortProjects<T extends { name: string; lastActivityAt?: string; updatedAt?: string }>(list: T[], sort: ProjectSort): T[] {
-  return list.slice().sort((a, b) => {
-    if (sort === 'custom') return 0; // preserve the server's stored (drag) order
-    if (sort === 'alpha') return a.name.localeCompare(b.name);
-    return (Date.parse(b.lastActivityAt || b.updatedAt || '') || 0) - (Date.parse(a.lastActivityAt || a.updatedAt || '') || 0);
-  });
-}
 
 type NavInit = { level: 0 | 1 | 2; projectId?: string; leaf?: 'tab' | 'agent'; tabId?: string; agentId?: string };
 function parsePath(path: string): NavInit {
@@ -95,7 +90,7 @@ export function MobileApp() {
   const [query, setQuery] = useState('');
   const [projectSort, setProjectSort] = useState<ProjectSort>(() => (localStorage.getItem('dispatch:sort') as ProjectSort) || 'recent');
   useEffect(() => { try { localStorage.setItem('dispatch:sort', projectSort); } catch { /* ignore */ } }, [projectSort]);
-  const [bottomTab, setBottomTab] = useState<'projects' | 'pinned' | 'agents' | 'analytics' | 'settings'>('projects');
+  const [bottomTab, setBottomTab] = useState<'projects' | 'chat' | 'pinned' | 'agents' | 'analytics' | 'settings'>('projects');
   // Dispatch mode (mobile): the coordinator view opens as a full-screen overlay
   // over the active project (mirrors browseFiles). Closing returns to the project.
   const [dispatchOpen, setDispatchOpen] = useState(false);
@@ -158,6 +153,16 @@ export function MobileApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingThread]);
 
+  // The Chat pane's Docs "+N more": open that project in the Projects tab.
+  const pendingProject = useUI((s) => s.pendingOpenProject);
+  useEffect(() => {
+    if (!pendingProject) return;
+    useUI.getState().clearOpenProject();
+    setBottomTab('projects');
+    openProject(pendingProject);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingProject]);
+
   // Presence: the thread terminal is "being viewed" only on the level-2 tab leaf.
   useEffect(() => {
     useViewing.getState().set(level === 2 && leaf === 'tab' ? leafTabId : null);
@@ -192,8 +197,8 @@ export function MobileApp() {
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
-  const filtered = projects.filter((p) => p.name.toLowerCase().includes(query.toLowerCase()));
-  const sortedProjects = sortProjects(filtered, projectSort);
+  const ordered = useStableOrder(projects, projectSort);
+  const sortedProjects = ordered.filter((p) => p.name.toLowerCase().includes(query.toLowerCase()));
   // The back button labels the screen it returns TO (iOS convention): the
   // project detail goes back to "Projects"; a thread/agent goes back to its
   // project.
@@ -257,7 +262,9 @@ export function MobileApp() {
         <div style={{ display: 'flex', width: '100%', height: '100%', transform: `translateX(-${level * 100}%)`, transition: 'transform .28s cubic-bezier(.4,0,.2,1)' }}>
           {/* Level 0 — projects / agents, switched by the bottom tab bar */}
           <div style={{ ...slot, display: 'flex', flexDirection: 'column' }}>
-            {bottomTab === 'analytics' ? (
+            {bottomTab === 'chat' ? (
+              <ChatMode mobile />
+            ) : bottomTab === 'analytics' ? (
               <Suspense fallback={analyticsFallback}><AnalyticsView /></Suspense>
             ) : bottomTab === 'settings' ? (
               <MobileSettingsList onOpen={openSettingsSection} />
@@ -292,7 +299,7 @@ export function MobileApp() {
                   );
                 }}
               />
-              {!filtered.length && <div style={{ padding: 16, color: 'var(--color-text-tertiary)', fontSize: 13 }}>No projects</div>}
+              {!sortedProjects.length && <div style={{ padding: 16, color: 'var(--color-text-tertiary)', fontSize: 13 }}>No projects</div>}
             </div>
             </>
             )}
@@ -324,12 +331,13 @@ export function MobileApp() {
         </div>
       </div>
 
-      {/* Bottom tab bar — Projects / Pinned / Automations. Visible at the root AND
+      {/* Bottom tab bar — Projects / Chat / Pinned / Analytics / Settings. Automations
+          is hidden on mobile (desktop only). Visible at the root AND
           inside a project (level 1); only the thread/agent screen (level 2)
           reclaims the space. Tapping a tab from a project pops back to the root. */}
       {level < 2 && (
         <div style={{ flexShrink: 0, display: 'flex', borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
-          {([['projects', 'Projects', Folders], ['pinned', 'Pinned', PushPin], ['agents', 'Automations', Robot], ['analytics', 'Analytics', ChartBar], ['settings', 'Settings', Gear]] as const).map(([key, label, Icon]) => {
+          {([['projects', 'Projects', Folders], ['chat', 'Chat', ChatCircleDots], ['pinned', 'Pinned', PushPin], ['analytics', 'Analytics', ChartBar], ['settings', 'Settings', Gear]] as const).map(([key, label, Icon]) => {
             const on = bottomTab === key;
             return (
               <button key={key} onClick={() => { setBottomTab(key); if (level > 0) history.back(); }}

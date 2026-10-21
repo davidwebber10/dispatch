@@ -4,6 +4,7 @@ import { useSettings, ACCENTS, formatSidebarLimit, stepSidebarLimit } from '../.
 import { useServers, currentLabel } from '../../stores/servers';
 import { useSetup } from '../../stores/setup';
 import { UpdatesSection } from './UpdatesSection';
+import { TelemetrySetting } from './TelemetrySetting';
 import { MultiPaneSetting } from '../panes/MultiPaneSetting';
 import { sectionLabel, row, item, chip, Divider, Toggle, Stepper } from './ui';
 
@@ -170,6 +171,9 @@ export function GeneralSection({ onDone }: { onDone?: () => void }) {
       <div style={row}><span style={item}>Push notifications on this device</span><Toggle on={pushEnabled} onClick={() => void togglePush()} /></div>
       <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>Alerts are armed per thread with the bell — this enables this device to receive them.</div>
       {pushMsg && <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>{pushMsg}</div>}
+      <Divider />
+
+      <TelemetrySetting />
       <Divider />
 
       <MultiPaneSetting />

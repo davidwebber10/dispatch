@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 // Mocked at the module level so no test ever shells out for real. index.ts imports
 // execFileSync/spawnSync via a plain ESM `import { ... } from 'child_process'`
@@ -167,6 +170,71 @@ describe('cmdUpdate', () => {
     };
 
     expect(() => cmdUpdate({ daemon } as any)).toThrow('restart: not implemented on linux');
+  });
+});
+
+describe('cmdUpdate progress file', () => {
+  const daemonWith = (restart: () => void = () => {}) => ({
+    install: vi.fn(), uninstall: vi.fn(), start: vi.fn(), stop: vi.fn(),
+    status: vi.fn(() => ({ loaded: true })), restart: vi.fn(restart),
+  });
+  const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-upd-'));
+  const read = (dir: string) => JSON.parse(fs.readFileSync(path.join(dir, 'update-status.json'), 'utf8'));
+
+  test('records each step in order and ends "restarting" just before the restart', () => {
+    const dataDir = tmp();
+    const seen: string[] = [];
+    vi.mocked(execFileSync).mockImplementation(((cmd: string, args: string[]) => {
+      if (cmd === 'git' && args[0] === 'rev-parse') return '';
+      seen.push(`${read(dataDir).step}:${cmd} ${args[0]}`);
+      return '';
+    }) as any);
+    const daemon = daemonWith(() => { seen.push(`${read(dataDir).state}:restart`); });
+    cmdUpdate({ daemon, dataDir, repoRoot: dataDir } as any);
+    expect(seen.map((x) => x.split(':')[0] + ':' + (x.includes(process.execPath) ? 'node' : x.split(':').slice(1).join(':')))).toEqual(
+      ['pull:git pull', 'install:pnpm install', 'build:pnpm -r', 'tools:node', 'restarting:restart']);
+    const s = read(dataDir);
+    expect(s).toMatchObject({ v: 1, state: 'restarting', step: 'restart', steps: ['pull', 'install', 'build', 'tools', 'restart'], error: null });
+    expect(typeof s.pid).toBe('number');
+    expect(typeof s.startedAt).toBe('string');
+  });
+
+  test('a failed step is recorded with its step and message, and the error still propagates', () => {
+    const dataDir = tmp();
+    vi.mocked(execFileSync).mockImplementation(((cmd: string, args: string[]) => {
+      if (cmd === 'pnpm' && args[0] === '-r') throw new Error('Command failed: pnpm -r run build');
+      return '';
+    }) as any);
+    expect(() => cmdUpdate({ daemon: daemonWith(), dataDir, repoRoot: dataDir } as any)).toThrow('pnpm -r run build');
+    expect(read(dataDir)).toMatchObject({ state: 'failed', step: 'build', error: 'Command failed: pnpm -r run build' });
+  });
+
+  test('skips pnpm install when the lockfile did not change and node_modules exists', () => {
+    const repoRoot = tmp();
+    fs.mkdirSync(path.join(repoRoot, 'node_modules'));
+    const calls: string[] = [];
+    vi.mocked(execFileSync).mockImplementation(((cmd: string, args: string[]) => {
+      calls.push(`${cmd} ${args.join(' ')}`);
+      if (cmd === 'git' && args[0] === 'rev-parse') return 'abc123\n';
+      return '';
+    }) as any);
+    cmdUpdate({ daemon: daemonWith(), dataDir: repoRoot, repoRoot } as any);
+    expect(calls).not.toContain('pnpm install');
+    expect(read(repoRoot).skipped).toEqual(['install']);
+  });
+
+  test('runs pnpm install when the lockfile changed', () => {
+    const repoRoot = tmp();
+    fs.mkdirSync(path.join(repoRoot, 'node_modules'));
+    let n = 0;
+    const calls: string[] = [];
+    vi.mocked(execFileSync).mockImplementation(((cmd: string, args: string[]) => {
+      calls.push(`${cmd} ${args.join(' ')}`);
+      if (cmd === 'git' && args[0] === 'rev-parse') return `hash${++n}\n`;
+      return '';
+    }) as any);
+    cmdUpdate({ daemon: daemonWith(), dataDir: repoRoot, repoRoot } as any);
+    expect(calls).toContain('pnpm install');
   });
 });
 

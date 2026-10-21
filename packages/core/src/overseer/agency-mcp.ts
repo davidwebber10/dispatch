@@ -32,11 +32,15 @@ import {
   checkArchiveAllowed,
 } from './guards.js';
 import { buildWorkerCreateBody } from './worker-payload.js';
+import {
+  httpJson, resolveWorkerDefaults, createWorker, sendTask, readAgentOutput,
+  HARNESS_ARG_DESCRIPTION, TITLE_RULES, CARD_FIELDS_SCHEMA, type AgentType,
+} from './agency-shared.js';
 
 const PROTOCOL_VERSION = '2024-11-05';
 const SERVER_INFO = { name: 'dispatch-agency', version: '0.1.0' } as const;
 
-export type AgentType = 'planner' | 'implementer' | 'researcher' | 'reviewer' | 'design-reviewer' | 'code-reviewer';
+export type { AgentType };
 
 function apiBase(): string {
   return process.env.DISPATCH_API || `http://localhost:${process.env.DISPATCH_PORT || 3456}`;
@@ -71,15 +75,6 @@ function selfSpawnDepth(): number {
  */
 const pairRateLimiter = new PairRateLimiter();
 
-/** spawn_agent/queue_agent `harness` arg. It must say that `model` never picks the harness: a
- *  coordinator that passed model "gpt-6-astra" alone got claude-code workers that could not run. */
-const HARNESS_ARG_DESCRIPTION =
-  'Optional harness (agent CLI) for this worker. Omit to use the configured default: ' +
-  'the per-agent-type worker matrix, else the session default the user picked, else claude-code. ' +
-  'The model never picks the harness: pass harness with any non-Claude model ' +
-  '(e.g. harness "codex" with model "gpt-6-astra"). Otherwise override only when the task clearly ' +
-  'benefits from a specific harness.';
-
 /** spawn_agent/queue_agent/message_agent `ledgerIds` arg (structured-recap spec, Unit 3 hand-offs). */
 const LEDGER_IDS_ARG_DESCRIPTION =
   'Optional ledger item IDs (e.g. ["N7", "N12"]). The daemon appends a block "Owner decisions ' +
@@ -87,48 +82,6 @@ const LEDGER_IDS_ARG_DESCRIPTION =
   "the user's exact words, not a paraphrase. Overseer only.";
 
 const LEDGER_IDS_SCHEMA = { type: 'array', items: { type: 'string' }, description: LEDGER_IDS_ARG_DESCRIPTION } as const;
-
-/** The title rules, for each tool that takes a title (titles and source panel spec 2026-10-09, Unit 2). */
-const TITLE_RULES =
-  'A short title that chips, card rows and recap lines show instead of the question: one line, at least 2 words, ' +
-  'about 40 characters (50 at most), never only a code such as N41 or Q12, e.g. "Merge board PR #26".';
-
-/** The decision-card fields of ledger_add and ledger_import (decision cards spec 2026-10-06, Unit 1). */
-const CARD_FIELDS_SCHEMA = {
-  context: { type: 'string', description: 'Go/decide: what the user needs to know to decide, 20 to 800 characters.' },
-  options: {
-    type: 'array',
-    items: {
-      type: 'object',
-      properties: {
-        label: { type: 'string', description: 'The option, e.g. "A. 5 nights".' },
-        effect: { type: 'string', description: 'What happens if the user picks it.' },
-      },
-      required: ['label', 'effect'],
-    },
-    description: 'Decide: at least 2 options. Go: optional.',
-  },
-  recommendation: { type: 'string', description: 'When options exist: exactly one of the option labels.' },
-  why: { type: 'string', description: 'When options exist: the reason for the recommendation.' },
-  default: { type: 'string', description: 'Go/decide: what happens if the user does not answer. "Nothing happens" is valid.' },
-  source: {
-    type: 'object',
-    properties: {
-      kind: { type: 'string', enum: ['plan', 'doc', 'agent', 'thread', 'pr', 'issue', 'user', 'overseer'] },
-      ref: {
-        type: 'string',
-        description: 'plan/doc: a path relative to the project (it must exist); agent: its label or ID; ' +
-          'thread: the label or ID of one of the user\'s own threads in this project (not an agent, not you); ' +
-          'pr/issue: "#123"; user: the user\'s exact words; overseer: not needed.',
-      },
-      section: { type: 'string', description: 'Optional: the section inside the source.' },
-      id: { type: 'string', description: 'Optional: the source\'s own ID, e.g. "LR-6" (a cross-reference only).' },
-    },
-    required: ['kind'],
-    description: 'Go/decide: where the decision comes from. The daemon checks that it exists.',
-  },
-  note: { type: 'string', description: 'Optional: your own note, shown as "Overseer\'s note".' },
-} as const;
 
 /** The tools the coordinator can call. */
 export const TOOLS = [
@@ -668,37 +621,7 @@ export const TOOLS = [
 
 // --- HTTP helper -----------------------------------------------------------
 
-async function httpJson(method: string, url: string, body?: unknown): Promise<any> {
-  const res = await fetch(url, {
-    method,
-    headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) {
-    let detail = '';
-    try { detail = await res.text(); } catch { /* ignore */ }
-    throw new Error(`${method} ${url} -> ${res.status} ${res.statusText}${detail ? `: ${detail}` : ''}`);
-  }
-  const text = await res.text().catch(() => '');
-  if (!text) return null; // 204 / empty body
-  try { return JSON.parse(text); } catch { return text; }
-}
-
 // --- tool implementations --------------------------------------------------
-
-/**
- * Resolve harness/model via the daemon's single tested place (matrix + session default +
- * availability guard) — GET .../overseer/worker-defaults. An explicit `harness` arg is fed
- * THROUGH the endpoint as `?harness=` (see Finding 3's harness-affinity semantics for how the
- * matrix model then applies) rather than bypassing it, so the availability guard always runs —
- * an explicit pick must not skip the "is this CLI actually installed" check.
- */
-async function resolveWorkerDefaults(agentType: AgentType, harness: string): Promise<{ harness: string; model?: string }> {
-  const url = `${apiBase()}/api/sessions/${sessionId()}/overseer/worker-defaults?agentType=${encodeURIComponent(agentType)}${harness ? `&harness=${encodeURIComponent(harness)}` : ''}`;
-  const defaults = await httpJson('GET', url) as { harness: string; model?: string; available: boolean; reason?: string };
-  if (!defaults.available) throw new Error(defaults.reason || `${defaults.harness} is not available on this server`);
-  return { harness: defaults.harness, model: defaults.model };
-}
 
 async function spawnAgent(args: { agentType: AgentType; name?: string; task: string; mission?: string; model?: string; harness?: string; ledgerIds?: string[] }): Promise<{ agentId: string; label: string; mission?: string }> {
   if (!args?.agentType) throw new Error('agentType is required');
@@ -713,13 +636,8 @@ async function spawnAgent(args: { agentType: AgentType; name?: string; task: str
   const harness = typeof args.harness === 'string' ? args.harness.trim() : '';
   const childDepth = selfSpawnDepth() + 1;
 
-  const resolved = await resolveWorkerDefaults(args.agentType, harness);
-
-  const terminal = await httpJson('POST', `${apiBase()}/api/sessions/${sessionId()}/terminals`,
-    buildWorkerCreateBody({ agentType: args.agentType, label, resolved, explicitModel: model, mission, spawnDepth: childDepth }));
-  const agentId: string | undefined = terminal?.id;
-  if (!agentId) throw new Error('spawn did not return a terminal id');
-  await httpJson('POST', `${apiBase()}/api/terminals/${agentId}/message`, { text: task, source: 'coordinator' });
+  const agentId = await createWorker(apiBase(), sessionId(), { agentType: args.agentType, label, mission, model, harness, spawnDepth: childDepth, spawnedBy: selfTerminalId() || undefined });
+  await sendTask(apiBase(), agentId, task);
   return { agentId, label, ...(mission ? { mission } : {}) };
 }
 
@@ -744,10 +662,10 @@ async function queueAgent(args: { agentType: AgentType; name?: string; task: str
   const harness = typeof args.harness === 'string' ? args.harness.trim() : '';
   const childDepth = selfSpawnDepth() + 1;
 
-  const resolved = await resolveWorkerDefaults(args.agentType, harness);
+  const resolved = await resolveWorkerDefaults(apiBase(), sessionId(), args.agentType, harness);
 
   const terminal = await httpJson('POST', `${apiBase()}/api/sessions/${sessionId()}/terminals`,
-    buildWorkerCreateBody({ agentType: args.agentType, label, resolved, explicitModel: model, mission, spawnDepth: childDepth, queued: true, task, dependsOn }));
+    buildWorkerCreateBody({ agentType: args.agentType, label, resolved, explicitModel: model, mission, spawnDepth: childDepth, queued: true, task, dependsOn, spawnedBy: selfTerminalId() || undefined }));
   const agentId: string | undefined = terminal?.id;
   if (!agentId) throw new Error('queue did not return a terminal id');
   return { agentId, label, ...(mission ? { mission } : {}), queued: true };
@@ -832,13 +750,7 @@ async function completeAgent(args: { agentId: string; force?: boolean }): Promis
  */
 async function readAgent(args: { agentId: string }): Promise<{ agentId: string; status: string | null; output: string; tools: string[] }> {
   if (!args?.agentId) throw new Error('agentId is required');
-  const conv = await httpJson('GET', `${apiBase()}/api/terminals/${args.agentId}/conversation?limit=500`);
-  const items: any[] = Array.isArray(conv?.items) ? conv.items : [];
-  const output = items.filter((it) => it?.kind === 'assistant' && it.text).map((it) => it.text).join('\n\n').trim();
-  const tools = items.filter((it) => it?.kind === 'tool' && it.toolName).map((it) => it.toolName as string);
-  let status: string | null = null;
-  try { const t = await httpJson('GET', `${apiBase()}/api/terminals/${args.agentId}`); status = t?.status ?? null; } catch { /* ignore */ }
-  return { agentId: args.agentId, status, output: output || '(no assistant output captured yet)', tools: tools.slice(-30) };
+  return readAgentOutput(apiBase(), args.agentId);
 }
 
 /**

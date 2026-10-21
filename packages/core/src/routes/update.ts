@@ -5,6 +5,9 @@ import type { EventBroadcaster } from '../ws/events.js';
 import { applyUpdate, preflightUpdate, type GitExec } from '../update/apply.js';
 import { checkForUpdateOnce } from '../update/checker.js';
 import { getRunningVersion, isNewerVersion } from '../update/version.js';
+import { markUpdateStarted, readUpdateProgress } from '../update/progress.js';
+import { platform } from '../platform/index.js';
+import path from 'path';
 import {
   applyHostedUpdate,
   checkHostedUpdate,
@@ -29,6 +32,10 @@ export interface CreateUpdateRouterOptions {
   hostedApplyFn?: typeof applyHostedUpdate;
   /** Test seam: replace the hosted availability check. */
   hostedCheckFn?: typeof checkHostedUpdate;
+  /** Where the updater writes update-status.json (default: platform.dataDir()). */
+  dataDir?: string;
+  /** The updater's output (default: <platform.logDir()>/update.log). */
+  updateLogPath?: string;
 }
 
 export function createUpdateRouter(broadcaster: EventBroadcaster, repoDir: string, db: Database.Database, opts?: CreateUpdateRouterOptions): Router {
@@ -39,6 +46,14 @@ export function createUpdateRouter(broadcaster: EventBroadcaster, repoDir: strin
   const hosted = opts?.hosted !== undefined ? opts.hosted : hostedTarget();
   const hostedApply = opts?.hostedApplyFn ?? applyHostedUpdate;
   const hostedCheck = opts?.hostedCheckFn ?? checkHostedUpdate;
+  const dataDir = opts?.dataDir ?? platform.dataDir();
+  const updateLogPath = opts?.updateLogPath ?? path.join(platform.logDir(), 'update.log');
+
+  // GET /api/update/progress — the running (or last) update's step, error and output tail,
+  // from the updater's status file (update/progress.ts). The update window polls it.
+  router.get('/progress', (_req, res) => {
+    res.json(readUpdateProgress({ dataDir, logPath: updateLogPath }));
+  });
 
   // POST /api/update/check — poll GitHub for the latest release right now (the
   // background loop only fires every ~45 min) and answer with the same shape as
@@ -99,6 +114,7 @@ export function createUpdateRouter(broadcaster: EventBroadcaster, repoDir: strin
       });
       return;
     }
+    markUpdateStarted(dataDir);
     broadcaster.broadcast({ type: 'update:in-progress' });
     apply(repoDir);
     res.json({ ok: true });

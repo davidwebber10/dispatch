@@ -1,6 +1,7 @@
 import type { harnessCapabilities } from '../../../core/src/providers/capabilities';
 import { apiPath } from '../lib/basePath';
 import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry, LedgerCard, LedgerSource } from './types';
+import type { EndlessPage, EndlessState, EndlessSearchHit, EndlessView, EndlessProject, EndlessProjectsResponse, EndlessImage, EndlessDocCopy, EndlessDocRow, ClaudeLoginSession, UpdateProgress } from './types';
 
 /**
  * A content block for a structured `user` turn (mirrors the daemon's wire shape). A
@@ -57,7 +58,40 @@ const qs = (o: QueryParams): string => {
   return s ? `?${s}` : '';
 };
 
+/** A saved Endless Chat image (`EndlessMessage.media` holds file names). */
+export const endlessMediaUrl = (name: string): string => apiPath(`/api/endless/media/${encodeURIComponent(name)}`);
+
 export const api = {
+  // Endless Chat (spec 2026-10-13).
+  endlessMessages: (p: { before?: number; around?: number; limit?: number; project?: string | null } = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(p)) if (v !== undefined && v !== null && v !== '') q.set(k, String(v));
+    const s = q.toString();
+    return req<EndlessPage>(`/api/endless/messages${s ? `?${s}` : ''}`);
+  },
+  endlessSend: (text: string, project: string | null, images: EndlessImage[] = []) =>
+    req<{ ok: true }>('/api/endless/send', { method: 'POST', body: body({ text, project, images }) }),
+  endlessRetry: () => req<{ ok: true }>('/api/endless/retry', { method: 'POST' }),
+  endlessStop: () => req<{ ok: true }>('/api/endless/stop', { method: 'POST' }),
+  claudeLoginStart: () => req<ClaudeLoginSession>('/api/claude-auth/login', { method: 'POST' }),
+  claudeLoginCode: (code: string) => req<ClaudeLoginSession>('/api/claude-auth/login/code', { method: 'POST', body: body({ code }) }),
+  endlessState: () => req<EndlessState>('/api/endless/state'),
+  endlessSearch: (q: string, project: string | null) =>
+    req<{ results: EndlessSearchHit[] }>(`/api/endless/search?q=${encodeURIComponent(q)}${project ? `&project=${encodeURIComponent(project)}` : ''}`),
+  endlessView: () => req<EndlessView>('/api/endless/view'),
+  endlessProjects: () => req<EndlessProjectsResponse | EndlessProject[]>('/api/endless/projects'),
+  endlessInstructions: () => req<{ text: string }>('/api/endless/instructions'),
+  /** One doc copy. Throws `GET … failed: 403` (outside the project), `404` (not found), `413` (over 2 MB), `400` (unknown project). */
+  endlessDoc: (project: string, path: string, branch: string | null, worktree?: string | null) => {
+    const q = new URLSearchParams({ project, path });
+    if (branch) q.set('branch', branch);
+    if (worktree) q.set('worktree', worktree);
+    return req<EndlessDocCopy>(`/api/endless/doc?${q.toString()}`);
+  },
+  endlessDocs: (project: string) => req<{ rows: EndlessDocRow[]; total: number }>(`/api/endless/docs?project=${encodeURIComponent(project)}`),
+  endlessDocCounts: (projects: string[]) =>
+    req<{ counts: Record<string, number> }>(`/api/endless/docs/counts?projects=${projects.map(encodeURIComponent).join(',')}`),
+  setEndlessInstructions: (text: string) => req<{ ok: true }>('/api/endless/instructions', { method: 'PUT', body: body({ text }) }),
   listServers: () => req<{ label: string; origin: string }[]>('/api/servers'),
   addServer: (label: string, origin: string) => req<{ label: string; origin: string }[]>('/api/servers', { method: 'POST', body: body({ label, origin }) }),
   removeServer: (origin: string) => req<{ label: string; origin: string }[]>(`/api/servers?origin=${encodeURIComponent(origin)}`, { method: 'DELETE' }),
@@ -140,6 +174,8 @@ export const api = {
 
   // Per-harness settings (server-backed — the daemon needs them at spawn time).
   getHarnessSettings: () => req<HarnessSettingsResponse>('/api/settings/harnesses'),
+  getTelemetrySetting: () => req<{ enabled: boolean }>('/api/settings/telemetry'),
+  setTelemetrySetting: (enabled: boolean) => req<{ enabled: boolean }>('/api/settings/telemetry', { method: 'PUT', body: body({ enabled }) }),
   putHarnessSettings: (patch: Record<string, Partial<Record<'defaultModel' | 'defaultMode' | 'keySecret', string | null>> & { models?: OpencodeModel[] | null }>) =>
     req<HarnessSettingsResponse>('/api/settings/harnesses', { method: 'PUT', body: body(patch) }),
   /** Search OpenRouter's public catalog (daemon-cached) for the OpenCode "add a model" box. */
@@ -298,6 +334,7 @@ export const api = {
 
   // Auto-updater
   getUpdateState: () => req<UpdateState>('/api/state/update'),
+  getUpdateProgress: () => req<UpdateProgress>('/api/update/progress'),
   checkUpdate: () => req<UpdateState>('/api/update/check', { method: 'POST' }),
   // Accent-tinted PWA icons (rendered client-side, served by the daemon)
   putAppearanceIcons: (icons: Record<string, string>) =>

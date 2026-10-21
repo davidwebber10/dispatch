@@ -325,4 +325,62 @@ function initializeSchema(db: Database.Database): void {
   // Overseer ledger titles (spec 2026-10-09, Unit 1): a short label the overseer writes. Rows that
   // exist keep NULL; they show their question until the overseer gives them a title.
   migrate(db, '007-ledger-title', () => db.exec('ALTER TABLE ledger_items ADD COLUMN title TEXT;'));
+  // Endless Chat (spec 2026-10-13, section 3): the append-only log, the summary tree, the
+  // saved views, and an FTS5 index for the human's memory search. Triggers make both logs
+  // append-only; the FTS index follows inserts through a trigger (external content table).
+  migrate(db, '008-endless-chat', () => db.exec(`
+    CREATE TABLE IF NOT EXISTS endless_messages (
+      i          INTEGER PRIMARY KEY,
+      kind       TEXT NOT NULL,
+      text       TEXT NOT NULL,
+      size       INTEGER NOT NULL,
+      project    TEXT,
+      ref        TEXT,
+      media      TEXT,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_endless_messages_project ON endless_messages(project, i);
+    CREATE TABLE IF NOT EXISTS endless_nodes (
+      l    INTEGER NOT NULL,
+      i    INTEGER NOT NULL,
+      text TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      PRIMARY KEY (l, i)
+    );
+    CREATE TABLE IF NOT EXISTS endless_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE VIRTUAL TABLE IF NOT EXISTS endless_messages_fts USING fts5(text, content='endless_messages', content_rowid='i');
+    CREATE TRIGGER IF NOT EXISTS endless_messages_fts_insert AFTER INSERT ON endless_messages
+      BEGIN INSERT INTO endless_messages_fts(rowid, text) VALUES (new.i, new.text); END;
+    CREATE TRIGGER IF NOT EXISTS endless_messages_no_update BEFORE UPDATE ON endless_messages
+      BEGIN SELECT RAISE(ABORT, 'endless messages are append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS endless_messages_no_delete BEFORE DELETE ON endless_messages
+      BEGIN SELECT RAISE(ABORT, 'endless messages are append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS endless_nodes_no_update BEFORE UPDATE ON endless_nodes
+      BEGIN SELECT RAISE(ABORT, 'endless nodes are append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS endless_nodes_no_delete BEFORE DELETE ON endless_nodes
+      BEGIN SELECT RAISE(ABORT, 'endless nodes are append-only'); END;
+  `));
+  // Endless Chat stage 2 (spec 2026-10-13, section 6.4): a thread Chat started owes Chat one report
+  // each time Chat sends it work. The row is deleted in the same transaction that logs the report,
+  // so a report is logged exactly once, also across a restart.
+  migrate(db, '009-endless-pending-reports', () => db.exec(`
+    CREATE TABLE IF NOT EXISTS endless_pending_reports (
+      terminal_id TEXT PRIMARY KEY,
+      armed_at    INTEGER NOT NULL
+    );
+  `));
+  // Every arm owes one report: a second job sent while the first runs must not be absorbed by the
+  // first job's settle. `owed` counts the reports; a claim takes one and deletes the row at zero.
+  migrate(db, '010-endless-report-owed', () => {
+    const cols = db.prepare('PRAGMA table_info(endless_pending_reports)').all() as { name: string }[];
+    if (!cols.some((c) => c.name === 'owed')) db.exec('ALTER TABLE endless_pending_reports ADD COLUMN owed INTEGER NOT NULL DEFAULT 1');
+  });
+  // A question is an interim report (stage 2 final review, I-1): it does not take an owed report,
+  // so the job's real ending still reports. `waiting_reported` marks that the interim report is
+  // logged: a second question and a restart while the thread waits log no second one. An arm
+  // clears it; the real ending deletes the row.
+  migrate(db, '011-endless-report-waiting', () => {
+    const cols = db.prepare('PRAGMA table_info(endless_pending_reports)').all() as { name: string }[];
+    if (!cols.some((c) => c.name === 'waiting_reported')) db.exec('ALTER TABLE endless_pending_reports ADD COLUMN waiting_reported INTEGER NOT NULL DEFAULT 0');
+  });
 }

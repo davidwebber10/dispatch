@@ -6,6 +6,7 @@ import { NewProjectModal } from './NewProjectModal';
 import { ArrowsDownUp, Plus } from '@phosphor-icons/react';
 import { SortableList } from '../common/SortableList';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { useStableOrder } from '../../hooks/useStableOrder';
 import { revealIn } from '../../lib/reveal';
 
 type Sort = 'recent' | 'alpha' | 'custom';
@@ -107,14 +108,8 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispa
     }
   }, [activeTabId, activeId, byProject, expanded]);
 
-  const filtered = sessions
-    .filter((s) => s.name.toLowerCase().includes(query.toLowerCase()))
-    .slice()
-    .sort((a, b) => {
-      if (sort === 'custom') return 0; // preserve the server's stored order
-      if (sort === 'alpha') return a.name.localeCompare(b.name);
-      return (Date.parse(b.lastActivityAt || b.updatedAt || '') || 0) - (Date.parse(a.lastActivityAt || a.updatedAt || '') || 0);
-    });
+  const ordered = useStableOrder(sessions, sort);
+  const filtered = ordered.filter((s) => s.name.toLowerCase().includes(query.toLowerCase()));
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>

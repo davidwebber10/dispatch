@@ -16,9 +16,9 @@ describe('popScore storage', () => {
 
   it('returns null when nothing is stored or the payload is garbage', () => {
     expect(readBest()).toBeNull();
-    localStorage.setItem('dispatch:rain-pop-best', 'not json{');
+    localStorage.setItem('dispatch:blaster-best', 'not json{');
     expect(readBest()).toBeNull();
-    localStorage.setItem('dispatch:rain-pop-best', JSON.stringify({ score: 0, date: 'x' }));
+    localStorage.setItem('dispatch:blaster-best', JSON.stringify({ score: 0, date: 'x' }));
     expect(readBest()).toBeNull();
   });
 

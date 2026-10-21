@@ -4,7 +4,7 @@ import { Fireworks } from './Fireworks';
 import { readAndClearCelebration } from './popScore';
 
 /**
- * The post-restart payoff for the update-rain pop game: when the just-finished
+ * The post-restart payoff for the update game (the blaster): when the just-finished
  * round set a new high score, the updating page leaves a one-shot celebration
  * flag in localStorage (see popScore.ts — state can't survive the hard reload
  * any other way). This component, mounted in the NORMAL app view next to
@@ -49,11 +49,11 @@ export function HighScoreCelebration() {
         <div style={{ marginTop: 10, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 40, fontWeight: 700, lineHeight: 1, color: 'rgba(140,255,180,1)', textShadow: '0 0 16px rgba(62,207,106,.55)' }}>
           {celebration.score}
         </div>
-        <div style={{ marginTop: 4, fontSize: 11, letterSpacing: 2, color: 'rgba(62,207,106,.75)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>POPS</div>
+        <div style={{ marginTop: 4, fontSize: 11, letterSpacing: 2, color: 'rgba(62,207,106,.75)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>POINTS</div>
         <div style={{ marginTop: 10, fontSize: 12.5, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
           {celebration.prev > 0
             ? <>You beat your old best of {celebration.prev} during the update.</>
-            : <>Your first update-rain high score. It's on the board now.</>}
+            : <>Your first blaster high score. It's on the board now.</>}
         </div>
         <div style={{ marginTop: 18 }}>
           <button

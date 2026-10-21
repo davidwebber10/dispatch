@@ -4,7 +4,7 @@ import { create } from 'zustand';
 // board (docs/superpowers/specs/2026-07-20-thread-board-design.md's "Placement" section):
 // 'workspace' is the normal project/thread layout, 'board' is the full-bleed cross-project board
 // that bypasses Workspace entirely (see App.tsx).
-export type View = 'workspace' | 'board' | 'analytics' | 'settings';
+export type View = 'workspace' | 'board' | 'analytics' | 'settings' | 'chat';
 export type InspectorTab = 'details' | 'files';
 
 const LKEY = 'dispatch:left-collapsed';
@@ -13,7 +13,7 @@ const VKEY = 'dispatch:view';
 const loadBool = (k: string): boolean => { try { return localStorage.getItem(k) === '1'; } catch { return false; } };
 const saveBool = (k: string, v: boolean): void => { try { localStorage.setItem(k, v ? '1' : '0'); } catch { /* ignore */ } };
 // Board is temporarily hidden; restore saved Board selections to Threads.
-const VIEWS: readonly View[] = ['workspace', 'analytics', 'settings'];
+const VIEWS: readonly View[] = ['workspace', 'analytics', 'settings', 'chat'];
 // Exported so mount.test.tsx can exercise the read-back path directly (pre-seed
 // localStorage, call this) rather than only the write path — the read-back is
 // what regressed originally (the old check recognised only 'board').
@@ -47,6 +47,10 @@ export const useUI = create<{
   pendingOpenThread: { sessionId: string; terminalId: string } | null;
   requestOpenThread: (v: { sessionId: string; terminalId: string }) => void;
   clearOpenThread: () => void;
+  // Cross-shell "open this project in the Threads view" intent (the Chat pane's Docs "+N more").
+  pendingOpenProject: string | null;
+  requestOpenProject: (id: string) => void;
+  clearOpenProject: () => void;
 }>((set, get) => ({
   view: loadView(),
   setView: (requested) => { const view = requested === 'board' ? 'workspace' : requested; saveView(view); set({ view }); },
@@ -64,4 +68,7 @@ export const useUI = create<{
   pendingOpenThread: null,
   requestOpenThread: (v) => set({ pendingOpenThread: v }),
   clearOpenThread: () => set({ pendingOpenThread: null }),
+  pendingOpenProject: null,
+  requestOpenProject: (id) => set({ pendingOpenProject: id }),
+  clearOpenProject: () => set({ pendingOpenProject: null }),
 }));

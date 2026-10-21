@@ -189,6 +189,18 @@ describe('boot kickstart covers Codex coordinators too (review T1), gated on the
     expect(codexStructured.sent).toEqual([]);
   });
 
+  it('names the threads it skipped because their turn completed (a Chat thread then reports), and only those', async () => {
+    writeCodexRollout('codex-thread-2', 'task_complete');
+    seedCoordinator('cx', 'codex', { externalId: 'codex-thread-2', status: 'working' });
+    terminalsDb.create(db, { id: 'plain', sessionId: 's1', type: 'claude-code', label: 'plain', config: { transport: 'structured' } });
+    terminalsDb.updateStatus(db, 'plain', 'working');
+
+    const result = await svc.kickstartInterruptedAgents(0);
+
+    expect(result.completed).toEqual(['cx']);
+    expect(result.skipped.sort()).toEqual(['cx', 'plain']);
+  });
+
   it('does not re-kick a Codex coordinator already kicked when its rollout has not moved since', async () => {
     const file = writeCodexRollout('codex-thread-3', 'task_started');
     const past = (Date.now() - 60_000) / 1000;

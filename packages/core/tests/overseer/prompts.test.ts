@@ -163,3 +163,22 @@ it('frames report_status as a status signal, not the channel that delivers a que
   expect(prompt).not.toContain('the human will never see it');
   expect(prompt).not.toContain('put the question in `ask`');
 });
+
+it('every agent type gets the test-run rule: full suite only after a code change, no killing, no head/tail', () => {
+  for (const [type, prompt] of Object.entries(AGENT_PROMPTS)) {
+    expect(prompt, type).toContain('if you changed code, run the test files your change touches, then the full suite once at the end');
+    expect(prompt, type).toContain('If you did not change code, run single test files only');
+    expect(prompt, type).toContain('Do not pipe a test run through head or tail. Write the output to a file, then read the file');
+    expect(prompt, type).toContain('If a run that you did not start is alive, wait. Never kill a process that you did not start');
+    expect(prompt, type).not.toMatch(/kill it by PID/i);
+  }
+});
+
+it('every agent prompt asks for the absolute path and branch of each doc it writes', () => {
+  for (const p of Object.values(AGENT_PROMPTS)) {
+    expect(p).toMatch(/Doc: .*absolute path.*branch/s);
+    // It must not compete with "make it the last thing you say" (the summary rule).
+    expect(p).toContain('put one line per doc in your final report');
+    expect(p).not.toContain('end your report with');
+  }
+});

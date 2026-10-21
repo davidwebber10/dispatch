@@ -5,6 +5,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import * as readline from 'readline';
 import { looksLikeQuestion } from '../status/question.js';
 import { broadKillDenial } from './broad-kill-guard.js';
+import { inheritedEnv } from '../platform/inherited-env.js';
 
 /**
  * A gated tool/permission request the CLI is blocked on, awaiting a human call.
@@ -292,7 +293,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
     if (this.sessions.has(terminalId)) this.kill(terminalId);
     const child = spawn(opts.command, opts.args, {
       cwd: opts.workDir,
-      env: { ...process.env, ...this.defaultEnv, ...opts.env },
+      env: { ...inheritedEnv(), ...this.defaultEnv, ...opts.env },
       stdio: ['pipe', 'pipe', 'pipe'],
     }) as ChildProcessWithoutNullStreams;
     child.stdin.on('error', () => {}); // Fix 2: suppress EPIPE if child closes stdin while alive

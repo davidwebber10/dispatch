@@ -43,6 +43,7 @@ import type {
   StatusDeclaration,
 } from './manager.js';
 import { GrokTranslator, buildPermissionResponse, type AcpPermissionOption, type GrokAction } from './grok-translate.js';
+import { inheritedEnv } from '../platform/inherited-env.js';
 
 const MAX_EVENTS = 5000;
 
@@ -190,7 +191,7 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
 
   spawn(terminalId: string, opts: StructuredSpawnOpts): number {
     if (this.sessions.has(terminalId)) this.kill(terminalId);
-    const env = { ...process.env, ...this.defaultEnv, ...opts.env } as Record<string, string>;
+    const env = { ...inheritedEnv(), ...this.defaultEnv, ...opts.env } as Record<string, string>;
     const conn = new GrokConnection(opts.command, opts.args, opts.workDir, env);
     const session: GrokSession = {
       terminalId,

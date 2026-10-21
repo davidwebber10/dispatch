@@ -1,6 +1,7 @@
 import * as pty from 'node-pty';
 import { RingBuffer } from './buffer.js';
 import { EventEmitter } from 'events';
+import { inheritedEnv } from '../platform/inherited-env.js';
 
 interface ManagedPty {
   process: pty.IPty;
@@ -25,7 +26,7 @@ export class PTYManager extends EventEmitter {
     }
 
     const childEnv: Record<string, string> = {
-      ...process.env,
+      ...inheritedEnv(),
       ...this.defaultEnv,
       ...env,
       TERM: 'xterm-256color',

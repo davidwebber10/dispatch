@@ -2,6 +2,7 @@ import { execFileSync, spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { platform } from '../platform/index.js';
+import { markUpdateFailed } from './progress.js';
 
 export interface PreflightResult {
   ok: boolean;
@@ -120,6 +121,8 @@ export function applyUpdate(repoDir: string, onFailure?: (reason: string) => voi
   const log = fs.openSync(logPath, 'a', 0o600);
   const fail = (reason: string) => {
     fs.appendFileSync(logPath, `[dispatch] ${reason}\n`);
+    // The update window reads the status file; keep a step error the updater already wrote.
+    markUpdateFailed(platform.dataDir(), reason);
     onFailure?.(`${reason} See ${logPath} for details.`);
   };
   try {

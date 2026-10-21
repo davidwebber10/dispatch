@@ -10,16 +10,17 @@ let fsExists: (p: string) => boolean = () => false;
 // promisify(execFile) appends the callback as the LAST arg, so calls arrive as
 // (cmd, args, cb) for `which` and (cmd, args, opts, cb) with options. Treat the
 // last argument as the callback regardless of arity.
-function whenExec(impl: (cmd: string, args: string[]) => { stdout: string } | Error) {
+function whenExec(impl: (cmd: string, args: string[], opts?: { env?: Record<string, string> }) => { stdout: string } | Error) {
   execFileMock.mockImplementation((...allArgs: any[]) => {
     const cb = allArgs[allArgs.length - 1];
     const [cmd, args] = allArgs as [string, string[]];
-    const r = impl(cmd, args);
+    const opts = allArgs.length > 3 ? allArgs[2] : undefined;
+    const r = impl(cmd, args, opts);
     if (r instanceof Error) cb(r); else cb(null, { stdout: r.stdout, stderr: '' });
   });
 }
 
-import { detectProvider, detectTailscale, _resetAuthCache } from '../../src/setup/detect.js';
+import { detectProvider, detectTailscale, _resetAuthCache, setProviderProbeEnv } from '../../src/setup/detect.js';
 
 describe('detectProvider', () => {
   // The signed-in cache is module-level and keyed by provider name, so a verdict from the
@@ -92,6 +93,46 @@ describe('detectProvider', () => {
 
     await detectProvider('claude', { fresh: true });
     expect(statusCalls).toBe(2); // fresh bypasses it — the Re-check button's job
+  });
+
+  it("asks the CLI under the thread spawn env, so Dispatch's saved Claude token counts", async () => {
+    // The CLI's own keychain login has expired, but threads are spawned with Dispatch's
+    // saved token as CLAUDE_CODE_OAUTH_TOKEN. The check must see what a thread sees.
+    whenExec((cmd, args, opts) => {
+      if (cmd === 'which') return { stdout: '/usr/local/bin/claude\n' };
+      if (args.includes('--version')) return { stdout: 'claude 1.2.3\n' };
+      return { stdout: JSON.stringify({ loggedIn: Boolean(opts?.env?.CLAUDE_CODE_OAUTH_TOKEN) }) };
+    });
+    expect((await detectProvider('claude')).signedIn).toBe(false);
+
+    // Setting the spawn env drops the cached "no", so the next check re-asks at once.
+    setProviderProbeEnv({ PATH: '/usr/bin', CLAUDE_CODE_OAUTH_TOKEN: 'test-token' });
+    try {
+      expect((await detectProvider('claude')).signedIn).toBe(true);
+    } finally {
+      setProviderProbeEnv({ ...process.env } as Record<string, string>);
+    }
+  });
+
+  it("keeps the daemon's own env under the spawn env overlay — the CLI finds its keychain login by $USER", async () => {
+    // The spawn env is an OVERLAY (PATH, BROWSER, DOPPLER_*, …) that the thread managers
+    // merge over process.env. Handing it to execFile alone drops USER, and the macOS CLI
+    // then looks up its keychain item under no account and reports loggedIn:false while
+    // every thread runs signed in.
+    const prevUser = process.env.USER;
+    process.env.USER = 'someone';
+    whenExec((cmd, args, opts) => {
+      if (cmd === 'which') return { stdout: '/usr/local/bin/claude\n' };
+      if (args.includes('--version')) return { stdout: 'claude 1.2.3\n' };
+      return { stdout: JSON.stringify({ loggedIn: opts?.env?.USER === 'someone' }) };
+    });
+    setProviderProbeEnv({ PATH: '/usr/bin', DOPPLER_TOKEN: 'x' });
+    try {
+      expect((await detectProvider('claude')).signedIn).toBe(true);
+    } finally {
+      process.env.USER = prevUser;
+      setProviderProbeEnv({ ...process.env } as Record<string, string>);
+    }
   });
 
   it('forgets the cached verdict when the CLI disappears', async () => {

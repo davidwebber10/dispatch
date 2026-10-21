@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi, beforeEach, afterEach, it, expect } from 'vitest';
-import { ChatImage } from './ChatImage';
+import { ChatImage, ImageViewerHost } from './ChatImage';
 
 /** Open the lightbox and click Download, capturing the anchor the component builds. */
 async function downloadFrom(blobType: string, alt: string): Promise<{ download: string }> {
@@ -37,4 +37,71 @@ it('names an AVIF download .avif, not .png', async () => {
 
 it('still names the common types correctly', async () => {
   expect((await downloadFrom('image/png', 'shot')).download).toBe('shot.png');
+});
+
+it('opens from a focusable button with an accessible name', () => {
+  render(<ChatImage src="/a.png" alt="chart" />);
+  const opener = screen.getByRole('button', { name: 'Open image: chart' });
+  expect(opener.tagName).toBe('BUTTON'); // a native button opens on Enter and Space
+  expect(opener).not.toHaveAttribute('tabindex', '-1');
+  opener.focus();
+  expect(document.activeElement).toBe(opener);
+  fireEvent.click(opener);
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+});
+
+it('opens as a modal dialog, takes focus, traps Tab, and gives focus back on Escape', () => {
+  render(<ChatImage src="/a.png" alt="chart" />);
+  const opener = screen.getByRole('button', { name: 'Open image: chart' });
+  opener.focus();
+  fireEvent.click(opener);
+  const dialog = screen.getByRole('dialog');
+  expect(dialog).toHaveAttribute('aria-modal', 'true');
+  const close = screen.getByLabelText('Close');
+  expect(dialog.contains(document.activeElement)).toBe(true);
+  expect(document.activeElement).toBe(close);
+  // Tab on the last control wraps to the first; Shift+Tab on the first wraps to the last.
+  expect(fireEvent.keyDown(close, { key: 'Tab' })).toBe(false);
+  expect(document.activeElement).toBe(screen.getByLabelText('Copy image').hasAttribute('disabled') ? screen.getByLabelText('Download image') : screen.getByLabelText('Copy image'));
+  const first = document.activeElement as HTMLElement;
+  expect(fireEvent.keyDown(first, { key: 'Tab', shiftKey: true })).toBe(false);
+  expect(document.activeElement).toBe(close);
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(document.activeElement).toBe(opener);
+});
+
+it('keeps the viewer open when the image that opened it is replaced by another with the same picture', () => {
+  // A sent image row is first drawn from the pending send, then from the logged message: the
+  // thumbnail that opened the viewer is unmounted and a new one mounts.
+  const { rerender } = render(<ImageViewerHost><ChatImage key="pending" src="data:image/png;base64,AAA" /></ImageViewerHost>);
+  fireEvent.click(screen.getByRole('button', { name: 'Open image' }));
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+  rerender(<ImageViewerHost><ChatImage key="logged" src="/api/endless/media/a.png" /></ImageViewerHost>);
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText('Close'));
+  expect(screen.queryByRole('dialog')).toBeNull();
+});
+
+it('keeps Tab inside the dialog after a click on the image took the focus away', () => {
+  render(<ChatImage src="/a.png" alt="chart" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Open image: chart' }));
+  const dialog = screen.getByRole('dialog');
+  // A click on the picture moves focus to the body, where the dialog's own key handler never sees Tab.
+  (document.activeElement as HTMLElement).blur();
+  expect(dialog.contains(document.activeElement)).toBe(false);
+  expect(fireEvent.keyDown(document.body, { key: 'Tab' })).toBe(false);
+  expect(dialog.contains(document.activeElement)).toBe(true);
+});
+
+it('gives focus to the composer when the thumbnail that opened the viewer was replaced', () => {
+  const tree = (k: string) => <ImageViewerHost><textarea aria-label="Message" /><ChatImage key={k} src="/a.png" alt="chart" /></ImageViewerHost>;
+  const { rerender } = render(tree('pending'));
+  const opener = screen.getByRole('button', { name: 'Open image: chart' });
+  opener.focus();
+  fireEvent.click(opener);
+  rerender(tree('logged')); // the row is replaced at turn end
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Message' }));
 });
