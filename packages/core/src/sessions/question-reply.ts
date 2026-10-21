@@ -3,7 +3,7 @@
  * a chat reply, an empty Discuss, or a Dismiss. Each rides a deny `control_response`, and the
  * Claude CLI hands the message to the model verbatim as the question's is_error tool_result.
  *
- * The wording lives here once (owner decision N4). The web's AnsweredQuestionCard detects
+ * The wording lives here once. The web's AnsweredQuestionCard detects
  * QUESTION_REPLY_PREFIX in that tool_result, so keep packages/web's copy in step
  * (components/tabs/chat/questionReply.ts). A test on each side pins the string.
  */
@@ -37,8 +37,8 @@ export const QUESTION_CANNED_MESSAGES: Record<QuestionCannedAction, string> = {
 };
 
 /**
- * The deny message for a chat reply. `imageCount` images follow as their own turn (owner decision
- * N5), so the model is told to expect them.
+ * The deny message for a chat reply. `imageCount` images follow as their own turn (a deny can only
+ * carry text), so the model is told to expect them.
  */
 export function questionReplyMessage(reply: string, imageCount = 0): string {
   const text = reply.trim();

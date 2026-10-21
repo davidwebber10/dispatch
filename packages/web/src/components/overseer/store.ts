@@ -331,7 +331,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
     const payload: string | ContentBlock[] = images.length
       ? [...images, ...(trimmed ? [{ type: 'text', text: trimmed } as ContentBlock] : [])]
       : trimmed;
-    // The coordinator is parked on its own question: this reply answers it (owner decision N1).
+    // The coordinator is parked on its own question: this reply answers it.
     // The hook splits off any images and falls back to a normal send when the question is gone.
     if (get().coordinatorPending?.questions?.length) {
       get().replyToCoordinatorQuestion(payload);

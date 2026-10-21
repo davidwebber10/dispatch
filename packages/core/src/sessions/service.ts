@@ -1344,9 +1344,10 @@ export class SessionService {
       const what = canned === 'dismiss'
         ? 'dismissed it without answering. The agent will continue on its own judgment'
         : 'asked it to explain the options first. The agent is explaining and will ask again';
+      // The card can be closed from the agent's chat or from a Control Plane Needs card, so say neither.
       this.notifyCoordinatorOfAgent(agentTerminalId,
-        `💬 The user answered the question your agent "${agent.label || 'agent'}"${mission ? ` (mission "${mission}")` : ''} ` +
-        `[agentId ${agentTerminalId}] asked, directly in the agent's chat: they ${what}. Do not call answer_agent for that question. ` +
+        `💬 The user closed the question your agent "${agent.label || 'agent'}"${mission ? ` (mission "${mission}")` : ''} ` +
+        `[agentId ${agentTerminalId}] asked: they ${what}. Do not call answer_agent for that question. ` +
         `Read how it responds with read_agent and adjust.`, { kind: 'question-answered' });
       return;
     }
@@ -1735,6 +1736,14 @@ export class SessionService {
       }
       return delivered;
     }
+    if (opts.canned && !manager.repliesToQuestions) {
+      // This harness drops a deny's message (Codex) or is untested (Grok, OpenCode), so the fixed text would
+      // never reach the model. Close the card with a plain deny, as before. Only a Dismiss is worth telling
+      // a worker's coordinator about: a Discuss asked the agent to explain, and the agent never heard it.
+      const delivered = manager.answerPermission(terminalId, requestId || pending.requestId, { behavior: 'deny', message: 'Denied' });
+      if (delivered && opts.canned === 'dismiss') this.noteQuestionAnsweredInChat(terminalId, '', 0, 'dismiss');
+      return delivered;
+    }
     if (opts.canned) {
       // A card's Discuss-with-no-text or Dismiss: fixed text, logged as `canned` so a quote never matches it.
       const message = QUESTION_CANNED_MESSAGES[opts.canned];
@@ -1750,9 +1759,9 @@ export class SessionService {
   }
 
   /**
-   * A chat reply to a pending AskUserQuestion (owner decision N1): resolve the question as a deny
+   * A chat reply to a pending AskUserQuestion (the reply wording is fixed in question-reply.ts): resolve the question as a deny
    * whose message carries the reply, so the model reads it as the question's answer. Sent once,
-   * never as a separate user turn. `imageCount` images go out afterwards as their own turn (N5);
+   * never as a separate user turn. `imageCount` images go out afterwards as their own turn, because a deny can only carry text;
    * the caller sends them once this returns 'delivered'.
    *   'not-found'   — no question pending, or `requestId` is missing or names another one. No
    *                   fallback to "whatever is pending": that is the race guard.

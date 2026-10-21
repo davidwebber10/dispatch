@@ -449,7 +449,7 @@ test('a reconnect reset clears pending (stale question not re-shown before repla
   expect(result.current.pending).toBeNull();
 });
 
-// --- A chat reply answers a pending AskUserQuestion (owner decision N1) --------------------
+// --- A chat reply answers a pending AskUserQuestion --------------------
 const QUESTION = { requestId: 'req-9', toolName: 'AskUserQuestion', toolUseId: 'tu-9', questions: [{ question: 'Pick one', header: 'Choice', options: ['A', 'B'], multiSelect: false }] };
 const IMAGE: ContentBlock = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } };
 const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });

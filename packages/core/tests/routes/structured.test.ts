@@ -167,7 +167,7 @@ it('POST permission with no pending → 404; bad decision → 400', async () => 
   await request(app).post(`/api/terminals/${id}/stop`);
 });
 
-// --- A chat reply answers a pending AskUserQuestion (owner decision N1) ----------
+// --- A chat reply answers a pending AskUserQuestion ----------
 
 it('POST permission with `reply` denies the question with the reply text once, and sends no user turn', async () => {
   const t = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code', config: { transport: 'structured', agentType: 'planner', role: 'agent' } });

@@ -259,6 +259,30 @@ describe('a chat reply to a pending question', () => {
     expect(log()).toEqual([{ source: 'canned', text: QUESTION_DISMISS_MESSAGE }, { source: 'canned', text: QUESTION_DISCUSS_MESSAGE }]);
   });
 
+  it('Dismiss and an empty Discuss on a harness that drops a deny message send a plain deny, log nothing canned, and discuss tells nobody', () => {
+    structured.repliesToQuestions = false;
+    ask('agent');
+    expect(svc.answerPermission('agent', 'r1', { decision: 'deny', canned: 'dismiss' })).toBe(true);
+    ask('agent');
+    expect(svc.answerPermission('agent', 'r1', { decision: 'deny', canned: 'discuss' })).toBe(true);
+    expect(structured.answered.map((a) => (a.decision as any).message)).toEqual(['Denied', 'Denied']);
+    expect(log().filter((r: any) => r.source === 'canned')).toEqual([]);
+    const notices = structured.sent.filter((m) => m.id === 'coord').map((m) => m.content);
+    expect(notices).toHaveLength(1); // the dismiss closes the question; the discuss text never reached the agent
+    expect(notices[0]).toEqual(expect.stringContaining('dismissed it without answering'));
+  });
+
+  it('the coordinator notice for Dismiss and Discuss does not claim the user answered in the agent chat', () => {
+    ask('agent');
+    svc.answerPermission('agent', 'r1', { decision: 'deny', canned: 'dismiss' });
+    ask('agent');
+    svc.answerPermission('agent', 'r1', { decision: 'deny', canned: 'discuss' });
+    for (const n of structured.sent.filter((m) => m.id === 'coord').map((m) => String(m.content))) {
+      expect(n).not.toContain("directly in the agent's chat");
+      expect(n).toContain('Do not call answer_agent for that question.');
+    }
+  });
+
   it("Dismiss and an empty Discuss in a worker's chat tell the coordinator the question is closed", () => {
     ask('agent');
     expect(svc.answerPermission('agent', 'r1', { decision: 'deny', canned: 'dismiss' })).toBe(true);
@@ -290,7 +314,7 @@ describe('a chat reply to a pending question', () => {
   });
 });
 
-describe('the reply wording (owner decision N4)', () => {
+describe('the reply wording', () => {
   it('is the fixed prefix, the reply, a blank line, then the guidance line', () => {
     expect(questionReplyMessage('Neither.')).toBe(
       'The user did not pick an option. They replied: Neither.\n\n' +

@@ -275,7 +275,7 @@ export function selectedOptionLabels(answer: string, labels: string[]): Set<stri
  */
 export function AnsweredQuestionCard({ questions, resultText }: { questions: PermissionQuestion[]; resultText: string }) {
   const [open, setOpen] = useState(false);
-  // A chat reply (owner decision N1) answers every question at once, in the user's own words.
+  // A chat reply answers every question at once, in the user's own words.
   const chatReply = parseQuestionReply(resultText);
   const replyText = chatReply ? (chatReply.imageOnly ? '(an image)' : chatReply.reply) : null;
   const parsed = chatReply ? null : parseAnsweredResult(resultText, questions);
