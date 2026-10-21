@@ -86,14 +86,11 @@ export class EndlessService {
    */
   private readonly errored = new Set<string>();
   /**
-   * True during boot, until the process reconcile ran: it ends threads that died with the old
-   * daemon with error edges, and a report recovery already wrote must not be followed by a second
-   * one. While held, only an owed report is delivered from a status edge.
+   * Threads reportCompletedAtBoot just reported as finished. The process reconcile that follows
+   * ends such a thread (its row still reads 'working', no process lives) with an error edge: that
+   * edge is the same ending, so it is dropped once. Any other edge of the thread passes.
    */
-  private hold = false;
-
-  holdUnsolicitedReports(): void { this.hold = true; }
-  releaseUnsolicitedReports(): void { this.hold = false; }
+  private readonly bootReported = new Set<string>();
 
   constructor(private readonly o: EndlessServiceOptions) {
     this.store = new EndlessStore(o.db);
@@ -241,10 +238,11 @@ export class EndlessService {
       this.errored.delete(terminalId);
       // A question is always delivered, even when the settle edge did not fire for it (the
       // thread was not 'working' before, e.g. a watch woke it). The report dedupes identical text.
-      if (status === 'needs_input' && !this.hold && this.isChatThread(terminalId)) this.onThreadSettled({ terminalId, threadStatus: 'needs_input' });
+      if (status === 'needs_input' && this.isChatThread(terminalId)) this.onThreadSettled({ terminalId, threadStatus: 'needs_input' });
       return;
     }
-    if (this.errored.has(terminalId) || !(this.store.hasPendingReport(terminalId) || (!this.hold && this.isChatThread(terminalId)))) return;
+    if (this.bootReported.delete(terminalId)) return;
+    if (this.errored.has(terminalId) || !(this.store.hasPendingReport(terminalId) || this.isChatThread(terminalId))) return;
     // Bounded: a thread archived while in error never gets the clearing edge.
     if (this.errored.size >= 500) this.errored.clear();
     this.errored.add(terminalId);
@@ -359,7 +357,9 @@ export class EndlessService {
     for (const id of terminalIds) {
       try {
         const t = terminalsDb.getById(this.o.db, id);
-        if (t && threadOrigin(t) === 'endless') this.report(id, 'idle');
+        if (t && threadOrigin(t) === 'endless') {
+          if (this.report(id, 'idle').length) this.bootReported.add(id);
+        }
       } catch (err) {
         console.warn(`[endless] the boot report of ${id} failed:`, err);
       }

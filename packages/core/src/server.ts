@@ -543,7 +543,6 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     finalOutput: (id) => sessionService.finalOutput(id),
     pendingPermission: (id) => sessionService.getPendingPermission(id),
   });
-  endless.holdUnsolicitedReports();
   // Stage 2: a thread Chat started reports when it settles (finished or asking) or fails.
   statusService.addThreadSettledListener(({ terminalId, threadStatus }) => endless.onThreadSettled({ terminalId, threadStatus }));
   onEndlessStatus = (terminalId, status) => endless.onThreadStatus(terminalId, status);
@@ -895,11 +894,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       endless.reportCompletedAtBoot(completed);
     })
     .catch((err) => console.error('kickstart failed', err))
-    .finally(() => {
-      statusService.reconcileProcesses((id) => ptyManager.isAlive(id) || !!sessionService.structuredManagerForTerminal(id)?.isAlive(id));
-      // Its error edges are deferred a tick: release after they passed.
-      setTimeout(() => endless.releaseUnsolicitedReports(), 1000).unref();
-    });
+    .finally(() => statusService.reconcileProcesses((id) => ptyManager.isAlive(id) || !!sessionService.structuredManagerForTerminal(id)?.isAlive(id)));
 
   threadAutoNamer.resumePending();
 

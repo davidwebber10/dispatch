@@ -205,18 +205,20 @@ describe('thread reports', () => {
     await endTurn(x);
   });
 
-  it('while boot holds unsolicited reports, an error or question edge of an unarmed thread says nothing', async () => {
+  it('the boot reconcile error edge of a thread reported as completed is dropped once; a later failure reports', async () => {
     const x = make();
-    x.svc.holdUnsolicitedReports();
-    x.svc.onThreadStatus('t1', 'error');
-    x.svc.onThreadStatus('t3', 'needs_input');
-    await flush();
-    expect(works()).toEqual([]);
-    x.svc.releaseUnsolicitedReports();
-    x.svc.onThreadStatus('t1', 'idle');
-    x.svc.onThreadStatus('t1', 'error');
+    outputs.t1 = 'done at boot';
+    x.svc.arm('t1');
+    x.svc.reportCompletedAtBoot(['t1']);
     await flush();
     expect(works()).toHaveLength(1);
+    x.svc.onThreadStatus('t1', 'error'); // reconcileProcesses: same ending
+    await flush();
+    expect(works()).toHaveLength(1);
+    x.svc.onThreadStatus('t1', 'working');
+    x.svc.onThreadStatus('t1', 'error'); // a real failure afterwards
+    await flush();
+    expect(works()).toHaveLength(2);
     await settle();
     await endTurn(x);
   });
