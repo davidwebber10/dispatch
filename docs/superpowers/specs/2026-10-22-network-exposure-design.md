@@ -27,8 +27,12 @@ The fix ships in two phases.
   no firewall rules, no per-OS code paths beyond the existing WSL rule.
 - **Phase 2 (full design):** paired devices (QR code or short code instead of the
   raw token), a Network and devices settings page, an exposure warning in
-  onboarding and the app, Cloudflare Access JWT checks, and a choice of listen
-  address with "this computer only" as the default for new installs.
+  onboarding and the app, and a choice of listen address with "this computer
+  only" as the default for new installs.
+
+Tailscale is the main remote-access case. No current user is known to put
+Cloudflare or another tunnel in front of Dispatch, so the design does not build
+around that case (section 6.6 has a short note).
 
 ## 2. Who can reach the daemon today
 
@@ -46,7 +50,7 @@ Plain reachability, with no change to anyone's setup:
 | The public internet | **Only if** the machine has a public IPv4 address, a router port forward, or a global IPv6 address on a network that does not filter inbound IPv6. Most home routers block inbound IPv6. Some campus, hotel and mobile networks do not. |
 | A web page open in the owner's browser | **Yes** for WebSockets (no Origin check). Plain `fetch` reads are blocked by the browser's same-origin rule, but DNS rebinding gets around that rule because the daemon does not check the `Host` header. |
 | Tailscale peers | Yes, for every device the tailnet ACL allows (not only the owner's devices). |
-| Through Cloudflare Tunnel | Only after Cloudflare Access sign-in, if the owner set up Access. Without Access, anyone on the internet. |
+| Through a reverse proxy or tunnel on the machine (Cloudflare or similar) | Whoever the proxy lets through. No current user is known to run one. |
 | A WSL2 daemon, NAT mode (the default) | LAN devices: no, unless the owner added a Windows `netsh portproxy` rule and a firewall rule. The Windows host browser: yes, through `localhostForwarding`. |
 | A WSL2 daemon, mirrored mode | LAN devices: only if the Hyper-V firewall allows inbound traffic (probably blocked by default, not verified). The Windows host browser: yes, through shared loopback. |
 
@@ -116,12 +120,8 @@ spawns `bin/dispatch update` detached (`update/apply.ts:130-139`).
 
 ### 3.3 Proxies in front of the daemon
 
-- **Cloudflare Tunnel.** The documented ingress is
-  `service: http://localhost:3456` (`docs/cloudflare.md:52`), so the daemon sees a
-  loopback peer with `Host: dispatch.example.com`. Cloudflare Access is the only gate
-  (`docs/cloudflare.md:89-104`).
-- **`tailscale serve`.** Also a loopback peer (`docs/wsl2-bring-up.md:128-141`).
-  The `Host` is the machine's `ts.net` name.
+Tailscale is the main remote-access path for current users.
+
 - **Tailscale direct.** The README's recommended path is
   `http://MACHINE.TAILNET.ts.net:3456` (`README.md:76-79`, `docs/cloudflare.md:126-132`),
   and the setup wizard's Mobile step shows a QR code of
@@ -129,6 +129,11 @@ spawns `bin/dispatch update` detached (`update/apply.ts:130-139`).
   `packages/web/src/components/setup/SetupWizard.tsx:126-160`). The peer address is
   the phone's tailnet address, not loopback. **This path depends on the
   all-interfaces listen.**
+- **`tailscale serve`** (HTTPS, needed for the iPhone PWA and push). A loopback
+  peer (`docs/wsl2-bring-up.md:128-141`) with the machine's `ts.net` name as `Host`.
+- **Other reverse proxies or tunnels** (Cloudflare Tunnel is documented in
+  `docs/cloudflare.md`). Also a loopback peer, with the proxy's public name as
+  `Host`. No current user is known to use one.
 - **Hosted box.** A private-subnet router injects `x-dispatch-box-token`;
   `requireBoxToken` and `upgradeAllowed` enforce it (`server.ts:463-464,765`,
   `auth/box-token.ts`). Unset locally, so a no-op there.
@@ -183,8 +188,8 @@ services. The gate closes all of these at once.
    depend on it.
 3. **Public-internet attacker**, for machines with a public IP, port forward or
    unfiltered IPv6. Same capability as the LAN attacker.
-4. **Tunnel exposure.** `tailscale funnel` or a Cloudflare hostname with no Access
-   policy puts loopback-looking requests from the internet in front of the daemon.
+4. **Tunnel exposure.** `tailscale funnel` (or any public tunnel) puts
+   loopback-looking requests from the internet in front of the daemon.
 
 ### 4.2 Out of scope (documented limits)
 
@@ -194,23 +199,21 @@ services. The gate closes all of these at once.
   local user can still drive the daemon. Phase 2 offers an opt-in "require a
   credential on loopback too" mode (section 8.7). Shared multi-user machines are
   rare for this tool.
-- **The tunnel's own gate.** Cloudflare Access policy and Tailscale ACLs are the
-  owner's configuration. Phase 1 trusts what arrives through a known tunnel
-  hostname, as today. Phase 2 checks the Cloudflare Access JWT.
+- **The tunnel's own gate.** Tailscale ACLs (and the sign-in of any other proxy)
+  are the owner's configuration.
 
 ### 4.3 The trust question for tunnels
 
-cloudflared and `tailscale serve` run on the same machine and connect over
-loopback, so **a loopback peer address alone does not prove the request is local**.
+`tailscale serve` (and any other same-machine proxy) connects over loopback, so
+**a loopback peer address alone does not prove the request is local**.
 The design never trusts the peer address alone. A credential-free request also
 needs a known `Host` header:
 
 - A LAN attacker cannot reach loopback at all, whatever `Host` it sends.
 - A rebinding page cannot make the browser send a known `Host` (`localhost`, this
-  machine's `ts.net` name, the owner's Cloudflare hostname) while the browser is
-  connected to the attacker's name.
-- A tunnel request carries the tunnel hostname, which is known, so it passes as it
-  does today. The tunnel's own sign-in stays the gate for those requests.
+  machine's `ts.net` name) while the browser is connected to the attacker's name.
+- A request through another proxy carries a name the daemon does not know, so it
+  gets the sign-in page unless the owner adds the name (section 6.6).
 - A `tailscale serve` request also carries `Tailscale-User-Login`, which
   `tailscale serve` sets for tailnet requests and does not set for Funnel requests
   (section 6.5). Phase 1 trusts the `ts.net` host only when that header is present,
@@ -222,8 +225,8 @@ needs a known `Host` header:
 |---|---|---|---|---|
 | A. Per-machine firewall rule | Yes, on the machines that install it | No | Nothing | Per OS, per machine. Users who "do nothing" stay exposed. Rejected by the requirements. |
 | B. Listen on loopback only by default | Yes | No | Tailscale direct (the README path and the wizard QR), plain LAN, `tailscaled` inside WSL, hosted box. The WSL host browser should keep working (6.1) but is untested. | Small, but a breaking default and no help against web pages |
-| C. Gate: credential for any request that is not local, plus Host and Origin checks | Yes | Yes | Plain LAN (needs the token once per browser), Cloudflare hosts that are not found automatically (same) | Small to medium. Same code on every OS. |
-| D. C plus Tailscale owner check (`tailscale whois`) | Yes | Yes | Plain LAN, unknown Cloudflare hosts | C plus one small module |
+| C. Gate: credential for any request that is not local, plus Host and Origin checks | Yes | Yes | Plain LAN and Tailscale direct (each needs the token once per browser) | Small to medium. Same code on every OS. |
+| D. C plus Tailscale owner check (`tailscale whois`) | Yes | Yes | Plain LAN | C plus one small module |
 | E. D plus loopback listen as the default | Yes, and the port is not even visible | Yes | As B | D plus listener rework |
 
 **Recommendation: D in Phase 1, E as an opt-in in Phase 2 and the default for new
@@ -348,22 +351,15 @@ task (`platform/daemon-wsl.ts:109-121`).
   and of this machine. The daemon already runs `tailscale status --json`
   (`setup/detect.ts:232-245`, `platform/darwin.ts:62-75`, `platform/wsl.ts:103-113`).
 
-### 6.6 Cloudflare Tunnel and Access
+### 6.6 Other reverse proxies and tunnels (not designed for)
 
-- cloudflared "creates outbound-only connections" and dials the ingress
-  `service` ([Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/)),
-  so with `service: http://localhost:3456` the daemon sees a loopback peer and the
-  public hostname as `Host` (inferred; consistent with the Reveal comments at
-  `routes/files.ts:296-299`).
-- Access puts a signed JWT in `Cf-Access-Jwt-Assertion`. To check it: keys from
-  `https://TEAM.cloudflareaccess.com/cdn-cgi/access/certs`, `iss` equal to the team
-  domain, `aud` equal to the application's AUD tag, and `exp`
-  ([validating JWTs](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/)).
-  "Validation of the header alone is not sufficient." Cloudflare exempts tunnel
-  origins from validation **only because nothing else can reach them**, which is
-  not true of a daemon that listens on all interfaces. That is one more reason the
-  gate must exist.
-- `Cf-Access-Authenticated-User-Email` is not signed. The design never trusts it.
+No current user is known to run Cloudflare Tunnel or another proxy in front of
+Dispatch. The design does not build anything for that case. A user who does will
+see the sign-in page, because the proxy's public name is not a known host. They
+have two ways in: sign in once per browser with the token, or run
+`dispatch access allow-host NAME` once. The proxy's own sign-in (for example
+Cloudflare Access) stays their gate, as today. `docs/cloudflare.md` gets one
+paragraph that says this.
 
 ### 6.7 Browser protections against web pages
 
@@ -440,11 +436,6 @@ A host is known when its name (port removed) is one of:
   `ts.net` name counts for a loopback or gateway peer only when the request also has
   `Tailscale-User-Login` and no `Tailscale-Funnel-Request` (section 4.3). For a
   tailnet peer (rule 3) the name counts on its own.
-- Every `hostname` in a local cloudflared ingress file whose `service` points at
-  `localhost`, `127.0.0.1` or `[::1]` on this daemon's port. Files read:
-  `~/.cloudflared/config.yml`, `~/.cloudflared/config.yaml`,
-  `/etc/cloudflared/config.yml`, `/usr/local/etc/cloudflared/config.yml`. Read
-  with a small line parser (no new dependency), cached by file modification time.
 - An entry in `~/.dispatch/access.json` (`allowedHosts`), written by
   `dispatch access allow-host NAME`. Read by modification time, so no restart is
   needed.
@@ -536,15 +527,15 @@ either.
 - New `packages/core/src/auth/tailscale-whois.ts`: whois and self lookups with
   cache. Reuse the binary lookup from `setup/detect.ts:232-235`.
 - New `packages/core/src/auth/known-hosts.ts`: loopback names, Tailscale self,
-  cloudflared ingress parser, `access.json`.
+  `access.json`.
 - `packages/core/src/server.ts`: install the gate after `boxGate` (`:463-464`) and in
   the upgrade handler before routing (`:765`).
 - `packages/core/src/platform/types.ts`, `wsl.ts`: expose the WSL gateway check as
   its own predicate so Reveal and the gate share it.
 - `packages/cli/src/index.ts`: `dispatch access` commands; the status line.
 - `packages/web/src/api/client.ts`, `packages/web/src/main.tsx`: the reload on 401.
-- Docs: `README.md` remote-access section, `docs/cloudflare.md`, a new
-  `docs/network-access.md`, release note.
+- Docs: `README.md` remote-access section, one paragraph in `docs/cloudflare.md`
+  (section 6.6), a new `docs/network-access.md`, release note.
 
 ### 7.11 Phase 1 break list
 
@@ -556,8 +547,6 @@ either.
 | Tailscale direct from someone else's device in the same tailnet | Sign-in page. | Give them the token once (`dispatch access`), or share the tailnet node with intent. |
 | `tailscale serve` (HTTPS, iPhone PWA) | No change. | None. |
 | `tailscale funnel` | Sign-in page (public internet). | Sign in once per browser with the token. |
-| Cloudflare Tunnel with a local `config.yml` (the documented setup) | No change. | None. |
-| Cloudflare Tunnel managed in the Cloudflare dashboard (no local ingress file) | Sign-in page after the Access sign-in. | Run `dispatch access allow-host dispatch.example.com` once, or sign in once per browser. |
 | Plain LAN (`http://192.168.x.y:3456` or `MACHINE.local:3456`) | Sign-in page. | Sign in once per browser with the token from `dispatch access`. |
 | WSL2, NAT mode, Windows browser at `localhost` | No change (gateway rule). | None. |
 | WSL2 with Windows-side Tailscale and `tailscale serve` | No change (gateway peer, `ts.net` Host, identity header). | None. |
@@ -569,11 +558,14 @@ either.
 | Hosted box | No change (box token is a credential). | None. |
 | An open browser tab on a LAN address during the update | Reloads to the sign-in page. | Sign in. |
 
+Not in the table: an unknown user behind another reverse proxy or tunnel
+(Cloudflare or similar) sees the sign-in page and uses section 6.6.
+
 ### 7.12 Residual risks after Phase 1
 
-- **R-1. Tunnel with no gate.** A Cloudflare hostname with no Access policy, or a
-  host the owner added with `allow-host`, is trusted as today. Phase 2 checks the
-  Access JWT (8.5). `tailscale funnel` is not affected: it gets the sign-in page.
+- **R-1. A host added with `allow-host`.** The daemon trusts it like `localhost`,
+  so the proxy behind that name must have its own sign-in. `tailscale funnel` is
+  not affected: it gets the sign-in page.
 - **R-2. WSL with a LAN portproxy.** Traffic through a Windows portproxy arrives
   from the gateway address, the same as the Windows browser, and the attacker
   controls `Host`. Only users who added a portproxy on purpose are affected
@@ -642,16 +634,10 @@ page, and makes exposure visible. It needs its own implementation plan.
 - The browser shows a one-time notice the first time a new device signs in
   ("A new device signed in from ADDRESS"), and a push notification if push is on.
 
-### 8.5 Cloudflare Access JWT check
+### 8.5 Proxy-specific checks: not planned
 
-- Settings field for the Cloudflare team domain and the Access application AUD
-  tag. When set, a request for a Cloudflare host must carry a valid
-  `Cf-Access-Jwt-Assertion`: signature checked against
-  `https://TEAM.cloudflareaccess.com/cdn-cgi/access/certs` (cached), `aud` and
-  `iss` checked, not expired. A request with no valid JWT gets the sign-in page.
-  This closes "tunnel with no Access policy" and lets Cloudflare hosts be trusted
-  without being listed.
-- Uses Node's `crypto` (RS256), no new dependency.
+No check for a particular proxy (for example the Cloudflare Access JWT). Add one
+only if a real user needs it.
 
 ### 8.6 Docs
 
@@ -686,12 +672,12 @@ page, and makes exposure visible. It needs its own implementation plan.
 >
 > What changes for you:
 > - On the computer that runs Dispatch, nothing changes.
-> - Your own devices on Tailscale, `tailscale serve`, and Cloudflare Tunnel with the
->   documented `config.yml` keep working with no steps.
+> - Your own devices on Tailscale (direct or through `tailscale serve`) keep working
+>   with no steps.
 > - Any other device (for example a laptop on the same Wi-Fi) shows a sign-in page
 >   once. Run `dispatch access` on the computer that runs Dispatch to get the access
 >   token, then paste it.
-> - If your Cloudflare tunnel is managed in the Cloudflare dashboard, run
+> - If you put another proxy or tunnel in front of Dispatch, sign in once, or run
 >   `dispatch access allow-host YOUR.HOSTNAME` once.
 > - On Windows (WSL2), if you added a `netsh portproxy` rule so other devices can
 >   reach Dispatch, remove it and use Tailscale instead. That path is not yet
@@ -710,8 +696,8 @@ page, and makes exposure visible. It needs its own implementation plan.
   null`, and the Vite dev case.
 - Tailscale tests with a fake `whois`: same user, other user, tagged node, command
   missing, cache expiry.
-- cloudflared parser tests: one hostname, many, a non-local service, another port,
-  comments, `config.yaml`.
+- `allow-host` tests: an added name passes from loopback, a removed name does not,
+  an added name does not help a LAN peer.
 - Integration tests with a real listen on a random port: HTTP 401, sign-in page,
   login sets the cookie, the cookie opens `/api` and all three WebSockets, a
   foreign-Origin WebSocket gets 401 or 403, rotation revokes the cookie, login rate
@@ -746,9 +732,8 @@ Use a test daemon on port 3480 with a temporary `HOME`, never the live daemon.
   `tailscaled` inside WSL from a phone (expect no sign-in); Windows-side Tailscale
   plus `tailscale serve`. For Phase 2 only: a loopback-only listen with the Windows
   browser in NAT and in mirrored mode.
-- **Cloudflare:** one of the users who reaches Dispatch through a Cloudflare domain
-  confirms whether their tunnel uses a local `config.yml` or the dashboard, then
-  tests the release candidate.
+- **Tailscale users:** one other user on Tailscale tests the release candidate
+  from their own phone (direct and, if they use it, `tailscale serve`).
 
 ## 11. Related known limit: confined doc read
 
@@ -768,12 +753,13 @@ Each has a recommended answer. They are repeated as owner decisions in the repor
 1. **NE-1: Does the repository owner review Phase 1 before release?**
    Recommended: yes. Open the PR, ask for review the same day, and release after
    approval. Phase 1 changes default behaviour for every install.
-2. **NE-2: Cloudflare hosts that are not in a local ingress file.** (A) Sign-in page
-   until the owner runs `allow-host` or signs in. (B) Trust any `Host` on loopback
-   when a `Cf-Access-Jwt-Assertion` header is present. Recommended: A. A rebinding
-   page can add that header, so B reopens the rebinding hole.
+2. **NE-2:** folded into NE-4. No current user is known to run Cloudflare or
+   another proxy, so there is no separate proxy decision.
 3. **NE-3: Tailscale rule scope in Phase 1.** (A) Only devices owned by the same
    Tailscale user. (B) Any device the tailnet ACL allows (today's behaviour).
    Recommended: A. In a company tailnet, B gives coworkers a shell.
 4. **NE-4: A switch to turn the gate off.** Recommended: no switch. The token
-   sign-in works in every setup, and a switch would be turned on and forgotten.
+   sign-in works in every setup, and a switch would be turned on and forgotten. An
+   unknown user behind another proxy or tunnel also has `allow-host` (6.6). Do not
+   trust a proxy's own header (for example `Cf-Access-Jwt-Assertion`) without
+   checking it: a rebinding page can send it.
