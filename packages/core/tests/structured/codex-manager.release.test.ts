@@ -56,6 +56,7 @@ it('killAll ends every session and closes the shared app-server (that frees all 
   spawnFake('b', { resumeId: 'thread-b' });
   await bound('a'); await bound('b');
   m.killAll();
+  expect(logged('thread/unsubscribe').map((e) => e.params.threadId)).not.toContain('thread-b'); // the last session just closes the child
   expect(m.isAlive('a')).toBe(false);
   expect(m.isAlive('b')).toBe(false);
   await until(() => { try { process.kill(pid, 0); return false; } catch { return true; } }, 'app-server exit');
@@ -107,8 +108,29 @@ it('respawning a terminal onto the same thread releases then resumes, and the ne
   await bound('keep'); await bound('a');
   spawnFake('a', { resumeId: 'thread-a' }); // revive: spawn() kills the old session first
   await until(() => logged('thread/resume').filter((e) => e.params.threadId === 'thread-a').length === 2, 'second resume');
-  const order = [...logged('thread/unsubscribe'), ...logged('thread/resume').slice(2)];
-  expect(order[0].params.threadId).toBe('thread-a');
+  const wire = fs.readFileSync(logPath, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
+    .filter((e) => (e.method === 'thread/unsubscribe' || e.method === 'thread/resume') && e.params.threadId === 'thread-a')
+    .map((e) => e.method);
+  expect(wire).toEqual(['thread/resume', 'thread/unsubscribe', 'thread/resume']); // release first, then the revive
   expect(logged('thread/unsubscribe')).toHaveLength(1); // the new session is not released by the old one's tail
   expect(m.isAlive('a')).toBe(true);
+});
+
+it('a crash while a resume is still in flight resumes that thread again instead of stranding it', async () => {
+  const marker = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'codex-hang-')), 'once');
+  const pid = spawnFake('a', { resumeId: 'thread-a', env: { CODEX_FAKE_RESUME_HANG_ONCE: marker } });
+  await until(() => logged('thread/resume').length === 1, 'first resume sent'); // sent, never answered
+  process.kill(pid, 'SIGKILL');
+  await bound('a');
+  expect(logged('thread/resume').map((e) => e.params.threadId)).toEqual(['thread-a', 'thread-a']);
+});
+
+it('a thread killed while its resume is in flight is released once the app-server answers', async () => {
+  spawnFake('keep', { resumeId: 'thread-keep' });
+  await bound('keep');
+  const marker = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'codex-hang-')), 'once');
+  fs.writeFileSync(marker, '1'); // answers normally
+  spawnFake('a', { resumeId: 'thread-a' });
+  m.kill('a'); // resume not answered yet
+  await until(() => logged('thread/unsubscribe').some((e) => e.params.threadId === 'thread-a'), 'late unsubscribe');
 });

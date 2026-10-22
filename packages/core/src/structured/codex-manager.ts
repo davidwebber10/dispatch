@@ -108,11 +108,19 @@ class CodexConnection extends EventEmitter {
     if (typeof msg.method === 'string') this.emit('notification', msg.method, msg.params ?? {});
   }
 
-  request(method: string, params: unknown): Promise<any> {
+  /** `timeoutMs` (optional) rejects AND drops the pending entry, so an unanswered request cannot
+   *  accumulate on a long-lived connection. */
+  request(method: string, params: unknown, timeoutMs?: number): Promise<any> {
     if (this.closed) return Promise.reject(new Error('app-server not connected'));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      if (timeoutMs !== undefined) {
+        const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`${method} timed out`)); }, timeoutMs);
+        timer.unref?.();
+        this.pending.set(id, { resolve: (v) => { clearTimeout(timer); resolve(v); }, reject: (e) => { clearTimeout(timer); reject(e); } });
+      } else {
+        this.pending.set(id, { resolve, reject });
+      }
       this.writeRaw({ jsonrpc: '2.0', id, method, params });
     });
   }
@@ -365,14 +373,8 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
    *  or throw out of kill(). */
   private releaseThread(conn: CodexConnection, threadId: string): void {
     if (!conn.alive) return;
-    let timer: NodeJS.Timeout | undefined;
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error('thread/unsubscribe timed out')), this.releaseTimeoutMs);
-      timer.unref?.();
-    });
-    Promise.race([conn.request('thread/unsubscribe', { threadId }), timeout])
-      .catch(() => { /* best-effort: the thread is still unloaded when the daemon or app-server exits */ })
-      .finally(() => clearTimeout(timer));
+    conn.request('thread/unsubscribe', { threadId }, this.releaseTimeoutMs)
+      .catch(() => { /* best-effort: the thread is still unloaded when the daemon or app-server exits */ });
   }
 
   /** The terminal of the live session that owns `threadId` — bound to it, or resuming it. */
@@ -431,7 +433,9 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
       session.pending = null;
       session.pendingApproval = null;
       this.emit('failed', session.terminalId);
-      const resumeId = session.threadId;
+      // A start/resume still in flight when the server died has no threadId yet; its resumeId
+      // (a resumed thread) is the same native thread, so resume that rather than strand the session.
+      const resumeId = session.threadId ?? session.resumeId;
       session.threadId = undefined;
       session.turnActive = false;
       if (!resumeId) continue;

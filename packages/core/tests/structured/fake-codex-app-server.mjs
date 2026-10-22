@@ -89,6 +89,10 @@ rl.on('line', (line) => {
 
   if (msg.method === 'thread/resume') {
     logRequest('thread/resume', msg.params);
+    // CODEX_FAKE_RESUME_HANG_ONCE=<marker file>: the first process to see a resume never answers
+    // (the test then kills it mid-flight); a respawned process finds the marker and answers.
+    const hangMarker = process.env.CODEX_FAKE_RESUME_HANG_ONCE;
+    if (hangMarker && !fs.existsSync(hangMarker)) { fs.writeFileSync(hangMarker, '1'); return; }
     const tid = msg.params?.threadId ?? THREAD;
     // Return one prior completed turn so the backfill path has history to replay.
     respond(msg.id, { thread: { id: tid, turns: [{ id: 'prev', items: [
