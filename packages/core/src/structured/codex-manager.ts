@@ -191,6 +191,9 @@ interface CodexSession {
   /** toolUseId → the policy reason a governed thread's approval was declined with, until Codex's
    *  own completion of that item arrives (see declineWithReason / withDenyReason). */
   deniedReasons: Map<string, string>;
+  /** Bumped by every startThread attempt; a failure from a superseded attempt (the app-server died
+   *  mid-start and crash recovery began a new one) or from an ended session is ignored. */
+  startGen: number;
   /** Resolves once thread/start|resume has assigned a threadId; sends chain on it. */
   ready: Promise<void>;
   /**
@@ -277,6 +280,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
       sandbox: opts.sandbox,
       threadConfig: opts.threadConfig,
       deniedReasons: new Map(),
+      startGen: 0,
       ready: Promise.resolve(),
     };
     if (opts.seedEvents?.length) {
@@ -284,10 +288,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
       if (session.events.length > MAX_EVENTS) session.events.splice(0, session.events.length - MAX_EVENTS);
     }
     this.sessions.set(terminalId, session);
-    session.ready = this.startThread(session, conn).catch((err) => {
-      this.pushEvent(session, { type: 'system', subtype: 'spawn_error', message: String(err) });
-      this.emit('failed', session.terminalId);
-    });
+    session.ready = this.beginThread(session, conn);
     return conn.pid;
   }
 
@@ -308,6 +309,17 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     conn.on('server-request', (method: string, id: RpcId, params: any) => this.onServerRequest(method, id, params));
     conn.on('exit', () => this.onConnExit(conn));
     return conn;
+  }
+
+  /** Run startThread for a session; its failure is reported unless the attempt was superseded by
+   *  crash recovery or the session has ended (kill) in the meantime. */
+  private beginThread(session: CodexSession, conn: CodexConnection): Promise<void> {
+    const gen = ++session.startGen;
+    return this.startThread(session, conn).catch((err) => {
+      if (session.startGen !== gen || this.sessions.get(session.terminalId) !== session) return;
+      this.pushEvent(session, { type: 'system', subtype: 'spawn_error', message: String(err) });
+      this.emit('failed', session.terminalId);
+    });
   }
 
   /** Start (or resume) the thread for a session, then bind its threadId for routing. */
@@ -438,12 +450,9 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
       const resumeId = session.threadId ?? session.resumeId;
       session.threadId = undefined;
       session.turnActive = false;
-      if (!resumeId) continue;
-      session.resumeId = resumeId;
-      session.ready = this.startThread(session, conn2).catch((err) => {
-        this.pushEvent(session, { type: 'system', subtype: 'spawn_error', message: String(err) });
-        this.emit('failed', session.terminalId);
-      });
+      // No id at all: a fresh thread/start was lost mid-flight, so start it fresh again.
+      if (resumeId) session.resumeId = resumeId;
+      session.ready = this.beginThread(session, conn2);
     }
   }
 

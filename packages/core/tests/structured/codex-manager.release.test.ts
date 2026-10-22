@@ -128,9 +128,41 @@ it('a crash while a resume is still in flight resumes that thread again instead 
 it('a thread killed while its resume is in flight is released once the app-server answers', async () => {
   spawnFake('keep', { resumeId: 'thread-keep' });
   await bound('keep');
-  const marker = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'codex-hang-')), 'once');
-  fs.writeFileSync(marker, '1'); // answers normally
   spawnFake('a', { resumeId: 'thread-a' });
   m.kill('a'); // resume not answered yet
   await until(() => logged('thread/unsubscribe').some((e) => e.params.threadId === 'thread-a'), 'late unsubscribe');
+});
+
+it('a crash mid-resume reports one failure (no stale spawn_error), and none for a thread killed during recovery', async () => {
+  const marker = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'codex-hang-')), 'once');
+  const failed: string[] = [];
+  m.on('failed', (id: string) => failed.push(id));
+  const pid = spawnFake('a', { resumeId: 'thread-a', env: { CODEX_FAKE_RESUME_HANG_ONCE: marker } });
+  await until(() => logged('thread/resume').length === 1, 'first resume sent');
+  process.kill(pid, 'SIGKILL');
+  await bound('a');
+  await new Promise((r) => setTimeout(r, 100));
+  expect(failed).toEqual(['a']); // onConnExit's own notice only
+  expect(m.getEvents('a').some((e: any) => e.subtype === 'spawn_error')).toBe(false);
+});
+
+it('a crash before a fresh thread/start answered starts that thread fresh again', async () => {
+  const pid = spawnFake('a', { env: { CODEX_FAKE_START_HANG_ONCE: path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'codex-hang-')), 'once') } });
+  await until(() => logged('thread/start').length === 1, 'first start sent');
+  process.kill(pid, 'SIGKILL');
+  await bound('a');
+  expect(logged('thread/start')).toHaveLength(2);
+});
+
+it('a hung unsubscribe leaves nothing pending on the connection after its timeout', async () => {
+  const mgr = new CodexStructuredSessionManager({ releaseTimeoutMs: 30 });
+  const lp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'codex-release-log-')), 'r.jsonl');
+  const sp = (id: string, r: string) => mgr.spawn(id, { command: process.execPath, args: [fake], workDir: process.cwd(), resumeId: r, env: { CODEX_FAKE_LOG: lp, CODEX_FAKE_UNSUB: 'hang' } });
+  sp('a', 'thread-a'); sp('b', 'thread-b');
+  await until(() => !!mgr.getSessionId('a') && !!mgr.getSessionId('b'), 'bound');
+  const conn = (mgr as any).conn;
+  mgr.kill('a');
+  expect(conn.pending.size).toBe(1);
+  await until(() => conn.pending.size === 0, 'pending cleared');
+  mgr.killAll();
 });

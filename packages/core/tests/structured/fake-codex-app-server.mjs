@@ -82,6 +82,9 @@ rl.on('line', (line) => {
 
   if (msg.method === 'thread/start') {
     logRequest('thread/start', msg.params);
+    // CODEX_FAKE_START_HANG_ONCE=<marker file>: same as the resume variant below, for a fresh start.
+    const startMarker = process.env.CODEX_FAKE_START_HANG_ONCE;
+    if (startMarker && !fs.existsSync(startMarker)) { fs.writeFileSync(startMarker, '1'); return; }
     respond(msg.id, { thread: { id: THREAD, turns: [] }, model: msg.params?.model ?? 'gpt-5.6-sol' });
     notify('thread/started', { thread: { id: THREAD, sessionId: THREAD, turns: [] } });
     return;
