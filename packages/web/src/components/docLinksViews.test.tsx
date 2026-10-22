@@ -85,13 +85,22 @@ describe('the overseer (Control Plane)', () => {
     render(<OverseerView />);
     expectRouted('overseer');
   });
+  it('a relative link in a reply reads from the coordinator\'s project', () => {
+    useOverseer.setState({ coordinatorStream: [m('overseer', 'Control Plane', '[rel](docs/plan.md)', '9:02', 2)] } as never);
+    render(<OverseerView />);
+    expect(click('rel')).toBe(false);
+    expect(useDocViewer.getState().open).toMatchObject({ project: 'p1', path: 'docs/plan.md', origin: 'overseer' });
+  });
   it('a link in the ledger source panel does too', async () => {
-    vi.spyOn(api, 'getLedgerSource').mockResolvedValue({ kind: 'section', file: 'r.md', path: 'docs/r.md', heading: 'H', markdown: SRC, id: 'LR-6', fromMainCheckout: false, note: null, cut: false } as never);
+    vi.spyOn(api, 'getLedgerSource').mockResolvedValue({ kind: 'section', file: 'r.md', path: 'docs/r.md', heading: 'H', markdown: SRC + ' [sib](y.md)', id: 'LR-6', fromMainCheckout: false, note: null, cut: false } as never);
     useOverseer.setState({ coordinatorStream: [] } as never);
     useLedgerCard.setState({ sourcePanel: { projectId: 'p1', seq: 14 } } as never);
     render(<OverseerView />);
     await screen.findByText('plan');
     expectRouted('overseer');
+    act(() => useDocViewer.getState().close());
+    expect(click('sib')).toBe(false);
+    expect(useDocViewer.getState().open).toMatchObject({ path: 'docs/y.md', origin: 'overseer' });
   });
 });
 

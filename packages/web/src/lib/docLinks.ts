@@ -51,12 +51,17 @@ function isAppHost(hostname: string): boolean {
   return typeof location !== 'undefined' && !!location.hostname && h === location.hostname.toLowerCase();
 }
 
+function isThisApp(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  return h === 'localhost' || h === '::1' || h.startsWith('127.') || (typeof location !== 'undefined' && !!location.hostname && h === location.hostname.toLowerCase());
+}
+
 /** The file path of a link to the app's own host (`http://localhost:3456/Users/me/plan.md`), else null. */
 function appHostPath(h: string): string | null {
   let url: URL;
   try { url = new URL(h); } catch { return null; }
   if (!isAppHost(url.hostname)) return null;
-  const path = decode(url.pathname);
+  const path = decode(url.pathname.replace(LINE_SUFFIX, ''));
   return path && DOC_LINK.test(path) ? path : null;
 }
 
@@ -66,8 +71,10 @@ export function classifyLink(href: string, ctx: LinkContext): LinkAction {
   if (WEB.test(h)) {
     const own = /^https?:/i.test(h) ? appHostPath(h) : null;
     if (own === null) return { kind: 'web', href };
-    // Only a path inside a project opens; anywhere else it is just the app, so it does nothing.
-    return classifyLink(own.split('/').map(encodeURIComponent).join('/'), { ...ctx, from: undefined });
+    // Only a path inside a project opens. Anywhere else it is just the app (this machine) so it does
+    // nothing; another LAN or Tailscale host is a different site and opens in a new tab as before.
+    const act = classifyLink(own.split('/').map(encodeURIComponent).join('/'), { ...ctx, from: undefined });
+    return act.kind === 'none' && !isThisApp(new URL(h).hostname) ? { kind: 'web', href } : act;
   }
   const file = FILE_URL.exec(h);
   if (file) target = file[1];
@@ -78,10 +85,12 @@ export function classifyLink(href: string, ctx: LinkContext): LinkAction {
   const path = decode(bare);
   if (!path || !DOC_LINK.test(path) || /[\\\0]/.test(path)) return NONE;
   const abs = path.startsWith('/');
+  // A relative link in a doc that was opened by its absolute path stays absolute.
+  const absFrom = !abs && !!ctx.from?.startsWith('/');
   const base = abs || !ctx.from ? [] : ctx.from.split('/').slice(0, -1);
   const parts = normalize([...base, ...path.split('/')]);
   if (!parts || !parts.length) return NONE;
-  const clean = (abs ? '/' : '') + parts.join('/');
+  const clean = (abs || absFrom ? '/' : '') + parts.join('/');
   const project = projectForPath(clean, ctx.project, ctx.projects);
   return project ? { kind: 'doc', project, path: clean } : NONE;
 }

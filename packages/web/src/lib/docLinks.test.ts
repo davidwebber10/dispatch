@@ -74,14 +74,28 @@ describe('classifyLink: a link to the app itself plus a path', () => {
     expect(classifyLink(`http://localhost:3456${p}?x=1`, ctx)).toEqual(doc(p));
     expect(classifyLink('http://localhost:3456/Users/me/dev/app/my%20plan.md', ctx)).toEqual(doc('/Users/me/dev/app/my plan.md'));
   });
+  it('reads a :line suffix on an app-host link', () => {
+    expect(classifyLink(`http://localhost:3456${p}:12`, ctx)).toEqual(doc(p));
+  });
   it('does nothing when the path is in no project (it would only load the app)', () => {
     expect(classifyLink('http://localhost:3456/etc/notes.md', ctx)).toEqual({ kind: 'none' });
     expect(classifyLink('http://localhost:3456/Users/me/dev/app/../../../etc/x.md', ctx)).toEqual({ kind: 'none' });
+  });
+  it('opens another LAN or Tailscale host\'s doc link in a new tab', () => {
+    expect(classifyLink('http://192.168.1.20/readme.md', ctx).kind).toBe('web');
+    expect(classifyLink('https://nas.tail1234.ts.net/notes.txt', ctx).kind).toBe('web');
   });
   it('keeps a web link to another host, and an own-host link to a non-doc, as web', () => {
     expect(classifyLink(`https://example.com${p}`, ctx)).toEqual({ kind: 'web', href: `https://example.com${p}` });
     expect(classifyLink('https://github.com/o/r/blob/main/docs/plan.md', ctx).kind).toBe('web');
     expect(classifyLink('http://localhost:3456/api/sessions', ctx).kind).toBe('web');
     expect(classifyLink('http://localhost:3456/', ctx).kind).toBe('web');
+  });
+});
+
+describe('classifyLink: a relative link in a doc opened by its absolute path', () => {
+  it('stays absolute', () => {
+    expect(classifyLink('./other.md', { ...ctx, from: '/Users/me/dev/app/docs/plan.md' })).toEqual(doc('/Users/me/dev/app/docs/other.md'));
+    expect(classifyLink('../b.md', { ...ctx, from: '/Users/me/dev/app/docs/plan.md' })).toEqual(doc('/Users/me/dev/app/b.md'));
   });
 });

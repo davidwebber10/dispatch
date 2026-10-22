@@ -5,6 +5,7 @@
 
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { DocsScope } from '../DocsScope';
+import { useOverseer } from './store';
 import { overseerRootStyle } from './atoms';
 import { OverseerMobile } from './OverseerMobile';
 import { useCoordinatorSync, useNeedsSync } from './store';
@@ -18,7 +19,9 @@ import { LedgerSourcePanel } from './components/LedgerSourcePanel';
 
 /** Doc links in the overseer's messages, its ledger cards and its source panel open in the overseer's own doc viewer. */
 export function OverseerView({ onBack }: { onBack?: () => void } = {}) {
-  return <DocsScope origin="overseer"><OverseerBody onBack={onBack} /></DocsScope>;
+  // A relative link in a reply reads from the coordinator's project.
+  const project = useOverseer((s) => s.coordinatorProject);
+  return <DocsScope project={project} origin="overseer"><OverseerBody onBack={onBack} /></DocsScope>;
 }
 
 function OverseerBody({ onBack }: { onBack?: () => void }) {
