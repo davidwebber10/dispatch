@@ -82,6 +82,9 @@ rl.on('line', (line) => {
 
   if (msg.method === 'thread/start') {
     logRequest('thread/start', msg.params);
+    // CODEX_FAKE_START_HANG_ONCE=<marker file>: same as the resume variant below, for a fresh start.
+    const startMarker = process.env.CODEX_FAKE_START_HANG_ONCE;
+    if (startMarker && !fs.existsSync(startMarker)) { fs.writeFileSync(startMarker, '1'); return; }
     respond(msg.id, { thread: { id: THREAD, turns: [] }, model: msg.params?.model ?? 'gpt-5.6-sol' });
     notify('thread/started', { thread: { id: THREAD, sessionId: THREAD, turns: [] } });
     return;
@@ -89,6 +92,10 @@ rl.on('line', (line) => {
 
   if (msg.method === 'thread/resume') {
     logRequest('thread/resume', msg.params);
+    // CODEX_FAKE_RESUME_HANG_ONCE=<marker file>: the first process to see a resume never answers
+    // (the test then kills it mid-flight); a respawned process finds the marker and answers.
+    const hangMarker = process.env.CODEX_FAKE_RESUME_HANG_ONCE;
+    if (hangMarker && !fs.existsSync(hangMarker)) { fs.writeFileSync(hangMarker, '1'); return; }
     const tid = msg.params?.threadId ?? THREAD;
     // Return one prior completed turn so the backfill path has history to replay.
     respond(msg.id, { thread: { id: tid, turns: [{ id: 'prev', items: [
@@ -246,6 +253,16 @@ rl.on('line', (line) => {
     return;
   }
 
+  // Release a thread (real codex: unsubscribes it; app-server unloads it, and its MCP children,
+  // once idle past thread_unload_delay_secs). Opt-in misbehaviour for the release tests:
+  // CODEX_FAKE_UNSUB=hang never answers, =error answers with an RPC error.
+  if (msg.method === 'thread/unsubscribe') {
+    logRequest('thread/unsubscribe', msg.params);
+    if (process.env.CODEX_FAKE_UNSUB === 'hang') return;
+    if (process.env.CODEX_FAKE_UNSUB === 'error') { send({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: 'boom' } }); return; }
+    respond(msg.id, { status: 'unsubscribed' });
+    return;
+  }
   if (msg.method === 'thread/compact/start') { respond(msg.id, {}); return; }
   // Unknown requests still need a response so the client's pending map drains.
   if (msg.id !== undefined && msg.method) respond(msg.id, {});

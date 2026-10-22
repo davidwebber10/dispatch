@@ -96,7 +96,7 @@ describe('codex provider', () => {
         systemPrompt: 'note',
       },
     });
-    expect(cmd).toEqual({ command: 'codex', args: ['app-server'] });
+    expect(cmd).toEqual({ command: 'codex', args: ['app-server', '-c', 'thread_unload_delay_secs=10'] });
   });
 
   it('builds new command with full permissions (the analogue of Claude --dangerously-skip-permissions)', () => {

@@ -33,6 +33,9 @@ function modelArgs(model?: string): string[] {
   return model ? ['--model', model] : [];
 }
 
+/** Seconds an unsubscribed, idle thread stays loaded in the shared `codex app-server` (see buildStructuredCommand). */
+export const CODEX_THREAD_UNLOAD_DELAY_SECS = 10;
+
 export const codexProvider: SessionProvider = {
   name: 'codex',
   structured: { protocol: 'codex-rpc', disabledBy: 'DISPATCH_CODEX_PRETTY' },
@@ -73,7 +76,13 @@ export const codexProvider: SessionProvider = {
     // argv belongs to whichever thread spawned it first. So no MCP `-c` args (they carry the
     // per-thread dispatch identity) and no developer_instructions: both ride each thread's own
     // thread/start `config` / `developerInstructions` (SecretsMcpInjection.codexThreadConfig).
-    return { command: 'codex', args: ['app-server'] };
+    //
+    // The ONE exception is `thread_unload_delay_secs`: a global app-server setting, not thread
+    // identity. CodexStructuredSessionManager releases a killed thread with `thread/unsubscribe`,
+    // but codex-cli 0.163.0 only unloads it (and stops its ~8-process MCP set) once it has been
+    // unsubscribed AND idle for this long; the default is far too long (>12 s measured, ~30 min
+    // by the app-server's own default), so every ended thread would leak its tool set meanwhile.
+    return { command: 'codex', args: ['app-server', '-c', `thread_unload_delay_secs=${CODEX_THREAD_UNLOAD_DELAY_SECS}`] };
   },
 
   buildRunnerCommand({ prompt, secretsMcp }) {
