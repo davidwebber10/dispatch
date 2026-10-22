@@ -246,6 +246,16 @@ rl.on('line', (line) => {
     return;
   }
 
+  // Release a thread (real codex: unsubscribes it; app-server unloads it, and its MCP children,
+  // once idle past thread_unload_delay_secs). Opt-in misbehaviour for the release tests:
+  // CODEX_FAKE_UNSUB=hang never answers, =error answers with an RPC error.
+  if (msg.method === 'thread/unsubscribe') {
+    logRequest('thread/unsubscribe', msg.params);
+    if (process.env.CODEX_FAKE_UNSUB === 'hang') return;
+    if (process.env.CODEX_FAKE_UNSUB === 'error') { send({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: 'boom' } }); return; }
+    respond(msg.id, { status: 'unsubscribed' });
+    return;
+  }
   if (msg.method === 'thread/compact/start') { respond(msg.id, {}); return; }
   // Unknown requests still need a response so the client's pending map drains.
   if (msg.id !== undefined && msg.method) respond(msg.id, {});

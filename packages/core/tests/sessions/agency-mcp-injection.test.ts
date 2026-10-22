@@ -131,7 +131,7 @@ describe('agency MCP: caller identity + standard injection path', () => {
     });
 
     expect(manager.calls).toHaveLength(1);
-    expect(manager.calls[0].args).toEqual(['app-server']);
+    expect(manager.calls[0].args).toEqual(['app-server', '-c', 'thread_unload_delay_secs=10']);
     const dispatch = manager.calls[0].threadConfig?.['mcp_servers.dispatch'];
     expect(dispatch.command).toBe('node');
     expect(dispatch.env.DISPATCH_TERMINAL).toBe(terminal.id);
@@ -204,7 +204,7 @@ describe('agency MCP: caller identity + standard injection path', () => {
     });
 
     expect(manager.calls).toHaveLength(1);
-    expect(manager.calls[0].args).toEqual(['app-server']);
+    expect(manager.calls[0].args).toEqual(['app-server', '-c', 'thread_unload_delay_secs=10']);
     expect(manager.calls[0].threadConfig?.['mcp_servers.dispatch']?.env?.DISPATCH_TERMINAL).toBe(terminal.id);
   });
 

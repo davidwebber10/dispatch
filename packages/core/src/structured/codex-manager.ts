@@ -214,6 +214,8 @@ interface CodexSession {
 export interface CodexManagerOptions {
   approvalPolicy?: 'untrusted' | 'on-request' | 'never';
   sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+  /** How long a `thread/unsubscribe` may stay unanswered before we stop waiting (default 5s). */
+  releaseTimeoutMs?: number;
 }
 
 export class CodexStructuredSessionManager extends EventEmitter implements IStructuredManager {
@@ -224,10 +226,12 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
   private defaultEnv: Record<string, string> = {};
   private readonly approvalPolicy: 'untrusted' | 'on-request' | 'never';
   private readonly sandbox: 'read-only' | 'workspace-write' | 'danger-full-access';
+  private readonly releaseTimeoutMs: number;
 
   constructor(opts: CodexManagerOptions = {}) {
     super();
     this.setMaxListeners(0);
+    this.releaseTimeoutMs = opts.releaseTimeoutMs ?? 5000;
     this.approvalPolicy = opts.approvalPolicy ?? 'on-request';
     this.sandbox = opts.sandbox ?? 'workspace-write';
   }
@@ -320,7 +324,9 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
         // Consequence: a persona CHANGE only reaches a thread started fresh.
         ...(session.systemPrompt ? { developerInstructions: session.systemPrompt } : {}),
       });
-      this.bindThread(session, res?.thread?.id ?? session.resumeId, res?.model);
+      const threadId = res?.thread?.id ?? session.resumeId;
+      if (this.endedWhileStarting(session, conn, threadId)) return;
+      this.bindThread(session, threadId, res?.model);
       await this.backfill(session, conn, res?.thread?.turns).catch(() => { /* backfill is best-effort */ });
     } else {
       const res = await conn.request('thread/start', {
@@ -336,8 +342,37 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
       });
       const threadId = res?.thread?.id;
       if (typeof threadId !== 'string' || !threadId) throw new Error('thread/start returned no threadId');
+      if (this.endedWhileStarting(session, conn, threadId)) return;
       this.bindThread(session, threadId, res?.model);
     }
+  }
+
+  /** A session killed while its thread/start|resume was in flight never got a threadId, so kill()
+   *  had nothing to release. The app-server has loaded the thread (and its MCP set) regardless:
+   *  release it now, unless another live session has since taken the thread over. */
+  private endedWhileStarting(session: CodexSession, conn: CodexConnection, threadId: string): boolean {
+    if (this.sessions.get(session.terminalId) === session) return false;
+    if (!this.ownerOf(threadId)) this.releaseThread(conn, threadId);
+    return true;
+  }
+
+  /** Tell the shared app-server to let go of a thread. Without this it keeps the thread loaded
+   *  and keeps its whole MCP tool set (~8 processes, ~0.8 GB) running until the daemon restarts.
+   *  `thread/unsubscribe` drops our subscription; the app-server then unloads the thread and
+   *  stops its MCP servers once it is idle for `thread_unload_delay_secs` (set in the app-server
+   *  argv, see providers/codex.ts). The thread's history stays on disk, so a later
+   *  `thread/resume` still works. Fire-and-forget: errors and a silent app-server never block
+   *  or throw out of kill(). */
+  private releaseThread(conn: CodexConnection, threadId: string): void {
+    if (!conn.alive) return;
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('thread/unsubscribe timed out')), this.releaseTimeoutMs);
+      timer.unref?.();
+    });
+    Promise.race([conn.request('thread/unsubscribe', { threadId }), timeout])
+      .catch(() => { /* best-effort: the thread is still unloaded when the daemon or app-server exits */ })
+      .finally(() => clearTimeout(timer));
   }
 
   /** The terminal of the live session that owns `threadId` — bound to it, or resuming it. */
@@ -691,8 +726,10 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     if (session.threadId) this.threadToTerminal.delete(session.threadId);
     this.sessions.delete(terminalId);
     this.emit('exit', terminalId, 0);
-    // Tear down the shared server once the last codex thread is gone.
+    // Tear down the shared server once the last codex thread is gone (closing it ends every
+    // thread's MCP set); otherwise release just this thread so its MCP set does not outlive it.
     if (this.sessions.size === 0 && this.conn) { this.conn.close(); this.conn = undefined; }
+    else if (session.threadId && this.conn) this.releaseThread(this.conn, session.threadId);
   }
 
   killAll(): void { for (const id of [...this.sessions.keys()]) this.kill(id); }
