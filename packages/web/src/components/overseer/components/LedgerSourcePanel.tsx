@@ -16,6 +16,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Markdown } from '../../Markdown';
+import { ThreadDocsContext, useThreadDocChips } from '../../threadDocs';
 import { Icon } from '../atoms';
 import { api } from '../../../api/client';
 import { useProjects } from '../../../stores/projects';
@@ -73,6 +74,12 @@ export function LedgerSourcePanel({ mobile = false }: { mobile?: boolean } = {})
 }
 
 type Load = { status: 'loading' } | { status: 'error'; detail: string } | { status: 'ready'; data: LedgerSource };
+
+/** The section's links read from the folder of its file; they open in the overseer's viewer (mounted by OverseerView). */
+function SectionMarkdown({ projectId, from, source }: { projectId: string; from: string; source: string }) {
+  const chips = useThreadDocChips(projectId, 'overseer', from);
+  return <ThreadDocsContext.Provider value={chips}><Markdown source={source} /></ThreadDocsContext.Provider>;
+}
 
 function PanelBody({ projectId, seq, mobile }: { projectId: string; seq: number; mobile: boolean }) {
   const [heading, setHeading] = useState<string | undefined>(undefined);
@@ -178,7 +185,7 @@ function PanelBody({ projectId, seq, mobile }: { projectId: string; seq: number;
           <>
             <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.4, color: 'var(--tp)' }}>{data.heading}</div>
             <div ref={bodyRef} className="ledger-source-body">
-              <Markdown source={data.markdown} />
+              <SectionMarkdown projectId={projectId} from={data.path} source={data.markdown} />
             </div>
             {data.cut && <div style={note}>The section continues in the file.</div>}
           </>

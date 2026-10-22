@@ -1,5 +1,5 @@
 import type { ConvItem } from '../../../api/types';
-import { renderMarkdown } from '../../../lib/markdown';
+import { Markdown } from '../../Markdown';
 
 export function WebView({ tool, result }: { tool: ConvItem; result?: ConvItem }) {
   let input: any = {};
@@ -13,7 +13,7 @@ export function WebView({ tool, result }: { tool: ConvItem; result?: ConvItem })
       {url && <div style={{ font: '500 12px var(--font-mono)', color: 'var(--color-accent)', wordBreak: 'break-all' }}>{url}</div>}
       {query && <div style={{ font: '500 12.5px var(--font-sans)', color: 'var(--color-text-primary)' }}>{query}</div>}
       {prompt && <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{prompt}</div>}
-      {out.trim() && <div className="md-view" style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }} dangerouslySetInnerHTML={{ __html: renderMarkdown(out) }} />}
+      {out.trim() && <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}><Markdown source={out} /></div>}
     </div>
   );
 }

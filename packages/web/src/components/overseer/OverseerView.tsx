@@ -4,6 +4,8 @@
 // no props are passed to the region components.
 
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { DocsScope } from '../DocsScope';
+import { useOverseer } from './store';
 import { overseerRootStyle } from './atoms';
 import { OverseerMobile } from './OverseerMobile';
 import { useCoordinatorSync, useNeedsSync } from './store';
@@ -15,7 +17,14 @@ import { WorkerLightbox } from './components/WorkerLightbox';
 import { LedgerRefPopover } from './components/LedgerChips';
 import { LedgerSourcePanel } from './components/LedgerSourcePanel';
 
+/** Doc links in the overseer's messages, its ledger cards and its source panel open in the overseer's own doc viewer. */
 export function OverseerView({ onBack }: { onBack?: () => void } = {}) {
+  // A relative link in a reply reads from the coordinator's project.
+  const project = useOverseer((s) => s.coordinatorProject);
+  return <DocsScope project={project} origin="overseer"><OverseerBody onBack={onBack} /></DocsScope>;
+}
+
+function OverseerBody({ onBack }: { onBack?: () => void }) {
   const isMobile = useIsMobile();
   // Single owner of the live coordinator subscription + the membrane escalation sync
   // (both run for desktop and mobile since OverseerView is the entry for both).

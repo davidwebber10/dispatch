@@ -154,9 +154,12 @@ describe('Markdown: file URLs and middle clicks with docs.link', () => {
     fireEvent.click(screen.getByRole('link', { name: 'b' }));
     expect(onOpen.mock.calls).toEqual([['/Users/me/dev/app/docs/a.md', null], ['/Users/me/dev/app/docs/b.md', null]]);
   });
-  it('a file URL stays inert without docs.link', () => {
+  it('a file URL does nothing when no view routes it (never a navigation)', () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
     render(<Markdown source="[a](file:///Users/me/dev/app/docs/a.md)" />);
-    expect(screen.queryByRole('link')).toBeNull();
+    expect(fireEvent.click(screen.getByRole('link', { name: 'a' }))).toBe(false);
+    expect(open).not.toHaveBeenCalled();
+    open.mockRestore();
   });
   it('a middle click is routed like a click and never navigates', () => {
     const open = vi.spyOn(window, 'open').mockReturnValue(null);

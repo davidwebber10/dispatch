@@ -66,7 +66,7 @@ vi.mock('@xterm/xterm', () => {
         }
       }
     }
-    constructor() { instances.push(this); }
+    constructor(opts?: Record<string, unknown>) { if (opts) this.options = opts; instances.push(this); }
     // Clipboard surface for the custom key handler (Ctrl+C copy / Ctrl+V release):
     // tests place a selection with `selection` and drive `keyHandler` directly.
     selection = '';
@@ -118,6 +118,8 @@ import { TerminalTab } from './TerminalTab';
 import { api } from '../../api/client';
 import { useSettings } from '../../stores/settings';
 import { useThreadStatus } from '../../stores/threadStatus';
+import { useProjects } from '../../stores/projects';
+import { useDocViewer } from '../../stores/docViewer';
 import { INITIAL_REPLAY_MOBILE, MAX_REPLAY, nextReplayStep } from '../../api/terminal-socket';
 import { PAGE_UP, WHEEL_UP } from '../../lib/ptyWheel';
 
@@ -1384,4 +1386,35 @@ test('a rebuild replay holds its queries back (the old socket\'s withheld frames
   await tick();
   expect(replies(created[0])).toEqual([]);
   expect(replies(created[1])).toEqual([]);
+});
+
+// ---- links the CLI prints (OSC 8): a doc opens in the doc viewer, a web link in a new tab, the rest nothing ----
+
+test('an OSC 8 link in the terminal routes like a link in a message', async () => {
+  useProjects.setState({ sessions: [{ id: 's1', workingDir: '/Users/me/dev/app' }] as any });
+  vi.spyOn(api, 'endlessDoc').mockReturnValue(new Promise(() => {}));
+  act(() => useDocViewer.getState().close());
+  const open = vi.spyOn(window, 'open').mockReturnValue(null);
+  const term = await mountTerm();
+  const handler = term.options.linkHandler as { allowNonHttpProtocols: boolean; activate: (e: MouseEvent, uri: string) => void };
+  const click = new MouseEvent('click');
+  // file:// links are ignored by xterm unless the handler allows them.
+  expect(handler.allowNonHttpProtocols).toBe(true);
+
+  await waitFor(() => expect(useProjects.getState().sessions).toHaveLength(1));
+  act(() => handler.activate(click, 'file:///Users/me/dev/app/docs/plan.md'));
+  expect(useDocViewer.getState().open).toMatchObject({ project: 's1', path: '/Users/me/dev/app/docs/plan.md', origin: 't1' });
+
+  act(() => useDocViewer.getState().close());
+  act(() => handler.activate(click, 'http://localhost:3456/Users/me/dev/app/docs/plan.md'));
+  expect(useDocViewer.getState().open).toMatchObject({ project: 's1', path: '/Users/me/dev/app/docs/plan.md' });
+  expect(open).not.toHaveBeenCalled();
+
+  act(() => useDocViewer.getState().close());
+  act(() => handler.activate(click, 'https://example.com/a'));
+  expect(open).toHaveBeenCalledWith('https://example.com/a', '_blank', 'noopener,noreferrer');
+  act(() => handler.activate(click, 'javascript:alert(1)'));
+  act(() => handler.activate(click, 'file:///etc/passwd'));
+  expect(open).toHaveBeenCalledTimes(1);
+  expect(useDocViewer.getState().open).toBeNull();
 });
