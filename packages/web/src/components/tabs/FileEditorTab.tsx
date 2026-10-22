@@ -2,7 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { EditorView, basicSetup } from 'codemirror';
 import { EditorState } from '@codemirror/state';
 import { oneDark } from '@codemirror/theme-one-dark';
-import { renderMarkdown } from '../../lib/markdown';
+import { Markdown } from '../Markdown';
+import { DocsScope } from '../DocsScope';
 import { api } from '../../api/client';
 import type { Terminal } from '../../api/types';
 import { isCsv, isMarkdown, languageFor } from '../../lib/fileType';
@@ -170,11 +171,11 @@ export function FileEditorTab({ terminal }: { terminal: Terminal }) {
         : md && mode === 'view'
           ? <div
               ref={mdView}
-              className="md-view"
               onScroll={(e) => mdScroll.set(terminal.id, e.currentTarget.scrollTop)}
               style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '14px 28px' }}
-              dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
-            />
+            >
+              <DocsScope project={terminal.sessionId} origin={terminal.id} from={path}><Markdown source={content} /></DocsScope>
+            </div>
           : <div ref={host} style={{ flex: 1, minHeight: 0, overflow: 'auto' }} />}
     </div>
   );

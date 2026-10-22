@@ -3,7 +3,8 @@ import DOMPurify from 'dompurify';
 import { renderMarkdown } from '../lib/markdown';
 import { chipifyHtml, type LedgerChips } from '../lib/ledgerRefs';
 import { findDocPaths, docName } from '../lib/docPaths';
-import type { LinkAction } from '../lib/docLinks';
+import { classifyLink, type LinkAction } from '../lib/docLinks';
+import { useThreadDocs } from './threadDocs';
 import { ImageLightbox, useViewerHost } from './ChatImage';
 
 /**
@@ -91,6 +92,13 @@ export interface DocChips {
   link?: (href: string) => LinkAction;
 }
 
+/**
+ * What a <Markdown> with no docs prop and no ThreadDocsContext does: a link never navigates the app (a
+ * web link opens a new tab, every other link does nothing) and no doc path becomes a chip. A view that
+ * knows its project gives a real one (DocsScope), so no view can forget to route its links.
+ */
+const LINKS_ONLY: DocChips = { onOpen: () => {}, accept: () => false, link: (href) => classifyLink(href, { project: null, projects: [] }) };
+
 const DOC_EXT = /\.(?:md|markdown|txt)/i;
 /** Text inside these stays plain: a link already goes somewhere, a code block is code, a button or a form field is a control. */
 const DOC_SKIP = new Set(['A', 'PRE', 'BUTTON', 'SCRIPT', 'STYLE', 'TEXTAREA', 'OPTION']);
@@ -160,7 +168,9 @@ function docifyHtml(html: string, accept?: (path: string) => boolean): string {
  * only, so the question can never become markup; a click on one is handled here. `docs` (Chat)
  * turns each doc path into a doc chip the same way; a click calls `docs.onOpen` and goes no further.
  */
-export const Markdown = React.memo(function Markdown({ source, ledger, docs }: { source: string; ledger?: LedgerChips; docs?: DocChips }) {
+export const Markdown = React.memo(function Markdown({ source, ledger, docs: own }: { source: string; ledger?: LedgerChips; docs?: DocChips }) {
+  const inherited = useThreadDocs();
+  const docs = own ?? inherited ?? LINKS_ONLY;
   const withDocs = !!docs;
   const accept = docs?.accept;
   const linkOf = docs?.link;

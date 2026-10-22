@@ -60,3 +60,28 @@ describe('classifyLink', () => {
     }
   });
 });
+
+describe('classifyLink: a link to the app itself plus a path', () => {
+  const p = '/Users/me/dev/app/docs/plan.md';
+  it('reads a loopback, LAN or Tailscale host with a path as the file path', () => {
+    for (const host of ['localhost:3456', '127.0.0.1:3456', '[::1]:3456', '192.168.1.20:3456', '10.0.0.5:3456', '100.101.102.103:3456', 'mac-mini.tail1234.ts.net:3456', 'mac-mini.local:3456']) {
+      expect(classifyLink(`http://${host}${p}`, ctx), host).toEqual(doc(p));
+    }
+    expect(classifyLink(`https://mac-mini.tail1234.ts.net${p}`, ctx)).toEqual(doc(p));
+  });
+  it('drops a line, a fragment and a query, and decodes the path', () => {
+    expect(classifyLink(`http://localhost:3456${p}#L12`, ctx)).toEqual(doc(p));
+    expect(classifyLink(`http://localhost:3456${p}?x=1`, ctx)).toEqual(doc(p));
+    expect(classifyLink('http://localhost:3456/Users/me/dev/app/my%20plan.md', ctx)).toEqual(doc('/Users/me/dev/app/my plan.md'));
+  });
+  it('does nothing when the path is in no project (it would only load the app)', () => {
+    expect(classifyLink('http://localhost:3456/etc/notes.md', ctx)).toEqual({ kind: 'none' });
+    expect(classifyLink('http://localhost:3456/Users/me/dev/app/../../../etc/x.md', ctx)).toEqual({ kind: 'none' });
+  });
+  it('keeps a web link to another host, and an own-host link to a non-doc, as web', () => {
+    expect(classifyLink(`https://example.com${p}`, ctx)).toEqual({ kind: 'web', href: `https://example.com${p}` });
+    expect(classifyLink('https://github.com/o/r/blob/main/docs/plan.md', ctx).kind).toBe('web');
+    expect(classifyLink('http://localhost:3456/api/sessions', ctx).kind).toBe('web');
+    expect(classifyLink('http://localhost:3456/', ctx).kind).toBe('web');
+  });
+});

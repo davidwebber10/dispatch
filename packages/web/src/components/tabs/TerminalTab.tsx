@@ -21,6 +21,8 @@ import { InputActionsMenu } from '../dictation/InputActionsMenu';
 import { createWriteGate, suppressReplayedQueries } from '../../lib/replayQueries';
 import { consumePageTicks, shouldPtyScroll } from '../../lib/ptyWheel';
 import { findTerminal, useTabs } from '../../stores/tabs';
+import { DocViewer } from '../endless/DocViewer';
+import { useThreadDocChips } from '../threadDocs';
 
 type SoftKey = { label: string; seq: string; title?: string; Icon?: Icon };
 // Slash commands live in a searchable sheet behind the "/" key. Run-commands end
@@ -145,6 +147,11 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
   const [meta, setMeta] = useState<Terminal | null>(null);
   const cachedType = useTabs((s) => findTerminal(s.byProject, terminalId)?.type);
   const termType = cachedType ?? meta?.type;
+  // A link the CLI prints (OSC 8) routes like a link in a message; the handler reads it through a ref.
+  const cachedProject = useTabs((s) => findTerminal(s.byProject, terminalId)?.sessionId);
+  const docChips = useThreadDocChips(cachedProject ?? meta?.sessionId, terminalId);
+  const docChipsRef = useRef(docChips);
+  docChipsRef.current = docChips;
   const typeRef = useRef(termType);
   typeRef.current = termType;
   const [drop, setDrop] = useState(false);
@@ -173,7 +180,14 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
   useEffect(() => {
     let disposed = false;
     const s0 = useSettings.getState();
-    const term = new XTerm({ fontFamily: 'JetBrains Mono, monospace', fontSize: s0.fontSize, theme: { background: '#1E1E1E' }, scrollback: s0.scrollback, convertEol: true, cursorBlink: true });
+    const term = new XTerm({ fontFamily: 'JetBrains Mono, monospace', fontSize: s0.fontSize, theme: { background: '#1E1E1E' }, scrollback: s0.scrollback, convertEol: true, cursorBlink: true,
+      // xterm's own handler asks confirm() and ignores every non-http link; a doc opens in the doc viewer, a web link in a new tab, the rest nothing.
+      linkHandler: { allowNonHttpProtocols: true, activate: (_e, uri) => {
+        const chips = docChipsRef.current;
+        const act = chips.link!(uri);
+        if (act.kind === 'doc') chips.onOpen(act.path, null);
+        else if (act.kind === 'web') window.open(uri, '_blank', 'noopener,noreferrer');
+      } } });
     const fit = new FitAddon();
     term.loadAddon(fit);
 
@@ -1048,6 +1062,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
         </div>,
         document.body,
       )}
+      <DocViewer owner={terminalId} />
     </div>
   );
 }

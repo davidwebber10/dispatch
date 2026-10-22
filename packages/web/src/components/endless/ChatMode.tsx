@@ -6,6 +6,7 @@ import { ProjectsPanel } from './ProjectsPanel';
 import { MemorySearch } from './MemorySearch';
 import { MemoryInspector } from './MemoryInspector';
 import { DocViewer } from './DocViewer';
+import { ThreadDocsContext, useThreadDocChips } from '../threadDocs';
 import { useDocViewer } from '../../stores/docViewer';
 import { Modal } from '../common/Modal';
 import { WorkerLightbox } from '../overseer/components/WorkerLightbox';
@@ -46,7 +47,10 @@ export function ChatMode({ mobile = false }: { mobile?: boolean }) {
     s.watch();
     return () => { useEndless.getState().unwatch(); useOverseer.getState().closeWorkerLightbox(); useDocViewer.getState().close(); };
   }, []);
+  // Doc links in any Chat text (a live reply, a note card) open in Chat's own viewer below.
+  const docs = useThreadDocChips(null, undefined);
   return (
+    <ThreadDocsContext.Provider value={docs}>
     <div data-testid="chat-mode" data-mobile={mobile ? '1' : undefined}
       style={{ display: 'flex', flex: 1, minWidth: 0, minHeight: 0, height: '100%', background: 'var(--color-base)' }}>
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
@@ -80,5 +84,6 @@ export function ChatMode({ mobile = false }: { mobile?: boolean }) {
       {/* After the lightbox: a doc opened from a thread stacks above it (Modal z-index 100, the lightbox 60). */}
       <DocViewer />
     </div>
+    </ThreadDocsContext.Provider>
   );
 }

@@ -38,10 +38,37 @@ function normalize(parts: string[]): string[] | null {
   return out;
 }
 
+const PRIVATE_V4 = /^(?:10\.|127\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|169\.254\.|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)\d+\.\d+(?:\.\d+)?$/;
+
+/**
+ * True when a URL host is a place Dispatch itself is served from: this machine, a LAN or Tailscale
+ * address, a `.ts.net` or `.local` name, or the host of this page. An agent writes such a link
+ * (`http://localhost:3456/Users/me/app/plan.md`) when it means the file; to the browser it is the app.
+ */
+function isAppHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (h === 'localhost' || h === '::1' || PRIVATE_V4.test(h) || h.endsWith('.ts.net') || h.endsWith('.local')) return true;
+  return typeof location !== 'undefined' && !!location.hostname && h === location.hostname.toLowerCase();
+}
+
+/** The file path of a link to the app's own host (`http://localhost:3456/Users/me/plan.md`), else null. */
+function appHostPath(h: string): string | null {
+  let url: URL;
+  try { url = new URL(h); } catch { return null; }
+  if (!isAppHost(url.hostname)) return null;
+  const path = decode(url.pathname);
+  return path && DOC_LINK.test(path) ? path : null;
+}
+
 export function classifyLink(href: string, ctx: LinkContext): LinkAction {
   const h = href.trim();
-  if (WEB.test(h)) return { kind: 'web', href };
   let target = h;
+  if (WEB.test(h)) {
+    const own = /^https?:/i.test(h) ? appHostPath(h) : null;
+    if (own === null) return { kind: 'web', href };
+    // Only a path inside a project opens; anywhere else it is just the app, so it does nothing.
+    return classifyLink(own.split('/').map(encodeURIComponent).join('/'), { ...ctx, from: undefined });
+  }
   const file = FILE_URL.exec(h);
   if (file) target = file[1];
   // A :line suffix is dropped first, so `plan.md:12` is not read as a scheme.
