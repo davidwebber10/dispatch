@@ -1,4 +1,5 @@
-import { Router, type Request, type Response } from 'express';
+import { type Request, type Response, type Router } from 'express';
+import { policyRouter } from '../auth/route-policy.js';
 import { LedgerError, type LedgerService } from '../overseer/ledger-service.js';
 
 /**
@@ -11,7 +12,7 @@ import { LedgerError, type LedgerService } from '../overseer/ledger-service.js';
  * return conversations — the web app reads them.
  */
 export function createLedgerRouter(ledger: LedgerService): Router {
-  const router = Router();
+  const router = policyRouter();
 
   const handle = (status: number, run: (req: Request) => unknown) => (req: Request, res: Response) => {
     try {

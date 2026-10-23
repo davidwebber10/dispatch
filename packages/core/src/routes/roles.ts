@@ -1,4 +1,5 @@
-import { Router } from 'express';
+import type { Router } from 'express';
+import { policyRouter } from '../auth/route-policy.js';
 import type { RolesService, RoleStatusEntry } from '../roles/service.js';
 
 /** Strip the role's brief body from the wire payload — the CLI reads role.md directly
@@ -9,7 +10,7 @@ function serialize(entry: RoleStatusEntry): Omit<RoleStatusEntry, 'def'> & { def
 }
 
 export function createRolesRouter(rolesService: RolesService): Router {
-  const router = Router();
+  const router = policyRouter();
 
   router.get('/', (_req, res) => {
     res.json({ roles: rolesService.list().map(serialize) });

@@ -1,5 +1,6 @@
 import { harnessCapabilities } from '../providers/capabilities.js';
-import { Router } from 'express';
+import type { Router } from 'express';
+import { policyRouter } from '../auth/route-policy.js';
 import type { SessionService } from '../sessions/service.js';
 import { isPtyType } from '../db/terminals.js';
 import { TAB_ONLY_TYPES, THREAD_TYPES } from '../providers/agent-types.js';
@@ -10,7 +11,7 @@ import { modelSupportsTools } from '../settings/model-capabilities.js';
 const VALID_TYPES: readonly string[] = [...THREAD_TYPES, ...TAB_ONLY_TYPES];
 
 export function createTerminalsRouter(sessionService: SessionService, broadcaster?: EventBroadcaster, statusService?: StatusService): Router {
-  const router = Router();
+  const router = policyRouter();
 
   // GET /api/sessions/:id/terminals/archived — MUST be before the generic list route
   router.get('/sessions/:id/terminals/archived', (req, res) => {

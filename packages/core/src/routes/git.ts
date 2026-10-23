@@ -1,5 +1,6 @@
 import { execFile } from 'child_process';
-import { Router } from 'express';
+import type { Router } from 'express';
+import { policyRouter } from '../auth/route-policy.js';
 import type Database from 'better-sqlite3';
 import * as sessionsDb from '../db/sessions.js';
 import { rowToSession } from '../types.js';
@@ -34,7 +35,7 @@ export function parsePorcelainZ(out: string): GitChangedFile[] {
 }
 
 export function createGitRouter(db: Database.Database): Router {
-  const router = Router({ mergeParams: true });
+  const router = policyRouter({ mergeParams: true });
 
   // GET /api/sessions/:id/git — current branch for the session's working dir
   router.get('/', (req, res) => {

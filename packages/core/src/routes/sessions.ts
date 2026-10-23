@@ -1,4 +1,5 @@
-import { Router } from 'express';
+import type { Router } from 'express';
+import { policyRouter } from '../auth/route-policy.js';
 import type Database from 'better-sqlite3';
 import type { SessionService } from '../sessions/service.js';
 import type { EventBroadcaster } from '../ws/events.js';
@@ -11,7 +12,7 @@ import { harnessCapabilities } from '../providers/capabilities.js';
 import { detectProvider } from '../setup/detect.js';
 
 export function createSessionsRouter(sessionService: SessionService, broadcaster: EventBroadcaster | undefined, db: Database.Database): Router {
-  const router = Router();
+  const router = policyRouter();
 
   // POST /api/sessions/reorder — reorder sessions (before parameterized routes)
   router.post('/reorder', (req, res) => {

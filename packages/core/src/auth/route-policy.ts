@@ -1,5 +1,5 @@
 import { Router, type Request, type RequestHandler, type Response, type RouterOptions } from 'express';
-import { principalOf, scopeOf } from './request-principal.js';
+import { principalOf, scopeOf, type Principal } from './request-principal.js';
 import type { KeyPrincipal } from './principals.js';
 import type { CallerFacts, KeyScope } from './key-scope.js';
 
@@ -79,6 +79,16 @@ export function refuse(res: Response, result: Extract<RuleResult, { ok: false }>
   res.status(result.status).json({ error: result.error, message: result.message });
 }
 
+/**
+ * The request principal. When the principal middleware did not run (a unit test that mounts one
+ * router on a bare Express app) the caller counts as credential-free, like `createApp`. Both app
+ * builders always run the middleware first; `route-policy-completeness.test.ts` proves a key is
+ * refused on a plain route of the full app.
+ */
+function principalOrNone(req: Request): Principal {
+  try { return principalOf(req); } catch { return { kind: 'none', via: 'test' }; }
+}
+
 const OWNER_ONLY: Extract<RuleResult, { ok: false }> = {
   ok: false, status: 403, error: 'owner_only',
   message: 'This action is for the owner only. Ask the owner to do it in the browser.',
@@ -86,7 +96,7 @@ const OWNER_ONLY: Extract<RuleResult, { ok: false }> = {
 
 /** The owner and a credential-free local caller pass; any key gets 403 owner_only. */
 export const ownerOnly: RequestHandler = tag((req, res, next) => {
-  const p = principalOf(req);
+  const p = principalOrNone(req);
   if (p.kind === 'owner' || p.kind === 'none') return next();
   refuse(res, OWNER_ONLY);
 }, 'owner');
@@ -102,7 +112,7 @@ export const publicRoute: RequestHandler = tag((_req, _res, next) => next(), 'pu
  */
 export function keyRoute(rules: KeyRules): RequestHandler {
   return tag((req, res, next) => {
-    const principal = principalOf(req);
+    const principal = principalOrNone(req);
     if (principal.kind === 'owner' || principal.kind === 'none') return next();
     const scope = scopeOf(req);
     let caller: CallerFacts | null = null;

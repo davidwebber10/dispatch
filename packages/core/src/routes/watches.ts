@@ -1,4 +1,5 @@
-import { Router } from 'express';
+import type { Router } from 'express';
+import { policyRouter } from '../auth/route-policy.js';
 import type Database from 'better-sqlite3';
 import * as terminalsDb from '../db/terminals.js';
 import * as watchesDb from '../db/watches.js';
@@ -14,7 +15,7 @@ const VALID_CRITERIA: ReadonlySet<WatchRow['criteria']> = new Set(['idle', 'need
  * thread can never learn about or subscribe to a terminal outside its project.
  */
 export function createWatchesRouter(db: Database.Database): Router {
-  const router = Router();
+  const router = policyRouter();
 
   router.post('/', (req, res) => {
     const { watcherTerminalId, targetTerminalId, criteria, note, once } = req.body ?? {};

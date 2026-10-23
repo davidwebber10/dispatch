@@ -14,15 +14,10 @@ import * as terminalsDb from './db/terminals.js';
 import * as appState from './db/app-state.js';
 import { SessionService } from './sessions/service.js';
 import { PTYManager } from './pty/manager.js';
-import { createSessionsRouter } from './routes/sessions.js';
-import { createTerminalsRouter } from './routes/terminals.js';
 import { AgentService } from './agents/service.js';
-import { createAgentsRouter } from './routes/agents.js';
 import { RolesService } from './roles/service.js';
-import { createRolesRouter } from './routes/roles.js';
 import { aggregateSessionStatus } from './status/aggregate.js';
 import { AuthRequestService } from './auth/service.js';
-import { createAuthRouter } from './routes/auth.js';
 import { ClaudeLoginService } from './auth/claude-login.js';
 import { createBoxGate, upgradeAllowed } from './auth/box-token.js';
 import { createAccessGate } from './auth/access-gate.js';
@@ -30,9 +25,11 @@ import { createTokenSource } from './auth/access-token.js';
 import { KeyRegistry } from './auth/principals.js';
 import { createKeyScope } from './auth/key-scope.js';
 import {
-  createLoginKeyCheck, createPrincipalMiddleware, noCredentialStatsHandler, refuseKeyUpgrade, whoamiHandler,
+  createLoginKeyCheck, createPrincipalMiddleware, refuseKeyUpgrade,
 } from './auth/request-principal.js';
 import { createNoCredentialStats } from './auth/no-credential-stats.js';
+import { publicRoute } from './auth/route-policy.js';
+import { mountApiRoutes } from './server-routes.js';
 import { createAccessConfig } from './auth/known-hosts.js';
 import { createTailscaleAccess } from './auth/tailscale-access.js';
 import { securityHeaders } from './auth/security-headers.js';
@@ -41,38 +38,22 @@ import { OsConnectionsProvider } from './integrations/os-provider.js';
 import { HeartbeatService } from './platform/heartbeat.js';
 import { writeOwnPid, removeOwnPid } from './platform/pid-file.js';
 import { UsageRecorder } from './usage/recorder.js';
-import { createClaudeAuthRouter } from './routes/claude-auth.js';
-import { createProvidersRouter } from './routes/providers.js';
-import { createServersRouter } from './routes/servers.js';
-import { createFilesRouter } from './routes/files.js';
-import { createStateRouter } from './routes/state.js';
 import { closeInterruptedTurns } from './analytics/recorder.js';
 import { attachPtyCapture } from './analytics/pty-capture.js';
 import * as usageDb from './db/usage.js';
-import { createGitRouter } from './routes/git.js';
-import { createSecretsRouter } from './routes/secrets.js';
-import { createHarnessSettingsRouter } from './routes/harness-settings.js';
-import { createTelemetrySettingsRouter } from './routes/telemetry-settings.js';
 import { startTelemetryLoop } from './telemetry/sender.js';
 import { opencodeKeySecretName } from './settings/harness-settings.js';
 import { warmModelCapabilities } from './settings/model-capabilities.js';
 import { warmClaudeVersion, prunePromptFiles, setClaudeProbeEnv } from './providers/claude-prompt-file.js';
 import { setProviderProbeEnv } from './setup/detect.js';
-import { createTranscribeRouter } from './routes/transcribe.js';
-import { TranscriptionService } from './transcription/service.js';
-import { createSetupRouter } from './routes/setup.js';
 import { withShimPath } from './auth/shim.js';
-import { createToolsRouter } from './routes/tools.js';
 import { getToolsSpawnEnv, toolStatuses, awarenessNote } from './tools/status.js';
 import { ToolAuthProber } from './tools/auth-probe.js';
 import { SecretsService } from './secrets/service.js';
 import { sweepThreadMcpConfigs } from './sessions/mcp-config-sweep.js';
 import { IntegrationsService, type IntegrationLauncher } from './integrations/service.js';
-import { createEventsRouter } from './routes/events.js';
-import { createIntegrationsRouter } from './routes/integrations.js';
 import { PushService } from './push/service.js';
 import { wireThreadSettledPush } from './push/notify.js';
-import { createPushRouter } from './routes/push.js';
 import { StatusService } from './status/service.js';
 import { createEventsBroadcaster, createNoopBroadcaster } from './ws/events.js';
 import type { EventBroadcaster } from './ws/events.js';
@@ -91,15 +72,11 @@ import { startUpdateCheckLoop } from './update/checker.js';
 import { finishRestartedUpdate } from './update/progress.js';
 import { guardLoopback } from './platform/loopback-guard.js';
 import { getRunningVersion } from './update/version.js';
-import { createUpdateRouter } from './routes/update.js';
-import { createAppearanceRouter, customIconHandler } from './routes/appearance.js';
-import { createWatchesRouter } from './routes/watches.js';
-import { createLedgerRouter } from './routes/ledger.js';
+import { customIconHandler } from './routes/appearance.js';
 import { LedgerService } from './overseer/ledger-service.js';
 import { WatchDispatcher } from './sessions/watch-dispatcher.js';
-import { createAnalyticsRouter, trackingStartedAt } from './routes/analytics.js';
+import { trackingStartedAt } from './routes/analytics.js';
 import { EndlessService, limitsFromEnv, startEndless } from './endless/service.js';
-import { createEndlessRouter } from './routes/endless.js';
 
 /**
  * The analytics boot steps, run once per app before any route is mounted.
@@ -252,6 +229,13 @@ interface CreateAppOptions {
   structuredCommand?: { command: string; args: string[] };
   /** Inject the key registry (tests mint keys through it). Exposed as `app.locals.keys`. */
   keys?: KeyRegistry;
+  /** Chat service (a stub in tests). Without it `/api/endless` answers 503. */
+  endless?: EndlessService;
+  /**
+   * Structured managers by provider name, in place of the real Claude, Codex, Grok and opencode
+   * managers (test seam: no CLI runs). Must include `claude-code`.
+   */
+  managers?: Map<string, IStructuredManager>;
 }
 
 /**
@@ -302,8 +286,17 @@ function wirePermissionMembrane(manager: IStructuredManager, status: StatusServi
 }
 
 /** Every additional harness receives identical registration, lifecycle and accounting wiring. */
-function wireHarnesses(sessionService: SessionService, status: StatusService, db: Database.Database, broadcaster: EventBroadcaster): Map<string, IStructuredManager> {
+function wireHarnesses(sessionService: SessionService, status: StatusService, db: Database.Database, broadcaster: EventBroadcaster, injected?: Map<string, IStructuredManager>): Map<string, IStructuredManager> {
   const managers = new Map<string, IStructuredManager>();
+  if (injected) {
+    // Test seam: the caller's managers stand in for the real CLI managers, so no CLI runs.
+    for (const [name, manager] of injected) {
+      sessionService.registerStructuredManager(name, manager);
+      wirePermissionMembrane(manager, status, sessionService, db, broadcaster);
+      managers.set(name, manager);
+    }
+    return managers;
+  }
   for (const provider of listProviders()) {
     if (provider.structured.disabledBy && process.env[provider.structured.disabledBy] === '0') continue;
     const manager = provider.structured.protocol === 'claude-json' ? new ClaudeStructuredSessionManager()
@@ -348,8 +341,6 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const noCredentialStats = createNoCredentialStats({});
   app.use(createPrincipalMiddleware({ registry: keys, scope: createKeyScope(db), via: 'test' }));
   app.use(express.json({ limit: '50mb' })); // large enough for Claude PostToolUse hook payloads (full file reads)
-  app.get('/api/whoami', whoamiHandler);
-  app.get('/api/access/no-credential-stats', noCredentialStatsHandler(noCredentialStats));
 
   const ptyManager = skipPty ? new NoopPTYManager() : new PTYManager();
   const serverUrl = 'http://localhost:3456'; // Updated at runtime in startServer
@@ -381,7 +372,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   // optional StatusService dependency, same shape as onActivity below.
   const watchDispatcher = new WatchDispatcher(db, buildWatchDeliver(sessionService));
   const statusService = new StatusService(db, broadcaster, undefined, (terminalId, status) => watchDispatcher.onStatus(terminalId, status));
-  const harnessManagers = wireHarnesses(sessionService, statusService, db, broadcaster);
+  const harnessManagers = wireHarnesses(sessionService, statusService, db, broadcaster, options.managers);
   const structuredManager = harnessManagers.get('claude-code')!;
   agentService.setLifecycleService(statusService);
   statusService.onHarnessCommitted(event => { if (event.type === 'process.exited') rolesService.handleTerminalExit(event.terminalId); });
@@ -393,32 +384,14 @@ export function createApp(options: CreateAppOptions): import('express').Express 
 
   bootAnalytics(db);
 
-  // Mount routes
-  app.use('/api/sessions', createSessionsRouter(sessionService, broadcaster, db));
-  app.use('/api', createTerminalsRouter(sessionService, undefined, statusService));
-  app.use('/api', createLedgerRouter(wireLedger(db, sessionService, broadcaster)));
-  app.use('/api/events', createEventsRouter(statusService));
-  app.use('/api/agents', createAgentsRouter(agentService));
-  app.use('/api/roles', createRolesRouter(rolesService));
-  app.use('/api/providers', createProvidersRouter());
-  app.use('/api/servers', createServersRouter(db));
-  app.use('/api/secrets', createSecretsRouter(secretsService));
-  app.use('/api/settings/harnesses', createHarnessSettingsRouter(db, secretsService));
-  app.use('/api/settings/telemetry', createTelemetrySettingsRouter(db));
-  app.use('/api/transcribe', createTranscribeRouter(new TranscriptionService(secretsService)));
-  app.use('/api/setup', createSetupRouter(db, secretsService));
-  app.use('/api/sessions/:id/files', createFilesRouter(db));
-  app.use('/api/sessions/:id/git', createGitRouter(db));
-  app.use('/api/auth-requests', createAuthRouter(authRequestService));
-  app.use('/api/claude-auth', createClaudeAuthRouter(new ClaudeLoginService(dispatchDir)));
-  app.use('/api/state', createStateRouter(db));
-  app.use('/api/integrations', createIntegrationsRouter(integrationsService));
-  app.use('/api/push', createPushRouter(pushService));
-  app.use('/api/tools', createToolsRouter({ base: toolsBase, prober: toolsAuth }));
-  app.use('/api/update', createUpdateRouter(broadcaster, resolveRepoRoot(), db));
-  app.use('/api/appearance', createAppearanceRouter(dispatchDir));
-  app.use('/api/watches', createWatchesRouter(db));
-  app.use('/api/analytics', createAnalyticsRouter(db));
+  // Mount routes (the one list, shared with startServer)
+  mountApiRoutes(app, {
+    db, sessionService, statusService, agentService, rolesService, authRequestService,
+    claudeLogin: new ClaudeLoginService(dispatchDir), secretsService, integrationsService, pushService,
+    ledgerService: wireLedger(db, sessionService, broadcaster),
+    toolsBase, toolsAuth, dataDir: dispatchDir, repoRoot: resolveRepoRoot(),
+    broadcaster, noCredentialStats, endless: options.endless,
+  });
 
   // Attach internals for server wiring
   (app as any)._ptyManager = ptyManager;
@@ -431,9 +404,9 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const webDist = process.env.DISPATCH_WEB_DIST
     ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../web/dist');
   if (fs.existsSync(path.join(webDist, 'index.html'))) {
-    app.get('/icons/:name', customIconHandler(dispatchDir));
+    app.get('/icons/:name', publicRoute, customIconHandler(dispatchDir));
     app.use(express.static(webDist));
-    app.get(/^\/(?!api\/).*/, (_req, res) => {
+    app.get(/^\/(?!api\/).*/, publicRoute, (_req, res) => {
       res.sendFile(path.join(webDist, 'index.html'));
     });
   }
@@ -510,8 +483,6 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     registry: keys, scope: createKeyScope(db), getToken: getAccessToken, boxToken: BOX_TOKEN, stats: noCredentialStats,
   }));
   app.use(express.json({ limit: '50mb' })); // large enough for Claude PostToolUse hook payloads (full file reads)
-  app.get('/api/whoami', whoamiHandler);
-  app.get('/api/access/no-credential-stats', noCredentialStatsHandler(noCredentialStats));
 
   // Create HTTP server
   const server = http.createServer(app);
@@ -748,35 +719,13 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   bootAnalytics(db);
 
-  // Mount routes
-  app.use('/api/sessions', createSessionsRouter(sessionService, broadcaster, db));
-  app.use('/api', createTerminalsRouter(sessionService, broadcaster, statusService));
-  app.use('/api', createLedgerRouter(ledgerService));
-  app.use('/api/events', createEventsRouter(statusService));
-  app.use('/api/agents', createAgentsRouter(agentService));
-  app.use('/api/roles', createRolesRouter(rolesService));
-  app.use('/api/providers', createProvidersRouter());
-  app.use('/api/servers', createServersRouter(db));
-  app.use('/api/secrets', createSecretsRouter(secretsService, refreshPtyEnv));
-  app.use('/api/settings/harnesses', createHarnessSettingsRouter(db, secretsService, refreshPtyEnv));
-  app.use('/api/settings/telemetry', createTelemetrySettingsRouter(db));
-  app.use('/api/transcribe', createTranscribeRouter(new TranscriptionService(secretsService)));
-  app.use('/api/setup', createSetupRouter(db, secretsService));
-  app.use('/api/sessions/:id/files', createFilesRouter(db));
-  app.use('/api/sessions/:id/git', createGitRouter(db));
-  app.use('/api/auth-requests', createAuthRouter(authRequestService));
-  app.use('/api/claude-auth', createClaudeAuthRouter(claudeLogin));
-
-  app.use('/api/state', createStateRouter(db));
-  app.use('/api/integrations', createIntegrationsRouter(integrationsService));
-  app.use('/api/push', createPushRouter(pushService));
-  app.use('/api/tools', createToolsRouter({ base: toolsBase, prober: toolsAuth }));
-  const repoRoot = resolveRepoRoot();
-  app.use('/api/update', createUpdateRouter(broadcaster, repoRoot, db));
-  app.use('/api/appearance', createAppearanceRouter(dataDir));
-  app.use('/api/watches', createWatchesRouter(db));
-  app.use('/api/analytics', createAnalyticsRouter(db));
-  app.use('/api/endless', createEndlessRouter(endless));
+  // Mount routes (the one list, shared with createApp)
+  mountApiRoutes(app, {
+    db, sessionService, statusService, agentService, rolesService, authRequestService,
+    claudeLogin, secretsService, integrationsService, pushService, ledgerService,
+    toolsBase, toolsAuth, dataDir, repoRoot: resolveRepoRoot(),
+    broadcaster, terminalsBroadcaster: broadcaster, noCredentialStats, refreshPtyEnv, endless,
+  });
 
   // Serve the built web client (single-origin) when a build is present.
   // SPA fallback returns index.html for any non-/api, non-WS GET.
@@ -792,9 +741,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     const sendIndex = (_req: express.Request, res: express.Response) => {
       res.type('html').send(indexHtml);
     };
-    app.get('/icons/:name', customIconHandler(dataDir));
+    app.get('/icons/:name', publicRoute, customIconHandler(dataDir));
     app.use(express.static(webDist, { index: false }));
-    app.get(/^\/(?!api\/).*/, sendIndex);
+    app.get(/^\/(?!api\/).*/, publicRoute, sendIndex);
     console.log(`Serving web client from ${webDist}${BASE_PATH ? ` under ${BASE_PATH}` : ''}`);
   }
 

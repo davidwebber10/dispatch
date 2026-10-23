@@ -1,5 +1,6 @@
 import { harnessCapabilities } from '../providers/capabilities.js';
-import { Router } from 'express';
+import type { Router } from 'express';
+import { policyRouter } from '../auth/route-policy.js';
 import type Database from 'better-sqlite3';
 import * as appState from '../db/app-state.js';
 import type { SecretsService } from '../secrets/service.js';
@@ -10,7 +11,7 @@ const SETUP_KEY = 'setup_completed_at';
 const port = () => Number(process.env.PORT) || 3456;
 
 export function createSetupRouter(db: Database.Database, secrets: SecretsService, runInstall?: ShellRunner): Router {
-  const router = Router();
+  const router = policyRouter();
   router.get('/harnesses', (_req, res) => res.json(harnessCapabilities()));
 
   router.get('/state', async (_req, res) => {

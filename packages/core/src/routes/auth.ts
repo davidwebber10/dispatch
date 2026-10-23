@@ -1,8 +1,9 @@
-import { Router } from 'express';
+import type { Router } from 'express';
+import { policyRouter } from '../auth/route-policy.js';
 import type { AuthRequestService } from '../auth/service.js';
 
 export function createAuthRouter(service: AuthRequestService): Router {
-  const router = Router();
+  const router = policyRouter();
 
   router.get('/', (_req, res) => {
     res.json(service.list());

@@ -1,4 +1,5 @@
-import { Router } from 'express';
+import type { Router } from 'express';
+import { policyRouter } from '../auth/route-policy.js';
 import { LedgerError } from '../overseer/ledger-service.js';
 import { EndlessService, UserError } from '../endless/service.js';
 import { DocTimeoutError } from '../docs/service.js';
@@ -11,7 +12,7 @@ const int = (v: unknown, fallback: number, min: number, max: number): number => 
 
 /** Endless Chat HTTP surface (spec 2026-10-13, section 2). Live events ride the events socket. */
 export function createEndlessRouter(svc: EndlessService): Router {
-  const router = Router();
+  const router = policyRouter();
   router.use((_req, res, next) => {
     if (svc.available) next();
     else res.status(503).json({ error: 'Chat is unavailable' });

@@ -1,4 +1,5 @@
-import { Router } from 'express';
+import type { Router } from 'express';
+import { policyRouter } from '../auth/route-policy.js';
 import type Database from 'better-sqlite3';
 import * as appState from '../db/app-state.js';
 
@@ -73,7 +74,7 @@ function writeServers(db: Database.Database, list: ServerOption[]): void {
 }
 
 export function createServersRouter(db?: Database.Database): Router {
-  const router = Router();
+  const router = policyRouter();
 
   router.get('/', (_req, res) => {
     res.json(db ? readServers(db) : parseServers(process.env.DISPATCH_SERVERS));
