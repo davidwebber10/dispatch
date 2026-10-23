@@ -965,20 +965,24 @@ with `dispatch open` from inside WSL; `curl.exe` started from a WSL thread gets 
   body allowlists, six delivery paths, MCP changes, tests). Stage 2 is small (gate
   rule removal, `dispatch open`, the one-time code, doc changes).
 
-## 13. Open questions for the owner
+## 13. Owner decisions
+
+**Decided 2026-10-23 by the owner: A for all three (PK-1 A, PK-2 A, PK-3 A).**
+Two releases; the phone signs in once after stage 2; the process check waits until
+stage 2 has run for a few weeks.
 
 - **PK-1. How to release.** (A) Two releases: stage 1 first, stage 2 when the go
   conditions in 7.1 hold (Codex check and end-to-end tests passed, the "programs with
   no key" count is clean, at least one week). (B) Both stages in one release.
-  **Recommended: A.** The stage 1 count shows any script of yours that would break,
+  **Recommended and chosen: A.** The stage 1 count shows any script of yours that would break,
   before it breaks.
 - **PK-2. Your phone through `tailscale serve` after stage 2.** (A) It signs in once,
   like every other browser, and keeps the cookie for 400 days. (B) It stays automatic,
-  as today. **Recommended: A.** Option B keeps a door that any program on this
+  as today. **Recommended and chosen: A.** Option B keeps a door that any program on this
   computer can open by sending two headers, so stage 2 would not really stop local
   programs. It also keeps the accepted limit R-6, which option A closes.
 - **PK-3. The process check (stage 3).** (A) Decide after stage 2 has run for a few
-  weeks. (B) Build it with stage 2. (C) Never. **Recommended: A.** It needs different
+  weeks. (B) Build it with stage 2. (C) Never. **Recommended and chosen: A.** It needs different
   code per OS and a thread can escape it, so it should wait until stages 1 and 2 show
   whether it is needed.
 
