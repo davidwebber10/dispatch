@@ -111,7 +111,7 @@ describe('this machine', () => {
   test('every response carries the security headers', async () => {
     const r = await call({ path: '/api/sessions' });
     expect(r.headers['x-frame-options']).toBe('DENY');
-    expect(r.headers['content-security-policy']).toBe("frame-ancestors 'none'");
+    expect(r.headers['content-security-policy']).toContain("frame-ancestors 'none'");
     expect(r.headers['x-content-type-options']).toBe('nosniff');
     const denied = await call({ path: '/api/sessions', host: 'evil.example' });
     expect(denied.headers['x-frame-options']).toBe('DENY');

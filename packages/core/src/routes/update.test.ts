@@ -31,12 +31,12 @@ function app(broadcaster: EventBroadcaster, gitExec: GitExec, applyFn: (repoDir:
 
 const CLEAN_AND_FF_ABLE: Record<string, string> = {
   'status --porcelain': '',
-  'fetch origin': '',
-  'rev-parse --abbrev-ref HEAD': 'main\n',
-  'rev-parse --abbrev-ref @{u}': 'origin/main\n',
+  'fetch origin --tags': '',
+  'tag -l v* --sort=-v:refname': 'v3.5.0\nv3.4.0\n',
   'rev-parse HEAD': 'abc123\n',
-  'rev-parse origin/main': 'def456\n',
+  'rev-parse v3.5.0^{commit}': 'def456\n',
   'merge-base --is-ancestor abc123 def456': '',
+  'merge-base --is-ancestor def456 abc123': '',
 };
 
 function fakeGit(responses: Record<string, string>): GitExec {
@@ -112,7 +112,7 @@ describe('POST /api/update/apply', () => {
     const dirtyAndDivergedGit: GitExec = (args) => {
       const key = args.join(' ');
       if (key === 'status --porcelain') return ' M a.ts\n';
-      if (key === 'merge-base --is-ancestor abc123 def456') throw new Error('exit code 1');
+      if (key.startsWith('merge-base --is-ancestor')) throw new Error('exit code 1');
       return CLEAN_AND_FF_ABLE[key];
     };
 
@@ -133,7 +133,7 @@ describe('POST /api/update/apply', () => {
     // Simulate the real execFileSync throw for a failed --is-ancestor check.
     const gitWithDivergence: GitExec = (args) => {
       const key = args.join(' ');
-      if (key === 'merge-base --is-ancestor abc123 def456') throw new Error('exit code 1');
+      if (key.startsWith('merge-base --is-ancestor')) throw new Error('exit code 1');
       return CLEAN_AND_FF_ABLE[key];
     };
 
