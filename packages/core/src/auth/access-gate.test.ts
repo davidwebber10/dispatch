@@ -94,6 +94,10 @@ describe('tailscale serve (loopback peer, ts.net Host)', () => {
     expect(await ok({ ...id, forwardedFor: '203.0.113.9' })).toBe(false);
     expect(await ok({ ...id, forwardedFor: '100.64.0.3' })).toBe(false);
   });
+  test('serve identity relayed with Forwarded, X-Real-IP or CF-Connecting-IP but no owner X-Forwarded-For is refused', async () => {
+    const id = { ...serve, tailscaleUserLogin: 'me@example.com', proxied: true, forwardedFor: undefined };
+    expect(await ok(id)).toBe(false);
+  });
   test('Funnel request: refused even with an identity-looking header', async () => {
     expect(await ok({ ...serve, tailscaleUserLogin: 'me@example.com', tailscaleFunnel: '?1' })).toBe(false);
   });

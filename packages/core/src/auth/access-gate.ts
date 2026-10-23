@@ -69,7 +69,9 @@ async function isKnownLocalHost(req: GateRequest, host: string, deps: GateDeps):
       // `tailscale serve` sets X-Forwarded-For to the tailnet client. Another local proxy that keeps
       // the client's Host and merely forwards the identity header would carry a different address,
       // so when the header is there it must name one of the owner's own devices.
-      if (!req.forwardedFor) return true;
+      // Any relay header without a verified X-Forwarded-For (Forwarded, X-Real-IP, CF-Connecting-IP) is refused.
+      if (!req.proxied) return true;
+      if (!req.forwardedFor) return false;
       return isTailscaleAddress(req.forwardedFor) && (await deps.tailscale.isOwnerPeer(req.forwardedFor));
     }
   }

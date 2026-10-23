@@ -588,7 +588,7 @@ Not in the table: an unknown user behind another reverse proxy or tunnel
   nginx `proxy_pass`, `socat`, `ssh -R`) is indistinguishable from a local caller, and
   the remote client chooses `Host`. Neither phase closes it; the owner must give such a
   proxy its own sign-in. A `tailscale serve` identity header is trusted only when
-  `X-Forwarded-For`, if present, names one of the owner's own devices (found in review).
+  the request was relayed with `X-Forwarded-For` naming one of the owner's own devices; a relay header without it is refused (found in review).
 - **R-5. The token file.** Anything running as the user can read
   `~/.dispatch/access-token`. Same as every other secret in `~/.dispatch`.
 
