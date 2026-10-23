@@ -11,8 +11,9 @@ const SAFE_HOST = /^[A-Za-z0-9.\-:[\]]{1,255}$/;
  *   another site. The WebSocket address is spelled out from the Host header because older Safari does not
  *   treat 'self' as covering ws:/wss:.
  * - Images may come from any http(s) address. This is open on purpose: Markdown shows a remote image
- *   only after the reader clicks "Load image" (Markdown.tsx), and that click loads it. The page has no
- *   other place that makes an image request on its own.
+ *   only after the reader clicks "Load image" (Markdown.tsx), and that click loads it. Two other places
+ *   load remote images by design: release-note avatars and chat image blocks that carry a URL.
+ * - The sign-in page has an inline script, so it sends its own policy (signin-page.ts).
  * - Styles: inline style attributes are used all over the client, and the web fonts come from Google Fonts.
  * - Frames: the Browser tab shows any web page in an iframe, so `frame-src` is open; nothing may frame the app.
  */

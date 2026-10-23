@@ -34,6 +34,12 @@ const sanitize = (html: string, keepFileLinks = false): string => {
   const keep = (_node: Element, data: { attrName: string; attrValue: string; forceKeepAttr?: boolean }) => {
     if (data.attrName === 'href' && (/^\s*file:\/\//i.test(data.attrValue) || BARE_DOC_LINE.test(data.attrValue.trim()))) data.forceKeepAttr = true;
   };
+  // SVG paint and filter attributes (fill, mask, filter, clip-path) can name another address in url(...), and
+  // the page requests it on render. Only a same-document reference (url(#id)) is kept.
+  const noRemoteUrl = (_node: Element, data: { attrValue: string; keepAttr?: boolean }) => {
+    if (/url\(\s*['"]?\s*(?!#)/i.test(data.attrValue)) data.keepAttr = false;
+  };
+  DOMPurify.addHook('uponSanitizeAttribute', noRemoteUrl);
   if (keepFileLinks) DOMPurify.addHook('uponSanitizeAttribute', keep);
   // Forbidden: style (a fake screen, or a css url() fetch), forms and fields (a post to another
   // site), and media or <picture> sources (each one fetches a remote URL on its own).
@@ -45,7 +51,10 @@ const sanitize = (html: string, keepFileLinks = false): string => {
       FORBID_ATTR: ['style', 'srcset', 'poster', 'background', 'action', 'formaction'],
     });
   }
-  finally { if (keepFileLinks) DOMPurify.removeHook('uponSanitizeAttribute', keep); }
+  finally {
+    DOMPurify.removeHook('uponSanitizeAttribute', noRemoteUrl);
+    if (keepFileLinks) DOMPurify.removeHook('uponSanitizeAttribute', keep);
+  }
 };
 
 /** True for an image the page may load at once: data:, blob:, or the app's own origin (relative paths included). */

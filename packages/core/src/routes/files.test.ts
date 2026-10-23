@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
 import fs from 'fs';
 import { execFileSync } from 'child_process';
 import os from 'os';
@@ -8,7 +8,11 @@ import request from 'supertest';
 import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema.js';
 import * as sessionsDb from '../db/sessions.js';
+// Own upload folder: this file empties and counts it, and must not touch the live daemon's or another test file's.
+vi.hoisted(() => { process.env.DISPATCH_UPLOAD_DIR = `${process.env.TMPDIR || '/tmp'}/dispatch-upload-test-${process.pid}`; });
 import { createFilesRouter, UPLOAD_TMP_DIR as TMP_UPLOAD_DIR } from './files.js';
+
+afterAll(() => { fs.rmSync(TMP_UPLOAD_DIR, { recursive: true, force: true }); });
 
 function makeApp(workingDir: string) {
   const db = new Database(':memory:');

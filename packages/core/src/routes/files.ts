@@ -19,8 +19,9 @@ const MAX_READ_BYTES = 5 * 1024 * 1024;
 /** Cap on one upload into the project. The inbox keeps its own 50 MB cap. */
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
-/** Per-user temp folder for multer. A fixed shared name let another account create it first. */
-export const UPLOAD_TMP_DIR = path.join(os.tmpdir(), `dispatch-uploads-${typeof process.getuid === 'function' ? process.getuid() : 'user'}`);
+/** Per-user temp folder for multer. A fixed shared name let another account create it first. DISPATCH_UPLOAD_DIR is for tests. */
+export const UPLOAD_TMP_DIR = process.env.DISPATCH_UPLOAD_DIR
+  || path.join(os.tmpdir(), `dispatch-uploads-${typeof process.getuid === 'function' ? process.getuid() : 'user'}`);
 
 /** Create (or re-check) the temp folder: owner-only, a real directory, owned by us. */
 function ensureUploadDir(): void {

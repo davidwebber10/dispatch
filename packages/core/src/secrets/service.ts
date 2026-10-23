@@ -153,7 +153,7 @@ export class SecretsService {
     return all.map((s) => ({ name: s.name }));
   }
 
-  /** Resolve a single secret's value by name (server-side only; never returned to clients). */
+  /** Resolve a single secret's value by name (server-side use, and the explicit reveal route in routes/secrets.ts). */
   async getSecret(name: string): Promise<string | null> {
     const c = this.read();
     if (!c.token || !c.project || !c.config) throw new Error('Doppler is not connected');
