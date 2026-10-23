@@ -77,6 +77,11 @@ describe('control characters in a PTY payload', () => {
     expect(out).toBe(`${PASTE_START}a[31mbcde\tf\ng${PASTE_END}\r`);
   });
 
+  it('a tab in a single-line message becomes a space (it would be a completion keystroke)', () => {
+    expect(ptyMessagePayload('a\tb')).toBe('a b\r');
+    expect(ptyMessagePayload('a\tb\nc')).toBe(`${PASTE_START}a\tb\nc${PASTE_END}\r`);
+  });
+
   it('single-line text with an ESC stays single-line plain text', () => {
     expect(ptyMessagePayload('hi\x1b[200~there')).toBe('hi[200~there\r');
   });
@@ -85,6 +90,7 @@ describe('control characters in a PTY payload', () => {
 describe('stripControlChars', () => {
   it('can also fold newlines for one-line fields', () => {
     expect(stripControlChars('a\nb\r\nc\x1b', { keepNewline: false })).toBe('a b c');
+    expect(stripControlChars('a\tb', { keepNewline: false })).toBe('a b');
   });
 });
 

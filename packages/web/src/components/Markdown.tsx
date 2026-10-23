@@ -41,7 +41,7 @@ const sanitize = (html: string, keepFileLinks = false): string => {
     return DOMPurify.sanitize(html, {
       ADD_TAGS: ['img'],
       ADD_ATTR: ['src', 'alt'],
-      FORBID_TAGS: ['style', 'form', 'input', 'button', 'textarea', 'select', 'option', 'video', 'audio', 'source', 'track', 'picture', 'image', 'use'],
+      FORBID_TAGS: ['style', 'form', 'input', 'button', 'textarea', 'select', 'option', 'video', 'audio', 'source', 'track', 'picture', 'image', 'use', 'feImage', 'feimage'],
       FORBID_ATTR: ['style', 'srcset', 'poster', 'background', 'action', 'formaction'],
     });
   }

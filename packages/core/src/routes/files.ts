@@ -87,6 +87,12 @@ export function createFilesRouter(db: Database.Database): Router {
   // daemon the dir vanishes mid-uptime and every upload then fails with ENOENT
   // until a restart.
   const tmpStorage = multer.diskStorage({
+    // The name is chosen here and kept on the request, so a write that fails half way can still be removed.
+    filename: (req, _file, cb) => {
+      const name = `up-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      (req as any).uploadTmpPath = path.join(UPLOAD_TMP_DIR, name);
+      cb(null, name);
+    },
     destination: (_req, _file, cb) => {
       try {
         ensureUploadDir();
@@ -109,6 +115,20 @@ export function createFilesRouter(db: Database.Database): Router {
     const relative = path.relative(root, resolved);
     if (relative.startsWith('..') || path.isAbsolute(relative)) return null;
     return resolved;
+  }
+
+  /**
+   * True when the real location of `resolved`'s parent folder is inside the real project folder.
+   * resolveSafe compares text only, so a symlinked folder inside the project could lead outside it.
+   * The item itself may be a symlink (delete and rename act on the link, not its target).
+   */
+  function parentInsideRealRoot(workingDir: string, resolved: string): boolean {
+    try {
+      const root = fs.realpathSync(path.resolve(workingDir));
+      const parent = fs.realpathSync(path.dirname(resolved));
+      const rel = path.relative(root, parent);
+      return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+    } catch { return false; }
   }
 
   /** True when `resolved` is the working directory itself (delete and rename refuse it). */
@@ -234,12 +254,24 @@ export function createFilesRouter(db: Database.Database): Router {
     if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
 
     try {
-      // Regular files only: a device or FIFO can fill memory or block forever.
-      const st = await fs.promises.stat(resolved);
-      if (!st.isFile()) return res.status(400).json({ error: 'Not a regular file' });
-      if (st.size > MAX_READ_BYTES) return res.status(413).json({ error: `File is larger than ${MAX_READ_BYTES / (1024 * 1024)} MB` });
-      const content = await fs.promises.readFile(resolved, 'utf-8');
-      res.json({ content, path: requestedPath });
+      // Regular files only: a device or FIFO can fill memory or block forever. Open without blocking,
+      // then check the OPEN descriptor (not the path), so a swap after the check changes nothing, and
+      // read at most the cap plus one byte so a file that grows meanwhile is still bounded.
+      const fh = await fs.promises.open(resolved, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      try {
+        const st = await fh.stat();
+        if (!st.isFile()) return res.status(400).json({ error: 'Not a regular file' });
+        if (st.size > MAX_READ_BYTES) return res.status(413).json({ error: `File is larger than ${MAX_READ_BYTES / (1024 * 1024)} MB` });
+        const buf = Buffer.alloc(MAX_READ_BYTES + 1);
+        let n = 0;
+        for (;;) {
+          const { bytesRead } = await fh.read(buf, n, buf.length - n, null);
+          if (bytesRead === 0) break;
+          n += bytesRead;
+          if (n > MAX_READ_BYTES) return res.status(413).json({ error: `File is larger than ${MAX_READ_BYTES / (1024 * 1024)} MB` });
+        }
+        res.json({ content: buf.toString('utf-8', 0, n), path: requestedPath });
+      } finally { await fh.close(); }
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -387,9 +419,10 @@ export function createFilesRouter(db: Database.Database): Router {
   router.post('/upload', (req, res) => {
     upload.single('file')(req, res, (uploadErr: any) => {
       if (uploadErr instanceof multer.MulterError && uploadErr.code === 'LIMIT_FILE_SIZE') {
+        unlinkQuiet((req as any).uploadTmpPath);
         return res.status(413).json({ error: `File is larger than ${MAX_UPLOAD_BYTES / (1024 * 1024)} MB` });
       }
-      if (uploadErr) return res.status(400).json({ error: uploadErr.message });
+      if (uploadErr) { unlinkQuiet((req as any).uploadTmpPath); return res.status(400).json({ error: uploadErr.message }); }
 
       const session = (req as any).session;
       const tmpFile = req.file?.path;
@@ -416,9 +449,10 @@ export function createFilesRouter(db: Database.Database): Router {
   router.post('/inbox', (req, res) => {
     inboxUpload.single('file')(req, res, (err: any) => {
       if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+        unlinkQuiet((req as any).uploadTmpPath);
         return res.status(413).json({ error: 'File is larger than 50 MB' });
       }
-      if (err) return res.status(400).json({ error: err.message });
+      if (err) { unlinkQuiet((req as any).uploadTmpPath); return res.status(400).json({ error: err.message }); }
 
       const session = (req as any).session;
       if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
@@ -475,6 +509,9 @@ export function createFilesRouter(db: Database.Database): Router {
     if (isRoot(session.workingDir, from) || isRoot(session.workingDir, to)) {
       return res.status(400).json({ error: 'Cannot rename the project folder' });
     }
+    if (!parentInsideRealRoot(session.workingDir, from) || !parentInsideRealRoot(session.workingDir, to)) {
+      return res.status(403).json({ error: 'Path traversal not allowed' });
+    }
 
     try {
       fs.renameSync(from, to);
@@ -493,6 +530,7 @@ export function createFilesRouter(db: Database.Database): Router {
     const resolved = resolveSafe(session.workingDir, requestedPath);
     if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
     if (isRoot(session.workingDir, resolved)) return res.status(400).json({ error: 'Cannot delete the project folder' });
+    if (!parentInsideRealRoot(session.workingDir, resolved)) return res.status(403).json({ error: 'Path traversal not allowed' });
 
     try {
       fs.rmSync(resolved, { recursive: true });

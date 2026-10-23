@@ -96,7 +96,7 @@ describe('path safety and read limits', () => {
     expect(fs.existsSync(path.join(workDir, 'a.txt'))).toBe(true);
   });
 
-  it('read refuses a FIFO without hanging', async () => {
+  it.skipIf(process.platform === 'win32')('read refuses a FIFO without hanging', async () => {
     const fifo = path.join(workDir, 'pipe');
     execFileSync('mkfifo', [fifo]);
     const res = await request(makeApp(workDir)).get('/api/sessions/s1/files/read').query({ path: 'pipe' });
@@ -127,6 +127,38 @@ describe('path safety and read limits', () => {
       const res = url.includes('mkdir') ? await request(app).post(url) : await request(app).get(url);
       expect(res.status).toBe(400);
     }
+  });
+});
+
+describe('symlinked folders cannot lead delete or rename outside the project', () => {
+  let workDir: string;
+  let outside: string;
+  beforeEach(() => {
+    workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-files-ln-'));
+    outside = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-files-out-'));
+    fs.writeFileSync(path.join(outside, 'keep.txt'), 'x');
+    fs.symlinkSync(outside, path.join(workDir, 'link'));
+  });
+  afterEach(() => { fs.rmSync(workDir, { recursive: true, force: true }); fs.rmSync(outside, { recursive: true, force: true }); });
+
+  it('delete through a symlinked folder is refused and the target is untouched', async () => {
+    const res = await request(makeApp(workDir)).delete('/api/sessions/s1/files').query({ path: 'link/keep.txt' });
+    expect(res.status).toBe(403);
+    expect(fs.existsSync(path.join(outside, 'keep.txt'))).toBe(true);
+  });
+
+  it('rename into or out of a symlinked folder is refused', async () => {
+    fs.writeFileSync(path.join(workDir, 'a.txt'), 'x');
+    const app = makeApp(workDir);
+    expect((await request(app).post('/api/sessions/s1/files/rename').send({ from: 'a.txt', to: 'link/a.txt' })).status).toBe(403);
+    expect((await request(app).post('/api/sessions/s1/files/rename').send({ from: 'link/keep.txt', to: 'k.txt' })).status).toBe(403);
+    expect(fs.existsSync(path.join(outside, 'keep.txt'))).toBe(true);
+  });
+
+  it('deleting the symlink itself is allowed and leaves the target', async () => {
+    const res = await request(makeApp(workDir)).delete('/api/sessions/s1/files').query({ path: 'link' });
+    expect(res.status).toBe(200);
+    expect(fs.existsSync(path.join(outside, 'keep.txt'))).toBe(true);
   });
 });
 

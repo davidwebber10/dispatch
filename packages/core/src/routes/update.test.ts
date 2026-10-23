@@ -32,7 +32,7 @@ function app(broadcaster: EventBroadcaster, gitExec: GitExec, applyFn: (repoDir:
 const CLEAN_AND_FF_ABLE: Record<string, string> = {
   'status --porcelain': '',
   'fetch origin --tags': '',
-  'tag -l v* --sort=-v:refname': 'v3.5.0\nv3.4.0\n',
+  'ls-remote --tags --refs origin': 'a1\trefs/tags/v3.4.0\nb2\trefs/tags/v3.5.0\n',
   'rev-parse HEAD': 'abc123\n',
   'rev-parse v3.5.0^{commit}': 'def456\n',
   'merge-base --is-ancestor abc123 def456': '',

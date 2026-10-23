@@ -140,7 +140,7 @@ describe('cmdUpdate', () => {
     const calls: string[] = [];
     vi.mocked(execFileSync).mockImplementation(((cmd: string, args: string[]) => {
       calls.push(`${cmd} ${(args ?? []).join(' ')}`);
-      if (cmd === 'git' && args[0] === 'tag') return 'v3.10.0\nv3.9.2\nv3.10.0-rc1\n';
+      if (cmd === 'git' && args[0] === 'ls-remote') return 'a\trefs/tags/v3.9.2\nb\trefs/tags/v3.10.0\nc\trefs/tags/v3.11.0-rc1\n';
       return Buffer.from('');
     }) as any);
     const daemon = {
@@ -173,7 +173,7 @@ describe('cmdUpdate', () => {
       restart: vi.fn(() => { throw new Error('restart: not implemented on linux'); }),
     };
 
-    vi.mocked(execFileSync).mockImplementation(((cmd: string, args: string[]) => (cmd === 'git' && args[0] === 'tag' ? 'v1.0.0\n' : '')) as any);
+    vi.mocked(execFileSync).mockImplementation(((cmd: string, args: string[]) => (cmd === 'git' && args[0] === 'ls-remote' ? 'a\trefs/tags/v1.0.0\n' : '')) as any);
     expect(() => cmdUpdate({ daemon } as any)).toThrow('restart: not implemented on linux');
   });
 });
@@ -191,7 +191,7 @@ describe('cmdUpdate with no release tag', () => {
 
 describe('latestReleaseTag', () => {
   test('first plain vX.Y.Z, skipping prerelease shapes', () => {
-    expect(latestReleaseTag('v2.0.0-rc1\nv1.9.0\nv1.8.0\n')).toBe('v1.9.0');
+    expect(latestReleaseTag('a\trefs/tags/v2.0.0-rc1\nb\trefs/tags/v1.9.0\nc\trefs/tags/v1.10.0')).toBe('v1.10.0');
     expect(latestReleaseTag('')).toBeNull();
   });
 });
@@ -209,7 +209,7 @@ describe('cmdUpdate progress file', () => {
     const seen: string[] = [];
     vi.mocked(execFileSync).mockImplementation(((cmd: string, args: string[]) => {
       if (cmd === 'git' && args[0] === 'rev-parse') return '';
-      if (cmd === 'git' && args[0] === 'tag') return 'v1.0.0\n';
+      if (cmd === 'git' && args[0] === 'ls-remote') return 'a\trefs/tags/v1.0.0\n';
       if (cmd === 'git' && args[0] === 'fetch') return '';
       seen.push(`${read(dataDir).step}:${cmd} ${args[0]}`);
       return '';
@@ -228,7 +228,7 @@ describe('cmdUpdate progress file', () => {
     const dataDir = tmp();
     vi.mocked(execFileSync).mockImplementation(((cmd: string, args: string[]) => {
       if (cmd === 'pnpm' && args[0] === '-r') throw new Error('Command failed: pnpm -r run build');
-      if (cmd === 'git' && args[0] === 'tag') return 'v1.0.0\n';
+      if (cmd === 'git' && args[0] === 'ls-remote') return 'a\trefs/tags/v1.0.0\n';
       return '';
     }) as any);
     expect(() => cmdUpdate({ daemon: daemonWith(), dataDir, repoRoot: dataDir } as any)).toThrow('pnpm -r run build');
@@ -242,7 +242,7 @@ describe('cmdUpdate progress file', () => {
     vi.mocked(execFileSync).mockImplementation(((cmd: string, args: string[]) => {
       calls.push(`${cmd} ${args.join(' ')}`);
       if (cmd === 'git' && args[0] === 'rev-parse') return 'abc123\n';
-      if (cmd === 'git' && args[0] === 'tag') return 'v1.0.0\n';
+      if (cmd === 'git' && args[0] === 'ls-remote') return 'a\trefs/tags/v1.0.0\n';
       return '';
     }) as any);
     cmdUpdate({ daemon: daemonWith(), dataDir: repoRoot, repoRoot } as any);
@@ -258,7 +258,7 @@ describe('cmdUpdate progress file', () => {
     vi.mocked(execFileSync).mockImplementation(((cmd: string, args: string[]) => {
       calls.push(`${cmd} ${args.join(' ')}`);
       if (cmd === 'git' && args[0] === 'rev-parse') return `hash${++n}\n`;
-      if (cmd === 'git' && args[0] === 'tag') return 'v1.0.0\n';
+      if (cmd === 'git' && args[0] === 'ls-remote') return 'a\trefs/tags/v1.0.0\n';
       return '';
     }) as any);
     cmdUpdate({ daemon: daemonWith(), dataDir: repoRoot, repoRoot } as any);

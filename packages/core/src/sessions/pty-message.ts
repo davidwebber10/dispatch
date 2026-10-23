@@ -26,13 +26,13 @@ const SUBMIT = '\r';
 /**
  * Remove ESC, the other C0 controls, DEL and the C1 controls. Text typed into a PTY is read as
  * keystrokes: an embedded ESC[201~ ends the bracketed paste early and the rest is typed as
- * commands (a slash command, or `!` for Claude's shell mode). Tab is kept; newline is kept
- * unless `keepNewline` is false, which folds it to a space for one-line fields.
+ * commands (a slash command, or `!` for Claude's shell mode). Tab and newline are kept
+ * unless `keepNewline` is false, which folds both to a space for one-line fields.
  */
 export function stripControlChars(text: string, opts: { keepNewline?: boolean } = {}): string {
   const keepNewline = opts.keepNewline !== false;
-  const folded = keepNewline ? text : text.replace(/\r\n|[\r\n]/g, ' ');
-  return folded.replace(keepNewline ? /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g : /[\x00-\x08\x0a-\x1f\x7f-\x9f]/g, '');
+  const folded = keepNewline ? text : text.replace(/\r\n|[\r\n\t]/g, ' ');
+  return folded.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '');
 }
 
 /** True when `text` has any character that stripControlChars would remove, newline included. */
@@ -48,7 +48,8 @@ export function hasControlChars(text: string): boolean {
  */
 export function ptyMessagePayload(text: string): string {
   const normalized = stripControlChars(text.replace(/\r\n/g, '\n').replace(/\r/g, '\n'));
-  if (!normalized.includes('\n')) return normalized + SUBMIT;
+  // A tab in a typed (unbracketed) line would be a keystroke (completion), so fold it to a space.
+  if (!normalized.includes('\n')) return normalized.replace(/\t/g, ' ') + SUBMIT;
   return PASTE_START + normalized + PASTE_END + SUBMIT;
 }
 

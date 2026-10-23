@@ -15,7 +15,7 @@ function fakeGit(responses: Record<string, string | Error>): GitExec {
 const CLEAN_AND_FF_ABLE = {
   'status --porcelain': '',
   'fetch origin --tags': '',
-  'tag -l v* --sort=-v:refname': 'v3.5.0\nv3.4.0\n',
+  'ls-remote --tags --refs origin': 'a1\trefs/tags/v3.4.0\nb2\trefs/tags/v3.5.0\n',
   'rev-parse HEAD': 'abc123\n',
   'rev-parse v3.5.0^{commit}': 'def456\n',
   'merge-base --is-ancestor abc123 def456': '',
@@ -112,7 +112,7 @@ describe('preflightUpdate', () => {
     // tag (and never resolved origin/main or an upstream).
     const git = fakeGit({
       ...CLEAN_AND_FF_ABLE,
-      'tag -l v* --sort=-v:refname': 'v3.10.0\nv3.9.2\n',
+      'ls-remote --tags --refs origin': 'a1\trefs/tags/v3.9.2\nb2\trefs/tags/v3.10.0\n',
       'rev-parse v3.10.0^{commit}': 'def456\n',
     });
     expect(preflightUpdate('/repo', git)).toEqual({ ok: true });
@@ -121,13 +121,13 @@ describe('preflightUpdate', () => {
   it('ignores prerelease and non-release tags when picking the newest', () => {
     const git = fakeGit({
       ...CLEAN_AND_FF_ABLE,
-      'tag -l v* --sort=-v:refname': 'v3.6.0-rc1\nvnext\nv3.5.0\n',
+      'ls-remote --tags --refs origin': 'a\trefs/tags/v3.6.0-rc1\nb\trefs/tags/vnext\nc\trefs/tags/v3.5.0\n',
     });
     expect(preflightUpdate('/repo', git)).toEqual({ ok: true });
   });
 
   it('fails clearly when origin has no release tag', () => {
-    const git = fakeGit({ ...CLEAN_AND_FF_ABLE, 'tag -l v* --sort=-v:refname': '' });
+    const git = fakeGit({ ...CLEAN_AND_FF_ABLE, 'ls-remote --tags --refs origin': '' });
     const result = preflightUpdate('/repo', git);
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(/No release tag/);
@@ -176,9 +176,10 @@ describe('parsePorcelain', () => {
 });
 
 describe('latestReleaseTag', () => {
-  it('takes the first plain vX.Y.Z line', () => {
-    expect(latestReleaseTag('v1.2.3\nv1.2.2\n')).toBe('v1.2.3');
-    expect(latestReleaseTag('v1.3.0-beta\nv1.2.3\n')).toBe('v1.2.3');
+  const lines = (...t: string[]) => t.map((x, i) => `sha${i}\trefs/tags/${x}`).join('\n');
+  it('takes the highest plain vX.Y.Z by number, not by text', () => {
+    expect(latestReleaseTag(lines('v3.9.2', 'v3.10.0', 'v3.2.11'))).toBe('v3.10.0');
+    expect(latestReleaseTag(lines('v1.3.0-beta', 'v1.2.3', 'nightly'))).toBe('v1.2.3');
     expect(latestReleaseTag('')).toBeNull();
   });
 });

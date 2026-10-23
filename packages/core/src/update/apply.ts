@@ -38,11 +38,20 @@ export function makeGitExec(repoDir: string): GitExec {
 }
 
 /**
- * The newest plain release tag (vX.Y.Z) in `git tag -l` output that is sorted newest first. Prerelease
- * and other tag shapes are ignored. Keep in step with the same function in packages/cli/src/index.ts.
+ * The newest plain release tag (vX.Y.Z) among the tags ORIGIN advertises: the output of
+ * `git ls-remote --tags --refs origin`, lines of `sha<TAB>refs/tags/NAME`. Reading origin's list, not
+ * the local one, keeps a local-only tag from standing in for a release. Prerelease and other tag shapes
+ * are ignored; versions compare as numbers. Keep in step with the same function in packages/cli/src/index.ts.
  */
-export function latestReleaseTag(tagList: string): string | null {
-  return tagList.split('\n').map((t) => t.trim()).find((t) => /^v\d+\.\d+\.\d+$/.test(t)) ?? null;
+export function latestReleaseTag(lsRemote: string): string | null {
+  let best: { tag: string; v: number[] } | null = null;
+  for (const line of lsRemote.split('\n')) {
+    const m = /refs\/tags\/(v(\d+)\.(\d+)\.(\d+))\s*$/.exec(line.trim());
+    if (!m) continue;
+    const v = [Number(m[2]), Number(m[3]), Number(m[4])];
+    if (!best || v[0] > best.v[0] || (v[0] === best.v[0] && (v[1] > best.v[1] || (v[1] === best.v[1] && v[2] > best.v[2])))) best = { tag: m[1], v };
+  }
+  return best?.tag ?? null;
 }
 
 /**
@@ -84,7 +93,7 @@ export function preflightUpdate(repoDir: string, gitExec?: GitExec, opts?: { for
 
   let tag: string | null;
   try {
-    tag = latestReleaseTag(git(['tag', '-l', 'v*', '--sort=-v:refname']));
+    tag = latestReleaseTag(git(['ls-remote', '--tags', '--refs', 'origin']));
   } catch (err: any) {
     return { ok: false, reason: `could not list release tags: ${err.message}` };
   }

@@ -51,3 +51,15 @@ test('read-only hides delete + add and shows the banner', async () => {
   expect(screen.queryByText('ADD VARIABLE')).not.toBeInTheDocument();
   expect(screen.getByText(/Turn off read-only to add, edit, or delete variables/)).toBeInTheDocument();
 });
+
+test('a reloaded list drops the fetched values, so the next reveal asks again', async () => {
+  render(<SecretsSection />);
+  await waitFor(() => expect(screen.getByText('API_KEY')).toBeInTheDocument());
+  fireEvent.click(screen.getAllByTitle('Reveal value')[0]);
+  await waitFor(() => expect(screen.getByText('sk-live-1')).toBeInTheDocument());
+  vi.mocked(api.getSecretValue).mockImplementation(async () => 'sk-live-2');
+  fireEvent.click(screen.getByRole('button', { name: 'Re-sync' }));
+  await waitFor(() => expect(screen.queryByText('sk-live-1')).not.toBeInTheDocument());
+  fireEvent.click(screen.getAllByTitle('Reveal value')[0]);
+  await waitFor(() => expect(screen.getByText('sk-live-2')).toBeInTheDocument());
+});

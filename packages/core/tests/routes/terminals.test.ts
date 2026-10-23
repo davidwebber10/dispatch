@@ -345,6 +345,20 @@ describe('terminal routes', () => {
     expect(res.body.sentText.endsWith(' ')).toBe(true);
   });
 
+  it.skipIf(process.platform === 'win32')('send-file-reference refuses a path with a control character, in both modes', async () => {
+    const filename = 'ctl\rname.txt';
+    fs.writeFileSync(path.join(tmpDir, filename), 'x');
+    const create = await request(app)
+      .post(`/api/sessions/${sessionId}/terminals`)
+      .send({ type: 'shell', workingDir: tmpDir });
+    for (const mode of ['shell-path', 'agent-context']) {
+      const res = await request(app)
+        .post(`/api/terminals/${create.body.id}/send-file-reference`)
+        .send({ path: filename, mode });
+      expect(res.status).toBe(404);
+    }
+  });
+
   it('POST /api/terminals/:terminalId/send-file-reference returns 404 for missing terminals', async () => {
     const res = await request(app)
       .post('/api/terminals/missing-terminal/send-file-reference')

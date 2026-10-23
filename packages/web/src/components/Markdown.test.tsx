@@ -261,6 +261,7 @@ describe('sanitizer drops style, forms and media tags', () => {
     ['<video src="https://evil.test/v.mp4" poster="https://evil.test/p.png"></video>', 'video'],
     ['<audio src="https://evil.test/a.mp3"></audio>', 'audio'],
     ['<picture><source srcset="https://evil.test/a.png"></picture>', 'source'],
+    ['<svg><filter id="f"><feImage href="https://evil.test/a.png"/></filter><rect filter="url(#f)"/></svg>', 'feimage'],
     ['<textarea>x</textarea><select><option>a</option></select>', 'textarea'],
   ])('%s', (html, selector) => {
     const { container } = render(<Markdown source={html} />);

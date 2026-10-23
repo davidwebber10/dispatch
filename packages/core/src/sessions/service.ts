@@ -2122,8 +2122,9 @@ export class SessionService {
     const absolutePath = this.resolveTerminalFilePath(terminalId, requestedPath);
     if (!absolutePath) return null;
     if (!this.ptyManager.isAlive(terminalId)) throw new Error('Terminal process is not running');
-    // A path with a CR, ESC or other control character would be typed as keystrokes into the CLI.
-    if (mode === 'agent-context' && hasControlChars(absolutePath)) return null;
+    // A path with a CR, ESC or other control character would be typed as keystrokes (quoting a path
+    // for a shell does not neutralize terminal control bytes), in both modes.
+    if (hasControlChars(absolutePath)) return null;
 
     const sentText = mode === 'shell-path'
       ? `${this.shellEscapePath(absolutePath)} `

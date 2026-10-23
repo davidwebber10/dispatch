@@ -35,6 +35,9 @@ export function SecretsSection() {
 
   useEffect(() => { void useSecrets.getState().loadStatus(); }, []);
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
+  // A fetched value belongs to one project/config and one moment: drop them all when the list reloads
+  // (an add, a delete, a re-sync) or the config changes, so reveal and copy never return a stale value.
+  useEffect(() => { setValues({}); setReveal({}); }, [secrets, status?.project, status?.config]);
   useEffect(() => {
     if (status?.project) { setProject(status.project); void useSecrets.getState().loadConfigs(status.project); }
     if (status?.config) setConfig(status.config);
