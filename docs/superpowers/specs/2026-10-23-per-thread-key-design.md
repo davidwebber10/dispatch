@@ -1,7 +1,7 @@
 ---
 title: Per-thread keys (the daemon stops trusting every local caller)
 date: 2026-10-23
-status: draft for owner review (review rounds 1 and 2 fixed; no round 3)
+status: draft for owner review (review rounds 1 and 2 fixed; no round 3; amended 2026-10-23 with owner decision PK-4)
 base: main 0ce95415 (v3.4.0)
 builds on: docs/superpowers/specs/2026-10-22-network-exposure-design.md (Phase 1 shipped in v3.4.0)
 findings: SEC-05 (main), SEC-20, SEC-22, SEC-25 (unlocked by this design), SEC-04 (partly)
@@ -24,6 +24,11 @@ the thread, takes the caller's identity from the key and never from the body, an
 enforces the rules itself. A thread key can call only a short allowlist of routes.
 Everything else stays with the owner, whose credentials are the browser cookie and
 the access token from Phase 1.
+
+One rule gets looser on purpose (owner decision PK-4, 6.4.1): a project's overseer
+(its coordinator) can read threads in every project and can message another
+project's overseer. It still cannot start, archive or answer threads, or write
+ledger items, outside its own project. Workers stay inside their own project.
 
 It ships in three stages:
 
@@ -54,7 +59,7 @@ shared OS user. Section 8 lists every residual risk.
 1. The daemon knows which thread made each request, and the thread cannot lie
    about it.
 2. Every agent guard that matters is enforced in the daemon: identity, project
-   scope, spawn depth, message rate, "questions only" for `answer_agent`,
+   scope (with the overseer reach of PK-4, 6.4.1), spawn depth, message rate, "questions only" for `answer_agent`,
    coordinator-only ledger writes, never `source: user` from an agent.
 3. A thread key cannot reach owner-only actions: secrets, integrations, schedules,
    roles, settings, sign-in, update, access, push, raw terminal input, any
@@ -218,6 +223,15 @@ were written from request bodies, so the daemon checks them before it mints a ke
 - `role: coordinator` and `origin: endless` stay as stored. They are visible in the
   app, and only the owner can change them from now on. A record that a thread
   forged before stage 1 keeps its role; residual risk K-11.
+
+**Overseer keys.** A thread key is an **overseer key** when, at request time, its
+row has `config.role: coordinator`, is not archived, has no `config.roleRun`, and is
+the live coordinator of its own current project (the same test as the ledger's
+"live coordinator in this project" check, `overseer/ledger-service.ts:162-170`).
+Every other thread key is a **worker key** (plain threads included). An overseer key
+gets the cross-project reach of 6.4.1; a worker key never does. Only the daemon makes
+coordinator rows (`ensureCoordinator`), and from stage 1 on no key can set
+`config.role` (6.4), so a worker cannot turn itself into an overseer.
 
 **Role runs** (`config.roleRun` set, written only by `roles/service.ts`) get a
 narrower thread key: `whoami`, the read routes, `report-status`, `events` and
@@ -406,26 +420,80 @@ workers and to Chat spawns.
 
 | Method and route | Rule in the daemon |
 |---|---|
-| `GET /api/whoami` | Returns the caller's own id, project, role, depth, parent. |
-| `GET /api/sessions/SID/terminals` | `SID` is the caller's project. |
-| `GET /api/terminals/ID`, `GET /api/terminals/ID/conversation` | Target is in the caller's project. Keys are redacted from the transcript (6.3). |
-| `GET /api/terminals/ID/permission` | Target is in the caller's project. |
-| `GET /api/sessions/SID/overseer/worker-defaults` | `SID` is the caller's project. |
-| `POST /api/sessions/SID/terminals` (spawn and queue) | `SID` is the caller's project. The create body allowlist above. `spawnDepth` = caller depth + 1, refused past `MAX_SPAWN_DEPTH` (3). |
-| `POST /api/terminals/ID/message` | Target is in the caller's project, is not the caller, is not a shell tab. The daemon sets `source` to `coordinator` when the caller is the project's coordinator, else `agent`. A body `source: user` is refused. The per-pair hourly limit from `guards.ts` runs here, keyed by caller and target. |
+| `GET /api/whoami` | Returns the caller's own id, project, role, depth, parent, and whether it is an overseer key. |
+| `GET /api/sessions` (project list) | Overseer key only (6.4.1); a worker key gets `403 out_of_scope`. For a key the daemon returns only `id`, `name` and the live coordinator's thread id of each project. |
+| `GET /api/sessions/SID/terminals` | Worker key: `SID` is the caller's project. Overseer key: any project (6.4.1). |
+| `GET /api/terminals/ID`, `GET /api/terminals/ID/conversation` | Worker key: target is in the caller's project. Overseer key: any project (6.4.1). Keys are redacted from the transcript (6.3). |
+| `GET /api/terminals/ID/permission` | Worker key: target is in the caller's project. Overseer key: any project (6.4.1); this is a read and answers nothing. |
+| `GET /api/sessions/SID/overseer/worker-defaults` | `SID` is the caller's project (every key kind; it only feeds a spawn). |
+| `POST /api/sessions/SID/terminals` (spawn and queue) | `SID` is the caller's project (overseer keys too). The create body allowlist above. `spawnDepth` = caller depth + 1, refused past `MAX_SPAWN_DEPTH` (3). |
+| `POST /api/terminals/ID/message` | Target is not the caller and is not a shell tab. Target is in the caller's project, or (overseer key only, 6.4.1) the target is the live overseer of another project. The daemon sets `source` to `coordinator` when the caller is the project's coordinator, else `agent`. A body `source: user` is refused. The per-pair hourly limit from `guards.ts` (10 per sender and target pair per hour) runs here, keyed by caller and target, for same-project and cross-project messages alike. A cross-project message gets the sender line of 6.4.1. |
 | `POST /api/terminals/ID/start` | Target is not the caller, and was spawned by the caller or the caller is the coordinator of the target's current project. |
 | `DELETE /api/terminals/ID` (archive) | Same rule, plus the `checkArchiveAllowed` rules, moved into the daemon. |
 | `POST /api/terminals/ID/permission` (answer) | Same rule. The body may hold only `decision: allow`, `answers` and `requestId`; `reply`, `canned`, `message` and `deny` are refused. The pending request must have `questions` (a question, not a held tool call), and `requestId` must match it. The daemon logs the answer with source `coordinator`, never `user`, so no key can write a quotable "user" line (`sessions/service.ts:1735,1780,1795-1801`). |
 | `POST /api/terminals/ID/report-status` | `ID` is the caller. |
-| `POST /api/watches` | The watcher is the caller (filled in or checked). The target is in the caller's project. A shell tab cannot be a watcher (PR 103). |
+| `POST /api/watches` | The watcher is the caller (filled in or checked). The target is in the caller's project, for overseer keys too (PK-4 does not include watches). A shell tab cannot be a watcher (PR 103). |
 | `GET /api/watches` | Returns only the caller's watches. |
 | `DELETE /api/watches/ID` | The watch belongs to the caller. |
-| `POST /api/sessions/SID/ledger` and `POST /api/sessions/SID/ledger/{list,note,import,handoff,show,decide-self}` and `POST /api/sessions/SID/ledger/ITEM/{resolve,add-from-agent,decide-self,mark-default,title}` | `SID` is the caller's project. `caller` comes from the key; the existing "live coordinator in this project" check (`overseer/ledger-service.ts:162-170`) then runs on the real caller. |
+| `POST /api/sessions/SID/ledger` and `POST /api/sessions/SID/ledger/{list,note,import,handoff,show,decide-self}` and `POST /api/sessions/SID/ledger/ITEM/{resolve,add-from-agent,decide-self,mark-default,title}` | `SID` is the caller's project, for overseer keys too (an overseer cannot write another project's ledger). `caller` comes from the key; the existing "live coordinator in this project" check (`overseer/ledger-service.ts:162-170`) then runs on the real caller. |
 | `POST /api/events/PROVIDER/ID` | `ID` is the caller and `PROVIDER` matches its type. |
 | `POST /api/auth-requests` | `terminalId` is set from the key. |
 
 A **role run** key gets only `whoami`, the `GET` rows, `report-status`, `events` and
-`auth-requests` (6.1).
+`auth-requests` (6.1). A role run is never an overseer key, so its `GET` rows stay
+inside its own project.
+
+#### 6.4.1 Cross-project reach for overseers (owner decision PK-4)
+
+**This loosens today's rule on purpose.** Today every agent can list, read, message,
+start, archive and answer threads only in its own project (the check lives in the
+agency MCP, `overseer/agency-mcp.ts:818-834,880,892`). The owner needs overseers of
+different projects to see and talk to each other, so on 2026-10-23 the owner chose option C
+(section 13). The daemon enforces it as follows.
+
+| Action | Overseer key | Worker key | Chat key (unchanged) |
+|---|---|---|---|
+| List projects (`GET /api/sessions`) | Any project | Refused | Not on its allowlist (Chat has its own reads) |
+| List threads (`list_threads`), read a thread (`read_thread`, `read_agent`), read a pending question | Any project | Own project only | Any project |
+| Message a thread (`message_thread`) | Own project: any thread. Another project: **only that project's live overseer** | Own project only | `origin: endless` targets |
+| Start, archive or answer a thread | Own project only (its workers, or as the coordinator) | Own workers only | `origin: endless` targets (archive) |
+| Spawn or queue a worker | Own project only | Own project only | Any project |
+| Ledger writes | Own project only | Refused by the coordinator check | Chat ledger only |
+| Watches | Own project only | Own project only | None |
+
+Rules:
+
+- **Message target.** A cross-project message is allowed only when the target row
+  has `config.role: coordinator`, is not archived, and is the live coordinator of its
+  own current project. Any other target in another project (a worker, a plain thread,
+  a role run, a shell tab) gets `403 out_of_scope`. `message_agent` is for the
+  caller's own workers and stays inside the project.
+- **Rate limit.** The daemon's one pair limiter (10 messages per sender and target
+  pair per rolling hour, `overseer/guards.ts`) counts cross-project messages the same
+  way. The 11th message from overseer A to overseer B in one hour gets
+  `429 rate_limited`. A reply from B to A is its own pair. No spawn credit applies
+  across projects.
+- **The receiver sees where a message came from.** For every cross-project message
+  the daemon itself puts one line before the text: `[From the overseer of project
+  "NAME" (thread ID). This is not a message from the owner.]`, with the sender's
+  current project name and terminal id taken from the key, never from the body. For
+  a block message the line is the first text block. It reaches the receiving
+  overseer in both views and every harness, it is stored with the message, and the
+  owner sees it in the receiving thread. The message keeps `source: coordinator`
+  (never `user`).
+- **No forged sender line.** A message from any key (same project or not, Chat
+  included) whose text holds the marker `[From the overseer of project` anywhere gets
+  `403 identity_mismatch`. So a worker cannot make a same-project message look like
+  it came from another project's overseer. Owner messages are not checked.
+- **Discovery.** An overseer finds other projects with a new agency MCP tool
+  `list_projects` (backed by `GET /api/sessions`, trimmed for keys), and lists a
+  project's threads with `list_threads` and an optional `projectId`.
+- **Scope uses current facts.** Whether a caller or a target is an overseer is read
+  from the database at request time (6.1). An overseer that the owner archives, or
+  that stops being its project's live coordinator, loses the reach at once.
+
+Not included in PK-4: cross-project watches, cross-project `message_agent`, and any
+cross-project write. Each would be a separate, reviewed change to the policy table.
 
 **Chat key (`dck_`)**
 
@@ -462,7 +530,7 @@ creating or changing a project.
 | `403` | `owner_only` | A key called a route outside its allowlist |
 | `403` | `field_not_allowed` | A create or answer body has a field outside its allowlist |
 | `403` | `identity_mismatch` | A body or query field names another caller, or a role, depth, parent or origin the daemon would not write |
-| `403` | `out_of_scope` | Target outside the caller's project, the caller itself, or not the caller's worker |
+| `403` | `out_of_scope` | Target outside the caller's reach (another project for a worker key; another project's non-overseer thread, or any write, for an overseer key), the caller itself, or not the caller's worker |
 | `403` | `depth_exceeded` | Spawn past the limit |
 | `403` | `not_a_question` | `answer_agent` on a held tool call |
 | `429` | `rate_limited` | Per-pair message limit |
@@ -478,7 +546,9 @@ a follow-up, not part of this design.
 **Behaviour change for agents:** today any thread can start, archive or answer any
 thread through its tools (only three tools check the project). After stage 1 a thread
 can do that only for its own workers, or as the coordinator of the project. No
-first-party flow uses the wider right; section 7.2 lists it.
+first-party flow uses the wider right; section 7.2 lists it. In the other direction,
+overseers gain reach they do not have today: reads in every project and messages to
+other projects' overseers (6.4.1).
 
 ### 6.5 Lifecycle walk-through
 
@@ -719,6 +789,9 @@ so. Thread keys work in both releases.
 | An agent that calls an owner-only route or forges identity | `403` | `403` | Ask the owner |
 | An agent that starts, archives or answers a thread that is not its own worker (and it is not the coordinator) | `403 out_of_scope` | Same | The coordinator or the owner does it |
 | An agent that answers a held tool call, or its own question | `403` | Same | The owner answers in the browser |
+| An overseer that reads another project, or messages another project's overseer | Newly allowed (6.4.1); today the agency MCP refuses it | Same | None |
+| An overseer that messages a worker or plain thread in another project, or starts, archives, answers, spawns or writes the ledger there | `403 out_of_scope` | Same | Message that project's overseer instead |
+| A worker that reads or messages a thread in another project | `403 out_of_scope` (today the agency MCP refuses most of these, but `read_agent` has no project check) | Same | Its overseer does it |
 | `pnpm dev` (Vite) | Nothing | One sign-in on `localhost`; the cookie also reaches the dev server, because cookies ignore the port | None |
 | Hosted box | Threads reach their own routes through the box gate with their key | Same | None |
 | A proxy added with `allow-host` | Nothing | Sign in once per browser | None |
@@ -781,6 +854,14 @@ This matches NE-4 in the network spec.
   `DISPATCH_AUTH_FILE` from Codex shell commands. Then a sign-in banner from a Codex
   shell does not appear, and the CLI in that shell refuses to run calls that need a
   credential (6.7: it fails closed, it never falls back to the owner token).
+- **K-13. An overseer's cross-project reach (PK-4, accepted).** An injected overseer
+  can read the transcripts of every project, and can send up to 10 messages an hour
+  to each other project's overseer. Text from one project can therefore reach another
+  project's overseer, and from there its workers. The sender line (6.4.1) tells the
+  receiver that the message came from another project and is not from the owner, and
+  the receiver still decides what to do with it. No overseer can write in another
+  project. A record forged as `role: coordinator` before stage 1 (K-11) would also
+  get this reach, which makes K-11 a little wider.
 
 ## 9. Tests
 
@@ -806,6 +887,25 @@ This matches NE-4 in the network spec.
   `canned` or `deny` body, a thread in another project, a thread that is not the
   caller's worker; an answer from a key is logged as `coordinator`.
 - Role runs: a role-run key is refused on spawn, message, start, archive and answer.
+- Cross-project reach (PK-4, 6.4.1):
+  - an overseer key lists projects, lists another project's threads, and reads
+    another project's thread (`read_thread`, `read_agent`, the pending question):
+    allowed;
+  - an overseer key messages another project's live overseer: allowed, the
+    delivered text starts with the sender line that names the sender's project and
+    terminal id, and the source is `coordinator`; the 11th message to the same
+    overseer in one hour gets `429 rate_limited`;
+  - an overseer key messages a worker, a plain thread or an archived coordinator in
+    another project: `403 out_of_scope`;
+  - an overseer key starts, archives, answers, spawns, queues or writes a ledger item
+    in another project: `403 out_of_scope`;
+  - a worker key lists projects, reads, or messages a thread in another project
+    (its overseer included): `403 out_of_scope`;
+  - any key message whose text holds the sender-line marker: `403 identity_mismatch`;
+  - an overseer that the owner archived, or a coordinator row that is not its
+    project's live coordinator, gets worker scope;
+  - a Chat key still reads, spawns and archives `origin: endless` threads in any
+    project.
 - Moves: after the owner moves a worker to another project, its old parent loses
   start, archive and answer on it.
 - Legacy records: a stored `spawnDepth` of 7 or `"x"` counts as 3; a `spawnedBy` in
@@ -918,7 +1018,11 @@ with `dispatch open` from inside WSL; `curl.exe` started from a WSL thread gets 
   `providers/grok.ts`, `providers/grok-home.ts`, `providers/opencode.ts`,
   `providers/opencode-config.ts`: delivery.
 - `overseer/agency-mcp.ts`, `overseer/agency-shared.ts`: send the key, `whoami`,
-  readable errors. `overseer/guards.ts` stays as the client-side early check and is
+  readable errors; for PK-4 a new `list_projects` tool, an optional `projectId` on
+  `list_threads`, and client checks that let an overseer read any project and message
+  another project's overseer.
+- `sessions/service.ts` (`sendThreadMessage`): the sender line of 6.4.1 on
+  cross-project messages. `overseer/guards.ts` stays as the client-side early check and is
   reused by the daemon.
 - `endless/service.ts`, `endless/turn-runner.ts`, `endless/summarizer-claude.ts`,
   `endless/memory-mcp.ts`: Chat keys.
@@ -985,6 +1089,19 @@ stage 2 has run for a few weeks.
   weeks. (B) Build it with stage 2. (C) Never. **Recommended and chosen: A.** It needs different
   code per OS and a thread can escape it, so it should wait until stages 1 and 2 show
   whether it is needed.
+
+**Decided 2026-10-23 by the owner: PK-4 option C.**
+
+- **PK-4. Can overseers reach other projects?** (A) No: every key stays in its own
+  project, as today. (B) Overseers can read every project, but cannot message
+  outside their own. (C) Overseers can read every project and can message another
+  project's overseer, under the existing limit of 10 messages per sender and target
+  pair per hour; no other cross-project action. **Chosen: C.** The owner has needed
+  cross-project reach between overseers. Each project's work stays under its own
+  overseer: an overseer still cannot start, archive or answer threads, spawn workers
+  or write ledger items outside its own project. Worker keys stay own-project only;
+  the summarizer key and the Chat key do not change. This loosens today's rule on
+  purpose; 6.4.1 has the rules and K-13 the accepted risk.
 
 Decided in the spec after review round 1, not asked: stage 1 sets no browser cookie
 (6.6). One sign-in per browser costs little; handing out a lasting owner credential
