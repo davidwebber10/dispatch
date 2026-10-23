@@ -4,7 +4,7 @@ import type { RequestHandler } from 'express';
 const SAFE_HOST = /^[A-Za-z0-9.\-:[\]]{1,255}$/;
 
 /**
- * The Content-Security-Policy for the app (overview findings SEC-09 and SEC-08).
+ * The Content-Security-Policy for the app.
  *
  * - Scripts only from the app itself: no inline script, no eval, no `javascript:` URL.
  * - `connect-src` is the app's own origin plus its WebSocket address, so a script cannot post data to
@@ -37,7 +37,7 @@ export function contentSecurityPolicy(host?: string): string {
 }
 
 /**
- * Headers for every response (network exposure spec, 7.13; overview findings SEC-08 and SEC-09).
+ * Headers for every response (network exposure spec, 7.13).
  */
 export const securityHeaders: RequestHandler = (req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY');
