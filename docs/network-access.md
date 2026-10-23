@@ -24,7 +24,7 @@ are refused.
 2. Open Dispatch on the other device. It shows a sign-in page.
 3. Paste the token. The browser keeps a cookie for 400 days.
 
-`dispatch access --link HOST` (or `--link https://MACHINE.ts.net` for `tailscale serve`) prints a link for a phone: the token is in the part after `#`, which
+`dispatch access --link HOST` (a port in HOST is kept as given; or `--link https://MACHINE.ts.net` for `tailscale serve`) prints a link for a phone: the token is in the part after `#`, which
 browsers never send to a server.
 
 `dispatch access rotate` makes a new token and signs out every device.

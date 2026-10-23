@@ -43,6 +43,17 @@ describe('dispatch access', () => {
     await run(['--link', 'mac.tail1.ts.net']);
     expect(out.join('\n')).toContain('http://mac.tail1.ts.net:3456/#access=tok-1');
   });
+  test.each([
+    ['192.168.4.60:3490', 'http://192.168.4.60:3490/#access=tok-1'],
+    ['192.168.4.60', 'http://192.168.4.60:3456/#access=tok-1'],
+    ['mac.tail1.ts.net:8080', 'http://mac.tail1.ts.net:8080/#access=tok-1'],
+    ['[::1]:3490', 'http://[::1]:3490/#access=tok-1'],
+    ['[::1]', 'http://[::1]:3456/#access=tok-1'],
+    ['fd7a:115c:a1e0::1', 'http://[fd7a:115c:a1e0::1]:3456/#access=tok-1'],
+  ])('--link %s does not add a second port', async (host, want) => {
+    await run(['--link', host]);
+    expect(out.join('\n')).toBe(want);
+  });
   test('--link accepts a full URL (tailscale serve has no port)', async () => {
     await run(['--link', 'https://mac.tail1.ts.net/']);
     expect(out.join('\n')).toContain('https://mac.tail1.ts.net/#access=tok-1');

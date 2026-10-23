@@ -131,6 +131,14 @@ export function probeHttp(port: number, probe?: (port: number) => boolean): stri
  * exposure spec, 7.5). The token goes to stdout only: never into argv, a log or a URL that a
  * server sees (the --link form puts it in the fragment, which browsers never send).
  */
+/** Base URL for `access --link`: a full URL as given; a host gets the daemon port unless it already has one. */
+export function linkBase(arg: string, port: number): string {
+  if (/^https?:\/\//.test(arg)) return arg.replace(/\/+$/, '');
+  if (/^\[[^\]]+\](:\d+)?$/.test(arg)) return /\]:\d+$/.test(arg) ? `http://${arg}` : `http://${arg}:${port}`; // [::1] or [::1]:3490
+  if ((arg.match(/:/g) ?? []).length > 1) return `http://[${arg}]:${port}`;                                       // bare IPv6
+  return /:\d+$/.test(arg) ? `http://${arg}` : `http://${arg}:${port}`;                                          // host or host:port
+}
+
 async function cmdAccess(ctx: Ctx, args: string[]): Promise<void> {
   if (!ctx.dataDir) throw new Error('cannot find the Dispatch data directory');
   const lib = ctx.accessLib ?? (await import('dispatch-server/access'));
@@ -149,7 +157,7 @@ async function cmdAccess(ctx: Ctx, args: string[]): Promise<void> {
     case '--link':
       if (!arg) throw new Error('usage: dispatch access --link <host>');
       // A full URL (for example https://MACHINE.ts.net for tailscale serve) is used as given.
-      console.log(`${/^https?:\/\//.test(arg) ? arg.replace(/\/+$/, '') : `http://${arg}:${ctx.port}`}/#access=${lib.ensureAccessToken(dataDir)}`);
+      console.log(`${linkBase(arg, ctx.port)}/#access=${lib.ensureAccessToken(dataDir)}`);
       return;
     case 'rotate':
       lib.rotateAccessToken(dataDir);
