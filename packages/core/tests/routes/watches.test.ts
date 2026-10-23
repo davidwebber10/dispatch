@@ -47,6 +47,19 @@ describe('watch routes', () => {
       expect(row.note).toBe('ping me');
     });
 
+    it('refuses a shell tab as the watcher, because its wake text would run as a command', async () => {
+      terminalsDb.create(db, { id: 'shell-1', sessionId: sessionA, type: 'shell', label: 'sh' });
+      const res = await request(app).post('/api/watches').send({
+        watcherTerminalId: 'shell-1',
+        targetTerminalId: 'target-1',
+        criteria: 'any',
+        note: 'anything',
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/shell/i);
+      expect(watchesDb.listByWatcher(db, 'shell-1')).toHaveLength(0);
+    });
+
     it('rejects cross-project watches with 400 "not in this project"', async () => {
       const res = await request(app).post('/api/watches').send({
         watcherTerminalId: 'watcher-1',

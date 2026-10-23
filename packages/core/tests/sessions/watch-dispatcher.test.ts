@@ -222,3 +222,11 @@ describe('composeWakeMessage', () => {
     expect(text).toContain('read_thread');
   });
 });
+
+describe('composeWakeMessage control characters', () => {
+  it('drops control characters and newlines from the note and the label', () => {
+    const msg = composeWakeMessage({ id: 't1', label: 'La\x1b[2Jbel\r' }, 'idle', 'n1\nrun\x03 this');
+    expect(msg).not.toMatch(/[\x00-\x1f\x7f]/);
+    expect(msg).toContain('n1 run this');
+  });
+});

@@ -60,6 +60,7 @@ import { createToolsRouter } from './routes/tools.js';
 import { getToolsSpawnEnv, toolStatuses, awarenessNote } from './tools/status.js';
 import { ToolAuthProber } from './tools/auth-probe.js';
 import { SecretsService } from './secrets/service.js';
+import { sweepThreadMcpConfigs } from './sessions/mcp-config-sweep.js';
 import { IntegrationsService, type IntegrationLauncher } from './integrations/service.js';
 import { createEventsRouter } from './routes/events.js';
 import { createIntegrationsRouter } from './routes/integrations.js';
@@ -319,6 +320,8 @@ function buildWatchDeliver(sessionService: SessionService): (terminalId: string,
   return (terminalId: string, text: string) => {
     const terminal = sessionService.getTerminal(terminalId);
     if (!terminal) return; // watcher vanished between lookup and delivery — nothing to do
+    // A shell tab would run the wake text as a command (also covers a watch stored before the route refused it).
+    if (terminal.type === 'shell') return;
     if (terminal.config?.transport === 'structured' && sessionService.structuredManagerFor(terminal.type)) {
       sessionService.ensureStructuredAlive(terminalId);
       sessionService.sendStructuredMessage(terminalId, text);
@@ -519,6 +522,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Determine actual server URL after port is known
   const sessionService = new SessionService(db, ptyManager, path.join(dataDir, 'mcp.json'));
   sessionService.setUserPromptListener((id, text) => threadAutoNamer.notifyPrompt(id, text));
+  sessionService.setDaemonPort(preferredPort); // corrected below if the daemon falls back to another port
   // A Claude overseer loads only its own memory folder under this home (overseer memory scope
   // spec 2026-10-07, Unit 1). Only the real daemon sets it; createApp (tests) leaves it unset.
   sessionService.setOverseerMemoryHome(os.homedir());
@@ -863,6 +867,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Hold 127.0.0.1 and ::1 on the port too, so no other process can take localhost from us
   // (platform/loopback-guard.ts).
   const loopbackGuards = await guardLoopback(server, port);
+  sessionService.setDaemonPort(port);
 
   // Record our own pid so daemon controllers (e.g. WSL's restart()) can find and signal this
   // process without an OS service manager. Only now that the port is bound: a duplicate launch
@@ -938,7 +943,13 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     })
     .catch((err) => console.error('kickstart failed', err))
     .finally(() => {
-      try { statusService.reconcileProcesses((id) => ptyManager.isAlive(id) || !!sessionService.structuredManagerForTerminal(id)?.isAlive(id)); }
+      try {
+        const alive = (id: string) => ptyManager.isAlive(id) || !!sessionService.structuredManagerForTerminal(id)?.isAlive(id);
+        statusService.reconcileProcesses(alive);
+        // Old per-thread MCP files: removed once the threads that will run again have rewritten theirs.
+        const swept = sweepThreadMcpConfigs(dataDir, alive);
+        if (swept) console.log(`Removed ${swept} stale thread MCP config file(s)`);
+      }
       finally { setTimeout(() => endless.endBoot(), 1000).unref(); }
     });
 

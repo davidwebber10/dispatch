@@ -24,13 +24,30 @@ const PASTE_END = '\x1b[201~';
 const SUBMIT = '\r';
 
 /**
+ * Remove ESC, the other C0 controls, DEL and the C1 controls. Text typed into a PTY is read as
+ * keystrokes: an embedded ESC[201~ ends the bracketed paste early and the rest is typed as
+ * commands (a slash command, or `!` for Claude's shell mode). Tab is kept; newline is kept
+ * unless `keepNewline` is false, which folds it to a space for one-line fields.
+ */
+export function stripControlChars(text: string, opts: { keepNewline?: boolean } = {}): string {
+  const keepNewline = opts.keepNewline !== false;
+  const folded = keepNewline ? text : text.replace(/\r\n|[\r\n]/g, ' ');
+  return folded.replace(keepNewline ? /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g : /[\x00-\x08\x0a-\x1f\x7f-\x9f]/g, '');
+}
+
+/** True when `text` has any character that stripControlChars would remove, newline included. */
+export function hasControlChars(text: string): boolean {
+  return /[\x00-\x1f\x7f-\x9f]/.test(text);
+}
+
+/**
  * The exact byte string to write into a PTY to deliver `text` as ONE submitted message.
  *
  * Normalizes CRLF/CR line endings to \n first: a stray \r *inside* the payload would submit
  * mid-message even when bracketed, which is the very failure this exists to prevent.
  */
 export function ptyMessagePayload(text: string): string {
-  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const normalized = stripControlChars(text.replace(/\r\n/g, '\n').replace(/\r/g, '\n'));
   if (!normalized.includes('\n')) return normalized + SUBMIT;
   return PASTE_START + normalized + PASTE_END + SUBMIT;
 }

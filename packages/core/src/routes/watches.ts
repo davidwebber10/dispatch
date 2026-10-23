@@ -33,6 +33,11 @@ export function createWatchesRouter(db: Database.Database): Router {
       res.status(404).json({ error: `unknown terminal: ${watcherTerminalId}` });
       return;
     }
+    // A shell tab has no agent: the wake text would be typed into it and run as a command.
+    if (watcher.type === 'shell') {
+      res.status(400).json({ error: 'a shell tab cannot watch: it has no agent to read the wake message' });
+      return;
+    }
     const target = terminalsDb.getById(db, targetTerminalId);
     if (!target) {
       res.status(404).json({ error: `unknown terminal: ${targetTerminalId}` });

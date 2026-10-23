@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ptyMessagePayload, flattenForPty } from '../../src/sessions/pty-message.js';
+import { ptyMessagePayload, flattenForPty, stripControlChars, hasControlChars } from '../../src/sessions/pty-message.js';
 
 const PASTE_START = '\x1b[200~';
 const PASTE_END = '\x1b[201~';
@@ -61,5 +61,36 @@ describe('flattenForPty', () => {
 
   it('tolerates a non-array, non-string payload', () => {
     expect(flattenForPty(undefined as any)).toEqual({ text: '', droppedNonText: false });
+  });
+});
+
+describe('control characters in a PTY payload', () => {
+  it('removes an embedded paste terminator so the paste cannot end early', () => {
+    const out = ptyMessagePayload(`first\n${PASTE_END}/exit\nlast`);
+    expect(out).toBe(`${PASTE_START}first\n[201~/exit\nlast${PASTE_END}\r`);
+    // The only paste terminator is the one the daemon wrote.
+    expect(out.split(PASTE_END)).toHaveLength(2);
+  });
+
+  it('removes ESC, other C0 controls, DEL and C1 controls but keeps tab and newline', () => {
+    const out = ptyMessagePayload('a\x1b[31mb\x03c\x7fd\x9be\tf\ng');
+    expect(out).toBe(`${PASTE_START}a[31mbcde\tf\ng${PASTE_END}\r`);
+  });
+
+  it('single-line text with an ESC stays single-line plain text', () => {
+    expect(ptyMessagePayload('hi\x1b[200~there')).toBe('hi[200~there\r');
+  });
+});
+
+describe('stripControlChars', () => {
+  it('can also fold newlines for one-line fields', () => {
+    expect(stripControlChars('a\nb\r\nc\x1b', { keepNewline: false })).toBe('a b c');
+  });
+});
+
+describe('hasControlChars', () => {
+  it('flags CR, LF, ESC and DEL but not a plain path', () => {
+    expect(hasControlChars('/p/a b/c.txt')).toBe(false);
+    for (const bad of ['/p/a\rb', '/p/a\nb', '/p/a\x1bb', '/p/a\x7fb']) expect(hasControlChars(bad)).toBe(true);
   });
 });
